@@ -17,9 +17,14 @@ export function QuickAddHost(): React.JSX.Element {
       title="New task"
       description="Write the task; Tab walks its fields; Enter adds it"
       width="w-fit"
-      // An open token folds first; only then does Escape close quick add.
+      // A field's step goes back to the text first, and an open completion
+      // closes first; only then does Escape close quick add.
       onEscapeKeyDown={(event) => {
-        if (document.activeElement?.matches('[data-token][aria-expanded="true"]'))
+        if (
+          document.querySelector(
+            '[data-quick-add]:not([data-step="text"]), [data-quick-add] .cm-tooltip-autocomplete',
+          )
+        )
           event.preventDefault()
       }}
     >

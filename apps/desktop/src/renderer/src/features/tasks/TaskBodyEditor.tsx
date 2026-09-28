@@ -6,7 +6,7 @@
  * Every other surface edits a document that exists, which is `EditorPane`'s job.
  */
 import type { Task } from '@holi/shared'
-import { EditorState } from '@codemirror/state'
+import { EditorState, type Extension } from '@codemirror/state'
 import { EditorView, placeholder } from '@codemirror/view'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { useEffect, useRef } from 'react'
@@ -33,12 +33,21 @@ export function TaskDescriptionEditor({
   initial,
   onChange,
   hostClassName,
+  placeholderText = 'description — @ to mention a note, [[wiki-links]] to link',
+  extensions = [],
+  viewRef,
 }: {
   notePath: string
   initial: string
   onChange: (v: string) => void
   /** Override the editor host's default classes (a fixed min-height). */
   hostClassName?: string
+  placeholderText?: string
+  /** A host's own layer over the notes stack (quick add's keys and title line),
+   *  read at mount like `initial`. */
+  extensions?: Extension[]
+  /** The live view, for a host that moves focus into it. */
+  viewRef?: React.RefObject<EditorView | null>
 }): React.JSX.Element {
   const snapshot = useAtomValue(snapshotAtom)
   const remote = useAtomValue(activeRemoteAtom)
@@ -111,8 +120,10 @@ export function TaskDescriptionEditor({
               onAsk: (prompt, target) => askAgentRef.current.onAsk(prompt, target),
             },
             notePath,
+            frontmatter: false,
           }),
-          placeholder('description — @ to mention a note, [[wiki-links]] to link'),
+          ...extensions,
+          placeholder(placeholderText),
           EditorView.updateListener.of((u) => {
             if (u.docChanged) onChangeRef.current(u.state.doc.toString())
           }),
@@ -120,7 +131,11 @@ export function TaskDescriptionEditor({
       }),
       parent: hostRef.current,
     })
-    return () => view.destroy()
+    if (viewRef) viewRef.current = view
+    return () => {
+      if (viewRef) viewRef.current = null
+      view.destroy()
+    }
     // Mount once; `initial` seeds the view and is not tracked afterwards.
   }, [])
 

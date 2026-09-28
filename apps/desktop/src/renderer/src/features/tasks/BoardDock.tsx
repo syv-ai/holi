@@ -74,7 +74,8 @@ const newTask: MorphingMenuItem = {
   id: 'new',
   label: 'New task',
   icon: Plus,
-  panel: () => <QuickAdd flight />,
+  rise: true,
+  panel: (_close, open) => <QuickAdd flight open={open} />,
 }
 
 export function BoardDock(): React.JSX.Element {

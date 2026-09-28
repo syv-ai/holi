@@ -3,7 +3,7 @@
  * shapes a choice takes there, drawn as the nav menu draws its list.
  *
  * - `MorphRow`: a full-width row, `rounded-xl`, the accent background on
- *   hover and while `on`. Marked `data-morph-row`, so it cascades in with
+ *   hover, while `on`, and while `active` (the row a keyboard is on). Marked `data-morph-row`, so it cascades in with
  *   the panel.
  * - `PillGroup`: one choice among a few, as pills. The accent background
  *   slides from the old choice to the new one (a shared `layoutId`), so the
@@ -23,6 +23,7 @@ export function MorphRow({
   label,
   value,
   on,
+  active,
   onClick,
   className,
   ...rest
@@ -33,6 +34,8 @@ export function MorphRow({
   value?: ReactNode
   /** A toggle's state: the accent background and a check. */
   on?: boolean
+  /** The row arrow keys have reached, in a list stepped from outside. */
+  active?: boolean
   onClick?: () => void
   className?: string
 } & Omit<React.ComponentProps<'button'>, 'onClick' | 'value'>): React.JSX.Element {
@@ -41,9 +44,10 @@ export function MorphRow({
       type="button"
       data-morph-row=""
       aria-pressed={on}
+      data-active={active ? '' : undefined}
       onClick={onClick}
       className={cn(
-        'flex min-h-8 w-full items-center gap-2 rounded-xl px-2.5 py-1.5 text-left text-sm outline-none motion-respond hover:bg-accent focus-visible:ring-1 focus-visible:ring-ring aria-pressed:bg-accent',
+        'flex min-h-8 w-full items-center gap-2 rounded-xl px-2.5 py-1.5 text-left text-sm outline-none motion-respond hover:bg-accent focus-visible:ring-1 focus-visible:ring-ring aria-pressed:bg-accent data-active:bg-accent',
         className,
       )}
       {...rest}
@@ -144,7 +148,8 @@ export function Token({
   ...rest
 }: {
   icon: IconGlyph
-  label: ReactNode
+  /** Its value; none draws the icon alone (name it with `aria-label`). */
+  label?: ReactNode
   set: boolean
   open: boolean
 } & React.ComponentProps<'button'>): React.JSX.Element {
@@ -161,7 +166,7 @@ export function Token({
       {...rest}
     >
       <Icon icon={icon} size="sm" />
-      <span className="truncate">{label}</span>
+      {label !== undefined && <span className="truncate">{label}</span>}
     </button>
   )
 }

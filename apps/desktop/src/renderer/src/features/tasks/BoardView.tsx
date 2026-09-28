@@ -222,7 +222,7 @@ export function BoardView(): React.JSX.Element {
   const { arrivalProps } = useArrivals(all.map((t) => t.path))
 
   return (
-    <div className="relative flex min-h-0 flex-1 flex-col">
+    <div data-morph-stage="" className="relative flex min-h-0 flex-1 flex-col">
       <BrokenStrip />
       <LayoutGroup>
         <div ref={scroller} className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto">

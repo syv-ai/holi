@@ -33,6 +33,14 @@
  * over a list does. When growing leftward from that corner would cross the
  * window's edge (the toolbar of a narrow sidebar), it grows rightward from the
  * dock's left edge instead.
+ *
+ * **A panel may rise.** Centred at the foot, a panel item marked `rise` grows
+ * out of the dock and travels up to just under the middle of the view it
+ * floats over (the nearest `[data-morph-stage]`, else the window): quick add,
+ * a form worth writing in at eye level. The pin moves by its `bottom`, never
+ * by a transform on an ancestor, which would carry the fixed pin with it.
+ * Open, the shell follows its panel's size as the panel changes, so a rising
+ * form that grows keeps its middle where it was.
  */
 import { animate } from 'motion'
 import { motion, useReducedMotion } from 'motion/react'
@@ -68,9 +76,12 @@ export type MorphingMenuAction = {
   onSelect?: () => void
   /** A panel of its own instead of an action: selecting the item grows the
    *  menu into it, as a group grows into its rows. Given `close`, so a panel
-   *  can fold the menu when its work is done. Elements marked
+   *  can fold the menu when its work is done, and whether it is the panel
+   *  showing (it stays mounted while hidden). Elements marked
    *  `data-morph-row` cascade in. */
-  panel?: (close: () => void) => ReactNode
+  panel?: (close: () => void, open: boolean) => ReactNode
+  /** Centred anchor only: the open panel rises toward the middle of its view. */
+  rise?: boolean
 }
 
 /** One level of children keeps the menu small and the way back predictable. */
@@ -122,6 +133,10 @@ const reflow = { type: 'spring', duration: 0.45, bounce: 0.35 } as const
 
 /** How far the open menu keeps from the window's edge. */
 const MARGIN = 8
+
+/** How much of the way from the middle of its view back to the dock a rising
+ *  panel stops: near the middle, not on it. */
+const RISE_SHORT = 0.25
 
 /** How many of `total` shortcuts the vertical dock, which does not wrap, shows
  *  along a main axis `size` px long. All of them when they fit; otherwise one
@@ -210,7 +225,9 @@ export function MorphingMenu({
   }
 
   useImperativeHandle(ref, () => ({
-    openPanel: (id: string) => open({ kind: 'panel', id }, id, true),
+    // A hotkey is not a visit to the dock: closing leaves the focus off its
+    // shortcut rather than drawing a ring on it.
+    openPanel: (id: string) => open({ kind: 'panel', id }, id, false),
   }))
 
   function back() {
@@ -253,8 +270,27 @@ export function MorphingMenu({
       width: panel?.offsetWidth ?? barSize.width,
       height: panel?.offsetHeight ?? barSize.height,
     })
+    const box = root.getBoundingClientRect()
+    /** The pin's `bottom` at the dock, and where a rising panel ends. */
+    const rest = window.innerHeight - box.bottom
+    const risingItem =
+      center && view.kind === 'panel' && items.find((item) => item.id === view.id)?.rise
+    const bottomFor = () => {
+      if (!risingItem) return rest
+      const stage = root.closest('[data-morph-stage]')?.getBoundingClientRect() ?? {
+        top: 0,
+        height: window.innerHeight,
+      }
+      const height = targetSize().height
+      const middle = stage.top + stage.height / 2
+      const atDock = box.bottom - height / 2
+      const centre = middle + (atDock - middle) * RISE_SHORT
+      return Math.max(
+        rest,
+        Math.min(window.innerHeight - centre - height / 2, window.innerHeight - height - MARGIN),
+      )
+    }
     const pin = () => {
-      const box = root.getBoundingClientRect()
       // Unmeasured (0) never flips: there is nothing yet to cross the edge.
       const width = targetSize().width
       const flip = top && width > 0 && box.right - width < MARGIN
@@ -265,7 +301,8 @@ export function MorphingMenu({
           ? {
               position: 'fixed',
               left: `${box.left + box.width / 2}px`,
-              bottom: `${window.innerHeight - box.bottom}px`,
+              // A pin that is already up stays where it is; the rise moves it.
+              ...(shell.dataset.pinned === undefined ? { bottom: `${rest}px` } : {}),
             }
           : flip
             ? {
@@ -305,14 +342,47 @@ export function MorphingMenu({
       delete shell.dataset.pinned
       delete shell.dataset.flip
     }
+    /** Landed open, the shell follows its panel as the panel changes size (a
+     *  form that grows a field), a rising one about its middle. Not while it
+     *  morphs: the spring owns the size until then. */
+    let landed = false
+    const follow = () => {
+      if (!landed || cancelled || !panel) return
+      const size = targetSize()
+      Object.assign(shell.style, { width: `${size.width}px`, height: `${size.height}px` })
+      if (center && shell.dataset.pinned !== undefined) shell.style.bottom = `${bottomFor()}px`
+    }
+    const observer = expanded && panel ? new ResizeObserver(follow) : null
+    if (panel) observer?.observe(panel)
     const settle = () => {
       if (!expanded) unpin()
+      landed = true
+      follow()
     }
     const changed = old.kind !== view.kind || ('id' in old && 'id' in view && old.id !== view.id)
     const crossingBar = (old.kind === 'collapsed') !== (view.kind === 'collapsed')
     const snap = reducedMotion || !changed
 
     if (expanded) pin()
+    // The centred pin travels between the dock and a rising panel's height;
+    // a collapse brings it back to the dock before it unpins.
+    if (center && shell.dataset.pinned !== undefined) {
+      const bottom = `${bottomFor()}px`
+      if (snap) shell.style.bottom = bottom
+      else if (shell.style.bottom !== bottom)
+        track(
+          animate(
+            shell,
+            { bottom },
+            // Rising, it leaves with the grow, not the squeeze.
+            {
+              ...spring,
+              bounce: expanded ? 0.2 : 0.1,
+              delay: expanded && crossingBar ? compress.duration : 0,
+            },
+          ),
+        )
+    }
     if (snap) {
       Object.assign(shell.style, {
         width: `${targetSize().width}px`,
@@ -334,7 +404,9 @@ export function MorphingMenu({
         })
         .catch(() => {}) // A stopped transition must never resume its second phase.
     } else {
-      track(animate(shell, targetSize(), { ...spring, duration: 0.25, bounce: 0.1 }))
+      void track(animate(shell, targetSize(), { ...spring, duration: 0.25, bounce: 0.1 }))
+        .finished.then(() => !cancelled && settle())
+        .catch(() => {})
     }
 
     track(
@@ -405,6 +477,7 @@ export function MorphingMenu({
     window.addEventListener('resize', resize)
     return () => {
       cancelled = true
+      observer?.disconnect()
       running.forEach((animation) => animation.stop())
       window.removeEventListener('resize', resize)
     }
@@ -634,7 +707,7 @@ export function MorphingMenu({
               inert={!visible}
               className={hiddenPanel(!visible, 'w-max')}
             >
-              {item.panel!(() => close())}
+              {item.panel!(() => close(), visible)}
             </div>
           )
         })}

@@ -1,40 +1,39 @@
 /**
  * Quick add (⌘T, and the board dock's New): the card as it will look, filled
- * in place (docs/features/tasks.md). It shows in the board's dock, or centred
- * like the palette anywhere else (`QuickAddHost`).
+ * in place (docs/features/tasks.md). It rises out of the board's dock, or
+ * opens centred like the palette anywhere else (`QuickAddHost`).
  *
- * - **The card is the form.** A tall field grows with what you type: the
- *   first line is the title, any further lines the description. Under the
- *   card, a token bar: Lane, Column, Due, Priority, Tags. A token unfolds its
- *   choices beneath the bar.
- * - **Keys set everything.** Tab from the text walks the tokens and back;
- *   ←/→ step the open token's choices and the value follows; Space toggles a
- *   tag; Backspace clears Due or Priority; on Lane, typing finds a folder or
- *   names a new one. Enter adds from anywhere; Escape folds an open token.
- * - **Lane is any folder**, not only a board lane, as the full create allows.
- *   It defaults to the active note's folder.
- * - After an add the text clears and lane and column stay: the next task
- *   usually goes to the same place. On the board, the card flies from the
- *   dock to its cell (a shared `layoutId`, the path it will have).
+ * - **The card is the form.** A small note editor (the notes stack:
+ *   `@`-mentions, `[[wiki-links]]`, live preview): the first line is the
+ *   title, set larger, and any further lines are the description.
+ * - **Tab is a wizard.** Tab swaps the whole panel for the next field's step
+ *   (Lane, Due, Priority, Tags) and wraps back to the text; Shift+Tab goes
+ *   back. On a step ↑/↓ choose and the value follows; Space toggles a tag;
+ *   Backspace clears Due or Priority; on Lane, typing finds a folder or names
+ *   a new one. Escape on a step returns to the text. The bar at the foot names
+ *   the steps with their values, the current one on the accent.
+ * - **Enter adds** from anywhere; Shift+Enter is a new line. The editor's own
+ *   Enter and Tab yield to these (`quickKeys`), except while a completion is
+ *   open, whose Enter picks.
+ * - Everything is created in Todo. **Lane is any folder**, not only a board
+ *   lane, as the full create allows; it defaults to the active note's folder.
+ * - After an add the text clears and the lane stays: the next task usually
+ *   goes to the same place. On the board, the card flies from the dock to its
+ *   cell (a shared `layoutId`, the path it will have).
  */
-import type { Priority, Task, TaskStatus } from '@holi/shared'
+import type { Priority } from '@holi/shared'
 import { taskFilePath, taskSlug } from '@holi/shared'
+import { completionStatus } from '@codemirror/autocomplete'
+import { insertNewlineAndIndent } from '@codemirror/commands'
+import { insertNewlineContinueMarkup } from '@codemirror/lang-markdown'
+import { Prec } from '@codemirror/state'
+import { Decoration, EditorView, keymap } from '@codemirror/view'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
-import { CalendarDays, CircleDashed, CornerDownLeft, Flag, Folder, Hash } from 'lucide-react'
-import { useId, useMemo, useRef, useState } from 'react'
+import { CalendarDays, Check, Flag, Folder, Hash, PenLine } from 'lucide-react'
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { duePresets, shortStamp } from '@/lib/date-presets'
-import {
-  Icon,
-  PillGroup,
-  TaskCheck,
-  Textarea,
-  Token,
-  instant,
-  settle,
-  type IconGlyph,
-  type PillOption,
-} from '@/primitives'
+import { Icon, MorphRow, TaskCheck, Token, instant, settle, type IconGlyph } from '@/primitives'
 import { nowAtom } from '@/state/clock'
 import {
   ROOT_LANE,
@@ -44,27 +43,36 @@ import {
   tasksAtom,
 } from '@/state/tasks'
 import { activeDocAtom, snapshotAtom } from '@/state/vaults'
-import { TaskMeta } from './BoardCard'
+import { TaskDescriptionEditor } from './TaskBodyEditor'
 
-const COLUMNS: PillOption<TaskStatus>[] = [
-  { value: 'todo', label: 'Todo' },
-  { value: 'doing', label: 'Doing' },
-  { value: 'done', label: 'Done' },
-]
-const PRIORITIES: PillOption<Priority>[] = [
+const PRIORITIES: { value: Priority; label: string }[] = [
   { value: 'high', label: 'High' },
   { value: 'medium', label: 'Medium' },
   { value: 'low', label: 'Low' },
 ]
-/** The folder options a strip shows at once; typing narrows the rest. */
-const FOLDERS_SHOWN = 12
+/** The folders Lane lists at once; typing narrows the rest. */
+const FOLDERS_SHOWN = 40
 
-type TokenId = 'lane' | 'status' | 'due' | 'priority' | 'tags'
+/** The body's heights, in px: the title's one line; the text once it has a
+ *  description, and the most a step's list takes; a step's heading and a row. */
+const TITLE_ONLY = 44
+const FULL = 240
+const STEP_HEADING = 38
+const ROW = 32
+
+type Step = 'text' | 'lane' | 'due' | 'priority' | 'tags'
+const STEPS: readonly Step[] = ['text', 'lane', 'due', 'priority', 'tags']
+const STEP_NAMES: Record<Step, string> = {
+  text: 'Task',
+  lane: 'Lane',
+  due: 'Due',
+  priority: 'Priority',
+  tags: 'Tags',
+}
 
 type Draft = {
   text: string
   folder: string
-  status: TaskStatus
   due?: string
   priority?: Priority
   tags: string[]
@@ -88,7 +96,56 @@ function stepIn<T>(values: readonly T[], current: T, step: number): T {
   return values[next] as T
 }
 
-export function QuickAdd({ flight = false }: { flight?: boolean }): React.JSX.Element {
+/** What quick add asks of the editor's keys, read when a key is pressed. */
+type QuickKeys = { add: () => void; tab: (by: 1 | -1) => void }
+
+/**
+ * Quick add's layer over the notes stack: Enter adds and Tab walks the wizard,
+ * above the stack's own bindings (a list's Enter, `indentWithTab`). An open
+ * completion keeps its Enter. Shift+Enter continues a list as Enter would in a
+ * note. The first line is the title, drawn larger.
+ */
+function quickKeys(keys: React.RefObject<QuickKeys>) {
+  return [
+    Prec.highest(
+      keymap.of([
+        {
+          key: 'Enter',
+          run: (view) => {
+            if (completionStatus(view.state) === 'active') return false
+            keys.current.add()
+            return true
+          },
+          shift: (view) => insertNewlineContinueMarkup(view) || insertNewlineAndIndent(view),
+        },
+        {
+          key: 'Tab',
+          run: () => (keys.current.tab(1), true),
+          shift: () => (keys.current.tab(-1), true),
+        },
+      ]),
+    ),
+    EditorView.decorations.compute(['doc'], () =>
+      Decoration.set([Decoration.line({ class: 'cm-quick-title' }).range(0)]),
+    ),
+    EditorView.theme({
+      '&': { height: '100%', fontSize: '13px', '--editor-inset': '0px' },
+      '&.cm-focused': { outline: 'none' },
+      '.cm-scroller': { lineHeight: '1.55' },
+      '.cm-content': { padding: '0 0 8px' },
+      '.cm-quick-title': { fontSize: '16px', fontWeight: '500', paddingBottom: '2px' },
+    }),
+  ]
+}
+
+export function QuickAdd({
+  flight = false,
+  open = true,
+}: {
+  flight?: boolean
+  /** The dock keeps its panel mounted while folded; folding it resets the wizard. */
+  open?: boolean
+}): React.JSX.Element {
   const snapshot = useAtomValue(snapshotAtom)
   const activeDoc = useAtomValue(activeDocAtom)
   const tasks = useAtomValue(tasksAtom)
@@ -100,19 +157,21 @@ export function QuickAdd({ flight = false }: { flight?: boolean }): React.JSX.El
   const [draft, setDraft] = useState<Draft>(() => ({
     text: '',
     folder: activeDoc ? folderOf(activeDoc.path) : ROOT_LANE,
-    status: 'todo',
     tags: [],
   }))
   const set = (patch: Partial<Draft>) => setDraft((d) => ({ ...d, ...patch }))
-  const [open, setOpen] = useState<TokenId | null>(null)
+  const [step, setStep] = useState<Step>('text')
+  /** Which way the last step went, so the panels slide the same way. */
+  const [direction, setDirection] = useState<1 | -1>(1)
   const [laneQuery, setLaneQuery] = useState('')
-  const [tagAt, setTagAt] = useState(0)
+  /** The row ↑/↓ have reached on a step; Space, → or a click picks it. */
+  const [cursor, setCursor] = useState(0)
   /** The preview's layoutId: a draft's own, then, for one add, the path the
    *  new card will have, so the card takes over from the preview mid-air. */
   const draftId = useId()
   const [flightId, setFlightId] = useState(draftId)
-  const textRef = useRef<HTMLTextAreaElement>(null)
-  const tokenRefs = useRef(new Map<TokenId, HTMLButtonElement>())
+  const viewRef = useRef<EditorView | null>(null)
+  const listRef = useRef<HTMLDivElement>(null)
 
   const folders = useMemo(
     () => [
@@ -135,17 +194,21 @@ export function QuickAdd({ flight = false }: { flight?: boolean }): React.JSX.El
     return query && !folders.includes(query) ? [...matching, query] : matching
   }, [folders, query])
   const dues = duePresets(now)
-
   const { title, description } = split(draft.text)
-  const preview = {
-    path: '',
-    title: title || 'New task',
-    status: draft.status,
-    due: draft.due,
-    priority: draft.priority,
-    tags: draft.tags,
-    description,
-  } as Task
+
+  /** The editor owns the text; setting it from here goes through the view,
+   *  so the undo history keeps it. */
+  const setText = (text: string) => {
+    const view = viewRef.current
+    if (view) view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: text } })
+  }
+
+  const go = (next: Step) => {
+    setDirection(STEPS.indexOf(next) >= STEPS.indexOf(step) ? 1 : -1)
+    setStep(next)
+    setLaneQuery('')
+  }
+  const walk = (by: 1 | -1) => go(stepIn(STEPS, step, by))
 
   const submit = async () => {
     if (!title) return
@@ -158,13 +221,13 @@ export function QuickAdd({ flight = false }: { flight?: boolean }): React.JSX.El
       predicted = taskFilePath(folder, `${taskSlug(title)}-${n}`)
     if (flight) setFlightId(predicted)
     const sent = draft
-    set({ text: '', due: undefined, priority: undefined, tags: [] })
-    setOpen(null)
-    textRef.current?.focus()
+    setText('')
+    set({ due: undefined, priority: undefined, tags: [] })
+    go('text')
     try {
       await create({
         title,
-        status: sent.status,
+        status: 'todo',
         folder,
         ...(description ? { description } : {}),
         extra: {
@@ -177,145 +240,303 @@ export function QuickAdd({ flight = false }: { flight?: boolean }): React.JSX.El
       // Refused (a folder that cannot be, a clash): the draft comes back
       // rather than vanishing with the task.
       setDraft(sent)
+      setText(sent.text)
     }
     setFlightId(`${draftId}-${predicted}`)
   }
 
-  /** ←/→ on a token: the value follows. */
-  const step = (token: TokenId, by: 1 | -1) => {
-    if (token === 'lane') set({ folder: stepIn(laneChoices, draft.folder, by) })
-    if (token === 'status')
-      set({
-        status: stepIn(
-          COLUMNS.map((c) => c.value),
-          draft.status,
-          by,
-        ),
-      })
-    if (token === 'due')
-      set({ due: stepIn([undefined, ...dues.map((d) => d.value)], draft.due, by) })
-    if (token === 'priority')
-      set({ priority: stepIn([undefined, ...PRIORITIES.map((p) => p.value)], draft.priority, by) })
-    if (token === 'tags' && allTags.length > 0)
-      setTagAt((at) => (at + by + allTags.length) % allTags.length)
-  }
+  // The editor binds its keys once; they call whatever this render made.
+  const keys = useRef<QuickKeys>({ add: () => {}, tab: () => {} })
+  keys.current = { add: () => void submit(), tab: walk }
+  const extensions = useMemo(() => quickKeys(keys), [])
 
   const toggleTag = (tag: string) =>
     set({
       tags: draft.tags.includes(tag) ? draft.tags.filter((t) => t !== tag) : [...draft.tags, tag],
     })
 
-  const onTokenKey = (token: TokenId) => (event: React.KeyboardEvent<HTMLButtonElement>) => {
+  /** The step's rows. Picking one of a single choice sets it and moves on;
+   *  a tag toggles and stays. */
+  type Choice = {
+    key: string
+    label: string
+    icon?: IconGlyph
+    value?: string
+    on: boolean
+    pick: () => void
+  }
+  const single = (patch: Partial<Draft>) => {
+    set(patch)
+    walk(1)
+  }
+  const choices: Choice[] =
+    step === 'lane'
+      ? laneChoices.slice(0, FOLDERS_SHOWN).map((f) => ({
+          key: f || '/',
+          icon: Folder,
+          label: folders.includes(f) ? folderName(f) : `New: ${f}`,
+          on: f === draft.folder,
+          pick: () => single({ folder: f }),
+        }))
+      : step === 'due'
+        ? [{ value: undefined, label: 'No due date' }, ...dues].map((d) => ({
+            key: d.value ?? 'none',
+            label: d.label,
+            ...(d.value ? { value: shortStamp(d.value) } : {}),
+            on: d.value === draft.due,
+            pick: () => single({ due: d.value }),
+          }))
+        : step === 'priority'
+          ? [{ value: undefined, label: 'No priority' }, ...PRIORITIES].map((p) => ({
+              key: p.value ?? 'none',
+              label: p.label,
+              on: p.value === draft.priority,
+              pick: () => single({ priority: p.value }),
+            }))
+          : step === 'tags'
+            ? allTags.map((tag) => ({
+                key: tag,
+                label: `#${tag}`,
+                on: draft.tags.includes(tag),
+                pick: () => toggleTag(tag),
+              }))
+            : []
+  const at = Math.min(cursor, Math.max(0, choices.length - 1))
+  /** One line until Shift+Enter starts a description; a step as tall as its
+   *  rows, to a point. */
+  const bodyHeight =
+    step === 'text'
+      ? draft.text.includes('\n')
+        ? FULL
+        : TITLE_ONLY
+      : Math.min(FULL, STEP_HEADING + Math.max(1, choices.length) * ROW)
+
+  // Focus follows the step: the editor for the text, the list for a field,
+  // whose cursor starts on the current value. Before paint, so the view that
+  // is going never holds focus when it hides.
+  const shownStep = useRef(step)
+  useLayoutEffect(() => {
+    if (shownStep.current === step) return
+    shownStep.current = step
+    setCursor(
+      Math.max(
+        0,
+        choices.findIndex((c) => c.on),
+      ),
+    )
+    if (step === 'text') viewRef.current?.focus()
+    else listRef.current?.focus({ preventScroll: true })
+    // `choices` is this render's, which is the step's own.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step])
+
+  // Opening puts the caret in the text: centred, quick add mounts with its
+  // opening; in the dock it stays mounted and `open` turns on. Folded away
+  // mid-wizard, it opens on the text again.
+  useEffect(() => {
+    if (open) {
+      viewRef.current?.focus()
+      return
+    }
+    setStep('text')
+    shownStep.current = 'text'
+    setLaneQuery('')
+  }, [open])
+
+  // The row a key reached stays in sight.
+  useEffect(() => {
+    listRef.current
+      ?.querySelector('[data-active]')
+      ?.scrollIntoView({ block: 'nearest', behavior: reduced ? 'auto' : 'smooth' })
+  }, [step, at, reduced])
+
+  const onKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     const { key } = event
-    if (key === 'ArrowRight' || key === 'ArrowLeft') {
+    if (key === 'Escape') {
+      if (step !== 'text') {
+        event.preventDefault()
+        event.stopPropagation()
+        go('text')
+      } else if (event.defaultPrevented) {
+        // The editor closed a completion: that Escape was spent.
+        event.stopPropagation()
+      }
+      return
+    }
+    // The editor handled it (its own Enter and Tab included).
+    if (event.defaultPrevented) return
+    if (key === 'Tab') {
       event.preventDefault()
-      setOpen(token)
-      step(token, key === 'ArrowRight' ? 1 : -1)
-    } else if (key === 'Enter') {
+      walk(event.shiftKey ? -1 : 1)
+      return
+    }
+    if (key === 'Enter' && !event.shiftKey) {
+      // From the text it adds; from a step it goes back to the text.
       event.preventDefault()
-      void submit()
-    } else if (key === 'Escape' && open !== null) {
+      if (step === 'text') void submit()
+      else go('text')
+      return
+    }
+    if (step === 'text') return
+    if (key === 'ArrowDown' || key === 'ArrowUp') {
       event.preventDefault()
-      event.stopPropagation()
-      setOpen(null)
-    } else if (key === 'Tab' && !event.shiftKey && token === 'tags') {
-      // The last token hands back to the text.
+      if (choices.length > 0)
+        setCursor((at + (key === 'ArrowDown' ? 1 : -1) + choices.length) % choices.length)
+    } else if (key === ' ' || key === 'ArrowRight') {
       event.preventDefault()
-      textRef.current?.focus()
-    } else if (key === ' ' && token === 'tags') {
-      event.preventDefault()
-      const tag = allTags[tagAt]
-      if (tag) toggleTag(tag)
+      choices[at]?.pick()
     } else if (key === 'Backspace') {
       event.preventDefault()
-      if (token === 'due') set({ due: undefined })
-      if (token === 'priority') set({ priority: undefined })
-      if (token === 'lane') {
-        const next = laneQuery.slice(0, -1)
-        setLaneQuery(next)
-        if (next === '') set({ folder: ROOT_LANE })
+      if (step === 'due') set({ due: undefined })
+      if (step === 'priority') set({ priority: undefined })
+      if (step === 'lane') {
+        setLaneQuery(laneQuery.slice(0, -1))
+        setCursor(0)
       }
     } else if (
-      token === 'lane' &&
+      step === 'lane' &&
       key.length === 1 &&
       !event.metaKey &&
       !event.ctrlKey &&
       !event.altKey
     ) {
-      // Typing on Lane finds a folder, or names a new one; the value follows
-      // the first match.
+      // Typing on Lane narrows the folders, or names a new one.
       event.preventDefault()
-      const next = cleanFolder(laneQuery + key)
       setLaneQuery(laneQuery + key)
-      const needle = next.toLowerCase()
-      const hit = folders.find((f) => folderName(f).toLowerCase().includes(needle))
-      set({ folder: hit ?? next })
+      setCursor(0)
     }
   }
 
-  const token = (id: TokenId, icon: IconGlyph, label: string, isSet: boolean) => (
+  /** A step in the bar at the foot: its icon, and its value once it has one. */
+  const stepToken = (id: Step, icon: IconGlyph, value: string | undefined) => (
     <Token
       key={id}
-      ref={(element: HTMLButtonElement | null) => {
-        if (element) tokenRefs.current.set(id, element)
-        else tokenRefs.current.delete(id)
-      }}
       icon={icon}
-      label={label}
-      set={isSet}
-      open={open === id}
-      data-token={id}
-      onFocus={() => setOpen(id)}
-      onClick={() => setOpen((o) => (o === id ? null : id))}
-      onKeyDown={onTokenKey(id)}
+      label={value}
+      aria-label={value ? `${STEP_NAMES[id]}: ${value}` : STEP_NAMES[id]}
+      set={value !== undefined}
+      open={step === id}
+      tabIndex={-1}
+      data-step-token={id}
+      onClick={() => go(id)}
     />
   )
 
   return (
-    <div className="w-[26rem] max-w-[calc(100vw-2rem)]" data-quick-add="">
+    <div
+      className="w-[30rem] max-w-[calc(100vw-2rem)]"
+      data-quick-add=""
+      data-step={step}
+      onKeyDown={onKeyDown}
+    >
       <motion.div
         data-morph-row=""
-        layoutId={flight && !reduced ? flightId : undefined}
+        initial={false}
+        animate={{ height: bodyHeight }}
         transition={reduced ? instant : settle}
-        style={{ borderRadius: 12 }}
-        className="bg-muted px-2.5 py-2 text-xs"
+        className="relative overflow-hidden"
       >
-        <div className="flex items-start gap-2">
-          {/* What the card will look like: the check is a picture here. */}
-          <span inert aria-hidden className="mt-0.5">
-            <TaskCheck filled={false} label="" />
-          </span>
-          <div className="min-w-0 flex-1">
-            <Textarea
-              ref={textRef}
-              variant="bare"
-              autoFocus
-              rows={4}
-              value={draft.text}
-              aria-label="New task"
-              placeholder={
-                'What needs doing?\nShift+Enter for a new line; lines after the first are the description.'
-              }
-              onFocus={() => setOpen(null)}
-              onChange={(event) => set({ text: event.target.value })}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter' && !event.shiftKey) {
-                  event.preventDefault()
-                  void submit()
-                }
-                if (event.key === 'Tab' && event.shiftKey) {
-                  event.preventDefault()
-                  tokenRefs.current.get('tags')?.focus()
-                }
+        {/* The text stays mounted under the steps: its undo history and a
+            half-typed mention survive a trip round the wizard. */}
+        <motion.div
+          inert={step !== 'text'}
+          aria-hidden={step !== 'text'}
+          animate={
+            step === 'text'
+              ? { opacity: 1, x: 0 }
+              : { opacity: 0, x: reduced ? 0 : direction * -24 }
+          }
+          transition={reduced ? instant : settle}
+          className="absolute inset-0"
+        >
+          <motion.div
+            layoutId={flight && !reduced ? flightId : undefined}
+            transition={reduced ? instant : settle}
+            style={{ borderRadius: 12 }}
+            className="flex h-full items-start gap-2.5 px-3 pt-2.5"
+          >
+            {/* What the card will look like: the check is a picture here. */}
+            <span inert aria-hidden className="mt-0.5">
+              <TaskCheck filled={false} label="" />
+            </span>
+            <div className="h-full min-w-0 flex-1">
+              <TaskDescriptionEditor
+                notePath=""
+                initial=""
+                placeholderText="What needs doing?"
+                extensions={extensions}
+                viewRef={viewRef}
+                onChange={(text) => set({ text })}
+                hostClassName="h-full overflow-hidden"
+              />
+            </div>
+          </motion.div>
+        </motion.div>
+
+        <AnimatePresence initial={false} custom={direction}>
+          {step !== 'text' && (
+            <motion.div
+              key={step}
+              custom={direction}
+              variants={{
+                from: (d: number) => ({ opacity: 0, x: reduced ? 0 : d * 24 }),
+                at: { opacity: 1, x: 0 },
+                gone: (d: number) => ({ opacity: 0, x: reduced ? 0 : d * -24 }),
               }}
-              className="max-h-64 min-h-24 text-sm leading-5"
-            />
-            <TaskMeta task={preview} />
-            <p className="mt-1 text-[10px] text-muted-foreground">
-              {folderName(draft.folder)} · {COLUMNS.find((c) => c.value === draft.status)?.label}
-            </p>
-          </div>
-        </div>
+              initial="from"
+              animate="at"
+              exit="gone"
+              transition={reduced ? instant : settle}
+              className="absolute inset-0 flex flex-col px-1.5 pt-1.5"
+            >
+              <div className="flex items-baseline justify-between px-2.5 pb-1.5">
+                <span className="text-sm font-medium">{STEP_NAMES[step]}</span>
+                {step === 'lane' && laneQuery && (
+                  <span className="truncate pl-3 text-xs text-muted-foreground">{laneQuery}</span>
+                )}
+              </div>
+              <div
+                ref={listRef}
+                role="listbox"
+                aria-label={STEP_NAMES[step]}
+                aria-multiselectable={step === 'tags' || undefined}
+                tabIndex={-1}
+                className="min-h-0 flex-1 overflow-y-auto overscroll-contain outline-none"
+              >
+                {step === 'tags' && allTags.length === 0 && (
+                  <p className="px-2.5 py-1.5 text-sm text-muted-foreground">
+                    No tags in this vault yet
+                  </p>
+                )}
+                {choices.map((choice, index) => (
+                  <MorphRow
+                    key={choice.key}
+                    role="option"
+                    aria-selected={choice.on}
+                    tabIndex={-1}
+                    icon={choice.icon}
+                    label={choice.label}
+                    value={
+                      choice.on ? (
+                        <span className="flex items-center gap-2">
+                          {choice.value}
+                          <Icon icon={Check} />
+                        </span>
+                      ) : (
+                        choice.value
+                      )
+                    }
+                    active={index === at}
+                    onClick={() => {
+                      setCursor(index)
+                      choice.pick()
+                    }}
+                  />
+                ))}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </motion.div>
 
       <div
@@ -324,107 +545,16 @@ export function QuickAdd({ flight = false }: { flight?: boolean }): React.JSX.El
         aria-label="Task fields"
         className="flex flex-wrap items-center gap-0.5 pt-1.5"
       >
-        {token('lane', Folder, folderName(draft.folder), true)}
-        {token(
-          'status',
-          CircleDashed,
-          COLUMNS.find((c) => c.value === draft.status)!.label as string,
-          true,
-        )}
-        {token('due', CalendarDays, draft.due ? shortStamp(draft.due) : 'Due', Boolean(draft.due))}
-        {token(
-          'priority',
-          Flag,
-          (PRIORITIES.find((p) => p.value === draft.priority)?.label as string | undefined) ??
-            'Priority',
-          Boolean(draft.priority),
-        )}
-        {token(
+        {stepToken('text', PenLine, undefined)}
+        {stepToken('lane', Folder, draft.folder === ROOT_LANE ? undefined : draft.folder)}
+        {stepToken('due', CalendarDays, draft.due ? shortStamp(draft.due) : undefined)}
+        {stepToken('priority', Flag, PRIORITIES.find((p) => p.value === draft.priority)?.label)}
+        {stepToken(
           'tags',
           Hash,
-          draft.tags.length ? draft.tags.map((t) => `#${t}`).join(' ') : 'Tags',
-          draft.tags.length > 0,
+          draft.tags.length ? draft.tags.map((t) => `#${t}`).join(' ') : undefined,
         )}
-        <span className="ml-auto flex items-center gap-1 pr-1.5 text-[10px] text-muted-foreground">
-          <Icon icon={CornerDownLeft} size="sm" /> adds
-        </span>
       </div>
-
-      <AnimatePresence initial={false}>
-        {open && (
-          <motion.div
-            key={open}
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: 'auto', opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={reduced ? instant : settle}
-            className="overflow-hidden"
-          >
-            <div className="pt-1.5">
-              {open === 'lane' && (
-                <>
-                  <p className="px-1 pb-1 text-[10px] text-muted-foreground">
-                    {laneQuery ? `Folder: ${laneQuery}` : 'Type to find a folder or name a new one'}
-                  </p>
-                  <PillGroup
-                    label="Lane"
-                    tabbable={false}
-                    options={laneChoices.slice(0, FOLDERS_SHOWN).map((f) => ({
-                      value: f === ROOT_LANE ? '/' : f,
-                      label: folders.includes(f) ? folderName(f) : `New: ${f}`,
-                    }))}
-                    isOn={(v) => (v === '/' ? ROOT_LANE : v) === draft.folder}
-                    onPick={(v) => set({ folder: v === '/' ? ROOT_LANE : v })}
-                  />
-                </>
-              )}
-              {open === 'status' && (
-                <PillGroup
-                  label="Column"
-                  tabbable={false}
-                  options={COLUMNS}
-                  isOn={(v) => v === draft.status}
-                  onPick={(v) => set({ status: v })}
-                />
-              )}
-              {open === 'due' && (
-                <PillGroup
-                  label="Due"
-                  tabbable={false}
-                  options={dues.map((d) => ({ value: d.value, label: d.label }))}
-                  isOn={(v) => v === draft.due}
-                  onPick={(v) => set({ due: draft.due === v ? undefined : v })}
-                />
-              )}
-              {open === 'priority' && (
-                <PillGroup
-                  label="Priority"
-                  tabbable={false}
-                  options={PRIORITIES}
-                  isOn={(v) => v === draft.priority}
-                  onPick={(v) => set({ priority: draft.priority === v ? undefined : v })}
-                />
-              )}
-              {open === 'tags' &&
-                (allTags.length === 0 ? (
-                  <p className="px-1 text-[10px] text-muted-foreground">
-                    No tags in this vault yet
-                  </p>
-                ) : (
-                  <PillGroup
-                    label="Tags"
-                    multiple
-                    tabbable={false}
-                    options={allTags.map((t) => ({ value: t, label: `#${t}` }))}
-                    active={allTags[tagAt]}
-                    isOn={(v) => draft.tags.includes(v)}
-                    onPick={toggleTag}
-                  />
-                ))}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
     </div>
   )
 }

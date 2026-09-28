@@ -52,6 +52,9 @@ export interface EditorDeps {
    *  the commands, `editable` stops the caret, since a caret that swallows input
    *  reads as a broken editor. */
   readOnly?: boolean
+  /** The note's properties bar; off for text that is not a note (a task's
+   *  description, whose file's frontmatter is the task's own). */
+  frontmatter?: boolean
 }
 
 /**
@@ -93,7 +96,7 @@ export function baseEditorExtensions(deps: EditorDeps): Extension[] {
     headingSlide,
     // After livePreview: the block-replace owns the frontmatter region, and
     // livePreview skips it.
-    frontmatterExtension,
+    deps.frontmatter === false ? [] : frontmatterExtension,
     // Also a StateField: CodeMirror refuses block decorations from a plugin.
     mermaidExtension,
     linkClickHandler(deps.nav),
