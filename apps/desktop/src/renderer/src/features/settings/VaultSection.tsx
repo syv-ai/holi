@@ -9,16 +9,18 @@
  * thing that can happen to it, and this is the only surface that shows it.
  */
 import { SiGithub } from '@icons-pack/react-simple-icons'
-import { useAtomValue } from 'jotai'
+import { useAtomValue, useSetAtom } from 'jotai'
 import { useEffect, useState } from 'react'
 import type { Collaborator } from '@holi/shared'
+import type { VaultMembership } from '../../../../main/router'
 import { Button, Icon, Tooltip } from '@/primitives'
 import { cn } from '@/lib/cn'
 import { collaboratorsErrorText, errorCodeOf } from '@/lib/collaborators-error'
 import { trpc } from '@/lib/trpc'
+import { openDialogAtom } from '@/state/dialogs'
 import { activeRemoteAtom, vaultsAtom } from '@/state/vaults'
 import { ExternalLink, SettingsField, SettingsHeading, SettingsNote } from './settings-ui'
-import { COLLABORATORS, WHERE_IT_LIVES } from './vault-headings'
+import { COLLABORATORS, LEAVE_OR_DELETE, WHERE_IT_LIVES } from './vault-headings'
 
 /** Mirrors `remoteUrl` in `main/git.ts`, minus the `.git`: this one is for a
  *  human to click. A vault whose origin is a local path (a test fixture) gets a
@@ -174,6 +176,71 @@ export function VaultSection(): React.JSX.Element {
           </li>
         ))}
       </ul>
+
+      {remote !== null && <LeaveOrDelete remote={remote} />}
     </div>
+  )
+}
+
+/**
+ * The open vault's way out (D109): Leave for a collaborator, Delete for an
+ * admin, Remove when GitHub no longer shows it. Each opens the confirm the
+ * vault picker's options open too.
+ */
+function LeaveOrDelete({ remote }: { remote: string }): React.JSX.Element {
+  const openDialog = useSetAtom(openDialogAtom)
+  const [membership, setMembership] = useState<VaultMembership | 'error' | null>(null)
+
+  useEffect(() => {
+    setMembership(null)
+    void trpc.vaults.membership
+      .query({ remote })
+      .then(setMembership)
+      .catch(() => setMembership('error'))
+  }, [remote])
+
+  const remove = (intent: 'leave' | 'delete' | 'forget') =>
+    openDialog({ id: 'remove-vault', size: 'sm', remote, intent })
+
+  return (
+    <>
+      <SettingsHeading title={LEAVE_OR_DELETE} />
+      <div className="flex items-center justify-between gap-3">
+        <SettingsNote>
+          {membership === null
+            ? 'reading…'
+            : membership === 'error'
+              ? 'GitHub did not answer, so Holi cannot tell what you may do here.'
+              : membership.kind === 'gone'
+                ? 'GitHub no longer shows this vault to you. Only the clone is left.'
+                : membership.owned
+                  ? 'You own this vault. Deleting it removes it on GitHub for everyone.'
+                  : 'Leaving drops your access and removes the clone from this machine.'}
+        </SettingsNote>
+        <div className="flex shrink-0 gap-2">
+          {membership !== null && membership !== 'error' && membership.kind === 'gone' && (
+            <Button variant="secondary" size="xs" onClick={() => remove('forget')}>
+              Remove from this machine…
+            </Button>
+          )}
+          {membership !== null &&
+            membership !== 'error' &&
+            membership.kind === 'live' &&
+            !membership.owned && (
+              <Button variant="secondary" size="xs" onClick={() => remove('leave')}>
+                Leave…
+              </Button>
+            )}
+          {membership !== null &&
+            membership !== 'error' &&
+            membership.kind === 'live' &&
+            membership.canAdmin && (
+              <Button variant="destructive" size="xs" onClick={() => remove('delete')}>
+                Delete…
+              </Button>
+            )}
+        </div>
+      </div>
+    </>
   )
 }

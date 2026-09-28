@@ -113,6 +113,16 @@ export interface PublicViewer {
   avatarUrl?: string
 }
 
+/**
+ * Where you stand on a vault's GitHub repo, for leaving and deleting it (D109).
+ * `gone`: GitHub no longer shows it to you. `accessVia` names the organization
+ * your access comes through when it is not yours to drop; `others` are the
+ * other collaborators, whom a delete takes it from too.
+ */
+export type VaultMembership =
+  | { kind: 'gone' }
+  | { kind: 'live'; owned: boolean; canAdmin: boolean; accessVia: string | null; others: string[] }
+
 export interface RouterDeps {
   registry: VaultRegistry
   session: GitHubSession
@@ -626,6 +636,76 @@ export function createRouter(deps: RouterDeps) {
     }
   }
 
+  /** The signed-in login. `gh` has already refused a missing token, and a
+   *  token is only ever stored with its viewer. */
+  function viewerLogin(): string {
+    const login = deps.session.viewer?.login
+    if (!login) throw new TRPCError({ code: 'UNAUTHORIZED', message: 'not signed in to GitHub' })
+    return login
+  }
+
+  /** GitHub logins are case-insensitive. */
+  const sameLogin = (a: string, b: string) => a.toLowerCase() === b.toLowerCase()
+
+  /**
+   * Commit and push `remote`, then report what is still only here (D109).
+   *
+   * The open vault goes through its own loop, which knows how to recover from
+   * a rejected push. Any other vault was flushed when it was closed, so a dirty
+   * tree there is someone's edit made outside Holi: it counts as stuck rather
+   * than being committed from here, where its pre-commit hook has no endpoint.
+   */
+  async function settleVault(remote: string): Promise<{ ahead: number; dirty: boolean }> {
+    const active = deps.host.active()
+    if (active?.remote === remote) {
+      await active.commitNow()
+      await active.pushNow()
+      const { ahead, dirty } = await active.repo.status()
+      return { ahead, dirty }
+    }
+    const repo = openRepo(await rootFor(remote), { token: () => deps.session.token() })
+    let status = await repo.status()
+    if (status.ahead > 0 && !status.dirty) {
+      try {
+        let pushed = await repo.push()
+        if (pushed.kind === 'rejected' && pushed.reason === 'non-fast-forward') {
+          if ((await repo.pull()).kind !== 'conflict') pushed = await repo.push()
+        }
+      } catch (err) {
+        // Offline, or the remote is gone: the status below says what is left.
+        console.error(`[vaults] could not push ${remote}:`, err)
+      }
+      status = await repo.status()
+    }
+    return { ahead: status.ahead, dirty: status.dirty }
+  }
+
+  /** The guard on every removal that could lose work: settle, and refuse if
+   *  anything is still only on this machine. The dialog settles first and says
+   *  so; this is the backstop. */
+  async function refuseIfStuck(remote: string): Promise<void> {
+    const { ahead, dirty } = await settleVault(remote)
+    if (ahead > 0 || dirty) {
+      throw new TRPCError({
+        code: 'PRECONDITION_FAILED',
+        message: 'this vault has work that has not reached GitHub',
+      })
+    }
+  }
+
+  /**
+   * One vault's clone to the OS Trash, and out of the registry: sign-out's
+   * `deleteClones`, for one vault. Closed first when it is the open one, so no
+   * watcher or timer fires into a moved tree. Trash before unregister, so a
+   * clone that will not move stays listed rather than orphaned.
+   */
+  async function removeClone(remote: string): Promise<void> {
+    const root = await rootFor(remote)
+    if (deps.host.active()?.remote === remote) await deps.host.close()
+    await deps.trashItem(root)
+    await deps.registry.remove(remote)
+  }
+
   /** The remote is interpolated into a URL, so it is validated before it is. */
   function safeRemote(remote: string): string {
     if (!isRemote(remote)) {
@@ -674,8 +754,8 @@ export function createRouter(deps: RouterDeps) {
     }),
 
     signOut: t.procedure.mutation(async () => {
-      // The keychain entry goes, the clones stay. `vaults.remove` is a
-      // separate, deliberate act.
+      // The keychain entry goes, the clones stay. Removing one is a separate,
+      // deliberate act: `deleteClones`, or leaving or deleting a vault (D109).
       await deps.session.signOut()
       return { ok: true as const }
     }),
@@ -827,6 +907,108 @@ export function createRouter(deps: RouterDeps) {
       }
       return { ok: true as const }
     }),
+
+    /**
+     * What this person may do to the vault on GitHub, for the leave and delete
+     * dialogs (D109). `gone` is a remote GitHub no longer shows them: deleted,
+     * or their access was taken away. Either way the clone is all that is left.
+     */
+    membership: t.procedure
+      .input(fields({ remote: 'string' }))
+      .query(({ input }): Promise<VaultMembership> =>
+        gh(async () => {
+          const remote = safeRemote(input.remote)
+          const login = viewerLogin()
+          let repo: Repo
+          try {
+            repo = await deps.session.api.repo(remote)
+          } catch (err) {
+            if (err instanceof GitHubApiError && err.kind === 'not-found') return { kind: 'gone' }
+            throw err
+          }
+          const owned = repo.owner.kind === 'user' && sameLogin(repo.owner.login, login)
+          const [collaborators, direct] = await Promise.all([
+            // Names for the delete confirm only: a listing GitHub refuses must
+            // not stop someone leaving.
+            deps.session.api.collaborators(remote).catch(() => []),
+            // A personal repo has no other kind of access to have.
+            owned || repo.owner.kind === 'user'
+              ? true
+              : deps.session.api.isDirectCollaborator(remote, login),
+          ])
+          return {
+            kind: 'live',
+            owned,
+            canAdmin: repo.canAdmin,
+            accessVia: direct ? null : repo.owner.login,
+            others: collaborators.map((c) => c.login).filter((l) => !sameLogin(l, login)),
+          }
+        }),
+      ),
+
+    /**
+     * Get the vault's work onto its remote, and say what could not go (D109).
+     * Leaving and deleting both wait on this: nothing is trashed while work is
+     * stuck on this machine.
+     */
+    settle: t.procedure
+      .input(fields({ remote: 'string' }))
+      .mutation(({ input }) => settleVault(safeRemote(input.remote))),
+
+    /**
+     * Drop your own access on GitHub, then the clone (D109). Refused for a vault
+     * you own: an owner who wants out deletes it. Access that comes through an
+     * organization is not yours to drop, so it stays, and the answer says whose
+     * it is.
+     */
+    leave: t.procedure.input(fields({ remote: 'string' })).mutation(({ input }) =>
+      gh(async (): Promise<{ accessVia: string | null }> => {
+        const remote = safeRemote(input.remote)
+        const login = viewerLogin()
+        const repo = await deps.session.api.repo(remote)
+        if (repo.owner.kind === 'user' && sameLogin(repo.owner.login, login)) {
+          throw new TRPCError({
+            code: 'FORBIDDEN',
+            message: 'you own this vault: delete it instead of leaving',
+          })
+        }
+        await refuseIfStuck(remote)
+        const direct =
+          repo.owner.kind === 'user' || (await deps.session.api.isDirectCollaborator(remote, login))
+        if (direct) await deps.session.api.removeCollaborator(remote, login)
+        await removeClone(remote)
+        return { accessVia: direct ? null : repo.owner.login }
+      }),
+    ),
+
+    /** Delete is GitHub's to do (D109): this opens the repo's settings, whose
+     *  Danger Zone holds it, and `forgetDeleted` follows once it is done. */
+    openRepoSettings: t.procedure
+      .input(fields({ remote: 'string' }))
+      .mutation(async ({ input }) => {
+        await deps.openExternal(`https://github.com/${safeRemote(input.remote)}/settings`)
+        return { ok: true as const }
+      }),
+
+    /**
+     * The clone of a vault that is gone from GitHub goes to the Trash (D109).
+     * Main asks GitHub itself rather than taking the renderer's word: the clone
+     * is only let go once the remote answers 404, so a repo still standing keeps
+     * its local copy (`gone: false`) however the dialog got here.
+     */
+    forgetDeleted: t.procedure.input(fields({ remote: 'string' })).mutation(({ input }) =>
+      gh(async (): Promise<{ gone: boolean }> => {
+        const remote = safeRemote(input.remote)
+        try {
+          await deps.session.api.repo(remote)
+          return { gone: false }
+        } catch (err) {
+          if (!(err instanceof GitHubApiError) || err.kind !== 'not-found') throw err
+        }
+        await removeClone(remote)
+        return { gone: true }
+      }),
+    ),
 
     // "Commit anyway" for a file the large-file gate held back: the user has
     // decided this big asset belongs in git. Bypasses the pre-commit hook.

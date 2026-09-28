@@ -3,6 +3,7 @@ import { ComposeMailDialog } from '@/features/google/ComposeMailDialog'
 import { EditIcon } from '@/features/explorer/EditIcon'
 import { ConvertToPdf } from '@/features/pdf/ConvertToPdf'
 import { CreateTask } from '@/features/tasks/CreateTask'
+import { RemoveVault } from '@/features/vault/RemoveVault'
 import { Dialog } from '@/primitives'
 import { activeDialogAtom, closeDialogAtom } from '@/state/dialogs'
 
@@ -30,6 +31,9 @@ export function DialogHost(): React.JSX.Element | null {
           onOpenMap={active.onOpenMap}
           onClose={() => close()}
         />
+      )}
+      {active.id === 'remove-vault' && (
+        <RemoveVault remote={active.remote} intent={active.intent} onClose={() => close()} />
       )}
     </Dialog>
   )

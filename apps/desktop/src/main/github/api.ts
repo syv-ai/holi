@@ -48,6 +48,9 @@ export interface Repo {
    * letting someone discover it at their first Publish.
    */
   canPush: boolean
+  /** `permissions.admin`: the level GitHub asks for before it deletes the repo,
+   *  so it decides whether Holi offers Delete at all. */
+  canAdmin: boolean
   owner: { login: string; kind: 'user' | 'org' }
   /** Carries the `holi-vault` topic. Drives the "join a vault" filter. */
   isVault: boolean
@@ -136,6 +139,31 @@ export class GitHubApi {
       `${this.#base}/repos/${assertRemote(remote)}/collaborators?per_page=100`,
     )
     return raw.map(toCollaborator)
+  }
+
+  /**
+   * Whether `login` is a collaborator in their own right, rather than through
+   * an organization's team or base permission. Only direct access is something
+   * a person can drop themselves: the rest belongs to the organization.
+   */
+  async isDirectCollaborator(remote: string, login: string): Promise<boolean> {
+    const raw = await this.#paginate(
+      `${this.#base}/repos/${assertRemote(remote)}/collaborators?affiliation=direct&per_page=100`,
+    )
+    const wanted = login.toLowerCase()
+    return raw.some((c) => String(c.login).toLowerCase() === wanted)
+  }
+
+  /**
+   * Take `login` off the repo. GitHub lets anyone do this to themselves, admin
+   * or not; removing someone else takes admin. Answers 204 with no body, so it
+   * goes through `#send` rather than `#request`.
+   */
+  async removeCollaborator(remote: string, login: string): Promise<void> {
+    await this.#send(
+      `${this.#base}/repos/${assertRemote(remote)}/collaborators/${encodeURIComponent(login)}`,
+      { method: 'DELETE' },
+    )
   }
 
   /**
@@ -331,6 +359,7 @@ function toRepo(raw: Record<string, unknown>): Repo {
     pushedAt: String(raw.pushed_at),
     defaultBranch: String(raw.default_branch),
     canPush: permissions.push === true,
+    canAdmin: permissions.admin === true,
     owner: {
       login: String(owner.login),
       kind: owner.type === 'Organization' ? 'org' : 'user',

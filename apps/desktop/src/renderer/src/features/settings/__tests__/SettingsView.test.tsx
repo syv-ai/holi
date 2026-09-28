@@ -57,7 +57,10 @@ vi.mock('@/lib/trpc', () => ({
       removeAccount: { mutate: vi.fn() },
       imageSenders: { query: async () => [] },
     },
-    vaults: { unpushed: { query: async () => [] } },
+    vaults: {
+      unpushed: { query: async () => [] },
+      membership: { query: async () => ({ kind: 'gone' }) },
+    },
   },
 }))
 

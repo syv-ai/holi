@@ -33,7 +33,13 @@ export type ActiveDialog = { closable?: boolean } & (
        *  field here, because the tree holds the opener. */
       onOpenMap: () => void
     }
+  /** Opened from the vault picker and from Settings, for any registered vault,
+   *  not only the open one. */
+  | { id: 'remove-vault'; size: 'sm'; remote: string; intent: RemoveVaultIntent }
 )
+
+/** Leave a vault, delete it, or let go of one GitHub no longer shows (D109). */
+export type RemoveVaultIntent = 'leave' | 'delete' | 'forget'
 
 /** Null when nothing is open. The host is mounted once by the app shell. */
 export const activeDialogAtom = atom<ActiveDialog | null>(null)

@@ -2,8 +2,9 @@
  * Getting the clone for a vault — by cloning it, or by adopting what is already
  * at the path.
  *
- * **Nothing here deletes anything, ever.** `vaults.remove` deliberately leaves
- * the clone on disk (it may hold commits that never left the machine), so an
+ * **Nothing here deletes anything, ever.** A clone is only ever moved to the
+ * Trash, by sign-out or by leaving or deleting a vault (D109), and `vaults.remove`
+ * leaves it on disk (it may hold commits that never left the machine), so an
  * occupied clone path is a normal state rather than a corrupt one, and a
  * re-clone is precisely what would destroy that work. When the path cannot be
  * confidently claimed, this refuses and says what it found.

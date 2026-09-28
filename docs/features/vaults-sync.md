@@ -6,6 +6,8 @@ A vault is a GitHub repository cloned into a directory Holi owns. Sync runs both
 
 **The clone.** Every vault lives at `~/Holi/<owner>/<repo>` (`HOLI_VAULT_ROOT` overrides it for dev and tests only). The registry of vaults is machine-local. Opening a vault clones it, or adopts a clone already at that path if its origin matches; anything else there is refused, never deleted. One vault is open at a time, owning its repo, watcher, snapshot and timers; a background vault does not sync.
 
+**Leaving and deleting (D109).** Each vault in the picker has an ellipsis that drills into its options, and Settings → Vault ends in the same actions for the open vault. **Leave** removes you as a collaborator on GitHub (anyone may remove themselves), then moves the clone to the Trash. An owner of a personal repo cannot leave; their way out is Delete. Access through an organization is the organization's, so Leave says so and only removes the clone. **Delete** is GitHub's to do: Holi opens the repo's settings, whose Danger Zone asks for the name, and moves the clone to the Trash only once GitHub answers 404 for the repo. Main checks that answer itself. A vault GitHub no longer shows you (deleted, or access removed) offers **Remove from this machine** instead. Leave and Delete push first; if work still will not reach the remote, nothing is removed and a new assistant session starts in that vault, asked to find out why and help push it. Delete names the other collaborators who lose the vault with you.
+
 **Committing.** The watcher is a hint: a change triggers a rescan (200 ms quiet) and a commit check (3 s quiet). `git status` decides what commits, so a dropped event only delays work. A 30 s heal tick rescans and commits regardless, and a check runs as the vault opens. Messages are `Update <path>` or `Update N files`; a burst lands as one commit.
 
 **Flush and leave points.** Window blur, tab close, vault switch and quit write dirty editor buffers to disk. Vault switch and quit then commit and push within a 1 s budget. ⌘S is window-wide: it saves every open buffer, commits and pushes at once.
@@ -32,6 +34,7 @@ A vault is a GitHub repository cloned into a directory Holi owns. Sync runs both
 - A transform never blocks a commit: a throw is logged and the commit proceeds; three failures in a row disable it for the session. The size guard is the one veto, because an oversized blob pushed once is in everyone's history forever.
 - Settings say which transforms run, never what one is. The script ships in the binary and lives in `.git/hooks/`, which nothing can push.
 - The sync state never says up to date when it is not.
+- A clone is only ever moved to the Trash, never deleted, and never while it holds work the remote lacks.
 
 ## Rejected
 
@@ -44,6 +47,7 @@ A vault is a GitHub repository cloned into a directory Holi owns. Sync runs both
 - `core.hooksPath` into a tracked folder: a teammate's push would run code on your laptop, and it disables the size guard.
 - Relinking from watcher events: a move arrives as an unpaired delete and add; only the commit boundary has the rename map.
 - Warning after a large file commits: by then it is pushed.
+- Deleting the repo from Holi: it needs the `delete_repo` scope on every token, for an act GitHub already guards with a typed name.
 
 ## Code
 
@@ -52,4 +56,5 @@ A vault is a GitHub repository cloned into a directory Holi owns. Sync runs both
 - `apps/desktop/src/main/vault/clone.ts`, `registry.ts`, `watcher.ts`: clone, registry, watcher
 - `apps/desktop/src/main/vault/large-files.ts`: size partition, hook script, endpoint file
 - `apps/desktop/src/main/vault/hooks/`, `main/agent/ops.ts`: staged set, runner, transforms, run log, the hook's route
+- `apps/desktop/src/main/router.ts` (`vaults.membership`, `settle`, `leave`, `forgetDeleted`), `renderer/src/features/vault/RemoveVault.tsx`, `state/vault-removal.ts`: leaving and deleting
 - `apps/desktop/src/renderer/src/lib/sync-label.ts`, `lib/reconcile-lock.ts`, `components/Shell.tsx`: footer, callouts, read-only lock

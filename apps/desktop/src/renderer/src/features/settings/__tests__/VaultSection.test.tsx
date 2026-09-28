@@ -19,6 +19,17 @@ vi.mock('@/lib/trpc', () => ({
       collaborators: { query: () => collaborators() },
       openCollaboratorSettings: { mutate: vi.fn() },
     },
+    vaults: {
+      membership: {
+        query: async () => ({
+          kind: 'live',
+          owned: false,
+          canAdmin: false,
+          accessVia: null,
+          others: [],
+        }),
+      },
+    },
   },
 }))
 

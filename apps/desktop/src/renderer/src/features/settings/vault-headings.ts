@@ -8,3 +8,4 @@
  */
 export const WHERE_IT_LIVES = 'Where it lives'
 export const COLLABORATORS = 'Collaborators'
+export const LEAVE_OR_DELETE = 'Leave or delete'

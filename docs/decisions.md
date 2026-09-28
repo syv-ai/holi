@@ -5,7 +5,7 @@ decided and which page now holds it. The pages carry the reasoning; the numbers 
 code and in git history (`git log -p docs/decisions.md` has every original write-up).
 
 A new decision gets the next free number, a line here, and its substance written straight into the
-page that owns it. **Next free: D109.**
+page that owns it. **Next free: D110.**
 
 ## D60 onward
 
@@ -60,6 +60,7 @@ page that owns it. **Next free: D109.**
 | D106 | PDF comments reach the agent through the `holi` CLI                                 | [pdf](features/pdf.md), [agent-config](features/agent-config.md)             |
 | D107 | An app is a `.app` bundle anywhere in the vault, named by its path                  | [vault-apps](features/vault-apps.md), [file-tree](features/file-tree.md)     |
 | D108 | The sidebar ends in one morphing nav menu; Home is a tab                            | [nav-menu](features/nav-menu.md)                                             |
+| D109 | Leave drops your access, Delete happens on GitHub; stuck work blocks both           | [vaults-sync](features/vaults-sync.md)                                       |
 
 ## D1 to D59
 

@@ -68,6 +68,7 @@ import { runCommandAtom, useCommandHotkeys } from '../state/commands'
 import { recentOfTab, touchRecentAtom } from '../state/recents'
 import { closePaneWithExitAtom, closeTabWithExitAtom, leavingPaneAtom } from '../state/pane-exit'
 import { applyVaultSwitchAtom, leavingVaultAtom, switchVaultAtom } from '../state/vault-switch'
+import { pendingVaultPromptAtom, startPendingVaultPromptAtom } from '../state/vault-removal'
 import {
   agentSessionsAtom,
   agentSessionsSectionOpenAtom,
@@ -120,6 +121,8 @@ export function Shell() {
   const openVault = useSetAtom(openVaultAtom)
   const openLanding = useSetAtom(openLandingAtom)
   const sweepDaily = useSetAtom(sweepDailyAtom)
+  const startPendingPrompt = useSetAtom(startPendingVaultPromptAtom)
+  const setPendingPrompt = useSetAtom(pendingVaultPromptAtom)
   const setHistoryOpen = useSetAtom(historyOpenAtom)
   const [navOpen, setNavOpen] = useAtom(navOpenAtom)
   const historyTarget = useAtomValue(historyTargetPathAtom)
@@ -215,9 +218,12 @@ export function Shell() {
     void (async () => {
       await openVault(activeRemote)
       await openLanding()
+      // A session asked for before this vault was open: the stuck push a
+      // leave or delete was blocked on (D109).
+      await startPendingPrompt(activeRemote)
       await sweepDaily()
     })()
-  }, [activeRemote, openVault, openLanding, sweepDaily])
+  }, [activeRemote, openVault, openLanding, startPendingPrompt, sweepDaily])
 
   // Every app-level key, from the one table (`state/commands.ts`, D102).
   useCommandHotkeys()
@@ -353,7 +359,10 @@ export function Shell() {
                     setShowAdd(true)
                   }
                 }}
-                onCancel={() => setLeaving(null)}
+                onCancel={() => {
+                  setLeaving(null)
+                  setPendingPrompt(null)
+                }}
               />
             )}
 

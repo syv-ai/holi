@@ -26,7 +26,7 @@ import { ThemeSection } from './ThemeSection'
 import { VaultSection } from './VaultSection'
 import { headingId } from './settings-ui'
 import { LIGHT_AND_DARK } from './appearance-headings'
-import { COLLABORATORS, WHERE_IT_LIVES } from './vault-headings'
+import { COLLABORATORS, LEAVE_OR_DELETE, WHERE_IT_LIVES } from './vault-headings'
 
 export interface SettingsSectionHeading {
   /** The anchor the rail scrolls to: `headingId(title)`, never hand-written. */
@@ -95,7 +95,7 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
   {
     id: 'vault',
     label: 'Vault',
-    headings: [heading(WHERE_IT_LIVES), heading(COLLABORATORS)],
+    headings: [heading(WHERE_IT_LIVES), heading(COLLABORATORS), heading(LEAVE_OR_DELETE)],
     // What GitHub says, not what a file says. `.holi/vault` is the marker that
     // this clone IS a vault and holds nothing to edit.
     files: [],
