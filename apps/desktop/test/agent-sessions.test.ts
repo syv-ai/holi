@@ -28,6 +28,10 @@ function setup(initial: Row[] = []) {
       return { ok: true as const }
     }),
     respawn: vi.fn(async () => ({ ok: true as const })),
+    rm: vi.fn(async (_t, id: string) => {
+      listing = listing.filter((r) => r.id !== id)
+      return { ok: true as const }
+    }),
     startBg: vi.fn(async () => {
       listing = [...listing, row('newnew00', { status: 'idle', state: 'blocked' })]
       return { ok: true as const, id: 'newnew00' }
@@ -214,6 +218,25 @@ describe('agent sessions', () => {
     expect(t.terminals.closeAll).toHaveBeenCalled()
     expect(t.released).toHaveBeenCalled()
     expect(t.sessions.sessions()).toEqual([])
+  })
+
+  it('leaving removes only the sessions Holi started empty that never had a turn', async () => {
+    const t = setup([row('aaaaaaaa')]) // there before: never Holi's to remove
+    await t.sessions.ensure()
+    await t.sessions.start({})
+    await t.sessions.leave()
+    expect(t.cli.rm).toHaveBeenCalledTimes(1)
+    expect(t.cli.rm).toHaveBeenCalledWith(expect.anything(), 'newnew00')
+  })
+
+  it('leaving keeps a session Holi started empty once it has had a turn', async () => {
+    const t = setup()
+    await t.sessions.ensure()
+    await t.sessions.start({})
+    t.sessions.noteTurn(REMOTE, 'newnew00', true)
+    await t.sessions.leave()
+    expect(t.cli.stop).toHaveBeenCalledWith(expect.anything(), 'newnew00')
+    expect(t.cli.rm).not.toHaveBeenCalled()
   })
 
   it('can leave without stopping anything', async () => {

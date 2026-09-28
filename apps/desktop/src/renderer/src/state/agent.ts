@@ -71,19 +71,49 @@ export const activeSessionAtom = atom<AgentSession | null>((get) => {
   return null
 })
 
+/** Claude Code's name for an unnamed session, and Holi's for one. */
+export const NEW_SESSION = 'New session'
+
+/** A terminal's title less the state glyph Claude Code puts in front of it. */
+export const titleText = (terminal: AgentTerminal): string =>
+  terminal.title.replace(/^[^\p{L}\p{N}]+\s+/u, '').trim()
+
+/** Claude Code titles its list `… claude agents`. */
+export const titleIsList = (terminal: AgentTerminal): boolean =>
+  /\bclaude agents$/.test(titleText(terminal))
+
 /**
- * What an agent tab is called: its terminal's title, which Claude Code sets
- * to the attached session's name, less the state glyph in front of it. The
- * list, and a terminal that has not said, are "Agents".
+ * The live session a terminal's title names, if exactly one has that name.
+ * Claude Code titles an attached session by its name, so only a named one can
+ * be found this way: an unnamed session's title is generic ("current
+ * session", "Claude Code").
+ */
+export function sessionTitled(
+  terminal: AgentTerminal,
+  sessions: AgentSession[],
+): AgentSession | null {
+  const title = titleText(terminal)
+  if (title === '' || title === NEW_SESSION) return null
+  // Names are not unique: a name two sessions share names neither.
+  const named = sessions.filter((s) => s.name === title)
+  return named.length === 1 ? named[0]! : null
+}
+
+/**
+ * What an agent tab is called, in Holi's names so a tab and its sidebar row
+ * agree: the session its title names, "Agents" for the list, and "New
+ * session" for a session Claude Code has not named, whatever generic title it
+ * gave that. A terminal that has not titled itself yet is what Holi opened it
+ * for.
  */
 export function terminalLabel(terminal: AgentTerminal | null, sessions: AgentSession[]): string {
   if (terminal === null) return 'Agents'
-  const title = terminal.title.replace(/^[^\p{L}\p{N}]+\s+/u, '').trim()
-  if (title !== '' && !/claude agents$/.test(title)) return title
-  if (title === '' && terminal.launchedFor !== null) {
-    return sessions.find((s) => s.id === terminal.launchedFor)?.name ?? 'Agents'
+  if (titleText(terminal) === '') {
+    if (terminal.launchedFor === null) return 'Agents'
+    return sessions.find((s) => s.id === terminal.launchedFor)?.name ?? NEW_SESSION
   }
-  return 'Agents'
+  if (titleIsList(terminal)) return 'Agents'
+  return sessionTitled(terminal, sessions)?.name ?? NEW_SESSION
 }
 
 /** Where an ask goes: one of the vault's sessions, by id, or a new one. */

@@ -55,6 +55,8 @@ export interface ClaudeCli {
   list(target: VaultCliTarget): Promise<string | null>
   stop(target: VaultCliTarget, id: string): Promise<ActionResult>
   respawn(target: VaultCliTarget, id: string): Promise<ActionResult>
+  /** Remove a stopped session from Claude Code's list, conversation and all. */
+  rm(target: VaultCliTarget, id: string): Promise<ActionResult>
   /** A new background session in the vault. With no prompt it waits for its
    *  first one; with a prompt, that prompt is its first turn. */
   startBg(target: VaultCliTarget, opts: { name?: string; prompt?: string }): Promise<StartResult>
@@ -163,6 +165,7 @@ export function createClaudeCli(deps: ClaudeCliDeps = {}): ClaudeCli {
     },
     stop: (target, id) => action(target, ['stop', id]),
     respawn: (target, id) => action(target, ['respawn', id]),
+    rm: (target, id) => action(target, ['rm', id]),
     startBg(target, { name, prompt }) {
       const label = sessionName(name)
       return start(target, [

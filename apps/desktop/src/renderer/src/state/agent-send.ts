@@ -15,7 +15,10 @@ import { focusSessionTerminal } from '../lib/session-terminals'
 import { trpc } from '../lib/trpc'
 import {
   agentGeometryAtom,
+  agentSessionsAtom,
   agentTerminalsAtom,
+  sessionTitled,
+  titleIsList,
   type AgentTarget,
   type AgentTerminal,
 } from './agent'
@@ -41,7 +44,7 @@ const geometry = (get: Getter) => get(agentGeometryAtom)
  * opened as the list.
  */
 const showsList = (t: AgentTerminal): boolean =>
-  t.title === '' ? t.launchedFor === null : /\bclaude agents$/.test(t.title)
+  t.title === '' ? t.launchedFor === null : titleIsList(t)
 
 /**
  * ⌘J and the agent icon: the agents list.
@@ -76,13 +79,18 @@ export const openOverviewAtom = atom(null, async (get, set): Promise<AgentResult
 })
 
 /**
- * One session, from a sidebar row, an orb or the palette: the window Holi
- * opened for it if that is still open, else a new `claude attach` window.
- * Two windows on one session only mirror each other, so a second one is never
- * wrong, just more.
+ * One session, from a sidebar row, an orb or the palette: a window whose title
+ * names it (any tab, the list's included, may have attached it since), else the
+ * window Holi opened for it, else a new `claude attach` window. An unnamed
+ * session has only a generic title, so it can land in a second window; two
+ * windows on one session only mirror each other, never wrong, just more.
  */
 export const openSessionAtom = atom(null, async (get, set, id: string): Promise<AgentResult> => {
-  const existing = get(agentTerminalsAtom).find((t) => t.launchedFor === id)
+  const terminals = get(agentTerminalsAtom)
+  const sessions = get(agentSessionsAtom)
+  const existing =
+    terminals.find((t) => sessionTitled(t, sessions)?.id === id) ??
+    terminals.find((t) => t.launchedFor === id)
   if (existing !== undefined) {
     land(set, existing.id)
     return { ok: true }

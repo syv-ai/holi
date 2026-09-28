@@ -66,7 +66,7 @@ export function SessionRows(): React.JSX.Element | null {
   return (
     // No horizontal padding: each row carries its own `px-2`, the way a tree
     // row does, so a hover highlight spans the sidebar.
-    <div className="flex shrink-0 flex-col py-1" data-session-rows="">
+    <div className="flex shrink-0 flex-col pb-3 pt-1" data-session-rows="">
       {sessions.map((session) => {
         const indicator = agentIndicator(session)
         return (
@@ -83,11 +83,12 @@ export function SessionRows(): React.JSX.Element | null {
                       // `size="xs"` brings. `pl-5` puts the dot's centre on
                       // the nav menu's first icon (its dock's `p-2` plus the
                       // menu's own inset plus half a 32px icon). Right padding
-                      // leaves room for Stop.
-                      'h-[22px] w-full justify-start gap-1 rounded py-0 pl-5 pr-7 text-sm font-normal',
+                      // leaves room for Stop. Hover is the text colour alone,
+                      // so the ghost variant's hover background is cancelled.
+                      'h-[22px] w-full justify-start gap-1 rounded py-0 pl-5 pr-7 text-sm font-normal hover:bg-transparent dark:hover:bg-transparent',
                       session.id === active?.id
                         ? 'text-brand'
-                        : 'text-muted-foreground hover:bg-accent/60 hover:text-foreground',
+                        : 'text-muted-foreground hover:text-foreground',
                     )}
                     onClick={() => void openSession(session.id)}
                   >

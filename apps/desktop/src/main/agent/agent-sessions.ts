@@ -147,6 +147,16 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
   let lastPushed = ''
   let idleRecheck: ReturnType<typeof setTimeout> | null = null
   let focusWriter: { root: string; snapshot: ContextSnapshot } | null = null
+  /**
+   * Sessions Holi started with no prompt that have not had a turn yet. Left
+   * as they are, each one sits in Claude Code's list after Holi stops it, a
+   * nameless row that resumes blank; so leaving the vault removes them.
+   *
+   * Holi's own record, not a reading of the listing, which cannot say whether
+   * a session ever had a turn. A session resumed from the list is never on
+   * it, so a conversation that exists is never removed.
+   */
+  const unprompted = new Set<string>()
 
   const send = (channel: string, payload: unknown): void => {
     deps.getWindow()?.webContents.send(channel, payload)
@@ -250,6 +260,8 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
 
     let wantsRecheck = false
     for (const row of liveRows) {
+      // Busy, or waiting on an answer, means a turn: the hook's floor.
+      if (row.status !== undefined && row.status !== 'idle') unprompted.delete(row.id)
       if (row.status !== 'idle') {
         // Whatever it is doing, it is not between turns. That cancels any idle
         // candidacy, which makes the confirmation two CONSECUTIVE readings.
@@ -337,6 +349,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
         ...(prompt === undefined ? {} : { prompt }),
       })
       if (!res.ok) return res
+      if (prompt === undefined) unprompted.add(res.id)
       await refresh()
       const opened = await openOn(c, { attach: res.id, cols, rows: r })
       return opened.ok ? { ok: true, sessionId: res.id, terminalId: opened.terminalId } : opened
@@ -401,6 +414,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     noteTurn(remote, jobId, active) {
       // A turn in a vault Holi is not showing is not this vault's pause.
       if (current?.remote !== remote) return
+      if (active) unprompted.delete(jobId)
       if (active) coordinator.begin(jobId)
       else coordinator.end(jobId)
       void refresh()
@@ -433,7 +447,13 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     const c = current
     if (c === null) return
     if (stopSessions) {
-      const stops = Promise.all(live().map((row) => deps.cli.stop(targetOf(c), row.id)))
+      // Stop, then remove the ones that never had a turn (`unprompted`).
+      const stops = Promise.all(
+        live().map(async (row) => {
+          const stopped = await deps.cli.stop(targetOf(c), row.id)
+          if (stopped.ok && unprompted.has(row.id)) await deps.cli.rm(targetOf(c), row.id)
+        }),
+      )
       await Promise.race([
         stops,
         new Promise((r) => setTimeout(r, deps.leaveCapMs ?? LEAVE_CAP_MS)),
@@ -441,6 +461,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     }
     await deps.terminals.closeAll()
     for (const id of [...coordinator.working]) coordinator.forget(id)
+    unprompted.clear()
     if (idleRecheck !== null) {
       clearTimeout(idleRecheck)
       idleRecheck = null

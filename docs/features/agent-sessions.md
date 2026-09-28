@@ -20,8 +20,9 @@ bin directory first on `PATH` is what keeps `holi` and `holi-google` resolvable 
 
 **Terminals are windows.** A Holi terminal is a PTY running `claude agents` (the list) or
 `claude attach <id>` (one session), with a headless-xterm `TerminalMirror` as its record. Closing
-one detaches: the session keeps running. Its tab is labelled by the terminal title, which Claude
-Code sets to the attached session's name, less its state glyph; the list is "Agents". What a
+one detaches: the session keeps running. Its tab is labelled in Holi's names, so tab and row
+agree: the live session its terminal title names (Claude Code titles an attached session by its
+name), "Agents" for the list, and "New session" for an unnamed session, whose title is generic. What a
 terminal shows can change under it (`←` in an attached session goes back to the list, and Enter
 there attaches any session), so a terminal is never taken to be a session. When its client exits
 (a detach, `/exit`, its session stopped) the tab closes.
@@ -30,8 +31,10 @@ there attaches any session), so a terminal is never taken to be a session. When 
 open one. Which terminal shows it is read from its title, since `←` and Enter move a terminal
 between the list and a session. An agent tab's **Open overview** always opens a new one. The agent item is green while any session
 is live. Under the file tree, one row per **live** session (its process alive): the state orb,
-aligned with the nav menu's first icon, the name, and what it waits for when it needs you. A row opens its session in the terminal Holi opened for it, else a new
-`claude attach` window; two windows on one session mirror each other. With the nav hidden, the rail
+aligned with the nav menu's first icon, the name, and what it waits for when it needs you. A row opens its session in a terminal whose title names it, else the one Holi
+opened for it, else a new `claude attach` window. An unnamed session, or a name two sessions
+share, matches no title, so it can land in a second window; two windows on one session mirror
+each other. With the nav hidden, the rail
 shows one orb per live session. A stopped or finished session is not in the sidebar: it is in the
 agent list, where opening it picks it up again.
 
@@ -76,11 +79,15 @@ view. The sync side is in [vaults-sync.md](vaults-sync.md).
 
 **Leaving a vault stops its sessions.** A vault switch, adding a vault, and quitting Holi each
 `claude stop` the vault's live sessions, asking first if one is working or needs you, then close
-every terminal and delete `holi.env`. The conversations stay in the agent list.
+every terminal and delete `holi.env`. The conversations stay in the agent list, except a session
+Holi started with no prompt that never had a turn: it is `claude rm`'d, since it would sit there
+as a nameless row that resumes blank. That is Holi's own record (a turn hook, or the listing
+showing it busy, crosses it off), so a session resumed from the list is never removed.
 
 ## Rules
 
-- Never infer session state from PTY output. A terminal's title is a label, never an identity.
+- Never infer session state from PTY output. A terminal's title labels and finds a tab, never
+  keys a session.
 - Key a session by its job id, never by the conversation's `sessionId`, which changes on `/clear`.
 - Run every `claude` for a vault through `claude-cli.ts`, so the supervisor's environment is
   always Holi's.
@@ -97,8 +104,6 @@ every terminal and delete `holi.env`. The conversations stay in the agent list.
   process Holi never spawned.
 - A bearer or port in a session's environment: a background session's environment is the
   supervisor's, and the supervisor outlives a Holi restart.
-- Matching a terminal's title to a session to reuse its tab: names are not unique, and nothing
-  published says which session a terminal shows. A second window on a session is a mirror.
 - A headless chat panel or a server-side agent: re-implements the TUI.
 - A Holi list of past sessions: the agent list is that list.
 - A gate before the agent's writes: Claude Code already asks.
