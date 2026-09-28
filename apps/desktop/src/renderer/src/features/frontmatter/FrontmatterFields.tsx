@@ -75,6 +75,7 @@ export function FrontmatterFields({
             name={field.key}
             value={value}
             options={field.kind.options}
+            clearable={!field.required}
             onChange={(next) =>
               // Done is completion: on a recurring task, the next occurrence
               // rather than the end of the series (docs/features/tasks.md).
