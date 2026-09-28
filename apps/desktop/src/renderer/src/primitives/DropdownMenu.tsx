@@ -16,6 +16,21 @@ import {
 /** An item's own classes beyond the row look: its icons. */
 const ITEM_ICONS = '[&_svg]:pointer-events-none [&_svg]:shrink-0'
 
+/**
+ * The press that opened the menu, while it is still held.
+ *
+ * The popup is laid over its trigger (`morph-popup.tsx`), so the release of a
+ * click on the trigger lands on the first row, and Radix selects a row on
+ * pointerup: the menu closed as it opened, whichever vault or action happened
+ * to sit there. A release that has barely moved from the opening press is the
+ * end of that click, never a pick. One that travelled is a press-drag-release
+ * onto a row, and still picks. Radix's `Select` guards the same way.
+ */
+type OpeningPress = { current: { x: number; y: number } | null }
+const OpeningPressContext = React.createContext<OpeningPress | null>(null)
+/** How far a release may land from the opening press and still be its click. */
+const CLICK_SLOP = 8
+
 /** Opens as the nav menu's family does: out of its trigger (`morph-popup.tsx`). */
 function DropdownMenu({
   open,
@@ -24,13 +39,16 @@ function DropdownMenu({
   ...props
 }: React.ComponentProps<typeof DropdownMenuPrimitive.Root>) {
   const morph = useMorphRoot({ open, defaultOpen, onOpenChange })
+  const press = React.useRef<{ x: number; y: number } | null>(null)
   return morph.provide(
-    <DropdownMenuPrimitive.Root
-      data-slot="dropdown-menu"
-      open={morph.open}
-      onOpenChange={morph.onOpenChange}
-      {...props}
-    />,
+    <OpeningPressContext.Provider value={press}>
+      <DropdownMenuPrimitive.Root
+        data-slot="dropdown-menu"
+        open={morph.open}
+        onOpenChange={morph.onOpenChange}
+        {...props}
+      />
+    </OpeningPressContext.Provider>,
   )
 }
 
@@ -42,11 +60,25 @@ function DropdownMenuPortal({
 
 function DropdownMenuTrigger({
   ref,
+  onPointerDown,
   ...props
 }: React.ComponentProps<typeof DropdownMenuPrimitive.Trigger>) {
   const triggerRef = useMorphTrigger(ref)
+  const press = React.useContext(OpeningPressContext)
   return (
-    <DropdownMenuPrimitive.Trigger ref={triggerRef} data-slot="dropdown-menu-trigger" {...props} />
+    <DropdownMenuPrimitive.Trigger
+      ref={triggerRef}
+      data-slot="dropdown-menu-trigger"
+      onPointerDown={(event) => {
+        onPointerDown?.(event)
+        if (press === null || event.button !== 0) return
+        press.current = { x: event.clientX, y: event.clientY }
+        // After the content's own pointerup handler, which reads it: React's
+        // handlers run at the root, before a listener on the window.
+        window.addEventListener('pointerup', () => (press.current = null), { once: true })
+      }}
+      {...props}
+    />
   )
 }
 
@@ -61,11 +93,19 @@ function DropdownMenuContent({
   ...props
 }: React.ComponentProps<typeof DropdownMenuPrimitive.Content>) {
   const morph = useMorphPopup()
+  const press = React.useContext(OpeningPressContext)
   const force = morph.mounted || undefined
   return (
     <DropdownMenuPrimitive.Portal forceMount={force}>
       <DropdownMenuPrimitive.Content
         ref={morph.contentRef}
+        // The end of the click that opened the menu is not a pick (`OpeningPress`).
+        onPointerUpCapture={(event) => {
+          const at = press?.current
+          if (at && Math.hypot(event.clientX - at.x, event.clientY - at.y) < CLICK_SLOP) {
+            event.stopPropagation()
+          }
+        }}
         forceMount={force}
         data-slot="dropdown-menu-content"
         align={align}
