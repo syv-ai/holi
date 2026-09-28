@@ -7,8 +7,8 @@ hidden, the same menu runs down the rail.
 
 ## How it works
 
-- **Items, in order:** Home, Search, Apps, Board, Email, Agenda, Settings, so Settings always sits
-  beside More at the dock's end. Home opens the home tab; Search opens quick open
+- **Items, in order:** Home, Search, Apps, Board, Email, Agenda, Settings, so Settings always ends
+  the dock. Home opens the home tab; Search opens quick open
   ([command palette](command-palette.md)); Board opens the board and carries the open-task count,
   red while any task is overdue (the board's own `overdue` label); Email, Agenda and Settings open
   their tabs.
@@ -18,20 +18,23 @@ hidden, the same menu runs down the rail.
   it returns to the list. It is absent when the vault has no finished apps.
 - **Email and Agenda** appear only while a Google account is connected. `undefined` (not asked
   main yet) hides them too, so they never flash in.
-- **The dock wraps.** Every item has a 32px shortcut and More ends them, in rows as wide as the
+- **The dock wraps.** Every item has a 32px shortcut, in rows as wide as the
   sidebar allows: one row at the default width, three columns at the 150px minimum. When a resize
   moves a shortcut to another cell it springs there with a little bounce (`motion`'s layout
   animation) rather than jumping. A shortcut grows slightly under the pointer; the growth is a
-  `scale`, which takes no layout, so a hover never re-wraps the rows. More opens the full list,
-  where every item has its label.
+  `scale`, which takes no layout, so a hover never re-wraps the rows. Since everything has a
+  shortcut, there is no More; the labels are the shortcuts' tooltips.
 - **On the rail** the dock is one column and takes the shortcuts that fit along the rail's height
-  under the session orbs; the rest are in the list.
+  under the session orbs. Only when some do not fit does More take the last slot, and its list
+  holds just those, so nothing is offered twice.
 - **One surface.** The collapsed bar and the open list are one element that resizes between them
   with a spring (a squeeze, then the grow), with the rows cascading in. Open, it is pinned
   `position: fixed` at the dock's corner so it can grow out of the drawer and the 44px rail over
   the panes; it returns to the dock's box once the collapse lands. The dock at rest has no surface,
   only its icons; the open menu floats, so it takes `--popover` and its shadow, from when it pins
-  until the collapse lands.
+  until the collapse lands. A top-right menu grows leftward from its corner, unless that would
+  cross the window's left edge (a narrow sidebar): then it grows rightward from the dock's left
+  edge.
 - **The active surface** reads as current (`aria-current`, the accent background), and an app's
   parent Apps item with it.
 - **Sessions** keep their resizable, collapsible **chats** panel, now directly above the menu

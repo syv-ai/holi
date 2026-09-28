@@ -1,8 +1,8 @@
 /**
  * The nav menu's items do what their names say, and the ones that depend on
  * something (apps, Google) appear only when it is there. Driven through the
- * expanded list: jsdom lays nothing out, so the dock has no room and holds only
- * More, which is every item's labelled home anyway.
+ * expanded list: jsdom lays nothing out, so the vertical dock has no room and
+ * holds only More, whose list is then every item.
  */
 import { render, screen, within } from '@/test/render'
 import userEvent from '@testing-library/user-event'
@@ -39,7 +39,7 @@ function setup({
   store.set(googleAccountAtom, account as never)
   render(
     <Provider store={store}>
-      <NavMenu />
+      <NavMenu orientation="vertical" />
     </Provider>,
   )
   return { store, user: userEvent.setup() }

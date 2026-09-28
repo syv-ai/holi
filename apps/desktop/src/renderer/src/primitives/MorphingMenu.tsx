@@ -6,14 +6,14 @@
  * timer (the one Radix provider already gives the delay-then-instant session),
  * no links, and selection owned by the host.
  *
- * **The dock wraps.** Every item has a shortcut, and More ends them, in a grid
- * as wide as the menu's box allows: a sidebar wide enough holds one row, a
- * narrower one wraps. When a resize moves a shortcut to another cell it
- * springs there (`motion`'s layout animation) rather than jumping. The
- * expanded list is where every item has its label.
+ * **The dock wraps.** Every item has a shortcut, in a grid as wide as the
+ * menu's box allows: a sidebar wide enough holds one row, a narrower one
+ * wraps. When a resize moves a shortcut to another cell it springs there
+ * (`motion`'s layout animation) rather than jumping.
  *
  * **Vertical** is one column, for a rail too narrow for a row. It takes the
- * shortcuts that fit along its height; the rest live in the list.
+ * shortcuts that fit along its height, and only when some do not is there a
+ * More: its list holds just those, so nothing is offered twice.
  *
  * **No surface at rest.** The dock is bare icons on whatever it sits on; the
  * popover surface and its shadow belong to the open menu, from the moment it
@@ -28,7 +28,9 @@
  * **Anchored at a corner.** By default the menu sits at the foot of what holds
  * it and opens upward from its bottom-left corner; `anchor="top-right"` puts
  * it at the top and opens it downward from that corner instead, as a toolbar
- * over a list does.
+ * over a list does. When growing leftward from that corner would cross the
+ * window's edge (the toolbar of a narrow sidebar), it grows rightward from the
+ * dock's left edge instead.
  */
 import { animate } from 'motion'
 import { motion, useReducedMotion } from 'motion/react'
@@ -85,10 +87,15 @@ const THICKNESS = BUTTON + 2 * INSET
  *  little past and back. */
 const reflow = { type: 'spring', duration: 0.45, bounce: 0.35 } as const
 
-/** How many shortcuts fit before More, along a main axis `size` px long: the
- *  vertical dock, which does not wrap. */
-export function dockCapacity(size: number): number {
-  return Math.max(0, Math.floor((size - 2 * INSET) / BUTTON) - 1)
+/** How far the open menu keeps from the window's edge. */
+const MARGIN = 8
+
+/** How many of `total` shortcuts the vertical dock, which does not wrap, shows
+ *  along a main axis `size` px long. All of them when they fit; otherwise one
+ *  slot goes to More. */
+export function dockCapacity(size: number, total: number): number {
+  const slots = Math.max(0, Math.floor((size - 2 * INSET) / BUTTON))
+  return total <= slots ? total : Math.max(0, slots - 1)
 }
 
 /** The horizontal dock's grid for `cells` shortcuts (More included) in a
@@ -128,9 +135,11 @@ export function MorphingMenu({
   const focusNext = useRef<string | null>(null)
   const reducedMotion = useReducedMotion() ?? false
   const expanded = view.kind !== 'collapsed'
-  const barItems = vertical ? items.slice(0, dockCapacity(room)) : items
+  const barItems = vertical ? items.slice(0, dockCapacity(room, items.length)) : items
+  /** What the dock had no room for: More's list, and More only when it has one. */
+  const overflow = items.slice(barItems.length)
   const groups = items.filter((item) => item.children?.length)
-  const count = barItems.length + 1
+  const count = barItems.length + (overflow.length > 0 ? 1 : 0)
   const grid = vertical ? { columns: 1, rows: count } : dockGrid(count, room)
   const barSize = {
     width: grid.columns * BUTTON + 2 * INSET,
@@ -201,15 +210,31 @@ export function MorphingMenu({
     })
     const pin = () => {
       const box = root.getBoundingClientRect()
+      // Unmeasured (0) never flips: there is nothing yet to cross the edge.
+      const width = targetSize().width
+      const flip = top && width > 0 && box.right - width < MARGIN
+      shell.toggleAttribute('data-flip', flip)
       Object.assign(
         shell.style,
-        top
-          ? { position: 'fixed', right: `${window.innerWidth - box.right}px`, top: `${box.top}px` }
-          : {
+        flip
+          ? {
               position: 'fixed',
-              left: `${box.left}px`,
-              bottom: `${window.innerHeight - box.bottom}px`,
-            },
+              left: `${box.right - barSize.width}px`,
+              right: 'auto',
+              top: `${box.top}px`,
+            }
+          : top
+            ? {
+                position: 'fixed',
+                left: '',
+                right: `${window.innerWidth - box.right}px`,
+                top: `${box.top}px`,
+              }
+            : {
+                position: 'fixed',
+                left: `${box.left}px`,
+                bottom: `${window.innerHeight - box.bottom}px`,
+              },
         { zIndex: '50' },
       )
       shell.dataset.pinned = ''
@@ -227,6 +252,7 @@ export function MorphingMenu({
         zIndex: '',
       })
       delete shell.dataset.pinned
+      delete shell.dataset.flip
     }
     const settle = () => {
       if (!expanded) unpin()
@@ -437,7 +463,7 @@ export function MorphingMenu({
   const hiddenPanel = (hidden: boolean) =>
     cn(
       'absolute top-0 max-h-[calc(100dvh-4rem)] w-67 max-w-[calc(100vw-1rem)] overflow-y-auto overscroll-contain p-1.5',
-      top ? 'right-0' : 'left-0',
+      top ? FROM_RIGHT : 'left-0',
       hidden && 'pointer-events-none',
     )
 
@@ -469,7 +495,7 @@ export function MorphingMenu({
       <div
         ref={shellRef}
         className={cn(
-          'absolute overflow-hidden rounded-[1.25rem]',
+          'group/morph absolute overflow-hidden rounded-[1.25rem]',
           top ? 'top-0 right-0' : 'bottom-0 left-0',
           'text-muted-foreground data-pinned:bg-popover data-pinned:text-popover-foreground data-pinned:shadow-popover',
         )}
@@ -481,27 +507,29 @@ export function MorphingMenu({
           inert={expanded}
           className={cn(
             'absolute grid p-1',
-            top ? 'top-0 right-0' : 'bottom-0 left-0',
+            top ? `top-0 ${FROM_RIGHT}` : 'bottom-0 left-0',
             expanded && 'pointer-events-none',
           )}
           style={{ ...barSize, gridTemplateColumns: `repeat(${grid.columns}, ${BUTTON}px)` }}
         >
           {barItems.map(shortcut)}
-          <Cell still={reducedMotion}>
-            <Tooltip content={moreLabel} side={tooltipSide}>
-              <button
-                type="button"
-                data-menu-item="more"
-                aria-label={moreLabel}
-                aria-expanded={expanded}
-                aria-controls={`${id}-main`}
-                className="flex size-8 shrink-0 items-center justify-center rounded-full outline-none motion-respond hover:scale-110 hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
-                onClick={(event) => open({ kind: 'main' }, 'more', event.detail === 0)}
-              >
-                <ChevronsUpDown size={16} aria-hidden="true" />
-              </button>
-            </Tooltip>
-          </Cell>
+          {overflow.length > 0 && (
+            <Cell still={reducedMotion}>
+              <Tooltip content={moreLabel} side={tooltipSide}>
+                <button
+                  type="button"
+                  data-menu-item="more"
+                  aria-label={moreLabel}
+                  aria-expanded={expanded}
+                  aria-controls={`${id}-main`}
+                  className="flex size-8 shrink-0 items-center justify-center rounded-full outline-none motion-respond hover:scale-110 hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
+                  onClick={(event) => open({ kind: 'main' }, 'more', event.detail === 0)}
+                >
+                  <ChevronsUpDown size={16} aria-hidden="true" />
+                </button>
+              </Tooltip>
+            </Cell>
+          )}
         </div>
         <div
           id={`${id}-main`}
@@ -510,7 +538,7 @@ export function MorphingMenu({
           inert={view.kind !== 'main'}
           className={hiddenPanel(view.kind !== 'main')}
         >
-          {items.map(row)}
+          {overflow.map(row)}
         </div>
         {groups.map((group) => {
           const visible = view.kind === 'group' && view.id === group.id
@@ -542,6 +570,10 @@ export function MorphingMenu({
     </nav>
   )
 }
+
+/** The top-right anchor's inner layers hug the shell's right edge, or its left
+ *  one while the open shell grows rightward (`data-flip`). */
+const FROM_RIGHT = 'right-0 group-data-flip/morph:right-auto group-data-flip/morph:left-0'
 
 /**
  * One grid cell of the dock. The layout spring lives here rather than on the
