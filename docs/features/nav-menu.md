@@ -7,11 +7,14 @@ hidden, the same menu runs down the rail.
 
 ## How it works
 
-- **Items, in order:** Home, Search, Apps, Board, Email, Agenda, Settings, so Settings always ends
-  the dock. Home opens the home tab; Search opens quick open
+- **Items, in order:** Home, Search, Apps, Board, Email, Agenda, Sync, Settings, so Settings always
+  ends the dock. Home opens the home tab; Search opens quick open
   ([command palette](command-palette.md)); Board opens the board and carries the open-task count,
   red while any task is overdue (the board's own `overdue` label); Email, Agenda and Settings open
-  their tabs.
+  their tabs. Sync is the vault's sync state as a glyph whose colour and turning carry it, and opens
+  a panel with the state in words, its action and the history ([vaults and sync](vaults-sync.md)).
+- **An item may carry a state on its glyph:** `tone` colours it (busy, warn, alert, live) and
+  `motion` loops it (`orbit`, `pulse`), only while that state is in flight.
 - **Apps is a drill-down.** Its children are the vault's finished apps by name
   ([vault apps](vault-apps.md)); from the dock it opens straight into them, from the list it
   drills in. Back goes to where it was opened from: from the dock it closes the menu, from the list

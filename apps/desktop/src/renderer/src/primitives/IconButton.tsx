@@ -25,6 +25,23 @@ import { Tooltip } from './Tooltip'
 
 const BOX = { sm: 'size-6', md: 'size-8' } as const
 
+/** A state the glyph itself carries, at rest and under the pointer alike. */
+export type IconTone = 'busy' | 'warn' | 'alert' | 'live'
+/** `busy` is the brand, `warn` amber (no token yet; a named utility is
+ *  gate-legal), `alert` destructive, `live` the green of a running session. */
+export const ICON_TONE: Record<IconTone, string> = {
+  busy: 'text-brand',
+  warn: 'text-amber-400',
+  alert: 'text-destructive',
+  live: 'text-green-500',
+}
+/** A loop on the glyph, bound to a state that is in flight (`index.css`). */
+export type IconMotion = 'orbit' | 'pulse'
+export const ICON_MOTION: Record<IconMotion, string> = {
+  orbit: 'motion-orbit',
+  pulse: 'motion-pulse',
+}
+
 export type IconButtonProps = Omit<ComponentProps<'button'>, 'children' | 'aria-label'> & {
   icon: IconGlyph
   /** The accessible name, and the tooltip unless `tooltip` says otherwise. */
@@ -40,6 +57,10 @@ export type IconButtonProps = Omit<ComponentProps<'button'>, 'children' | 'aria-
   active?: boolean
   /** Fill the glyph as well as stroke it: a starred item's star. */
   filled?: boolean
+  /** The glyph's colour for a state (`ICON_TONE`); absent, the muted rest. */
+  tone?: IconTone
+  /** The glyph loops while its state is in flight (`ICON_MOTION`). */
+  motion?: IconMotion
   /** Hover and open change the icon's colour only: no tint behind it, no
    *  grow. For a control inside something that already has a hover look (a
    *  card's ⋯). */
@@ -59,6 +80,8 @@ export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(functio
     pressed,
     active = false,
     filled = false,
+    tone,
+    motion,
     quiet = false,
     tooltip,
     tooltipSide,
@@ -92,7 +115,12 @@ export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(functio
       )}
       {...props}
     >
-      <Icon icon={icon} size={size} filled={filled} />
+      <Icon
+        icon={icon}
+        size={size}
+        filled={filled}
+        className={cn(tone && ICON_TONE[tone], motion && ICON_MOTION[motion])}
+      />
       {children}
     </button>
   )

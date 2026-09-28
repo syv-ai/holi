@@ -34,7 +34,6 @@ import { FileTree } from '@/features/explorer/FileTree'
 import { NavMenu } from '@/features/nav/NavMenu'
 import { ImageViewer } from '@/features/files/ImageViewer'
 import { VaultPicker } from '@/features/vault/VaultPicker'
-import { syncLabel } from '../lib/sync-label'
 import { trpc } from '../lib/trpc'
 import { sweepDailyAtom } from '../state/daily'
 import { openLandingAtom } from '../state/landing'
@@ -45,7 +44,6 @@ import {
   moveTab,
   moveTabToNewPane,
   openApp,
-  openHistory,
   openPinned,
   openInNewPane,
   openPreview,
@@ -88,7 +86,6 @@ import {
   activeRemoteAtom,
   heldBackAtom,
   openVaultAtom,
-  abandonReconcileAtom,
   syncStateAtom,
   vaultsAtom,
 } from '../state/vaults'
@@ -96,10 +93,6 @@ import {
 /** The sessions section's header row, in px: what its panel collapses to, so
  *  the control that reopens it stays. It shares tree-row metrics. */
 const SECTION_HEADER_HEIGHT = 22
-
-// warn is a named amber utility: there is no warning token yet, and named
-// palette utilities are gate-legal (only arbitrary colour literals are banned).
-const TONE = { quiet: 'text-muted-foreground', busy: 'text-brand', warn: 'text-amber-400' } as const
 
 /** Bytes as a short human size for the held-back callout (984 KB, 12.3 MB). */
 function formatBytes(bytes: number): string {
@@ -131,7 +124,6 @@ export function Shell() {
   // nav menu share this atom.
   useGoogleAccount()
   const reconcile = useSetAtom(reconcileAtom)
-  const abandonReconcile = useSetAtom(abandonReconcileAtom)
   const [heldBack, setHeldBack] = useAtom(heldBackAtom)
   /** The pane playing its exit, if any; the timer is the atom's
    *  (`state/pane-exit.ts`), so every close path shares it. */
@@ -263,7 +255,6 @@ export function Shell() {
     const openPaths = pane.tabs.flatMap((t) => (t.kind === 'note' ? [t.path] : []))
     window.holi.agent.setFocus({ focusedPath, openPaths })
   }, [tab, pane])
-  const label = syncLabel(syncState)
   // Single-click / link-nav opens a preview tab (browsing costs one tab);
   // double-click pins. Editing a preview promotes it (see EditorPane onEdit).
   // A bundle path is an app (D107): the tree opens one with a note's gestures,
@@ -597,53 +588,6 @@ export function Shell() {
           onDismiss={() => setBanner(null)}
         />
       )}
-
-      {/* The footer only reports: push is automatic (D61). */}
-      <footer className="flex items-center justify-between gap-3 border-t border-divider px-3 py-1 text-xs text-muted-foreground">
-        <div className="flex min-w-0 items-center gap-2">
-          {/* The sync state doubles as the entry to the vault's history. */}
-          <Tooltip content="version history">
-            <Button
-              variant="link"
-              // Override Button's `text-sm font-medium` to match the footer.
-              className={`h-auto p-0 text-xs font-normal truncate ${TONE[label.tone]}`}
-              onClick={() => setWorkspace(openHistory)}
-            >
-              {label.text}
-            </Button>
-          </Tooltip>
-          {/* The conflict button below is for content conflicts only: a
-              config conflict's banner owns the action. */}
-          {/* While a reconcile runs its files are read-only, so offer the way
-              out; otherwise the only escape is a terminal. */}
-          {syncState.kind === 'reconciling' && (
-            <Tooltip content="Take the merge back out of the tree — the conflict stays, nothing is lost">
-              <Button
-                variant="outline"
-                size="xs"
-                className="shrink-0 border-amber-700/60 text-[11px] text-amber-300 hover:bg-amber-950/40 hover:text-amber-300"
-                onClick={() => void abandonReconcile()}
-              >
-                Abandon
-              </Button>
-            </Tooltip>
-          )}
-          {syncState.kind === 'conflict' && configConflicts.length === 0 && (
-            <Tooltip content="Re-run the merge and hand the conflict to the vault assistant to resolve">
-              <Button
-                variant="outline"
-                size="xs"
-                // amber = the warning role (no token yet); named utilities are gate-legal.
-                className="shrink-0 border-amber-700/60 text-[11px] text-amber-300 hover:bg-amber-950/40 hover:text-amber-300"
-                onClick={() => void reconcile()}
-              >
-                Ask Claude to reconcile
-              </Button>
-            </Tooltip>
-          )}
-        </div>
-        {/* No agent control here: the sidebar lists sessions (D101). */}
-      </footer>
     </div>
   )
 }

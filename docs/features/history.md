@@ -8,7 +8,7 @@ A vault's history is its git history, and the autosave commits give it fine reso
 
 **Restore.** "Restore this version" asks for confirmation in a dialog, flushes open buffers, writes that commit's content to the file and commits it through the ordinary autosave, so it lands as `Update <path>` and pushes like any edit. The version you left stays in the log, and the drawer returns to it.
 
-**The vault tab.** A singleton tab, opened by clicking the sync state in the footer or from the command palette. The left side lists every commit in the vault (newest first, 200). Picking one shows one collapsible per changed file, expanded, each with that file's diff. Each file fetches its own diff when first opened, so a large commit loads in parallel and reopening a file costs nothing.
+**The vault tab.** A singleton tab, opened from the sync item's panel in the nav menu or from the command palette. The left side lists every commit in the vault (newest first, 200). Picking one shows one collapsible per changed file, expanded, each with that file's diff. Each file fetches its own diff when first opened, so a large commit loads in parallel and reopening a file costs nothing.
 
 ## Rules
 

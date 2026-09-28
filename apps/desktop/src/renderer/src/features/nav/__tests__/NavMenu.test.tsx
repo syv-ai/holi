@@ -58,7 +58,7 @@ test('the items are in their order, without apps or Google when there are none',
     within(list)
       .getAllByRole('button')
       .map((b) => b.textContent),
-  ).toEqual(['Home', 'Search', 'Board', 'Settings'])
+  ).toEqual(['Home', 'Search', 'Board', 'Sync: up to date', 'Settings'])
 })
 
 test('Settings comes last, after Google, so it sits beside More', async () => {
@@ -68,7 +68,7 @@ test('Settings comes last, after Google, so it sits beside More', async () => {
     within(list)
       .getAllByRole('button')
       .map((b) => b.textContent),
-  ).toEqual(['Home', 'Search', 'Apps', 'Board', 'Email', 'Agenda', 'Settings'])
+  ).toEqual(['Home', 'Search', 'Apps', 'Board', 'Email', 'Agenda', 'Sync: up to date', 'Settings'])
 })
 
 test('the board count turns to an alert while a task is overdue', async () => {

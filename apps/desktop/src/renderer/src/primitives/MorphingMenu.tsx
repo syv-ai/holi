@@ -57,7 +57,7 @@ import {
 import { cn } from '@/lib/cn'
 import { compress, PILL, rowAt, rowArrive, rowFrom, rowGone, rowLeave, spring } from './springs'
 import { Icon, type IconGlyph } from './Icon'
-import { IconButton } from './IconButton'
+import { ICON_MOTION, ICON_TONE, IconButton, type IconMotion, type IconTone } from './IconButton'
 
 export type MorphingMenuAction = {
   id: string
@@ -70,6 +70,10 @@ export type MorphingMenuAction = {
   badge?: number
   /** `alert` paints the badge in the destructive colour: something is late. */
   badgeTone?: 'alert'
+  /** The glyph's colour for a state, in the dock and in the list. */
+  tone?: IconTone
+  /** The glyph loops while its state is in flight. */
+  motion?: IconMotion
   /** A toggle's state: `aria-pressed`, and the accent background while on.
    *  Absent for an item that is not a toggle. */
   pressed?: boolean
@@ -528,6 +532,8 @@ export function MorphingMenu({
           aria-current={active ? (hasChildren ? 'true' : 'page') : undefined}
           pressed={item.pressed}
           active={active}
+          tone={item.tone}
+          motion={item.motion}
           aria-expanded={hasChildren ? false : undefined}
           aria-controls={hasChildren ? `${id}-group-${item.id}` : undefined}
           onClick={(event) =>
@@ -582,7 +588,10 @@ export function MorphingMenu({
               : select(item)
         }
       >
-        <Icon icon={active && item.activeIcon ? item.activeIcon : item.icon} />
+        <Icon
+          icon={active && item.activeIcon ? item.activeIcon : item.icon}
+          className={cn(item.tone && ICON_TONE[item.tone], item.motion && ICON_MOTION[item.motion])}
+        />
         <span className="min-w-0 truncate">{item.label}</span>
         {item.badge !== undefined && item.badge > 0 && (
           <span
