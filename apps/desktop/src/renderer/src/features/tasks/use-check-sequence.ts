@@ -11,7 +11,8 @@
  *
  * **A recurring task rolls forward rather than finishing** (`completeTask`):
  * it ticks and strikes, then unwinds in place, and its due date moves when the
- * snapshot re-reads. It never parks, because it is not going anywhere.
+ * snapshot re-reads. It parks too: rolling forward returns it to Todo, and
+ * from Doing that is a move.
  *
  * The glyph follows the stage, never `task.status`: the re-read lands in the
  * middle of the sequence and flips the status under it.
@@ -81,7 +82,9 @@ export function useCheckSequence(
   const toggle = () => {
     if (stage === 'idle') {
       rolls.current = completeTask(task, today).status !== 'done'
-      start('done', rolls.current ? null : task.status)
+      // Parked either way: a card that rolls forward returns to Todo, and one
+      // ticked in Doing would otherwise jump there mid-sequence.
+      start('done', task.status)
       setStage('tick')
     } else if (stage === 'settled') {
       rolls.current = false

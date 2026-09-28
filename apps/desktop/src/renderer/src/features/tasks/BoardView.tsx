@@ -112,7 +112,11 @@ export function BoardView(): React.JSX.Element {
       }),
   }
   /** Which column's new card is open, and in which lane (an index). */
-  const [adding, setAdding] = useState<{ status: TaskStatus; lane: number } | null>(null)
+  const [adding, setAdding] = useState<{
+    status: TaskStatus
+    lane: number
+    title: string
+  } | null>(null)
 
   const everything = [...tasks.values()]
   const shown = (t: Task) => parked.get(t.path) ?? t.status
@@ -154,12 +158,14 @@ export function BoardView(): React.JSX.Element {
     <div className="relative flex min-h-0 flex-1 flex-col">
       <BrokenStrip />
       <LayoutGroup>
-        <div className="flex min-h-0 flex-1 gap-3 overflow-auto p-4 pb-20">
+        <div className="flex min-h-0 flex-1 gap-3 overflow-auto p-4">
           {columns.map((column) => (
             <section
               key={column.status}
               data-column={column.status}
-              className="flex min-w-0 flex-1 flex-col self-start rounded-[1.25rem] bg-card p-2"
+              // Each surface runs to the foot of the board, full or not.
+              // The foot keeps clear of the dock that floats over it.
+              className="flex min-w-0 flex-1 flex-col rounded-[1.25rem] bg-card p-2 pb-16"
             >
               <h2 className="flex h-8 items-center gap-2 px-2 pb-1 text-xs font-semibold">
                 {column.label}
@@ -179,7 +185,7 @@ export function BoardView(): React.JSX.Element {
                       label={`Add to ${column.label}`}
                       shape="round"
                       data-add-column={column.status}
-                      onClick={() => setAdding({ status: column.status, lane: 0 })}
+                      onClick={() => setAdding({ status: column.status, lane: 0, title: '' })}
                     />
                   </motion.div>
                 )}
@@ -203,7 +209,7 @@ export function BoardView(): React.JSX.Element {
                       {...drag.target(lane, column.status)}
                       className={cn('mb-1.5 rounded-2xl p-1 motion-respond', gap && 'bg-accent/40')}
                     >
-                      <p className="px-1.5 pb-1 text-[10px] font-medium break-words text-muted-foreground">
+                      <p className="px-1.5 pb-1.5 text-xs font-medium break-words text-muted-foreground">
                         {laneLabel(lane)}
                       </p>
                       <div className="flex min-h-6 flex-col gap-1.5">
@@ -215,6 +221,7 @@ export function BoardView(): React.JSX.Element {
                               <BoardCard
                                 key={item.task.path}
                                 task={item.task}
+                                shown={shown(item.task)}
                                 drag={drag}
                                 parking={parking}
                                 arrival={
@@ -231,12 +238,14 @@ export function BoardView(): React.JSX.Element {
                             status={column.status}
                             lane={lane}
                             layoutId={`new-${column.status}`}
+                            title={adding.title}
+                            onTitle={(title) => setAdding({ ...adding, title })}
                             onSubmit={(title) =>
                               void create({ title, status: column.status, folder: lane })
                             }
                             onLane={(step) =>
                               setAdding({
-                                status: column.status,
+                                ...adding,
                                 lane: (laneIndex + step + lanes.length) % lanes.length,
                               })
                             }

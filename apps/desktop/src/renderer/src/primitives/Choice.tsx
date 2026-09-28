@@ -43,7 +43,7 @@ export function MorphRow({
       aria-pressed={on}
       onClick={onClick}
       className={cn(
-        'flex min-h-8 w-full items-center gap-2 rounded-xl px-2.5 py-1.5 text-left text-sm outline-none motion-respond hover:bg-accent focus-visible:bg-accent aria-pressed:bg-accent',
+        'flex min-h-8 w-full items-center gap-2 rounded-xl px-2.5 py-1.5 text-left text-sm outline-none motion-respond hover:bg-accent focus-visible:ring-1 focus-visible:ring-ring aria-pressed:bg-accent',
         className,
       )}
       {...rest}
@@ -154,7 +154,7 @@ export function Token({
       aria-expanded={open}
       data-set={set ? '' : undefined}
       className={cn(
-        'flex h-7 max-w-48 items-center gap-1.5 rounded-xl px-2 text-xs outline-none motion-respond hover:bg-accent focus-visible:bg-accent aria-expanded:bg-accent',
+        'flex h-7 max-w-48 items-center gap-1.5 rounded-xl px-2 text-xs outline-none motion-respond hover:bg-accent focus-visible:ring-1 focus-visible:ring-ring aria-expanded:bg-accent',
         set ? 'text-foreground' : 'text-muted-foreground',
         className,
       )}

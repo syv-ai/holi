@@ -14,7 +14,6 @@ import type { Task, TaskStatus } from '@holi/shared'
 import { virtualLabels } from '@holi/shared'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { motion, useReducedMotion } from 'motion/react'
-import { useState } from 'react'
 import { cn } from '@/lib/cn'
 import { shortStamp } from '@/lib/date-presets'
 import {
@@ -52,9 +51,11 @@ export function TaskMeta({ task }: { task: Task }): React.JSX.Element | null {
   const now = useAtomValue(nowAtom)
   const reduced = useReducedMotion() ?? false
   const labels = virtualLabels(task, now)
-  if (!task.due && labels.length === 0 && task.tags.length === 0) return null
+  // An empty meta line still takes its row, so every card is one height.
+  if (!task.due && labels.length === 0 && task.tags.length === 0)
+    return <div aria-hidden className="mt-1 h-4" />
   return (
-    <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-muted-foreground">
+    <div className="mt-1 flex h-4 items-center gap-x-2 overflow-hidden text-[11px] whitespace-nowrap text-muted-foreground">
       {task.due && (
         // Keyed by the date, so a recurring task rolling forward shows the
         // new date arriving rather than a silent swap.
@@ -82,11 +83,15 @@ export function TaskMeta({ task }: { task: Task }): React.JSX.Element | null {
 
 export function BoardCard({
   task,
+  shown,
   drag,
   parking,
   arrival,
 }: {
   task: Task
+  /** The column the card is drawn in: its status, or where it is parked
+   *  while its check plays. Its look follows this, not the file. */
+  shown: TaskStatus
   drag: Drag
   parking: Parking
   /** Set only while this card is new to the board (`useArrivals`). */
@@ -99,7 +104,7 @@ export function BoardCard({
   const reduced = useReducedMotion() ?? false
   const sequence = useCheckSequence(task, today, parking, setStatus)
   const folded = drag.isFolded(task.path)
-  const done = task.status === 'done'
+  const done = shown === 'done'
 
   // A plain element, not a motion one: motion claims `onDragStart` for its own
   // gesture and never hands it to the DOM, and the board's drag is native.
@@ -110,7 +115,9 @@ export function BoardCard({
       // A task IS its file: a click opens it beside the board as a preview.
       onClick={() => open(task.path)}
       className={cn(
-        'group/card cursor-grab rounded-xl px-2.5 py-2 text-xs motion-respond active:cursor-grabbing',
+        // One height for every card, one line of title or five: the title
+        // truncates, and the meta line keeps its row even when empty.
+        'group/card h-14 cursor-grab rounded-xl px-2.5 py-2 text-xs motion-respond active:cursor-grabbing',
         done ? 'hover:bg-accent' : 'bg-muted hover:brightness-110',
         arrival?.className,
       )}
@@ -128,12 +135,9 @@ export function BoardCard({
           className="mt-px"
         />
         <div className="min-w-0 flex-1">
-          <StrikeText
-            text={task.title}
-            struck={sequence.struck}
-            onStruck={sequence.onStruck}
-            className="leading-4"
-          />
+          <div className="truncate leading-4">
+            <StrikeText text={task.title} struck={sequence.struck} onStruck={sequence.onStruck} />
+          </div>
           <TaskMeta task={task} />
         </div>
         <ConfirmInPlace
@@ -189,6 +193,8 @@ export function NewCard({
   status,
   lane,
   layoutId,
+  title,
+  onTitle,
   onSubmit,
   onLane,
   onClose,
@@ -196,11 +202,14 @@ export function NewCard({
   status: TaskStatus
   lane: string
   layoutId: string
+  /** Held by the board: Tab remounts the card in the next lane, and what was
+   *  typed goes with it. */
+  title: string
+  onTitle: (title: string) => void
   onSubmit: (title: string) => void
   onLane: (step: 1 | -1) => void
   onClose: () => void
 }): React.JSX.Element {
-  const [title, setTitle] = useState('')
   const reduced = useReducedMotion() ?? false
   return (
     <motion.div
@@ -216,12 +225,12 @@ export function NewCard({
         value={title}
         placeholder={`New task in ${lane || 'the vault root'}`}
         aria-label={`New ${status} task`}
-        onChange={(event) => setTitle(event.target.value)}
+        onChange={(event) => onTitle(event.target.value)}
         onKeyDown={(event) => {
           if (event.key === 'Enter' && title.trim()) {
             event.preventDefault()
             onSubmit(title.trim())
-            setTitle('')
+            onTitle('')
           }
           if (event.key === 'Escape') {
             event.preventDefault()

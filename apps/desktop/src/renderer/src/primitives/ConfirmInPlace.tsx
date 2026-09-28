@@ -63,7 +63,7 @@ export function ConfirmInPlace({
                 setAsking(false)
                 onConfirm()
               }}
-              className="px-2 py-0.5 text-[11px] outline-none focus-visible:underline"
+              className="rounded-full px-2 py-0.5 text-[11px] outline-none focus-visible:ring-1 focus-visible:ring-ring"
             >
               {confirmLabel}
             </button>

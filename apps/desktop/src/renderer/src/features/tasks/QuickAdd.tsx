@@ -157,20 +157,27 @@ export function QuickAdd({ flight = false }: { flight?: boolean }): React.JSX.El
     for (let n = 2; taken.has(predicted); n++)
       predicted = taskFilePath(folder, `${taskSlug(title)}-${n}`)
     if (flight) setFlightId(predicted)
+    const sent = draft
     set({ text: '', due: undefined, priority: undefined, tags: [] })
     setOpen(null)
     textRef.current?.focus()
-    await create({
-      title,
-      status: draft.status,
-      folder,
-      ...(description ? { description } : {}),
-      extra: {
-        ...(draft.due ? { due: draft.due } : {}),
-        ...(draft.priority ? { priority: draft.priority } : {}),
-        ...(draft.tags.length ? { tags: draft.tags } : {}),
-      },
-    })
+    try {
+      await create({
+        title,
+        status: sent.status,
+        folder,
+        ...(description ? { description } : {}),
+        extra: {
+          ...(sent.due ? { due: sent.due } : {}),
+          ...(sent.priority ? { priority: sent.priority } : {}),
+          ...(sent.tags.length ? { tags: sent.tags } : {}),
+        },
+      })
+    } catch {
+      // Refused (a folder that cannot be, a clash): the draft comes back
+      // rather than vanishing with the task.
+      setDraft(sent)
+    }
     setFlightId(`${draftId}-${predicted}`)
   }
 

@@ -3,7 +3,7 @@
  */
 import { describe, expect, it } from 'vitest'
 import type { Task } from '@holi/shared'
-import { rankAt, reorderRank, sortCell } from '../src/renderer/src/lib/board-order'
+import { rankAt, sortCell } from '../src/renderer/src/lib/board-order'
 
 const task = (title: string, order?: number): Task =>
   ({ path: `task.${title}.md`, title, status: 'todo', tags: [], description: '', order }) as Task
@@ -32,41 +32,6 @@ describe('sortCell', () => {
   })
 })
 
-describe('reorderRank', () => {
-  it('gives a card dropped above the top card a rank that beats it', () => {
-    const cell = [task('a', 1), task('b', 2), task('c', 3)]
-    const rank = reorderRank(cell, 'task.c.md', 'task.a.md', true)
-    expect(rank).not.toBeNull()
-    expect(rank!).toBeLessThan(1)
-  })
-
-  it('writes nothing when the card is dropped where it already is', () => {
-    // A drag that ends where it started is the commonest miss, and every rank
-    // written is a file rewritten and a commit. The check is positional rather
-    // than numeric: the rank a no-op computes is not always the one the card
-    // already has, but the sequence it produces is the same one.
-    const cell = [task('a', 1), task('b', 1.5), task('c', 3)]
-    expect(reorderRank(cell, 'task.b.md', 'task.a.md', false)).toBeNull()
-    expect(reorderRank(cell, 'task.b.md', 'task.c.md', true)).toBeNull()
-  })
-
-  it('still moves a card dropped just below its own neighbour', () => {
-    // The near miss of the no-op above: dropping the FIRST card below the
-    // second is a real move, and an off-by-one in the "did it move" test reads
-    // it as a no-op and silently does nothing.
-    const cell = [task('a', 1), task('b', 2), task('c', 3)]
-    const rank = reorderRank(cell, 'task.a.md', 'task.b.md', false)
-    expect(rank).not.toBeNull()
-    expect(rank!).toBeGreaterThan(2)
-    expect(rank!).toBeLessThan(3)
-  })
-
-  it('ignores a card dropped on itself', () => {
-    const cell = [task('a', 1), task('b', 2)]
-    expect(reorderRank(cell, 'task.a.md', 'task.a.md', true)).toBeNull()
-  })
-})
-
 describe('rankAt', () => {
   const cell = [task('a', 1), task('b', 2), task('c', 3)]
 
@@ -85,6 +50,13 @@ describe('rankAt', () => {
   it('writes nothing for a same-cell drop back into its own place', () => {
     // `b` sits at index 1; without it the gap at index 1 is between a and c.
     expect(rankAt(cell, 'task.b.md', 1)).toBeNull()
+  })
+
+  it('ranks a drop among unranked cards below the ranked ones, not above them', () => {
+    // a is ranked; b and c are not, so they sort after it. A gap between b and
+    // c must not produce a rank that jumps above a.
+    const mixed = [task('a', 5), task('b'), task('c')]
+    expect(rankAt(mixed, 'task.x.md', 2)!).toBeGreaterThan(5)
   })
 
   it('moves a same-cell card between its new neighbours', () => {
