@@ -11,9 +11,9 @@
  *
  * State is background only; nothing here draws an edge.
  */
-import { LayoutGroup, motion, useReducedMotion } from 'motion/react'
+import { AnimatePresence, LayoutGroup, motion, useReducedMotion } from 'motion/react'
 import { Check } from 'lucide-react'
-import { useId, type ReactNode } from 'react'
+import { useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { cn } from '@/lib/cn'
 import { Icon, type IconGlyph } from './Icon'
 import { instant, settle } from './springs'
@@ -137,7 +137,9 @@ export function PillGroup<T extends string>({
 /**
  * A field of a draft, as a compact button in a row of them (quick add's
  * token bar): its icon and its value, muted until it is set, the accent
- * background while its choices are open.
+ * background while its choices are open. A value arriving or leaving opens
+ * out of the icon and folds back into it, so a centred row spreads both ways
+ * rather than jumping.
  */
 export function Token({
   icon,
@@ -153,20 +155,49 @@ export function Token({
   set: boolean
   open: boolean
 } & React.ComponentProps<'button'>): React.JSX.Element {
+  const reduced = useReducedMotion() ?? false
   return (
     <button
       type="button"
       aria-expanded={open}
       data-set={set ? '' : undefined}
       className={cn(
-        'flex h-7 max-w-48 items-center gap-1.5 rounded-xl px-2 text-xs outline-none motion-respond hover:bg-accent focus-visible:ring-1 focus-visible:ring-ring aria-expanded:bg-accent',
+        'flex h-7 items-center rounded-xl px-2 text-xs outline-none motion-respond hover:bg-accent focus-visible:ring-1 focus-visible:ring-ring aria-expanded:bg-accent',
         set ? 'text-foreground' : 'text-muted-foreground',
         className,
       )}
       {...rest}
     >
       <Icon icon={icon} size="sm" />
-      {label !== undefined && <span className="truncate">{label}</span>}
+      <AnimatePresence initial={false}>
+        {label !== undefined && <TokenValue key="value" label={label} still={reduced} />}
+      </AnimatePresence>
     </button>
+  )
+}
+
+/**
+ * A token's value, as wide as its text: measured, so a value that changes
+ * (a second tag, another date) slides to its new width as one arriving does.
+ * `width: auto` would only animate the arrival.
+ */
+function TokenValue({ label, still }: { label: ReactNode; still: boolean }) {
+  const text = useRef<HTMLSpanElement>(null)
+  const [width, setWidth] = useState<number | null>(null)
+  useLayoutEffect(() => {
+    if (text.current) setWidth(text.current.offsetWidth)
+  }, [label])
+  return (
+    <motion.span
+      initial={{ width: 0, opacity: 0 }}
+      animate={{ width: width ?? 'auto', opacity: 1 }}
+      exit={{ width: 0, opacity: 0 }}
+      transition={still ? instant : settle}
+      className="min-w-0 overflow-hidden whitespace-nowrap"
+    >
+      <span ref={text} className="inline-block max-w-40 truncate pl-1.5 align-top">
+        {label}
+      </span>
+    </motion.span>
   )
 }

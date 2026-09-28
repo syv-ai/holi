@@ -55,7 +55,7 @@ const FOLDERS_SHOWN = 40
 
 /** The body's heights, in px: the title's one line; the text once it has a
  *  description, and the most a step's list takes; a step's heading and a row. */
-const TITLE_ONLY = 44
+const TITLE_ONLY = 48
 const FULL = 240
 const STEP_HEADING = 38
 const ROW = 32
@@ -90,6 +90,7 @@ const cleanFolder = (folder: string) => folder.trim().replace(/^\/+|\/+$/g, '')
 const folderName = (folder: string) => (folder === ROOT_LANE ? 'Vault root' : folder)
 /** A folder under a dot-folder (`.claude`, `.holi`): listed after the rest. */
 const isHidden = (folder: string) => folder.split('/').some((part) => part.startsWith('.'))
+const cleanTag = (tag: string) => tag.trim().replace(/^#+/, '')
 
 /** A step through `values` from `current`, wrapping. */
 function stepIn<T>(values: readonly T[], current: T, step: number): T {
@@ -131,11 +132,11 @@ function quickKeys(keys: React.RefObject<QuickKeys>) {
       Decoration.set([Decoration.line({ class: 'cm-quick-title' }).range(0)]),
     ),
     EditorView.theme({
-      '&': { height: '100%', fontSize: '13px', '--editor-inset': '0px' },
+      '&': { height: '100%', fontSize: '15px', '--editor-inset': '0px' },
       '&.cm-focused': { outline: 'none' },
       '.cm-scroller': { lineHeight: '1.55' },
       '.cm-content': { padding: '0 0 8px' },
-      '.cm-quick-title': { fontSize: '16px', fontWeight: '500', paddingBottom: '2px' },
+      '.cm-quick-title': { fontSize: '18px', fontWeight: '500', paddingBottom: '2px' },
     }),
   ]
 }
@@ -165,7 +166,8 @@ export function QuickAdd({
   const [step, setStep] = useState<Step>('text')
   /** Which way the last step went, so the panels slide the same way. */
   const [direction, setDirection] = useState<1 | -1>(1)
-  const [laneQuery, setLaneQuery] = useState('')
+  /** What was typed on Lane or Tags: it narrows the list, or names a new one. */
+  const [typed, setTyped] = useState('')
   /** The row ↑/↓ have reached on a step; Space, → or a click picks it. */
   const [cursor, setCursor] = useState(0)
   /** The preview's layoutId: a draft's own, then, for one add, the path the
@@ -189,7 +191,7 @@ export function QuickAdd({
   )
   /** Lane's choices: the folders the query matches, hidden ones last, and
    *  the query itself as a new folder when nothing is named exactly that. */
-  const query = cleanFolder(laneQuery)
+  const query = cleanFolder(typed)
   const laneChoices = useMemo(() => {
     const needle = query.toLowerCase()
     const matching = folders.filter((f) => folderName(f).toLowerCase().includes(needle))
@@ -209,7 +211,7 @@ export function QuickAdd({
   const go = (next: Step) => {
     setDirection(STEPS.indexOf(next) >= STEPS.indexOf(step) ? 1 : -1)
     setStep(next)
-    setLaneQuery('')
+    setTyped('')
   }
   const walk = (by: 1 | -1) => go(stepIn(STEPS, step, by))
 
@@ -258,6 +260,34 @@ export function QuickAdd({
       tags: draft.tags.includes(tag) ? draft.tags.filter((t) => t !== tag) : [...draft.tags, tag],
     })
 
+  /** Tags' rows: the vault's tags and the draft's new ones that match what
+   *  was typed, then the typed tag as a new one when it is not there yet.
+   *  Picking the new one adds it and clears the typing. */
+  const tagChoices = (): Choice[] => {
+    const known = [...allTags, ...draft.tags.filter((t) => !allTags.includes(t))]
+    const name = cleanTag(typed)
+    const needle = name.toLowerCase()
+    const rows: Choice[] = known
+      .filter((tag) => tag.toLowerCase().includes(needle))
+      .map((tag) => ({
+        key: tag,
+        label: `#${tag}`,
+        on: draft.tags.includes(tag),
+        pick: () => toggleTag(tag),
+      }))
+    if (name && !known.includes(name))
+      rows.push({
+        key: `new:${name}`,
+        label: `New: #${name}`,
+        on: false,
+        pick: () => {
+          set({ tags: [...draft.tags, name] })
+          setTyped('')
+        },
+      })
+    return rows
+  }
+
   /** The step's rows. Picking one of a single choice sets it and moves on;
    *  a tag toggles and stays. */
   type Choice = {
@@ -297,12 +327,7 @@ export function QuickAdd({
               pick: () => single({ priority: p.value }),
             }))
           : step === 'tags'
-            ? allTags.map((tag) => ({
-                key: tag,
-                label: `#${tag}`,
-                on: draft.tags.includes(tag),
-                pick: () => toggleTag(tag),
-              }))
+            ? tagChoices()
             : []
   const at = Math.min(cursor, Math.max(0, choices.length - 1))
   /** One line until Shift+Enter starts a description; a step as tall as its
@@ -343,7 +368,7 @@ export function QuickAdd({
     }
     setStep('text')
     shownStep.current = 'text'
-    setLaneQuery('')
+    setTyped('')
   }, [open])
 
   // The row a key reached stays in sight. The list scrolls, and only the list:
@@ -402,20 +427,20 @@ export function QuickAdd({
       event.preventDefault()
       if (step === 'due') set({ due: undefined })
       if (step === 'priority') set({ priority: undefined })
-      if (step === 'lane') {
-        setLaneQuery(laneQuery.slice(0, -1))
+      if (step === 'lane' || step === 'tags') {
+        setTyped(typed.slice(0, -1))
         setCursor(0)
       }
     } else if (
-      step === 'lane' &&
+      (step === 'lane' || step === 'tags') &&
       key.length === 1 &&
       !event.metaKey &&
       !event.ctrlKey &&
       !event.altKey
     ) {
-      // Typing on Lane narrows the folders, or names a new one.
+      // Typing on Lane or Tags narrows the list, or names a new one.
       event.preventDefault()
-      setLaneQuery(laneQuery + key)
+      setTyped(typed + key)
       setCursor(0)
     }
   }
@@ -504,8 +529,8 @@ export function QuickAdd({
             >
               <div className="flex items-baseline justify-between px-2.5 pb-1.5">
                 <span className="text-sm font-medium">{STEP_NAMES[step]}</span>
-                {step === 'lane' && laneQuery && (
-                  <span className="truncate pl-3 text-xs text-muted-foreground">{laneQuery}</span>
+                {typed && (
+                  <span className="truncate pl-3 text-xs text-muted-foreground">{typed}</span>
                 )}
               </div>
               <div
@@ -516,7 +541,7 @@ export function QuickAdd({
                 tabIndex={-1}
                 className="min-h-0 flex-1 overflow-y-auto overscroll-contain outline-none"
               >
-                {step === 'tags' && allTags.length === 0 && (
+                {step === 'tags' && choices.length === 0 && (
                   <p className="px-2.5 py-1.5 text-sm text-muted-foreground">
                     No tags in this vault yet
                   </p>
@@ -556,7 +581,7 @@ export function QuickAdd({
         data-morph-row=""
         role="toolbar"
         aria-label="Task fields"
-        className="flex flex-wrap items-center gap-0.5 pt-1.5"
+        className="flex flex-wrap items-center justify-center gap-0.5 pt-1.5"
       >
         {stepToken('text', PenLine, undefined)}
         {stepToken('lane', Folder, draft.folder === ROOT_LANE ? undefined : draft.folder)}

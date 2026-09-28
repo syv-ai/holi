@@ -53,19 +53,19 @@ Todo / Doing / Done, with one swim lane per folder.
   cell. The gap holds until the writes land, then the card unfolds into it. A no-op drop writes
   nothing.
 - **Quick add (⌘T)** is the card it will make: a small note editor (mentions, wiki-links, live
-  preview) whose first line is the title, set larger, and whose later lines are the description.
-  It opens one line tall and grows when Shift+Enter starts a description.
-  On the board it grows out of the dock and rises to just under the middle of the view, and the
-  new card flies to its cell; anywhere else it opens centred at the top, on the palette's surface.
-  Tab is a wizard: it swaps the whole panel for the next field (lane, due, priority, tags) and
-  cycles back to the text; Shift+Tab goes back. On a field, ↑/↓ move, and Space, → or a click
-  picks; a single choice then moves on to the next field, a tag toggles and stays. Enter on a field
-  returns to the text; Enter in the text adds; Shift+Enter is a new line. Escape on a field returns
-  to the text, then closes. The bar at the foot is the fields as icons, each showing its value once
-  set. Everything is created in Todo. Lane is any folder, defaulting to the active note's; typing
-  on lane narrows the folders or names a new one; after an add the text clears and the lane stays.
-  ⌘⇧T is the full-create dialog, which opens the result. Both write the whole task in one create.
-  The agent writes the file.
+  preview) whose first line is the title, set larger, and whose later lines are the description. It
+  opens one line tall and grows when Shift+Enter starts a description. On the board it grows out of
+  the dock and rises to just under the middle of the view, and the new card flies to its cell;
+  anywhere else it opens centred at the top, on the palette's surface. Tab is a wizard: it swaps the
+  whole panel for the next field (lane, due, priority, tags) and cycles back to the text; Shift+Tab
+  goes back. On a field, ↑/↓ move, and Space, → or a click picks; a single choice then moves on to
+  the next field, a tag toggles and stays. Enter on a field returns to the text; Enter in the text
+  adds; Shift+Enter is a new line. Escape on a field returns to the text, then closes. The bar at
+  the foot is the fields as icons, centred, each opening out to show its value once set. Everything
+  is created in Todo. Lane is any folder, defaulting to the active note's; typing on lane or tags
+  narrows the list or names a new one; after an add the text clears and the lane stays. ⌘⇧T is the
+  full-create dialog, which opens the result. Both write the whole task in one create. The agent
+  writes the file.
 - **Completing** is setting status to done, from the checkbox, a drop into Done, or the status
   row; `completeTask` in `packages/shared` says what that writes. A
   recurring task with a `due` rolls forward: `due` advances to on-or-after today via
