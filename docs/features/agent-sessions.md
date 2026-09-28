@@ -17,9 +17,10 @@ file is the vault's.
 
 **Tabs.** A session tab can sit beside the note it is about. It stays mounted while hidden, builds
 its xterm on first show, and never fits at 0x0. Closing a tab does not end the session. The
-sidebar's **chats** section is always present and is where sessions are started, resumed, renamed,
-duplicated, restarted and ended; with the nav hidden, the rail shows one orb per live session. ⌘J
-goes to the current session or starts one.
+sidebar's **chats** section is always present and is where sessions are renamed, duplicated,
+restarted and ended; with the nav hidden, the rail shows one orb per live session. A session tab's
+bar carries **Open overview** and **Start another session**. ⌘J goes to the current session or
+starts one.
 
 **State is read, not inferred.** Main runs `claude agents --json` against the vault's config
 directory, joins rows by pid, and derives `needs-you | working | idle` from `waitingFor`, then
@@ -35,7 +36,7 @@ most footer key hints.
 
 **Actions.** Rename pastes `/rename ` and brings the tab forward. Duplicate forks by the id read
 from the listing at that moment, and refuses a session with no turn yet. Restart starts a new
-process under the same real name. Resume opens bare `--resume` in a new tab; escaping that picker
+process under the same real name. Open overview runs bare `--resume` in a new tab; escaping that picker
 before any turn drops the session. An exited session stays listed until closed.
 
 **Asks are pasted, never submitted.** Text from a selection, task, mail thread or PDF comment goes

@@ -69,18 +69,6 @@ function setup(sessions: AgentSession[], open = true) {
   }
 }
 
-test('offers a way to start the first one when the vault has none', async () => {
-  // The `+` beside the heading is the only place a first session can be started
-  // with the mouse (D101).
-  const { store } = setup([])
-  store.set(activeRemoteAtom, REMOTE)
-  await userEvent.click(screen.getByLabelText('start another session'))
-
-  await waitFor(() =>
-    expect(start).toHaveBeenCalledWith(expect.objectContaining({ vaultId: REMOTE })),
-  )
-})
-
 test('is shown for a single session', () => {
   // With no tab open, one card is the only thing on screen that says a session
   // exists.
@@ -174,25 +162,6 @@ test('keeps no name of its own, even now that it offers a rename', async () => {
 
   await waitFor(() => expect(paste).toHaveBeenCalledWith('a', '/rename '))
   expect(store.get(agentSessionsAtom)[0]!.name).toBe('One')
-})
-
-test('starts another session from the section header', async () => {
-  const { store } = setup([session({ id: 'a', name: 'One' })])
-  store.set(activeRemoteAtom, REMOTE)
-  await userEvent.click(screen.getByLabelText('start another session'))
-
-  await waitFor(() =>
-    expect(start).toHaveBeenCalledWith(expect.objectContaining({ vaultId: REMOTE })),
-  )
-})
-
-test('resumes a past session in a new tab, killing nothing', async () => {
-  const { store } = setup([session({ id: 'a', name: 'One' })])
-  store.set(activeRemoteAtom, REMOTE)
-  await userEvent.click(screen.getByLabelText('resume a past session'))
-
-  await waitFor(() => expect(start).toHaveBeenCalledWith(expect.objectContaining({ resume: true })))
-  expect(kill).not.toHaveBeenCalled()
 })
 
 test('duplicating a session forks it, and shows the copy', async () => {

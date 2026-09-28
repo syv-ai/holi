@@ -15,7 +15,7 @@
  * and a copy kept in Holi would go stale.
  */
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
-import { ChevronRight, History, Plus } from 'lucide-react'
+import { ChevronRight } from 'lucide-react'
 import { useState } from 'react'
 import {
   Button,
@@ -26,7 +26,6 @@ import {
   ContextMenuTrigger,
   Dialog,
   Icon,
-  IconButton,
   Tooltip,
 } from '@/primitives'
 import { cn } from '@/lib/cn'
@@ -39,19 +38,13 @@ import {
 } from '@/state/agent'
 import { useSessionIndicator } from './session-indicator'
 import { openSession, workspaceAtom } from '@/state/panes'
-import {
-  duplicateSessionAtom,
-  renameSessionAtom,
-  restartSessionAtom,
-  startSessionAtom,
-} from '@/state/agent-send'
+import { duplicateSessionAtom, renameSessionAtom, restartSessionAtom } from '@/state/agent-send'
 
 export function SessionsSection(): React.JSX.Element {
   const sessions = useAtomValue(agentSessionsAtom)
   const active = useAtomValue(activeSessionAtom)
   const setActiveId = useSetAtom(activeSessionIdAtom)
   const setWorkspace = useSetAtom(workspaceAtom)
-  const startSession = useSetAtom(startSessionAtom)
   const duplicateSession = useSetAtom(duplicateSessionAtom)
   const restartSession = useSetAtom(restartSessionAtom)
   const renameSession = useSetAtom(renameSessionAtom)
@@ -80,17 +73,6 @@ export function SessionsSection(): React.JSX.Element {
     // does. The header is what stays visible when the panel is collapsed to it,
     // so its `shrink-0` is load-bearing.
     <div className="group/sessions relative flex h-full flex-col overflow-hidden">
-      {/* The explorer's section-action pattern: floated top-right, hidden until
-          you are in the section. */}
-      <div className="motion-respond pointer-events-none absolute right-2 top-0.5 z-10 flex items-center gap-0.5 opacity-0 focus-within:pointer-events-auto focus-within:opacity-100 group-hover/sessions:pointer-events-auto group-hover/sessions:opacity-100">
-        <IconButton
-          icon={History}
-          label="resume a past session"
-          tooltip="resume a past session in a new tab"
-          onClick={() => void startSession({ resume: true })}
-        />
-        <IconButton icon={Plus} label="start another session" onClick={() => void startSession()} />
-      </div>
       {/* The whole header is the toggle. Same metrics and lowercase as the apps
           section. */}
       <Button

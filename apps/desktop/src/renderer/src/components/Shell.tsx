@@ -61,6 +61,7 @@ import type { PaneDropZone } from '@/lib/tab-drop'
 import type { ConflictResolvers } from '@/lib/editor-reload'
 import { ConflictBanner } from '@/composites/ConflictBanner'
 import { SessionsSection } from '@/features/agent/SessionsSection'
+import { SessionActions } from '@/features/agent/SessionActions'
 import { VaultSwitchConfirm } from '@/features/agent/VaultSwitchConfirm'
 import { CommandPalette } from '@/features/palette/CommandPalette'
 import { QuickAddHost } from '@/features/tasks/QuickAddHost'
@@ -472,6 +473,8 @@ export function Shell() {
                     }
                     trailing={
                       <>
+                        {/* An assistant tab's actions (`SessionActions`). */}
+                        {p.tabs[p.active]?.kind === 'session' && <SessionActions />}
                         {/* Version history for the focused note. Only on the
                               active pane: `historyTargetPathAtom` reads its tab,
                               the drawer's own predicate. */}
