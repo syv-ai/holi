@@ -166,8 +166,10 @@ class TaskCheckWidget extends WidgetType {
       event.preventDefault()
       if (view.state.readOnly) return
       const pos = view.posAtDOM(box)
-      if (!/^\[[ xX]\]$/.test(view.state.sliceDoc(pos, pos + 3))) return
-      view.dispatch({ changes: { from: pos, to: pos + 3, insert: this.checked ? '[ ]' : '[x]' } })
+      // Two characters for an empty `[]` (empty-task.ts), three otherwise.
+      const len = view.state.sliceDoc(pos, pos + 2) === '[]' ? 2 : 3
+      if (!/^\[[ xX]?\]$/.test(view.state.sliceDoc(pos, pos + len))) return
+      view.dispatch({ changes: { from: pos, to: pos + len, insert: this.checked ? '[ ]' : '[x]' } })
     })
     return box
   }
@@ -400,7 +402,9 @@ export function buildDecorations(state: EditorState, from: number, to: number): 
               from: taskMark.from,
               to: taskMark.to,
               deco: Decoration.replace({
-                widget: new TaskCheckWidget(state.sliceDoc(taskMark.from, taskMark.to) !== '[ ]'),
+                widget: new TaskCheckWidget(
+                  /^\[[xX]\]$/.test(state.sliceDoc(taskMark.from, taskMark.to)),
+                ),
               }),
             })
             break

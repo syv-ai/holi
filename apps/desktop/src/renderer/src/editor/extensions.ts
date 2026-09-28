@@ -1,6 +1,7 @@
 import { completionKeymap } from '@codemirror/autocomplete'
 import { markdownTableAutocompleter, markdownTables } from 'codemirror-markdown-tables'
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
+import { emptyTaskMarker } from './empty-task'
 import { bracketMatching, indentOnInput, indentUnit } from '@codemirror/language'
 import { selectNextOccurrence } from '@codemirror/search'
 import { drawSelection, dropCursor, EditorView, keymap } from '@codemirror/view'
@@ -101,7 +102,11 @@ export function baseEditorExtensions(deps: EditorDeps): Extension[] {
     // GFM base: the table widget needs the GFM Table grammar, which plain
     // markdown() (CommonMark) omits. `codeLanguages` parses fenced code in its
     // own language (fence-languages.ts).
-    markdown({ base: markdownLanguage, codeLanguages: fenceLanguage }),
+    markdown({
+      base: markdownLanguage,
+      codeLanguages: fenceLanguage,
+      extensions: emptyTaskMarker,
+    }),
     // Colours the code nested in fences. Overlap: markdown's `#`/`**` marks take
     // the punctuation grey, visible only on the active line.
     codeHighlighting,
@@ -183,7 +188,11 @@ export function mailComposerExtensions(): Extension[] {
     indentUnit.of('    '),
     EditorView.lineWrapping,
     // Same GFM base as the notes editor, fences highlighted too.
-    markdown({ base: markdownLanguage, codeLanguages: fenceLanguage }),
+    markdown({
+      base: markdownLanguage,
+      codeLanguages: fenceLanguage,
+      extensions: emptyTaskMarker,
+    }),
     codeHighlighting,
     markdownTables(),
     // Table completion only: `@` types an email address here.

@@ -40,6 +40,7 @@
     "@icons-pack/react-simple-icons": "^13.13.0",
     "@lezer/common": "^1.5.2",
     "@lezer/highlight": "^1.2.3",
+    "@lezer/markdown": "^1.7.1",
     "@radix-ui/react-dialog": "^1.1.23",
     "@replit/codemirror-css-color-picker": "^6.3.0",
     "@trpc/client": "^11.18.0",
