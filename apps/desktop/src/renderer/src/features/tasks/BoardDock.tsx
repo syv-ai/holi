@@ -58,7 +58,7 @@ export function FilterChips(): React.JSX.Element {
               aria-label={`Stop filtering by ${tag}`}
               data-filter-chip={tag}
               onClick={() => remove(tag)}
-              className="h-7 gap-1 rounded-full bg-popover px-3 text-xs font-normal text-popover-foreground shadow-popover hover:bg-popover hover:text-foreground dark:hover:bg-popover"
+              className="h-8 gap-2 rounded-full bg-muted pr-3.5 pl-5 text-xs font-normal text-foreground active:scale-100 hover:bg-accent dark:hover:bg-accent"
             >
               {VIRTUAL.has(tag) ? tag : `#${tag}`}
               <Icon icon={X} size="sm" className="text-muted-foreground" />

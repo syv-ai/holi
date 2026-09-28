@@ -29,7 +29,7 @@ import {
 } from 'motion/react'
 import { ChevronRight } from 'lucide-react'
 import { useLayoutEffect, useRef, useState } from 'react'
-import { Button, Icon, RollingCount, UndoInPlace, instant, settle } from '@/primitives'
+import { Button, ConfirmInPlace, Icon, RollingCount, instant, settle } from '@/primitives'
 import { cn } from '@/lib/cn'
 import { useArrivals } from '@/lib/use-arrivals'
 import { rankAt, sortCell } from '@/lib/board-order'
@@ -172,9 +172,6 @@ export function BoardView(): React.JSX.Element {
         return next
       }),
   }
-  /** Done tasks whose deletion is waiting out its undo: off the board already,
-   *  still on disk (`UndoInPlace`). */
-  const [emptying, setEmptying] = useState<string[] | null>(null)
   const [collapsed, setCollapsed] = useAtom(collapsedLanesAtom)
   const toggleLane = (key: string) =>
     setCollapsed((current) => {
@@ -185,9 +182,7 @@ export function BoardView(): React.JSX.Element {
 
   const everything = [...tasks.values()]
   const shown = (t: Task) => parked.get(t.path) ?? t.status
-  const all = everything.filter(
-    (t) => !emptying?.includes(t.path) && matchesFilter({ ...t, status: shown(t) }, filter, now),
-  )
+  const all = everything.filter((t) => matchesFilter({ ...t, status: shown(t) }, filter, now))
   const lanes = laneOrder(all.map(laneOf))
   const cell = (lane: string, status: TaskStatus) =>
     sortCell(all.filter((t) => shown(t) === status && laneOf(t) === lane))
@@ -251,18 +246,15 @@ export function BoardView(): React.JSX.Element {
                       value={all.filter((t) => shown(t) === column.status).length}
                       className="font-normal text-muted-foreground"
                     />
-                    {column.status === 'done' && (finished.length > 0 || emptying) && (
-                      // Empties what the column shows: the cards go at once,
-                      // the files when the undo runs out. Git keeps them.
-                      <UndoInPlace
+                    {column.status === 'done' && finished.length > 0 && (
+                      // Empties what the column shows, once confirmed; left
+                      // unanswered, the question folds away. Git keeps them.
+                      <ConfirmInPlace
                         label="Delete every done task"
-                        doneLabel={`${emptying?.length ?? finished.length} deleted`}
-                        onStart={() => setEmptying(finished.map((t) => t.path))}
-                        onUndo={() => setEmptying(null)}
-                        onCommit={() => {
-                          const paths = emptying ?? []
-                          void removeAll(paths).finally(() => setEmptying(null))
-                        }}
+                        confirmLabel={`Delete ${finished.length}`}
+                        fuse={4000}
+                        size="md"
+                        onConfirm={() => void removeAll(finished.map((t) => t.path))}
                         className="ml-auto font-normal"
                       />
                     )}
