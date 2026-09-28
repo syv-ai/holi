@@ -10,8 +10,10 @@
  */
 import { useAtom, useAtomValue } from 'jotai'
 import { Eye, EyeOff, Plus, Search, Tag, X } from 'lucide-react'
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { useEffect, useMemo, useRef, type ReactNode } from 'react'
 import {
+  Button,
   Icon,
   IconButton,
   Input,
@@ -19,10 +21,54 @@ import {
   MorphingMenu,
   type MorphingMenuHandle,
   type MorphingMenuItem,
+  instant,
+  settle,
 } from '@/primitives'
 import { nowAtom } from '@/state/clock'
 import { availableLabels, filterAtom, quickAddAtom, tasksAtom } from '@/state/tasks'
 import { QuickAdd } from './QuickAdd'
+
+/** Labels are drawn bare, as on a card; a real tag carries its `#`. */
+const VIRTUAL = new Set(['overdue', 'p1', 'p2', 'p3'])
+
+/**
+ * What the Tags filter is narrowing by, floating just above the dock while it
+ * narrows: one chip per tag, each one's ✕ taking it off. Nothing at rest.
+ */
+export function FilterChips(): React.JSX.Element {
+  const [filter, setFilter] = useAtom(filterAtom)
+  const reduced = useReducedMotion() ?? false
+  const remove = (tag: string) =>
+    setFilter((f) => ({ ...f, tags: f.tags.filter((t) => t !== tag) }))
+  return (
+    <div className="flex flex-wrap justify-center gap-1.5">
+      <AnimatePresence initial={false} mode="popLayout">
+        {filter.tags.map((tag) => (
+          <motion.div
+            key={tag}
+            layout={!reduced}
+            initial={{ opacity: 0, scale: 0.8, y: 6 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.8 }}
+            transition={reduced ? instant : settle}
+          >
+            <Button
+              variant="ghost"
+              size="xs"
+              aria-label={`Stop filtering by ${tag}`}
+              data-filter-chip={tag}
+              onClick={() => remove(tag)}
+              className="h-7 gap-1 rounded-full bg-popover px-3 text-xs font-normal text-popover-foreground shadow-popover hover:bg-popover hover:text-foreground dark:hover:bg-popover"
+            >
+              {VIRTUAL.has(tag) ? tag : `#${tag}`}
+              <Icon icon={X} size="sm" className="text-muted-foreground" />
+            </Button>
+          </motion.div>
+        ))}
+      </AnimatePresence>
+    </div>
+  )
+}
 
 const newTask: MorphingMenuItem = {
   id: 'new',

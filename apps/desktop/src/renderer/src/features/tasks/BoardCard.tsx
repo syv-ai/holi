@@ -211,22 +211,27 @@ export function BoardCard({
       animate={{ height: folded ? 0 : 'auto', opacity: folded ? 0 : 1 }}
       className={cn('overflow-hidden', folded && 'pointer-events-none')}
     >
-      {/* The board's second way to delete, besides the bin; and to open. */}
-      <ContextMenu>
-        <motion.div {...sequence.flick}>
-          <ContextMenuTrigger asChild>{card}</ContextMenuTrigger>
-        </motion.div>
-        <ContextMenuContent>
-          <ContextMenuItem onSelect={() => open(task.path)}>Open</ContextMenuItem>
-          <ContextMenuItem onSelect={() => sequence.toggle()}>
-            {done ? 'Reopen' : 'Complete'}
-          </ContextMenuItem>
-          <ContextMenuSeparator />
-          <ContextMenuItem variant="destructive" onSelect={() => void remove(task.path)}>
-            Delete
-          </ContextMenuItem>
-        </ContextMenuContent>
-      </ContextMenu>
+      {/* The space below a card is inside its fold, not a list gap: a gap
+          stays open around a card folded to nothing and shuts in one frame
+          when the card leaves, jumping everything under it. */}
+      <div className="pb-2.5">
+        {/* The board's second way to delete, besides the bin; and to open. */}
+        <ContextMenu>
+          <motion.div {...sequence.flick}>
+            <ContextMenuTrigger asChild>{card}</ContextMenuTrigger>
+          </motion.div>
+          <ContextMenuContent>
+            <ContextMenuItem onSelect={() => open(task.path)}>Open</ContextMenuItem>
+            <ContextMenuItem onSelect={() => sequence.toggle()}>
+              {done ? 'Reopen' : 'Complete'}
+            </ContextMenuItem>
+            <ContextMenuSeparator />
+            <ContextMenuItem variant="destructive" onSelect={() => void remove(task.path)}>
+              Delete
+            </ContextMenuItem>
+          </ContextMenuContent>
+        </ContextMenu>
+      </div>
     </motion.div>
   )
 }

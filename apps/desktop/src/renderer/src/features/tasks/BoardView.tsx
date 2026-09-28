@@ -29,7 +29,7 @@ import {
 } from 'motion/react'
 import { ChevronRight } from 'lucide-react'
 import { useLayoutEffect, useRef, useState } from 'react'
-import { Button, ConfirmInPlace, Icon, RollingCount, instant, settle } from '@/primitives'
+import { Button, Icon, RollingCount, UndoInPlace, instant, settle } from '@/primitives'
 import { cn } from '@/lib/cn'
 import { useArrivals } from '@/lib/use-arrivals'
 import { rankAt, sortCell } from '@/lib/board-order'
@@ -49,7 +49,7 @@ import {
 } from '@/state/tasks'
 import { nowAtom } from '@/state/clock'
 import { BoardCard } from './BoardCard'
-import { BoardDock } from './BoardDock'
+import { BoardDock, FilterChips } from './BoardDock'
 import type { Parking } from './use-check-sequence'
 import { cellKey, useBoardDrag, withGap } from './use-board-drag'
 
@@ -83,7 +83,8 @@ function BrokenStrip(): React.JSX.Element | null {
   )
 }
 
-/** The gap a drag opens: springs open, springs shut. */
+/** The gap a drag opens: springs open, springs shut. It carries the space
+ *  below it, as a card does, so nothing is left behind when it shuts. */
 function Gap({ height }: { height: number }): React.JSX.Element {
   const reduced = useReducedMotion() ?? false
   return (
@@ -91,13 +92,18 @@ function Gap({ height }: { height: number }): React.JSX.Element {
       aria-hidden
       data-gap=""
       initial={{ height: 0, opacity: 0 }}
-      animate={{ height, opacity: 1 }}
+      animate={{ height: height + GAP_BELOW, opacity: 1 }}
       exit={{ height: 0, opacity: 0 }}
       transition={reduced ? instant : settle}
-      className="rounded-xl bg-accent"
-    />
+      className="overflow-hidden"
+    >
+      <div className="rounded-xl bg-accent" style={{ height }} />
+    </motion.div>
   )
 }
+
+/** The space under every card (`pb-2.5` in `BoardCard`), in pixels. */
+const GAP_BELOW = 10
 
 /**
  * The board's width, following its scroller's on `settle`. A pane opening
@@ -166,6 +172,9 @@ export function BoardView(): React.JSX.Element {
         return next
       }),
   }
+  /** Done tasks whose deletion is waiting out its undo: off the board already,
+   *  still on disk (`UndoInPlace`). */
+  const [emptying, setEmptying] = useState<string[] | null>(null)
   const [collapsed, setCollapsed] = useAtom(collapsedLanesAtom)
   const toggleLane = (key: string) =>
     setCollapsed((current) => {
@@ -176,7 +185,9 @@ export function BoardView(): React.JSX.Element {
 
   const everything = [...tasks.values()]
   const shown = (t: Task) => parked.get(t.path) ?? t.status
-  const all = everything.filter((t) => matchesFilter({ ...t, status: shown(t) }, filter, now))
+  const all = everything.filter(
+    (t) => !emptying?.includes(t.path) && matchesFilter({ ...t, status: shown(t) }, filter, now),
+  )
   const lanes = laneOrder(all.map(laneOf))
   const cell = (lane: string, status: TaskStatus) =>
     sortCell(all.filter((t) => shown(t) === status && laneOf(t) === lane))
@@ -240,12 +251,18 @@ export function BoardView(): React.JSX.Element {
                       value={all.filter((t) => shown(t) === column.status).length}
                       className="font-normal text-muted-foreground"
                     />
-                    {column.status === 'done' && finished.length > 0 && (
-                      // Empties what the column shows. Git keeps the files.
-                      <ConfirmInPlace
+                    {column.status === 'done' && (finished.length > 0 || emptying) && (
+                      // Empties what the column shows: the cards go at once,
+                      // the files when the undo runs out. Git keeps them.
+                      <UndoInPlace
                         label="Delete every done task"
-                        confirmLabel={`Delete ${finished.length}`}
-                        onConfirm={() => void removeAll(finished.map((t) => t.path))}
+                        doneLabel={`${emptying?.length ?? finished.length} deleted`}
+                        onStart={() => setEmptying(finished.map((t) => t.path))}
+                        onUndo={() => setEmptying(null)}
+                        onCommit={() => {
+                          const paths = emptying ?? []
+                          void removeAll(paths).finally(() => setEmptying(null))
+                        }}
                         className="ml-auto font-normal"
                       />
                     )}
@@ -276,7 +293,7 @@ export function BoardView(): React.JSX.Element {
                           // card's flick is not cut.
                           className="overflow-clip [overflow-clip-margin:8px]"
                         >
-                          <div {...drag.target(lane, column.status)} className="mb-1.5 p-1">
+                          <div {...drag.target(lane, column.status)} className="px-1 pt-1">
                             {/* The vault root's lane has no name to show. The lane a
                           drag aims at lights its name, not its surface. A
                           folded lane still takes a drop, at its top. */}
@@ -319,7 +336,7 @@ export function BoardView(): React.JSX.Element {
                                   // card's flick is not cut while the lane folds.
                                   className="overflow-clip [overflow-clip-margin:8px]"
                                 >
-                                  <div className="flex min-h-6 flex-col gap-2.5 pt-1">
+                                  <div className="flex min-h-6 flex-col pt-1">
                                     <AnimatePresence initial={false}>
                                       {withGap(cards, drag.isFolded, gap?.index ?? null).map(
                                         (item) =>
@@ -371,9 +388,12 @@ export function BoardView(): React.JSX.Element {
           Centred by flex, not a transform: a transformed ancestor would
           become the open menu's containing block and drag its fixed pin. */}
       <motion.div
-        className="pointer-events-none absolute bottom-4 left-0 flex w-full justify-center"
+        className="pointer-events-none absolute bottom-4 left-0 flex w-full flex-col items-center gap-2"
         style={{ width }}
       >
+        <div className="pointer-events-auto">
+          <FilterChips />
+        </div>
         <div className="pointer-events-auto w-40">
           <BoardDock />
         </div>

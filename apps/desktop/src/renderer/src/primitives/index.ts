@@ -72,6 +72,7 @@ export {
 } from './MorphingMenu'
 export { check, instant, rowFromMotion, settle, spring } from './springs'
 export { ConfirmInPlace } from './ConfirmInPlace'
+export { UndoInPlace } from './UndoInPlace'
 export { RollingCount } from './RollingCount'
 export { StrikeText } from './StrikeText'
 export { TaskCheck } from './TaskCheck'

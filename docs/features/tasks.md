@@ -25,7 +25,7 @@ Todo / Doing / Done, with one swim lane per folder.
   cards recede to flat rows. Each
   column counts its cards. `overdue` and `p1`–`p3` are labels computed at render, drawn as
   coloured text and filtered like tags; clicking a label or tag on a card toggles it in the Tags
-  filter. A todo card's check is a plain ring, a doing card's a dotted one in `--task-doing`. A
+  filter, and each active one floats as a chip above the dock whose click takes it off. A todo card's check is a plain ring, a doing card's a dotted one in `--task-doing`. A
   timed due is late after its minute; a timeless one once
   its day has passed. Task files that fail to parse show in a "could not be read" strip.
 - **The board reflows as one motion.** A pane opening or closing beside it, or Hide done, springs
@@ -40,8 +40,10 @@ Todo / Doing / Done, with one swim lane per folder.
   card is parked in its column until the sequence and the write are both done. A recurring task
   ticks and strikes, then unwinds in place with its next due date. Unticking runs it backwards.
 - **Deleting** is the card's bin, which grows into Delete / ✕ before anything is removed, or the
-  card's context menu. Done's header has a bin of its own that empties the column: it deletes
-  every done task the column shows, after the same in-place confirmation. Git keeps them.
+  card's context menu. Done's header has a bin of its own that empties the column. Its
+  confirmation is an undo: pressed, the column's cards go at once and the bin becomes "N deleted
+  · Undo" over a four-second fuse; the files are deleted only when the fuse runs out, so Undo
+  never has to restore anything (`UndoInPlace`). Git keeps them.
 - **Dragging.** The card folds out of its cell and a gap springs open where it would land, in any
   cell. Between columns rewrites `status` (into Done means complete). Between lanes moves the file
   through the rename that rewrites inbound [wiki-links](wiki-links.md). **The drop lands at the
