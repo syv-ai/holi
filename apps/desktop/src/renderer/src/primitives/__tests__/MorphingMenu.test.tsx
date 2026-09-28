@@ -211,3 +211,36 @@ test('anchored top-right, the open menu pins by its top-right corner', async () 
   expect(shell.style.bottom).toBe('')
   expect(shell.style.left).toBe('')
 })
+
+test('a panel item grows the menu into its own panel, and Escape folds it back', async () => {
+  giveRoom(320)
+  const panelItems: MorphingMenuItem[] = [
+    ...items(),
+    {
+      id: 'new',
+      label: 'New task',
+      icon: dot,
+      panel: (close) => (
+        <div data-morph-row="">
+          <input aria-label="Title" />
+          <button type="button" onClick={close}>
+            Done
+          </button>
+        </div>
+      ),
+    },
+  ]
+  render(<MorphingMenu label="Board" anchor="bottom-center" items={panelItems} />)
+  await userEvent.click(screen.getByRole('button', { name: 'New task' }))
+  const nav = screen.getByRole('navigation', { name: 'Board' })
+  expect(nav.dataset.view).toBe('panel')
+  expect(document.activeElement).toBe(screen.getByRole('textbox', { name: 'Title' }))
+
+  await userEvent.keyboard('{Escape}')
+  expect(nav.dataset.view).toBe('collapsed')
+
+  // The panel's own `close` folds it too.
+  await userEvent.click(screen.getByRole('button', { name: 'New task' }))
+  await userEvent.click(screen.getByRole('button', { name: 'Done' }))
+  expect(nav.dataset.view).toBe('collapsed')
+})

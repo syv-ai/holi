@@ -47,12 +47,20 @@ hidden, the same menu runs down the rail.
 
 - The menu is two layers: `primitives/MorphingMenu` owns the dock, the morph, focus and dismissal
   and knows nothing of Holi. It also serves the [file tree](file-tree.md)'s toolbar, anchored
-  `top-right` so it opens downward, with `pressed` toggles; `features/nav/NavMenu` builds the items from shared state only
-  (`appPathsAtom`, `openTaskCountAtom`, `googleAccountAtom`, the workspace, the palette).
+  `top-right` so it opens downward, with `pressed` toggles, and the [board](tasks.md)'s dock,
+  anchored `bottom-center` with `surface="float"`; `features/nav/NavMenu` builds the items from
+  shared state only (`appPathsAtom`, `openTaskCountAtom`, `googleAccountAtom`, the workspace, the
+  palette).
+- **An item can carry a panel** instead of an action or children: selecting it grows the menu into
+  that panel exactly as a group grows into its rows (squeeze, spring, cascade of the panel's
+  `data-morph-row` elements), focus goes to the panel's first control, and the panel gets `close`
+  to fold the menu when its work is done. `openPanel(id)` on the menu's ref opens one from outside,
+  for a hotkey. A panel opens from the dock, so Back and Escape close the menu.
 - Home is a destination, not "close everything": a tab of its own, so it can become a dashboard
   without changing what opening it means, and it closes nothing.
 - The items are memoised: a change of item identity restarts the menu's layout pass.
-- Escape does what Back does, then collapses from the list; a press outside or tabbing
+- Escape does what Back does (a panel's own Escape handling runs first), then collapses from the
+  list; a press outside or tabbing
   away dismisses without choosing. Opened from the keyboard, closing returns focus to the shortcut
   it came from, or to More when the dock had no room for it.
 - Reduced motion snaps: no squeeze, spring, blur, cascade or reflow.

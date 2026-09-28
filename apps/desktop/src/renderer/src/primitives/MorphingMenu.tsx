@@ -37,7 +37,15 @@
 import { animate } from 'motion'
 import { motion, useReducedMotion } from 'motion/react'
 import { ArrowLeft, ChevronRight, ChevronsUpDown } from 'lucide-react'
-import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import {
+  useEffect,
+  useId,
+  useImperativeHandle,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react'
 import { cn } from '@/lib/cn'
 import { compress, PILL, rowAt, rowArrive, rowFrom, rowGone, rowLeave, spring } from './springs'
 import { Icon, type IconGlyph } from './Icon'
@@ -58,6 +66,11 @@ export type MorphingMenuAction = {
    *  Absent for an item that is not a toggle. */
   pressed?: boolean
   onSelect?: () => void
+  /** A panel of its own instead of an action: selecting the item grows the
+   *  menu into it, as a group grows into its rows. Given `close`, so a panel
+   *  can fold the menu when its work is done. Elements marked
+   *  `data-morph-row` cascade in. */
+  panel?: (close: () => void) => ReactNode
 }
 
 /** One level of children keeps the menu small and the way back predictable. */
@@ -70,18 +83,32 @@ export type MorphingMenuProps = {
   /** The active destination's id, or a child's: its parent reads as active too. */
   activeId?: string | null
   orientation?: 'horizontal' | 'vertical'
-  /** The corner the menu grows from. */
-  anchor?: 'bottom-left' | 'top-right'
+  /** The corner the menu grows from. `bottom-center` sits centred at the
+   *  foot of its box and grows up and out from the middle, as a board's
+   *  floating dock does. */
+  anchor?: 'bottom-left' | 'top-right' | 'bottom-center'
   label: string
   moreLabel?: string
   backLabel?: string
   /** Rest on the page's background rather than bare, so rows under a floating
-   *  toolbar do not show through it. */
-  surface?: boolean
+   *  toolbar do not show through it; `float` rests on the popover surface
+   *  with its shadow, for a dock that floats over content (the board's). */
+  surface?: boolean | 'float'
   className?: string
+  /** For opening a panel item from outside (a hotkey). */
+  ref?: React.Ref<MorphingMenuHandle>
 }
 
-type View = { kind: 'collapsed' } | { kind: 'main' } | { kind: 'group'; id: string }
+export type MorphingMenuHandle = {
+  /** Grow the menu into the panel of the item with this id. */
+  openPanel: (id: string) => void
+}
+
+type View =
+  | { kind: 'collapsed' }
+  | { kind: 'main' }
+  | { kind: 'group'; id: string }
+  | { kind: 'panel'; id: string }
 
 /** The geometry, in px: a shortcut, the bar's inset around them, and the pill
  *  they make. Numbers the fitting needs, so they live here and not in CSS. */
@@ -123,10 +150,12 @@ export function MorphingMenu({
   backLabel = 'Back',
   surface = false,
   className,
+  ref,
 }: MorphingMenuProps): React.JSX.Element {
   const id = useId()
   const vertical = orientation === 'vertical'
   const top = anchor === 'top-right'
+  const center = anchor === 'bottom-center'
   const tooltipSide = vertical ? 'right' : top ? 'bottom' : 'top'
   const [view, setView] = useState<View>({ kind: 'collapsed' })
   const [room, setRoom] = useState(0)
@@ -146,6 +175,7 @@ export function MorphingMenu({
   /** What the dock had no room for: More's list, and More only when it has one. */
   const overflow = items.slice(barItems.length)
   const groups = items.filter((item) => item.children?.length)
+  const panelItems = items.filter((item) => item.panel)
   const count = barItems.length + (overflow.length > 0 ? 1 : 0)
   const grid = vertical ? { columns: 1, rows: count } : dockGrid(count, room)
   const barSize = {
@@ -168,7 +198,7 @@ export function MorphingMenu({
     if (!expanded) {
       returnTarget.current = origin
       openedWithKeyboard.current = keyboard
-      groupFromDock.current = next.kind === 'group'
+      groupFromDock.current = next.kind === 'group' || next.kind === 'panel'
     }
     focusNext.current = 'first'
     setView(next)
@@ -179,7 +209,15 @@ export function MorphingMenu({
     setView({ kind: 'collapsed' })
   }
 
+  useImperativeHandle(ref, () => ({
+    openPanel: (id: string) => open({ kind: 'panel', id }, id, true),
+  }))
+
   function back() {
+    if (view.kind === 'panel') {
+      close(true, view.id)
+      return
+    }
     if (view.kind !== 'group') return
     if (groupFromDock.current) {
       close(true, view.id)
@@ -223,25 +261,31 @@ export function MorphingMenu({
       shell.toggleAttribute('data-flip', flip)
       Object.assign(
         shell.style,
-        flip
+        center
           ? {
               position: 'fixed',
-              left: `${box.right - barSize.width}px`,
-              right: 'auto',
-              top: `${box.top}px`,
+              left: `${box.left + box.width / 2}px`,
+              bottom: `${window.innerHeight - box.bottom}px`,
             }
-          : top
+          : flip
             ? {
                 position: 'fixed',
-                left: '',
-                right: `${window.innerWidth - box.right}px`,
+                left: `${box.right - barSize.width}px`,
+                right: 'auto',
                 top: `${box.top}px`,
               }
-            : {
-                position: 'fixed',
-                left: `${box.left}px`,
-                bottom: `${window.innerHeight - box.bottom}px`,
-              },
+            : top
+              ? {
+                  position: 'fixed',
+                  left: '',
+                  right: `${window.innerWidth - box.right}px`,
+                  top: `${box.top}px`,
+                }
+              : {
+                  position: 'fixed',
+                  left: `${box.left}px`,
+                  bottom: `${window.innerHeight - box.bottom}px`,
+                },
         { zIndex: '50' },
       )
       shell.dataset.pinned = ''
@@ -264,9 +308,7 @@ export function MorphingMenu({
     const settle = () => {
       if (!expanded) unpin()
     }
-    const changed =
-      old.kind !== view.kind ||
-      (old.kind === 'group' && view.kind === 'group' && old.id !== view.id)
+    const changed = old.kind !== view.kind || ('id' in old && 'id' in view && old.id !== view.id)
     const crossingBar = (old.kind === 'collapsed') !== (view.kind === 'collapsed')
     const snap = reducedMotion || !changed
 
@@ -339,10 +381,14 @@ export function MorphingMenu({
     const focus = focusNext.current
     focusNext.current = null
     if (focus) {
+      const first =
+        view.kind === 'panel'
+          ? panel?.querySelector<HTMLElement>(
+              'input, textarea, button, [tabindex]:not([tabindex="-1"])',
+            )
+          : controls[0]
       const target =
-        focus === 'first'
-          ? controls[0]
-          : controls.find((element) => element.dataset.menuItem === focus)
+        focus === 'first' ? first : controls.find((element) => element.dataset.menuItem === focus)
       // An item the dock had no room for has no shortcut to return to.
       ;(
         target ??
@@ -361,7 +407,7 @@ export function MorphingMenu({
     // `barSize` is derived from `count` and the grid; listing the object would
     // re-run every render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [view, reducedMotion, items, count, grid.columns, vertical, top])
+  }, [view, reducedMotion, items, count, grid.columns, vertical, top, center])
 
   useEffect(() => {
     if (!expanded) return
@@ -395,7 +441,9 @@ export function MorphingMenu({
           onClick={(event) =>
             hasChildren
               ? open({ kind: 'group', id: item.id }, item.id, event.detail === 0)
-              : select(item)
+              : item.panel
+                ? open({ kind: 'panel', id: item.id }, item.id, event.detail === 0)
+                : select(item)
           }
         >
           {item.badge !== undefined && item.badge > 0 && (
@@ -437,7 +485,9 @@ export function MorphingMenu({
         onClick={(event) =>
           hasChildren
             ? open({ kind: 'group', id: item.id }, item.id, event.detail === 0)
-            : select(item)
+            : item.panel
+              ? open({ kind: 'panel', id: item.id }, item.id, event.detail === 0)
+              : select(item)
         }
       >
         <Icon icon={active && item.activeIcon ? item.activeIcon : item.icon} />
@@ -458,10 +508,11 @@ export function MorphingMenu({
     )
   }
 
-  const hiddenPanel = (hidden: boolean) =>
+  const hiddenPanel = (hidden: boolean, width = 'w-67') =>
     cn(
-      'absolute top-0 max-h-[calc(100dvh-4rem)] w-67 max-w-[calc(100vw-1rem)] overflow-y-auto overscroll-contain p-1.5',
-      top ? FROM_RIGHT : 'left-0',
+      'absolute top-0 max-h-[calc(100dvh-4rem)] max-w-[calc(100vw-1rem)] overflow-y-auto overscroll-contain p-1.5',
+      width,
+      top ? FROM_RIGHT : center ? FROM_CENTER : 'left-0',
       hidden && 'pointer-events-none',
     )
 
@@ -478,7 +529,7 @@ export function MorphingMenu({
         if (event.key !== 'Escape' || !expanded) return
         event.preventDefault()
         event.stopPropagation()
-        if (view.kind === 'group') back()
+        if (view.kind === 'group' || view.kind === 'panel') back()
         else close()
       }}
       onBlur={(event) => {
@@ -494,9 +545,11 @@ export function MorphingMenu({
         ref={shellRef}
         className={cn(
           'group/morph absolute overflow-hidden rounded-[1.25rem]',
-          top ? 'top-0 right-0' : 'bottom-0 left-0',
+          top ? 'top-0 right-0' : center ? 'bottom-0 left-1/2 -translate-x-1/2' : 'bottom-0 left-0',
           'motion-respond text-muted-foreground',
-          surface && 'bg-background',
+          surface === 'float'
+            ? 'bg-popover text-popover-foreground shadow-popover'
+            : surface && 'bg-background',
           'data-open:bg-popover data-open:text-popover-foreground data-open:shadow-popover',
         )}
         data-open={expanded ? '' : undefined}
@@ -508,7 +561,7 @@ export function MorphingMenu({
           inert={expanded}
           className={cn(
             'absolute grid p-1',
-            top ? `top-0 ${FROM_RIGHT}` : 'bottom-0 left-0',
+            top ? `top-0 ${FROM_RIGHT}` : center ? `bottom-0 ${FROM_CENTER}` : 'bottom-0 left-0',
             expanded && 'pointer-events-none',
           )}
           style={{ ...barSize, gridTemplateColumns: `repeat(${grid.columns}, ${BUTTON}px)` }}
@@ -565,6 +618,22 @@ export function MorphingMenu({
             </div>
           )
         })}
+        {panelItems.map((item) => {
+          const visible = view.kind === 'panel' && view.id === item.id
+          return (
+            <div
+              key={item.id}
+              data-morph-panel=""
+              data-panel={item.id}
+              aria-label={item.label}
+              aria-hidden={!visible}
+              inert={!visible}
+              className={hiddenPanel(!visible, 'w-max')}
+            >
+              {item.panel!(() => close())}
+            </div>
+          )
+        })}
       </div>
     </nav>
   )
@@ -573,6 +642,10 @@ export function MorphingMenu({
 /** The top-right anchor's inner layers hug the shell's right edge, or its left
  *  one while the open shell grows rightward (`data-flip`). */
 const FROM_RIGHT = 'right-0 group-data-flip/morph:right-auto group-data-flip/morph:left-0'
+
+/** The bottom-centre anchor's inner layers stay centred on the shell, which
+ *  grows out from its middle. */
+const FROM_CENTER = 'left-1/2 -translate-x-1/2'
 
 /**
  * One grid cell of the dock. The layout spring lives here rather than on the
