@@ -582,7 +582,7 @@ const frontmatterDecoField = StateField.define<DecorationSet>({
 })
 
 const frontmatterTheme = EditorView.baseTheme({
-  // PADDING, not margin, below: CodeMirror measures a block widget by its
+  // PADDING, not margin, above and below: CodeMirror measures a block widget by its
   // border box, so a vertical margin is height it does not know about and
   // clicks below land a line off. Horizontal auto margins are harmless.
   //
@@ -591,6 +591,8 @@ const frontmatterTheme = EditorView.baseTheme({
   '.cm-fm': {
     width: 'min(24rem, 100% - 2 * var(--editor-inset))',
     margin: '0 auto',
+    // Room above too, so the properties do not crowd the pane's top edge.
+    paddingTop: '1.25rem',
     paddingBottom: '2.5rem',
     textAlign: 'center',
   },
