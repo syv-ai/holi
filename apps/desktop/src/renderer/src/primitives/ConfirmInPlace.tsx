@@ -96,7 +96,10 @@ export function ConfirmInPlace({
         className,
       )}
     >
-      <AnimatePresence mode="popLayout" initial={false}>
+      {/* The md pill fades out where it stands before the bin comes back
+          ('wait'): popped out of the layout, it would ride the shrinking box
+          over to the bin's place first. */}
+      <AnimatePresence mode={md ? 'wait' : 'popLayout'} initial={false}>
         {asking && md ? (
           <motion.button
             key="ask"
@@ -151,6 +154,10 @@ export function ConfirmInPlace({
             type="button"
             aria-label={label}
             {...fade}
+            // Pressed, the bin gets out of the pill's way at once.
+            exit={
+              md ? { opacity: 0, transition: reduced ? instant : { duration: 0.06 } } : fade.exit
+            }
             onClick={() => setAsking(true)}
             className={cn(
               'grid place-items-center rounded-full text-icon outline-none motion-respond hover:text-icon-active focus-visible:ring-1 focus-visible:ring-ring',
