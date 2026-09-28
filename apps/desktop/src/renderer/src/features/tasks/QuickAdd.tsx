@@ -46,9 +46,9 @@ import { activeDocAtom, snapshotAtom } from '@/state/vaults'
 import { TaskDescriptionEditor } from './TaskBodyEditor'
 
 const PRIORITIES: { value: Priority; label: string }[] = [
-  { value: 'high', label: 'High' },
-  { value: 'medium', label: 'Medium' },
   { value: 'low', label: 'Low' },
+  { value: 'medium', label: 'Medium' },
+  { value: 'high', label: 'High' },
 ]
 /** The folders Lane lists at once; typing narrows the rest. */
 const FOLDERS_SHOWN = 40
@@ -88,6 +88,8 @@ const folderOf = (path: string) =>
   path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : ROOT_LANE
 const cleanFolder = (folder: string) => folder.trim().replace(/^\/+|\/+$/g, '')
 const folderName = (folder: string) => (folder === ROOT_LANE ? 'Vault root' : folder)
+/** A folder under a dot-folder (`.claude`, `.holi`): listed after the rest. */
+const isHidden = (folder: string) => folder.split('/').some((part) => part.startsWith('.'))
 
 /** A step through `values` from `current`, wrapping. */
 function stepIn<T>(values: readonly T[], current: T, step: number): T {
@@ -185,12 +187,13 @@ export function QuickAdd({
     ],
     [snapshot],
   )
-  /** Lane's choices: the folders the query matches, and the query itself as
-   *  a new folder when nothing is named exactly that. */
+  /** Lane's choices: the folders the query matches, hidden ones last, and
+   *  the query itself as a new folder when nothing is named exactly that. */
   const query = cleanFolder(laneQuery)
   const laneChoices = useMemo(() => {
     const needle = query.toLowerCase()
     const matching = folders.filter((f) => folderName(f).toLowerCase().includes(needle))
+    matching.sort((a, b) => Number(isHidden(a)) - Number(isHidden(b)))
     return query && !folders.includes(query) ? [...matching, query] : matching
   }, [folders, query])
   const dues = duePresets(now)
@@ -343,11 +346,21 @@ export function QuickAdd({
     setLaneQuery('')
   }, [open])
 
-  // The row a key reached stays in sight.
+  // The row a key reached stays in sight. The list scrolls, and only the list:
+  // `scrollIntoView` would also scroll the clipped panel around it.
   useEffect(() => {
-    listRef.current
-      ?.querySelector('[data-active]')
-      ?.scrollIntoView({ block: 'nearest', behavior: reduced ? 'auto' : 'smooth' })
+    const list = listRef.current
+    const row = list?.querySelector<HTMLElement>('[data-active]')
+    if (!list || !row) return
+    const top = row.offsetTop - list.offsetTop
+    const bottom = top + row.offsetHeight
+    const to =
+      top < list.scrollTop
+        ? top
+        : bottom > list.scrollTop + list.clientHeight
+          ? bottom - list.clientHeight
+          : null
+    if (to !== null) list.scrollTo({ top: to, behavior: reduced ? 'auto' : 'smooth' })
   }, [step, at, reduced])
 
   const onKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
