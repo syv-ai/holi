@@ -163,7 +163,7 @@ function NameInput({
   return (
     <Input
       ref={ref}
-      className="h-[20px] min-w-0 flex-1 rounded border-primary bg-background px-1 py-0 text-[13px] shadow-none"
+      className="h-[20px] min-w-0 flex-1 rounded px-1 py-0 text-[13px]"
       placeholder={placeholder}
       value={value}
       onChange={(e) => setValue(e.target.value)}

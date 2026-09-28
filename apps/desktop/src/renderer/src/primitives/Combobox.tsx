@@ -71,20 +71,16 @@ function ComboboxItem({ className, ...props }: ComboboxPrimitive.Item.Props) {
   )
 }
 
-const comboboxChipsVariants = cva(
-  'flex flex-wrap items-center gap-1 text-sm has-aria-invalid:border-destructive',
-  {
-    variants: {
-      variant: {
-        default:
-          'min-h-9 rounded-md border border-input bg-transparent px-1.5 py-1.5 shadow-xs focus-within:border-ring dark:bg-input/30',
-        // A value in a labelled row (`field-look.ts`), grown to wrap its chips.
-        field: `${FIELD_LOOK} h-auto min-h-8 py-1`,
-      },
+const comboboxChipsVariants = cva('flex flex-wrap items-center gap-1 text-sm', {
+  variants: {
+    variant: {
+      default: 'min-h-9 rounded-md bg-muted px-1.5 py-1.5 has-aria-invalid:bg-destructive/15',
+      // A value in a labelled row (`field-look.ts`), grown to wrap its chips.
+      field: `${FIELD_LOOK} h-auto min-h-8 py-1`,
     },
-    defaultVariants: { variant: 'default' },
   },
-)
+  defaultVariants: { variant: 'default' },
+})
 
 function ComboboxChips({
   className,

@@ -143,10 +143,7 @@ export function TaskDescriptionEditor({
     <div
       ref={hostRef}
       data-detail-description
-      className={
-        hostClassName ??
-        'mt-1 min-h-[10rem] overflow-hidden rounded-md border border-input bg-transparent text-xs focus-within:border-ring'
-      }
+      className={hostClassName ?? 'mt-1 min-h-[10rem] overflow-hidden rounded-md bg-muted text-xs'}
     />
   )
 }

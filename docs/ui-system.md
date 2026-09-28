@@ -44,9 +44,11 @@ or a test.
 
 ## Focus
 
-One treatment: a control recolours its own edge on `focus-visible` (`border-input` →
-`border-ring`, same 1px), so nothing grows or shifts. Where there is no edge (a filled or ghost
-button, an icon button, the resize handle) it draws `ring-1 ring-ring`. `ring-0` is only for
+A field you type into has no edge at all: a calm grey fill (`TEXT_FIELD_LOOK` in
+`primitives/field-look.ts`), and its focus is the caret blinking where the text goes. Any other
+control recolours its own edge on `focus-visible` (`border-input` → `border-ring`, same 1px), so
+nothing grows or shifts. Where there is no edge (a filled or ghost button, an icon button, the
+resize handle) it draws `ring-1 ring-ring`. `ring-0` is only for
 opting a bordered variant out of the ring. `test/focus-treatment.test.ts` is a source scan, so a
 component pasted from shadcn upstream with the 3px halo fails before it is mounted anywhere.
 
@@ -141,8 +143,8 @@ DOM: they copy width, motion, header and edge through the injected stylesheet an
 
 ## Rules
 
-- State shows by background colour, never by borders, rings or outlines. Form fields keep a dimmed
-  edge; focus is the one exception, defined above.
+- State shows by background colour, never by borders, rings or outlines. A text field is a grey
+  fill, not an edge; focus is the one exception, defined above.
 - Sidebars are flat `--background` with no separator from the pane.
 - Only floating things (dialogs, menus, popovers, tooltips) get `--popover` and a shadow.
 - Never coloured text on a tinted background of the same hue: coloured text on no background, or

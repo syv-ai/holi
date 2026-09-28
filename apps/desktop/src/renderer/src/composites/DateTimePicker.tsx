@@ -316,7 +316,7 @@ export function DateTimePicker({
                     type="time"
                     value={time}
                     aria-label="time"
-                    className="ml-auto h-7 w-auto rounded-md border border-input px-2 text-xs"
+                    className="ml-auto h-7 w-auto px-2 text-xs"
                     onChange={(e) =>
                       selected !== null &&
                       e.target.value !== '' &&
