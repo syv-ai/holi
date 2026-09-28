@@ -207,10 +207,10 @@ export function BoardView(): React.JSX.Element {
                       {...drag.target(lane, column.status)}
                       className={cn('mb-1.5 rounded-2xl p-1 motion-respond', gap && 'bg-accent/40')}
                     >
-                      <p className="px-1.5 pb-1.5 text-xs font-medium break-words text-muted-foreground">
+                      <p className="px-1.5 pt-3 pb-2 text-xs font-medium break-words text-muted-foreground">
                         {laneLabel(lane)}
                       </p>
-                      <div className="flex min-h-6 flex-col gap-1.5">
+                      <div className="flex min-h-6 flex-col gap-2.5">
                         <AnimatePresence initial={false}>
                           {withGap(cards, drag.isFolded, gap?.index ?? null).map((item) =>
                             item.kind === 'gap' ? (
