@@ -39,6 +39,9 @@ export interface FieldSpec {
    * means nothing to a human and must not be hand-edited.
    */
   readonly hidden?: boolean
+  /** Never empty: no way to clear it. A task's `status`, which reads as `todo`
+   *  when absent, so clearing it would only pretend to. */
+  readonly required?: boolean
 }
 
 /** `todo | doing | done`, and the rest of the task vocabulary: the same words
@@ -47,7 +50,11 @@ const TASK_FIELDS: readonly FieldSpec[] = [
   // DISPLAY order only: `serializeTaskFile` builds its own object, so changing
   // it here rewrites no task file. `folder` is derived and rendered above these
   // by the widget itself.
-  { key: 'status', kind: { kind: 'enum', options: ['todo', 'doing', 'done'] } },
+  {
+    key: 'status',
+    kind: { kind: 'enum', options: ['todo', 'doing', 'done'] },
+    required: true,
+  },
   { key: 'priority', kind: { kind: 'enum', options: ['low', 'medium', 'high'] } },
   { key: 'due', kind: { kind: 'stamp' } },
   { key: 'reminder', kind: { kind: 'stamp' } },

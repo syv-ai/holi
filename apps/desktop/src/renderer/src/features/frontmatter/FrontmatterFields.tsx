@@ -151,8 +151,12 @@ export function FrontmatterFields({
           label={field.key}
           hover
           // Removing unsets a schema key (its row stays, empty) and deletes any
-          // other key with its row.
-          onRemove={isFieldSet(values[field.key]) ? () => set(field.key, undefined) : undefined}
+          // other key with its row. A required key has nothing to remove.
+          onRemove={
+            !field.required && isFieldSet(values[field.key])
+              ? () => set(field.key, undefined)
+              : undefined
+          }
         >
           {control(field)}
         </FieldRow>

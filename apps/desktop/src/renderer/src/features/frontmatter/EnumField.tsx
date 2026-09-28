@@ -4,14 +4,13 @@
  * Controlled `open`, for the row's label: a label clicks its control, and
  * Radix opens a Select on a mouse's `pointerdown`, never on its `click`. So a
  * click the trigger saw no press for came from the label, and opens it here.
+ *
+ * Only the vocabulary is offered. Empty is the unset field itself, cleared by
+ * the row's ×, not a choice in the list that would read the same as it.
  */
 import { useRef, useState } from 'react'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/primitives'
 import { useFieldControlId } from '@/composites'
-
-/** The VALUE that means "unset" in a Radix Select, which forbids ''. A real
- *  option so a set field can be cleared; an unset field shows nothing. */
-const UNSET = '—'
 
 export function EnumField({
   name,
@@ -23,22 +22,16 @@ export function EnumField({
   name: string
   value: unknown
   options: readonly string[]
-  /** Undefined clears the key. */
-  onChange: (next: string | undefined) => void
+  onChange: (next: string) => void
 }): React.JSX.Element {
   const id = useFieldControlId()
   const [open, setOpen] = useState(false)
   const pressed = useRef(false)
   const chosen = typeof value === 'string' && options.includes(value) ? value : undefined
   return (
-    // Undefined, not the sentinel, when unset: Radix renders the selected
-    // item's text, so `UNSET` would print its `—`.
-    <Select
-      open={open}
-      onOpenChange={setOpen}
-      value={chosen}
-      onValueChange={(v) => onChange(v === UNSET ? undefined : v)}
-    >
+    // '' when unset, not undefined: undefined would hand Radix the value, so a
+    // cleared field kept showing its last choice.
+    <Select open={open} onOpenChange={setOpen} value={chosen ?? ''} onValueChange={onChange}>
       <SelectTrigger
         id={id}
         variant="field"
@@ -53,7 +46,6 @@ export function EnumField({
         <SelectValue placeholder="" />
       </SelectTrigger>
       <SelectContent>
-        <SelectItem value={UNSET}>{UNSET}</SelectItem>
         {options.map((o) => (
           <SelectItem key={o} value={o}>
             {o}

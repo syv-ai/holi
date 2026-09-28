@@ -73,8 +73,7 @@ test('clearing a field deletes the key rather than writing a null', async () => 
   const onWrite = fields('status: todo\npriority: high\n')
   const user = userEvent.setup()
 
-  await user.click(screen.getByRole('combobox', { name: /priority/i }))
-  await user.click(screen.getByRole('option', { name: '—' }))
+  await user.click(screen.getByRole('button', { name: 'remove field priority' }))
 
   const written = onWrite.mock.calls[0]![0] as string
   expect(written).not.toContain('priority')
@@ -206,9 +205,9 @@ test('the × on a schema key unsets it', async () => {
 })
 
 test('a row with nothing set has no × to press', () => {
-  fields('status: todo\n')
+  fields('status: todo\npriority: high\n')
   expect(screen.queryByRole('button', { name: 'remove field due' })).not.toBeInTheDocument()
-  expect(screen.getByRole('button', { name: 'remove field status' })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'remove field priority' })).toBeInTheDocument()
 })
 
 test("a field's title puts the caret in a text field", async () => {
@@ -223,9 +222,9 @@ test("a field's title opens a select", async () => {
   // Twice: once the trigger has seen a mouse, Radix no longer opens on a click,
   // which is all a label gives it.
   await user.click(screen.getByRole('combobox', { name: 'status' }))
+  await user.keyboard('{Escape}')
   // The list shrinks back into its trigger before it is gone.
   await waitFor(() => expect(screen.queryByRole('listbox')).toBeNull())
-  await user.keyboard('{Escape}')
   await user.click(screen.getByText('status'))
   expect(screen.getByRole('listbox')).toBeInTheDocument()
 })
