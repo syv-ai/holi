@@ -11,7 +11,8 @@
 import { useAtom, useAtomValue } from 'jotai'
 import { Button, Checkbox, Input } from '@/primitives'
 import { cn } from '@/lib/cn'
-import { availableLabels, filterAtom, nowAtom, tasksAtom } from '@/state/tasks'
+import { nowAtom } from '@/state/clock'
+import { availableLabels, filterAtom, tasksAtom } from '@/state/tasks'
 
 export function FilterBar(): React.JSX.Element {
   const [filter, setFilter] = useAtom(filterAtom)

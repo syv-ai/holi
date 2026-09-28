@@ -31,7 +31,8 @@ import { FileFactsLine } from './FileFactsLine'
 import { TagsField } from './TagsField'
 import { TextField } from './TextField'
 import { duePresets, reminderPresets } from '@/lib/date-presets'
-import { nowAtom, taskTagsAtom, todayAtom } from '@/state/tasks'
+import { nowAtom, todayAtom } from '@/state/clock'
+import { taskTagsAtom } from '@/state/tasks'
 
 export function FrontmatterFields({
   path,

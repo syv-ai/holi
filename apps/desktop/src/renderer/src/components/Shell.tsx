@@ -56,7 +56,7 @@ import {
 } from '../state/panes'
 import { historyOpenAtom, historyTargetPathAtom } from '../state/history'
 import { useGoogleAccount } from '../state/google'
-import { tickNowAtom } from '../state/tasks'
+import { tickNowAtom } from '../state/clock'
 import type { PaneDropZone } from '@/lib/tab-drop'
 import type { ConflictResolvers } from '@/lib/editor-reload'
 import { ConflictBanner } from '@/composites/ConflictBanner'

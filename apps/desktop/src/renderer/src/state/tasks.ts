@@ -9,16 +9,10 @@
  * body; backrefs are a grep).
  */
 import type { Task, TaskStatus } from '@holi/shared'
-import {
-  allLabels,
-  dailyNoteFilename,
-  parseWikiLinks,
-  stampDate,
-  taskArea,
-  virtualLabels,
-} from '@holi/shared'
+import { allLabels, dailyNoteFilename, parseWikiLinks, taskArea, virtualLabels } from '@holi/shared'
 import { atom } from 'jotai'
 import { trpc } from '../lib/trpc'
+import { nowAtom, todayAtom } from './clock'
 import { closeTabsForPaths, workspaceAtom } from './panes'
 import { activeRemoteAtom, loadSnapshotAtom, snapshotAtom } from './vaults'
 
@@ -68,39 +62,6 @@ export function countOpenTasksLinking(tasks: Iterable<Task>, notePath: string): 
 export const todayLinkCountAtom = atom((get) =>
   countOpenTasksLinking(get(snapshotAtom).tasks, dailyNoteFilename(get(todayAtom))),
 )
-
-/** The current local minute, as `YYYY-MM-DDTHH:MM`. */
-function localNow(): string {
-  const d = new Date()
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return (
-    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
-    `T${pad(d.getHours())}:${pad(d.getMinutes())}`
-  )
-}
-
-/**
- * Now, to the minute, as `YYYY-MM-DDTHH:MM`.
- *
- * Held in state rather than read inline so the label rules stay pure and
- * testable, and the board re-renders when the clock moves. Local, not UTC: the
- * same frame the roll-forward uses.
- *
- * **Minute-valued on purpose.** A due date may name an hour, so `overdue` turns
- * over on a minute (D79), but the atom's identity changes only when the minute
- * string does, so a timer that fires twice a minute re-renders nothing.
- */
-export const nowAtom = atom<string>(localNow())
-
-/** Today, as `YYYY-MM-DD`: derived, so the daily note and the labels can never
- *  disagree about what day it is. */
-export const todayAtom = atom((get) => stampDate(get(nowAtom)) ?? get(nowAtom).slice(0, 10))
-
-/** Advance `nowAtom` to the current minute. Mounted once, from the Shell. */
-export const tickNowAtom = atom(null, (get, set) => {
-  const next = localNow()
-  if (next !== get(nowAtom)) set(nowAtom, next)
-})
 
 /** The create-task dialog's mode. `quick` (⌘T) captures a task and stays where
  * you are; `full` (⌘⇧T) captures it and opens it to flesh out. */

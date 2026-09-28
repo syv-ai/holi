@@ -47,11 +47,11 @@ import {
   laneOrder,
   matchesFilter,
   moveTaskAtom,
-  nowAtom,
   patchTaskAtom,
   setTaskStatusAtom,
   tasksAtom,
 } from '@/state/tasks'
+import { nowAtom } from '@/state/clock'
 
 const COLUMNS: { status: TaskStatus; label: string }[] = [
   { status: 'todo', label: 'Todo' },

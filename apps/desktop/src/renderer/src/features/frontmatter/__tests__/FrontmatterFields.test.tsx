@@ -2,7 +2,7 @@ import { render, screen } from '@/test/render'
 import userEvent from '@testing-library/user-event'
 import { expect, test, vi } from 'vitest'
 import { Provider, createStore } from 'jotai'
-import { nowAtom } from '@/state/tasks'
+import { nowAtom } from '@/state/clock'
 import { FrontmatterFields } from '../FrontmatterFields'
 
 const TASK = 'projects/task.fix-the-tap.md'

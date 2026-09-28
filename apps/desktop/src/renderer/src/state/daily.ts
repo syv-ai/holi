@@ -13,7 +13,7 @@ import { atom } from 'jotai'
 import { dailyNoteFilename } from '@holi/shared'
 import { trpc } from '../lib/trpc'
 import { openPinned, workspaceAtom } from './panes'
-import { todayAtom } from './tasks'
+import { todayAtom } from './clock'
 import { loadVaultSettingsAtom } from './settings'
 import { activeDocAtom, activeRemoteAtom, loadSnapshotAtom, snapshotAtom } from './vaults'
 

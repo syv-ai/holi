@@ -5,7 +5,8 @@
 import { createStore } from 'jotai'
 import { expect, test } from 'vitest'
 import type { Task, VaultSnapshot } from '@holi/shared'
-import { nowAtom, overdueTaskCountAtom } from '../src/renderer/src/state/tasks'
+import { nowAtom } from '../src/renderer/src/state/clock'
+import { overdueTaskCountAtom } from '../src/renderer/src/state/tasks'
 import { snapshotAtom } from '../src/renderer/src/state/vaults'
 
 const task = (path: string, over: Partial<Task> = {}): Task => ({

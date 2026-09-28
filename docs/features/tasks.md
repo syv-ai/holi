@@ -75,7 +75,8 @@ Todo / Doing / Done, with one swim lane per folder.
   `recurrence.ts`, `reminder.ts`, `rank.ts`: the format and all the pure rules.
 - `apps/desktop/src/main/router.ts`: `tasks.*` and `patched`, which applies completion.
 - `apps/desktop/src/main/reminders/`, `main/tray.ts`: the sweep, tick, watermark, notifications.
-- `apps/desktop/src/renderer/src/state/tasks.ts`: task set, filter, drops, writes, `nowAtom`.
+- `apps/desktop/src/renderer/src/state/tasks.ts`: task set, filter, drops, writes.
+- `apps/desktop/src/renderer/src/state/clock.ts`: `nowAtom` and `todayAtom`, the minute the overdue labels and the daily note read.
 - `apps/desktop/src/renderer/src/features/tasks/`, `lib/board-order.ts`, `lib/date-presets.ts`,
   `composites/DateTimePicker.tsx`, `composites/RecurrenceField.tsx`.
 - `apps/desktop/src/main/agent/skills/using-tasks/SKILL.md`: the seeded agent skill.

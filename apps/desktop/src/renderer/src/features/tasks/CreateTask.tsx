@@ -20,10 +20,10 @@ import {
   ROOT_LANE,
   createTaskAtom,
   laneLabel,
-  nowAtom,
   patchTaskAtom,
   taskCreateFolders,
 } from '@/state/tasks'
+import { nowAtom } from '@/state/clock'
 import { openTaskAtom } from '@/state/view'
 import { activeDocAtom, snapshotAtom } from '@/state/vaults'
 
