@@ -1,13 +1,11 @@
 /**
- * Facts about one file that are not in it: who made it and when, how often it
- * has changed, and how it is linked.
+ * Facts about one file that are not in it: who made it and when, and how often
+ * it has changed.
  *
- * The frontmatter block shows these beside the fields, read-only. None of them
- * is written into the file, because each already has an authority that a copy
- * could only drift from: git's history for the first three, the vault's
- * wiki-links for the last.
+ * The frontmatter header and the history drawer show these, read-only. None of
+ * them is written into the file, because git's history already holds them and a
+ * copy could only drift from it.
  */
-import { parseWikiLinks } from '@holi/shared'
 import type { Commit } from '../git'
 
 export interface CommitFact {
@@ -37,12 +35,4 @@ export function fileHistory(commits: readonly Commit[]): FileHistory | null {
     first: { date: first.date, author: first.author },
     revisions: commits.length,
   }
-}
-
-/** How many distinct things `text` links to, not counting itself. A target
- *  linked five times is one outgoing link, the way a backlink is one file. */
-export function linksOut(text: string, self: string): number {
-  const targets = new Set(parseWikiLinks(text).map((l) => l.target))
-  targets.delete(self)
-  return targets.size
 }

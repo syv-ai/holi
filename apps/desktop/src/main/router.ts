@@ -32,7 +32,7 @@ import { ensureSeeded } from './agent/seed-content'
 import { initAppOp, type AppInitResult } from './apps/app-ops'
 import { migrateApps as moveLegacyApps } from './apps/migrate-apps'
 import { scanBackrefs, scanBackrefsMany } from './vault/backrefs'
-import { fileHistory, linksOut, type FileHistory } from './vault/file-facts'
+import { fileHistory, type FileHistory } from './vault/file-facts'
 import { copyNotes } from './vault/copy'
 import { importFiles } from './vault/import-files'
 import { exportFiles } from './vault/export-files'
@@ -1114,21 +1114,6 @@ export function createRouter(deps: RouterDeps) {
       .query(async ({ input }): Promise<FileHistory | null> =>
         fileHistory(await activeOrThrow().repo.log({ path: safe(input.path) })),
       ),
-
-    /** How the file is linked: files linking here (the same scan the delete
-     *  preview uses, a read of every note, so the block asks only when opened)
-     *  and distinct targets it links to, read from disk. */
-    links: t.procedure
-      .input(fields({ remote: 'string', path: 'string' }))
-      .query(async ({ input }): Promise<{ in: number; out: number }> => {
-        const root = await rootFor(input.remote)
-        const path = safe(input.path)
-        const [inbound, text] = await Promise.all([
-          scanBackrefs(root, path),
-          readFile(absPathFor(root, path), 'utf8').catch(() => ''),
-        ])
-        return { in: inbound.length, out: linksOut(text, path) }
-      }),
 
     /**
      * Set or clear a path's icon in `.holi/settings/icons.yaml` (D82).

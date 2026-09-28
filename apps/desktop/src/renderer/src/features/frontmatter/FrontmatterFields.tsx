@@ -27,7 +27,6 @@ import { useAtomValue } from 'jotai'
 import { DateTimePicker, FieldRow, RecurrenceField } from '@/composites'
 import { AddFieldRow } from './AddFieldRow'
 import { EnumField } from './EnumField'
-import { FileFactsLine } from './FileFactsLine'
 import { TagsField } from './TagsField'
 import { TextField } from './TextField'
 import { duePresets, reminderPresets } from '@/lib/date-presets'
@@ -38,7 +37,6 @@ export function FrontmatterFields({
   path,
   yaml,
   onWrite,
-  facts = false,
 }: {
   /** The file, which is what decides the schema. */
   path: string
@@ -46,9 +44,6 @@ export function FrontmatterFields({
   yaml: string
   /** The whole YAML body to write back. */
   onWrite: (yaml: string) => void
-  /** Draw the read-only facts line over the rows (`FileFactsLine`), which
-   *  asks main for the file's history and links. */
-  facts?: boolean
 }): React.JSX.Element | null {
   const now = useAtomValue(nowAtom)
   const today = useAtomValue(todayAtom)
@@ -145,7 +140,6 @@ export function FrontmatterFields({
       className="flex flex-col bg-transparent px-1 py-1.5 text-foreground"
       data-frontmatter-fields={path}
     >
-      {facts && <FileFactsLine path={path} />}
       {frontmatterRows(schema, Object.keys(values)).map((field) => (
         <FieldRow
           key={field.key}

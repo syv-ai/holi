@@ -413,7 +413,7 @@ class FrontmatterWidget extends WidgetType {
     wrap.appendChild(live.header)
 
     if (this.body === null) {
-      // No frontmatter: the bar still shows, since its facts are about the file.
+      // No frontmatter: the bar still shows, since its header is about the file.
       // No chevron and nothing here writes a block: `normalize-md` adds
       // frontmatter on the next commit anyway.
       wrap.setAttribute('data-frontmatter', 'none')

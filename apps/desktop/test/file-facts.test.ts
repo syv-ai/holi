@@ -1,9 +1,9 @@
 /**
- * The facts the frontmatter block shows that are not in the file: its history
- * from git, and how it links out.
+ * The facts the frontmatter header shows that are not in the file: its history
+ * from git.
  */
 import { describe, expect, it } from 'vitest'
-import { fileHistory, linksOut } from '../src/main/vault/file-facts'
+import { fileHistory } from '../src/main/vault/file-facts'
 import type { Commit } from '../src/main/git'
 
 const commit = (date: string, author: string): Commit => ({
@@ -38,19 +38,5 @@ describe('fileHistory', () => {
 
   it('is null for a file with no commits yet', () => {
     expect(fileHistory([])).toBeNull()
-  })
-})
-
-describe('linksOut', () => {
-  it('counts distinct targets, so a note linked twice is one link', () => {
-    expect(linksOut('[[a.md]] and [[a.md|again]] and [[b.md]]', 'self.md')).toBe(2)
-  })
-
-  it('does not count a link to itself', () => {
-    expect(linksOut('[[self.md]] [[a.md]]', 'self.md')).toBe(1)
-  })
-
-  it('is zero for prose with no links', () => {
-    expect(linksOut('just words', 'self.md')).toBe(0)
   })
 })

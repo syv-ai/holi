@@ -1,6 +1,6 @@
 /**
- * One file's history, fetched once and shared: the frontmatter header, the
- * facts line and the history drawer all read `fileHistoryAtom(path)`.
+ * One file's history, fetched once and shared: the frontmatter header and the
+ * history drawer both read `fileHistoryAtom(path)`.
  *
  * It follows the file's history epoch, holds the last answer while a refetch is
  * in flight, and never shows one vault's answer in another.

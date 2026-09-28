@@ -1,5 +1,5 @@
 /**
- * A commit's date as the frontmatter header and facts line show it.
+ * A commit's date as the frontmatter header shows it.
  */
 
 /** ISO date → `DD/MM/YY`. Empty string when it can't be parsed. */

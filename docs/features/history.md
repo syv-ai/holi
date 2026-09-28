@@ -29,7 +29,7 @@ A vault's history is its git history, and the autosave commits give it fine reso
 - `apps/desktop/src/renderer/src/features/history/HistoryPanel.tsx`: the file drawer
 - `apps/desktop/src/renderer/src/features/history/HistoryView.tsx`: the vault tab
 - `apps/desktop/src/renderer/src/state/history.ts`: loading, selection, restore
-- `apps/desktop/src/renderer/src/state/file-history.ts`: `fileHistoryAtom(path)`, the one per-file lookup the frontmatter header, the facts line and the drawer's count share
+- `apps/desktop/src/renderer/src/state/file-history.ts`: `fileHistoryAtom(path)`, the one per-file lookup the frontmatter header and the drawer's count share
 - `apps/desktop/src/main/router.ts` (`history.*`, `notes.fileHistory`): log, changed files, per-file diff, restore
 - `apps/desktop/src/main/vault/file-facts.ts`: revision count, first and last commit
 - `apps/desktop/src/main/git.ts` (`log`, `show`, `changedFiles`): the git side

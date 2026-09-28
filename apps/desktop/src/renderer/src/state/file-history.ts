@@ -1,8 +1,8 @@
 /**
  * One file's git history (`notes.fileHistory`): its last and first commit and
  * how many commits touched it. Fetched once per path and shared by everything
- * that shows it: the frontmatter header (last updated, `v.N`), the facts line
- * (created) and the history drawer's revision count.
+ * that shows it: the frontmatter header (last updated, `v.N`) and the history
+ * drawer's revision count.
  *
  * Asked again whenever the file's history epoch moves (a commit took it, or a
  * pull merged), and never otherwise. A refetch holds the last answer, so
