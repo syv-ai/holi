@@ -18,9 +18,17 @@
  */
 import type { Task, TaskStatus } from '@holi/shared'
 import { useAtomValue, useSetAtom } from 'jotai'
-import { AnimatePresence, LayoutGroup, motion, useReducedMotion } from 'motion/react'
+import {
+  AnimatePresence,
+  LayoutGroup,
+  animate,
+  motion,
+  useMotionValue,
+  useReducedMotion,
+  type MotionValue,
+} from 'motion/react'
 import { Plus } from 'lucide-react'
-import { useState } from 'react'
+import { useLayoutEffect, useRef, useState } from 'react'
 import { IconButton, RollingCount, instant, settle } from '@/primitives'
 import { cn } from '@/lib/cn'
 import { useArrivals } from '@/lib/use-arrivals'
@@ -90,6 +98,49 @@ function Gap({ height }: { height: number }): React.JSX.Element {
   )
 }
 
+/**
+ * The board's width, following its scroller's on `settle`. A pane opening
+ * beside the board, or closing, changes the scroller in one frame; driving the
+ * content's real width from one spring reflows columns, headers, cards and the
+ * dock together, with nothing scaled (a `layout` animation would squash text).
+ *
+ * A window resize or a splitter drag jumps instead: the width follows the
+ * pointer, and a spring would trail behind it. A drag moves a few pixels per
+ * frame, a pane opening moves hundreds.
+ */
+function useBoardWidth(
+  scroller: React.RefObject<HTMLDivElement | null>,
+  reduced: boolean,
+): MotionValue<number> | undefined {
+  const width = useMotionValue(0)
+  const [measured, setMeasured] = useState(false)
+  useLayoutEffect(() => {
+    const element = scroller.current
+    if (!element) return
+    let windowWidth = window.innerWidth
+    const observer = new ResizeObserver(([entry]) => {
+      const next = entry!.contentRect.width
+      const resized = window.innerWidth !== windowWidth
+      windowWidth = window.innerWidth
+      if (reduced || resized || Math.abs(next - width.get()) < 48) width.jump(next)
+      else animate(width, next, settle)
+      setMeasured(true)
+    })
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [scroller, reduced, width])
+  return measured ? width : undefined
+}
+
+/** How a column comes and goes (Hide done): it grows from nothing beside its
+ *  neighbours, which give it room, rather than appearing in one frame. The
+ *  negative margin takes back the flex gap it would leave behind. */
+const columnPresence = {
+  initial: { flexGrow: 0, opacity: 0, marginLeft: -12, paddingLeft: 0, paddingRight: 0 },
+  animate: { flexGrow: 1, opacity: 1, marginLeft: 0, paddingLeft: 8, paddingRight: 8 },
+  exit: { flexGrow: 0, opacity: 0, marginLeft: -12, paddingLeft: 0, paddingRight: 0 },
+}
+
 export function BoardView(): React.JSX.Element {
   const tasks = useAtomValue(tasksAtom)
   const patch = useSetAtom(patchTaskAtom)
@@ -99,6 +150,8 @@ export function BoardView(): React.JSX.Element {
   const filter = useAtomValue(filterAtom)
   const now = useAtomValue(nowAtom)
   const reduced = useReducedMotion() ?? false
+  const scroller = useRef<HTMLDivElement>(null)
+  const width = useBoardWidth(scroller, reduced)
 
   /** Cards whose check is still playing: drawn in the column they came from
    *  until the sequence and the write are both done (`useCheckSequence`). */
@@ -162,130 +215,134 @@ export function BoardView(): React.JSX.Element {
     <div className="relative flex min-h-0 flex-1 flex-col">
       <BrokenStrip />
       <LayoutGroup>
-        <div className="min-h-0 flex-1 overflow-auto">
+        <div ref={scroller} className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto">
           {/* At least the board's height, and as tall as its tallest column:
               the surfaces stretch to whichever is more. */}
-          <div className="flex min-h-full gap-3 p-4">
-            {columns.map((column) => (
-              <section
-                key={column.status}
-                data-column={column.status}
-                // Each surface runs to the foot of the board, full or not.
-                // The foot keeps clear of the dock that floats over it.
-                className="flex min-w-0 flex-1 flex-col rounded-[1.25rem] bg-card/40 p-2 pb-16"
-              >
-                <h2 className="flex h-8 items-center gap-2 px-2 pb-1 text-xs font-semibold">
-                  {column.label}
-                  <RollingCount
-                    value={all.filter((t) => shown(t) === column.status).length}
-                    className="font-normal text-muted-foreground"
-                  />
-                  {adding?.status !== column.status && (
-                    <motion.div
-                      layoutId={reduced ? undefined : `new-${column.status}`}
-                      transition={reduced ? instant : settle}
-                      style={{ borderRadius: 999 }}
-                      className="ml-auto"
-                    >
-                      <IconButton
-                        icon={Plus}
-                        label={`Add to ${column.label}`}
-                        shape="round"
-                        data-add-column={column.status}
-                        onClick={() => setAdding({ status: column.status, lane: 0, title: '' })}
-                      />
-                    </motion.div>
-                  )}
-                </h2>
+          <motion.div className="flex min-h-full gap-3 p-4" style={{ width }}>
+            <AnimatePresence initial={false}>
+              {columns.map((column) => (
+                <motion.section
+                  key={column.status}
+                  data-column={column.status}
+                  {...columnPresence}
+                  transition={reduced ? instant : settle}
+                  // Each surface runs to the foot of the board, full or not.
+                  // The foot keeps clear of the dock that floats over it.
+                  className="flex min-w-0 flex-1 flex-col rounded-[1.25rem] bg-card/40 p-2 pb-16"
+                >
+                  <h2 className="flex h-8 items-center gap-2 px-2 pb-1 text-xs font-semibold">
+                    {column.label}
+                    <RollingCount
+                      value={all.filter((t) => shown(t) === column.status).length}
+                      className="font-normal text-muted-foreground"
+                    />
+                    {adding?.status !== column.status && (
+                      <motion.div
+                        layoutId={reduced ? undefined : `new-${column.status}`}
+                        transition={reduced ? instant : settle}
+                        style={{ borderRadius: 999 }}
+                        className="ml-auto"
+                      >
+                        <IconButton
+                          icon={Plus}
+                          label={`Add to ${column.label}`}
+                          shape="round"
+                          data-add-column={column.status}
+                          onClick={() => setAdding({ status: column.status, lane: 0, title: '' })}
+                        />
+                      </motion.div>
+                    )}
+                  </h2>
 
-                {lanes.map((lane, laneIndex) => {
-                  const cards = cell(lane, column.status)
-                  const gap = drag.gap(lane, column.status)
-                  const addingHere = adding?.status === column.status && adding.lane === laneIndex
-                  // A lane group with cards is laid out plainly. An empty one is
-                  // not there at rest, and springs open only while a drag is on,
-                  // so every cell can take the drop. (Animating every group's
-                  // height left stale pixel heights that clipped cards.)
-                  const group = (
-                    <div {...drag.target(lane, column.status)} className="mb-1.5 p-1">
-                      {/* The vault root's lane has no name to show. The lane a
+                  {lanes.map((lane, laneIndex) => {
+                    const cards = cell(lane, column.status)
+                    const gap = drag.gap(lane, column.status)
+                    const addingHere = adding?.status === column.status && adding.lane === laneIndex
+                    // A lane group with cards is laid out plainly. An empty one is
+                    // not there at rest, and springs open only while a drag is on,
+                    // so every cell can take the drop. (Animating every group's
+                    // height left stale pixel heights that clipped cards.)
+                    const group = (
+                      <div {...drag.target(lane, column.status)} className="mb-1.5 p-1">
+                        {/* The vault root's lane has no name to show. The lane a
                           drag aims at lights its name, not its surface. */}
-                      {lane ? (
-                        <p
-                          className={cn(
-                            'px-1.5 pt-3 pb-2 text-xs font-medium break-words motion-respond',
-                            gap ? 'text-foreground' : 'text-muted-foreground',
-                          )}
-                        >
-                          {lane}
-                        </p>
-                      ) : (
-                        <div className="h-2" />
-                      )}
-                      <div className="flex min-h-6 flex-col gap-2.5">
-                        <AnimatePresence initial={false}>
-                          {withGap(cards, drag.isFolded, gap?.index ?? null).map((item) =>
-                            item.kind === 'gap' ? (
-                              <Gap key="gap" height={gap!.height} />
-                            ) : (
-                              <BoardCard
-                                key={item.task.path}
-                                task={item.task}
-                                shown={shown(item.task)}
-                                drag={drag}
-                                parking={parking}
-                                arrival={
-                                  drag.isFolded(item.task.path)
-                                    ? undefined
-                                    : arrivalProps(item.task.path)
-                                }
-                              />
-                            ),
-                          )}
-                        </AnimatePresence>
-                        {addingHere && (
-                          <NewCard
-                            status={column.status}
-                            lane={lane}
-                            layoutId={`new-${column.status}`}
-                            title={adding.title}
-                            onTitle={(title) => setAdding({ ...adding, title })}
-                            onSubmit={(title) =>
-                              void create({ title, status: column.status, folder: lane })
-                            }
-                            onLane={(step) =>
-                              setAdding({
-                                ...adding,
-                                lane: (laneIndex + step + lanes.length) % lanes.length,
-                              })
-                            }
-                            onClose={() => setAdding(null)}
-                          />
+                        {lane ? (
+                          <p
+                            className={cn(
+                              'px-1.5 pt-3 pb-2 text-xs font-medium break-words motion-respond',
+                              gap ? 'text-foreground' : 'text-muted-foreground',
+                            )}
+                          >
+                            {lane}
+                          </p>
+                        ) : (
+                          <div className="h-2" />
                         )}
+                        <div className="flex min-h-6 flex-col gap-2.5">
+                          <AnimatePresence initial={false}>
+                            {withGap(cards, drag.isFolded, gap?.index ?? null).map((item) =>
+                              item.kind === 'gap' ? (
+                                <Gap key="gap" height={gap!.height} />
+                              ) : (
+                                <BoardCard
+                                  key={item.task.path}
+                                  task={item.task}
+                                  shown={shown(item.task)}
+                                  drag={drag}
+                                  parking={parking}
+                                  arrival={
+                                    drag.isFolded(item.task.path)
+                                      ? undefined
+                                      : arrivalProps(item.task.path)
+                                  }
+                                />
+                              ),
+                            )}
+                          </AnimatePresence>
+                          {addingHere && (
+                            <NewCard
+                              status={column.status}
+                              lane={lane}
+                              layoutId={`new-${column.status}`}
+                              title={adding.title}
+                              onTitle={(title) => setAdding({ ...adding, title })}
+                              onSubmit={(title) =>
+                                void create({ title, status: column.status, folder: lane })
+                              }
+                              onLane={(step) =>
+                                setAdding({
+                                  ...adding,
+                                  lane: (laneIndex + step + lanes.length) % lanes.length,
+                                })
+                              }
+                              onClose={() => setAdding(null)}
+                            />
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  )
-                  if (cards.length > 0 || addingHere)
-                    return <div key={lane || ROOT_LANE}>{group}</div>
-                  return (
-                    <AnimatePresence key={lane || ROOT_LANE} initial={false}>
-                      {drag.active && (
-                        <motion.div
-                          initial={{ height: 0, opacity: 0 }}
-                          animate={{ height: 'auto', opacity: 1 }}
-                          exit={{ height: 0, opacity: 0 }}
-                          transition={reduced ? instant : settle}
-                          className="overflow-hidden"
-                        >
-                          {group}
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
-                  )
-                })}
-              </section>
-            ))}
-          </div>
+                    )
+                    if (cards.length > 0 || addingHere)
+                      return <div key={lane || ROOT_LANE}>{group}</div>
+                    return (
+                      <AnimatePresence key={lane || ROOT_LANE} initial={false}>
+                        {drag.active && (
+                          <motion.div
+                            initial={{ height: 0, opacity: 0 }}
+                            animate={{ height: 'auto', opacity: 1 }}
+                            exit={{ height: 0, opacity: 0 }}
+                            transition={reduced ? instant : settle}
+                            className="overflow-hidden"
+                          >
+                            {group}
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+                    )
+                  })}
+                </motion.section>
+              ))}
+            </AnimatePresence>
+          </motion.div>
         </div>
       </LayoutGroup>
 
@@ -302,11 +359,14 @@ export function BoardView(): React.JSX.Element {
           for its icons, so it never catches clicks meant for the cards.
           Centred by flex, not a transform: a transformed ancestor would
           become the open menu's containing block and drag its fixed pin. */}
-      <div className="pointer-events-none absolute inset-x-0 bottom-4 flex justify-center">
+      <motion.div
+        className="pointer-events-none absolute bottom-4 left-0 flex w-full justify-center"
+        style={{ width }}
+      >
         <div className="pointer-events-auto w-40">
           <BoardDock />
         </div>
-      </div>
+      </motion.div>
     </div>
   )
 }

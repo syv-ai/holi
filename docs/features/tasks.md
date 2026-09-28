@@ -17,13 +17,17 @@ Todo / Doing / Done, with one swim lane per folder.
 - **Editing a task is editing its file.** A card click opens it beside the board as a preview,
   with frontmatter drawn as typed rows ([frontmatter](frontmatter.md)).
 - **Board.** Todo, Doing and Done are three column surfaces; lanes are groups inside each: the
-  vault root (always present), then folders alphabetically. A lane group with no cards in a column
+  vault root (always present, unlabelled), then folders alphabetically. A lane group with no cards in a column
   rests hidden and springs open while a drag is on, so every cell can take a drop. Cards are
-  tinted (`--muted` on the column's `--card`), with no edge, and a title stays on one line; Done
+  tinted (`--muted` on the column's `--card`, both faint), with no edge, and a title stays on one line; Done
   cards recede to flat rows. Each
   column counts its cards. `overdue` and `p1`–`p3` are labels computed at render, drawn as
   coloured text and filtered like tags. A timed due is late after its minute; a timeless one once
   its day has passed. Task files that fail to parse show in a "could not be read" strip.
+- **The board reflows as one motion.** A pane opening or closing beside it, or Hide done, springs
+  the columns, headers, cards and dock to their new widths together: the board's real width
+  follows its container on a spring, so nothing is scaled. A window resize or splitter drag
+  follows the pointer instead. The lane a drag aims at lights its name.
 - **The dock.** One dock floats at the board's foot (the [nav menu](nav-menu.md)'s morph): Search,
   Tags and Hide done, still the only three narrowing controls, each growing the dock into its
   panel, and quick add.
