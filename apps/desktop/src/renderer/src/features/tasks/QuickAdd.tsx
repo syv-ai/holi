@@ -28,7 +28,7 @@ import { insertNewlineAndIndent } from '@codemirror/commands'
 import { insertNewlineContinueMarkup } from '@codemirror/lang-markdown'
 import { Prec } from '@codemirror/state'
 import { Decoration, EditorView, keymap, tooltips } from '@codemirror/view'
-import { useAtomValue, useSetAtom } from 'jotai'
+import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { CalendarDays, Check, Flag, Folder, Hash, PenLine } from 'lucide-react'
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
@@ -47,6 +47,7 @@ import { nowAtom } from '@/state/clock'
 import {
   ROOT_LANE,
   createTaskAtom,
+  quickAddFolderAtom,
   taskCreateFolders,
   taskTagsAtom,
   tasksAtom,
@@ -179,6 +180,13 @@ export function QuickAdd({
     tags: [],
   }))
   const set = (patch: Partial<Draft>) => setDraft((d) => ({ ...d, ...patch }))
+  // Opened from a lane's +: that folder is the lane, taken once.
+  const [folderAsked, setFolderAsked] = useAtom(quickAddFolderAtom)
+  useEffect(() => {
+    if (folderAsked === null) return
+    set({ folder: folderAsked })
+    setFolderAsked(null)
+  }, [folderAsked, setFolderAsked])
   const [step, setStep] = useState<Step>('text')
   /** Which way the last step went, so the panels slide the same way. */
   const [direction, setDirection] = useState<1 | -1>(1)
@@ -524,8 +532,9 @@ export function QuickAdd({
             style={{ borderRadius: 12 }}
             className="flex h-full items-start gap-2.5 px-3 pt-2.5"
           >
-            {/* What the card will look like: the check is a picture here. */}
-            <span inert aria-hidden className="mt-0.5">
+            {/* What the card will look like: the check is a picture here,
+                centred on the title's line (28px). */}
+            <span inert aria-hidden className="mt-1">
               <TaskCheck filled={false} label="" />
             </span>
             <div className="h-full min-w-0 flex-1">

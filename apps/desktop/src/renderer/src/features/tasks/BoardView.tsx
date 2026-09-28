@@ -27,9 +27,17 @@ import {
   useReducedMotion,
   type MotionValue,
 } from 'motion/react'
-import { ChevronRight } from 'lucide-react'
+import { ChevronRight, Plus } from 'lucide-react'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { Button, ConfirmInPlace, Icon, RollingCount, instant, settle } from '@/primitives'
+import {
+  Button,
+  ConfirmInPlace,
+  Icon,
+  IconButton,
+  RollingCount,
+  instant,
+  settle,
+} from '@/primitives'
 import { cn } from '@/lib/cn'
 import { useArrivals } from '@/lib/use-arrivals'
 import { rankAt, sortCell } from '@/lib/board-order'
@@ -37,6 +45,7 @@ import {
   ROOT_LANE,
   brokenTasksAtom,
   collapsedLanesAtom,
+  openQuickAddInAtom,
   deleteTasksAtom,
   filterAtom,
   laneOf,
@@ -192,6 +201,7 @@ export function BoardView(): React.JSX.Element {
       }),
   }
   const [collapsed, setCollapsed] = useAtom(collapsedLanesAtom)
+  const openQuickAddIn = useSetAtom(openQuickAddInAtom)
   const toggleLane = (key: string) =>
     setCollapsed((current) => {
       const next = new Set(current)
@@ -310,14 +320,17 @@ export function BoardView(): React.JSX.Element {
                           transition={reduced ? instant : settle}
                           // Clip only what spills well past the group, so a
                           // card's flick is not cut.
-                          className="overflow-clip [overflow-clip-margin:8px]"
+                          className="group/section overflow-clip [overflow-clip-margin:8px] has-[[data-flying]]:overflow-visible"
                         >
                           <div {...drag.target(lane, column.status)} className="px-1 pt-1">
                             {/* The vault root's lane has no name to show. The lane a
                           drag aims at lights its name, not its surface. A
                           folded lane still takes a drop, at its top. */}
                             {lane ? (
-                              <div className="pt-2 pb-1">
+                              // The name folds the lane; a folded one counts its
+                              // cards at the row's end; on hover, + adds a task
+                              // to this folder.
+                              <div className="flex items-center gap-1 pt-2 pb-1">
                                 <Button
                                   variant="ghost"
                                   size="xs"
@@ -325,12 +338,11 @@ export function BoardView(): React.JSX.Element {
                                   data-lane-toggle={key}
                                   onClick={() => toggleLane(key)}
                                   className={cn(
-                                    'group/lane h-6 max-w-full justify-start gap-1 px-1.5 font-medium active:scale-100 hover:bg-transparent dark:hover:bg-transparent',
+                                    'group/lane h-6 min-w-0 justify-start gap-1 px-1.5 font-medium active:scale-100 hover:bg-transparent dark:hover:bg-transparent',
                                     gap ? 'text-foreground' : 'text-muted-foreground',
                                   )}
                                 >
                                   <span className="truncate">{lane}</span>
-                                  {!open && <span className="font-normal">{cards.length}</span>}
                                   <Icon
                                     icon={ChevronRight}
                                     size="sm"
@@ -340,6 +352,24 @@ export function BoardView(): React.JSX.Element {
                                     )}
                                   />
                                 </Button>
+                                {!open && (
+                                  <span
+                                    data-lane-count={key}
+                                    className="ml-auto pr-1 text-xs text-muted-foreground"
+                                  >
+                                    {cards.length}
+                                  </span>
+                                )}
+                                <IconButton
+                                  icon={Plus}
+                                  label={`New task in ${lane}`}
+                                  data-lane-add={key}
+                                  onClick={() => openQuickAddIn(lane)}
+                                  className={cn(
+                                    'shrink-0 opacity-0 group-hover/section:opacity-100 focus-visible:opacity-100',
+                                    open && 'ml-auto',
+                                  )}
+                                />
                               </div>
                             ) : (
                               <div className="h-2" />
@@ -353,7 +383,7 @@ export function BoardView(): React.JSX.Element {
                                   transition={reduced ? instant : settle}
                                   // Clip only what spills well past the cell, so a
                                   // card's flick is not cut while the lane folds.
-                                  className="overflow-clip [overflow-clip-margin:8px]"
+                                  className="overflow-clip [overflow-clip-margin:8px] has-[[data-flying]]:overflow-visible"
                                 >
                                   <div className="flex min-h-6 flex-col pt-1">
                                     <AnimatePresence initial={false} custom={hiddenByFilter}>

@@ -6,6 +6,7 @@ import { selectNextOccurrence } from '@codemirror/search'
 import { drawSelection, dropCursor, EditorView, keymap } from '@codemirror/view'
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
 import { EditorState, type Extension } from '@codemirror/state'
+import { isTaskFilePath } from '@holi/shared'
 import { holiCompletion } from './completion'
 import { fenceLanguage } from './fence-languages'
 import { formattingKeymap } from './formatting'
@@ -30,6 +31,15 @@ import { slashCommands, tableSizes } from './slash'
 import { wikiHoverPreview, type ReadNote } from './wikiHover'
 import { colorModeAware } from './color-mode'
 import { codeHighlighting, editorTheme, markdownHighlighting, notesFontTheme } from './theme'
+
+/**
+ * A task's body is a narrower column than a note's: as wide as its properties
+ * widget (`.cm-fm`, 24rem), so a task reads as a card's back rather than a
+ * page. The lines keep their side inset around it.
+ */
+const taskColumn = EditorView.theme({
+  '.cm-content': { maxWidth: 'calc(24rem + 2 * var(--editor-inset))' },
+})
 
 /** Live seams the editor pulls on demand: closures over the renderer's state,
  * read when needed rather than baked in, so new data never rebuilds the view. */
@@ -143,6 +153,7 @@ export function baseEditorExtensions(deps: EditorDeps): Extension[] {
     colorModeAware(),
     // Notes only; the other stacks stay mono (see `notesFontTheme`).
     notesFontTheme,
+    isTaskFilePath(deps.notePath) ? taskColumn : [],
   ]
 }
 

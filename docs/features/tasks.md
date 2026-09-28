@@ -15,16 +15,18 @@ Todo / Doing / Done, with one swim lane per folder.
 - **Dates are stamps**: `YYYY-MM-DD` or `YYYY-MM-DDTHH:MM`, local, no timezone. The time is
   optional on `due` and `reminder`, and its absence means "that day", not midnight.
 - **Editing a task is editing its file.** A card click opens it beside the board as a preview,
-  with frontmatter drawn as typed rows ([frontmatter](frontmatter.md)).
+  with frontmatter drawn as typed rows ([frontmatter](frontmatter.md)). Its body is a narrower
+  column than a note's, as wide as those rows.
 - **Board.** Todo, Doing and Done are three column surfaces; lanes are groups inside each: the
   vault root (always present, unlabelled), then folders alphabetically. A lane group with no cards in a column
   rests hidden and springs open while a drag is on, so every cell can take a drop. A folder's
-  name folds its group shut in that column alone, showing its count; a folded group still takes a
-  drop, at its top. The root lane has no name, so it does not fold. Cards are
+  name folds its group shut in that column alone, its count at the row's end; a folded group still
+  takes a drop, at its top. Hovering a folder's group shows a + on its row that opens quick add
+  with that folder as its lane. The root lane has no name, so it does not fold. Cards are
   tinted (`--muted` on the column's `--card`, both faint), with no edge, and a title stays on one line; Done
   cards recede to flat rows. Each
   column counts its cards. `overdue` and `p1`–`p3` are labels computed at render, drawn as
-  coloured text and filtered like tags; clicking a label or tag on a card toggles it in the Tags
+  coloured text and filtered like tags; clicking a label or tag on a card toggles it in the
   filter, and each active one floats as a chip above the dock whose click takes it off. A todo card's check is a plain ring, a doing card's a dotted one in `--task-doing`. A
   timed due is late after its minute; a timeless one once
   its day has passed. Task files that fail to parse show in a "could not be read" strip.
@@ -33,14 +35,16 @@ Todo / Doing / Done, with one swim lane per folder.
   follows its container on a spring, so nothing is scaled. A window resize or splitter drag
   follows the pointer instead. The lane a drag aims at lights its name.
 - **The dock.** One dock floats at the board's foot (the [nav menu](nav-menu.md)'s morph): Search,
-  Tags and Hide done, still the only three narrowing controls, each growing the dock into its
-  panel, and quick add.
+  Filter and Hide done, still the only three narrowing controls, each growing the dock into its
+  panel, and quick add. Filter lists the folders that hold tasks (a task in any chosen one) and
+  the tags (a task carrying every chosen one); a filter or search moves the board on one spring,
+  cards and lane groups together.
 - **Completing plays before it moves.** The check fills and ticks, the strike runs across the
-  title, the card flicks, and then it flies to Done. The write goes out as the tick starts; the
+  title, the card flicks, and then it flies to Done, over everything it crosses. The write goes out as the tick starts; the
   card is parked in its column until the sequence and the write are both done. A recurring task
   ticks and strikes, then unwinds in place with its next due date. Unticking runs it backwards.
-- **Deleting** is the card's bin, which grows into Delete / ✕ before anything is removed, or the
-  card's context menu. Done's header has a bin of its own that empties the column: it grows
+- **Deleting** is Delete in the card's ⋯ menu (on hover), whose row turns into a solid Delete
+  that a second pick commits, or the card's context menu. Done's header has a bin of its own that empties the column: it grows
   into a solid Delete pill, a shade crossing it from the right over four seconds. Nothing is
   deleted unless the pill is pressed; when the shade reaches the end it folds back, or waits
   while the pointer is on it. It deletes every done task the column shows. Git keeps them.

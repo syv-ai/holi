@@ -40,6 +40,10 @@ export type IconButtonProps = Omit<ComponentProps<'button'>, 'children' | 'aria-
   active?: boolean
   /** Fill the glyph as well as stroke it: a starred item's star. */
   filled?: boolean
+  /** Hover and open change the icon's colour only: no tint behind it, no
+   *  grow. For a control inside something that already has a hover look (a
+   *  card's ⋯). */
+  quiet?: boolean
   tooltip?: ReactNode | false
   tooltipSide?: 'top' | 'right' | 'bottom' | 'left'
   /** Drawn over the icon: a badge on its corner. */
@@ -55,6 +59,7 @@ export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(functio
     pressed,
     active = false,
     filled = false,
+    quiet = false,
     tooltip,
     tooltipSide,
     className,
@@ -74,8 +79,12 @@ export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(functio
       data-active={active ? '' : undefined}
       className={cn(
         'relative inline-flex shrink-0 cursor-default items-center justify-center text-icon outline-none motion-respond',
-        'hover:scale-110 hover:bg-accent hover:text-icon-active active:scale-95',
-        'aria-pressed:bg-accent aria-pressed:text-icon-active data-active:bg-accent data-active:text-icon-active data-[state=open]:bg-accent data-[state=open]:text-icon-active',
+        quiet
+          ? 'hover:text-icon-active data-[state=open]:text-icon-active'
+          : [
+              'hover:scale-110 hover:bg-accent hover:text-icon-active active:scale-95',
+              'aria-pressed:bg-accent aria-pressed:text-icon-active data-active:bg-accent data-active:text-icon-active data-[state=open]:bg-accent data-[state=open]:text-icon-active',
+            ],
         'focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50',
         BOX[size],
         shape === 'round' ? 'rounded-full' : 'rounded-md',

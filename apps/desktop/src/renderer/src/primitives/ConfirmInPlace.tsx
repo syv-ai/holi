@@ -9,9 +9,14 @@
  * unless the pointer is still on it, in which case it waits for the pointer
  * to leave: not answering is keeping, but a question being read stays open.
  *
- * Two sizes. `sm` sits inside a row (a card's bin): the act and a ✕, tight to
+ * Three sizes. `sm` sits inside a row (a card's bin): the act and a ✕, tight to
  * the row it must not stretch. `md` stands on its own (a column header): one
  * solid pill that reads the act, the fuse a shade crossing it behind the words.
+ * `row` is a menu's row (a card's ⋯ menu): the row reads the act, and picking
+ * it turns the same row into that solid confirmation, which a second pick
+ * commits. It is one element and takes the props of what it stands in for, so
+ * a menu item can be it (`DropdownMenuItem asChild`): the menu's keys reach it,
+ * and Enter picks as a click does.
  */
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { Trash2, X } from 'lucide-react'
@@ -20,16 +25,7 @@ import { cn } from '@/lib/cn'
 import { Icon, type IconGlyph } from './Icon'
 import { instant, settle } from './springs'
 
-export function ConfirmInPlace({
-  label,
-  confirmLabel,
-  cancelLabel = 'Keep',
-  icon = Trash2,
-  fuse,
-  size = 'sm',
-  onConfirm,
-  className,
-}: {
+type ConfirmProps = {
   /** The bin's accessible name: "Delete Fix login". */
   label: string
   /** The act, as the button that commits it reads: "Delete". */
@@ -38,10 +34,32 @@ export function ConfirmInPlace({
   icon?: IconGlyph
   /** Milliseconds the question stays open unanswered. */
   fuse?: number
-  size?: 'sm' | 'md'
   onConfirm: () => void
   className?: string
-}): React.JSX.Element {
+}
+
+export function ConfirmInPlace(
+  props:
+    | (ConfirmProps & { size?: 'sm' | 'md' })
+    | (ConfirmProps & { size: 'row' } & Omit<React.ComponentProps<'div'>, 'children'>),
+): React.JSX.Element {
+  if (props.size === 'row') {
+    const { size: _size, ...row } = props
+    return <ConfirmRow {...row} />
+  }
+  return <ConfirmIcon {...props} />
+}
+
+function ConfirmIcon({
+  label,
+  confirmLabel,
+  cancelLabel = 'Keep',
+  icon = Trash2,
+  fuse,
+  size = 'sm',
+  onConfirm,
+  className,
+}: ConfirmProps & { size?: 'sm' | 'md' }): React.JSX.Element {
   const [asking, setAsking] = useState(false)
   /** The fuse has run out: the next leave folds it. */
   const [burnt, setBurnt] = useState(false)
@@ -169,5 +187,87 @@ export function ConfirmInPlace({
         )}
       </AnimatePresence>
     </motion.div>
+  )
+}
+
+/** How long a row's question stays open unanswered, by default. */
+const ROW_FUSE = 4000
+
+function ConfirmRow({
+  label,
+  confirmLabel,
+  cancelLabel: _cancel,
+  icon = Trash2,
+  fuse = ROW_FUSE,
+  onConfirm,
+  className,
+  onClick,
+  onPointerEnter,
+  onPointerLeave,
+  ...rest
+}: ConfirmProps & Omit<React.ComponentProps<'div'>, 'children'>): React.JSX.Element {
+  const [asking, setAsking] = useState(false)
+  const [burnt, setBurnt] = useState(false)
+  const hovered = useRef(false)
+  const reduced = useReducedMotion() ?? false
+  const fold = () => {
+    setAsking(false)
+    setBurnt(false)
+  }
+  // Unanswered, it folds; read under the pointer, it waits for the pointer.
+  useEffect(() => {
+    if (!asking) return
+    const timer = window.setTimeout(() => {
+      if (hovered.current) setBurnt(true)
+      else fold()
+    }, fuse)
+    return () => window.clearTimeout(timer)
+  }, [asking, fuse])
+
+  return (
+    <div
+      {...rest}
+      aria-label={asking ? confirmLabel : label}
+      data-asking={asking ? '' : undefined}
+      onClick={(event) => {
+        onClick?.(event)
+        if (!asking) return setAsking(true)
+        fold()
+        onConfirm()
+      }}
+      onPointerEnter={(event) => {
+        onPointerEnter?.(event)
+        hovered.current = true
+      }}
+      onPointerLeave={(event) => {
+        onPointerLeave?.(event)
+        hovered.current = false
+        if (burnt) fold()
+      }}
+      className={cn(
+        'relative overflow-hidden',
+        className,
+        asking && 'justify-center bg-destructive! font-medium text-destructive-foreground!',
+      )}
+    >
+      {asking ? (
+        <>
+          {/* The time left: a shade crossing from the right, behind the words. */}
+          <motion.span
+            aria-hidden
+            className="absolute inset-0 origin-right bg-background/25"
+            initial={{ scaleX: 0 }}
+            animate={{ scaleX: 1 }}
+            transition={reduced ? instant : { duration: fuse / 1000, ease: 'linear' }}
+          />
+          <span className="relative">{confirmLabel}</span>
+        </>
+      ) : (
+        <>
+          <Icon icon={icon} />
+          <span>{confirmLabel}</span>
+        </>
+      )}
+    </div>
   )
 }

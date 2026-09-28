@@ -13,6 +13,8 @@ import type { Task, TaskStatus } from '@holi/shared'
 import { virtualLabels } from '@holi/shared'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { motion, useReducedMotion } from 'motion/react'
+import { Ellipsis } from 'lucide-react'
+import { useRef } from 'react'
 import { cn } from '@/lib/cn'
 import { shortStamp } from '@/lib/date-presets'
 import {
@@ -23,6 +25,11 @@ import {
   ContextMenuItem,
   ContextMenuSeparator,
   ContextMenuTrigger,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+  IconButton,
   StrikeText,
   TaskCheck,
   instant,
@@ -151,6 +158,7 @@ export function BoardCard({
       tags: f.tags.includes(word) ? f.tags.filter((t) => t !== word) : [...f.tags, word],
     }))
   const reduced = useReducedMotion() ?? false
+  const flight = useRef<HTMLDivElement>(null)
   const sequence = useCheckSequence(task, today, parking, setStatus)
   const folded = drag.isFolded(task.path)
   const done = shown === 'done'
@@ -192,12 +200,38 @@ export function BoardCard({
           </div>
           <TaskMeta task={task} onFilter={filterBy} />
         </div>
-        <ConfirmInPlace
-          label={`Delete ${task.title}`}
-          confirmLabel="Delete"
-          onConfirm={() => void remove(task.path)}
-          className="opacity-0 group-hover/card:opacity-100 focus-within:opacity-100 data-asking:opacity-100"
-        />
+        {/* The card's actions, on hover: one menu that more will join. The
+            menu is portalled, but React bubbles its clicks through here, so
+            they stop before they open the card. */}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <IconButton
+              icon={Ellipsis}
+              label={`Actions for ${task.title}`}
+              tooltip={false}
+              data-card-menu={task.path}
+              onClick={(event) => event.stopPropagation()}
+              quiet
+              className="opacity-0 group-hover/card:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100"
+            />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" onClick={(event) => event.stopPropagation()}>
+            {/* Picked, the row asks; picked again, it deletes. The menu stays
+                open between the two. */}
+            <DropdownMenuItem
+              asChild
+              variant="destructive"
+              onSelect={(event) => event.preventDefault()}
+            >
+              <ConfirmInPlace
+                size="row"
+                label={`Delete ${task.title}`}
+                confirmLabel="Delete"
+                onConfirm={() => void remove(task.path)}
+              />
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
     </div>
   )
@@ -206,6 +240,12 @@ export function BoardCard({
     // Three layers, so no two animations write the same transform: the outer
     // owns position and fold, the middle the flick, the card the drag.
     <motion.div
+      ref={flight}
+      // Flying (to Done, to its cell), it draws over the board and the lanes
+      // it crosses stop clipping it (`has-[[data-flying]]` in BoardView): a
+      // clipped flight read as passing behind everything between.
+      onLayoutAnimationStart={() => flight.current?.setAttribute('data-flying', '')}
+      onLayoutAnimationComplete={() => flight.current?.removeAttribute('data-flying')}
       layout={reduced ? false : 'position'}
       // Only a card at rest flies: a folded one is mid-drop, and its landing
       // is the gap closing, not a flight from where it was picked up.
@@ -223,7 +263,10 @@ export function BoardCard({
             : { opacity: 1, transition: { duration: 0 } },
       }}
       exit="gone"
-      className={cn('overflow-hidden', folded && 'pointer-events-none')}
+      className={cn(
+        'overflow-hidden data-flying:relative data-flying:z-10',
+        folded && 'pointer-events-none',
+      )}
     >
       {/* The space below a card is inside its fold, not a list gap: a gap
           stays open around a card folded to nothing and shuts in one frame

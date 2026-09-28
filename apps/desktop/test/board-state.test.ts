@@ -70,7 +70,7 @@ describe('lanes', () => {
 })
 
 describe('filter (three controls, and one vocabulary)', () => {
-  const F = { search: '', tags: [] as string[], hideDone: false }
+  const F = { search: '', tags: [] as string[], folders: [] as string[], hideDone: false }
 
   it('search matches the title', () => {
     expect(matchesFilter(task({ title: 'Review the Q2 doc' }), { ...F, search: 'q2' }, TODAY)).toBe(
@@ -87,16 +87,22 @@ describe('filter (three controls, and one vocabulary)', () => {
   })
 
   it('search is case-insensitive and ignores surrounding space', () => {
-    expect(matchesFilter(task({ title: 'Review' }), { ...F, search: '  REVIEW ' }, TODAY)).toBe(true)
+    expect(matchesFilter(task({ title: 'Review' }), { ...F, search: '  REVIEW ' }, TODAY)).toBe(
+      true,
+    )
   })
 
   it('the tag filter matches a REAL tag', () => {
-    expect(matchesFilter(task({ tags: ['finance'] }), { ...F, tags: ['finance'] }, TODAY)).toBe(true)
+    expect(matchesFilter(task({ tags: ['finance'] }), { ...F, tags: ['finance'] }, TODAY)).toBe(
+      true,
+    )
     expect(matchesFilter(task({ tags: ['ops'] }), { ...F, tags: ['finance'] }, TODAY)).toBe(false)
   })
 
   it('the tag filter matches a VIRTUAL label identically — one vocabulary', () => {
-    expect(matchesFilter(task({ due: '2020-01-01' }), { ...F, tags: ['overdue'] }, TODAY)).toBe(true)
+    expect(matchesFilter(task({ due: '2020-01-01' }), { ...F, tags: ['overdue'] }, TODAY)).toBe(
+      true,
+    )
     expect(matchesFilter(task({ due: '2030-01-01' }), { ...F, tags: ['overdue'] }, TODAY)).toBe(
       false,
     )

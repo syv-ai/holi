@@ -77,6 +77,16 @@ export const openQuickAddAtom = atom(null, (get, set) =>
   }),
 )
 
+/** The folder quick add opens in, asked for by a board lane's +. Taken once:
+ *  quick add fills its Lane from it and clears it. */
+export const quickAddFolderAtom = atom<string | null>(null)
+
+/** Quick add, opened in `folder`. */
+export const openQuickAddInAtom = atom(null, (_get, set, folder: string) => {
+  set(quickAddFolderAtom, folder)
+  set(openQuickAddAtom)
+})
+
 // ------------------------------------------------------------------ reducers
 // Pure, exported, and tested directly.
 
@@ -101,10 +111,12 @@ export type Filter = {
   search: string
   /** Matched against virtual labels AND real tags alike: one vocabulary. */
   tags: string[]
+  /** Lanes (a task's folder, `ROOT_LANE` for the vault root): any of them. */
+  folders: string[]
   hideDone: boolean
 }
 
-export const EMPTY_FILTER: Filter = { search: '', tags: [], hideDone: false }
+export const EMPTY_FILTER: Filter = { search: '', tags: [], folders: [], hideDone: false }
 export const filterAtom = atom<Filter>(EMPTY_FILTER)
 
 /** Lane groups folded shut on the board, by cell key (`status:lane`): one
@@ -112,7 +124,9 @@ export const filterAtom = atom<Filter>(EMPTY_FILTER)
 export const collapsedLanesAtom = atom<ReadonlySet<string>>(new Set<string>())
 
 /** The board's only narrowing. Three controls, deliberately: the bar is a
- * search-and-narrow aid, not a second configuration surface.
+ * search-and-narrow aid, not a second configuration surface. The filter
+ * narrows by folder and by tag: a task in any chosen folder, carrying every
+ * chosen tag.
  *
  * The tag filter matches `overdue`/`p1`… exactly as it matches a real tag: computing
  * the labels is what makes "show me the overdue p1s" a tag query rather than two
@@ -126,6 +140,8 @@ export function matchesFilter(task: Task, filter: Filter, now: string): boolean 
     const hay = `${task.title}\n${task.description}`.toLowerCase()
     if (!hay.includes(needle)) return false
   }
+
+  if (filter.folders.length > 0 && !filter.folders.includes(laneOf(task))) return false
 
   if (filter.tags.length > 0) {
     const labels = new Set(allLabels(task, now))
