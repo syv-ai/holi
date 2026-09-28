@@ -19,12 +19,16 @@ const RING_DASH = `1 ${(2 * Math.PI * RING_R) / 13 - 1}`
 
 export function TaskCheck({
   filled,
+  doing = false,
   onDrawn,
   label,
   onClick,
   className,
 }: {
   filled: boolean
+  /** In progress: the ring takes the doing colour, as the file tree's icon
+   *  does (`--task-doing`). The fill on completion is the same. */
+  doing?: boolean
   onDrawn?: () => void
   /** The accessible name: "Complete Fix login", "Reopen Fix login". */
   label: string
@@ -49,7 +53,7 @@ export function TaskCheck({
       <motion.svg
         viewBox="0 0 24 24"
         aria-hidden
-        className="size-4 text-muted-foreground"
+        className={cn('size-4', doing ? 'text-task-doing' : 'text-muted-foreground')}
         initial={false}
         animate={{ scale: filled ? check.popScale : 1 }}
         transition={filled ? timing(check.pop) : instant}

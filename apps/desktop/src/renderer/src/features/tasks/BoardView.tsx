@@ -172,7 +172,7 @@ export function BoardView(): React.JSX.Element {
                 data-column={column.status}
                 // Each surface runs to the foot of the board, full or not.
                 // The foot keeps clear of the dock that floats over it.
-                className="flex min-w-0 flex-1 flex-col rounded-[1.25rem] bg-card p-2 pb-16"
+                className="flex min-w-0 flex-1 flex-col rounded-[1.25rem] bg-card/40 p-2 pb-16"
               >
                 <h2 className="flex h-8 items-center gap-2 px-2 pb-1 text-xs font-semibold">
                   {column.label}

@@ -116,7 +116,7 @@ export function BoardCard({
         // A title never wraps, so a long one never makes a card taller; a card
         // with no due date or tags is one row shorter.
         'group/card cursor-grab rounded-xl px-2.5 py-2 text-xs motion-respond active:cursor-grabbing',
-        done ? 'hover:bg-accent' : 'bg-muted hover:brightness-110',
+        done ? 'hover:bg-accent' : 'bg-muted/40 hover:bg-muted/70',
         arrival?.className,
       )}
       style={arrival?.style}
@@ -124,6 +124,7 @@ export function BoardCard({
       <div className="flex items-start gap-2">
         <TaskCheck
           filled={sequence.filled}
+          doing={shown === 'doing'}
           onDrawn={sequence.onDrawn}
           label={`${done ? 'Reopen' : 'Complete'} ${task.title}`}
           onClick={(event) => {
@@ -215,7 +216,7 @@ export function NewCard({
       transition={reduced ? instant : settle}
       style={{ borderRadius: 12 }}
       data-new-card={status}
-      className="bg-muted px-2.5 py-2"
+      className="bg-muted/40 px-2.5 py-2"
     >
       <Input
         variant="bare"
