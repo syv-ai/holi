@@ -163,12 +163,14 @@ export function Token({
       data-set={set ? '' : undefined}
       className={cn(
         'flex h-7 items-center rounded-xl px-2 text-xs outline-none motion-respond hover:bg-accent focus-visible:ring-1 focus-visible:ring-ring aria-expanded:bg-accent',
+        // Out of room, a value gives way (and truncates); a bare icon never does.
+        label === undefined ? 'shrink-0' : 'min-w-0',
         set ? 'text-foreground' : 'text-muted-foreground',
         className,
       )}
       {...rest}
     >
-      <Icon icon={icon} size="sm" />
+      <Icon icon={icon} size="sm" className="shrink-0" />
       <AnimatePresence initial={false}>
         {label !== undefined && <TokenValue key="value" label={label} still={reduced} />}
       </AnimatePresence>
@@ -176,16 +178,21 @@ export function Token({
   )
 }
 
+/** The most a token's value takes before it truncates, in px. */
+const VALUE_MAX = 160
+
 /**
- * A token's value, as wide as its text: measured, so a value that changes
- * (a second tag, another date) slides to its new width as one arriving does.
- * `width: auto` would only animate the arrival.
+ * A token's value, as wide as its text up to `VALUE_MAX`: measured, so a
+ * value that changes (a second tag, another date) slides to its new width as
+ * one arriving does. `width: auto` would only animate the arrival. The
+ * measure is an unseen copy, since the text shown truncates to its box: when
+ * the row runs out of room the box gives way and the text ends in an ellipsis.
  */
 function TokenValue({ label, still }: { label: ReactNode; still: boolean }) {
   const text = useRef<HTMLSpanElement>(null)
   const [width, setWidth] = useState<number | null>(null)
   useLayoutEffect(() => {
-    if (text.current) setWidth(text.current.offsetWidth)
+    if (text.current) setWidth(Math.min(text.current.offsetWidth, VALUE_MAX))
   }, [label])
   return (
     <motion.span
@@ -194,9 +201,10 @@ function TokenValue({ label, still }: { label: ReactNode; still: boolean }) {
       exit={{ width: 0, opacity: 0 }}
       // No bounce: the row it sits in has no room to overshoot into.
       transition={still ? instant : { ...settle, bounce: 0 }}
-      className="min-w-0 overflow-hidden whitespace-nowrap"
+      className="relative min-w-0 overflow-hidden whitespace-nowrap"
     >
-      <span ref={text} className="inline-block max-w-40 truncate pl-1.5 align-top">
+      <span className="block truncate pl-1.5">{label}</span>
+      <span ref={text} aria-hidden className="invisible absolute top-0 left-0 pl-1.5">
         {label}
       </span>
     </motion.span>
