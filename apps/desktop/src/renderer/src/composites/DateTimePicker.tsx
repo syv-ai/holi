@@ -18,7 +18,16 @@ import {
 } from '@holi/shared'
 import { CalendarDays, ChevronLeft, ChevronRight, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
-import { Button, Input, Popover, PopoverContent, PopoverTrigger, Tooltip } from '@/primitives'
+import {
+  Button,
+  Icon,
+  IconButton,
+  Input,
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+  Tooltip,
+} from '@/primitives'
 import { useFieldControlId } from './FieldRow'
 import { cn } from '@/lib/cn'
 import type { DatePreset } from '@/lib/date-presets'
@@ -203,7 +212,7 @@ export function DateTimePicker({
                 stamp in a narrow panel is a layout problem, not a reason to
                 lose the affordance that says this opens a calendar. */}
             <span className="truncate">{humanise(value) ?? emptyText ?? placeholder ?? ''}</span>
-            <CalendarDays className="size-3.5 shrink-0 opacity-60" />
+            <Icon icon={CalendarDays} size="sm" tone="muted" />
           </Button>
         </PopoverTrigger>
       </Tooltip>
@@ -232,21 +241,25 @@ export function DateTimePicker({
         )}
 
         <div className="min-w-0">
+          {/* No tooltips on the paging arrows: opening the popover focuses the
+              first of them, and a tooltip opened by that focus would take the
+              first Escape meant for the popover. */}
           <div className="flex items-center justify-between px-2 pt-2">
-            <Button
-              variant="ghost"
-              size="icon-xs"
-              aria-label="previous month"
+            <IconButton
+              icon={ChevronLeft}
+              label="previous month"
+              tooltip={false}
               onClick={() => page(-1)}
-            >
-              <ChevronLeft />
-            </Button>
+            />
             <span className="text-xs font-medium">
               {MONTHS[view.month - 1]} {view.year}
             </span>
-            <Button variant="ghost" size="icon-xs" aria-label="next month" onClick={() => page(1)}>
-              <ChevronRight />
-            </Button>
+            <IconButton
+              icon={ChevronRight}
+              label="next month"
+              tooltip={false}
+              onClick={() => page(1)}
+            />
           </div>
 
           <div className="grid grid-cols-7 gap-px p-2" ref={gridRef} onKeyDown={onGridKeyDown}>
@@ -310,14 +323,11 @@ export function DateTimePicker({
                       onChange(withTime(selected, e.target.value))
                     }
                   />
-                  <Button
-                    variant="ghost"
-                    size="icon-xs"
-                    aria-label="remove the time"
+                  <IconButton
+                    icon={X}
+                    label="remove the time"
                     onClick={() => selected !== null && onChange(selected)}
-                  >
-                    <X />
-                  </Button>
+                  />
                 </>
               )}
               <Button

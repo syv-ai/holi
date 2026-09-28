@@ -111,8 +111,9 @@ export const completionChrome = {
   // `:has()` over it.
   [`${POPUP} > ul > li.${OPTION_CLASS} .cm-completionIcon`]: { display: 'none' },
   [`${POPUP} .cm-holi-icon`]: {
-    width: '14px',
-    height: '14px',
+    width: 'var(--icon-sm)',
+    height: 'var(--icon-sm)',
+    strokeWidth: 'var(--icon-stroke)',
     flex: 'none',
     color: 'var(--muted-foreground)',
   },
@@ -366,6 +367,15 @@ export const editorTheme = EditorView.baseTheme({
     background: 'var(--task-done)',
     borderColor: 'var(--task-done)',
     color: 'var(--background)',
+  },
+  // The box scales with its list's text, so the tick fills it rather than
+  // taking a fixed size, capped at the small icon. `middle` keeps the box on
+  // the baseline the text tick gave it.
+  '.cm-task-tick': {
+    width: 'min(var(--icon-sm), 80%)',
+    height: 'min(var(--icon-sm), 80%)',
+    strokeWidth: 'var(--icon-stroke)',
+    verticalAlign: 'middle',
   },
   '.cm-quote-mark': { color: '#737373' },
   // A plain click on a markdown link places the caret; only ⌘/Ctrl-click

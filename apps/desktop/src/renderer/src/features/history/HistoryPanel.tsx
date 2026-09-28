@@ -17,7 +17,7 @@ import { ArrowLeft } from 'lucide-react'
 import { motion, useReducedMotion } from 'motion/react'
 import { useEffect, useRef, useState } from 'react'
 import { Churn, DiffView, DrawerShell, DrawerTitle } from '@/composites'
-import { Button, Dialog, Tooltip, spring } from '@/primitives'
+import { Button, Dialog, Icon, Tooltip, spring } from '@/primitives'
 import { cn } from '@/lib/cn'
 import {
   diffAtom,
@@ -189,7 +189,7 @@ export function HistoryPanel() {
               onClick={backToLog}
               className="w-full justify-start px-3 text-[13px] font-normal text-muted-foreground"
             >
-              <ArrowLeft aria-hidden="true" />
+              <Icon icon={ArrowLeft} size="sm" />
               Back to log
             </Button>
             {selected !== null && (

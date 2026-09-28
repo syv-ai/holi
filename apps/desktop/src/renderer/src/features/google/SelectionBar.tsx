@@ -11,7 +11,7 @@
  * explains the rest, and the list re-reads.
  */
 import { Archive, MailOpen, Mail, Star, StarOff, Trash2, X } from 'lucide-react'
-import { Button, Tooltip } from '@/primitives'
+import { IconButton } from '@/primitives'
 
 export function SelectionBar({
   count,
@@ -35,64 +35,31 @@ export function SelectionBar({
       <div className="ml-auto flex shrink-0 items-center gap-1">
         {/* Both directions of both toggles, spelled out rather than derived:
             a mixed selection has no "current" state to flip. */}
-        <Tooltip content="mark read">
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            aria-label="mark read"
-            onClick={() => onSetRead(true)}
-          >
-            <MailOpen size={14} />
-          </Button>
-        </Tooltip>
-        <Tooltip content="mark unread">
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            aria-label="mark unread"
-            onClick={() => onSetRead(false)}
-          >
-            <Mail size={14} />
-          </Button>
-        </Tooltip>
-        <Tooltip content="star">
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            aria-label="star"
-            onClick={() => onSetStarred(true)}
-          >
-            <Star size={14} />
-          </Button>
-        </Tooltip>
-        <Tooltip content="unstar">
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            aria-label="unstar"
-            onClick={() => onSetStarred(false)}
-          >
-            <StarOff size={14} />
-          </Button>
-        </Tooltip>
-        <Tooltip content="archive — removes them from the inbox, keeps them in All Mail">
-          <Button variant="ghost" size="icon-xs" aria-label="archive" onClick={onArchive}>
-            <Archive size={14} />
-          </Button>
-        </Tooltip>
+        <IconButton icon={MailOpen} label="mark read" onClick={() => onSetRead(true)} />
+        <IconButton icon={Mail} label="mark unread" onClick={() => onSetRead(false)} />
+        <IconButton icon={Star} label="star" onClick={() => onSetStarred(true)} />
+        <IconButton icon={StarOff} label="unstar" onClick={() => onSetStarred(false)} />
+        <IconButton
+          icon={Archive}
+          label="archive"
+          tooltip="archive — removes them from the inbox, keeps them in All Mail"
+          onClick={onArchive}
+        />
         {/* Trash, which Gmail keeps for 30 days. Not called Delete: Holi cannot
             delete mail permanently and will not request the scope that would
             let it. */}
-        <Tooltip content="move to trash — recoverable for 30 days">
-          <Button variant="ghost" size="icon-xs" aria-label="move to trash" onClick={onTrash}>
-            <Trash2 size={14} />
-          </Button>
-        </Tooltip>
-        <Tooltip content="clear selection (Esc)">
-          <Button variant="ghost" size="icon-xs" aria-label="clear selection" onClick={onClear}>
-            <X size={14} />
-          </Button>
-        </Tooltip>
+        <IconButton
+          icon={Trash2}
+          label="move to trash"
+          tooltip="move to trash — recoverable for 30 days"
+          onClick={onTrash}
+        />
+        <IconButton
+          icon={X}
+          label="clear selection"
+          tooltip="clear selection (Esc)"
+          onClick={onClear}
+        />
       </div>
     </div>
   )

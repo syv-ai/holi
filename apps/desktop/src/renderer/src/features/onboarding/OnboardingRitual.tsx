@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
 import { useAtomValue, useSetAtom } from 'jotai'
+import { X } from 'lucide-react'
 import type { Repo } from '../../../../main/github/api'
 import {
   Button,
+  IconButton,
   Input,
   Select,
   SelectContent,
@@ -340,17 +342,14 @@ export function OnboardingRitual({ mode, onDismiss, dryRun = false }: Props) {
               <span className="obrit-dot" data-state={dotState(4)} />
             </div>
             {dismissible && (
-              <Tooltip content="Dismiss (Esc)">
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  className="size-7 rounded-full text-muted-foreground"
-                  onClick={onDismiss}
-                  aria-label="Dismiss"
-                >
-                  ✕
-                </Button>
-              </Tooltip>
+              <IconButton
+                icon={X}
+                label="Dismiss"
+                tooltip="Dismiss (Esc)"
+                size="md"
+                shape="round"
+                onClick={onDismiss}
+              />
             )}
           </div>
         </header>

@@ -29,7 +29,7 @@ import {
   THEME_FILE,
   THEME_LOCAL_FILE,
 } from '@holi/shared'
-import { Button, ColorSwatch, Dialog, Input, Tooltip } from '@/primitives'
+import { Button, ColorSwatch, Dialog, IconButton, Input, Tooltip } from '@/primitives'
 import { SettingsList, SettingsNote, SettingsRow } from './settings-ui'
 import { SettingsHeading } from './settings-ui'
 import { LIGHT_AND_DARK } from './appearance-headings'
@@ -110,39 +110,35 @@ function TokenRow({
       control={
         <div className="flex items-center gap-3">
           {kind === 'color' ? (
-        <ColorSwatch
-          shown={shown}
-          hex={tokenToHex(slug)}
-          onPick={onSet}
-          label={`${themeTokenLabel(slug)} colour`}
-        />
-      ) : (
-        // A length or a shadow: typed rather than picked, since a swatch cannot
-        // express it and the validator says what it accepts.
-        <Input
-          value={draft}
-          aria-label={themeTokenLabel(slug)}
-          placeholder={kind === 'length' ? '0.5rem' : 'inherits'}
-          onChange={(e) => setDraft(e.target.value)}
-          onBlur={() => {
-            if (draft.trim() === '') onClear()
-            else if (draft !== set) onSet(draft.trim())
-          }}
-            className="h-6 w-44 shrink-0 px-1.5 py-0 font-mono text-[11px]"
-          />
+            <ColorSwatch
+              shown={shown}
+              hex={tokenToHex(slug)}
+              onPick={onSet}
+              label={`${themeTokenLabel(slug)} colour`}
+            />
+          ) : (
+            // A length or a shadow: typed rather than picked, since a swatch cannot
+            // express it and the validator says what it accepts.
+            <Input
+              value={draft}
+              aria-label={themeTokenLabel(slug)}
+              placeholder={kind === 'length' ? '0.5rem' : 'inherits'}
+              onChange={(e) => setDraft(e.target.value)}
+              onBlur={() => {
+                if (draft.trim() === '') onClear()
+                else if (draft !== set) onSet(draft.trim())
+              }}
+              className="h-6 w-44 shrink-0 px-1.5 py-0 font-mono text-[11px]"
+            />
           )}
 
-          <Tooltip content={set === undefined ? 'already the default' : 'back to the default'}>
-            <Button
-              variant="ghost"
-              size="icon-xs"
-              aria-label={`reset ${themeTokenLabel(slug)}`}
-              disabled={set === undefined}
-              onClick={onClear}
-            >
-              <RotateCcw size={12} />
-            </Button>
-          </Tooltip>
+          <IconButton
+            icon={RotateCcw}
+            label={`reset ${themeTokenLabel(slug)}`}
+            tooltip={set === undefined ? 'already the default' : 'back to the default'}
+            disabled={set === undefined}
+            onClick={onClear}
+          />
         </div>
       }
     />
@@ -338,8 +334,15 @@ function ResetTheme({ remote }: { remote: string }): React.JSX.Element {
     // **No rule of its own**: the view's footer draws one, and two would sit a
     // few pixels apart. Spacing separates it.
     <div className="mt-6 flex items-center justify-between gap-3">
-      <SettingsNote>Clear every colour this vault has set, in both files and both modes.</SettingsNote>
-      <Button variant="secondary" size="xs" className="shrink-0" onClick={() => setConfirming(true)}>
+      <SettingsNote>
+        Clear every colour this vault has set, in both files and both modes.
+      </SettingsNote>
+      <Button
+        variant="secondary"
+        size="xs"
+        className="shrink-0"
+        onClick={() => setConfirming(true)}
+      >
         Reset theme
       </Button>
 

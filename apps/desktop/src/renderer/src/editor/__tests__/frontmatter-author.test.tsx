@@ -83,7 +83,7 @@ it('opens the profile through the editor seam, and leaves the block closed', () 
 it('ends the line with the version, after the name', () => {
   const v = mount(DOC, () => {})
   expect(v.dom.querySelector('.cm-fm-line')?.textContent).toBe(
-    '▸6 chars · Last updated 24/09/26,ada-holm· v.14',
+    '6 chars · Last updated 24/09/26,ada-holm· v.14',
   )
   expect(v.dom.querySelector('.cm-fm-version')?.textContent).toBe('· v.14')
 })

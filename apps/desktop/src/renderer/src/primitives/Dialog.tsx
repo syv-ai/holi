@@ -1,4 +1,5 @@
-import { XIcon } from 'lucide-react'
+import { X } from 'lucide-react'
+import { Icon } from './Icon'
 import { Dialog as DialogPrimitive } from 'radix-ui'
 import { cn } from '@/lib/cn'
 
@@ -76,12 +77,12 @@ export function Dialog({
           {closable && (
             <DialogPrimitive.Close
               className={cn(
-                'absolute right-4 top-4 rounded-xs opacity-70 motion-respond',
-                'hover:opacity-100 focus-visible:ring-1 focus-visible:ring-ring focus-visible:outline-none',
+                'absolute right-3 top-3 inline-flex size-6 items-center justify-center rounded-md text-icon motion-respond',
+                'hover:scale-110 hover:bg-accent hover:text-icon-active active:scale-95 focus-visible:ring-1 focus-visible:ring-ring focus-visible:outline-none',
                 'disabled:pointer-events-none',
               )}
             >
-              <XIcon className="size-4" />
+              <Icon icon={X} size="sm" />
               <span className="sr-only">Close</span>
             </DialogPrimitive.Close>
           )}

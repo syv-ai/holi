@@ -4,7 +4,7 @@
 import { type FieldSpec, addableKey } from '@holi/shared'
 import { Plus } from 'lucide-react'
 import { useRef, useState } from 'react'
-import { Button, Input, Tooltip } from '@/primitives'
+import { IconButton, Input } from '@/primitives'
 import { cn } from '@/lib/cn'
 
 /**
@@ -41,17 +41,12 @@ export function AddFieldRow({
 
   if (!open) {
     return (
-      <Tooltip content="add field">
-        <Button
-          variant="ghost"
-          size="icon-xs"
-          aria-label="add field"
-          className="motion-respond self-start text-muted-foreground hover:bg-muted/40"
-          onClick={() => setOpen(true)}
-        >
-          <Plus />
-        </Button>
-      </Tooltip>
+      <IconButton
+        icon={Plus}
+        label="add field"
+        className="self-start"
+        onClick={() => setOpen(true)}
+      />
     )
   }
 

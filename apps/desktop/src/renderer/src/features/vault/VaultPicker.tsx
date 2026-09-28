@@ -10,6 +10,7 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
+  Icon,
   Tooltip,
 } from '@/primitives'
 
@@ -31,19 +32,17 @@ export function VaultPicker({
       <Tooltip content="switch vault">
         <DropdownMenuTrigger
           data-vault-picker
-          className="flex min-w-0 flex-1 items-center gap-1 px-2 py-1 text-sm font-bold text-foreground outline-none hover:text-muted-foreground"
+          className="flex min-w-0 flex-1 items-center gap-1 px-2 py-1 text-sm font-bold text-foreground outline-none"
         >
           <span className="min-w-0 flex-1 truncate text-left">
             {active?.name ?? (vaults.length ? 'select vault' : 'no vaults')}
           </span>
-          <ChevronDown size={18} strokeWidth={2.5} className="shrink-0" />
+          <Icon icon={ChevronDown} />
         </DropdownMenuTrigger>
       </Tooltip>
 
       <DropdownMenuContent>
-        {vaults.length === 0 && (
-          <DropdownMenuItem disabled>no vaults yet</DropdownMenuItem>
-        )}
+        {vaults.length === 0 && <DropdownMenuItem disabled>no vaults yet</DropdownMenuItem>}
         {vaults.map((v) => (
           <DropdownMenuItem
             key={v.remote}
@@ -53,8 +52,8 @@ export function VaultPicker({
               if (v.remote !== activeRemote) onSelect(v.remote)
             }}
           >
-            <span className="flex w-3 shrink-0 justify-center text-brand">
-              {v.remote === activeRemote && <Check size={14} strokeWidth={3} />}
+            <span className="flex w-3.5 shrink-0 justify-center">
+              {v.remote === activeRemote && <Icon icon={Check} size="sm" className="text-brand" />}
             </span>
             <Tooltip content={v.remote} side="right">
               <span className="truncate">{v.name}</span>
@@ -65,7 +64,7 @@ export function VaultPicker({
             separate control competing with the switcher. */}
         <DropdownMenuSeparator />
         <DropdownMenuItem data-vault-add onSelect={onAddVault}>
-          <Plus size={14} className="w-3 shrink-0" />
+          <Icon icon={Plus} size="sm" />
           <span>Add vault…</span>
         </DropdownMenuItem>
       </DropdownMenuContent>

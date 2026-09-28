@@ -18,15 +18,14 @@ import { useAtomValue, useSetAtom } from 'jotai'
 import { Plus } from 'lucide-react'
 import { useState } from 'react'
 import {
-  Button,
   Checkbox,
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuSeparator,
   ContextMenuTrigger,
+  IconButton,
   Input,
-  Tooltip,
 } from '@/primitives'
 import { openBesideAtom } from '@/state/panes'
 import { shortStamp } from '@/lib/date-presets'
@@ -347,18 +346,14 @@ function Grid(): React.JSX.Element {
             className="flex items-center gap-1 px-1 pb-1 text-xs font-semibold text-foreground"
           >
             {c.label}
-            <Tooltip content={`add to ${c.label}`}>
-              <Button
-                variant="ghost"
-                size="icon-xs"
-                data-add-column={c.status}
-                aria-label={`Add to ${c.label}`}
-                className="ml-auto text-muted-foreground hover:text-foreground"
-                onClick={() => setAdding((s) => (s === c.status ? null : c.status))}
-              >
-                <Plus />
-              </Button>
-            </Tooltip>
+            <IconButton
+              icon={Plus}
+              label={`Add to ${c.label}`}
+              tooltip={`add to ${c.label}`}
+              data-add-column={c.status}
+              className="ml-auto"
+              onClick={() => setAdding((s) => (s === c.status ? null : c.status))}
+            />
           </div>
         ))}
 

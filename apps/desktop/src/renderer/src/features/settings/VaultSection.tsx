@@ -12,17 +12,12 @@ import { SiGithub } from '@icons-pack/react-simple-icons'
 import { useAtomValue } from 'jotai'
 import { useEffect, useState } from 'react'
 import type { Collaborator } from '@holi/shared'
-import { Button, Tooltip } from '@/primitives'
+import { Button, Icon, Tooltip } from '@/primitives'
 import { cn } from '@/lib/cn'
 import { collaboratorsErrorText, errorCodeOf } from '@/lib/collaborators-error'
 import { trpc } from '@/lib/trpc'
 import { activeRemoteAtom, vaultsAtom } from '@/state/vaults'
-import {
-  ExternalLink,
-  SettingsField,
-  SettingsHeading,
-  SettingsNote,
-} from './settings-ui'
+import { ExternalLink, SettingsField, SettingsHeading, SettingsNote } from './settings-ui'
 import { COLLABORATORS, WHERE_IT_LIVES } from './vault-headings'
 
 /** Mirrors `remoteUrl` in `main/git.ts`, minus the `.git`: this one is for a
@@ -149,7 +144,7 @@ export function VaultSection(): React.JSX.Element {
           }}
         >
           Manage…
-          <SiGithub size={13} color="currentColor" aria-hidden="true" />
+          <Icon icon={SiGithub} size="sm" />
         </Button>
       </div>
       {/* A refusal is ordinary (signed out, no scope, local-fixture vault) and

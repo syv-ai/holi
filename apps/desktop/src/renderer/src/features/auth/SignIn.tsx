@@ -13,7 +13,7 @@
 import { useSetAtom } from 'jotai'
 import { Check, Copy } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
-import { Button, Tooltip } from '@/primitives'
+import { Button, IconButton } from '@/primitives'
 import { trpc } from '@/lib/trpc'
 import { sessionAtom } from '@/state/session'
 
@@ -90,16 +90,13 @@ export function SignIn() {
             <code className="rounded border border-border bg-muted px-4 py-2 font-mono text-2xl tracking-[0.3em]">
               {phase.userCode}
             </code>
-            <Tooltip content={copied ? 'Copied' : 'Copy code'}>
-              <Button
-                variant="ghost"
-                size="icon"
-                aria-label="Copy code"
-                onClick={() => void copyCode(phase.userCode)}
-              >
-                {copied ? <Check className="text-brand" /> : <Copy />}
-              </Button>
-            </Tooltip>
+            <IconButton
+              icon={copied ? Check : Copy}
+              label="Copy code"
+              tooltip={copied ? 'Copied' : 'Copy code'}
+              size="md"
+              onClick={() => void copyCode(phase.userCode)}
+            />
           </div>
           <Button
             variant="link"
@@ -145,7 +142,9 @@ export function SignIn() {
         <p className="text-xs text-muted-foreground">Sign-in was cancelled on GitHub.</p>
       )}
       {phase.kind === 'expired' && (
-        <p className="text-xs text-muted-foreground">That code expired. Press the button for a new one.</p>
+        <p className="text-xs text-muted-foreground">
+          That code expired. Press the button for a new one.
+        </p>
       )}
       {phase.kind === 'failed' && (
         <p className="max-w-md text-center text-xs text-destructive">{phase.message}</p>

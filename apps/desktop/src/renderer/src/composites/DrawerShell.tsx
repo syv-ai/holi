@@ -176,7 +176,7 @@ export function DrawerShell({
       <div className="flex h-full w-(--drawer-w) shrink-0 flex-col" inert={!open}>
         <PanelHeader
           actions={actions}
-          close={onClose ? { icon: <X />, label: `Close ${label}`, onSelect: onClose } : undefined}
+          close={onClose ? { icon: X, label: `Close ${label}`, onSelect: onClose } : undefined}
           className={cn(
             'border-drawer-edge',
             // Room for the edge control, which sits over the header's end.

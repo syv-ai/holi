@@ -20,6 +20,7 @@
 import { Fragment, useEffect, useRef, useState } from 'react'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { TriangleAlert } from 'lucide-react'
+import { Icon } from '@/primitives'
 import { openPinned, workspaceAtom } from '@/state/panes'
 import { activeRemoteAtom } from '@/state/vaults'
 import { SettingsPicker, SettingsRail } from './SettingsRail'
@@ -102,7 +103,7 @@ export function SettingsView(): React.JSX.Element {
                   key={warning}
                   className="mt-3 flex items-start gap-1.5 text-[11px] text-muted-foreground"
                 >
-                  <TriangleAlert size={13} className="mt-0.5 shrink-0" />
+                  <Icon icon={TriangleAlert} size="sm" className="mt-0.5" />
                   {warning}
                 </p>
               ))}

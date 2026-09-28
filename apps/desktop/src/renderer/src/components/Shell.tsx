@@ -9,6 +9,7 @@ import { Fragment, useEffect, useRef, useState } from 'react'
 import { fileKind, isAppBundlePath, isTaskFilePath, isVaultConfigPath } from '@holi/shared'
 import {
   Button,
+  IconButton,
   Kbd,
   ResizableHandle,
   ResizablePanel,
@@ -65,11 +66,7 @@ import { VaultSwitchConfirm } from '@/features/agent/VaultSwitchConfirm'
 import { CommandPalette } from '@/features/palette/CommandPalette'
 import { runCommandAtom, useCommandHotkeys } from '../state/commands'
 import { recentOfTab, touchRecentAtom } from '../state/recents'
-import {
-  closePaneWithExitAtom,
-  closeTabWithExitAtom,
-  leavingPaneAtom,
-} from '../state/pane-exit'
+import { closePaneWithExitAtom, closeTabWithExitAtom, leavingPaneAtom } from '../state/pane-exit'
 import { applyVaultSwitchAtom, leavingVaultAtom, switchVaultAtom } from '../state/vault-switch'
 import {
   agentSessionsAtom,
@@ -317,24 +314,17 @@ export function Shell() {
           // on its side at the foot. The toggle rides the drawer's moving edge
           // and lands in the rail's top slot.
           edgeControl={
-            <Tooltip
-              content={
+            <IconButton
+              icon={navOpen ? PanelLeftClose : PanelLeftOpen}
+              label={navOpen ? 'Hide sidebar' : 'Show sidebar'}
+              tooltip={
                 <span className="inline-flex items-center gap-1.5">
                   {navOpen ? 'Hide sidebar' : 'Show sidebar'}
                   <Kbd>⌥⌘S</Kbd>
                 </span>
               }
-            >
-              <Button
-                variant="ghost"
-                size="icon-xs"
-                className="text-muted-foreground"
-                aria-label={navOpen ? 'Hide sidebar' : 'Show sidebar'}
-                onClick={() => setNavOpen((open) => !open)}
-              >
-                {navOpen ? <PanelLeftClose size={16} /> : <PanelLeftOpen size={16} />}
-              </Button>
-            </Tooltip>
+              onClick={() => setNavOpen((open) => !open)}
+            />
           }
           rail={
             <>
@@ -352,174 +342,162 @@ export function Shell() {
           }
         >
           <div className="relative flex min-h-0 flex-1 flex-col">
-              {showAdd && <OnboardingRitual mode="add-vault" onDismiss={() => setShowAdd(false)} />}
-              {leaving !== null && (
-                <VaultSwitchConfirm
-                  intent={leaving.kind}
-                  onConfirm={() => {
-                    if (leaving.kind === 'switch') applySwitch(leaving.remote)
-                    else {
-                      setLeaving(null)
-                      setShowAdd(true)
-                    }
-                  }}
-                  onCancel={() => setLeaving(null)}
-                />
-              )}
-
-              {/* The sidebar's own vertical group: the tree, then the sessions
-              on the row directly above the nav menu. */}
-              <ResizablePanelGroup
-                orientation="vertical"
-                className="min-h-0 flex-1"
-                defaultLayout={sidebarLayout.defaultLayout}
-                onLayoutChanged={(layout, meta) => {
-                  sidebarLayout.onLayoutChanged(layout, meta)
-                  // Reconcile a real drag back into the open flags. Only
-                  // `isUserInteraction`: mount and reflow report sizes too, and
-                  // would collapse sections behind the user's back.
-                  //
-                  // Ask the panel, not `layout`: a layout value is a flexGrow
-                  // weight, not a pixel height.
-                  if (!meta.isUserInteraction) return
-                  setSessionsOpen(sessionsPanelRef.current?.isCollapsed() === false)
+            {showAdd && <OnboardingRitual mode="add-vault" onDismiss={() => setShowAdd(false)} />}
+            {leaving !== null && (
+              <VaultSwitchConfirm
+                intent={leaving.kind}
+                onConfirm={() => {
+                  if (leaving.kind === 'switch') applySwitch(leaving.remote)
+                  else {
+                    setLeaving(null)
+                    setShowAdd(true)
+                  }
                 }}
+                onCancel={() => setLeaving(null)}
+              />
+            )}
+
+            {/* The sidebar's own vertical group: the tree, then the sessions
+              on the row directly above the nav menu. */}
+            <ResizablePanelGroup
+              orientation="vertical"
+              className="min-h-0 flex-1"
+              defaultLayout={sidebarLayout.defaultLayout}
+              onLayoutChanged={(layout, meta) => {
+                sidebarLayout.onLayoutChanged(layout, meta)
+                // Reconcile a real drag back into the open flags. Only
+                // `isUserInteraction`: mount and reflow report sizes too, and
+                // would collapse sections behind the user's back.
+                //
+                // Ask the panel, not `layout`: a layout value is a flexGrow
+                // weight, not a pixel height.
+                if (!meta.isUserInteraction) return
+                setSessionsOpen(sessionsPanelRef.current?.isCollapsed() === false)
+              }}
+            >
+              <ResizablePanel id="tree" minSize={80}>
+                <FileTree
+                  activePath={tab?.kind === 'note' || tab?.kind === 'app' ? tab.path : null}
+                  onOpenPreview={open}
+                  onOpenPinned={openPin}
+                  onOpenInNewPane={(path) =>
+                    setWorkspace((w) =>
+                      openInNewPane(
+                        w,
+                        isAppBundlePath(path) ? { kind: 'app', path } : { kind: 'note', path },
+                      ),
+                    )
+                  }
+                />
+              </ResizablePanel>
+              {/* Present even with no sessions: its `+` is the only mouse
+                    path to a first one (D101). */}
+              <ResizableHandle />
+              <ResizablePanel
+                id="sessions"
+                collapsible
+                collapsedSize={SECTION_HEADER_HEIGHT}
+                defaultSize={hasSessions ? 140 : SECTION_HEADER_HEIGHT}
+                minSize={SECTION_HEADER_HEIGHT}
+                maxSize="60"
+                panelRef={sessionsPanelRef}
               >
-                <ResizablePanel id="tree" minSize={80}>
-                  <FileTree
-                    activePath={tab?.kind === 'note' || tab?.kind === 'app' ? tab.path : null}
-                    onOpenPreview={open}
-                    onOpenPinned={openPin}
-                    onOpenInNewPane={(path) =>
-                      setWorkspace((w) =>
-                        openInNewPane(
-                          w,
-                          isAppBundlePath(path) ? { kind: 'app', path } : { kind: 'note', path },
-                        ),
-                      )
+                <SessionsSection />
+              </ResizablePanel>
+            </ResizablePanelGroup>
+
+            {/* The nav menu on the sidebar's floor (D108). It opens upward
+              over the sessions and the tree. */}
+            <div className="flex shrink-0 p-2">
+              <NavMenu />
+            </div>
+          </div>
+        </DrawerShell>
+
+        <div className="flex min-w-60 flex-1 flex-col">
+          {/* The panes. Layout deliberately not persisted: a stored layout
+                is weights keyed to a panel count, and panes come and go. */}
+          <ResizablePanelGroup orientation="horizontal" className="min-h-0">
+            {workspace.panes.map((p, i) => (
+              <Fragment key={i}>
+                {i > 0 && <ResizableHandle />}
+                <ResizablePanel id={`pane-${i}`} minSize={240}>
+                  <PaneView
+                    pane={p}
+                    focused={i === workspace.active}
+                    leaving={leavingPane === i}
+                    solo={isSoloNote(workspace)}
+                    onFocus={() => setWorkspace((w) => focusPane(w, i))}
+                    // Every action focuses this pane first, then acts on the
+                    // active pane.
+                    onSelect={(t) =>
+                      setWorkspace((w) => {
+                        const focusedW = focusPane(w, i)
+                        return {
+                          ...focusedW,
+                          panes: focusedW.panes.map((q, pi) =>
+                            pi === i ? { ...q, active: t } : q,
+                          ),
+                        }
+                      })
+                    }
+                    onPin={(t) => setWorkspace((w) => pinTab(focusPane(w, i), t))}
+                    onCloseTab={(t) => closeTabWithExit(i, t)}
+                    onEdit={() => setWorkspace((w) => pinActive(focusPane(w, i)))}
+                    onOpenNote={open}
+                    onConflict={(path, resolve) => setBanner({ path, resolve })}
+                    // Answered workspace-wide: pane 1's left edge and pane
+                    // 0's right edge are one gap.
+                    allowed={
+                      dragTab === null || overStrip ? NO_ZONES : dropZones(workspace, dragTab, i)
+                    }
+                    // Over the strip from the start, or the bands flash for
+                    // a frame before the first `dragover`.
+                    onDragBegin={(tab) => {
+                      setDragTab(tab)
+                      setOverStrip(true)
+                    }}
+                    onDragOverStrip={setOverStrip}
+                    onDropTab={(t, index) => setWorkspace((w) => moveTab(w, t, { pane: i, index }))}
+                    onDropEdge={(t, side) =>
+                      setWorkspace((w) => moveTabToNewPane(w, t, side === 'before' ? i : i + 1))
+                    }
+                    trailing={
+                      <>
+                        {/* Version history for the focused note. Only on the
+                              active pane: `historyTargetPathAtom` reads its tab,
+                              the drawer's own predicate. */}
+                        {i === workspace.active && historyTarget !== null && (
+                          <IconButton
+                            icon={History}
+                            label="version history"
+                            className="ml-1"
+                            onClick={() => setHistoryOpen((v) => !v)}
+                          />
+                        )}
+                        {/* Closing a pane's last tab unsplits; this does it in
+                              one gesture. */}
+                        {workspace.panes.length > 1 && (
+                          <IconButton
+                            icon={PanelRight}
+                            label="close this pane"
+                            className="ml-1"
+                            onClick={() => closePaneWithExit(i)}
+                          />
+                        )}
+                      </>
                     }
                   />
                 </ResizablePanel>
-                {/* Present even with no sessions: its `+` is the only mouse
-                    path to a first one (D101). */}
-                <ResizableHandle />
-                <ResizablePanel
-                  id="sessions"
-                  collapsible
-                  collapsedSize={SECTION_HEADER_HEIGHT}
-                  defaultSize={hasSessions ? 140 : SECTION_HEADER_HEIGHT}
-                  minSize={SECTION_HEADER_HEIGHT}
-                  maxSize="60"
-                  panelRef={sessionsPanelRef}
-                >
-                  <SessionsSection />
-                </ResizablePanel>
-              </ResizablePanelGroup>
+              </Fragment>
+            ))}
+          </ResizablePanelGroup>
+        </div>
 
-              {/* The nav menu on the sidebar's floor (D108). It opens upward
-              over the sessions and the tree. */}
-              <div className="flex shrink-0 p-2">
-                <NavMenu />
-              </div>
-            </div>
-          </DrawerShell>
-
-
-          <div className="flex min-w-60 flex-1 flex-col">
-            {/* The panes. Layout deliberately not persisted: a stored layout
-                is weights keyed to a panel count, and panes come and go. */}
-            <ResizablePanelGroup orientation="horizontal" className="min-h-0">
-              {workspace.panes.map((p, i) => (
-                <Fragment key={i}>
-                  {i > 0 && <ResizableHandle />}
-                  <ResizablePanel id={`pane-${i}`} minSize={240}>
-                    <PaneView
-                      pane={p}
-                      focused={i === workspace.active}
-                      leaving={leavingPane === i}
-                      solo={isSoloNote(workspace)}
-                      onFocus={() => setWorkspace((w) => focusPane(w, i))}
-                      // Every action focuses this pane first, then acts on the
-                      // active pane.
-                      onSelect={(t) =>
-                        setWorkspace((w) => {
-                          const focusedW = focusPane(w, i)
-                          return {
-                            ...focusedW,
-                            panes: focusedW.panes.map((q, pi) =>
-                              pi === i ? { ...q, active: t } : q,
-                            ),
-                          }
-                        })
-                      }
-                      onPin={(t) => setWorkspace((w) => pinTab(focusPane(w, i), t))}
-                      onCloseTab={(t) => closeTabWithExit(i, t)}
-                      onEdit={() => setWorkspace((w) => pinActive(focusPane(w, i)))}
-                      onOpenNote={open}
-                      onConflict={(path, resolve) => setBanner({ path, resolve })}
-                      // Answered workspace-wide: pane 1's left edge and pane
-                      // 0's right edge are one gap.
-                      allowed={
-                        dragTab === null || overStrip ? NO_ZONES : dropZones(workspace, dragTab, i)
-                      }
-                      // Over the strip from the start, or the bands flash for
-                      // a frame before the first `dragover`.
-                      onDragBegin={(tab) => {
-                        setDragTab(tab)
-                        setOverStrip(true)
-                      }}
-                      onDragOverStrip={setOverStrip}
-                      onDropTab={(t, index) =>
-                        setWorkspace((w) => moveTab(w, t, { pane: i, index }))
-                      }
-                      onDropEdge={(t, side) =>
-                        setWorkspace((w) => moveTabToNewPane(w, t, side === 'before' ? i : i + 1))
-                      }
-                      trailing={
-                        <>
-                          {/* Version history for the focused note. Only on the
-                              active pane: `historyTargetPathAtom` reads its tab,
-                              the drawer's own predicate. */}
-                          {i === workspace.active && historyTarget !== null && (
-                            <Tooltip content="version history">
-                              <Button
-                                variant="ghost"
-                                size="icon-xs"
-                                className="ml-1 shrink-0 text-muted-foreground"
-                                onClick={() => setHistoryOpen((v) => !v)}
-                              >
-                                <History size={16} />
-                              </Button>
-                            </Tooltip>
-                          )}
-                          {/* Closing a pane's last tab unsplits; this does it in
-                              one gesture. */}
-                          {workspace.panes.length > 1 && (
-                            <Tooltip content="close this pane">
-                              <Button
-                                variant="ghost"
-                                size="icon-xs"
-                                className="ml-1 shrink-0 text-muted-foreground"
-                                aria-label="close this pane"
-                                onClick={() => closePaneWithExit(i)}
-                              >
-                                <PanelRight size={16} />
-                              </Button>
-                            </Tooltip>
-                          )}
-                        </>
-                      }
-                    />
-                  </ResizablePanel>
-                </Fragment>
-              ))}
-            </ResizablePanelGroup>
-          </div>
-
-          {/* The right-hand drawers; each decides whether it is open. The last
+        {/* The right-hand drawers; each decides whether it is open. The last
               turn (D88) is a diff over a commit range. */}
-          <HistoryPanel />
-          <TurnReview />
+        <HistoryPanel />
+        <TurnReview />
 
         <DialogHost />
         <CommandPalette />

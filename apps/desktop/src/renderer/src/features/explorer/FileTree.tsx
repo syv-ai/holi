@@ -34,7 +34,7 @@ import {
   withMdExtension,
 } from '@/lib/tree-paths'
 import { useArrivals } from '@/lib/use-arrivals'
-import { Button, ContextMenu, ContextMenuTrigger, Input } from '@/primitives'
+import { Button, ContextMenu, ContextMenuTrigger, Icon, Input } from '@/primitives'
 import { registerAppAtom, unregisteredAppPathsAtom } from '@/state/apps'
 import { todayDailyPathAtom } from '@/state/daily'
 import { revealRequestAtom } from '@/state/reveal'
@@ -568,11 +568,11 @@ export function FileTree({
    * What a row leads with: a folder's chevron, or a file's type glyph in the
    * chevron's column, so the two read apart at a glance. On the open file's
    * path it is brand, file and every folder above it, so the chevrons trace
-   * the way down alongside the connector. `!` beats Button's own svg sizing.
+   * the way down alongside the connector.
    */
   const lead = (id: string, node: TreeItemData, isOpen: boolean) => {
     const slot = cn(
-      'motion-respond flex w-3.5 shrink-0 justify-center [&_svg]:size-3.5!',
+      'motion-respond flex w-3.5 shrink-0 justify-center',
       onPath(id) ? 'text-brand' : 'text-muted-foreground group-hover:text-foreground',
       ignored.has(id) && 'opacity-50',
     )
@@ -584,7 +584,7 @@ export function FileTree({
         <>
           {isOpen && (
             <span className={slot}>
-              <ChevronRight className="motion-respond size-3! rotate-90" />
+              <Icon icon={ChevronRight} size="sm" className="motion-respond rotate-90" />
             </span>
           )}
           <span data-slot="row-icon" className={slot}>
@@ -603,9 +603,10 @@ export function FileTree({
     return (
       <>
         <span className={slot}>
-          <ChevronRight
-            className="motion-respond size-3!"
-            style={{ transform: isOpen ? 'rotate(90deg)' : 'none' }}
+          <Icon
+            icon={ChevronRight}
+            size="sm"
+            className={cn('motion-respond', isOpen && 'rotate-90')}
           />
         </span>
         {/* A chosen icon still shows; the plain folder glyph would repeat the chevron. */}
@@ -717,8 +718,8 @@ export function FileTree({
     pending && (
       <Disclose open group={false}>
         <div className={cn(className, 'flex items-center')} style={style}>
-          <span className="flex w-3.5 shrink-0 justify-center text-muted-foreground">
-            {pending.kind === 'folder' && <ChevronRight className="size-3" />}
+          <span className="flex w-3.5 shrink-0 justify-center">
+            {pending.kind === 'folder' && <Icon icon={ChevronRight} size="sm" tone="muted" />}
           </span>
           <NameInput
             initial=""

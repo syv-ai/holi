@@ -1,41 +1,28 @@
 /**
- * The popup's glyphs, as plain SVG fragments, matching the explorer's
- * `lucide-react` icons (`composites/file-icons.tsx`).
- *
- * Hand-copied rather than imported: a CodeMirror option is plain DOM, and
- * lucide's geometry (`__iconNode`) is reachable only by a deep `dist/` import.
- * `__tests__/completion-rows.test.tsx` fails if the two diverge. Copied from
- * lucide-react 1.27.0.
+ * The popup's glyphs, the explorer's lucide icons (`composites/file-icons.tsx`)
+ * as vanilla `lucide` geometry: a CodeMirror option is plain DOM, so it is
+ * drawn with `createElement` rather than a React component. The same package
+ * version as `lucide-react`, so the two cannot drift. Size and stroke are CSS
+ * (`theme.ts`, from the `--icon-*` tokens).
  */
+import {
+  Circle,
+  CircleCheck,
+  CircleDot,
+  FileText,
+  ListTodo,
+  Settings2,
+  Table,
+  type IconNode,
+} from 'lucide'
 
-/** lucide's own SVG attributes. The size is left to CSS. */
-export const SVG_ATTRS: Record<string, string> = {
-  viewBox: '0 0 24 24',
-  fill: 'none',
-  stroke: 'currentColor',
-  'stroke-width': '2',
-  'stroke-linecap': 'round',
-  'stroke-linejoin': 'round',
-  'aria-hidden': 'true',
-}
-
-export const GLYPHS: Record<string, string> = {
-  // FileText
-  'holi-note':
-    '<path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"/>' +
-    '<path d="M14 2v5a1 1 0 0 0 1 1h5"/><path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/>',
-  // Circle / CircleDot / CircleCheck — the explorer's `TaskIcon` vocabulary.
-  'holi-task-todo': '<circle cx="12" cy="12" r="10"/>',
-  'holi-task-doing': '<circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="1"/>',
-  'holi-task-done': '<circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/>',
-  // ListTodo
-  'holi-list-todo':
-    '<path d="M13 5h8"/><path d="M13 12h8"/><path d="M13 19h8"/><path d="m3 17 2 2 4-4"/>' +
-    '<rect x="3" y="4" width="6" height="6" rx="1"/>',
-  // Table
-  'holi-table':
-    '<path d="M12 3v18"/><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18"/><path d="M3 15h18"/>',
-  // Settings2
-  'holi-setting':
-    '<path d="M14 17H5"/><path d="M19 7h-9"/><circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/>',
+export const GLYPHS: Record<string, IconNode> = {
+  'holi-note': FileText,
+  // The explorer's `TaskIcon` vocabulary.
+  'holi-task-todo': Circle,
+  'holi-task-doing': CircleDot,
+  'holi-task-done': CircleCheck,
+  'holi-list-todo': ListTodo,
+  'holi-table': Table,
+  'holi-setting': Settings2,
 }

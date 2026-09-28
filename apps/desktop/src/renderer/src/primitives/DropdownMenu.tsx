@@ -1,5 +1,6 @@
 import * as React from 'react'
-import { CheckIcon, ChevronRightIcon, CircleIcon } from 'lucide-react'
+import { Check, ChevronRight } from 'lucide-react'
+import { Icon } from './Icon'
 import { DropdownMenu as DropdownMenuPrimitive } from 'radix-ui'
 
 import { cn } from '@/lib/cn'
@@ -13,8 +14,7 @@ import {
 } from './morph-popup'
 
 /** An item's own classes beyond the row look: its icons. */
-const ITEM_ICONS =
-  "[&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4"
+const ITEM_ICONS = '[&_svg]:pointer-events-none [&_svg]:shrink-0'
 
 /** Opens as the nav menu's family does: out of its trigger (`morph-popup.tsx`). */
 function DropdownMenu({
@@ -105,7 +105,7 @@ function DropdownMenuItem({
       className={cn(
         MORPH_ROW_LOOK,
         ITEM_ICONS,
-        "data-[inset]:pl-8 data-[variant=destructive]:text-destructive data-[variant=destructive]:focus:bg-destructive/10 data-[variant=destructive]:focus:text-destructive dark:data-[variant=destructive]:focus:bg-destructive/20 [&_svg:not([class*='text-'])]:text-muted-foreground data-[variant=destructive]:*:[svg]:text-destructive!",
+        "data-[inset]:pl-8 data-[variant=destructive]:text-destructive data-[variant=destructive]:focus:bg-destructive/10 data-[variant=destructive]:focus:text-destructive dark:data-[variant=destructive]:focus:bg-destructive/20 [&_svg:not([class*='text-'])]:text-icon data-[variant=destructive]:*:[svg]:text-destructive!",
         className,
       )}
       {...props}
@@ -129,7 +129,7 @@ function DropdownMenuCheckboxItem({
     >
       <span className="pointer-events-none absolute left-2.5 flex size-3.5 items-center justify-center">
         <DropdownMenuPrimitive.ItemIndicator>
-          <CheckIcon className="size-4" />
+          <Icon icon={Check} />
         </DropdownMenuPrimitive.ItemIndicator>
       </span>
       {children}
@@ -157,7 +157,7 @@ function DropdownMenuRadioItem({
     >
       <span className="pointer-events-none absolute left-2.5 flex size-3.5 items-center justify-center">
         <DropdownMenuPrimitive.ItemIndicator>
-          <CircleIcon className="size-2 fill-current" />
+          <span className="size-2 rounded-full bg-current" />
         </DropdownMenuPrimitive.ItemIndicator>
       </span>
       {children}
@@ -227,13 +227,13 @@ function DropdownMenuSubTrigger({
       className={cn(
         MORPH_ROW_LOOK,
         ITEM_ICONS,
-        "data-[inset]:pl-8 data-[state=open]:bg-accent data-[state=open]:text-accent-foreground [&_svg:not([class*='text-'])]:text-muted-foreground",
+        "data-[inset]:pl-8 data-[state=open]:bg-accent data-[state=open]:text-accent-foreground [&_svg:not([class*='text-'])]:text-icon",
         className,
       )}
       {...props}
     >
       {children}
-      <ChevronRightIcon className="ml-auto size-4" />
+      <Icon icon={ChevronRight} className="ml-auto" />
     </DropdownMenuPrimitive.SubTrigger>
   )
 }

@@ -1,5 +1,6 @@
 import { Command as CommandPrimitive } from 'cmdk'
-import { SearchIcon } from 'lucide-react'
+import { Search } from 'lucide-react'
+import { Icon } from './Icon'
 import { AnimatePresence, useAnimate, usePresence, useReducedMotion } from 'motion/react'
 import { Dialog as DialogPrimitive } from 'radix-ui'
 import { useEffect, useLayoutEffect, useRef } from 'react'
@@ -269,7 +270,7 @@ function CommandInput({
 }: React.ComponentProps<typeof CommandPrimitive.Input>): React.JSX.Element {
   return (
     <div data-slot="command-input-wrapper" className="flex h-9 items-center gap-2 px-2.5">
-      <SearchIcon className="size-4 shrink-0 text-muted-foreground" />
+      <Icon icon={Search} tone="muted" />
       <CommandPrimitive.Input
         data-slot="command-input"
         className={cn(
@@ -348,7 +349,7 @@ function CommandItem({
     <CommandPrimitive.Item
       data-slot="command-item"
       className={cn(
-        "relative flex min-h-8 cursor-default items-center gap-2 rounded-xl px-2.5 py-1.5 text-sm outline-hidden select-none data-[disabled=true]:pointer-events-none data-[disabled=true]:opacity-50 data-[selected=true]:bg-accent [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 [&_svg:not([class*='text-'])]:text-muted-foreground",
+        "relative flex min-h-8 cursor-default items-center gap-2 rounded-xl px-2.5 py-1.5 text-sm outline-hidden select-none data-[disabled=true]:pointer-events-none data-[disabled=true]:opacity-50 data-[selected=true]:bg-accent [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='text-'])]:text-icon",
         className,
       )}
       {...props}

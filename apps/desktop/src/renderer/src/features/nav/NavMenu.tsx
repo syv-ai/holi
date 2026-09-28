@@ -65,20 +65,19 @@ export function NavMenu({
   // Stable across renders that change nothing here: the menu re-measures and
   // restarts its morph when its items change.
   const items = useMemo((): MorphingMenuItem[] => {
-    const icon = (Glyph: typeof House) => <Glyph size={16} />
     return [
-      { id: 'home', label: 'Home', icon: icon(House), onSelect: () => setWorkspace(openHome) },
-      { id: 'search', label: 'Search', icon: icon(Search), onSelect: () => openPalette('open') },
+      { id: 'home', label: 'Home', icon: House, onSelect: () => setWorkspace(openHome) },
+      { id: 'search', label: 'Search', icon: Search, onSelect: () => openPalette('open') },
       ...(appPaths.length > 0
         ? [
             {
               id: 'apps',
               label: 'Apps',
-              icon: <AppIcon size={16} />,
+              icon: AppIcon,
               children: appPaths.map((path) => ({
                 id: appItemId(path),
                 label: appName(path),
-                icon: <AppIcon size={16} />,
+                icon: AppIcon,
                 onSelect: () => setWorkspace((w) => openApp(w, path)),
               })),
             },
@@ -87,7 +86,7 @@ export function NavMenu({
       {
         id: 'board',
         label: 'Board',
-        icon: icon(SquareKanban),
+        icon: SquareKanban,
         badge: openTaskCount,
         badgeTone: overdueCount > 0 ? 'alert' : undefined,
         onSelect: () => setWorkspace(openBoard),
@@ -97,22 +96,22 @@ export function NavMenu({
             {
               id: 'mail',
               label: 'Email',
-              icon: icon(Mail),
+              icon: Mail,
               onSelect: () => setWorkspace(openMail),
             },
             {
               id: 'agenda',
               label: 'Agenda',
-              icon: icon(CalendarDays),
+              icon: CalendarDays,
               onSelect: () => setWorkspace(openAgenda),
             },
           ]
         : []),
-      // Last, so it sits beside More at the dock's end.
+      // Last, so it ends the dock.
       {
         id: 'settings',
         label: 'Settings',
-        icon: icon(Settings),
+        icon: Settings,
         onSelect: () => setWorkspace(openSettings),
       },
     ]

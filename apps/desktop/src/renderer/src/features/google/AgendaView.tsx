@@ -32,6 +32,8 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
+  Icon,
+  IconButton,
   ResizableHandle,
   ResizablePanel,
   ResizablePanelGroup,
@@ -332,11 +334,12 @@ export function AgendaView() {
           <div className="flex h-11 shrink-0 items-center justify-end gap-2 px-4">
             <div className="flex items-center gap-1">
               <CalendarPicker calendars={calendars} onToggle={toggleCalendar} />
-              <Tooltip content="refresh">
-                <Button variant="ghost" size="icon-xs" aria-label="refresh agenda" onClick={load}>
-                  <RefreshCw size={14} />
-                </Button>
-              </Tooltip>
+              <IconButton
+                icon={RefreshCw}
+                label="refresh agenda"
+                tooltip="refresh"
+                onClick={load}
+              />
             </div>
           </div>
 
@@ -410,18 +413,12 @@ export function AgendaView() {
                               </Tooltip>
                             )}
                             {event.conferenceUrl !== null && (
-                              <Tooltip content="join the meeting">
-                                <Button
-                                  variant="ghost"
-                                  size="icon-xs"
-                                  aria-label={`join ${event.title}`}
-                                  onClick={() =>
-                                    void window.holi.openExternal(event.conferenceUrl!)
-                                  }
-                                >
-                                  <Video size={14} />
-                                </Button>
-                              </Tooltip>
+                              <IconButton
+                                icon={Video}
+                                label={`join ${event.title}`}
+                                tooltip="join the meeting"
+                                onClick={() => void window.holi.openExternal(event.conferenceUrl!)}
+                              />
                             )}
                           </span>
                         </div>
@@ -479,7 +476,7 @@ function EventDetail({
               className="mr-auto gap-1"
               onClick={() => void window.holi.openExternal(event.conferenceUrl!)}
             >
-              <Video size={13} />
+              <Icon icon={Video} size="sm" />
               Join
             </Button>
           </Tooltip>
@@ -494,16 +491,12 @@ function EventDetail({
             {creating ? 'Creating…' : 'Task'}
           </Button>
         </Tooltip>
-        <Tooltip content="open in Google Calendar">
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            aria-label={`open ${event.title} in Google Calendar`}
-            onClick={() => void window.holi.openExternal(event.htmlLink)}
-          >
-            <ExternalLink size={14} />
-          </Button>
-        </Tooltip>
+        <IconButton
+          icon={ExternalLink}
+          label={`open ${event.title} in Google Calendar`}
+          tooltip="open in Google Calendar"
+          onClick={() => void window.holi.openExternal(event.htmlLink)}
+        />
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-6">
@@ -519,17 +512,29 @@ function EventDetail({
             {!event.mine && <span className="text-muted-foreground"> · subscribed</span>}
           </Fact>
           {KIND_LABELS[event.kind] !== undefined && (
-            <Fact icon={<CalendarDays size={13} />}>{KIND_LABELS[event.kind]}</Fact>
+            <Fact icon={<Icon icon={CalendarDays} size="sm" tone="muted" />}>
+              {KIND_LABELS[event.kind]}
+            </Fact>
           )}
-          {event.recurring && <Fact icon={<Repeat size={13} />}>repeats</Fact>}
+          {event.recurring && (
+            <Fact icon={<Icon icon={Repeat} size="sm" tone="muted" />}>repeats</Fact>
+          )}
           {/* On the row this is only a dimming; here it is said in words. */}
-          {!event.busy && <Fact icon={<CalendarDays size={13} />}>does not block time</Fact>}
-          {event.location !== undefined && event.location !== '' && (
-            <Fact icon={<MapPin size={13} />}>{event.location}</Fact>
+          {!event.busy && (
+            <Fact icon={<Icon icon={CalendarDays} size="sm" tone="muted" />}>
+              does not block time
+            </Fact>
           )}
-          {event.organizer !== null && <Fact icon={<User size={13} />}>{event.organizer}</Fact>}
+          {event.location !== undefined && event.location !== '' && (
+            <Fact icon={<Icon icon={MapPin} size="sm" tone="muted" />}>{event.location}</Fact>
+          )}
+          {event.organizer !== null && (
+            <Fact icon={<Icon icon={User} size="sm" tone="muted" />}>{event.organizer}</Fact>
+          )}
           {event.attendeeCount > 1 && (
-            <Fact icon={<Users size={13} />}>{event.attendeeCount} people</Fact>
+            <Fact icon={<Icon icon={Users} size="sm" tone="muted" />}>
+              {event.attendeeCount} people
+            </Fact>
           )}
         </dl>
 

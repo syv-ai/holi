@@ -17,6 +17,7 @@ import {
   ComboboxContent,
   ComboboxItem,
   ComboboxList,
+  Icon,
 } from '@/primitives'
 import { useFieldControlId } from '@/composites'
 
@@ -84,7 +85,7 @@ export function TagsField({
         <ComboboxList>
           {(tag: string) => (
             <ComboboxItem key={tag} value={tag}>
-              {tag === typed && !offered.includes(tag) && <Plus />}
+              {tag === typed && !offered.includes(tag) && <Icon icon={Plus} tone="muted" />}
               {tag}
             </ComboboxItem>
           )}

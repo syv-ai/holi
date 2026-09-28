@@ -40,14 +40,15 @@ import { ArrowLeft, ChevronRight, ChevronsUpDown } from 'lucide-react'
 import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { cn } from '@/lib/cn'
 import { compress, PILL, rowAt, rowArrive, rowFrom, rowGone, rowLeave, spring } from './springs'
-import { Tooltip } from './Tooltip'
+import { Icon, type IconGlyph } from './Icon'
+import { IconButton } from './IconButton'
 
 export type MorphingMenuAction = {
   id: string
   label: string
-  icon: ReactNode
+  icon: IconGlyph
   /** Shown in place of `icon` while this item is the active one. */
-  activeIcon?: ReactNode
+  activeIcon?: IconGlyph
   /** A count: on the icon's corner in the dock, at the row's end in the list.
    *  Nothing when absent or zero. */
   badge?: number
@@ -379,44 +380,39 @@ export function MorphingMenu({
     const active = isActive(item)
     return (
       <Cell key={item.id} still={reducedMotion}>
-        <Tooltip content={item.label} side={tooltipSide}>
-          <button
-            type="button"
-            data-menu-item={item.id}
-            aria-label={item.label}
-            aria-current={active ? (hasChildren ? 'true' : 'page') : undefined}
-            aria-pressed={item.pressed}
-            aria-expanded={hasChildren ? false : undefined}
-            aria-controls={hasChildren ? `${id}-group-${item.id}` : undefined}
-            className={cn(
-              'relative flex size-8 shrink-0 items-center justify-center rounded-full outline-none motion-respond hover:scale-110 hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring',
-              (active || item.pressed) && 'bg-accent text-foreground',
-            )}
-            onClick={(event) =>
-              hasChildren
-                ? open({ kind: 'group', id: item.id }, item.id, event.detail === 0)
-                : select(item)
-            }
-          >
-            <span className="flex" aria-hidden="true">
-              {active && item.activeIcon ? item.activeIcon : item.icon}
+        <IconButton
+          icon={active && item.activeIcon ? item.activeIcon : item.icon}
+          label={item.label}
+          size="md"
+          shape="round"
+          tooltipSide={tooltipSide}
+          data-menu-item={item.id}
+          aria-current={active ? (hasChildren ? 'true' : 'page') : undefined}
+          pressed={item.pressed}
+          active={active}
+          aria-expanded={hasChildren ? false : undefined}
+          aria-controls={hasChildren ? `${id}-group-${item.id}` : undefined}
+          onClick={(event) =>
+            hasChildren
+              ? open({ kind: 'group', id: item.id }, item.id, event.detail === 0)
+              : select(item)
+          }
+        >
+          {item.badge !== undefined && item.badge > 0 && (
+            <span
+              aria-hidden="true"
+              data-tone={item.badgeTone}
+              className={cn(
+                'absolute -top-0.5 -right-0.5 min-w-3.5 rounded-full px-1 text-[10px] leading-3.5',
+                item.badgeTone === 'alert'
+                  ? 'bg-destructive text-destructive-foreground'
+                  : 'bg-foreground/15 text-foreground',
+              )}
+            >
+              {item.badge}
             </span>
-            {item.badge !== undefined && item.badge > 0 && (
-              <span
-                aria-hidden="true"
-                data-tone={item.badgeTone}
-                className={cn(
-                  'absolute -top-0.5 -right-0.5 min-w-3.5 rounded-full px-1 text-[10px] leading-3.5',
-                  item.badgeTone === 'alert'
-                    ? 'bg-destructive text-destructive-foreground'
-                    : 'bg-foreground/15 text-foreground',
-                )}
-              >
-                {item.badge}
-              </span>
-            )}
-          </button>
-        </Tooltip>
+          )}
+        </IconButton>
       </Cell>
     )
   }
@@ -444,9 +440,7 @@ export function MorphingMenu({
             : select(item)
         }
       >
-        <span className="flex shrink-0" aria-hidden="true">
-          {active && item.activeIcon ? item.activeIcon : item.icon}
-        </span>
+        <Icon icon={active && item.activeIcon ? item.activeIcon : item.icon} />
         <span className="min-w-0 truncate">{item.label}</span>
         {item.badge !== undefined && item.badge > 0 && (
           <span
@@ -459,9 +453,7 @@ export function MorphingMenu({
             {item.badge}
           </span>
         )}
-        {hasChildren && (
-          <ChevronRight size={16} aria-hidden="true" className="ml-auto shrink-0 opacity-60" />
-        )}
+        {hasChildren && <Icon icon={ChevronRight} tone="muted" className="ml-auto" />}
       </button>
     )
   }
@@ -524,19 +516,17 @@ export function MorphingMenu({
           {barItems.map(shortcut)}
           {overflow.length > 0 && (
             <Cell still={reducedMotion}>
-              <Tooltip content={moreLabel} side={tooltipSide}>
-                <button
-                  type="button"
-                  data-menu-item="more"
-                  aria-label={moreLabel}
-                  aria-expanded={expanded}
-                  aria-controls={`${id}-main`}
-                  className="flex size-8 shrink-0 items-center justify-center rounded-full outline-none motion-respond hover:scale-110 hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
-                  onClick={(event) => open({ kind: 'main' }, 'more', event.detail === 0)}
-                >
-                  <ChevronsUpDown size={16} aria-hidden="true" />
-                </button>
-              </Tooltip>
+              <IconButton
+                icon={ChevronsUpDown}
+                label={moreLabel}
+                size="md"
+                shape="round"
+                tooltipSide={tooltipSide}
+                data-menu-item="more"
+                aria-expanded={expanded}
+                aria-controls={`${id}-main`}
+                onClick={(event) => open({ kind: 'main' }, 'more', event.detail === 0)}
+              />
             </Cell>
           )}
         </div>
@@ -568,7 +558,7 @@ export function MorphingMenu({
                 className="flex min-h-8 w-full items-center gap-2 rounded-xl px-2.5 py-1.5 text-left text-sm text-muted-foreground outline-none motion-respond hover:bg-accent focus-visible:ring-1 focus-visible:ring-ring"
                 onClick={back}
               >
-                <ArrowLeft size={16} aria-hidden="true" />
+                <Icon icon={ArrowLeft} />
                 <span>{backLabel}</span>
               </button>
               {group.children!.map(row)}

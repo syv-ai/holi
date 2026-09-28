@@ -39,6 +39,7 @@ import {
   frontmatterYamlValid,
 } from './frontmatter-region'
 import { yaml } from '@codemirror/lang-yaml'
+import { ChevronDown, ChevronRight, createElement } from 'lucide'
 import {
   closeFrontmatterPortal,
   openFrontmatterPortal,
@@ -385,7 +386,13 @@ class FrontmatterWidget extends WidgetType {
     pill.setAttribute(this.expanded ? 'data-frontmatter-header' : 'data-frontmatter-pill', '')
     const mark = document.createElement('span')
     mark.className = 'cm-fm-mark'
-    mark.textContent = this.expanded ? '▾' : '▸'
+    mark.setAttribute('data-chevron', this.expanded ? 'open' : 'closed')
+    mark.append(
+      createElement(this.expanded ? ChevronDown : ChevronRight, {
+        class: 'cm-fm-chevron',
+        'aria-hidden': 'true',
+      }),
+    )
     paintChevron(mark, live.body ?? this.body)
     live.mark = mark
     pill.append(mark)
@@ -611,7 +618,7 @@ const frontmatterTheme = EditorView.baseTheme({
     padding: '0.05rem 0.15rem',
     fontSize: '0.8rem',
     lineHeight: '1.2',
-    color: '#6b6b6b',
+    color: 'var(--muted-foreground)',
     background: 'transparent',
     border: 'none',
     cursor: 'pointer',
@@ -640,7 +647,7 @@ const frontmatterTheme = EditorView.baseTheme({
     flexShrink: '0',
     fontSize: '0.8rem',
     lineHeight: '1.2',
-    color: '#6b6b6b',
+    color: 'var(--muted-foreground)',
     textDecoration: 'none',
     cursor: 'pointer',
   },
@@ -648,25 +655,37 @@ const frontmatterTheme = EditorView.baseTheme({
     flexShrink: '0',
     fontSize: '0.8rem',
     lineHeight: '1.2',
-    color: '#6b6b6b',
+    color: 'var(--muted-foreground)',
   },
   '.cm-fm-history': { color: 'inherit', textDecoration: 'none', cursor: 'pointer' },
-  '.cm-fm-author:hover, .cm-fm-history:hover': { color: '#a3a3a3', textDecoration: 'underline' },
+  '.cm-fm-author:hover, .cm-fm-history:hover': {
+    color: 'var(--foreground)',
+    textDecoration: 'underline',
+  },
   // The bar for a file with no frontmatter or no collapsed state: not a button.
   '.cm-fm-bare': {
     display: 'flex',
     padding: '0.05rem 0.15rem',
     fontSize: '0.8rem',
     lineHeight: '1.2',
-    color: '#6b6b6b',
+    color: 'var(--muted-foreground)',
   },
   '.cm-fm-reveal': { paddingTop: '0.5rem', textAlign: 'start' },
-  '.cm-fm-pill:hover': { color: '#a3a3a3' },
+  '.cm-fm-pill:hover': { color: 'var(--foreground)' },
+  // Centred on the text: an svg's own baseline is its bottom edge.
+  '.cm-fm-mark': { display: 'inline-flex', alignSelf: 'center' },
+  '.cm-fm-chevron': {
+    width: 'var(--icon-sm)',
+    height: 'var(--icon-sm)',
+    strokeWidth: 'var(--icon-stroke)',
+  },
   // See `caretInBlock`: a caret whose head is inside the replaced region would
   // render as tall as the whole block.
   '&.cm-fm-caret-hidden .cm-cursor': { display: 'none' },
   // Explicit on the mark, so it wins over the inherited hover colour.
-  '.cm-fm-mark.cm-fm-invalid': { color: '#f87171' },
+  // `--syntax-invalid`, not `--destructive`: that is a fill, too dark for a
+  // glyph on the dark page.
+  '.cm-fm-mark.cm-fm-invalid': { color: 'var(--syntax-invalid)' },
 })
 
 /** Where the editable body starts: past the frontmatter block, or 0. EditorPane

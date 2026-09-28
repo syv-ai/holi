@@ -8,10 +8,10 @@
 import * as React from 'react'
 import { Combobox as ComboboxPrimitive } from '@base-ui/react/combobox'
 import { cva, type VariantProps } from 'class-variance-authority'
-import { XIcon } from 'lucide-react'
+import { X } from 'lucide-react'
+import { Icon } from './Icon'
 
 import { cn } from '@/lib/cn'
-import { Button } from './Button'
 import { FIELD_LOOK } from './field-look'
 
 const Combobox = ComboboxPrimitive.Root
@@ -63,7 +63,7 @@ function ComboboxItem({ className, ...props }: ComboboxPrimitive.Item.Props) {
     <ComboboxPrimitive.Item
       data-slot="combobox-item"
       className={cn(
-        "motion-respond relative flex w-full cursor-default items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-hidden select-none data-highlighted:bg-accent data-highlighted:text-accent-foreground data-disabled:pointer-events-none data-disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+        'motion-respond relative flex w-full cursor-default items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-hidden select-none data-highlighted:bg-accent data-highlighted:text-accent-foreground data-disabled:pointer-events-none data-disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0',
         className,
       )}
       {...props}
@@ -123,12 +123,11 @@ function ComboboxChip({
       {children}
       {removeLabel !== undefined && (
         <ComboboxPrimitive.ChipRemove
-          render={<Button variant="ghost" size="icon-xs" />}
-          className="-ml-1 size-4 opacity-50 hover:bg-transparent hover:opacity-100"
+          className="-mr-0.5 inline-flex size-4 items-center justify-center rounded-sm text-icon outline-none motion-respond hover:scale-110 hover:text-icon-active focus-visible:ring-1 focus-visible:ring-ring"
           data-slot="combobox-chip-remove"
           aria-label={removeLabel}
         >
-          <XIcon className="pointer-events-none" />
+          <Icon icon={X} size="sm" />
         </ComboboxPrimitive.ChipRemove>
       )}
     </ComboboxPrimitive.Chip>

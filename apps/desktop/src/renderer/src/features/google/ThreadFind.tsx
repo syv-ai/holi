@@ -15,7 +15,7 @@
  */
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { ChevronDown, ChevronUp, Search, X } from 'lucide-react'
-import { Button, Input, Tooltip } from '@/primitives'
+import { Icon, IconButton, Input } from '@/primitives'
 import { clearIn, findIn, setActiveMark } from '../../lib/mail-find'
 import { mailFrameFor, useMailFrameVersion } from '../../state/mail-frames'
 
@@ -113,7 +113,7 @@ export function ThreadFind({
 
   return (
     <div className="flex h-11 shrink-0 items-center gap-1 border-b border-divider px-3">
-      <Search size={14} className="shrink-0 text-muted-foreground" />
+      <Icon icon={Search} size="sm" tone="muted" />
       <Input
         ref={inputRef}
         value={term}
@@ -144,33 +144,21 @@ export function ThreadFind({
           {marks.length === 0 ? 'no matches' : `${active + 1}/${marks.length}`}
         </span>
       )}
-      <Tooltip content="previous match (⇧⏎)">
-        <Button
-          variant="ghost"
-          size="icon-xs"
-          aria-label="previous match"
-          disabled={marks.length === 0}
-          onClick={() => step(-1)}
-        >
-          <ChevronUp size={14} />
-        </Button>
-      </Tooltip>
-      <Tooltip content="next match (⏎)">
-        <Button
-          variant="ghost"
-          size="icon-xs"
-          aria-label="next match"
-          disabled={marks.length === 0}
-          onClick={() => step(1)}
-        >
-          <ChevronDown size={14} />
-        </Button>
-      </Tooltip>
-      <Tooltip content="close find">
-        <Button variant="ghost" size="icon-xs" aria-label="close find" onClick={onClose}>
-          <X size={14} />
-        </Button>
-      </Tooltip>
+      <IconButton
+        icon={ChevronUp}
+        label="previous match"
+        tooltip="previous match (⇧⏎)"
+        disabled={marks.length === 0}
+        onClick={() => step(-1)}
+      />
+      <IconButton
+        icon={ChevronDown}
+        label="next match"
+        tooltip="next match (⏎)"
+        disabled={marks.length === 0}
+        onClick={() => step(1)}
+      />
+      <IconButton icon={X} label="close find" onClick={onClose} />
     </div>
   )
 }

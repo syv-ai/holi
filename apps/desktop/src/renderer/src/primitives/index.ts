@@ -57,6 +57,8 @@ export {
   DropdownMenuTrigger,
 } from './DropdownMenu'
 export { Field, FieldLabel } from './Field'
+export { Icon, type IconGlyph, type IconSize } from './Icon'
+export { IconButton, type IconButtonProps } from './IconButton'
 export { Input } from './Input'
 export { Kbd } from './Kbd'
 export { Label } from './Label'

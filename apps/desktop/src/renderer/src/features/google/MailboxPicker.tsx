@@ -22,6 +22,7 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
+  Icon,
   Tooltip,
 } from '@/primitives'
 
@@ -128,7 +129,7 @@ export function MailboxPicker({
           <Button variant="ghost" size="xs" className="gap-1" aria-label="choose a mailbox">
             {mailboxLabelOf(view)}
             {/* The chevron makes this read as a menu, not a clickable label. */}
-            <ChevronDown size={12} className="text-muted-foreground" aria-hidden />
+            <Icon icon={ChevronDown} size="sm" tone="muted" />
           </Button>
         </DropdownMenuTrigger>
       </Tooltip>

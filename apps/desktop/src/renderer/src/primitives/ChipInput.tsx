@@ -8,8 +8,10 @@
  * chip, so the send path checks recipients for presence, never shape.
  */
 import * as React from 'react'
+import { X } from 'lucide-react'
 import { cn } from '@/lib/cn'
 import type { MailAddress } from '@/lib/mail-types'
+import { IconButton } from './IconButton'
 
 export interface ChipInputProps {
   value: MailAddress[]
@@ -157,14 +159,16 @@ export function ChipInput({
               Tooltip primitive, which would force every consumer to supply a
               TooltipProvider. */}
           {address.name !== address.email && <span className="sr-only">{address.email}</span>}
-          <button
-            type="button"
-            aria-label={`Remove ${address.name}`}
-            className="motion-respond text-muted-foreground hover:text-foreground"
+          {/* No tooltip, for the same reason; boxed to the chip's line
+              height so it never makes the chip taller than its name. */}
+          <IconButton
+            icon={X}
+            label={`Remove ${address.name}`}
+            tooltip={false}
+            shape="round"
+            className="size-4"
             onClick={() => onChange(value.filter((a) => a.email !== address.email))}
-          >
-            ×
-          </button>
+          />
         </span>
       ))}
 

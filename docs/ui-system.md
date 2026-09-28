@@ -22,6 +22,8 @@ or a test.
     `transition-*` except `transition-none`, and literal transition or animation values in a
     `style` object. A computed value (`animationDelay: staggerDelay(i)`) passes.
     `features/onboarding/` is exempt from the motion rules only.
+  - a lucide or simple-icons glyph rendered directly as JSX, and a colour, background or hover
+    class on an `IconButton` (see Icons).
 
 ## Tokens
 
@@ -47,6 +49,30 @@ One treatment: a control recolours its own edge on `focus-visible` (`border-inpu
 button, an icon button, the resize handle) it draws `ring-1 ring-ring`. `ring-0` is only for
 opting a bordered variant out of the ring. `test/focus-treatment.test.ts` is a source scan, so a
 component pasted from shadcn upstream with the 3px halo fails before it is mounted anywhere.
+
+## Icons
+
+One place decides how an icon looks, so every icon in the app agrees.
+
+- **Two sizes and one stroke.** `sm` is 14px (beside text, dense rows, tab close, chip remove,
+  panel headers), `md` is 16px (toolbars, menus, the dock). They are `--icon-sm`, `--icon-md`
+  and `--icon-stroke` in `index.css`, applied as the `icon-sm`/`icon-md` utilities. Size is a
+  class, never lucide's `size` attribute, so no container rule can override it. It is not a
+  theme token: a vault re-skins colour, not layout.
+- **`Icon`** (`primitives/Icon.tsx`) is the only way a glyph is drawn in React. Its colour is the
+  holder's (`currentColor`); a bare icon beside text takes `tone="muted"`, and a signal (brand,
+  destructive, a file type, a task status) comes in as a token class.
+- **`IconButton`** (`primitives/IconButton.tsx`) is every control that is only an icon. It owns
+  the whole look: muted at rest (`text-icon`), and under the pointer the foreground
+  (`text-icon-active`), the neutral `accent` background and a slight grow (`scale-110`). Pressed,
+  active and an open menu trigger look like the hover and stay. The label is both the accessible
+  name and the tooltip. `className` is for layout and reveal only.
+- **Menus** colour their row icons `text-icon` through the row, so a menu item passes a bare
+  `Icon`.
+- **Outside React** (CodeMirror widgets, the completion popup, the PDF viewer's registry) glyphs
+  come from the vanilla `lucide` package at the same version as `lucide-react`, sized from the
+  same custom properties, never copied by hand.
+- **File-type colours** are `--file-*` tokens, not hex at the call site.
 
 ## Motion
 
@@ -136,7 +162,8 @@ DOM: they copy width, motion, header and edge through the injected stylesheet an
 ## Code
 
 - `apps/desktop/src/renderer/src/index.css`: tokens, motion utilities, drawer and reduced-motion rules.
-- `apps/desktop/eslint.config.mjs`: the gate.
+- `apps/desktop/eslint.config.mjs`: the gate, including the local `holi/icon-through-primitive` rule.
+- `apps/desktop/src/renderer/src/primitives/Icon.tsx`, `IconButton.tsx`, `composites/file-icons.tsx`.
 - `apps/desktop/src/renderer/src/lib/motion.ts`, `lib/use-ack.ts`, `lib/use-arrivals.ts`.
 - `apps/desktop/src/renderer/src/composites/DrawerShell.tsx`, `lib/drawer.ts`.
 - `apps/desktop/src/renderer/src/state/theme.ts`, `lib/theme-applicator.ts`, `lib/pdf-viewer-config.ts`.

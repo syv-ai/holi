@@ -6,6 +6,7 @@
  * Rebuilds on docChanged/selectionSet/viewport.
  */
 import { syntaxTree } from '@codemirror/language'
+import { Check, createElement } from 'lucide'
 import type { SyntaxNode, SyntaxNodeRef } from '@lezer/common'
 import { Facet, RangeSetBuilder, type EditorState } from '@codemirror/state'
 import {
@@ -157,7 +158,9 @@ class TaskCheckWidget extends WidgetType {
     box.className = this.checked ? 'cm-task-check cm-task-check-done' : 'cm-task-check'
     box.setAttribute('role', 'checkbox')
     box.setAttribute('aria-checked', String(this.checked))
-    box.textContent = this.checked ? '✓' : ''
+    // lucide's Check, as the rest of the app draws a tick; sized by the box.
+    if (this.checked)
+      box.append(createElement(Check, { class: 'cm-task-tick', 'aria-hidden': 'true' }))
     box.addEventListener('mousedown', (event) => {
       // Keep the caret where it is.
       event.preventDefault()
@@ -422,7 +425,11 @@ export function buildDecorations(state: EditorState, from: number, to: number): 
           break
         case 'HorizontalRule':
           if (!activeHere) {
-            ranges.push({ from: node.from, to: node.to, deco: Decoration.replace({ widget: new HrWidget() }) })
+            ranges.push({
+              from: node.from,
+              to: node.to,
+              deco: Decoration.replace({ widget: new HrWidget() }),
+            })
           }
           break
         case 'Link': {

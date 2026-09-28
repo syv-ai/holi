@@ -5,7 +5,8 @@
  */
 import { autocompletion, type Completion, type CompletionSource } from '@codemirror/autocomplete'
 import type { Extension } from '@codemirror/state'
-import { GLYPHS, SVG_ATTRS } from './completion-icons'
+import { createElement } from 'lucide'
+import { GLYPHS } from './completion-icons'
 
 /**
  * Stamped on the popup by `tooltipClass` so the chrome in `theme.ts` wins the
@@ -36,12 +37,10 @@ export function holiOptionClass(completion: Completion): string {
   return (completion.type?.startsWith(HOLI_TYPE_PREFIX) ?? false) ? OPTION_CLASS : ''
 }
 
-const SVG_NS = 'http://www.w3.org/2000/svg'
-
 /**
  * The row's left glyph: the note's emoji, else the glyph its `type` names.
  * `null` for rows we do not author, leaving CodeMirror's icon (the table menu
- * needs it). Built through `DOMParser`, never `innerHTML` into the document.
+ * needs it).
  */
 export function holiIcon(completion: Completion): Node | null {
   const { emoji } = completion as HoliCompletion
@@ -53,16 +52,11 @@ export function holiIcon(completion: Completion): Node | null {
   }
   const glyph = completion.type === undefined ? undefined : GLYPHS[completion.type]
   if (glyph === undefined) return null
-  const parsed = new DOMParser().parseFromString(
-    `<svg xmlns="${SVG_NS}">${glyph}</svg>`,
-    'image/svg+xml',
-  )
-  const svg = document.createElementNS(SVG_NS, 'svg')
-  for (const [name, value] of Object.entries(SVG_ATTRS)) svg.setAttribute(name, value)
   // The type rides on the element so the chrome can colour a task by status.
-  svg.setAttribute('class', `cm-holi-icon cm-holi-icon-${completion.type}`)
-  for (const child of [...parsed.documentElement.children]) svg.appendChild(child)
-  return svg
+  return createElement(glyph, {
+    class: `cm-holi-icon cm-holi-icon-${completion.type}`,
+    'aria-hidden': 'true',
+  })
 }
 
 /** The trailing meta text, when there is one. */

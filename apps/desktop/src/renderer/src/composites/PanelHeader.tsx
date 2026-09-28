@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import { Button, Kbd, Tooltip } from '@/primitives'
+import { IconButton, Kbd, type IconGlyph } from '@/primitives'
 import { cn } from '@/lib/cn'
 import { matchHotkey } from '@/lib/hotkey'
 
@@ -21,7 +21,7 @@ import { matchHotkey } from '@/lib/hotkey'
  * `className` for the odd case (a modal title bar).
  */
 export interface HeaderAction {
-  icon: React.ReactNode
+  icon: IconGlyph
   /** Accessible name + tooltip base. */
   label: string
   /** Glyph shortcut (e.g. `⌘J`) — shown in the tooltip AND bound while mounted. */
@@ -77,23 +77,20 @@ export function PanelHeader({
       {controls.length > 0 && (
         <div className="ml-auto flex items-center gap-1">
           {controls.map((a, i) => (
-            <Tooltip
+            <IconButton
               key={i}
-              content={
+              icon={a.icon}
+              label={a.label}
+              tooltip={
                 a.hotkey ? (
                   <span className="inline-flex items-center gap-1.5">
                     {a.label}
                     <Kbd>{a.hotkey}</Kbd>
                   </span>
-                ) : (
-                  a.label
-                )
+                ) : undefined
               }
-            >
-              <Button variant="ghost" size="icon-xs" onClick={a.onSelect} aria-label={a.label}>
-                {a.icon}
-              </Button>
-            </Tooltip>
+              onClick={a.onSelect}
+            />
           ))}
         </div>
       )}

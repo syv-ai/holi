@@ -8,7 +8,7 @@
  */
 import { useEffect, useState } from 'react'
 import { FilePen } from 'lucide-react'
-import { Button } from '@/primitives'
+import { Button, Icon } from '@/primitives'
 import { trpc } from '../../lib/trpc'
 import type { MailAddress } from '../../lib/mail-types'
 
@@ -85,7 +85,7 @@ export function DraftsList({
             onClick={() => onOpen(draft)}
           >
             <span className="flex items-baseline gap-1">
-              <FilePen size={11} className="shrink-0 self-center text-muted-foreground" />
+              <Icon icon={FilePen} size="sm" tone="muted" className="self-center" />
               <span className="min-w-0 flex-1 truncate text-xs">{recipients(draft.to)}</span>
               <span className="shrink-0 text-[10px] text-muted-foreground">
                 {shortDate(draft.date)}

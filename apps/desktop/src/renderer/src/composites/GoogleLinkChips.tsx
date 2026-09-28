@@ -7,7 +7,7 @@
  */
 import { CalendarDays, Mail } from 'lucide-react'
 import { googleLinksIn, type GoogleLinkKind } from '@holi/shared'
-import { Button, Tooltip } from '@/primitives'
+import { Button, Icon, Tooltip } from '@/primitives'
 
 const ICON = { calendar: CalendarDays, mail: Mail } as const
 const WHAT: Record<GoogleLinkKind, string> = {
@@ -22,7 +22,6 @@ export function GoogleLinkChips({ body }: { body: string }) {
   return (
     <div className="mb-3 flex flex-wrap gap-1.5 px-1">
       {links.map((link, i) => {
-        const Icon = ICON[link.kind]
         return (
           <Tooltip key={`${link.url}:${i}`} content={WHAT[link.kind]}>
             <Button
@@ -31,7 +30,7 @@ export function GoogleLinkChips({ body }: { body: string }) {
               className="max-w-xs gap-1.5"
               onClick={() => void window.holi.openExternal(link.url)}
             >
-              <Icon size={12} className="shrink-0" />
+              <Icon icon={ICON[link.kind]} size="sm" />
               {/* The link text as written — normally the subject or event title. */}
               <span className="truncate">{link.title === '' ? link.url : link.title}</span>
             </Button>

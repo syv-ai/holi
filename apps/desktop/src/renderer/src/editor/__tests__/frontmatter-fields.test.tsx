@@ -129,7 +129,7 @@ it('an open note keeps its header on top, with the chevron pointing down', () =>
   const v = mount('---\ntags: [ops]\n---\n\nprose\n', 'notes/meeting.md')
   v.dispatch({ effects: toggleFrontmatter.of(true) })
   const header = v.dom.querySelector('[data-frontmatter-header]')
-  expect(header?.querySelector('.cm-fm-mark')?.textContent).toBe('▾')
+  expect(header?.querySelector('.cm-fm-mark')?.getAttribute('data-chevron')).toBe('open')
   expect(header?.querySelector('.cm-fm-summary')?.textContent).toBe('5 chars')
   // Above the fields, not beside them.
   expect(v.dom.querySelector('.cm-fm')?.firstElementChild?.contains(header!)).toBe(true)

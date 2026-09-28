@@ -55,6 +55,8 @@ import { buildSummarizePrompt } from '@/lib/summarize-prompt'
 import {
   Button,
   Checkbox,
+  Icon,
+  IconButton,
   Input,
   Popover,
   PopoverContent,
@@ -747,14 +749,7 @@ export function MailView() {
           {writeError !== null && (
             <div className="flex shrink-0 items-start gap-2 border-b border-border bg-secondary px-3 py-1.5 text-[11px] text-amber-400">
               <span className="min-w-0 flex-1">{writeError}</span>
-              <Button
-                variant="ghost"
-                size="icon-xs"
-                aria-label="dismiss"
-                onClick={() => setWriteError(null)}
-              >
-                <X size={12} />
-              </Button>
+              <IconButton icon={X} label="dismiss" onClick={() => setWriteError(null)} />
             </div>
           )}
 
@@ -868,11 +863,10 @@ export function MailView() {
                         void window.holi.openExternal(meeting.conferenceUrl ?? meeting.htmlLink)
                       }
                     >
-                      {meeting.conferenceUrl !== null ? (
-                        <Video size={13} />
-                      ) : (
-                        <CalendarDays size={13} />
-                      )}
+                      <Icon
+                        icon={meeting.conferenceUrl !== null ? Video : CalendarDays}
+                        size="sm"
+                      />
                       {meeting.conferenceUrl !== null ? 'Join' : 'Meeting'}
                     </Button>
                   </Tooltip>
@@ -886,7 +880,7 @@ export function MailView() {
                     className="shrink-0 gap-1"
                     onClick={() => void summarize()}
                   >
-                    <Sparkles size={13} />
+                    <Icon icon={Sparkles} size="sm" />
                     Summarize
                   </Button>
                 </Tooltip>
@@ -898,7 +892,7 @@ export function MailView() {
                     disabled={remote === null}
                     onClick={() => void linkToTask(open)}
                   >
-                    <Link2 size={13} />
+                    <Icon icon={Link2} size="sm" />
                     Task
                   </Button>
                 </Tooltip>
@@ -913,112 +907,64 @@ export function MailView() {
                       aria-label="unsubscribe from this sender"
                       onClick={() => void window.holi.openExternal(openRow.unsubscribeUrl!)}
                     >
-                      <MailMinus size={13} />
+                      <Icon icon={MailMinus} size="sm" />
                       Unsubscribe
                     </Button>
                   </Tooltip>
                 )}
                 {/* Triage (D68). Star is a toggle that says which way it goes;
                     archive and trash both take the thread out of the list. */}
-                <Tooltip content={openRow?.starred === true ? 'unstar' : 'star'}>
-                  <Button
-                    variant="ghost"
-                    size="icon-xs"
-                    aria-label={
-                      openRow?.starred === true ? 'unstar this thread' : 'star this thread'
-                    }
-                    onClick={() => void setStarred(open.id, openRow?.starred !== true)}
-                  >
-                    <Star
-                      size={14}
-                      // Filled means starred.
-                      className={openRow?.starred === true ? 'fill-current' : undefined}
-                    />
-                  </Button>
-                </Tooltip>
-                <Tooltip content="archive — removes it from the inbox, keeps it in All Mail">
-                  <Button
-                    variant="ghost"
-                    size="icon-xs"
-                    aria-label="archive this thread"
-                    onClick={() =>
-                      void removeThread(open.id, () => trpc.google.archive.mutate({ id: open.id }))
-                    }
-                  >
-                    <Archive size={14} />
-                  </Button>
-                </Tooltip>
+                <IconButton
+                  // Filled means starred.
+                  icon={Star}
+                  filled={openRow?.starred === true}
+                  label={openRow?.starred === true ? 'unstar this thread' : 'star this thread'}
+                  tooltip={openRow?.starred === true ? 'unstar' : 'star'}
+                  onClick={() => void setStarred(open.id, openRow?.starred !== true)}
+                />
+                <IconButton
+                  icon={Archive}
+                  label="archive this thread"
+                  tooltip="archive — removes it from the inbox, keeps it in All Mail"
+                  onClick={() =>
+                    void removeThread(open.id, () => trpc.google.archive.mutate({ id: open.id }))
+                  }
+                />
                 {/* Trash, which Gmail keeps for 30 days. Not called Delete:
                     Holi has no scope to delete mail permanently. */}
-                <Tooltip content="move to trash — recoverable for 30 days">
-                  <Button
-                    variant="ghost"
-                    size="icon-xs"
-                    aria-label="move this thread to trash"
-                    onClick={() =>
-                      void removeThread(open.id, () => trpc.google.trash.mutate({ id: open.id }))
-                    }
-                  >
-                    <Trash2 size={14} />
-                  </Button>
-                </Tooltip>
+                <IconButton
+                  icon={Trash2}
+                  label="move this thread to trash"
+                  tooltip="move to trash — recoverable for 30 days"
+                  onClick={() =>
+                    void removeThread(open.id, () => trpc.google.trash.mutate({ id: open.id }))
+                  }
+                />
                 {/* Reply, reply-all and forward all open the same inline
                     composer below. `replyTarget` rather than the last message:
                     replying to your own last reply addresses you. */}
-                <Tooltip content="reply">
-                  <Button
-                    variant="ghost"
-                    size="icon-xs"
-                    aria-label="reply"
-                    onClick={() => startCompose(false)}
-                  >
-                    <Reply size={14} />
-                  </Button>
-                </Tooltip>
-                <Tooltip content="reply to everyone">
-                  <Button
-                    variant="ghost"
-                    size="icon-xs"
-                    aria-label="reply to everyone"
-                    onClick={() => startCompose(true)}
-                  >
-                    <ReplyAll size={14} />
-                  </Button>
-                </Tooltip>
+                <IconButton icon={Reply} label="reply" onClick={() => startCompose(false)} />
+                <IconButton
+                  icon={ReplyAll}
+                  label="reply to everyone"
+                  onClick={() => startCompose(true)}
+                />
                 {/* "Continue draft": opens the thread's NEWEST unsent draft.
                     Any other is reachable from the Drafts list. */}
                 {openSummary?.hasDraft === true && (
-                  <Tooltip content="continue your draft">
-                    <Button
-                      variant="ghost"
-                      size="icon-xs"
-                      aria-label="continue draft"
-                      onClick={openThreadDraft}
-                    >
-                      <FilePen size={14} />
-                    </Button>
-                  </Tooltip>
+                  <IconButton
+                    icon={FilePen}
+                    label="continue draft"
+                    tooltip="continue your draft"
+                    onClick={openThreadDraft}
+                  />
                 )}
-                <Tooltip content="forward">
-                  <Button
-                    variant="ghost"
-                    size="icon-xs"
-                    aria-label="forward"
-                    onClick={startForward}
-                  >
-                    <Forward size={14} />
-                  </Button>
-                </Tooltip>
-                <Tooltip content="open in Gmail">
-                  <Button
-                    variant="ghost"
-                    size="icon-xs"
-                    aria-label="open in Gmail"
-                    onClick={() => void window.holi.openExternal(open.webUrl)}
-                  >
-                    <ExternalLink size={14} />
-                  </Button>
-                </Tooltip>
+                <IconButton icon={Forward} label="forward" onClick={startForward} />
+                <IconButton
+                  icon={ExternalLink}
+                  label="open in Gmail"
+                  onClick={() => void window.holi.openExternal(open.webUrl)}
+                />
               </div>
 
               {/* One scroller for the whole thread. Each message renders at its
@@ -1233,17 +1179,13 @@ function MailToolbar({
 
   return (
     <div className="flex h-11 shrink-0 items-center gap-1 px-2">
-      <Tooltip content="search mail (⌘F)">
-        <Button
-          ref={searchButtonRef}
-          variant="ghost"
-          size="icon-xs"
-          aria-label="search mail"
-          onClick={() => onSearchOpenChange(true)}
-        >
-          <Search size={14} />
-        </Button>
-      </Tooltip>
+      <IconButton
+        ref={searchButtonRef}
+        icon={Search}
+        label="search mail"
+        tooltip="search mail (⌘F)"
+        onClick={() => onSearchOpenChange(true)}
+      />
 
       {/* A state, not a place: it survives a search, and it is a toggle rather
           than an entry in the picker. Absent for Sent and Drafts. */}
@@ -1257,7 +1199,7 @@ function MailToolbar({
             aria-pressed={unreadOnly}
             onClick={() => onUnreadChange(!unreadOnly)}
           >
-            <MailOpen size={14} />
+            <Icon icon={MailOpen} size="sm" />
             {unreadCount !== null && unreadCount > 0 && (
               <span className="text-[10px] text-muted-foreground">{unreadCount}</span>
             )}
@@ -1281,16 +1223,13 @@ function MailToolbar({
       <div className="ml-auto flex shrink-0 items-center gap-1">
         {/* A new message is a DIALOG, where a reply is inline: a fresh message
             has no context to preserve. */}
-        <Tooltip content="write a new message">
-          <Button variant="ghost" size="icon-xs" aria-label="new message" onClick={onCompose}>
-            <SquarePen size={14} />
-          </Button>
-        </Tooltip>
-        <Tooltip content="refresh">
-          <Button variant="ghost" size="icon-xs" aria-label="refresh mail" onClick={onRefresh}>
-            <RefreshCw size={14} />
-          </Button>
-        </Tooltip>
+        <IconButton
+          icon={SquarePen}
+          label="new message"
+          tooltip="write a new message"
+          onClick={onCompose}
+        />
+        <IconButton icon={RefreshCw} label="refresh mail" tooltip="refresh" onClick={onRefresh} />
       </div>
     </div>
   )
@@ -1361,7 +1300,7 @@ function SearchField({
 
   return (
     <div className="relative flex min-w-0 flex-1 items-center gap-1">
-      <Search size={14} className="shrink-0 text-muted-foreground" />
+      <Icon icon={Search} size="sm" tone="muted" />
       <Input
         ref={ref}
         value={query}
@@ -1374,11 +1313,7 @@ function SearchField({
         aria-expanded={matches.length > 0}
         aria-controls="mail-people"
       />
-      <Tooltip content="close search">
-        <Button variant="ghost" size="icon-xs" aria-label="close search" onClick={onClose}>
-          <X size={14} />
-        </Button>
-      </Tooltip>
+      <IconButton icon={X} label="close search" onClick={onClose} />
 
       {matches.length > 0 && (
         <ul
@@ -1514,7 +1449,7 @@ function ListFooter({
   return (
     <div className="flex h-7 shrink-0 items-center justify-between gap-2 border-t border-divider px-2 text-[10px] text-muted-foreground">
       <span className="flex min-w-0 items-center gap-1 truncate">
-        <RefreshCw size={10} className={`shrink-0 ${syncing ? 'motion-orbit' : ''}`} />
+        <Icon icon={RefreshCw} size="sm" className={syncing ? 'motion-orbit' : undefined} />
         {syncing ? 'Syncing…' : syncedAt === null ? 'Not synced' : `Synced ${ago(syncedAt)}`}
       </span>
       <span className="shrink-0">
@@ -1633,28 +1568,22 @@ function ThreadRow({
               {/* These three stay on the sender's line: they are things *you*
                   did, where the rail holds what the thread is. */}
               {thread.starred && (
-                <Star
-                  size={11}
-                  className="shrink-0 self-center text-muted-foreground"
-                  aria-label="starred"
-                />
+                <span role="img" aria-label="starred" className="flex shrink-0 self-center">
+                  <Icon icon={Star} size="sm" tone="muted" />
+                </span>
               )}
               {/* "You started replying and stopped". */}
               {thread.hasDraft && (
-                <FilePen
-                  size={11}
-                  className="shrink-0 self-center text-muted-foreground"
-                  aria-label="unsent draft"
-                />
+                <span role="img" aria-label="unsent draft" className="flex shrink-0 self-center">
+                  <Icon icon={FilePen} size="sm" tone="muted" />
+                </span>
               )}
               {/* "You replied and are waiting on them": see `answered` in
                   main/google/gmail.ts for why the LAST message decides. */}
               {thread.answered && (
-                <Reply
-                  size={11}
-                  className="shrink-0 self-center text-muted-foreground"
-                  aria-label="you replied"
-                />
+                <span role="img" aria-label="you replied" className="flex shrink-0 self-center">
+                  <Icon icon={Reply} size="sm" tone="muted" />
+                </span>
               )}
             </span>
             <span className={`mt-0.5 block truncate pl-3.5 text-xs ${subjectWeight}`}>
@@ -1696,7 +1625,11 @@ function ThreadRow({
             {(thread.hasInvite || thread.messageCount > 1) && (
               <span className="flex items-center gap-1">
                 {/* A meeting, not a message: the second has a deadline. */}
-                {thread.hasInvite && <CalendarDays size={11} aria-label="meeting invite" />}
+                {thread.hasInvite && (
+                  <span role="img" aria-label="meeting invite" className="flex">
+                    <Icon icon={CalendarDays} size="sm" />
+                  </span>
+                )}
                 {thread.messageCount > 1 && <span>({thread.messageCount})</span>}
               </span>
             )}
@@ -1749,11 +1682,12 @@ function MessageBlock({
         className="block h-auto w-full rounded px-1 py-1 text-left"
       >
         <span className="flex items-baseline gap-2 text-xs">
-          {shown ? (
-            <ChevronDown size={12} className="shrink-0 self-center text-muted-foreground" />
-          ) : (
-            <ChevronRight size={12} className="shrink-0 self-center text-muted-foreground" />
-          )}
+          <Icon
+            icon={shown ? ChevronDown : ChevronRight}
+            size="sm"
+            tone="muted"
+            className="self-center"
+          />
           <span className="min-w-0 flex-1 truncate font-medium">{message.from.name}</span>
           {/* Where you are in the conversation. Suppressed on a one-message
               thread, where "1/1" is noise. */}
@@ -1863,7 +1797,7 @@ function AddressLink({ address }: { address: MailAddress }): React.JSX.Element {
             className="gap-1"
             onClick={() => void window.holi.openExternal(`mailto:${address.email}`)}
           >
-            <Reply size={12} />
+            <Icon icon={Reply} size="sm" />
             Email
           </Button>
           <Button
@@ -1898,11 +1832,10 @@ function Attachments({ attachments, webUrl }: { attachments: Attachment[]; webUr
               className="gap-1"
               onClick={() => void window.holi.openExternal(webUrl)}
             >
-              {attachment.mimeType.startsWith('image/') ? (
-                <Paperclip size={12} />
-              ) : (
-                <FileText size={12} />
-              )}
+              <Icon
+                icon={attachment.mimeType.startsWith('image/') ? Paperclip : FileText}
+                size="sm"
+              />
               <span className="max-w-48 truncate">{attachment.filename}</span>
               <span className="text-muted-foreground">{fileSize(attachment.size)}</span>
             </Button>

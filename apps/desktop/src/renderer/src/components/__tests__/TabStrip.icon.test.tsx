@@ -61,7 +61,7 @@ test('any other file keeps its extension and its type glyph', () => {
 test('a task leads with its status glyph', () => {
   const task = { path: 'task.ship.md', title: 'Ship', status: 'doing', tags: [] } as unknown as Task
   const pill = strip({ kind: 'note', path: 'task.ship.md' }, 'task.ship', { tasks: [task] })
-  expect(pill.innerHTML).toContain('var(--task-doing)')
+  expect(pill.innerHTML).toContain('text-task-doing')
 })
 
 test('an app is named without .app and leads with the app glyph', () => {

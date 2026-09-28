@@ -115,13 +115,74 @@ const external = {
   ],
 }
 
+// Icons have one home (docs/ui-system.md, Icons). A lucide or simple-icons
+// glyph is drawn only through `<Icon>` or `<IconButton>`, which own its size,
+// stroke and the clickable look; rendering one directly is how the renderer
+// ended up with seven sizes and a dozen hover styles. And an IconButton takes
+// no colour, background or hover class, because those are the primitive's.
+// Tracked by import, not by name, so a local component called `Search` is not
+// mistaken for the glyph.
+const GLYPH_SOURCES = new Set(['lucide-react', '@icons-pack/react-simple-icons'])
+// Any colour or background, under any variant, and its own hover or press. A
+// reveal (`group-hover:opacity-100`, `focus-visible:opacity-100`) is layout, and
+// passes.
+const ICON_BUTTON_OWNS = /(^|\s)([\w/-]+:)*!?(text|bg|fill|stroke)-|(^|\s)(hover|active):/
+const holi = {
+  rules: {
+    'icon-through-primitive': {
+      meta: { type: 'problem', schema: [] },
+      create(context) {
+        const glyphs = new Set()
+        const classText = (value) => {
+          if (!value) return null
+          if (value.type === 'Literal' && typeof value.value === 'string') return value.value
+          if (value.type === 'JSXExpressionContainer') {
+            const e = value.expression
+            if (e.type === 'Literal' && typeof e.value === 'string') return e.value
+            if (e.type === 'TemplateLiteral') return e.quasis.map((q) => q.value.raw).join(' ')
+          }
+          return null
+        }
+        return {
+          ImportDeclaration(node) {
+            if (node.importKind === 'type' || !GLYPH_SOURCES.has(node.source.value)) return
+            for (const s of node.specifiers) if (s.importKind !== 'type') glyphs.add(s.local.name)
+          },
+          JSXOpeningElement(node) {
+            const name = node.name.type === 'JSXIdentifier' ? node.name.name : null
+            if (name !== null && glyphs.has(name)) {
+              context.report({
+                node,
+                message: `<${name}> drawn directly: pass it to <Icon icon={${name}} /> or <IconButton icon={${name}} />, which own an icon's size, stroke and look.`,
+              })
+            }
+            if (name === 'IconButton') {
+              const cls = node.attributes.find(
+                (a) => a.type === 'JSXAttribute' && a.name.name === 'className',
+              )
+              const text = classText(cls?.value)
+              if (text !== null && ICON_BUTTON_OWNS.test(text)) {
+                context.report({
+                  node: cls,
+                  message:
+                    "colour, background or hover class on <IconButton>: those are the primitive's. className is for layout and reveal.",
+                })
+              }
+            }
+          },
+        }
+      },
+    },
+  },
+}
+
 const LINTED = ['src/renderer/src/**/*.{ts,tsx}', 'test/fixtures/gate/**/*.{ts,tsx}']
 
 export default [
   { ignores: ['out/**', 'dist/**', '**/node_modules/**'] },
   {
     files: LINTED,
-    plugins: { boundaries, 'react-hooks': reactHooks },
+    plugins: { boundaries, 'react-hooks': reactHooks, holi },
     languageOptions: {
       parser: tseslint.parser,
       parserOptions: { ecmaFeatures: { jsx: true }, sourceType: 'module' },
@@ -147,6 +208,7 @@ export default [
       'no-restricted-syntax': [LEVEL, nativeRule, ...colourRules, ...motionRules, titleRule],
       'boundaries/element-types': [LEVEL, elementTypes],
       'boundaries/external': [LEVEL, external],
+      'holi/icon-through-primitive': LEVEL,
     },
   },
   // primitives/ is the ONE place native elements + Radix are allowed.

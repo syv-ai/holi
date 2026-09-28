@@ -33,10 +33,12 @@ export function SessionOrbs(): React.JSX.Element {
             <Tooltip key={session.id} content={`${session.name}: ${indicator.title}`}>
               <Button
                 variant="ghost"
-                size="icon-xs"
+                size="xs"
                 aria-label={`${session.name}, ${indicator.state}`}
                 data-session-orb={session.id}
-                className={cn('shrink-0', session.id === active?.id && 'bg-accent')}
+                // A dot, not a glyph, so not an IconButton: the xs button
+                // squared to the rail's 24px slot.
+                className={cn('size-6 px-0', session.id === active?.id && 'bg-accent')}
                 onClick={() => {
                   setActiveId(session.id)
                   setWorkspace((w) => openSession(w, session.id))

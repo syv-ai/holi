@@ -95,6 +95,24 @@
   --task-doing: #388bfd;
   --task-done: #3fb950;
 
+  /* ── File-type tokens ───────────────────────────────────────────────
+   * The type colour of a file glyph in the tree, tabs and palette
+   * (`composites/file-icons.tsx`), so a `.json` reads yellow and a `.ts` sky
+   * at a glance. A curated, dark-friendly palette, not each brand's own hex:
+   * several (JSON black, TOML brown) would vanish on the dark UI. No light arm,
+   * like `--task-*`. */
+  --file-blue: #6b9fff;
+  --file-sky: #4fc3f7;
+  --file-teal: #26a69a;
+  --file-yellow: #f5c542;
+  --file-orange: #ff8a65;
+  --file-red: #ef5350;
+  --file-pink: #e57399;
+  --file-purple: #b388ff;
+  --file-green: #66bb6a;
+  --file-tan: #cfa06a;
+  --file-grey: #b0bec5;
+
   /* ── Diff tokens ─────────────────────────────────────────────────
    * The two hues every part of a diff derives from, so `DiffView` need not
    * know the mode (`@codemirror/merge` hardcodes `&light`/`&dark` hexes; D85).
@@ -225,6 +243,26 @@
   --color-diff-removed-foreground: var(--diff-removed-foreground);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  /* An icon's colour by role (`primitives/Icon.tsx`, `IconButton.tsx`): muted at
+     rest, the foreground under the pointer and while pressed or current. */
+  --color-icon: var(--muted-foreground);
+  --color-icon-active: var(--foreground);
+  /* Signal colours for a glyph (`<Icon className="text-file-sky">`): a task's
+     status and a file's type. */
+  --color-task-todo: var(--task-todo);
+  --color-task-doing: var(--task-doing);
+  --color-task-done: var(--task-done);
+  --color-file-blue: var(--file-blue);
+  --color-file-sky: var(--file-sky);
+  --color-file-teal: var(--file-teal);
+  --color-file-yellow: var(--file-yellow);
+  --color-file-orange: var(--file-orange);
+  --color-file-red: var(--file-red);
+  --color-file-pink: var(--file-pink);
+  --color-file-purple: var(--file-purple);
+  --color-file-green: var(--file-green);
+  --color-file-tan: var(--file-tan);
+  --color-file-grey: var(--file-grey);
 
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
@@ -278,6 +316,27 @@
  * Slide is A (arrive/leave) for a panel moving its whole width. Over that
  * distance `--ease-settle` front-loads and then crawls, so a slide is eased in
  * and out, slower, and the same both ways. */
+/* ── Icons ─────────────────────────────────────────────────────────────
+ * Two sizes and one stroke, and nothing else: 14px beside text and in dense
+ * controls, 16px in toolbars, menus and the dock. Plain `:root`, because the
+ * editor's and the PDF viewer's DOM icons read them from CSS-in-JS too. Size
+ * is not a theme token: a vault re-skins colour, never layout. */
+:root {
+  --icon-sm: 14px;
+  --icon-md: 16px;
+  --icon-stroke: 2;
+}
+@utility icon-sm {
+  width: var(--icon-sm);
+  height: var(--icon-sm);
+  stroke-width: var(--icon-stroke);
+}
+@utility icon-md {
+  width: var(--icon-md);
+  height: var(--icon-md);
+  stroke-width: var(--icon-stroke);
+}
+
 :root {
   --motion-stagger: 45ms;
   --motion-slide: 400ms;

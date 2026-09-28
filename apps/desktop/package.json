@@ -57,6 +57,7 @@
     "command-score": "0.1.2",
     "dompurify": "^3.4.13",
     "jotai": "^2.20.1",
+    "lucide": "1.27.0",
     "lucide-react": "^1.27.0",
     "marked": "^18.0.9",
     "mermaid": "^11.17.2",

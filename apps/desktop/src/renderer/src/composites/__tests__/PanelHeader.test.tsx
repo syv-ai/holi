@@ -1,11 +1,12 @@
 import { fireEvent, render, screen } from '@/test/render'
 import userEvent from '@testing-library/user-event'
 import { expect, test, vi } from 'vitest'
+import { RotateCw, X } from 'lucide-react'
 import { PanelHeader } from '../PanelHeader'
 
 test('renders the leading region and action controls', () => {
   render(
-    <PanelHeader actions={[{ icon: <i>↻</i>, label: 'Restart', onSelect: () => {} }]}>
+    <PanelHeader actions={[{ icon: RotateCw, label: 'Restart', onSelect: () => {} }]}>
       <span>Claude</span>
     </PanelHeader>,
   )
@@ -16,7 +17,7 @@ test('renders the leading region and action controls', () => {
 test('an action reports clicks through onSelect', async () => {
   const onSelect = vi.fn()
   render(
-    <PanelHeader actions={[{ icon: <i>↻</i>, label: 'Restart', onSelect }]}>x</PanelHeader>,
+    <PanelHeader actions={[{ icon: RotateCw, label: 'Restart', onSelect }]}>x</PanelHeader>,
   )
   await userEvent.click(screen.getByRole('button', { name: 'Restart' }))
   expect(onSelect).toHaveBeenCalledOnce()
@@ -24,7 +25,7 @@ test('an action reports clicks through onSelect', async () => {
 
 test('a hidden action is not rendered', () => {
   render(
-    <PanelHeader actions={[{ icon: <i>↻</i>, label: 'Restart', hidden: true, onSelect: () => {} }]}>
+    <PanelHeader actions={[{ icon: RotateCw, label: 'Restart', hidden: true, onSelect: () => {} }]}>
       x
     </PanelHeader>,
   )
@@ -34,7 +35,7 @@ test('a hidden action is not rendered', () => {
 test('a hotkey is shown in the tooltip and bound while mounted', async () => {
   const onSelect = vi.fn()
   render(
-    <PanelHeader close={{ icon: <i>×</i>, label: 'Hide', hotkey: '⌘J', onSelect }}>x</PanelHeader>,
+    <PanelHeader close={{ icon: X, label: 'Hide', hotkey: '⌘J', onSelect }}>x</PanelHeader>,
   )
   // Shown — the custom Tooltip (never a native title), with the hotkey as a kbd.
   expect(screen.getByRole('button', { name: 'Hide' })).not.toHaveAttribute('title')
@@ -50,7 +51,7 @@ test('a hotkey is shown in the tooltip and bound while mounted', async () => {
 test('the bound hotkey ignores a non-matching chord', () => {
   const onSelect = vi.fn()
   render(
-    <PanelHeader close={{ icon: <i>×</i>, label: 'Hide', hotkey: '⌘J', onSelect }}>x</PanelHeader>,
+    <PanelHeader close={{ icon: X, label: 'Hide', hotkey: '⌘J', onSelect }}>x</PanelHeader>,
   )
   fireEvent.keyDown(window, { key: 'j' }) // no modifier
   fireEvent.keyDown(window, { key: 'k', metaKey: true })

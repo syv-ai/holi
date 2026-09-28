@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, expect, test, vi } from 'vitest'
 import { MorphingMenu, dockCapacity, dockGrid, type MorphingMenuItem } from '../MorphingMenu'
 
-const dot = <span />
+const dot = () => <svg />
 function items(onSelect = vi.fn()): MorphingMenuItem[] {
   return [
     { id: 'home', label: 'Home', icon: dot, onSelect },

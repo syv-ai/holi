@@ -10,7 +10,7 @@ import {
   availableOptions,
   type VaultSettingDescriptor,
 } from '@holi/shared'
-import { Button, Checkbox, Tooltip } from '@/primitives'
+import { Button, Checkbox, Icon, Tooltip } from '@/primitives'
 import { useAck } from '@/lib/use-ack'
 import { SettingsRow } from './settings-ui'
 
@@ -146,7 +146,7 @@ export function SettingRow({
           was silently replaced by a default and never mentioned. */}
       {warnings.map((warning) => (
         <p key={warning} className="flex items-start gap-1.5 text-[11px] text-destructive">
-          <TriangleAlert size={13} className="mt-0.5 shrink-0" />
+          <Icon icon={TriangleAlert} size="sm" className="mt-0.5" />
           {warning}
         </p>
       ))}

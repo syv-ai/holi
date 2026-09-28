@@ -4,6 +4,7 @@
  * tokens, the CSS put into its shadow root, the opening zoom, and keydown
  * spelling. No React, no DOM globals beyond the `KeyboardEvent` type.
  */
+import { Lock, LockOpen, Sparkles, type IconNode } from 'lucide'
 import { DRAWER_WIDTH } from './drawer'
 import { ASK_AGENT_PDF, ASK_AGENT_THREAD } from './pdf-comments'
 import { MAKE_EDITABLE, MAKE_READ_ONLY } from './pdf-read-only'
@@ -476,26 +477,42 @@ export const PDF_SHADOW_CSS = [
 
 /**
  * Holi's own icons for the viewer's toolbar, as SVG path data (the viewer's
- * icon registry takes paths only). lucide's `lock` and `lock-open`, the set
- * the rest of Holi draws from, with the body's `rect` spelled as a path.
+ * icon registry takes paths only). Read from vanilla `lucide`, the set the
+ * rest of Holi draws from, so a `rect` or `circle` in the geometry is spelled
+ * here as the path that draws the same outline.
  */
-const LOCK_BODY = 'M5 11h14a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2z'
-const lucideIcon = (...d: string[]) => ({
-  paths: d.map((path) => ({ d: path, stroke: 'currentColor' })),
+function iconPaths(node: IconNode): string[] {
+  return node.map(([tag, attrs]) => {
+    const n = (key: string) => Number(attrs[key] ?? 0)
+    if (tag === 'path') return String(attrs.d)
+    if (tag === 'circle') {
+      const [cx, cy, r] = [n('cx'), n('cy'), n('r')]
+      return `M${cx - r} ${cy}a${r} ${r} 0 1 0 ${2 * r} 0a${r} ${r} 0 1 0 ${-2 * r} 0`
+    }
+    if (tag === 'rect') {
+      const [x, y, w, h] = [n('x'), n('y'), n('width'), n('height')]
+      const r = Math.min(n('rx'), w / 2, h / 2)
+      const arc = (dx: number, dy: number) => (r === 0 ? '' : `a${r} ${r} 0 0 1 ${dx} ${dy}`)
+      return (
+        `M${x + r} ${y}h${w - 2 * r}${arc(r, r)}v${h - 2 * r}${arc(-r, r)}` +
+        `h${2 * r - w}${arc(-r, -r)}v${2 * r - h}${arc(r, -r)}z`
+      )
+    }
+    throw new Error(`PDF icon: no path for <${tag}>`)
+  })
+}
+const lucideIcon = (node: IconNode) => ({
+  paths: iconPaths(node).map((d) => ({ d, stroke: 'currentColor' })),
+  // A number, as the registry takes it: the `--icon-stroke` value.
   strokeWidth: 2,
   strokeLinecap: 'round' as const,
   strokeLinejoin: 'round' as const,
 })
 export const PDF_ICONS = {
-  'holi-lock': lucideIcon(LOCK_BODY, 'M7 11V7a5 5 0 0 1 10 0v4'),
-  'holi-lock-open': lucideIcon(LOCK_BODY, 'M7 11V7a5 5 0 0 1 9.9-1'),
-  // lucide's `sparkles`, the agent's mark elsewhere in Holi (the palette, mail).
-  'holi-sparkles': lucideIcon(
-    'M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z',
-    'M20 2v4',
-    'M22 4h-4',
-    'M6 20a2 2 0 1 1-4 0a2 2 0 1 1 4 0',
-  ),
+  'holi-lock': lucideIcon(Lock),
+  'holi-lock-open': lucideIcon(LockOpen),
+  // The agent's mark elsewhere in Holi (the palette, mail).
+  'holi-sparkles': lucideIcon(Sparkles),
 }
 
 /**

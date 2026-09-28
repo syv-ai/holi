@@ -52,6 +52,7 @@ import {
   CommandItem,
   CommandList,
   CommandShortcut,
+  Icon,
   Kbd,
 } from '@/primitives'
 import {
@@ -326,7 +327,7 @@ export function CommandPalette(): React.JSX.Element {
               {showAsk && (
                 <CommandGroup>
                   <CommandItem value={`ask:${query}`} onSelect={ask}>
-                    <Sparkles />
+                    <Icon icon={Sparkles} />
                     <span className="truncate">Ask the assistant: {query.trim()}</span>
                   </CommandItem>
                 </CommandGroup>
@@ -379,11 +380,9 @@ function RowIconView({ row, orb }: { row: PaletteRow; orb?: string }): React.JSX
         </span>
       )
     case 'app':
-      return <AppWindow />
-    case 'surface': {
-      const Glyph = SURFACE_GLYPHS[row.key as keyof typeof SURFACE_GLYPHS]
-      return <Glyph />
-    }
+      return <Icon icon={AppWindow} />
+    case 'surface':
+      return <Icon icon={SURFACE_GLYPHS[row.key as keyof typeof SURFACE_GLYPHS]} />
   }
 }
 

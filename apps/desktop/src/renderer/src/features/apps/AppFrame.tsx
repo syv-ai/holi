@@ -25,7 +25,7 @@ import { useAtomValue, useSetAtom } from 'jotai'
 import { RotateCw } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { APP_METHODS, appHost, appName, type AppMethod, type AppResponse } from '@holi/shared'
-import { Button, Tooltip } from '@/primitives'
+import { Button, IconButton } from '@/primitives'
 import { trpc } from '../../lib/trpc'
 import { appPathsAtom, closeAppAtom } from '../../state/apps'
 import { activeModeAtom } from '../../state/color-scheme'
@@ -84,8 +84,7 @@ export function AppFrame({ path }: { path: string }): React.JSX.Element {
       const msg = event.data as { id?: unknown; method?: unknown; params?: unknown }
       if (msg === null || typeof msg !== 'object' || typeof msg.id !== 'string') return
       const id = msg.id
-      const reply = (response: AppResponse): void =>
-        frame.contentWindow?.postMessage(response, '*')
+      const reply = (response: AppResponse): void => frame.contentWindow?.postMessage(response, '*')
 
       if (!isAppMethod(msg.method)) {
         // Refused as a value rather than dropped: an app that asked for
@@ -119,16 +118,12 @@ export function AppFrame({ path }: { path: string }): React.JSX.Element {
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex h-8 items-center justify-end px-2">
-        <Tooltip content="reload this app">
-          <Button
-            variant="ghost"
-            className="h-auto p-1 text-muted-foreground hover:text-foreground"
-            aria-label="reload"
-            onClick={() => setReloads((n) => n + 1)}
-          >
-            <RotateCw size={13} />
-          </Button>
-        </Tooltip>
+        <IconButton
+          icon={RotateCw}
+          label="reload"
+          tooltip="reload this app"
+          onClick={() => setReloads((n) => n + 1)}
+        />
       </div>
       <iframe
         // Remounting is the reload: an app holds nothing across one (its origin

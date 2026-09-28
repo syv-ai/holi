@@ -18,9 +18,11 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
+  Icon,
+  IconButton,
   Tooltip,
 } from '@/primitives'
-import { CalendarDays, ChevronLeft, ChevronRight, House, Mail, SquareKanban } from 'lucide-react'
+import { CalendarDays, ChevronLeft, ChevronRight, House, Mail, SquareKanban, X } from 'lucide-react'
 import { appName, type TaskStatus } from '@holi/shared'
 import { pathGlyph, pathLabel } from '@/composites/file-icons'
 import { offscreenTabs, type Offscreen } from '@/lib/tab-overflow'
@@ -119,9 +121,9 @@ function tabIcon(tab: Tab, marks: PathMarks, sessions: AgentSession[]): ReactNod
   if (tab.kind === 'note' || tab.kind === 'app') {
     return pathGlyph(tab.path, { emoji: marks.icons[tab.path], task: marks.tasks.get(tab.path) })
   }
-  if (tab.kind === 'home') return <House size={14} />
-  if (tab.kind === 'agenda') return <CalendarDays size={14} />
-  if (tab.kind === 'mail') return <Mail size={14} />
+  if (tab.kind === 'home') return <Icon icon={House} size="sm" />
+  if (tab.kind === 'agenda') return <Icon icon={CalendarDays} size="sm" />
+  if (tab.kind === 'mail') return <Icon icon={Mail} size="sm" />
   // A session's glyph is its state: the same dot, from the same derivation, as
   // the sidebar card and footer, so they cannot disagree (D72).
   if (tab.kind === 'session') {
@@ -132,7 +134,7 @@ function tabIcon(tab: Tab, marks: PathMarks, sessions: AgentSession[]): ReactNod
         : agentIndicator({ ...session, themeNote: null }).dot
     return <span aria-hidden="true" className={cn('h-2 w-2 shrink-0 rounded-full', dot)} />
   }
-  return <SquareKanban size={14} />
+  return <Icon icon={SquareKanban} size="sm" />
 }
 
 function tabName(tab: Tab, sessions: AgentSession[]): string {
@@ -217,9 +219,9 @@ function OverflowMenu({
               aria-hidden={!visible}
               tabIndex={visible ? undefined : -1}
             >
-              {side === 'left' && <ChevronLeft size={12} />}
+              {side === 'left' && <Icon icon={ChevronLeft} size="sm" />}
               {shown.length}
-              {side === 'right' && <ChevronRight size={12} />}
+              {side === 'right' && <Icon icon={ChevronRight} size="sm" />}
             </Button>
           </DropdownMenuTrigger>
         </Tooltip>
@@ -615,7 +617,7 @@ export function TabStrip({
                   transform: shift === null ? undefined : `translateX(${shift[i] ?? 0}px)`,
                   transitionProperty: shift === null ? 'opacity' : 'opacity, transform',
                 }}
-                className={`motion-respond group flex shrink-0 items-center gap-1 rounded-full px-3 py-1 text-xs ${
+                className={`motion-respond group group/tab flex shrink-0 items-center gap-1 rounded-full px-3 py-1 text-xs ${
                   dragFromKey === key ? 'opacity-40' : ''
                 } ${
                   i === active
@@ -631,11 +633,11 @@ export function TabStrip({
                     // Ghost bg/padding neutralised so the pill owns the surface.
                     // A preview tab reads italic (VS Code).
                     //
-                    // The 7px nudge centres an unhovered label against the
+                    // The 10px nudge centres an unhovered label against the
                     // invisible close control's reserved width. A transform, not
                     // padding: a pill changing width on hover would shift the
                     // pills after it and the drop midpoints.
-                    className={`motion-respond h-auto translate-x-[7px] gap-1.5 p-0 group-hover:translate-x-0 hover:bg-transparent ${
+                    className={`motion-respond h-auto translate-x-[10px] gap-1.5 p-0 group-hover/tab:translate-x-0 hover:bg-transparent ${
                       t.kind === 'note' && t.preview ? 'italic' : ''
                     }`}
                     onClick={() => onSelect(i)}
@@ -648,15 +650,15 @@ export function TabStrip({
                 </Tooltip>
                 {/* Shown on hover or focus. Hidden with `opacity`, never
                   `hidden`, so the pill's width never changes. */}
-                <Tooltip content="close tab">
-                  <Button
-                    variant="ghost"
-                    className="motion-respond h-auto p-0 text-muted-foreground opacity-0 group-hover:opacity-100 hover:bg-transparent hover:text-foreground focus-visible:opacity-100"
-                    onClick={() => onClose(i)}
-                  >
-                    ✕
-                  </Button>
-                </Tooltip>
+                <IconButton
+                  icon={X}
+                  label="close tab"
+                  shape="round"
+                  // Boxed to the pill's line height, so it never makes the pill
+                  // taller than its label.
+                  className="size-4 opacity-0 group-hover/tab:opacity-100 focus-visible:opacity-100"
+                  onClick={() => onClose(i)}
+                />
               </span>
             )
           })}

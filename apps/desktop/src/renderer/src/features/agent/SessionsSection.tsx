@@ -25,6 +25,8 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
   Dialog,
+  Icon,
+  IconButton,
   Tooltip,
 } from '@/primitives'
 import { cn } from '@/lib/cn'
@@ -81,28 +83,13 @@ export function SessionsSection(): React.JSX.Element {
       {/* The explorer's section-action pattern: floated top-right, hidden until
           you are in the section. */}
       <div className="motion-respond pointer-events-none absolute right-2 top-0.5 z-10 flex items-center gap-0.5 opacity-0 focus-within:pointer-events-auto focus-within:opacity-100 group-hover/sessions:pointer-events-auto group-hover/sessions:opacity-100">
-        <Tooltip content="resume a past session in a new tab">
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            aria-label="resume a past session"
-            className="text-muted-foreground hover:text-foreground"
-            onClick={() => void startSession({ resume: true })}
-          >
-            <History size={14} />
-          </Button>
-        </Tooltip>
-        <Tooltip content="start another session">
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            aria-label="start another session"
-            className="text-muted-foreground hover:text-foreground"
-            onClick={() => void startSession()}
-          >
-            <Plus size={14} />
-          </Button>
-        </Tooltip>
+        <IconButton
+          icon={History}
+          label="resume a past session"
+          tooltip="resume a past session in a new tab"
+          onClick={() => void startSession({ resume: true })}
+        />
+        <IconButton icon={Plus} label="start another session" onClick={() => void startSession()} />
       </div>
       {/* The whole header is the toggle. Same metrics and lowercase as the apps
           section. */}
@@ -113,11 +100,7 @@ export function SessionsSection(): React.JSX.Element {
         className="h-[22px] w-full shrink-0 justify-start gap-1 rounded-none px-2 text-sm font-medium text-muted-foreground hover:bg-accent/60"
         onClick={() => setOpen((v) => !v)}
       >
-        <ChevronRight
-          className="size-3.5 motion-respond"
-          style={{ transform: open ? 'rotate(90deg)' : 'none' }}
-          aria-hidden="true"
-        />
+        <Icon icon={ChevronRight} size="sm" className={cn('motion-respond', open && 'rotate-90')} />
         chats
       </Button>
       {open && sessions.length > 0 && (

@@ -14,7 +14,7 @@
 import { createContext, useContext, useId } from 'react'
 import { X } from 'lucide-react'
 import { cn } from '@/lib/cn'
-import { Button, Field, FieldLabel, Tooltip } from '@/primitives'
+import { Field, FieldLabel, IconButton, Tooltip } from '@/primitives'
 
 const ControlId = createContext<string | undefined>(undefined)
 
@@ -74,19 +74,15 @@ export function FieldRow({
           {typeof children === 'function' ? children(id) : children}
         </div>
         {onRemove && (
-          <Tooltip content={`Remove ${label}`}>
-            <Button
-              variant="ghost"
-              size="icon-xs"
-              aria-label={`remove field ${label}`}
-              // A child of the row, so pointing at it keeps the row hovered
-              // even though it sits outside the row's box.
-              className="motion-respond absolute top-1/2 left-full -translate-y-1/2 text-muted-foreground opacity-0 group-hover/field:opacity-100 hover:bg-muted hover:text-foreground focus-visible:opacity-100"
-              onClick={onRemove}
-            >
-              <X />
-            </Button>
-          </Tooltip>
+          <IconButton
+            icon={X}
+            label={`remove field ${label}`}
+            tooltip={`Remove ${label}`}
+            // A child of the row, so pointing at it keeps the row hovered
+            // even though it sits outside the row's box.
+            className="absolute top-1/2 left-full -translate-y-1/2 opacity-0 group-hover/field:opacity-100 focus-visible:opacity-100"
+            onClick={onRemove}
+          />
         )}
       </Field>
     </ControlId.Provider>

@@ -14,7 +14,7 @@
 import { useAtomValue, useSetAtom } from 'jotai'
 import { ChevronDown, ChevronRight } from 'lucide-react'
 import { useEffect, useState } from 'react'
-import { Button, Tooltip } from '@/primitives'
+import { Button, Icon, Tooltip } from '@/primitives'
 import { Churn, DiffView, PanelHeader } from '@/composites'
 import { cn } from '@/lib/cn'
 import {
@@ -66,11 +66,7 @@ function FileEntry({ path, sha }: { path: string; sha: string }): React.JSX.Elem
         aria-expanded={open}
         className="h-auto w-full min-w-0 justify-start gap-1.5 rounded-none px-2 py-1.5 text-left text-xs font-normal"
       >
-        {open ? (
-          <ChevronDown size={13} className="shrink-0 text-muted-foreground" />
-        ) : (
-          <ChevronRight size={13} className="shrink-0 text-muted-foreground" />
-        )}
+        <Icon icon={open ? ChevronDown : ChevronRight} size="sm" tone="muted" />
         <span className="min-w-0 flex-1 truncate">{path}</span>
       </Button>
       {open && (
