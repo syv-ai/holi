@@ -686,6 +686,9 @@ export const markdownHighlighting = syntaxHighlighting(markdownHighlightStyle)
 export const notesFontTheme = EditorView.theme({
   '&': { '--tbl-style-font-family': `var(--editor-font, ${MONO})` },
   '.cm-scroller': { fontFamily: `var(--editor-font, ${MONO})` },
+  // The running text's colour (`--prose` in index.css); marks, links and chips
+  // keep their own.
+  '.cm-content': { color: 'var(--prose)' },
   '.cm-code-line': { fontFamily: MONO },
   '.cm-inline-code': { fontFamily: MONO },
   '.cm-fm .cm-scroller': { fontFamily: MONO },

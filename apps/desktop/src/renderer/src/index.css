@@ -20,6 +20,9 @@
 
   --background: var(--color-neutral-950);
   --foreground: var(--color-neutral-100);
+  /* A note's and a task's running text: a touch under the foreground, which is
+     glaring at length on near-black. Mixed, so a vault theme's colours carry it. */
+  --prose: color-mix(in srgb, var(--foreground) 88%, var(--background));
   --card: var(--color-neutral-900);
   --card-foreground: var(--color-neutral-100);
   --popover: var(--color-neutral-900);
@@ -167,6 +170,7 @@
 
   --background: var(--color-neutral-50);
   --foreground: var(--color-neutral-900);
+  --prose: var(--foreground);
   --card: #ffffff;
   --card-foreground: var(--color-neutral-900);
   --popover: #ffffff;
