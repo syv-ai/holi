@@ -21,7 +21,7 @@ import { useEffect } from 'react'
 import { saveAllBuffers } from '../lib/buffer-registry'
 import { matchHotkey } from '../lib/hotkey'
 import { trpc } from '../lib/trpc'
-import { showAgentAtom, startSessionAtom } from './agent-send'
+import { showAgentsAtom, startSessionAtom } from './agent-send'
 import { openTodaysDailyAtom } from './daily'
 import { openDialogAtom } from './dialogs'
 import { closeActiveTabWithExitAtom } from './pane-exit'
@@ -109,13 +109,14 @@ export const STATIC_COMMANDS: readonly Command[] = [
     hotkey: '⌥⌘S',
     run: (_get, set) => set(navOpenAtom, (open) => !open),
   },
-  // Bound here because a session tab is mounted only while it is open, so the
-  // shortcut that OPENS one cannot live inside it.
+  // Bound here because an agent tab is mounted only while it is open, so the
+  // shortcut that OPENS one cannot live inside it. The agent list: where
+  // sessions are started and picked up (D110).
   {
     id: 'agent.show',
-    label: 'Go to the agent',
+    label: 'Go to the agents',
     hotkey: '⌘J',
-    run: (_get, set) => set(showAgentAtom),
+    run: (_get, set) => void set(showAgentsAtom),
   },
   {
     id: 'agent.new',

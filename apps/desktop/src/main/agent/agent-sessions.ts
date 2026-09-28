@@ -71,9 +71,12 @@ export interface AgentSessionsDeps {
   getWindow(): BrowserWindow | null
   cli: ClaudeCli
   terminals: AgentTerminals
-  /** Provision the vault's config directory (D86) and say whether Holi has
-   *  ever used it. Null leaves the vault without an assistant. */
-  resolveConfig(vault: VaultRef): Promise<{ dir: string; firstSpawn: boolean } | null>
+  /** Provision the vault's config directory (D86). Null leaves the vault
+   *  without an assistant. */
+  resolveConfig(vault: VaultRef): Promise<{ dir: string } | null>
+  /** True the first time Holi opens a terminal on this config directory,
+   *  consumed on read (`takeFirstSpawn`). */
+  takeFirstSpawn(configDir: string): Promise<boolean>
   /** Holi's generated commands, first on every session's `PATH`. */
   binDir(): string | null
   /** Write the vault's `holi.env`: where its sessions find this Holi. */
@@ -123,8 +126,9 @@ interface Current {
   remote: string
   root: string
   configDir: string
-  /** Consumed by the first terminal opened on this directory. */
-  firstSpawn: boolean
+  /** Set once this run's first terminal has asked about the sign-in marker:
+   *  the marker is the directory's, so no later terminal needs to. */
+  spawnChecked: boolean
   unwatch: () => void
   /** False until the first listing read, which seeds the working set. */
   seeded: boolean
@@ -135,6 +139,9 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
   const watch = deps.watch ?? ((dir: string, cb: () => void) => watchConfigDir(dir, cb, log))
   let current: Current | null = null
   let activating: Promise<Current | null> | null = null
+  /** Set while `leave` runs: nothing may attach to a vault on its way out,
+   *  which would rewrite the `holi.env` just deleted and mint a new token. */
+  let leaving: Promise<void> | null = null
   /** The latest listing for the current vault, live or not. */
   let rows: ClaudeRow[] = []
   let lastPushed = ''
@@ -184,7 +191,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
       remote: vault.remote,
       root: vault.root,
       configDir: config.dir,
-      firstSpawn: config.firstSpawn,
+      spawnChecked: false,
       unwatch: () => {},
       seeded: false,
     }
@@ -193,14 +200,20 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
   }
 
   async function ensureCurrent(): Promise<Current | null> {
+    if (leaving !== null) return null
     const vault = deps.host.active()
     if (vault === null) return null
     if (current?.remote === vault.remote) return current
     if (activating !== null) return activating
     // A different vault without a `leave` in between: let go of the old one's
     // watch and endpoint, but its sessions are not ours to stop from here.
-    if (current !== null) await release(current)
-    activating = activate({ remote: vault.remote, root: vault.root })
+    // Inside the one `activating` promise, so a second caller during the
+    // release waits on it rather than activating the vault twice.
+    const previous = current
+    activating = (async () => {
+      if (previous !== null) await release(previous)
+      return activate({ remote: vault.remote, root: vault.root })
+    })()
     try {
       current = await activating
     } finally {
@@ -282,8 +295,14 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
   }
 
   async function openOn(c: Current, args: Geometry & { attach?: string }): Promise<OpenResult> {
-    const notice = c.firstSpawn ? SIGN_IN_NOTICE : undefined
-    c.firstSpawn = false
+    // Taken here, at a terminal, not at vault open: a run that opens no
+    // terminal must leave the notice for the one that does.
+    let firstSpawn = false
+    if (!c.spawnChecked) {
+      c.spawnChecked = true
+      firstSpawn = await deps.takeFirstSpawn(c.configDir).catch(() => false)
+    }
+    const notice = firstSpawn ? SIGN_IN_NOTICE : undefined
     const res = deps.terminals.open({
       target: targetOf(c),
       ...(args.attach === undefined ? {} : { attach: args.attach }),
@@ -398,28 +417,40 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     },
 
     async leave({ stopSessions = true } = {}) {
-      const c = current
-      if (c === null) return
-      if (stopSessions) {
-        const stops = Promise.all(live().map((row) => deps.cli.stop(targetOf(c), row.id)))
-        await Promise.race([
-          stops,
-          new Promise((r) => setTimeout(r, deps.leaveCapMs ?? LEAVE_CAP_MS)),
-        ])
+      if (leaving !== null) return leaving
+      leaving = leaveNow(stopSessions)
+      try {
+        await leaving
+      } finally {
+        leaving = null
       }
-      await deps.terminals.closeAll()
-      for (const id of [...coordinator.working]) coordinator.forget(id)
-      if (idleRecheck !== null) {
-        clearTimeout(idleRecheck)
-        idleRecheck = null
-      }
-      focusWriter?.snapshot.stop()
-      focusWriter = null
-      current = null
-      rows = []
-      await release(c)
-      push()
     },
+  }
+
+  async function leaveNow(stopSessions: boolean): Promise<void> {
+    // A vault still attaching is the one being left: let it land first.
+    if (activating !== null) await activating
+    const c = current
+    if (c === null) return
+    if (stopSessions) {
+      const stops = Promise.all(live().map((row) => deps.cli.stop(targetOf(c), row.id)))
+      await Promise.race([
+        stops,
+        new Promise((r) => setTimeout(r, deps.leaveCapMs ?? LEAVE_CAP_MS)),
+      ])
+    }
+    await deps.terminals.closeAll()
+    for (const id of [...coordinator.working]) coordinator.forget(id)
+    if (idleRecheck !== null) {
+      clearTimeout(idleRecheck)
+      idleRecheck = null
+    }
+    focusWriter?.snapshot.stop()
+    focusWriter = null
+    current = null
+    rows = []
+    await release(c)
+    push()
   }
   return api
 }

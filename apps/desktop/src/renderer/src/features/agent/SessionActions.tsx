@@ -1,15 +1,17 @@
 /**
- * An assistant tab's own actions, in its pane's tab bar where a note keeps its
- * version history: another session beside this one, or the overview, Claude
- * Code's own picker of the vault's past sessions, in a new tab.
+ * An agent tab's own actions, in its pane's tab bar where a note keeps its
+ * version history: a new overview (Claude Code's agent list; ⌘J and the agent
+ * icon focus the one already open instead), or another session in a tab of its
+ * own.
  */
 import { useSetAtom } from 'jotai'
 import { LayoutList, Plus } from 'lucide-react'
 import { IconButton } from '@/primitives'
-import { startSessionAtom } from '@/state/agent-send'
+import { openOverviewAtom, startSessionAtom } from '@/state/agent-send'
 
 export function SessionActions(): React.JSX.Element {
   const startSession = useSetAtom(startSessionAtom)
+  const openOverview = useSetAtom(openOverviewAtom)
   return (
     <>
       <IconButton
@@ -17,7 +19,7 @@ export function SessionActions(): React.JSX.Element {
         label="Open overview"
         className="ml-1"
         data-session-overview=""
-        onClick={() => void startSession({ resume: true })}
+        onClick={() => void openOverview()}
       />
       <IconButton
         icon={Plus}

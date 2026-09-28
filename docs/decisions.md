@@ -5,7 +5,7 @@ decided and which page now holds it. The pages carry the reasoning; the numbers 
 code and in git history (`git log -p docs/decisions.md` has every original write-up).
 
 A new decision gets the next free number, a line here, and its substance written straight into the
-page that owns it. **Next free: D110.**
+page that owns it. **Next free: D111.**
 
 ## D60 onward
 
@@ -52,7 +52,7 @@ page that owns it. **Next free: D110.**
 | D98  | Motion is four named behaviours from one vocabulary                                 | [ui-system](ui-system.md)                                                    |
 | D99  | There is one completion popup, and it is Holi's                                     | [editor](features/editor.md)                                                 |
 | D100 | A vault runs several agent sessions                                                 | [agent-sessions](features/agent-sessions.md)                                 |
-| D101 | A session is a tab; its state is read from Claude Code                              | [agent-sessions](features/agent-sessions.md)                                 |
+| D101 | A session's state is read from Claude Code (its tab half: see D110)                 | [agent-sessions](features/agent-sessions.md)                                 |
 | D102 | One table of commands behind keys, menu and palette                                 | [command-palette](features/command-palette.md)                               |
 | D103 | A PDF opens in a tab, and a mark is saved into the file                             | [pdf](features/pdf.md)                                                       |
 | D104 | Signatures in the PDF viewer                                                        | [pdf](features/pdf.md)                                                       |
@@ -61,6 +61,7 @@ page that owns it. **Next free: D110.**
 | D107 | An app is a `.app` bundle anywhere in the vault, named by its path                  | [vault-apps](features/vault-apps.md), [file-tree](features/file-tree.md)     |
 | D108 | The sidebar ends in one morphing nav menu; Home is a tab                            | [nav-menu](features/nav-menu.md)                                             |
 | D109 | Leave drops your access, Delete happens on GitHub; stuck work blocks both           | [vaults-sync](features/vaults-sync.md)                                       |
+| D110 | A session is a Claude Code background session; a Holi tab is a terminal onto it     | [agent-sessions](features/agent-sessions.md)                                 |
 
 ## D1 to D59
 

@@ -94,7 +94,7 @@ export function cliEnv(base: NodeJS.ProcessEnv, target: VaultCliTarget): Record<
 
 function defaultRun(bin: string, args: string[], opts: RunOptions): Promise<string> {
   return new Promise((resolve, reject) => {
-    execFile(
+    const child = execFile(
       bin,
       args,
       {
@@ -106,6 +106,10 @@ function defaultRun(bin: string, args: string[], opts: RunOptions): Promise<stri
       },
       (err, stdout, stderr) => (err ? reject(new Error(stderr || String(err))) : resolve(stdout)),
     )
+    // No input, and saying so at once: `claude --bg` reads a piped stdin as
+    // part of the prompt and waits for its end, which execFile's open pipe
+    // never sends, so every start sat out Claude Code's stdin wait (~3 s).
+    child.stdin?.end()
   })
 }
 

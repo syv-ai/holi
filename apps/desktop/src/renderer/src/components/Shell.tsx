@@ -15,7 +15,6 @@ import {
   ResizablePanel,
   ResizablePanelGroup,
   Tooltip,
-  type PanelImperativeHandle,
 } from '@/primitives'
 import { OnboardingRitual } from '@/features/onboarding/OnboardingRitual'
 import { SessionOrbs } from '@/features/agent/SessionOrbs'
@@ -58,7 +57,7 @@ import { tickNowAtom } from '../state/clock'
 import type { PaneDropZone } from '@/lib/tab-drop'
 import type { ConflictResolvers } from '@/lib/editor-reload'
 import { ConflictBanner } from '@/composites/ConflictBanner'
-import { SessionsSection } from '@/features/agent/SessionsSection'
+import { SessionRows } from '@/features/agent/SessionRows'
 import { SessionActions } from '@/features/agent/SessionActions'
 import { VaultSwitchConfirm } from '@/features/agent/VaultSwitchConfirm'
 import { CommandPalette } from '@/features/palette/CommandPalette'
@@ -68,19 +67,14 @@ import { recentOfTab, touchRecentAtom } from '../state/recents'
 import { closePaneWithExitAtom, closeTabWithExitAtom, leavingPaneAtom } from '../state/pane-exit'
 import { applyVaultSwitchAtom, leavingVaultAtom, switchVaultAtom } from '../state/vault-switch'
 import { pendingVaultPromptAtom, startPendingVaultPromptAtom } from '../state/vault-removal'
-import {
-  agentSessionsAtom,
-  agentSessionsSectionOpenAtom,
-  useAgentSessions,
-  useSessionTabs,
-} from '@/state/agent'
+import { agentSessionsAtom, useAgentSessions, useAgentTabs } from '@/state/agent'
 import { reconcileAtom } from '@/state/agent-send'
 import { sessionsWorthAsking } from '@/lib/agent-notices'
 
 /** One shared empty array, so a pane not being dragged over keeps the same
  *  `allowed` reference between renders. */
 const NO_ZONES: PaneDropZone[] = []
-import { navOpenAtom, usePanelLayout } from '../state/preferences'
+import { navOpenAtom } from '../state/preferences'
 import { useVaultTheme } from '../state/theme'
 import {
   activeRemoteAtom,
@@ -89,10 +83,6 @@ import {
   syncStateAtom,
   vaultsAtom,
 } from '../state/vaults'
-
-/** The sessions section's header row, in px: what its panel collapses to, so
- *  the control that reopens it stays. It shares tree-row metrics. */
-const SECTION_HEADER_HEIGHT = 22
 
 /** Bytes as a short human size for the held-back callout (984 KB, 12.3 MB). */
 function formatBytes(bytes: number): string {
@@ -137,35 +127,14 @@ export function Shell() {
   // so Close Tab arrives here rather than as a keydown.
   useEffect(() => window.holi.menu.onCommand((id) => void runCommand(id)), [runCommand])
 
-  // For the vault-switch confirm and the sessions panel's default size.
+  // For the vault-switch confirm.
   const agentSessions = useAtomValue(agentSessionsAtom)
-  // The sidebar's own vertical split: the tree, then the sessions section
-  // under it, which sits on the nav menu.
-  const sidebarLayout = usePanelLayout(activeRemote, 'sidebar')
-  const hasSessions = agentSessions.length > 0
-  const [sessionsOpen, setSessionsOpen] = useAtom(agentSessionsSectionOpenAtom)
-  /** A handle on the collapsible section, so the persisted open flag drives
-   *  collapse/expand rather than the panel owning a second copy. */
-  const sessionsPanelRef = useRef<PanelImperativeHandle | null>(null)
-
-  // Drive the panel from its open flag, one frame late: until the group
-  // registers the panel's constraints, `isCollapsed()` throws and takes the
-  // Shell down.
-  useEffect(() => {
-    const id = requestAnimationFrame(() => {
-      const panel = sessionsPanelRef.current
-      if (!panel) return
-      if (sessionsOpen && panel.isCollapsed()) panel.expand()
-      else if (!sessionsOpen && !panel.isCollapsed()) panel.collapse()
-    })
-    return () => cancelAnimationFrame(id)
-  }, [sessionsOpen, hasSessions])
   // Paint the active vault's colour/chrome theme onto the document root.
   useVaultTheme()
-  // The session list and its whole-set effects. Mounted here because the shell
-  // outlives every tab (D101).
+  // The session and terminal lists and their whole-set effects. Mounted here
+  // because the shell outlives every tab (D110).
   useAgentSessions()
-  useSessionTabs(activeRemote)
+  useAgentTabs(activeRemote)
 
   // Keep `nowAtom` on the current minute so `overdue` turns over on the clock.
   // Every 30s: the atom only changes when the minute string does, so the extra
@@ -272,7 +241,7 @@ export function Shell() {
   useEffect(() => setBanner(null), [activeRemote])
 
   /**
-   * Adding a vault activates it, ending sessions as a switch does. Asked at the
+   * Adding a vault activates it, stopping sessions as a switch does. Asked at the
    * trigger, before someone names a repo and waits for a clone.
    */
   const addVault = () => {
@@ -358,25 +327,10 @@ export function Shell() {
               />
             )}
 
-            {/* The sidebar's own vertical group: the tree, then the sessions
-              on the row directly above the nav menu. */}
-            <ResizablePanelGroup
-              orientation="vertical"
-              className="min-h-0 flex-1"
-              defaultLayout={sidebarLayout.defaultLayout}
-              onLayoutChanged={(layout, meta) => {
-                sidebarLayout.onLayoutChanged(layout, meta)
-                // Reconcile a real drag back into the open flags. Only
-                // `isUserInteraction`: mount and reflow report sizes too, and
-                // would collapse sections behind the user's back.
-                //
-                // Ask the panel, not `layout`: a layout value is a flexGrow
-                // weight, not a pixel height.
-                if (!meta.isUserInteraction) return
-                setSessionsOpen(sessionsPanelRef.current?.isCollapsed() === false)
-              }}
-            >
-              <ResizablePanel id="tree" minSize={80}>
+            {/* The tree, then the vault's live sessions on the row directly
+              above the nav menu (D110): no header, nothing to resize. */}
+            <div className="flex min-h-0 flex-1 flex-col">
+              <div className="min-h-0 flex-1">
                 <FileTree
                   activePath={tab?.kind === 'note' || tab?.kind === 'app' ? tab.path : null}
                   onOpenPreview={open}
@@ -390,22 +344,12 @@ export function Shell() {
                     )
                   }
                 />
-              </ResizablePanel>
-              {/* Present even with no sessions: its `+` is the only mouse
-                    path to a first one (D101). */}
-              <ResizableHandle />
-              <ResizablePanel
-                id="sessions"
-                collapsible
-                collapsedSize={SECTION_HEADER_HEIGHT}
-                defaultSize={hasSessions ? 140 : SECTION_HEADER_HEIGHT}
-                minSize={SECTION_HEADER_HEIGHT}
-                maxSize="60"
-                panelRef={sessionsPanelRef}
-              >
-                <SessionsSection />
-              </ResizablePanel>
-            </ResizablePanelGroup>
+              </div>
+              {/* Many sessions scroll rather than squeeze the tree away. */}
+              <div className="max-h-[40%] shrink-0 overflow-y-auto">
+                <SessionRows />
+              </div>
+            </div>
 
             {/* The nav menu on the sidebar's floor (D108). It opens upward
               over the sessions and the tree. */}
@@ -465,7 +409,7 @@ export function Shell() {
                     trailing={
                       <>
                         {/* An assistant tab's actions (`SessionActions`). */}
-                        {p.tabs[p.active]?.kind === 'session' && <SessionActions />}
+                        {p.tabs[p.active]?.kind === 'agent' && <SessionActions />}
                         {/* Version history for the focused note. Only on the
                               active pane: `historyTargetPathAtom` reads its tab,
                               the drawer's own predicate. */}

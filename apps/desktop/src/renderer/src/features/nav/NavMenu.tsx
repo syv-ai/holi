@@ -1,7 +1,8 @@
 /**
  * The morphing menu at the foot of the nav, and down the rail while the nav is
  * hidden (D108): Home, Search, Apps, Board, Email and Agenda once Google is
- * connected, the vault's sync state (`SyncItem`), then Settings beside More.
+ * connected, the vault's assistant (`AgentItem`), the vault's sync state
+ * (`SyncItem`), then Settings beside More.
  *
  * Reads shared state only, never another feature's components: the apps from
  * `appPathsAtom`, the count from `openTaskCountAtom`, Google from the account
@@ -29,6 +30,7 @@ import {
   type Tab,
 } from '@/state/panes'
 import { openTaskCountAtom, overdueTaskCountAtom } from '@/state/tasks'
+import { useAgentItem } from './AgentItem'
 import { useSyncItem } from './SyncItem'
 
 /** An app's child id: its bundle path, kept apart from the fixed ids. */
@@ -43,7 +45,8 @@ function activeItemId(tab: Tab | null): string | null {
     tab.kind === 'board' ||
     tab.kind === 'settings' ||
     tab.kind === 'mail' ||
-    tab.kind === 'agenda'
+    tab.kind === 'agenda' ||
+    tab.kind === 'agent'
   ) {
     return tab.kind
   }
@@ -63,6 +66,7 @@ export function NavMenu({
   const overdueCount = useAtomValue(overdueTaskCountAtom)
   const googleConnected = useAtomValue(googleAccountAtom) != null
   const sync = useSyncItem()
+  const agent = useAgentItem()
 
   // Stable across renders that change nothing here: the menu re-measures and
   // restarts its morph when its items change.
@@ -109,6 +113,7 @@ export function NavMenu({
             },
           ]
         : []),
+      agent,
       sync,
       // Last, so it ends the dock.
       {
@@ -118,7 +123,16 @@ export function NavMenu({
         onSelect: () => setWorkspace(openSettings),
       },
     ]
-  }, [appPaths, openTaskCount, overdueCount, googleConnected, sync, setWorkspace, openPalette])
+  }, [
+    appPaths,
+    openTaskCount,
+    overdueCount,
+    googleConnected,
+    agent,
+    sync,
+    setWorkspace,
+    openPalette,
+  ])
 
   return (
     <MorphingMenu

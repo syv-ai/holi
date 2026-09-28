@@ -5,16 +5,21 @@
 import { render, screen } from '@/test/render'
 import userEvent from '@testing-library/user-event'
 import { Provider, createStore } from 'jotai'
-import { expect, test } from 'vitest'
-import { activeSessionIdAtom, agentSessionsAtom, type AgentSession } from '@/state/agent'
+import { beforeEach, expect, test, vi } from 'vitest'
+import { agentSessionsAtom, type AgentSession } from '@/state/agent'
 import { activeTab, workspaceAtom } from '@/state/panes'
 import { SessionOrbs } from '../SessionOrbs'
 
 const session = (over: Partial<AgentSession> & { id: string; name: string }): AgentSession => ({
   state: 'idle',
-  configStale: false,
-  exited: false,
   ...over,
+})
+
+const open = vi.fn()
+beforeEach(() => {
+  open.mockReset()
+  open.mockResolvedValue({ ok: true, terminalId: 't-a' })
+  window.holi = { agent: { open: (args: unknown) => open(args) } } as never
 })
 
 function setup(sessions: AgentSession[]) {
@@ -28,14 +33,12 @@ function setup(sessions: AgentSession[]) {
   return store
 }
 
-test('one orb per running session; an ended one stays in the nav', () => {
+test('one orb per live session', () => {
   setup([
     session({ id: 'a', name: 'Refactor' }),
     session({ id: 'b', name: 'Research', state: 'needs-you' }),
-    session({ id: 'c', name: 'Old', exited: true }),
   ])
   expect(document.querySelectorAll('[data-session-orb]')).toHaveLength(2)
-  expect(screen.queryByRole('button', { name: /Old/ })).not.toBeInTheDocument()
 })
 
 test('the orb says the state, in the colour the chats section uses', () => {
@@ -47,6 +50,8 @@ test('the orb says the state, in the colour the chats section uses', () => {
 test('a press opens the session', async () => {
   const store = setup([session({ id: 'a', name: 'Refactor' })])
   await userEvent.setup().click(screen.getByRole('button', { name: /Refactor/ }))
-  expect(activeTab(store.get(workspaceAtom))).toEqual({ kind: 'session', id: 'a' })
-  expect(store.get(activeSessionIdAtom)).toBe('a')
+  expect(open).toHaveBeenCalledWith({ attach: 'a', cols: 80, rows: 24 })
+  await vi.waitFor(() =>
+    expect(activeTab(store.get(workspaceAtom))).toEqual({ kind: 'agent', id: 't-a' }),
+  )
 })

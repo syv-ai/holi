@@ -7,7 +7,7 @@ app-level action is one row of one command table that keys, palette and menu all
 ## How it works
 
 - **Quick open (⌘P)** lists every openable thing: markdown docs and other vault files (hidden
-  paths left out, git-ignored ones dimmed), vault apps, live agent sessions, and the five surfaces
+  paths left out, git-ignored ones dimmed), vault apps, live agent sessions, open agent tabs, and the five surfaces
   (board, agenda, mail, settings, history). A path row shows its filename with the folder beside
   it, and the tree's type glyph or the vault's emoji for that path. A session row shows the
   sidebar's status orb. Enter opens pinned, ⌘↵ opens beside. ⌘P while open steps the selection.
@@ -24,7 +24,8 @@ app-level action is one row of one command table that keys, palette and menu all
   out. Each further ⇥ moves down (⇧⇥ up) while Control is held, and releasing Control opens the
   selection. It means the literal Control key on every platform.
 - **Ask the assistant.** With any text typed outside `>` mode, the last row sends it to the
-  session ⌘J goes to, where it lands unsent in the input box ([agent sessions](agent-sessions.md)).
+  session the showing agent tab was opened for (else the last one opened, else a new one), where it
+  lands unsent in the input box ([agent sessions](agent-sessions.md)).
 - **The overlay** is its own atom, mounted once in Shell: top-anchored, no dimmed backdrop, 60vh
   list with an always-painted scrollbar, ↑ on the first row wraps. Every chosen row closes the
   palette first, then opens or runs.
@@ -38,7 +39,7 @@ app-level action is one row of one command table that keys, palette and menu all
   glyph, an optional `when`, and a Jotai write. One `keydown` listener installed by Shell matches
   the table with `lib/hotkey.ts`. The application menu sends a command id over `menu:command`.
   Rows today: open today's daily (⌘⇧D), save and sync (⌘S), split pane (⌘\), toggle sidebar
-  (⌥⌘S), go to the agent (⌘J), new session, new task (⌘T), new task with details (⌘⇧T), close
+  (⌥⌘S), go to the agents (⌘J), new session, new task (⌘T), new task with details (⌘⇧T), close
   tab (⌘W), go home, open each of the five surfaces, new note (untitled, at the root), quick open (⌘P),
   command palette (⌘⇧P), and one "switch to" per other vault.
 - Pane exit animation and the vault-switch confirm live in atoms, so close tab, split and switch

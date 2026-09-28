@@ -7,12 +7,12 @@
  */
 import type { Tab } from '../state/panes'
 
-export type RecentKind = 'path' | 'app' | 'session' | 'surface' | 'command'
+export type RecentKind = 'path' | 'app' | 'session' | 'terminal' | 'surface' | 'command'
 
 export interface RecentEntry {
   kind: RecentKind
-  /** A vault-relative path, an app bundle, a session id, a `SingletonTab`, or a
-   *  command id, by `kind`. */
+  /** A vault-relative path, an app bundle, a session's job id, an agent
+   *  terminal's id, a `SingletonTab`, or a command id, by `kind`. */
   key: string
 }
 
@@ -25,8 +25,9 @@ export function entryOfTab(tab: Tab): RecentEntry {
       return { kind: 'path', key: tab.path }
     case 'app':
       return { kind: 'app', key: tab.path }
-    case 'session':
-      return { kind: 'session', key: tab.id }
+    // An agent tab is a terminal, whatever session it shows now (D110).
+    case 'agent':
+      return { kind: 'terminal', key: tab.id }
     default:
       return { kind: 'surface', key: tab.kind }
   }

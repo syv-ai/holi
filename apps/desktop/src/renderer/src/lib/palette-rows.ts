@@ -75,10 +75,18 @@ function splitPath(path: string): { name: string; detail?: string } {
 export interface RowSources {
   snapshot: VaultSnapshot
   appPaths: readonly string[]
-  sessions: readonly { id: string; name: string; exited: boolean }[]
+  /** The vault's live sessions, by job id. */
+  sessions: readonly { id: string; name: string }[]
+  /** Holi's open agent terminals, by terminal id, with their tab labels. */
+  terminals?: readonly { id: string; label: string }[]
 }
 
-export function buildRows({ snapshot, appPaths, sessions }: RowSources): PaletteRow[] {
+export function buildRows({
+  snapshot,
+  appPaths,
+  sessions,
+  terminals = [],
+}: RowSources): PaletteRow[] {
   const ignored = new Set(snapshot.ignored)
   const pathRow = (
     path: string,
@@ -109,14 +117,18 @@ export function buildRows({ snapshot, appPaths, sessions }: RowSources): Palette
       name: appName(path),
       icon: { glyph: 'app' },
     })),
-    ...sessions
-      .filter((s) => !s.exited)
-      .map((s): PaletteRow => ({
-        kind: 'session',
-        key: s.id,
-        name: s.name,
-        icon: { glyph: 'session' },
-      })),
+    ...sessions.map((s): PaletteRow => ({
+      kind: 'session',
+      key: s.id,
+      name: s.name,
+      icon: { glyph: 'session' },
+    })),
+    ...terminals.map((t): PaletteRow => ({
+      kind: 'terminal',
+      key: t.id,
+      name: t.label,
+      icon: { glyph: 'session' },
+    })),
     ...SURFACES.map(({ key, name }): PaletteRow => ({
       kind: 'surface',
       key,

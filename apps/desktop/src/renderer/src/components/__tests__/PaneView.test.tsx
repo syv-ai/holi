@@ -12,8 +12,8 @@ import { PaneView } from '../PaneView'
 
 // The terminal is stubbed: xterm needs geometry jsdom does not have.
 vi.mock('@/features/agent/SessionTerminal', () => ({
-  SessionTerminal: ({ sessionId, visible }: { sessionId: string; visible: boolean }) => (
-    <div data-terminal={sessionId} data-visible={visible} />
+  SessionTerminal: ({ terminalId, visible }: { terminalId: string; visible: boolean }) => (
+    <div data-terminal={terminalId} data-visible={visible} />
   ),
 }))
 vi.mock('@/features/agent/TurnChip', () => ({ TurnChip: () => <div data-turn-chip /> }))
@@ -171,14 +171,14 @@ test('a pane that is staying is untouched', () => {
   expect(main).not.toHaveClass('pointer-events-none')
 })
 
-test('keeps every session tab’s terminal mounted, showing only the active one', () => {
+test('keeps every agent tab’s terminal mounted, showing only the active one', () => {
   // An unmounted terminal loses its scrollback and must visibly replay main's
-  // mirror (D101).
+  // mirror (D110).
   pane({
     pane: {
       tabs: [
-        { kind: 'session', id: 'a' },
-        { kind: 'session', id: 'b' },
+        { kind: 'agent', id: 'a' },
+        { kind: 'agent', id: 'b' },
       ],
       active: 1,
     },
@@ -188,16 +188,16 @@ test('keeps every session tab’s terminal mounted, showing only the active one'
   expect(document.querySelector('[data-terminal="b"]')?.getAttribute('data-visible')).toBe('true')
 })
 
-test('a session tab shows its terminal instead of the editor', () => {
-  pane({ pane: { tabs: [{ kind: 'session', id: 'a' }], active: 0 } })
+test('an agent tab shows its terminal instead of the editor', () => {
+  pane({ pane: { tabs: [{ kind: 'agent', id: 'a' }], active: 0 } })
 
   expect(document.querySelector('[data-terminal="a"]')).not.toBeNull()
   expect(screen.queryByText('select or create a note')).not.toBeInTheDocument()
 })
 
-test('a note tab beside a session keeps the session’s terminal alive', () => {
+test('a note tab beside an agent tab keeps its terminal alive', () => {
   // The PTY keeps running, so its terminal must survive switching to a note.
-  pane({ pane: { tabs: [{ kind: 'session', id: 'a' }, note('plan')], active: 1 } })
+  pane({ pane: { tabs: [{ kind: 'agent', id: 'a' }, note('plan')], active: 1 } })
 
   expect(document.querySelector('[data-terminal="a"]')?.getAttribute('data-visible')).toBe('false')
 })

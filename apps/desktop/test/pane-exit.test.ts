@@ -143,7 +143,7 @@ describe('⌘W', () => {
 })
 
 const live = (id: string): AgentSession =>
-  ({ id, name: id, state: 'working', exited: false, hadTurn: true }) as AgentSession
+  ({ id, name: id, state: 'working' }) satisfies AgentSession
 
 describe('switching vault', () => {
   it('asks first when a session would be lost, and does not move the remote', () => {

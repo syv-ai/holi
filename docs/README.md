@@ -29,7 +29,7 @@ other rather than repeating each other.
 | [wiki-links](features/wiki-links.md)           | Link grammar, rename, backrefs                                           |
 | [tasks](features/tasks.md)                     | Task files, the board, dates, recurrence, reminders                      |
 | [daily-notes](features/daily-notes.md)         | Idempotent daily notes and their archive                                 |
-| [agent-sessions](features/agent-sessions.md)   | Claude Code in a PTY, session tabs, turn review, reconcile               |
+| [agent-sessions](features/agent-sessions.md)   | Claude Code background sessions, agent tabs, turn review, reconcile      |
 | [agent-config](features/agent-config.md)       | Config layering, the per-vault silo, seeded files, tools, permissions    |
 | [agent-memory](features/agent-memory.md)       | The vault's `memory/` directory                                          |
 | [google](features/google.md)                   | Gmail and Calendar per vault                                             |

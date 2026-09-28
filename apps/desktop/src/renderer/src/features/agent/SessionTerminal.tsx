@@ -1,10 +1,12 @@
 /**
- * One agent session's terminal (D100, D101): each session is an ordinary tab
- * with its own xterm, scrollback, data tap and geometry.
+ * One of Holi's terminals onto Claude Code (D110): the agents list or one
+ * background session, an ordinary tab with its own xterm, scrollback, data tap
+ * and geometry.
  *
- * It stays **mounted for as long as its session exists** and is merely hidden
+ * It stays **mounted for as long as its terminal exists** and is merely hidden
  * when another tab is showing: unmounting would throw away the scrollback and
- * replaying main's mirror to get it back is a visible repaint.
+ * replaying main's mirror to get it back is a visible repaint. When its client
+ * exits (a detach, or its session stopped) the tab closes.
  */
 import { FitAddon } from '@xterm/addon-fit'
 import { WebglAddon } from '@xterm/addon-webgl'
@@ -27,18 +29,13 @@ const DISABLE_FOCUS_REPORTING = '\x1b[?1004l'
  * sliver. */
 const MIN_FITTABLE_PX = 10
 
-/** Dim, italic line — session lifecycle notices printed into the scrollback. */
-function notice(term: Terminal, text: string) {
-  term.write(`\r\n\x1b[2;3m${text}\x1b[0m\r\n`)
-}
-
 export function SessionTerminal({
-  sessionId,
+  terminalId,
   visible,
   onGeometry,
 }: {
-  sessionId: string
-  /** This session's tab is the one showing. Drives the deferred build and the
+  terminalId: string
+  /** This terminal's tab is the one showing. Drives the deferred build and the
    *  refit; the host is hidden rather than unmounted when false. */
   visible: boolean
   /** Every fit, so the panel can spawn the next session at a geometry that has
@@ -77,8 +74,8 @@ export function SessionTerminal({
     if (cols === lastSizeRef.current.cols && rows === lastSizeRef.current.rows) return // a redundant resize is a SIGWINCH → full TUI redraw
     lastSizeRef.current = { cols, rows }
     geometryRef.current?.(cols, rows)
-    window.holi.agent.resize(sessionId, cols, rows)
-  }, [sessionId])
+    window.holi.agent.resize(terminalId, cols, rows)
+  }, [terminalId])
 
   /**
    * Build the terminal on FIRST SHOW, not on mount.
@@ -121,7 +118,7 @@ export function SessionTerminal({
     fitRef.current = fit
     // So a paste into this session can be followed by the keyboard: see
     // `session-terminals.ts` for the case the visible effect below misses.
-    const unregister = registerSessionTerminal(sessionId, () => term.focus())
+    const unregister = registerSessionTerminal(terminalId, () => term.focus())
 
     const selection = term.onSelectionChange(() => {
       const selected = term.getSelection()
@@ -144,7 +141,7 @@ export function SessionTerminal({
       e.preventDefault()
       switch (action.kind) {
         case 'write':
-          window.holi.agent.write(sessionId, action.seq)
+          window.holi.agent.write(terminalId, action.seq)
           break
         case 'scroll':
           if (action.to === 'top') term.scrollToTop()
@@ -155,26 +152,23 @@ export function SessionTerminal({
           break
         case 'paste':
           void navigator.clipboard.readText().then((text) => {
-            if (text) window.holi.agent.write(sessionId, text)
+            if (text) window.holi.agent.write(terminalId, text)
           })
           break
       }
       return false
     })
 
-    // Filtered by session: every session's bytes arrive on one channel.
+    // Filtered by terminal: every terminal's bytes arrive on one channel.
     const offData = window.holi.agent.onData((e) => {
-      if (e.id === sessionId) term.write(e.data)
+      if (e.id === terminalId) term.write(e.data)
     })
-    const offExit = window.holi.agent.onExit((e) => {
-      if (e.id === sessionId) notice(term, `[session ended (code ${e.code})]`)
-    })
-    const typed = term.onData((data) => window.holi.agent.write(sessionId, data))
+    const typed = term.onData((data) => window.holi.agent.write(terminalId, data))
 
     // Replay what main's mirror recorded (output from before this terminal
     // existed), THEN start taking live data.
     void (async () => {
-      const state = await window.holi.agent.attach(sessionId)
+      const state = await window.holi.agent.attach(terminalId)
       if (state) term.write(state)
       term.write(HIDE_CURSOR)
     })()
@@ -192,7 +186,6 @@ export function SessionTerminal({
       clearTimeout(reHide)
       unregister()
       offData()
-      offExit()
       typed.dispose()
       selection.dispose()
       observer.disconnect()
@@ -201,7 +194,7 @@ export function SessionTerminal({
       fitRef.current = null
       disposeRef.current = null
     }
-  }, [sessionId, syncSize])
+  }, [terminalId, syncSize])
 
   useEffect(() => () => disposeRef.current?.(), [])
 
@@ -223,7 +216,7 @@ export function SessionTerminal({
     // this xterm, and rebuilding them from the mirror is a repaint you can see.
     <div
       ref={hostRef}
-      data-session-terminal={sessionId}
+      data-session-terminal={terminalId}
       className={cn('relative min-h-0 flex-1 bg-background', !visible && 'hidden')}
     >
       {/* The gutter is the inset, not padding: xterm measures the box it is

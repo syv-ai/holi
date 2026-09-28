@@ -32,11 +32,28 @@ export const leavingPaneAtom = atom<number | null>(null)
  *  timer rather than letting two of them fire and take two panes. */
 let leaveTimer: ReturnType<typeof setTimeout> | null = null
 
+const agentIds = (w: Workspace): Set<string> =>
+  new Set(w.panes.flatMap((p) => p.tabs.flatMap((t) => (t.kind === 'agent' ? [t.id] : []))))
+
+/**
+ * Apply a close, then detach every terminal whose last tab it took. Closing an
+ * agent tab only ends its window (the session keeps running); without this the
+ * PTY would linger in main's list, and the list is what the palette and the
+ * reuse paths read. Diffed across the one change, not the terminals against
+ * the workspace: a new terminal is listed before its tab lands.
+ */
+const applyClosingAtom = atom(null, (get, set, apply: (w: Workspace) => Workspace): void => {
+  const before = agentIds(get(workspaceAtom))
+  set(workspaceAtom, apply)
+  const after = agentIds(get(workspaceAtom))
+  for (const id of before) if (!after.has(id)) void window.holi.agent.close(id)
+})
+
 const leaveThenApplyAtom = atom(
   null,
   (_get, set, index: number, apply: (w: Workspace) => Workspace): void => {
     if (prefersReducedMotion()) {
-      set(workspaceAtom, apply)
+      set(applyClosingAtom, apply)
       return
     }
     if (leaveTimer !== null) clearTimeout(leaveTimer)
@@ -44,7 +61,7 @@ const leaveThenApplyAtom = atom(
     leaveTimer = setTimeout(
       () => {
         leaveTimer = null
-        set(workspaceAtom, apply)
+        set(applyClosingAtom, apply)
         set(leavingPaneAtom, null)
       },
       motionDurationMs('--motion-leave', 190),
@@ -69,7 +86,7 @@ export const closeTabWithExitAtom = atom(
       set(leaveThenApplyAtom, paneIndex, apply)
       return
     }
-    set(workspaceAtom, apply)
+    set(applyClosingAtom, apply)
   },
 )
 

@@ -221,22 +221,19 @@ export async function takeFirstSpawn(configDir: string): Promise<boolean> {
 export interface AgentConfigResolution {
   /** Absolute path, handed to the child as `$CLAUDE_CONFIG_DIR`. */
   dir: string
-  /** True → Holi has never spawned here, so this vault owes the user a `/login`
-   *  and an explanation of why it is being asked again. Consumed on read. */
-  firstSpawn: boolean
 }
 
 /**
  * Everything the spawn path needs, in one call: provision the vault's config
- * directory, stamp the theme it should open in, and say whether this is the first
- * time Holi has spawned there.
+ * directory and stamp the theme it should open in. The sign-in marker is left
+ * alone (`takeFirstSpawn`): it is taken by the first terminal, not the open.
  *
  * The mode comes from the same pair D85 uses for `data-theme` (the vault's
  * `colorScheme` and the OS preference), through the same `resolveColorMode`, so
  * `system` cannot mean one thing to the app and another to the agent.
  *
  * `systemPrefersDark` is **injected** rather than read here: this module sits on
- * `agent-manager`'s path, which must load under vitest, so no runtime `electron`
+ * `agent-sessions`' path, which must load under vitest, so no runtime `electron`
  * import may appear in it. The caller owns `nativeTheme`.
  */
 export async function resolveVaultAgentConfig(args: {
@@ -255,7 +252,7 @@ export async function resolveVaultAgentConfig(args: {
     ...(args.env === undefined ? {} : { env: args.env }),
     retiredStatusLine: retiredStatusLine(args.userDataDir),
   })
-  return { dir, firstSpawn: await takeFirstSpawn(dir) }
+  return { dir }
 }
 
 /** Staging for the migration below. A directory cannot be renamed into itself. */

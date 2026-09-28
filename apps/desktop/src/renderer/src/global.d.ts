@@ -2,7 +2,12 @@ import type { VaultSnapshot } from '@holi/shared'
 import type { SyncState } from '../../main/vault/active-vault'
 import type { HeldBackFile } from '../../main/vault/large-files'
 import type { TrpcEnvelope, TrpcOpWire } from './lib/ipc-link'
-import type { AgentSession } from './state/agent'
+import type { AgentSession, AgentTerminal } from './state/agent'
+
+type AgentActionResult = { ok: true } | { ok: false; message: string }
+type AgentOpenResult = { ok: true; terminalId: string } | { ok: false; message: string }
+type AgentStartResult =
+  { ok: true; sessionId: string; terminalId: string } | { ok: false; message: string }
 
 declare global {
   interface Window {
@@ -67,53 +72,50 @@ declare global {
       /** Pick a folder on disk: the destination for Copy/Move to Folder…. */
       chooseFolder(): Promise<string | null>
       /**
-       * The vault's live Claude Code sessions, an ordinary tab each (D100,
-       * D101). A byte stream, not tRPC: output and the list are pushed,
-       * keystrokes/resize/focus are fire-and-forget, the rest request/response.
-       *
-       * Every route but `setFocus` names a session; the focus file is the
-       * vault's, read by whichever session takes the next turn.
+       * The vault's assistant (D110). **Sessions** are Claude Code's background
+       * sessions, by job id; **terminals** are Holi's windows onto them, by
+       * terminal id: `claude agents` (the list) or `claude attach <id>`. A byte
+       * stream, not tRPC: output and both lists are pushed, keystrokes/resize/
+       * focus are fire-and-forget, the rest request/response.
        */
       agent: {
         onData(cb: (e: { id: string; data: Uint8Array | string }) => void): () => void
+        /** A terminal's client exited: its tab closes. */
         onExit(cb: (e: { id: string; code: number }) => void): () => void
-        /** The whole list, whenever any derived field changes. */
         onSessions(cb: (sessions: AgentSession[]) => void): () => void
+        onTerminals(cb: (terminals: AgentTerminal[]) => void): () => void
         sessions(): Promise<AgentSession[]>
-        /** Replayable terminal state for one session, and open its data tap. */
-        attach(id: string): Promise<string>
+        terminals(): Promise<AgentTerminal[]>
+        /** A terminal on the list, or on one session with `attach`. */
+        open(args: { attach?: string; cols?: number; rows?: number }): Promise<AgentOpenResult>
+        /** A new background session and a terminal on it. A `prompt` is its
+         *  first turn (reconcile); without one it waits for yours. */
         start(args: {
-          vaultId: string
-          /** Claude Code's own `--name`, so the tab is named from the moment it
-           *  exists. Normalised in main: first line, collapsed, capped. */
           name?: string
-          resume?: boolean
-          /** Spawn the PTY at this geometry — the last size a visible terminal
-           *  fitted to — so Claude's TUI fills the pane from the first paint. */
+          prompt?: string
           cols?: number
           rows?: number
-          /** Seed the interactive session's first turn (the reconcile flow). */
-          prompt?: string
-          /** Put this in its input box, unsent. Main holds it until the TUI
-           *  is reading; written at spawn it would be lost. */
-          paste?: string
-        }): Promise<{ ok: boolean; id?: string; message?: string }>
-        /** Put text in a live session's input box, unsent. Refused if that
-         *  session ended between picking it and sending. */
-        paste(id: string, text: string): Promise<{ ok: boolean; message?: string }>
-        /** Fork this session's conversation into a new one (`--fork-session`).
-         *  Main resolves Claude Code's own session id; the renderer never holds
-         *  one. Refused when the listing cannot say what to fork. */
-        duplicate(id: string): Promise<{ ok: boolean; id?: string; message?: string }>
-        /** End this session and start a new one under its name, at this
-         *  geometry. Main decides which names are real; a placeholder is not
-         *  carried over. */
-        restart(
+        }): Promise<AgentStartResult>
+        /** Put text in a session's input, unsent: a live one by id, or `'new'`.
+         *  Refused when that session ended between picking and sending. */
+        send(args: {
+          text: string
+          target: string
+          cols?: number
+          rows?: number
+        }): Promise<AgentOpenResult>
+        stop(id: string): Promise<AgentActionResult>
+        /** A fresh process for the same conversation (`claude respawn`). */
+        respawn(id: string): Promise<AgentActionResult>
+        /** A background copy of the conversation, and a terminal on it. */
+        duplicate(
           id: string,
           geometry?: { cols?: number; rows?: number },
-        ): Promise<{ ok: boolean; id?: string; message?: string }>
-        /** End one session and drop it from the list. */
-        kill(id: string): Promise<{ ok: true }>
+        ): Promise<AgentStartResult>
+        /** Replayable state for one terminal, and open its data tap. */
+        attach(terminalId: string): Promise<string>
+        /** Detach: ends the window, never the session. */
+        close(terminalId: string): Promise<void>
         write(id: string, data: string): void
         resize(id: string, cols: number, rows: number): void
         setFocus(focus: { focusedPath: string | null; openPaths: string[] }): void

@@ -34,8 +34,7 @@ async function rig(overrides: Partial<AgentOpsDeps> = {}) {
   let starts = 0
   let ends = 0
   const server = createHookServer({
-    onTurnStart: () => (starts += 1),
-    onTurnEnd: () => (ends += 1),
+    onJobTurn: (_remote, _job, active) => (active ? (starts += 1) : (ends += 1)),
     log: () => {},
     // One vault in these; the server routes by the caller's token (D87).
     opsFor: () => createAgentOps(deps),
@@ -45,7 +44,6 @@ async function rig(overrides: Partial<AgentOpsDeps> = {}) {
   return {
     port: () => server.port()!,
     token: () => server.tokenForVault('owner/repo'),
-    sessionToken: () => server.mintSessionToken('owner/repo', 'sess-a'),
     openApp,
     initApp,
     refreshSeed,
@@ -57,11 +55,10 @@ async function rig(overrides: Partial<AgentOpsDeps> = {}) {
 describe('the turn signals keep their contract', () => {
   it("still answers with an EMPTY body — a body is injected into Claude's context", async () => {
     const r = await rig()
-    // A session's own token: the vault's standing one names no session, so its
-    // turn signals are dropped (hook-server.test.ts covers that).
-    const token = r.sessionToken()
+    // With a job id: a signal naming no session is dropped (hook-server.test.ts
+    // covers that).
     for (const route of ['/turn/start', '/turn/end']) {
-      const res = await post(r.port(), `${route}?t=${token}`)
+      const res = await post(r.port(), `${route}?t=${r.token()}&job=1234abcd`)
       expect(res.status).toBe(204)
       expect(res.body).toBe('')
     }
@@ -204,7 +201,7 @@ describe('auth and routing', () => {
   })
 
   it('serves ops with no ops dep at all as a 404, not a crash', async () => {
-    const server = createHookServer({ onTurnStart: () => {}, onTurnEnd: () => {}, log: () => {} })
+    const server = createHookServer({ onJobTurn: () => {}, log: () => {} })
     servers.push(server)
     await server.start()
     const res = await post(

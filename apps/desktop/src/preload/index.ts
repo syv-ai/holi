@@ -47,13 +47,14 @@ const onCommitted = pushChannel<unknown>('vault:committed')
  */
 const onFlushRequest = pushChannel<void>('vault:flush')
 
-/** PTY bytes for a session tab's xterm to decode, and which session produced them. */
+/** PTY bytes for an agent terminal's xterm to decode, and which terminal. */
 const onAgentData = pushChannel<{ id: string; data: Uint8Array | string }>('agent-pty:data')
-/** One session ended. */
+/** One terminal's client exited (a detach, or its session was stopped). */
 const onAgentExit = pushChannel<{ id: string; code: number }>('agent-pty:exit')
-/** Every session of the open vault, whenever the derived list changes. One
- *  channel for the whole set: a tab strip renders the list, not a diff of it. */
+/** The vault's live sessions, whenever the derived list changes. */
 const onAgentSessions = pushChannel<unknown>('agent:sessions')
+/** Holi's open terminals and their titles, whenever that changes. */
+const onAgentTerminals = pushChannel<unknown>('agent:terminals')
 
 /** A reminder fired and its notification was clicked: open this task, switching
  * vaults first if it lives in another one. Carries `remote` so the renderer's
@@ -118,22 +119,21 @@ contextBridge.exposeInMainWorld('holi', {
     onData: onAgentData,
     onExit: onAgentExit,
     onSessions: onAgentSessions,
+    onTerminals: onAgentTerminals,
     sessions: () => ipcRenderer.invoke('agent:sessions'),
-    attach: (id: string): Promise<string> => ipcRenderer.invoke('agent:attach', id),
-    start: (args: {
-      vaultId: string
-      name?: string
-      resume?: boolean
-      cols?: number
-      rows?: number
-      prompt?: string
-      paste?: string
-    }) => ipcRenderer.invoke('agent-pty:start', args),
-    paste: (id: string, text: string) => ipcRenderer.invoke('agent:paste', { id, text }),
-    duplicate: (id: string) => ipcRenderer.invoke('agent:duplicate', id),
-    restart: (id: string, geometry: { cols?: number; rows?: number } = {}) =>
-      ipcRenderer.invoke('agent:restart', { id, ...geometry }),
-    kill: (id: string) => ipcRenderer.invoke('agent-pty:kill', id),
+    terminals: () => ipcRenderer.invoke('agent:terminals'),
+    open: (args: { attach?: string; cols?: number; rows?: number }) =>
+      ipcRenderer.invoke('agent:open', args),
+    start: (args: { name?: string; prompt?: string; cols?: number; rows?: number }) =>
+      ipcRenderer.invoke('agent:start', args),
+    send: (args: { text: string; target: string; cols?: number; rows?: number }) =>
+      ipcRenderer.invoke('agent:send', args),
+    stop: (id: string) => ipcRenderer.invoke('agent:stop', id),
+    respawn: (id: string) => ipcRenderer.invoke('agent:respawn', id),
+    duplicate: (id: string, geometry: { cols?: number; rows?: number } = {}) =>
+      ipcRenderer.invoke('agent:duplicate', { id, ...geometry }),
+    attach: (terminalId: string): Promise<string> => ipcRenderer.invoke('agent:attach', terminalId),
+    close: (terminalId: string) => ipcRenderer.invoke('agent-pty:close', terminalId),
     write: (id: string, data: string) => ipcRenderer.send('agent-pty:write', { id, data }),
     resize: (id: string, cols: number, rows: number) =>
       ipcRenderer.send('agent-pty:resize', { id, cols, rows }),

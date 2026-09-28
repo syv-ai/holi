@@ -6,26 +6,35 @@ Holi's job is to seed those files, keep them current, and keep the machine's own
 
 ## How it works
 
-**A config directory per vault.** Every spawn sets `CLAUDE_CONFIG_DIR` to
+**A config directory per vault.** Every `claude` Holi runs sets `CLAUDE_CONFIG_DIR` to
 `userData/agent-config/<slug>/`, where the slug is the sanitised remote plus 8 hex of its sha1 (the
 sanitised half alone is not unique). The machine's `~/.claude` (global settings, skills, plugins,
 marketplaces, MCP servers) is excluded by construction, and one vault's plugins never reach another.
-Holi creates the directory and merges three keys into its `settings.json`:
-`disableClaudeAiConnectors` (only when absent), `theme` (dark or light, written on every spawn from
-the app's resolved colour mode), and `statusLine` (Holi's script, rewritten when its path moves).
-A theme change reaches a running session only on restart, and its dot says so.
+It is also the key of the vault's Claude Code supervisor, so the agent list shows that vault's
+sessions only. Holi creates the directory when it opens the vault and merges into its
+`settings.json`: `disableClaudeAiConnectors` (only when absent), `theme` (dark or light, from the
+app's resolved colour mode) and an `env` block with Holi's static paths (`HOLI_BIN`,
+`HOLI_GOOGLE_BIN`, `TYPST_BIN`), the one channel that reaches every background session (D110). It
+removes the `statusLine` older versions installed. A theme change reaches a running session on
+**Restart** (`claude respawn`).
+
+**Where a session finds Holi.** `holi.env` in the same directory (mode 0600), written whole each
+time Holi opens the vault and deleted when it leaves: the hook server's port and the vault's token,
+and the Google port and the vault's Google token. A background session's environment is its
+supervisor's, which may predate this Holi, so nothing per-run rides in it.
 
 **Sign-in is lazy.** Credentials are keyed to the config directory, so each vault needs its own
-`/login`. The first spawn in a directory writes a `.holi-spawned` marker and prints a notice into the
-scrollback. Holi never reads Claude Code's sign-in state. A leftover shared `agent-config/` is
-renamed whole into the slot of the vault whose path appears in its `.claude.json` `projects{}`.
+`/login`. The first terminal Holi opens on a directory writes a `.holi-spawned` marker and prints a
+notice into its scrollback. Holi never reads Claude Code's sign-in state. A leftover shared
+`agent-config/` is renamed whole into the slot of the vault whose path appears in its
+`.claude.json` `projects{}`.
 
 **Shared layer, committed.** `.claude/` (settings, hooks, skills), `AGENTS.md` (the vault's
 instructions, which Claude Code reads natively, so no `CLAUDE.md` is seeded), and `memory/`
 ([agent-memory.md](agent-memory.md)). Claude Code reads them from the cwd. **Personal layer:**
-`CLAUDE.local.md` and anything `*.local.*`, gitignored. A change to `.claude/settings.json`,
-`CLAUDE.md` or `AGENTS.md` (`AGENT_CONFIG_FILES`) marks running sessions stale until restarted.
-Hooks and skills are re-read per use, so they are not in that set.
+`CLAUDE.local.md` and anything `*.local.*`, gitignored. A session reads `.claude/settings.json`,
+`CLAUDE.md` and `AGENTS.md` when its process starts, so a change reaches it on Restart; hooks and
+skills are re-read per use.
 
 **Per-turn context is one line.** The `UserPromptSubmit` hook prints `Focused note: <path>` from
 `.holi/state/context.local.json`, which main keeps current. Tasks, backlinks and sync state the agent
@@ -41,9 +50,11 @@ finds itself with `Glob`, `grep` and `git`.
   file matches the sha256 Holi recorded in `.holi/state/seed-state.local.json`. No record means no
   refresh, except a file already identical to what Holi ships, which is adopted.
   `holi seed refresh [path] [--force]` does it on demand; `--force` reaches managed files only.
-- **`.claude/settings.json`**: merged key-wise by `settingsWithRequired`. Holi adds its hooks,
-  `permissions.ask` and `permissions.allow` rules, `disableClaudeAiConnectors` and
-  `autoMemoryEnabled`, and keeps everything else. Malformed JSON is left alone.
+- **`.claude/settings.json`**: merged key-wise by `settingsWithRequired`. Holi adds its hooks
+  (the turn bracket's `turn-signal.mjs` among them, replacing the inline `curl` older vaults
+  carry), `permissions.ask` and `permissions.allow` rules, `disableClaudeAiConnectors`,
+  `autoMemoryEnabled` and `worktree.bgIsolation: "none"` (only when absent, so sessions edit the
+  vault rather than a worktree of it), and keeps everything else. Malformed JSON is left alone.
 
 Changing a once file's seed text reaches new vaults only. To tell existing vaults something, use a
 managed skill, a `settingsWithRequired` key, or a file whose writer regenerates it (`app.yaml` and
@@ -53,7 +64,7 @@ the theme files are rewritten whole from the schema on every write).
 additions are commands in a directory prepended to `PATH`, plus skills that document them:
 
 - `holi`: `app open`, `app init`, `seed refresh`, `pdf comments <path> [--json]`. It posts to the
-  hook server with the session's token. All reversible or read-only, so none is gated.
+  hook server with the token in `holi.env`. All reversible or read-only, so none is gated.
 - `holi-google`: mail and calendar through main, which holds the tokens ([google.md](google.md)).
 - `$TYPST_BIN` for PDF export ([pdf.md](pdf.md)).
 - Managed skills: `memory`, `using-tasks`, `vault-apps`, `theme`, `gmail-calendar`, `md-to-pdf`,
@@ -94,6 +105,7 @@ the vault's pre-commit transforms like anyone's ([vaults-sync.md](vaults-sync.md
 - `apps/desktop/src/main/agent/agent-config-dir.ts`: per-vault config dir, first-spawn marker, migration
 - `apps/desktop/src/main/agent/seed-content.ts`: seed classes, `AGENTS.md` text, `settingsWithRequired`
 - `apps/desktop/src/main/agent/seed-state.ts`: managed-file hashes
-- `apps/desktop/src/main/agent/cli.ts`, `ops.ts`: the `holi` and `holi-statusline` scripts and their routes
+- `apps/desktop/src/main/agent/cli.ts`, `ops.ts`: the `holi` script and its routes
+- `apps/desktop/src/main/agent/endpoint-file.ts`: `holi.env`
 - `apps/desktop/src/main/agent/hooks/`, `skills/`: shipped hook scripts and skills
-- `packages/shared/src/path-safety.ts`: `AGENT_CONFIG_FILES`, `isAgentSurfacePath`
+- `packages/shared/src/path-safety.ts`: `isAgentSurfacePath`

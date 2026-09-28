@@ -27,7 +27,7 @@ An example of a shared vault (still work in progress and not refactored to work 
 
 ## The shape of v1
 
-A signed-in employee opens Holi and sees their latest used vault. They open a shared vault. They hit ⌘J and a live Claude session opens in a tab, able to read and edit the vault. They flip to the **task board**, a clean Todo/Doing/Done board with swim lanes by folder, and drag a task to Doing.
+A signed-in employee opens Holi and sees their latest used vault. They open a shared vault. They hit ⌘J and Claude Code's agent list opens in a tab, where they start or pick up a session that can read and edit the vault. They flip to the **task board**, a clean Todo/Doing/Done board with swim lanes by folder, and drag a task to Doing.
 
 ## Beyond v1
 

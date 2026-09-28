@@ -9,7 +9,7 @@ import { useAtomValue, useSetAtom } from 'jotai'
 import { cn } from '@/lib/cn'
 import { isLockedForReconcile } from '@/lib/reconcile-lock'
 import type { ConflictResolvers } from '@/lib/editor-reload'
-import { agentGeometryAtom } from '@/state/agent'
+import { agentGeometryAtom, agentTerminalsAtom } from '@/state/agent'
 import { syncStateAtom } from '@/state/vaults'
 import { useEffect, useState, type ReactNode } from 'react'
 import { TAB_MIME, paneDropZone, parseTabPayload, type PaneDropZone } from '@/lib/tab-drop'
@@ -41,6 +41,23 @@ const DROP_BAND = 'pointer-events-none absolute'
  * or nobody would discover splitting by drag. Dim while waiting, lit when the
  * pointer is inside.
  */
+/**
+ * The turn chip for the session an agent tab was opened for. The agents list,
+ * and a tab whose terminal Holi did not open for a session, have none: nothing
+ * published says which session they show (D110).
+ */
+function AgentTurnChip({ terminalId }: { terminalId: string }): React.JSX.Element | null {
+  const terminals = useAtomValue(agentTerminalsAtom)
+  const sessionId = terminals.find((t) => t.id === terminalId)?.launchedFor ?? null
+  if (sessionId === null) return null
+  return (
+    <div className="shrink-0 border-t border-divider px-2 py-1">
+      {/* Keyed, so the chip's "just landed" refs belong to one session. */}
+      <TurnChip key={sessionId} sessionId={sessionId} />
+    </div>
+  )
+}
+
 function EdgeBand({ side, active }: { side: 'before' | 'after'; active: boolean }) {
   return (
     <div
@@ -158,7 +175,7 @@ export function PaneView({
             Sessions render below, outside the fade: they stay mounted, and
             fading them read as blinking. Nothing rather than an empty flex-1
             box, which would take the terminals' height. */}
-        {tab?.kind === 'session' ? null : (
+        {tab?.kind === 'agent' ? null : (
           <div ref={bodyRef} className="flex min-h-0 flex-1 flex-col">
             {tab?.kind === 'app' ? (
               <AppFrame path={tab.path} />
@@ -199,28 +216,24 @@ export function PaneView({
         )}
 
         {/**
-         * Every session tab in this pane, mounted, with only the active one
-         * shown (D101).
+         * Every agent tab in this pane, mounted, with only the active one
+         * shown (D110).
          *
-         * Outside the switch and keyed by session id: an unmounted terminal
+         * Outside the switch and keyed by terminal id: an unmounted terminal
          * loses its scrollback and must visibly replay main's mirror.
          */}
         {pane.tabs.map((t, i) =>
-          t.kind !== 'session' ? null : (
+          t.kind !== 'agent' ? null : (
             <div
-              key={`session:${t.id}`}
+              key={`agent:${t.id}`}
               className={cn('min-h-0 flex-1 flex-col', i === pane.active ? 'flex' : 'hidden')}
             >
               <SessionTerminal
-                sessionId={t.id}
+                terminalId={t.id}
                 visible={i === pane.active}
                 onGeometry={(cols, rows) => setGeometry({ cols, rows })}
               />
-              {/* Keyed, so the chip's "just landed" refs belong to one
-                  session. */}
-              <div className="shrink-0 border-t border-divider px-2 py-1">
-                <TurnChip key={t.id} sessionId={t.id} />
-              </div>
+              <AgentTurnChip terminalId={t.id} />
             </div>
           ),
         )}

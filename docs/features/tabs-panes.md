@@ -4,9 +4,9 @@ The workspace is one or more side-by-side panes, each with its own tab strip. Ta
 
 ## How it works
 
-**A tab is a union**, not a path: `note` (any file, by path), `app` (a vault app, by its bundle path), `session` (an agent session), or one of the singletons `home`, `board`, `agenda`, `mail`, `settings`, `history`. `state/panes.ts` owns it as pure functions over a `Workspace { panes, active }`.
+**A tab is a union**, not a path: `note` (any file, by path), `app` (a vault app, by its bundle path), `agent` (a terminal onto Claude Code: the agent list or one session, D110), or one of the singletons `home`, `board`, `agenda`, `mail`, `settings`, `history`. `state/panes.ts` owns it as pure functions over a `Workspace { panes, active }`.
 
-**Preview and pinned.** A single click in the tree opens a file in the pane's preview tab (italic), replacing whatever was previewed. A double click in the tree, a double click on the tab, editing the document, or dragging the tab pins it. Singletons open leftmost and are pinned by construction; if already open they are focused where they sit. Apps and sessions are appended. Closing a session tab does not end the session.
+**Preview and pinned.** A single click in the tree opens a file in the pane's preview tab (italic), replacing whatever was previewed. A double click in the tree, a double click on the tab, editing the document, or dragging the tab pins it. Singletons open leftmost and are pinned by construction; if already open they are focused where they sit. Apps and agent tabs are appended. Closing an agent tab only detaches: the session keeps running.
 
 **A tab names a file as the tree does**, by the same `pathLabel`/`pathGlyph`: a note without `.md` and with no glyph, an app without `.app` and with the app glyph, a task with its status, any other file with its extension and type glyph, and an icon-map emoji over all of them. See [file tree](file-tree.md).
 

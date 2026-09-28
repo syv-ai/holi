@@ -5,9 +5,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   AgentRuntime,
-  buildAgentArgs,
   buildAgentEnv,
-  sessionName,
   defaultProbePid,
   resolveClaudeBin,
   type PidState,
@@ -171,41 +169,10 @@ describe('buildAgentEnv', () => {
     expect(buildAgentEnv({ PATH: '/usr/bin' }).CLAUDE_CODE_NO_FLICKER).toBe('1')
   })
 
-  it('injects the hook port and token when given', () => {
-    const env = buildAgentEnv({ PATH: '/usr/bin' }, { hookPort: 5000, hookToken: 'abc123' })
-    expect(env.HOLI_HOOK_PORT).toBe('5000')
-    expect(env.HOLI_HOOK_TOKEN).toBe('abc123')
-  })
-
-  it('omits the hook keys when absent or null', () => {
-    expect(buildAgentEnv({ PATH: '/usr/bin' }).HOLI_HOOK_PORT).toBeUndefined()
-    const env = buildAgentEnv({ PATH: '/usr/bin' }, { hookPort: null, hookToken: null })
-    expect(env.HOLI_HOOK_PORT).toBeUndefined()
-    expect(env.HOLI_HOOK_TOKEN).toBeUndefined()
-  })
-
   it('strips inherited hook keys so a vault cannot spoof them (reserved)', () => {
     const env = buildAgentEnv({ PATH: '/usr/bin', HOLI_HOOK_PORT: '9', HOLI_HOOK_TOKEN: 'evil' })
     expect(env.HOLI_HOOK_PORT).toBeUndefined()
     expect(env.HOLI_HOOK_TOKEN).toBeUndefined()
-  })
-
-  it('sets TYPST_BIN when the typst path is given, omits it otherwise', () => {
-    expect(buildAgentEnv({ PATH: '/usr/bin' }, { typstBin: '/opt/typst' }).TYPST_BIN).toBe(
-      '/opt/typst',
-    )
-    expect(buildAgentEnv({ PATH: '/usr/bin' }).TYPST_BIN).toBeUndefined()
-    expect(buildAgentEnv({ PATH: '/usr/bin' }, { typstBin: null }).TYPST_BIN).toBeUndefined()
-  })
-
-  it('passes the Google ops channel and the holi-google path (D67)', () => {
-    const env = buildAgentEnv(
-      { PATH: '/usr/bin' },
-      { googlePort: 6001, googleToken: 'tok', googleBin: '/data/bin/holi-google' },
-    )
-    expect(env.HOLI_GOOGLE_PORT).toBe('6001')
-    expect(env.HOLI_GOOGLE_TOKEN).toBe('tok')
-    expect(env.HOLI_GOOGLE_BIN).toBe('/data/bin/holi-google')
   })
 
   /**
@@ -216,17 +183,11 @@ describe('buildAgentEnv', () => {
    * `Bash(holi-google send:*)` had.
    */
   it('prepends the Holi bin dir to PATH so the bare names resolve', () => {
-    const env = buildAgentEnv(
-      { PATH: '/usr/bin:/bin' },
-      { googleBin: '/data/bin/holi-google', binDir: '/data/bin' },
-    )
+    const env = buildAgentEnv({ PATH: '/usr/bin:/bin' }, { binDir: '/data/bin' })
 
     expect(env.PATH).toBe('/data/bin:/usr/bin:/bin')
     // Prepended, not appended: another holi-google earlier in PATH would win.
     expect(env.PATH!.startsWith('/data/bin:')).toBe(true)
-    // And the old spelling still works — the skill has always used it, and the
-    // hook covers both.
-    expect(env.HOLI_GOOGLE_BIN).toBe('/data/bin/holi-google')
   })
 
   it('leaves PATH alone when there is no google bin dir', () => {
@@ -236,13 +197,6 @@ describe('buildAgentEnv', () => {
 
   it('still sets a usable PATH when the parent had none', () => {
     expect(buildAgentEnv({}, { binDir: '/data/bin' }).PATH).toBe('/data/bin')
-  })
-
-  it('omits the Google keys when the channel is not running', () => {
-    const env = buildAgentEnv({ PATH: '/usr/bin' }, { googlePort: null, googleToken: null })
-    expect(env.HOLI_GOOGLE_PORT).toBeUndefined()
-    expect(env.HOLI_GOOGLE_TOKEN).toBeUndefined()
-    expect(env.HOLI_GOOGLE_BIN).toBeUndefined()
   })
 
   it('strips inherited Google keys so a vault cannot point the agent elsewhere', () => {
@@ -288,101 +242,6 @@ describe('buildAgentEnv', () => {
     )
     expect(env.CLAUDE_CONFIG_DIR).toBe('/data/agent-config')
     expect(env.PATH).toBe('/data/bin:/usr/bin:/bin')
-  })
-})
-
-describe('buildAgentArgs', () => {
-  it('is bare by default — no prompt, no flags (interactive Claude Code)', () => {
-    expect(buildAgentArgs()).toEqual([])
-  })
-
-  it('forks a named conversation, which is not the same flag as bare --resume', () => {
-    // `--resume <id> --fork-session` copies that conversation; bare `--resume`
-    // shows Claude Code's own picker. Passing both would be one flag twice.
-    expect(buildAgentArgs({ forkOf: 'c737c427-7b06' })).toEqual([
-      '--resume',
-      'c737c427-7b06',
-      '--fork-session',
-    ])
-    expect(buildAgentArgs({ forkOf: 'c737c427-7b06', resume: true })).toEqual([
-      '--resume',
-      'c737c427-7b06',
-      '--fork-session',
-    ])
-  })
-
-  it('names a fork as well as forking it', () => {
-    expect(buildAgentArgs({ forkOf: 'abc', name: 'Fix the merge (copy)' })).toEqual([
-      '--name',
-      'Fix the merge (copy)',
-      '--resume',
-      'abc',
-      '--fork-session',
-    ])
-  })
-
-  it('never passes --append-system-prompt (Holi builds no prompt content)', () => {
-    expect(buildAgentArgs()).not.toContain('--append-system-prompt')
-    expect(buildAgentArgs({ resume: true })).not.toContain('--append-system-prompt')
-  })
-
-  it('declares no MCP config, and does not suppress the vault own (D60)', () => {
-    const args = buildAgentArgs({ resume: true })
-    expect(args).not.toContain('--mcp-config')
-    // --strict-mcp-config would also disable MCP servers the VAULT configures
-    // natively in .claude/, which it is entitled to do.
-    expect(args).not.toContain('--strict-mcp-config')
-  })
-
-  it('adds a bare --resume when asked (the CLI shows its native picker)', () => {
-    expect(buildAgentArgs({ resume: true })).toEqual(['--resume'])
-  })
-
-  it('appends a prompt as the last positional arg (seeds the interactive turn)', () => {
-    // `claude "<prompt>"` starts interactive and auto-submits it — the reconcile seed.
-    expect(buildAgentArgs({ prompt: 'resolve the merge' })).toEqual(['resolve the merge'])
-    expect(buildAgentArgs({})).toEqual([])
-  })
-
-  it('never passes --dangerously-skip-permissions', () => {
-    for (const resume of [true, false]) {
-      expect(buildAgentArgs({ resume })).not.toContain('--dangerously-skip-permissions')
-    }
-  })
-
-  it('names the session, before --resume and before the prompt (D100)', () => {
-    expect(buildAgentArgs({ name: 'Fix the CSV import', resume: true, prompt: 'go' })).toEqual([
-      '--name',
-      'Fix the CSV import',
-      '--resume',
-      'go',
-    ])
-  })
-
-  it('omits --name when there is nothing to call it', () => {
-    expect(buildAgentArgs({})).toEqual([])
-    expect(buildAgentArgs({ name: '' })).toEqual([])
-    expect(buildAgentArgs({ name: '   \n  ' })).toEqual([])
-  })
-})
-
-describe('sessionName', () => {
-  it('takes the first line only', () => {
-    // A newline in argv splits the argument, and the natural source is the first
-    // line of something the user typed at an editor selection.
-    expect(sessionName('Rewrite this bit\n\n> the quoted passage')).toBe('Rewrite this bit')
-  })
-
-  it('collapses whitespace and caps the length', () => {
-    expect(sessionName('  two   spaces  ')).toBe('two spaces')
-    const long = 'x'.repeat(200)
-    expect(sessionName(long)).toHaveLength(60)
-  })
-
-  it('answers null for nothing worth showing', () => {
-    expect(sessionName(undefined)).toBeNull()
-    expect(sessionName('')).toBeNull()
-    expect(sessionName('\n\n')).toBeNull()
   })
 })
 

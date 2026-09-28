@@ -1,185 +1,151 @@
 /**
- * What you *do* to the vault's agent: start a session, and send one an ask.
+ * What you *do* to the vault's assistant (D110): open the agents list, open a
+ * session, start one, send one an ask, stop, restart or copy it.
  *
- * Separate from `state/agent.ts` (what the agent *is*) because these need the
- * open vault, and a third module keeps `agent.ts` and `vaults.ts` from importing
- * each other.
+ * Separate from `state/agent.ts` (what the assistant *is*) because these need
+ * the terminal geometry and the workspace, and a third module keeps
+ * `agent.ts` free of both.
  *
- * **Every spawn lands through `land`**: the tab you land on and the colour mode
- * that session read out of its config (D86).
+ * **Every window lands through `land`**: its tab comes forward and its
+ * terminal takes the keyboard.
  */
 import { atom, type Getter, type Setter } from 'jotai'
 import { buildReconcilePrompt } from '../lib/reconcile-prompt'
 import { focusSessionTerminal } from '../lib/session-terminals'
 import { trpc } from '../lib/trpc'
 import {
-  activeSessionAtom,
-  activeSessionIdAtom,
   agentGeometryAtom,
-  agentModeAtSpawnAtom,
-  agentSessionsAtom,
+  agentTerminalsAtom,
   type AgentTarget,
+  type AgentTerminal,
 } from './agent'
-import { openSession, workspaceAtom } from './panes'
-import { activeModeAtom } from './color-scheme'
-import { activeRemoteAtom } from './vaults'
+import { openAgentTab, workspaceAtom } from './panes'
 
-/** What a start answers with: the new session's id, or why there isn't one. */
-export interface StartResult {
-  ok: boolean
-  id?: string
-  message?: string
+/** What an action answers: done, or why not, in words the caller can print. */
+export type AgentResult = { ok: true } | { ok: false; message: string }
+
+/** Show a terminal's tab and give it the keyboard. A miss on the focus is
+ *  fine: a terminal not built yet focuses itself when it is. */
+function land(set: Setter, terminalId: string): void {
+  set(workspaceAtom, (w) => openAgentTab(w, terminalId))
+  focusSessionTerminal(terminalId)
 }
 
-/**
- * What every spawn owes the app once main has made one: show it, and remember
- * the colour mode it was born under (D86). Forgetting the mode fails quietly: a
- * session missing from that map never nudges you to restart it.
- */
-function land(get: Getter, set: Setter, id: string): void {
-  // Show it: someone who asked for a session is asking to look at it.
-  set(activeSessionIdAtom, id)
-  set(workspaceAtom, (w) => openSession(w, id))
-  // What Claude just read out of its settings, for this session alone (D86).
-  set(agentModeAtSpawnAtom, (m) => ({ ...m, [id]: get(activeModeAtom) }))
-}
-
-/** Start one session in the open vault and open its tab (D101). */
-export const startSessionAtom = atom(
-  null,
-  async (
-    get,
-    set,
-    opts: { name?: string; resume?: boolean; prompt?: string; paste?: string } = {},
-  ): Promise<StartResult> => {
-    // A vault's identity is its remote (D60); it is what main matches against
-    // the vault it has open, so a start with the wrong one is refused there.
-    const remote = get(activeRemoteAtom)
-    if (remote === null) return { ok: false, message: 'No vault is open.' }
-    const { cols, rows } = get(agentGeometryAtom)
-    const res = await window.holi.agent.start({ vaultId: remote, cols, rows, ...opts })
-    if (!res.ok || res.id === undefined) {
-      return { ok: false, ...(res.message === undefined ? {} : { message: res.message }) }
-    }
-    const id = res.id
-    land(get, set, id)
-    return { ok: true, id }
-  },
-)
+const geometry = (get: Getter) => get(agentGeometryAtom)
 
 /**
- * Rename a session: put Claude Code's own command in its box and get out of the
- * way (D101).
- *
- * **There is no dialog and no name field.** `/rename` is the only route Claude
- * Code offers, with no shell equivalent, so Holi types the half it knows and
- * focuses the tab.
- *
- * Unsent, like everything Holi writes: appending the Enter would submit whatever
- * draft was already sitting in that composer.
+ * Whether a terminal shows the agents list **now**. How it was launched does
+ * not say: `←` and Enter move one terminal between the list and a session. Its
+ * title does, because Claude Code titles the list `… claude agents` and a
+ * session by its name. A list that has not titled itself yet is one Holi just
+ * opened as the list.
  */
-export const renameSessionAtom = atom(
-  null,
-  async (_get, set, id: string): Promise<{ ok: boolean; message?: string }> =>
-    // The trailing space is the point: the caret lands where the name goes.
-    set(sendToAgentAtom, { text: '/rename ', target: id }),
-)
+const showsList = (t: AgentTerminal): boolean =>
+  t.title === '' ? t.launchedFor === null : /\bclaude agents$/.test(t.title)
 
 /**
- * Copy a session's conversation into one of its own (D101).
+ * ⌘J and the agent icon: the agents list.
  *
- * Main resolves Claude Code's session id at the moment of the fork, so the
- * renderer never holds one.
+ * Focuses a terminal showing the list, the most recently opened if there are
+ * several, else opens one. **It does not toggle**: pressed twice, it leaves
+ * you where it put you.
  */
-export const duplicateSessionAtom = atom(
-  null,
-  async (get, set, id: string): Promise<{ ok: boolean; message?: string }> => {
-    const res = await window.holi.agent.duplicate(id)
-    if (!res.ok || res.id === undefined) {
-      return { ok: false, ...(res.message === undefined ? {} : { message: res.message }) }
-    }
-    land(get, set, res.id)
+export const showAgentsAtom = atom(null, async (get, set): Promise<AgentResult> => {
+  const existing = get(agentTerminalsAtom).filter(showsList).at(-1)
+  if (existing !== undefined) {
+    land(set, existing.id)
     return { ok: true }
-  },
-)
-
-/**
- * End a session and start another in its place, under its name (D101).
- *
- * Main does the ending and the naming. The renderer adds the geometry, so the
- * new terminal is born at the size the old one had.
- */
-export const restartSessionAtom = atom(
-  null,
-  async (get, set, id: string): Promise<{ ok: boolean; message?: string }> => {
-    const { cols, rows } = get(agentGeometryAtom)
-    const res = await window.holi.agent.restart(id, { cols, rows })
-    if (!res.ok || res.id === undefined) {
-      return { ok: false, ...(res.message === undefined ? {} : { message: res.message }) }
-    }
-    land(get, set, res.id)
-    return { ok: true }
-  },
-)
-
-/**
- * Go to the agent: ⌘J.
- *
- * Opens the current session's tab, or starts one when the vault has none.
- *
- * **It does not toggle.** A tab is a place to go, and ⌘J pressed twice should
- * leave you where it put you.
- */
-export const showAgentAtom = atom(null, (get, set): void => {
-  const current = get(activeSessionAtom)
-  // An exited session is a record to read, not somewhere to be sent to work, so
-  // this steps over it to another live one, or a new one. Its tab stays open.
-  const target =
-    current !== null && !current.exited
-      ? current
-      : (get(agentSessionsAtom).find((s) => !s.exited) ?? null)
-  if (target === null) {
-    void set(startSessionAtom)
-    return
   }
-  set(activeSessionIdAtom, target.id)
-  set(workspaceAtom, (w) => openSession(w, target.id))
+  const res = await window.holi.agent.open(geometry(get))
+  if (!res.ok) return res
+  land(set, res.terminalId)
+  return { ok: true }
 })
 
 /**
- * Send text to a session, live or new. It lands in the input box **unsent**
- * (D100) and that session's tab comes forward.
+ * Open overview, in an agent tab's bar: a **new** agents list every time. The
+ * tab it sits in may itself be the list Holi opened, since `←` and Enter move
+ * a terminal between the list and a session, so reusing one would only ever
+ * bring you back to where you are.
+ */
+export const openOverviewAtom = atom(null, async (get, set): Promise<AgentResult> => {
+  const res = await window.holi.agent.open(geometry(get))
+  if (!res.ok) return res
+  land(set, res.terminalId)
+  return { ok: true }
+})
+
+/**
+ * One session, from a sidebar row, an orb or the palette: the window Holi
+ * opened for it if that is still open, else a new `claude attach` window.
+ * Two windows on one session only mirror each other, so a second one is never
+ * wrong, just more.
+ */
+export const openSessionAtom = atom(null, async (get, set, id: string): Promise<AgentResult> => {
+  const existing = get(agentTerminalsAtom).find((t) => t.launchedFor === id)
+  if (existing !== undefined) {
+    land(set, existing.id)
+    return { ok: true }
+  }
+  const res = await window.holi.agent.open({ attach: id, ...geometry(get) })
+  if (!res.ok) return res
+  land(set, res.terminalId)
+  return { ok: true }
+})
+
+/**
+ * A new background session and its window. With a `prompt` that prompt is its
+ * first turn (reconcile, a stuck push); without one it waits for yours.
+ */
+export const startSessionAtom = atom(
+  null,
+  async (get, set, opts: { name?: string; prompt?: string } = {}): Promise<AgentResult> => {
+    const res = await window.holi.agent.start({ ...opts, ...geometry(get) })
+    if (!res.ok) return res
+    land(set, res.terminalId)
+    return { ok: true }
+  },
+)
+
+/**
+ * Send text to a session, live or new. It lands in the input box **unsent** and
+ * that session's window comes forward.
  *
  * One rule for every sender: nothing Holi writes can append a submit to a
- * half-typed draft. A `'new'` target is spawned with `--name` from the ask's
- * first line, and main holds the paste until that session's TUI is up.
+ * half-typed draft. A `'new'` target starts a session named from the ask's
+ * first line.
  *
- * A target that ended between being picked and being sent to is **refused**, not
- * silently dropped, so the caller can keep the text.
+ * A target that ended between being picked and being sent to is **refused**,
+ * not silently dropped, so the caller can keep the text.
  */
 export const sendToAgentAtom = atom(
   null,
-  async (
-    _get,
-    set,
-    args: { text: string; target: AgentTarget },
-  ): Promise<{ ok: boolean; message?: string }> => {
-    if (args.target === 'new') {
-      const res = await set(startSessionAtom, { name: args.text, paste: args.text })
-      return res.ok
-        ? { ok: true }
-        : { ok: false, message: res.message ?? 'Could not start a session.' }
-    }
-    const res = await window.holi.agent.paste(args.target, args.text)
+  async (get, set, args: { text: string; target: AgentTarget }): Promise<AgentResult> => {
+    const res = await window.holi.agent.send({ ...args, ...geometry(get) })
     if (!res.ok) return res
-    // Focus the tab the text just landed in, opening it if it was closed: an ask
-    // that arrives somewhere you cannot see is an ask you will not answer.
-    set(activeSessionIdAtom, args.target)
-    set(workspaceAtom, (w) => openSession(w, args.target))
-    // …and the keyboard with it. A tab coming forward focuses its own terminal;
-    // one that was already showing does not (e.g. `/rename `). A miss is fine:
-    // the terminal is not built yet, and it focuses itself when it is.
-    focusSessionTerminal(args.target)
+    land(set, res.terminalId)
+    return { ok: true }
+  },
+)
+
+/** Stop a session: `claude stop`. Its conversation stays in the agents list,
+ *  and any window on it closes. */
+export const stopSessionAtom = atom(null, (_get, _set, id: string) => window.holi.agent.stop(id))
+
+/** A fresh process for the same conversation: `claude respawn`. It picks up
+ *  changed settings and `AGENTS.md`. */
+export const respawnSessionAtom = atom(null, (_get, _set, id: string) =>
+  window.holi.agent.respawn(id),
+)
+
+/** Copy a session's conversation into a background session of its own, and
+ *  open it. Main reads Claude Code's conversation id at the moment of the fork. */
+export const duplicateSessionAtom = atom(
+  null,
+  async (get, set, id: string): Promise<AgentResult> => {
+    const res = await window.holi.agent.duplicate(id, geometry(get))
+    if (!res.ok) return res
+    land(set, res.terminalId)
     return { ok: true }
   },
 )
@@ -198,5 +164,5 @@ export const sendToAgentAtom = atom(
 export const reconcileAtom = atom(null, async (_get, set) => {
   const { paths } = await trpc.sync.reconcile.mutate()
   if (paths.length === 0) return
-  await set(startSessionAtom, { prompt: buildReconcilePrompt(paths) })
+  await set(startSessionAtom, { name: 'Reconcile', prompt: buildReconcilePrompt(paths) })
 })

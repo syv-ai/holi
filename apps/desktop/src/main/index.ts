@@ -15,7 +15,13 @@ import { app, BrowserWindow, dialog, ipcMain, nativeTheme, protocol, type Tray }
 import { requestFlush, type FlushChannel } from './flush'
 import { guardNavigation } from './window-guard'
 import { assetAbsPath, mimeFor } from './vault/asset-protocol'
-import { appFileAbsPath, appHeadHtml, appMimeFor, injectAppHead, parseAppUrl } from './apps/app-protocol'
+import {
+  appFileAbsPath,
+  appHeadHtml,
+  appMimeFor,
+  injectAppHead,
+  parseAppUrl,
+} from './apps/app-protocol'
 import { createSession } from './github/electron'
 import { createGoogleAccountsManager } from './google/electron'
 import { createCalendarPrefs } from './google/calendar-prefs'
@@ -58,11 +64,14 @@ import { installAppMenu } from './menu'
 import {
   migrateSharedAgentConfig,
   resolveVaultAgentConfig,
+  takeFirstSpawn,
 } from './agent/agent-config-dir'
-import { createAgentManager, type AgentManager } from './agent/agent-manager'
+import { createAgentSessions, type AgentSessions } from './agent/agent-sessions'
+import { createAgentTerminals } from './agent/agent-terminals'
+import { createClaudeCli } from './agent/claude-cli'
+import { removeEndpointFile, writeEndpointFile } from './agent/endpoint-file'
 import { openTurnLog } from './agent/turn-log'
 import { createHookServer } from './agent/hook-server'
-import { createSessionRegistry } from './agent/session-registry'
 import { ensureTypst, resolveTypstBin } from './pdf/typst-bin'
 import { registerAgentIpc } from './agent-ipc'
 
@@ -150,9 +159,7 @@ async function main(): Promise<void> {
   const googleAccounts = await createGoogleAccountsManager()
   // One file, two readers: the agenda panel (via the router) and the agent (via
   // the ops server below). Plain JSON: it holds calendar ids, not a credential.
-  const calendarPrefs = createCalendarPrefs(
-    join(app.getPath('userData'), 'google-calendars.json'),
-  )
+  const calendarPrefs = createCalendarPrefs(join(app.getPath('userData'), 'google-calendars.json'))
   /**
    * Senders whose remote images always load.
    *
@@ -231,8 +238,7 @@ async function main(): Promise<void> {
   })
   const registry = new VaultRegistry(join(app.getPath('userData'), 'vaults.json'))
 
-  const send = (channel: string, payload: unknown) =>
-    mainWindow?.webContents.send(channel, payload)
+  const send = (channel: string, payload: unknown) => mainWindow?.webContents.send(channel, payload)
 
   const host = createVaultHost({
     registry,
@@ -241,9 +247,10 @@ async function main(): Promise<void> {
     gitDeps: { token: () => session.token() },
     onSnapshot: (snapshot) => {
       send('vault:snapshot', snapshot)
-      // A vault change is where synced agent-config can go stale under a live
-      // session (`agent` is assigned below, long before any snapshot fires).
-      void agent?.notifyVaultChanged()
+      // A snapshot is also how main learns a vault opened: attach the assistant
+      // to it (a no-op for the vault it is already on). `agent` is assigned
+      // below, long before any snapshot fires.
+      void agent?.ensure()
     },
     onSyncState: (state) => send('vault:sync', state),
     // How the seeded pre-commit hook reaches us. A getter, read at open, so a
@@ -258,11 +265,11 @@ async function main(): Promise<void> {
     // every commit tick and once at open, so a vault switch resets it.
     onHeldBack: (files) => send('vault:heldback', files),
     onCommitted: (paths) => send('vault:committed', paths),
-    // A switch ends the vault's agent sessions, and this is the only place that
-    // still holds the vault they ran in. The conversations stay reachable
-    // through `claude --resume`.
+    // A switch stops the vault's sessions (D110; the renderer asked first if
+    // one was busy), and this is the only place that still holds the vault
+    // they ran in. They stay in Claude Code's agent list and resume when opened.
     onLeave: async () => {
-      await agent?.dispose().catch((err) => console.error('[vault] agent dispose failed:', err))
+      await agent?.leave().catch((err) => console.error('[vault] agent leave failed:', err))
     },
   })
 
@@ -360,7 +367,7 @@ async function main(): Promise<void> {
   // The hook server learns turn start/end from the agent's own Claude Code hooks
   // and drives the manager's pause/resume. The forward ref is safe: its
   // callbacks fire only at runtime, long after `agent` is assigned.
-  let agent: AgentManager
+  let agent: AgentSessions
   /**
    * The agent's door to Google (D67, D70): a loopback server serving calendar
    * and mail results, with main making the API calls using the token only it
@@ -431,9 +438,7 @@ async function main(): Promise<void> {
   }))
   await googleOps.start()
   const googleCliPath = await installGoogleCli(app.getPath('userData'))
-  // Same bin directory, so one PATH prepend covers both. It also writes
-  // `holi-statusline`, which is NOT found on PATH: Claude Code runs that command
-  // in a shell of its own and the vault's config directory names it absolutely.
+  // Same bin directory, so one PATH prepend covers both.
   const holiCliPath = await installHoliCli(app.getPath('userData'))
 
   /**
@@ -454,59 +459,56 @@ async function main(): Promise<void> {
   }
 
   const hookServer = createHookServer({
-    onTurnStart: (sessionId) => agent.setTurnActive(sessionId, true),
-    onTurnEnd: (sessionId) => agent.setTurnActive(sessionId, false),
-    // What a session's footer prints, and where Holi learns the name Claude
-    // Code's own small-model pass wrote for it (D101).
-    onStatus: (sessionId, status) => agent.noteStatus(sessionId, status),
+    // A turn edge in one of a vault's background sessions, by job id (D110).
+    onJobTurn: (remote, jobId, active) => agent.noteTurn(remote, jobId, active),
     opsFor: (remote) =>
       createAgentOps({
-      openApp: async (path) => {
-        const root = await rootFor(remote)
-        if (root === null) return { ok: false, error: 'no vault is open' }
-        const result = await openAppOp(root, path)
-        // The tab opens only once the app is known to be openable: a refusal
-        // that still opened a tab would show the agent a blank frame and tell
-        // it the reason at the same time.
-        if (!result.ok) return result
-        send('apps:open', result.bundle)
-        return { ok: true }
-      },
-      initApp: async (path) => {
-        const root = await rootFor(remote)
-        if (root === null) return { ok: false, error: 'no vault is open' }
-        return initAppOp(root, path)
-      },
-      /**
-       * Holi's own pre-commit hook, calling back in. The transforms run here
-       * rather than in the shell script so they are TypeScript and tested; the
-       * script is a curl and an `exit 0`.
-       */
-      runPreCommitHooks: async () => {
-        const root = await rootFor(remote)
-        if (root === null) return { changed: [], failed: [] }
-        // No `notify`: Holi has no push seam into a live Claude Code session,
-        // and typing into the agent's PTY is not one. The run log
-        // (`.holi/state/hooks.local.log`) is the agent-readable surface.
-        const result = await runPreCommit(root, await stagedChanges(root), {
-          settings: await readHookSettings(root),
-          transforms: VAULT_TRANSFORMS,
-        })
-        return { changed: result.changed, failed: result.failed }
-      },
-      refreshSeed: async (input) => {
-        const root = await rootFor(remote)
-        if (root === null) {
-          return { refreshed: [], skipped: [{ path: '', reason: 'no vault is open' }] }
-        }
-        return refreshManaged(root, input)
-      },
-      // `holi pdf comments` (D106): read-only, from the saved file.
-      pdfComments: async (path) => {
-        const root = await rootFor(remote)
-        if (root === null) return { ok: false, error: 'no vault is open' }
-        return pdfCommentsInVault(root, path)
-      },
+        openApp: async (path) => {
+          const root = await rootFor(remote)
+          if (root === null) return { ok: false, error: 'no vault is open' }
+          const result = await openAppOp(root, path)
+          // The tab opens only once the app is known to be openable: a refusal
+          // that still opened a tab would show the agent a blank frame and tell
+          // it the reason at the same time.
+          if (!result.ok) return result
+          send('apps:open', result.bundle)
+          return { ok: true }
+        },
+        initApp: async (path) => {
+          const root = await rootFor(remote)
+          if (root === null) return { ok: false, error: 'no vault is open' }
+          return initAppOp(root, path)
+        },
+        /**
+         * Holi's own pre-commit hook, calling back in. The transforms run here
+         * rather than in the shell script so they are TypeScript and tested; the
+         * script is a curl and an `exit 0`.
+         */
+        runPreCommitHooks: async () => {
+          const root = await rootFor(remote)
+          if (root === null) return { changed: [], failed: [] }
+          // No `notify`: Holi has no push seam into a live Claude Code session,
+          // and typing into the agent's PTY is not one. The run log
+          // (`.holi/state/hooks.local.log`) is the agent-readable surface.
+          const result = await runPreCommit(root, await stagedChanges(root), {
+            settings: await readHookSettings(root),
+            transforms: VAULT_TRANSFORMS,
+          })
+          return { changed: result.changed, failed: result.failed }
+        },
+        refreshSeed: async (input) => {
+          const root = await rootFor(remote)
+          if (root === null) {
+            return { refreshed: [], skipped: [{ path: '', reason: 'no vault is open' }] }
+          }
+          return refreshManaged(root, input)
+        },
+        // `holi pdf comments` (D106): read-only, from the saved file.
+        pdfComments: async (path) => {
+          const root = await rootFor(remote)
+          if (root === null) return { ok: false, error: 'no vault is open' }
+          return pdfCommentsInVault(root, path)
+        },
       }),
   })
   await hookServer.start()
@@ -526,43 +528,65 @@ async function main(): Promise<void> {
     },
   )
   if (movedTo) console.log(`[agent] shared config directory is now ${movedTo}'s`)
-  agent = createAgentManager({
+  /** The Google bearer each open vault's sessions hold (D87): one per vault
+   *  per app run, written into its `holi.env` and revoked when Holi leaves it. */
+  const googleTokens = new Map<string, string>()
+  const binDir = dirname(googleCliPath)
+  const terminals = createAgentTerminals({ getWindow: () => mainWindow })
+  agent = createAgentSessions({
     host,
-    // Per spawn, not per launch: the active vault moves under the manager, and
-    // the theme stamped into that directory tracks a setting the user can flip
-    // while the app runs. `nativeTheme` is read at spawn for the same reason.
-    resolveConfigDir: ({ remote, root }) =>
-      resolveVaultAgentConfig({
+    getWindow: () => mainWindow,
+    cli: createClaudeCli(),
+    terminals,
+    // Per vault open, not per launch: the active vault moves, and the theme
+    // stamped into its directory tracks a setting the user can flip while the
+    // app runs. Static paths every session needs ride in the settings `env`
+    // block, the one channel that reaches a background session (D110).
+    resolveConfig: async ({ remote, root }) => {
+      // Find-only for the env; download-warm fire-and-forget so a machine that
+      // never rendered has typst next time.
+      const typstBin = await resolveTypstBin({ cacheDir: typstCacheDir }).catch(() => null)
+      void ensureTypst({ cacheDir: typstCacheDir })
+      return resolveVaultAgentConfig({
         userDataDir,
         remote,
         root,
         systemPrefersDark: nativeTheme.shouldUseDarkColors,
-      }),
-    getWindow: () => mainWindow,
+        env: {
+          HOLI_BIN: holiCliPath,
+          HOLI_GOOGLE_BIN: googleCliPath,
+          ...(typstBin === null ? {} : { TYPST_BIN: typstBin }),
+        },
+      })
+    },
+    takeFirstSpawn,
+    binDir: () => binDir,
+    claimEndpoint: async ({ remote, configDir }) => {
+      const hookPort = hookServer.port()
+      if (hookPort === null) return
+      let googleToken = googleTokens.get(remote)
+      if (googleToken === undefined) {
+        googleToken = googleOps.mintToken(remote)
+        googleTokens.set(remote, googleToken)
+      }
+      await writeEndpointFile(configDir, {
+        hookPort,
+        // The vault's standing token: the same one its `.git/hooks` carry.
+        hookToken: hookServer.tokenForVault(remote),
+        googlePort: googleOps.port(),
+        googleToken,
+      })
+    },
+    releaseEndpoint: async ({ remote, configDir }) => {
+      const googleToken = googleTokens.get(remote)
+      if (googleToken !== undefined) googleOps.revoke(googleToken)
+      googleTokens.delete(remote)
+      await removeEndpointFile(configDir)
+    },
     // What each turn changed, as a commit range, in the vault it ran in (D88).
     turnLogFor: openTurnLog,
-    // Claude Code's own session listing (D100): what each session is doing and
-    // what it is called, read from the CLI rather than derived from the PTY.
-    sessionRegistry: createSessionRegistry(),
-    hookPort: () => hookServer.port(),
-    // The id is what a turn signal reports back, so the vault's several sessions
-    // stay apart.
-    mintHookToken: (remote, sessionId) => hookServer.mintSessionToken(remote, sessionId),
-    revokeHookToken: (token) => hookServer.revoke(token),
-    // $TYPST_BIN for the md-to-pdf skill: find-only for the env, download-warm
-    // fire-and-forget so a machine that never rendered has typst next time.
-    resolveTypstBin: () => resolveTypstBin({ cacheDir: typstCacheDir }),
-    warmTypst: () => {
-      void ensureTypst({ cacheDir: typstCacheDir })
-    },
-    googlePort: () => googleOps.port(),
-    mintGoogleToken: (remote) => googleOps.mintToken(remote),
-    revokeGoogleToken: (token) => googleOps.revoke(token),
-    googleBin: () => googleCliPath,
-    holiBin: () => holiCliPath,
-    binDir: () => dirname(googleCliPath),
   })
-  registerAgentIpc({ agent })
+  registerAgentIpc({ agent, terminals })
 
   /**
    * Reminders: a tray-resident evaluator sweeps every registered vault each
@@ -692,19 +716,61 @@ async function main(): Promise<void> {
    * second pass fall through, or this vetoes forever.
    */
   let quitting = false
+  /** A quit confirm is on screen: a second ⌘Q must not stack another. */
+  let confirmingQuit = false
+  /**
+   * Quitting stops the vault's sessions (D110), so ask first when one of them
+   * is working or waiting on you: that turn is cut short. Asked at the start,
+   * before anything is torn down. Idle sessions stop without a question; their
+   * conversations stay in Claude Code's agent list.
+   */
+  async function confirmQuit(): Promise<boolean> {
+    const busy = agent.sessions().filter((s) => s.state !== 'idle')
+    if (busy.length === 0) return true
+    const one = busy.length === 1
+    const options: Electron.MessageBoxOptions = {
+      type: 'warning',
+      buttons: ['Quit', 'Cancel'],
+      defaultId: 1,
+      cancelId: 1,
+      message: one ? `Quit and stop ${busy[0]!.name}?` : `Quit and stop ${busy.length} sessions?`,
+      detail: `${one ? 'Its' : 'Their'} current turn is cut short. The conversation${one ? '' : 's'} stay in the agents list.`,
+    }
+    const { response } =
+      mainWindow === null
+        ? await dialog.showMessageBox(options)
+        : await dialog.showMessageBox(mainWindow, options)
+    return response === 0
+  }
   app.on('before-quit', (event) => {
     if (quitting) return
     event.preventDefault()
-    quitting = true
+    if (confirmingQuit) return
+    confirmingQuit = true
+    void confirmQuit()
+      .catch(() => true)
+      .then((go) => {
+        confirmingQuit = false
+        if (!go) return
+        quitting = true
+        void teardownAndQuit()
+      })
+  })
+
+  async function teardownAndQuit(): Promise<void> {
     reminders.close() // stop the sweep timer at once: no tick into a teardown
     tray?.destroy() // let go of the menu-bar item as we leave
     tray = null
-    void (async () => {
+    await (async () => {
       try {
-        // Kill the agent's PTY (and its process group) before we flush and
-        // commit: nothing the session was mid-writing should race the teardown.
-        await agent.dispose().catch((err) => console.error('[quit] agent dispose failed:', err))
-        await hookServer.stop().catch((err) => console.error('[quit] hook server stop failed:', err))
+        // Stop the vault's sessions and close every terminal before we flush
+        // and commit: nothing a session was mid-writing should race the
+        // teardown.
+        await agent.leave().catch((err) => console.error('[quit] agent leave failed:', err))
+        await hookServer
+          .stop()
+          .catch((err) => console.error('[quit] hook server stop failed:', err))
+        await googleOps.stop().catch((err) => console.error('[quit] google ops stop failed:', err))
         // A flush point is a flush THEN a commit, and only the renderer can do
         // the first half: the editor's newest words are not on disk until it
         // writes them. Quit is the one flush point main starts, so it asks.
@@ -729,7 +795,7 @@ async function main(): Promise<void> {
         app.quit()
       }
     })()
-  })
+  }
 }
 
 /**

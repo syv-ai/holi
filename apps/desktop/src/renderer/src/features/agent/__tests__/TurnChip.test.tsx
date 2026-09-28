@@ -43,8 +43,6 @@ const session = (id: string, state: 'working' | 'idle' = 'idle'): AgentSession =
   id,
   name: 'New session',
   state,
-  configStale: false,
-  exited: false,
 })
 
 beforeEach(() => {

@@ -121,7 +121,7 @@ editor beside it reflows during the slide. It owns its column rather than living
 `react-resizable-panels`, which cannot animate a size. Each opens at 320px and resizes between 150
 and 560 (`lib/drawer.ts`) by pointer (1:1, transition off) or arrow keys, remembering its own
 width. The nav closes to a 44px rail holding its toggle (an `edgeControl` that slides with the
-edge), an orb per running session and the [nav menu](features/nav-menu.md) on its side. The PDF viewer's sidebars are that library's
+edge), an orb per live agent session and the [nav menu](features/nav-menu.md) on its side. The PDF viewer's sidebars are that library's
 DOM: they copy width, motion, header and edge through the injected stylesheet and cannot resize.
 
 ## Per-vault theming

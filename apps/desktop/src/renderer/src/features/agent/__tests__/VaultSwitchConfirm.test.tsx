@@ -17,8 +17,6 @@ import { agentSessionsAtom, type AgentSession } from '@/state/agent'
 const session = (over: Partial<AgentSession> & { id: string }): AgentSession => ({
   name: 'New session',
   state: 'working',
-  configStale: false,
-  exited: false,
   ...over,
 })
 
@@ -62,7 +60,7 @@ test('leaves an idle session out of the count', async () => {
 
 test('says every session ends, not only the busy one', async () => {
   setup([session({ id: 'a', name: 'Fix the merge' })])
-  expect(await screen.findByText(/ends every session in this vault/)).toBeInTheDocument()
+  expect(await screen.findByText(/stops every session in this vault/)).toBeInTheDocument()
 })
 
 test('adding a vault asks the same question in its own words', async () => {
@@ -77,7 +75,7 @@ test('adding a vault asks the same question in its own words', async () => {
 test('says what is at stake the same way whichever it is', async () => {
   setup([session({ id: 'a', name: 'Fix the merge' })], 'add')
   expect(await screen.findByText(/Fix the merge is part way through a turn/)).toBeInTheDocument()
-  expect(await screen.findByText(/Resume in the sessions list/)).toBeInTheDocument()
+  expect(await screen.findByText(/stays in the agents list/)).toBeInTheDocument()
 })
 
 test('keeps saying what was true when it interrupted you', async () => {

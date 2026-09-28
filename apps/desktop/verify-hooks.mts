@@ -45,8 +45,7 @@ await git(['add', '-A'])
 await git(['commit', '-q', '-m', 'seed'])
 
 const server = createHookServer({
-  onTurnStart: () => {},
-  onTurnEnd: () => {},
+  onJobTurn: () => {},
   ops: createAgentOps({
     openApp: () => Promise.resolve({ ok: true }),
     initApp: () => Promise.resolve({ ok: true, created: [] }),

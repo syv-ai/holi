@@ -50,13 +50,15 @@ export type Tab =
    *  (D107). There is one tab per app, not one per vault. */
   | { kind: 'app'; path: string }
   /**
-   * One of the vault's agent sessions (D101), by the id main minted for it.
+   * A terminal onto Claude Code (D110), by the id main minted for it: the
+   * agents list, or one background session.
    *
-   * One tab per session, as with an app. **Closing the tab does not end the
-   * session**: it keeps running, and the sidebar's list is how you get back to
-   * it. A tab is a view, and a view is free to close.
+   * **Closing the tab does not end a session**: it detaches, the session keeps
+   * running, and the sidebar's rows are how you get back to it. What the tab
+   * shows can change under it (`←` goes back to the list), so it is named by
+   * its terminal, never by a session.
    */
-  | { kind: 'session'; id: string }
+  | { kind: 'agent'; id: string }
   /** Home, the board, the Google agenda, mail (D67), settings and history — one
    *  of each, ever. */
   | { kind: SingletonTab }
@@ -86,7 +88,7 @@ function sameTab(a: Tab, b: Tab): boolean {
   if (a.kind !== b.kind) return false
   if (a.kind === 'note' && b.kind === 'note') return a.path === b.path
   if (a.kind === 'app' && b.kind === 'app') return a.path === b.path
-  if (a.kind === 'session' && b.kind === 'session') return a.id === b.id
+  if (a.kind === 'agent' && b.kind === 'agent') return a.id === b.id
   // Everything left is a singleton, of which there is one, ever. A kind that
   // carries an identity and is NOT listed above falls in here and reads as
   // "already open" whatever it names, so two different sessions would share one tab.
@@ -173,10 +175,10 @@ export function openApp(workspace: Workspace, path: string): Workspace {
   return openTab(workspace, { kind: 'app', path })
 }
 
-/** Show one agent session, or focus its tab if already open. Deduped by id: two
- *  terminals over one PTY would both be attached to it. */
-export function openSession(workspace: Workspace, id: string): Workspace {
-  return openTab(workspace, { kind: 'session', id })
+/** Show one agent terminal, or focus its tab if already open. Deduped by id:
+ *  two views over one PTY would both be attached to it. */
+export function openAgentTab(workspace: Workspace, id: string): Workspace {
+  return openTab(workspace, { kind: 'agent', id })
 }
 
 /**
@@ -373,16 +375,11 @@ export function closeTabsForPaths(workspace: Workspace, paths: string[]): Worksp
 }
 
 /**
- * Close the tabs of sessions that are no longer in main's list.
- *
- * A session leaves that list when it is **ended**, not when it exits: an exited
- * session keeps its place, and its tab with it, so the last thing it printed is
- * still there to read. What this closes is a terminal attached to a session that
- * has been disposed of: by the End action, a vault switch, or the app closing
- * the vault under it.
+ * Close the tabs of terminals that are no longer in main's list. A terminal
+ * leaves it when its client exits: a detach, `/exit`, or its session stopped.
  */
-export function closeSessionTabs(workspace: Workspace, liveIds: string[]): Workspace {
-  return closeTabsWhere(workspace, (t) => t.kind === 'session' && !liveIds.includes(t.id))
+export function closeAgentTabs(workspace: Workspace, liveIds: string[]): Workspace {
+  return closeTabsWhere(workspace, (t) => t.kind === 'agent' && !liveIds.includes(t.id))
 }
 
 /**

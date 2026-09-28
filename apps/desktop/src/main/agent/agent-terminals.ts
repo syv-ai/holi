@@ -210,7 +210,9 @@ export function createAgentTerminals(deps: AgentTerminalsDeps): AgentTerminals {
       const t = terminals.get(id)
       if (t === undefined) return ''
       // Serialise BEFORE opening the tap: a chunk that lands mid-serialise goes
-      // to the record only, never both replayed and streamed.
+      // to the record only, never both replayed and streamed. Closed first,
+      // because a re-attach (a pane move remounts the view) finds it open.
+      t.attached = false
       const state = await t.mirror.serialize()
       if (terminals.has(id)) t.attached = true
       return state

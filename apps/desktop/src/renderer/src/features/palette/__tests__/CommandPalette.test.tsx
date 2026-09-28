@@ -13,9 +13,9 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { render, screen, waitFor } from '@/test/render'
 import { useCommandHotkeys } from '@/state/commands'
-import { activeSessionIdAtom, agentSessionsAtom, type AgentSession } from '@/state/agent'
+import { agentSessionsAtom, agentTerminalsAtom, type AgentSession } from '@/state/agent'
 import { paletteAtom } from '@/state/palette'
-import { emptyWorkspace, workspaceAtom } from '@/state/panes'
+import { emptyWorkspace, openAgentTab, workspaceAtom } from '@/state/panes'
 import { recentsByVaultAtom } from '@/state/recents'
 import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
 import { CommandPalette } from '../CommandPalette'
@@ -28,14 +28,14 @@ function Hotkeys(): null {
   return null
 }
 
-const paste = vi.fn(async () => ({ ok: true }))
+const send = vi.fn(async () => ({ ok: true, terminalId: 't1' }))
 
 beforeEach(() => {
   // cmdk scrolls the selected item into view; jsdom has no layout to scroll.
   Element.prototype.scrollIntoView = () => {}
   // @ts-expect-error — the preload bridge is not typed onto window in tests.
-  window.holi = { agent: { paste } }
-  paste.mockClear()
+  window.holi = { agent: { send } }
+  send.mockClear()
   store.set(activeRemoteAtom, 'o/vault')
   store.set(snapshotAtom, {
     ...emptyVaultSnapshot(),
@@ -49,7 +49,7 @@ beforeEach(() => {
   store.set(workspaceAtom, emptyWorkspace())
   store.set(paletteAtom, { open: false, mode: 'open', query: '', step: 0, stepDirection: 1 })
   store.set(agentSessionsAtom, [])
-  store.set(activeSessionIdAtom, null)
+  store.set(agentTerminalsAtom, [])
 })
 
 afterEach(() => {
@@ -210,9 +210,11 @@ test('Escape closes', async () => {
 })
 
 test('the Ask row is last once something is typed, and sends to the current session', async () => {
-  const live = { id: 's1', name: 'refactor', exited: false, state: 'idle' } as AgentSession
+  const live: AgentSession = { id: 's1', name: 'refactor', state: 'idle' }
   store.set(agentSessionsAtom, [live])
-  store.set(activeSessionIdAtom, 's1')
+  // The session's own window is the one showing, which is what makes it current.
+  store.set(agentTerminalsAtom, [{ id: 't1', launchedFor: 's1', title: '' }])
+  store.set(workspaceAtom, (w) => openAgentTab(w, 't1'))
   mount()
 
   await userEvent.keyboard('{Meta>}p{/Meta}')
@@ -223,6 +225,10 @@ test('the Ask row is last once something is typed, and sends to the current sess
 
   await userEvent.click(screen.getByText(/Ask the assistant/))
 
-  await waitFor(() => expect(paste).toHaveBeenCalledWith('s1', 'why is the board empty'))
+  await waitFor(() =>
+    expect(send).toHaveBeenCalledWith(
+      expect.objectContaining({ text: 'why is the board empty', target: 's1' }),
+    ),
+  )
   expect(store.get(paletteAtom).open).toBe(false)
 })

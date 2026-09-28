@@ -307,18 +307,17 @@ describe('resolveVaultAgentConfig', () => {
     expect((await settings(dir)).theme).toBe('light') // the default is `system`
   })
 
-  it('reports a fresh directory as a first spawn, once', async () => {
+  it('leaves the sign-in marker for the first terminal, however often it resolves', async () => {
     const args = {
       userDataDir: await tempDir(),
       remote: 'owner/repo',
       root: await vault('dark'),
       systemPrefersDark: true,
     }
-    const first = await resolveVaultAgentConfig(args)
-    expect(first.dir).toContain(agentConfigSlug('owner/repo'))
-    expect(first.firstSpawn).toBe(true)
-
-    expect((await resolveVaultAgentConfig(args)).firstSpawn).toBe(false)
+    await resolveVaultAgentConfig(args)
+    const { dir } = await resolveVaultAgentConfig(args)
+    expect(dir).toContain(agentConfigSlug('owner/repo'))
+    expect(await takeFirstSpawn(dir)).toBe(true)
   })
 })
 

@@ -22,7 +22,16 @@ import {
   IconButton,
   Tooltip,
 } from '@/primitives'
-import { CalendarDays, ChevronLeft, ChevronRight, House, Mail, SquareKanban, X } from 'lucide-react'
+import {
+  Bot,
+  CalendarDays,
+  ChevronLeft,
+  ChevronRight,
+  House,
+  Mail,
+  SquareKanban,
+  X,
+} from 'lucide-react'
 import { appName, type TaskStatus } from '@holi/shared'
 import { pathGlyph, pathLabel } from '@/composites/file-icons'
 import { offscreenTabs, type Offscreen } from '@/lib/tab-overflow'
@@ -38,8 +47,13 @@ import {
   type PillBox,
 } from '@/lib/tab-drop'
 import type { Tab } from '@/state/panes'
-import { agentSessionsAtom, type AgentSession } from '@/state/agent'
-import { renameSessionAtom } from '@/state/agent-send'
+import {
+  agentSessionsAtom,
+  agentTerminalsAtom,
+  terminalLabel,
+  type AgentSession,
+  type AgentTerminal,
+} from '@/state/agent'
 import { agentIndicator } from '@/lib/agent-notices'
 import { cn } from '@/lib/cn'
 import { snapshotAtom } from '@/state/vaults'
@@ -102,8 +116,8 @@ export function tabKey(tab: Tab): string {
     ? `note:${tab.path}`
     : tab.kind === 'app'
       ? `app:${tab.path}`
-      : tab.kind === 'session'
-        ? `session:${tab.id}`
+      : tab.kind === 'agent'
+        ? `agent:${tab.id}`
         : tab.kind
 }
 
@@ -115,42 +129,53 @@ interface PathMarks {
   tasks: ReadonlyMap<string, TaskStatus>
 }
 
+/** The vault's sessions and Holi's terminals: what an agent tab is named and
+ *  marked from. */
+interface AgentView {
+  sessions: AgentSession[]
+  terminals: AgentTerminal[]
+}
+
+/** The live session an agent tab was opened for, if it has one. */
+function sessionOf(tab: Tab & { kind: 'agent' }, agents: AgentView): AgentSession | null {
+  const launchedFor = agents.terminals.find((t) => t.id === tab.id)?.launchedFor ?? null
+  return agents.sessions.find((s) => s.id === launchedFor) ?? null
+}
+
 /** A note leads with nothing, as its tree row does; the pill keeps no empty
  *  slot, since nothing here lines up with it. */
-function tabIcon(tab: Tab, marks: PathMarks, sessions: AgentSession[]): ReactNode {
+function tabIcon(tab: Tab, marks: PathMarks, agents: AgentView): ReactNode {
   if (tab.kind === 'note' || tab.kind === 'app') {
     return pathGlyph(tab.path, { emoji: marks.icons[tab.path], task: marks.tasks.get(tab.path) })
   }
   if (tab.kind === 'home') return <Icon icon={House} size="sm" />
   if (tab.kind === 'agenda') return <Icon icon={CalendarDays} size="sm" />
   if (tab.kind === 'mail') return <Icon icon={Mail} size="sm" />
-  // A session's glyph is its state: the same dot, from the same derivation, as
-  // the sidebar card and footer, so they cannot disagree (D72).
-  if (tab.kind === 'session') {
-    const session = sessions.find((s) => s.id === tab.id)
-    const dot =
-      session === undefined
-        ? 'bg-muted-foreground'
-        : agentIndicator({ ...session, themeNote: null }).dot
+  // A tab opened for a session that is still live carries its state: the same
+  // dot, from the same derivation, as its sidebar row. Anything else (the list,
+  // or a session that has gone) is Claude Code's glyph.
+  if (tab.kind === 'agent') {
+    const session = sessionOf(tab, agents)
+    if (session === null) return <Icon icon={Bot} size="sm" />
+    const dot = agentIndicator(session).dot
     return <span aria-hidden="true" className={cn('h-2 w-2 shrink-0 rounded-full', dot)} />
   }
   return <Icon icon={SquareKanban} size="sm" />
 }
 
-function tabName(tab: Tab, sessions: AgentSession[]): string {
+function tabName(tab: Tab, agents: AgentView): string {
   if (tab.kind === 'note' || tab.kind === 'app') return pathLabel(tab.path)
-  // Claude Code's own name, pushed by main. A gone session's tab keeps a label
-  // for the frame until the tab goes too.
-  if (tab.kind === 'session') return sessions.find((s) => s.id === tab.id)?.name ?? 'Session'
+  // The terminal's own title, which Claude Code sets to what it is showing.
+  if (tab.kind === 'agent') {
+    return terminalLabel(agents.terminals.find((t) => t.id === tab.id) ?? null, agents.sessions)
+  }
   return TAB_NAME[tab.kind]
 }
 
-function tabTooltip(tab: Tab, sessions: AgentSession[]): string {
-  if (tab.kind === 'session') {
-    const session = sessions.find((s) => s.id === tab.id)
-    return session === undefined
-      ? 'this session has gone'
-      : agentIndicator({ ...session, themeNote: null }).title
+function tabTooltip(tab: Tab, agents: AgentView): string {
+  if (tab.kind === 'agent') {
+    const session = sessionOf(tab, agents)
+    return session === null ? 'Claude Code' : agentIndicator(session).title
   }
   return (
     TAB_LABEL[tab.kind] ??
@@ -177,14 +202,14 @@ function OverflowMenu({
   indices,
   tabs,
   marks,
-  sessions,
+  agents,
   onReveal,
 }: {
   side: 'left' | 'right'
   indices: number[]
   tabs: Tab[]
   marks: PathMarks
-  sessions: AgentSession[]
+  agents: AgentView
   onReveal: (index: number) => void
 }) {
   const visible = indices.length > 0
@@ -235,9 +260,9 @@ function OverflowMenu({
                 className="gap-2 text-xs"
                 onSelect={() => onReveal(index)}
               >
-                {tabIcon(tab, marks, sessions)}
+                {tabIcon(tab, marks, agents)}
                 <span className={tab.kind === 'note' && tab.preview ? 'italic' : ''}>
-                  {tabName(tab, sessions)}
+                  {tabName(tab, agents)}
                 </span>
               </DropdownMenuItem>
             )
@@ -292,12 +317,8 @@ export function TabStrip({
     [snapshot],
   )
   const sessions = useAtomValue(agentSessionsAtom)
-  const rename = useSetAtom(renameSessionAtom)
-  const renameSession = (id: string) => {
-    // An exited session has no box to type into.
-    if (sessions.find((s) => s.id === id)?.exited !== false) return
-    void rename(id)
-  }
+  const terminals = useAtomValue(agentTerminalsAtom)
+  const agents = useMemo<AgentView>(() => ({ sessions, terminals }), [sessions, terminals])
   const hostRef = useRef<HTMLDivElement | null>(null)
   const pillRefs = useRef(new Map<string, HTMLElement>())
   /** Where the dragged tab would land. `x` is in the scroller's content
@@ -627,7 +648,7 @@ export function TabStrip({
                     : 'text-muted-foreground hover:text-foreground'
                 }`}
               >
-                <Tooltip content={tabTooltip(t, sessions)}>
+                <Tooltip content={tabTooltip(t, agents)}>
                   <Button
                     variant="ghost"
                     // Ghost bg/padding neutralised so the pill owns the surface.
@@ -641,11 +662,11 @@ export function TabStrip({
                       t.kind === 'note' && t.preview ? 'italic' : ''
                     }`}
                     onClick={() => onSelect(i)}
-                    // Double-click pins a preview note; a session renames.
-                    onDoubleClick={() => (t.kind === 'session' ? renameSession(t.id) : onPin(i))}
+                    // Double-click pins a preview note.
+                    onDoubleClick={() => onPin(i)}
                   >
-                    {tabIcon(t, marks, sessions)}
-                    <span>{tabName(t, sessions)}</span>
+                    {tabIcon(t, marks, agents)}
+                    <span>{tabName(t, agents)}</span>
                   </Button>
                 </Tooltip>
                 {/* Shown on hover or focus. Hidden with `opacity`, never
@@ -668,7 +689,7 @@ export function TabStrip({
           indices={offscreen.left}
           tabs={tabs}
           marks={marks}
-          sessions={sessions}
+          agents={agents}
           onReveal={reveal}
         />
         <OverflowMenu
@@ -676,7 +697,7 @@ export function TabStrip({
           indices={offscreen.right}
           tabs={tabs}
           marks={marks}
-          sessions={sessions}
+          agents={agents}
           onReveal={reveal}
         />
       </div>

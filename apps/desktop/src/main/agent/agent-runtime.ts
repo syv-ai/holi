@@ -1,10 +1,11 @@
 /**
- * The `claude` session itself: one interactive CLI in a node-pty PTY, its bytes
- * forwarded to the renderer's xterm.
+ * One `claude` client in a node-pty PTY (`claude agents` or `claude attach`,
+ * D110), its bytes forwarded to the renderer's xterm, and the environment and
+ * binary lookup every `claude` Holi runs shares.
  *
  * node-pty is an Electron-ABI native module, so it loads lazily inside the
- * real spawn path only; tests inject a fake PTY and never touch it. Everything above the PTY (env, args, binary discovery) is a pure
- * function.
+ * real spawn path only; tests inject a fake PTY and never touch it. Everything
+ * above the PTY (env, binary discovery) is a pure function.
  */
 import { execFileSync } from 'node:child_process'
 import { accessSync, constants } from 'node:fs'
@@ -74,24 +75,6 @@ export const defaultProbePid = (pid: number): PidState => {
  * `~/.claude/settings.json`, which Holi never touches.
  */
 export interface AgentEnvOpts {
-  /** The local hook server's port (git coexistence). The seeded curl hooks read
-   *  it live from `$HOLI_HOOK_PORT`; null/omitted leaves the child hook-less. */
-  hookPort?: number | null
-  hookToken?: string | null
-  /** The resolved typst binary (find-only). Set as `$TYPST_BIN` so the seeded
-   *  md-to-pdf skill can render with the same engine the UI's Convert uses. */
-  typstBin?: string | null
-  /** The Google ops channel (D67): where `holi-google` sends its requests, and
-   *  the per-instance token that proves it is us. The agent never receives a
-   *  Google token — main holds those and makes the calls itself. */
-  googlePort?: number | null
-  googleToken?: string | null
-  /** Absolute path to the generated `holi-google` command, as `$HOLI_GOOGLE_BIN`
-   *  — the same shape as `$TYPST_BIN`, and what the seeded skill invokes. */
-  googleBin?: string | null
-  /** Absolute path to the generated `holi` command, as `$HOLI_BIN`. The agent
-   *  types the bare name; this is for a hook or a script that needs the path. */
-  holiBin?: string | null
   /**
    * The directory holding Holi's generated commands, **prepended to `PATH`**.
    *
@@ -150,8 +133,9 @@ export function buildAgentEnv(
    */
   delete env.CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN
   env.CLAUDE_CODE_NO_FLICKER = '1'
-  // Reserved keys: strip any inherited value so a vault/user env can't spoof the
-  // hook target, then set our own only when a live server is running.
+  // Reserved keys: strip any inherited value so a vault/user env can't spoof
+  // the hook target. Holi sets none of them any more: sessions find it through
+  // `holi.env` in their config dir (D110).
   delete env.HOLI_HOOK_PORT
   delete env.HOLI_HOOK_TOKEN
   delete env.HOLI_GOOGLE_PORT
@@ -162,86 +146,12 @@ export function buildAgentEnv(
   // back on the machine's `~/.claude`.
   delete env.CLAUDE_CONFIG_DIR
   if (opts.configDir) env.CLAUDE_CONFIG_DIR = opts.configDir
-  if (opts.hookPort != null) env.HOLI_HOOK_PORT = String(opts.hookPort)
-  if (opts.hookToken) env.HOLI_HOOK_TOKEN = opts.hookToken
-  if (opts.typstBin) env.TYPST_BIN = opts.typstBin
-  if (opts.googlePort != null) env.HOLI_GOOGLE_PORT = String(opts.googlePort)
-  if (opts.googleToken) env.HOLI_GOOGLE_TOKEN = opts.googleToken
-  if (opts.googleBin) env.HOLI_GOOGLE_BIN = opts.googleBin
-  if (opts.holiBin) env.HOLI_BIN = opts.holiBin
   // Prepended, never appended: an earlier `holi-google` or `holi` on the
   // inherited PATH would otherwise win under a name the gate trusts.
   if (opts.binDir) {
     env.PATH = env.PATH ? `${opts.binDir}:${env.PATH}` : opts.binDir
   }
   return env
-}
-
-export interface AgentArgs {
-  /**
-   * What to call this session (D100).
-   *
-   * **Claude Code's own name, not a label Holi keeps beside one.** It shows in
-   * the prompt box, the `/resume` picker and the terminal title, and comes back
-   * in Claude Code's session listing, which Holi's tabs read. A session started
-   * with no name gets a default display name (the cwd's name plus a short
-   * suffix) that says nothing about the conversation, so Holi shows "New
-   * session" instead.
-   *
-   * Normalised here rather than at the call sites, because it goes into argv.
-   */
-  name?: string
-  /** Bare `--resume` — the CLI shows its own session picker in the terminal. */
-  resume?: boolean
-  /** A first message to seed the interactive session with (the reconcile flow).
-   *  `claude "<prompt>"` starts interactive and auto-submits it as turn one — a
-   *  positional arg, NOT a system prompt and NOT a keystroke written into the TUI. */
-  prompt?: string
-  /**
-   * Claude Code's own session id to **fork**: `--resume <id> --fork-session`
-   * copies that conversation into a new session and leaves the original alone.
-   *
-   * Read out of the listing at the moment of the fork and never stored: the id
-   * changes under one terminal on `/clear` (D100).
-   */
-  forkOf?: string
-}
-
-/** The longest a session name is worth being: a tab is narrow, and the source is
- *  usually the first line of a sentence someone typed at an editor selection. */
-const MAX_NAME = 60
-
-/**
- * A name fit for argv, or null.
- *
- * First line only, whitespace collapsed, capped. A newline would split the
- * argument and everything after it would arrive as a second one; the rest is
- * about a tab being narrow rather than about safety.
- */
-export function sessionName(raw: string | undefined): string | null {
-  if (raw === undefined) return null
-  const line = raw.split('\n')[0] ?? ''
-  const clean = line.replace(/\s+/g, ' ').trim().slice(0, MAX_NAME).trim()
-  return clean === '' ? null : clean
-}
-
-/**
- * The interactive `claude` invocation, deliberately bare. NO
- * `--append-system-prompt`: vault conventions live in `AGENTS.md`, which Claude
- * Code reads natively (docs/features/agent-config.md). And no
- * `--strict-mcp-config`, which would suppress MCP servers the *vault* configures
- * in `.claude/`.
- */
-export function buildAgentArgs({ name, resume, forkOf, prompt }: AgentArgs = {}): string[] {
-  const label = sessionName(name)
-  return [
-    ...(label === null ? [] : ['--name', label]),
-    // A fork names the conversation it copies and asks for a copy; bare
-    // `--resume` shows Claude Code's own picker instead. They are the same flag
-    // with and without an argument, so only one of them can be passed.
-    ...(forkOf !== undefined ? ['--resume', forkOf, '--fork-session'] : resume ? ['--resume'] : []),
-    ...(prompt ? [prompt] : []),
-  ]
 }
 
 /** GUI apps don't inherit a login shell's PATH — check the usual install dirs. */

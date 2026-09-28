@@ -3,10 +3,11 @@
  * HTTP server the agent's Claude Code hooks POST to, so Holi learns when a turn
  * starts and ends WITHOUT parsing PTY output.
  *
- * The seeded `UserPromptSubmit`/`Stop` hooks `curl` this on `127.0.0.1:$HOLI_HOOK_PORT`,
- * guarded so they no-op for a bare `claude` opened outside Holi. A per-instance
- * token (query `?t=`) rejects any other local process — the port is ephemeral,
- * but this closes the "some other localhost thing toggles our sync pause" gap.
+ * The seeded `UserPromptSubmit`/`Stop` hooks (`turn-signal.mjs`) POST here with
+ * the vault's token and the session's job id, both read from `holi.env` and
+ * `$CLAUDE_JOB_DIR` (D110), and no-op outside Holi. The token (query `?t=`)
+ * rejects any other local process: the port is ephemeral, but this closes the
+ * "some other localhost thing toggles our sync pause" gap.
  * A turn-signal response is always empty (a body would be injected into
  * Claude's context). The same server also carries the **agent ops** routes the
  * `holi` CLI calls (`ops.ts`), and those DO answer: they are replies to a
@@ -20,10 +21,6 @@ import { randomBytes } from 'node:crypto'
 import type { AgentOps } from './ops'
 
 export interface HookServerDeps {
-  /** A turn began in this session. Only ever a session's own token, never the
-   *  vault's standing one — see `TokenBearer`. */
-  onTurnStart(sessionId: string): void
-  onTurnEnd(sessionId: string): void
   /**
    * A turn began or ended in one of this vault's Claude Code background
    * sessions (D110), named by its short job id.
@@ -34,15 +31,7 @@ export interface HookServerDeps {
    * reads the token from `$CLAUDE_CONFIG_DIR/holi.env` and the id from
    * `$CLAUDE_JOB_DIR`.
    */
-  onJobTurn?: (remote: string, jobId: string, active: boolean) => void
-  /**
-   * This session's status line asked what to print (D101).
-   *
-   * The whole of Claude Code's status JSON arrives as the body, and what comes
-   * back is the one line the session's footer shows. Main parses it because it
-   * wants fields for itself, notably `session_name`.
-   */
-  onStatus?: (sessionId: string, status: unknown) => string
+  onJobTurn: (remote: string, jobId: string, active: boolean) => void
   log?: (msg: string) => void
   /**
    * The agent-ops routes for **one vault**, if this instance has them. Absent
@@ -65,14 +54,10 @@ export interface HookServer {
    * This vault's standing token, minted once and stable for the app's life.
    *
    * It is written into the clone's `.git/hooks`, so it has to keep working
-   * across agent sessions and vault switches. Never revoked.
+   * across agent sessions and vault switches. Never revoked. The agent's
+   * sessions carry it too, through `holi.env`.
    */
   tokenForVault(remote: string): string
-  /** A token for one agent session in one vault, revoked when it ends. The id
-   *  is what a turn signal on this token reports, so several sessions in one
-   *  vault stay apart. */
-  mintSessionToken(remote: string, sessionId: string): string
-  revoke(token: string): void
 }
 
 /** Cap the drained request body — the hooks send nothing we read, so this is
@@ -82,21 +67,10 @@ const MAX_BODY_BYTES = 64 * 1024
 /** A Claude Code job id: eight hex characters, the name of its `jobs/` dir. */
 const JOB_ID = /^[0-9a-f]{8}$/
 
-/**
- * What a token speaks for. Always a vault, because that is how an ops route
- * finds the repository to act on. A session id as well **only** when the token
- * was minted for one session: the vault's standing token is written into
- * `.git/hooks` and outlives every session, so it cannot name one.
- */
-interface TokenBearer {
-  remote: string
-  sessionId?: string
-}
-
 export function createHookServer(deps: HookServerDeps): HookServer {
   const log = deps.log ?? ((msg: string) => console.log(`[hook-server] ${msg}`))
-  /** token → what it speaks for. */
-  const tokens = new Map<string, TokenBearer>()
+  /** token → the vault it speaks for. */
+  const tokens = new Map<string, string>()
   /** remote → its standing token, so a vault's `.git/hooks` file stays valid. */
   const vaultTokens = new Map<string, string>()
   let server: Server | null = null
@@ -113,15 +87,14 @@ export function createHookServer(deps: HookServerDeps): HookServer {
     // **The token is checked on the headers, before a byte of body is read.**
     // Draining first would mean an unauthenticated local process could make us
     // buffer up to the cap on every request just by being wrong about the token.
-    const bearer = tokens.get(url.searchParams.get('t') ?? '')
-    if (bearer === undefined) {
+    const remote = tokens.get(url.searchParams.get('t') ?? '')
+    if (remote === undefined) {
       req.resume()
       res.writeHead(403).end()
       return
     }
 
     const isTurn = url.pathname === '/turn/start' || url.pathname === '/turn/end'
-    const isStatus = url.pathname === '/statusline'
 
     // A turn signal sends nothing we read, so its body is drained and discarded;
     // an ops route's arguments ride in the body so `curl --data-urlencode`
@@ -138,34 +111,12 @@ export function createHookServer(deps: HookServerDeps): HookServer {
     })
 
     req.on('end', () => {
-      if (isStatus) {
-        // A status line belongs to exactly one session, and the bearer says
-        // which. The vault's standing token names no session and prints nothing.
-        let line = ''
-        if (bearer.sessionId !== undefined && deps.onStatus !== undefined) {
-          try {
-            line = deps.onStatus(bearer.sessionId, JSON.parse(body))
-          } catch (error) {
-            // Malformed JSON, or a bug in the reader. An empty status line is a
-            // blank row in a terminal; a 500 here would be a red one.
-            log(`statusline failed: ${String(error)}`)
-          }
-        }
-        res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' }).end(line)
-        return
-      }
       if (isTurn) {
-        // A turn signal on the vault's standing token names no session, and with
-        // several running there is no honest guess, so it is dropped (still
-        // answered empty).
-        const active = url.pathname === '/turn/start'
+        // A signal that names no job cannot say which session's turn it is,
+        // and with several running there is no honest guess, so it is dropped
+        // (still answered empty).
         const job = url.searchParams.get('job') ?? ''
-        if (bearer.sessionId !== undefined) {
-          if (active) deps.onTurnStart(bearer.sessionId)
-          else deps.onTurnEnd(bearer.sessionId)
-        } else if (JOB_ID.test(job)) {
-          deps.onJobTurn?.(bearer.remote, job, active)
-        }
+        if (JOB_ID.test(job)) deps.onJobTurn(remote, job, url.pathname === '/turn/start')
         res.writeHead(204).end() // empty body — never inject text into Claude's context
         return
       }
@@ -175,7 +126,7 @@ export function createHookServer(deps: HookServerDeps): HookServer {
       const params = new URLSearchParams(url.search)
       for (const [key, value] of new URLSearchParams(body)) params.set(key, value)
 
-      void Promise.resolve(deps.opsFor?.(bearer.remote)(url.pathname, params) ?? null)
+      void Promise.resolve(deps.opsFor?.(remote)(url.pathname, params) ?? null)
         .then((reply) => {
           if (reply === null) {
             res.writeHead(404).end()
@@ -200,20 +151,9 @@ export function createHookServer(deps: HookServerDeps): HookServer {
       if (token === undefined) {
         token = randomBytes(16).toString('hex')
         vaultTokens.set(remote, token)
-        tokens.set(token, { remote })
+        tokens.set(token, remote)
       }
       return token
-    },
-    mintSessionToken(remote, sessionId) {
-      const token = randomBytes(16).toString('hex')
-      tokens.set(token, { remote, sessionId })
-      return token
-    },
-    revoke(token) {
-      // A vault's standing token is not revocable through here: it lives in a
-      // file on disk and must outlast the session that happened to be open.
-      if (vaultTokens.get(tokens.get(token)?.remote ?? '') === token) return
-      tokens.delete(token)
     },
     port: () => boundPort,
     start: () =>

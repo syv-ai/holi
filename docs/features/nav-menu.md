@@ -7,11 +7,12 @@ hidden, the same menu runs down the rail.
 
 ## How it works
 
-- **Items, in order:** Home, Search, Apps, Board, Email, Agenda, Sync, Settings, so Settings always
-  ends the dock. Home opens the home tab; Search opens quick open
+- **Items, in order:** Home, Search, Apps, Board, Email, Agenda, Agents, Sync, Settings, so
+  Settings always ends the dock. Home opens the home tab; Search opens quick open
   ([command palette](command-palette.md)); Board opens the board and carries the open-task count,
   red while any task is overdue (the board's own `overdue` label); Email, Agenda and Settings open
-  their tabs. Sync is the vault's sync state as a glyph whose colour and turning carry it, and opens
+  their tabs. Agents goes to Claude Code's agent list, the tab ⌘J goes to, and is green while any
+  of the vault's sessions is running ([agent sessions](agent-sessions.md)). Sync is the vault's sync state as a glyph whose colour and turning carry it, and opens
   a panel with the state in words, its action and the history ([vaults and sync](vaults-sync.md)).
 - **An item may carry a state on its glyph:** `tone` colours it (busy, warn, alert, live) and
   `motion` loops it (`orbit`, `pulse`), only while that state is in flight.
@@ -41,8 +42,8 @@ hidden, the same menu runs down the rail.
   edge.
 - **The active surface** reads as current (`aria-current`, the accent background), and an app's
   parent Apps item with it.
-- **Sessions** keep their resizable, collapsible **chats** panel, now directly above the menu
-  ([agent sessions](agent-sessions.md)).
+- **Sessions** are one row each directly above the menu, under the file tree, only while running:
+  no header, nothing to resize or collapse ([agent sessions](agent-sessions.md)).
 - **Home** is a singleton tab (`home`), opened leftmost like the board. Today it shows the empty
   editor's state.
 

@@ -30,10 +30,10 @@
  * (D100), starting a session when there is none.
  */
 import { useAtomValue, useSetAtom, useStore } from 'jotai'
-import { AppWindow, Calendar, History, Kanban, Mail, Settings, Sparkles } from 'lucide-react'
+import { AppWindow, Bot, Calendar, History, Kanban, Mail, Settings, Sparkles } from 'lucide-react'
 import { useEffect, useMemo, useRef } from 'react'
 import { fileIconFor } from '@/composites/file-icons'
-import { agentIndicator, agentThemeNote } from '@/lib/agent-notices'
+import { agentIndicator } from '@/lib/agent-notices'
 import { cn } from '@/lib/cn'
 import {
   buildRows,
@@ -56,14 +56,13 @@ import {
   Kbd,
 } from '@/primitives'
 import {
-  activeSessionIdAtom,
-  agentModeAtSpawnAtom,
   agentSessionsAtom,
+  agentTerminalsAtom,
   defaultAgentTargetAtom,
+  terminalLabel,
 } from '@/state/agent'
-import { sendToAgentAtom } from '@/state/agent-send'
+import { openSessionAtom, sendToAgentAtom } from '@/state/agent-send'
 import { appPathsAtom } from '@/state/apps'
-import { activeModeAtom } from '@/state/color-scheme'
 import { commandsAtom, runCommandAtom, type Command } from '@/state/commands'
 import {
   closePaletteAtom,
@@ -77,8 +76,8 @@ import {
   openApp,
   openBeside,
   openInNewPane,
+  openAgentTab,
   openPinned,
-  openSession,
   openSingleton,
   workspaceAtom,
   type SingletonTab,
@@ -95,15 +94,18 @@ const SURFACE_GLYPHS = {
   history: History,
 } as const
 
-/** The tab a row opens as, for the "beside" gesture. */
-function tabOf(row: PaletteRow): Tab {
+/** The tab a row opens as, for the "beside" gesture. Null for a session: it
+ *  opens through a terminal main has to start (`openSessionAtom`). */
+function tabOf(row: PaletteRow): Tab | null {
   switch (row.kind) {
     case 'path':
       return { kind: 'note', path: row.key }
     case 'app':
       return { kind: 'app', path: row.key }
+    case 'terminal':
+      return { kind: 'agent', id: row.key }
     case 'session':
-      return { kind: 'session', id: row.key }
+      return null
     case 'surface':
       return { kind: row.key as SingletonTab }
   }
@@ -121,20 +123,25 @@ export function CommandPalette(): React.JSX.Element {
   const snapshot = useAtomValue(snapshotAtom)
   const appPaths = useAtomValue(appPathsAtom)
   const sessions = useAtomValue(agentSessionsAtom)
-  const modeAtSpawn = useAtomValue(agentModeAtSpawnAtom)
-  const colorMode = useAtomValue(activeModeAtom)
+  const terminals = useAtomValue(agentTerminalsAtom)
   const recents = useAtomValue(recentsAtom)
   const commands = useAtomValue(commandsAtom)
   const workspace = useAtomValue(workspaceAtom)
   const run = useSetAtom(runCommandAtom)
   const setWorkspace = useSetAtom(workspaceAtom)
-  const setActiveSession = useSetAtom(activeSessionIdAtom)
+  const openSession = useSetAtom(openSessionAtom)
   const askTarget = useAtomValue(defaultAgentTargetAtom)
   const sendToAgent = useSetAtom(sendToAgentAtom)
 
   const rows = useMemo(
-    () => buildRows({ snapshot, appPaths, sessions }),
-    [snapshot, appPaths, sessions],
+    () =>
+      buildRows({
+        snapshot,
+        appPaths,
+        sessions,
+        terminals: terminals.map((t) => ({ id: t.id, label: terminalLabel(t, sessions) })),
+      }),
+    [snapshot, appPaths, sessions, terminals],
   )
   const tabsMode = state.mode === 'tabs'
   const query = state.query
@@ -227,20 +234,27 @@ export function CommandPalette(): React.JSX.Element {
   const chooseRow = (row: PaletteRow): void => {
     const openBesideIt = beside.current
     beside.current = false
-    keepFocus.current = row.kind === 'session'
+    keepFocus.current = row.kind === 'session' || row.kind === 'terminal'
     close()
-    if (row.kind === 'session') setActiveSession(row.key)
+    if (row.kind === 'session') {
+      void openSession(row.key)
+      return
+    }
     setWorkspace((w) => {
       if (openBesideIt) {
-        return row.kind === 'path' ? openBeside(w, w.active, row.key) : openInNewPane(w, tabOf(row))
+        if (row.kind === 'path') return openBeside(w, w.active, row.key)
+        const tab = tabOf(row)
+        return tab === null ? w : openInNewPane(w, tab)
       }
       switch (row.kind) {
         case 'path':
           return openPinned(w, row.key)
         case 'app':
           return openApp(w, row.key)
+        case 'terminal':
+          return openAgentTab(w, row.key)
         case 'session':
-          return openSession(w, row.key)
+          return w // opened above, through main
         case 'surface':
           return openSingleton(w, row.key as SingletonTab)
       }
@@ -261,18 +275,10 @@ export function CommandPalette(): React.JSX.Element {
     void sendToAgent({ text, target: askTarget })
   }
 
-  /** The sidebar's orb for a session row, from the same rule the cards use. */
+  /** The sidebar's orb for a session row, from the same rule the rows use. */
   const orbFor = (id: string): string => {
     const session = sessions.find((s) => s.id === id)
-    if (session === undefined) return 'bg-muted-foreground'
-    return agentIndicator({
-      ...session,
-      themeNote: agentThemeNote({
-        running: !session.exited,
-        modeAtSpawn: modeAtSpawn[session.id] ?? null,
-        mode: colorMode,
-      }),
-    }).dot
+    return session === undefined ? 'bg-muted-foreground' : agentIndicator(session).dot
   }
 
   const showAsk = cmdQuery === null && !tabsMode && query.trim() !== ''
@@ -379,6 +385,8 @@ function RowIconView({ row, orb }: { row: PaletteRow; orb?: string }): React.JSX
           <span aria-hidden="true" className={cn('h-2 w-2 rounded-full', orb)} />
         </span>
       )
+    case 'terminal':
+      return <Icon icon={Bot} />
     case 'app':
       return <Icon icon={AppWindow} />
     case 'surface':

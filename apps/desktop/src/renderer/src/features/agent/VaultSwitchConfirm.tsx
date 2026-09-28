@@ -1,13 +1,14 @@
 /**
- * The question a vault switch asks when sessions are running (D100).
+ * The question a vault switch asks when sessions are running (D110).
  *
- * **A switch ends every one of the vault's sessions**: `VaultHost` holds exactly
- * one `ActiveVault` and `open()` closes the current one first, so a session left
- * running would have no repo, watcher or sync loop behind it.
+ * **A switch stops every one of the vault's sessions** (`claude stop`):
+ * `VaultHost` holds exactly one `ActiveVault` and `open()` closes the current
+ * one first, so a session left running would have no watcher or sync loop
+ * behind it.
  *
  * It is asked only for a session that is mid-turn or waiting on you, the same
- * line the sidebar's End action draws: an idle conversation ends quietly and
- * comes back with Resume.
+ * line the sidebar's Stop draws: an idle conversation stops quietly and picks
+ * up again from the agents list.
  *
  * Adding a vault asks the same question at the start of the ritual, not the end:
  * creating a vault opens it, and the moment to say so is before someone has
@@ -39,12 +40,12 @@ export type LeaveIntent = 'switch' | 'add'
 const WORDING = {
   switch: {
     title: 'Switch vaults?',
-    what: 'Switching ends every session in this vault.',
+    what: 'Switching stops every session in this vault.',
     go: 'Switch anyway',
   },
   add: {
     title: 'Add a vault?',
-    what: 'Adding a vault opens it, which ends every session in this vault.',
+    what: 'Adding a vault opens it, which stops every session in this vault.',
     go: 'Continue',
   },
 } as const
@@ -70,8 +71,8 @@ export function VaultSwitchConfirm(props: {
         <Dialog.Header>{wording.title}</Dialog.Header>
         <Dialog.Body>
           <p className="text-xs text-muted-foreground">
-            {why(busy)} {wording.what} What they have already written stays in it, and Resume in the
-            sessions list picks a conversation up again.
+            {why(busy)} {wording.what} What they have already written stays in it, and each
+            conversation stays in the agents list, where it picks up where it left off.
           </p>
         </Dialog.Body>
         <Dialog.Footer>

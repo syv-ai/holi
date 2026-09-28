@@ -97,22 +97,6 @@ export function isVaultConfigPath(path: string): boolean {
 }
 
 /**
- * The synced files Claude Code loads **once at launch**, so a change to any of
- * them under a live agent session is only picked up by restarting it, which is
- * what the "shared config changed; restart to pick it up" notice is for
- * (docs/features/agent-config.md).
- *
- * Deliberately NOT here: `.holi/settings/app.yaml` (Holi's config, not the
- * agent's), `*.local.*` overrides (never synced, so a pull can't change them),
- * and hooks/skills (re-read per invocation, so no restart is needed).
- */
-export const AGENT_CONFIG_FILES: readonly string[] = [
-  '.claude/settings.json',
-  'CLAUDE.md',
-  'AGENTS.md',
-]
-
-/**
  * Whether a vault-relative path is "hidden" in the explorer: true iff any
  * `/`-segment starts with a dot (`.gitignore`, `.holi/…`, a nested `sub/.foo`).
  * Display-only, and unrelated to `isLocalOnlyPath`, which is about what git must

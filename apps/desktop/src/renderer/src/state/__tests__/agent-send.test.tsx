@@ -1,324 +1,216 @@
 /**
- * Starting a session, and sending one an ask (D100). Store-level: nothing here
- * renders, because none of it belongs to a component.
+ * What you do to the vault's assistant (D110): the agents list, a session's
+ * window, starting one, sending an ask. Store-level: nothing here renders,
+ * because none of it belongs to a component.
  */
 import { createStore } from 'jotai'
 import { beforeEach, expect, test, vi } from 'vitest'
 import {
-  activeSessionIdAtom,
-  agentModeAtSpawnAtom,
   agentSessionsAtom,
+  agentTerminalsAtom,
   askTargetsAtom,
   defaultAgentTargetAtom,
   type AgentSession,
+  type AgentTerminal,
 } from '../agent'
 import {
   duplicateSessionAtom,
-  renameSessionAtom,
-  restartSessionAtom,
+  openSessionAtom,
   sendToAgentAtom,
-  showAgentAtom,
+  showAgentsAtom,
   startSessionAtom,
+  stopSessionAtom,
 } from '../agent-send'
-import { activeTab, openSession, workspaceAtom } from '../panes'
-import { activeRemoteAtom } from '../vaults'
+import { activeTab, openAgentTab, workspaceAtom } from '../panes'
 import { registerSessionTerminal } from '../../lib/session-terminals'
-
-const REMOTE = 'owner/repo'
 
 const session = (over: Partial<AgentSession> & { id: string }): AgentSession => ({
   name: 'New session',
   state: 'idle',
-  configStale: false,
-  exited: false,
   ...over,
 })
 
+const terminal = (id: string, launchedFor: string | null, title = ''): AgentTerminal => ({
+  id,
+  launchedFor,
+  title,
+})
+
+const open = vi.fn()
 const start = vi.fn()
-const paste = vi.fn()
+const send = vi.fn()
+const stop = vi.fn()
 const duplicate = vi.fn()
-const restart = vi.fn()
 
 beforeEach(() => {
-  start.mockReset()
-  paste.mockReset()
-  start.mockResolvedValue({ ok: true, id: 'spawned' })
-  paste.mockResolvedValue({ ok: true })
-  duplicate.mockReset()
-  duplicate.mockResolvedValue({ ok: true, id: 'copy' })
-  restart.mockReset()
-  restart.mockResolvedValue({ ok: true, id: 'reborn' })
+  for (const fn of [open, start, send, stop, duplicate]) fn.mockReset()
+  open.mockResolvedValue({ ok: true, terminalId: 'opened' })
+  start.mockResolvedValue({ ok: true, sessionId: 'newnew00', terminalId: 'started' })
+  send.mockResolvedValue({ ok: true, terminalId: 'sent' })
+  stop.mockResolvedValue({ ok: true })
+  duplicate.mockResolvedValue({ ok: true, sessionId: 'copy0000', terminalId: 'copied' })
   window.holi = {
     agent: {
+      open: (args: unknown) => open(args),
       start: (args: unknown) => start(args),
-      paste: (id: string, text: string) => paste(id, text),
-      duplicate: (id: string) => duplicate(id),
-      restart: (id: string, geometry: unknown) => restart(id, geometry),
+      send: (args: unknown) => send(args),
+      stop: (id: string) => stop(id),
+      duplicate: (id: string, geometry: unknown) => duplicate(id, geometry),
     },
   } as never
 })
 
-/** A store with a vault open and whatever sessions main has pushed. */
-function storeWith(sessions: AgentSession[] = [], openTabs: string[] = []) {
+/** A store with whatever sessions and terminals main has pushed. */
+function storeWith(sessions: AgentSession[] = [], terminals: AgentTerminal[] = []) {
   const store = createStore()
-  store.set(activeRemoteAtom, REMOTE)
   store.set(agentSessionsAtom, sessions)
-  for (const id of openTabs) store.set(workspaceAtom, (w) => openSession(w, id))
+  store.set(agentTerminalsAtom, terminals)
   return store
 }
 
-/** The session tab showing, if the showing tab is a session at all. */
+/** The agent tab showing, if the showing tab is one at all. */
 const shown = (store: ReturnType<typeof createStore>): string | null => {
   const tab = activeTab(store.get(workspaceAtom))
-  return tab?.kind === 'session' ? tab.id : null
+  return tab?.kind === 'agent' ? tab.id : null
 }
 
-test('going to the agent with no sessions starts one', async () => {
-  const store = storeWith([])
-  store.set(showAgentAtom)
+test('going to the agents opens the list when Holi has none open', async () => {
+  const store = storeWith()
+  await store.set(showAgentsAtom)
 
-  await vi.waitFor(() =>
-    expect(start).toHaveBeenCalledWith(expect.objectContaining({ vaultId: REMOTE })),
+  expect(open).toHaveBeenCalledWith({ cols: 80, rows: 24 })
+  expect(shown(store)).toBe('opened')
+})
+
+test('going to the agents focuses the list that is already open', async () => {
+  const store = storeWith([], [terminal('t-attach', 'aaaaaaaa'), terminal('t-list', null)])
+  await store.set(showAgentsAtom)
+
+  expect(open).not.toHaveBeenCalled()
+  expect(shown(store)).toBe('t-list')
+})
+
+test('going to the agents skips a list terminal that has since attached a session', async () => {
+  // `←` and Enter move a terminal between the list and a session: its title,
+  // not its launch, says which it shows.
+  const store = storeWith(
+    [],
+    [
+      terminal('t-was-list', null, 'check123 (copy)'),
+      terminal('t-now-list', 'aaaaaaaa', '1 awaiting input · claude agents'),
+    ],
   )
+  await store.set(showAgentsAtom)
+
+  expect(open).not.toHaveBeenCalled()
+  expect(shown(store)).toBe('t-now-list')
 })
 
-test('going to the agent opens the current session rather than starting one', () => {
-  const store = storeWith([session({ id: 'a' })])
-  store.set(showAgentAtom)
-
-  expect(start).not.toHaveBeenCalled()
-  expect(shown(store)).toBe('a')
-})
-
-test('going to the agent twice leaves you where it put you', () => {
+test('going to the agents twice leaves you where it put you', async () => {
   // A tab is a place to go: the second press must not undo the first.
-  const store = storeWith([session({ id: 'a' })])
-  store.set(showAgentAtom)
-  store.set(showAgentAtom)
+  const store = storeWith([], [terminal('t-list', null)])
+  await store.set(showAgentsAtom)
+  await store.set(showAgentsAtom)
 
-  expect(shown(store)).toBe('a')
+  expect(shown(store)).toBe('t-list')
   expect(store.get(workspaceAtom).panes[0]!.tabs).toHaveLength(1)
 })
 
-test('an exited session is not somewhere you can be sent to work', async () => {
-  // A dead session is a record. Going to the agent should hand you something you
-  // can type into.
-  const store = storeWith([session({ id: 'a', exited: true })])
-  store.set(showAgentAtom)
-  await vi.waitFor(() => expect(start).toHaveBeenCalled())
+test('opening a session reuses the window Holi opened for it', async () => {
+  const store = storeWith([session({ id: 'aaaaaaaa' })], [terminal('t-a', 'aaaaaaaa')])
+  await store.set(openSessionAtom, 'aaaaaaaa')
+
+  expect(open).not.toHaveBeenCalled()
+  expect(shown(store)).toBe('t-a')
 })
 
-test('a start shows the session it made, and makes only one', async () => {
-  // A reconcile, or an ask sent to a new session, lands you in it: the tab is
-  // opened for a session that exists, after it exists.
-  const store = storeWith([])
-  await store.set(startSessionAtom, { prompt: 'resolve the merge conflict' })
+test('opening a session with no window attaches a new one', async () => {
+  const store = storeWith([session({ id: 'aaaaaaaa' })])
+  await store.set(openSessionAtom, 'aaaaaaaa')
 
-  expect(start).toHaveBeenCalledTimes(1)
-  expect(start).toHaveBeenCalledWith(
-    expect.objectContaining({ prompt: 'resolve the merge conflict' }),
-  )
-  // And it lands you on the new tab.
-  expect(store.get(activeSessionIdAtom)).toBe('spawned')
-  expect(shown(store)).toBe('spawned')
+  expect(open).toHaveBeenCalledWith({ attach: 'aaaaaaaa', cols: 80, rows: 24 })
+  expect(shown(store)).toBe('opened')
 })
 
-test('a live target is pasted into, exactly once and with no submit', async () => {
-  const store = storeWith([session({ id: 'a' }), session({ id: 'b' })])
+test('an ask goes to main unsent, and its window comes forward with the keyboard', async () => {
+  const store = storeWith([session({ id: 'aaaaaaaa' })])
+  const focus = vi.fn()
+  const unregister = registerSessionTerminal('sent', focus)
 
-  const res = await store.set(sendToAgentAtom, { text: 'what is this about?', target: 'b' })
+  const res = await store.set(sendToAgentAtom, { text: 'look at this', target: 'aaaaaaaa' })
 
   expect(res).toEqual({ ok: true })
-  expect(paste).toHaveBeenCalledTimes(1)
-  expect(paste).toHaveBeenCalledWith('b', 'what is this about?')
-  // Main owns the bracketing and refuses to add an Enter; the renderer must not
-  // have reached for `write` and done its own.
-  expect(start).not.toHaveBeenCalled()
-  // …and the tab it landed in is the one showing: an ask that arrives somewhere
-  // you cannot see is an ask you will not answer.
-  expect(store.get(activeSessionIdAtom)).toBe('b')
-  expect(shown(store)).toBe('b')
+  expect(send).toHaveBeenCalledWith({
+    text: 'look at this',
+    target: 'aaaaaaaa',
+    cols: 80,
+    rows: 24,
+  })
+  expect(shown(store)).toBe('sent')
+  expect(focus).toHaveBeenCalled()
+  unregister()
 })
 
-test("a 'new' target spawns, named after the ask, with the ask as its paste", async () => {
-  const store = storeWith([])
+test('a refused ask says why and opens nothing, so the sender keeps the text', async () => {
+  send.mockResolvedValue({ ok: false, message: 'That session has ended. Pick another one.' })
+  const store = storeWith()
 
-  await store.set(sendToAgentAtom, { text: 'Rewrite this paragraph\n\n> the quote', target: 'new' })
+  const res = await store.set(sendToAgentAtom, { text: 'x', target: 'aaaaaaaa' })
 
-  expect(start).toHaveBeenCalledWith(
-    expect.objectContaining({
-      name: 'Rewrite this paragraph\n\n> the quote',
-      paste: 'Rewrite this paragraph\n\n> the quote',
-    }),
-  )
-  // The name is normalised in main (first line, collapsed, capped) and nowhere
-  // else: a second copy of that rule in the renderer would drift.
-  expect(paste).not.toHaveBeenCalled()
-})
-
-test('a target that ended between picking and sending is refused, not dropped', async () => {
-  paste.mockResolvedValue({ ok: false, message: 'That session has ended. Pick another one.' })
-  const store = storeWith([session({ id: 'a' })])
-
-  const res = await store.set(sendToAgentAtom, { text: 'have a look', target: 'a' })
-
-  expect(res.ok).toBe(false)
-  expect(res.message).toBe('That session has ended. Pick another one.')
-  // Nothing moved: the sender still has the text, and no tab opened to show a
-  // failure.
+  expect(res).toEqual({ ok: false, message: 'That session has ended. Pick another one.' })
   expect(shown(store)).toBeNull()
-  expect(store.get(activeSessionIdAtom)).toBeNull()
 })
 
-test('a failed spawn comes back with why', async () => {
-  start.mockResolvedValue({ ok: false, message: 'Claude CLI not found on PATH' })
-  const store = storeWith([])
+test('starting a session opens its window', async () => {
+  const store = storeWith()
+  await store.set(startSessionAtom, { name: 'Tidy' })
 
-  const res = await store.set(sendToAgentAtom, { text: 'have a look', target: 'new' })
-
-  expect(res).toEqual({ ok: false, message: 'Claude CLI not found on PATH' })
+  expect(start).toHaveBeenCalledWith({ name: 'Tidy', cols: 80, rows: 24 })
+  expect(shown(store)).toBe('started')
 })
 
-test('a session waiting on you is not offered as a target', () => {
-  // It is blocked on a dialog of its own, so an ask sent to it waits behind that
-  // dialog at best.
+test('stop goes to main and answers what it said', async () => {
+  const store = storeWith([session({ id: 'aaaaaaaa' })])
+  expect(await store.set(stopSessionAtom, 'aaaaaaaa')).toEqual({ ok: true })
+  expect(stop).toHaveBeenCalledWith('aaaaaaaa')
+})
+
+test('duplicate opens the copy', async () => {
+  const store = storeWith([session({ id: 'aaaaaaaa' })])
+  await store.set(duplicateSessionAtom, 'aaaaaaaa')
+  expect(shown(store)).toBe('copied')
+})
+
+test('an ask may go to any live session not waiting on a question of its own', () => {
   const store = storeWith([
-    session({ id: 'a', name: 'One' }),
-    session({ id: 'b', name: 'Two', state: 'needs-you' }),
-    session({ id: 'c', name: 'Three', state: 'working' }),
+    session({ id: 'a', name: 'one' }),
+    session({ id: 'b', name: 'two', state: 'needs-you' }),
+    session({ id: 'c', name: 'three', state: 'working' }),
   ])
   expect(store.get(askTargetsAtom)).toEqual([
-    { id: 'a', name: 'One' },
-    // Working is fine: a paste lands in the composer mid-turn (measured).
-    { id: 'c', name: 'Three' },
+    { id: 'a', name: 'one' },
+    { id: 'c', name: 'three' },
   ])
 })
 
-test('an exited session is not offered either', () => {
-  const store = storeWith([session({ id: 'a', name: 'One', exited: true })])
-  expect(store.get(askTargetsAtom)).toEqual([])
+test('the default target is the session the showing tab was opened for', () => {
+  const store = storeWith(
+    [session({ id: 'a' }), session({ id: 'b' })],
+    [terminal('t-a', 'a'), terminal('t-b', 'b')],
+  )
+  store.set(workspaceAtom, (w) => openAgentTab(w, 't-a'))
+  expect(store.get(defaultAgentTargetAtom)).toBe('a')
 })
 
-test('the targets are in tab order', () => {
-  const store = storeWith([session({ id: 'a', name: 'One' }), session({ id: 'b', name: 'Two' })])
-  expect(store.get(askTargetsAtom).map((t) => t.id)).toEqual(['a', 'b'])
+test('the default target is a new session when there is none, or it needs you', () => {
+  expect(storeWith().get(defaultAgentTargetAtom)).toBe('new')
+  const waiting = storeWith([session({ id: 'a', state: 'needs-you' })], [terminal('t-a', 'a')])
+  waiting.set(workspaceAtom, (w) => openAgentTab(w, 't-a'))
+  expect(waiting.get(defaultAgentTargetAtom)).toBe('new')
 })
 
-test('the default target is the tab you are looking at', () => {
-  const store = storeWith([session({ id: 'a' }), session({ id: 'b' })])
-  store.set(activeSessionIdAtom, 'b')
-  expect(store.get(defaultAgentTargetAtom)).toBe('b')
-})
-
-test('the default target is a new session when the tab cannot read it', () => {
-  // needs-you is blocked on a dialog and exited is gone; text sent to either
-  // sits unread at best.
-  const store = storeWith([session({ id: 'a', state: 'needs-you' })])
-  store.set(activeSessionIdAtom, 'a')
-  expect(store.get(defaultAgentTargetAtom)).toBe('new')
-
-  const dead = storeWith([session({ id: 'a', exited: true })])
-  expect(dead.get(defaultAgentTargetAtom)).toBe('new')
-})
-
-test('a duplicate lands you on the copy, with its own spawn-time theme', async () => {
-  // A fork is a spawn: main makes it, the renderer shows it and remembers the
-  // mode it was born under.
-  duplicate.mockResolvedValue({ ok: true, id: 'copy' })
-  const store = storeWith([session({ id: 'a' })])
-
-  const res = await store.set(duplicateSessionAtom, 'a')
-
-  expect(res).toEqual({ ok: true })
-  expect(duplicate).toHaveBeenCalledWith('a')
-  expect(shown(store)).toBe('copy')
-  expect(store.get(activeSessionIdAtom)).toBe('copy')
-  expect(store.get(agentModeAtSpawnAtom)).toHaveProperty('copy')
-})
-
-test('a duplicate that main refuses says why, and shows nothing', async () => {
-  duplicate.mockResolvedValue({ ok: false, message: 'Claude Code has not said which…' })
-  const store = storeWith([session({ id: 'a' })])
-
-  const res = await store.set(duplicateSessionAtom, 'a')
-
-  expect(res).toEqual({ ok: false, message: 'Claude Code has not said which…' })
-  expect(shown(store)).toBeNull()
-})
-
-test('a restart is asked of main, at the pane geometry, and lands on the new session', async () => {
-  // The name and the ending are main's; what the renderer adds is the size
-  // the old terminal had and the landing every spawn owes the app.
-  const store = storeWith([session({ id: 'a', name: 'One' })], ['a'])
-
-  const res = await store.set(restartSessionAtom, 'a')
-
-  expect(res).toEqual({ ok: true })
-  expect(restart).toHaveBeenCalledWith('a', {
-    cols: expect.any(Number),
-    rows: expect.any(Number),
-  })
-  expect(store.get(activeSessionIdAtom)).toBe('reborn')
-  expect(shown(store)).toBe('reborn')
-  expect(store.get(agentModeAtSpawnAtom)).toHaveProperty('reborn')
-})
-
-test('a restart refused by main says so, and takes you nowhere', async () => {
-  restart.mockResolvedValue({ ok: false, message: 'That session has ended.' })
-  const store = storeWith([session({ id: 'a', name: 'One' })])
-
-  const res = await store.set(restartSessionAtom, 'a')
-
-  expect(res).toEqual({ ok: false, message: 'That session has ended.' })
-  expect(shown(store)).toBeNull()
-})
-
-test('a rename is the command, pasted, with the name left to type', async () => {
-  // The whole of Holi's rename: there is no shell route, so the command goes
-  // into the session's box, and only the half Holi knows.
-  const store = storeWith([session({ id: 'a', name: 'One' })])
-
-  const res = await store.set(renameSessionAtom, 'a')
-
-  expect(res).toEqual({ ok: true })
-  // The trailing space is the point: the caret lands where the name goes.
-  expect(paste).toHaveBeenCalledWith('a', '/rename ')
-  // …and its tab is the one showing, because the typing happens there.
-  expect(shown(store)).toBe('a')
-})
-
-test('a rename puts the keyboard in the terminal the command landed in', async () => {
-  // The tab was already showing, so nothing becomes visible and nothing would
-  // focus on its own: the name would be typed into the double-clicked tab. The
-  // send asks the terminal for focus directly.
-  const store = storeWith([session({ id: 'a', name: 'One' })], ['a'])
-  const focus = vi.fn()
-  const unregister = registerSessionTerminal('a', focus)
-
-  await store.set(renameSessionAtom, 'a')
-
-  expect(focus).toHaveBeenCalledTimes(1)
-  unregister()
-})
-
-test('a refused send asks nothing for focus', async () => {
-  paste.mockResolvedValue({ ok: false, message: 'That session has ended. Pick another one.' })
-  const store = storeWith([session({ id: 'a', name: 'One' })], ['a'])
-  const focus = vi.fn()
-  const unregister = registerSessionTerminal('a', focus)
-
-  await store.set(sendToAgentAtom, { text: 'have a look', target: 'a' })
-
-  expect(focus).not.toHaveBeenCalled()
-  unregister()
-})
-
-test('a rename refused by main says so, and takes you nowhere', async () => {
-  paste.mockResolvedValue({ ok: false, message: 'That session has ended. Pick another one.' })
-  const store = storeWith([session({ id: 'a', name: 'One' })])
-
-  const res = await store.set(renameSessionAtom, 'a')
-
-  expect(res.ok).toBe(false)
-  expect(shown(store)).toBeNull()
+test('a list tab has no session of its own, so the default falls back to the last one opened', () => {
+  const store = storeWith([session({ id: 'a' })], [terminal('t-a', 'a'), terminal('t-list', null)])
+  store.set(workspaceAtom, (w) => openAgentTab(w, 't-list'))
+  expect(store.get(defaultAgentTargetAtom)).toBe('a')
 })

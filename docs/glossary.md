@@ -91,20 +91,22 @@ A rule that rolls a completed task forward to its next occurrence by rewriting i
 
 ### Agent
 
-Claude Code running as an interactive `claude` process in a PTY, with the vault clone as its cwd.
-"The agent" is the set of a vault's sessions.
+Claude Code, run by the vault's own Claude Code supervisor, with the vault clone as its cwd. "The
+agent" is the set of a vault's sessions.
 
 ### Session
 
-One live `claude` process in a vault: one terminal, one conversation, shown as a **session tab**.
-Its name and its state (`needs-you`, `working`, `idle`) come from Claude Code itself. Closing the
-tab does not end the session; a vault switch does. See [agent-sessions](features/agent-sessions.md).
+One Claude Code background session in a vault, named by its job id (D110): one conversation, run
+by the supervisor whether or not a window shows it. Holi's **agent tabs** are terminals onto
+sessions: the agent list, or one session attached. Its name and its state (`needs-you`, `working`,
+`idle`) come from Claude Code itself. Closing a tab detaches; Stop, a vault switch or quitting stops
+it, and it stays in the agent list. See [agent-sessions](features/agent-sessions.md).
 
 ### Ask
 
 Text sent from Holi to a session (a selection, a task, a mail thread). It lands in the input as a
-bracketed paste with no Enter, so Holi never submits a draft the user was typing. A reconcile is the
-exception: it submits its instruction as the first turn of its own session.
+bracketed paste with no Enter, so Holi never submits a draft the user was typing. A reconcile or a
+stuck push is the exception: it submits its instruction as the first turn of its own session.
 
 ### Agent surface
 

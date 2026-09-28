@@ -165,12 +165,13 @@ export interface GoogleOpsServer {
   stop(): Promise<void>
   port(): number | null
   /**
-   * A bearer bound to one vault, for one agent session (D87).
+   * A bearer bound to one vault (D87), minted once per vault per app run,
+   * written into that vault's `holi.env`, and revoked when Holi leaves it.
    *
-   * Per session rather than per app run, for two reasons. An agent session
-   * **outlives a vault switch**, so resolving by "whatever is active" would
-   * have a backgrounded agent read a different vault's mail. And a token that
-   * dies with its session does not stay valid for as long as the app is open.
+   * Bound to a vault rather than resolved by "whatever is active": a
+   * background session **outlives a vault switch**, and must not then read a
+   * different vault's mail. Revoked on leave, so a token does not stay valid
+   * for a vault Holi is no longer on.
    */
   mintToken(remote: string): string
   revoke(token: string): void

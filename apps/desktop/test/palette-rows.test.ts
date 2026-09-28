@@ -34,16 +34,15 @@ const rows = (over: Partial<VaultSnapshot> = {}): PaletteRow[] =>
   buildRows({
     snapshot: snapshot(over),
     appPaths: ['Work/plan.app'],
-    sessions: [
-      { id: 's1', name: 'refactor', exited: false },
-      { id: 's2', name: 'old', exited: true },
-    ],
+    // Only live sessions are listed at all (D110): `s2` has stopped.
+    sessions: [{ id: 's1', name: 'refactor' }],
+    terminals: [{ id: 't1', label: 'Agents' }],
   })
 
 const keys = (list: readonly PaletteRow[]) => list.map((r) => `${r.kind}:${r.key}`)
 
 describe('buildRows', () => {
-  it('lists docs, files, apps, live sessions and the five surfaces; hides hidden paths', () => {
+  it('lists docs, files, apps, live sessions, agent tabs and the five surfaces; hides hidden paths', () => {
     expect(keys(rows())).toEqual([
       'path:notes/alpha.md',
       'path:notes/beta.md',
@@ -51,6 +50,7 @@ describe('buildRows', () => {
       'path:notes/deck.pdf',
       'app:Work/plan.app',
       'session:s1',
+      'terminal:t1',
       'surface:board',
       'surface:agenda',
       'surface:mail',
@@ -153,17 +153,17 @@ describe('openTabRows', () => {
     { kind: 'note', path: 'notes/alpha.md' },
     { kind: 'app', path: 'Work/plan.app' },
     { kind: 'board' },
-    { kind: 'session', id: 's1' },
+    { kind: 'agent', id: 't1' },
   ] as const
 
   it('lists the open tabs most recently used first, without the current one', () => {
     const recents: RecentEntry[] = [
       { kind: 'surface', key: 'board' },
-      { kind: 'session', key: 's1' },
+      { kind: 'terminal', key: 't1' },
       { kind: 'path', key: 'notes/alpha.md' },
     ]
     const ranked = openTabRows(rows(), [...tabs], { kind: 'board' }, recents)
-    expect(keys(ranked)).toEqual(['session:s1', 'path:notes/alpha.md', 'app:Work/plan.app'])
+    expect(keys(ranked)).toEqual(['terminal:t1', 'path:notes/alpha.md', 'app:Work/plan.app'])
     expect(ranked.map((r) => r.recent)).toEqual([true, true, false])
   })
 

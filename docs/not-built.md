@@ -11,7 +11,7 @@ folding its reasoning into the owning page.
 ## Agent
 
 **Telling a live session something unprompted.** Holi has no channel into a running Claude Code
-session except its PTY, where anything written lands in the user's input box. The pre-commit
+session except a terminal attached to it, where anything written lands in the user's input box. The pre-commit
 transforms wanted to tell the agent what they rewrote: the runner supports a `notify` callback and
 main leaves it unwired. The substitute is `.holi/state/hooks.local.log`, which the agent reads when
 asked. Also absent: surfacing a hook failure in the sync status bar when no session is open.

@@ -58,8 +58,7 @@ async function vault(settings: Record<string, boolean> = {}): Promise<string> {
 
   resetBreaker()
   const server = createHookServer({
-    onTurnStart: () => {},
-    onTurnEnd: () => {},
+    onJobTurn: () => {},
     log: () => {},
     // One vault in these; the server routes by the caller's token (D87).
     opsFor: () =>
@@ -194,8 +193,7 @@ describe('nothing here can stop a commit', () => {
     await git(dir, ['config', 'user.name', 'Holi Test'])
 
     const server = createHookServer({
-      onTurnStart: () => {},
-      onTurnEnd: () => {},
+      onJobTurn: () => {},
       log: () => {},
       // One vault in these; the server routes by the caller's token (D87).
       opsFor: () =>

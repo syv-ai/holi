@@ -12,7 +12,7 @@ Holi is one desktop app. There is no server, no database and no hosted service.
 │  editor · board · drawers · views          vault store (walk, watcher)  │
 │              │                             sync engine (commit, pull,   │
 │              │  tRPC over IPC                push, reconcile)           │
-│  preload / contextBridge ◄──────────────── PTY host → `claude` sessions │
+│  preload / contextBridge ◄──────────────── PTYs → `claude agents|attach`│
 │                                            GitHub · Google · Typst      │
 └────────────────────────────────────────────────────┬────────────────────┘
                                                      │ git over HTTPS, REST
@@ -75,8 +75,10 @@ See [vaults-sync](features/vaults-sync.md), [history](features/history.md),
 
 ## 5. The agent
 
-Main spawns `claude` in a `node-pty` PTY with the vault clone as cwd, and the renderer draws it in
-xterm. A vault can run several sessions, each an ordinary tab. What a session is doing is read from
+Every session is a Claude Code background session (D110): the vault's supervisor runs it, its job
+id names it, and it keeps running with no window open. Main opens terminals onto them in `node-pty`
+PTYs (`claude agents` for the list, `claude attach <id>` for one session) with the vault clone as
+cwd, and the renderer draws each in xterm as an ordinary tab. What a session is doing is read from
 Claude Code itself (its session listing and turn hooks), never inferred from terminal output.
 
 Each vault's agent gets its own `CLAUDE_CONFIG_DIR`, so it inherits the vault's committed `.claude/`,
