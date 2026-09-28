@@ -30,7 +30,6 @@ import {
   brokenTasksAtom,
   createTaskAtom,
   filterAtom,
-  laneLabel,
   laneOf,
   laneOrder,
   matchesFilter,
@@ -208,13 +207,21 @@ export function BoardView(): React.JSX.Element {
                   // so every cell can take the drop. (Animating every group's
                   // height left stale pixel heights that clipped cards.)
                   const group = (
-                    <div
-                      {...drag.target(lane, column.status)}
-                      className={cn('mb-1.5 rounded-2xl p-1 motion-respond', gap && 'bg-accent/40')}
-                    >
-                      <p className="px-1.5 pt-3 pb-2 text-xs font-medium break-words text-muted-foreground">
-                        {laneLabel(lane)}
-                      </p>
+                    <div {...drag.target(lane, column.status)} className="mb-1.5 p-1">
+                      {/* The vault root's lane has no name to show. The lane a
+                          drag aims at lights its name, not its surface. */}
+                      {lane ? (
+                        <p
+                          className={cn(
+                            'px-1.5 pt-3 pb-2 text-xs font-medium break-words motion-respond',
+                            gap ? 'text-foreground' : 'text-muted-foreground',
+                          )}
+                        >
+                          {lane}
+                        </p>
+                      ) : (
+                        <div className="h-2" />
+                      )}
                       <div className="flex min-h-6 flex-col gap-2.5">
                         <AnimatePresence initial={false}>
                           {withGap(cards, drag.isFolded, gap?.index ?? null).map((item) =>
