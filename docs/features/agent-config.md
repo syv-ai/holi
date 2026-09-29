@@ -94,7 +94,8 @@ additions are commands in a directory prepended to `PATH`, plus skills that docu
 
 **What is taken away.** Claude Code tools and bundled skills with no job in a vault are off, from
 `settings.json`: `permissions.deny` holds `NotebookEdit`, plan mode, worktrees, `ReportFindings`,
-`EndConversation` and `SendFeedback` (which reaches Anthropic, not Holi); `skillOverrides` turns
+`EndConversation`, `SendFeedback` (which reaches Anthropic, not Holi) and the todo tools
+(`TaskCreate`, `TaskGet`, `TaskList`, `TaskUpdate`, whose tasks are not the vault's `task.*.md`); `skillOverrides` turns
 off the code-work and Claude Code configuration skills (`code-review`, `simplify`, `init`, `run`,
 `update-config` and the like) and `import-memory`. `schedule`, `loop` and `dataviz` stay. A deny
 outranks an allow in every scope, so getting a tool back means removing it from the vault's

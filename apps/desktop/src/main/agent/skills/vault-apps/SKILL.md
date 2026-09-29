@@ -15,8 +15,10 @@ month". The user does not have to know anything about how it works; you write th
 files and it appears in their file tree.
 
 An app is for the people who use this vault, inside Holi. It need not read the
-vault (a calculator is fine), but a page meant for someone outside the vault is
-not a vault app: they would never see it.
+vault (a calculator is fine). Someone outside the vault would never see it, so
+when the user wants to share one, build the app first and then, if you have the
+Artifact tool, publish an artifact as its shareable copy: the same page with the
+data it showed written in, since an artifact cannot reach the vault.
 
 ## Where it goes
 
@@ -192,6 +194,11 @@ _be_ text on a dark background. When you want the brand colour on a number, a
 link or a label, reach for `--brand`.
 
 ```css
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
 body {
   background: var(--background);
   color: var(--foreground);
@@ -217,6 +224,61 @@ A text button is `color: var(--brand)` with no background. Mixing the two —
 `color: var(--primary)` on the page background — is the one combination that
 reliably comes out unreadable.
 
+## Fitting the pane
+
+The tab is the page's whole viewport, and it is whatever size the user's pane
+is: anywhere from 240px wide to the full window, and it changes when they split
+a pane or drag a divider. Build for every width, never for a screen.
+
+**Never scroll sideways.** A horizontal scrollbar means something is wider than
+the pane, and it is always one of these:
+
+- **Padding added to a width.** `box-sizing: border-box` on everything (as in the
+  styles above), so `width: 100%` plus padding is still 100%.
+- **A fixed width.** No `width` in pixels wider than about 200px, and no `100vw`
+  (it counts a scrollbar the pane may have). Use `%`, `fr`, `max-width` and
+  `min()`: `width: min(40rem, 100%)`.
+- **Columns that do not wrap.** A grid of cards is
+  `grid-template-columns: repeat(auto-fit, minmax(min(14rem, 100%), 1fr))`, which
+  goes from one column to many on its own. A row of things is
+  `display: flex; flex-wrap: wrap`.
+- **Text that will not break.** A flex or grid child holding text needs
+  `min-width: 0`, or its longest word holds the column open. Paths and URLs need
+  `overflow-wrap: anywhere`; a one-line label gets
+  `overflow: hidden; text-overflow: ellipsis; white-space: nowrap`.
+- **A chart with a pixel size.** An SVG gets a `viewBox` and
+  `width: 100%; height: auto`. A canvas is sized from its container's
+  `clientWidth` when it draws, and redrawn on `resize`.
+- **A wide table.** Fewer columns first, and cells that wrap. If it is still
+  wider than the pane, put it in a `div` with `overflow-x: auto`, so the table
+  scrolls and the page does not.
+
+**Fit the height, and scroll inside it.** A page that runs a little past the
+bottom of the pane scrolls for nothing. Make the app one screen that fills the
+pane, with the one part that can grow (a list, a table) scrolling inside it:
+
+```css
+html,
+body {
+  height: 100%;
+}
+body {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+.grows {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+```
+
+Charts take a share of the height rather than a fixed one:
+`height: clamp(10rem, 35vh, 22rem)` (`vh` is the pane's height here). Keep the
+page's own padding modest (`1rem`): two rems on each side is a quarter of a narrow
+pane.
+
 ## A whole app
 
 `Vault dashboard.app/index.html`:
@@ -227,6 +289,11 @@ reliably comes out unreadable.
   <head>
     <meta charset="utf-8" />
     <style>
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+      }
       body {
         background: var(--background);
         color: var(--foreground);
@@ -234,7 +301,7 @@ reliably comes out unreadable.
           14px/1.5 system-ui,
           sans-serif;
         margin: 0;
-        padding: 2rem;
+        padding: 1rem;
       }
       .n {
         color: var(--brand);
@@ -244,6 +311,7 @@ reliably comes out unreadable.
       .err {
         color: var(--destructive);
         white-space: pre-wrap;
+        overflow-wrap: anywhere;
       }
       button {
         all: unset;
@@ -291,6 +359,10 @@ reliably comes out unreadable.
 - **Open it: `holi app open <path>`.** Then say what it should show, so the
   user can tell you when it does not — you have still never seen it render, so
   do not claim to have looked at it.
-- If they already had it open, tell them to reload the tab (see above).
+- **Check it fits the pane** (above): nothing with a pixel width, grids that
+  wrap, long text that breaks, and one scrolling region rather than a page that
+  scrolls. Ask the user to narrow the pane and say whether anything scrolls
+  sideways.
+- If they already had it open, `holi app open` again reloads it (see above).
 - Ask what the user wants it to answer before adding a second screen to it. A
   small app that answers one question beats a dashboard nobody reads.

@@ -103,7 +103,8 @@ function entryFor(rawName: string): string {
 <meta charset="utf-8" />
 <title>${name}</title>
 <style>
-  body { font: 16px/1.5 system-ui, sans-serif; padding: 2rem; }
+  *, *::before, *::after { box-sizing: border-box; }
+  body { font: 16px/1.5 system-ui, sans-serif; margin: 0; padding: 1rem; }
 </style>
 <h1>${name}</h1>
 <p>Scaffolded by <code>holi app init</code>. Replace this with the app.</p>

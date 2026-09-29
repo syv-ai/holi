@@ -291,10 +291,11 @@ const SETTINGS_JSON =
         allow: ['Bash(holi pdf comments:*)'],
         // Claude Code tools with no job in a vault: notebooks, plan mode,
         // worktrees (one working tree is what sync assumes), code-review
-        // reporting, and SendFeedback, which reaches Anthropic rather than
-        // Holi (the holi-feedback skill is the route to Holi). Merged like
-        // `ask`. A deny outranks an allow in every scope, so a vault that
-        // wants one back removes it here.
+        // reporting, SendFeedback, which reaches Anthropic rather than Holi
+        // (the holi-feedback skill is the route to Holi), and the todo tools,
+        // whose "tasks" are not the vault's `task.*.md`. TaskStop stays: it
+        // stops background shells. Merged like `ask`. A deny outranks an allow
+        // in every scope, so a vault that wants one back removes it here.
         deny: [
           'NotebookEdit',
           'EnterPlanMode',
@@ -304,6 +305,10 @@ const SETTINGS_JSON =
           'ReportFindings',
           'SendFeedback',
           'EndConversation',
+          'TaskCreate',
+          'TaskGet',
+          'TaskList',
+          'TaskUpdate',
         ],
       },
       /**
