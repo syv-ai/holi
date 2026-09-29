@@ -29,7 +29,7 @@ import { Button, IconButton } from '@/primitives'
 import { trpc } from '../../lib/trpc'
 import { appPathsAtom, closeAppAtom } from '../../state/apps'
 import { activeModeAtom } from '../../state/color-scheme'
-import { openNoteTabAtom } from '../../state/panes'
+import { appOpensAtom, openNoteTabAtom } from '../../state/panes'
 import { activeRemoteAtom } from '../../state/vaults'
 
 function isAppMethod(value: unknown): value is AppMethod {
@@ -50,6 +50,7 @@ export function AppFrame({ path }: { path: string }): React.JSX.Element {
   const openNote = useSetAtom(openNoteTabAtom)
   const closeApp = useSetAtom(closeAppAtom)
   const [reloads, setReloads] = useState(0)
+  const opens = useAtomValue(appOpensAtom)[path] ?? 0
   const frameRef = useRef<HTMLIFrameElement>(null)
   const exists = appPaths.includes(path)
 
@@ -129,7 +130,8 @@ export function AppFrame({ path }: { path: string }): React.JSX.Element {
         // Remounting is the reload: an app holds nothing across one (its origin
         // is opaque, so there is no storage to keep), so a fresh document IS the
         // fresh start, and it is the only way a frame sheds what it has loaded.
-        key={reloads}
+        // The agent's `holi app open` reloads it the same way.
+        key={`${reloads}:${opens}`}
         ref={frameRef}
         // The mode in force goes in the URL, since main themes the document and
         // cannot see the renderer. A mode change reloads the frame.

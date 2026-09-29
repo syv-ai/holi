@@ -195,18 +195,25 @@ is no index and nothing to keep in sync — that is the point.
 
 ## Making a task from an event or thread
 
-Write an ordinary task file (`task.<slug>.md`, per `AGENTS.md`) and put the link
-in the body:
+Write an ordinary task file with the using-tasks skill, and put the link in the
+body:
 
 ```markdown
 ---
-title: Prepare the Q2 review
 status: todo
-due: 2026-08-04
+due: 2026-08-04T11:00
 ---
+
+# Prepare the Q2 review
 
 [Q2 review](https://calendar.google.com/...)
 ```
+
+**Convert the time first.** An event's `start` carries a UTC offset
+(`2026-08-04T09:00:00Z`), and a task's `due` is local wall-clock time with none.
+Copied across as it is, a meeting at 11:00 in Copenhagen becomes a task due at
+09:00. Convert to this machine's local time (`date` tells you its zone), then
+drop the offset. An all-day event's `start` is already a date.
 
 ## Rules
 

@@ -82,7 +82,11 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
 - The injected palette must be complete. Injecting only the vault's overrides gives an unthemed
   vault `:root{}` and an unreadable app. A test pins that every themeable token has a base value.
 - Only local authorship opens a tab (`holi app open`). An app arriving by sync never opens itself.
-- Reload is manual. Auto-reload fires on the half-written state while the agent is still writing.
+- Reload is explicit, never automatic: the ⟳ button, or the agent's `holi app open` on an app
+  already open, run once it has finished writing. Auto-reload fires on the half-written state
+  while the agent is still writing.
+- No `allow-forms`: a form's submission is blocked before its submit handler runs, so the check
+  flags `<form>` and the skill says to handle the click and Enter instead.
 - Personal apps, when they exist, are told apart by location (`userData`), not by the `.local.`
   marker, which is a basename rule and cannot mark a directory.
 - An app inside another app is just files of the outer one; otherwise the outer app could serve

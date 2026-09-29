@@ -53,8 +53,8 @@ Omit an optional field to leave it unset — the template reads
 ## Recipe
 
 1. Choose a template (default `plain`) and read its `template.json` for the fields.
-2. Write a wrapper `.typ` in a scratch dir **outside the vault** (PDFs are outputs,
-   never committed). Use ABSOLUTE paths so `--root /` can read everything:
+2. Write a wrapper `.typ` in a scratch dir **outside the vault**. Use ABSOLUTE
+   paths so `--root /` can read everything:
 
    ```typ
    #import "/ABS/VAULT/.holi/document-templates/plain/template.typ": doc
@@ -73,5 +73,10 @@ Omit an optional field to leave it unset — the template reads
    "$TYPST_BIN" compile "$DIR/wrapper.typ" "$DIR/the-note.pdf" --root /
    ```
 
-4. Report the absolute path of the resulting PDF to the user. Do not move it into
-   the vault.
+4. Report the absolute path of the resulting PDF to the user.
+
+**Where the PDF goes.** Outside the vault by default: the note is the source and a
+PDF of it is an output, so committing it keeps a copy that goes stale. Put it in
+the vault, next to the note, only when the user wants it there, typically so
+people can read or comment on it in Holi (the pdf-comments skill reads those
+comments back). A PDF in the vault is committed and synced like any file.

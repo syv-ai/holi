@@ -175,6 +175,14 @@ export function openApp(workspace: Workspace, path: string): Workspace {
   return openTab(workspace, { kind: 'app', path })
 }
 
+/**
+ * How many times the agent has asked for each app since launch, by bundle path.
+ * `holi app open` on an app that is already open reloads it, so an agent that
+ * just edited one shows the new version with the command it already knows.
+ * The frame's own reload button counts separately.
+ */
+export const appOpensAtom = atom<Record<string, number>>({})
+
 /** Show one agent terminal, or focus its tab if already open. Deduped by id:
  *  two views over one PTY would both be attached to it. */
 export function openAgentTab(workspace: Workspace, id: string): Workspace {

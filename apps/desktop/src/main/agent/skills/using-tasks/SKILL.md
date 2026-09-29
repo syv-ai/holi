@@ -99,9 +99,14 @@ recurring task advances `due` by the rule, moves `reminder` by the same number o
 days (keeping its own time of day), and sets `status` back to `todo`. A recurring
 task with no `due` never rolls — there is nothing to advance from.
 
-Complete a recurring task by setting `status: done` **through the app or by asking
-for it to be completed**, not by writing `done` into the file: writing it by hand
-records the task as finished instead of rolling it forward.
+**Complete a task with `holi task done <path>`**, never by writing `done` into the
+file. On a recurring task, writing `done` by hand ends the series instead of
+rolling it forward; the command applies the same rule as the board's checkbox
+and prints what it wrote. On any other task it simply sets `status: done`.
+
+Outside Holi, where the command is not there, roll it forward by hand: `due` to
+the rule's next date on or after today, `reminder` moved by the same number of
+days, `status` left at `todo`.
 
 ## Where a task lives
 

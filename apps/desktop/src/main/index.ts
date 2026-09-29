@@ -44,6 +44,7 @@ import { installGoogleCli } from './google/cli'
 import { installHoliCli } from './agent/cli'
 import { createAgentOps } from './agent/ops'
 import { initAppOp, openAppOp } from './apps/app-ops'
+import { taskDoneOp } from './vault/task-done'
 import {
   describeUpdate,
   updateConflictPrompt,
@@ -65,7 +66,7 @@ import {
   textOnly,
 } from './google/gmail'
 import { registerIpc } from './ipc'
-import { createRouter } from './router'
+import { createRouter, localToday } from './router'
 import { createVaultHost } from './vault/active-vault'
 import { VaultRegistry, vaultRoot } from './vault/registry'
 import { scanVault } from './vault/vault-store'
@@ -544,6 +545,11 @@ async function main(): Promise<void> {
           const root = await rootFor(remote)
           if (root === null) return { ok: false, error: 'no vault is open' }
           return pdfCommentsInVault(root, path)
+        },
+        taskDone: async (path) => {
+          const root = await rootFor(remote)
+          if (root === null) return { ok: false, error: 'no vault is open' }
+          return taskDoneOp(root, path, localToday())
         },
       }),
   })

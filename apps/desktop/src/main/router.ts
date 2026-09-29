@@ -215,7 +215,7 @@ export interface RouterDeps {
 /** `YYYY-MM-DD` in the machine's own timezone. `toISOString().slice(0, 10)`
  * would be the UTC date, which is a different day for much of the world for
  * much of the day. */
-function localToday(): string {
+export function localToday(): string {
   const d = new Date()
   const pad = (n: number) => String(n).padStart(2, '0')
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`

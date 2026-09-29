@@ -165,6 +165,14 @@ function boundaries(source, ext) {
         'API is holi.docs.list, holi.docs.read, holi.tasks.list and holi.open.',
     ])
   }
+  if (/<form\b/i.test(code) || /createElement\(\s*["']form["']/.test(code)) {
+    found.push([
+      ERROR,
+      'a form never submits in an app: the frame is sandboxed without forms, so ' +
+        'submission is blocked before a submit handler runs, and nothing happens. ' +
+        'Handle the button click, and Enter as a keydown on the input, instead.',
+    ])
+  }
   if (/<script[^>]*\bsrc\s*=\s*["'][^"']*(?:holi|bridge)[^"']*["']/i.test(source)) {
     found.push([
       ERROR,

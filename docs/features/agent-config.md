@@ -54,7 +54,8 @@ finds itself with `Glob`, `grep` and `git`.
 - **`.claude/settings.json`**: merged key-wise by `settingsWithRequired`. Holi adds its hooks, each
   only where its script is (a hook a later release adds is wired when its script arrives)
   (the turn bracket's `turn-signal.mjs` among them, replacing the inline `curl` older vaults
-  carry), `permissions.ask` and `permissions.allow` rules, `disableClaudeAiConnectors`,
+  carry), `permissions.ask`, `permissions.allow` and `permissions.deny` rules, each
+  `skillOverrides` entry that is absent, `disableClaudeAiConnectors`,
   `autoMemoryEnabled`, `awaySummaryEnabled` and `promptSuggestionEnabled` (all `false`: no
   session recap, no next-prompt suggestion) and `worktree.bgIsolation: "none"` (only when absent,
   so sessions edit the vault rather than a worktree of it), the inline `statusLine`
@@ -82,12 +83,22 @@ write).
 **Tool surface.** Native `Read`, `Write`, `Edit`, `Bash`, `Glob`, `Grep`. No MCP server. Holi's
 additions are commands in a directory prepended to `PATH`, plus skills that document them:
 
-- `holi`: `app open`, `app init`, `skills update`, `pdf comments <path> [--json]`. It posts to the
-  hook server with the token in `holi.env`. All reversible or read-only, so none is gated.
+- `holi`: `app open` (which reloads an app already open), `app init`, `task done <path>`,
+  `skills update`, `pdf comments <path> [--json]`. It posts to the hook server with the token in
+  `holi.env`. All reversible or read-only, so none is gated.
 - `holi-google`: mail and calendar through main, which holds the tokens ([google.md](google.md)).
 - `$TYPST_BIN` for PDF export ([pdf.md](pdf.md)).
 - Shipped skills: `memory`, `using-tasks`, `vault-apps`, `theme`, `gmail-calendar`, `md-to-pdf`,
-  `pdf-comments`.
+  `pdf-comments`, `holi-feedback` (a GitHub issue on syv-ai/holi, labelled `vault-assistant`,
+  through `.github/ISSUE_TEMPLATE/vault-assistant.yml`).
+
+**What is taken away.** Claude Code tools and bundled skills with no job in a vault are off, from
+`settings.json`: `permissions.deny` holds `NotebookEdit`, plan mode, worktrees, `ReportFindings`,
+`EndConversation` and `SendFeedback` (which reaches Anthropic, not Holi); `skillOverrides` turns
+off the code-work and Claude Code configuration skills (`code-review`, `simplify`, `init`, `run`,
+`update-config` and the like) and `import-memory`. `schedule`, `loop` and `dataviz` stay. A deny
+outranks an allow in every scope, so getting a tool back means removing it from the vault's
+`settings.json`; a skill comes back by setting it to `"on"`, which the merge leaves alone.
 
 **Permissions.** Claude Code's native prompts are the permission UX. The seeded rules ask for
 `curl`, `wget` and the undoable `holi-google` writes, and allow `holi pdf comments`. Sending mail is

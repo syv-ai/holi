@@ -14,6 +14,10 @@ tasks are open per project", "show me every note tagged draft", "a burndown of t
 month". The user does not have to know anything about how it works; you write the
 files and it appears in their file tree.
 
+An app is for the people who use this vault, inside Holi. It need not read the
+vault (a calculator is fine), but a page meant for someone outside the vault is
+not a vault app: they would never see it.
+
 ## Where it goes
 
 An app is a folder whose name ends in `.app`, and it can go anywhere in the vault.
@@ -105,6 +109,10 @@ These are not oversights — build within them rather than around them.
   Reloading the tab starts the app from scratch, so it must be useful holding
   nothing: derive the view from the vault every time rather than keeping state.
   In-memory state within one session (a selected filter, a sort order) is fine.
+- **It cannot submit a form.** The frame is sandboxed without forms, so a
+  `<form>` is blocked before its submit handler runs, and pressing Enter or the
+  button does nothing at all. Use a plain button's click, and a `keydown` on the
+  input for Enter.
 - **It cannot read the agent's files.** `AGENTS.md`, `CLAUDE.md`, `MEMORY.md`,
   `USER.local.md` and everything under `.claude/` **and `memory/`** are refused —
   `holi.docs.read` rejects, and they are absent from `holi.docs.list()`. The
@@ -124,14 +132,15 @@ You have two things and no more: a check that runs on every file you write, and
 a command that opens the app.
 
 ```sh
-holi app open <path>        # opens (or focuses) the app's tab in Holi
+holi app open <path>        # opens the app's tab in Holi, or reloads it if open
 holi app init <path>        # scaffolds <path>, a folder ending in .app
 ```
 
 **The check speaks on its own.** Every time you write a file inside a `.app`
 folder, a `vault-app check` runs and tells you what will not work — a
 syntax error and its line, a `.ts` file that has no bundler to build it, a
-`localStorage` call that will throw, a missing manifest. It never blocks a
+`localStorage` call that will throw, a `<form>` that will never submit, a
+missing manifest. It never blocks a
 write and it says nothing at all when there is nothing wrong, so **if it is
 quiet, that is the answer**.
 
@@ -158,13 +167,13 @@ legible in the page itself:
 ## Editing an app that is already open
 
 **Your edit does not appear until the tab is reloaded**, and there is no
-auto-reload — deliberately, because writing `index.html` and then `app.js` would
+auto-reload, deliberately: writing `index.html` and then `app.js` would
 otherwise reload on the half-written state and show a broken app.
 
-So whenever you change an app the user may already have open, tell them: _reload
-it with the ⟳ button at the top right of the tab_. Otherwise they are looking at
-the old version while you describe the new one, and you will both conclude the
-fix did not work.
+So when you have finished changing an app, run `holi app open <path>` again. On
+an app that is already open it reloads the tab, so the user sees the new
+version. Outside Holi, where the command is not there, ask them to reload it
+with the ⟳ button at the top right of the tab.
 
 ## Styling
 

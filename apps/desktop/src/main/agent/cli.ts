@@ -51,12 +51,15 @@ usage() {
   cat >&2 <<'USAGE'
 usage: holi <command>
 
-  app open <path>               open a finished app in a tab
+  app open <path>               open a finished app in a tab, or reload it
+                                if it is already open
   app init <path>               scaffold <path> (a folder ending in .app)
   skills update                 bring this release's skills and hooks into the
                                 vault, merged with its own changes
   pdf comments <path> [--json]  print a vault PDF's comments: page, mark,
                                 marked text, author, dates and replies
+  task done <path>              complete a task file; a recurring one rolls
+                                forward to its next occurrence
 
 An app is a folder ending in .app, anywhere in the vault, e.g. Finance/Budget.app.
 It is finished when it has app.yaml next to index.html. Write the manifest LAST:
@@ -110,6 +113,17 @@ case "\$cmd" in
           echo "holi skills update: \$(cat "\$body")" >&2
           exit 1
         fi
+        ;;
+      *) usage ;;
+    esac
+    ;;
+  task)
+    sub="\${1:-}"
+    [ $# -gt 0 ] && shift
+    case "\$sub" in
+      done)
+        [ $# -ge 1 ] || { echo "holi task done <path>" >&2; exit 2; }
+        post task/done --data-urlencode "path=\$1"
         ;;
       *) usage ;;
     esac

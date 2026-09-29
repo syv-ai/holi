@@ -12,7 +12,14 @@ import type { SyncState } from '../../../main/vault/active-vault'
 import type { HeldBackFile } from '../../../main/vault/large-files'
 import { flushAllBuffers } from '../lib/buffer-registry'
 import { trpc } from '../lib/trpc'
-import { closeTabsForPaths, openApp, retargetTab, retargetTabs, workspaceAtom } from './panes'
+import {
+  appOpensAtom,
+  closeTabsForPaths,
+  openApp,
+  retargetTab,
+  retargetTabs,
+  workspaceAtom,
+} from './panes'
 import { openTaskAtom } from './view'
 
 type JotaiStore = ReturnType<typeof createStore>
@@ -194,9 +201,10 @@ export function subscribeToVault(store: JotaiStore): () => void {
   })
   // `holi app open <id>`, typed by the agent. Local authorship only: see the
   // channel's own comment for why an app appearing in the snapshot does not
-  // open anything.
+  // open anything. An app already open reloads (`appOpensAtom`).
   const offAppOpen = window.holi.apps.onOpen((bundle) => {
     store.set(workspaceAtom, (w) => openApp(w, bundle))
+    store.set(appOpensAtom, (n) => ({ ...n, [bundle]: (n[bundle] ?? 0) + 1 }))
   })
   return () => {
     offSnapshot()
