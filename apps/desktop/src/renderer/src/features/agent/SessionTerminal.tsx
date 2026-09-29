@@ -220,9 +220,9 @@ export function SessionTerminal({
       className={cn('relative min-h-0 flex-1 bg-background', !visible && 'hidden')}
     >
       {/* The gutter is the inset, not padding: xterm measures the box it is
-          opened in, and an inset box measures what it is. 16px either side,
-          8px above and below. */}
-      <div ref={mountRef} className="absolute inset-x-4 inset-y-2" />
+          opened in, and an inset box measures what it is. 24px either side,
+          16px above and below. */}
+      <div ref={mountRef} className="absolute inset-x-6 inset-y-4" />
     </div>
   )
 }

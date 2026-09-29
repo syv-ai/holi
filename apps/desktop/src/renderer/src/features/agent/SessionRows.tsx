@@ -32,7 +32,12 @@ import {
   IconButton,
   Tooltip,
 } from '@/primitives'
-import { agentIndicator, contextColour, sessionsWorthAsking } from '@/lib/agent-notices'
+import {
+  agentIndicator,
+  contextColour,
+  needsYouIcon,
+  sessionsWorthAsking,
+} from '@/lib/agent-notices'
 import { cn } from '@/lib/cn'
 import { activeSessionAtom, agentSessionsAtom, type AgentSession } from '@/state/agent'
 import {
@@ -74,6 +79,7 @@ export function SessionRows(): React.JSX.Element | null {
         const indicator = agentIndicator(session)
         const percent = session.contextPercent
         const colour = percent === undefined ? null : contextColour(percent)
+        const NeedsYou = session.state === 'needs-you' ? needsYouIcon(session.waitingFor) : null
         return (
           <ContextMenu key={session.id}>
             <ContextMenuTrigger asChild>
@@ -108,11 +114,14 @@ export function SessionRows(): React.JSX.Element | null {
                     </span>
                     <span className="min-w-0 flex-1 truncate text-left">{session.name}</span>
                     {/* What it waits for, because a dot alone cannot say WHAT,
-                        and that is the whole reason to walk over to it.
-                        Coloured text on no background. */}
-                    {session.state === 'needs-you' && (
-                      <span className="shrink-0 text-xs text-orange-400">
-                        {session.waitingFor ?? 'needs you'}
+                        and that is the whole reason to walk over to it. An
+                        icon, with the words in the tooltip. Coloured, on no
+                        background. Wrapped, because a bare svg child would
+                        switch on the button's own icon padding and move the
+                        dot. */}
+                    {NeedsYou && (
+                      <span className="flex shrink-0">
+                        <NeedsYou aria-hidden="true" className="size-3.5 text-orange-400" />
                       </span>
                     )}
                     {/* In Stop's slot, right-aligned with its glyph, and in

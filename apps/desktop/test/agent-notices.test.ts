@@ -1,7 +1,9 @@
+import { CircleAlert, Hand, MessageCircleQuestionMark } from 'lucide-react'
 import { describe, expect, it } from 'vitest'
 import {
   agentIndicator,
   contextColour,
+  needsYouIcon,
   sessionsWorthAsking,
 } from '../src/renderer/src/lib/agent-notices'
 
@@ -76,5 +78,18 @@ describe('contextColour', () => {
     expect(contextColour(80)).toContain('var(--context-full) 51%')
     expect(contextColour(99)).toContain('var(--context-full) 100%')
     expect(contextColour(100)).toContain('var(--context-full) 100%')
+  })
+})
+
+describe('needsYouIcon', () => {
+  it('maps the reasons Claude Code reports', () => {
+    expect(needsYouIcon('permission prompt')).toBe(Hand)
+    expect(needsYouIcon('input needed')).toBe(MessageCircleQuestionMark)
+  })
+
+  it('falls back to a generic icon for free text or no reason', () => {
+    expect(needsYouIcon('Tea or coffee?')).toBe(CircleAlert)
+    expect(needsYouIcon('toString')).toBe(CircleAlert)
+    expect(needsYouIcon(undefined)).toBe(CircleAlert)
   })
 })
