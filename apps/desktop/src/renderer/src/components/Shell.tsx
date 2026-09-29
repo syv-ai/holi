@@ -341,7 +341,11 @@ export function Shell() {
             {/* The tree, then the vault's live sessions on the row directly
               above the nav menu: no header, nothing to resize. */}
             <div className="flex min-h-0 flex-1 flex-col">
-              <div className="min-h-0 flex-1">
+              {/* A flex column, so the tree's own `flex-1` has a height to
+                  fill and its list scrolls inside it rather than running on
+                  under the sessions and the menu. The bottom margin keeps a
+                  clear band between a scrolled tree and what sits below it. */}
+              <div className="mb-3 flex min-h-0 flex-1 flex-col">
                 <FileTree
                   activePath={tab?.kind === 'note' || tab?.kind === 'app' ? tab.path : null}
                   onOpenPreview={open}
