@@ -73,11 +73,11 @@ beforeEach(async () => {
             },
       ),
     ),
-    refreshSeed: vi.fn((input: { path?: string; force?: boolean }) =>
+    updateSkills: vi.fn(() =>
       Promise.resolve({
-        refreshed: [input.path ?? 'all'],
-        skipped: [],
-        force: input.force === true,
+        ok: true as const,
+        report: {} as never,
+        summary: 'Skills: 1 updated.',
       }),
     ),
   }
@@ -127,7 +127,7 @@ describe('usage', () => {
     expect(res.code).not.toBe(0)
     expect(res.stderr).toContain('app open')
     expect(res.stderr).toContain('app init')
-    expect(res.stderr).toContain('seed refresh')
+    expect(res.stderr).toContain('skills update')
     expect(res.stderr).toContain('pdf comments')
   })
 
@@ -213,28 +213,21 @@ describe('app init', () => {
   })
 })
 
-describe('seed refresh', () => {
-  it('with no path refreshes everything', async () => {
-    const res = await run(bin, ['seed', 'refresh'], env)
+describe('skills update', () => {
+  it('prints the summary Holi answers', async () => {
+    const res = await run(bin, ['skills', 'update'], env)
     expect(res.code).toBe(0)
-    expect(deps.refreshSeed).toHaveBeenCalledWith({ path: undefined, force: false })
+    expect(res.stdout.trim()).toBe('Skills: 1 updated.')
+    expect(deps.updateSkills).toHaveBeenCalled()
   })
 
-  it('takes a path', async () => {
-    await run(bin, ['seed', 'refresh', '.claude/skills/vault-apps/SKILL.md'], env)
-    expect(deps.refreshSeed).toHaveBeenCalledWith({
-      path: '.claude/skills/vault-apps/SKILL.md',
-      force: false,
+  it('fails with the reason when Holi refuses', async () => {
+    ;(deps.updateSkills as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ok: false,
+      message: 'No vault is open.',
     })
-  })
-
-  it('takes --force', async () => {
-    await run(bin, ['seed', 'refresh', 'AGENTS.md', '--force'], env)
-    expect(deps.refreshSeed).toHaveBeenCalledWith({ path: 'AGENTS.md', force: true })
-  })
-
-  it('takes --force with no path', async () => {
-    await run(bin, ['seed', 'refresh', '--force'], env)
-    expect(deps.refreshSeed).toHaveBeenCalledWith({ path: undefined, force: true })
+    const res = await run(bin, ['skills', 'update'], env)
+    expect(res.code).not.toBe(0)
+    expect(res.stderr).toContain('No vault is open.')
   })
 })

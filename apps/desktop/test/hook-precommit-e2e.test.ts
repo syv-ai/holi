@@ -65,7 +65,12 @@ async function vault(settings: Record<string, boolean> = {}): Promise<string> {
       createAgentOps({
         openApp: () => Promise.resolve({ ok: true }),
         initApp: () => Promise.resolve({ ok: true, created: [] }),
-        refreshSeed: () => Promise.resolve({ refreshed: [], skipped: [] }),
+        updateSkills: () =>
+          Promise.resolve({
+            ok: true as const,
+            report: {} as never,
+            summary: 'Skills are up to date.',
+          }),
         runPreCommitHooks: async () => {
           const result = await runPreCommit(dir, await stagedChanges(dir), {
             settings: await readHookSettings(dir),
@@ -200,7 +205,12 @@ describe('nothing here can stop a commit', () => {
         createAgentOps({
           openApp: () => Promise.resolve({ ok: true }),
           initApp: () => Promise.resolve({ ok: true, created: [] }),
-          refreshSeed: () => Promise.resolve({ refreshed: [], skipped: [] }),
+          updateSkills: () =>
+            Promise.resolve({
+              ok: true as const,
+              report: {} as never,
+              summary: 'Skills are up to date.',
+            }),
           runPreCommitHooks: () => Promise.reject(new Error('everything is broken')),
         }),
     })

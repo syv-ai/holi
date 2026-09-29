@@ -21,7 +21,7 @@ import { useEffect } from 'react'
 import { saveAllBuffers } from '../lib/buffer-registry'
 import { matchHotkey } from '../lib/hotkey'
 import { trpc } from '../lib/trpc'
-import { showAgentsAtom, startSessionAtom } from './agent-send'
+import { showAgentsAtom, startSessionAtom, updateSkillsAtom } from './agent-send'
 import { openTodaysDailyAtom } from './daily'
 import { openDialogAtom } from './dialogs'
 import { closeActiveTabWithExitAtom } from './pane-exit'
@@ -122,6 +122,13 @@ export const STATIC_COMMANDS: readonly Command[] = [
     id: 'agent.new',
     label: 'New session',
     run: (_get, set) => void set(startSessionAtom),
+  },
+  // The skills and hooks a vault was seeded with are its own (D111); a newer
+  // release's reach it only when asked for, here or with `holi skills update`.
+  {
+    id: 'agent.updateSkills',
+    label: 'Update skills',
+    run: (_get, set) => void set(updateSkillsAtom),
   },
   // Create a task in any folder, including one that is not yet a lane. ⌘T is
   // quick add, the card it will make, in the board's dock or centred; ⌘⇧T is

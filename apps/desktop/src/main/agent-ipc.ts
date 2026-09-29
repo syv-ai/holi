@@ -16,8 +16,14 @@ import type { AgentSessions, Geometry } from './agent/agent-sessions'
 import type { AgentTerminals, TerminalSummary } from './agent/agent-terminals'
 import type { SessionSummary } from './agent/claude-sessions'
 import type { FocusInput } from './agent/context-snapshot'
+import type { SkillsUpdate } from './agent/seed-content'
 
-export function registerAgentIpc(deps: { agent: AgentSessions; terminals: AgentTerminals }): void {
+export function registerAgentIpc(deps: {
+  agent: AgentSessions
+  terminals: AgentTerminals
+  /** The palette's Update skills (D111), for the active vault. */
+  updateSkills(): Promise<SkillsUpdate>
+}): void {
   const { agent, terminals } = deps
 
   // Asked at mount, and a vault may just have opened: attach to it first.
@@ -41,6 +47,8 @@ export function registerAgentIpc(deps: { agent: AgentSessions; terminals: AgentT
   ipcMain.handle('agent:duplicate', (_e, args: Geometry & { id: string }) =>
     agent.duplicate(args.id, args),
   )
+
+  ipcMain.handle('agent:update-skills', () => deps.updateSkills())
 
   ipcMain.handle('agent:attach', (_e, terminalId: string) => terminals.attach(terminalId))
   // Detach: ends the window, never the session.

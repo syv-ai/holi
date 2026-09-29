@@ -46,28 +46,45 @@ finds itself with `Glob`, `grep` and `git`.
 - **Once files**: `AGENTS.md`, `memory/index.md`, `.holi/vault`,
   `.holi/settings/app.yaml` and `app.local.yaml`, `theme.css`, `theme.local.css`, `icons.yaml`,
   `.holi/document-templates/**`. Created if absent, then the user's.
-- **Managed files**: `.claude/hooks/**` and `.claude/skills/**`. Refreshed on open only when the
-  file matches the sha256 Holi recorded in `.holi/state/seed-state.local.json`. No record means no
-  refresh, except a file already identical to what Holi ships, which is adopted.
-  `holi seed refresh [path] [--force]` does it on demand; `--force` reaches managed files only.
-- **`.claude/settings.json`**: merged key-wise by `settingsWithRequired`. Holi adds its hooks
+- **Shipped files** (D111): `.claude/hooks/**` and `.claude/skills/**`. Written only when the
+  vault is created (`.holi/vault` does not exist yet), and the vault's from then on: an open never
+  writes one, so a deleted skill stays deleted. They are plain committed files because a vault
+  works in any Claude Code, the web and the desktop app included; a Claude Code plugin would not
+  reach cloud sessions or a machine it was never installed on.
+- **`.claude/settings.json`**: merged key-wise by `settingsWithRequired`. Holi adds its hooks, each
+  only where its script is (a hook a later release adds is wired when its script arrives)
   (the turn bracket's `turn-signal.mjs` among them, replacing the inline `curl` older vaults
   carry), `permissions.ask` and `permissions.allow` rules, `disableClaudeAiConnectors`,
-  `autoMemoryEnabled` and `worktree.bgIsolation: "none"` (only when absent, so sessions edit the
-  vault rather than a worktree of it), and keeps everything else. Malformed JSON is left alone.
+  `autoMemoryEnabled`, `awaySummaryEnabled` and `promptSuggestionEnabled` (all `false`: no
+  session recap, no next-prompt suggestion) and `worktree.bgIsolation: "none"` (only when absent,
+  so sessions edit the vault rather than a worktree of it), and keeps everything else. A vault
+  turns a default back by setting it here or in `settings.local.json`; Claude Code's `/config`
+  writes user settings, which a project value outranks. Malformed JSON is left alone.
+
+**Updating skills and hooks** (D111). A Holi release may ship newer versions; they reach a vault
+only when its user asks, with `holi skills update` or the palette's **Update skills**. Against the
+base Holi recorded when it wrote each file (`.holi/state/seed-state.local.json`, machine-local): an
+untouched file is replaced, one the vault changed elsewhere is 3-way merged, and a same-line
+conflict is left as it is with the shipped version (and the base) staged beside it as
+`*.shipped.local.*` and `*.base.local.*`. Conflicts get an agent session whose submitted first turn
+merges them and deletes the staged files; until it does, the file stays a conflict. A machine with
+no recorded base hands every changed file to the agent. The palette reports the outcome as a
+native notification. Holi's side of each hook stays backward-compatible, since a vault may run an
+older script indefinitely.
 
 Changing a once file's seed text reaches new vaults only. To tell existing vaults something, use a
-managed skill, a `settingsWithRequired` key, or a file whose writer regenerates it (`app.yaml` and
-the theme files are rewritten whole from the schema on every write).
+shipped skill (through the update), a `settingsWithRequired` key, or a file whose writer
+regenerates it (`app.yaml` and the theme files are rewritten whole from the schema on every
+write).
 
 **Tool surface.** Native `Read`, `Write`, `Edit`, `Bash`, `Glob`, `Grep`. No MCP server. Holi's
 additions are commands in a directory prepended to `PATH`, plus skills that document them:
 
-- `holi`: `app open`, `app init`, `seed refresh`, `pdf comments <path> [--json]`. It posts to the
+- `holi`: `app open`, `app init`, `skills update`, `pdf comments <path> [--json]`. It posts to the
   hook server with the token in `holi.env`. All reversible or read-only, so none is gated.
 - `holi-google`: mail and calendar through main, which holds the tokens ([google.md](google.md)).
 - `$TYPST_BIN` for PDF export ([pdf.md](pdf.md)).
-- Managed skills: `memory`, `using-tasks`, `vault-apps`, `theme`, `gmail-calendar`, `md-to-pdf`,
+- Shipped skills: `memory`, `using-tasks`, `vault-apps`, `theme`, `gmail-calendar`, `md-to-pdf`,
   `pdf-comments`.
 
 **Permissions.** Claude Code's native prompts are the permission UX. The seeded rules ask for
@@ -104,7 +121,7 @@ the vault's pre-commit transforms like anyone's ([vaults-sync.md](vaults-sync.md
 
 - `apps/desktop/src/main/agent/agent-config-dir.ts`: per-vault config dir, first-spawn marker, migration
 - `apps/desktop/src/main/agent/seed-content.ts`: seed classes, `AGENTS.md` text, `settingsWithRequired`
-- `apps/desktop/src/main/agent/seed-state.ts`: managed-file hashes
+- `apps/desktop/src/main/agent/seed-state.ts`: what Holi seeded, the base an update merges from
 - `apps/desktop/src/main/agent/cli.ts`, `ops.ts`: the `holi` script and its routes
 - `apps/desktop/src/main/agent/endpoint-file.ts`: `holi.env`
 - `apps/desktop/src/main/agent/hooks/`, `skills/`: shipped hook scripts and skills

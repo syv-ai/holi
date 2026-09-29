@@ -820,9 +820,9 @@ export function createRouter(deps: RouterDeps) {
         // than from a second read that could already disagree with it.
         const root = await rootFor(input.remote)
         /**
-         * Seed on **open**, not only on clone (D70), so a vault created before
-         * a managed file existed still receives it. Without this the mail send
-         * gate would be absent from every established vault.
+         * Seed on **open**, not only on clone (D70), for what an open may still
+         * do: create a missing once-file and merge `.claude/settings.json`.
+         * Skills and hooks are written only at creation (D111).
          *
          * Before `host.open`, for `addVault`'s reason: nothing can be committed
          * ahead of the `.gitignore`.

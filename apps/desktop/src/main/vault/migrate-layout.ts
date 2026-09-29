@@ -11,8 +11,8 @@
  * `.gitignore` carries exactly `*.local.*`, so a bare name there gets committed.
  *
  * This is a move and not a deletion because of `seed-state.local.json`: it holds
- * the hashes proving Holi wrote a managed file, and "no record means no
- * refresh", so losing it would stop the vault ever receiving an improved skill.
+ * what Holi seeded, the base `holi skills update` merges against (D111), and
+ * without it every file the vault changed would need an agent to merge.
  */
 import { access, mkdir, rename } from 'node:fs/promises'
 import { dirname, join } from 'node:path'

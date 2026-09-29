@@ -1,13 +1,14 @@
-import { mkdtemp, readFile, rm, writeFile, mkdir } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { isLocalOnlyPath } from '@holi/shared'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   SEED_STATE_FILE,
-  mayRefresh,
   readSeedState,
   recordSeeded,
+  sha256,
+  untouched,
 } from '../src/main/agent/seed-state'
 
 const dirs: string[] = []
@@ -41,57 +42,43 @@ describe('the state file itself', () => {
     expect(await readSeedState(root)).toEqual({})
   })
 
-  it('records a hash, not the content', async () => {
+  it('records the text it wrote, the base an update merges against (D111)', async () => {
     const root = await tempDir()
     await recordSeeded(root, SKILL, '# hello\n')
-    const state = await readSeedState(root)
-    expect(Object.keys(state)).toEqual([SKILL])
-    expect(state[SKILL]).toMatch(/^[0-9a-f]{64}$/)
-    expect(await readFile(join(root, SEED_STATE_FILE), 'utf8')).not.toContain('hello')
+    expect(await readSeedState(root)).toEqual({
+      [SKILL]: { sha: sha256('# hello\n'), text: '# hello\n' },
+    })
+  })
+
+  it('reads a record from before the text was kept as its hash alone', async () => {
+    const root = await tempDir()
+    await mkdir(join(root, '.holi/state'), { recursive: true })
+    await writeFile(join(root, SEED_STATE_FILE), JSON.stringify({ [SKILL]: sha256('# old\n') }))
+    expect(await readSeedState(root)).toEqual({ [SKILL]: { sha: sha256('# old\n') } })
   })
 
   it('keeps earlier records when a later one is written', async () => {
     const root = await tempDir()
     await recordSeeded(root, SKILL, '# a\n')
     await recordSeeded(root, '.claude/hooks/x.mjs', '# b\n')
-    expect(Object.keys(await readSeedState(root)).sort()).toEqual([
-      '.claude/hooks/x.mjs',
-      SKILL,
-    ])
+    expect(Object.keys(await readSeedState(root)).sort()).toEqual(['.claude/hooks/x.mjs', SKILL])
   })
 })
 
-describe('mayRefresh', () => {
+describe('untouched', () => {
   it('is true when the file on disk is exactly what Holi last wrote', async () => {
     const root = await tempDir()
     await recordSeeded(root, SKILL, '# hello\n')
-    expect(await mayRefresh(root, SKILL, '# hello\n')).toBe(true)
+    expect(untouched((await readSeedState(root))[SKILL], '# hello\n')).toBe(true)
   })
 
   it('is false when somebody edited the file', async () => {
     const root = await tempDir()
     await recordSeeded(root, SKILL, '# hello\n')
-    expect(await mayRefresh(root, SKILL, '# hello, and my own note\n')).toBe(false)
+    expect(untouched((await readSeedState(root))[SKILL], '# hello, and mine\n')).toBe(false)
   })
 
-  it('is false with no record at all — the file is assumed to be the user\'s', async () => {
-    // Every vault that exists today is in exactly this state. A `true` here
-    // rewrites everyone's edited skills once, silently, on the next open.
-    const root = await tempDir()
-    expect(await mayRefresh(root, SKILL, '# hello\n')).toBe(false)
-  })
-
-  it('is false for a path recorded under a different name', async () => {
-    const root = await tempDir()
-    await recordSeeded(root, '.claude/hooks/x.mjs', '# hello\n')
-    expect(await mayRefresh(root, SKILL, '# hello\n')).toBe(false)
-  })
-
-  it('is true again after re-recording the edit as ours', async () => {
-    const root = await tempDir()
-    await recordSeeded(root, SKILL, '# hello\n')
-    await recordSeeded(root, SKILL, '# v2\n')
-    expect(await mayRefresh(root, SKILL, '# v2\n')).toBe(true)
-    expect(await mayRefresh(root, SKILL, '# hello\n')).toBe(false)
+  it('is false with no record at all', () => {
+    expect(untouched(undefined, '# hello\n')).toBe(false)
   })
 })

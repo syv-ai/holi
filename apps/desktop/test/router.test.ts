@@ -78,9 +78,9 @@ async function rig(files: Record<string, string> = {}, auth?: StoredAuth) {
       await writeFile(join(root, rel), text, 'utf8')
     })
   }
-  // A real vault carries its managed files — they are written at creation and,
-  // since D70, repaired on every open. Building the rig without them made every
-  // snapshot assertion here describe a vault that cannot exist.
+  // A real vault carries its seeded files, written at creation. Building the rig
+  // without them made every snapshot assertion here describe a vault that
+  // cannot exist.
   await mkdir(root, { recursive: true })
   await ensureSeeded(root)
   const registry = new VaultRegistry(join(base, 'vaults.json'))
@@ -217,7 +217,7 @@ describe('vaults', () => {
   it('open returns the vault contents and stamps lastOpenedAt', async () => {
     const { caller, registry } = await rig({ 'a.md': '# A\n' })
     const snap = await caller.vaults.open({ remote: REMOTE })
-    // A real vault also carries its seeded managed files, so this asserts the
+    // A real vault also carries its seeded files, so this asserts the
     // note is there rather than that nothing else is.
     expect(snap.docs.map((d) => d.path)).toContain('a.md')
     expect((await registry.list())[0]!.lastOpenedAt).toBe('2026-07-21T12:00:00Z')
@@ -232,22 +232,18 @@ describe('vaults', () => {
   })
 
   /**
-   * The seed has to run on **open**, not only on clone (D70).
-   *
-   * `ensureSeeded` says in its own doc that it is "safe to run on every vault
-   * activation" — and was wired only to `addVault`, so a vault created before a
-   * new managed file existed never received it. That is how the D70 send gate
-   * would have been absent from every established vault: the hook file unwritten,
-   * `PreToolUse` unwired, and `send` reaching a real mailbox with no confirmation.
+   * An open seeds what a vault must have (D70), but never a skill or hook
+   * script: those are the vault's after creation, and a newer version arrives
+   * only through `holi skills update` (D111).
    */
-  it('open seeds managed files that did not exist when the vault was created', async () => {
+  it('open leaves a hook script the vault deleted deleted', async () => {
     const { caller, root } = await rig({ 'a.md': '# A\n' })
     const gate = join(root, '.claude/hooks/google-send-gate.mjs')
     await rm(gate, { force: true })
 
     await caller.vaults.open({ remote: REMOTE })
 
-    expect(await readFile(gate, 'utf8').catch(() => null)).not.toBeNull()
+    expect(await readFile(gate, 'utf8').catch(() => null)).toBeNull()
   })
 
   it('open wires the send gate into a settings.json that predates it', async () => {
@@ -1350,17 +1346,10 @@ describe('vaults.add', () => {
 
     const snap = await caller.vaults.add({ remote: 'syv-ai/notes', url: origin })
 
-    // The repo's own content plus the managed files, because seeding happens on
-    // the way in rather than at some later activation. The seeded skills are
-    // markdown under .claude/, so — like every managed .md — they scan as notes.
+    // The repo's own content plus the once-files, because seeding happens on
+    // the way in rather than at some later activation. No skills: this joins a
+    // vault that already exists, and its skills are its own (D111).
     expect(snap.docs.map((d) => d.path).sort()).toEqual([
-      '.claude/skills/gmail-calendar/SKILL.md',
-      '.claude/skills/md-to-pdf/SKILL.md',
-      '.claude/skills/memory/SKILL.md',
-      '.claude/skills/pdf-comments/SKILL.md',
-      '.claude/skills/theme/SKILL.md',
-      '.claude/skills/using-tasks/SKILL.md',
-      '.claude/skills/vault-apps/SKILL.md',
       'AGENTS.md',
       'README.md',
       // D89: a new vault is seeded with the memory directory, not a MEMORY.md.

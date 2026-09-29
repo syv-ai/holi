@@ -28,8 +28,10 @@ afterEach(async () => {
 async function rig(overrides: Partial<AgentOpsDeps> = {}) {
   const openApp = vi.fn((_id: string) => Promise.resolve({ ok: true as const }))
   const initApp = vi.fn((_id: string) => Promise.resolve({ ok: true as const, created: [] }))
-  const refreshSeed = vi.fn(() => Promise.resolve({ refreshed: [], skipped: [] }))
-  const deps: AgentOpsDeps = { openApp, initApp, refreshSeed, ...overrides }
+  const updateSkills = vi.fn(() =>
+    Promise.resolve({ ok: true as const, report: {} as never, summary: 'Skills are up to date.' }),
+  )
+  const deps: AgentOpsDeps = { openApp, initApp, updateSkills, ...overrides }
 
   let starts = 0
   let ends = 0
@@ -46,7 +48,7 @@ async function rig(overrides: Partial<AgentOpsDeps> = {}) {
     token: () => server.tokenForVault('owner/repo'),
     openApp,
     initApp,
-    refreshSeed,
+    updateSkills,
     starts: () => starts,
     ends: () => ends,
   }

@@ -1,13 +1,14 @@
 /**
- * The managed files every vault carries: the `.gitignore` that keeps private
+ * The files every vault carries: the `.gitignore` that keeps private
  * files private, the shared agent instructions (`AGENTS.md`, which Claude Code
  * reads natively, so there is no `CLAUDE.md`), and the per-turn context hook.
  *
  * **Seeding runs on vault creation, adoption AND every open** (`vaults.add`/
- * `vaults.create`/`vaults.open` → `ensureSeeded`; the open case is D70).
- * Running it that often is what makes a NEW seeded file reach older vaults with
- * no migration. A member who deletes a seeded file gets it back on the next
- * open, which is the price of the send gate being present in every vault.
+ * `vaults.create`/`vaults.open` → `ensureSeeded`; the open case is D70), but
+ * what it may do on an open is narrow. Holi's skills and hooks
+ * (`SHIPPED_FILES`) are written only when the vault is created: after that they
+ * are the vault's, and a newer version reaches them only through
+ * `holi skills update` (D111).
  *
  * **`.gitignore` is the exception.** An adopted repo usually already has one,
  * and the sync engine commits with `git add -A`, so create-if-missing would let
@@ -18,12 +19,13 @@
  * `USER.local.md` is deliberately NOT seeded: it is machine-local (its name says
  * so), and the agent creates it when it first learns something about the user.
  */
-import { readFile } from 'node:fs/promises'
+import { readFile, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
   applyThemePatch,
   ICONS_FILE,
   LOCAL_ONLY_IGNORE_LINES,
+  merge3,
   MEMORY_INDEX,
   MEMORY_INDEX_EMPTY,
   seedSettings,
@@ -36,7 +38,7 @@ import {
   VAULT_MARKER_FILE,
 } from '@holi/shared'
 import { writeAtomic } from '../vault/vault-files'
-import { mayRefresh, readSeedState, recordSeeded } from './seed-state'
+import { readSeedState, recordSeeded, untouched } from './seed-state'
 import userPromptSubmitHook from './hooks/user-prompt-submit.mjs?raw'
 import googleSendGateHook from './hooks/google-send-gate.mjs?raw'
 import vaultAppCheckHook from './hooks/vault-app-check.mjs?raw'
@@ -192,6 +194,15 @@ const SETTINGS_JSON =
        */
       autoMemoryEnabled: false,
       /**
+       * A quieter Claude Code: no session recap after being away, no greyed
+       * next-prompt suggestion in the input. Defaults only, merged when absent,
+       * so a vault that wants either back sets it `true` here (or in
+       * `settings.local.json` for one machine). Not `/config`: it writes user
+       * settings, which the project's value outranks.
+       */
+      awaySummaryEnabled: false,
+      promptSuggestionEnabled: false,
+      /**
        * Background sessions edit the vault itself (D110).
        *
        * Claude Code otherwise moves a dispatched session into a git worktree
@@ -281,12 +292,21 @@ const PLAIN_MANIFEST =
 const THEME_SKELETON = applyThemePatch(null, {})
 
 /**
- * **Holi owns these after writing them** (D75). Documentation and code Holi
- * ships: refreshed on every open, but only when the file on disk is still
- * byte-for-byte what Holi last wrote there (see `seed-state.ts`). Without that,
- * a shipped skill's first draft would be permanent in every vault.
+ * Holi's skills and hooks (D111). **The vault's from the moment they are
+ * written**, and written only when the vault is created: a vault works in any
+ * Claude Code (the desktop app, the web, a plain CLI), so these are ordinary
+ * committed files, and nothing Holi does on an open changes them.
+ *
+ * A Holi release may ship newer versions. They reach a vault only when its
+ * user runs `holi skills update` (`updateShipped`), which replaces a file the
+ * vault never touched, 3-way merges one it did, and hands a conflict to an
+ * agent session.
+ *
+ * **Holi's side of a hook must stay backward-compatible.** A vault can run a
+ * hook script from any earlier release indefinitely, so the hook server and
+ * the endpoint file answer every older script, not only the one shipped now.
  */
-export const MANAGED_FILES: Record<string, string> = {
+export const SHIPPED_FILES: Record<string, string> = {
   '.claude/hooks/user-prompt-submit.mjs': userPromptSubmitHook,
   '.claude/hooks/google-send-gate.mjs': googleSendGateHook,
   '.claude/hooks/vault-app-check.mjs': vaultAppCheckHook,
@@ -301,9 +321,8 @@ export const MANAGED_FILES: Record<string, string> = {
   /**
    * How to write a memory (D89).
    *
-   * **A skill rather than more `AGENTS.md` prose, because `AGENTS.md` is a
-   * ONCE_FILE and cannot be corrected.** Skills are managed, so this one lands
-   * in every vault on the next open and can be improved later (D75).
+   * **A skill rather than more `AGENTS.md` prose**: a skill can be improved
+   * later through `holi skills update` (D111), and `AGENTS.md` cannot.
    */
   '.claude/skills/memory/SKILL.md': memorySkill,
   /** `holi pdf comments` (D106): what it prints, and that it only reads. */
@@ -372,7 +391,7 @@ export const ONCE_FILES: Record<string, string> = {
 
 /** Both classes together, for callers that only ask "is this a file Holi
  *  seeds?". */
-export const SEED_FILES: Record<string, string> = { ...ONCE_FILES, ...MANAGED_FILES }
+export const SEED_FILES: Record<string, string> = { ...ONCE_FILES, ...SHIPPED_FILES }
 
 export const GITIGNORE = '.gitignore'
 
@@ -412,8 +431,17 @@ export const SETTINGS = '.claude/settings.json'
  *
  * A malformed file returns `null`: it is the user's, and unparseable JSON is not
  * something to "fix" by overwriting. The cost is an ungated vault.
+ *
+ * **A hook's entry goes in only where its script is** (`hasHook`, by script
+ * name). Scripts are seeded at creation and updated on request (D111), so a
+ * hook a later release adds must not be wired on an open, before the update
+ * that brings its script: it would fail on every prompt. `updateShipped` runs
+ * this again after writing scripts, so the two arrive together.
  */
-export function settingsWithRequired(existing: string | null): string | null {
+export function settingsWithRequired(
+  existing: string | null,
+  hasHook: (name: string) => boolean = () => true,
+): string | null {
   if (existing === null || existing.trim() === '') return SETTINGS_JSON
 
   let settings: Record<string, unknown>
@@ -431,6 +459,8 @@ export function settingsWithRequired(existing: string | null): string | null {
     permissions: { ask: string[]; allow: string[] }
     disableClaudeAiConnectors: boolean
     autoMemoryEnabled: boolean
+    awaySummaryEnabled: boolean
+    promptSuggestionEnabled: boolean
   }
   let changed = false
 
@@ -457,12 +487,21 @@ export function settingsWithRequired(existing: string | null): string | null {
     changed = true
   }
 
+  /** Recap and prompt suggestions off, for the same reason and only when
+   *  absent: `true` is a vault that wants them back. */
+  for (const key of ['awaySummaryEnabled', 'promptSuggestionEnabled'] as const) {
+    if (settings[key] === undefined) {
+      settings[key] = required[key]
+      changed = true
+    }
+  }
+
   // The gate. Matched by the script it runs rather than by deep-equality, so a
   // user who reordered or annotated the entry does not get a duplicate.
   const hooks = (settings.hooks ?? {}) as Record<string, unknown[]>
   const preToolUse = Array.isArray(hooks.PreToolUse) ? hooks.PreToolUse : []
   const hasGate = JSON.stringify(preToolUse).includes('google-send-gate')
-  if (!hasGate) {
+  if (!hasGate && hasHook('google-send-gate')) {
     hooks.PreToolUse = [
       ...preToolUse,
       ...required.hooks.PreToolUse.filter((e) => JSON.stringify(e).includes('google-send-gate')),
@@ -472,7 +511,10 @@ export function settingsWithRequired(existing: string | null): string | null {
   }
 
   // The memory index guard, merged and matched the same way.
-  if (!JSON.stringify(hooks.PreToolUse ?? []).includes('memory-index-guard')) {
+  if (
+    !JSON.stringify(hooks.PreToolUse ?? []).includes('memory-index-guard') &&
+    hasHook('memory-index-guard')
+  ) {
     hooks.PreToolUse = [
       ...(hooks.PreToolUse ?? []),
       ...required.hooks.PreToolUse.filter((e) => JSON.stringify(e).includes('memory-index-guard')),
@@ -483,7 +525,7 @@ export function settingsWithRequired(existing: string | null): string | null {
 
   // The vault-app validator, merged and matched the same way as the gate.
   const postToolUse = Array.isArray(hooks.PostToolUse) ? hooks.PostToolUse : []
-  if (!JSON.stringify(postToolUse).includes('vault-app-check')) {
+  if (!JSON.stringify(postToolUse).includes('vault-app-check') && hasHook('vault-app-check')) {
     hooks.PostToolUse = [...postToolUse, ...required.hooks.PostToolUse]
     settings.hooks = hooks
     changed = true
@@ -491,7 +533,7 @@ export function settingsWithRequired(existing: string | null): string | null {
 
   // The session overview (D89), matched the same way.
   const sessionStart = Array.isArray(hooks.SessionStart) ? hooks.SessionStart : []
-  if (!JSON.stringify(sessionStart).includes('memory-overview')) {
+  if (!JSON.stringify(sessionStart).includes('memory-overview') && hasHook('memory-overview')) {
     hooks.SessionStart = [...sessionStart, ...required.hooks.SessionStart]
     settings.hooks = hooks
     changed = true
@@ -513,10 +555,11 @@ export function settingsWithRequired(existing: string | null): string | null {
     const entries = Array.isArray(hooks[event]) ? hooks[event] : []
     const kept = withoutOldTurnHooks(entries)
     const hasSignal = JSON.stringify(kept).includes('turn-signal.mjs')
-    if (JSON.stringify(kept) !== JSON.stringify(entries) || !hasSignal) {
-      hooks[event] = hasSignal
-        ? kept
-        : [...kept, { hooks: [{ type: 'command', command: turnHook(edge) }] }]
+    const add = !hasSignal && hasHook('turn-signal')
+    if (JSON.stringify(kept) !== JSON.stringify(entries) || add) {
+      hooks[event] = add
+        ? [...kept, { hooks: [{ type: 'command', command: turnHook(edge) }] }]
+        : kept
       settings.hooks = hooks
       changed = true
     }
@@ -580,39 +623,49 @@ function withoutOldTurnHooks(entries: unknown[]): unknown[] {
   return out
 }
 
-/**
- * What one run of `ensureSeeded` did.
- *
- * `skipped` has to be visible: a managed file left alone is Holi declining to
- * ship an improvement, and the user is entitled to know which.
- */
+/** What one run of `ensureSeeded` wrote. */
 export interface SeedResult {
-  /** Created because it was absent. */
   written: string[]
-  /** A managed file overwritten with a newer shipped version (D75). */
-  refreshed: string[]
-  /** A managed file Holi could not prove was still its own. */
-  skipped: { path: string; reason: 'edited' | 'unrecorded' }[]
+}
+
+const HOOKS_DIR = '.claude/hooks/'
+
+/** Which of Holi's hook scripts the vault has, by name (`turn-signal`). */
+async function hooksPresent(root: string): Promise<(name: string) => boolean> {
+  const present = new Set<string>()
+  for (const rel of Object.keys(SHIPPED_FILES)) {
+    if (!rel.startsWith(HOOKS_DIR)) continue
+    if ((await readFile(join(root, rel), 'utf8').catch(() => null)) !== null) {
+      present.add(rel.slice(HOOKS_DIR.length).replace(/\.mjs$/, ''))
+    }
+  }
+  return (name) => present.has(name)
+}
+
+async function mergeSettings(root: string): Promise<boolean> {
+  const onDisk = await readFile(join(root, SETTINGS), 'utf8').catch(() => null)
+  const next = settingsWithRequired(onDisk, await hooksPresent(root))
+  if (next === null) return false
+  await writeAtomic(root, vaultRelPath(SETTINGS), next)
+  return true
 }
 
 /**
- * Write whatever managed file is missing, and refresh the ones Holi still owns.
+ * Write what a vault must have. Idempotent, and run on creation, adoption and
+ * every open. Four rules:
  *
- * Idempotent, and safe to run on every vault activation. Three rules, one per
- * class:
- *
- *   - **once** (`ONCE_FILES`) — created if absent, never touched again.
- *   - **managed** (`MANAGED_FILES`) — created if absent, and rewritten when the
- *     shipped content has changed *and* the file on disk is still byte-for-byte
- *     what Holi last wrote there. Anything else is skipped and reported.
- *   - **`.claude/settings.json`** — merged key-wise (`settingsWithRequired`).
- *
- * The `.gitignore` comes first and on its own: everything below it is a file
- * that would be committed, and until it exists nothing stops `git add -A` from
- * taking a machine-local file with it.
+ *   - **`.gitignore`** first and on its own: everything below it is a file that
+ *     would be committed, and until it exists nothing stops `git add -A` from
+ *     taking a machine-local file with it.
+ *   - **once** (`ONCE_FILES`): created if absent, never touched again.
+ *   - **shipped** (`SHIPPED_FILES`): written **only when the vault is being
+ *     created**, told by `.holi/vault` not existing yet, and recorded so a
+ *     later `holi skills update` has a base to merge against (D111). An open
+ *     never writes one, so a skill the vault deleted stays deleted.
+ *   - **`.claude/settings.json`**: merged key-wise (`settingsWithRequired`).
  */
 export async function ensureSeeded(root: string): Promise<SeedResult> {
-  const result: SeedResult = { written: [], refreshed: [], skipped: [] }
+  const result: SeedResult = { written: [] }
 
   const existing = await readFile(join(root, GITIGNORE), 'utf8').catch(() => null)
   const next = gitignoreWithLocalOnly(existing)
@@ -620,6 +673,9 @@ export async function ensureSeeded(root: string): Promise<SeedResult> {
     await writeAtomic(root, vaultRelPath(GITIGNORE), next)
     result.written.push(GITIGNORE)
   }
+
+  // Read before the once-files below write it.
+  const creating = (await readFile(join(root, VAULT_MARKER_FILE)).catch(() => null)) === null
 
   for (const [rel, content] of Object.entries(ONCE_FILES)) {
     // `settings.json` is MERGED rather than skipped when present: see
@@ -631,42 +687,16 @@ export async function ensureSeeded(root: string): Promise<SeedResult> {
     result.written.push(rel)
   }
 
-  for (const [rel, content] of Object.entries(MANAGED_FILES)) {
-    const onDisk = await readFile(join(root, rel), 'utf8').catch(() => null)
-    if (onDisk === null) {
+  if (creating) {
+    for (const [rel, content] of Object.entries(SHIPPED_FILES)) {
+      if ((await readFile(join(root, rel), 'utf8').catch(() => null)) !== null) continue
       await writeAtomic(root, vaultRelPath(rel), content)
       await recordSeeded(root, rel, content)
       result.written.push(rel)
-      continue
     }
-    if (onDisk === content) {
-      // Already exactly what we ship, however it got there, so it is ours.
-      // Recording it is what lets the NEXT version reach this vault.
-      await recordSeeded(root, rel, content)
-      continue
-    }
-    const state = await readSeedState(root)
-    if (state[rel] === undefined) {
-      // No recorded hash. Assume the user's: guessing the other way would
-      // silently rewrite their edited skills.
-      result.skipped.push({ path: rel, reason: 'unrecorded' })
-      continue
-    }
-    if (!(await mayRefresh(root, rel, onDisk))) {
-      result.skipped.push({ path: rel, reason: 'edited' })
-      continue
-    }
-    await writeAtomic(root, vaultRelPath(rel), content)
-    await recordSeeded(root, rel, content)
-    result.refreshed.push(rel)
   }
 
-  const settingsOnDisk = await readFile(join(root, SETTINGS), 'utf8').catch(() => null)
-  const settingsNext = settingsWithRequired(settingsOnDisk)
-  if (settingsNext !== null) {
-    await writeAtomic(root, vaultRelPath(SETTINGS), settingsNext)
-    result.written.push(SETTINGS)
-  }
+  if (await mergeSettings(root)) result.written.push(SETTINGS)
 
   // Brand binaries (Raleway fonts + logo), base64 in a generated module. Same
   // if-absent rule as the once text seeds, via the bytes overload of writeAtomic.
@@ -679,42 +709,179 @@ export async function ensureSeeded(root: string): Promise<SeedResult> {
   return result
 }
 
+/** What `holi skills update` did, one list per outcome, by vault path. */
+export interface UpdateReport {
+  /** The vault never changed it: replaced with the shipped version. */
+  updated: string[]
+  /** Shipped, and new to this vault. */
+  added: string[]
+  /** Both changed it, in different places: both kept. */
+  merged: string[]
+  /** For an agent: both changed the same lines, or there is no base to merge
+   *  from. The shipped version is staged beside it (`stagedPath`). */
+  conflicts: string[]
+  /** Nothing new to bring: already the shipped version, or the vault's own
+   *  changes on top of it. */
+  current: string[]
+  /** The vault deleted it after Holi seeded it: left deleted. */
+  deleted: string[]
+}
+
 /**
- * `holi seed refresh [path] [--force]` — rewrite the managed files Holi wrote.
- *
- * The on-demand half of D75: `ensureSeeded` declines whenever it cannot prove
- * the file is still its own, and `--force` is how a user says "I edited it,
- * give me your copy back".
- *
- * **`--force` reaches managed files only.** A once-file is the user's, so
- * asking for one comes back as `not managed` rather than as an error.
+ * Where a conflict's other versions wait for the agent: beside the file, with
+ * `.shipped.local` or `.base.local` before its extension. `.local.` keeps them
+ * on this machine (D65) and out of every commit.
  */
-export async function refreshManaged(
-  root: string,
-  opts: { path?: string; force?: boolean },
-): Promise<{ refreshed: string[]; skipped: { path: string; reason: string }[] }> {
-  const refreshed: string[] = []
-  const skipped: { path: string; reason: string }[] = []
+export function stagedPath(rel: string, which: 'shipped' | 'base'): string {
+  const slash = rel.lastIndexOf('/')
+  const dot = rel.lastIndexOf('.')
+  return dot > slash
+    ? `${rel.slice(0, dot)}.${which}.local${rel.slice(dot)}`
+    : `${rel}.${which}.local`
+}
 
-  if (opts.path !== undefined && MANAGED_FILES[opts.path] === undefined) {
-    skipped.push({ path: opts.path, reason: 'not managed' })
-    return { refreshed, skipped }
+async function removeStaged(root: string, rel: string): Promise<void> {
+  for (const which of ['shipped', 'base'] as const) {
+    await unlink(join(root, stagedPath(rel, which))).catch(() => undefined)
   }
+}
 
-  const targets = opts.path === undefined ? Object.keys(MANAGED_FILES) : [opts.path]
+/**
+ * `holi skills update`: bring this release's skills and hooks to the vault
+ * (D111). Per file, against the base Holi recorded when it wrote it:
+ *
+ *   - already the shipped text: current;
+ *   - absent: added if Holi never wrote it here, left alone if the vault
+ *     deleted it;
+ *   - untouched since Holi wrote it: replaced;
+ *   - changed, with the base's text: 3-way merged, kept when it merges clean;
+ *   - otherwise a conflict, the file left as it is and the shipped version
+ *     (and the base, when there is one) staged beside it for an agent.
+ *
+ * A conflict records the shipped version as the base, since the agent resolves
+ * against it. Until the agent deletes what was staged, the file stays a
+ * conflict: merging the vault's unresolved text against that new base would
+ * quietly keep it and drop Holi's changes. Settings are merged again at the
+ * end: a script this added is wired in the same run.
+ */
+export async function updateShipped(root: string): Promise<UpdateReport> {
+  const report: UpdateReport = {
+    updated: [],
+    added: [],
+    merged: [],
+    conflicts: [],
+    current: [],
+    deleted: [],
+  }
+  const state = await readSeedState(root)
 
-  for (const rel of targets) {
-    const content = MANAGED_FILES[rel]!
+  for (const [rel, shipped] of Object.entries(SHIPPED_FILES)) {
     const onDisk = await readFile(join(root, rel), 'utf8').catch(() => null)
-    if (onDisk === content) continue
-    if (onDisk !== null && opts.force !== true && !(await mayRefresh(root, rel, onDisk))) {
-      const state = await readSeedState(root)
-      skipped.push({ path: rel, reason: state[rel] === undefined ? 'unrecorded' : 'edited' })
+    const record = state[rel]
+    let write: string | null = null
+    // A conflict handed off earlier and not yet resolved: the agent deletes
+    // what was staged when it is done.
+    const pending =
+      (await readFile(join(root, stagedPath(rel, 'shipped'))).catch(() => null)) !== null
+
+    if (onDisk === shipped) report.current.push(rel)
+    else if (pending && onDisk !== null) {
+      // Still the agent's: refresh what it merges from, and nothing else. The
+      // base it was given stays, and the record already names this release.
+      await writeAtomic(root, vaultRelPath(stagedPath(rel, 'shipped')), shipped)
+      await recordSeeded(root, rel, shipped)
+      report.conflicts.push(rel)
       continue
+    } else if (onDisk === null) {
+      if (record !== undefined) report.deleted.push(rel)
+      else {
+        write = shipped
+        report.added.push(rel)
+      }
+    } else if (untouched(record, onDisk)) {
+      write = shipped
+      report.updated.push(rel)
+    } else {
+      const merge = record?.text === undefined ? null : merge3(record.text, onDisk, shipped)
+      if (merge?.kind === 'merged') {
+        // Only the vault's changes, on top of what it already had: nothing new
+        // from Holi, so nothing to write or report.
+        if (merge.text === onDisk) report.current.push(rel)
+        else {
+          write = merge.text
+          report.merged.push(rel)
+        }
+      } else {
+        await writeAtomic(root, vaultRelPath(stagedPath(rel, 'shipped')), shipped)
+        if (record?.text !== undefined) {
+          await writeAtomic(root, vaultRelPath(stagedPath(rel, 'base')), record.text)
+        }
+        // The agent's resolution is made against this release, so it is the
+        // base the next update merges from.
+        await recordSeeded(root, rel, shipped)
+        report.conflicts.push(rel)
+        continue
+      }
     }
-    await writeAtomic(root, vaultRelPath(rel), content)
-    await recordSeeded(root, rel, content)
-    refreshed.push(rel)
+
+    if (write !== null) await writeAtomic(root, vaultRelPath(rel), write)
+    // The shipped text is the base from here on, whatever the file now holds:
+    // a merged file carries the vault's changes on top of it.
+    if (onDisk !== null || write !== null) await recordSeeded(root, rel, shipped)
+    await removeStaged(root, rel)
   }
-  return { refreshed, skipped }
+
+  await mergeSettings(root)
+  return report
+}
+
+/** What an update answers across the CLI and IPC: the report, and the
+ *  session its conflicts were handed to, if any. */
+export type SkillsUpdate =
+  | { ok: true; report: UpdateReport; summary: string; terminalId?: string }
+  | { ok: false; message: string }
+
+/** The report in one line, for the notification and the CLI. */
+export function describeUpdate(report: UpdateReport, sessionStarted: boolean): string {
+  const parts = [
+    [report.updated.length, 'updated'],
+    [report.added.length, 'added'],
+    [report.merged.length, 'merged'],
+  ] as const
+  const done = parts.filter(([n]) => n > 0).map(([n, what]) => `${n} ${what}`)
+  const conflicts = report.conflicts.length
+  if (done.length === 0 && conflicts === 0) return 'Skills are up to date.'
+  const head = done.length > 0 ? `Skills: ${done.join(', ')}.` : ''
+  const tail =
+    conflicts === 0
+      ? ''
+      : `${conflicts} ${conflicts === 1 ? 'needs' : 'need'} merging by hand` +
+        (sessionStarted
+          ? ': a session is on it.'
+          : ', with the new version staged beside each as a .shipped.local file.')
+  return [head, tail].filter((t) => t !== '').join(' ')
+}
+
+/**
+ * The first turn of the session that resolves an update's conflicts. One of
+ * the few sends Holi submits: resolving them is a job the user asked for.
+ */
+export async function updateConflictPrompt(root: string, conflicts: string[]): Promise<string> {
+  const lines: string[] = []
+  for (const rel of conflicts) {
+    const base = stagedPath(rel, 'base')
+    const hasBase = (await readFile(join(root, base)).catch(() => null)) !== null
+    lines.push(
+      `- \`${rel}\`: Holi's new version is \`${stagedPath(rel, 'shipped')}\`` +
+        (hasBase ? `; the version this vault started from is \`${base}\`` : '') +
+        '.',
+    )
+  }
+  return [
+    'Holi ships newer versions of these files, and this vault has changed them too, so they could not be merged automatically:',
+    '',
+    ...lines,
+    '',
+    "Merge each one in place: bring in Holi's changes and keep this vault's own. Where the two contradict, keep what this vault meant and say so. Then delete the `.shipped.local` and `.base.local` files, and summarise what changed.",
+  ].join('\n')
 }

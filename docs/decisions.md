@@ -5,7 +5,7 @@ decided and which page now holds it. The pages carry the reasoning; the numbers 
 code and in git history (`git log -p docs/decisions.md` has every original write-up).
 
 A new decision gets the next free number, a line here, and its substance written straight into the
-page that owns it. **Next free: D111.**
+page that owns it. **Next free: D112.**
 
 ## D60 onward
 
@@ -26,7 +26,7 @@ page that owns it. **Next free: D111.**
 | D72  | A vault agent inherits the vault, not the machine                                   | [agent-config](features/agent-config.md)                                     |
 | D73  | A mail thread and a calendar event are joined by the invite's UID                   | [google](features/google.md)                                                 |
 | D74  | A vault app is bounded by its own origin and barred from the agent surface          | [vault-apps](features/vault-apps.md)                                         |
-| D75  | A managed file Holi wrote is refreshed, not frozen                                  | [agent-config](features/agent-config.md)                                     |
+| D75  | Superseded by D111 (managed files were refreshed on open)                           | [agent-config](features/agent-config.md)                                     |
 | D76  | Vault git hooks are a managed capability: Holi ships the code, the vault enables it | [vaults-sync](features/vaults-sync.md)                                       |
 | D77  | A document lives in exactly one pane                                                | [tabs-panes](features/tabs-panes.md)                                         |
 | D78  | A tab is dragged, and a drag only offers what it can do                             | [tabs-panes](features/tabs-panes.md)                                         |
@@ -62,6 +62,7 @@ page that owns it. **Next free: D111.**
 | D108 | The sidebar ends in one morphing nav menu; Home is a tab                            | [nav-menu](features/nav-menu.md)                                             |
 | D109 | Leave drops your access, Delete happens on GitHub; stuck work blocks both           | [vaults-sync](features/vaults-sync.md)                                       |
 | D110 | A session is a Claude Code background session; a Holi tab is a terminal onto it     | [agent-sessions](features/agent-sessions.md)                                 |
+| D111 | Skills and hooks are seeded once; a release's versions arrive on request, merged    | [agent-config](features/agent-config.md)                                     |
 
 ## D1 to D59
 

@@ -8,7 +8,8 @@
  * port (D110).
  *
  * **Every command is reversible or read-only** (opening a tab, scaffolding a
- * directory, rewriting a file Holi itself wrote, printing PDF comments), which
+ * directory, merging Holi's newer skills into the vault's, printing PDF
+ * comments), which
  * is why none of them is gated. That is D70's rule reaching the opposite
  * conclusion from `holi-google send`.
  */
@@ -24,7 +25,8 @@ const SCRIPT = `#!/bin/sh
 # asks first:
 #   app open <path>          open the app's tab (you can close it)
 #   app init <path>          scaffold a new app bundle (you can delete it)
-#   seed refresh [path]      rewrite the managed files Holi itself wrote
+#   skills update            merge this release's skills and hooks into the
+#                            vault's (a conflict gets a session of its own)
 #   pdf comments <path>      print a PDF's comments (reads, changes nothing)
 #
 # If this says Holi is not running, it is not running, or you are in a shell it
@@ -51,7 +53,8 @@ usage: holi <command>
 
   app open <path>               open a finished app in a tab
   app init <path>               scaffold <path> (a folder ending in .app)
-  seed refresh [path] [--force] rewrite the managed files Holi wrote
+  skills update                 bring this release's skills and hooks into the
+                                vault, merged with its own changes
   pdf comments <path> [--json]  print a vault PDF's comments: page, mark,
                                 marked text, author, dates and replies
 
@@ -90,27 +93,23 @@ case "\$cmd" in
       *) usage ;;
     esac
     ;;
-  seed)
+  skills)
     sub="\${1:-}"
     [ $# -gt 0 ] && shift
     case "\$sub" in
-      refresh)
-        # Options are parsed into variables FIRST, then the curl arguments are
-        # built: building them with \`set --\` while still looping over \$@
-        # rewrites the very list being iterated, and the loop reads its own
-        # output. (holi-google reschedule carries the same comment, and the
-        # same scar.)
-        path=""; force=""
-        while [ $# -gt 0 ]; do
-          case "\$1" in
-            --force) force=true; shift ;;
-            -*) echo "holi seed refresh: unknown option \$1" >&2; exit 2 ;;
-            *) path="\$1"; shift ;;
-          esac
-        done
-        set -- --data-urlencode "force=\${force:-false}"
-        [ -n "\$path" ] && set -- "\$@" --data-urlencode "path=\$path"
-        post seed/refresh "\$@"
+      update)
+        # The answer is one line of text; the status decides where it goes, as
+        # for pdf comments below.
+        body=\$(mktemp)
+        trap 'rm -f "\$body"' EXIT
+        code=\$(curl -sS -X POST -o "\$body" -w '%{http_code}' \\
+          "\$base/skills/update?t=\$HOLI_HOOK_TOKEN") || exit 1
+        if [ "\$code" = 200 ]; then
+          cat "\$body"; echo
+        else
+          echo "holi skills update: \$(cat "\$body")" >&2
+          exit 1
+        fi
         ;;
       *) usage ;;
     esac

@@ -93,7 +93,8 @@ showing it busy, crosses it off), so a session resumed from the list is never re
   always Holi's.
 - Probe a pid before signalling it: signal the group only if it still leads its group. A reaped pid
   may already be a stranger's. Holi only ever signals its own terminal clients.
-- Only reconcile and a stuck push submit a turn. Holi cannot see the composer.
+- Only reconcile, a stuck push and a skills update's conflicts submit a turn. Holi cannot see the
+  composer.
 - Record a turn after the vault resumes, fire-and-forget: a lost record beats a stuck pause.
 - A turn revert does not flush open buffers first; a dirty buffer 3-way merges.
 - Turn-hook responses are empty: a body would be injected into Claude's context.

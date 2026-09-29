@@ -159,6 +159,18 @@ export const duplicateSessionAtom = atom(
 )
 
 /**
+ * Update skills, from the palette (D111): this release's skills and hooks,
+ * merged into the vault. Main tells the outcome as a notification; when some
+ * could not be merged, the session it started to resolve them comes forward.
+ */
+export const updateSkillsAtom = atom(null, async (_get, set): Promise<AgentResult> => {
+  const res = await window.holi.agent.updateSkills()
+  if (!res.ok) return res
+  if (res.terminalId !== undefined) land(set, res.terminalId)
+  return { ok: true }
+})
+
+/**
  * "Ask Claude to reconcile". Re-materialise the conflict in the working
  * tree (main re-runs the merge), then give it its own session with the conflicted
  * paths as a submitted first turn. If the merge now applies cleanly (no paths),

@@ -22,6 +22,7 @@
  * vitest.
  */
 import { commentThreadsJson, formatCommentThreads, type PdfCommentThread } from '@holi/shared'
+import type { SkillsUpdate } from './seed-content'
 
 /** What a route needs main to do. Injected, so this module stays testable
  *  without a window, a vault, or a running app. */
@@ -34,11 +35,8 @@ export interface AgentOpsDeps {
    *  Holi's own git hook, not by the agent, but it lives here because this is
    *  where the loopback port and its token already are. */
   runPreCommitHooks(): Promise<{ changed: string[]; failed: unknown[] }>
-  /** Re-write the managed files Holi still owns (D75). */
-  refreshSeed(input: {
-    path?: string
-    force?: boolean
-  }): Promise<{ refreshed: string[]; skipped: { path: string; reason: string }[] }>
+  /** `holi skills update` (D111): this release's skills and hooks, merged in. */
+  updateSkills(): Promise<SkillsUpdate>
   /** A vault PDF's comment threads, read from the saved file (D106). `path` is
    *  as the agent typed it; the dep checks it against the vault. */
   pdfComments(
@@ -97,19 +95,12 @@ export function createAgentOps(deps: AgentOpsDeps): AgentOps {
           return json({ changed: [], failed: [{ error: message(error) }] })
         }
       }
-      case '/seed/refresh': {
-        const path = params.get('path')
+      case '/skills/update': {
         try {
-          return json(
-            await deps.refreshSeed({
-              path: path === null || path === '' ? undefined : path,
-              force: params.get('force') === 'true',
-            }),
-          )
+          const result = await deps.updateSkills()
+          return text(result.ok ? 200 : 422, result.ok ? result.summary : result.message)
         } catch (error) {
-          // Keeps the shape the caller parses, so a failure is one branch in the
-          // CLI rather than two.
-          return json({ refreshed: [], skipped: [], error: message(error) })
+          return text(422, message(error))
         }
       }
       case '/pdf/comments': {

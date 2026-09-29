@@ -127,6 +127,8 @@ legacy alias with the same behavior as `pnpm lint`.
   marker. When a decision changes what the agent is _told_, ask how existing
   vaults are reached before assuming the seed covers it — `settingsWithRequired`
   is the pattern that does reach them, and it only covers `.claude/settings.json`.
+  A shipped skill or hook (`SHIPPED_FILES`) is written only at vault creation and
+  reaches an existing vault only when its user runs `holi skills update` (D111).
 - **A file whose writer regenerates it is the third answer to that question, and
   the cheapest.** `.holi/settings/app.yaml`, `app.local.yaml` and the two theme
   files are `ONCE_FILE`s, but `writeSettingsText`/`writeThemeText` emit the whole

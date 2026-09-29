@@ -11,7 +11,16 @@
 import { readFile, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { app, BrowserWindow, dialog, ipcMain, nativeTheme, protocol, type Tray } from 'electron'
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  nativeTheme,
+  Notification,
+  protocol,
+  type Tray,
+} from 'electron'
 import { requestFlush, type FlushChannel } from './flush'
 import { guardNavigation } from './window-guard'
 import { assetAbsPath, mimeFor } from './vault/asset-protocol'
@@ -35,7 +44,12 @@ import { installGoogleCli } from './google/cli'
 import { installHoliCli } from './agent/cli'
 import { createAgentOps } from './agent/ops'
 import { initAppOp, openAppOp } from './apps/app-ops'
-import { refreshManaged } from './agent/seed-content'
+import {
+  describeUpdate,
+  updateConflictPrompt,
+  updateShipped,
+  type SkillsUpdate,
+} from './agent/seed-content'
 import { runPreCommit } from './vault/hooks/runner'
 import { stagedChanges } from './vault/hooks/staged'
 import { readHookSettings, VAULT_TRANSFORMS } from './vault/hooks/transforms'
@@ -458,6 +472,32 @@ async function main(): Promise<void> {
     return (await registry.list()).find((e) => e.remote === remote)?.path ?? null
   }
 
+  /**
+   * `holi skills update` and the palette's Update skills (D111): bring this
+   * release's skills and hooks to a vault. Conflicts get a session of their
+   * own, but only in the vault Holi is showing, the one sessions start in.
+   */
+  const updateSkills = async (remote: string): Promise<SkillsUpdate> => {
+    const root = await rootFor(remote)
+    if (root === null) return { ok: false, message: 'No vault is open.' }
+    const report = await updateShipped(root)
+    let terminalId: string | undefined
+    if (report.conflicts.length > 0 && host.active()?.remote === remote) {
+      const started = await agent.start({
+        name: 'Update skills',
+        prompt: await updateConflictPrompt(root, report.conflicts),
+      })
+      if (started.ok) terminalId = started.terminalId
+      else console.warn('[skills] no session for the conflicts:', started.message)
+    }
+    return {
+      ok: true,
+      report,
+      summary: describeUpdate(report, terminalId !== undefined),
+      ...(terminalId === undefined ? {} : { terminalId }),
+    }
+  }
+
   const hookServer = createHookServer({
     // A turn edge in one of a vault's background sessions, by job id (D110).
     onJobTurn: (remote, jobId, active) => agent.noteTurn(remote, jobId, active),
@@ -496,13 +536,7 @@ async function main(): Promise<void> {
           })
           return { changed: result.changed, failed: result.failed }
         },
-        refreshSeed: async (input) => {
-          const root = await rootFor(remote)
-          if (root === null) {
-            return { refreshed: [], skipped: [{ path: '', reason: 'no vault is open' }] }
-          }
-          return refreshManaged(root, input)
-        },
+        updateSkills: () => updateSkills(remote),
         // `holi pdf comments` (D106): read-only, from the saved file.
         pdfComments: async (path) => {
           const root = await rootFor(remote)
@@ -586,7 +620,20 @@ async function main(): Promise<void> {
     // What each turn changed, as a commit range, in the vault it ran in (D88).
     turnLogFor: openTurnLog,
   })
-  registerAgentIpc({ agent, terminals })
+  registerAgentIpc({
+    agent,
+    terminals,
+    // The palette's Update skills: the report as a native notification, since
+    // Holi has no notice surface of its own; a conflict's session opens too.
+    updateSkills: async () => {
+      const remote = host.active()?.remote
+      if (remote === undefined) return { ok: false, message: 'No vault is open.' }
+      const result = await updateSkills(remote)
+      const body = result.ok ? result.summary : result.message
+      new Notification({ title: 'Update skills', body }).show()
+      return result
+    },
+  })
 
   /**
    * Reminders: a tray-resident evaluator sweeps every registered vault each

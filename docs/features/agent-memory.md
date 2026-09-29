@@ -38,8 +38,8 @@ port: local reads and one `git log` with a 2 s timeout.
 **One memory surface.** The seeded `.claude/settings.json` sets `autoMemoryEnabled: false`, merged
 into existing vaults only when the key is absent, so Claude Code's own out-of-vault memory is off.
 
-**The contract ships as a managed `memory` skill**, not only as `AGENTS.md` prose. `AGENTS.md` is a
-once file and cannot be corrected in existing vaults; a managed skill lands on the next open
+**The contract ships as a `memory` skill**, not only as `AGENTS.md` prose. `AGENTS.md` is a once
+file and cannot be corrected in existing vaults; a skill can, through `holi skills update`
 ([agent-config.md](agent-config.md)).
 
 **Legacy files.** `MEMORY.md` and `USER.local.md` still work and are still read, and nothing moves
@@ -55,8 +55,8 @@ and the `scaffold-md` transform does not prepend frontmatter to a memory or to t
 - The committed index lists shared memories only. A personal memory's title and description appear
   in no committed file.
 - Nothing in the indexer can fail a commit.
-- `memory/index.md` is a once file, never managed: a managed refresh would fight the transform on
-  every open.
+- `memory/index.md` is a once file, never shipped: an update merging into it would fight the
+  transform.
 - Edits to `memory/index.md` are discarded on the next memory commit. A seeded `PreToolUse` hook
   (`memory-index-guard.mjs`) refuses them up front with that reason; `AGENTS.md` says it too, for
   agents other than Claude Code.

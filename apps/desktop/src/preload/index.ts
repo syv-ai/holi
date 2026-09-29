@@ -133,6 +133,7 @@ contextBridge.exposeInMainWorld('holi', {
     duplicate: (id: string, geometry: { cols?: number; rows?: number } = {}) =>
       ipcRenderer.invoke('agent:duplicate', { id, ...geometry }),
     attach: (terminalId: string): Promise<string> => ipcRenderer.invoke('agent:attach', terminalId),
+    updateSkills: () => ipcRenderer.invoke('agent:update-skills'),
     close: (terminalId: string) => ipcRenderer.invoke('agent-pty:close', terminalId),
     write: (id: string, data: string) => ipcRenderer.send('agent-pty:write', { id, data }),
     resize: (id: string, cols: number, rows: number) =>

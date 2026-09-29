@@ -8,6 +8,9 @@ type AgentActionResult = { ok: true } | { ok: false; message: string }
 type AgentOpenResult = { ok: true; terminalId: string } | { ok: false; message: string }
 type AgentStartResult =
   { ok: true; sessionId: string; terminalId: string } | { ok: false; message: string }
+/** Mirrors `SkillsUpdate` in main/agent/seed-content.ts; the report stays in main. */
+type SkillsUpdateResult =
+  { ok: true; summary: string; terminalId?: string } | { ok: false; message: string }
 
 declare global {
   interface Window {
@@ -114,6 +117,9 @@ declare global {
         ): Promise<AgentStartResult>
         /** Replayable state for one terminal, and open its data tap. */
         attach(terminalId: string): Promise<string>
+        /** This release's skills and hooks, merged into the vault (D111). Main
+         *  shows the summary as a notification; a conflict's session opens. */
+        updateSkills(): Promise<SkillsUpdateResult>
         /** Detach: ends the window, never the session. */
         close(terminalId: string): Promise<void>
         write(id: string, data: string): void
