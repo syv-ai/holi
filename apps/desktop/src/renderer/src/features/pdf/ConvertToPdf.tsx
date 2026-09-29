@@ -1,9 +1,11 @@
 import type { TemplateField } from '@holi/shared'
+import { useSetAtom } from 'jotai'
 import { useEffect, useMemo, useState } from 'react'
 import { FormField } from '@/composites/FormField'
 import { FieldWidget } from '@/features/pdf/FieldWidget'
 import { trpc } from '@/lib/trpc'
 import { metaFromValues, missingRequired, parseFrontmatter, prefillValues } from '@/lib/pdf-fields'
+import { openNoteTabAtom } from '@/state/panes'
 import {
   Button,
   Dialog,
@@ -26,8 +28,8 @@ interface TemplateOption {
 /**
  * Convert-to-PDF: pick a template, fill its typed metadata fields (each the
  * widget its declared type maps to), choose a destination via the native save
- * dialog, Convert. The render writes to the chosen path and is revealed in
- * Finder. Fills a Dialog's slots and knows nothing about overlays or sizing.
+ * dialog (which opens beside the note), Convert. A PDF in the vault opens in a
+ * tab; one saved elsewhere is revealed in Finder. Fills a Dialog's slots and knows nothing about overlays or sizing.
  */
 export function ConvertToPdf({
   remote,
@@ -94,6 +96,8 @@ export function ConvertToPdf({
     setValues(prefillValues(tpl.fields, frontmatter, today))
   }, [slug, templates, today, frontmatter])
 
+  const openTab = useSetAtom(openNoteTabAtom)
+
   const convert = async () => {
     if (selected === null) return
     const missing = missingRequired(selected.fields, values)
@@ -108,15 +112,23 @@ export function ConvertToPdf({
     setBusy(true)
     setError(null)
     try {
-      const defaultName = name.replace(/\.(md|markdown)$/i, '') + '.pdf'
-      const outPath = await window.holi.showSaveDialog(defaultName)
+      const outPath = await window.holi.showSaveDialog({ remote, path })
       if (outPath === null) {
         setBusy(false)
         return // user cancelled the save dialog
       }
       const meta = metaFromValues(selected.fields, values)
-      const { pdfPath } = await trpc.pdf.render.mutate({ remote, path, template: slug, outPath, meta })
-      await window.holi.openPath(pdfPath)
+      const { pdfPath, vaultPath } = await trpc.pdf.render.mutate({
+        remote,
+        path,
+        template: slug,
+        outPath,
+        meta,
+      })
+      // In the vault it opens in a tab, where it can be read and commented
+      // on; anywhere else, Finder shows where it went.
+      if (vaultPath !== null) openTab(vaultPath)
+      else await window.holi.openPath(pdfPath)
       onClose()
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e))
@@ -172,11 +184,7 @@ export function ConvertToPdf({
 
         {selected !== null &&
           selected.fields.map((f) => (
-            <FormField
-              key={f.key}
-              label={f.label}
-              required={f.required && f.type !== 'checkbox'}
-            >
+            <FormField key={f.key} label={f.label} required={f.required && f.type !== 'checkbox'}>
               <FieldWidget
                 field={f}
                 value={values[f.key] ?? ''}

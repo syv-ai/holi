@@ -7,7 +7,7 @@
  * theatre. GitHub decides what leaves, at push time (docs/features/auth.md).
  */
 import { readFile, rm, stat } from 'node:fs/promises'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { initTRPC, TRPCError } from '@trpc/server'
 import {
   completeTask,
@@ -81,7 +81,13 @@ import type { SignatureStore } from './pdf/signatures'
 import { listContacts } from './google/people'
 import type { ActiveVault, SyncState, VaultHost } from './vault/active-vault'
 import { ensureClone } from './vault/clone'
-import { pruneEmptiedFolder, removeDocFile, writeAtomic, absPathFor } from './vault/vault-files'
+import {
+  pruneEmptiedFolder,
+  removeDocFile,
+  writeAtomic,
+  absPathFor,
+  toVaultRel,
+} from './vault/vault-files'
 import { renameNote } from './vault/rename'
 import { scanVault, type VaultSnapshot } from './vault/vault-store'
 import { migrateVaultLayout } from './vault/migrate-layout'
@@ -193,10 +199,6 @@ export interface RouterDeps {
    * destructive account action should be undoable.
    */
   trashItem: (path: string) => Promise<void>
-  /** Absolute dir the Convert-to-PDF output is written to (the user's Downloads).
-   *  Injected rather than read from electron here so the router stays
-   *  typecheckable and testable under plain Node. */
-  downloadsDir: string
   /** Where a downloaded typst binary is cached (userData/typst). Injected for
    *  the same reason; the resolver only reads it, never electron. */
   typstCacheDir: string
@@ -437,7 +439,7 @@ function deleteManyInput(raw: unknown): { remote: string; paths: string[]; folde
 /** The Convert-to-PDF render input. `meta` (the template's declared fields to
  * user values) is not something `fields` can express, so it is validated here.
  * `outPath` is an absolute destination the native save dialog chose; absent,
- * the procedure writes to Downloads. */
+ * the procedure writes beside the note. */
 function renderPdfInput(raw: unknown): {
   remote: string
   path: string
@@ -1793,12 +1795,12 @@ export function createRouter(deps: RouterDeps) {
     ),
 
     // Render `path` through `template` to a PDF and return its path. Writes to
-    // `outPath` when given (the native save dialog's choice); otherwise defaults
-    // to Downloads. Not a vaultMutation: the output goes outside the vault, so
-    // there is no snapshot to refresh.
+    // `outPath` when given (the native save dialog's choice); otherwise beside
+    // the note. `vaultPath` is set when the PDF is inside the vault, so the
+    // caller can open it in a tab; the watcher picks the new file up.
     render: t.procedure
       .input(renderPdfInput)
-      .mutation(async ({ input }): Promise<{ pdfPath: string }> => {
+      .mutation(async ({ input }): Promise<{ pdfPath: string; vaultPath: string | null }> => {
         const root = await rootFor(input.remote)
         const noteAbs = absPathFor(root, safe(input.path))
         const tpl = (await listTemplates(root)).find((t) => t.slug === input.template)
@@ -1813,7 +1815,7 @@ export function createRouter(deps: RouterDeps) {
           .split('/')
           .at(-1)!
           .replace(/\.(md|markdown)$/i, '')
-        const outPath = input.outPath ?? join(deps.downloadsDir, `${base}.pdf`)
+        const outPath = input.outPath ?? join(dirname(noteAbs), `${base}.pdf`)
         await renderPdf({
           typstBin,
           templateDir: tpl.dir,
@@ -1822,7 +1824,7 @@ export function createRouter(deps: RouterDeps) {
           fields: tpl.fields,
           meta: input.meta ?? {},
         })
-        return { pdfPath: outPath }
+        return { pdfPath: outPath, vaultPath: toVaultRel(root, outPath) }
       }),
   })
 

@@ -369,11 +369,10 @@ async function main(): Promise<void> {
       const { shell } = await import('electron')
       await shell.trashItem(path)
     },
-    downloadsDir: app.getPath('downloads'),
     typstCacheDir,
   })
 
-  registerIpc({ router })
+  registerIpc({ router, rootFor: (remote) => rootFor(remote) })
 
   // The vault agent: any number of live `claude` sessions, all in the
   // active vault's clone, all ended when that vault closes. `getWindow` is lazy,

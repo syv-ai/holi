@@ -7,7 +7,8 @@
  */
 import type { AnyRouter } from '@trpc/server'
 import { app, BrowserWindow, dialog, ipcMain, nativeImage, shell } from 'electron'
-import { join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
+import { vaultRelPath } from '@holi/shared'
 import { callProcedure, toEnvelope, type TrpcEnvelope, type TrpcOp } from './trpc-call'
 
 /**
@@ -19,10 +20,13 @@ const DRAG_ICON = nativeImage.createFromDataURL(
   'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
 )
 
-export function registerIpc(deps: { router: AnyRouter }): void {
-  ipcMain.handle(
-    'holi:trpc',
-    (_event, op: TrpcOp): Promise<TrpcEnvelope> => toEnvelope(callProcedure(deps.router, op)),
+export function registerIpc(deps: {
+  router: AnyRouter
+  /** A vault's clone on disk, or null when it is not known. */
+  rootFor: (remote: string) => Promise<string | null>
+}): void {
+  ipcMain.handle('holi:trpc', (_event, op: TrpcOp): Promise<TrpcEnvelope> =>
+    toEnvelope(callProcedure(deps.router, op)),
   )
 
   // The SYSTEM browser, not a window: the sign-in page has to reuse the user's
@@ -60,15 +64,28 @@ export function registerIpc(deps: { router: AnyRouter }): void {
   // The native SAVE sheet for Convert-to-PDF. The renderer gets back an
   // absolute path (or null on cancel) and hands it to `pdf.render`. Tied to the
   // calling window so it is a sheet, not a floating dialog.
+  //
+  // It opens beside the note, so the PDF lands in the vault unless the user
+  // picks somewhere else: a PDF there can be read and commented on in Holi.
   ipcMain.handle(
     'holi:showSaveDialog',
-    async (event, defaultName: string): Promise<string | null> => {
+    async (event, input: { remote: string; path: string }): Promise<string | null> => {
       const win = BrowserWindow.fromWebContents(event.sender)
+      const name = basename(input.path).replace(/\.(md|markdown)$/i, '') + '.pdf'
+      const root = await deps.rootFor(input.remote).catch(() => null)
+      let dir = app.getPath('downloads')
+      try {
+        if (root !== null) dir = join(root, dirname(vaultRelPath(input.path)))
+      } catch {
+        // Not a vault path: Downloads, as before.
+      }
       const opts = {
-        defaultPath: join(app.getPath('downloads'), defaultName),
+        defaultPath: join(dir, name),
         filters: [{ name: 'PDF', extensions: ['pdf'] }],
       }
-      const result = win ? await dialog.showSaveDialog(win, opts) : await dialog.showSaveDialog(opts)
+      const result = win
+        ? await dialog.showSaveDialog(win, opts)
+        : await dialog.showSaveDialog(opts)
       return result.canceled || result.filePath === undefined ? null : result.filePath
     },
   )

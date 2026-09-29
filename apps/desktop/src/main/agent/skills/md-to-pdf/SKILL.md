@@ -53,7 +53,7 @@ Omit an optional field to leave it unset — the template reads
 ## Recipe
 
 1. Choose a template (default `plain`) and read its `template.json` for the fields.
-2. Write a wrapper `.typ` in a scratch dir **outside the vault**. Use ABSOLUTE
+2. Write a wrapper `.typ` in a scratch dir outside the vault. Use ABSOLUTE
    paths so `--root /` can read everything:
 
    ```typ
@@ -73,10 +73,13 @@ Omit an optional field to leave it unset — the template reads
    "$TYPST_BIN" compile "$DIR/wrapper.typ" "$DIR/the-note.pdf" --root /
    ```
 
-4. Report the absolute path of the resulting PDF to the user.
+4. Move it to where it goes (below), and tell the user where that is.
 
-**Where the PDF goes.** Outside the vault by default: the note is the source and a
-PDF of it is an output, so committing it keeps a copy that goes stale. Put it in
-the vault, next to the note, only when the user wants it there, typically so
-people can read or comment on it in Holi (the pdf-comments skill reads those
-comments back). A PDF in the vault is committed and synced like any file.
+**Where the PDF goes.** In the vault, next to the note (`notes/the-note.pdf` for
+`notes/the-note.md`), the same place Holi's own Convert to PDF offers. There it
+can be read and commented on in Holi (the pdf-comments skill reads those comments
+back), and it is committed and synced like any file. Leave it outside the vault
+when the user asks, or when it comes out large (over about 10 MB, usually from
+images): a repository keeps every version of a binary forever, so say how big it
+is and ask before moving one that size in. Compiling to the scratch dir first is
+what lets you check.

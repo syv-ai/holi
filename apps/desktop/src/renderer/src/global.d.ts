@@ -71,7 +71,7 @@ declare global {
       /** Native "save as" for the Convert-to-PDF output. Presents a save sheet
        *  defaulting to `defaultName` under Downloads; resolves to the chosen
        *  absolute path, or null if the user cancelled. */
-      showSaveDialog(defaultName: string): Promise<string | null>
+      showSaveDialog(input: { remote: string; path: string }): Promise<string | null>
       /** Pick a folder on disk: the destination for Copy/Move to Folder…. */
       chooseFolder(): Promise<string | null>
       /**

@@ -109,7 +109,6 @@ async function rig(files: Record<string, string> = {}, auth?: StoredAuth) {
     vaultRoot: join(base, 'Holi'),
     openExternal: async () => {},
     trashItem,
-    downloadsDir: join(base, 'Downloads'),
     typstCacheDir: join(base, 'typst'),
     signatures: createSignatureStore(join(base, 'pdf-signatures.json')),
     now: () => '2026-07-21T12:00:00Z',
@@ -1098,7 +1097,6 @@ async function authRig(routes: Record<string, Scripted[]>, seed?: StoredAuth) {
     vaultRoot: join(base, 'Holi'),
     openExternal,
     trashItem: async () => {},
-    downloadsDir: join(base, 'Downloads'),
     typstCacheDir: join(base, 'typst'),
   }).createCaller({})
   return { caller, session, store, openExternal }
@@ -1810,7 +1808,6 @@ describe('google composer procedures', () => {
       vaultRoot: join(base, 'Holi'),
       openExternal: async () => {},
       trashItem: async () => {},
-      downloadsDir: join(base, 'Downloads'),
       typstCacheDir: join(base, 'typst'),
       googleDataFor: async () => googleData as never,
     }).createCaller({})
@@ -1915,7 +1912,6 @@ describe('google composer procedures', () => {
       vaultRoot: join(base, 'Holi'),
       openExternal: async () => {},
       trashItem: async () => {},
-      downloadsDir: join(base, 'Downloads'),
       typstCacheDir: join(base, 'typst'),
     }).createCaller({})
 
@@ -1940,7 +1936,6 @@ describe('google forwarding', () => {
       vaultRoot: join(base, 'Holi'),
       openExternal: async () => {},
       trashItem: async () => {},
-      downloadsDir: join(base, 'Downloads'),
       typstCacheDir: join(base, 'typst'),
       googleDataFor: async () =>
         ({
@@ -1972,7 +1967,6 @@ describe('google forwarding', () => {
       vaultRoot: join(base, 'Holi'),
       openExternal: async () => {},
       trashItem: async () => {},
-      downloadsDir: join(base, 'Downloads'),
       typstCacheDir: join(base, 'typst'),
       googleDataFor: async () => ({ sendMail: async () => ({ id: 'm-1' }) }) as never,
     }).createCaller({})
@@ -2113,7 +2107,6 @@ describe('google accounts per vault', () => {
       vaultRoot: join(base, 'Holi'),
       openExternal: async () => {},
       trashItem: async () => {},
-      downloadsDir: join(base, 'Downloads'),
       typstCacheDir: join(base, 'typst'),
       googleAccounts: googleAccounts as never,
     }).createCaller({})
@@ -2181,7 +2174,6 @@ describe('google status and accounts with no vault open', () => {
       vaultRoot: join(base, 'Holi'),
       openExternal: async () => {},
       trashItem: async () => {},
-      downloadsDir: join(base, 'Downloads'),
       typstCacheDir: join(base, 'typst'),
       googleAccounts: {
         list: () => [{ sub: 'sub-1', email: 'ada@syv.ai' }],

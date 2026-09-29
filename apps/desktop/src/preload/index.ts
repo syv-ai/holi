@@ -112,7 +112,8 @@ contextBridge.exposeInMainWorld('holi', {
   /** Hand these files to the OS as a drag. Fire-and-forget: a drag cannot wait
    *  for a round trip. */
   startDrag: (paths: string[]) => ipcRenderer.send('holi:startDrag', paths),
-  showSaveDialog: (defaultName: string) => ipcRenderer.invoke('holi:showSaveDialog', defaultName),
+  showSaveDialog: (input: { remote: string; path: string }) =>
+    ipcRenderer.invoke('holi:showSaveDialog', input),
   /** Pick a folder on disk: the destination for Copy/Move to Folder…. */
   chooseFolder: (): Promise<string | null> => ipcRenderer.invoke('holi:chooseFolder'),
   agent: {
