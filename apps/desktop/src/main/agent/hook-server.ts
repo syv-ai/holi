@@ -9,7 +9,10 @@
  * rejects any other local process: the port is ephemeral, but this closes the
  * "some other localhost thing toggles our sync pause" gap.
  * A turn-signal response is always empty (a body would be injected into
- * Claude's context). The same server also carries the **agent ops** routes the
+ * Claude's context). `/statusline` is keyed the same way: the seeded
+ * `status-line.mjs` posts Claude Code's status JSON with the job id, prints
+ * its footer itself, and is answered empty. The same server also carries the
+ * **agent ops** routes the
  * `holi` CLI calls (`ops.ts`), and those DO answer: they are replies to a
  * command the agent typed, not to a hook it never sees. The two classes are
  * routed apart here so that distinction cannot blur.
@@ -32,6 +35,12 @@ export interface HookServerDeps {
    * `$CLAUDE_JOB_DIR`.
    */
   onJobTurn: (remote: string, jobId: string, active: boolean) => void
+  /**
+   * A session's status line fired, with Claude Code's status JSON.
+   * Keyed like a turn edge. Holi's side of a shipped hook must stay
+   * backward-compatible, so this route answers every older script too.
+   */
+  onStatus?: (remote: string, jobId: string, status: unknown) => void
   log?: (msg: string) => void
   /**
    * The agent-ops routes for **one vault**, if this instance has them. Absent
@@ -60,8 +69,8 @@ export interface HookServer {
   tokenForVault(remote: string): string
 }
 
-/** Cap the drained request body — the hooks send nothing we read, so this is
- *  purely a guard against a runaway sender holding the socket open. */
+/** Cap the request body: a guard against a runaway sender holding the socket
+ *  open. A turn signal sends nothing; a status JSON is a few kilobytes. */
 const MAX_BODY_BYTES = 64 * 1024
 
 /** A Claude Code job id: eight hex characters, the name of its `jobs/` dir. */
@@ -95,6 +104,7 @@ export function createHookServer(deps: HookServerDeps): HookServer {
     }
 
     const isTurn = url.pathname === '/turn/start' || url.pathname === '/turn/end'
+    const isStatus = url.pathname === '/statusline'
 
     // A turn signal sends nothing we read, so its body is drained and discarded;
     // an ops route's arguments ride in the body so `curl --data-urlencode`
@@ -111,6 +121,19 @@ export function createHookServer(deps: HookServerDeps): HookServer {
     })
 
     req.on('end', () => {
+      if (isStatus) {
+        // Like a turn signal: a reading that names no job has no row to go on.
+        const job = url.searchParams.get('job') ?? ''
+        if (JOB_ID.test(job)) {
+          try {
+            deps.onStatus?.(remote, job, JSON.parse(body))
+          } catch (error) {
+            log(`statusline failed: ${String(error)}`)
+          }
+        }
+        res.writeHead(204).end()
+        return
+      }
       if (isTurn) {
         // A signal that names no job cannot say which session's turn it is,
         // and with several running there is no honest guess, so it is dropped

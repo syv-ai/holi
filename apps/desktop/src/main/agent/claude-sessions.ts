@@ -51,6 +51,9 @@ export interface SessionSummary {
   state: SessionState
   /** Present only for 'needs-you', when Claude Code says why. */
   waitingFor?: string
+  /** How much of its context window is used, 0 to 100, from its status line.
+   *  Absent until Claude Code has said, and again after a `/clear`. */
+  contextPercent?: number
 }
 
 const NEW_SESSION = 'New session'
@@ -113,7 +116,11 @@ export function isLive(row: ClaudeRow): boolean {
  * The hook bracket (`working`) is the floor under a listing that is slow or
  * too old to answer.
  */
-export function summarise(row: ClaudeRow, working: ReadonlySet<string>): SessionSummary {
+export function summarise(
+  row: ClaudeRow,
+  working: ReadonlySet<string>,
+  contextPercent?: number,
+): SessionSummary {
   let state: SessionState = 'idle'
   if (row.status === 'waiting') state = 'needs-you'
   else if (row.status === 'busy' || row.status === 'shell' || working.has(row.id)) state = 'working'
@@ -125,7 +132,25 @@ export function summarise(row: ClaudeRow, working: ReadonlySet<string>): Session
     ...(state === 'needs-you' && row.waitingFor !== undefined
       ? { waitingFor: row.waitingFor }
       : {}),
+    ...(contextPercent === undefined ? {} : { contextPercent }),
   }
+}
+
+/**
+ * How much of a session's context window is used, 0 to 100 and rounded, from
+ * the JSON Claude Code hands its `statusLine` command. A documented
+ * channel, which is why Holi reads it and not the transcript. Null before the
+ * first message and after a `/clear`, and for any shape it does not recognise:
+ * it is another program's output.
+ */
+export function readContextPercent(status: unknown): number | null {
+  if (status === null || typeof status !== 'object') return null
+  const window = (status as Record<string, unknown>)['context_window']
+  if (window === null || typeof window !== 'object') return null
+  const used = (window as Record<string, unknown>)['used_percentage']
+  return typeof used === 'number' && Number.isFinite(used)
+    ? Math.min(100, Math.max(0, Math.round(used)))
+    : null
 }
 
 /** The directories Claude Code keeps session state in, under the config dir. */

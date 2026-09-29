@@ -147,6 +147,31 @@ describe('agent sessions', () => {
     expect(t.sessions.sessions()[0]?.state).toBe('working')
   })
 
+  it("puts a session's context reading on its row, by job id and for this vault only", async () => {
+    const t = setup([row('aaaaaaaa'), row('bbbbbbbb')])
+    await t.sessions.ensure()
+    const status = (used: number | null) => ({
+      model: { display_name: 'Opus 5.5' },
+      context_window: { used_percentage: used },
+    })
+
+    t.sessions.noteStatus(REMOTE, 'aaaaaaaa', status(41.6))
+    t.sessions.noteStatus('someone/else', 'bbbbbbbb', status(90))
+    expect(t.sessions.sessions().map((s) => s.contextPercent)).toEqual([42, undefined])
+    expect(t.sent.at(-1)?.[1]).toEqual(t.sessions.sessions())
+
+    // `/clear` starts over: nothing to show until its first message.
+    t.sessions.noteStatus(REMOTE, 'aaaaaaaa', status(null))
+    expect(t.sessions.sessions()[0]?.contextPercent).toBeUndefined()
+
+    // A stopped session's reading goes with it.
+    t.sessions.noteStatus(REMOTE, 'bbbbbbbb', status(10))
+    await t.sessions.stop('bbbbbbbb')
+    t.setListing([row('aaaaaaaa'), row('bbbbbbbb')])
+    await t.sessions.refresh()
+    expect(t.sessions.sessions()[1]?.contextPercent).toBeUndefined()
+  })
+
   it('stops a session: it leaves the list', async () => {
     const t = setup([row('aaaaaaaa'), row('bbbbbbbb')])
     await t.sessions.ensure()

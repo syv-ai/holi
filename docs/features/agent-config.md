@@ -57,7 +57,9 @@ finds itself with `Glob`, `grep` and `git`.
   carry), `permissions.ask` and `permissions.allow` rules, `disableClaudeAiConnectors`,
   `autoMemoryEnabled`, `awaySummaryEnabled` and `promptSuggestionEnabled` (all `false`: no
   session recap, no next-prompt suggestion) and `worktree.bgIsolation: "none"` (only when absent,
-  so sessions edit the vault rather than a worktree of it), and keeps everything else. A vault
+  so sessions edit the vault rather than a worktree of it), a `statusLine` running
+  `status-line.mjs` (only when absent, so a vault's own footer stays), and keeps everything
+  else. A vault
   turns a default back by setting it here or in `settings.local.json`; Claude Code's `/config`
   writes user settings, which a project value outranks. Malformed JSON is left alone.
 

@@ -113,6 +113,41 @@ describe('createHookServer', () => {
     expect(r.ends()).toEqual([`${VAULT}:bbbbbbbb`])
   })
 
+  it('POST /statusline hands the status JSON over by vault and job, and answers an empty 204', async () => {
+    const seen: unknown[] = []
+    const server = createHookServer({
+      onJobTurn: () => {},
+      onStatus: (remote, job, status) => seen.push([remote, job, status]),
+      log: () => {},
+    })
+    servers.push(server)
+    await server.start()
+    const token = server.tokenForVault(VAULT)
+    const status = { context_window: { used_percentage: 42 } }
+    const send = (query: string, body: string) =>
+      new Promise<{ status: number; body: string }>((resolve, reject) => {
+        const req = request(
+          { host: '127.0.0.1', port: server.port()!, path: `/statusline?${query}`, method: 'POST' },
+          (res) => {
+            let text = ''
+            res.on('data', (c) => (text += c))
+            res.on('end', () => resolve({ status: res.statusCode ?? 0, body: text }))
+          },
+        )
+        req.on('error', reject)
+        req.end(body)
+      })
+
+    expect(await send(`t=${token}&job=1234abcd`, JSON.stringify(status))).toEqual({
+      status: 204,
+      body: '',
+    })
+    // No job, no row to put it on; malformed JSON, nothing to read.
+    await send(`t=${token}&job=`, JSON.stringify(status))
+    expect(await send(`t=${token}&job=1234abcd`, '{')).toEqual({ status: 204, body: '' })
+    expect(seen).toEqual([[VAULT, '1234abcd', status]])
+  })
+
   it('drops a turn signal that names no session', async () => {
     // With several sessions running there is no honest answer to "which one
     // turned", and guessing would pause and resume the vault under a session

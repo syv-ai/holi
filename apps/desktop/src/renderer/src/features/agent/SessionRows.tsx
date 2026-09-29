@@ -12,6 +12,10 @@
  * session stops at once; one mid-turn, or waiting on an answer, asks first,
  * because that turn is cut short.
  *
+ * Stop shows on hover and on keyboard focus. The rest of the time its slot
+ * holds how much of the session's context window is used: muted like
+ * the name below 60%, then amber ramping to red at 99%.
+ *
  * The rows take the tree row's height, and their dots sit on the centre of
  * the nav menu's first icon below.
  */
@@ -29,7 +33,7 @@ import {
   IconButton,
   Tooltip,
 } from '@/primitives'
-import { agentIndicator, sessionsWorthAsking } from '@/lib/agent-notices'
+import { agentIndicator, contextColour, sessionsWorthAsking } from '@/lib/agent-notices'
 import { cn } from '@/lib/cn'
 import { activeSessionAtom, agentSessionsAtom, type AgentSession } from '@/state/agent'
 import {
@@ -69,6 +73,8 @@ export function SessionRows(): React.JSX.Element | null {
     <div className="flex shrink-0 flex-col pb-3 pt-1" data-session-rows="">
       {sessions.map((session) => {
         const indicator = agentIndicator(session)
+        const percent = session.contextPercent
+        const colour = percent === undefined ? null : contextColour(percent)
         return (
           <ContextMenu key={session.id}>
             <ContextMenuTrigger asChild>
@@ -83,9 +89,12 @@ export function SessionRows(): React.JSX.Element | null {
                       // `size="xs"` brings. `pl-5` puts the dot's centre on
                       // the nav menu's first icon (its dock's `p-2` plus the
                       // menu's own inset plus half a 32px icon). Right padding
-                      // leaves room for Stop. Hover is the text colour alone,
-                      // so the ghost variant's hover background is cancelled.
-                      'h-[22px] w-full justify-start gap-1 rounded py-0 pl-5 pr-7 text-sm font-normal hover:bg-transparent dark:hover:bg-transparent',
+                      // leaves room for Stop, or holds the context reading,
+                      // which is at least Stop's width. Hover is the text
+                      // colour alone, so the ghost variant's hover background
+                      // is cancelled.
+                      'h-[22px] w-full justify-start gap-1 rounded py-0 pl-5 text-sm font-normal hover:bg-transparent dark:hover:bg-transparent',
+                      percent === undefined ? 'pr-7' : 'pr-2',
                       session.id === active?.id
                         ? 'text-brand'
                         : 'text-muted-foreground hover:text-foreground',
@@ -105,6 +114,21 @@ export function SessionRows(): React.JSX.Element | null {
                     {session.state === 'needs-you' && (
                       <span className="shrink-0 text-xs text-orange-400">
                         {session.waitingFor ?? 'needs you'}
+                      </span>
+                    )}
+                    {/* In Stop's slot, right-aligned with its glyph, and in
+                        the flow so a long name truncates before it. Hidden
+                        exactly when Stop shows, by opacity so nothing moves. */}
+                    {percent !== undefined && (
+                      <span
+                        data-session-context={session.id}
+                        className={cn(
+                          'min-w-5 shrink-0 text-right text-xs tabular-nums group-focus-within/row:opacity-0 group-hover/row:opacity-0',
+                          colour === null && 'text-muted-foreground',
+                        )}
+                        style={colour === null ? undefined : { color: colour }}
+                      >
+                        {percent}%
                       </span>
                     )}
                   </Button>

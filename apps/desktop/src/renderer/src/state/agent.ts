@@ -20,6 +20,9 @@ export interface AgentSession {
   state: SessionState
   /** Only for 'needs-you': why, e.g. 'permission prompt'. */
   waitingFor?: string
+  /** How much of its context window is used, 0 to 100, from its status line.
+   *  Absent before its first message and after a `/clear`. */
+  contextPercent?: number
 }
 
 /**

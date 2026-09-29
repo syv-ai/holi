@@ -45,6 +45,7 @@ import vaultAppCheckHook from './hooks/vault-app-check.mjs?raw'
 import memoryOverviewHook from './hooks/memory-overview.mjs?raw'
 import memoryIndexGuardHook from './hooks/memory-index-guard.mjs?raw'
 import turnSignalHook from './hooks/turn-signal.mjs?raw'
+import statusLineHook from './hooks/status-line.mjs?raw'
 import mdToPdfSkill from './skills/md-to-pdf/SKILL.md?raw'
 import themeSkill from './skills/theme/SKILL.md?raw'
 import gmailCalendarSkill from './skills/gmail-calendar/SKILL.md?raw'
@@ -203,6 +204,15 @@ const SETTINGS_JSON =
       awaySummaryEnabled: false,
       promptSuggestionEnabled: false,
       /**
+       * The footer: the model and how much of the context window is
+       * used, printed by the vault's own script so it reads the same in any
+       * Claude Code. Inside Holi the script also hands the reading to the
+       * session's row. Replacing Claude Code's footer drops its own hints
+       * (`esc to interrupt`); a machine that wants them back sets its own
+       * `statusLine` in `settings.local.json`, which outranks this one.
+       */
+      statusLine: { type: 'command', command: hookCommand('status-line') },
+      /**
        * Background sessions edit the vault itself (D110).
        *
        * Claude Code otherwise moves a dispatched session into a git worktree
@@ -313,6 +323,7 @@ export const SHIPPED_FILES: Record<string, string> = {
   '.claude/hooks/memory-overview.mjs': memoryOverviewHook,
   '.claude/hooks/memory-index-guard.mjs': memoryIndexGuardHook,
   '.claude/hooks/turn-signal.mjs': turnSignalHook,
+  '.claude/hooks/status-line.mjs': statusLineHook,
   '.claude/skills/md-to-pdf/SKILL.md': mdToPdfSkill,
   '.claude/skills/theme/SKILL.md': themeSkill,
   '.claude/skills/gmail-calendar/SKILL.md': gmailCalendarSkill,
@@ -460,6 +471,7 @@ export function settingsWithRequired(
     disableClaudeAiConnectors: boolean
     autoMemoryEnabled: boolean
     awaySummaryEnabled: boolean
+    statusLine: { type: string; command: string }
     promptSuggestionEnabled: boolean
   }
   let changed = false
@@ -563,6 +575,13 @@ export function settingsWithRequired(
       settings.hooks = hooks
       changed = true
     }
+  }
+
+  /** Only when absent, so a vault's own footer stays, and only once its script
+   *  is there: a status line that fails is a blank footer in every session. */
+  if (settings.statusLine === undefined && hasHook('status-line')) {
+    settings.statusLine = required.statusLine
+    changed = true
   }
 
   /** Only when absent: a user who chose isolation keeps it, and loses Holi's

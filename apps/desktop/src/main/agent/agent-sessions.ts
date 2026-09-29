@@ -25,6 +25,7 @@ import { sessionName, type ClaudeCli, type VaultCliTarget } from './claude-cli'
 import {
   isLive,
   parseListing,
+  readContextPercent,
   summarise,
   watchConfigDir,
   type ClaudeRow,
@@ -115,6 +116,9 @@ export interface AgentSessions {
   duplicate(id: string, geometry?: Geometry): Promise<StartResult>
   /** A turn edge from the seeded hook, by vault and job id. */
   noteTurn(remote: string, jobId: string, active: boolean): void
+  /** A session's status line fired: Claude Code's status JSON, by vault and
+   *  job id. */
+  noteStatus(remote: string, jobId: string, status: unknown): void
   /** The focus file is the vault's, so this names no session. */
   setFocus(focus: FocusInput): void
   /** Let go of the vault: optionally stop its live sessions, close every
@@ -157,6 +161,13 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
    * it, so a conversation that exists is never removed.
    */
   const unprompted = new Set<string>()
+  /**
+   * Each live session's context use, by job id, from its status line. Claude
+   * Code's listing does not carry it. The status line runs on Claude Code's
+   * own events, a background session with no client attached included, and a
+   * session between turns is not using any more.
+   */
+  const contextPercent = new Map<string, number>()
 
   const send = (channel: string, payload: unknown): void => {
     deps.getWindow()?.webContents.send(channel, payload)
@@ -172,7 +183,8 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
   })
 
   const live = (): ClaudeRow[] => rows.filter(isLive)
-  const summaries = (): SessionSummary[] => live().map((row) => summarise(row, coordinator.working))
+  const summaries = (): SessionSummary[] =>
+    live().map((row) => summarise(row, coordinator.working, contextPercent.get(row.id)))
 
   function push(): void {
     const next = summaries()
@@ -257,6 +269,8 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
 
     // A session whose process has gone will not end its turn now.
     for (const id of coordinator.working) if (!liveIds.has(id)) coordinator.forget(id)
+    // Nor use any more context; resumed, it says so again at its first event.
+    for (const id of contextPercent.keys()) if (!liveIds.has(id)) contextPercent.delete(id)
 
     let wantsRecheck = false
     for (const row of liveRows) {
@@ -420,6 +434,15 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
       void refresh()
     },
 
+    noteStatus(remote, jobId, status) {
+      // Only the vault Holi is showing has rows to put a number on.
+      if (current?.remote !== remote) return
+      const percent = readContextPercent(status)
+      if (percent === null) contextPercent.delete(jobId)
+      else contextPercent.set(jobId, percent)
+      push()
+    },
+
     setFocus(focus) {
       const vault = deps.host.active()
       if (vault === null) return
@@ -462,6 +485,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     await deps.terminals.closeAll()
     for (const id of [...coordinator.working]) coordinator.forget(id)
     unprompted.clear()
+    contextPercent.clear()
     if (idleRecheck !== null) {
       clearTimeout(idleRecheck)
       idleRecheck = null

@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { agentIndicator, sessionsWorthAsking } from '../src/renderer/src/lib/agent-notices'
+import {
+  agentIndicator,
+  contextColour,
+  sessionsWorthAsking,
+} from '../src/renderer/src/lib/agent-notices'
 
 describe('agentIndicator', () => {
   const idle = { state: 'idle' as const }
@@ -56,5 +60,21 @@ describe('sessionsWorthAsking', () => {
 
   it('keeps a session that is waiting on you', () => {
     expect(sessionsWorthAsking([live('needs-you')])).toHaveLength(1)
+  })
+})
+
+describe('contextColour', () => {
+  it("is the row's muted text below 60%", () => {
+    expect(contextColour(0)).toBeNull()
+    expect(contextColour(59)).toBeNull()
+  })
+
+  it('ramps from amber at 60% to full red at 99%, and stays red past it', () => {
+    expect(contextColour(60)).toBe(
+      'color-mix(in oklab, var(--context-full) 0%, var(--context-warm))',
+    )
+    expect(contextColour(80)).toContain('var(--context-full) 51%')
+    expect(contextColour(99)).toContain('var(--context-full) 100%')
+    expect(contextColour(100)).toContain('var(--context-full) 100%')
   })
 })

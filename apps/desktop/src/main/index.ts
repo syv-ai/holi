@@ -501,6 +501,8 @@ async function main(): Promise<void> {
   const hookServer = createHookServer({
     // A turn edge in one of a vault's background sessions, by job id (D110).
     onJobTurn: (remote, jobId, active) => agent.noteTurn(remote, jobId, active),
+    // A session's status line: how much of its context is used.
+    onStatus: (remote, jobId, status) => agent.noteStatus(remote, jobId, status),
     opsFor: (remote) =>
       createAgentOps({
         openApp: async (path) => {

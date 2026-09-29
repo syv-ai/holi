@@ -133,6 +133,12 @@
   --diff-added-foreground: var(--color-green-400);
   --diff-removed-foreground: var(--color-red-400);
 
+  /* The two ends of a session row's context reading, as TEXT: amber where it
+     starts to matter (60%), full red at 99%. The row mixes between them
+     (`contextColour`). Not in the theme whitelist, like `--diff-*`. */
+  --context-warm: var(--color-amber-400);
+  --context-full: var(--color-red-500);
+
   /* ── Rendered-table tokens (per-vault themeable) ───────────────────
    * `codemirror-markdown-tables` paints from its own `--tbl-theme-*`
    * properties and picks light or dark from `EditorView.darkTheme`, which Holi
@@ -212,6 +218,8 @@
   /* Text, so a light arm; the diff tints deliberately have none. */
   --diff-added-foreground: var(--color-green-700);
   --diff-removed-foreground: var(--color-red-700);
+  --context-warm: var(--color-amber-600);
+  --context-full: var(--color-red-600);
 
   /* Softer on white, where the dark-first weight reads as smudge. --selection
      is brand-derived and needs no light arm. */

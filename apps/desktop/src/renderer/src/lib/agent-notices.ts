@@ -71,3 +71,23 @@ export interface FleetSession {
 export function sessionsWorthAsking<T extends FleetSession>(sessions: T[]): T[] {
   return sessions.filter((s) => s.state === 'working' || s.state === 'needs-you')
 }
+
+/** Below this, a session's context reading is muted, like its name. */
+export const CONTEXT_WARM_AT = 60
+/** Where the ramp reaches full red. */
+const CONTEXT_FULL_AT = 99
+
+/**
+ * The colour of a session's context reading, or null for the row's own muted
+ * text.
+ *
+ * From 60% it ramps smoothly from `--context-warm` to `--context-full`,
+ * mixed rather than stepped so a reading that climbs a point at a time never
+ * jumps. Text colour only, on no background.
+ */
+export function contextColour(percent: number): string | null {
+  if (percent < CONTEXT_WARM_AT) return null
+  const span = CONTEXT_FULL_AT - CONTEXT_WARM_AT
+  const t = Math.round((Math.min(percent - CONTEXT_WARM_AT, span) / span) * 100)
+  return `color-mix(in oklab, var(--context-full) ${t}%, var(--context-warm))`
+}

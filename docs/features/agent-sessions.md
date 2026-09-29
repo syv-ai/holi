@@ -31,7 +31,10 @@ there attaches any session), so a terminal is never taken to be a session. When 
 open one. Which terminal shows it is read from its title, since `←` and Enter move a terminal
 between the list and a session. An agent tab's **Open overview** always opens a new one. The agent item is green while any session
 is live. Under the file tree, one row per **live** session (its process alive): the state orb,
-aligned with the nav menu's first icon, the name, and what it waits for when it needs you. A row opens its session in a terminal whose title names it, else the one Holi
+aligned with the nav menu's first icon, the name, and what it waits for when it needs you. At the
+right end, where **Stop** shows on hover and keyboard focus, the rest of the time sits how much of
+the session's context window is used: muted text below 60%, then text ramping from amber to
+full red at 99%, nothing before the first message. A row opens its session in a terminal whose title names it, else the one Holi
 opened for it, else a new `claude attach` window. An unnamed session, or a name two sessions
 share, matches no title, so it can land in a second window; two windows on one session mirror
 each other. With the nav hidden, the rail
@@ -52,6 +55,17 @@ and is idle. The read is triggered by a watch of `<configDir>/sessions/` and `jo
 never parsed), by each turn hook, and by a vault opening. The one timer is a second read about a second
 after an `idle` one, because a quiet session makes no watcher edge: a turn ends only when two
 consecutive reads say idle. A failed read answers nothing, and the bracket still reports `working`.
+
+**Context is the status line's.** `claude agents --json` carries no context figure and `/context`
+is interactive, so the reading comes from the documented `statusLine` command, which the vault's
+seeded settings point at the shipped `status-line.mjs`. Claude Code runs it on its own
+events, a background session with no client attached included, and hands it JSON on stdin. The
+script prints the footer itself (`Opus 5.5 · 42% context`), so it reads the same in any Claude
+Code, then posts the JSON to the hook server's `/statusline` with the vault's token from `holi.env`
+and the job id from `$CLAUDE_JOB_DIR`, answered empty. Main keeps `context_window.used_percentage`
+per job id on the pushed session list and drops it when the session stops. A `null` reading (before
+the first message, after `/clear`) clears it. An existing vault gets the script, and so the
+reading, with `holi skills update`.
 
 **Asks are pasted, never submitted.** Text from a selection, task, mail thread or PDF comment goes
 to a live session the user picks (needs-you sessions are not offered), or to a new one named from
@@ -97,7 +111,8 @@ showing it busy, crosses it off), so a session resumed from the list is never re
   composer.
 - Record a turn after the vault resumes, fire-and-forget: a lost record beats a stuck pause.
 - A turn revert does not flush open buffers first; a dirty buffer 3-way merges.
-- Turn-hook responses are empty: a body would be injected into Claude's context.
+- Turn-hook and status-line responses are empty: a turn hook's body would be injected into
+  Claude's context, and the status line prints its own footer.
 
 ## Rejected
 
@@ -112,6 +127,8 @@ showing it busy, crosses it off), so a session resumed from the list is never re
 - A worktree per session: edits invisible until merged, `.local.` files absent. Hence the seeded
   `worktree.bgIsolation: "none"`.
 - A `Notification` or `PermissionRequest` hook for needs-you: late or partial.
+- Reading context use from transcripts or the PTY: Claude Code's files and screen are not an
+  interface; its status-line JSON is.
 - A three-pane merge editor: resolves positionally, wrong for prose.
 
 ## Code
@@ -121,7 +138,8 @@ showing it busy, crosses it off), so a session resumed from the list is never re
 - `apps/desktop/src/main/agent/agent-terminals.ts`, `agent-runtime.ts`, `terminal-mirror.ts`:
   terminals, the PTY and kill path
 - `apps/desktop/src/main/agent/agent-sessions.ts`: the vault controller
-- `apps/desktop/src/main/agent/endpoint-file.ts`, `hooks/turn-signal.mjs`: how sessions find Holi
+- `apps/desktop/src/main/agent/endpoint-file.ts`, `hooks/turn-signal.mjs`,
+  `hooks/status-line.mjs`: how sessions find Holi
 - `apps/desktop/src/main/agent/turn-coordinator.ts`, `turn-log.ts`: working set and turn records
 - `apps/desktop/src/renderer/src/features/agent/`: rows, orbs, terminal, turn chip and review
 - `apps/desktop/src/renderer/src/state/agent.ts`, `agent-send.ts`: the lists, and what you do
