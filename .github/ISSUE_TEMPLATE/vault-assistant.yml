@@ -1,0 +1,33 @@
+name: Vault assistant feedback
+description: Feedback from, or about, the assistant in a Holi vault.
+labels: [vault-assistant]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Usually drafted by the vault assistant with its holi-feedback skill, and
+        reviewed by its user before submitting. Leave out anything private from
+        the vault: this repository is public.
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Kind
+      options:
+        - Something is missing
+        - Something is broken
+        - A skill or instruction is unclear or wrong
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: feedback
+    attributes:
+      label: What happened, and what would help
+      description: What the assistant was doing, where it got stuck, and what would have made it easy.
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: The skill, command or Holi feature involved, if one was. Claude Code version (claude --version).

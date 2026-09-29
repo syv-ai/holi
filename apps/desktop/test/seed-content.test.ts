@@ -72,6 +72,7 @@ describe('SEED_FILES', () => {
       '.claude/hooks/vault-app-check.mjs',
       '.claude/settings.json',
       '.claude/skills/gmail-calendar/SKILL.md',
+      '.claude/skills/holi-feedback/SKILL.md',
       '.claude/skills/md-to-pdf/SKILL.md',
       '.claude/skills/memory/SKILL.md',
       '.claude/skills/pdf-comments/SKILL.md',
@@ -494,6 +495,8 @@ describe('settingsWithRequired', () => {
 
     expect(after.hooks.PreToolUse[0].hooks[0].command).toContain('google-send-gate.mjs')
     expect(after.permissions.ask).toContain('Bash(holi-google send:*)')
+    expect(after.permissions.deny).toContain('SendFeedback')
+    expect(after.skillOverrides['code-review']).toBe('off')
   })
 
   it('keeps the user’s own hooks and permissions', () => {
@@ -503,6 +506,7 @@ describe('settingsWithRequired', () => {
         PostToolUse: [{ matcher: 'Write', hooks: [{ type: 'command', command: 'format' }] }],
       },
       permissions: { ask: ['Bash(rm:*)'], allow: ['Bash(ls:*)'], deny: ['Bash(sudo:*)'] },
+      skillOverrides: { init: 'on' },
       model: 'opus',
     })
 
@@ -512,7 +516,8 @@ describe('settingsWithRequired', () => {
     expect(after.hooks.PostToolUse[0].hooks[0].command).toBe('format')
     expect(after.hooks.UserPromptSubmit[0].hooks[0].command).toBe('mine')
     expect(after.permissions.allow).toEqual(['Bash(ls:*)', 'Bash(holi pdf comments:*)'])
-    expect(after.permissions.deny).toEqual(['Bash(sudo:*)'])
+    expect(after.permissions.deny[0]).toBe('Bash(sudo:*)')
+    expect(after.skillOverrides.init).toBe('on')
     expect(after.model).toBe('opus')
     // Added, not replaced
     expect(after.permissions.ask).toContain('Bash(rm:*)')
@@ -719,6 +724,7 @@ describe('the shipped / once split', () => {
       '.claude/hooks/user-prompt-submit.mjs',
       '.claude/hooks/vault-app-check.mjs',
       '.claude/skills/gmail-calendar/SKILL.md',
+      '.claude/skills/holi-feedback/SKILL.md',
       '.claude/skills/md-to-pdf/SKILL.md',
       '.claude/skills/memory/SKILL.md',
       '.claude/skills/pdf-comments/SKILL.md',

@@ -52,6 +52,7 @@ import vaultAppsSkill from './skills/vault-apps/SKILL.md?raw'
 import usingTasksSkill from './skills/using-tasks/SKILL.md?raw'
 import memorySkill from './skills/memory/SKILL.md?raw'
 import pdfCommentsSkill from './skills/pdf-comments/SKILL.md?raw'
+import holiFeedbackSkill from './skills/holi-feedback/SKILL.md?raw'
 import { BRAND_BINARIES } from './templates/_brand/binary-assets.generated'
 import brandTyp from './templates/_brand/brand.typ?raw'
 import figuresTyp from './templates/_brand/figures.typ?raw'
@@ -70,6 +71,8 @@ import reportTyp from './templates/report/template.typ?raw'
 const AGENTS_MD = `# Agent rules
 
 You are the assistant for a Holi vault: a private GitHub repo of files, mostly markdown. Images, PDFs and anything else are ordinary committed files. Links between files are path-based wiki-links: \`[[projects/q2/roadmap.md]]\`.
+
+Holi, the app around this vault, is open source: https://github.com/syv-ai/holi. Its \`docs/\` say how Holi works. Feedback for the Holi team goes there as an issue, with the holi-feedback skill.
 
 ## Tasks
 
@@ -133,6 +136,23 @@ const isHolisStatusLine = (value: unknown): boolean => {
     typeof command === 'string' && (command === STATUS_LINE || command.includes('status-line.mjs'))
   )
 }
+
+/** Claude Code's bundled skills a vault agent has no use for: code review,
+ *  app launching, API and workflow authoring, Claude Code configuration, and
+ *  importing another assistant's memory (a vault's memory is `memory/`). */
+const OFF_SKILLS = [
+  'code-review',
+  'simplify',
+  'security-review',
+  'run',
+  'init',
+  'claude-api',
+  'workflow-authoring',
+  'update-config',
+  'fewer-permission-prompts',
+  'keybindings-help',
+  'import-memory',
+]
 
 const SETTINGS_JSON =
   JSON.stringify(
@@ -269,7 +289,29 @@ const SETTINGS_JSON =
         // Read-only Holi commands, which ask nothing because they change
         // nothing. Merged into existing vaults like `ask` is.
         allow: ['Bash(holi pdf comments:*)'],
+        // Claude Code tools with no job in a vault: notebooks, plan mode,
+        // worktrees (one working tree is what sync assumes), code-review
+        // reporting, and SendFeedback, which reaches Anthropic rather than
+        // Holi (the holi-feedback skill is the route to Holi). Merged like
+        // `ask`. A deny outranks an allow in every scope, so a vault that
+        // wants one back removes it here.
+        deny: [
+          'NotebookEdit',
+          'EnterPlanMode',
+          'ExitPlanMode',
+          'EnterWorktree',
+          'ExitWorktree',
+          'ReportFindings',
+          'SendFeedback',
+          'EndConversation',
+        ],
       },
+      /**
+       * Claude Code's bundled skills that are about working on code, off. Each
+       * is merged only when the vault has no entry for it, so a vault that sets
+       * one back to `"on"` keeps it.
+       */
+      skillOverrides: Object.fromEntries(OFF_SKILLS.map((name) => [name, 'off'])),
     },
     null,
     2,
@@ -364,6 +406,9 @@ export const SHIPPED_FILES: Record<string, string> = {
   '.claude/skills/memory/SKILL.md': memorySkill,
   /** `holi pdf comments`: what it prints, and that it only reads. */
   '.claude/skills/pdf-comments/SKILL.md': pdfCommentsSkill,
+  /** Feedback for the Holi team, as a GitHub issue. Also where an existing
+   *  vault learns Holi's repo URL, which its frozen `AGENTS.md` does not say. */
+  '.claude/skills/holi-feedback/SKILL.md': holiFeedbackSkill,
 }
 
 /**
@@ -493,7 +538,8 @@ export function settingsWithRequired(
   const required = JSON.parse(SETTINGS_JSON) as {
     hooks: { PreToolUse: unknown[]; PostToolUse: unknown[]; SessionStart: unknown[] }
     worktree: { bgIsolation: string }
-    permissions: { ask: string[]; allow: string[] }
+    permissions: { ask: string[]; allow: string[]; deny: string[] }
+    skillOverrides: Record<string, string>
     disableClaudeAiConnectors: boolean
     autoMemoryEnabled: boolean
     awaySummaryEnabled: boolean
@@ -639,6 +685,32 @@ export function settingsWithRequired(
   if (missingAllow.length > 0) {
     permissions.allow = [...allow, ...missingAllow]
     settings.permissions = permissions
+    changed = true
+  }
+
+  // And the tools a vault has no use for.
+  const deny = Array.isArray(permissions.deny) ? (permissions.deny as string[]) : []
+  const missingDeny = required.permissions.deny.filter((rule) => !deny.includes(rule))
+  if (missingDeny.length > 0) {
+    permissions.deny = [...deny, ...missingDeny]
+    settings.permissions = permissions
+    changed = true
+  }
+
+  // The skills that are off, one key at a time: a skill the vault turned back
+  // on keeps its entry.
+  const overrides =
+    settings.skillOverrides !== null &&
+    typeof settings.skillOverrides === 'object' &&
+    !Array.isArray(settings.skillOverrides)
+      ? (settings.skillOverrides as Record<string, unknown>)
+      : {}
+  const missingOverrides = Object.keys(required.skillOverrides).filter(
+    (name) => overrides[name] === undefined,
+  )
+  if (missingOverrides.length > 0) {
+    for (const name of missingOverrides) overrides[name] = required.skillOverrides[name]
+    settings.skillOverrides = overrides
     changed = true
   }
 
