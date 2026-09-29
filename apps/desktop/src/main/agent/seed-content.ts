@@ -45,7 +45,6 @@ import vaultAppCheckHook from './hooks/vault-app-check.mjs?raw'
 import memoryOverviewHook from './hooks/memory-overview.mjs?raw'
 import memoryIndexGuardHook from './hooks/memory-index-guard.mjs?raw'
 import turnSignalHook from './hooks/turn-signal.mjs?raw'
-import statusLineHook from './hooks/status-line.mjs?raw'
 import mdToPdfSkill from './skills/md-to-pdf/SKILL.md?raw'
 import themeSkill from './skills/theme/SKILL.md?raw'
 import gmailCalendarSkill from './skills/gmail-calendar/SKILL.md?raw'
@@ -106,6 +105,34 @@ const turnHook = (edge: 'start' | 'end') => `${hookCommand('turn-signal')} ${edg
  *  on the per-session environment, which a background session never has. */
 const isOldTurnHook = (command: string): boolean =>
   command.includes('/turn/start') || command.includes('/turn/end')
+
+/**
+ * The status line: one inline command, as Claude Code's own docs show, so a
+ * vault needs no script for it and every vault gets it on its next open.
+ *
+ * `jq` prints the footer (`Opus 5.5 · 42% context`, the model alone before the
+ * first message); it ships with macOS. Inside a Holi background session the
+ * same JSON goes to the hook server, found through `holi.env` and keyed by the
+ * job id, the way `turn-signal.mjs` does it. The post is detached with its
+ * output discarded, so a slow or absent Holi never holds up the footer, and
+ * outside Holi the command only prints.
+ */
+const STATUS_LINE = [
+  'input=$(cat)',
+  `printf '%s' "$input" | jq -j '[.model.display_name, (.context_window.used_percentage // empty | round | tostring + "% context")] | map(select(. != null and . != "")) | join(" · ")'`,
+  `if [ -n "\${CLAUDE_JOB_DIR:-}" ] && [ -f "\${CLAUDE_CONFIG_DIR:-}/holi.env" ]; then . "$CLAUDE_CONFIG_DIR/holi.env"; printf '%s' "$input" | curl -s -m 2 -o /dev/null -H 'content-type: application/json' --data-binary @- "http://127.0.0.1:\${HOLI_HOOK_PORT:-0}/statusline?t=\${HOLI_HOOK_TOKEN:-}&job=\${CLAUDE_JOB_DIR##*/}" >/dev/null 2>&1 & fi`,
+  'true',
+].join('; ')
+
+/** A status line Holi wrote: this one, or the script an earlier release
+ *  shipped. Anything else is the vault's own. */
+const isHolisStatusLine = (value: unknown): boolean => {
+  if (value === null || typeof value !== 'object') return false
+  const command = (value as Record<string, unknown>).command
+  return (
+    typeof command === 'string' && (command === STATUS_LINE || command.includes('status-line.mjs'))
+  )
+}
 
 const SETTINGS_JSON =
   JSON.stringify(
@@ -204,14 +231,14 @@ const SETTINGS_JSON =
       awaySummaryEnabled: false,
       promptSuggestionEnabled: false,
       /**
-       * The footer: the model and how much of the context window is
-       * used, printed by the vault's own script so it reads the same in any
-       * Claude Code. Inside Holi the script also hands the reading to the
-       * session's row. Replacing Claude Code's footer drops its own hints
-       * (`esc to interrupt`); a machine that wants them back sets its own
-       * `statusLine` in `settings.local.json`, which outranks this one.
+       * The footer: the model and how much of the context window is used
+       * (`STATUS_LINE`), which reads the same in any Claude Code. Inside Holi
+       * it also hands the reading to the session's row. Replacing Claude
+       * Code's footer drops its own hints (`esc to interrupt`); a machine that
+       * wants them back sets its own `statusLine` in `settings.local.json`,
+       * which outranks this one.
        */
-      statusLine: { type: 'command', command: hookCommand('status-line') },
+      statusLine: { type: 'command', command: STATUS_LINE },
       /**
        * Background sessions edit the vault itself.
        *
@@ -323,7 +350,6 @@ export const SHIPPED_FILES: Record<string, string> = {
   '.claude/hooks/memory-overview.mjs': memoryOverviewHook,
   '.claude/hooks/memory-index-guard.mjs': memoryIndexGuardHook,
   '.claude/hooks/turn-signal.mjs': turnSignalHook,
-  '.claude/hooks/status-line.mjs': statusLineHook,
   '.claude/skills/md-to-pdf/SKILL.md': mdToPdfSkill,
   '.claude/skills/theme/SKILL.md': themeSkill,
   '.claude/skills/gmail-calendar/SKILL.md': gmailCalendarSkill,
@@ -577,9 +603,13 @@ export function settingsWithRequired(
     }
   }
 
-  /** Only when absent, so a vault's own footer stays, and only once its script
-   *  is there: a status line that fails is a blank footer in every session. */
-  if (settings.statusLine === undefined && hasHook('status-line')) {
+  /** Written when absent or when it is Holi's and differs, so an earlier
+   *  release's is replaced and a vault's own footer stays. */
+  const statusLine = settings.statusLine
+  if (
+    (statusLine === undefined || isHolisStatusLine(statusLine)) &&
+    JSON.stringify(statusLine) !== JSON.stringify(required.statusLine)
+  ) {
     settings.statusLine = required.statusLine
     changed = true
   }

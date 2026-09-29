@@ -67,7 +67,6 @@ describe('SEED_FILES', () => {
       '.claude/hooks/google-send-gate.mjs',
       '.claude/hooks/memory-index-guard.mjs',
       '.claude/hooks/memory-overview.mjs',
-      '.claude/hooks/status-line.mjs',
       '.claude/hooks/turn-signal.mjs',
       '.claude/hooks/user-prompt-submit.mjs',
       '.claude/hooks/vault-app-check.mjs',
@@ -716,7 +715,6 @@ describe('the shipped / once split', () => {
       '.claude/hooks/google-send-gate.mjs',
       '.claude/hooks/memory-index-guard.mjs',
       '.claude/hooks/memory-overview.mjs',
-      '.claude/hooks/status-line.mjs',
       '.claude/hooks/turn-signal.mjs',
       '.claude/hooks/user-prompt-submit.mjs',
       '.claude/hooks/vault-app-check.mjs',
@@ -1100,16 +1098,17 @@ describe('settingsWithRequired — background sessions', () => {
     ])
   })
 
-  it("wires the status line once its script is there, and keeps a vault's own", () => {
-    const holis = {
+  it("reaches every vault at once, replaces an earlier release's, and keeps a vault's own", () => {
+    const holis = JSON.parse(SEED_FILES['.claude/settings.json']!).statusLine
+    expect(holis.type).toBe('command')
+    // No script to wait for: an existing vault gets it on its next open.
+    expect(JSON.parse(settingsWithRequired('{}', () => false)!).statusLine).toEqual(holis)
+    const shipped = {
       type: 'command',
       command: 'node "$CLAUDE_PROJECT_DIR/.claude/hooks/status-line.mjs"',
     }
-    expect(JSON.parse(SEED_FILES['.claude/settings.json']!).statusLine).toEqual(holis)
-    expect(JSON.parse(settingsWithRequired('{}')!).statusLine).toEqual(holis)
-    // Before `holi skills update` brings the script: a blank footer otherwise.
-    const before = settingsWithRequired('{}', (name) => name !== 'status-line')
-    expect(JSON.parse(before!).statusLine).toBeUndefined()
+    const replaced = settingsWithRequired(JSON.stringify({ statusLine: shipped }))
+    expect(JSON.parse(replaced!).statusLine).toEqual(holis)
     const mine = { type: 'command', command: 'mine.sh' }
     const kept = settingsWithRequired(JSON.stringify({ statusLine: mine }))
     expect(kept === null ? mine : JSON.parse(kept).statusLine).toEqual(mine)

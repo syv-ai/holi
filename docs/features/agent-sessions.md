@@ -57,15 +57,15 @@ after an `idle` one, because a quiet session makes no watcher edge: a turn ends 
 consecutive reads say idle. A failed read answers nothing, and the bracket still reports `working`.
 
 **Context is the status line's.** `claude agents --json` carries no context figure and `/context`
-is interactive, so the reading comes from the documented `statusLine` command, which the vault's
-seeded settings point at the shipped `status-line.mjs`. Claude Code runs it on its own
-events, a background session with no client attached included, and hands it JSON on stdin. The
-script prints the footer itself (`Opus 5.5 · 42% context`), so it reads the same in any Claude
-Code, then posts the JSON to the hook server's `/statusline` with the vault's token from `holi.env`
-and the job id from `$CLAUDE_JOB_DIR`, answered empty. Main keeps `context_window.used_percentage`
-per job id on the pushed session list and drops it when the session stops. A `null` reading (before
-the first message, after `/clear`) clears it. An existing vault gets the script, and so the
-reading, with `holi skills update`.
+is interactive, so the reading comes from the documented `statusLine` command: one inline shell
+command in the vault's settings, with no script. Claude Code runs it on its own events, a
+background session with no client attached included, and hands it JSON on stdin. `jq` (which ships
+with macOS) prints the footer, `Opus 5.5 · 42% context`, so it reads the same in any Claude Code.
+Inside a Holi background session the command also posts the JSON, detached, to the hook server's
+`/statusline` with the vault's token from `holi.env` and the job id from `$CLAUDE_JOB_DIR`,
+answered empty. Main keeps `context_window.used_percentage` per job id on the pushed session list
+and drops it when the session stops. A `null` reading (before the first message, after `/clear`)
+clears it.
 
 **Asks are pasted, never submitted.** Text from a selection, task, mail thread or PDF comment goes
 to a live session the user picks (needs-you sessions are not offered), or to a new one named from
@@ -138,8 +138,8 @@ showing it busy, crosses it off), so a session resumed from the list is never re
 - `apps/desktop/src/main/agent/agent-terminals.ts`, `agent-runtime.ts`, `terminal-mirror.ts`:
   terminals, the PTY and kill path
 - `apps/desktop/src/main/agent/agent-sessions.ts`: the vault controller
-- `apps/desktop/src/main/agent/endpoint-file.ts`, `hooks/turn-signal.mjs`,
-  `hooks/status-line.mjs`: how sessions find Holi
+- `apps/desktop/src/main/agent/endpoint-file.ts`, `hooks/turn-signal.mjs`, `seed-content.ts`
+  (`STATUS_LINE`): how sessions find Holi
 - `apps/desktop/src/main/agent/turn-coordinator.ts`, `turn-log.ts`: working set and turn records
 - `apps/desktop/src/renderer/src/features/agent/`: rows, orbs, terminal, turn chip and review
 - `apps/desktop/src/renderer/src/state/agent.ts`, `agent-send.ts`: the lists, and what you do

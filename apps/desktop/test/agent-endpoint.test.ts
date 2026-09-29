@@ -1,7 +1,7 @@
 /**
  * How a background session finds the running Holi: the endpoint file in
  * its config dir, the job-keyed turn route, and the readers of the file (the
- * seeded `turn-signal.mjs` and `status-line.mjs` hooks and the `holi` script),
+ * seeded `turn-signal.mjs` hook, the seeded status line and the `holi` script),
  * run for real.
  */
 import { execFile } from 'node:child_process'
@@ -18,10 +18,10 @@ import {
 } from '../src/main/agent/endpoint-file'
 import { createHookServer, type HookServer } from '../src/main/agent/hook-server'
 import { createAgentOps } from '../src/main/agent/ops'
+import { SEED_FILES } from '../src/main/agent/seed-content'
 
 const execFileAsync = promisify(execFile)
 const HOOK = join(__dirname, '../src/main/agent/hooks/turn-signal.mjs')
-const STATUS_HOOK = join(__dirname, '../src/main/agent/hooks/status-line.mjs')
 
 async function run(
   file: string,
@@ -162,48 +162,43 @@ describe('turn-signal.mjs', () => {
   })
 })
 
-describe('status-line.mjs', () => {
+describe('the seeded status line', () => {
+  /** Run as Claude Code runs it: the settings command, through a shell. */
+  const command = JSON.parse(SEED_FILES['.claude/settings.json']!).statusLine.command as string
   const status = { model: { display_name: 'Opus 5.5' }, context_window: { used_percentage: 41.6 } }
+  const statusLine = (env: NodeJS.ProcessEnv, input: string) =>
+    run('/bin/sh', ['-c', command], env, input)
 
   it('prints the footer and hands the status to Holi under its job', async () => {
     await writeFor()
-    const res = await run(
-      process.execPath,
-      [STATUS_HOOK],
-      sessionEnv('abcd1234'),
-      JSON.stringify(status),
-    )
-    expect(res).toEqual({ code: 0, stdout: 'Opus 5.5 · 42% context', stderr: '' })
-    expect(statuses).toEqual([['syv/vault', 'abcd1234', status]])
+    const res = await statusLine(sessionEnv('abcd1234'), JSON.stringify(status))
+    expect(res).toMatchObject({ code: 0, stdout: 'Opus 5.5 · 42% context' })
+    // Detached, so the footer never waits on it.
+    await vi.waitFor(() => expect(statuses).toEqual([['syv/vault', 'abcd1234', status]]))
   })
 
-  it('prints the same footer without Holi, and nothing for input it cannot read', async () => {
+  it('prints the same footer without Holi, and only the model before the first message', async () => {
     const json = JSON.stringify(status)
     // No endpoint file, then a closed port, then not a background session.
-    expect(await run(process.execPath, [STATUS_HOOK], sessionEnv(), json)).toMatchObject({
+    expect(await statusLine(sessionEnv(), json)).toMatchObject({
       code: 0,
       stdout: 'Opus 5.5 · 42% context',
     })
     await writeEndpointFile(dir, { hookPort: 1, hookToken: 'ab' })
-    expect(await run(process.execPath, [STATUS_HOOK], sessionEnv(), json)).toMatchObject({
+    expect(await statusLine(sessionEnv(), json)).toMatchObject({
       code: 0,
       stdout: 'Opus 5.5 · 42% context',
     })
     await writeFor()
     const { CLAUDE_JOB_DIR: _j, ...interactive } = sessionEnv()
-    expect(await run(process.execPath, [STATUS_HOOK], interactive, json)).toMatchObject({
+    expect(await statusLine(interactive, json)).toMatchObject({
       code: 0,
       stdout: 'Opus 5.5 · 42% context',
     })
-    // Before the first message there is no reading, only the model.
     const fresh = { model: { display_name: 'Opus 5.5' }, context_window: { used_percentage: null } }
-    expect(
-      await run(process.execPath, [STATUS_HOOK], interactive, JSON.stringify(fresh)),
-    ).toMatchObject({ code: 0, stdout: 'Opus 5.5' })
-    expect(await run(process.execPath, [STATUS_HOOK], sessionEnv(), 'not json')).toEqual({
+    expect(await statusLine(interactive, JSON.stringify(fresh))).toMatchObject({
       code: 0,
-      stdout: '',
-      stderr: '',
+      stdout: 'Opus 5.5',
     })
     expect(statuses).toEqual([])
   })
