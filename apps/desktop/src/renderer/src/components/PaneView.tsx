@@ -44,7 +44,7 @@ const DROP_BAND = 'pointer-events-none absolute'
 /**
  * The turn chip for the session an agent tab was opened for. The agents list,
  * and a tab whose terminal Holi did not open for a session, have none: nothing
- * published says which session they show (D110).
+ * published says which session they show.
  */
 function AgentTurnChip({ terminalId }: { terminalId: string }): React.JSX.Element | null {
   const terminals = useAtomValue(agentTerminalsAtom)
@@ -217,7 +217,7 @@ export function PaneView({
 
         {/**
          * Every agent tab in this pane, mounted, with only the active one
-         * shown (D110).
+         * shown.
          *
          * Outside the switch and keyed by terminal id: an unmounted terminal
          * loses its scrollback and must visibly replay main's mirror.

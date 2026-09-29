@@ -198,7 +198,7 @@ describe('isAgentSurfacePath (what a vault app may never touch)', () => {
   })
 
   it('matches everything under memory/ — MEMORY.md subdivided is still memory', () => {
-    // D89. A vault app hosts untrusted code, and what the user told the
+    // A vault app hosts untrusted code, and what the user told the
     // assistant does not become readable by spreading it over more files.
     expect(isAgentSurfacePath('memory/shell-quirks.md')).toBe(true)
     expect(isAgentSurfacePath('memory/people/ada.md')).toBe(true)
@@ -232,4 +232,3 @@ describe('isAgentSurfacePath (what a vault app may never touch)', () => {
     expect(isAgentSurfacePath('.holi/git-hooks/pre-commit')).toBe(false)
   })
 })
-

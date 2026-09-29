@@ -1,5 +1,5 @@
 /**
- * How a background session finds the running Holi (D110): the endpoint file in
+ * How a background session finds the running Holi: the endpoint file in
  * its config dir, the job-keyed turn route, and the readers of the file (the
  * seeded `turn-signal.mjs` and `status-line.mjs` hooks and the `holi` script),
  * run for real.

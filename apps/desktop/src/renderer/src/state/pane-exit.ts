@@ -10,7 +10,7 @@
  * **Both ways out of a split come through here**: the close-pane button, and
  * closing the LAST TAB of a pane, which is the one people actually do.
  *
- * State rather than Shell's own `useState` (D102): a command closes a tab from
+ * State rather than Shell's own `useState`: a command closes a tab from
  * a key, the menu and the palette alike, none of which reach a component timer.
  */
 import { atom } from 'jotai'

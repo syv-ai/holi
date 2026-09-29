@@ -4,7 +4,7 @@ import type { TaskStatus } from '@holi/shared'
 /**
  * Inline chip for a `[[path]]` / `[[path|Label]]` wiki-link.
  *
- * Every chip routes by path: a task is a file like any other (D27/D60). With
+ * Every chip routes by path: a task is a file like any other. With
  * `task` present it draws a status orb and strikes the title when done.
  * `label` arrives resolved (`|Label`, or a task's title).
  */

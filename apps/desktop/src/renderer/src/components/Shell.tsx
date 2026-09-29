@@ -1,7 +1,7 @@
 /**
  * The app, once someone is signed in: a vault, its tree, and whatever tabs are
  * open over it. The snapshot push is subscribed once at the root, so this reads
- * atoms. An agent session is an ordinary tab (D101).
+ * atoms. An agent session is an ordinary tab.
  */
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { History, PanelLeftClose, PanelLeftOpen, PanelRight } from 'lucide-react'
@@ -132,7 +132,7 @@ export function Shell() {
   // Paint the active vault's colour/chrome theme onto the document root.
   useVaultTheme()
   // The session and terminal lists and their whole-set effects. Mounted here
-  // because the shell outlives every tab (D110).
+  // because the shell outlives every tab.
   useAgentSessions()
   useAgentTabs(activeRemote)
 
@@ -151,12 +151,12 @@ export function Shell() {
    * Whether the drag is over a tab strip; the landing strips hide meanwhile.
    * Most drags are reorders that never leave the strip, so bands under every
    * nudge are noise. They still appear before the pointer aims at one, as soon
-   * as it leaves the strip (D78).
+   * as it leaves the strip.
    */
   const [overStrip, setOverStrip] = useState(false)
   const [showAdd, setShowAdd] = useState(false)
   /** Leaving this vault (switching, or adding one, which opens it) waits on an
-   *  answer because sessions are running in it (D100). */
+   *  answer because sessions are running in it. */
   const [leaving, setLeaving] = useAtom(leavingVaultAtom)
   /** An unmergeable external write, with the two ways out the editor handed up.
    *  Held as one object so the message can never outlive its resolvers. */
@@ -181,13 +181,13 @@ export function Shell() {
       await openVault(activeRemote)
       await openLanding()
       // A session asked for before this vault was open: the stuck push a
-      // leave or delete was blocked on (D109).
+      // leave or delete was blocked on.
       await startPendingPrompt(activeRemote)
       await sweepDaily()
     })()
   }, [activeRemote, openVault, openLanding, startPendingPrompt, sweepDaily])
 
-  // Every app-level key, from the one table (`state/commands.ts`, D102).
+  // Every app-level key, from the one table (`state/commands.ts`).
   useCommandHotkeys()
 
   const tab = activeTab(workspace)
@@ -226,14 +226,14 @@ export function Shell() {
   }, [tab, pane])
   // Single-click / link-nav opens a preview tab (browsing costs one tab);
   // double-click pins. Editing a preview promotes it (see EditorPane onEdit).
-  // A bundle path is an app (D107): the tree opens one with a note's gestures,
+  // A bundle path is an app: the tree opens one with a note's gestures,
   // and it opens as an app tab, which has no preview state.
   const open = (path: string) =>
     setWorkspace((w) => (isAppBundlePath(path) ? openApp(w, path) : openPreview(w, path)))
   const openPin = (path: string) =>
     setWorkspace((w) => (isAppBundlePath(path) ? openApp(w, path) : openPinned(w, path)))
 
-  /** Both live in `state/vault-switch.ts` (D102): a switch is a command, and
+  /** Both live in `state/vault-switch.ts`: a switch is a command, and
    *  the confirm it may need is asked there, before the remote moves. */
   const applySwitch = useSetAtom(applyVaultSwitchAtom)
   const switchVault = useSetAtom(switchVaultAtom)
@@ -328,7 +328,7 @@ export function Shell() {
             )}
 
             {/* The tree, then the vault's live sessions on the row directly
-              above the nav menu (D110): no header, nothing to resize. */}
+              above the nav menu: no header, nothing to resize. */}
             <div className="flex min-h-0 flex-1 flex-col">
               <div className="min-h-0 flex-1">
                 <FileTree
@@ -351,7 +351,7 @@ export function Shell() {
               </div>
             </div>
 
-            {/* The nav menu on the sidebar's floor (D108). It opens upward
+            {/* The nav menu on the sidebar's floor. It opens upward
               over the sessions and the tree. */}
             <div className="flex shrink-0 p-2">
               <NavMenu />
@@ -441,7 +441,7 @@ export function Shell() {
         </div>
 
         {/* The right-hand drawers; each decides whether it is open. The last
-              turn (D88) is a diff over a commit range. */}
+              turn is a diff over a commit range. */}
         <HistoryPanel />
         <TurnReview />
 

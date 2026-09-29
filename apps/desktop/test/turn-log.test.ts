@@ -1,5 +1,5 @@
 /**
- * The turn log (D88) — two shas per turn, and nothing else.
+ * The turn log — two shas per turn, and nothing else.
  *
  * The constraint that shapes every case: a broken log must never break a turn.
  * The bracket this hangs off also resumes sync, so losing a record is a smaller
@@ -44,7 +44,7 @@ describe('reading', () => {
   })
 
   it('reads a record written before a vault could run two sessions', async () => {
-    // `sessionId` and `overlapped` arrived with D100. Every record already on
+    // `sessionId` and `overlapped` arrived with several sessions per vault. Every record already on
     // disk has neither, and must keep reading as one session and no overlap —
     // which is exactly what those turns were.
     await mkdir(join(root, '.holi/state'), { recursive: true })
@@ -107,7 +107,7 @@ describe('appending', () => {
   })
 
   it('never syncs, because the name says so', () => {
-    // `.local.` is the whole mechanism (D65): the seeded ignore covers it, and a
+    // `.local.` is the whole mechanism: the seeded ignore covers it, and a
     // teammate pulling your turn boundaries would be reading your session.
     expect(file().endsWith('.local.json')).toBe(true)
   })

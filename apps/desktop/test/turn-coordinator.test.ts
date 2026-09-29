@@ -1,5 +1,5 @@
 /**
- * The vault's working set (D100).
+ * The vault's working set.
  *
  * Every case here is about the mismatch the coordinator exists for: the pause is
  * the VAULT's and the turn bracket is each SESSION's. So the questions are how

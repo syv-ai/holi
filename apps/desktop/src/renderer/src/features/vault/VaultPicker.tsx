@@ -3,7 +3,7 @@
  * native select cannot hold an action row and "Add vault…" belongs *in* the
  * list: switching and adding are the same gesture.
  *
- * **Switching only.** A vault's way out (Leave, Remove, Delete; D109) lives in
+ * **Switching only.** A vault's way out (Leave, Remove, Delete) lives in
  * Settings, Vault, for the open vault, away from a menu you open to switch.
  */
 import { Check, ChevronDown, Plus } from 'lucide-react'

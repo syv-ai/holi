@@ -15,7 +15,7 @@ export interface StagedChanges {
   modified: string[]
   /** Paired by git's own similarity detection, not by us. */
   renamed: { from: string; to: string }[]
-  /** Paths this commit removes. Only `memory-index` reads it (D89). */
+  /** Paths this commit removes. Only `memory-index` reads it. */
   deleted: string[]
 }
 

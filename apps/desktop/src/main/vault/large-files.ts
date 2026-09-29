@@ -2,7 +2,7 @@
  * The large-file gate (docs/features/vaults-sync.md).
  *
  * Git history is permanent and replicated to every clone, and push is automatic
- * (D61) — so a big binary committed once is published to everyone before anyone
+ * — so a big binary committed once is published to everyone before anyone
  * reacts, forever. This module keeps oversized files out: `partitionBySize` is
  * the pure decision the autosave loop uses to hold them back, and the pre-commit
  * hook (below) is the same gate for the agent's own direct commits.
@@ -54,7 +54,7 @@ export function partitionBySize(
  * TypeScript template literal, where every backslash has to survive two
  * readers, and a `sed` backreference does not.
  *
- * **Machine-local** (`.local.`, D65): it holds this instance's ephemeral port
+ * **Machine-local** (`.local.`): it holds this instance's ephemeral port
  * and per-instance token, both meaningless on another machine and one of them a
  * credential. Rewritten on every vault open, because the port moves on every
  * app restart. Mode 0600.
@@ -113,7 +113,7 @@ if [ -n "$offenders" ]; then
   exit 1
 fi
 
-# ---- the vault transforms (D76) -----------------------------------------
+# ---- the vault transforms -----------------------------------------
 # Everything below this line is ADVISORY and exits 0 no matter what. The guard
 # above vetoes because git history is permanent and push is automatic, so an
 # oversized blob committed once is published forever. A transform is an opinion

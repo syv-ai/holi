@@ -146,7 +146,7 @@ export interface Commit {
 }
 
 /** One file's change across a commit range — the unit an agent turn is reviewed
- *  in (D88). */
+ *  in. */
 export interface RangeFile {
   path: string
   added: number
@@ -222,12 +222,17 @@ export function classifyPushFailure(
 ): 'permission' | 'non-fast-forward' | null {
   // GitHub's refusals, verbatim: `remote: Permission to <repo> denied to <user>`
   // with a 403, or `Authentication failed` for a revoked or expired token.
-  if (/\bpermission to .+ denied|error: 403|returned error: 403|authentication failed|invalid username or token/i.test(stderr)) {
+  if (
+    /\bpermission to .+ denied|error: 403|returned error: 403|authentication failed|invalid username or token/i.test(
+      stderr,
+    )
+  ) {
     return 'permission'
   }
   // A ref git refused because ours is stale. Both spellings land here.
   const refRejected = stdout.split('\n').some((line) => line.startsWith('!'))
-  if (refRejected && /non-fast-forward|fetch first|stale info/i.test(stdout)) return 'non-fast-forward'
+  if (refRejected && /non-fast-forward|fetch first|stale info/i.test(stdout))
+    return 'non-fast-forward'
   return null
 }
 
@@ -551,7 +556,11 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
   async function rangeFiles(from: string, to: string): Promise<RangeFile[]> {
     const range = `${from}..${to}`
     const stat = await tryGit(root, ['diff', '--numstat', '-z', '--no-color', range], opts)
-    const names = await tryGit(root, ['diff', '--name-status', '-z', '--no-color', '-M', range], opts)
+    const names = await tryGit(
+      root,
+      ['diff', '--name-status', '-z', '--no-color', '-M', range],
+      opts,
+    )
     if (!stat.ok || !names.ok) return []
 
     // `--numstat -z` is `added\tremoved\tpath\0`, and for a RENAME it spends
@@ -620,7 +629,9 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
       .then(() => true)
       .catch(() => false)
     const range = hasUpstream ? `origin/${target}..HEAD` : 'HEAD'
-    const waiting = Number(await runGit(root, ['rev-list', '--count', range], opts).catch(() => '0'))
+    const waiting = Number(
+      await runGit(root, ['rev-list', '--count', range], opts).catch(() => '0'),
+    )
     if (waiting === 0) return { kind: 'nothing-to-push' }
 
     const res = await tryGit(
@@ -660,7 +671,11 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
   async function commitFileNoVerify(path: string): Promise<string | null> {
     await runGit(root, ['add', '--', path], opts)
     if ((await tryGit(root, ['diff', '--cached', '--quiet'], opts)).ok) return null
-    await runGit(root, [...(await identityArgs()), 'commit', '--no-verify', '-m', `Add ${path}`], opts)
+    await runGit(
+      root,
+      [...(await identityArgs()), 'commit', '--no-verify', '-m', `Add ${path}`],
+      opts,
+    )
     return runGit(root, ['rev-parse', 'HEAD'], opts)
   }
 
@@ -735,7 +750,8 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
     if (branch === '') {
       branch = await runGit(root, ['rev-parse', '--abbrev-ref', 'HEAD'], opts).catch(() => '')
       if (branch === 'HEAD' || branch === '') {
-        branch = (await runGit(root, ['symbolic-ref', '--short', 'HEAD'], opts).catch(() => '')) || branch
+        branch =
+          (await runGit(root, ['symbolic-ref', '--short', 'HEAD'], opts).catch(() => '')) || branch
       }
     }
 
@@ -755,9 +771,11 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
   /** What `origin/HEAD` points at. Null when the remote never published one —
    * a local-only or freshly initialised repo. */
   async function defaultBranch(): Promise<string | null> {
-    const ref = await runGit(root, ['symbolic-ref', '--short', 'refs/remotes/origin/HEAD'], opts).catch(
-      () => null,
-    )
+    const ref = await runGit(
+      root,
+      ['symbolic-ref', '--short', 'refs/remotes/origin/HEAD'],
+      opts,
+    ).catch(() => null)
     return ref === null ? null : ref.replace(/^origin\//, '')
   }
 

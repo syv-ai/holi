@@ -165,8 +165,17 @@ describe('createGoogleData', () => {
         calls++
         const body = url.includes('otherContacts')
           ? { otherContacts: [] }
-          : { connections: [{ names: [{ displayName: 'Jane' }], emailAddresses: [{ value: 'jane@syv.ai' }] }] }
-        return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) }
+          : {
+              connections: [
+                { names: [{ displayName: 'Jane' }], emailAddresses: [{ value: 'jane@syv.ai' }] },
+              ],
+            }
+        return {
+          ok: true,
+          status: 200,
+          json: async () => body,
+          text: async () => JSON.stringify(body),
+        }
       }) as unknown as typeof globalThis.fetch
       const subject = createGoogleData({
         api: () => new GoogleApi({ accessToken: async () => 'at', fetch: fetchImpl }),
@@ -200,8 +209,8 @@ describe('createGoogleData', () => {
     })
 
     it('never reaches another account, because that account is another instance', async () => {
-      // This used to be `useAccount` dropping the memoized address book. Under
-      // D87 one GoogleData serves one account (its own cache file, its own
+      // This used to be `useAccount` dropping the memoized address book. Now
+      // one GoogleData serves one account (its own cache file, its own
       // sessions), so a second account cannot see the first's contacts for the
       // stronger reason that it was never handed the object holding them.
       const mine = peopleApi()
@@ -235,7 +244,7 @@ describe('createGoogleData', () => {
     await listAgenda(g.api(), WINDOW, { overrides: {} })
     await listThreads(g.api(), {})
 
-    // The agent asks for current data (D67, "Do not cache"); nothing it did
+    // The agent asks for current data ("Do not cache"); nothing it did
     // touched the store, so nothing it reads can be stale.
     expect(cache.readAgenda('')).toBeNull()
     expect(cache.readThreads('')).toBeNull()
@@ -244,7 +253,7 @@ describe('createGoogleData', () => {
 })
 
 /**
- * The writes (D68), and the ordering that keeps disk honest.
+ * The writes, and the ordering that keeps disk honest.
  *
  * **Google first, cache only on success.** Patching optimistically and then
  * discovering the request failed leaves a lie on disk that survives a restart —
@@ -310,9 +319,7 @@ describe('mutations', () => {
 
     await subject.setRead('t1', true)
 
-    expect(posts).toEqual([
-      'https://gmail.googleapis.com/gmail/v1/users/me/threads/t1/modify',
-    ])
+    expect(posts).toEqual(['https://gmail.googleapis.com/gmail/v1/users/me/threads/t1/modify'])
     expect(cache.readThreads(INBOX_KEY)![0]!.unread).toBe(false)
   })
 
@@ -369,7 +376,7 @@ describe('mutations', () => {
 })
 
 /**
- * The composer's writes (D71).
+ * The composer's writes.
  *
  * §7 earns itself here. A sent *message* is not a label delta and `patchThread`
  * cannot express one — but a draft appearing and disappearing **is** one, which
@@ -524,8 +531,8 @@ describe('composer writes', () => {
     })
 
     it('is never another account aliases, because that account is another instance', async () => {
-      // As with contacts: the memoized aliases belong to the instance, and D87
-      // gives each account its own.
+      // As with contacts: the memoized aliases belong to the instance, and each
+      // account has its own.
       const mine = composer()
       const theirs = composer()
       await mine.data.sendAs()
@@ -552,7 +559,7 @@ describe('composer writes', () => {
 })
 
 /**
- * Forwarding attachments through the write surface (D71).
+ * Forwarding attachments through the write surface.
  *
  * The renderer names a message; main fetches the bytes. These assert that the
  * fetch happens on the write path and that the empty case stays empty.

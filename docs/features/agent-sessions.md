@@ -1,7 +1,7 @@
 # Agent sessions
 
 The vault assistant is Claude Code, run as Claude Code runs it. Every session is a Claude Code
-**background session** (D110): the per-vault supervisor runs it, its short job id names it, and it
+**background session**: the per-vault supervisor runs it, its short job id names it, and it
 outlives any window onto it. Holi opens terminals onto those sessions, reads what they are doing,
 keeps its own git out of their way, shows what each turn changed, and hands them merge conflicts.
 Configuration is in [agent-config.md](agent-config.md).

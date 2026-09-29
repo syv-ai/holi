@@ -1,5 +1,5 @@
 /**
- * A PDF's comment threads, read from the file on disk (D106), for
+ * A PDF's comment threads, read from the file on disk, for
  * `holi pdf comments`.
  *
  * **Through PDFium, the parser the viewer already uses**, running in Node: the

@@ -114,7 +114,7 @@ export interface PublicViewer {
 }
 
 /**
- * Where you stand on a vault's GitHub repo, for leaving and deleting it (D109).
+ * Where you stand on a vault's GitHub repo, for leaving and deleting it.
  * `gone`: GitHub no longer shows it to you. `accessVia` names the organization
  * your access comes through when it is not yours to drop; `others` are the
  * other collaborators, whom a delete takes it from too.
@@ -127,7 +127,7 @@ export interface RouterDeps {
   registry: VaultRegistry
   session: GitHubSession
   /**
-   * The Google connector (D67), when configured.
+   * The Google connector, when configured.
    *
    * Optional so the app still runs when the Google client id has not been
    * filled in. The `google.*` procedures refuse with a clear precondition
@@ -145,7 +145,7 @@ export interface RouterDeps {
    * every read goes to Google.
    *
    * **The agent's ops server is deliberately not given this** — it asks for
-   * current data and must not be handed a stale answer (D67).
+   * current data and must not be handed a stale answer.
    */
   googleDataFor?: (remote: string) => Promise<GoogleData | null>
   /**
@@ -281,7 +281,7 @@ const MAIL_CATEGORIES: readonly MailCategory[] = [
 ]
 
 /**
- * The composer's payload, which `fields` cannot express (D71).
+ * The composer's payload, which `fields` cannot express.
  *
  * `fields` handles strings and booleans; a mail carries arrays and a nested
  * object. Validated for **shape** only — the semantic rules stay in
@@ -545,7 +545,7 @@ export function createRouter(deps: RouterDeps) {
     await ensureSeeded(repo.root)
     await migrateApps(repo.root)
     await migrateVaultLayout(repo.root)
-      await migrateSettingsFormat(repo.root)
+    await migrateSettingsFormat(repo.root)
     await deps.registry.add({
       remote,
       path: repo.root,
@@ -557,7 +557,7 @@ export function createRouter(deps: RouterDeps) {
   }
 
   /**
-   * Move the apps kept in `.holi/apps/` to `<id>.app/` at the root (D107).
+   * Move the apps kept in `.holi/apps/` to `<id>.app/` at the root.
    *
    * Runs wherever `ensureSeeded` does and always **ahead of `host.open`**, for
    * the seed's reason and a sharper one: the first snapshot the renderer sees
@@ -661,7 +661,7 @@ export function createRouter(deps: RouterDeps) {
   const sameLogin = (a: string, b: string) => a.toLowerCase() === b.toLowerCase()
 
   /**
-   * Commit and push `remote`, then report what is still only here (D109).
+   * Commit and push `remote`, then report what is still only here.
    *
    * The open vault goes through its own loop, which knows how to recover from
    * a rejected push. Any other vault was flushed when it was closed, so a dirty
@@ -768,7 +768,7 @@ export function createRouter(deps: RouterDeps) {
 
     signOut: t.procedure.mutation(async () => {
       // The keychain entry goes, the clones stay. Removing one is a separate,
-      // deliberate act: `deleteClones`, or leaving or deleting a vault (D109).
+      // deliberate act: `deleteClones`, or leaving or deleting a vault.
       await deps.session.signOut()
       return { ok: true as const }
     }),
@@ -820,9 +820,9 @@ export function createRouter(deps: RouterDeps) {
         // than from a second read that could already disagree with it.
         const root = await rootFor(input.remote)
         /**
-         * Seed on **open**, not only on clone (D70), for what an open may still
+         * Seed on **open**, not only on clone, for what an open may still
          * do: create a missing once-file and merge `.claude/settings.json`.
-         * Skills and hooks are written only at creation (D111).
+         * Skills and hooks are written only at creation.
          *
          * Before `host.open`, for `addVault`'s reason: nothing can be committed
          * ahead of the `.gitignore`.
@@ -830,7 +830,7 @@ export function createRouter(deps: RouterDeps) {
         await ensureSeeded(root)
         await migrateApps(root)
         await migrateVaultLayout(root)
-      await migrateSettingsFormat(root)
+        await migrateSettingsFormat(root)
         await deps.registry.touch(input.remote, now())
         const active = await deps.host.open(input.remote)
         return active.snapshot()
@@ -923,7 +923,7 @@ export function createRouter(deps: RouterDeps) {
 
     /**
      * What this person may do to the vault on GitHub, for the leave and delete
-     * dialogs (D109). `gone` is a remote GitHub no longer shows them: deleted,
+     * dialogs. `gone` is a remote GitHub no longer shows them: deleted,
      * or their access was taken away. Either way the clone is all that is left.
      */
     membership: t.procedure
@@ -960,7 +960,7 @@ export function createRouter(deps: RouterDeps) {
       ),
 
     /**
-     * Get the vault's work onto its remote, and say what could not go (D109).
+     * Get the vault's work onto its remote, and say what could not go.
      * Leaving and deleting both wait on this: nothing is trashed while work is
      * stuck on this machine.
      */
@@ -969,7 +969,7 @@ export function createRouter(deps: RouterDeps) {
       .mutation(({ input }) => settleVault(safeRemote(input.remote))),
 
     /**
-     * Drop your own access on GitHub, then the clone (D109). Refused for a vault
+     * Drop your own access on GitHub, then the clone. Refused for a vault
      * you own: an owner who wants out deletes it. Access that comes through an
      * organization is not yours to drop, so it stays, and the answer says whose
      * it is.
@@ -994,7 +994,7 @@ export function createRouter(deps: RouterDeps) {
       }),
     ),
 
-    /** Delete is GitHub's to do (D109): this opens the repo's settings, whose
+    /** Delete is GitHub's to do: this opens the repo's settings, whose
      *  Danger Zone holds it, and `forgetDeleted` follows once it is done. */
     openRepoSettings: t.procedure
       .input(fields({ remote: 'string' }))
@@ -1004,7 +1004,7 @@ export function createRouter(deps: RouterDeps) {
       }),
 
     /**
-     * The clone of a vault that is gone from GitHub goes to the Trash (D109).
+     * The clone of a vault that is gone from GitHub goes to the Trash.
      * Main asks GitHub itself rather than taking the renderer's word: the clone
      * is only let go once the remote answers 404, so a repo still standing keeps
      * its local copy (`gone: false`) however the dialog got here.
@@ -1119,7 +1119,7 @@ export function createRouter(deps: RouterDeps) {
             // where the format keeps it.
             //
             // The agenda's create-from-event uses `description` to seed the body
-            // with the event's markdown link, which under D67 *is* the whole
+            // with the event's markdown link, which *is* the whole
             // representation of the link. The heading lands above it.
             description: setFirstHeading(input.description ?? '', input.title),
           }),
@@ -1146,7 +1146,7 @@ export function createRouter(deps: RouterDeps) {
      * The horizontal drag axis: moving a card to another lane moves the
      * `task.<name>.md` file into that folder and rewrites inbound `[[wiki-links]]`.
      * A task's path is its identity, so a lane change IS a rename, reusing
-     * `renameNote`'s link-rewriting pass, never a second (D63).
+     * `renameNote`'s link-rewriting pass, never a second.
      *
      * A `status` rides along for a DIAGONAL drop (lane + column in one gesture):
      * it is written in place first, so the single `renameNote` carries the final
@@ -1219,7 +1219,7 @@ export function createRouter(deps: RouterDeps) {
   }
 
   /**
-   * What a vault app may ask the vault for (D74).
+   * What a vault app may ask the vault for.
    *
    * **The refusal lives here and not in the renderer.** The renderer could do
    * every check in this namespace with no new IPC at all — and must not: it is
@@ -1284,7 +1284,7 @@ export function createRouter(deps: RouterDeps) {
   })
 
   /**
-   * Bytes for a file the renderer renders itself (D103: the PDF viewer). The
+   * Bytes for a file the renderer renders itself (the PDF viewer). The
    * `holi-vault://` protocol serves the same bytes to `<img>`, but a renderer
    * `fetch` of it fails on CORS, and giving the protocol a permissive header
    * would open it to the sandboxed vault-app frames too: a packaged `file://`
@@ -1343,7 +1343,7 @@ export function createRouter(deps: RouterDeps) {
       ),
 
     /**
-     * Set or clear a path's icon in `.holi/settings/icons.yaml` (D82).
+     * Set or clear a path's icon in `.holi/settings/icons.yaml`.
      *
      * The map rather than the note's frontmatter, whatever the path is: one
      * gesture with one destination is what makes the menu item explicable, and
@@ -1611,7 +1611,7 @@ export function createRouter(deps: RouterDeps) {
   })
 
   /**
-   * What the agent's last turns changed (D88).
+   * What the agent's last turns changed.
    *
    * A turn is a COMMIT RANGE, so nothing here stores a file list: `files` asks
    * git each time. Storing the paths as well would be a second copy of an answer
@@ -1676,7 +1676,7 @@ export function createRouter(deps: RouterDeps) {
      * so the patch arrives as text and goes through `parseThemePatch`: the
      * same whitelist and the same per-token value check that guard a committed
      * file a teammate wrote. A write cannot reach these files by a route that
-     * skips the check, and D64's promise that a theme is structurally incapable
+     * skips the check, and the promise that a theme is structurally incapable
      * of changing layout holds however the theme was authored.
      *
      * Returns the warnings rather than throwing: a refused token must not
@@ -1769,32 +1769,28 @@ export function createRouter(deps: RouterDeps) {
       }),
 
     // The vault's templates, for the Convert picker and its metadata inputs.
-    templates: t.procedure
-      .input(fields({ remote: 'string' }))
-      .query(
-        async ({
-          input,
-        }): Promise<
-          {
-            name: string
-            slug: string
-            description: string
-            fields: TemplateField[]
-            warnings: string[]
-          }[]
-        > => {
-          const root = await rootFor(input.remote)
-          return (await listTemplates(root)).map(
-            ({ name, slug, description, fields, warnings }) => ({
-              name,
-              slug,
-              description,
-              fields,
-              warnings,
-            }),
-          )
-        },
-      ),
+    templates: t.procedure.input(fields({ remote: 'string' })).query(
+      async ({
+        input,
+      }): Promise<
+        {
+          name: string
+          slug: string
+          description: string
+          fields: TemplateField[]
+          warnings: string[]
+        }[]
+      > => {
+        const root = await rootFor(input.remote)
+        return (await listTemplates(root)).map(({ name, slug, description, fields, warnings }) => ({
+          name,
+          slug,
+          description,
+          fields,
+          warnings,
+        }))
+      },
+    ),
 
     // Render `path` through `template` to a PDF and return its path. Writes to
     // `outPath` when given (the native save dialog's choice); otherwise defaults
@@ -1831,7 +1827,7 @@ export function createRouter(deps: RouterDeps) {
   })
 
   /**
-   * The Google connection (D67): a **data connector**, not identity.
+   * The Google connection: a **data connector**, not identity.
    *
    * Deliberately its own sub-router rather than a branch of `auth`: signing out
    * of GitHub must not drop your mail/calendar connection, and disconnecting
@@ -1924,7 +1920,7 @@ export function createRouter(deps: RouterDeps) {
     /**
      * Unlink **this vault**. The account and its tokens survive, and any other
      * vault using it keeps working.
-     * The destructive counterpart is `removeAccount` (D87).
+     * The destructive counterpart is `removeAccount`.
      */
     disconnectVault: t.procedure.mutation(async () => {
       await googleAccounts().unlinkVault(activeRemote())
@@ -2063,14 +2059,14 @@ export function createRouter(deps: RouterDeps) {
       .query(({ input }): Promise<MailThread> => readThread(googleApi(), input.id)),
 
     /**
-     * The mailbox writes (D68): `setRead`, `setStarred`, `archive`, `trash`.
+     * The mailbox writes: `setRead`, `setStarred`, `archive`, `trash`.
      *
      * Each goes through `googleData` rather than calling `gmail.ts` directly,
      * because the cache has to move with the mailbox: a thread marked read at
      * Google and still bold on disk is a list that disagrees with itself until
      * the next full sync. `googleData` owns that ordering.
      *
-     * **The agent reaches these same four methods** (D70).
+     * **The agent reaches these same four methods**.
      * `createGoogleOpsServer` is handed the methods, never `googleData` itself,
      * so it cannot read a cached anything, and it calls the identical function
      * this procedure calls. What the agent does *not* get here is any route to
@@ -2108,7 +2104,7 @@ export function createRouter(deps: RouterDeps) {
     }),
 
     /**
-     * The composer (D71).
+     * The composer.
      *
      * The reads go straight to Google like `thread` does: a drafts list is not
      * cached, and `readDraft` is the one call that answers "is this ours?".
@@ -2152,7 +2148,7 @@ export function createRouter(deps: RouterDeps) {
      * sends into that conversation, and neither sends a new message.
      *
      * **This is deliberately not hook-gated, and the omission is the design.**
-     * D70's gate intercepts the *agent's* `Bash`, because an agent sending mail
+     * The send gate intercepts the *agent's* `Bash`, because an agent sending mail
      * is an act the user did not individually authorise. A user pressing Send
      * has already authorised it; prompting here would be a dialog asking
      * permission for the click that opened it.
@@ -2289,7 +2285,7 @@ export function createRouter(deps: RouterDeps) {
     return deps.googleAccounts
   }
 
-  /** The vault whose Google account these procedures speak for (D87). The
+  /** The vault whose Google account these procedures speak for. The
    *  renderer resolves by ACTIVE vault, which is correct here: the UI shows one
    *  vault at a time. The agent resolves by its ops bearer instead. */
   function activeRemote(): string {
@@ -2332,7 +2328,7 @@ export function createRouter(deps: RouterDeps) {
    *
    * Built per call rather than held: the object is nothing but a closure, and a
    * cached one would outlive a disconnect. The getter is what refreshes and
-   * single-flights (D67: main is the sole token authority).
+   * single-flights (main is the sole token authority).
    */
   function googleApi(): GoogleApi {
     // Resolved inside the getter, not here: that keeps every call site

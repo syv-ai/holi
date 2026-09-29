@@ -14,7 +14,7 @@ vi.mock('../../lib/trpc', () => ({
   trpc: {
     google: {
       status: { query: () => statusMock() },
-      // D87: the same read also asks which accounts exist and which one
+      // The same read also asks which accounts exist and which one
       // this vault uses. Mocked here so these stay about the shared atom.
       accounts: { query: () => accountsMock() },
     },

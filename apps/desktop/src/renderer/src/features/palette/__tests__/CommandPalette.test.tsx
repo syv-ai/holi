@@ -1,5 +1,5 @@
 /**
- * The palette (D102), driven the way a person drives it: keys in, tabs out.
+ * The palette, driven the way a person drives it: keys in, tabs out.
  *
  * Ranking is `test/palette-rows.test.ts`; what a command does is
  * `test/commands.test.ts`. This covers the seams between them and cmdk: the

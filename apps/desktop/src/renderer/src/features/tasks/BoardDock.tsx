@@ -5,7 +5,7 @@
  *
  * **Still three narrowing controls, deliberately:** search, filter, hide done.
  * The filter holds the folders that have tasks and the tags. `overdue` and
- * `p1`–`p3` are labels (D41), so they sit in the tag list beside real tags and
+ * `p1`–`p3` are labels, so they sit in the tag list beside real tags and
  * "the overdue p1s" is an ordinary tag query. The fourth icon is quick add,
  * which is not a filter.
  */

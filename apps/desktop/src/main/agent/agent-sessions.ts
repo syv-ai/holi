@@ -1,5 +1,5 @@
 /**
- * The vault's assistant, as Claude Code runs it (D110).
+ * The vault's assistant, as Claude Code runs it.
  *
  * **A session is Claude Code's background session.** Its supervisor runs it,
  * its short job id names it, and it outlives any window onto it. Holi does not
@@ -8,7 +8,7 @@
  * (`claude-sessions.ts`). This module ties those to the active vault.
  *
  * Three things belong to the **vault**, not to any session, and live here: the
- * config directory with its endpoint file (D86, D110), the sync pause (owned by
+ * config directory with its endpoint file, the sync pause (owned by
  * the turn coordinator), and the focus file the per-turn hook reads.
  *
  * **Holi does not decide what a session is doing.** Claude Code's listing says
@@ -36,7 +36,7 @@ import { createTurnCoordinator, type TurnCoordinator } from './turn-coordinator'
 import type { TurnLog } from './turn-log'
 
 /**
- * Printed into the first terminal Holi opens on a fresh config directory (D86).
+ * Printed into the first terminal Holi opens on a fresh config directory.
  * Credentials are keyed to the directory, so one Holi has never used cannot be
  * signed in. In the scrollback, because `/login` fires nothing Holi sees.
  */
@@ -72,7 +72,7 @@ export interface AgentSessionsDeps {
   getWindow(): BrowserWindow | null
   cli: ClaudeCli
   terminals: AgentTerminals
-  /** Provision the vault's config directory (D86). Null leaves the vault
+  /** Provision the vault's config directory. Null leaves the vault
    *  without an assistant. */
   resolveConfig(vault: VaultRef): Promise<{ dir: string } | null>
   /** True the first time Holi opens a terminal on this config directory,

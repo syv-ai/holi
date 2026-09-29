@@ -20,7 +20,7 @@ let loading: Promise<Mermaid> | null = null
 let configured: 'light' | 'dark' | null = null
 
 /** The app's current mode, from the stamp `state/color-scheme.ts` puts on the
- *  root (both modes are stamped explicitly, D85). */
+ *  root (both modes are stamped explicitly). */
 function appTheme(): 'light' | 'dark' {
   return document.documentElement.dataset['theme'] === 'light' ? 'light' : 'dark'
 }

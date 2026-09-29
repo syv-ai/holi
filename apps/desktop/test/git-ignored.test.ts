@@ -46,7 +46,7 @@ describe('ignoredPaths', () => {
 
   it('honours a rule the name gives no hint of', async () => {
     // The whole reason this asks git instead of matching `.local.`: a vault can
-    // ignore anything, and vaults seeded before D65 carry a bare `USER.md`.
+    // ignore anything, and vaults seeded before the `.local.` convention carry a bare `USER.md`.
     await write('.gitignore', 'USER.md\nbuild/\n')
     await write('USER.md', 'about me\n')
     await write('build/out.md', 'generated\n')

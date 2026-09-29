@@ -154,7 +154,7 @@ describe('parseTaskFile', () => {
   })
 
   it('ignores keys the record no longer has, rather than rejecting the file', () => {
-    // Files written before D60 carry id/version/area/related, and so will any
+    // Files written by the old server carry id/version/area/related, and so will any
     // vault migrated from the old app. They must stay readable: the alternative
     // is a vault whose every task fails to parse.
     const parsed = parse(
@@ -220,7 +220,7 @@ describe('serializeTaskFile', () => {
 
   it('writes unknown keys back, so an edit never eats them', () => {
     // Dragging a card rewrites the whole file. Anything a human, another tool, or
-    // a pre-D60 vault put in the frontmatter must survive that rewrite — the
+    // an old vault put in the frontmatter must survive that rewrite — the
     // alternative is silent data loss on the first status change.
     const text = serializeTaskFile({ ...task, extra: { id: 'abc', area: 'projects/q2' } })
     expect(parse(text, task.path).extra).toEqual({ id: 'abc', area: 'projects/q2' })
@@ -303,7 +303,7 @@ describe('taskFileName', () => {
 })
 
 // ─────────────────────────────────────────────────────────────────────────
-// D79: `due` is a stamp — the time is optional on it.
+// `due` is a stamp — the time is optional on it.
 describe('a due date that names an hour', () => {
   it('parses and round-trips a timed due unchanged', () => {
     const task = parse('---\ndue: 2026-08-25T14:00\n---\nbody\n')

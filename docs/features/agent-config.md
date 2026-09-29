@@ -14,7 +14,7 @@ It is also the key of the vault's Claude Code supervisor, so the agent list show
 sessions only. Holi creates the directory when it opens the vault and merges into its
 `settings.json`: `disableClaudeAiConnectors` (only when absent), `theme` (dark or light, from the
 app's resolved colour mode) and an `env` block with Holi's static paths (`HOLI_BIN`,
-`HOLI_GOOGLE_BIN`, `TYPST_BIN`), the one channel that reaches every background session (D110). It
+`HOLI_GOOGLE_BIN`, `TYPST_BIN`), the one channel that reaches every background session. It
 removes the `statusLine` older versions installed. A theme change reaches a running session on
 **Restart** (`claude respawn`).
 
@@ -46,7 +46,7 @@ finds itself with `Glob`, `grep` and `git`.
 - **Once files**: `AGENTS.md`, `memory/index.md`, `.holi/vault`,
   `.holi/settings/app.yaml` and `app.local.yaml`, `theme.css`, `theme.local.css`, `icons.yaml`,
   `.holi/document-templates/**`. Created if absent, then the user's.
-- **Shipped files** (D111): `.claude/hooks/**` and `.claude/skills/**`. Written only when the
+- **Shipped files**: `.claude/hooks/**` and `.claude/skills/**`. Written only when the
   vault is created (`.holi/vault` does not exist yet), and the vault's from then on: an open never
   writes one, so a deleted skill stays deleted. They are plain committed files because a vault
   works in any Claude Code, the web and the desktop app included; a Claude Code plugin would not
@@ -63,7 +63,7 @@ finds itself with `Glob`, `grep` and `git`.
   turns a default back by setting it here or in `settings.local.json`; Claude Code's `/config`
   writes user settings, which a project value outranks. Malformed JSON is left alone.
 
-**Updating skills and hooks** (D111). A Holi release may ship newer versions; they reach a vault
+**Updating skills and hooks**. A Holi release may ship newer versions; they reach a vault
 only when its user asks, with `holi skills update` or the palette's **Update skills**. Against the
 base Holi recorded when it wrote each file (`.holi/state/seed-state.local.json`, machine-local): an
 untouched file is replaced, one the vault changed elsewhere is 3-way merged, and a same-line

@@ -41,7 +41,7 @@ describe('createVaultAccounts', () => {
   })
 
   it('lets two vaults share one account', async () => {
-    // Many-to-one is the shape D87 asks for: a vault has at most one account,
+    // Many-to-one is the shape asked for: a vault has at most one account,
     // an account may serve several vaults.
     const store = createVaultAccounts(await tempFile())
     await store.link(VAULT, SUB)

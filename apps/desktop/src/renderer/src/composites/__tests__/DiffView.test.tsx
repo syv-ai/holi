@@ -1,5 +1,5 @@
 /**
- * `DiffView`, in its two modes (D88, toward #4).
+ * `DiffView`, in its two modes (toward #4).
  *
  * It has always been a read-only view of history. The turn review needs the same
  * diff to be *resolvable* — reject a hunk the agent wrote and the file goes back
@@ -75,7 +75,7 @@ test('does not rebuild the view when the resolver identity changes', () => {
 
 /**
  * The colour mode. This view used to declare `{ dark: true }` unconditionally,
- * which was true of the app until light mode shipped (D85) and after that put a
+ * which was true of the app until light mode shipped and after that put a
  * black `#0a0a0a` band across every diff in a light vault.
  *
  * Asserted on `EditorView.darkTheme` for the reason `editor/color-mode.test`

@@ -1,5 +1,5 @@
 /**
- * The icon map (D82). An icon is keyed by path and rots on rename by design, so
+ * The icon map. An icon is keyed by path and rots on rename by design, so
  * a stale entry is visible nowhere else; naming it is why this is a list.
  */
 import { render, screen, waitFor, within } from '@/test/render'
@@ -47,7 +47,10 @@ test('says where icons come from when there are none', () => {
 })
 
 test('lists every entry in the map, whatever it points at', () => {
-  setup({ 'notes/b.md': '🌱', 'a.md': '📌', projects: '📁' }, { docs: ['a.md', 'notes/b.md'], dirs: ['projects'] })
+  setup(
+    { 'notes/b.md': '🌱', 'a.md': '📌', projects: '📁' },
+    { docs: ['a.md', 'notes/b.md'], dirs: ['projects'] },
+  )
   // Rows are groups of controls rather than a semantic list, so
   // `data-icon-path` is the handle.
   const rows = [...document.querySelectorAll('[data-icon-path]')]
@@ -61,7 +64,7 @@ test('lists every entry in the map, whatever it points at', () => {
 })
 
 test('names an entry whose path is no longer in the vault', () => {
-  // The failure mode D82 accepts: rename the file and the icon stays behind,
+  // The failure mode a path-keyed icon map accepts: rename the file and the icon stays behind,
   // pointing at nothing. This list is the only place it can be found.
   setup({ 'old-name.md': '🌱', 'kept.md': '📌' }, { docs: ['kept.md'] })
   const stale = screen.getByText('old-name.md').closest<HTMLElement>('[data-icon-path]')!
@@ -75,11 +78,13 @@ test('clearing an entry removes it, rather than writing a blank', () => {
   // `undefined` is what deletes the key, the same call the dialog makes when
   // you empty its field. An empty string would be an entry that renders nothing.
   setup({ 'a.md': '📌' }, { docs: ['a.md'] })
-  return userEvent.click(screen.getByRole('button', { name: 'clear the icon for a.md' })).then(() =>
-    waitFor(() =>
-      expect(setIcon).toHaveBeenCalledWith({ remote: REMOTE, path: 'a.md', emoji: undefined }),
-    ),
-  )
+  return userEvent
+    .click(screen.getByRole('button', { name: 'clear the icon for a.md' }))
+    .then(() =>
+      waitFor(() =>
+        expect(setIcon).toHaveBeenCalledWith({ remote: REMOTE, path: 'a.md', emoji: undefined }),
+      ),
+    )
 })
 
 test('editing summons the tree’s own dialog, filled in', async () => {

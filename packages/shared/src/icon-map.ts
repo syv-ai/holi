@@ -1,13 +1,13 @@
 /**
  * `.holi/settings/icons.yaml` — the vault's per-path icon map, and the **only** place an
- * icon lives (D82).
+ * icon lives.
  *
  * Rejected: `icon:` in a note's frontmatter. It can only serve things that HAVE
  * frontmatter (not a folder, not a PDF, and not `CLAUDE.md`/`AGENTS.md`, where
  * frontmatter becomes prompt text), and two mechanisms with a precedence rule
  * cost more than they were worth.
  *
- * Its layering is the theme's (D64): the committed file is shared with everyone
+ * Its layering is the theme's: the committed file is shared with everyone
  * who clones the vault, and a local-only `icons.local.yaml` beside it overrides
  * it **per key**.
  *

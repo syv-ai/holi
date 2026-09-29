@@ -69,7 +69,7 @@ function PdfIcon({ className }: { className?: string }) {
 }
 
 /**
- * A vault app's glyph (D107): a rounded square with `</>` cut out of it, from
+ * A vault app's glyph: a rounded square with `</>` cut out of it, from
  * svgrepo.com (#525813). Filled with `currentColor` rather than a type colour,
  * so it takes the tree row's tint as the chevron does.
  */
@@ -184,7 +184,7 @@ export function fileIconFor(path: string, icon?: string): JSX.Element {
  *  dotted one for doing, a checked one for done.
  *
  *  **The colours are the `--task-*` tokens, not hex**, the same ones the
- *  editor's task orbs use, so a vault theme recolours both at once (D64). */
+ *  editor's task orbs use, so a vault theme recolours both at once. */
 export function TaskIcon({ status }: { status: TaskStatus }) {
   if (status === 'done') return <Icon icon={CircleCheck} size="sm" className="text-task-done" />
   if (status === 'doing') return <Icon icon={CircleDot} size="sm" className="text-task-doing" />
@@ -194,7 +194,7 @@ export function TaskIcon({ status }: { status: TaskStatus }) {
 /**
  * What a file or app is called wherever it is listed: the tree and the tabs
  * (`docs/features/file-tree.md`). A note is the unmarked thing and drops its
- * `.md`; an app drops its `.app` (D107); anything else keeps its extension.
+ * `.md`; an app drops its `.app`; anything else keeps its extension.
  */
 export function pathLabel(path: string): string {
   if (isAppBundlePath(path)) return appName(path)

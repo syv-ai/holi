@@ -31,7 +31,7 @@ describe('parseWikiLinks', () => {
     })
   })
 
-  it('has one grammar: a task: prefix is just an ordinary target now (D27/D60)', () => {
+  it('has one grammar: a task: prefix is just an ordinary target now', () => {
     const [link] = parseWikiLinks('do [[task:0192-abc]] first')
     expect(link).toMatchObject({ target: 'task:0192-abc', label: undefined })
   })
@@ -41,7 +41,10 @@ describe('parseWikiLinks', () => {
     expect(parseWikiLinks('[[a\nb.md]]')).toEqual([]) // bodies never span lines
     expect(parseWikiLinks('[[ ]]')).toEqual([]) // a blank body resolves to nothing
     // greedy body keeps a lone '[' inside the token (old editor behaviour):
-    expect(parseWikiLinks('[[x [y.md]]')[0]).toMatchObject({ raw: '[[x [y.md]]', target: 'x [y.md' })
+    expect(parseWikiLinks('[[x [y.md]]')[0]).toMatchObject({
+      raw: '[[x [y.md]]',
+      target: 'x [y.md',
+    })
   })
 })
 
@@ -56,7 +59,7 @@ describe('formatWikiLink', () => {
   })
 })
 
-describe('rewriteWikiLinks (the D12 rename primitive)', () => {
+describe('rewriteWikiLinks (the rename primitive)', () => {
   it('rewrites only links targeting the old path, preserving labels and everything else', () => {
     const text = 'see [[old/a.md]] and [[old/a.md|Alpha]] but not [[other.md]] or [[task:x1]]'
     const { text: out, count } = rewriteWikiLinks(text, 'old/a.md', 'new/b.md')

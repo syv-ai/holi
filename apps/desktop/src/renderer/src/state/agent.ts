@@ -3,7 +3,7 @@ import { useEffect, useRef } from 'react'
 import { activeTab, closeAgentTabs, workspaceAtom } from './panes'
 import { resetTurnReviewAtom, turnReviewOpenAtom } from './turns'
 
-/** What a session is doing. Claude Code's own answer, read by main (D110). */
+/** What a session is doing. Claude Code's own answer, read by main. */
 export type SessionState = 'needs-you' | 'working' | 'idle'
 
 /**
@@ -54,7 +54,7 @@ export const agentTerminalAtom = (id: string) =>
  * opened for a live session. Null when neither says.
  *
  * A guess by construction: an agents tab can be attached to any session, and
- * nothing Claude Code publishes says which (D110). So this is only ever a
+ * nothing Claude Code publishes says which. So this is only ever a
  * default for an ask, never an identity.
  */
 export const activeSessionAtom = atom<AgentSession | null>((get) => {

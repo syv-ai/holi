@@ -142,7 +142,13 @@ test('stays open while several calendars are ticked', async () => {
 test('marks an event from someone else’s calendar as theirs', async () => {
   agendaMock.mockResolvedValue([
     event(),
-    event({ id: 'e2', title: 'Dentist', calendarId: 'jane', calendarName: 'Jane Doe', mine: false }),
+    event({
+      id: 'e2',
+      title: 'Dentist',
+      calendarId: 'jane',
+      calendarName: 'Jane Doe',
+      mine: false,
+    }),
   ])
 
   render(<AgendaView />)
@@ -217,9 +223,7 @@ test('offers the video link for a Zoom conference, not just Meet', async () => {
 
 test('puts the event description into the task it creates', async () => {
   getDefaultStore().set(activeRemoteAtom, 'git@github.com:syv-ai/notes.git')
-  agendaMock.mockResolvedValue([
-    event({ description: 'Dial-in 555-0100, agenda in the deck' }),
-  ])
+  agendaMock.mockResolvedValue([event({ description: 'Dial-in 555-0100, agenda in the deck' })])
   const user = userEvent.setup()
 
   render(<AgendaView />)
@@ -229,7 +233,7 @@ test('puts the event description into the task it creates', async () => {
 
   await waitFor(() => expect(createTaskMock).toHaveBeenCalled())
   const { description } = createTaskMock.mock.calls[0]![0] as { description: string }
-  // The link is the representation (D67); the description carries the dial-in.
+  // The link is the representation; the description carries the dial-in.
   expect(description).toContain('https://calendar.google.com/x')
   expect(description).toContain('Dial-in 555-0100')
 })
@@ -394,7 +398,7 @@ test('remembers its width per account, not per vault', async () => {
   const keys = reads.mock.calls.map(([key]) => key)
   reads.mockRestore()
 
-  // The agenda is account-wide (D67): the same calendar whichever vault is
+  // The agenda is account-wide: the same calendar whichever vault is
   // open, and open with no vault at all.
   expect(keys).toContain('holi:panelLayouts:global')
   expect(keys).not.toContain('holi:panelLayouts')

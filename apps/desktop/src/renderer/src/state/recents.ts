@@ -1,5 +1,5 @@
 /**
- * Recents per vault, kept on this machine (D102).
+ * Recents per vault, kept on this machine.
  *
  * `localStorage` rather than `.holi/settings/app.local.yaml`: that file is a
  * settings document the user or the agent authors, its validator refuses keys

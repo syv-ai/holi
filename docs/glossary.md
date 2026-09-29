@@ -96,7 +96,7 @@ agent" is the set of a vault's sessions.
 
 ### Session
 
-One Claude Code background session in a vault, named by its job id (D110): one conversation, run
+One Claude Code background session in a vault, named by its job id: one conversation, run
 by the supervisor whether or not a window shows it. Holi's **agent tabs** are terminals onto
 sessions: the agent list, or one session attached. Its name and its state (`needs-you`, `working`,
 `idle`) come from Claude Code itself. Closing a tab detaches; Stop, a vault switch or quitting stops

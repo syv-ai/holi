@@ -60,7 +60,7 @@ async function vault(settings: Record<string, boolean> = {}): Promise<string> {
   const server = createHookServer({
     onJobTurn: () => {},
     log: () => {},
-    // One vault in these; the server routes by the caller's token (D87).
+    // One vault in these; the server routes by the caller's token.
     opsFor: () =>
       createAgentOps({
         openApp: () => Promise.resolve({ ok: true }),
@@ -200,7 +200,7 @@ describe('nothing here can stop a commit', () => {
     const server = createHookServer({
       onJobTurn: () => {},
       log: () => {},
-      // One vault in these; the server routes by the caller's token (D87).
+      // One vault in these; the server routes by the caller's token.
       opsFor: () =>
         createAgentOps({
           openApp: () => Promise.resolve({ ok: true }),

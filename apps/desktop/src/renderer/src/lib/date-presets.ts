@@ -1,5 +1,5 @@
 /**
- * The shortcuts the date pickers offer, resolved (D79).
+ * The shortcuts the date pickers offer, resolved.
  *
  * A preset is a label and a finished stamp: "1 day before" writes
  * `2026-08-24T09:00`, so the file holds the moment, never an offset resolved

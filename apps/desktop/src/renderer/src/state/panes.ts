@@ -46,11 +46,11 @@ export type SingletonTab = 'home' | 'board' | 'agenda' | 'mail' | 'settings' | '
  */
 export type Tab =
   | { kind: 'note'; path: string; preview?: boolean }
-  /** A vault app (D74), identified by its bundle's path, `Finance/Budget.app`
-   *  (D107). There is one tab per app, not one per vault. */
+  /** A vault app, identified by its bundle's path, `Finance/Budget.app`.
+   * There is one tab per app, not one per vault. */
   | { kind: 'app'; path: string }
   /**
-   * A terminal onto Claude Code (D110), by the id main minted for it: the
+   * A terminal onto Claude Code, by the id main minted for it: the
    * agents list, or one background session.
    *
    * **Closing the tab does not end a session**: it detaches, the session keeps
@@ -59,7 +59,7 @@ export type Tab =
    * its terminal, never by a session.
    */
   | { kind: 'agent'; id: string }
-  /** Home, the board, the Google agenda, mail (D67), settings and history — one
+  /** Home, the board, the Google agenda, mail, settings and history — one
    *  of each, ever. */
   | { kind: SingletonTab }
 
@@ -141,7 +141,7 @@ export function openSingleton(workspace: Workspace, kind: SingletonTab): Workspa
   return updatePane(workspace, (pane) => ({ tabs: [{ kind }, ...pane.tabs], active: 0 }))
 }
 
-/** Home (D108): a surface of its own rather than "no tab", so what it shows
+/** Home: a surface of its own rather than "no tab", so what it shows
  *  can grow without changing what opening it means. */
 export function openHome(workspace: Workspace): Workspace {
   return openSingleton(workspace, 'home')
@@ -516,7 +516,7 @@ export function activePane(workspace: Workspace): Pane | null {
 }
 
 /* ────────────────────────────────────────────────────────────────────────────
- * Moving a tab (D78)
+ * Moving a tab
  *
  * Relocating a tab keeps exactly one buffer per path (`findTab`), so a move is
  * always remove, then insert; never copy.

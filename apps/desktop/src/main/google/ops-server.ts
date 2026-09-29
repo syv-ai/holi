@@ -1,6 +1,6 @@
 /**
  * The agent's door to Google: a tiny localhost server that serves **results,
- * never tokens** (D67).
+ * never tokens**.
  *
  * The agent runs as its own `claude` process, so it cannot reach main's IPC and
  * must not reach the keychain. Instead it asks this server, which calls Google
@@ -14,12 +14,7 @@
  *
  * No runtime `electron` import: this loads under vitest.
  */
-import {
-  createServer,
-  type IncomingMessage,
-  type RequestListener,
-  type Server,
-} from 'node:http'
+import { createServer, type IncomingMessage, type RequestListener, type Server } from 'node:http'
 import { randomBytes } from 'node:crypto'
 import type { EventPatch, NewEvent } from './calendar'
 import type { OutgoingMail } from './mime'
@@ -31,7 +26,7 @@ export interface GoogleOps {
   thread(id: string): Promise<unknown>
 
   /**
-   * Writes (D70). POST with a body: a mail body does not belong in a query
+   * Writes. POST with a body: a mail body does not belong in a query
    * string, where it would also be printed into the confirmation prompt the
    * user reads.
    *
@@ -165,7 +160,7 @@ export interface GoogleOpsServer {
   stop(): Promise<void>
   port(): number | null
   /**
-   * A bearer bound to one vault (D87), minted once per vault per app run,
+   * A bearer bound to one vault, minted once per vault per app run,
    * written into that vault's `holi.env`, and revoked when Holi leaves it.
    *
    * Bound to a vault rather than resolved by "whatever is active": a
@@ -222,7 +217,9 @@ export function createGoogleOpsServer(opsFor: (remote: string) => GoogleOps): Go
         // The agent reads this text, so it has to say what to do.
         res.writeHead(status, { 'Content-Type': 'application/json' })
         res.end(
-          JSON.stringify({ error: err instanceof Error ? err.message : 'the Google request failed' }),
+          JSON.stringify({
+            error: err instanceof Error ? err.message : 'the Google request failed',
+          }),
         )
       }
     })()
@@ -256,10 +253,15 @@ export function createGoogleOpsServer(opsFor: (remote: string) => GoogleOps): Go
    * gate depends on: `send` is a route, not a flag on a general-purpose verb,
    * so a hook matching on the command that reaches it has something to match.
    */
-  async function routeWrite(ops: GoogleOps, url: URL, body: Record<string, unknown>): Promise<unknown> {
+  async function routeWrite(
+    ops: GoogleOps,
+    url: URL,
+    body: Record<string, unknown>,
+  ): Promise<unknown> {
     const id = () => {
       const value = body.id
-      if (typeof value !== 'string' || value === '') throw new BadRequest('this operation needs an id')
+      if (typeof value !== 'string' || value === '')
+        throw new BadRequest('this operation needs an id')
       return value
     }
     /** One recipient or several. A form body cannot tell them apart: `to=a`
@@ -317,7 +319,8 @@ export function createGoogleOpsServer(opsFor: (remote: string) => GoogleOps): Go
       }
       case '/schedule': {
         const { title, start, end, allDay, location, description } = body
-        if (typeof title !== 'string' || title === '') throw new BadRequest('schedule needs a title')
+        if (typeof title !== 'string' || title === '')
+          throw new BadRequest('schedule needs a title')
         if (typeof start !== 'string' || typeof end !== 'string') {
           throw new BadRequest('schedule needs a start and an end')
         }

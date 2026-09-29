@@ -1,5 +1,5 @@
 /**
- * One of Holi's terminals onto Claude Code (D110): the agents list or one
+ * One of Holi's terminals onto Claude Code: the agents list or one
  * background session, an ordinary tab with its own xterm, scrollback, data tap
  * and geometry.
  *

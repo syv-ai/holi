@@ -75,7 +75,7 @@ declare global {
       /** Pick a folder on disk: the destination for Copy/Move to Folder…. */
       chooseFolder(): Promise<string | null>
       /**
-       * The vault's assistant (D110). **Sessions** are Claude Code's background
+       * The vault's assistant. **Sessions** are Claude Code's background
        * sessions, by job id; **terminals** are Holi's windows onto them, by
        * terminal id: `claude agents` (the list) or `claude attach <id>`. A byte
        * stream, not tRPC: output and both lists are pushed, keystrokes/resize/
@@ -117,7 +117,7 @@ declare global {
         ): Promise<AgentStartResult>
         /** Replayable state for one terminal, and open its data tap. */
         attach(terminalId: string): Promise<string>
-        /** This release's skills and hooks, merged into the vault (D111). Main
+        /** This release's skills and hooks, merged into the vault. Main
          *  shows the summary as a notification; a conflict's session opens. */
         updateSkills(): Promise<SkillsUpdateResult>
         /** Detach: ends the window, never the session. */

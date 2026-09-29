@@ -1,5 +1,5 @@
 /**
- * The command palette (D102): ⌘P quick-opens every openable thing, `>`
+ * The command palette: ⌘P quick-opens every openable thing, `>`
  * switches the same box to commands, ⌘⇧P opens there, and ⌃⇥ is the tab
  * switcher. VS Code's shape.
  *
@@ -26,8 +26,8 @@
  * one binding that means the literal Control key on every platform.
  *
  * The last row, once anything is typed outside `>` mode, asks the assistant:
- * the text goes to the session ⌘J goes to and lands unsent in its input
- * (D100), starting a session when there is none.
+ * the text goes to the session ⌘J goes to and lands unsent in its input,
+ * starting a session when there is none.
  */
 import { useAtomValue, useSetAtom, useStore } from 'jotai'
 import { AppWindow, Bot, Calendar, History, Kanban, Mail, Settings, Sparkles } from 'lucide-react'

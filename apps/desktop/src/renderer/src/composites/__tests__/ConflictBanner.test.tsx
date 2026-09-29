@@ -12,11 +12,7 @@ function banner() {
   const takeDisk = vi.fn()
   const onDismiss = vi.fn()
   render(
-    <ConflictBanner
-      path="22-08-2026.md"
-      resolve={{ keepMine, takeDisk }}
-      onDismiss={onDismiss}
-    />,
+    <ConflictBanner path="22-08-2026.md" resolve={{ keepMine, takeDisk }} onDismiss={onDismiss} />,
   )
   return { keepMine, takeDisk, onDismiss }
 }
@@ -59,7 +55,7 @@ test('Dismiss resolves neither side', async () => {
 })
 
 // The complaint that produced this component: hardcoded ambers meant a vault
-// theme could not reach it (D64). Assert the tokens, not the hex.
+// theme could not reach it. Assert the tokens, not the hex.
 test('paints from theme tokens rather than a fixed palette', () => {
   banner()
   const cls = screen.getByRole('alert').className

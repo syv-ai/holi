@@ -142,7 +142,7 @@ describe('buildAgentEnv', () => {
     expect(env.CLAUDE_CODE_USE_BEDROCK).toBe('1')
   })
 
-  it('hands the child no endpoint or bearer — there is no MCP server (D60)', () => {
+  it('hands the child no endpoint or bearer — there is no MCP server', () => {
     const env = buildAgentEnv({ PATH: '/usr/bin' })
     expect(env.HOLI_AGENT_ENDPOINT).toBeUndefined()
     expect(env.HOLI_AGENT_TOKEN).toBeUndefined()
@@ -176,10 +176,10 @@ describe('buildAgentEnv', () => {
   })
 
   /**
-   * The gate matches command text, so the command text has to be predictable
-   * (D70). With only `$HOLI_GOOGLE_BIN`, the agent types
+   * The gate matches command text, so the command text has to be predictable.
+   * With only `$HOLI_GOOGLE_BIN`, the agent types
    * `"$HOLI_GOOGLE_BIN" send` and any rule keyed on the name `holi-google`
-   * matches nothing — which is exactly the hole D67 §5's planned
+   * matches nothing — which is exactly the hole the originally planned
    * `Bash(holi-google send:*)` had.
    */
   it('prepends the Holi bin dir to PATH so the bare names resolve', () => {
@@ -214,7 +214,7 @@ describe('buildAgentEnv', () => {
   })
 
   /**
-   * D72: the vault agent runs on Holi's own config directory, not the machine's
+   * The vault agent runs on Holi's own config directory, not the machine's
    * `~/.claude` — that is what keeps home skills, plugins, marketplaces and the
    * machine's MCP servers out of a vault session.
    */
@@ -223,7 +223,7 @@ describe('buildAgentEnv', () => {
     expect(env.CLAUDE_CONFIG_DIR).toBe('/data/agent-config')
   })
 
-  it('strips an inherited CLAUDE_CONFIG_DIR (reserved, D72)', () => {
+  it('strips an inherited CLAUDE_CONFIG_DIR (reserved)', () => {
     // Stronger than the HOLI_* keys: an inherited value would silently put the
     // agent back on the machine config this decision exists to keep out — or on
     // a directory a committed `.env` chose.
@@ -247,7 +247,7 @@ describe('buildAgentEnv', () => {
 
 describe('AgentRuntime.pid', () => {
   it('is the child pid while running, and null once it has exited', () => {
-    // The join key to `claude agents --json` (D100): a row there is keyed by pid.
+    // The join key to `claude agents --json`: a row there is keyed by pid.
     const { spawn, spawns } = fakeSpawn(31337)
     const runtime = new AgentRuntime({ spawnPty: spawn })
 

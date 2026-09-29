@@ -18,7 +18,7 @@ import { isTaskFilePath } from './task-file'
 export type FieldKind =
   /** One of a fixed vocabulary. */
   | { readonly kind: 'enum'; readonly options: readonly string[] }
-  /** A stamp (D79): `YYYY-MM-DD`, or `YYYY-MM-DDTHH:MM` when it names a time. */
+  /** A stamp: `YYYY-MM-DD`, or `YYYY-MM-DDTHH:MM` when it names a time. */
   | { readonly kind: 'stamp' }
   /** A calendar day and nothing finer. */
   | { readonly kind: 'date' }

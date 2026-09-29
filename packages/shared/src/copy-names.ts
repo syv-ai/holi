@@ -15,7 +15,7 @@ export const freeCopyPath = (taken: (p: string) => boolean, path: string): strin
   const base = path.slice(slash + 1)
   const dir = slash === -1 ? '' : path.slice(0, slash)
   /**
-   * **A `.local.` marker counts as part of the extension** (D65).
+   * **A `.local.` marker counts as part of the extension**.
    *
    * Splitting on the last dot alone would turn `notes.local.md` into
    * `notes.local copy.md`, which no longer matches `*.local.*`, so duplicating

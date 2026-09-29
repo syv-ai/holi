@@ -1,5 +1,5 @@
 /**
- * Applies the active vault's theme to the document root (D64).
+ * Applies the active vault's theme to the document root.
  *
  * The theme is a set of whitelisted colour/chrome token values (resolved in main
  * from `.holi/settings/theme.yaml` + `.holi/settings/theme.local.yaml`). Writing

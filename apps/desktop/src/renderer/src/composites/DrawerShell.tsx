@@ -15,7 +15,7 @@
  * fighting it. So a drawer is a plain flex item with its own resize handle.
  *
  * **Resizing** is direct manipulation: the handle tracks the pointer 1:1 with
- * the transition off (D98), writes the width straight to the element while
+ * the transition off, writes the width straight to the element while
  * dragging, and stores it once, on release, per drawer (`drawerWidthsAtom`).
  * Arrow keys move it by 16px for the keyboard. Every drawer shares one range
  * (`DRAWER_WIDTH`).

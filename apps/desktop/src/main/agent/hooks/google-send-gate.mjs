@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Holi PreToolUse hook — the send gate (D70).
+// Holi PreToolUse hook — the send gate.
 //
 // Sending mail and replying are the two things the agent can do that reach
 // another human and cannot be undone. Everything else it can do to a mailbox or
@@ -17,7 +17,7 @@
 // the cost of a needless prompt is a click while the cost of a missed one is an
 // email that has already gone.
 //
-// **The honest limit** (recorded in D70): this gates a *cooperative* agent, not
+// **The honest limit**: this gates a *cooperative* agent, not
 // an adversarial one. No string match survives `eval`, a variable, or `sh -c`.
 // The claim it supports is "the agent never sends without you seeing it", not
 // "the agent cannot send".

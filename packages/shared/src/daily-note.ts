@@ -2,7 +2,7 @@
  * main (which mints and sweeps the note) and the renderer (which displays it).
  * See docs/features/daily-notes.md.
  *
- * Every function takes the date as an ISO `YYYY-MM-DD` **string**, never a `Date` (D44):
+ * Every function takes the date as an ISO `YYYY-MM-DD` **string**, never a `Date`:
  * the caller resolves the local date, and tests pass a date instead of injecting a clock.
  */
 
@@ -38,13 +38,13 @@ export function buildDailyNoteContent(isoDate: string): string {
 }
 
 /** Path-shape check for tagging tree leaves without reading content. A **display
- * predicate only**: the sweep selects on the `type: daily-note` marker (D46), never on
+ * predicate only**: the sweep selects on the `type: daily-note` marker, never on
  * this, so a hand-authored note that merely looks like a date is never swept or deleted. */
 export function isDailyNoteFilename(name: string): boolean {
   return DAILY_FILENAME_RE.test(name)
 }
 
-/** Whether a note's frontmatter declares it a daily note: the sweep's selector (D46). */
+/** Whether a note's frontmatter declares it a daily note: the sweep's selector. */
 export function isDailyNote(content: string): boolean {
   return DAILY_FRONTMATTER_RE.test(content)
 }

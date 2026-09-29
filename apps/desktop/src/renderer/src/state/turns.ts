@@ -1,5 +1,5 @@
 /**
- * The agent's last turn, and what it changed (D88).
+ * The agent's last turn, and what it changed.
  *
  * A turn is a **commit range**, and nothing here caches what that range
  * contains: the file list and every diff are asked of git when shown, since any
@@ -18,7 +18,7 @@ export interface Turn {
   end: string
   /** ISO 8601. */
   at: string
-  /** Which session ran it (D100). Absent on older records, which get no chip:
+  /** Which session ran it. Absent on older records, which get no chip:
    *  there is no tab for them to sit under. */
   sessionId?: string
   /** Another session's turn was open at the same instant, so this range contains
@@ -48,7 +48,7 @@ export interface TurnDiff {
 export const turnReviewOpenAtom = atom(false)
 
 /**
- * The newest turn per session, keyed by session id (D100).
+ * The newest turn per session, keyed by session id.
  *
  * The log is per vault and newest-first, so this is a fold over it rather than N
  * queries. A chip belongs to a tab, so a record that names no session has

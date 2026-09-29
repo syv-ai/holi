@@ -5,7 +5,7 @@
  *
  * The seeded `UserPromptSubmit`/`Stop` hooks (`turn-signal.mjs`) POST here with
  * the vault's token and the session's job id, both read from `holi.env` and
- * `$CLAUDE_JOB_DIR` (D110), and no-op outside Holi. The token (query `?t=`)
+ * `$CLAUDE_JOB_DIR`, and no-op outside Holi. The token (query `?t=`)
  * rejects any other local process: the port is ephemeral, but this closes the
  * "some other localhost thing toggles our sync pause" gap.
  * A turn-signal response is always empty (a body would be injected into
@@ -26,7 +26,7 @@ import type { AgentOps } from './ops'
 export interface HookServerDeps {
   /**
    * A turn began or ended in one of this vault's Claude Code background
-   * sessions (D110), named by its short job id.
+   * sessions, named by its short job id.
    *
    * The id rides beside the vault's standing token, because a background
    * session's environment comes from Claude Code's supervisor rather than from
@@ -46,7 +46,7 @@ export interface HookServerDeps {
    * The agent-ops routes for **one vault**, if this instance has them. Absent
    * leaves every ops path a 404 rather than a crash.
    *
-   * Resolved from the caller's token rather than from the active vault (D87),
+   * Resolved from the caller's token rather than from the active vault,
    * so a `git commit` in one vault never runs its pre-commit transforms against
    * whichever vault is on screen.
    */

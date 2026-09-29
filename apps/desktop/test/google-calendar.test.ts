@@ -92,8 +92,19 @@ describe('resolveCalendars', () => {
   const MIXED = {
     [CAL_LIST]: {
       items: [
-        { id: 'primary', summary: 'Ada', primary: true, accessRole: 'owner', backgroundColor: '#039be5' },
-        { id: 'holidays', summary: 'syv.ai holidays', accessRole: 'owner', backgroundColor: '#0b8043' },
+        {
+          id: 'primary',
+          summary: 'Ada',
+          primary: true,
+          accessRole: 'owner',
+          backgroundColor: '#039be5',
+        },
+        {
+          id: 'holidays',
+          summary: 'syv.ai holidays',
+          accessRole: 'owner',
+          backgroundColor: '#0b8043',
+        },
         { id: 'jane', summary: 'Jane Doe', accessRole: 'reader', backgroundColor: '#d50000' },
         { id: 'room3', summary: 'Meeting Room 3', accessRole: 'freeBusyReader' },
       ],
@@ -156,7 +167,12 @@ describe('resolveCalendars', () => {
     const { api } = googleApi({
       [CAL_LIST]: {
         items: [
-          { id: 'jane', summary: 'Jane Doe', summaryOverride: 'Jane (design)', accessRole: 'reader' },
+          {
+            id: 'jane',
+            summary: 'Jane Doe',
+            summaryOverride: 'Jane (design)',
+            accessRole: 'reader',
+          },
         ],
       },
     })
@@ -314,7 +330,11 @@ describe('listAgenda', () => {
     const { api } = googleApi({
       [CAL_LIST]: { items: [{ id: 'primary', summary: 'Me', accessRole: 'owner' }] },
       [eventsUrl('primary')]: {
-        items: [timed('e1', 'Review', '2026-08-04T09:00:00Z', { hangoutLink: 'https://meet.google.com/x' })],
+        items: [
+          timed('e1', 'Review', '2026-08-04T09:00:00Z', {
+            hangoutLink: 'https://meet.google.com/x',
+          }),
+        ],
       },
     })
 
@@ -463,7 +483,9 @@ describe('listAgenda', () => {
       [CAL_LIST]: { items: [{ id: 'primary', summary: 'Me', accessRole: 'owner' }] },
       [eventsUrl('primary')]: {
         items: [
-          timed('m', 'Sync', '2026-08-04T09:00:00Z', { hangoutLink: 'https://meet.google.com/abc' }),
+          timed('m', 'Sync', '2026-08-04T09:00:00Z', {
+            hangoutLink: 'https://meet.google.com/abc',
+          }),
         ],
       },
     })
@@ -690,7 +712,7 @@ describe('refusals are classified, not passed through raw', () => {
 })
 
 /**
- * Calendar writes (D70) — and the refusal that keeps them inside the undoable
+ * Calendar writes — and the refusal that keeps them inside the undoable
  * tier.
  *
  * An event carrying attendees emails them on create, and emails cancellations
@@ -774,7 +796,11 @@ describe('calendar writes', () => {
   it('carries sendUpdates=none on every write', async () => {
     const { writes, api } = writable(SOLO)
 
-    await createEvent(api, { title: 'A', start: '2026-08-06T09:00:00Z', end: '2026-08-06T10:00:00Z' })
+    await createEvent(api, {
+      title: 'A',
+      start: '2026-08-06T09:00:00Z',
+      end: '2026-08-06T10:00:00Z',
+    })
     await updateEvent(api, 'ev-1', { start: '2026-08-06T10:00:00Z' })
     await deleteEvent(api, 'ev-1')
 

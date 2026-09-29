@@ -1,5 +1,5 @@
 /**
- * What makes a directory a vault app (D107).
+ * What makes a directory a vault app.
  *
  * An app is a **bundle**: a directory whose name ends in `.app`, anywhere in the
  * vault, holding `index.html` and `app.yaml`. Like a note, it is identified by
@@ -17,7 +17,7 @@ const isBundleName = (segment: string): boolean =>
 /**
  * Is `path` an app bundle?
  *
- * Not on the agent surface (D74: an app there could rewrite the agent's own
+ * Not on the agent surface (an app there could rewrite the agent's own
  * hooks), and not inside another bundle: an app inside an app is just files of
  * the outer one, or the outer app could serve the inner one's code as its own.
  */

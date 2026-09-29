@@ -1,6 +1,6 @@
 /**
- * Move the apps a vault kept in `.holi/apps/<id>/` to `<id>.app/` at its root
- * (D107), where the tree shows them.
+ * Move the apps a vault kept in `.holi/apps/<id>/` to `<id>.app/` at its root,
+ * where the tree shows them.
  *
  * **One `rename` per app, not a file-by-file move.** A file walk would drop
  * empty directories, and one rename is atomic on the same filesystem: the app

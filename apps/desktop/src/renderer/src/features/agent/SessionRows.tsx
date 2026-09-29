@@ -1,6 +1,5 @@
 /**
- * The vault's live Claude Code sessions, one row each, under the file tree
- * (D110).
+ * The vault's live Claude Code sessions, one row each, under the file tree.
  *
  * Only live ones: a session whose process has ended (stopped, finished and
  * retired by Claude Code's supervisor) is in the agent list that ⌘J and the

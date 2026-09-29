@@ -9,7 +9,7 @@
  *   whose middle is below the pointer; the drop lands exactly there
  *   (`rankAt`), in any cell.
  * - **The gap outlives the drop until the write lands.** Writes re-read the
- *   vault (no optimistic data, D60), so for a moment the file has not moved
+ *   vault (no optimistic data), so for a moment the file has not moved
  *   yet. The gap holds the space, and the card stays folded under both its
  *   old path and the one a lane move gives it, so the re-read cannot draw it
  *   full size beside its own gap. When the write resolves the gap closes as

@@ -270,7 +270,7 @@ describe('buildRfc822 — multipart/alternative', () => {
   })
 
   it('sends an empty message as a single part rather than refusing it', () => {
-    // An empty body is allowed to send (D71), so `renderMailMarkdown('')`
+    // An empty body is allowed to send, so `renderMailMarkdown('')`
     // returning '' is not the bug above — there was nothing to render.
     const raw = buildRfc822({ ...BASE, body: '', html: '' })
 

@@ -1,5 +1,5 @@
 /**
- * The composer (D71).
+ * The composer.
  *
  * The tests that matter here are about *drafts that should not exist* and
  * *drafts that should not fork*: both surface later in Gmail as half-written

@@ -57,7 +57,7 @@ export function formatDateTime(epoch: number): string {
 //
 // A **stamp** is a date that may or may not name a time: `YYYY-MM-DD` or
 // `YYYY-MM-DDTHH:MM[:SS]`. It is the type a task's `due` and `reminder` both
-// hold (D79).
+// hold.
 //
 // The `timed` flag is carried because the absence of a time is *data*: a task
 // due `2026-08-25` is due that day, and one due `2026-08-25T00:00` is due at

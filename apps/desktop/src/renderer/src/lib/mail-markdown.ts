@@ -1,5 +1,5 @@
 /**
- * Markdown → HTML for outgoing mail (D71).
+ * Markdown → HTML for outgoing mail.
  *
  * The only renderer: the preview and the sent `text/html` part are both this
  * output, so the preview is the artifact, with no second renderer to drift.

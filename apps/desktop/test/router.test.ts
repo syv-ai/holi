@@ -54,8 +54,8 @@ const hosts: VaultHost[] = []
 /**
  * A host reporting one open vault.
  *
- * The `google.*` procedures resolve their account through the ACTIVE vault
- * (D87), so a router with nothing open refuses before it reaches the seam
+ * The `google.*` procedures resolve their account through the ACTIVE vault,
+ * so a router with nothing open refuses before it reaches the seam
  * these tests are about. Opening a real vault would mean a real clone and a
  * real git repo, which is a lot of machinery to assert that `send` passes its
  * input through.
@@ -129,7 +129,7 @@ describe('settings', () => {
     const settings = await caller.settings.read({ remote: REMOTE })
     expect(settings.landing).toEqual({ kind: 'daily' })
     expect(settings.dailyNotes).toBe(true)
-    // The seed writes a hooks block; `archive-done` is opt-in (D76).
+    // The seed writes a hooks block; `archive-done` is opt-in.
     expect(settings.hooks).toEqual({
       relink: true,
       'archive-done': false,
@@ -171,7 +171,7 @@ describe('settings', () => {
       remote: REMOTE,
       committedJson: JSON.stringify({ dailyNotes: false }),
     })
-    // D76's transforms are seeded; a write about daily notes must not drop them.
+    // The hook transforms are seeded; a write about daily notes must not drop them.
     expect((await caller.settings.read({ remote: REMOTE })).hooks).toEqual({
       relink: true,
       'archive-done': false,
@@ -232,9 +232,9 @@ describe('vaults', () => {
   })
 
   /**
-   * An open seeds what a vault must have (D70), but never a skill or hook
+   * An open seeds what a vault must have, but never a skill or hook
    * script: those are the vault's after creation, and a newer version arrives
-   * only through `holi skills update` (D111).
+   * only through `holi skills update`.
    */
   it('open leaves a hook script the vault deleted deleted', async () => {
     const { caller, root } = await rig({ 'a.md': '# A\n' })
@@ -249,7 +249,7 @@ describe('vaults', () => {
   it('open wires the send gate into a settings.json that predates it', async () => {
     const { caller, root } = await rig({ 'a.md': '# A\n' })
     const settings = join(root, '.claude/settings.json')
-    // Exactly what a vault seeded before D70 looks like.
+    // Exactly what a vault seeded before the send gate looks like.
     await writeFile(
       settings,
       JSON.stringify({
@@ -664,7 +664,7 @@ describe('tasks.update', () => {
 
   it('carries unknown frontmatter keys through the rewrite', async () => {
     // A whole-file rewrite is what an edit IS, so anything the parser did not
-    // understand — a pre-D60 `id`, a key another tool owns — must survive it.
+    // understand — an old `id`, a key another tool owns — must survive it.
     const { caller, root } = await rig({
       'task.legacy.md': '---\ntitle: Legacy\nstatus: todo\nid: abc\n---\n',
     })
@@ -1348,11 +1348,11 @@ describe('vaults.add', () => {
 
     // The repo's own content plus the once-files, because seeding happens on
     // the way in rather than at some later activation. No skills: this joins a
-    // vault that already exists, and its skills are its own (D111).
+    // vault that already exists, and its skills are its own.
     expect(snap.docs.map((d) => d.path).sort()).toEqual([
       'AGENTS.md',
       'README.md',
-      // D89: a new vault is seeded with the memory directory, not a MEMORY.md.
+      // A new vault is seeded with the memory directory, not a MEMORY.md.
       'memory/index.md',
     ])
     const entry = (await caller.vaults.list()).find((v) => v.remote === 'syv-ai/notes')
@@ -1759,7 +1759,7 @@ describe('history', () => {
 })
 
 /**
- * The composer's procedures (D71).
+ * The composer's procedures.
  *
  * The router is where the renderer's payload stops being trusted, so most of
  * these are about a bad shape being refused rather than reaching `buildRfc822`
@@ -2018,7 +2018,7 @@ describe('apps', () => {
       'MEMORY.md',
       'USER.local.md',
       '.claude/settings.json',
-      // D89. `memory/` is MEMORY.md subdivided, and does not become readable by
+      // `memory/` is MEMORY.md subdivided, and does not become readable by
       // being spread over more files.
       'memory/index.md',
       'memory/shell-quirks.md',
@@ -2067,7 +2067,7 @@ describe('apps', () => {
 })
 
 /**
- * A vault's Google account is its own (D87).
+ * A vault's Google account is its own.
  *
  * These are about the seam between the router and the accounts manager: which
  * vault a procedure acts on, and — for the two disconnects — how much it takes
@@ -2160,7 +2160,7 @@ describe('google accounts per vault', () => {
 })
 
 /**
- * Asked before a vault is open (D87).
+ * Asked before a vault is open.
  *
  * The renderer reads this once on mount and records the answer. At startup that
  * can land before the vault has finished opening, and a throw there is a

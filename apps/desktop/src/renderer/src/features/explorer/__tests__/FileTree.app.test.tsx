@@ -1,5 +1,5 @@
 /**
- * An app bundle in the tree (D107): one row that opens the app, whose files
+ * An app bundle in the tree: one row that opens the app, whose files
  * show only once its contents are expanded.
  */
 import { emptyVaultSnapshot } from '@holi/shared'

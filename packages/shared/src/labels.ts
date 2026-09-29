@@ -18,7 +18,7 @@ const PRIORITY_LABEL = { high: 'p1', medium: 'p2', low: 'p3' } as const
 /**
  * Whether a task is late, given the moment `now`.
  *
- * Two rules, because `due` is a stamp and the time on it is optional (D79):
+ * Two rules, because `due` is a stamp and the time on it is optional:
  *
  * - **Due names an hour** → late once that minute has passed. A task due at
  *   14:00 is late at 14:01 and not at 14:00.

@@ -14,7 +14,7 @@ import { isRemote } from '../vault/registry'
 /**
  * The GitHub repo topic that marks a repo as a Holi vault.
  *
- * A vault IS a repo (D60), but not every repo you can push to is a vault. The
+ * A vault IS a repo, but not every repo you can push to is a vault. The
  * topic rides back in the repos listing for free, so the "join a vault" picker
  * can show only real vaults without a per-repo probe, and `vaults.add` can
  * refuse to seed a code repo. The on-disk twin of this flag is `.holi/vault`.

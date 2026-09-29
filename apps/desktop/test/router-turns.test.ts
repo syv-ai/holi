@@ -1,5 +1,5 @@
 /**
- * The `turns` router (D88), toward #4.
+ * The `turns` router, toward #4.
  *
  * Reachability and the seams, not resolution: `rangeFiles` is tested on real
  * repositories in `git-range.test.ts` and the log on disk in `turn-log.test.ts`.

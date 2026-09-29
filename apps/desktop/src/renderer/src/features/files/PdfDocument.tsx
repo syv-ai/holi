@@ -1,5 +1,5 @@
 /**
- * A vault PDF in a pane, through embedpdf's ready-made viewer (D103). The one
+ * A vault PDF in a pane, through embedpdf's ready-made viewer. The one
  * module that imports embedpdf, loaded lazily by `PdfViewer` so the main chunk
  * never pays for the viewer, its worker or the PDFium wasm.
  *
@@ -23,9 +23,9 @@
  *   blank-page white is overridden by a `<style>` in the shadow root, a sibling
  *   of Preact's render so a re-render leaves it alone.
  * - **It arrives once, whole.** The viewer's loading stages are not
- *   configurable, so it is laid out invisible and fades in (D98) when the first
+ *   configurable, so it is laid out invisible and fades in when the first
  *   page image loads, with a timer so an error or password prompt still shows.
- * - **Signatures outlive the PDF** (D104): loaded from main (`userData`, never
+ * - **Signatures outlive the PDF**: loaded from main (`userData`, never
  *   a vault) and saved on every change. Signature only: with initials too, Save
  *   stays disabled until both are filled, with no hint why.
  * - **It opens at 150%, or fit-width if narrower** (`openingZoomCap`), both
@@ -275,7 +275,7 @@ export function PdfDocument({
   const [signatureColumn, setSignatureColumn] = useState<Element | null>(null)
   /** The comment rows Holi's field is portalled into (`PdfCommentField`). */
   const [commentRows, setCommentRows] = useState<CommentRow[]>([])
-  /** An open Ask agent popover (D106): where its button is, and what it asks
+  /** An open Ask agent popover: where its button is, and what it asks
    *  about, one thread by its mark's id or every thread. */
   const [ask, setAsk] = useState<{
     anchor: DOMRect
@@ -511,7 +511,7 @@ export function PdfDocument({
         })
       }
 
-      // Ask agent (D106): about the selected comment's thread, or with none
+      // Ask agent: about the selected comment's thread, or with none
       // selected about the PDF itself. Two commands whose `visible` swaps, like
       // the read-only pair, because a command's label is fixed. Each opens
       // Holi's popover under its own button, found by the toolbar CSS's id.
@@ -558,8 +558,8 @@ export function PdfDocument({
       }
 
       const ui = provided(registry, 'ui')
-      // Signatures, Add comment and the read-only toggle on the top bar
-      // (D104, D105), merged after the commands exist so the buttons can
+      // Signatures, Add comment and the read-only toggle on the top bar,
+      // merged after the commands exist so the buttons can
       // resolve them; the comment tool off the Annotate bar; and the wider
       // comments panel.
       if (ui != null) {

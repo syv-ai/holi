@@ -34,7 +34,7 @@ export interface StoredGoogleAuth {
   scopes: string[]
 }
 
-/** Every connected account, keyed by `sub` (D87). */
+/** Every connected account, keyed by `sub`. */
 export type GoogleAccounts = Record<string, StoredGoogleAuth>
 
 /** Bump when the shape changes; an unrecognised value reads as disconnected. */

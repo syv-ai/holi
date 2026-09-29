@@ -84,7 +84,7 @@ const exitMs = (): number => (prefersReducedMotion() ? 0 : motionDurationMs('--m
 
 /**
  * The tooltip's two states: a button, and the popover it opens into (a row of
- * target sessions, D100, and a textarea with no send button).
+ * target sessions, and a textarea with no send button).
  *
  * Both states live in one element that swaps its children, not a `StateField`:
  * nothing outside the tooltip acts on them. A selection change rebuilds the

@@ -3,7 +3,7 @@
  * as opposed to what it can read off the filesystem itself.
  *
  * Mounted on the hook server, which already owns an ephemeral loopback port and
- * a per-instance token. The `holi-google` shape (D67) with a smaller surface.
+ * a per-instance token. The `holi-google` shape with a smaller surface.
  *
  * **A turn-signal route and an ops route answer differently.** Whatever a Claude
  * Code hook prints is injected into the agent's context, so a hook route replies
@@ -35,9 +35,9 @@ export interface AgentOpsDeps {
    *  Holi's own git hook, not by the agent, but it lives here because this is
    *  where the loopback port and its token already are. */
   runPreCommitHooks(): Promise<{ changed: string[]; failed: unknown[] }>
-  /** `holi skills update` (D111): this release's skills and hooks, merged in. */
+  /** `holi skills update`: this release's skills and hooks, merged in. */
   updateSkills(): Promise<SkillsUpdate>
-  /** A vault PDF's comment threads, read from the saved file (D106). `path` is
+  /** A vault PDF's comment threads, read from the saved file. `path` is
    *  as the agent typed it; the dep checks it against the vault. */
   pdfComments(
     path: string,

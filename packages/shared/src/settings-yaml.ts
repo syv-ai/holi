@@ -127,7 +127,7 @@ function wrap(text: string, width = 76): string[] {
  * setting this vault has not answered is a commented line, with its explanation
  * and legal values above it, so it is discoverable without the settings tab.
  *
- * **That is also what lets a default stay a default** (D85): a commented line
+ * **That is also what lets a default stay a default**: a commented line
  * is visible to a reader and invisible to the resolver, so a default can still
  * be raised later for vaults that never pinned it.
  *

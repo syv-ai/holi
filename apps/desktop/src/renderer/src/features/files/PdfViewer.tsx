@@ -1,5 +1,5 @@
 /**
- * A `.pdf` tab (D103). The viewer proper is `PdfDocument`, loaded lazily so
+ * A `.pdf` tab. The viewer proper is `PdfDocument`, loaded lazily so
  * embedpdf, its worker and the PDFium wasm are their own chunk; until it
  * arrives the pane shows the file name.
  */

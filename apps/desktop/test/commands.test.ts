@@ -1,5 +1,5 @@
 /**
- * The one table of commands (D102).
+ * The one table of commands.
  *
  * The invariants are what make "one table" mean anything: two rows with one
  * id would run the wrong one from the palette, two rows with one hotkey would

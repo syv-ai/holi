@@ -150,7 +150,7 @@ describe('migrateVaultLayout', () => {
   })
 
   it('keeps the .local. marker, or git would start committing them', async () => {
-    // D65: local-ness is that marker and nothing else, and the seeded
+    // Local-ness is that marker and nothing else, and the seeded
     // `.gitignore` carries exactly `*.local.*`. A rename to a bare name under a
     // directory that merely sounds private is a published private file.
     for (const rel of [SEED_STATE_FILE, CONTEXT_FILE, HOOKS_LOG_FILE, ENDPOINT_FILE]) {

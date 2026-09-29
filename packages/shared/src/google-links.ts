@@ -1,5 +1,5 @@
 /**
- * Google links in a note or task body — **detected, never stored** (D67).
+ * Google links in a note or task body — **detected, never stored**.
  *
  * A linked email or calendar event is an ordinary markdown link in the file's
  * body, with no frontmatter field, so "what references this meeting?" stays a

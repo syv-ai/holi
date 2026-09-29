@@ -1,5 +1,5 @@
 /**
- * RFC-822 assembly: the pure half of sending mail (D70).
+ * RFC-822 assembly: the pure half of sending mail.
  *
  * Gmail's `messages.send` and `drafts.create` do not take a structured message.
  * They take `{ raw }`: an entire RFC-822 document, base64url-encoded. So the
@@ -13,7 +13,7 @@
 
 import { randomBytes } from 'node:crypto'
 
-/** A file travelling with a message. Only forwards produce these (D71): there
+/** A file travelling with a message. Only forwards produce these: there
  *  is no file picker, so the bytes always come from another Gmail message. */
 export interface MailPart {
   filename: string
@@ -35,7 +35,7 @@ export interface OutgoingMail {
    * The markdown source, which doubles as the `text/plain` part. UTF-8;
    * newlines are content and are left alone. Markdown is chosen as the plain
    * alternative deliberately: it is what the user wrote, and it reads as prose
-   * to a client that will not show the HTML (D71).
+   * to a client that will not show the HTML.
    */
   body: string
   cc?: string[]
@@ -53,7 +53,7 @@ export interface OutgoingMail {
 }
 
 /**
- * The header that makes a draft Holi wrote reopen byte-exact (D71).
+ * The header that makes a draft Holi wrote reopen byte-exact.
  *
  * Written **unconditionally**: the agent composes markdown too, and this is what
  * lets the composer open a draft the agent wrote without guessing. Its absence
@@ -209,7 +209,7 @@ function randomBoundary(): string {
  * thread. Nothing about the response says so, which is why `replyToThread`
  * always passes both.
  *
- * One function, three shapes, chosen by what was supplied (D71): text alone,
+ * One function, three shapes, chosen by what was supplied: text alone,
  * `multipart/alternative` when `html` is present, and that wrapped in a
  * `multipart/mixed` when there are attachments. The single-part path is pinned
  * byte for byte by a test.
@@ -231,7 +231,7 @@ export function buildRfc822(
    * An html part that rendered to nothing *from prose that exists* is a bug in
    * the renderer, and it reaches the recipient as a blank message. An empty
    * body rendering to nothing is not that bug (an empty message is allowed to
-   * send, D71), so the two cases are separated rather than both refused.
+   * send), so the two cases are separated rather than both refused.
    *
    * Trimmed, because `marked` renders whitespace to nothing quite correctly.
    */

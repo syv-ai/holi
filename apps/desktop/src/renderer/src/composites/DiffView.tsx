@@ -5,7 +5,7 @@
  *
  * Two modes, switched by `onResolve`. Without it: a read-only view of history,
  * no merge controls. With it: accept/reject controls and an editable document,
- * for reviewing an agent turn (D88).
+ * for reviewing an agent turn.
  */
 import { unifiedMergeView } from '@codemirror/merge'
 import { EditorState } from '@codemirror/state'

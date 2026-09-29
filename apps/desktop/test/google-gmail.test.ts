@@ -83,7 +83,7 @@ function gmail(
         ? isIcs
           ? { threads: invites }
           : { threads: list, nextPageToken }
-        : threads[path.split('/').pop()!] ?? {}
+        : (threads[path.split('/').pop()!] ?? {})
     return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) }
   }) as unknown as typeof globalThis.fetch
 
@@ -164,7 +164,9 @@ describe('bodyTextOf', () => {
   })
 
   it('reads a single-part message whose body sits on the payload', () => {
-    expect(bodyTextOf({ mimeType: 'text/plain', body: { data: b64('just this') } })).toBe('just this')
+    expect(bodyTextOf({ mimeType: 'text/plain', body: { data: b64('just this') } })).toBe(
+      'just this',
+    )
   })
 })
 
@@ -197,7 +199,9 @@ describe('bodyHtmlOf', () => {
   it('never mistakes an html attachment for the message body', () => {
     const html = bodyHtmlOf({
       mimeType: 'multipart/mixed',
-      parts: [{ mimeType: 'text/html', filename: 'report.html', body: { data: b64('<p>ATTACHED</p>') } }],
+      parts: [
+        { mimeType: 'text/html', filename: 'report.html', body: { data: b64('<p>ATTACHED</p>') } },
+      ],
     })
 
     expect(html).toBeNull()
@@ -218,7 +222,9 @@ describe('htmlToText', () => {
   })
 
   it('decodes the entities that otherwise read as noise', () => {
-    expect(htmlToText('<p>Tom &amp; Jerry &lt;3 &quot;x&quot;&nbsp;y</p>')).toBe('Tom & Jerry <3 "x" y')
+    expect(htmlToText('<p>Tom &amp; Jerry &lt;3 &quot;x&quot;&nbsp;y</p>')).toBe(
+      'Tom & Jerry <3 "x" y',
+    )
   })
 
   it('strips tags without executing anything — it is a formatter, not a sanitizer', () => {
@@ -419,7 +425,12 @@ describe('listThreads', () => {
       id: 't1',
       messages: [
         { id: 'm1', internalDate: '1000', labelIds: ['INBOX'], payload: { headers: [] } },
-        { id: 'm2', internalDate: '2000', labelIds: ['INBOX', 'STARRED'], payload: { headers: [] } },
+        {
+          id: 'm2',
+          internalDate: '2000',
+          labelIds: ['INBOX', 'STARRED'],
+          payload: { headers: [] },
+        },
       ],
     }
     const { api } = gmail([{ id: 't1' }], { t1: starred })
@@ -433,7 +444,12 @@ describe('listThreads', () => {
     const important = {
       id: 't1',
       messages: [
-        { id: 'm1', internalDate: '1000', labelIds: ['INBOX', 'IMPORTANT'], payload: { headers: [] } },
+        {
+          id: 'm1',
+          internalDate: '1000',
+          labelIds: ['INBOX', 'IMPORTANT'],
+          payload: { headers: [] },
+        },
       ],
     }
     const { api } = gmail([{ id: 't1' }], { t1: important })
@@ -472,7 +488,12 @@ describe('listThreads', () => {
         t1: {
           id: 't1',
           messages: [
-            { id: 'm1', internalDate: '1000', labelIds: ['INBOX', label], payload: { headers: [] } },
+            {
+              id: 'm1',
+              internalDate: '1000',
+              labelIds: ['INBOX', label],
+              payload: { headers: [] },
+            },
           ],
         },
       })
@@ -485,7 +506,9 @@ describe('listThreads', () => {
     const { api } = gmail([{ id: 't1' }], {
       t1: {
         id: 't1',
-        messages: [{ id: 'm1', internalDate: '1000', labelIds: ['INBOX'], payload: { headers: [] } }],
+        messages: [
+          { id: 'm1', internalDate: '1000', labelIds: ['INBOX'], payload: { headers: [] } },
+        ],
       },
     })
 
@@ -558,7 +581,9 @@ describe('listThreads', () => {
     const both = gmail([{ id: 't1' }], {
       t1: newsletter('<mailto:stop@list.test>, <https://list.test/unsub?u=9>'),
     })
-    expect((await listThreads(both.api)).threads[0]!.unsubscribeUrl).toBe('https://list.test/unsub?u=9')
+    expect((await listThreads(both.api)).threads[0]!.unsubscribeUrl).toBe(
+      'https://list.test/unsub?u=9',
+    )
 
     const mailtoOnly = gmail([{ id: 't1' }], { t1: newsletter('<mailto:stop@list.test>') })
     expect((await listThreads(mailtoOnly.api)).threads[0]!.unsubscribeUrl).toBeNull()
@@ -850,14 +875,16 @@ describe('readThread', () => {
   })
 
   it('shows an untitled thread rather than an empty heading', async () => {
-    const { api } = gmail([], { t1: { id: 't1', messages: [{ id: 'm1', payload: { headers: [] } }] } })
+    const { api } = gmail([], {
+      t1: { id: 't1', messages: [{ id: 'm1', payload: { headers: [] } }] },
+    })
 
     expect((await readThread(api, 't1')).subject).toBe('(no subject)')
   })
 
   /**
    * A message carries BOTH representations, and which consumer gets which is the
-   * whole design (D67, revised): the UI renders `html` through the renderer's
+   * whole design: the UI renders `html` through the renderer's
    * sanitizer so designed mail looks like mail, and the agent reads `body`,
    * because an LLM wants prose and not a table layout.
    */
@@ -1032,10 +1059,7 @@ describe('addresses', () => {
             internalDate: '1000',
             payload: {
               mimeType: 'text/plain',
-              headers: [
-                header('Subject', 'Hi'),
-                header('From', '"Mette Nielsen" <Mette@SYV.ai>'),
-              ],
+              headers: [header('Subject', 'Hi'), header('From', '"Mette Nielsen" <Mette@SYV.ai>')],
               body: { data: b64('hi') },
             },
           },
@@ -1091,7 +1115,12 @@ describe('category counts', () => {
     const seen: string[] = []
     const fetchImpl = vi.fn(async (url: string) => {
       seen.push(url)
-      return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => body,
+        text: async () => JSON.stringify(body),
+      }
     })
     const api = new GoogleApi({
       accessToken: async () => 'at-1',
@@ -1166,7 +1195,7 @@ describe('category counts', () => {
 })
 
 /**
- * The four writes (D68).
+ * The four writes.
  *
  * What these protect is **which request each one makes**, because every wrong
  * answer here is silent. Trash in particular: adding a `TRASH` label through
@@ -1199,8 +1228,8 @@ describe('thread mutations', () => {
   })
 
   it('marks a thread unread by adding UNREAD back', async () => {
-    // The other direction, which the agent needs for "leave this one for me"
-    // (D70). Read is a two-way label, exactly like starred.
+    // The other direction, which the agent needs for "leave this one for me".
+    // Read is a two-way label, exactly like starred.
     const { posts, api } = writable()
 
     await setThreadRead(api, 't1', false)
@@ -1243,7 +1272,8 @@ describe('thread mutations', () => {
     const fetchImpl = vi.fn(async () => ({
       ok: false,
       status: 403,
-      text: async () => JSON.stringify({ error: { errors: [{ reason: 'insufficientPermissions' }] } }),
+      text: async () =>
+        JSON.stringify({ error: { errors: [{ reason: 'insufficientPermissions' }] } }),
       json: async () => ({}),
     }))
     const api = new GoogleApi({
@@ -1259,18 +1289,19 @@ describe('thread mutations', () => {
 })
 
 /**
- * Sending, drafting and replying (D70).
+ * Sending, drafting and replying.
  *
  * The fake **refuses the way Google refuses**: a `raw` that is not valid
  * base64url comes back 400. That is the whole point of writing it this way —
  * a fake that accepts any string would pass a plain-base64 bug straight through
- * to the first real send, which is exactly the failure mode D69 named.
+ * to the first real send, which is exactly the failure mode this fake exists to catch.
  */
 describe('send, draft and reply', () => {
   /** Decode what the fake was handed back into an RFC-822 document. */
   function rawOf(body: unknown): string {
-    const raw = (body as { raw?: string; message?: { raw?: string } }).raw
-      ?? (body as { message?: { raw?: string } }).message?.raw
+    const raw =
+      (body as { raw?: string; message?: { raw?: string } }).raw ??
+      (body as { message?: { raw?: string } }).message?.raw
     if (raw === undefined) throw new Error('the request carried no raw message')
     return Buffer.from(raw, 'base64url').toString('utf8')
   }
@@ -1293,8 +1324,7 @@ describe('send, draft and reply', () => {
       }
       const body = JSON.parse(String(init.body)) as Record<string, unknown>
       const raw = (body.raw ?? (body.message as { raw?: string } | undefined)?.raw) as
-        | string
-        | undefined
+        string | undefined
       if (raw !== undefined && !/^[A-Za-z0-9_-]+$/.test(raw)) {
         // Gmail's own refusal for a `raw` in the wrong alphabet or with padding.
         return {
@@ -1506,7 +1536,7 @@ describe('send, draft and reply', () => {
 })
 
 /**
- * The composer's Gmail surface (D71).
+ * The composer's Gmail surface.
  *
  * Everything here reaches another human or edits something that will. The fake
  * below **refuses the way Google refuses** — a malformed `raw` is a 400, an
@@ -1677,12 +1707,10 @@ describe('the composer surface', () => {
   function messageFromRaw(record: DraftRecord): Record<string, unknown> {
     const text = decode(record.raw)
     const [head = '', ...rest] = text.split('\r\n\r\n')
-    const headers = head
-      .split('\r\n')
-      .map((line) => ({
-        name: line.slice(0, line.indexOf(':')),
-        value: line.slice(line.indexOf(':') + 1).trim(),
-      }))
+    const headers = head.split('\r\n').map((line) => ({
+      name: line.slice(0, line.indexOf(':')),
+      value: line.slice(line.indexOf(':') + 1).trim(),
+    }))
     const contentType = headerIn(text, 'Content-Type') ?? ''
     const body = rest.join('\r\n\r\n')
 
@@ -2048,7 +2076,7 @@ describe('the composer surface', () => {
 })
 
 /**
- * Forwarding the original's attachments (D71).
+ * Forwarding the original's attachments.
  *
  * The bytes are fetched HERE, in main, from a message id the renderer supplied.
  * That is what buys a forward that carries its files with no file picker, no

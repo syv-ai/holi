@@ -28,12 +28,11 @@ function main(payload) {
   const filePath = payload?.tool_input?.file_path
   if (typeof filePath !== 'string') return []
 
-  // `<name>.app/…` (D107). The hook is handed an absolute path, so the part
+  // `<name>.app/…`. The hook is handed an absolute path, so the part
   // above the vault is cut off first when the session's cwd (the vault root)
   // says where that is; a folder named `x.app` above the vault is not an app.
   const cwd = typeof payload?.cwd === 'string' ? payload.cwd.replace(/[/\\]+$/, '') : ''
-  const inVault =
-    cwd !== '' && (filePath.startsWith(`${cwd}/`) || filePath.startsWith(`${cwd}\\`))
+  const inVault = cwd !== '' && (filePath.startsWith(`${cwd}/`) || filePath.startsWith(`${cwd}\\`))
   const base = inVault ? cwd.length + 1 : 0
   const rel = filePath.slice(base)
   const match = /(?:^|[/\\])([^/\\]+\.app)[/\\]/.exec(rel)
@@ -86,7 +85,8 @@ function syntax(source, ext) {
     const [, attrs, body] = m
     // A `src=` script has no body to parse, and a JSON block is not JavaScript.
     if (/\bsrc\s*=/i.test(attrs)) continue
-    if (/\btype\s*=\s*["']?(?!module|text\/javascript|application\/javascript)/i.test(attrs)) continue
+    if (/\btype\s*=\s*["']?(?!module|text\/javascript|application\/javascript)/i.test(attrs))
+      continue
     const before = source.slice(0, m.index + m[0].indexOf(body))
     found.push(...check(body, before.split('\n').length - 1))
   }

@@ -1,5 +1,5 @@
 /**
- * The command palette's own state (D102). Not an entry in the form-dialog
+ * The command palette's own state. Not an entry in the form-dialog
  * registry (`state/dialogs.ts`): a palette is a different overlay class,
  * top-anchored and undimmed, and it is opened by keys that must work while a
  * form dialog is up.

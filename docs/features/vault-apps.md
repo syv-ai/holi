@@ -7,7 +7,7 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
 
 ## How it works
 
-- **An app is a bundle (D107): a directory named `<name>.app` holding `index.html` and
+- **An app is a bundle: a directory named `<name>.app` holding `index.html` and
   `app.yaml`**, both at its root, anywhere in the vault except the agent surface, and not inside
   another bundle. Like a note it is identified by its vault-relative path (`Finance/Budget.app`);
   its name is the folder name without `.app`, as a note drops `.md`. `app.yaml` is the "finished"

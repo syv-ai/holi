@@ -1,6 +1,6 @@
 /**
  * One connected Google account, and **the only thing in Holi allowed to mint
- * an access token** (D67).
+ * an access token**.
  *
  * That exclusivity is the whole design. Google *rotates* refresh tokens: a
  * refresh may return a new one and invalidate the old. Two independent
@@ -17,7 +17,7 @@ import { resolveClientId, resolveClientSecret } from './credentials'
 import { GoogleTokenStore, type GoogleAccounts, type StoredGoogleAuth } from './token-store'
 
 /**
- * The scopes Holi asks Google for (D68, D70; docs/features/google.md).
+ * The scopes Holi asks Google for (docs/features/google.md).
  *
  * `gmail.modify` is a superset of `gmail.readonly`. It buys read state, star,
  * archive, trash, drafts and send.
@@ -29,7 +29,7 @@ import { GoogleTokenStore, type GoogleAccounts, type StoredGoogleAuth } from './
  * - *Sending is not stopped by scope.* `gmail.modify` permits `messages.send`,
  *   and no lesser scope grants `threads.modify`. Never write "the agent cannot
  *   send": the agent's sends are gated by the seeded `google-send-gate.mjs`
- *   `PreToolUse` hook (D70), and that hook is the wall.
+ *   `PreToolUse` hook, and that hook is the wall.
  *
  * **Contacts is two scopes, not one.** `contacts.readonly` covers
  * `people/me/connections`, the contacts someone explicitly saved. The
@@ -46,7 +46,7 @@ export const GOOGLE_SCOPES = [
   'https://www.googleapis.com/auth/calendar.readonly',
   'https://www.googleapis.com/auth/contacts.readonly',
   'https://www.googleapis.com/auth/contacts.other.readonly',
-  // Calendar WRITE (D70), for time-blocking on the user's own calendar.
+  // Calendar WRITE, for time-blocking on the user's own calendar.
   // Narrower than it looks: Holi refuses any event carrying attendees, so this
   // scope never sends an invitation or a cancellation. `calendar.readonly`
   // stays alongside it because reading the full calendar list is not implied
@@ -96,7 +96,7 @@ export class GoogleReconnectRequiredError extends Error {
 }
 
 /**
- * A handle on **one** account's record (D87).
+ * A handle on **one** account's record.
  *
  * N sessions each holding a copy of the accounts map would clobber each other
  * on `store.write`, so the map has exactly one owner (`accounts.ts`) and a

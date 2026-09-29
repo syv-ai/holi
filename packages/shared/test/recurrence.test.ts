@@ -34,9 +34,7 @@ describe('nextDue', () => {
 
   it('stops at endDate (exclusive past it, inclusive on it)', () => {
     expect(nextDue('2026-04-13', { ...rule('daily', 1), endDate: '2026-04-13' })).toBeNull()
-    expect(nextDue('2026-04-13', { ...rule('daily', 1), endDate: '2026-04-14' })).toBe(
-      '2026-04-14',
-    )
+    expect(nextDue('2026-04-13', { ...rule('daily', 1), endDate: '2026-04-14' })).toBe('2026-04-14')
   })
 
   it('returns null on an unparseable due date', () => {
@@ -59,9 +57,9 @@ describe('nextDue — weekly with weekday sets', () => {
 
   it('interval > 1 jumps to the target ISO week before scanning weekdays', () => {
     // Friday + biweekly Mondays → Monday of the week after next
-    expect(
-      nextDue('2026-04-17', { frequency: 'weekly', interval: 2, weekdays: ['mon'] }),
-    ).toBe('2026-04-27')
+    expect(nextDue('2026-04-17', { frequency: 'weekly', interval: 2, weekdays: ['mon'] })).toBe(
+      '2026-04-27',
+    )
   })
 })
 
@@ -103,7 +101,7 @@ describe('nextDueCatchup (completing a stale recurring task)', () => {
 })
 
 // ─────────────────────────────────────────────────────────────────────────
-// D79: a due date may carry a time. The arithmetic still runs on whole days;
+// A due date may carry a time. The arithmetic still runs on whole days;
 // the hour is preserved across every step, and its ABSENCE is preserved too.
 describe('nextDue — a due date that names an hour', () => {
   it('keeps the hour across a weekly step', () => {

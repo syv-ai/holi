@@ -1,6 +1,6 @@
 /**
- * What one session's last turn changed (D88). It sits under its own tab's
- * terminal, because a turn belongs to a session and a vault runs several (D100).
+ * What one session's last turn changed. It sits under its own tab's
+ * terminal, because a turn belongs to a session and a vault runs several.
  * It is a count and a door, nothing more: what changed is `TurnReview`'s job.
  *
  * **A turn ENDING is the event.** `agent:sessions` pushes on every bracket, so

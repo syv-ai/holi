@@ -1,5 +1,5 @@
 /**
- * Per-vault theming (D64): the pure core (parse → merge → whitelist → validate).
+ * Per-vault theming: the pure core (parse → merge → whitelist → validate).
  *
  * A vault contributes a set of *token values* that re-cascade the app's semantic
  * design tokens (see the renderer's `index.css`). The vocabulary is a fixed
@@ -190,7 +190,7 @@ const COMMENTS = /\/\*[\s\S]*?\*\//g
 const BLOCK = /([^{}]+)\{([^{}]*)\}/g
 
 /** `--slug: value`, the only declaration shape a theme may carry. A plain
- *  property (`color: red`) does not match: the structural half of D64's promise. */
+ *  property (`color: red`) does not match: the structural half of the theme's promise. */
 const DECLARATION = /^\s*--([A-Za-z][A-Za-z0-9-]*)\s*:\s*(.+?)\s*$/
 
 /**

@@ -1,5 +1,5 @@
 /**
- * Where a vault's agent finds the running Holi (D110).
+ * Where a vault's agent finds the running Holi.
  *
  * A background session's environment comes from Claude Code's supervisor, not
  * from Holi, and the supervisor outlives a Holi restart that moves every port.

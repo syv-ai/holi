@@ -1,8 +1,8 @@
 /**
- * The one way Holi runs a `claude` command for a vault (D110).
+ * The one way Holi runs a `claude` command for a vault.
  *
  * **Every invocation gets the same environment.** A vault's sessions run under
- * a Claude Code supervisor keyed by its `CLAUDE_CONFIG_DIR` (D86), and the
+ * a Claude Code supervisor keyed by its `CLAUDE_CONFIG_DIR`, and the
  * supervisor takes its environment from whichever `claude` process starts it.
  * Its workers inherit that, not the environment of the terminal that
  * dispatched them. So if a listing read started it with Electron's bare env,
@@ -27,7 +27,7 @@ const ACTION_TIMEOUT_MS = 20_000
 export interface VaultCliTarget {
   /** The vault clone: the cwd, which is where a new session starts. */
   root: string
-  /** The vault's own Claude Code config directory (D86). */
+  /** The vault's own Claude Code config directory. */
   configDir: string
   /** Holi's generated commands, prepended to `PATH`. */
   binDir: string | null

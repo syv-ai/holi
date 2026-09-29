@@ -1,5 +1,5 @@
 /**
- * Who Holi is connected to at Google, and which vault uses whom (D87).
+ * Who Holi is connected to at Google, and which vault uses whom.
  *
  * This is the owner. It holds the accounts map (**the only thing that does**),
  * hands out one `GoogleSession` per account, and resolves a vault to the session
@@ -11,12 +11,7 @@
  *
  * **No `electron` import**, like every file in `google/` except `electron.ts`.
  */
-import {
-  GoogleSession,
-  type AccountRef,
-  type GoogleAccount,
-  GOOGLE_SCOPES,
-} from './session'
+import { GoogleSession, type AccountRef, type GoogleAccount, GOOGLE_SCOPES } from './session'
 import { startLoopbackFlow, type Listen, type LoopbackFlow } from './loopback-flow'
 import { resolveClientId, resolveClientSecret } from './credentials'
 import type { GoogleAccounts, GoogleTokenStore, StoredGoogleAuth } from './token-store'

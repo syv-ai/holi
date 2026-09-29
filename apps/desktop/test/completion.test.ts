@@ -47,7 +47,7 @@ describe('the chrome cannot go quietly dead again', () => {
     }
   })
 
-  // The popup was the one overlay in the app that ignored D64 theming and
+  // The popup was the one overlay in the app that ignored vault theming and
   // light mode, because this block was written in hex.
   test('nothing here is a colour literal', () => {
     expect(JSON.stringify(completionChrome)).not.toMatch(/#[0-9a-fA-F]{3}/)
@@ -63,7 +63,7 @@ describe('the chrome cannot go quietly dead again', () => {
 describe('the popup moves in the app’s vocabulary and no other', () => {
   const chrome = JSON.stringify(completionChrome)
 
-  // D98: anything that cannot name one of the four behaviours does not animate.
+  // Anything that cannot name one of the four behaviours does not animate.
   // Opening is `arrive`; the selection is `respond`. Nothing here loops.
   test('every duration comes from the motion tier', () => {
     expect(chrome).toContain('var(--motion-arrive')

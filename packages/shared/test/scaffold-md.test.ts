@@ -6,7 +6,12 @@
  * recognise Holi's own write.
  */
 import { describe, expect, it } from 'vitest'
-import { hasFrontmatter, scaffoldFrontmatter, scaffoldNoteText, wantsScaffold } from '../src/scaffold-md'
+import {
+  hasFrontmatter,
+  scaffoldFrontmatter,
+  scaffoldNoteText,
+  wantsScaffold,
+} from '../src/scaffold-md'
 
 describe('scaffoldNoteText', () => {
   it('is empty tags, and deliberately no title or created date', () => {
@@ -47,7 +52,7 @@ describe('wantsScaffold', () => {
   })
 
   it('refuses a memory file, whose frontmatter is type + description', () => {
-    // D89, and this one has teeth beyond tidiness: `memory/index.md` is
+    // This one has teeth beyond tidiness: `memory/index.md` is
     // GENERATED, so a `created:`/`tags:` block prepended here would be rewritten
     // away by the memory-index transform on the same commit, every commit.
     expect(wantsScaffold('memory/shell-quirks.md')).toBe(false)
@@ -77,16 +82,12 @@ describe('wantsScaffold', () => {
 
 describe('scaffoldFrontmatter', () => {
   it('prepends the block', () => {
-    expect(scaffoldFrontmatter('body\n')).toBe(
-      '---\ntags: []\n---\n\nbody\n',
-    )
+    expect(scaffoldFrontmatter('body\n')).toBe('---\ntags: []\n---\n\nbody\n')
   })
 
   it('is a no-op on a file that already has a block, which is what makes it idempotent', () => {
     const text = '---\ntype: daily-note\ndate: 2026-09-09\n---\n\n# 09-09-2026\n'
     expect(scaffoldFrontmatter(text)).toBe(text)
-    expect(scaffoldFrontmatter(scaffoldFrontmatter('body\n'))).toBe(
-      scaffoldFrontmatter('body\n'),
-    )
+    expect(scaffoldFrontmatter(scaffoldFrontmatter('body\n'))).toBe(scaffoldFrontmatter('body\n'))
   })
 })

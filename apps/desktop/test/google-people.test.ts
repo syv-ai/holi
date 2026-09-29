@@ -1,5 +1,5 @@
 /**
- * The address book behind `@`-completion (D68).
+ * The address book behind `@`-completion.
  *
  * Two sources, and **`otherContacts` is the one people forget.**
  * `connections` is the contacts a user has explicitly saved, which in a
@@ -35,11 +35,7 @@ interface RawPerson {
  * the same bug (`contacts.other.readonly`) — nothing here talks to Google, and
  * no fake can — but it can stop the parameter half coming back.
  */
-function people(
-  connections: RawPerson[],
-  otherContacts: RawPerson[] = [],
-  { fail = false } = {},
-) {
+function people(connections: RawPerson[], otherContacts: RawPerson[] = [], { fail = false } = {}) {
   const seen: string[] = []
   const fetchImpl = vi.fn(async (url: string) => {
     seen.push(url)
@@ -75,7 +71,10 @@ const person = (name: string, email: string): RawPerson => ({
 
 describe('listContacts', () => {
   it('reads saved contacts AND the auto-collected ones', async () => {
-    const { api, seen } = people([person('Jane Doe', 'jane@syv.ai')], [person('Lars', 'lars@syv.ai')])
+    const { api, seen } = people(
+      [person('Jane Doe', 'jane@syv.ai')],
+      [person('Lars', 'lars@syv.ai')],
+    )
 
     const contacts = await listContacts(api)
 
@@ -128,7 +127,10 @@ describe('listContacts', () => {
   })
 
   it('drops a contact with no address — there is nothing to complete to', async () => {
-    const { api } = people([{ names: [{ displayName: 'No Email' }] }, person('Jane', 'jane@syv.ai')])
+    const { api } = people([
+      { names: [{ displayName: 'No Email' }] },
+      person('Jane', 'jane@syv.ai'),
+    ])
 
     expect(await listContacts(api)).toEqual([{ name: 'Jane', email: 'jane@syv.ai' }])
   })

@@ -1,7 +1,7 @@
 /**
  * Version history: the vault's git history, per open file and vault-wide.
  *
- * Git's object store IS the timeline (D60, `docs/features/history.md`).
+ * Git's object store IS the timeline (`docs/features/history.md`).
  * Everything per-file keys off the open note's **path**, and opening a different
  * note clears the selection and the preview.
  */

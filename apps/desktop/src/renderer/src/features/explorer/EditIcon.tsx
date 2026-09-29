@@ -24,7 +24,7 @@ function lastEmojiOf(raw: string): string {
 }
 
 /**
- * Set or clear a path's icon in `.holi/settings/icons.yaml` (D82). The map is
+ * Set or clear a path's icon in `.holi/settings/icons.yaml`. The map is
  * the only place an icon lives, so this works the same on a note, a folder and
  * a PDF, with no precedence to explain. No Clear button: an empty field already
  * means "no entry".

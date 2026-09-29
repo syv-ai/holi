@@ -6,7 +6,7 @@ import { EditorView, ViewPlugin, type ViewUpdate } from '@codemirror/view'
 const WINDOW_MS = 600
 
 /**
- * The two parts of a heading's `#` slide (D92) that CSS cannot do alone.
+ * The two parts of a heading's `#` slide that CSS cannot do alone.
  *
  * When it may run: the transition exists only under `.cm-heading-sliding`,
  * added on a selection move and removed shortly after. Without the gate every

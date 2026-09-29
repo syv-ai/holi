@@ -141,7 +141,7 @@ describe('SEED_FILES', () => {
     expect(skill).toContain('--root /') // the compile recipe
   })
 
-  it('seeds the gmail-calendar skill with the command and the linking rule (D67)', () => {
+  it('seeds the gmail-calendar skill with the command and the linking rule', () => {
     const skill = SEED_FILES['.claude/skills/gmail-calendar/SKILL.md']!
     expect(skill).toContain('name: gmail-calendar')
     expect(skill).toContain('$HOLI_GOOGLE_BIN')
@@ -152,8 +152,8 @@ describe('SEED_FILES', () => {
     expect(skill).toContain('rfc822msgid')
     // The agent's boundary, stated as what is true rather than what used to be.
     // This has now been wrong twice, in opposite directions, which is why it is
-    // pinned at all: it asserted 'read-only' until D68 made the scope
-    // gmail.modify, and asserted 'no subcommand that writes' until D70 added
+    // pinned at all: it asserted 'read-only' until the scope became
+    // gmail.modify, and asserted 'no subcommand that writes' until sending added
     // nine of them. A false invariant in a prompt the agent reasons from is
     // worse than none, because it reasons *from* it.
     expect(skill).not.toContain('scopes are read-only')
@@ -161,7 +161,7 @@ describe('SEED_FILES', () => {
     expect(skill).not.toContain('You have no write commands')
 
     // What is true now: the line is reversibility, drafting is preferred over
-    // sending, and sending prompts the user every time (D70).
+    // sending, and sending prompts the user every time.
     expect(skill).toContain('undo')
     expect(skill).toContain('draft')
     expect(skill).toMatch(/asks? the user every time|every time/)
@@ -179,7 +179,7 @@ describe('SEED_FILES', () => {
   it('seeds the using-tasks skill documenting the task file format', () => {
     const skill = SEED_FILES['.claude/skills/using-tasks/SKILL.md']!
     expect(skill).toContain('name: using-tasks')
-    // The two facts an agent gets WRONG rather than merely misses (D79): a
+    // The two facts an agent gets WRONG rather than merely misses: a
     // reminder is a moment, and a value that is not a stamp fires nothing.
     expect(skill).toContain('absolute moment')
     expect(skill).toContain('inert')
@@ -212,7 +212,7 @@ describe('SEED_FILES', () => {
       '.claude/hooks/vault-app-check.mjs',
     )
     // UserPromptSubmit + Stop bracket a turn for git coexistence (hook-server
-    // signal); PreToolUse is the send gate (D70) and is unrelated to the bracket.
+    // signal); PreToolUse is the send gate and is unrelated to the bracket.
     expect(Object.keys(settings.hooks)).toEqual([
       'UserPromptSubmit',
       'Stop',
@@ -238,7 +238,7 @@ describe('SEED_FILES', () => {
    * `matcher: 'Bash'` with **no `if` condition** is deliberate. An `if` keyed on
    * one spelling of the command would miss the other two the agent can produce,
    * and a gate that misses fails OPEN while still reading like protection —
-   * which is exactly what D67 §5's `Bash(holi-google send:*)` rule did.
+   * which is exactly what the originally planned `Bash(holi-google send:*)` rule did.
    */
   it('wires the send gate to every Bash call, deciding in the hook rather than in a matcher', () => {
     const settings = JSON.parse(SEED_FILES['.claude/settings.json']!)
@@ -450,8 +450,8 @@ describe('hook scripts', () => {
     // The one piece of state the agent cannot discover itself (features/agent-config.md);
     // everything else it finds natively, so nothing else is injected.
     expect(run.stdout).toBe('Focused note: `notes/plan.md` (use `Read` to view its contents)')
-    expect(run.stdout).not.toContain('## Memory') // no fill indicators (D60)
-    expect(run.stdout).not.toContain('# Related') // no tasks/backrefs (D60)
+    expect(run.stdout).not.toContain('## Memory') // no fill indicators
+    expect(run.stdout).not.toContain('# Related') // no tasks/backrefs
   })
 
   it('user-prompt-submit prints nothing when nothing is focused', async () => {
@@ -472,10 +472,10 @@ describe('hook scripts', () => {
  * `.claude/settings.json` is **merged, not skipped** — the gate depends on it.
  *
  * The seed loop is write-if-absent, and every established vault already has a
- * `settings.json`. So the D70 `PreToolUse` gate would have been written as a
+ * `settings.json`. So the send gate's `PreToolUse` hook would have been written as a
  * *file* and never wired: the hook script present, nothing invoking it, and
  * `send` reaching a real mailbox with no confirmation at all. That is the same
- * shape as D68's stale grant — a capability widened in code while the stored
+ * shape as the stale Gmail grant — a capability widened in code while the stored
  * artifact still reflects the old one.
  *
  * `.gitignore` already had this problem and already solved it line-wise. This is
@@ -571,7 +571,7 @@ describe('ensureSeeded — settings.json', () => {
   it('wires the gate into an existing settings.json on an established vault', async () => {
     const root = await mkdtemp(join(tmpdir(), 'holi-seed-settings-'))
     await mkdir(join(root, '.claude'), { recursive: true })
-    // Exactly what a vault seeded before D70 looks like.
+    // Exactly what a vault seeded before the send gate looks like.
     await writeFile(
       join(root, '.claude/settings.json'),
       JSON.stringify({
@@ -595,7 +595,7 @@ describe('ensureSeeded — settings.json', () => {
 })
 
 describe('the connector opt-out reaches vaults that already exist', () => {
-  // D70's own lesson, applied to itself: a seed that only runs at creation is a
+  // The send gate's own lesson, applied to itself: a seed that only runs at creation is a
   // migration that never happens. Every vault that exists today already has a
   // settings.json, so the creation path reaches none of them.
   it('adds the opt-out to an established vault on the merge path', () => {
@@ -665,7 +665,7 @@ describe('settingsWithRequired — the memory index guard', () => {
 describe('ensureSeeded — the vault-apps skill', () => {
   it('writes the authoring contract into a vault that never had it', async () => {
     // This is what makes a new skill reach EXISTING vaults with no migration:
-    // ensureSeeded runs on vault open (D70), and create-if-missing means a
+    // ensureSeeded runs on vault open, and create-if-missing means a
     // brand-new seed file is the only thing it writes on that pass.
     const root = await tempDir()
     const { written } = await ensureSeeded(root)
@@ -701,7 +701,7 @@ describe('ensureSeeded — the vault-apps skill', () => {
   })
 })
 
-describe('the shipped / once split (D111)', () => {
+describe('the shipped / once split', () => {
   it('classifies every seed file exactly once', () => {
     const shipped = Object.keys(SHIPPED_FILES).sort()
     const once = Object.keys(ONCE_FILES).sort()
@@ -741,7 +741,7 @@ describe('the shipped / once split (D111)', () => {
   })
 })
 
-describe('ensureSeeded: skills and hooks only at creation (D111)', () => {
+describe('ensureSeeded: skills and hooks only at creation', () => {
   const SKILL = '.claude/skills/vault-apps/SKILL.md'
   const GATE = '.claude/hooks/google-send-gate.mjs'
 
@@ -794,7 +794,7 @@ describe('ensureSeeded: skills and hooks only at creation (D111)', () => {
   })
 })
 
-describe('updateShipped: what `holi skills update` does (D111)', () => {
+describe('updateShipped: what `holi skills update` does', () => {
   const SKILL = '.claude/skills/vault-apps/SKILL.md'
   const shipped = () => SHIPPED_FILES[SKILL]!
 
@@ -953,7 +953,7 @@ describe('the vault-apps skill teaches the loop that now exists', () => {
 })
 
 /**
- * Vault memory (D89) — one memory surface, seeded and migrated.
+ * Vault memory — one memory surface, seeded and migrated.
  *
  * The two settings keys are the whole of what item 13 was reaching for, in place
  * of surfacing Claude Code's own memory directory (which lives outside the
@@ -961,7 +961,7 @@ describe('the vault-apps skill teaches the loop that now exists', () => {
  * containment, and would have left the vault with TWO memory surfaces — the
  * problem item 13 names).
  */
-describe('vault memory (D89)', () => {
+describe('vault memory', () => {
   const settings = () => JSON.parse(SEED_FILES['.claude/settings.json']!)
   const parse = (s: string | null) => JSON.parse(s!) as Record<string, any>
 
@@ -996,15 +996,15 @@ describe('vault memory (D89)', () => {
 
   it('ships a memory skill, because AGENTS.md cannot be corrected', () => {
     // The reason this is a skill and not more `AGENTS.md` prose: `AGENTS.md` is
-    // a ONCE_FILE, so a vault seeded before D65 still tells the agent that
+    // a ONCE_FILE, so a vault seeded before the `.local.` convention still tells the agent that
     // `USER.md` is machine-local — a claim Holi made and then invalidated — and
-    // nothing has ever been able to reach it. A skill can be updated (D111).
+    // nothing has ever been able to reach it. A skill can be updated.
     const skill = SEED_FILES['.claude/skills/memory/SKILL.md']!
     expect(SHIPPED_FILES['.claude/skills/memory/SKILL.md']).toBeDefined()
 
     const prose = skill.replace(/\s+/g, ' ')
     expect(prose).toContain('one fact in one file')
-    // The filename is the only thing that decides privacy (D65).
+    // The filename is the only thing that decides privacy.
     expect(prose).toMatch(/\.local\.md.*gitignored|gitignored.*\.local\.md/)
     // The index is generated; an edit to it is discarded silently.
     expect(prose).toMatch(/Do not edit .memory\/index\.md./)
@@ -1014,7 +1014,7 @@ describe('vault memory (D89)', () => {
   })
 
   it('reaches a vault that already exists, both keys and the hook', () => {
-    // D70's lesson restated: a seed that only runs at creation is a migration
+    // The same lesson restated: a seed that only runs at creation is a migration
     // that never happens, and every vault that exists today has a settings.json.
     const before = JSON.stringify({ hooks: {}, permissions: { ask: [] } })
     const after = parse(settingsWithRequired(before))
@@ -1054,7 +1054,7 @@ describe('vault memory (D89)', () => {
   })
 })
 
-describe('settingsWithRequired — background sessions (D110)', () => {
+describe('settingsWithRequired — background sessions', () => {
   const OLD_START =
     '[ -n "$HOLI_HOOK_PORT" ] || exit 0; curl -s --max-time 2 -X POST "http://127.0.0.1:$HOLI_HOOK_PORT/turn/start?t=$HOLI_HOOK_TOKEN" >/dev/null 2>&1'
   const OLD_END = OLD_START.replace('/turn/start', '/turn/end')

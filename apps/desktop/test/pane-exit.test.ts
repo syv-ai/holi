@@ -1,5 +1,5 @@
 /**
- * The pane exit and the vault switch as atoms (D102), so that a command can
+ * The pane exit and the vault switch as atoms, so that a command can
  * drive them. What moved out of Shell was a timer and a confirm; what these
  * pin is that the timing and the asking survived the move.
  */

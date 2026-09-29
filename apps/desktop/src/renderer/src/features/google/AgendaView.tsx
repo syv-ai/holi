@@ -2,7 +2,7 @@
  * The agenda — your Google Calendar for the next few days, and the one place
  * an event becomes a task.
  *
- * **Account-wide, not vault content** (D67): this shows the same events
+ * **Account-wide, not vault content**: this shows the same events
  * whichever vault is open. Creating a task from an event writes a *task file*,
  * not a calendar event.
  *
@@ -266,7 +266,7 @@ export function AgendaView() {
 
   /**
    * Make a task out of an event. The event's Google permalink goes in the
-   * **body** as an ordinary markdown link (D67), no frontmatter field: "which
+   * **body** as an ordinary markdown link, no frontmatter field: "which
    * tasks reference this event" is a grep for the URL.
    */
   const createTask = async (event: CalendarEvent) => {

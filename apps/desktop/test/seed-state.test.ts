@@ -42,7 +42,7 @@ describe('the state file itself', () => {
     expect(await readSeedState(root)).toEqual({})
   })
 
-  it('records the text it wrote, the base an update merges against (D111)', async () => {
+  it('records the text it wrote, the base an update merges against', async () => {
     const root = await tempDir()
     await recordSeeded(root, SKILL, '# hello\n')
     expect(await readSeedState(root)).toEqual({

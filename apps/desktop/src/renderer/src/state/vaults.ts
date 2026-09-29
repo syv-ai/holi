@@ -45,7 +45,7 @@ const EMPTY_SNAPSHOT: VaultSnapshot = emptyVaultSnapshot()
 /**
  * The whole vault, as last read off disk.
  *
- * **One source** (D60). The board, the tree and the editor all derive from this
+ * **One source**. The board, the tree and the editor all derive from this
  * rather than each holding a query of their own, so there is nothing to
  * disagree with.
  *

@@ -5,8 +5,8 @@
  * has to carry the whole vocabulary — a setting you cannot see is a setting you
  * cannot use, which is what `editorFont` and `maxCommittedFileBytes` were for
  * as long as the file held only the birth ritual's four answers. And an unset
- * setting has to stay a COMMENT: the moment it is written as a value, D85's
- * argument is lost and this vault has frozen a default that can never be
+ * setting has to stay a COMMENT: the moment it is written as a value, the
+ * argument for asking at birth is lost and this vault has frozen a default that can never be
  * raised for it again.
  */
 import { describe, expect, it } from 'vitest'
@@ -43,7 +43,7 @@ describe('a seeded settings file', () => {
   })
 
   it('comments out a setting the ritual does not ask, so no default is frozen', () => {
-    // D85: a number written into every vault at birth is a default that can
+    // A number written into every vault at birth is a default that can
     // never be raised for the vaults that already have one. Visible in the
     // file, absent from the resolved values, is the whole point.
     expect(seeded).toContain('# maxCommittedFileBytes:')

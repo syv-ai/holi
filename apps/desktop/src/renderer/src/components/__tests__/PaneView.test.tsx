@@ -173,7 +173,7 @@ test('a pane that is staying is untouched', () => {
 
 test('keeps every agent tab’s terminal mounted, showing only the active one', () => {
   // An unmounted terminal loses its scrollback and must visibly replay main's
-  // mirror (D110).
+  // mirror.
   pane({
     pane: {
       tabs: [

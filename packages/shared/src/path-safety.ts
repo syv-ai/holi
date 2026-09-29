@@ -47,7 +47,7 @@ export function vaultRelPath(raw: string): VaultRelPath {
  * basename (`.holi/settings/app.local.yaml`, `.holi/state/context.local.json`,
  * `.holi/settings/theme.local.css`, `CLAUDE.local.md`, `USER.local.md`).
  *
- * The marker is the whole rule on purpose (D65): a file's git-vs-local status
+ * The marker is the whole rule on purpose: a file's git-vs-local status
  * must be legible from its name, never a special-cased exception. */
 export function isLocalOnlyPath(path: string): boolean {
   const base = path.split('/').at(-1) ?? path
@@ -124,7 +124,7 @@ export function isKeepFile(path: string): boolean {
  *
  * A vault app may neither read nor write them: that would be untrusted code
  * reading the user's memory, or rewriting `.claude/hooks/google-send-gate.mjs`,
- * the hook that asks before mail leaves (D70).
+ * the hook that asks before mail leaves.
  *
  * `.holi/` is deliberately absent: that is Holi's own config, not the agent's.
  */
@@ -135,7 +135,7 @@ export const AGENT_SURFACE_FILES: readonly string[] = [
   'USER.local.md',
 ]
 
-/** Where the vault's memory lives (D89). **Content, not plumbing**: at the root
+/** Where the vault's memory lives. **Content, not plumbing**: at the root
  *  rather than under `.holi/`, so the user need not unhide it to read it.
  *
  *  Declared here rather than in `memory-index.ts` because `isAgentSurfacePath`
@@ -147,7 +147,7 @@ export const MEMORY_DIR = 'memory'
  *  ordinary note someone wrote); `.claude/` and `memory/` match as whole
  *  subtrees.
  *
- *  **`memory/` is `MEMORY.md` subdivided** (D89): what the user told the
+ *  **`memory/` is `MEMORY.md` subdivided**: what the user told the
  *  assistant does not become readable to untrusted app code by spreading it
  *  over more files. Root-anchored, so `notes/memory/x.md` stays an ordinary note.
  *

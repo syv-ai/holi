@@ -48,7 +48,7 @@ function auth(overrides: Partial<StoredGoogleAuth> = {}): StoredGoogleAuth {
 }
 
 /**
- * An `AccountRef` over the real store (D87).
+ * An `AccountRef` over the real store.
  *
  * A session no longer holds the accounts map — N sessions each holding a copy
  * would clobber each other on `write` — so it is handed a reference to its own
@@ -159,7 +159,7 @@ describe('missingScopes', () => {
   })
 
   /**
-   * The D70 grant widening, on its own.
+   * The grant widening for sending, on its own.
    *
    * Widening `GOOGLE_SCOPES` does not invalidate an existing grant: the refresh
    * token keeps minting tokens for the old scopes, so mail and the agenda go on
@@ -173,9 +173,7 @@ describe('missingScopes', () => {
     )
     const session = await connected(auth({ scopes: beforeD70 }))
 
-    expect(session.missingScopes()).toEqual([
-      'https://www.googleapis.com/auth/calendar.events',
-    ])
+    expect(session.missingScopes()).toEqual(['https://www.googleapis.com/auth/calendar.events'])
   })
 
   it('does not alias calendar.events — it comes back exactly as it was asked for', async () => {
@@ -253,7 +251,9 @@ describe('missingScopes', () => {
   })
 
   it('ignores extra scopes Google granted that this build never asked for', async () => {
-    const session = await connected(auth({ scopes: [...GOOGLE_SCOPES, 'https://example.test/extra'] }))
+    const session = await connected(
+      auth({ scopes: [...GOOGLE_SCOPES, 'https://example.test/extra'] }),
+    )
 
     expect(session.missingScopes()).toEqual([])
   })
@@ -294,7 +294,11 @@ describe('getAccessToken', () => {
   })
 
   it('persists a rotated refresh token, so the next refresh uses the live one', async () => {
-    const fetchImpl = refreshFetch({ access_token: 'at-2', refresh_token: 'rt-2', expires_in: 3600 })
+    const fetchImpl = refreshFetch({
+      access_token: 'at-2',
+      refresh_token: 'rt-2',
+      expires_in: 3600,
+    })
     const session = await connected(auth({ expiresAt: NOW - 1 }), fetchImpl)
 
     await session.getAccessToken()

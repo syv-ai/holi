@@ -3,7 +3,7 @@
  * at the path.
  *
  * **Nothing here deletes anything, ever.** A clone is only ever moved to the
- * Trash, by sign-out or by leaving or deleting a vault (D109), and `vaults.remove`
+ * Trash, by sign-out or by leaving or deleting a vault, and `vaults.remove`
  * leaves it on disk (it may hold commits that never left the machine), so an
  * occupied clone path is a normal state rather than a corrupt one, and a
  * re-clone is precisely what would destroy that work. When the path cannot be

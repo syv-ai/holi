@@ -1,5 +1,5 @@
 /**
- * The domain (D60). Every identity in here is a **path** or a **remote**: there
+ * The domain. Every identity in here is a **path** or a **remote**: there
  * are no generated ids.
  */
 
@@ -95,7 +95,7 @@ export interface Task {
   priority?: Priority
   tags: string[]
   /** When to be notified, as a stamp: an absolute moment, never an offset
-   *  from `due` (D79). A stamp with no time fires at `ANCHOR_HOUR`. Anything
+   *  from `due`. A stamp with no time fires at `ANCHOR_HOUR`. Anything
    *  that is not a stamp is inert: it is carried through the file untouched and
    *  never fires. */
   reminder?: string

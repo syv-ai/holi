@@ -1,5 +1,5 @@
 /**
- * One session's word on what its last turn changed (D88, D100).
+ * One session's word on what its last turn changed.
  *
  * The chip lives under its own tab, so the two states worth pinning are the
  * ones a per-session chip could get wrong: whose turn it shows, and what it

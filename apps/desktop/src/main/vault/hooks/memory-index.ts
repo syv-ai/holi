@@ -1,6 +1,6 @@
 /**
  * `memory-index`: `memory/index.md` lands in the same commit as the memory it
- * describes (D89). It runs at the commit boundary so the index is never a
+ * describes. It runs at the commit boundary so the index is never a
  * follow-up commit, and a burst of memory writes yields one correct index.
  *
  * **Gated on the diff, but indexed from the tree.** The staged set decides

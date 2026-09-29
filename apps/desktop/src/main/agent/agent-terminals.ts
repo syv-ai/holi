@@ -1,5 +1,5 @@
 /**
- * Holi's terminals onto Claude Code (D110).
+ * Holi's terminals onto Claude Code.
  *
  * A session is Claude Code's background session, run by its supervisor. What
  * Holi owns is a **window onto it**: a PTY running `claude agents` (the list,

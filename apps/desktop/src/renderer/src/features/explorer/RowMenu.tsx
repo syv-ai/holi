@@ -31,7 +31,7 @@ export function RowMenu({
 }: {
   path: string
   isFolder: boolean
-  /** Set when the row is an app bundle (D107): whether its files are showing,
+  /** Set when the row is an app bundle: whether its files are showing,
    *  and whether it still lacks the manifest that finishes it. */
   app: { open: boolean; unfinished: boolean } | null
   /** Show or hide an app's files in the tree. */

@@ -1,5 +1,5 @@
 /**
- * The comment field under a PDF comment, as a field that wraps (D103).
+ * The comment field under a PDF comment, as a field that wraps.
  *
  * The viewer's own is a one-line `<input>`, which no CSS can make wrap, and
  * its comment sidebar is not a component Holi can replace. So this textarea is

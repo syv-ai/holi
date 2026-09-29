@@ -87,7 +87,7 @@ export function HistoryPanel() {
     void loadVersions()
   }, [targetPath, epoch, open, loadVersions])
 
-  // The commit on the remote: GitHub is the vault's host (D60).
+  // The commit on the remote: GitHub is the vault's host.
   const openCommit = (sha: string) => {
     if (remote) void window.holi.openExternal(`https://github.com/${remote}/commit/${sha}`)
   }

@@ -1,5 +1,5 @@
 /**
- * Writing a vault's theme (#16, over D64).
+ * Writing a vault's theme (#16).
  *
  * The disk half. The merge itself is pure and tested in `@holi/shared`; what is
  * worth testing here is that a write lands in the right FILE, keeps what it did
@@ -109,7 +109,7 @@ describe('writeVaultTheme', () => {
     await writeVaultTheme(root, 'local', { dark: { brand: '#00ff00' } })
 
     const resolved = await readVaultTheme(root)
-    // Local wins per key, committed supplies the rest — D64's layering.
+    // Local wins per key, committed supplies the rest — the theme's layering.
     expect(resolved.dark).toEqual({ primary: '#ff0000', brand: '#00ff00' })
     expect(resolved.warnings).toEqual([])
   })

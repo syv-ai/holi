@@ -20,7 +20,7 @@ type LandingSettings = Pick<ResolvedVaultSettings, 'landing' | 'dailyNotes'>
  *
  * A rotted target falls back by re-resolving as if `landing` were daily, not
  * to a hardcoded daily: a vault with daily notes off lands on nothing. Rot
- * degrades to the ordinary thing, never an error (as D82 does for icons).
+ * degrades to the ordinary thing, never an error (as the icon map does).
  */
 export function resolveLanding(
   settings: LandingSettings,

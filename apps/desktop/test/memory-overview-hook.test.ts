@@ -1,5 +1,5 @@
 /**
- * The session overview (D89) — run as a real child process, the way Claude Code
+ * The session overview — run as a real child process, the way Claude Code
  * invokes it.
  *
  * In-process assertions on its helpers would miss the things that actually break
@@ -91,7 +91,7 @@ describe('memory-overview', () => {
 
   it('includes personal memories, which appear in no committed file', async () => {
     // The overview is the ONLY reader a `.local.md` memory has: it is excluded
-    // from the committed index by design (D65), and `index.local.md` was
+    // from the committed index by design, and `index.local.md` was
     // deliberately not built.
     const { out } = await run(
       await vault({
@@ -138,7 +138,10 @@ describe('memory-overview', () => {
     // It is auto-loaded by nothing and appears in no index, so without this line
     // a fact in it is one the agent has to remember to go looking for.
     const { out } = await run(
-      await vault({ 'memory/index.md': INDEX, 'USER.local.md': '# Ada\n\nPrefers short replies.\n' }),
+      await vault({
+        'memory/index.md': INDEX,
+        'USER.local.md': '# Ada\n\nPrefers short replies.\n',
+      }),
     )
     expect(out).toMatch(/`USER\.local\.md` in the older shape/)
   })

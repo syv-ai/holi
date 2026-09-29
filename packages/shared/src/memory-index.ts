@@ -1,5 +1,5 @@
 /**
- * The vault's memory index — pure (D89).
+ * The vault's memory index — pure.
  *
  * A memory is one fact in one file under `memory/`, carrying a `type`, a
  * one-line `description` and an optional `title`. This module turns a set of
@@ -15,7 +15,7 @@
  * **No IO.** Files in, markdown out; the transform owns the disk.
  *
  * The index is committed, so it lists **shared memories only**: a
- * `memory/x.local.md` is personal (D65) and its title and description must
+ * `memory/x.local.md` is personal and its title and description must
  * appear in no committed file. `isSharedMemoryPath` is where that lives.
  */
 

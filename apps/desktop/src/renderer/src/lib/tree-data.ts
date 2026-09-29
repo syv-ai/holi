@@ -6,7 +6,7 @@
  * `folders`: the on-disk directories (`snapshot.dirs`) plus client-only ones
  * still being named, so an empty or fully filtered folder still shows.
  *
- * An app bundle (`Budget.app`, D107) is a folder with `isApp` set: it holds its
+ * An app bundle (`Budget.app`) is a folder with `isApp` set: it holds its
  * files like any folder, and sorts with the files, since it reads as one. It
  * needs its entry document to be one: a `.app` folder with nothing to open (a
  * macOS app copied in, an app whose first file is still being written) is a

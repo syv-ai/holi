@@ -1,7 +1,7 @@
 /**
  * The commit transforms, and the vault's say over which of them run.
  *
- * **This is not a hook framework** (the D74 argument against `manifest.json`).
+ * **This is not a hook framework** (the same argument that keeps vault apps free of a `manifest.json` layer).
  * A new transform gets added to this array; it does not get a plugin system.
  */
 import { VAULT_SETTING_DEFAULTS } from '@holi/shared'
@@ -38,7 +38,7 @@ export const DEFAULT_HOOKS: HookSettings = { ...VAULT_SETTING_DEFAULTS.hooks }
 /**
  * Read the enable list from the vault's settings.
  *
- * **Data, never code** (D76). Settings say *which* transforms run, never what
+ * **Data, never code**. Settings say *which* transforms run, never what
  * one is: a vault-tracked script behind `core.hooksPath` would let a teammate's
  * push run code on your laptop, so the hook body ships in the binary.
  *

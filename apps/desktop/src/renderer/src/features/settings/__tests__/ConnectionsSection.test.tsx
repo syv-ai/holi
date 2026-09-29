@@ -1,5 +1,5 @@
 /**
- * A vault's Google account is its own (D87).
+ * A vault's Google account is its own.
  *
  * An account connected on this machine is not an account *this vault uses*.
  * Reusing the first as the second is a mapping and no consent, and unlinking a

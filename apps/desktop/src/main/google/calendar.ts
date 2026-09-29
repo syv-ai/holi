@@ -1,6 +1,6 @@
 /**
  * The agenda: Google Calendar, flattened into the shape the panel renders, plus
- * the agent's attendee-free calendar writes at the bottom (D70).
+ * the agent's attendee-free calendar writes at the bottom.
  */
 import type { GoogleApi } from './api'
 import { fetchEventColors } from './event-colors'
@@ -33,7 +33,7 @@ export interface CalendarEvent {
   location?: string
   /**
    * Google's own permalink for the event: **the link Holi writes into a task
-   * or note** (D67). Taken from the API rather than assembled from the id,
+   * or note**. Taken from the API rather than assembled from the id,
    * which is not enough to build a working URL.
    */
   htmlLink: string
@@ -373,7 +373,6 @@ function conferenceUrlOf(event: RawEvent): string | null {
   )
 }
 
-
 function toCalendarEvent(
   event: RawEvent,
   calendar: CalendarChoice,
@@ -430,7 +429,7 @@ function byStart(a: CalendarEvent, b: CalendarEvent): number {
 }
 
 /**
- * Calendar writes: the agent's time-blocking surface (D70).
+ * Calendar writes: the agent's time-blocking surface.
  *
  * **Every function here is bounded by one rule: it must not email anyone.**
  * An event carrying attendees sends invitations on create and cancellations on
@@ -502,9 +501,7 @@ interface RawAttendees {
  * blocks.
  */
 async function assertNobodyIsInvited(api: GoogleApi, eventId: string): Promise<void> {
-  const event = await api.get<RawAttendees>(
-    `${PRIMARY_EVENTS}/${encodeURIComponent(eventId)}`,
-  )
+  const event = await api.get<RawAttendees>(`${PRIMARY_EVENTS}/${encodeURIComponent(eventId)}`)
   if (Array.isArray(event.attendees) && event.attendees.length > 0) {
     // Read by the agent, so it says what to do instead rather than only what
     // went wrong.

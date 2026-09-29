@@ -58,7 +58,7 @@ describe('a target that still exists', () => {
 
 describe('a target that has rotted', () => {
   // A note deleted, or an app removed by a collaborator in a shared vault. The
-  // trade D82 already accepted for icons: rot degrades to the ordinary thing,
+  // trade the icon map already accepts: rot degrades to the ordinary thing,
   // never to an error.
   test('falls back to the daily when the note is gone', () => {
     expect(resolveLanding(on({ kind: 'note', path: 'deleted.md' }), vault)).toEqual({

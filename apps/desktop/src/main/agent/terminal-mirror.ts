@@ -40,7 +40,7 @@ export class TerminalMirror {
    *
    * A published terminal protocol, read the way any terminal reads it, and used
    * only as a label: Claude Code sets it to the attached session's name, and to
-   * "claude agents" in its list (D110). It never says which session, so nothing
+   * "claude agents" in its list. It never says which session, so nothing
    * is keyed on it.
    */
   onTitle(cb: (title: string) => void): void {

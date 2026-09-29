@@ -4,7 +4,7 @@
  * - **Permanent delete cannot happen.** It needs `https://mail.google.com/`,
  *   which Holi does not request. Trash is Gmail's trash, recoverable for 30
  *   days, which is why the button says trash and not delete.
- * - Reply, reply-all and forward (D71) use [[MailComposer]] mounted inline at
+ * - Reply, reply-all and forward use [[MailComposer]] mounted inline at
  *   the foot of the thread, because the message being answered is the context
  *   and a modal hides it. A new message is a dialog: it has no context.
  *
@@ -12,7 +12,7 @@
  * immediately and restores the previous list if Google refuses. `main/google/data.ts`
  * takes the opposite order deliberately: see the note on `write` there.
  *
- * **Bodies are sanitized HTML in a sandboxed frame** (D67). HTML wins over the
+ * **Bodies are sanitized HTML in a sandboxed frame**. HTML wins over the
  * plain-text part when it exists. The defences and the blocking of remote
  * content live in [[SandboxedHtml]], shared with the agenda.
  *
@@ -212,7 +212,7 @@ export function MailView() {
    * knows whether its undo is still valid. See `write`.
    */
   const listGeneration = useRef(0)
-  /** The inline composer's intent, or `null` when it is closed (D71). */
+  /** The inline composer's intent, or `null` when it is closed. */
   const [composing, setComposing] = useState<ComposeIntent | null>(null)
   /**
    * Bumped on every open, so React remounts the composer rather than reusing
@@ -330,7 +330,7 @@ export function MailView() {
   }, [])
 
   /**
-   * The send-as aliases, for reply-all (D71).
+   * The send-as aliases, for reply-all.
    *
    * Failure leaves the list empty rather than blocking the view: the cost is
    * that a reply-all may copy the user on their own reply, as a chip they can
@@ -570,7 +570,7 @@ export function MailView() {
   /**
    * Link the open thread into a task.
    *
-   * The link is an ordinary markdown link in the task **body** (D67), with no
+   * The link is an ordinary markdown link in the task **body**, with no
    * frontmatter field, so "which tasks reference this thread" stays a grep.
    */
   const linkToTask = async (thread: { subject: string; webUrl: string }) => {
@@ -872,7 +872,7 @@ export function MailView() {
                   </Tooltip>
                 )}
                 {/* Goes to a real session, where follow-up questions live. It
-                    lands unsent like every other ask (D100). */}
+                    lands unsent like every other ask. */}
                 <Tooltip content="ask the vault assistant to summarise this thread">
                   <Button
                     variant="secondary"
@@ -912,7 +912,7 @@ export function MailView() {
                     </Button>
                   </Tooltip>
                 )}
-                {/* Triage (D68). Star is a toggle that says which way it goes;
+                {/* Triage. Star is a toggle that says which way it goes;
                     archive and trash both take the thread out of the list. */}
                 <IconButton
                   // Filled means starred.
@@ -1391,7 +1391,7 @@ export function replaceMention(query: string, mention: Mention, email: string): 
 }
 
 /**
- * People to complete from: **two sources, ranked by evidence** (D68).
+ * People to complete from: **two sources, ranked by evidence**.
  *
  * 1. Senders across the loaded threads, counted: the strongest signal, and free.
  * 2. The address book, from the People API (`contacts.readonly`). Broader, but

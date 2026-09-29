@@ -1,5 +1,5 @@
 /**
- * HTML → markdown (D71).
+ * HTML → markdown.
  *
  * 1. Opening a draft Holi did not write: the composer edits markdown, so there
  *    is never a read-only draft. `X-Holi-Source` only buys a byte-exact round

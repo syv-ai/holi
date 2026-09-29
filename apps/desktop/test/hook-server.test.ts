@@ -25,7 +25,7 @@ const VAULT = 'nthomsencph/privat'
 
 async function rig(opsFor?: (remote: string) => AgentOps) {
   // The job ids the callback was handed, in order: a turn signal is only
-  // useful if it says WHICH session turned (D110).
+  // useful if it says WHICH session turned.
   const starts: string[] = []
   const ends: string[] = []
   const server = createHookServer({

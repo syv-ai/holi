@@ -1,5 +1,5 @@
 /**
- * The palette's shell (D102): a cmdk list inside a Radix dialog composed by
+ * The palette's shell: a cmdk list inside a Radix dialog composed by
  * hand, because the registry's `CommandDialog` wants a compound Dialog this
  * repo does not have. What is worth pinning is the part that is ours: it
  * opens with its input focused (cmdk's arrow keys need focus inside the root),

@@ -96,7 +96,7 @@ beforeEach(async () => {
       }
     },
   }
-  // The CLI is vault-agnostic by design (D87): it curls a port with a bearer and
+  // The CLI is vault-agnostic by design: it curls a port with a bearer and
   // main resolves the vault from the bearer. One vault is all these need.
   server = createGoogleOpsServer(() => ops)
   await server.start()
@@ -151,12 +151,14 @@ describe('holi-google', () => {
 
   it('says what to do when Holi is not running, rather than failing obscurely', async () => {
     await expect(
-      run(bin, ['agenda'], { env: { ...process.env, HOLI_GOOGLE_PORT: '', HOLI_GOOGLE_TOKEN: '' } }),
+      run(bin, ['agenda'], {
+        env: { ...process.env, HOLI_GOOGLE_PORT: '', HOLI_GOOGLE_TOKEN: '' },
+      }),
     ).rejects.toMatchObject({ stderr: expect.stringMatching(/not running|not connected/) })
   })
 
   it('rejects an unknown subcommand with usage', async () => {
-    // Was `send`, which is now a real subcommand (D70) — a test whose subject
+    // Was `send`, which is now a real subcommand — a test whose subject
     // became a feature stops testing what it was written for.
     await expect(run(bin, ['delete-everything'], { env })).rejects.toMatchObject({
       stderr: expect.stringContaining('usage:'),
@@ -179,7 +181,7 @@ describe('holi-google', () => {
 
   // The header comment is a security claim in a file the user is invited to
   // read. It said "it can only read (the granted scopes are readonly)" for a
-  // day after D68 made the Gmail grant `gmail.modify` — true when written, and
+  // day after mail became read-write and made the Gmail grant `gmail.modify` — true when written, and
   // silently false afterwards. The same claim in SKILL.md is pinned by
   // `seed-content.test.ts`; this is its twin, so the pair cannot drift apart
   // again the next time the scopes move.
@@ -192,7 +194,7 @@ describe('holi-google', () => {
 })
 
 /**
- * The write subcommands (D70), through the real generated shell.
+ * The write subcommands, through the real generated shell.
  *
  * Chosen for the ways `sh` mangles things rather than for coverage: a body
  * containing the characters a hand-rolled JSON encoder breaks on, and the flag
@@ -327,7 +329,15 @@ describe('holi-google writes', () => {
   it('schedules a timed block and an all-day one', async () => {
     await run(
       bin,
-      ['schedule', '--title', 'Deep work', '--start', '2026-08-06T09:00:00Z', '--end', '2026-08-06T11:00:00Z'],
+      [
+        'schedule',
+        '--title',
+        'Deep work',
+        '--start',
+        '2026-08-06T09:00:00Z',
+        '--end',
+        '2026-08-06T11:00:00Z',
+      ],
       { env },
     )
     await run(

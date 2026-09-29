@@ -63,7 +63,7 @@ export interface EditorDeps {
   mentionData: () => MentionData
   /** Where a clicked link goes. */
   nav: () => LinkNav
-  /** Hand the current selection to one of the vault's agent sessions (D100). */
+  /** Hand the current selection to one of the vault's agent sessions. */
   askAgent: AskAgentSeam
   /** The open note's vault path, for note-relative image resolution. */
   notePath: string
@@ -173,7 +173,7 @@ export function baseEditorExtensions(deps: EditorDeps): Extension[] {
 }
 
 /**
- * The editor stack for writing a mail (D71). A separate stack, not a
+ * The editor stack for writing a mail. A separate stack, not a
  * parameterised notes stack: its markdown layers are about the vault, and
  * `[[wiki links]]` or `@`-mentions would paste vault paths into an email. It
  * keeps the markdown typing comforts and nothing that knows a vault exists.

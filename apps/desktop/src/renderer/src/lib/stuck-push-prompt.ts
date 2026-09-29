@@ -1,6 +1,6 @@
 /**
  * The first turn of the session Holi starts when leaving or deleting a vault is
- * blocked because its work will not reach GitHub (D109). Passed as the
+ * blocked because its work will not reach GitHub. Passed as the
  * positional prompt to `claude`, like the reconcile seed, so it is a plain
  * first-person ask.
  */

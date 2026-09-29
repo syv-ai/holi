@@ -11,7 +11,7 @@ describe('resolveIconMap', () => {
   })
 
   it('lets the local file override per key, leaving the rest of the shared map', () => {
-    // The theme's rule (D64), for the same reason: a one-line personal file
+    // The theme's rule, for the same reason: a one-line personal file
     // should recolour one entry and inherit everything else.
     const { icons } = resolveIconMap(
       json({ 'AGENTS.md': '🤖', 'MEMORY.md': '🧠' }),
@@ -121,7 +121,19 @@ describe('what counts as an emoji', () => {
   })
 
   it('refuses anything that is not one emoji', () => {
-    for (const bad of ['A', '7', 'rocket', '🎯🎯', '', '🎯 Roadmap', '→', '①', '日', 'A\ufe0f', '\ufe0f']) {
+    for (const bad of [
+      'A',
+      '7',
+      'rocket',
+      '🎯🎯',
+      '',
+      '🎯 Roadmap',
+      '→',
+      '①',
+      '日',
+      'A\ufe0f',
+      '\ufe0f',
+    ]) {
       expect(v(bad)).toBeUndefined()
     }
   })

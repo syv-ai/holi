@@ -1,5 +1,5 @@
 /**
- * What you *do* to the vault's assistant (D110): open the agents list, open a
+ * What you *do* to the vault's assistant: open the agents list, open a
  * session, start one, send one an ask, stop, restart or copy it.
  *
  * Separate from `state/agent.ts` (what the assistant *is*) because these need
@@ -159,7 +159,7 @@ export const duplicateSessionAtom = atom(
 )
 
 /**
- * Update skills, from the palette (D111): this release's skills and hooks,
+ * Update skills, from the palette: this release's skills and hooks,
  * merged into the vault. Main tells the outcome as a notification; when some
  * could not be merged, the session it started to resolve them comes forward.
  */

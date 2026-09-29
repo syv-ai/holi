@@ -1,6 +1,6 @@
 /**
  * `createGoogleAccounts` — the owner of the token store, and the one place that
- * turns a vault into a session (D87).
+ * turns a vault into a session.
  *
  * The properties worth protecting here are the ones a happy path hides: that two
  * vaults on one account share ONE session (so they share its single-flight
@@ -164,8 +164,10 @@ describe('removeAccount', () => {
 describe('onChange', () => {
   it('names the account that changed, so a cache can be scoped to it', async () => {
     const seen: (string | null)[] = []
-    const accounts = await manager([auth()], (async () =>
-      new Response('{}', { status: 200 })) as unknown as typeof globalThis.fetch)
+    const accounts = await manager(
+      [auth()],
+      (async () => new Response('{}', { status: 200 })) as unknown as typeof globalThis.fetch,
+    )
     accounts.onChange((sub) => seen.push(sub))
 
     await accounts.link(VAULT, 'sub-1')
@@ -179,7 +181,7 @@ describe('the client credentials', () => {
   /**
    * `electron.ts` builds the manager with **no** `clientId` and no
    * `clientSecret` — it always relied on the resolver that `GoogleSession`
-   * carried, and D87 moved `connect` here without bringing it along. Every rig
+   * carried, and giving each vault its own account moved `connect` here without bringing it along. Every rig
    * above passes `clientId: 'client-1'`, which is exactly why the empty-string
    * fallback shipped: consent died at Google with `Missing required parameter:
    * client_id` before the user ever saw a consent screen.
@@ -204,9 +206,7 @@ describe('the client credentials', () => {
         state = new URL(url).searchParams.get('state') ?? ''
       },
       fetch: (async (_url: string, init: RequestInit) => {
-        exchange.calls.push(
-          Object.fromEntries(new URLSearchParams(String(init.body)).entries()),
-        )
+        exchange.calls.push(Object.fromEntries(new URLSearchParams(String(init.body)).entries()))
         return {
           ok: true,
           json: async () => ({

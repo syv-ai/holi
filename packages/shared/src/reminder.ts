@@ -2,7 +2,7 @@
  * When a reminder fires, and whether it still owes a notification: pure
  * functions, no clock read anywhere.
  *
- * **A reminder is a moment** (D79): a stamp, `YYYY-MM-DD` or
+ * **A reminder is a moment**: a stamp, `YYYY-MM-DD` or
  * `YYYY-MM-DDTHH:MM`, and nothing else. Relative offsets ("1 day before") are
  * presets in the picker that resolve to a real datetime when chosen, so the
  * file says when the notification happens and it never depends on `due`.

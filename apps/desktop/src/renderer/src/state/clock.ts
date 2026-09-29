@@ -25,7 +25,7 @@ function localNow(): string {
  * same frame the roll-forward uses.
  *
  * **Minute-valued on purpose.** A due date may name an hour, so `overdue` turns
- * over on a minute (D79), but the atom's identity changes only when the minute
+ * over on a minute, but the atom's identity changes only when the minute
  * string does, so a timer that fires twice a minute re-renders nothing.
  */
 export const nowAtom = atom<string>(localNow())

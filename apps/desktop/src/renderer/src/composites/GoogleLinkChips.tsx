@@ -1,5 +1,5 @@
 /**
- * The chips for mail/calendar links found in a body (D67). A composite so more
+ * The chips for mail/calendar links found in a body. A composite so more
  * than one feature can use it.
  *
  * No state of its own: the links live in the body text, with no frontmatter

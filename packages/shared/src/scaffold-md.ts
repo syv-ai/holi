@@ -27,7 +27,7 @@ export function scaffoldNoteText(): string {
  *
  * - **The agent surface** (`isAgentSurfacePath`). These are read VERBATIM as
  *   the agent's instructions, so a `tags:` block is prompt text, not metadata
- *   (the same reason as D82). A skill's frontmatter has its own schema, and
+ *   (the same reason icons live in a vault-level map). A skill's frontmatter has its own schema, and
  *   `tags` is not in it.
  * - **Task files.** `serializeTaskFile` owns their frontmatter and
  *   `normalize-md` rewrites it into canonical order; a second writer would

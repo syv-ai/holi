@@ -11,7 +11,7 @@ const JUNK = new Set(['.DS_Store', 'Thumbs.db'])
 
 /** Directories that are never vault content, matched on any path segment.
  *
- * `.git` is the load-bearing one (D60): left unignored it would fire the
+ * `.git` is the load-bearing one: left unignored it would fire the
  * watcher on every commit Holi itself makes (an autosave loop), and a stray
  * `.md` under `.git/` would surface as a note. */
 const IGNORED_DIRS = new Set(['.git', 'node_modules'])

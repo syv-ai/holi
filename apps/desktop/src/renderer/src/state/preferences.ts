@@ -19,7 +19,7 @@ export const panelLayoutsByVaultAtom = atomWithStorage<Record<string, Record<str
  * Layouts for panel groups that are **not** vault content: one flat
  * `{ [groupId]: layout }` map, no remote in the key.
  *
- * Mail and the agenda are account-wide singletons (D67), so filing their split
+ * Mail and the agenda are account-wide singletons, so filing their split
  * under a vault would make the same panes remember different widths per vault.
  */
 export const globalPanelLayoutsAtom = atomWithStorage<Record<string, PanelLayout>>(

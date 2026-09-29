@@ -1,5 +1,5 @@
 /**
- * What ⌘P lists and in what order (D102), as the pure function the screen
+ * What ⌘P lists and in what order, as the pure function the screen
  * renders verbatim.
  */
 import { emptyVaultSnapshot, type VaultSnapshot } from '@holi/shared'
@@ -34,7 +34,7 @@ const rows = (over: Partial<VaultSnapshot> = {}): PaletteRow[] =>
   buildRows({
     snapshot: snapshot(over),
     appPaths: ['Work/plan.app'],
-    // Only live sessions are listed at all (D110): `s2` has stopped.
+    // Only live sessions are listed at all: `s2` has stopped.
     sessions: [{ id: 's1', name: 'refactor' }],
     terminals: [{ id: 't1', label: 'Agents' }],
   })

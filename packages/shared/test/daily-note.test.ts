@@ -21,7 +21,7 @@ describe('dailyNoteStem / dailyNoteFilename', () => {
     expect(dailyNoteStem('2026-01-02')).toBe('02-01-2026')
   })
 
-  // The path is the idempotency key (D44/unique index), so a malformed date must
+  // The path is the idempotency key (unique index), so a malformed date must
   // never reach the DB as `NaN-NaN-NaN.md` and claim a row.
   it('rejects a malformed or unreal date rather than emitting a junk path', () => {
     expect(() => dailyNoteStem('15-07-2026')).toThrow()
@@ -33,7 +33,9 @@ describe('dailyNoteStem / dailyNoteFilename', () => {
 
 describe('buildDailyNoteContent', () => {
   it('seeds type/date frontmatter and a title heading matching the stem', () => {
-    expect(buildDailyNoteContent(ISO)).toBe(`---\ntype: daily-note\ndate: ${ISO}\n---\n\n# ${STEM}\n\n`)
+    expect(buildDailyNoteContent(ISO)).toBe(
+      `---\ntype: daily-note\ndate: ${ISO}\n---\n\n# ${STEM}\n\n`,
+    )
   })
 
   // The seed and the stub heuristic are a matched pair — a note nobody has touched
@@ -47,7 +49,7 @@ describe('buildDailyNoteContent', () => {
   })
 })
 
-describe('isDailyNoteFilename (display predicate only — D46)', () => {
+describe('isDailyNoteFilename (display predicate only)', () => {
   it('matches the DD-MM-YYYY.md shape', () => {
     expect(isDailyNoteFilename('15-07-2026.md')).toBe(true)
   })

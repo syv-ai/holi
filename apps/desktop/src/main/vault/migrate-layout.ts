@@ -3,15 +3,15 @@
  * state, and the `.holi/vault` flag at the top.
  *
  * `icons` stays its own file rather than merging into `theme`: a theme is a
- * closed token whitelist validated as CSS (D64's security property is that the
+ * closed token whitelist validated as CSS (its security property is that the
  * vocabulary is closed), an icon map is unbounded and user-generated.
  *
- * **The filenames keep their `.local.` marker** even under `state/`. D65 makes
- * that marker the whole of what "machine-local" means and the seeded
+ * **The filenames keep their `.local.` marker** even under `state/`. That
+ * marker is the whole of what "machine-local" means, and the seeded
  * `.gitignore` carries exactly `*.local.*`, so a bare name there gets committed.
  *
  * This is a move and not a deletion because of `seed-state.local.json`: it holds
- * what Holi seeded, the base `holi skills update` merges against (D111), and
+ * what Holi seeded, the base `holi skills update` merges against, and
  * without it every file the vault changed would need an agent to merge.
  */
 import { access, mkdir, rename } from 'node:fs/promises'

@@ -1,5 +1,5 @@
 /**
- * What the renderer does around leaving or deleting a vault (D109). Main does
+ * What the renderer does around leaving or deleting a vault. Main does
  * the GitHub call and the Trash; this keeps the app standing once a vault is
  * gone, and hands stuck work to the assistant.
  */

@@ -17,7 +17,7 @@ export interface AgentIndicator {
  * The single derivation of one session's state, so its row, tab and orb
  * cannot disagree. Waiting on you first, then an open turn.
  *
- * Only live sessions are shown anywhere (D110): a stopped or finished one is in
+ * Only live sessions are shown anywhere: a stopped or finished one is in
  * Claude Code's agent list, not Holi's.
  */
 export function agentIndicator(args: {

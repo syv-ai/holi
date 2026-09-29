@@ -98,7 +98,7 @@ export function canvasFor(html: string, themed: MailPalette): MailPalette {
 /**
  * Anything that could end a declaration or open a tag is dropped.
  *
- * Theme values (D64) are validated in main; this is the cheap second gate,
+ * Theme values are validated in main; this is the cheap second gate,
  * since they are interpolated into a stylesheet by hand and a `}` would escape
  * its rule.
  */
@@ -189,10 +189,13 @@ export function mailFrameDocument({
 }: MailFrameOptions): string {
   // `default-src 'none'` covers script, frame, object, connect and font in one
   // go; only what a message legitimately needs is added back.
-  const imgSrc = allowRemoteContent ? "img-src data: https: http:" : "img-src data:"
-  const csp = ["default-src 'none'", imgSrc, "style-src 'unsafe-inline'", "form-action 'none'"].join(
-    '; ',
-  )
+  const imgSrc = allowRemoteContent ? 'img-src data: https: http:' : 'img-src data:'
+  const csp = [
+    "default-src 'none'",
+    imgSrc,
+    "style-src 'unsafe-inline'",
+    "form-action 'none'",
+  ].join('; ')
 
   // Order matters: defaults the message may override, the message, then the
   // rules it may not.

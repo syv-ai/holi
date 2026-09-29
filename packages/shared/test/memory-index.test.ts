@@ -1,5 +1,5 @@
 /**
- * The memory indexer (D89).
+ * The memory indexer.
  *
  * The theme running through all of it: **this thing maintains, it never
  * enforces**. Every test below that feeds it a broken file asserts that it

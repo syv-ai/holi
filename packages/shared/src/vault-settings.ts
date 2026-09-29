@@ -27,7 +27,7 @@
 
 import { parse as parseYaml } from 'yaml'
 
-/** The pre-commit transforms a vault can enable (D76). Kebab, matching the
+/** The pre-commit transforms a vault can enable. Kebab, matching the
  *  transform names themselves, so there is no mapping table between them. */
 export type TransformName =
   'relink' | 'archive-done' | 'normalize-md' | 'scaffold-md' | 'memory-index'
@@ -55,7 +55,7 @@ export const COLOR_SCHEMES: readonly ColorScheme[] = ['dark', 'light', 'system']
  *
  * **A name, never a CSS string.** `.holi/settings/app.yaml` is committed, so in a
  * shared vault this value was written by somebody else; a `font-family` taken
- * from it verbatim would be arbitrary CSS crossing a trust boundary (the D64
+ * from it verbatim would be arbitrary CSS crossing a trust boundary (the theme
  * whitelist argument). Three names resolve to three stacks this file owns, so
  * no sanitizer is needed.
  */
@@ -145,7 +145,7 @@ export function parseLandingTarget(value: unknown): LandingTarget | null {
   }
   if (kind === 'app') {
     if (typeof path === 'string' && path !== '') return { kind: 'app', path }
-    // Before D107 an app was `.holi/apps/<id>`, and opening a vault moves it to
+    // Before bundles an app was `.holi/apps/<id>`, and opening a vault moves it to
     // `<id>.app` at the root, so a landing written then still lands.
     if (typeof appId === 'string' && appId !== '') return { kind: 'app', path: `${appId}.app` }
     return null
@@ -285,7 +285,6 @@ export const SETTINGS_LOCAL_FILE = '.holi/settings/app.local.yaml'
 const SETTINGS_FILE_HINT = `Change it any time in ${SETTINGS_FILE}`
 const LOCAL_FILE_HINT = `Change it any time in ${SETTINGS_LOCAL_FILE}, which stays on this machine`
 
-
 /**
  * What a setting's value IS: its validation and, because the two are the same
  * question, the options a control needs.
@@ -350,10 +349,10 @@ export interface VaultSetting {
    *
    * **Not every setting is a question for a stranger.** Every row in the ritual
    * is one more thing between somebody and their first note, so a preference
-   * with a good default and no consequence at birth stays out of it (D87). The
+   * with a good default and no consequence at birth stays out of it. The
    * settings pane renders the whole list regardless.
    *
-   * It also keeps a default a default (D85): a value the seed does not write
+   * It also keeps a default a default: a value the seed does not write
    * can still be raised later for existing vaults.
    */
   askedAtBirth: boolean
@@ -494,7 +493,7 @@ export const VAULT_SETTINGS: readonly VaultSetting[] = [
     },
     default: 10 * 1024 * 1024,
     target: 'committed',
-    // **Not asked at birth (D85):** a number written into every vault at
+    // **Not asked at birth:** a number written into every vault at
     // creation is a default that can never be raised for those vaults.
     askedAtBirth: false,
     whereToChange: SETTINGS_FILE_HINT,
@@ -535,7 +534,7 @@ export const VAULT_SETTINGS: readonly VaultSetting[] = [
     },
     default: 'mono' as EditorFont,
     target: 'committed',
-    // Not asked at birth, deliberately (D87): it has a good default and no
+    // Not asked at birth, deliberately: it has a good default and no
     // consequence at a vault's first moment.
     askedAtBirth: false,
     whereToChange: SETTINGS_FILE_HINT,
@@ -551,7 +550,7 @@ export const VAULT_SETTINGS: readonly VaultSetting[] = [
  * `ColorScheme` and not `unknown`.
  *
  * `archive-done` is off: it moves task files, which changes what the board
- * shows, and a transform that rearranges someone's work is opt-in (D76).
+ * shows, and a transform that rearranges someone's work is opt-in.
  * `memory-index` is on: it only ever rewrites `memory/index.md`, a file it
  * generated. The 10 MB cap is read by `main/vault/large-files.ts`; notes-vault
  * assets sit well under it, and GitHub warns at 50.
@@ -568,11 +567,12 @@ export const VAULT_SETTING_DEFAULTS: Omit<ResolvedVaultSettings, 'warnings'> = O
  * `undefined` at runtime, and an entry for a key the interface lacks is a
  * setting nothing can ever read.
  */
-type _SchemaCoversSettings = Exclude<keyof ResolvedVaultSettings, 'warnings'> extends VaultSettingKey
-  ? VaultSettingKey extends Exclude<keyof ResolvedVaultSettings, 'warnings'>
-    ? true
-    : ['schema declares a key ResolvedVaultSettings does not have']
-  : ['ResolvedVaultSettings has a key no schema entry declares']
+type _SchemaCoversSettings =
+  Exclude<keyof ResolvedVaultSettings, 'warnings'> extends VaultSettingKey
+    ? VaultSettingKey extends Exclude<keyof ResolvedVaultSettings, 'warnings'>
+      ? true
+      : ['schema declares a key ResolvedVaultSettings does not have']
+    : ['ResolvedVaultSettings has a key no schema entry declares']
 const _keysAgree: _SchemaCoversSettings = true
 void _keysAgree
 
@@ -674,7 +674,6 @@ function mergeFlags(
   }
   return out
 }
-
 
 /** The subset the ritual asks and the seed writes: see `askedAtBirth`. */
 export const RITUAL_SETTING_DESCRIPTORS: readonly VaultSettingDescriptor[] =

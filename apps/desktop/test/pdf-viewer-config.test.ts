@@ -41,7 +41,7 @@ describe('PDF_DISABLED_CATEGORIES', () => {
   it("hides the Insert tab's stamp, image and attachment, and keeps its signatures", () => {
     // The viewer's real category names, read from its commands: `insert-*`.
     // A bare `signature` matched nothing, which is how the whole Insert tab
-    // leaked in; signatures are now a feature (D104), the rest are not.
+    // leaked in; signatures are now a feature, the rest are not.
     expect(PDF_DISABLED_CATEGORIES).toEqual(
       expect.arrayContaining(['insert-rubber-stamp', 'insert-image', 'insert-attachment']),
     )
@@ -228,7 +228,7 @@ describe('PDF_SCROLLBAR_CSS', () => {
     expect(PDF_SCROLLBAR_CSS).toMatch(
       /:host \*:hover::-webkit-scrollbar-thumb \{ background: var\(--scrollbar-thumb\);/,
     )
-    // Motion from D98's tokens, never a number.
+    // Motion from the motion tokens, never a number.
     expect(PDF_SCROLLBAR_CSS).toContain('var(--motion-respond) var(--ease-settle)')
     expect(PDF_SCROLLBAR_CSS).not.toMatch(/\d+m?s\b/)
   })
@@ -423,7 +423,7 @@ describe('PDF_SIDEBAR_MOTION_CSS', () => {
     expect(PDF_SIDEBAR_MOTION_CSS).toContain(
       '[data-sidebar-id].border-l.holi-sidebar-leaving { animation: holi-sidebar-out-right var(--motion-slide) var(--ease-slide) forwards; }',
     )
-    // Smooth both ways: one slide token in and out, not D98's quicker leave.
+    // Smooth both ways: one slide token in and out, not the quicker leave.
     expect(PDF_SIDEBAR_MOTION_CSS).not.toMatch(/--motion-(arrive|leave)|--ease-settle/)
     expect(PDF_SIDEBAR_MOTION_CSS).not.toMatch(/\d+m?s\b/)
   })

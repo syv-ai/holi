@@ -198,7 +198,7 @@ export type TaskPatch = Partial<
  * the same vocabulary, so the board cannot write a file it would then refuse. */
 const PATCH_READERS: Record<string, (v: unknown) => unknown> = {
   status: (v) => enumOf(v, STATUSES, 'status'),
-  // A stamp (D79): the time is optional, and its absence is meaningful. The
+  // A stamp: the time is optional, and its absence is meaningful. The
   // validity rules live in `dates.ts` and must not be restated here.
   due: (v) => {
     if (typeof v !== 'string' || parseStamp(v) === null) {

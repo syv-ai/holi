@@ -1,6 +1,6 @@
 /**
  * The month grid a date picker draws: pure arithmetic over the same UTC epochs
- * the rest of the date math uses, so it is testable without a DOM (D79).
+ * the rest of the date math uses, so it is testable without a DOM.
  *
  * Hand-rolled rather than `react-day-picker`: the repo carries no date library,
  * and that one would bring a second class-name API to theme.

@@ -1348,7 +1348,7 @@ describe('VaultHost', () => {
   })
 
   it('lets go of what was running against a vault BEFORE it closes', async () => {
-    // The agent's sessions (D100). A session teardown resumes the vault's sync
+    // The agent's sessions. A session teardown resumes the vault's sync
     // loop and may take a settle commit, so it has to run while the vault it
     // ran in is still the active one — not after the switch has moved on.
     const { registry } = await twoVaults()

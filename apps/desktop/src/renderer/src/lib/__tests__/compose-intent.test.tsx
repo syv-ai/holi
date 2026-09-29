@@ -1,5 +1,5 @@
 /**
- * The compose intent (D71): rules about who receives a message, bugs invisible
+ * The compose intent: rules about who receives a message, bugs invisible
  * to the sender and obvious to everybody else on the thread.
  */
 import { describe, expect, it } from 'vitest'
@@ -227,8 +227,10 @@ describe('composeFrom — the quoted body', () => {
   })
 
   it('prefers the html over the plain body when both are present', () => {
-    const body = composeFrom(reply({ body: 'plain fallback', html: '<p><em>rich</em></p>' }), SELF)
-      .body
+    const body = composeFrom(
+      reply({ body: 'plain fallback', html: '<p><em>rich</em></p>' }),
+      SELF,
+    ).body
 
     expect(body).toContain('_rich_')
     expect(body).not.toContain('plain fallback')

@@ -1,6 +1,6 @@
 /**
  * The open PDF's comment threads, read from the viewer's own store, for an ask
- * sent from the top bar (D106).
+ * sent from the top bar.
  *
  * The store rather than the file, so a mark made a moment ago is included
  * before its save. Threading rules are `@holi/shared`'s, shared with

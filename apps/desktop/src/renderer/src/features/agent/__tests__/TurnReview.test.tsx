@@ -1,5 +1,5 @@
 /**
- * What the agent's last turn changed, and taking a piece of it back (D88).
+ * What the agent's last turn changed, and taking a piece of it back.
  *
  * The panel is a projection of `state/turns.ts`, so what only this file can show
  * is the reading: that a range whose commits are gone says so instead of looking

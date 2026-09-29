@@ -1,5 +1,5 @@
 /**
- * What the composer is being opened *for* (D71).
+ * What the composer is being opened *for*.
  *
  * A discriminated union, so a typo in the kind is a compile error rather than
  * a silently empty composer. Everything here is a rule about who receives a
@@ -97,7 +97,10 @@ function forwardBody(parent: ThreadMessage, subject: string): string {
     `From: ${displayName(parent.from)} <${parent.from.email}>`,
     `Date: ${attributionDate(parent.date)}`,
     `Subject: ${subject}`,
-    `To: ${parent.to.map((a) => a.email).filter((email) => email !== '').join(', ')}`,
+    `To: ${parent.to
+      .map((a) => a.email)
+      .filter((email) => email !== '')
+      .join(', ')}`,
   ]
   return `\n\n${lines.join('\n')}\n\n${quoteAsMarkdown(parentAsMarkdown(parent))}`
 }

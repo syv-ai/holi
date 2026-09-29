@@ -95,7 +95,7 @@ describe('buildDecorations', () => {
 
 /**
  * Task chips. A task is a file, so a link to a task is an ordinary path wiki-link
- * `[[…/task.foo.md]]` (D27/D60). The editor renders it as a task chip — carrying the
+ * `[[…/task.foo.md]]`. The editor renders it as a task chip — carrying the
  * task's status for the orb — when the path resolves to a task via the store, and as a
  * plain note chip otherwise.
  */
@@ -145,7 +145,7 @@ describe('buildDecorations — task-path chips', () => {
 
   it('reveals the raw [[…]] when the caret is inside it', () => {
     // The caret starts on the line ABOVE the chip so that the chip's own line is
-    // not what puts it raw. Since D91 only the element itself would do that
+    // not what puts it raw. Now only the element itself would do that
     // anyway, but the doc is left as it was: it costs nothing and covers both.
     const doc = `first\nsee [[${TASK}]] ok`
     expect(chipIn(doc, [known])).toBeDefined()
@@ -368,7 +368,7 @@ describe('buildDecorations — list indentation', () => {
   })
 })
 
-describe('revealedSpans (D91: the element, not the line)', () => {
+describe('revealedSpans (the element, not the line)', () => {
   const at = (pos: number) => ({ from: pos, to: pos })
 
   it('counts a caret resting on either edge as being on the element', () => {
@@ -406,7 +406,7 @@ describe('revealedSpans (D91: the element, not the line)', () => {
   })
 })
 
-describe('buildDecorations — per-element reveal (D91)', () => {
+describe('buildDecorations — per-element reveal', () => {
   const concealedAt = (doc: string, caret: number, at: number, to: number) => {
     const state = stateFor(doc, caret)
     return specs(buildDecorations(state, 0, doc.length)).some((d) => d.from === at && d.to === to)
@@ -419,11 +419,11 @@ describe('buildDecorations — per-element reveal (D91)', () => {
     const bold = doc.indexOf('**')
     // the bold you are in shows its source...
     expect(decos.some((d) => d.from === bold && d.to === bold + 2)).toBe(false)
-    // ...and the chip on the same line stays a chip, which D22 could not do
+    // ...and the chip on the same line stays a chip, which whole-line reveal could not do
     const start = doc.indexOf('[[')
-    expect(
-      decos.some((d) => d.from === start && (d.spec['widget'] as unknown) !== undefined),
-    ).toBe(true)
+    expect(decos.some((d) => d.from === start && (d.spec['widget'] as unknown) !== undefined)).toBe(
+      true,
+    )
   })
 
   it('keeps the marks up while the caret rests on the closing edge', () => {
@@ -441,14 +441,16 @@ describe('buildDecorations — per-element reveal (D91)', () => {
     const bold = doc.indexOf('**')
     expect(decos.some((d) => d.from === bold && d.to === bold + 2)).toBe(true)
     const start = doc.indexOf('[[')
-    expect(
-      decos.some((d) => d.from === start && (d.spec['widget'] as unknown) !== undefined),
-    ).toBe(false)
+    expect(decos.some((d) => d.from === start && (d.spec['widget'] as unknown) !== undefined)).toBe(
+      false,
+    )
   })
 
   const headingIsRaw = (doc: string, caret: number) => {
     const state = stateFor(doc, caret)
-    const line = specs(buildDecorations(state, 0, doc.length)).find((d) => d.from === 0 && d.to === 0)
+    const line = specs(buildDecorations(state, 0, doc.length)).find(
+      (d) => d.from === 0 && d.to === 0,
+    )
     return String(line?.spec['class'] ?? '').includes('cm-heading-raw')
   }
 
@@ -480,8 +482,12 @@ describe('buildDecorations — inline only (a table cell)', () => {
 
   it('leaves a heading alone', () => {
     const doc = '# Title'
-    expect(normal(doc, 4).some((d) => String(d.spec['class'] ?? '').includes('cm-heading'))).toBe(true)
-    expect(inline(doc, 4).some((d) => String(d.spec['class'] ?? '').includes('cm-heading'))).toBe(false)
+    expect(normal(doc, 4).some((d) => String(d.spec['class'] ?? '').includes('cm-heading'))).toBe(
+      true,
+    )
+    expect(inline(doc, 4).some((d) => String(d.spec['class'] ?? '').includes('cm-heading'))).toBe(
+      false,
+    )
   })
 
   it('does not indent a line that reads like an alphabetic list', () => {
@@ -499,11 +505,13 @@ describe('buildDecorations — inline only (a table cell)', () => {
   })
 
   it('does not let a heading it is ignoring shadow an element inside it', () => {
-    // D91 works off spans; a gated node must be absent from that list too, or the
+    // Reveal works off spans; a gated node must be absent from that list too, or the
     // heading would still be the innermost thing the caret is on.
     const doc = '# Title **bold** end'
     const at = doc.indexOf('**')
     // caret on the bold: its marks show, and nothing above it claims the caret
-    expect(inline(doc, doc.indexOf('bold')).some((d) => d.from === at && d.to === at + 2)).toBe(false)
+    expect(inline(doc, doc.indexOf('bold')).some((d) => d.from === at && d.to === at + 2)).toBe(
+      false,
+    )
   })
 })

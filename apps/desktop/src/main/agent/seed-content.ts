@@ -4,11 +4,11 @@
  * reads natively, so there is no `CLAUDE.md`), and the per-turn context hook.
  *
  * **Seeding runs on vault creation, adoption AND every open** (`vaults.add`/
- * `vaults.create`/`vaults.open` → `ensureSeeded`; the open case is D70), but
+ * `vaults.create`/`vaults.open` → `ensureSeeded`), but
  * what it may do on an open is narrow. Holi's skills and hooks
  * (`SHIPPED_FILES`) are written only when the vault is created: after that they
  * are the vault's, and a newer version reaches them only through
- * `holi skills update` (D111).
+ * `holi skills update`.
  *
  * **`.gitignore` is the exception.** An adopted repo usually already has one,
  * and the sync engine commits with `git add -A`, so create-if-missing would let
@@ -93,7 +93,7 @@ A memory is one fact in one file under \`memory/\`. Do not use a memory system o
 const hookCommand = (name: string) => `node "$CLAUDE_PROJECT_DIR/.claude/hooks/${name}.mjs"`
 
 /**
- * A turn-bracket hook (D110): tells Holi a turn started or ended so it can pause
+ * A turn-bracket hook: tells Holi a turn started or ended so it can pause
  * sync while the agent works. The script finds Holi through `holi.env` in the
  * session's config dir and names the session by its job id, because a
  * background session's environment is Claude Code's supervisor's, not Holi's.
@@ -113,7 +113,7 @@ const SETTINGS_JSON =
       hooks: {
         // UserPromptSubmit injects the focused-note context AND signals turn
         // start; Stop signals turn end. That bracket already spans all tool use,
-        // so PreToolUse is only for gating send (D70), below.
+        // so PreToolUse is only for gating send, below.
         UserPromptSubmit: [
           {
             hooks: [
@@ -123,7 +123,7 @@ const SETTINGS_JSON =
           },
         ],
         Stop: [{ hooks: [{ type: 'command', command: turnHook('end') }] }],
-        // What this vault remembers, once per session (D89). Fires on startup,
+        // What this vault remembers, once per session. Fires on startup,
         // resume AND compact: after a compact the agent has just forgotten it
         // has memory at all.
         SessionStart: [{ hooks: [{ type: 'command', command: hookCommand('memory-overview') }] }],
@@ -140,7 +140,7 @@ const SETTINGS_JSON =
             hooks: [{ type: 'command', command: hookCommand('vault-app-check') }],
           },
         ],
-        // The send gate (D70). It matches Bash broadly and decides for itself,
+        // The send gate. It matches Bash broadly and decides for itself,
         // rather than relying on an `if` condition: the agent can spell the
         // command three ways, and a condition that misses one fails OPEN while
         // still reading like protection. The hook defers on everything it does
@@ -172,9 +172,9 @@ const SETTINGS_JSON =
        * No claude.ai cloud connectors in a vault.
        *
        * A claude.ai **Gmail** connector routes around every guarantee Holi
-       * makes about mail: main is the sole token authority (D67), the send gate
-       * is a hook on `Bash` (D70), and the cache is patched by Holi's own writes
-       * (D68). None of those apply to a tool Holi never sees.
+       * makes about mail: main is the sole token authority, the send gate
+       * is a hook on `Bash`, and the cache is patched by Holi's own writes.
+       * None of those apply to a tool Holi never sees.
        *
        * Settable in any scope, and `true` in *any* source wins, so this checked-in
        * project file opts the vault out and a user-level `false` cannot undo it.
@@ -183,7 +183,7 @@ const SETTINGS_JSON =
        */
       disableClaudeAiConnectors: true,
       /**
-       * One memory surface, not two (D89).
+       * One memory surface, not two.
        *
        * Claude Code's own auto-memory lives outside the vault, never syncs, and
        * is the surface its system prompt steers the agent to. This key closes
@@ -213,7 +213,7 @@ const SETTINGS_JSON =
        */
       statusLine: { type: 'command', command: hookCommand('status-line') },
       /**
-       * Background sessions edit the vault itself (D110).
+       * Background sessions edit the vault itself.
        *
        * Claude Code otherwise moves a dispatched session into a git worktree
        * under `.claude/worktrees/` before it edits: its work stays invisible to
@@ -225,7 +225,7 @@ const SETTINGS_JSON =
         // Seeded egress gating: the user still approves each one, they just
         // don't slip through unasked.
         //
-        // The holi-google entries are the *undoable* tier (D70) and are NOT the
+        // The holi-google entries are the *undoable* tier and are NOT the
         // wall: allow-always past them is fine, each has a one-click undo. The
         // wall for send/reply is the PreToolUse hook above, which overrides both
         // this list and a prior "don't ask again". The send/reply entries here
@@ -240,7 +240,7 @@ const SETTINGS_JSON =
           'Bash(holi-google reply:*)',
         ],
         // Read-only Holi commands, which ask nothing because they change
-        // nothing (D106). Merged into existing vaults like `ask` is.
+        // nothing. Merged into existing vaults like `ask` is.
         allow: ['Bash(holi pdf comments:*)'],
       },
     },
@@ -255,7 +255,7 @@ const SETTINGS_JSON =
  * onboarding questions, so the two cannot drift apart.
  *
  * The `hooks` block says **which** pre-commit transforms run, and can never say
- * what one is (D76): the script body ships in the binary and lives in
+ * what one is: the script body ships in the binary and lives in
  * `.git/hooks/`, where nothing can push it onto anyone's laptop.
  *
  * `archive-done` is off because it moves task files, which changes what the
@@ -292,7 +292,7 @@ const PLAIN_MANIFEST =
   ) + '\n'
 
 /**
- * The vault's colour/chrome theme (D64). Both files ship in every vault so
+ * The vault's colour/chrome theme. Both files ship in every vault so
  * theming is discoverable: shared overrides go in `theme.css` (committed),
  * personal ones in `theme.local.css` (gitignored).
  *
@@ -302,7 +302,7 @@ const PLAIN_MANIFEST =
 const THEME_SKELETON = applyThemePatch(null, {})
 
 /**
- * Holi's skills and hooks (D111). **The vault's from the moment they are
+ * Holi's skills and hooks. **The vault's from the moment they are
  * written**, and written only when the vault is created: a vault works in any
  * Claude Code (the desktop app, the web, a plain CLI), so these are ordinary
  * committed files, and nothing Holi does on an open changes them.
@@ -330,13 +330,13 @@ export const SHIPPED_FILES: Record<string, string> = {
   '.claude/skills/vault-apps/SKILL.md': vaultAppsSkill,
   '.claude/skills/using-tasks/SKILL.md': usingTasksSkill,
   /**
-   * How to write a memory (D89).
+   * How to write a memory.
    *
    * **A skill rather than more `AGENTS.md` prose**: a skill can be improved
-   * later through `holi skills update` (D111), and `AGENTS.md` cannot.
+   * later through `holi skills update`, and `AGENTS.md` cannot.
    */
   '.claude/skills/memory/SKILL.md': memorySkill,
-  /** `holi pdf comments` (D106): what it prints, and that it only reads. */
+  /** `holi pdf comments`: what it prints, and that it only reads. */
   '.claude/skills/pdf-comments/SKILL.md': pdfCommentsSkill,
 }
 
@@ -361,7 +361,7 @@ export const ONCE_FILES: Record<string, string> = {
   [SETTINGS_FILE]: HOLI_SETTINGS,
   '.holi/document-templates/plain/template.json': PLAIN_MANIFEST,
   '.holi/document-templates/plain/template.typ': plainTemplateTyp,
-  // The branded set and its shared brand foundation (D66). `_brand/` is skipped
+  // The branded set and its shared brand foundation. `_brand/` is skipped
   // by the template picker (underscore prefix); its binary fonts + logo are
   // seeded separately from BRAND_BINARIES below.
   '.holi/document-templates/_brand/brand.typ': brandTyp,
@@ -385,8 +385,8 @@ export const ONCE_FILES: Record<string, string> = {
   [SETTINGS_LOCAL_FILE]: HOLI_SETTINGS_LOCAL,
   'AGENTS.md': AGENTS_MD,
   /**
-   * The memory directory exists and is tracked from a vault's first commit
-   * (D89), in its empty-state form; after that the `memory-index` transform
+   * The memory directory exists and is tracked from a vault's first commit,
+   * in its empty-state form; after that the `memory-index` transform
    * owns the file.
    *
    * A ONCE_FILE and emphatically not a MANAGED_FILE: the transform rewrites it
@@ -434,7 +434,7 @@ export const SETTINGS = '.claude/settings.json'
  *
  * **Merged rather than skipped, and that is a security property.** Most vaults
  * already have a `settings.json`, so write-if-absent would ship the send gate
- * (D70) as a hook script nothing invokes.
+ * as a hook script nothing invokes.
  *
  * Key-wise, the way `.gitignore` is line-wise: an adopted vault's own hooks and
  * permission rules are not ours to replace. Holi adds what it needs and touches
@@ -444,7 +444,7 @@ export const SETTINGS = '.claude/settings.json'
  * something to "fix" by overwriting. The cost is an ungated vault.
  *
  * **A hook's entry goes in only where its script is** (`hasHook`, by script
- * name). Scripts are seeded at creation and updated on request (D111), so a
+ * name). Scripts are seeded at creation and updated on request, so a
  * hook a later release adds must not be wired on an open, before the update
  * that brings its script: it would fail on every prompt. `updateShipped` runs
  * this again after writing scripts, so the two arrive together.
@@ -489,7 +489,7 @@ export function settingsWithRequired(
   }
 
   /**
-   * One memory surface (D89), merged for `disableClaudeAiConnectors`'s reason.
+   * One memory surface, merged for `disableClaudeAiConnectors`'s reason.
    *
    * **Only when absent.** A user who set it `true` wants Claude Code's own
    * auto-memory as well; the vault's `memory/` works either way.
@@ -543,7 +543,7 @@ export function settingsWithRequired(
     changed = true
   }
 
-  // The session overview (D89), matched the same way.
+  // The session overview, matched the same way.
   const sessionStart = Array.isArray(hooks.SessionStart) ? hooks.SessionStart : []
   if (!JSON.stringify(sessionStart).includes('memory-overview') && hasHook('memory-overview')) {
     hooks.SessionStart = [...sessionStart, ...required.hooks.SessionStart]
@@ -552,7 +552,7 @@ export function settingsWithRequired(
   }
 
   /**
-   * The turn bracket (D110), which pauses sync while the agent works.
+   * The turn bracket, which pauses sync while the agent works.
    *
    * **This is what reaches existing vaults.** Until now the bracket was only
    * seeded, never merged, so a vault that already had a `settings.json` never
@@ -679,7 +679,7 @@ async function mergeSettings(root: string): Promise<boolean> {
  *   - **once** (`ONCE_FILES`): created if absent, never touched again.
  *   - **shipped** (`SHIPPED_FILES`): written **only when the vault is being
  *     created**, told by `.holi/vault` not existing yet, and recorded so a
- *     later `holi skills update` has a base to merge against (D111). An open
+ *     later `holi skills update` has a base to merge against. An open
  *     never writes one, so a skill the vault deleted stays deleted.
  *   - **`.claude/settings.json`**: merged key-wise (`settingsWithRequired`).
  */
@@ -749,7 +749,7 @@ export interface UpdateReport {
 /**
  * Where a conflict's other versions wait for the agent: beside the file, with
  * `.shipped.local` or `.base.local` before its extension. `.local.` keeps them
- * on this machine (D65) and out of every commit.
+ * on this machine and out of every commit.
  */
 export function stagedPath(rel: string, which: 'shipped' | 'base'): string {
   const slash = rel.lastIndexOf('/')
@@ -766,8 +766,8 @@ async function removeStaged(root: string, rel: string): Promise<void> {
 }
 
 /**
- * `holi skills update`: bring this release's skills and hooks to the vault
- * (D111). Per file, against the base Holi recorded when it wrote it:
+ * `holi skills update`: bring this release's skills and hooks to the vault.
+ * Per file, against the base Holi recorded when it wrote it:
  *
  *   - already the shipped text: current;
  *   - absent: added if Holi never wrote it here, left alone if the vault

@@ -1,12 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import {
-  formatStamp,
-  parseStamp,
-  stampDate,
-  stampEpoch,
-  stampTime,
-  withTime,
-} from '../src/dates'
+import { formatStamp, parseStamp, stampDate, stampEpoch, stampTime, withTime } from '../src/dates'
 
 const HOUR_MS = 3_600_000
 
@@ -30,7 +23,7 @@ describe('parseStamp', () => {
   })
 
   // The old reminder grammar's two forms are the ones most likely to turn up in
-  // a file written before D79, so they are named here rather than left to
+  // a file written before dates became stamps, so they are named here rather than left to
   // "rubbish" — and they must be null, never a throw: an unparseable reminder is
   // inert, and a thrown error would take the whole task file down with it.
   it('rejects everything that is not a stamp, without throwing', () => {

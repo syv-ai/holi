@@ -14,7 +14,7 @@ import { matchHotkey } from '@/lib/hotkey'
  * while the header is mounted, so a panel owns its controls and their shortcuts
  * in one place rather than in a detached Shell listener. The exception proves
  * the rule: ⌘J opens a session tab, and a tab cannot bind the shortcut that
- * opens it, so that one is a Shell listener (D101).
+ * opens it, so that one is a Shell listener.
  *
  * Domain-agnostic → composites/. Width/height-of-row is fixed for alignment with
  * the nav/editor/panel bars it shares the Resizable row with; override via

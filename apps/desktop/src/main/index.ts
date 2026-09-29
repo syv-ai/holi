@@ -106,7 +106,7 @@ protocol.registerSchemesAsPrivileged([
     scheme: 'holi-vault',
     privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true },
   },
-  // The vault-app scheme (D74). Same privileges, and `standard` is load-bearing
+  // The vault-app scheme. Same privileges, and `standard` is load-bearing
   // for a second reason here: it is what makes the URL's HOST parse as the app
   // id, which is how one app's frame is confined to one app's directory.
   {
@@ -164,10 +164,10 @@ async function main(): Promise<void> {
 
   // After whenReady: the keychain is not available before it.
   const session = await createSession()
-  // The Google connector (D67) is independent of the GitHub session on purpose:
+  // The Google connector is independent of the GitHub session on purpose:
   // it is a data connector, not identity, and neither sign-out affects the other.
   const userDataDir = app.getPath('userData')
-  // A machine-wide cache left from before per-account caches (D87). Deleted
+  // A machine-wide cache left from before per-account caches. Deleted
   // rather than renamed: it holds one account's mail.
   await rm(join(userDataDir, 'google-cache.db'), { force: true })
   const googleAccounts = await createGoogleAccountsManager()
@@ -184,7 +184,7 @@ async function main(): Promise<void> {
   const imagePrefs = createImagePrefs(join(app.getPath('userData'), 'google-image-senders.json'))
   /** The PDF viewer's saved signatures: `userData` too, never a vault. */
   const signatures = createSignatureStore(join(app.getPath('userData'), 'pdf-signatures.json'))
-  /** The active vault's Google client (D87), bound to a token *getter* so every
+  /** The active vault's Google client, bound to a token *getter* so every
    *  call goes through the one refreshing authority. Resolved inside the getter so the
    *  object cannot outlive a vault switch, and so a vault with no account fails
    *  at the point of use with a message naming the fix. */
@@ -199,7 +199,7 @@ async function main(): Promise<void> {
     })
 
   /**
-   * The UI's Google cache (D67, D87). In `userData` rather than in a vault: mail
+   * The UI's Google cache. In `userData` rather than in a vault: mail
    * is **account** data, and a vault is a shared git repo.
    *
    * **One file per account**, memoized, so switching between two vaults does
@@ -231,7 +231,7 @@ async function main(): Promise<void> {
     }
     return data
   }
-  /** The active vault's data layer, or null when it has no account (D87). */
+  /** The active vault's data layer, or null when it has no account. */
   const googleDataFor = async (remote: string): Promise<GoogleData | null> => {
     const sub = (await googleAccounts.sessionFor(remote))?.accountSub ?? null
     return sub === null ? null : googleDataForSub(sub)
@@ -279,7 +279,7 @@ async function main(): Promise<void> {
     // every commit tick and once at open, so a vault switch resets it.
     onHeldBack: (files) => send('vault:heldback', files),
     onCommitted: (paths) => send('vault:committed', paths),
-    // A switch stops the vault's sessions (D110; the renderer asked first if
+    // A switch stops the vault's sessions (the renderer asked first if
     // one was busy), and this is the only place that still holds the vault
     // they ran in. They stay in Claude Code's agent list and resume when opened.
     onLeave: async () => {
@@ -305,7 +305,7 @@ async function main(): Promise<void> {
   })
 
   /**
-   * A vault app, served from its own directory and its own origin (D74).
+   * A vault app, served from its own directory and its own origin.
    *
    * The frame is `sandbox="allow-scripts"` with no `allow-same-origin`, so this
    * origin is opaque: an app cannot fetch `holi-vault://`, cannot touch the
@@ -374,7 +374,7 @@ async function main(): Promise<void> {
 
   registerIpc({ router })
 
-  // The vault agent: any number of live `claude` sessions (D100), all in the
+  // The vault agent: any number of live `claude` sessions, all in the
   // active vault's clone, all ended when that vault closes. `getWindow` is lazy,
   // so registering the seam before the window exists is safe.
   //
@@ -383,7 +383,7 @@ async function main(): Promise<void> {
   // callbacks fire only at runtime, long after `agent` is assigned.
   let agent: AgentSessions
   /**
-   * The agent's door to Google (D67, D70): a loopback server serving calendar
+   * The agent's door to Google: a loopback server serving calendar
    * and mail results, with main making the API calls using the token only it
    * holds, plus the generated `holi-google` command. No MCP server.
    *
@@ -399,7 +399,7 @@ async function main(): Promise<void> {
    * no cache entry to patch.
    */
   /**
-   * The data layer for the vault whose bearer made the request (D87), never
+   * The data layer for the vault whose bearer made the request, never
    * the active vault. An agent session outlives a vault switch, so resolving by
    * what is on screen would have a backgrounded agent write to another vault's
    * mailbox.
@@ -458,7 +458,7 @@ async function main(): Promise<void> {
   /**
    * The clone the caller's vault lives in.
    *
-   * Resolved from the **caller's remote**, not from `host.active()` (D87): an
+   * Resolved from the **caller's remote**, not from `host.active()`: an
    * agent session outlives a vault switch, and a `git commit` in one clone fires
    * that clone's hook whatever Holi is showing. Resolving by what is on screen
    * would run the pre-commit transforms against the wrong repository.
@@ -473,7 +473,7 @@ async function main(): Promise<void> {
   }
 
   /**
-   * `holi skills update` and the palette's Update skills (D111): bring this
+   * `holi skills update` and the palette's Update skills: bring this
    * release's skills and hooks to a vault. Conflicts get a session of their
    * own, but only in the vault Holi is showing, the one sessions start in.
    */
@@ -499,7 +499,7 @@ async function main(): Promise<void> {
   }
 
   const hookServer = createHookServer({
-    // A turn edge in one of a vault's background sessions, by job id (D110).
+    // A turn edge in one of a vault's background sessions, by job id.
     onJobTurn: (remote, jobId, active) => agent.noteTurn(remote, jobId, active),
     // A session's status line: how much of its context is used.
     onStatus: (remote, jobId, status) => agent.noteStatus(remote, jobId, status),
@@ -539,7 +539,7 @@ async function main(): Promise<void> {
           return { changed: result.changed, failed: result.failed }
         },
         updateSkills: () => updateSkills(remote),
-        // `holi pdf comments` (D106): read-only, from the saved file.
+        // `holi pdf comments`: read-only, from the saved file.
         pdfComments: async (path) => {
           const root = await rootFor(remote)
           if (root === null) return { ok: false, error: 'no vault is open' }
@@ -548,12 +548,12 @@ async function main(): Promise<void> {
       }),
   })
   await hookServer.start()
-  // D86: the vault agent runs on THIS VAULT's config directory, not the machine's
+  // The vault agent runs on THIS VAULT's config directory, not the machine's
   // `~/.claude` or one shared across vaults: `plugins/` and user-scope
   // `settings.json` are keyed by nothing, so sharing a directory shares
   // capability.
   //
-  // A leftover shared directory (D72) goes to the vault that actually ran the
+  // A leftover shared directory goes to the vault that actually ran the
   // agent in it, which the directory itself records. Awaited before the manager
   // exists, or a fast first spawn provisions an empty directory beside the one
   // being moved.
@@ -564,7 +564,7 @@ async function main(): Promise<void> {
     },
   )
   if (movedTo) console.log(`[agent] shared config directory is now ${movedTo}'s`)
-  /** The Google bearer each open vault's sessions hold (D87): one per vault
+  /** The Google bearer each open vault's sessions hold: one per vault
    *  per app run, written into its `holi.env` and revoked when Holi leaves it. */
   const googleTokens = new Map<string, string>()
   const binDir = dirname(googleCliPath)
@@ -577,7 +577,7 @@ async function main(): Promise<void> {
     // Per vault open, not per launch: the active vault moves, and the theme
     // stamped into its directory tracks a setting the user can flip while the
     // app runs. Static paths every session needs ride in the settings `env`
-    // block, the one channel that reaches a background session (D110).
+    // block, the one channel that reaches a background session.
     resolveConfig: async ({ remote, root }) => {
       // Find-only for the env; download-warm fire-and-forget so a machine that
       // never rendered has typst next time.
@@ -619,7 +619,7 @@ async function main(): Promise<void> {
       googleTokens.delete(remote)
       await removeEndpointFile(configDir)
     },
-    // What each turn changed, as a commit range, in the vault it ran in (D88).
+    // What each turn changed, as a commit range, in the vault it ran in.
     turnLogFor: openTurnLog,
   })
   registerAgentIpc({
@@ -768,7 +768,7 @@ async function main(): Promise<void> {
   /** A quit confirm is on screen: a second ⌘Q must not stack another. */
   let confirmingQuit = false
   /**
-   * Quitting stops the vault's sessions (D110), so ask first when one of them
+   * Quitting stops the vault's sessions, so ask first when one of them
    * is working or waiting on you: that turn is cut short. Asked at the start,
    * before anything is torn down. Idle sessions stop without a question; their
    * conversations stay in Claude Code's agent list.
@@ -824,7 +824,7 @@ async function main(): Promise<void> {
         // the first half: the editor's newest words are not on disk until it
         // writes them. Quit is the one flush point main starts, so it asks.
         await requestFlush(flushChannel(mainWindow))
-        // Quit is a leave point (D61): commit the flushed buffer, then get it
+        // Quit is a leave point: commit the flushed buffer, then get it
         // off-machine before the window closes. Best-effort with a 1s budget:
         // an unreachable remote must not hang quit, and the next launch drains
         // what did not make it out. Order is flush -> commit -> push -> close.

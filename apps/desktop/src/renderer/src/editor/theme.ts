@@ -17,7 +17,7 @@ const POPUP = `.cm-tooltip.cm-tooltip-autocomplete.${COMPLETION_CLASS}`
  *
  * Exported so `test/completion.test.ts` can assert that every selector carries
  * `COMPLETION_CLASS` (without it CodeMirror's own rules outrank the block),
- * that nothing is a hex literal (D64 theming and light mode), and that nothing
+ * that nothing is a hex literal (vault theming and light mode), and that nothing
  * contests `:has(.cm-completionIcon-table)`.
  *
  * The radius tokens carry fallbacks because Tailwind's `@theme` tree-shakes
@@ -210,7 +210,7 @@ export const editorTheme = EditorView.baseTheme({
   // alone is invisible — the drawn cursor is a border-left element, style it.
   '.cm-cursor, .cm-cursor-primary': { borderLeftColor: '#e5e5e5', borderLeftWidth: '2px' },
   /**
-   * D64's `--selection`, themeable per vault. Written at this depth because
+   * The theme's `--selection`, themeable per vault. Written at this depth because
    * CodeMirror's own selection rule is five classes deep and a shallower one
    * loses however late it is mounted (the shape one-dark uses too).
    */
@@ -227,11 +227,11 @@ export const editorTheme = EditorView.baseTheme({
   '.cm-heading-2': { fontSize: '1.25em' },
   '.cm-heading-3': { fontSize: '1.1em' },
   /**
-   * D92: the one animation in the editor text. A heading's `#` slides rather
+   * The one animation in the editor text. A heading's `#` slides rather
    * than blinks, because the heading's text moves furthest when marks appear.
    *
    * `width: 0` to `width: auto` (interpolable via `interpolate-size` on the
-   * root) needs no measurement: the marks' width in the vault's face (D87) is
+   * root) needs no measurement: the marks' width in the vault's face is
    * one no CSS unit knows, and measuring a marker was tried and deleted as too
    * much machinery.
    *

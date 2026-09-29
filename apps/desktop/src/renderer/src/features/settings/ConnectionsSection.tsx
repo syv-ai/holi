@@ -1,11 +1,11 @@
 /**
- * The Connections section: the Google account behind mail + calendar (D67).
+ * The Connections section: the Google account behind mail + calendar.
  *
  * **Lives under `features/settings/`, not `features/google/`, because a feature
  * may only import primitives, composites and itself.** It shares only
  * `state/google.ts` with the mail and agenda views.
  *
- * **Two scopes, and the panel's job is keeping them apart** (D87). An account is
+ * **Two scopes, and the panel's job is keeping them apart**. An account is
  * connected on this *machine*; a *vault* uses one of them. So the rows offer
  * the machine's accounts, the connect button's label follows that list, and
  * every act here — using, unlinking — is this vault's alone except "Remove from
@@ -112,7 +112,7 @@ export function ConnectionsSection(): React.JSX.Element {
 
   /**
    * The connect button's label follows the **machine** list, not this vault's
-   * link (D87): "a different account" only makes sense when there is one here
+   * link: "a different account" only makes sense when there is one here
    * to differ from. While `accounts` is loading it is empty and the button is
    * disabled, so the plain label is also the safe one.
    */
@@ -174,7 +174,7 @@ export function ConnectionsSection(): React.JSX.Element {
         )}
       </div>
 
-      {/* Accounts connected on this machine that this vault is not using (D87).
+      {/* Accounts connected on this machine that this vault is not using.
           Picking one is a mapping, not a consent round trip, so it is one click
           and deliberately not dressed up as connecting. */}
       {others.length > 0 && (
@@ -230,8 +230,7 @@ function ImageSenders(): React.JSX.Element | null {
   return (
     <p className="mt-2 flex items-baseline gap-2 text-[11px] text-muted-foreground">
       <span className="min-w-0 flex-1">
-        Images load automatically from {senders.size}{' '}
-        {senders.size === 1 ? 'sender' : 'senders'}.
+        Images load automatically from {senders.size} {senders.size === 1 ? 'sender' : 'senders'}.
       </span>
       <Button variant="ghost" size="xs" className="shrink-0" onClick={() => void forget()}>
         Forget them

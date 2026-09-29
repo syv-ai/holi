@@ -4,7 +4,7 @@
  * CompletionSource fed live data.
  *
  * A task mention is an ordinary path wiki-link to the task file: no opaque id
- * and no `related[]` edge (D27/D60).
+ * and no `related[]` edge.
  */
 import type {
   CompletionContext,

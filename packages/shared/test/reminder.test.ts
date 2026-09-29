@@ -14,7 +14,7 @@ describe('pendingFireTime', () => {
 
   it('does not depend on the task at all beyond its status', () => {
     // The old signature took `due`, because a relative reminder resolved against
-    // it. A reminder is a moment now (D79) — nothing about when it fires can
+    // it. A reminder is a moment now — nothing about when it fires can
     // change when the due date does.
     expect(pendingFireTime.length).toBe(3)
   })
@@ -31,9 +31,7 @@ describe('pendingFireTime', () => {
   })
 
   it('still pends when the last fire was before the fire time', () => {
-    expect(pendingFireTime('todo', '2026-06-21T09:00', '2026-06-14T09:00')).toBe(
-      '2026-06-21T09:00',
-    )
+    expect(pendingFireTime('todo', '2026-06-21T09:00', '2026-06-14T09:00')).toBe('2026-06-21T09:00')
   })
 
   // The rule that survives the grammar's deletion, and the reason `parseStamp`

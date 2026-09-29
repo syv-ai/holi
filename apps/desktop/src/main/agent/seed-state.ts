@@ -1,5 +1,5 @@
 /**
- * What Holi seeded, so an update can tell what the vault changed (D111).
+ * What Holi seeded, so an update can tell what the vault changed.
  *
  * Holi's skills and hooks are the vault's files from the moment they are
  * written. `holi skills update` brings a newer shipped version to them, and to
@@ -12,8 +12,8 @@
  * written before the text was kept hold only the hash, and still answer the
  * first question.
  *
- * **Machine-local, and the `.local.` in the name is the whole enforcement**
- * (D65). A committed record would travel to a teammate and claim a base Holi
+ * **Machine-local, and the `.local.` in the name is the whole enforcement**.
+ * A committed record would travel to a teammate and claim a base Holi
  * never wrote on their machine. A machine without a record merges nothing and
  * hands every diverged file to the agent, which loses nothing.
  */

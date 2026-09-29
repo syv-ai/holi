@@ -165,7 +165,7 @@ describe('a mermaid fence in live preview', () => {
   })
 
   it('shows the source when the caret rests on the closing fence, like any element', () => {
-    // Edge-inclusive, the same rule D91 gave every other element.
+    // Edge-inclusive, the same rule as every other element.
     expect(specs(mermaidDecorations(stateFor(MERMAID, MERMAID.length - 1)))).toHaveLength(0)
   })
 

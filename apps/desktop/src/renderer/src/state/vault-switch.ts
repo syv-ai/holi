@@ -6,11 +6,11 @@
  * is needed: Shell's open effect picks it up and runs the same sequence as a
  * cold start.
  *
- * It also ends every session in the vault, so it asks first (D100), HERE,
+ * It also ends every session in the vault, so it asks first, HERE,
  * before `activeRemoteAtom` moves: once the atom changes the open effect closes
  * the old vault and there is nothing left to confirm.
  *
- * State rather than Shell's own (D102): "switch to <vault>" is a command. Shell
+ * State rather than Shell's own: "switch to <vault>" is a command. Shell
  * renders the confirm from `leavingVaultAtom`; the `'add'` intent is set by
  * Shell's add-vault gesture.
  */

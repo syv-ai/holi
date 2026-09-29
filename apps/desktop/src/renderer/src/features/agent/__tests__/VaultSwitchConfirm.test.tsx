@@ -1,6 +1,6 @@
 /**
  * The question a vault switch asks when sessions are running in the vault being
- * left (D100).
+ * left.
  *
  * What it owes the user is an accurate sentence about what they are about to
  * lose, so the cases are what it says for one session against several, and that

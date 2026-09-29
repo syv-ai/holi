@@ -2,7 +2,7 @@
  * The vault's working set: which of its agent sessions are mid-turn, and what
  * that means for the one git actor they all share.
  *
- * A vault runs several `claude` sessions (D100) but has exactly one sync loop,
+ * A vault runs several `claude` sessions but has exactly one sync loop,
  * so the pause is the **vault's** while the turn bracket is each **session's**.
  * The vault pauses once, when the working set goes from empty to non-empty, and
  * resumes once, when it empties. Per-session pause/resume would let the first
@@ -27,7 +27,7 @@ export interface TurnCoordinatorDeps {
   /** The vault these sessions run in, or null when none is open. Read per call
    *  rather than held: the active vault moves under this coordinator. */
   activeVault(): ActiveVault | null
-  /** Records what a turn changed, as a commit range (D88). Keyed by vault ROOT.
+  /** Records what a turn changed, as a commit range. Keyed by vault ROOT.
    *  Absent means no recording rather than a broken one. */
   turnLogFor?: (vaultRoot: string) => TurnLog
   /** Force-release a session whose turn never ends. Default 600000 (10 min). */
@@ -74,7 +74,7 @@ interface Turn {
   sessionId: string
   /** The vault it began in, or null if none was open. A record is written only
    *  while that is still the active vault, never attributed to whichever vault
-   *  is open now (D87). */
+   *  is open now. */
   remote: string | null
   base: string | null
   /** `head()` is async and `begin` is not, so the end of the turn waits on the

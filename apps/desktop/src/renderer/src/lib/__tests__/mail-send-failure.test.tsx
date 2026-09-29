@@ -1,5 +1,5 @@
 /**
- * Why a send failed, and what the user can do (D71).
+ * Why a send failed, and what the user can do.
  *
  * Only some failures have a fix the user can perform; a Retry for the rest
  * risks a duplicate reaching a real person.

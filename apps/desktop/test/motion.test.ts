@@ -46,7 +46,7 @@ describe('staggerDelay', () => {
  * Which rows are actually NEW, which is the gate an arrival needs.
  *
  * An `animation` declared on a list's children replays on every re-render —
- * that is D92's file-open bug in a new costume, and it is why this is computed
+ * that is the heading-slide file-open bug in a new costume, and it is why this is computed
  * from what changed rather than declared on the element.
  */
 describe('arrivalIndex', () => {

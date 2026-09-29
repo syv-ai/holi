@@ -118,7 +118,7 @@
 
   /* ── Diff tokens ─────────────────────────────────────────────────
    * The two hues every part of a diff derives from, so `DiffView` need not
-   * know the mode (`@codemirror/merge` hardcodes `&light`/`&dark` hexes; D85).
+   * know the mode (`@codemirror/merge` hardcodes `&light`/`&dark` hexes).
    *
    * Mid-ramp 500s and no light arm: every use is a translucent wash or a 3px
    * stripe, which reads on near-black and near-white alike.
@@ -305,7 +305,7 @@
    * in `features/onboarding/onboarding-ritual.css`, a one-time ceremony.
    *
    * Every duration scales off the 300ms arrive. Re-pacing the app is an edit
-   * to this block only. See docs/ui-system.md (D98). */
+   * to this block only. See docs/ui-system.md. */
   --ease-settle: cubic-bezier(0.22, 1, 0.36, 1);
   /* Symmetric, for F only. A loop eased like an entrance reads as a stutter. */
   --ease-loop: cubic-bezier(0.45, 0, 0.55, 1);

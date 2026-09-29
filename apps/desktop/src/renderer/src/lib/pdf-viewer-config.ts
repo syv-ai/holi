@@ -1,5 +1,5 @@
 /**
- * What the embedded PDF viewer (embedpdf) may do, as pure data (D103), so a
+ * What the embedded PDF viewer (embedpdf) may do, as pure data, so a
  * node test can pin it: disabled command categories, the palette in Holi's
  * tokens, the CSS put into its shadow root, the opening zoom, and keydown
  * spelling. No React, no DOM globals beyond the `KeyboardEvent` type.
@@ -16,7 +16,7 @@ import { MAKE_EDITABLE, MAKE_READ_ONLY } from './pdf-read-only'
  * `stopPropagation` before the palette saw it), ⌘W (closes Holi's tab) and
  * ⌘⇧S. The second is what a pane is not for: export, protect, fullscreen,
  * their menu, and annotation families outside highlight and mark-up.
- * Signatures are the one Insert item kept (D104) and sit on the top bar, so
+ * Signatures are the one Insert item kept and sit on the top bar, so
  * the Insert tab (`mode-insert`) goes too.
  *
  * The names are the viewer's own, and a name that matches no category fails
@@ -50,7 +50,7 @@ const v = (slug: string): string => `var(--${slug})`
  *
  * The palette becomes `--ep-*` custom properties on the viewer's shadow root,
  * and custom properties inherit across the shadow boundary, so
- * `var(--background)` resolves to the vault's theme (D64). The same map serves
+ * `var(--background)` resolves to the vault's theme. The same map serves
  * light and dark because the variables already flip with the mode.
  */
 export function pdfViewerTheme(mode: 'light' | 'dark') {
@@ -187,7 +187,7 @@ export const PDF_SCROLLBAR_CSS = [
 ].join('\n')
 
 /**
- * The Create Signature dialog (D104).
+ * The Create Signature dialog.
  *
  * The panel is Holi's dialog surface, `--popover`. The Draw, Type and Upload
  * areas are paper, because a signature is black ink and was invisible on a
@@ -292,7 +292,7 @@ const HOLI_BUTTONS: readonly PdfToolbarItem[] = [
   },
 ]
 
-/** Ask agent (D106), after the viewer's comments button because it asks about
+/** Ask agent, after the viewer's comments button because it asks about
  *  what that panel lists. Two commands, one visible at a time, because a
  *  command's label is fixed and the label says what is asked about: the
  *  selected comment, or the PDF itself. */
@@ -425,8 +425,8 @@ export const PDF_SIDEBAR_FORM_CSS = [
 ].join('\n')
 
 /**
- * A sidebar slides its whole width in from the edge it docks on, and back out
- * (D98). Left docks draw `border-r`, right docks `border-l`; the narrow-pane
+ * A sidebar slides its whole width in from the edge it docks on, and back out.
+ * Left docks draw `border-r`, right docks `border-l`; the narrow-pane
  * bottom sheet has neither and keeps its own motion. The slide is a negative
  * margin, so the panel keeps its width while the `flex-1` pages move with it.
  * The width is an inline style, unreadable from CSS, so it is written here.
@@ -532,7 +532,7 @@ export const PDF_ICONS = {
 
 /**
  * What placing a signature shares, said where it is placed from: the foot of
- * the Signatures panel, for as long as the panel is open (D104). A signature
+ * the Signatures panel, for as long as the panel is open. A signature
  * on a page is an image inside the PDF, the PDF is committed and synced, and
  * anyone with the file can extract that image, from any earlier commit too.
  */

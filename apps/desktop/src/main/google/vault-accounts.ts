@@ -1,7 +1,7 @@
 /**
- * Which Google account each vault uses (D87).
+ * Which Google account each vault uses.
  *
- * **Machine-local, and outside the vault**, keyed by remote (D60). A vault is a
+ * **Machine-local, and outside the vault**, keyed by remote. A vault is a
  * shared git repo and its clone can be deleted and re-made; this is a fact about
  * an account, so it lives in `userData` beside the tokens and other account
  * prefs.

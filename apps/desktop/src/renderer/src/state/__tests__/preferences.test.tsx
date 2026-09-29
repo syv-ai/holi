@@ -51,7 +51,7 @@ test('a drag on an account-wide split is stored without a vault in the key', () 
 
   binding.onLayoutChanged({ list: 30, reader: 70 }, DRAG)
 
-  // Mail and the agenda are account-wide singletons (D67). Filing the split
+  // Mail and the agenda are account-wide singletons. Filing the split
   // under a remote would remember a different width per vault for identical
   // content, and nothing at all with no vault open.
   expect(store.get(globalPanelLayoutsAtom)).toEqual({ mail: { list: 30, reader: 70 } })

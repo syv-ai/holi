@@ -1,5 +1,5 @@
 /**
- * The recipient field (D71).
+ * The recipient field.
  *
  * A primitive because an AST selector in `eslint.config.mjs` bans a native
  * `<input>` anywhere outside `primitives/` — not because a recipient field is a

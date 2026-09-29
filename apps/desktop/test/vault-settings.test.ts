@@ -112,7 +112,7 @@ describe('a machine-local hooks override', () => {
   // `readHookSettings` used to read `.holi/settings/app.yaml` alone, so the hooks
   // block was the only setting the `.local` layering did not reach.
   //
-  // It is not a D76 concern: a local file is written by YOU, never pushed to
+  // It is not a hook-security concern: a local file is written by YOU, never pushed to
   // anyone, and can still only say *whether* one of Holi's own transforms runs —
   // never what one is. What it buys is keeping `archive-done` off on your laptop
   // while the vault you share with four other people says on.

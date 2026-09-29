@@ -1,5 +1,5 @@
 /**
- * `memory-index` — the index lands in the commit that changed the memory (D89).
+ * `memory-index` — the index lands in the commit that changed the memory.
  *
  * Against a real repo because the transform reads the working tree, and because
  * the two claims worth guarding are both about *not* doing work: it must cost
@@ -76,7 +76,7 @@ describe('memory-index', () => {
   })
 
   it('never lists a personal memory, because the index is committed', async () => {
-    // The one rule here whose failure is worse than untidiness (D65).
+    // The one rule here whose failure is worse than untidiness.
     await write('memory/shared.md', memory('convention', 'Shared', 'everyone sees this'))
     await write('memory/salary.local.md', memory('person', 'Salary', 'nobody else sees this'))
 

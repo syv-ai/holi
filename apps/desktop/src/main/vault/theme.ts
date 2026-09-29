@@ -1,5 +1,5 @@
 /**
- * Reads a vault's theme off disk and resolves it (D64).
+ * Reads a vault's theme off disk and resolves it.
  *
  * Two optional files: `.holi/settings/theme.css` (committed) and
  * `.holi/settings/theme.local.css` (this machine only). `resolveTheme` in

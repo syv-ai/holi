@@ -1,7 +1,7 @@
 /**
  * The **UI's** Google data: the one place caching is decided.
  *
- * **The agent does not come through here to read, and does to write** (D70).
+ * **The agent does not come through here to read, and does to write**.
  * It must never be handed a stale *answer*, so the ops server in
  * `main/index.ts` is wired straight to `listAgenda` / `listThreads`, which take
  * no cache and therefore cannot read one. Its *writes* go through the methods
@@ -62,7 +62,7 @@ export interface GoogleData {
    */
   contacts(): Promise<MailAddress[]>
   /**
-   * The label writes (D68). Each calls Google **first** and touches the cache
+   * The label writes. Each calls Google **first** and touches the cache
    * only once Google has agreed: see the note above `write`.
    */
   setRead(id: string, read: boolean): Promise<void>
@@ -70,7 +70,7 @@ export interface GoogleData {
   archive(id: string): Promise<void>
   trash(id: string): Promise<void>
   /**
-   * The composer's writes (D71), on the same Google-first ordering.
+   * The composer's writes, on the same Google-first ordering.
    *
    * A sent *message* is not a label delta, but a draft appearing and
    * disappearing **is** one, which lets the thread's *Continue draft* chip
@@ -86,7 +86,7 @@ export interface GoogleData {
    */
   sendAs(): Promise<string[]>
   /** Wipe if the cached row shape predates this release. Call before first use.
-   *  One `GoogleData` serves one account (D87), so its file and memos are that
+   *  One `GoogleData` serves one account, so its file and memos are that
    *  account's by construction rather than by a check. */
   ensureShape(): void
   /** Disconnect. Leaves no file on disk. */
@@ -103,7 +103,7 @@ export interface ComposeWrite {
   draftId?: string
   threadId?: string
   /**
-   * Forward the attachments of this message (D71).
+   * Forward the attachments of this message.
    *
    * A message id rather than the files themselves: main fetches the bytes and
    * hands them to `buildRfc822`, so nothing base64 crosses the IPC seam.

@@ -1,5 +1,5 @@
 /**
- * What the agent's last turn changed, and how to take a piece of it back (D88).
+ * What the agent's last turn changed, and how to take a piece of it back.
  *
  * The review happens AFTER the turn, never as a gate before the write:
  * `features/vaults-sync.md` rules out an outbound gate, and Claude Code's

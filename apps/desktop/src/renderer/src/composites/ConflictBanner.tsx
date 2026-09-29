@@ -1,7 +1,7 @@
 /**
  * An external write the editor could not merge, and the two ways out of it.
- * Sits above the footer; colours from `destructive` so a vault theme reaches it
- * (D64). Both choices destroy something, so neither is styled as the default
+ * Sits above the footer; colours from `destructive` so a vault theme reaches it.
+ * Both choices destroy something, so neither is styled as the default
  * and each says which side it keeps.
  */
 import { Button } from '@/primitives'

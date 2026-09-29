@@ -1,5 +1,5 @@
 /**
- * The question a vault switch asks when sessions are running (D110).
+ * The question a vault switch asks when sessions are running.
  *
  * **A switch stops every one of the vault's sessions** (`claude stop`):
  * `VaultHost` holds exactly one `ActiveVault` and `open()` closes the current

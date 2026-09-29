@@ -4,7 +4,7 @@
  * A transform that rewrites files silently is indistinguishable from a bug, so
  * this log is where the agent can look to say what happened.
  *
- * **Machine-local** (`.local.`, D65): committing it would make every commit
+ * **Machine-local** (`.local.`): committing it would make every commit
  * dirty the log the next commit then has to include.
  *
  * **Capped, keeping the newest**, so the agent can read it in one tool call.

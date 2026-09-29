@@ -12,7 +12,6 @@ other rather than repeating each other.
 | [ui-system](ui-system.md)       | The renderer's component layers, tokens, focus, motion, drawers and theming |
 | [glossary](glossary.md)         | Canonical terms; when a word is ambiguous, this wins                        |
 | [not-built](not-built.md)       | Designed and wanted, but absent                                             |
-| [decisions](decisions.md)       | What each D-number decided, and where it now lives                          |
 
 ## Features
 
@@ -47,6 +46,6 @@ other rather than repeating each other.
 - **What is absent goes in [not-built](not-built.md)**, and leaves it when it ships. A deliberate
   boundary with a reason stays on its feature page.
 - **Rejected alternatives stay** beside the design that beat them, so nobody re-proposes them.
-- **Decisions** get a D-number and a line in [decisions](decisions.md); their substance goes
-  straight into the owning page.
+- **A decision goes straight into the page that owns it**, with its reason. Code comments say
+  what they mean in words, or name the page, and never cite a decision number.
 - **There is no server.** A page that implies one is stale.

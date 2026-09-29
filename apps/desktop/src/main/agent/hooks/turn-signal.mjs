@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Holi turn-signal hook (D110): tells the running Holi app that a turn in one of
+// Holi turn-signal hook: tells the running Holi app that a turn in one of
 // this vault's Claude Code background sessions started or ended, so it can pause
 // sync while the agent works. Usage: turn-signal.mjs start|end
 //

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { allLabels, virtualLabels } from '../src/labels'
 import type { Task } from '../src/types'
 
-// `now` is a TIMED stamp (D79) — the overdue rule reads the clock, not just
+// `now` is a TIMED stamp — the overdue rule reads the clock, not just
 // the calendar. Mid-afternoon, so both sides of the day boundary are reachable.
 const NOW = '2026-07-14T14:00'
 const TODAY = NOW
@@ -16,7 +16,7 @@ const task = (over: Partial<Task> = {}): Task => ({
   ...over,
 })
 
-describe('virtualLabels (D41 — computed, never stored)', () => {
+describe('virtualLabels (computed, never stored)', () => {
   it('maps priority to p1/p2/p3', () => {
     expect(virtualLabels(task({ priority: 'high' }), TODAY)).toEqual(['p1'])
     expect(virtualLabels(task({ priority: 'medium' }), TODAY)).toEqual(['p2'])
@@ -67,7 +67,7 @@ describe('allLabels', () => {
 })
 
 // ─────────────────────────────────────────────────────────────────────────
-// D79: `due` may name an hour, and when it does, overdue means past that
+// `due` may name an hour, and when it does, overdue means past that
 // minute. When it does not, overdue still means the DAY has passed — an
 // all-day task due today is not late at 00:01, which is the boundary the
 // day-granular rule got right and must keep getting right.

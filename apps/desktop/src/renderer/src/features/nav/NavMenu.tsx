@@ -1,6 +1,6 @@
 /**
  * The morphing menu at the foot of the nav, and down the rail while the nav is
- * hidden (D108): Home, Search, Apps, Board, Email and Agenda once Google is
+ * hidden: Home, Search, Apps, Board, Email and Agenda once Google is
  * connected, the vault's assistant (`AgentItem`), the vault's sync state
  * (`SyncItem`), then Settings beside More.
  *

@@ -45,6 +45,7 @@ Projects/Q2/Burndown.app/app.yaml     ← required: write this LAST
   An **empty file is enough**, so if you have nothing to say, write nothing.
   There is no `name` or `icon` key: the name is the folder, and the user sets an
   icon the way they do for any file. `holi app init <path>` scaffolds one for you.
+
 - It appears in the file tree and the apps list as soon as the manifest lands.
   No restart.
 
@@ -54,10 +55,10 @@ Projects/Q2/Burndown.app/app.yaml     ← required: write this LAST
 not define it, do not check whether it loaded. Every call returns a promise.
 
 ```js
-const docs  = await holi.docs.list()      // every markdown note
-const text  = await holi.docs.read(path)  // that note's markdown, as a string
-const tasks = await holi.tasks.list()     // every task.*.md
-await holi.open('projects/q2.md')         // opens that note in a Holi tab
+const docs = await holi.docs.list() // every markdown note
+const text = await holi.docs.read(path) // that note's markdown, as a string
+const tasks = await holi.tasks.list() // every task.*.md
+await holi.open('projects/q2.md') // opens that note in a Holi tab
 ```
 
 That is the whole API. There is nothing else on `holi`.
@@ -99,7 +100,7 @@ These are not oversights — build within them rather than around them.
 
 - **It cannot write anything.** No file writing, no task editing, no note
   creation. An app shows; the agent changes.
-- **It cannot store anything.** `localStorage` and `sessionStorage` *throw* (the
+- **It cannot store anything.** `localStorage` and `sessionStorage` _throw_ (the
   page has an opaque origin), cookies do nothing, and there is no `holi.data`.
   Reloading the tab starts the app from scratch, so it must be useful holding
   nothing: derive the view from the vault every time rather than keeping state.
@@ -107,14 +108,14 @@ These are not oversights — build within them rather than around them.
 - **It cannot read the agent's files.** `AGENTS.md`, `CLAUDE.md`, `MEMORY.md`,
   `USER.local.md` and everything under `.claude/` **and `memory/`** are refused —
   `holi.docs.read` rejects, and they are absent from `holi.docs.list()`. The
-  vault's memory is on that list for the same reason as the rest of it (D89):
+  vault's memory is on that list for the same reason as the rest of it:
   what the user told the assistant does not become readable to untrusted code by
   being spread over more files. An app that wants to show what the vault knows
   has to be told it, not read it.
 - **It cannot reach the rest of the vault directly.** No `fetch` of vault files,
   no access to Holi's own window. The bridge is the only route.
 
-It *can* use the network — a CDN, an API — but a vault is often used offline, so
+It _can_ use the network — a CDN, an API — but a vault is often used offline, so
 prefer writing the code inline over depending on something remote.
 
 ## Seeing whether it works
@@ -160,8 +161,8 @@ legible in the page itself:
 auto-reload — deliberately, because writing `index.html` and then `app.js` would
 otherwise reload on the half-written state and show a broken app.
 
-So whenever you change an app the user may already have open, tell them: *reload
-it with the ⟳ button at the top right of the tab*. Otherwise they are looking at
+So whenever you change an app the user may already have open, tell them: _reload
+it with the ⟳ button at the top right of the tab_. Otherwise they are looking at
 the old version while you describe the new one, and you will both conclude the
 fix did not work.
 
@@ -176,16 +177,27 @@ chosen:
 `--accent` `--destructive` `--border` `--input` `--ring` `--radius`
 
 **`--primary` is a fill, `--brand` is text.** `--primary` is the colour you put
-*behind* something, paired with `--primary-foreground` on top of it; on a dark
+_behind_ something, paired with `--primary-foreground` on top of it; on a dark
 theme it is dark enough to carry near-white text, which makes it far too dark to
-*be* text on a dark background. When you want the brand colour on a number, a
+_be_ text on a dark background. When you want the brand colour on a number, a
 link or a label, reach for `--brand`.
 
 ```css
-body { background: var(--background); color: var(--foreground);
-       font: 14px/1.5 system-ui, sans-serif; margin: 0; padding: 1rem; }
-.card { background: var(--card); border: 1px solid var(--border);
-        border-radius: var(--radius); padding: 1rem; }
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font:
+    14px/1.5 system-ui,
+    sans-serif;
+  margin: 0;
+  padding: 1rem;
+}
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1rem;
+}
 ```
 
 Never hard-code a colour: a literal `#1e1e1e` is the one thing that will look
@@ -206,11 +218,29 @@ reliably comes out unreadable.
   <head>
     <meta charset="utf-8" />
     <style>
-      body { background: var(--background); color: var(--foreground);
-             font: 14px/1.5 system-ui, sans-serif; margin: 0; padding: 2rem; }
-      .n { color: var(--brand); font-size: 2.5rem; font-weight: 600; }
-      .err { color: var(--destructive); white-space: pre-wrap; }
-      button { all: unset; cursor: pointer; color: var(--brand); }
+      body {
+        background: var(--background);
+        color: var(--foreground);
+        font:
+          14px/1.5 system-ui,
+          sans-serif;
+        margin: 0;
+        padding: 2rem;
+      }
+      .n {
+        color: var(--brand);
+        font-size: 2.5rem;
+        font-weight: 600;
+      }
+      .err {
+        color: var(--destructive);
+        white-space: pre-wrap;
+      }
+      button {
+        all: unset;
+        cursor: pointer;
+        color: var(--brand);
+      }
     </style>
   </head>
   <body>
@@ -225,8 +255,9 @@ reliably comes out unreadable.
         try {
           const [docs, tasks] = await Promise.all([holi.docs.list(), holi.tasks.list()])
           document.getElementById('docs').textContent = docs.length
-          document.getElementById('open').textContent =
-            tasks.filter((t) => t.status !== 'done').length
+          document.getElementById('open').textContent = tasks.filter(
+            (t) => t.status !== 'done',
+          ).length
           for (const doc of docs.slice(0, 5)) {
             const li = document.createElement('li')
             const b = document.createElement('button')

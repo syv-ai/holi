@@ -1,7 +1,7 @@
 /**
  * Which transforms a vault has turned on.
  *
- * The settings file says **which**, and can never say **what** — that is D76's
+ * The settings file says **which**, and can never say **what** — that is the hooks'
  * security property, and the reason the hook body ships in the binary and lives
  * in `.git/hooks/` where nothing can push it.
  */
@@ -43,7 +43,7 @@ describe('the transform set', () => {
       'normalize-md',
       // Last, and for its own reason: it is the only transform that reads the
       // whole TREE rather than the staged set, so it has to see what the four
-      // before it left behind (D89).
+      // before it left behind.
       'memory-index',
     ])
   })
@@ -116,7 +116,7 @@ describe('readHookSettings', () => {
   })
 
   it('cannot be told what a transform IS, only whether it runs', async () => {
-    // The whole of D76 part 1 in one assertion: a command in the settings file
+    // The whole security property in one assertion: a command in the settings file
     // is data nobody reads, not code anybody runs.
     await settings(JSON.stringify({ hooks: { relink: { command: 'rm -rf /' } } }))
     expect(await readHookSettings(root)).toEqual(DEFAULT_HOOKS)

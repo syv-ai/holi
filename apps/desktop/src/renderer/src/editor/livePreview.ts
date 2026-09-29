@@ -1,8 +1,7 @@
 /**
  * Live preview: a pure decoration builder over the syntax tree + wiki-link
  * grammar. The ELEMENT the selection touches renders raw; everything else
- * renders, including the rest of its line (D91, narrowing D22's whole-line
- * reveal). `revealedSpans` is the rule: touched edges included, innermost only.
+ * renders, including the rest of its line. `revealedSpans` is the rule: touched edges included, innermost only.
  * Rebuilds on docChanged/selectionSet/viewport.
  */
 import { syntaxTree } from '@codemirror/language'
@@ -188,7 +187,7 @@ class HrWidget extends WidgetType {
   }
 }
 
-/** A range in the document: the unit live preview reveals (D91). */
+/** A range in the document: the unit live preview reveals. */
 export interface Span {
   from: number
   to: number

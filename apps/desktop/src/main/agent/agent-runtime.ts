@@ -1,6 +1,6 @@
 /**
- * One `claude` client in a node-pty PTY (`claude agents` or `claude attach`,
- * D110), its bytes forwarded to the renderer's xterm, and the environment and
+ * One `claude` client in a node-pty PTY (`claude agents` or `claude attach`),
+ * its bytes forwarded to the renderer's xterm, and the environment and
  * binary lookup every `claude` Holi runs shares.
  *
  * node-pty is an Electron-ABI native module, so it loads lazily inside the
@@ -78,14 +78,14 @@ export interface AgentEnvOpts {
   /**
    * The directory holding Holi's generated commands, **prepended to `PATH`**.
    *
-   * It exists for the send gate (D70). The gate is a `PreToolUse` hook matching
+   * It exists for the send gate. The gate is a `PreToolUse` hook matching
    * the command *text*, and `"$HOLI_GOOGLE_BIN" send` contains no `holi-google`
    * at all, so the agent has to type the bare name. `holi` lives in the same
    * directory.
    */
   binDir?: string | null
   /**
-   * Holi's own Claude Code config directory, as `$CLAUDE_CONFIG_DIR` (D72).
+   * Holi's own Claude Code config directory, as `$CLAUDE_CONFIG_DIR`.
    *
    * This is the whole of the isolation: the variable relocates *every*
    * `~/.claude` path, and `~/.claude.json` with them, so a vault session sees
@@ -135,14 +135,14 @@ export function buildAgentEnv(
   env.CLAUDE_CODE_NO_FLICKER = '1'
   // Reserved keys: strip any inherited value so a vault/user env can't spoof
   // the hook target. Holi sets none of them any more: sessions find it through
-  // `holi.env` in their config dir (D110).
+  // `holi.env` in their config dir.
   delete env.HOLI_HOOK_PORT
   delete env.HOLI_HOOK_TOKEN
   delete env.HOLI_GOOGLE_PORT
   delete env.HOLI_GOOGLE_TOKEN
   delete env.HOLI_GOOGLE_BIN
   delete env.HOLI_BIN
-  // Reserved for the same reason (D72): an inherited value would put the agent
+  // Reserved for the same reason: an inherited value would put the agent
   // back on the machine's `~/.claude`.
   delete env.CLAUDE_CONFIG_DIR
   if (opts.configDir) env.CLAUDE_CONFIG_DIR = opts.configDir
@@ -193,7 +193,7 @@ export function resolveClaudeBin(env: NodeJS.ProcessEnv = process.env): string |
 }
 
 /**
- * There is deliberately **no login probe** (D72). Claude Code asks for the login
+ * There is deliberately **no login probe**. Claude Code asks for the login
  * itself, in the terminal; a copy of that state in Holi's chrome cannot be kept
  * in sync, because `/login` fires none of the events Holi sees.
  */
@@ -247,7 +247,7 @@ export class AgentRuntime {
   /**
    * The child's pid while it runs, null otherwise.
    *
-   * **The join key to Claude Code's own session listing** (D100): a row there is
+   * **The join key to Claude Code's own session listing**: a row there is
    * keyed by pid, and this is how Holi says which of its sessions a row is
    * about. Derived from `this.pty`, which `onExit` clears before it emits, so a
    * dead session reports null.

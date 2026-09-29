@@ -1,5 +1,5 @@
 /**
- * The agent turn under review (D88).
+ * The agent turn under review.
  *
  * A turn is a commit range, so everything here is a question asked of git at the
  * moment it is asked. What that leaves worth testing is the ordering: a turn

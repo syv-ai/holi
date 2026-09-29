@@ -1,5 +1,5 @@
 /**
- * The address book: what `@`-completion completes from (D68).
+ * The address book: what `@`-completion completes from.
  *
  * **Two collections, and reading only the first is the mistake to avoid.**
  * `people/me/connections` is the contacts a user has explicitly *saved*, which

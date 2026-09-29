@@ -2,15 +2,15 @@
  * `holi` — the command the agent types to ask Holi to do something.
  *
  * A generated shell script rather than a shipped binary, for the reasons
- * `holi-google` is one (D67): no build step or packaging entry, readable by the
+ * `holi-google` is one: no build step or packaging entry, readable by the
  * person whose machine it is on, and it re-reads `$CLAUDE_CONFIG_DIR/holi.env`
  * at every invocation, so it survives an app restart, which moves the ephemeral
- * port (D110).
+ * port.
  *
  * **Every command is reversible or read-only** (opening a tab, scaffolding a
  * directory, merging Holi's newer skills into the vault's, printing PDF
  * comments), which
- * is why none of them is gated. That is D70's rule reaching the opposite
+ * is why none of them is gated. That is the reversibility rule reaching the opposite
  * conclusion from `holi-google send`.
  */
 import { chmod, mkdir, rm, writeFile } from 'node:fs/promises'
@@ -164,8 +164,8 @@ export async function installHoliCli(userDataDir: string): Promise<string> {
   await writeFile(path, SCRIPT, { mode: 0o755 })
   // `writeFile`'s mode is ignored when the file already exists.
   await chmod(path, 0o755)
-  // The status-line script earlier versions wrote beside this one (D101). Its
-  // setting is removed from each vault's config directory (D110), and a stale
+  // The status-line script earlier versions wrote beside this one. Its
+  // setting is removed from each vault's config directory, and a stale
   // copy would still post to a port that no longer answers.
   await rm(join(userDataDir, 'bin', 'holi-statusline'), { force: true })
   return path

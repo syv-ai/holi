@@ -5,7 +5,7 @@
  * **classifying a refusal** so the caller can tell "reconnect Google" apart
  * from "you are rate limited" apart from "that scope was never granted".
  *
- * The write verbs (D68, D70) differ mainly in whether the answer is read,
+ * The write verbs differ mainly in whether the answer is read,
  * because a write reported as failed after Google accepted it can be a second
  * email rather than a stale button. Everything they can reach is bounded by
  * `GOOGLE_SCOPES`, which buys thread state, drafts, sends and calendar events,
@@ -134,7 +134,7 @@ export class GoogleApi {
   }
 
   /**
-   * A write whose answer is not read, e.g. the mail label changes (D68).
+   * A write whose answer is not read, e.g. the mail label changes.
    *
    * **Returns nothing, deliberately.** Gmail's write endpoints do not all
    * answer with a body. Reading `res.json()` and letting it throw would report
@@ -149,7 +149,7 @@ export class GoogleApi {
   }
 
   /**
-   * A partial update: `events.patch` (D70).
+   * A partial update: `events.patch`.
    *
    * `PATCH` rather than `PUT`: `events.update` replaces the whole resource, so
    * every field the caller did not think to send comes back blank. Moving an
@@ -160,7 +160,7 @@ export class GoogleApi {
     await res.text().catch(() => '')
   }
 
-  /** A delete: `events.delete` (D70). Answers 204 with no body. */
+  /** A delete: `events.delete`. Answers 204 with no body. */
   async del(url: string): Promise<void> {
     const res = await this.#write('DELETE', url)
     await res.text().catch(() => '')
@@ -168,7 +168,7 @@ export class GoogleApi {
 
   /**
    * A write whose answer is worth reading: `messages.send` and `drafts.create`
-   * both return an id (D70).
+   * both return an id.
    *
    * Outcomes are split by what Google said, not by what we could read. A
    * non-2xx throws. A 2xx whose body is empty or unparseable resolves to
@@ -184,7 +184,7 @@ export class GoogleApi {
   }
 
   /**
-   * A replacing write whose answer is worth reading: `drafts.update` (D71).
+   * A replacing write whose answer is worth reading: `drafts.update`.
    *
    * `PUT`, unlike `patch`: a draft is rewritten whole on every save, threading
    * headers included, because a saved draft can be sent from a phone and has
@@ -241,7 +241,11 @@ async function classify(res: Response): Promise<GoogleApiError> {
     return new GoogleApiError('reconnect', 401, 'the Google connection is no longer valid')
   }
   if (res.status === 403) {
-    if (reason === 'rateLimitExceeded' || reason === 'userRateLimitExceeded' || reason === 'quotaExceeded') {
+    if (
+      reason === 'rateLimitExceeded' ||
+      reason === 'userRateLimitExceeded' ||
+      reason === 'quotaExceeded'
+    ) {
       return new GoogleApiError('rate-limit', 403, 'Google is rate limiting this request')
     }
     if (reason === 'insufficientPermissions' || reason === 'ACCESS_TOKEN_SCOPE_INSUFFICIENT') {

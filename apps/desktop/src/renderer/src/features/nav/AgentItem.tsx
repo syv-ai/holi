@@ -1,5 +1,5 @@
 /**
- * The vault's assistant as one of the nav menu's items (D110): Claude Code's
+ * The vault's assistant as one of the nav menu's items: Claude Code's
  * agent list, where sessions are started and picked up, in a tab of its own.
  *
  * Green while any of the vault's sessions is running, the menu's grey

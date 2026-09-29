@@ -209,7 +209,9 @@ afterEach(() => {
 
 test('shows the subject, which is the whole point of a thread list', async () => {
   // The header-request side of this is covered in google-gmail.test.ts.
-  threadMock.mockResolvedValue(page([summary({ subject: 'Q2 budget', from: { name: 'Jane Doe', email: 'jane@doe.test' } })]))
+  threadMock.mockResolvedValue(
+    page([summary({ subject: 'Q2 budget', from: { name: 'Jane Doe', email: 'jane@doe.test' } })]),
+  )
 
   render(<MailView />)
 
@@ -858,7 +860,9 @@ test('opens the newest message and collapses the history above it', async () => 
   await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
 
   const older = await screen.findByRole('button', { name: /expand message 1 of 2 from Jane/i })
-  expect(screen.getByRole('button', { name: /collapse message 2 of 2 from Mette/i })).toBeInTheDocument()
+  expect(
+    screen.getByRole('button', { name: /collapse message 2 of 2 from Mette/i }),
+  ).toBeInTheDocument()
 
   await user.click(older)
   expect(
@@ -1011,7 +1015,7 @@ test('typing @ in the search box offers people from the mail on screen', async (
 })
 
 /**
- * Triage (D68): opening spends a request only when there is something to
+ * Triage: opening spends a request only when there is something to
  * change, the row moves without a refetch, and a refusal puts the row back.
  */
 
@@ -1033,7 +1037,9 @@ test('opening an unread thread marks it read, once, and the row stops being bold
   await waitFor(() => expect(setReadMock).toHaveBeenCalledWith({ id: 't1', read: true }))
   expect(setReadMock).toHaveBeenCalledTimes(1)
   // Locally, with no second `threads.query`.
-  await waitFor(() => expect(rowIsUnread(screen.getByRole('button', { name: /Q2 budget/ }))).toBe(false))
+  await waitFor(() =>
+    expect(rowIsUnread(screen.getByRole('button', { name: /Q2 budget/ }))).toBe(false),
+  )
   expect(threadMock).toHaveBeenCalledTimes(1)
 })
 
@@ -1059,7 +1065,9 @@ test('a refused mark-read puts the row back to unread', async () => {
 
   await waitFor(() => expect(setReadMock).toHaveBeenCalled())
   // The optimistic clear is undone: the mailbox still says unread.
-  await waitFor(() => expect(rowIsUnread(screen.getByRole('button', { name: /Q2 budget/ }))).toBe(true))
+  await waitFor(() =>
+    expect(rowIsUnread(screen.getByRole('button', { name: /Q2 budget/ }))).toBe(true),
+  )
 })
 
 test('stars and unstars the open thread', async () => {
@@ -1201,7 +1209,9 @@ test('“always from this sender” is remembered in main, keyed on the address'
   const article = await openThread()
   await user.click(within(article).getByRole('button', { name: /always from this sender/i }))
 
-  await waitFor(() => expect(allowImagesFromMock).toHaveBeenCalledWith({ sender: 'jane@example.com' }))
+  await waitFor(() =>
+    expect(allowImagesFromMock).toHaveBeenCalledWith({ sender: 'jane@example.com' }),
+  )
   // And it takes effect now, not on the next launch.
   expect(within(article).queryByRole('button', { name: /^load images$/i })).toBeNull()
 })
@@ -1429,9 +1439,7 @@ test('closing the find takes every mark with it', async () => {
 
   await user.click(screen.getByRole('button', { name: 'close find' }))
 
-  await waitFor(() =>
-    expect(document.querySelectorAll('[data-holi-find]')).toHaveLength(0),
-  )
+  await waitFor(() => expect(document.querySelectorAll('[data-holi-find]')).toHaveLength(0))
   // The text is intact, not left in pieces by the unwrapping.
   expect(screen.getByText(/the budget answer/)).toBeInTheDocument()
 })
@@ -1589,9 +1597,7 @@ test('forgets a selected thread that is no longer in the list', async () => {
  */
 
 /** Right-click the one thread row and hand back the menu. */
-async function openRowMenu(
-  user: ReturnType<typeof userEvent.setup>,
-): Promise<HTMLElement> {
+async function openRowMenu(user: ReturnType<typeof userEvent.setup>): Promise<HTMLElement> {
   fireEvent.contextMenu(await screen.findByRole('button', { name: /Q2 budget/ }))
   return await screen.findByRole('menu')
 }
@@ -1639,7 +1645,9 @@ test('offers Unsubscribe only when the sender advertised one', async () => {
   const user = userEvent.setup()
   render(<MailView />)
 
-  expect(within(await openRowMenu(user)).queryByRole('menuitem', { name: 'Unsubscribe' })).toBeNull()
+  expect(
+    within(await openRowMenu(user)).queryByRole('menuitem', { name: 'Unsubscribe' }),
+  ).toBeNull()
 })
 
 test('surfaces a refused row action rather than silently reverting', async () => {
@@ -1807,7 +1815,9 @@ test('a failed write does not roll back a refresh that landed while it was in fl
 
   // The stale snapshot must not come back.
   expect(await screen.findByText(/Reconnect Google in settings/)).toBeInTheDocument()
-  await waitFor(() => expect(screen.getByRole('button', { name: /Newer thing/ })).toBeInTheDocument())
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: /Newer thing/ })).toBeInTheDocument(),
+  )
 })
 
 test('reads the refusal from the code, not from Google’s prose', async () => {
@@ -1895,7 +1905,7 @@ test('does not churn the frame when nothing about the policy changed', async () 
 })
 
 /**
- * Replying without leaving (D71).
+ * Replying without leaving.
  *
  * The composer appears *inside the thread*, so the message being answered
  * stays on screen, and sending refreshes the thread rather than inventing a
@@ -1988,7 +1998,7 @@ test('open in Gmail is still there — leaving is a choice, not a fallback', asy
 })
 
 /**
- * The Drafts view (D71).
+ * The Drafts view.
  *
  * No route to a half-written message ends at a browser: a draft that belongs
  * to no thread, a thread that has one, and a thread that has two.
@@ -2145,7 +2155,7 @@ test('the thread list comes back when Mail is chosen again', async () => {
 })
 
 /**
- * A new message (D71).
+ * A new message.
  *
  * A dialog, where a reply is inline: a fresh message has no context to
  * preserve.

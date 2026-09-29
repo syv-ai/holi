@@ -1,7 +1,7 @@
 /**
  * The JavaScript half of the app's motion vocabulary. The vocabulary itself is
  * CSS (`index.css`, Motion tier); nothing here restates a duration or a curve.
- * See `docs/ui-system.md` (D98).
+ * See `docs/ui-system.md`.
  */
 
 /**
@@ -51,7 +51,7 @@ export function prefersReducedMotion(): boolean {
  * Which ids in a keyed list have just appeared, and in what order.
  *
  * The gate for an arrival: an `animation` on a list's children would replay on
- * every re-render (D92), so a row animates because it is new, a fact about two
+ * every re-render, so a row animates because it is new, a fact about two
  * renders.
  *
  * The first render returns nothing: a mount is the shell's arrival to make.

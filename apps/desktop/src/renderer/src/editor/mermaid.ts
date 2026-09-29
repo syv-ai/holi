@@ -1,6 +1,6 @@
 /**
  * A ```mermaid fence draws as a diagram, and shows its source when the
- * selection touches it (`touches`, D91).
+ * selection touches it (`touches`).
  *
  * A StateField, not a case in `livePreview`: CodeMirror refuses block
  * decorations from a `ViewPlugin` (`RangeError: Block decorations may not be

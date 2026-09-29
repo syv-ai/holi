@@ -72,7 +72,7 @@ import { useTreeProjection } from './useTreeProjection'
  * open folder's contents hung from a rounded connector whose path to the open
  * file is drawn in the brand colour.
  *
- * An app bundle (D107) is a folder that behaves as a file: a click opens the
+ * An app bundle is a folder that behaves as a file: a click opens the
  * app, and its files show only when it is expanded, by → or Show Contents.
  *
  * A view of the snapshot that owns no vault data. Its rules (which rows show,

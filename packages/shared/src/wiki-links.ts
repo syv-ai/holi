@@ -1,6 +1,6 @@
 /**
  * Canonical grammar for vault references in note markdown: one parser, thin
- * renderers (D12/D22, docs/features/wiki-links.md).
+ * renderers (docs/features/wiki-links.md).
  *
  *  - `[[vault-relative/path.md]]` wiki-links, optionally `[[path|Label]]`
  *
@@ -89,7 +89,7 @@ export function wikiLinksToText(text: string): string {
 
 /**
  * Rewrite every link targeting `fromPath` to `toPath`, preserving labels
- * (the D12 rename primitive, applied to each affected doc's text). Links to
+ * (the rename primitive, applied to each affected doc's text). Links to
  * other targets are untouched. Matching uses the same trimming as the parser,
  * and rewritten tokens come out normalized.
  */

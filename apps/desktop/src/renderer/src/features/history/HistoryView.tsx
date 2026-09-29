@@ -210,7 +210,7 @@ export function HistoryView(): React.JSX.Element {
     if (c.sha !== selectedSha) void selectCommit(c.sha)
   }
 
-  // The commit on the remote: GitHub is the vault's host (D60).
+  // The commit on the remote: GitHub is the vault's host.
   const openCommit = (sha: string) => {
     if (remote !== null) void window.holi.openExternal(`https://github.com/${remote}/commit/${sha}`)
   }

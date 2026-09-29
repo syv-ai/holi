@@ -42,7 +42,7 @@ describe('ensureAgentConfigDir', () => {
   })
 
   it('gives two vaults two directories, and what one holds the other never sees', async () => {
-    // The whole of D86: `plugins/`, marketplaces and settings are keyed by the
+    // The whole point of a directory per vault: `plugins/`, marketplaces and settings are keyed by the
     // config directory and by nothing else, so sharing one shares capability.
     const userData = await tempDir()
     const mine = await ensureAgentConfigDir(userData, VAULT)
@@ -59,8 +59,8 @@ describe('ensureAgentConfigDir', () => {
   })
 
   it("stamps Claude Code's theme, and re-stamps it on every spawn", async () => {
-    // `theme` is not a default: it tracks a live Holi setting (D85's resolved
-    // mode), so unlike the connector opt-out the last write has to win. What the
+    // `theme` is not a default: it tracks a live Holi setting (the resolved
+    // colour mode), so unlike the connector opt-out the last write has to win. What the
     // user typed alongside it still survives.
     const userData = await tempDir()
     const configDir = await ensureAgentConfigDir(userData, VAULT, { theme: 'light' })
@@ -107,7 +107,7 @@ describe('ensureAgentConfigDir', () => {
 
   it("hands every session Holi's static paths through the settings env block", async () => {
     // A background session's environment is the supervisor's, but a settings
-    // `env` block reaches it (D110). The user's own keys stay; Holi's track.
+    // `env` block reaches it. The user's own keys stay; Holi's track.
     const userData = await tempDir()
     const configDir = await ensureAgentConfigDir(userData, VAULT, {
       env: { HOLI_BIN: '/old/bin/holi' },
@@ -198,7 +198,7 @@ describe('agentConfigSlug', () => {
   it('separates two remotes that sanitize alike', () => {
     // Claude Code's own projects/ convention (non-alphanumerics to dashes) maps
     // both of these to `syv-better-holi`. Two vaults sharing one config dir is
-    // the plugin leak D86 exists to kill, so the name carries a hash of the remote.
+    // the plugin leak a directory per vault exists to kill, so the name carries a hash of the remote.
     expect(agentConfigSlug('syv/better-holi')).not.toBe(agentConfigSlug('syv-better/holi'))
   })
 
@@ -334,7 +334,7 @@ describe('migrateSharedAgentConfig', () => {
     { remote: VAULT, path: '/Holi/owner/repo' },
   ]
 
-  /** The shared directory as D72 left it: logged in, with one vault's transcripts. */
+  /** The shared directory as earlier versions left it: logged in, with one vault's transcripts. */
   async function shared(usedBy = '/Holi/owner/repo'): Promise<string> {
     const userData = await tempDir()
     const dir = flat(userData)

@@ -183,7 +183,7 @@ export function VaultSection(): React.JSX.Element {
 }
 
 /**
- * The open vault's way out (D109): Leave for a collaborator, Delete for an
+ * The open vault's way out: Leave for a collaborator, Delete for an
  * admin, Remove when GitHub no longer shows it. Each opens the confirm the
  * vault picker's options open too.
  */

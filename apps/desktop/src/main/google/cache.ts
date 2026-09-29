@@ -2,7 +2,7 @@
  * The Google cache: what a launch paints before Google answers.
  *
  * Not a mirror: it holds the last N threads for the questions actually asked,
- * and Google stays the source of truth. One file per account (D87), and
+ * and Google stays the source of truth. One file per account, and
  * Disconnect deletes the file. With `mail-sync.ts` on top, a refresh with
  * nothing new costs **one request instead of twenty-six**.
  *
@@ -35,7 +35,7 @@ const SIDECARS = ['-wal', '-shm', '-journal']
 export interface GoogleCache {
   /**
    * Wipe if the stored row shape is from an older release. Call before first use.
-   * Accounts are kept apart by living in **different files** (D87), not by a
+   * Accounts are kept apart by living in **different files**, not by a
    * wipe here.
    */
   ensureShape(): void
@@ -141,7 +141,10 @@ export function openGoogleCache(path: string): GoogleCache {
    * means go and ask Google.
    */
   function isAnswered(kind: string, key: string): boolean {
-    return database().prepare('SELECT 1 FROM answered WHERE kind = ? AND key = ?').get(kind, key) !== undefined
+    return (
+      database().prepare('SELECT 1 FROM answered WHERE kind = ? AND key = ?').get(kind, key) !==
+      undefined
+    )
   }
 
   function markAnswered(kind: string, key: string): void {
@@ -151,9 +154,10 @@ export function openGoogleCache(path: string): GoogleCache {
   return {
     ensureShape() {
       const read = (key: string): string | undefined =>
-        (database().prepare('SELECT value FROM meta WHERE key = ?').get(key) as
-          | { value?: string }
-          | undefined)?.value
+        (
+          database().prepare('SELECT value FROM meta WHERE key = ?').get(key) as
+            { value?: string } | undefined
+        )?.value
 
       // Rows are stored as whole objects, so a release that changes
       // `MailThreadSummary` would serve yesterday's JSON into today's UI and
@@ -161,7 +165,9 @@ export function openGoogleCache(path: string): GoogleCache {
       // free: this is a cache.
       if (read('shape') === SHAPE_VERSION) return
 
-      database().exec('DELETE FROM threads; DELETE FROM agenda; DELETE FROM answered; DELETE FROM meta;')
+      database().exec(
+        'DELETE FROM threads; DELETE FROM agenda; DELETE FROM answered; DELETE FROM meta;',
+      )
       database().prepare('INSERT INTO meta (key, value) VALUES (?, ?)').run('shape', SHAPE_VERSION)
     },
 
@@ -196,9 +202,14 @@ export function openGoogleCache(path: string): GoogleCache {
 
       const added = new Set(change.added)
       const removed = new Set(change.removed)
-      const update = database().prepare('UPDATE threads SET json = ? WHERE key = ? AND position = ?')
+      const update = database().prepare(
+        'UPDATE threads SET json = ? WHERE key = ? AND position = ?',
+      )
       for (const row of rows) {
-        const patched = applyLabelDelta(JSON.parse(row.json) as MailThreadSummary, { added, removed })
+        const patched = applyLabelDelta(JSON.parse(row.json) as MailThreadSummary, {
+          added,
+          removed,
+        })
         update.run(JSON.stringify(patched), row.key, row.position)
       }
     },
@@ -228,14 +239,16 @@ export function openGoogleCache(path: string): GoogleCache {
     },
 
     historyId(key) {
-      const row = database().prepare('SELECT value FROM meta WHERE key = ?').get(historyKey(key)) as
-        | { value?: string }
-        | undefined
+      const row = database()
+        .prepare('SELECT value FROM meta WHERE key = ?')
+        .get(historyKey(key)) as { value?: string } | undefined
       return row?.value ?? null
     },
 
     setHistoryId(key, id) {
-      database().prepare('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)').run(historyKey(key), id)
+      database()
+        .prepare('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)')
+        .run(historyKey(key), id)
     },
 
     destroy() {

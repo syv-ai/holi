@@ -171,8 +171,8 @@ export async function openActiveVault(args: {
    * is committed, so the snapshot says nothing.
    */
   onCommitted?: (paths: string[] | null) => void
-  /** Where this vault's git hook calls back (D76). Takes the remote so the
-   *  token is minted for THIS vault (D87): the endpoint is written into this
+  /** Where this vault's git hook calls back. Takes the remote so the
+   *  token is minted for THIS vault: the endpoint is written into this
    *  clone's `.git/hooks`, and a shared token would let a commit here run the
    *  staged transforms against whichever vault is on screen. */
   hookEndpoint?: (remote: string) => { port: number; token: string } | null
@@ -265,7 +265,7 @@ export async function openActiveVault(args: {
       // A vault directory can vanish under us (a user deleting the clone in
       // Finder), and a throw here must not take the heal loop down with it. An
       // empty vault is the honest reading of an absent one.
-      cached = await scanVault(root).catch(() => (emptyVaultSnapshot()))
+      cached = await scanVault(root).catch(() => emptyVaultSnapshot())
       if (!closed) args.onSnapshot(cached)
     } finally {
       scanning = false
@@ -367,7 +367,9 @@ export async function openActiveVault(args: {
       const sizes = new Map<string, number>()
       await Promise.all(
         status.dirtyPaths.map(async (p) => {
-          const size = await stat(join(root, p)).then((s) => s.size).catch(() => null)
+          const size = await stat(join(root, p))
+            .then((s) => s.size)
+            .catch(() => null)
           if (size !== null) sizes.set(p, size)
         }),
       )
@@ -523,7 +525,7 @@ export async function openActiveVault(args: {
    * Push local commits now, best-effort. Called by the coalescer, the leave
    * points (⌘S, vault switch, quit), and after coming back to the app.
    *
-   * The failure taxonomy is the whole point (D61):
+   * The failure taxonomy is the whole point:
    *   - **non-fast-forward** → pull inline, then retry once. A conflicting pull
    *     routes into the existing conflict path via `maybePull`.
    *   - **network** → `offline`; the coalescer, focus and the pull loop retry.
@@ -744,8 +746,8 @@ export function createVaultHost(args: {
   onSyncState: (state: SyncState) => void
   onHeldBack?: (files: HeldBackFile[]) => void
   onCommitted?: (paths: string[] | null) => void
-  /** Where this vault's git hook calls back (D76). Takes the remote so the
-   *  token is minted for THIS vault (D87): the endpoint is written into this
+  /** Where this vault's git hook calls back. Takes the remote so the
+   *  token is minted for THIS vault: the endpoint is written into this
    *  clone's `.git/hooks`, and a shared token would let a commit here run the
    *  staged transforms against whichever vault is on screen. Read per open:
    *  the hook server binds after the host is built, and the port moves on
@@ -754,7 +756,7 @@ export function createVaultHost(args: {
   /**
    * Let go of whatever is running against this vault, before it closes.
    *
-   * The agent's sessions (D100) are the reason it exists. `VaultHost` holds
+   * The agent's sessions are the reason it exists. `VaultHost` holds
    * exactly one `ActiveVault`, so a session left running in the vault being
    * closed has no repo, no watcher and no sync loop behind it; and its teardown
    * resumes the sync loop and may take a settle commit, both of which have to

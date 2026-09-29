@@ -1,5 +1,5 @@
 /**
- * Every unsent draft, in one list (D71).
+ * Every unsent draft, in one list.
  *
  * - **A new-message draft is reachable.** It belongs to no thread, so without
  *   this list the only way back to it is Gmail.

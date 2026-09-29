@@ -1,5 +1,5 @@
 /**
- * What Claude Code says about a vault's sessions (D110).
+ * What Claude Code says about a vault's sessions.
  *
  * A session is a Claude Code **background session**: its supervisor runs it,
  * its short job id names it, and `claude agents --json` is the supported way to

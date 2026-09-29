@@ -30,7 +30,7 @@ describe('VAULT_SETTING_DEFAULTS', () => {
     expect(VAULT_SETTING_DEFAULTS.colorScheme).toBe('system')
   })
 
-  it('keeps archive-done opt-in, because it rearranges someone’s work (D76)', () => {
+  it('keeps archive-done opt-in, because it rearranges someone’s work', () => {
     expect(VAULT_SETTING_DEFAULTS.hooks).toEqual({
       relink: true,
       'archive-done': false,
@@ -39,7 +39,7 @@ describe('VAULT_SETTING_DEFAULTS', () => {
       // only on a file's first commit, and the alternative is a note without a
       // created date and without its "N chars · Last updated" bar (#17).
       'scaffold-md': true,
-      // On for relink's reason (D89): it only ever rewrites a file it generated
+      // On for relink's reason: it only ever rewrites a file it generated
       // and that says so on its first line.
       'memory-index': true,
     })
@@ -226,7 +226,7 @@ describe('parseLandingTarget — the trust boundary', () => {
     expect(parseLandingTarget(value)).toEqual(value)
   })
 
-  it('reads a pre-D107 app id as the bundle opening the vault moved it to', () => {
+  it('reads an old app id as the bundle opening the vault moved it to', () => {
     expect(parseLandingTarget({ kind: 'app', appId: 'retro' })).toEqual({
       kind: 'app',
       path: 'retro.app',
@@ -342,7 +342,7 @@ describe('VAULT_SETTING_DESCRIPTORS', () => {
     expect(values).toEqual(['daily', 'board', 'agenda', 'mail'])
   })
 
-  it('gives the file-size cap a row without seeding it (D85 survives)', () => {
+  it('gives the file-size cap a row without seeding it', () => {
     // The distinction the row rests on: a pane is one person choosing for one
     // vault, where the SEED would freeze a number into every vault and make
     // raising the default later reach none of them.
@@ -383,7 +383,7 @@ describe('seedSettings', () => {
     expect(Object.keys(seeded).sort()).toEqual(['dailyNotes', 'hooks', 'landing'])
   })
 
-  it('still declares every transform D76 expects, with archive-done off', () => {
+  it('still declares every transform the hooks expect, with archive-done off', () => {
     // The seed used to be a hand-written literal. If a descriptor drops a
     // transform, the seed silently stops declaring it and the vault inherits a
     // default it never stated.
@@ -667,7 +667,6 @@ describe('editorFont', () => {
     expect(seedSettings('local')).not.toHaveProperty('editorFont')
   })
 })
-
 
 describe('the schema is the only declaration', () => {
   // The whole point of collapsing four hand-written lists into one. Before this,

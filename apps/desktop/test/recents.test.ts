@@ -1,5 +1,5 @@
 /**
- * Recents (D102): the pure rules, and the per-vault atoms over them.
+ * Recents: the pure rules, and the per-vault atoms over them.
  */
 import { createStore } from 'jotai'
 import { describe, expect, it } from 'vitest'

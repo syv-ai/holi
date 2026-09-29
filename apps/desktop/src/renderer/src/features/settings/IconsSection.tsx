@@ -1,7 +1,7 @@
 /**
- * Every icon this vault has set, in one place (D82).
+ * Every icon this vault has set, in one place.
  *
- * **Icons rot on rename, by design** (D82: the map is keyed by path). So this
+ * **Icons rot on rename, by design** (the map is keyed by path). So this
  * marks an entry whose path is no longer in the vault rather than hiding it: a
  * stale entry is invisible everywhere else, and this is the only place to
  * clean it up.

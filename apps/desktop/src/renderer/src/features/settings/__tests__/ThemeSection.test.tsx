@@ -1,5 +1,5 @@
 /**
- * The theme's controls (D64).
+ * The theme's controls.
  *
  * The pane renders every whitelisted token rather than a list of its own, a
  * reset DELETES the key rather than writing a blank, and the two axes (mode and

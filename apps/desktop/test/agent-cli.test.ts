@@ -84,7 +84,7 @@ beforeEach(async () => {
   server = createHookServer({
     onJobTurn: () => {},
     log: () => {},
-    // One vault in these; the server routes by the caller's token (D87).
+    // One vault in these; the server routes by the caller's token.
     opsFor: () => createAgentOps(deps),
   })
   await server.start()

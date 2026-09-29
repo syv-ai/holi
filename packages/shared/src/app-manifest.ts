@@ -19,7 +19,7 @@ import { parse as parseYaml } from 'yaml'
 export const APP_MANIFEST_FILE = 'app.yaml'
 
 export interface AppManifest {
-  /** Free text, for the launchers. The name is the bundle's folder name (D107),
+  /** Free text, for the launchers. The name is the bundle's folder name,
    *  and the icon is the vault icon map's, as for any row. */
   description?: string
 }

@@ -1,7 +1,7 @@
 /**
  * Recurrence roll-forward math: pure functions over stamps (`YYYY-MM-DD`, or
- * `YYYY-MM-DDTHH:MM`; the hour rides along and the arithmetic is on days)
- * (D19). Main runs this when a task is completed; the renderer only displays
+ * `YYYY-MM-DDTHH:MM`; the hour rides along and the arithmetic is on days).
+ * Main runs this when a task is completed; the renderer only displays
  * the results.
  */
 import {
@@ -57,7 +57,7 @@ export function describeRecurrence(rule: Recurrence): string {
  * date, or null if the date can't be parsed or the next occurrence would be
  * past `endDate`.
  *
- * `currentDue` is a **stamp** (D79): if it names an hour, the result names the
+ * `currentDue` is a **stamp**: if it names an hour, the result names the
  * same one. The time is split off before stepping and put back after, because
  * the month and year helpers clamp on days (Jan 31 + 1 month → Feb 28).
  */

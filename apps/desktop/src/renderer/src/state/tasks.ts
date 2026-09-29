@@ -198,7 +198,7 @@ export function dropIntent(task: Task, targetLane: string, targetStatus: TaskSta
 // ------------------------------------------------------------------- writes
 //
 // Every write re-reads the vault. No optimistic patching and no
-// mutation-result-as-truth: the file on disk is the only truth (D60).
+// mutation-result-as-truth: the file on disk is the only truth.
 
 export const createTaskAtom = atom(
   null,

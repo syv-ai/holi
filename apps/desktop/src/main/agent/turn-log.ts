@@ -1,12 +1,12 @@
 /**
- * What an agent turn changed, as two commit shas (D88).
+ * What an agent turn changed, as two commit shas.
  *
  * **The record is a range and nothing else.** No path list, no content, no
  * queue: `base` at turn start, `end` at the turn's settle commit, and the files
  * come from `git diff base..end` when someone asks. Storing paths as well would
  * duplicate what git holds, and go stale.
  *
- * **`.local.`, so it never syncs** (D65). A turn happened on this machine, not
+ * **`.local.`, so it never syncs**. A turn happened on this machine, not
  * in the vault's content.
  *
  * **A broken log must never break a turn.** Every read failure answers `[]`, and
@@ -29,7 +29,7 @@ export interface TurnRecord {
   end: string
   /** ISO timestamp of the turn's end. */
   at: string
-  /** Which of the vault's agent sessions ran it (D100). May be absent. */
+  /** Which of the vault's agent sessions ran it. May be absent. */
   sessionId?: string
   /** Another session's turn was open at the same instant, so this range contains
    *  work this turn did not do — they shared a settle commit and therefore an

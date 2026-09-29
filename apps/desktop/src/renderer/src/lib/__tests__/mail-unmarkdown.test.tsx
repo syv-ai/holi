@@ -1,5 +1,5 @@
 /**
- * HTML → markdown (D71).
+ * HTML → markdown.
  *
  * Two callers: opening a draft Holi did not write, and quoting an HTML-only
  * parent. Both are third-party markup, so the sanitiser runs before `turndown`,
@@ -141,9 +141,7 @@ describe('mailHtmlToMarkdown', () => {
   })
 
   it('keeps a nested list nested', () => {
-    const markdown = mailHtmlToMarkdown(
-      '<ul><li>one<ul><li>one a</li></ul></li><li>two</li></ul>',
-    )
+    const markdown = mailHtmlToMarkdown('<ul><li>one<ul><li>one a</li></ul></li><li>two</li></ul>')
 
     // The indent width is turndown's business; that nesting survives is ours.
     expect(markdown).toMatch(/^- +one$/m)

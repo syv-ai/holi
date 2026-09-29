@@ -2,7 +2,7 @@
  * Tells CodeMirror which colour mode it is in. Its base theme picks between
  * `&light` / `&dark` rules from `EditorView.darkTheme`, and unset means light.
  *
- * Read off the root's `data-theme` stamp (D85 resolves "system" before
+ * Read off the root's `data-theme` stamp ("system" is resolved before
  * stamping). A MutationObserver rather than a prop, because a view outlives a
  * theme flip.
  */

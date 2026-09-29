@@ -14,7 +14,7 @@ const task = (over: Partial<Task> = {}): Task => ({
 
 const NONE = (): Delivered => ({})
 
-// A reminder is the moment itself now (D79), so the fire time IS the stored
+// A reminder is the moment itself now, so the fire time IS the stored
 // value — `due` is along for the ride and no longer participates.
 const DUE = '2026-07-29'
 const FIRE = '2026-07-28T09:00'

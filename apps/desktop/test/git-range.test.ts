@@ -1,5 +1,5 @@
 /**
- * `head()` and `rangeFiles()` — the two git questions an agent turn asks (D88).
+ * `head()` and `rangeFiles()` — the two git questions an agent turn asks.
  *
  * A turn is a commit range, so what it changed is `git diff base..end` and
  * nothing else. That is the whole reason it is a range rather than a tool-level
@@ -13,7 +13,13 @@
 import { rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
-import { cleanupFixtures, commitFile, makeClone, makeRemote, plainGit } from './helpers/git-fixtures'
+import {
+  cleanupFixtures,
+  commitFile,
+  makeClone,
+  makeRemote,
+  plainGit,
+} from './helpers/git-fixtures'
 import { openRepo } from '../src/main/git'
 
 afterAll(cleanupFixtures)

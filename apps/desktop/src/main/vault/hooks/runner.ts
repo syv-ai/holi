@@ -4,9 +4,9 @@
  *
  * **A transform never vetoes a commit.** Holi's auto-commit IS the user's save,
  * and a transform is only an opinion about tidiness. A transform that throws is
- * caught and logged, and the commit proceeds (D76).
+ * caught and logged, and the commit proceeds.
  *
- * **Settings choose which transforms run, never what one is** (D74, D76): the
+ * **Settings choose which transforms run, never what one is**: the
  * script body ships in the binary and `.holi/settings/app.yaml` carries booleans.
  */
 import { execFile } from 'node:child_process'

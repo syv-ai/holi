@@ -34,7 +34,7 @@ async function rig(): Promise<Rig> {
 }
 
 describe('ContextSnapshot', () => {
-  it('writes the focused note and open paths — nothing else (D60)', async () => {
+  it('writes the focused note and open paths — nothing else', async () => {
     const r = await rig()
     r.snapshot.setFocus({ focusedPath: NOTE_PATH, openPaths: [NOTE_PATH, OTHER_PATH] })
     await r.snapshot.flush()

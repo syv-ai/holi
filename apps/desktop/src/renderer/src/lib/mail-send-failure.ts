@@ -1,5 +1,5 @@
 /**
- * Why a send or save did not happen, and what the user can do about it (D71).
+ * Why a send or save did not happen, and what the user can do about it.
  *
  * The action is the point: permission failures have a fix the user can
  * perform, rate limits one worth offering, and the rest none, so the text is

@@ -1,5 +1,5 @@
 /**
- * The vault's colours and chrome, with real controls (D64).
+ * The vault's colours and chrome, with real controls.
  *
  * **Two axes, chosen once for the whole section rather than per token:**
  *

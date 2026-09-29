@@ -6,7 +6,7 @@ import { MorphDialog } from './MorphDialog'
 
 /**
  * shadcn's Command (registry `command`, shadcn 4.21, cmdk 1.1.1), for the
- * palette (D102). Every export is the registry's, restyled as the nav menu's
+ * palette. Every export is the registry's, restyled as the nav menu's
  * family (`MorphingMenu`): its surface, its rows, its springs. One export is
  * composed by hand:
  *

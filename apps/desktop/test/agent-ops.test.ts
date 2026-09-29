@@ -38,7 +38,7 @@ async function rig(overrides: Partial<AgentOpsDeps> = {}) {
   const server = createHookServer({
     onJobTurn: (_remote, _job, active) => (active ? (starts += 1) : (ends += 1)),
     log: () => {},
-    // One vault in these; the server routes by the caller's token (D87).
+    // One vault in these; the server routes by the caller's token.
     opsFor: () => createAgentOps(deps),
   })
   servers.push(server)

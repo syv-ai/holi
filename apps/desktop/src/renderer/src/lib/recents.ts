@@ -1,5 +1,5 @@
 /**
- * A most-recent-first list of things opened or run (D102).
+ * A most-recent-first list of things opened or run.
  *
  * An entry moves to the front rather than appearing twice, the list is capped,
  * and dead entries are pruned by a caller-supplied liveness test, since this
@@ -25,7 +25,7 @@ export function entryOfTab(tab: Tab): RecentEntry {
       return { kind: 'path', key: tab.path }
     case 'app':
       return { kind: 'app', key: tab.path }
-    // An agent tab is a terminal, whatever session it shows now (D110).
+    // An agent tab is a terminal, whatever session it shows now.
     case 'agent':
       return { kind: 'terminal', key: tab.id }
     default:

@@ -1,8 +1,8 @@
 /**
  * Which vault apps exist, and the actions on them (`docs/features/vault-apps.md`).
  *
- * An app is a bundle, a directory named `<name>.app` anywhere in the vault
- * (D107), holding **both** an entry document (`index.html`) and a manifest
+ * An app is a bundle, a directory named `<name>.app` anywhere in the vault,
+ * holding **both** an entry document (`index.html`) and a manifest
  * (`app.yaml`) at its own root. The manifest is the "finished" marker, written
  * last: without it an app would appear the moment its first byte lands and open
  * to a half-written page. It is not sufficient on its own, since an app with no
@@ -10,7 +10,7 @@
  *
  * The same rule is re-implemented in `main/apps/app-ops.ts` and the
  * `vault-app-check` hook, deliberately: there is no shared layer, and inventing
- * one for three call sites is the mistake D74 refused.
+ * one for three call sites is the mistake vault apps refused.
  *
  * Derived from the snapshot, so a finished app appears as soon as the watcher
  * rescans.

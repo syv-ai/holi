@@ -1,10 +1,10 @@
 /**
- * Writing a mail, inside Holi (D71).
+ * Writing a mail, inside Holi.
  *
  * **The preview is the artifact, not a likeness of it.** `renderMailMarkdown`
  * produces the bytes shown in the preview pane *and* the `text/html` part that
  * is sent; the only difference is the remote-image flag (the preview holds
- * remote images back, D69), so they cannot drift.
+ * remote images back), so they cannot drift.
  *
  * **Autosave is single-flight and latest-wins.** A second `create` while the
  * first is in flight makes a second draft, and the message forks.
@@ -89,7 +89,7 @@ export function MailComposer({
     intent.kind === 'new' ? undefined : intent.threadId,
   )
   /**
-   * A forward carries the original's attachments (D71). The message id travels,
+   * A forward carries the original's attachments. The message id travels,
    * never the bytes: main fetches them and hands them to `buildRfc822`.
    */
   // Memoised: a fresh object each render would change `save`'s identity, and
@@ -285,7 +285,7 @@ export function MailComposer({
 
   /**
    * A forced save on the way out, so a dismissed composer leaves its text in
-   * Gmail Drafts (D71) rather than losing what was typed inside the idle window.
+   * Gmail Drafts rather than losing what was typed inside the idle window.
    * The save deliberately outlives the component, so its state updates are
    * suppressed.
    */

@@ -1,6 +1,6 @@
 /**
  * A PDF's comments as threads, and the one way Holi writes them down for the
- * agent (D106).
+ * agent.
  *
  * Two readers feed this: the open viewer's annotation store, for an ask sent
  * from the PDF viewer, and PDFium in main over the saved file, for

@@ -1,5 +1,5 @@
 /**
- * Markdown → HTML, the renderer's half of the composer (D71).
+ * Markdown → HTML, the renderer's half of the composer.
  *
  * Markdown is the only authoring language: inline HTML is escaped, so
  * `value < 5` survives and a web paste cannot smuggle markup. The authoring
@@ -77,7 +77,7 @@ describe('renderMailMarkdown', () => {
   })
 
   it('renders an empty document as an empty string', () => {
-    // An empty message is allowed to send (D71), and `buildRfc822` relies on
+    // An empty message is allowed to send, and `buildRfc822` relies on
     // this returning '' rather than a stray empty paragraph.
     expect(renderMailMarkdown('')).toBe('')
   })

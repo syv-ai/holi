@@ -1,5 +1,5 @@
 /**
- * What ⌘P lists, and in what order (D102). Pure, so a node test and the
+ * What ⌘P lists, and in what order. Pure, so a node test and the
  * screen agree: cmdk runs with `shouldFilter={false}` and renders exactly
  * what `rankRows` returns.
  *

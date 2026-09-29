@@ -30,7 +30,7 @@ describe('freeCopyPath', () => {
   })
 
   /**
-   * **Duplicating a personal file must not publish it** (D65).
+   * **Duplicating a personal file must not publish it**.
    *
    * Splitting on the last dot alone produced `x.local copy.md`, where `local`
    * is followed by a space — so the marker stopped matching, `*.local.*`

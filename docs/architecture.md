@@ -75,7 +75,7 @@ See [vaults-sync](features/vaults-sync.md), [history](features/history.md),
 
 ## 5. The agent
 
-Every session is a Claude Code background session (D110): the vault's supervisor runs it, its job
+Every session is a Claude Code background session: the vault's supervisor runs it, its job
 id names it, and it keeps running with no window open. Main opens terminals onto them in `node-pty`
 PTYs (`claude agents` for the list, `claude attach <id>` for one session) with the vault clone as
 cwd, and the renderer draws each in xterm as an ordinary tab. What a session is doing is read from

@@ -1,5 +1,5 @@
 /**
- * One table of commands (D102).
+ * One table of commands.
  *
  * Every app-level action is one row here: an id, the label the palette shows,
  * the hotkey glyph that both binds and displays it (`lib/hotkey.ts`), and a
@@ -80,7 +80,7 @@ export const STATIC_COMMANDS: readonly Command[] = [
   },
   // A real commit point (`docs/features/vaults-sync.md`): write the buffers,
   // commit instead of waiting out the idle timer, then push, since ⌘S is an
-  // explicit "save this" (D61). The commit has to resolve before the push, or
+  // explicit "save this". The commit has to resolve before the push, or
   // the push races ahead of it. Every open buffer saves; a buffer whose syntax
   // is mid-edit holds off on its own, which is why this uses the *gated* writer.
   {
@@ -111,7 +111,7 @@ export const STATIC_COMMANDS: readonly Command[] = [
   },
   // Bound here because an agent tab is mounted only while it is open, so the
   // shortcut that OPENS one cannot live inside it. The agent list: where
-  // sessions are started and picked up (D110).
+  // sessions are started and picked up.
   {
     id: 'agent.show',
     label: 'Go to the agents',
@@ -123,7 +123,7 @@ export const STATIC_COMMANDS: readonly Command[] = [
     label: 'New session',
     run: (_get, set) => void set(startSessionAtom),
   },
-  // The skills and hooks a vault was seeded with are its own (D111); a newer
+  // The skills and hooks a vault was seeded with are its own; a newer
   // release's reach it only when asked for, here or with `holi skills update`.
   {
     id: 'agent.updateSkills',

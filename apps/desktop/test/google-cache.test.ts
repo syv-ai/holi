@@ -115,7 +115,7 @@ describe('GoogleCache', () => {
     expect(cache.readThreads('in:inbox|promotions')).toBeNull()
   })
 
-  it('keeps one account out of another by living in a different FILE (D87)', () => {
+  it('keeps one account out of another by living in a different FILE', () => {
     // The security-relevant one, and it used to be `useAccount`'s wipe. Per vault
     // that wipe fired on every switch and cost a full re-fetch, so accounts are
     // separated by file now and this is what guarantees it.

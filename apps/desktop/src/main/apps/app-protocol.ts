@@ -3,7 +3,7 @@
  *
  * `holi-vault://` serves the whole vault to the renderer, which is trusted. This
  * one is deliberately narrower: an app is served **from its own bundle and
- * nowhere else**, so the URL's host encodes the bundle's path (`appHost`, D107)
+ * nowhere else**, so the URL's host encodes the bundle's path (`appHost`)
  * and the resolved root is `<vaultRoot>/<bundle>`. One app cannot read another's
  * files, and no app can read a note off disk — the bridge is the only route to
  * vault content, and the bridge is where the refusals live.

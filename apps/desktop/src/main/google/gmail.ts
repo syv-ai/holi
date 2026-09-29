@@ -1,6 +1,6 @@
 /**
  * Gmail: search, read, triage, compose, and the stable link that goes into a
- * note (D68, D70, D71; docs/features/google.md). The writes live at the foot of
+ * note (docs/features/google.md). The writes live at the foot of
  * this file; read the note above them before adding one.
  *
  * **A message carries both representations, and each consumer gets the one it
@@ -61,7 +61,7 @@ export interface MailThreadSummary {
    */
   answered: boolean
   messageCount: number
-  /** The link written into a task or note (D67). */
+  /** The link written into a task or note. */
   webUrl: string
   starred: boolean
   important: boolean
@@ -156,7 +156,7 @@ interface RawPart {
 
 interface RawMessage {
   id?: string
-  /** Absent on a loose draft that belongs to no conversation (D71). */
+  /** Absent on a loose draft that belongs to no conversation. */
   threadId?: string
   labelIds?: string[]
   snippet?: string
@@ -320,32 +320,38 @@ function findPart(part: RawPart | undefined, mimeType: string): RawPart | null {
  * this function let something through, nothing would execute it.
  */
 export function htmlToText(html: string): string {
-  return html
-    // Content that is not prose at all, dropped whole rather than flattened.
-    .replace(/<(script|style|head)[\s\S]*?<\/\1>/gi, '')
-    .replace(/<!--[\s\S]*?-->/g, '')
-    .replace(/<br\s*\/?>/gi, '\n')
-    // A paragraph-level close is a blank line; a row or list item is a single
-    // break. Treating them alike runs prose together into one wall.
-    .replace(/<\/(p|div|h[1-6]|blockquote)>/gi, '\n\n')
-    .replace(/<\/(tr|li)>/gi, '\n')
-    .replace(/<li[^>]*>/gi, '• ')
-    .replace(/<[^>]+>/g, '')
-    .replace(/&nbsp;/gi, ' ')
-    .replace(/&amp;/gi, '&')
-    .replace(/&lt;/gi, '<')
-    .replace(/&gt;/gi, '>')
-    .replace(/&quot;/gi, '"')
-    .replace(/&#(\d+);/g, (_, code: string) => String.fromCodePoint(Number(code)))
-    // Collapse the runs of blank lines HTML mail is made of.
-    .replace(/[ \t]+\n/g, '\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim()
+  return (
+    html
+      // Content that is not prose at all, dropped whole rather than flattened.
+      .replace(/<(script|style|head)[\s\S]*?<\/\1>/gi, '')
+      .replace(/<!--[\s\S]*?-->/g, '')
+      .replace(/<br\s*\/?>/gi, '\n')
+      // A paragraph-level close is a blank line; a row or list item is a single
+      // break. Treating them alike runs prose together into one wall.
+      .replace(/<\/(p|div|h[1-6]|blockquote)>/gi, '\n\n')
+      .replace(/<\/(tr|li)>/gi, '\n')
+      .replace(/<li[^>]*>/gi, '• ')
+      .replace(/<[^>]+>/g, '')
+      .replace(/&nbsp;/gi, ' ')
+      .replace(/&amp;/gi, '&')
+      .replace(/&lt;/gi, '<')
+      .replace(/&gt;/gi, '>')
+      .replace(/&quot;/gi, '"')
+      .replace(/&#(\d+);/g, (_, code: string) => String.fromCodePoint(Number(code)))
+      // Collapse the runs of blank lines HTML mail is made of.
+      .replace(/[ \t]+\n/g, '\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim()
+  )
 }
 
 /** Bounded concurrency: Gmail's list gives ids only, so a list view is N+1
  *  requests. Firing 25 at once invites a rate-limit; a small pool does not. */
-async function mapPooled<T, R>(items: T[], size: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+async function mapPooled<T, R>(
+  items: T[],
+  size: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
   const out: R[] = new Array<R>(items.length)
   let next = 0
   await Promise.all(
@@ -829,7 +835,7 @@ export function applyLabelDelta(
 }
 
 /**
- * The writes (D68, D70, D71): thread labels, then sending and drafts.
+ * The writes: thread labels, then sending and drafts.
  *
  * `gmail.modify` permits everything here, including `messages.send`; the scope
  * is not what bounds the agent's sends (see `GOOGLE_SCOPES`). Adding a write is
@@ -840,7 +846,7 @@ export function applyLabelDelta(
  */
 
 /**
- * Read is a **two-way** label, exactly like starred (D70).
+ * Read is a **two-way** label, exactly like starred.
  *
  * Removing `UNREAD` clears it from every message, which is what Gmail itself
  * does when a thread is opened. `unread` is derived from any message carrying
@@ -853,7 +859,11 @@ export async function setThreadRead(api: GoogleApi, id: string, read: boolean): 
   await modifyThread(api, id, read ? { remove: ['UNREAD'] } : { add: ['UNREAD'] })
 }
 
-export async function setThreadStarred(api: GoogleApi, id: string, starred: boolean): Promise<void> {
+export async function setThreadStarred(
+  api: GoogleApi,
+  id: string,
+  starred: boolean,
+): Promise<void> {
   await modifyThread(api, id, starred ? { add: ['STARRED'] } : { remove: ['STARRED'] })
 }
 
@@ -891,7 +901,7 @@ async function modifyThread(
 }
 
 /**
- * Send a message (D70).
+ * Send a message.
  *
  * `id: null` is a **success**: `postJson` returns `null` when Google accepted
  * the request and the response body could not be read. The field is named `id`
@@ -1010,7 +1020,7 @@ export async function replyToThread(
 }
 
 /**
- * The composer's Gmail surface (D71).
+ * The composer's Gmail surface.
  *
  * Separate from the agent's functions above: `createDraft` and `replyToThread`
  * derive their own recipients, which is right for an LLM working from an
@@ -1116,8 +1126,7 @@ export async function saveDraft(
   mail: OutgoingMail,
   opts: { draftId?: string; threadId?: string } = {},
 ): Promise<{ id: string | null }> {
-  const threading =
-    opts.threadId === undefined ? {} : await threadingHeaders(api, opts.threadId)
+  const threading = opts.threadId === undefined ? {} : await threadingHeaders(api, opts.threadId)
   const message = {
     raw: toBase64Url(buildRfc822({ ...mail, ...threading })),
     ...(opts.threadId === undefined ? {} : { threadId: opts.threadId }),
@@ -1221,11 +1230,13 @@ export async function readDraft(api: GoogleApi, draftId: string): Promise<DraftB
  */
 export async function listSendAs(api: GoogleApi): Promise<string[]> {
   const settings = await api.get<{ sendAs?: { sendAsEmail?: string }[] }>(`${BASE}/settings/sendAs`)
-  return (settings.sendAs ?? [])
-    .map((entry) => entry.sendAsEmail)
-    .filter((email): email is string => email !== undefined && email !== '')
-    // Lowercased because these are compared against header addresses.
-    .map((email) => email.toLowerCase())
+  return (
+    (settings.sendAs ?? [])
+      .map((entry) => entry.sendAsEmail)
+      .filter((email): email is string => email !== undefined && email !== '')
+      // Lowercased because these are compared against header addresses.
+      .map((email) => email.toLowerCase())
+  )
 }
 
 /**
@@ -1349,7 +1360,7 @@ function attachmentRefsOf(part: RawPart | undefined): AttachmentRef[] {
 }
 
 /**
- * Every attachment on a message, as MIME parts ready for `buildRfc822` (D71).
+ * Every attachment on a message, as MIME parts ready for `buildRfc822`.
  *
  * The renderer names a message; main fetches the bytes and hands them straight
  * to the assembler. Nothing base64 ever crosses the IPC seam.
@@ -1362,5 +1373,7 @@ export async function fetchMessageAttachments(
     format: 'full',
   })
   const refs = attachmentRefsOf(message.payload)
-  return await Promise.all(refs.map((ref) => fetchAttachment(api, messageId, ref.attachmentId, ref)))
+  return await Promise.all(
+    refs.map((ref) => fetchAttachment(api, messageId, ref.attachmentId, ref)),
+  )
 }

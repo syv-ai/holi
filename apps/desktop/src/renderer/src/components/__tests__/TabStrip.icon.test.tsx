@@ -1,7 +1,7 @@
 /**
  * A tab names and marks a file as its tree row does (`pathLabel`/`pathGlyph`):
  * a note has no `.md` and no glyph, an app no `.app` and the app glyph, a task
- * its status, anything else its type glyph, and an icon-map emoji (D82) beats
+ * its status, anything else its type glyph, and an icon-map emoji beats
  * all of them. Which glyph is which is the tree's tests' question; the strip is
  * tested for the plumbing from the snapshot.
  */

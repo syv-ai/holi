@@ -2,7 +2,7 @@
  * Whether a Google account is connected, in one place.
  *
  * Settings (where it changes) and the shell (which hides the agenda and mail
- * chips until Google is connected, D67) must not disagree about it.
+ * chips until Google is connected) must not disagree about it.
  *
  * **Three states, not two.** `undefined` means "not asked yet": without it the
  * shell cannot tell "no account" from "no answer", and would flash the chips on
@@ -37,7 +37,7 @@ export interface ConnectedGoogleAccount {
 /**
  * Every account connected on this machine, and the one the active vault uses.
  *
- * Two different facts (D87): an account can be connected and used by no vault
+ * Two different facts: an account can be connected and used by no vault
  * at all, which is what a fresh vault sees.
  */
 export const googleAccountsAtom = atom<ConnectedGoogleAccount[]>([])
@@ -57,7 +57,7 @@ export interface GoogleAccountState {
   account: GoogleAccount | null | undefined
   setAccount: (account: GoogleAccount | null | undefined) => void
   missingScopes: string[]
-  /** Every account connected on this machine (D87). */
+  /** Every account connected on this machine. */
   accounts: ConnectedGoogleAccount[]
   /** The account the active vault uses, or null. */
   currentSub: string | null
@@ -116,7 +116,7 @@ export function useGoogleAccount(): GoogleAccountState {
   }, [account, refresh])
 
   /**
-   * A vault switch changes the answer without changing the account (D87).
+   * A vault switch changes the answer without changing the account.
    *
    * Dropped back to `undefined` rather than re-fetched here, so the query
    * happens in exactly one place and the chips do not flash the previous vault's

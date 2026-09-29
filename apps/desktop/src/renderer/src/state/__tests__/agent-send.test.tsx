@@ -1,5 +1,5 @@
 /**
- * What you do to the vault's assistant (D110): the agents list, a session's
+ * What you do to the vault's assistant: the agents list, a session's
  * window, starting one, sending an ask. Store-level: nothing here renders,
  * because none of it belongs to a component.
  */

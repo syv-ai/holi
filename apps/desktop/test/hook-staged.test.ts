@@ -125,7 +125,7 @@ describe('stagedChanges', () => {
   })
 
   it('reports a deletion on its own list', async () => {
-    // Dropped entirely until D89. The four transforms that predate `memory-index`
+    // Dropped entirely until `memory-index`. The four transforms that predate `memory-index`
     // all rewrite the changed file itself, and there is nothing to rewrite in a
     // file that is going away — but `memory-index`'s output is a list of what
     // EXISTS, so a deleted memory that did not re-index would leave the index

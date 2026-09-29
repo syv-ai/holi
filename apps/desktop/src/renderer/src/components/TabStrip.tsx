@@ -122,7 +122,7 @@ export function tabKey(tab: Tab): string {
 }
 
 /** What a vault file or app is marked with here and in the tree alike. `icons`
- *  is `.holi/settings/icons.yaml` as the snapshot resolved it (D82), and
+ *  is `.holi/settings/icons.yaml` as the snapshot resolved it, and
  *  `tasks` each task file's status, both keyed by vault-relative path. */
 interface PathMarks {
   icons: Record<string, string>

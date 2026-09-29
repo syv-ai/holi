@@ -1,5 +1,5 @@
 /**
- * Leaving, deleting, or letting go of a vault that is gone (D109).
+ * Leaving, deleting, or letting go of a vault that is gone.
  *
  * - **Leave** drops your own access on GitHub, then the clone. Not for an owner.
  * - **Delete** is GitHub's to do: this sends you to the repo's settings and

@@ -1,5 +1,5 @@
 /**
- * The send gate (D70) — run as a real child process, over real stdin.
+ * The send gate — run as a real child process, over real stdin.
  *
  * This is the one piece of the design that has no second layer behind it. If it
  * returns `defer` for something it should have caught, mail leaves the building
@@ -64,7 +64,7 @@ describe('the send gate asks', () => {
     expect(decisionOf(await decide(bash('holi-google reply t1')))).toBe('ask')
   })
 
-  // The spelling the skill used before D70, and which still works. Missing this
+  // The spelling the skill used before the send gate, and which still works. Missing this
   // is how the gate would be believed in while never firing.
   it('asks for the $HOLI_GOOGLE_BIN spelling', async () => {
     expect(decisionOf(await decide(bash('"$HOLI_GOOGLE_BIN" send --to ada@syv.ai')))).toBe('ask')
@@ -73,7 +73,11 @@ describe('the send gate asks', () => {
 
   it('asks for an absolute path to the generated script', async () => {
     expect(
-      decisionOf(await decide(bash('/Users/x/Library/Application Support/Holi/bin/holi-google send --to a@b.c'))),
+      decisionOf(
+        await decide(
+          bash('/Users/x/Library/Application Support/Holi/bin/holi-google send --to a@b.c'),
+        ),
+      ),
     ).toBe('ask')
   })
 
@@ -127,8 +131,8 @@ describe('the send gate asks', () => {
   })
 
   it('still says it cannot be recalled, and that allowing it before does not skip this', async () => {
-    const reason = (await decide(bash('holi-google send --to ada@syv.ai')))
-      .hookSpecificOutput?.permissionDecisionReason
+    const reason = (await decide(bash('holi-google send --to ada@syv.ai'))).hookSpecificOutput
+      ?.permissionDecisionReason
 
     expect(reason).toMatch(/recall|undo|cannot be/i)
   })
@@ -267,7 +271,9 @@ describe('the claude.ai Gmail connector', () => {
   it('says the mail bypasses Holi, because that is the part the user cannot see', async () => {
     const d = await decide(mcp('mcp__claude_ai_Gmail__send_message'))
 
-    expect(d.hookSpecificOutput?.permissionDecisionReason ?? '').toMatch(/connector|rather than through Holi/i)
+    expect(d.hookSpecificOutput?.permissionDecisionReason ?? '').toMatch(
+      /connector|rather than through Holi/i,
+    )
   })
 
   it('has no opinion on a connector draft, which reaches nobody', async () => {

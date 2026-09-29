@@ -22,7 +22,7 @@ export function createGoogleAccountsManager(
 ): Promise<GoogleAccountsManager> {
   return createGoogleAccounts({
     store: new GoogleTokenStore(join(userDataDir, 'google-auth.enc'), safeStorage),
-    // D87: which vault uses which account. Plain JSON beside the tokens.
+    // Which vault uses which account. Plain JSON beside the tokens.
     vaults: createVaultAccounts(join(userDataDir, 'google-vault-accounts.json')),
     listen: listenLoopback,
     // The **system** browser, so the consent reuses the user's existing Google

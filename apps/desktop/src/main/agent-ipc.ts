@@ -1,5 +1,5 @@
 /**
- * The agent's IPC seam, distinct from the tRPC seam in `ipc.ts` (D110).
+ * The agent's IPC seam, distinct from the tRPC seam in `ipc.ts`.
  *
  * Two kinds of thing cross it. **Sessions** are Claude Code's background
  * sessions, named by their job id: listed, started, stopped, respawned,
@@ -21,7 +21,7 @@ import type { SkillsUpdate } from './agent/seed-content'
 export function registerAgentIpc(deps: {
   agent: AgentSessions
   terminals: AgentTerminals
-  /** The palette's Update skills (D111), for the active vault. */
+  /** The palette's Update skills, for the active vault. */
   updateSkills(): Promise<SkillsUpdate>
 }): void {
   const { agent, terminals } = deps

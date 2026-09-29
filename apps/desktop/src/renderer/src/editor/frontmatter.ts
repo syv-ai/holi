@@ -133,7 +133,7 @@ function pressToggle(view: EditorView, wrap: HTMLElement, open: boolean): void {
 }
 
 /**
- * Open or close from the height the last block had (D98: leaving uses the
+ * Open or close from the height the last block had (leaving uses the
  * faster token).
  *
  * The one place inside a note where height moves. Affordable because it is one

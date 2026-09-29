@@ -1,5 +1,5 @@
 /**
- * Holi's own Claude Code config directory (D72).
+ * Holi's own Claude Code config directory.
  *
  * Without it a vault agent would inherit the machine's `~/.claude`: its skills,
  * plugins, marketplaces, MCP servers and claude.ai connectors. `CLAUDE_CONFIG_DIR`
@@ -7,7 +7,7 @@
  * disable user-scope skills or plugins), and this module provisions what it
  * points at.
  *
- * **One directory per vault** (D86), at `userData/agent-config/<vault-slug>/`.
+ * **One directory per vault**, at `userData/agent-config/<vault-slug>/`.
  * Transcripts are keyed by cwd anyway, but `plugins/` and user-scope
  * `settings.json` are keyed by nothing, so a shared directory would let a plugin
  * installed in one vault reach every vault.
@@ -32,7 +32,7 @@ const CLAUDE_JSON = '.claude.json'
 const SPAWNED_MARKER = '.holi-spawned'
 
 /**
- * The directory name a vault's config lives under, from its remote (D86).
+ * The directory name a vault's config lives under, from its remote.
  *
  * Stable and filesystem-safe, because it is the address of a login and of a
  * transcript store: a name that drifts orphans both.
@@ -52,7 +52,7 @@ export function agentConfigSlug(remote: string): string {
   return readable === '' ? hash : `${readable}-${hash}`
 }
 
-/** What Holi resolved the app's colour mode to (D85's `activeModeAtom`). */
+/** What Holi resolved the app's colour mode to (the renderer's `activeModeAtom`). */
 export type AgentTheme = 'dark' | 'light'
 
 /**
@@ -63,7 +63,7 @@ function shellQuote(path: string): string {
   return `'${path.replace(/'/g, `'\\''`)}'`
 }
 
-/** Where Holi's old `holi-statusline` script lived (D101, retired by D110). */
+/** Where Holi's old `holi-statusline` script lived (retired when sessions became background sessions). */
 function retiredStatusLine(userDataDir: string): string {
   return join(userDataDir, 'bin', 'holi-statusline')
 }
@@ -73,7 +73,7 @@ export interface ConfigDirStamp {
   theme?: AgentTheme
   /**
    * Variables every session on this directory gets, through Claude Code's own
-   * settings `env` block (D110). A background session's environment is the
+   * settings `env` block. A background session's environment is the
    * supervisor's, not Holi's, but a settings `env` block reaches every session,
    * a pre-warmed one included. Only static paths go here: anything that changes
    * per app run lives in `holi.env` (see `endpoint-file.ts`).
@@ -144,7 +144,7 @@ function settingsWithRequired(existing: string | null, stamp: ConfigDirStamp = {
     }
   }
   /**
-   * The status line Holi used to install (D101). Session names now come from
+   * The status line Holi used to install. Session names now come from
    * Claude Code's own listing, and the script it ran reached Holi through an
    * environment a background session never has. Only Holi's own command goes.
    */
@@ -228,7 +228,7 @@ export interface AgentConfigResolution {
  * directory and stamp the theme it should open in. The sign-in marker is left
  * alone (`takeFirstSpawn`): it is taken by the first terminal, not the open.
  *
- * The mode comes from the same pair D85 uses for `data-theme` (the vault's
+ * The mode comes from the same pair the app uses for `data-theme` (the vault's
  * `colorScheme` and the OS preference), through the same `resolveColorMode`, so
  * `system` cannot mean one thing to the app and another to the agent.
  *
@@ -291,7 +291,7 @@ function usedByVault(
 }
 
 /**
- * One-shot: the shared directory D72 left behind becomes a vault's own.
+ * One-shot: the shared directory earlier versions left behind becomes a vault's own.
  *
  * `userData/agent-config/` may hold one vault's transcripts and plugin set, so it
  * is **renamed** into that vault's slot rather than stranded.

@@ -1,5 +1,5 @@
 /**
- * The composer's editor stack (D71).
+ * The composer's editor stack.
  *
  * The point of a third stack is what it does *not* carry. `baseEditorExtensions`
  * decorates `[[wiki links]]` into chips and completes `@` against vault notes —

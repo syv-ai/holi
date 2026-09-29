@@ -1,5 +1,5 @@
 /**
- * A brand-new message, as a dialog (D71).
+ * A brand-new message, as a dialog.
  *
  * A reply mounts inline under the thread it answers; a fresh message has no
  * context to preserve, so a modal costs nothing. Closing is safe: the composer

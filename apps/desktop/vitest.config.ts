@@ -18,7 +18,7 @@ export default defineConfig({
           passWithNoTests: true,
           // One file at a time — do NOT let test files run in parallel.
           //
-          // Kept through the D60 deletion even though the suites that forced it (the mirror
+          // Kept through the server's deletion even though the suites that forced it (the mirror
           // and bridge tests) are gone, because the cause is coming straight back: the vault
           // store is a chokidar watcher, and watcher suites are *event*-bound, not CPU-bound.
           // Parallel forks contend for the fsevents backend and the event loop, so an `add`
@@ -66,7 +66,7 @@ export default defineConfig({
           // `codemirror-markdown-tables` depends on `@mobily/ts-belt`, whose ESM
           // build uses directory imports (`.../Function`) that Node will not
           // resolve. Inlining hands them to Vite, which does. This only surfaced
-          // when `editor/extensions.ts` gained its first test (D71) — nothing in
+          // when `editor/extensions.ts` gained its first test — nothing in
           // this suite had ever imported the editor stack before.
           server: { deps: { inline: [/codemirror-markdown-tables/, /@mobily[/\\]ts-belt/] } },
         },

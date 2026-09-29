@@ -37,7 +37,7 @@ test('only the rows that appeared arrive, and they stagger in order', () => {
 })
 
 /**
- * An unrelated re-render must not replay the arrival (D92). Asserted as the
+ * An unrelated re-render must not replay the arrival. Asserted as the
  * class attribute not being touched at all, which is what a restart keys on.
  */
 test('a re-render with the same rows does not replay the arrival', async () => {

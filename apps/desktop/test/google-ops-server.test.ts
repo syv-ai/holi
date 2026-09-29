@@ -55,7 +55,7 @@ describe('auth', () => {
   })
 
   it('binds a fresh token per session, not per app run', async () => {
-    // Per session (D87), so a dead session's bearer stops working — and so two
+    // Per session, so a dead session's bearer stops working — and so two
     // agents in two vaults cannot be confused for one another.
     const { server } = await serve()
     expect(server.mintToken('a/one')).not.toBe(server.mintToken('a/two'))
@@ -135,7 +135,9 @@ describe('routes', () => {
     const agenda = vi.fn(async () => [])
     const { url } = await serve({ agenda })
 
-    await fetch(`${url('/agenda')}&timeMin=2026-08-04T00:00:00.000Z&timeMax=2026-08-05T00:00:00.000Z`)
+    await fetch(
+      `${url('/agenda')}&timeMin=2026-08-04T00:00:00.000Z&timeMax=2026-08-05T00:00:00.000Z`,
+    )
 
     expect(agenda).toHaveBeenCalledWith({
       timeMin: '2026-08-04T00:00:00.000Z',
@@ -199,7 +201,7 @@ describe('it serves results, never credentials', () => {
 })
 
 /**
- * The write half (D70).
+ * The write half.
  *
  * The agent's writes arrive as POST with a JSON body, because a mail body does
  * not belong in a query string. Everything here is either "the argument
@@ -306,7 +308,10 @@ describe('writes', () => {
     await post(url('/unschedule'), { id: 'ev-1' })
 
     expect(schedule).toHaveBeenCalledWith(expect.objectContaining({ title: 'Deep work' }))
-    expect(reschedule).toHaveBeenCalledWith('ev-1', expect.objectContaining({ start: '2026-08-06T10:00:00Z' }))
+    expect(reschedule).toHaveBeenCalledWith(
+      'ev-1',
+      expect.objectContaining({ start: '2026-08-06T10:00:00Z' }),
+    )
     expect(unschedule).toHaveBeenCalledWith('ev-1')
   })
 
@@ -367,7 +372,7 @@ describe('writes', () => {
     expect((await res.json()).error).toMatch(/attendees/)
   })
   /**
-   * Sending a draft that already exists (D70, amended 2026-08-14).
+   * Sending a draft that already exists.
    *
    * `draft` then a composed `send` produced TWO messages and orphaned the draft —
    * found against a real account, after the agent had done exactly that.
@@ -390,7 +395,12 @@ describe('writes', () => {
       const send = vi.fn(async () => ({ id: 'm-sent' }))
       const { url } = await serve({ send })
 
-      await post(url('/send'), { draftId: 'd-1', to: ['eve@evil.example'], subject: 'x', body: 'y' })
+      await post(url('/send'), {
+        draftId: 'd-1',
+        to: ['eve@evil.example'],
+        subject: 'x',
+        body: 'y',
+      })
 
       expect(send).toHaveBeenCalledWith({ draftId: 'd-1' })
     })
@@ -408,11 +418,15 @@ describe('writes', () => {
       const send = vi.fn(async () => ({ id: 'm-1' }))
       const { url } = await serve({ send })
 
-      const res = await post(url('/send'), { draftId: '', to: ['ada@syv.ai'], subject: 's', body: 'b' })
+      const res = await post(url('/send'), {
+        draftId: '',
+        to: ['ada@syv.ai'],
+        subject: 's',
+        body: 'b',
+      })
 
       expect(res.status).toBe(200)
       expect(send).toHaveBeenCalledWith({ mail: expect.objectContaining({ to: ['ada@syv.ai'] }) })
     })
   })
-
 })

@@ -1,5 +1,5 @@
 /**
- * A date, an optional time, and the shortcuts to both (D79): one control for
+ * A date, an optional time, and the shortcuts to both: one control for
  * `due`, `reminder` and a recurrence rule's `until`.
  *
  * It knows nothing about tasks: a stamp goes in and out, and the preset rail is

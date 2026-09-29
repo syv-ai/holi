@@ -3,13 +3,13 @@
  * it**: an explicit override, else the environment, else the embedded pair.
  *
  * Its own file because it has two callers that must never drift: `GoogleSession`
- * refreshes with it and `accounts.ts` runs a consent with it (D87). A stray
+ * refreshes with it and `accounts.ts` runs a consent with it. A stray
  * `?? ''` in one of them makes consent die at Google with `Missing required
  * parameter: client_id`.
  */
 
 /**
- * The OAuth client id for Holi's Google app (D67).
+ * The OAuth client id for Holi's Google app.
  *
  * A desktop client's id is not a secret, and neither is the `client_secret`
  * Google issues alongside it: for an installed app both ship in the binary and
@@ -18,7 +18,8 @@
  * `HOLI_GOOGLE_CLIENT_ID` / `HOLI_GOOGLE_CLIENT_SECRET` in the environment
  * override both, to point a dev build at a different app.
  */
-export const GOOGLE_CLIENT_ID = '132910330015-4ror8qtmhh69d1ms1s3s99tot5gm551q.apps.googleusercontent.com'
+export const GOOGLE_CLIENT_ID =
+  '132910330015-4ror8qtmhh69d1ms1s3s99tot5gm551q.apps.googleusercontent.com'
 
 /**
  * The desktop `client_secret` Google issued alongside the id above.
