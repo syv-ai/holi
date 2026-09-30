@@ -25,18 +25,18 @@ import { requestFlush, type FlushChannel } from './flush'
 import { guardNavigation } from './window-guard'
 import { assetAbsPath, mimeFor } from './vault/asset-protocol'
 import {
-  appFileAbsPath,
   appHeadHtml,
   appMimeFor,
   injectAppHead,
   parseAppUrl,
+  servableAppFile,
 } from './apps/app-protocol'
 import { createSession } from './github/electron'
+import { createMembersCache } from './github/members-cache'
 import { createGoogleAccountsManager } from './google/electron'
 import { createCalendarPrefs } from './google/calendar-prefs'
 import { createImagePrefs } from './google/image-prefs'
 import { createSignatureStore } from './pdf/signatures'
-import { pdfCommentsInVault } from './pdf/comments'
 import { openGoogleCache } from './google/cache'
 import { createGoogleData, type GoogleData } from './google/data'
 import { createGoogleOpsServer } from './google/ops-server'
@@ -326,7 +326,7 @@ async function main(): Promise<void> {
     if (vault === null) return new Response(null, { status: 404 })
     const parsed = parseAppUrl(request.url)
     if (parsed === null) return new Response(null, { status: 400 })
-    const abs = appFileAbsPath(vault.root, parsed.bundle, parsed.rel)
+    const abs = await servableAppFile(vault.root, parsed.bundle, parsed.rel)
     if (abs === null) return new Response(null, { status: 403 })
 
     // The entry document is the one file that is rewritten: it carries the
@@ -356,13 +356,15 @@ async function main(): Promise<void> {
   // Both doors into the capability registry read the running app through
   // these: the app's bridge (the router) and the agent's `holi` CLI (below).
   const uiReports = createUiReports()
+  // Settings' member list reads the same cache as an app and the agent.
+  const members = createMembersCache((remote) => session.api.collaborators(remote))
   const capabilityServices = createCapabilityServices(
     {
       today: localToday,
       active: () => host.active(),
       // `agent` is assigned below, before any vault can be open.
       sessions: () => agent?.sessions() ?? [],
-      collaborators: (remote) => session.api.collaborators(remote),
+      members,
       googleDataFor,
       calendarOverrides: async () => (await calendarPrefs.read()) ?? {},
       grants: createAppGrants(join(app.getPath('userData'), 'app-grants.json')),
@@ -372,6 +374,7 @@ async function main(): Promise<void> {
 
   const router = createRouter({
     capabilityServices,
+    members,
     reportUi: (remote, report) => {
       uiReports.set(remote, report)
       // The agent's per-turn hook reads the focused note from a file in the
@@ -567,12 +570,6 @@ async function main(): Promise<void> {
           return { changed: result.changed, failed: result.failed }
         },
         updateSkills: () => updateSkills(remote),
-        // `holi pdf comments`: read-only, from the saved file.
-        pdfComments: async (path) => {
-          const root = await rootFor(remote)
-          if (root === null) return { ok: false, error: 'no vault is open' }
-          return pdfCommentsInVault(root, path)
-        },
         // `holi store …` and the rest of the CLI door into the capability
         // registry, for the vault the command was typed in.
         capability: async (name, params) => {

@@ -85,9 +85,9 @@ write).
 **Tool surface.** Native `Read`, `Write`, `Edit`, `Bash`, `Glob`, `Grep`. No MCP server. Holi's
 additions are commands in a directory prepended to `PATH`, plus skills that document them:
 
-- `holi`: `app open` (which reloads an app already open), `app init`, `skills update`,
-  `pdf comments <path> [--json]`, and, through the CLI door into the capability registry
-  ([vault apps](vault-apps.md)), `task done <path>`, `store list|get|put|delete|check` over an
+- `holi`: `app open` (which reloads an app already open), `app init`, `skills update`, and,
+  through the CLI door into the capability registry ([vault apps](vault-apps.md)),
+  `pdf comments <path> [--json]`, `task done <path>`, `store list|get|put|delete|check` over an
   app's records, `docs render <path>`, `sync status`, `sessions`, `members` and `recents` (each
   with `--json`). The registry's reads the agent already has as Grep, Read and git (search,
   history, settings) stay app-only rather than grow a second way in. It posts to the hook server

@@ -5,10 +5,10 @@
  * never be synced — a second laptop starts empty and adds its own vaults. The
  * identity of a vault is its `remote`; `path` is just where this machine put it.
  */
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
 import type { VaultEntry } from '@holi/shared'
+import { jsonFileStore, type JsonFileStore } from '../json-file-store'
 
 /**
  * The managed vault root: `~/Holi`, and every clone sits at `<root>/owner/repo`.
@@ -46,60 +46,47 @@ export function clonePathFor(root: string, remote: string): string {
   return join(root, ...remote.split('/'))
 }
 
+/** Most-recently-opened first: the switcher's order, and "your last vault" on
+ *  launch is just the head of this list. */
+const newestFirst = (entries: readonly VaultEntry[]): VaultEntry[] =>
+  [...entries].sort((a, b) => b.lastOpenedAt.localeCompare(a.lastOpenedAt))
+
 export class VaultRegistry {
-  #file: string
-  #entries: VaultEntry[] | null = null
+  // Cached: every path-taking procedure resolves its vault through `list`.
+  #store: JsonFileStore<VaultEntry[]>
 
   constructor(file: string) {
-    this.#file = file
+    // A corrupt registry must not brick the app into a blank vault list with
+    // no way back: drop what does not parse and keep what does.
+    this.#store = jsonFileStore(file, (raw) => (Array.isArray(raw) ? raw.filter(isEntry) : []), {
+      cache: true,
+    })
   }
 
   async list(): Promise<VaultEntry[]> {
-    if (this.#entries === null) this.#entries = await this.#read()
-    // Most-recently-opened first: the switcher's order, and "your last vault" on
-    // launch is just the head of this list.
-    return [...this.#entries].sort((a, b) => b.lastOpenedAt.localeCompare(a.lastOpenedAt))
+    return newestFirst(await this.#store.read())
   }
 
   async add(entry: VaultEntry): Promise<VaultEntry[]> {
-    const entries = (await this.list()).filter((e) => e.remote !== entry.remote)
-    this.#entries = [...entries, entry]
-    await this.#write()
-    return this.list()
+    return newestFirst(
+      await this.#store.update((entries) => [
+        ...entries.filter((e) => e.remote !== entry.remote),
+        entry,
+      ]),
+    )
   }
 
   async remove(remote: string): Promise<VaultEntry[]> {
-    this.#entries = (await this.list()).filter((e) => e.remote !== remote)
-    await this.#write()
-    return this.list()
+    return newestFirst(
+      await this.#store.update((entries) => entries.filter((e) => e.remote !== remote)),
+    )
   }
 
   async touch(remote: string, at: string): Promise<void> {
-    const entries = await this.list()
-    const entry = entries.find((e) => e.remote === remote)
-    if (!entry) return
-    this.#entries = entries.map((e) => (e.remote === remote ? { ...e, lastOpenedAt: at } : e))
-    await this.#write()
-  }
-
-  async #read(): Promise<VaultEntry[]> {
-    const text = await readFile(this.#file, 'utf8').catch(() => null)
-    if (text === null) return []
-    try {
-      const raw: unknown = JSON.parse(text)
-      // A corrupt registry must not brick the app into a blank vault list with
-      // no way back: drop what does not parse and keep what does.
-      return Array.isArray(raw) ? raw.filter(isEntry) : []
-    } catch {
-      return []
-    }
-  }
-
-  async #write(): Promise<void> {
-    await mkdir(dirname(this.#file), { recursive: true })
-    const tmp = `${this.#file}.tmp`
-    await writeFile(tmp, JSON.stringify(this.#entries ?? [], null, 2) + '\n', 'utf8')
-    await rename(tmp, this.#file)
+    if (!(await this.#store.read()).some((e) => e.remote === remote)) return
+    await this.#store.update((entries) =>
+      entries.map((e) => (e.remote === remote ? { ...e, lastOpenedAt: at } : e)),
+    )
   }
 }
 

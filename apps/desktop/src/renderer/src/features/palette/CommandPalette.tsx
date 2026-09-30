@@ -25,17 +25,21 @@
  * table binds keydowns, and this one is finished by a keyup. It is also the
  * one binding that means the literal Control key on every platform.
  *
+ * Once two characters are typed, the notes whose text holds them follow the
+ * name matches, after a short pause and only for the query still in the box.
+ *
  * The last row, once anything is typed outside `>` mode, asks the assistant:
  * the text goes to the session ⌘J goes to and lands unsent in its input,
  * starting a session when there is none.
  */
 import { useAtomValue, useSetAtom, useStore } from 'jotai'
 import { AppWindow, Bot, Calendar, History, Kanban, Mail, Settings, Sparkles } from 'lucide-react'
-import { useEffect, useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { fileIconFor } from '@/composites/file-icons'
 import { agentIndicator } from '@/lib/agent-notices'
 import { cn } from '@/lib/cn'
 import {
+  bodyRows,
   buildRows,
   commandQuery,
   openTabRows,
@@ -44,6 +48,7 @@ import {
   type PaletteRow,
   type RankedRow,
 } from '@/lib/palette-rows'
+import { trpc } from '@/lib/trpc'
 import {
   CommandDialog,
   CommandEmpty,
@@ -84,7 +89,7 @@ import {
   type Tab,
 } from '@/state/panes'
 import { recentsAtom } from '@/state/recents'
-import { snapshotAtom } from '@/state/vaults'
+import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
 
 const SURFACE_GLYPHS = {
   board: Kanban,
@@ -113,6 +118,45 @@ function tabOf(row: PaletteRow): Tab | null {
 
 const rowValue = (row: PaletteRow): string => `${row.kind}:${row.key}`
 
+type BodyHit = { path: string; snippet?: string }
+
+/** Below this, a text search matches nearly every note and reads them all. */
+const BODY_MIN = 2
+const BODY_DEBOUNCE_MS = 150
+
+/**
+ * Main's text matches for `query`, once typing pauses. An answer for a query
+ * that is no longer in the box is dropped, both on its way in and on its way
+ * out, so a slow search never paints over a newer one.
+ */
+function useBodyHits(remote: string | null, query: string, enabled: boolean): BodyHit[] {
+  const [found, setFound] = useState<{ remote: string; q: string; hits: BodyHit[] }>({
+    remote: '',
+    q: '',
+    hits: [],
+  })
+  const q = query.trim()
+  const on = enabled && remote !== null && q.length >= BODY_MIN
+  useEffect(() => {
+    if (!on || remote === null) return
+    let live = true
+    const timer = setTimeout(() => {
+      trpc.notes.search.query({ remote, q }).then(
+        (hits) => {
+          if (live) setFound({ remote, q, hits })
+        },
+        () => {},
+      )
+    }, BODY_DEBOUNCE_MS)
+    return () => {
+      live = false
+      clearTimeout(timer)
+    }
+  }, [on, remote, q])
+  // Keyed by vault too: after a switch, the old vault's hits are not this one's.
+  return on && found.remote === remote && found.q === q ? found.hits : []
+}
+
 export function CommandPalette(): React.JSX.Element {
   const state = useAtomValue(paletteAtom)
   const setQuery = useSetAtom(setPaletteQueryAtom)
@@ -121,6 +165,7 @@ export function CommandPalette(): React.JSX.Element {
   const close = useSetAtom(closePaletteAtom)
   const store = useStore()
   const snapshot = useAtomValue(snapshotAtom)
+  const remote = useAtomValue(activeRemoteAtom)
   const appPaths = useAtomValue(appPathsAtom)
   const sessions = useAtomValue(agentSessionsAtom)
   const terminals = useAtomValue(agentTerminalsAtom)
@@ -158,6 +203,8 @@ export function CommandPalette(): React.JSX.Element {
     }
     return cmdQuery === null ? rankRows(rows, query, recents) : []
   }, [tabsMode, cmdQuery, rows, query, recents, workspace])
+  const hits = useBodyHits(remote, query, state.open && !tabsMode && cmdQuery === null)
+  const textRows = useMemo(() => bodyRows(rows, ranked, hits), [rows, ranked, hits])
   const rankedCommands = useMemo(
     () =>
       cmdQuery === null
@@ -330,6 +377,7 @@ export function CommandPalette(): React.JSX.Element {
                 onChoose={chooseRow}
                 orbFor={orbFor}
               />
+              <RowGroup heading="In text" rows={textRows} onChoose={chooseRow} orbFor={orbFor} />
               {showAsk && (
                 <CommandGroup>
                   <CommandItem value={`ask:${query}`} onSelect={ask}>
@@ -417,10 +465,16 @@ function RowGroup({
         >
           <RowIconView row={row} orb={row.kind === 'session' ? orbFor(row.key) : undefined} />
           <span className="truncate">{row.name}</span>
-          {row.detail !== undefined && (
-            <span className="ml-auto shrink-0 truncate text-xs text-muted-foreground">
-              {row.detail}
+          {row.snippet !== undefined ? (
+            <span className="ml-auto min-w-0 truncate text-xs text-muted-foreground">
+              {row.snippet}
             </span>
+          ) : (
+            row.detail !== undefined && (
+              <span className="ml-auto shrink-0 truncate text-xs text-muted-foreground">
+                {row.detail}
+              </span>
+            )
           )}
         </CommandItem>
       ))}

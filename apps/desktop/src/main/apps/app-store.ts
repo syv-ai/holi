@@ -25,7 +25,8 @@ import {
   vaultRelPath,
   type CollectionSchema,
 } from '@holi/shared'
-import { absPathFor, writeAtomic } from '../vault/vault-files'
+import { exactPath } from '@holi/shared/path-safety-node'
+import { writeAtomic } from '../vault/vault-files'
 import { CapabilityError } from './capability-error'
 
 export interface StoredRecord {
@@ -41,16 +42,26 @@ function relOrThrow(path: string) {
   }
 }
 
+/**
+ * A store file's absolute path, refused unless its name is the file on disk.
+ * A committed `data/items -> ../../memory` would otherwise let a record write
+ * land in the agent surface, or out of the vault.
+ */
+async function onDisk(root: string, path: string): Promise<string> {
+  const abs = await exactPath(root, relOrThrow(path))
+  if (abs === null) throw new CapabilityError('FORBIDDEN', path)
+  return abs
+}
+
 /** The collection's schema, or a refusal the agent can act on. */
 async function collectionOf(
   root: string,
   bundle: string,
   collection: string,
 ): Promise<{ schema?: CollectionSchema }> {
-  const text = await readFile(
-    absPathFor(root, relOrThrow(`${bundle}/${APP_MANIFEST_FILE}`)),
-    'utf8',
-  ).catch(() => null)
+  const text = await readFile(await onDisk(root, `${bundle}/${APP_MANIFEST_FILE}`), 'utf8').catch(
+    () => null,
+  )
   if (text === null) throw new CapabilityError('NOT_FOUND', `app is not finished: ${bundle}`)
   const collections = parseAppManifest(text)?.collections ?? {}
   // Own keys only: `constructor` or `toString` must not count as declared by
@@ -84,13 +95,14 @@ export async function storeList(
   collection: string,
 ): Promise<{ records: StoredRecord[]; skipped: string[] }> {
   await collectionOf(root, bundle, collection)
-  const dir = absPathFor(root, relOrThrow(`${bundle}/${DATA_DIR}/${collection}`))
+  const dir = await onDisk(root, `${bundle}/${DATA_DIR}/${collection}`)
   const names = (await readdir(dir).catch(() => [] as string[])).filter((n) => n.endsWith('.json'))
   const records: StoredRecord[] = []
   const skipped: string[] = []
   for (const name of names.sort()) {
     const id = name.slice(0, -'.json'.length)
-    const value = await readRecord(root, bundle, collection, id)
+    const abs = await onDisk(root, recordRel(bundle, collection, id)).catch(() => null)
+    const value = abs === null ? null : await readRecord(abs)
     // A hand edit that broke a file must not blank the app: list the rest, and
     // say which file was left out.
     if (value === null || !isRecordId(id)) skipped.push(name)
@@ -99,16 +111,8 @@ export async function storeList(
   return { records, skipped }
 }
 
-async function readRecord(
-  root: string,
-  bundle: string,
-  collection: string,
-  id: string,
-): Promise<Record<string, unknown> | null> {
-  const text = await readFile(
-    absPathFor(root, relOrThrow(recordRel(bundle, collection, id))),
-    'utf8',
-  ).catch(() => null)
+async function readRecord(abs: string): Promise<Record<string, unknown> | null> {
+  const text = await readFile(abs, 'utf8').catch(() => null)
   if (text === null) return null
   try {
     const value: unknown = JSON.parse(text)
@@ -125,7 +129,7 @@ export async function storeGet(
   id: string,
 ): Promise<Record<string, unknown> | null> {
   await collectionOf(root, bundle, collection)
-  return readRecord(root, bundle, collection, idOrThrow(id))
+  return readRecord(await onDisk(root, recordRel(bundle, collection, idOrThrow(id))))
 }
 
 export async function storePut(
@@ -143,7 +147,9 @@ export async function storePut(
   if (new TextEncoder().encode(text).length > MAX_RECORD_BYTES) {
     throw new CapabilityError('BAD_REQUEST', `record too large (over ${MAX_RECORD_BYTES} bytes)`)
   }
-  await writeAtomic(root, relOrThrow(recordRel(bundle, collection, recordId)), text)
+  const rel = recordRel(bundle, collection, recordId)
+  await onDisk(root, rel)
+  await writeAtomic(root, relOrThrow(rel), text)
   return recordId
 }
 
@@ -154,7 +160,7 @@ export async function storeDelete(
   id: string,
 ): Promise<boolean> {
   await collectionOf(root, bundle, collection)
-  const abs = absPathFor(root, relOrThrow(recordRel(bundle, collection, idOrThrow(id))))
+  const abs = await onDisk(root, recordRel(bundle, collection, idOrThrow(id)))
   const existed = await readFile(abs).then(
     () => true,
     () => false,
@@ -173,9 +179,7 @@ export async function storeCheck(root: string, bundle: string, rest: string): Pr
   const [, collection, id] = match as unknown as [string, string, string]
   const { schema } = await collectionOf(root, bundle, collection)
   if (!isRecordId(id)) return [`bad id: ${id}`]
-  const text = await readFile(absPathFor(root, relOrThrow(`${bundle}/${rest}`)), 'utf8').catch(
-    () => null,
-  )
+  const text = await readFile(await onDisk(root, `${bundle}/${rest}`), 'utf8').catch(() => null)
   if (text === null) throw new CapabilityError('NOT_FOUND', `${bundle}/${rest}`)
   let value: unknown
   try {

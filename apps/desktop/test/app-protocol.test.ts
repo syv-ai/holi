@@ -1,4 +1,6 @@
-import { sep } from 'node:path'
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join, sep } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { APP_METHODS, THEME_TOKENS, appHost } from '@holi/shared'
 import { APP_BASE_TOKENS, missingBaseTokens } from '../src/main/apps/app-tokens'
@@ -6,6 +8,7 @@ import { BRIDGE_JS } from '../src/main/apps/bridge-script'
 import {
   appFileAbsPath,
   appHeadHtml,
+  servableAppFile,
   injectAppHead,
   parseAppUrl,
 } from '../src/main/apps/app-protocol'
@@ -237,5 +240,27 @@ describe('BRIDGE_JS', () => {
     // renderer is what verifies identity.
     expect(BRIDGE_JS).not.toContain('localStorage')
     expect(BRIDGE_JS).toContain("'*'")
+  })
+})
+
+describe('servableAppFile', () => {
+  // A committed link is content like any other file, so an app's author (or a
+  // pull) can plant one: the protocol must not follow it out of the bundle.
+  it('serves a real file and refuses one reached through a symlink', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'holi-app-proto-'))
+    try {
+      await mkdir(join(root, 'memory'))
+      await writeFile(join(root, 'memory/x.md'), 'secret')
+      await mkdir(join(root, BUNDLE), { recursive: true })
+      await writeFile(join(root, BUNDLE, 'index.html'), '<p></p>')
+      await symlink('../../memory/x.md', join(root, BUNDLE, 'x.txt'))
+      await symlink('../../memory', join(root, BUNDLE, 'lib'))
+      expect(await servableAppFile(root, BUNDLE, 'index.html')).not.toBeNull()
+      expect(await servableAppFile(root, BUNDLE, 'x.txt')).toBeNull()
+      expect(await servableAppFile(root, BUNDLE, 'lib/x.md')).toBeNull()
+      expect(await servableAppFile(root, BUNDLE, 'data/a.json')).toBeNull()
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
   })
 })

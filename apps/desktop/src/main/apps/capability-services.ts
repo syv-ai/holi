@@ -11,6 +11,7 @@
 import type { Collaborator, RecentEntry } from '@holi/shared'
 import type { SessionSummary } from '../agent/claude-sessions'
 import { openRepo, type GitRepo } from '../git'
+import type { MembersCache } from '../github/members-cache'
 import type { AgendaWindow, CalendarEvent, CalendarOverrides } from '../google/calendar'
 import type { GoogleData } from '../google/data'
 import type { ListThreadsOptions, MailPage } from '../google/gmail'
@@ -41,16 +42,11 @@ export interface CapabilityServicesDeps {
   /** The open vault's remote and sync state, or null with none open. */
   active(): { remote: string; syncState(): SyncState } | null
   sessions(): SessionSummary[]
-  collaborators(remote: string): Promise<Collaborator[]>
+  members: MembersCache
   googleDataFor(remote: string): Promise<GoogleData | null>
   calendarOverrides(): Promise<CalendarOverrides>
   grants: AppGrants
-  now?: () => number
 }
-
-/** How long a collaborator list is reused: long enough that an app polling it
- *  does not spend the GitHub rate limit, short enough that an invite shows. */
-export const MEMBERS_TTL_MS = 10 * 60 * 1000
 
 /**
  * What the renderer says the person is looking at, per vault: the focused
@@ -82,9 +78,6 @@ export function createCapabilityServices(
   deps: CapabilityServicesDeps,
   reports: UiReports,
 ): (remote: string, root: string) => CapabilityServices {
-  const now = deps.now ?? Date.now
-  const members = new Map<string, { at: number; list: Promise<Collaborator[]> }>()
-
   return (remote, root) => {
     const isActive = () => deps.active()?.remote === remote
     return {
@@ -92,15 +85,7 @@ export function createCapabilityServices(
       syncState: () => (isActive() ? (deps.active()?.syncState() ?? null) : null),
       sessions: () => (isActive() ? deps.sessions() : []),
       recents: () => reports.get(remote).recents,
-      members: () => {
-        const cached = members.get(remote)
-        if (cached !== undefined && now() - cached.at < MEMBERS_TTL_MS) return cached.list
-        const list = deps.collaborators(remote)
-        members.set(remote, { at: now(), list })
-        // A failure is not cached: the next call asks GitHub again.
-        list.catch(() => members.delete(remote))
-        return list
-      },
+      members: () => deps.members.get(remote),
       repo: () => openRepo(root),
       agenda: async (window) => {
         const data = await deps.googleDataFor(remote)

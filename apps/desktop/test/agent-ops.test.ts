@@ -102,67 +102,6 @@ describe('app/open', () => {
   })
 })
 
-describe('pdf/comments', () => {
-  const thread = {
-    id: 'h',
-    page: 2,
-    kind: 'note' as const,
-    markedText: null,
-    author: 'Ada Holm',
-    created: null,
-    modified: null,
-    text: 'Why 60?',
-    replies: [],
-  }
-  const reading = (result: Awaited<ReturnType<AgentOpsDeps['pdfComments']>>) =>
-    vi.fn((_path: string) => Promise.resolve(result))
-
-  it('answers the readable layout as plain text', async () => {
-    const pdfComments = reading({ ok: true, path: 'docs/a b.pdf', threads: [thread] })
-    const r = await rig({ pdfComments })
-    const res = await post(r.port(), `/pdf/comments?t=${r.token()}`, 'path=docs%2Fa%20b.pdf')
-    expect(res.status).toBe(200)
-    expect(res.body).toBe('[From docs/a b.pdf, 1 comment]\n\nPage 2, note\n  Ada Holm\n  > Why 60?')
-    expect(pdfComments).toHaveBeenCalledWith('docs/a b.pdf')
-  })
-
-  it('answers JSON when asked', async () => {
-    const r = await rig({ pdfComments: reading({ ok: true, path: 'a.pdf', threads: [thread] }) })
-    const res = await post(r.port(), `/pdf/comments?t=${r.token()}`, 'path=a.pdf&json=true')
-    expect(res.status).toBe(200)
-    expect(JSON.parse(res.body)).toMatchObject({ path: 'a.pdf', threads: [{ id: 'h', page: 2 }] })
-  })
-
-  it('says so when there are no comments, as an answer and not a refusal', async () => {
-    const r = await rig({ pdfComments: reading({ ok: true, path: 'a.pdf', threads: [] }) })
-    const res = await post(r.port(), `/pdf/comments?t=${r.token()}`, 'path=a.pdf')
-    expect(res.status).toBe(200)
-    expect(res.body).toBe('No comments in a.pdf.')
-  })
-
-  it('refuses with a 422 and the reason, so the command can exit non-zero', async () => {
-    const r = await rig({ pdfComments: reading({ ok: false, error: 'a.md is not a PDF' }) })
-    const res = await post(r.port(), `/pdf/comments?t=${r.token()}`, 'path=a.md')
-    expect(res.status).toBe(422)
-    expect(res.body).toBe('a.md is not a PDF')
-  })
-
-  it('refuses a missing path without calling the dep', async () => {
-    const pdfComments = reading({ ok: true, path: '', threads: [] })
-    const r = await rig({ pdfComments })
-    const res = await post(r.port(), `/pdf/comments?t=${r.token()}`)
-    expect(res.status).toBe(422)
-    expect(pdfComments).not.toHaveBeenCalled()
-  })
-
-  it('turns a thrown dep into a refusal', async () => {
-    const r = await rig({ pdfComments: () => Promise.reject(new Error('pdfium broke')) })
-    const res = await post(r.port(), `/pdf/comments?t=${r.token()}`, 'path=a.pdf')
-    expect(res.status).toBe(422)
-    expect(res.body).toBe('pdfium broke')
-  })
-})
-
 describe('auth and routing', () => {
   it('refuses a bad token before the dep is reached', async () => {
     const r = await rig()

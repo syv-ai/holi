@@ -47,32 +47,6 @@ beforeEach(async () => {
   deps = {
     openApp: vi.fn((id: string) => Promise.resolve({ ok: true as const, id } as { ok: true })),
     initApp: vi.fn((id: string) => Promise.resolve({ ok: true as const, created: [id] })),
-    pdfComments: vi.fn((path: string) =>
-      Promise.resolve(
-        path === 'gone.pdf'
-          ? { ok: false as const, error: 'gone.pdf not found' }
-          : {
-              ok: true as const,
-              path,
-              threads:
-                path === 'empty.pdf'
-                  ? []
-                  : [
-                      {
-                        id: 'n1',
-                        page: 1,
-                        kind: 'note' as const,
-                        markedText: null,
-                        author: 'Bo Lind',
-                        created: null,
-                        modified: null,
-                        text: 'Is this standard?',
-                        replies: [],
-                      },
-                    ],
-            },
-      ),
-    ),
     capability: vi.fn((name: string, params: Record<string, string>) =>
       params.id === 'gone'
         ? Promise.reject(new Error('no such record'))
@@ -166,13 +140,15 @@ describe('app open', () => {
 })
 
 describe('pdf comments', () => {
-  it('prints the comments and exits 0', async () => {
+  const cap = () => deps.capability as ReturnType<typeof vi.fn>
+
+  it('reaches the registry and prints its text as is', async () => {
+    cap().mockResolvedValueOnce({ value: {}, text: '[From docs/msa.pdf, 1 comment]\n\nPage 1' })
     const res = await run(bin, ['pdf', 'comments', 'docs/msa.pdf'], env)
     expect(res.code).toBe(0)
-    expect(res.stdout).toBe(
-      '[From docs/msa.pdf, 1 comment]\n\nPage 1, note\n  Bo Lind\n  > Is this standard?\n',
-    )
+    expect(res.stdout).toBe('[From docs/msa.pdf, 1 comment]\n\nPage 1\n')
     expect(res.stderr).toBe('')
+    expect(cap()).toHaveBeenCalledWith('pdf.comments', { path: 'docs/msa.pdf' })
   })
 
   it('prints JSON with --json, before or after the path', async () => {
@@ -182,22 +158,20 @@ describe('pdf comments', () => {
     ]) {
       const res = await run(bin, ['pdf', 'comments', ...args], env)
       expect(res.code).toBe(0)
-      expect(JSON.parse(res.stdout)).toMatchObject({ path: 'a.pdf', threads: [{ id: 'n1' }] })
+      expect(JSON.parse(res.stdout)).toMatchObject({
+        name: 'pdf.comments',
+        params: { path: 'a.pdf' },
+      })
     }
   })
 
   it('passes a path with a space through intact', async () => {
     await run(bin, ['pdf', 'comments', 'client docs/a b.pdf'], env)
-    expect(deps.pdfComments).toHaveBeenCalledWith('client docs/a b.pdf')
-  })
-
-  it('says there are none and still exits 0', async () => {
-    const res = await run(bin, ['pdf', 'comments', 'empty.pdf'], env)
-    expect(res.code).toBe(0)
-    expect(res.stdout).toBe('No comments in empty.pdf.\n')
+    expect(cap()).toHaveBeenCalledWith('pdf.comments', { path: 'client docs/a b.pdf' })
   })
 
   it('puts a refusal on stderr and exits non-zero', async () => {
+    cap().mockRejectedValueOnce(new Error('gone.pdf not found'))
     const res = await run(bin, ['pdf', 'comments', 'gone.pdf'], env)
     expect(res.code).toBe(1)
     expect(res.stdout).toBe('')
@@ -207,7 +181,7 @@ describe('pdf comments', () => {
   it('needs a path, and refuses an unknown option', async () => {
     expect((await run(bin, ['pdf', 'comments'], env)).code).toBe(2)
     expect((await run(bin, ['pdf', 'comments', '--all', 'a.pdf'], env)).code).toBe(2)
-    expect(deps.pdfComments).not.toHaveBeenCalled()
+    expect(cap()).not.toHaveBeenCalled()
   })
 })
 

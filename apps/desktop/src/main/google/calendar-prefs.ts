@@ -9,8 +9,7 @@
  * here, and a config file developers can open and fix is worth more than
  * hiding a list of calendar names.
  */
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
-import { dirname } from 'node:path'
+import { jsonFileStore } from '../json-file-store'
 import type { CalendarOverrides } from './calendar'
 
 export interface CalendarPrefsStore {
@@ -20,42 +19,26 @@ export interface CalendarPrefsStore {
   set(id: string, enabled: boolean): Promise<void>
 }
 
-export function createCalendarPrefs(path: string): CalendarPrefsStore {
-  const read = async (): Promise<CalendarOverrides> => {
-    let raw: string
-    try {
-      raw = await readFile(path, 'utf8')
-    } catch {
-      // Not written yet: every calendar follows the default.
-      return {}
-    }
-    try {
-      const parsed: unknown = JSON.parse(raw)
-      if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
-      const out: CalendarOverrides = {}
-      for (const [id, value] of Object.entries(parsed)) {
-        // Anything else is a hand-edit gone wrong. Skipping the entry falls back
-        // to the default for that calendar, which is a better answer than
-        // treating `"yes"` as truthy and silently enabling someone's calendar.
-        if (typeof value === 'boolean') out[id] = value
-      }
-      return out
-    } catch {
-      // Corrupt file costs the user their toggles, never their agenda.
-      return {}
-    }
+/** Not written yet (every calendar follows the default) or corrupt (the user
+ *  loses their toggles, never their agenda): no choices. */
+function parseOverrides(parsed: unknown): CalendarOverrides {
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
+  const out: CalendarOverrides = {}
+  for (const [id, value] of Object.entries(parsed)) {
+    // Anything else is a hand-edit gone wrong. Skipping the entry falls back
+    // to the default for that calendar, which is a better answer than
+    // treating `"yes"` as truthy and silently enabling someone's calendar.
+    if (typeof value === 'boolean') out[id] = value
   }
+  return out
+}
 
+export function createCalendarPrefs(path: string): CalendarPrefsStore {
+  const store = jsonFileStore(path, parseOverrides)
   return {
-    read,
+    read: store.read,
     async set(id, enabled) {
-      const next = { ...(await read()), [id]: enabled }
-      await mkdir(dirname(path), { recursive: true })
-      // Written aside and renamed: a crash mid-write must not leave a truncated
-      // file, which `read` would discard along with every other choice.
-      const temporary = `${path}.tmp`
-      await writeFile(temporary, `${JSON.stringify(next, null, 2)}\n`, 'utf8')
-      await rename(temporary, path)
+      await store.update((current) => ({ ...current, [id]: enabled }))
     },
   }
 }

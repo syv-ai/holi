@@ -12,6 +12,7 @@
  * `index.ts` beside the vault one, so the two handlers read as the pair they are.
  */
 import { join } from 'node:path'
+import { exactPath } from '@holi/shared/path-safety-node'
 import {
   bundleFromAppHost,
   isAppDataPath,
@@ -77,6 +78,22 @@ export function appFileAbsPath(vaultRoot: string, bundle: string, rel: string): 
   // a `fetch('data/…')` cannot read past its checks.
   if (isAppDataPath(safe)) return null
   return absPathFor(join(vaultRoot, bundle), safe)
+}
+
+/**
+ * `appFileAbsPath`, and only when that name is the file on disk: nothing
+ * reached through a symlink, nothing opened by a case alias. The lexical checks
+ * above hold for the name; a committed `lib -> ../../memory` would otherwise
+ * serve whatever the link points at, in the vault or out of it.
+ */
+export async function servableAppFile(
+  vaultRoot: string,
+  bundle: string,
+  rel: string,
+): Promise<string | null> {
+  const abs = appFileAbsPath(vaultRoot, bundle, rel)
+  if (abs === null) return null
+  return exactPath(vaultRoot, `${bundle}/${vaultRelPath(rel)}`)
 }
 
 /**

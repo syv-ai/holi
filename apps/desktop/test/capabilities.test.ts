@@ -10,13 +10,8 @@ import {
   type CapabilityContext,
   type CapabilityError,
 } from '../src/main/apps/capabilities'
-import {
-  createCapabilityServices,
-  createUiReports,
-  MEMBERS_TTL_MS,
-  noServices,
-  type CapabilityServices,
-} from '../src/main/apps/capability-services'
+import { noServices, type CapabilityServices } from '../src/main/apps/capability-services'
+import { MEMBERS_TTL_MS, createMembersCache } from '../src/main/github/members-cache'
 
 describe('the capability registry', () => {
   it('answers every bridge method the renderer does not answer itself, at the app door', () => {
@@ -129,32 +124,23 @@ describe('members', () => {
     })
   })
 
-  it('asks GitHub once per TTL, and again after a failure', async () => {
+  it('asks GitHub once per TTL, and again after a failure or a forget', async () => {
     let clock = 0
     const collaborators = vi
       .fn()
       .mockRejectedValueOnce(new Error('down'))
       .mockResolvedValue([{ accountId: 1, login: 'ada', permission: 'write' }])
-    const services = createCapabilityServices(
-      {
-        today: () => '2026-09-30',
-        active: () => null,
-        sessions: () => [],
-        collaborators,
-        googleDataFor: async () => null,
-        calendarOverrides: async () => ({}),
-        grants: noServices(() => '').grants,
-        now: () => clock,
-      },
-      createUiReports(),
-    )
-    await expect(services('o/r', root).members()).rejects.toThrow('down')
-    await services('o/r', root).members()
-    await services('o/r', root).members()
+    const members = createMembersCache(collaborators, () => clock)
+    await expect(members.get('o/r')).rejects.toThrow('down')
+    await members.get('o/r')
+    await members.get('o/r')
     expect(collaborators).toHaveBeenCalledTimes(2)
     clock += MEMBERS_TTL_MS
-    await services('o/r', root).members()
+    await members.get('o/r')
     expect(collaborators).toHaveBeenCalledTimes(3)
+    members.forget('o/r')
+    await members.get('o/r')
+    expect(collaborators).toHaveBeenCalledTimes(4)
   })
 })
 

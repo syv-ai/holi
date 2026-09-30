@@ -93,9 +93,10 @@ post() {
 }
 
 # One capability through the CLI door. The answer is the output itself, so
-# the status decides where it goes, as for pdf comments below: 200 to stdout,
-# anything else to stderr and a failing exit. Every field rides in the body so
-# curl encodes it.
+# the status decides where it goes rather than curl's exit code: 200 to stdout,
+# anything else to stderr and a failing exit. The body goes through a file so
+# that nothing about it, a trailing newline included, is lost on the way.
+# Every field rides in the body so curl encodes it.
 cap() {
   label="\$1"; method="\$2"; shift 2
   body=\$(mktemp)
@@ -135,7 +136,7 @@ case "\$cmd" in
     case "\$sub" in
       update)
         # The answer is one line of text; the status decides where it goes, as
-        # for pdf comments below.
+        # for \`cap\` above.
         body=\$(mktemp)
         trap 'rm -f "\$body"' EXIT
         code=\$(curl -sS -X POST -o "\$body" -w '%{http_code}' \\
@@ -239,7 +240,7 @@ case "\$cmd" in
     [ $# -gt 0 ] && shift
     case "\$sub" in
       comments)
-        path=""; json=""
+        path=""; json=false
         while [ $# -gt 0 ]; do
           case "\$1" in
             --json) json=true; shift ;;
@@ -248,21 +249,7 @@ case "\$cmd" in
           esac
         done
         [ -n "\$path" ] || { echo "holi pdf comments <path> [--json]" >&2; exit 2; }
-        # Not \`post\`: the answer is the output itself, so the status decides
-        # where it goes (stdout, or stderr and a failing exit) rather than
-        # curl's exit code. The body goes through a file so that nothing about
-        # its contents, a trailing newline included, is lost on the way.
-        body=\$(mktemp)
-        trap 'rm -f "\$body"' EXIT
-        code=\$(curl -sS -X POST -o "\$body" -w '%{http_code}' \\
-          "\$base/pdf/comments?t=\$HOLI_HOOK_TOKEN" \\
-          --data-urlencode "path=\$path" --data-urlencode "json=\${json:-false}") || exit 1
-        if [ "\$code" = 200 ]; then
-          cat "\$body"; echo
-        else
-          echo "holi pdf comments: \$(cat "\$body")" >&2
-          exit 1
-        fi
+        cap "pdf comments" pdf.comments --data-urlencode "path=\$path"
         ;;
       *) usage ;;
     esac

@@ -8,6 +8,9 @@ import { copyFile, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { commentThreadsJson, emptyVaultSnapshot, formatCommentThreads } from '@holi/shared'
+import { runCapability } from '../src/main/apps/capabilities'
+import { noServices } from '../src/main/apps/capability-services'
 import { pdfCommentsInVault, readPdfComments } from '../src/main/pdf/comments'
 
 const FIXTURES = join(__dirname, 'fixtures', 'pdf-comments')
@@ -116,6 +119,31 @@ describe('pdfCommentsInVault', () => {
         error: `${typed} is not a path inside this vault`,
       })
     }
+  })
+
+  // `holi pdf comments` is this, through the CLI door: what it prints must be
+  // what the formatters make of the threads, text and JSON alike.
+  it('is the registry entry behind holi pdf comments', async () => {
+    const ctx = {
+      remote: 'o/r',
+      root,
+      bundle: null,
+      snapshot: async () => emptyVaultSnapshot(),
+      services: noServices(() => '2026-09-30'),
+    }
+    const path = 'client docs/msa.pdf'
+    const expected = await threads('embedpdf.pdf')
+    const out = await runCapability('pdf.comments', 'cli', ctx, { path })
+    expect(out.text).toBe(formatCommentThreads(path, expected))
+    expect(JSON.stringify(out.value, null, 2)).toBe(
+      JSON.stringify(commentThreadsJson(path, expected), null, 2),
+    )
+    await expect(runCapability('pdf.comments', 'cli', ctx, { path: 'gone.pdf' })).rejects.toThrow(
+      'gone.pdf not found',
+    )
+    await expect(runCapability('pdf.comments', 'app', ctx, { path })).rejects.toThrow(
+      /no such method/,
+    )
   })
 
   it('refuses what is not a PDF, and what is not there', async () => {

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -159,5 +159,27 @@ describe('the app store', () => {
     await expect(
       call('store.check', { path: 'Work/Tracker.app/data/items/h.json' }),
     ).rejects.toThrow(/no such method/)
+  })
+
+  // A committed link would otherwise let an app's store write into the agent
+  // surface, or out of the vault altogether.
+  it('neither reads nor writes through a symlinked collection', async () => {
+    await mkdir(join(root, 'memory'))
+    await writeFile(join(root, 'memory/x.json'), '{"title":"secret"}')
+    await mkdir(join(root, 'Work/Tracker.app/data'), { recursive: true })
+    await symlink('../../../memory', dataDir())
+    await expect(call('store.get', { collection: 'items', id: 'x' })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    })
+    await expect(call('store.list', { collection: 'items' })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    })
+    await expect(
+      call('store.put', { collection: 'items', id: 'y', value: { title: 'a' } }),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' })
+    await expect(call('store.delete', { collection: 'items', id: 'x' })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    })
+    expect(await readdir(join(root, 'memory'))).toEqual(['x.json'])
   })
 })

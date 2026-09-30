@@ -44,8 +44,8 @@ let dir: string
 let server: HookServer
 let turns: Array<[string, string, boolean]>
 let statuses: Array<[string, string, unknown]>
-const pdfComments = vi.fn((path: string) =>
-  Promise.resolve({ ok: true as const, path, threads: [] }),
+const capability = vi.fn((_name: string, params: Record<string, string>) =>
+  Promise.resolve({ value: params, text: '' }),
 )
 
 beforeEach(async () => {
@@ -61,7 +61,7 @@ beforeEach(async () => {
         openApp: vi.fn(),
         initApp: vi.fn(),
         refreshSeed: vi.fn(),
-        pdfComments,
+        capability,
       } as never),
   })
   await server.start()
@@ -210,7 +210,7 @@ describe('holi with only CLAUDE_CONFIG_DIR', () => {
     await writeFor()
     const res = await run(bin, ['pdf', 'comments', 'a.pdf', '--json'], sessionEnv())
     expect(res.code).toBe(0)
-    expect(pdfComments).toHaveBeenCalledWith('a.pdf')
+    expect(capability).toHaveBeenCalledWith('pdf.comments', { path: 'a.pdf' })
   })
 
   it('says Holi is not running when there is no file', async () => {

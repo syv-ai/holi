@@ -16,8 +16,7 @@
  * are one person; matching case-sensitively would silently re-block a sender
  * the user had already allowed.
  */
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
-import { dirname } from 'node:path'
+import { jsonFileStore } from '../json-file-store'
 
 export interface ImagePrefsStore {
   /** Lowercased addresses. Order is not meaningful. */
@@ -28,53 +27,33 @@ export interface ImagePrefsStore {
   clear(): Promise<void>
 }
 
+/** Not written yet, or corrupt: nothing is allowed. A corrupt file costs the
+ *  exceptions, never the mail; blocking is the safe direction to fail in. */
+function parseSenders(parsed: unknown): string[] {
+  if (!Array.isArray(parsed)) return []
+  // A hand-edit gone wrong drops the bad entry rather than the file, which
+  // would re-block every sender the user allowed.
+  return parsed
+    .filter((entry): entry is string => typeof entry === 'string')
+    .map((entry) => entry.trim().toLowerCase())
+    .filter((entry) => entry !== '')
+}
+
 export function createImagePrefs(path: string): ImagePrefsStore {
-  const read = async (): Promise<string[]> => {
-    let raw: string
-    try {
-      raw = await readFile(path, 'utf8')
-    } catch {
-      // Not written yet: nothing is allowed, which is the safe default.
-      return []
-    }
-    try {
-      const parsed: unknown = JSON.parse(raw)
-      if (!Array.isArray(parsed)) return []
-      // A hand-edit gone wrong drops the bad entry rather than the file, which
-      // would re-block every sender the user allowed.
-      return parsed
-        .filter((entry): entry is string => typeof entry === 'string')
-        .map((entry) => entry.trim().toLowerCase())
-        .filter((entry) => entry !== '')
-    } catch {
-      // A corrupt file costs the exceptions, never the mail. Blocking is the
-      // safe direction to fail in.
-      return []
-    }
-  }
-
-  const write = async (senders: string[]): Promise<void> => {
-    await mkdir(dirname(path), { recursive: true })
-    // Written aside and renamed: a crash mid-write must not leave a truncated
-    // file, which `read` would discard along with every other exception.
-    const temporary = `${path}.tmp`
-    await writeFile(temporary, `${JSON.stringify(senders, null, 2)}\n`, 'utf8')
-    await rename(temporary, path)
-  }
-
+  const store = jsonFileStore(path, parseSenders)
   return {
-    read,
+    read: store.read,
     async allow(sender) {
       const normalised = sender.trim().toLowerCase()
       // An empty address is what `parseAddress` produces for a `From` header it
       // could not read. Storing it would allow images for every such message.
       if (normalised === '') return
-      const current = await read()
-      if (current.includes(normalised)) return
-      await write([...current, normalised])
+      await store.update((current) =>
+        current.includes(normalised) ? current : [...current, normalised],
+      )
     },
     async clear() {
-      await write([])
+      await store.update(() => [])
     },
   }
 }

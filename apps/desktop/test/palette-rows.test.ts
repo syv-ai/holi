@@ -5,6 +5,7 @@
 import { emptyVaultSnapshot, type VaultSnapshot } from '@holi/shared'
 import { describe, expect, it } from 'vitest'
 import {
+  bodyRows,
   buildRows,
   commandQuery,
   openTabRows,
@@ -145,6 +146,32 @@ describe('rankRows with a query', () => {
   it('finds a surface and a session by name', () => {
     expect(keys(rankRows(rows(), 'boa', []))[0]).toBe('surface:board')
     expect(keys(rankRows(rows(), 'refac', []))[0]).toBe('session:s1')
+  })
+})
+
+describe('bodyRows', () => {
+  const rows = buildRows({ snapshot: snapshot(), appPaths: [], sessions: [] })
+
+  it('lists text matches after the name rows, leaving out what those already show', () => {
+    const ranked = rankRows(rows, 'alpha', [])
+    const out = bodyRows(rows, ranked, [
+      { path: 'notes/alpha.md', snippet: 'alpha' },
+      { path: 'notes/beta.md', snippet: '…the alpha plan…' },
+    ])
+    expect(out.map((r) => [r.key, r.snippet])).toEqual([['notes/beta.md', '…the alpha plan…']])
+  })
+
+  it('shows only what the palette would list by name: nothing hidden, nothing unknown', () => {
+    const out = bodyRows(
+      rows,
+      [],
+      [
+        { path: '.holi/settings/app.md', snippet: 'x' },
+        { path: 'gone.md', snippet: 'x' },
+        { path: 'notes/alpha.md', snippet: 'x' },
+      ],
+    )
+    expect(out.map((r) => r.key)).toEqual(['notes/alpha.md'])
   })
 })
 

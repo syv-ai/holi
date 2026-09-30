@@ -19,8 +19,8 @@
  * Plain JSON in userData, like `google/calendar-prefs.ts`: no credential here.
  */
 import { createHash } from 'node:crypto'
-import { mkdir, readdir, readFile, readlink, rename, writeFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { readdir, readFile, readlink } from 'node:fs/promises'
+import { join } from 'node:path'
 import {
   APP_MANIFEST_FILE,
   isLocalOnlyPath,
@@ -29,6 +29,7 @@ import {
   type AppAffordance,
 } from '@holi/shared'
 import { runGit } from '../git'
+import { jsonFileStore } from '../json-file-store'
 import { absPathFor } from '../vault/vault-files'
 
 export const GRANT_TTL_MS = 30 * 24 * 60 * 60 * 1000
@@ -129,25 +130,21 @@ export async function declaredAffordances(root: string, bundle: string): Promise
 const keyOf = (remote: string, bundle: string, affordance: string) =>
   JSON.stringify([remote, bundle, affordance])
 
-export function createAppGrants(path: string, now: () => number = Date.now): AppGrants {
-  let queue: Promise<void> = Promise.resolve()
-  const read = async (): Promise<GrantFile> => {
-    try {
-      const parsed: unknown = JSON.parse(await readFile(path, 'utf8'))
-      if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
-      const out: GrantFile = {}
-      for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
-        const r = value as Partial<GrantRecord> | null
-        if (typeof r?.expiresAt === 'number' && typeof r.codeHash === 'string') {
-          out[key] = { expiresAt: r.expiresAt, codeHash: r.codeHash }
-        }
-      }
-      return out
-    } catch {
-      // Unwritten or corrupt: nothing is approved, which is the safe way to fail.
-      return {}
+/** Unwritten or corrupt: nothing is approved, which is the safe way to fail. */
+function parseGrants(parsed: unknown): GrantFile {
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
+  const out: GrantFile = {}
+  for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+    const r = value as Partial<GrantRecord> | null
+    if (typeof r?.expiresAt === 'number' && typeof r.codeHash === 'string') {
+      out[key] = { expiresAt: r.expiresAt, codeHash: r.codeHash }
     }
   }
+  return out
+}
+
+export function createAppGrants(path: string, now: () => number = Date.now): AppGrants {
+  const store = jsonFileStore(path, parseGrants)
 
   return {
     async status(remote, root, bundle) {
@@ -162,7 +159,7 @@ export function createAppGrants(path: string, now: () => number = Date.now): App
           affordances: declared.map((affordance) => ({ affordance, granted: true })),
         }
       }
-      const file = await read()
+      const file = await store.read()
       return {
         codeHash,
         affordances: declared.map((affordance) => {
@@ -174,35 +171,25 @@ export function createAppGrants(path: string, now: () => number = Date.now): App
       }
     },
 
-    grant(remote, root, bundle, affordances, shownHash) {
-      // One write at a time: two approvals at once would each read the file,
-      // and the second rename would drop the first's record.
-      const write = async (): Promise<boolean> => {
-        const codeHash = await bundleCodeHash(root, bundle)
-        if (codeHash !== shownHash) return false
-        const declared = await declaredAffordances(root, bundle)
-        const chosen = declared.filter((a) => affordances.includes(a))
-        if (chosen.length === 0) return true
-        const file = await read()
+    async grant(remote, root, bundle, affordances, shownHash) {
+      const codeHash = await bundleCodeHash(root, bundle)
+      if (codeHash !== shownHash) return false
+      const declared = await declaredAffordances(root, bundle)
+      const chosen = declared.filter((a) => affordances.includes(a))
+      if (chosen.length === 0) return true
+      // Queued: two approvals at once would each read the file, and the second
+      // write would drop the first's record.
+      await store.update((file) => {
         // Expired approvals go on every write, so the file does not only grow.
-        for (const [key, record] of Object.entries(file)) {
-          if (record.expiresAt <= now()) delete file[key]
-        }
+        const next = Object.fromEntries(
+          Object.entries(file).filter(([, record]) => record.expiresAt > now()),
+        )
         for (const affordance of chosen) {
-          file[keyOf(remote, bundle, affordance)] = { expiresAt: now() + GRANT_TTL_MS, codeHash }
+          next[keyOf(remote, bundle, affordance)] = { expiresAt: now() + GRANT_TTL_MS, codeHash }
         }
-        await mkdir(dirname(path), { recursive: true })
-        const temporary = `${path}.tmp`
-        await writeFile(temporary, `${JSON.stringify(file, null, 2)}\n`, 'utf8')
-        await rename(temporary, path)
-        return true
-      }
-      const done = queue.then(write, write)
-      queue = done.then(
-        () => {},
-        () => {},
-      )
-      return done
+        return next
+      })
+      return true
     },
   }
 }

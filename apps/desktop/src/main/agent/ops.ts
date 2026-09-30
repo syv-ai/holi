@@ -14,20 +14,15 @@
  * is broken" rather than "that app has no manifest yet". A thrown dep becomes
  * `{ok:false,error}` for the same reason.
  *
- * **`/pdf/comments` and `/cap/<method>` are the exceptions**: their output is
- * the answer itself, so they answer `text/plain`, 200 with it or 422 with one
- * line, and the script routes them to stdout and stderr the way `cat` would.
+ * **`/cap/<method>` is the exception**: its output is the answer itself, so it
+ * answers `text/plain`, 200 with it or 422 with one line, and the script routes
+ * them to stdout and stderr the way `cat` would.
  * `/merge/record` is git's, not the agent's: 200 with the merged record, or 409.
  *
  * NOTE: no `electron` import, here or in `hook-server.ts`: both load under
  * vitest.
  */
-import {
-  commentThreadsJson,
-  formatCommentThreads,
-  mergeRecordText,
-  type PdfCommentThread,
-} from '@holi/shared'
+import { mergeRecordText } from '@holi/shared'
 import type { SkillsUpdate } from './seed-content'
 
 /** What a route needs main to do. Injected, so this module stays testable
@@ -43,11 +38,6 @@ export interface AgentOpsDeps {
   runPreCommitHooks(): Promise<{ changed: string[]; failed: unknown[] }>
   /** `holi skills update`: this release's skills and hooks, merged in. */
   updateSkills(): Promise<SkillsUpdate>
-  /** A vault PDF's comment threads, read from the saved file. `path` is
-   *  as the agent typed it; the dep checks it against the vault. */
-  pdfComments(
-    path: string,
-  ): Promise<{ ok: true; path: string; threads: PdfCommentThread[] } | { ok: false; error: string }>
   /** The CLI door into the capability registry (`apps/capabilities.ts`): run
    *  `name` for this vault with the command's fields as params. Throws the
    *  refusal, whose message is the one line the command prints. */
@@ -112,19 +102,6 @@ export function createAgentOps(deps: AgentOpsDeps): AgentOps {
         try {
           const result = await deps.updateSkills()
           return text(result.ok ? 200 : 422, result.ok ? result.summary : result.message)
-        } catch (error) {
-          return text(422, message(error))
-        }
-      }
-      case '/pdf/comments': {
-        const path = params.get('path')
-        if (path === null || path === '') return text(422, 'needs a path to a PDF in the vault')
-        try {
-          const result = await deps.pdfComments(path)
-          if (!result.ok) return text(422, result.error)
-          return params.get('json') === 'true'
-            ? text(200, JSON.stringify(commentThreadsJson(result.path, result.threads), null, 2))
-            : text(200, formatCommentThreads(result.path, result.threads))
         } catch (error) {
           return text(422, message(error))
         }

@@ -52,6 +52,8 @@ export interface PaletteRow {
 export interface RankedRow extends PaletteRow {
   /** Came from the recents, so the empty-query list can head it as such. */
   recent: boolean
+  /** A text match: the words around it, shown in place of the folder. */
+  snippet?: string
 }
 
 export const ROW_CAP = 50
@@ -198,6 +200,34 @@ export function rankRows(
     )
     .slice(0, cap)
     .map(({ row }): RankedRow => ({ ...row, recent: order.has(rowId(row.kind, row.key)) }))
+}
+
+/**
+ * The notes whose text matched, as rows after the name matches: in the order
+ * main found them, only paths the palette lists by name too (so a hidden path
+ * stays hidden), and none that the name rows already show.
+ */
+export function bodyRows(
+  rows: readonly PaletteRow[],
+  ranked: readonly RankedRow[],
+  hits: readonly { path: string; snippet?: string }[],
+  cap = ROW_CAP,
+): RankedRow[] {
+  const byPath = new Map(rows.filter((r) => r.kind === 'path').map((r) => [r.key, r]))
+  const shown = new Set(ranked.filter((r) => r.kind === 'path').map((r) => r.key))
+  const out: RankedRow[] = []
+  for (const hit of hits) {
+    const row = byPath.get(hit.path)
+    if (row === undefined || shown.has(hit.path)) continue
+    shown.add(hit.path)
+    out.push({
+      ...row,
+      recent: false,
+      ...(hit.snippet === undefined ? {} : { snippet: hit.snippet }),
+    })
+    if (out.length >= cap) break
+  }
+  return out
 }
 
 /**

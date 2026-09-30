@@ -33,6 +33,7 @@ import {
 } from '@holi/shared'
 import { ensureSeeded } from './agent/seed-content'
 import { initAppOp, type AppInitResult } from './apps/app-ops'
+import { searchBodies, type SearchHit } from './apps/app-search'
 import { CapabilityError, runCapability, type CapabilityContext } from './apps/capabilities'
 import { noServices, type CapabilityServices, type UiReport } from './apps/capability-services'
 import { migrateApps as moveLegacyApps } from './apps/migrate-apps'
@@ -47,6 +48,7 @@ import { openRepo, remoteUrl, type Commit, type RangeFile } from './git'
 import { openTurnLog, type TurnRecord } from './agent/turn-log'
 import { GitHubApiError, type Repo } from './github/api'
 import type { DeviceFlow } from './github/device-flow'
+import { createMembersCache, type MembersCache } from './github/members-cache'
 import type { GitHubSession } from './github/session'
 import type { LoopbackFlow as GoogleFlow } from './google/loopback-flow'
 import type { GoogleSession } from './google/session'
@@ -224,6 +226,9 @@ export interface RouterDeps {
    * builds without it; absent, those reads answer "not available here".
    */
   capabilityServices?: (remote: string, root: string) => CapabilityServices
+  /** The collaborator lists the capability services read too, so Settings
+   *  and an app share one. Optional: absent, the router keeps its own. */
+  members?: MembersCache
   /** Where the renderer's report of what the person is looking at lands (the
    *  agent's focus file, the bridge's recents). Optional like the rest:
    *  absent, a report is dropped. */
@@ -488,6 +493,8 @@ export function createRouter(deps: RouterDeps) {
   const today = deps.today ?? localToday
   const cloneUrlFor = deps.cloneUrlFor ?? remoteUrl
   const servicesFor = deps.capabilityServices ?? (() => noServices(today))
+  const members =
+    deps.members ?? createMembersCache((remote) => deps.session.api.collaborators(remote))
 
   /**
    * A write must be visible to the very next read.
@@ -789,6 +796,8 @@ export function createRouter(deps: RouterDeps) {
       // The keychain entry goes, the clones stay. Removing one is a separate,
       // deliberate act: `deleteClones`, or leaving or deleting a vault.
       await deps.session.signOut()
+      // Another account may see other members, or none.
+      members.forget()
       return { ok: true as const }
     }),
   })
@@ -805,9 +814,10 @@ export function createRouter(deps: RouterDeps) {
         // the UI could forget to make: a vault silently becoming public is the
         // highest-severity thing that can happen to it, and this panel is the
         // only surface that would ever show it.
+        // The list is cached; the visibility never is.
         const [repo, collaborators] = await Promise.all([
           deps.session.api.repo(remote),
-          deps.session.api.collaborators(remote),
+          members.get(remote),
         ])
         return { visibility: repo.visibility, collaborators }
       }),
@@ -817,6 +827,10 @@ export function createRouter(deps: RouterDeps) {
       .input(fields({ remote: 'string' }))
       .mutation(async ({ input }) => {
         // Holi does not implement invitation; it points at the flow that does.
+        // Settings is about to change who is in it: whatever list is read
+        // after this asks GitHub rather than the cache. An invite shows once
+        // accepted, so it can still take a cache lifetime to appear.
+        members.forget(safeRemote(input.remote))
         await deps.openExternal(`https://github.com/${safeRemote(input.remote)}/settings/access`)
         return { ok: true as const }
       }),
@@ -962,7 +976,7 @@ export function createRouter(deps: RouterDeps) {
           const [collaborators, direct] = await Promise.all([
             // Names for the delete confirm only: a listing GitHub refuses must
             // not stop someone leaving.
-            deps.session.api.collaborators(remote).catch(() => []),
+            members.get(remote).catch(() => []),
             // A personal repo has no other kind of access to have.
             owned || repo.owner.kind === 'user'
               ? true
@@ -1007,7 +1021,10 @@ export function createRouter(deps: RouterDeps) {
         await refuseIfStuck(remote)
         const direct =
           repo.owner.kind === 'user' || (await deps.session.api.isDirectCollaborator(remote, login))
-        if (direct) await deps.session.api.removeCollaborator(remote, login)
+        if (direct) {
+          await deps.session.api.removeCollaborator(remote, login)
+          members.forget(remote)
+        }
         await removeClone(remote)
         return { accessVia: direct ? null : repo.owner.login }
       }),
@@ -1396,6 +1413,27 @@ export function createRouter(deps: RouterDeps) {
         const text = await readFile(abs, 'utf8').catch(() => null)
         if (text === null) throw new TRPCError({ code: 'NOT_FOUND', message: input.path })
         return text
+      }),
+
+    /**
+     * The notes whose text holds `q`, most recently modified first: ⌘P's rows
+     * after the name matches it ranks itself. Holi's own UI, so nothing is out
+     * of reach, the agent surface included; the palette shows only what it
+     * would list by name anyway.
+     */
+    search: t.procedure
+      .input(fields({ remote: 'string', q: 'string' }))
+      .query(async ({ input }): Promise<SearchHit[]> => {
+        const q = input.q.trim()
+        if (q === '') return []
+        const docs = [...(await snapshotFor(input.remote)).docs].sort((a, b) =>
+          b.updatedAt.localeCompare(a.updatedAt),
+        )
+        return searchBodies(
+          await rootFor(input.remote),
+          docs.map((d) => d.path),
+          q,
+        )
       }),
 
     /** The file's last commit, first commit and commit count. Null when the

@@ -12,8 +12,7 @@
  * Read per call rather than cached, which removes cache invalidation from a
  * file the settings UI and the agent's door both resolve through.
  */
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
-import { dirname } from 'node:path'
+import { jsonFileStore } from '../json-file-store'
 
 /** `owner/repo` → Google's stable account id (`sub`). */
 export type VaultAccounts = Record<string, string>
@@ -31,58 +30,39 @@ export interface VaultAccountsStore {
   unlinkAccount(sub: string): Promise<void>
 }
 
+/** Not written yet (no vault has connected) or corrupt (the user loses their
+ *  links, never their mail): no links. */
+function parseAccounts(parsed: unknown): VaultAccounts {
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
+  const out: VaultAccounts = {}
+  for (const [remote, sub] of Object.entries(parsed)) {
+    // Anything else is a hand-edit gone wrong. Dropping the entry costs one
+    // vault its link, which beats building a session or a cache filename
+    // out of a number.
+    if (typeof sub === 'string' && sub !== '') out[remote] = sub
+  }
+  return out
+}
+
 export function createVaultAccounts(path: string): VaultAccountsStore {
-  const all = async (): Promise<VaultAccounts> => {
-    let raw: string
-    try {
-      raw = await readFile(path, 'utf8')
-    } catch {
-      return {} // not written yet: no vault has connected
-    }
-    try {
-      const parsed: unknown = JSON.parse(raw)
-      if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
-      const out: VaultAccounts = {}
-      for (const [remote, sub] of Object.entries(parsed)) {
-        // Anything else is a hand-edit gone wrong. Dropping the entry costs one
-        // vault its link, which beats building a session or a cache filename
-        // out of a number.
-        if (typeof sub === 'string' && sub !== '') out[remote] = sub
-      }
-      return out
-    } catch {
-      // Corrupt file costs the user their links, never their mail.
-      return {}
-    }
-  }
-
-  const save = async (next: VaultAccounts): Promise<void> => {
-    await mkdir(dirname(path), { recursive: true })
-    // Written aside and renamed: a crash mid-write must not leave a truncated
-    // file, which `all` would discard along with every other link.
-    const temporary = `${path}.tmp`
-    await writeFile(temporary, `${JSON.stringify(next, null, 2)}\n`, 'utf8')
-    await rename(temporary, path)
-  }
-
+  const store = jsonFileStore(path, parseAccounts)
   return {
-    all,
+    all: store.read,
     async subFor(remote) {
-      return (await all())[remote] ?? null
+      return (await store.read())[remote] ?? null
     },
     async link(remote, sub) {
-      await save({ ...(await all()), [remote]: sub })
+      await store.update((current) => ({ ...current, [remote]: sub }))
     },
     async unlinkVault(remote) {
-      const next = { ...(await all()) }
-      delete next[remote]
-      await save(next)
+      await store.update((current) =>
+        Object.fromEntries(Object.entries(current).filter(([key]) => key !== remote)),
+      )
     },
     async unlinkAccount(sub) {
-      const next = Object.fromEntries(
-        Object.entries(await all()).filter(([, value]) => value !== sub),
+      await store.update((current) =>
+        Object.fromEntries(Object.entries(current).filter(([, value]) => value !== sub)),
       )
-      await save(next)
     },
   }
 }

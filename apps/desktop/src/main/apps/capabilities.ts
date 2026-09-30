@@ -22,6 +22,8 @@ import { readFile } from 'node:fs/promises'
 import { isAbsolute, relative } from 'node:path'
 import {
   appBundleOf,
+  commentThreadsJson,
+  formatCommentThreads,
   isAgentSurfacePath,
   isAppBundlePath,
   isAppDataPath,
@@ -35,10 +37,11 @@ import {
   type VaultRelPath,
   type VaultSnapshot,
 } from '@holi/shared'
+import { exactPath } from '@holi/shared/path-safety-node'
 import type { SessionSummary } from '../agent/claude-sessions'
 import { readVaultSettings } from '../vault/settings'
+import { pdfCommentsInVault } from '../pdf/comments'
 import { taskDoneOp } from '../vault/task-done'
-import { absPathFor } from '../vault/vault-files'
 import { isSearchable, searchVault, type SearchHit } from './app-search'
 import { storeCheck, storeDelete, storeGet, storeList, storePut } from './app-store'
 import { CapabilityError } from './capability-error'
@@ -192,9 +195,18 @@ async function knownPath(ctx: CapabilityContext, path: string): Promise<VaultRel
 
 async function readNote(ctx: CapabilityContext, path: string): Promise<string> {
   const rel = await knownPath(ctx, path)
-  const text = await readFile(absPathFor(ctx.root, rel), 'utf8').catch(() => null)
+  // The snapshot never lists a symlink, but it can be a scan behind the disk.
+  const abs = await exactPath(ctx.root, rel)
+  if (abs === null) throw new CapabilityError('FORBIDDEN', path)
+  const text = await readFile(abs, 'utf8').catch(() => null)
   if (text === null) throw new CapabilityError('NOT_FOUND', path)
   return text
+}
+
+/** A comment's JSON timestamps back into the dates its formatter reads. */
+function dated<C extends { created: string | null; modified: string | null }>(c: C) {
+  const date = (iso: string | null) => (iso === null ? null : new Date(iso))
+  return { ...c, created: date(c.created), modified: date(c.modified) }
 }
 
 /** A GitHub or Google failure, as a refusal the app can render. */
@@ -446,6 +458,23 @@ const ENTRIES = {
       return result
     },
     text: (r) => (r.status === 'done' ? `done: ${r.path}` : `next: ${r.path} due ${r.due}`),
+  }),
+
+  // The agent's, for a PDF someone marked up: its threads as the viewer
+  // shows them. The value is the `--json` shape, so the text revives its dates.
+  'pdf.comments': cap({
+    doors: ['cli'],
+    params: (raw) => ({ path: stringParam(paramsObject(raw), 'path') }),
+    run: async (ctx, { path }) => {
+      const result = await pdfCommentsInVault(ctx.root, path)
+      if (!result.ok) throw new CapabilityError('BAD_REQUEST', result.error)
+      return commentThreadsJson(result.path, result.threads)
+    },
+    text: ({ path, threads }) =>
+      formatCommentThreads(
+        path,
+        threads.map((t) => ({ ...dated(t), replies: t.replies.map(dated) })),
+      ),
   }),
 
   'tasks.list': cap({

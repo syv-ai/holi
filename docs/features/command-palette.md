@@ -14,6 +14,11 @@ app-level action is one row of one command table that keys, palette and menu all
 - **Ordering.** Empty query: recents first, across every kind, then the vault's paths by modified
   time. With a query: each row scored with `command-score` on its name, then on its path at half
   weight so a folder name still finds the file; recents break ties; the list is capped at 50.
+- **Text matches.** From two typed characters, the notes whose text holds the query follow the
+  name rows under "In text", with the words around the match in place of the folder. Main reads the
+  bodies (`notes.search`, the same grep as an app's `holi.search`, most recently modified first,
+  capped at 50) once typing pauses; an answer for a query no longer in the box is dropped. Only a
+  path the palette lists by name can appear, and not twice.
 - **Recents** are kept per vault in `localStorage` (`holi:recents`), capped and pruned of things
   that no longer exist. They are recorded in two places only: Shell watching the active tab,
   whatever opened it, and `runCommandAtom` for each command run.
