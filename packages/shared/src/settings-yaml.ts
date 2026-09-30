@@ -59,6 +59,7 @@ function legalValues(type: SettingType): string[] {
   if (type.kind === 'flags') {
     return ['Each one is true or false. Naming one says nothing about the others.']
   }
+  if (type.kind === 'app') return ['Any app in the vault: a folder path ending in .app.']
   const shown = type.options.map((o) => `${inline(o.value)} (${o.label})`).join(', ')
   if (type.kind === 'number') {
     // The options are what the PANE offers; the validator takes any positive

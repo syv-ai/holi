@@ -663,6 +663,36 @@ describe('editorFont', () => {
   })
 })
 
+describe('home', () => {
+  it('takes any app bundle path, normalised', () => {
+    for (const [raw, path] of [
+      ['Home.app', 'Home.app'],
+      ['./Dash/Home.local.app/', 'Dash/Home.local.app'],
+    ]) {
+      const s = resolveVaultSettings(committed({ home: raw }), null)
+      expect(s.home).toBe(path)
+      expect(s.warnings).toEqual([])
+    }
+  })
+
+  it('lets the local file choose a home of your own', () => {
+    const s = resolveVaultSettings(
+      committed({ home: 'Team.app' }),
+      committed({ home: 'Me.local.app' }),
+    )
+    expect(s.home).toBe('Me.local.app')
+  })
+
+  it('refuses what is not an app, and says so', () => {
+    for (const raw of ['notes', '../x.app', '.claude/x.app', 3]) {
+      const s = resolveVaultSettings(committed({ home: raw }), null)
+      expect(s.home).toBe(VAULT_SETTING_DEFAULTS.home)
+      expect(s.warnings.join(' ')).toContain('home')
+    }
+    expect(parseSettingsPatch(committed({ home: 'notes' })).patch).not.toHaveProperty('home')
+  })
+})
+
 describe('the schema is the only declaration', () => {
   // The whole point of collapsing four hand-written lists into one. Before this,
   // the reader and the writer were separate passes per key that had already
@@ -671,7 +701,13 @@ describe('the schema is the only declaration', () => {
 
   it('accepts every value it offers, on both the read and the write', () => {
     for (const setting of VAULT_SETTINGS) {
-      if (setting.type.kind === 'boolean' || setting.type.kind === 'flags') continue
+      if (
+        setting.type.kind === 'boolean' ||
+        setting.type.kind === 'flags' ||
+        setting.type.kind === 'app'
+      ) {
+        continue
+      }
       for (const option of setting.type.options) {
         const file = committed({ [setting.key]: option.value })
 
@@ -705,6 +741,7 @@ describe('the schema is the only declaration', () => {
       const control = VAULT_SETTING_DESCRIPTORS.find((d) => d.key === setting.key)!.control
       if (setting.type.kind === 'boolean') expect(control.kind).toBe('toggle')
       else if (setting.type.kind === 'flags') expect(control.kind).toBe('group')
+      else if (setting.type.kind === 'app') expect(control.kind).toBe('app')
       else expect(control.kind).toBe('choice')
     }
   })

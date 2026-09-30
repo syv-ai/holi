@@ -36,6 +36,7 @@ import { VaultPicker } from '@/features/vault/VaultPicker'
 import { trpc } from '../lib/trpc'
 import { sweepDailyAtom } from '../state/daily'
 import { openLandingAtom } from '../state/landing'
+import { useSettingsFollowDisk } from '../state/settings'
 import {
   activeTab,
   appOpensAtom,
@@ -133,6 +134,8 @@ export function Shell() {
   const agentSessions = useAtomValue(agentSessionsAtom)
   // Paint the active vault's colour/chrome theme onto the document root.
   useVaultTheme()
+  // Settings edited on disk (the agent's `home:`, a pull) reach the app.
+  useSettingsFollowDisk()
   // The session and terminal lists and their whole-set effects. Mounted here
   // because the shell outlives every tab.
   useAgentSessions()

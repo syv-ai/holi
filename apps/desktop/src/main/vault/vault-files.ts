@@ -6,6 +6,7 @@ import { mkdir, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join, relative, sep } from 'node:path'
 import {
   GITKEEP,
+  SETTINGS_LOCAL_FILE,
   THEME_LOCAL_FILE,
   appBundleOf,
   isAppBundlePath,
@@ -70,6 +71,8 @@ export function isIgnoredPath(rel: string): boolean {
  *
  *  - **The personal theme.** It stays uncommitted and out of the snapshot's
  *    notes, but editing it has to restyle the app at once.
+ *  - **The personal settings.** `home:` there is a personal Home tab, which
+ *    has to follow an edit the way the committed file's does.
  *  - **A personal app** (`Home.local.app`) and everything in it. The watcher
  *    prunes an ignored directory's whole subtree, so without this the agent
  *    writes the app and nothing appears until the periodic heal. A bundle
@@ -80,7 +83,7 @@ export function isIgnoredPath(rel: string): boolean {
  */
 export function isWatchIgnoredPath(rel: string): boolean {
   if (isNonContentPath(rel)) return true
-  if (rel === THEME_LOCAL_FILE) return false
+  if (rel === THEME_LOCAL_FILE || rel === SETTINGS_LOCAL_FILE) return false
   // Only a bundle that is itself local: a `.local.` file inside a shared app
   // stays unwatched like any other.
   const bundle = isAppBundlePath(rel) ? rel : appBundleOf(rel)

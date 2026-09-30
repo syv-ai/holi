@@ -26,6 +26,8 @@
  */
 
 import { parse as parseYaml } from 'yaml'
+import { isAppBundlePath } from './app-bundle'
+import { vaultRelPath } from './path-safety'
 
 /** The pre-commit transforms a vault can enable. Kebab, matching the
  *  transform names themselves, so there is no mapping table between them. */
@@ -102,6 +104,8 @@ export type LandingTarget =
 
 export interface ResolvedVaultSettings {
   landing: LandingTarget
+  /** The app the Home tab shows: a bundle path, which may not exist yet. */
+  home: string
   dailyNotes: boolean
   colorScheme: ColorScheme
   editorFont: EditorFont
@@ -154,6 +158,17 @@ export function parseLandingTarget(value: unknown): LandingTarget | null {
     return { kind: kind as SingletonLanding }
   }
   return null
+}
+
+/** An untrusted value as an app bundle path, normalised, or `null`. */
+export function parseAppPath(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  try {
+    const path = vaultRelPath(value.replace(/\/+$/, ''))
+    return isAppBundlePath(path) ? path : null
+  } catch {
+    return null
+  }
 }
 
 /** Pick the last file that mentions `key` at all, so an override is per key and
@@ -247,12 +262,20 @@ export type VaultSettingControl =
       kind: 'group'
       toggles: readonly { key: TransformName; label: string; explanation: string }[]
     }
+  /** Pick one of the vault's apps: the options are the renderer's to list. */
+  | { kind: 'app' }
 
 /** A key a descriptor can describe: every setting the resolver answers, each
  *  with a row in the settings tab. A superset of what the ritual asks
  *  (`askedAtBirth`). */
 export type VaultSettingKey =
-  'dailyNotes' | 'landing' | 'hooks' | 'colorScheme' | 'editorFont' | 'maxCommittedFileBytes'
+  | 'dailyNotes'
+  | 'landing'
+  | 'home'
+  | 'hooks'
+  | 'colorScheme'
+  | 'editorFont'
+  | 'maxCommittedFileBytes'
 
 export interface VaultSettingDescriptor {
   key: VaultSettingKey
@@ -294,7 +317,7 @@ const LOCAL_FILE_HINT = `Change it any time in ${SETTINGS_LOCAL_FILE}, which sta
  * refuses. Here the kind decides the control (`toggle`, `choice`, `group`) and
  * the entry supplies only the labels, so that class of bug cannot be written.
  *
- * Five kinds cover six settings, and the fifth exists for exactly one of them.
+ * Six kinds cover seven settings; `parsed` and `app` exist for one each.
  */
 export type SettingType =
   | { kind: 'boolean' }
@@ -326,6 +349,11 @@ export type SettingType =
       expected: string
       options: readonly VaultSettingOption[]
     }
+  /**
+   * An app bundle path (`parseAppPath`). The legal values are whatever apps
+   * the vault holds, so the pane lists them itself and there are no options.
+   */
+  | { kind: 'app' }
 
 /**
  * One setting, declared once.
@@ -422,6 +450,19 @@ export const VAULT_SETTINGS: readonly VaultSetting[] = [
     target: 'committed',
     askedAtBirth: true,
     whereToChange: `${SETTINGS_FILE_HINT}, including pointing it at a note or an app`,
+    section: 'general',
+  },
+  {
+    key: 'home',
+    label: 'Home shows',
+    explanation:
+      'The app on the Home tab. Ask the vault assistant to change it, or pick another app.',
+    type: { kind: 'app' },
+    default: 'Home.app',
+    target: 'committed',
+    // An app a new vault is given, not a question for someone who has none.
+    askedAtBirth: false,
+    whereToChange: `${SETTINGS_FILE_HINT}, or in ${SETTINGS_LOCAL_FILE} for a home of your own`,
     section: 'general',
   },
   {
@@ -592,6 +633,8 @@ function controlFor(type: SettingType): VaultSettingControl {
       return { kind: 'toggle' }
     case 'flags':
       return { kind: 'group', toggles: type.flags }
+    case 'app':
+      return { kind: 'app' }
     // enum, number and parsed are all "pick one of these", and differ only in
     // what ELSE is legal, which is the validator's business, not the control's.
     default:
@@ -635,6 +678,12 @@ function readValue(
       return typeof value === 'object' && value !== null && !Array.isArray(value)
         ? { ok: true, value }
         : { ok: false, expected: 'an object' }
+    case 'app': {
+      const path = parseAppPath(value)
+      return path === null
+        ? { ok: false, expected: 'an app, a folder path ending in .app' }
+        : { ok: true, value: path }
+    }
   }
 }
 

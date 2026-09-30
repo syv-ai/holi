@@ -45,6 +45,7 @@ function setSystemDark(next: boolean) {
 
 const settings = (colorScheme: ResolvedVaultSettings['colorScheme']): ResolvedVaultSettings => ({
   landing: { kind: 'daily' },
+  home: VAULT_SETTING_DEFAULTS.home,
   dailyNotes: true,
   colorScheme,
   editorFont: 'mono',

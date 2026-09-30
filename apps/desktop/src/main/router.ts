@@ -34,6 +34,7 @@ import {
 import { ensureSeeded } from './agent/seed-content'
 import { initAppOp, type AppInitResult } from './apps/app-ops'
 import { searchBodies, type SearchHit } from './apps/app-search'
+import { writeHomeApp } from './apps/home-app'
 import { CapabilityError, runCapability, type CapabilityContext } from './apps/capabilities'
 import { noServices, type CapabilityServices, type UiReport } from './apps/capability-services'
 import { migrateApps as moveLegacyApps } from './apps/migrate-apps'
@@ -1364,6 +1365,16 @@ export function createRouter(deps: RouterDeps) {
       .mutation(async ({ input }): Promise<AppInitResult> =>
         initAppOp(await rootFor(input.remote), input.path),
       ),
+
+    /** The Home tab's "Create Home app": the default Home app, at the path the
+     *  vault's `home` setting names. Never overwrites. */
+    createHome: vaultMutation
+      .input(fields({ remote: 'string' }))
+      .mutation(async ({ input }): Promise<{ created: string[] }> => {
+        const root = await rootFor(input.remote)
+        const { home } = await readVaultSettings(root)
+        return { created: await writeHomeApp(root, home) }
+      }),
   })
 
   /**

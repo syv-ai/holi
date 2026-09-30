@@ -44,8 +44,10 @@ hidden, the same menu runs down the rail.
   parent Apps item with it.
 - **Sessions** are one row each directly above the menu, under the file tree, only while running:
   no header, nothing to resize or collapse ([agent sessions](agent-sessions.md)).
-- **Home** is a singleton tab (`home`), opened leftmost like the board. Today it shows the empty
-  editor's state.
+- **Home** is a singleton tab (`home`), opened leftmost like the board. It shows the app the
+  vault's `home` setting names, `Home.app` by default ([vault apps](vault-apps.md)). When there is
+  no such app, as in every vault made before Home was one, it says so and offers **Create Home
+  app**, which writes the default app at that path. Nothing is written unasked.
 
 ## Rules
 
@@ -89,5 +91,7 @@ hidden, the same menu runs down the rail.
 - `apps/desktop/src/renderer/src/primitives/springs.ts`: its springs, shared with the
   [command palette](command-palette.md).
 - `apps/desktop/src/renderer/src/features/nav/NavMenu.tsx`: the items.
-- `apps/desktop/src/renderer/src/features/home/HomeView.tsx`: the home tab.
+- `apps/desktop/src/renderer/src/components/PaneView.tsx` (which picks the app or the offer),
+  `features/home/HomeView.tsx` (the offer), `main/apps/home-app.ts` and `main/apps/home-app/`
+  (the default app).
 - `apps/desktop/src/renderer/src/components/Shell.tsx`: the sidebar and rail placement.

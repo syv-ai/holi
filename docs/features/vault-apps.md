@@ -45,7 +45,8 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   (Holi's base palette, `APP_BASE_TOKENS`, with the vault's resolved theme laid over it) and the
   `window.holi` bridge script. Every other file is served byte for byte.
 - **The bridge** is `postMessage` from the frame to `AppFrame`, which answers `holi.open` itself
-  (a vault file, or one of Holi's views: home, board, agenda, mail, settings, history) and
+  (a vault file, an app's bundle as that app, or one of Holi's views: home, board, agenda, mail,
+  settings, history) and
   forwards every other method to `apps.bridge` in main with the bundle it mounted. Reads:
   `docs.list`, `docs.read`, `docs.render` (a note as HTML, inline HTML escaped and only web links
   kept, so a note cannot run script as the app), `tasks.list`, `recents`, `search` (names, then
@@ -103,6 +104,13 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   a `<name>.app` folder below the session's cwd, a syntax error and its line, a `.ts`/`.tsx`/`.jsx` file nothing will build, a
   `localStorage` call, a missing manifest, and a hard-coded colour. It is advisory, exits 0, and is
   silent when nothing is wrong. See [agent config](agent-config.md) for the CLI and hooks.
+- **Home is an app.** The Home tab shows the app the `home` setting names, `Home.app` by default
+  ([settings](settings.md)). A new vault is created with it: plain HTML and a script, no build and
+  no vendored code, listing the recents (`holi.recents()`, kept live by `on('recents')`) over the
+  line "You can customize this page. Explain your vision to the vault assistant". It is written
+  at creation only, not as a once-file, since those return on every open: an existing vault's Home
+  tab offers **Create Home app** instead (`apps.createHome`, never overwrites), and a deleted one
+  stays deleted.
 - **Migration.** Apps used to live in `.holi/apps/<id>/`, hidden with the other dotfiles. On
   vault open, before the first snapshot, `migrate-apps.ts` moves each to `<id>.app/` at the root
   with one `rename`, then rewrites inbound `[[links]]`; the autosave commits it. An app whose

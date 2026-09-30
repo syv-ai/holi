@@ -10,13 +10,20 @@
  * succession (the landing and the sweep both need `dailyNotes`). Keying on the
  * remote is the whole invalidation rule.
  *
- * A settings file edited *while* the app runs is not picked up here until the
- * next vault open: these are decisions about how a vault starts.
+ * A settings file edited on disk while the app runs (by the agent, by hand, or
+ * by a pull) is re-read through `useSettingsFollowDisk`, so the Home tab and
+ * the live settings follow it. `landing` still acts only when a vault opens.
  */
-import { atom } from 'jotai'
-import type { ResolvedVaultSettings } from '@holi/shared'
+import { atom, useAtomValue, useSetAtom } from 'jotai'
+import { useEffect, useRef } from 'react'
+import {
+  SETTINGS_FILE,
+  SETTINGS_LOCAL_FILE,
+  VAULT_SETTING_DEFAULTS,
+  type ResolvedVaultSettings,
+} from '@holi/shared'
 import { trpc } from '../lib/trpc'
-import { activeRemoteAtom } from './vaults'
+import { activeRemoteAtom, snapshotAtom } from './vaults'
 
 /** The cache. Holds the remote it was read for, so a stale vault's answer can
  *  never be served. */
@@ -48,3 +55,35 @@ export const loadVaultSettingsAtom = atom(
     return settings
   },
 )
+
+/** The app the Home tab shows: the setting once this vault's settings are read,
+ *  the default until then. It may name an app that does not exist yet. */
+export const homeAppAtom = atom((get): string => {
+  const cached = get(vaultSettingsAtom)
+  return cached !== null && cached.remote === get(activeRemoteAtom)
+    ? cached.settings.home
+    : VAULT_SETTING_DEFAULTS.home
+})
+
+/** The two settings files as the snapshot last saw them. */
+const settingsFilesAtom = atom((get): string =>
+  get(snapshotAtom)
+    .files.filter((f) => f.path === SETTINGS_FILE || f.path === SETTINGS_LOCAL_FILE)
+    .map((f) => `${f.path}@${f.updatedAt}`)
+    .join('|'),
+)
+
+/** Re-read the settings when either file changes on disk. Mounted once, in Shell. */
+export function useSettingsFollowDisk(): void {
+  const files = useAtomValue(settingsFilesAtom)
+  const load = useSetAtom(loadVaultSettingsAtom)
+  const first = useRef(true)
+  useEffect(() => {
+    // The vault's open reads them; this answers only a later change.
+    if (first.current) {
+      first.current = false
+      return
+    }
+    load({ force: true }).catch((e: unknown) => console.warn('[settings] re-read failed:', e))
+  }, [files, load])
+}

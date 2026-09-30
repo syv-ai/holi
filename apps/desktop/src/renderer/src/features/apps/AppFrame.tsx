@@ -33,6 +33,7 @@ import {
   APP_METHODS,
   appHost,
   appName,
+  isAppBundlePath,
   isAppSurface,
   type AppAffordance,
   type AppMethod,
@@ -44,7 +45,13 @@ import { trpc } from '../../lib/trpc'
 import { appPushSignaturesAtom, storeSignatures } from '../../state/app-push'
 import { appPathsAtom, closeAppAtom } from '../../state/apps'
 import { activeModeAtom } from '../../state/color-scheme'
-import { appOpensAtom, openNoteTabAtom, openSingleton, workspaceAtom } from '../../state/panes'
+import {
+  appOpensAtom,
+  openApp,
+  openNoteTabAtom,
+  openSingleton,
+  workspaceAtom,
+} from '../../state/panes'
 import { activeRemoteAtom, snapshotAtom } from '../../state/vaults'
 
 function isAppMethod(value: unknown): value is AppMethod {
@@ -101,7 +108,9 @@ export function AppFrame({ path }: { path: string }): React.JSX.Element {
         }
         const path = fieldOf(params, 'path')
         if (path === null) throw new Error('open needs a path or a view')
-        openNote(path)
+        // An app's bundle is a folder: it opens as the app, not as a file.
+        if (isAppBundlePath(path)) setWorkspace((w) => openApp(w, path))
+        else openNote(path)
         return { ok: true }
       }
       return await trpc.apps.bridge.mutate({ remote, bundle: path, method, params })

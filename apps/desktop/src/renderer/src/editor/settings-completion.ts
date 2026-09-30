@@ -61,7 +61,7 @@ function valuesFor(key: string): Completion[] | null {
   }
   const type = setting.type
   if (type.kind === 'boolean') return BOOLEANS
-  if (type.kind === 'flags') return null
+  if (type.kind === 'flags' || type.kind === 'app') return null
   return type.options.map((option) => ({
     label: literal(option.value),
     // The settings pane's wording, so file and pane explain a choice alike.

@@ -464,6 +464,23 @@ pane.
 </html>
 ```
 
+## The Home tab
+
+Home is an app too: the one `home:` in `.holi/settings/app.yaml` names,
+`Home.app` unless it says otherwise. When the user asks to change or customize
+their home page, or says "customize this page" while Home is open, edit that
+app's files; it is plain HTML and `home.js`, with nothing to build. Keep what it
+shows unless they ask for it gone.
+
+- A home for everyone in the vault is the shared app. A home for one person is
+  a personal app, `Home.local.app`, named by `home: Home.local.app` in
+  `.holi/settings/app.local.yaml`, which never syncs.
+- If Home says there is no app yet, the user can press **Create Home app**, or
+  you can write the folder yourself.
+- To see a change, ask the user to open Home again (or reload it from its tab).
+  `holi app open <path>` works too, but opens it in a tab of its own beside
+  Home rather than reloading the Home tab.
+
 ## Before you say it is done
 
 - **Write `app.yaml`**, if you have not. Without it the app does not open.

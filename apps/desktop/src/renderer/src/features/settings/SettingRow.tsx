@@ -3,15 +3,20 @@
  * file decides only what a *setting* adds to a row: the layer badge, the
  * next-open caveat, the three control kinds, and the resolver's complaint.
  */
+import { useAtomValue } from 'jotai'
 import { TriangleAlert } from 'lucide-react'
 import {
   SETTINGS_FILE,
   SETTINGS_LOCAL_FILE,
+  appName,
   availableOptions,
+  isLocalOnlyPath,
   type VaultSettingDescriptor,
+  type VaultSettingOption,
 } from '@holi/shared'
 import { Button, Checkbox, Icon, Tooltip } from '@/primitives'
 import { useAck } from '@/lib/use-ack'
+import { appPathsAtom } from '@/state/apps'
 import { SettingsRow } from './settings-ui'
 
 /** The one setting whose value is a statement about an event that has already
@@ -50,6 +55,9 @@ export function SettingRow({
 }): React.JSX.Element {
   const { key, label, explanation, control } = descriptor
   const value = settings[key] ?? descriptor.default
+  const appPaths = useAtomValue(appPathsAtom)
+  const options: readonly VaultSettingOption[] =
+    control.kind === 'app' ? appOptions(appPaths, value) : availableOptions(descriptor, settings)
 
   // Changing a setting WRITES A FILE in the vault, so the row flashes once to
   // make the write visible where it happened.
@@ -87,13 +95,13 @@ export function SettingRow({
             onCheckedChange={(next) => change(key, next === true)}
             aria-label={label}
           />
-        ) : control.kind === 'choice' ? (
+        ) : control.kind === 'choice' || control.kind === 'app' ? (
           // `justify-end` so a group that has wrapped onto its own line stays
           // against the right edge, and so does a second row of options.
           <div role="radiogroup" aria-label={label} className="flex flex-wrap justify-end gap-1.5">
             {/* Filtered, not disabled — the same call the ritual makes. A greyed
                 out choice invites "why not?" and the answer is another row. */}
-            {availableOptions(descriptor, settings).map((option) => (
+            {options.map((option) => (
               <Button
                 key={option.label}
                 type="button"
@@ -152,4 +160,17 @@ export function SettingRow({
       ))}
     </SettingsRow>
   )
+}
+
+/**
+ * An app row's options: the vault's shared apps, and the current answer even
+ * when it names none of them (an app not made yet, or a personal one from the
+ * local file), so the row always shows what is in force. A personal app is not
+ * offered: this row writes the committed file, and a `.local.` app named there
+ * would point everyone else at nothing.
+ */
+function appOptions(appPaths: readonly string[], value: unknown): VaultSettingOption[] {
+  const shared = appPaths.filter((p) => !isLocalOnlyPath(p))
+  const current = typeof value === 'string' && !shared.includes(value) ? [value] : []
+  return [...shared, ...current].map((path) => ({ value: path, label: appName(path) }))
 }

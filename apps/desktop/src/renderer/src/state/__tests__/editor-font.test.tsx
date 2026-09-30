@@ -9,13 +9,18 @@
  */
 import { Provider, createStore } from 'jotai'
 import { expect, test } from 'vitest'
-import { EDITOR_FONT_STACKS, VAULT_SETTING_DEFAULTS, type ResolvedVaultSettings } from '@holi/shared'
+import {
+  EDITOR_FONT_STACKS,
+  VAULT_SETTING_DEFAULTS,
+  type ResolvedVaultSettings,
+} from '@holi/shared'
 import { render } from '@/test/render'
 import { EDITOR_FONT_VAR, useEditorFont } from '../editor-font'
 import { vaultSettingsAtom } from '../settings'
 
 const settings = (editorFont: ResolvedVaultSettings['editorFont']): ResolvedVaultSettings => ({
   landing: { kind: 'daily' },
+  home: VAULT_SETTING_DEFAULTS.home,
   dailyNotes: true,
   colorScheme: 'system',
   editorFont,
