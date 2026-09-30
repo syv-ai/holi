@@ -45,7 +45,6 @@ import { installHoliCli } from './agent/cli'
 import { createAgentOps } from './agent/ops'
 import { initAppOp, openAppOp } from './apps/app-ops'
 import { runCapability } from './apps/capabilities'
-import { taskDoneOp } from './vault/task-done'
 import {
   describeUpdate,
   updateConflictPrompt,
@@ -68,6 +67,8 @@ import {
 } from './google/gmail'
 import { registerIpc } from './ipc'
 import { createRouter, localToday } from './router'
+import { createAppGrants } from './apps/app-grants'
+import { createCapabilityServices, createUiReports } from './apps/capability-services'
 import { createVaultHost } from './vault/active-vault'
 import { VaultRegistry, vaultRoot } from './vault/registry'
 import { scanVault } from './vault/vault-store'
@@ -352,7 +353,33 @@ async function main(): Promise<void> {
   // Shared by the UI's Convert-to-PDF router and the agent's $TYPST_BIN.
   const typstCacheDir = join(app.getPath('userData'), 'typst')
 
+  // Both doors into the capability registry read the running app through
+  // these: the app's bridge (the router) and the agent's `holi` CLI (below).
+  const uiReports = createUiReports()
+  const capabilityServices = createCapabilityServices(
+    {
+      today: localToday,
+      active: () => host.active(),
+      // `agent` is assigned below, before any vault can be open.
+      sessions: () => agent?.sessions() ?? [],
+      collaborators: (remote) => session.api.collaborators(remote),
+      googleDataFor,
+      calendarOverrides: async () => (await calendarPrefs.read()) ?? {},
+      grants: createAppGrants(join(app.getPath('userData'), 'app-grants.json')),
+    },
+    uiReports,
+  )
+
   const router = createRouter({
+    capabilityServices,
+    reportUi: (remote, report) => {
+      uiReports.set(remote, report)
+      // The agent's per-turn hook reads the focused note from a file in the
+      // open vault's clone; a report about another vault has no file to feed.
+      if (host.active()?.remote === remote) {
+        agent?.setFocus({ focusedPath: report.focusedPath, openPaths: report.openPaths })
+      }
+    },
     registry,
     session,
     googleAccounts,
@@ -546,11 +573,6 @@ async function main(): Promise<void> {
           if (root === null) return { ok: false, error: 'no vault is open' }
           return pdfCommentsInVault(root, path)
         },
-        taskDone: async (path) => {
-          const root = await rootFor(remote)
-          if (root === null) return { ok: false, error: 'no vault is open' }
-          return taskDoneOp(root, path, localToday())
-        },
         // `holi store …` and the rest of the CLI door into the capability
         // registry, for the vault the command was typed in.
         capability: async (name, params) => {
@@ -566,6 +588,7 @@ async function main(): Promise<void> {
               bundle: null,
               snapshot: async () =>
                 active?.remote === remote ? active.snapshot() : scanVault(root),
+              services: capabilityServices(remote, root),
             },
             params,
           )

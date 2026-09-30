@@ -27,6 +27,27 @@ export interface AppManifest {
    *  schema main validates writes against. An undeclared collection is
    *  refused, so the data's shape is known up front. */
   collections?: Record<string, { schema?: CollectionSchema }>
+  /**
+   * The risky reads this app opts into, like Claude Code's
+   * `--dangerously-skip-permissions`: without the flag the call fails, and with
+   * it each person on each machine still approves the app before it runs them.
+   * Keyed `dangerously-allow` in the YAML.
+   */
+  dangerouslyAllow?: AppAffordance[]
+}
+
+/** The reads an app must opt into, because what they return is one person's,
+ *  not the vault's: an app can keep it in synced records or send it anywhere. */
+export const APP_AFFORDANCES = ['mail', 'calendar'] as const
+
+export type AppAffordance = (typeof APP_AFFORDANCES)[number]
+
+function parseAffordances(raw: unknown): AppAffordance[] | undefined {
+  if (!Array.isArray(raw)) return undefined
+  const known = raw.filter((v): v is AppAffordance =>
+    (APP_AFFORDANCES as readonly unknown[]).includes(v),
+  )
+  return known.length > 0 ? [...new Set(known)] : undefined
 }
 
 const KNOWN_KEYS = ['description'] as const
@@ -80,6 +101,8 @@ export function parseAppManifest(yaml: string): AppManifest | null {
   }
   const collections = parseCollections((raw as Record<string, unknown>).collections)
   if (collections !== undefined) manifest.collections = collections
+  const allow = parseAffordances((raw as Record<string, unknown>)['dangerously-allow'])
+  if (allow !== undefined) manifest.dangerouslyAllow = allow
   return manifest
 }
 

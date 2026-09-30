@@ -44,16 +44,41 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   rewritten: Holi injects a `<style>` of theme tokens
   (Holi's base palette, `APP_BASE_TOKENS`, with the vault's resolved theme laid over it) and the
   `window.holi` bridge script. Every other file is served byte for byte.
-- **The bridge** is `postMessage` from the frame to `AppFrame`, which answers `holi.open(path)`
-  itself (it opens a vault file in Holi) and forwards every other method to `apps.bridge` in main
-  with the bundle it mounted. Methods: `holi.docs.list()`, `holi.docs.read(path)`,
-  `holi.tasks.list()`, `holi.open(path)` and `holi.store(collection)`. The theme is ambient CSS
-  variables, not a call. The store is the only write.
+- **The bridge** is `postMessage` from the frame to `AppFrame`, which answers `holi.open` itself
+  (a vault file, or one of Holi's views: home, board, agenda, mail, settings, history) and
+  forwards every other method to `apps.bridge` in main with the bundle it mounted. Reads:
+  `docs.list`, `docs.read`, `docs.render` (a note as HTML, inline HTML escaped and only web links
+  kept, so a note cannot run script as the app), `tasks.list`, `recents`, `search` (names, then
+  bodies), `settings`, `members`, `history`, `sync.status`, `agent.sessions`, and, opted into,
+  `calendar.events` and `mail.threads`. Writes: `holi.store(collection)` and `tasks.complete`,
+  which applies the board's rule. `<holi-note path>` is a custom element the shim defines: the
+  note rendered, themed and live. The theme is ambient CSS variables, not a call.
+- **Push.** `holi.on(topic, fn)` hears `docs`, `tasks`, `sync`, `agent`, `recents`, `history` and
+  `store:<collection>`. `AppFrame` posts a topic when its signature changes (`state/app-push.ts`),
+  never on mount. A push carries no data: the app reads again through main, so every refusal
+  still applies, and the signatures leave the agent surface out, so an app is not told a memory
+  was written.
+- **Google data is opt-in, twice.** `calendar.events` and `mail.threads` read the Google account
+  of whoever has the app open, not the vault's, and an app can keep what it reads in records that
+  sync to every member, or send it over the network. So the app declares
+  `dangerously-allow: [mail, calendar]` in `app.yaml` (without it the call fails and names the
+  flag), and each person approves the app in a dialog before its frame loads. The approval is
+  kept in main (`userData/app-grants.json`), never the renderer, which is the process running the
+  app. It lapses after 30 days and whenever the app's code (anything but `data/`) changes, whoever
+  changed it: approving a teammate's app approves that code, not what it becomes after a pull. A
+  personal `.local.app` needs the flag but no approval, while git tracks none of it: its code was
+  written on this machine and its records never sync. One someone force-added and pushed is shared
+  code with a personal name, and is asked about like any other. An approval names the code the
+  dialog showed (a hash of every file, link and folder the protocol can serve, `data/` aside), so
+  a pull that lands while the dialog is up is asked about again rather than approved unseen. The agent has `holi-google` and its own gate, so these open to the app
+  door only.
 - **One registry, two doors.** What main answers is the capability registry
   (`main/apps/capabilities.ts`): each entry has its params, its refusals, and the doors it opens
   to, the app's bridge and the agent's `holi` CLI (`/cap/<method>` on the hook server). An app sees
   exactly what the agent can inspect from the terminal, written once. At the app door the bundle
-  is the frame's, and a `bundle` param is ignored; at the CLI door the agent names it.
+  is the frame's, and a `bundle` param is ignored; at the CLI door the agent names it. What an
+  entry needs beyond the files (sync, sessions, members cached ten minutes, Google, approvals,
+  the recents) comes from one services factory both doors call (`capability-services.ts`).
 - **State.** An app declares `collections` in `app.yaml`, each with an optional JSON Schema
   subset (`type`, `properties`, `required`, `additionalProperties`, `enum`, `items`,
   `minimum`/`maximum`, `minLength`/`maxLength`; other keywords are ignored). A record is one JSON
@@ -149,21 +174,25 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
 - A Deno or Bun sidecar for backends: Electron's `utilityProcess` already ships Node.
 - A CSP with `connect-src 'none'`: rules out any app that calls an API.
 - Note-embedded app widgets: keeps the editor lean.
-- An app store, versioning, or permission prompts: trust is vault membership; reuse is copying the
-  directory.
+- An app store, versioning, or permission prompts for what the vault shares: trust is vault
+  membership; reuse is copying the directory. The one prompt is for one person's own Google data,
+  which vault membership does not cover.
 - npm dependency trees in the vault: an app ships its libraries bundled to files.
 
 ## Code
 
 - `apps/desktop/src/main/apps/`: the protocol helpers, bridge shim, base tokens, open/init ops,
-  the move out of `.holi/apps`, the capability registry (`capabilities.ts`) and the store
-  (`app-store.ts`).
+  the move out of `.holi/apps`, the capability registry (`capabilities.ts`) and its services
+  (`capability-services.ts`), the store (`app-store.ts`), the approvals (`app-grants.ts`), note
+  rendering (`render-note.ts`) and search (`app-search.ts`).
 - `apps/desktop/src/main/vault/record-merge.ts`: the record merge driver's install;
   `apps/desktop/src/main/agent/ops.ts`: `/cap/<method>` and `/merge/record`.
 - `apps/desktop/src/main/index.ts`: scheme registration and the `holi-app` handler.
 - `apps/desktop/src/main/router.ts`: the `apps` namespace.
 - `apps/desktop/src/main/agent/hooks/vault-app-check.mjs`, `apps/desktop/src/main/agent/cli.ts`.
-- `apps/desktop/src/renderer/src/features/apps/`: `AppFrame`.
+- `apps/desktop/src/renderer/src/features/apps/`: `AppFrame`, with the approval dialog.
+- `apps/desktop/src/renderer/src/state/app-push.ts`: the push signatures;
+  `state/ui-report.ts`: the one report of focus and recents to main.
 - `apps/desktop/src/renderer/src/state/apps.ts`: the app lists and actions.
 - `apps/desktop/src/renderer/src/features/explorer/FileTree.tsx`, `RowMenu.tsx`: the app row.
 - `packages/shared/src/app-bundle.ts` (`isAppBundlePath`, `appBundleOf`, `appName`, `appHost`),

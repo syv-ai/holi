@@ -59,8 +59,8 @@ export interface Collaborator {
   permission: 'admin' | 'maintain' | 'write' | 'triage' | 'read'
 }
 
-// `SyncState` is not defined here: main computes it, so the union lives next to
-// `computeState` in `main/vault/active-vault.ts`.
+// `SyncState` is in `sync-state.ts`, with its label; main's `computeState`
+// decides which one is in force.
 
 export type RecurrenceFrequency = 'daily' | 'weekly' | 'monthly' | 'yearly'
 export type RecurrenceWeekday = 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun'

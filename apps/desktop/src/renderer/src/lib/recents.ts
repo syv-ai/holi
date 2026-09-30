@@ -5,18 +5,10 @@
  * and dead entries are pruned by a caller-supplied liveness test, since this
  * module knows only keys.
  */
+import { RECENTS_CAP, type RecentEntry } from '@holi/shared'
 import type { Tab } from '../state/panes'
 
-export type RecentKind = 'path' | 'app' | 'session' | 'terminal' | 'surface' | 'command'
-
-export interface RecentEntry {
-  kind: RecentKind
-  /** A vault-relative path, an app bundle, a session's job id, an agent
-   *  terminal's id, a `SingletonTab`, or a command id, by `kind`. */
-  key: string
-}
-
-export const RECENTS_CAP = 50
+export { RECENTS_CAP, type RecentEntry, type RecentKind } from '@holi/shared'
 
 /** The recent a tab counts as. Every tab kind is remembered. */
 export function entryOfTab(tab: Tab): RecentEntry {

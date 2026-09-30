@@ -178,6 +178,9 @@ export interface GitRepo {
   /** The paths a commit changed vs its (first) parent — the file list for a
    * commit's diff view. `--root` so the initial commit lists its files. */
   changedFiles(sha: string): Promise<string[]>
+  /** The paths each of the last `limit` commits changed, newest first: the
+   *  vault-wide history's file lists in one call rather than one per commit. */
+  commitFiles(limit: number): Promise<{ sha: string; files: string[] }[]>
   /** Fetch and merge the default branch. Never rebases; a conflict aborts. */
   pull(): Promise<PullResult>
   /** Re-run the merge WITHOUT aborting, leaving the conflict markers + MERGE_HEAD
@@ -466,7 +469,10 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
     // the payload would be the same byte. A leading RS keeps one unambiguous
     // record boundary, and `%s` is the subject's FIRST line by definition, so
     // no field inside a record can contain a newline either.
-    const args = ['log', '--numstat', '--format=%x1e%H%x1f%s%x1f%aI%x1f%an']
+    // `--literal-pathspecs`: the path is a name, never a glob. Without it
+    // `memor?/x.md` or `*x.md` would match a file the caller never named, and
+    // a vault app asking for one path's history would get another's.
+    const args = ['--literal-pathspecs', 'log', '--numstat', '--format=%x1e%H%x1f%s%x1f%aI%x1f%an']
     if (o.limit !== undefined) args.push(`-n${o.limit}`)
     // `--follow` needs exactly one pathspec, and must precede the `--`.
     // `--raw` beside it, for the status letter that tells a copy from a rename.
@@ -539,6 +545,25 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
       .split('\n')
       .map((s) => s.trim())
       .filter((s) => s !== '')
+  }
+
+  async function commitFiles(limit: number): Promise<{ sha: string; files: string[] }[]> {
+    // `-z` NUL-terminates every path and never quotes one, so a path with a
+    // tab or a quote in it reads back as itself. RS leads each record, as in
+    // `log`: after the sha comes NUL, a newline, then the NUL-terminated paths.
+    const raw = await runGit(
+      root,
+      ['log', `-n${limit}`, '-z', '--name-only', '--format=%x1e%H'],
+      opts,
+    ).catch(() => '')
+    return raw
+      .split('\x1e')
+      .filter((record) => record !== '')
+      .map((record) => {
+        const [sha = '', ...rest] = record.split('\0')
+        const files = rest.map((p) => p.replace(/^\n/, '')).filter((p) => p !== '')
+        return { sha: sha.trim(), files }
+      })
   }
 
   async function head(): Promise<string | null> {
@@ -795,6 +820,7 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
     log,
     show,
     changedFiles,
+    commitFiles,
     head,
     rangeFiles,
     commitAll,

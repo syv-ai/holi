@@ -66,12 +66,27 @@ not define it, do not check whether it loaded. Every call returns a promise.
 ```js
 const docs = await holi.docs.list() // every markdown note
 const text = await holi.docs.read(path) // that note's markdown, as a string
+const html = await holi.docs.render(path) // that note as HTML (or use <holi-note>)
 const tasks = await holi.tasks.list() // every task.*.md
+await holi.tasks.complete(path) // done; a recurring task rolls forward instead
 await holi.open('projects/q2.md') // opens that note in a Holi tab
+await holi.open('board') // or a view: home, board, agenda, mail, settings, history
+const recents = await holi.recents() // [{ kind: 'path'|'app'|'surface'|'session', key }], newest first
+const hits = await holi.search('budget') // [{ path, match: 'name'|'body', snippet? }]
+const settings = await holi.settings() // the vault's resolved settings
+const people = await holi.members() // [{ login, avatarUrl? }], who can reach the vault
+const commits = await holi.history({ path, limit }) // [{ sha, subject, date, author, files? }]
+const sync = await holi.sync.status() // { kind: 'up-to-date' | 'pulling' | 'offline' | ... }
+const sessions = await holi.agent.sessions() // [{ id, name, state: 'working'|'idle'|'needs-you' }]
 const items = holi.store('items') // this app's own records (see Keeping data)
+const off = holi.on('docs', () => redraw()) // see Hearing about changes
 ```
 
-That is the whole API. There is nothing else on `holi`.
+Plus `holi.calendar.events({ from, to })` and `holi.mail.threads(query)`, which
+need an opt-in (see Reading someone's mail or calendar). That is the whole API.
+
+`<holi-note path="projects/q2.md"></holi-note>` shows a note, rendered and themed,
+with its `[[links]]` opening in Holi. It renders again when the note changes.
 
 ### Exactly what comes back
 
@@ -109,8 +124,9 @@ takes the same kind of path.
 These are not oversights — build within them rather than around them.
 
 - **It cannot write the vault.** No file writing, no task editing, no note
-  creation. An app shows; the agent changes. The one thing it writes is its own
-  records, through `holi.store` (below).
+  creation. An app shows; the agent changes. It writes two things only: its own
+  records, through `holi.store` (below), and a task's completion, through
+  `holi.tasks.complete`, which applies the board's rule.
 - **It has no browser storage.** `localStorage` and `sessionStorage` _throw_ (the
   page has an opaque origin) and cookies do nothing. Anything that must survive
   a reload goes in `holi.store`; in-memory state within one session (a selected
@@ -131,6 +147,43 @@ These are not oversights — build within them rather than around them.
 
 It _can_ use the network — a CDN, an API — but a vault is often used offline, so
 prefer writing the code inline over depending on something remote.
+
+## Hearing about changes
+
+`holi.on(topic, fn)` calls `fn` whenever that topic changes, and returns a
+function that stops it. `fn` gets no arguments: read the data again.
+
+| Topic                | When                                  |
+| -------------------- | ------------------------------------- |
+| `docs`               | a note was added, changed or removed  |
+| `tasks`              | a task changed                        |
+| `store:<collection>` | a record in this app's collection did |
+| `sync`               | the sync state moved                  |
+| `agent`              | a session started, ended or changed   |
+| `recents`            | the user opened something             |
+| `history`            | a commit landed                       |
+
+Prefer this to polling. A put or delete from the app itself fires
+`store:<collection>` too, a moment later.
+
+## Reading someone's mail or calendar
+
+`holi.calendar.events({ from, to })` (ISO instants, at most 92 days apart) and
+`holi.mail.threads(query)` (Gmail's search grammar; none means the inbox) read
+the Google account of **whoever has the app open**, not the vault's. So they are
+off until the app opts in, in `app.yaml`:
+
+```yaml
+dangerously-allow: [mail, calendar] # either or both
+```
+
+Then each person sees a dialog the first time they open the app, and Holi asks
+again after 30 days and whenever the app's code changes. Until they allow it,
+the call rejects. A personal app (`Name.local.app`) needs the flag but no dialog.
+
+Before you add the flag to a shared app, tell the user plainly: whatever the app
+keeps in its records syncs to everyone in the vault, so do not store someone's
+mail in a shared app's store unless they asked for exactly that.
 
 ## Keeping data
 

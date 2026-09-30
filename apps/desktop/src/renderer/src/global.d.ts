@@ -124,7 +124,6 @@ declare global {
         close(terminalId: string): Promise<void>
         write(id: string, data: string): void
         resize(id: string, cols: number, rows: number): void
-        setFocus(focus: { focusedPath: string | null; openPaths: string[] }): void
       }
     }
   }

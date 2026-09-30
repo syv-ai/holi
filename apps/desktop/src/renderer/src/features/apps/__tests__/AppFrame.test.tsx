@@ -29,6 +29,8 @@ vi.mock('../../../lib/trpc', () => ({
   trpc: {
     apps: {
       bridge: { mutate: (input: { method: string }) => bridgeMock(input) },
+      // No `dangerously-allow` reads to approve, so the frame mounts at once.
+      grants: { query: () => Promise.resolve({ codeHash: 'h', affordances: [] }) },
     },
   },
 }))
@@ -58,30 +60,37 @@ beforeEach(() => {
 
 const frameOf = () => document.querySelector('iframe')!
 
+/** Mount the app and wait for its frame: the frame waits for main to say
+ *  there is nothing to approve. */
+async function renderApp() {
+  render(<AppFrame path="Team/Retro.app" />)
+  await waitFor(() => expect(document.querySelector('iframe')).not.toBeNull())
+}
+
 /** A message as the frame itself would send it. */
 function fromFrame(data: unknown, source: Window | null = frameOf().contentWindow) {
   window.dispatchEvent(new MessageEvent('message', { data, source }))
 }
 
 test('serves the app from its own origin, the host encoding its bundle', async () => {
-  render(<AppFrame path="Team/Retro.app" />)
+  await renderApp()
   expect(frameOf().getAttribute('src')).toBe(
     `holi-app://${appHost('Team/Retro.app')}/index.html?mode=dark`,
   )
 })
 
-test('is sandboxed WITHOUT allow-same-origin', () => {
+test('is sandboxed WITHOUT allow-same-origin', async () => {
   // The mail frame is the exact opposite (`allow-same-origin` and no scripts),
   // and the pair of tests is what says these two are deliberate opposites.
   // Granting both is the footgun that lets framed content drop its own sandbox;
   // here it would also give the app a real origin, and with it localStorage,
   // cookies, and a reachable holi-vault://.
-  render(<AppFrame path="Team/Retro.app" />)
+  await renderApp()
   expect(frameOf().getAttribute('sandbox')).toBe('allow-scripts')
 })
 
 test('ignores a message that did not come from the frame', async () => {
-  render(<AppFrame path="Team/Retro.app" />)
+  await renderApp()
   // `event.origin` is the string "null" for an opaque origin, so it is useless
   // as identity. The source is what says who spoke.
   fromFrame({ id: '1', method: 'docs.list' }, window)
@@ -90,7 +99,7 @@ test('ignores a message that did not come from the frame', async () => {
 })
 
 test('answers a docs.read with the value, addressed to the frame', async () => {
-  render(<AppFrame path="Team/Retro.app" />)
+  await renderApp()
   const post = vi.spyOn(frameOf().contentWindow!, 'postMessage')
   fromFrame({ id: 'r1', method: 'docs.read', params: { path: 'a.md' } })
   await waitFor(() => expect(post).toHaveBeenCalled())
@@ -105,7 +114,7 @@ test('answers a docs.read with the value, addressed to the frame', async () => {
 })
 
 test('answers docs.list and tasks.list from the vault the frame is in', async () => {
-  render(<AppFrame path="Team/Retro.app" />)
+  await renderApp()
   const post = vi.spyOn(frameOf().contentWindow!, 'postMessage')
   fromFrame({ id: 'd', method: 'docs.list' })
   fromFrame({ id: 't', method: 'tasks.list' })
@@ -119,7 +128,7 @@ test('answers docs.list and tasks.list from the vault the frame is in', async ()
 
 test('a refusal comes back as a value, not as a thrown error', async () => {
   bridgeMock.mockRejectedValueOnce(new Error('FORBIDDEN'))
-  render(<AppFrame path="Team/Retro.app" />)
+  await renderApp()
   const post = vi.spyOn(frameOf().contentWindow!, 'postMessage')
   fromFrame({ id: 'r1', method: 'docs.read', params: { path: 'MEMORY.md' } })
   await waitFor(() => expect(post).toHaveBeenCalled())
@@ -127,7 +136,7 @@ test('a refusal comes back as a value, not as a thrown error', async () => {
 })
 
 test('an unknown method is refused rather than ignored', async () => {
-  render(<AppFrame path="Team/Retro.app" />)
+  await renderApp()
   const post = vi.spyOn(frameOf().contentWindow!, 'postMessage')
   fromFrame({ id: 'x', method: 'docs.write', params: { path: 'a.md', text: 'no' } })
   await waitFor(() => expect(post).toHaveBeenCalled())
@@ -137,13 +146,16 @@ test('an unknown method is refused rather than ignored', async () => {
 })
 
 // The pane header's reload button and `holi app open` both bump this count.
-test('reload rebuilds the frame rather than reusing it', () => {
-  render(<AppFrame path="Team/Retro.app" />)
+test('reload rebuilds the frame rather than reusing it', async () => {
+  await renderApp()
   const before = frameOf()
   act(() =>
     store.set(appOpensAtom, (n) => ({ ...n, 'Team/Retro.app': (n['Team/Retro.app'] ?? 0) + 1 })),
   )
-  expect(frameOf()).not.toBe(before)
+  await waitFor(() => {
+    expect(document.querySelector('iframe')).not.toBeNull()
+    expect(frameOf()).not.toBe(before)
+  })
 })
 
 test('a deleted app leaves a tombstone, not a frame', async () => {

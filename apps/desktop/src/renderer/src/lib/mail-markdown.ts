@@ -8,17 +8,8 @@
  * (`sanitizeMailHtml` still runs downstream). It keeps `value < 5` intact and
  * stops a web paste smuggling markup into a hand-written message.
  */
+import { escapeHtml } from '@holi/shared'
 import { Marked } from 'marked'
-
-/** `&` first, or later entities get escaped twice. */
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;')
-}
 
 /**
  * An instance, not the module-level `marked`.

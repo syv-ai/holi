@@ -219,24 +219,6 @@ export function Shell() {
 
   const pane = workspace.panes[workspace.active]!
 
-  // Feed the agent's per-turn hook the focused note, the one thing it cannot
-  // discover itself. Main writes `.holi/state/context.local.json`.
-  //
-  // Typing to the agent focuses the agent's own tab, so that tab keeps the
-  // note that was focused before it: otherwise every prompt typed in Holi
-  // would report no note at all. Open notes are counted across every pane.
-  const focusedNote = useRef<string | null>(null)
-  useEffect(() => {
-    const openPaths = workspace.panes.flatMap((p) =>
-      p.tabs.flatMap((t) => (t.kind === 'note' ? [t.path] : [])),
-    )
-    if (tab?.kind === 'note') focusedNote.current = tab.path
-    else if (tab?.kind !== 'agent') focusedNote.current = null
-    if (focusedNote.current !== null && !openPaths.includes(focusedNote.current)) {
-      focusedNote.current = null
-    }
-    window.holi.agent.setFocus({ focusedPath: focusedNote.current, openPaths })
-  }, [tab, workspace.panes])
   // Single-click / link-nav opens a preview tab (browsing costs one tab);
   // double-click pins. Editing a preview promotes it (see EditorPane onEdit).
   // A bundle path is an app: the tree opens one with a note's gestures,

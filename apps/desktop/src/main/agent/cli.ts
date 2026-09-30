@@ -62,6 +62,11 @@ usage: holi <command>
                                 marked text, author, dates and replies
   task done <path>              complete a task file; a recurring one rolls
                                 forward to its next occurrence
+  docs render <path>            a note as the HTML a vault app shows
+  sync status [--json]          the vault's sync state, as the nav shows it
+  sessions [--json]             the vault's live agent sessions and their state
+  members [--json]              the people who can reach this vault on GitHub
+  recents [--json]              what the user opened recently, newest first
   store list <bundle> <collection> [--json]
                                 an app's records, one per line
   store get <bundle> <collection> <id> [--json]
@@ -151,9 +156,39 @@ case "\$cmd" in
     case "\$sub" in
       done)
         [ $# -ge 1 ] || { echo "holi task done <path>" >&2; exit 2; }
-        post task/done --data-urlencode "path=\$1"
+        json=false
+        cap "task done" tasks.complete --data-urlencode "path=\$1"
         ;;
       *) usage ;;
+    esac
+    ;;
+  docs)
+    sub="\${1:-}"
+    [ $# -gt 0 ] && shift
+    case "\$sub" in
+      render)
+        [ $# -eq 1 ] || { echo "holi docs render <path>" >&2; exit 2; }
+        json=false
+        cap "docs render" docs.render --data-urlencode "path=\$1"
+        ;;
+      *) usage ;;
+    esac
+    ;;
+  sync|sessions|members|recents)
+    # Reads with no arguments but --json. \`sync\` takes the one verb, status.
+    if [ "\$cmd" = sync ]; then
+      [ "\${1:-}" = status ] || usage
+      shift
+    fi
+    json=false
+    for a in "\$@"; do
+      if [ "\$a" = --json ]; then json=true; else usage; fi
+    done
+    case "\$cmd" in
+      sync) cap "sync status" sync.status ;;
+      sessions) cap sessions agent.sessions ;;
+      members) cap members members ;;
+      recents) cap recents recents ;;
     esac
     ;;
   store)

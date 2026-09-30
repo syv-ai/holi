@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { APP_METHODS } from '../src/app-bridge'
+import { APP_METHODS, APP_SURFACES, isAppTopic, storeTopic } from '../src/app-bridge'
 
 describe('APP_METHODS', () => {
   it('is exactly the shipped set and no more', () => {
@@ -14,12 +14,24 @@ describe('APP_METHODS', () => {
       'store.put',
       'store.delete',
       'store.list',
+      'recents',
+      'docs.render',
+      'search',
+      'settings',
+      'members',
+      'history',
+      'sync.status',
+      'agent.sessions',
+      'calendar.events',
+      'mail.threads',
+      'tasks.complete',
     ])
   })
 
-  it('writes only its own store, and has no theme method', () => {
-    // The store is the one write, confined to the app's own `data/` in main.
-    // Nothing writes a note or a task. There is no `theme` getter because the theme is AMBIENT: the tokens are
+  it('writes only its own store and completes tasks, and has no theme method', () => {
+    // The store is the one general write, confined to the app's own `data/` in
+    // main. `tasks.complete` is the one other: it applies the board's rule, so a
+    // recurring task rolls forward. Nothing writes a note or a task's text. There is no `theme` getter because the theme is AMBIENT: the tokens are
     // injected as CSS custom properties on serve, so a getter would be a second
     // source for something an app already reads with `var(--primary)`.
     for (const method of APP_METHODS) {
@@ -28,5 +40,19 @@ describe('APP_METHODS', () => {
       expect(method).not.toBe('docs.write')
       expect(method).not.toBe('tasks.write')
     }
+  })
+})
+
+describe('surfaces and topics', () => {
+  it('opens only the named surfaces', () => {
+    expect([...APP_SURFACES]).toEqual(['home', 'board', 'agenda', 'mail', 'settings', 'history'])
+  })
+
+  it('accepts the fixed topics and a store topic per collection', () => {
+    expect(isAppTopic('docs')).toBe(true)
+    expect(isAppTopic(storeTopic('items'))).toBe(true)
+    expect(isAppTopic('store:')).toBe(false)
+    expect(isAppTopic('store:../x')).toBe(false)
+    expect(isAppTopic('mail')).toBe(false)
   })
 })

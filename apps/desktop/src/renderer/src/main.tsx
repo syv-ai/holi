@@ -4,6 +4,7 @@ import { createRoot } from 'react-dom/client'
 import { App } from './App'
 import { TooltipProvider } from './primitives'
 import { flushAllBuffers } from './lib/buffer-registry'
+import { reportUiToMain } from './state/ui-report'
 import { subscribeToVault } from './state/vaults'
 import './index.css'
 
@@ -12,6 +13,7 @@ import './index.css'
  *  stale. */
 const store = createStore()
 subscribeToVault(store)
+reportUiToMain(store)
 
 /**
  * Main is quitting and wants buffers on disk before it commits. Subscribed

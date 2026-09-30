@@ -19,7 +19,7 @@
 import { emptyVaultSnapshot } from '@holi/shared'
 import { stat } from 'node:fs/promises'
 import { join } from 'node:path'
-import type { VaultSnapshot } from '@holi/shared'
+import type { SyncState, VaultSnapshot } from '@holi/shared'
 import type { GitDeps, GitRepo, PullResult, RepoStatus } from '../git'
 import { isIndexLockError, openRepo } from '../git'
 import {
@@ -34,34 +34,10 @@ import type { VaultRegistry } from './registry'
 import { scanVault } from './vault-store'
 import { watchVault, type VaultWatcher } from './watcher'
 
-/**
- * The sync indicator's vocabulary.
- *
- * Push is automatic, so an unpushed count is information only when a push is
- * *failing*: it rides `offline` rather than a state of its own.
- *
- *   - `no-access`: a push rejected for *permission* is reported as exactly
- *     that, never dressed as a network failure.
- *   - `paused`: a vault on another branch stays open and readable while sync
- *     is off, and the user has to be told which is true.
- */
-export type SyncState =
-  | { kind: 'up-to-date' }
-  | { kind: 'pulling' }
-  | { kind: 'offline'; count: number }
-  | { kind: 'no-access' }
-  | { kind: 'conflict'; paths: string[] }
-  | { kind: 'reconciling'; paths: string[] }
-  | {
-      kind: 'paused'
-      reason: string
-      /** True when someone asked for this pause and will lift it (the assistant
-       *  holding the vault for its turn). Such a pause is news, not a warning:
-       *  nothing is asked of the user and it clears itself. A pause that comes
-       *  from the repo being blocked carries no flag, because it is indefinite
-       *  and does want attention. */
-      manual?: boolean
-    }
+// The sync indicator's vocabulary lives in shared, beside the words for it
+// (`sync-state.ts`), so the nav and the agent's `holi sync status` agree.
+// `computeState` below decides which state is in force.
+export type { SyncState }
 
 export interface SyncTimings {
   /** Quiet before a rescan. Short: the file tree has to feel live. */

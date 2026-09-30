@@ -299,3 +299,43 @@ describe('store', () => {
     expect(cap()).not.toHaveBeenCalled()
   })
 })
+
+describe('reads through the capability door', () => {
+  const cap = () => deps.capability as ReturnType<typeof vi.fn>
+
+  it('maps each command to its capability', async () => {
+    for (const [args, name] of [
+      [['sync', 'status'], 'sync.status'],
+      [['sessions'], 'agent.sessions'],
+      [['members'], 'members'],
+      [['recents'], 'recents'],
+    ] as const) {
+      const res = await run(bin, [...args], env)
+      expect(res.code, args.join(' ')).toBe(0)
+      expect(res.stdout).toBe(`${name} ok\n`)
+    }
+  })
+
+  it('asks for JSON with --json', async () => {
+    const res = await run(bin, ['sync', 'status', '--json'], env)
+    expect(res.code).toBe(0)
+    expect(JSON.parse(res.stdout)).toMatchObject({ name: 'sync.status' })
+  })
+
+  it('renders a note, path verbatim', async () => {
+    await run(bin, ['docs', 'render', 'My notes/a b.md'], env)
+    expect(cap()).toHaveBeenLastCalledWith('docs.render', { path: 'My notes/a b.md' })
+  })
+
+  it('completes a task through tasks.complete', async () => {
+    const res = await run(bin, ['task', 'done', 'task.rent.md'], env)
+    expect(res.code).toBe(0)
+    expect(cap()).toHaveBeenLastCalledWith('tasks.complete', { path: 'task.rent.md' })
+  })
+
+  it('refuses a stray argument', async () => {
+    const res = await run(bin, ['sessions', 'all'], env)
+    expect(res.code).not.toBe(0)
+    expect(cap()).not.toHaveBeenCalled()
+  })
+})

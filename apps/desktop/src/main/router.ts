@@ -27,11 +27,14 @@ import {
   type VaultEntry,
   type VaultRelPath,
   parseThemePatch,
+  RECENTS_CAP,
+  type RecentEntry,
   VAULT_MARKER_FILE,
 } from '@holi/shared'
 import { ensureSeeded } from './agent/seed-content'
 import { initAppOp, type AppInitResult } from './apps/app-ops'
 import { CapabilityError, runCapability, type CapabilityContext } from './apps/capabilities'
+import { noServices, type CapabilityServices, type UiReport } from './apps/capability-services'
 import { migrateApps as moveLegacyApps } from './apps/migrate-apps'
 import { scanBackrefs, scanBackrefsMany } from './vault/backrefs'
 import { fileHistory, type FileHistory } from './vault/file-facts'
@@ -214,6 +217,17 @@ export interface RouterDeps {
    * evening. The machine's local time is the only frame there is.
    */
   today?: () => string
+  /**
+   * What a capability may ask of the running app beyond the vault's files:
+   * sync, sessions, members, Google, approvals. The same factory builds them
+   * for the CLI door (`capability-services.ts`). Optional so a test router
+   * builds without it; absent, those reads answer "not available here".
+   */
+  capabilityServices?: (remote: string, root: string) => CapabilityServices
+  /** Where the renderer's report of what the person is looking at lands (the
+   *  agent's focus file, the bridge's recents). Optional like the rest:
+   *  absent, a report is dropped. */
+  reportUi?: (remote: string, report: UiReport) => void
 }
 
 /** `YYYY-MM-DD` in the machine's own timezone. `toISOString().slice(0, 10)`
@@ -473,6 +487,7 @@ export function createRouter(deps: RouterDeps) {
   const now = deps.now ?? (() => new Date().toISOString())
   const today = deps.today ?? localToday
   const cloneUrlFor = deps.cloneUrlFor ?? remoteUrl
+  const servicesFor = deps.capabilityServices ?? (() => noServices(today))
 
   /**
    * A write must be visible to the very next read.
@@ -1255,18 +1270,23 @@ export function createRouter(deps: RouterDeps) {
         if (!isAppBundlePath(input.bundle)) {
           throw new TRPCError({ code: 'BAD_REQUEST', message: `not an app: ${input.bundle}` })
         }
+        const root = await rootFor(input.remote)
         const ctx: CapabilityContext = {
           remote: input.remote,
-          root: await rootFor(input.remote),
+          root,
           bundle: input.bundle,
           snapshot: () => snapshotFor(input.remote),
+          services: servicesFor(input.remote, root),
         }
         let result
         try {
           result = await runCapability(input.method, 'app', ctx, input.params)
         } catch (err) {
           if (err instanceof CapabilityError) {
-            throw new TRPCError({ code: err.code, message: err.message })
+            throw new TRPCError({
+              code: err.code === 'UNAVAILABLE' ? 'PRECONDITION_FAILED' : err.code,
+              message: err.message,
+            })
           }
           throw err
         }
@@ -1280,6 +1300,44 @@ export function createRouter(deps: RouterDeps) {
       }),
 
     // ---- Holi's own UI from here down. Not reachable from an app. ----
+
+    /** Which of the app's `dangerously-allow` reads this person has approved
+     *  on this machine: what `AppFrame` asks before it mounts the frame. */
+    grants: t.procedure
+      .input(fields({ remote: 'string', bundle: 'string' }))
+      .query(async ({ input }) => {
+        if (!isAppBundlePath(input.bundle)) {
+          throw new TRPCError({ code: 'BAD_REQUEST', message: `not an app: ${input.bundle}` })
+        }
+        const root = await rootFor(input.remote)
+        return servicesFor(input.remote, root).grants.status(input.remote, root, input.bundle)
+      }),
+
+    /** The person approved the dialog. Here and not in the registry, so an
+     *  app can never approve itself. */
+    grant: t.procedure
+      .input((raw: unknown) => {
+        const base = fields({ remote: 'string', bundle: 'string', codeHash: 'string' })(raw)
+        const affordances = (raw as { affordances?: unknown }).affordances
+        if (!Array.isArray(affordances) || !affordances.every((a) => typeof a === 'string')) {
+          throw new TRPCError({ code: 'BAD_REQUEST', message: 'affordances must be strings' })
+        }
+        return { ...base, affordances: affordances as string[] }
+      })
+      .mutation(async ({ input }): Promise<boolean> => {
+        if (!isAppBundlePath(input.bundle)) {
+          throw new TRPCError({ code: 'BAD_REQUEST', message: `not an app: ${input.bundle}` })
+        }
+        const root = await rootFor(input.remote)
+        // False: the app changed since the dialog was shown, so ask again.
+        return servicesFor(input.remote, root).grants.grant(
+          input.remote,
+          root,
+          input.bundle,
+          input.affordances,
+          input.codeHash,
+        )
+      }),
 
     /** Write the manifest that finishes a bundle — the launchers' "Finish this
      *  app", and the same op as `holi app init`. Never overwrites, so it cannot
@@ -2347,6 +2405,43 @@ export function createRouter(deps: RouterDeps) {
     })
   }
 
+  /** What the renderer, and only it, knows about the person's attention. */
+  const ui = t.router({
+    /**
+     * The focused note, the open notes and the recents, for one vault: main
+     * writes the agent's per-turn focus file from it and answers
+     * `holi recents` / `holi.recents()` with it. One report, sent whenever any
+     * of it changes; main keeps only the last, in memory.
+     */
+    report: t.procedure
+      .input((raw: unknown): UiReport & { remote: string } => {
+        const { remote } = fields({ remote: 'string' })(raw)
+        const r = raw as { focusedPath?: unknown; openPaths?: unknown; recents?: unknown }
+        const strings = (v: unknown) =>
+          Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []
+        const recents = (Array.isArray(r.recents) ? r.recents : [])
+          .filter(
+            (e): e is RecentEntry =>
+              e !== null &&
+              typeof e === 'object' &&
+              typeof (e as RecentEntry).kind === 'string' &&
+              typeof (e as RecentEntry).key === 'string',
+          )
+          .slice(0, RECENTS_CAP)
+          .map(({ kind, key }) => ({ kind, key }))
+        return {
+          remote,
+          focusedPath: typeof r.focusedPath === 'string' ? r.focusedPath : null,
+          openPaths: strings(r.openPaths),
+          recents,
+        }
+      })
+      .mutation(({ input }) => {
+        const { remote, ...report } = input
+        deps.reportUi?.(remote, report)
+      }),
+  })
+
   return t.router({
     auth,
     github,
@@ -2362,6 +2457,7 @@ export function createRouter(deps: RouterDeps) {
     settings,
     google,
     apps,
+    ui,
   })
 }
 

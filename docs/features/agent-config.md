@@ -37,7 +37,9 @@ instructions, which Claude Code reads natively, so no `CLAUDE.md` is seeded), an
 skills are re-read per use.
 
 **Per-turn context is one line.** The `UserPromptSubmit` hook prints `Focused note: <path>` from
-`.holi/state/context.local.json`, which main keeps current. Tasks, backlinks and sync state the agent
+`.holi/state/context.local.json`, which main keeps current from the renderer's one report of what
+the person is looking at (`ui.report`: the focused note, the open ones, the recents), the same
+report `holi recents` answers from. Tasks, backlinks and sync state the agent
 finds itself with `Glob`, `grep` and `git`.
 
 **Seeding.** `ensureSeeded` runs on create, adopt and every open. It writes `.gitignore`'s
@@ -83,11 +85,14 @@ write).
 **Tool surface.** Native `Read`, `Write`, `Edit`, `Bash`, `Glob`, `Grep`. No MCP server. Holi's
 additions are commands in a directory prepended to `PATH`, plus skills that document them:
 
-- `holi`: `app open` (which reloads an app already open), `app init`, `task done <path>`,
-  `skills update`, `pdf comments <path> [--json]`, and `store list|get|put|delete|check` over an
-  app's records, the CLI door into the capability registry ([vault apps](vault-apps.md)). It posts
-  to the hook server with the token in `holi.env`. All reversible or read-only (a record write is a
-  file change in git history), so none is gated.
+- `holi`: `app open` (which reloads an app already open), `app init`, `skills update`,
+  `pdf comments <path> [--json]`, and, through the CLI door into the capability registry
+  ([vault apps](vault-apps.md)), `task done <path>`, `store list|get|put|delete|check` over an
+  app's records, `docs render <path>`, `sync status`, `sessions`, `members` and `recents` (each
+  with `--json`). The registry's reads the agent already has as Grep, Read and git (search,
+  history, settings) stay app-only rather than grow a second way in. It posts to the hook server
+  with the token in `holi.env`. All reversible or read-only (a record write is a file change in git
+  history), so none is gated.
 - `holi-google`: mail and calendar through main, which holds the tokens ([google.md](google.md)).
 - `$TYPST_BIN` for PDF export ([pdf.md](pdf.md)).
 - Shipped skills: `memory`, `using-tasks`, `vault-apps`, `theme`, `gmail-calendar`, `md-to-pdf`,

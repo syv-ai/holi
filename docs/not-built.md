@@ -29,21 +29,12 @@ shared changes become proposals.
 
 ## Vault apps
 
-**App state.** Agreed design: state is per app and declared in `app.yaml`. `state: local` is a
-SQLite database under `userData` with a path and size cap in the manifest, never in the repo, and is
-the default (a finance app's data belongs nowhere near git). `state: shared` is a committed text
-file (JSON or NDJSON) in the app's folder, because text merges and diffs where a committed database
-cannot. Sensitivity is a location, not a cipher: with no server there is no key distribution, so
-encrypting shared state protects against nobody. Open: whether shared state is written like a
-document (last writer wins) or a log (merge keeps both). Until this lands there is no `holi.data`
-and no bridge write, and a retro board or a poll cannot be built.
+**The rest of the bridge and manifest.** `holi.open` opens a vault path as a note or one of Holi's
+views, so it cannot open another app, even by its bundle path. No theme-change event (a mode
+change reloads the frame). `app.yaml`'s `description` is written but never read.
 
-**The rest of the bridge and manifest.** `holi.open` opens a vault path as a note, so it cannot
-open another app, even by its bundle path. No `holi.tasks` writes or subscriptions, no theme-change
-event. `app.yaml`'s `description` is written but never read.
-
-**Backend, personal apps, hot reload.** A `utilityProcess` backend (`server.mjs`), personal apps in
-`userData/apps/`, and reloading an open app when its files change (today reload is a button).
+**Backend, hot reload.** A `utilityProcess` backend (`server.mjs`), and reloading an open app when
+its files change (today reload is a button).
 
 ## Notes & editor
 

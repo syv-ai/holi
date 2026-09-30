@@ -139,9 +139,5 @@ contextBridge.exposeInMainWorld('holi', {
     write: (id: string, data: string) => ipcRenderer.send('agent-pty:write', { id, data }),
     resize: (id: string, cols: number, rows: number) =>
       ipcRenderer.send('agent-pty:resize', { id, cols, rows }),
-    // No session: the focus file is the vault's, one path in the clone, read by
-    // whichever session takes the next turn.
-    setFocus: (focus: { focusedPath: string | null; openPaths: string[] }) =>
-      ipcRenderer.send('agent:focus', focus),
   },
 })

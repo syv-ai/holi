@@ -83,3 +83,22 @@ describe('parseAppManifest collections', () => {
     expect(parseAppManifest(yaml)).toEqual({ collections: { items: {} } })
   })
 })
+
+describe('parseAppManifest dangerously-allow', () => {
+  it('reads the list of opted-in affordances', () => {
+    expect(parseAppManifest('dangerously-allow: [mail, calendar]\n')).toEqual({
+      dangerouslyAllow: ['mail', 'calendar'],
+    })
+  })
+
+  it('drops an unknown affordance and keeps the rest', () => {
+    expect(parseAppManifest('dangerously-allow: [mail, drive, 3]\n')).toEqual({
+      dangerouslyAllow: ['mail'],
+    })
+  })
+
+  it('ignores a value that is not a list', () => {
+    expect(parseAppManifest('dangerously-allow: mail\n')).toEqual({})
+    expect(parseAppManifest('dangerously-allow: [drive]\n')).toEqual({})
+  })
+})

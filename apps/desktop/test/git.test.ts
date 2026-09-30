@@ -537,7 +537,30 @@ describe('classifyPushFailure', () => {
   })
 })
 
+describe('commitFiles', () => {
+  it("lists each commit's paths, newest first, a quote or a space kept as is", async () => {
+    const dir = await makeClone(await makeRemote())
+    await commitFile(dir, 'a b.md', 'a\n')
+    await commitFile(dir, 'we"ird.md', 'q\n')
+
+    const [latest, previous] = await openRepo(dir).commitFiles(2)
+    expect(latest!.files).toEqual(['we"ird.md'])
+    expect(previous!.files).toEqual(['a b.md'])
+    expect(latest!.sha).toMatch(/^[0-9a-f]{40}$/)
+  })
+})
+
 describe('log', () => {
+  it('reads a path as a name, never a glob', async () => {
+    // A vault app may ask for one path's history; `memor?/x.md` must not
+    // answer with `memory/x.md`'s.
+    const dir = await makeClone(await makeRemote())
+    await commitFile(dir, 'secret.md', 's\n')
+    expect(await openRepo(dir).log({ path: '*ecret.md' })).toEqual([])
+    expect(await openRepo(dir).log({ path: 'secre?.md' })).toEqual([])
+    expect(await openRepo(dir).log({ path: 'secret.md' })).toHaveLength(1)
+  })
+
   it('returns commits newest first, with sha, subject, date and author', async () => {
     const dir = await makeClone(await makeRemote())
     await commitFile(dir, 'a.md', 'a\n')

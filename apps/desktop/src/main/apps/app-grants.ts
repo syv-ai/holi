@@ -1,0 +1,208 @@
+/**
+ * Which apps this person has let read their Google data, on this machine.
+ *
+ * An app opts in with `dangerously-allow: [mail]` in its `app.yaml`, the way
+ * Claude Code opts into `--dangerously-skip-permissions`. The flag alone is not
+ * enough for a shared app: mail and calendar are one person's, not the vault's,
+ * and an app can keep what it reads in records that sync to every member, or
+ * send it over the network. So each person approves it once, in a dialog Holi
+ * shows before the app loads, and the approval is kept **here, in main**,
+ * because the renderer is the process running the app's code.
+ *
+ * An approval lapses after `GRANT_TTL_MS`, and as soon as the app's code
+ * changes (any file but `data/`), whoever changed it: approving a teammate's
+ * app is approving that code, not whatever it becomes after the next pull.
+ *
+ * A personal `.local.app` needs the flag but no approval: its code was written
+ * on this machine and its records never sync.
+ *
+ * Plain JSON in userData, like `google/calendar-prefs.ts`: no credential here.
+ */
+import { createHash } from 'node:crypto'
+import { mkdir, readdir, readFile, readlink, rename, writeFile } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
+import {
+  APP_MANIFEST_FILE,
+  isLocalOnlyPath,
+  parseAppManifest,
+  vaultRelPath,
+  type AppAffordance,
+} from '@holi/shared'
+import { runGit } from '../git'
+import { absPathFor } from '../vault/vault-files'
+
+export const GRANT_TTL_MS = 30 * 24 * 60 * 60 * 1000
+
+export interface AffordanceStatus {
+  affordance: AppAffordance
+  granted: boolean
+}
+
+export interface GrantStatus {
+  /** The code the answer is about, to send back with an approval. */
+  codeHash: string
+  /** One entry per affordance the app's manifest declares. */
+  affordances: AffordanceStatus[]
+}
+
+export interface AppGrants {
+  status(remote: string, root: string, bundle: string): Promise<GrantStatus>
+  /**
+   * Approve `affordances` for the code `codeHash` names, the code the dialog
+   * was shown for. False, and nothing recorded, when the code has changed
+   * since (a pull landed while the dialog was up): the person is asked again.
+   * Affordances the manifest does not declare are ignored: an approval never
+   * widens what the app asked for.
+   */
+  grant(
+    remote: string,
+    root: string,
+    bundle: string,
+    affordances: string[],
+    codeHash: string,
+  ): Promise<boolean>
+}
+
+interface GrantRecord {
+  expiresAt: number
+  codeHash: string
+}
+
+type GrantFile = Record<string, GrantRecord>
+
+/**
+ * Everything the app can serve, but its records: each file's path and a hash
+ * of its bytes, each symlink's path and target, every directory (records
+ * aside, `node_modules` included, since the protocol serves it), in name
+ * order. Each entry is framed by JSON, so no file's bytes can pass for the
+ * boundary between two entries. `data/` is left out because records change
+ * every time the app is used, and the approval is of the code.
+ */
+export async function bundleCodeHash(root: string, bundle: string): Promise<string> {
+  const hash = createHash('sha256')
+  const walk = async (rel: string): Promise<void> => {
+    const entries = await readdir(join(root, bundle, rel), { withFileTypes: true }).catch(() => [])
+    entries.sort((x, y) => (x.name < y.name ? -1 : x.name > y.name ? 1 : 0))
+    for (const e of entries) {
+      const path = rel === '' ? e.name : `${rel}/${e.name}`
+      if (rel === '' && e.name === 'data') continue
+      const abs = join(root, bundle, path)
+      if (e.isSymbolicLink()) {
+        const target = await readlink(abs).catch(() => '')
+        hash.update(`${JSON.stringify(['link', path, target])}\n`)
+      } else if (e.isDirectory()) {
+        hash.update(`${JSON.stringify(['dir', path])}\n`)
+        await walk(path)
+      } else {
+        const bytes = await readFile(abs).catch(() => null)
+        const digest =
+          bytes === null ? 'unreadable' : createHash('sha256').update(bytes).digest('hex')
+        hash.update(`${JSON.stringify(['file', path, digest])}\n`)
+      }
+    }
+  }
+  await walk('')
+  return hash.digest('hex')
+}
+
+/**
+ * A personal app skips the approval because its code was written here and never
+ * syncs. A `.local.` name only says so: a teammate can `git add -f` one and
+ * push it, and then it is shared code wearing a personal name. So it counts as
+ * personal only while git tracks none of it. If git cannot answer, it is shared.
+ */
+async function isPersonal(root: string, bundle: string): Promise<boolean> {
+  if (!isLocalOnlyPath(bundle)) return false
+  const tracked = await runGit(root, ['ls-files', '--', bundle]).catch(() => null)
+  return tracked !== null && tracked.trim() === ''
+}
+
+/** The affordances the bundle's manifest declares; none when it has no manifest. */
+export async function declaredAffordances(root: string, bundle: string): Promise<AppAffordance[]> {
+  const text = await readFile(
+    absPathFor(root, vaultRelPath(`${bundle}/${APP_MANIFEST_FILE}`)),
+    'utf8',
+  ).catch(() => null)
+  return (text === null ? null : parseAppManifest(text))?.dangerouslyAllow ?? []
+}
+
+const keyOf = (remote: string, bundle: string, affordance: string) =>
+  JSON.stringify([remote, bundle, affordance])
+
+export function createAppGrants(path: string, now: () => number = Date.now): AppGrants {
+  let queue: Promise<void> = Promise.resolve()
+  const read = async (): Promise<GrantFile> => {
+    try {
+      const parsed: unknown = JSON.parse(await readFile(path, 'utf8'))
+      if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
+      const out: GrantFile = {}
+      for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+        const r = value as Partial<GrantRecord> | null
+        if (typeof r?.expiresAt === 'number' && typeof r.codeHash === 'string') {
+          out[key] = { expiresAt: r.expiresAt, codeHash: r.codeHash }
+        }
+      }
+      return out
+    } catch {
+      // Unwritten or corrupt: nothing is approved, which is the safe way to fail.
+      return {}
+    }
+  }
+
+  return {
+    async status(remote, root, bundle) {
+      const [declared, codeHash] = await Promise.all([
+        declaredAffordances(root, bundle),
+        bundleCodeHash(root, bundle),
+      ])
+      if (declared.length === 0) return { codeHash, affordances: [] }
+      if (await isPersonal(root, bundle)) {
+        return {
+          codeHash,
+          affordances: declared.map((affordance) => ({ affordance, granted: true })),
+        }
+      }
+      const file = await read()
+      return {
+        codeHash,
+        affordances: declared.map((affordance) => {
+          const record = file[keyOf(remote, bundle, affordance)]
+          const granted =
+            record !== undefined && record.expiresAt > now() && record.codeHash === codeHash
+          return { affordance, granted }
+        }),
+      }
+    },
+
+    grant(remote, root, bundle, affordances, shownHash) {
+      // One write at a time: two approvals at once would each read the file,
+      // and the second rename would drop the first's record.
+      const write = async (): Promise<boolean> => {
+        const codeHash = await bundleCodeHash(root, bundle)
+        if (codeHash !== shownHash) return false
+        const declared = await declaredAffordances(root, bundle)
+        const chosen = declared.filter((a) => affordances.includes(a))
+        if (chosen.length === 0) return true
+        const file = await read()
+        // Expired approvals go on every write, so the file does not only grow.
+        for (const [key, record] of Object.entries(file)) {
+          if (record.expiresAt <= now()) delete file[key]
+        }
+        for (const affordance of chosen) {
+          file[keyOf(remote, bundle, affordance)] = { expiresAt: now() + GRANT_TTL_MS, codeHash }
+        }
+        await mkdir(dirname(path), { recursive: true })
+        const temporary = `${path}.tmp`
+        await writeFile(temporary, `${JSON.stringify(file, null, 2)}\n`, 'utf8')
+        await rename(temporary, path)
+        return true
+      }
+      const done = queue.then(write, write)
+      queue = done.then(
+        () => {},
+        () => {},
+      )
+      return done
+    },
+  }
+}

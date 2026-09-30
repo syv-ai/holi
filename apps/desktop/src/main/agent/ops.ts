@@ -28,7 +28,6 @@ import {
   mergeRecordText,
   type PdfCommentThread,
 } from '@holi/shared'
-import type { TaskDoneResult } from '../vault/task-done'
 import type { SkillsUpdate } from './seed-content'
 
 /** What a route needs main to do. Injected, so this module stays testable
@@ -49,9 +48,6 @@ export interface AgentOpsDeps {
   pdfComments(
     path: string,
   ): Promise<{ ok: true; path: string; threads: PdfCommentThread[] } | { ok: false; error: string }>
-  /** `holi task done`: complete a task the way the app does, so a recurring
-   *  one rolls forward. `path` is as the agent typed it. */
-  taskDone(path: string): Promise<TaskDoneResult>
   /** The CLI door into the capability registry (`apps/capabilities.ts`): run
    *  `name` for this vault with the command's fields as params. Throws the
    *  refusal, whose message is the one line the command prints. */
@@ -131,16 +127,6 @@ export function createAgentOps(deps: AgentOpsDeps): AgentOps {
             : text(200, formatCommentThreads(result.path, result.threads))
         } catch (error) {
           return text(422, message(error))
-        }
-      }
-      case '/task/done': {
-        const path = params.get('path')
-        if (path === null || path === '')
-          return json({ ok: false, error: 'task/done needs a path' })
-        try {
-          return json(await deps.taskDone(path))
-        } catch (error) {
-          return json({ ok: false, error: message(error) })
         }
       }
       case '/merge/record': {

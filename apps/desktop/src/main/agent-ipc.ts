@@ -15,7 +15,6 @@ import { ipcMain } from 'electron'
 import type { AgentSessions, Geometry } from './agent/agent-sessions'
 import type { AgentTerminals, TerminalSummary } from './agent/agent-terminals'
 import type { SessionSummary } from './agent/claude-sessions'
-import type { FocusInput } from './agent/context-snapshot'
 import type { SkillsUpdate } from './agent/seed-content'
 
 export function registerAgentIpc(deps: {
@@ -59,5 +58,4 @@ export function registerAgentIpc(deps: {
   ipcMain.on('agent-pty:resize', (_e, size: { id: string; cols: number; rows: number }) =>
     terminals.resize(size.id, size.cols, size.rows),
   )
-  ipcMain.on('agent:focus', (_e, focus: FocusInput) => agent.setFocus(focus))
 }

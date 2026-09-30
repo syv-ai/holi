@@ -6,7 +6,7 @@
  * and the state is `panes[] → tabs[]`.
  */
 
-import { fileKind, isAppBundlePath } from '@holi/shared'
+import { fileKind, isAppBundlePath, type SingletonSurface } from '@holi/shared'
 import { atom } from 'jotai'
 import type { PaneDropZone } from '@/lib/tab-drop'
 
@@ -34,7 +34,7 @@ export const openBesideAtom = atom(null, (_get, set, path: string) => {
  *
  *  Settings and history are tabs rather than modals so they can sit split beside
  *  the note they concern. */
-export type SingletonTab = 'home' | 'board' | 'agenda' | 'mail' | 'settings' | 'history'
+export type SingletonTab = SingletonSurface
 
 /**
  * A tab is either *of* something (a note or app by path, a session by id) or

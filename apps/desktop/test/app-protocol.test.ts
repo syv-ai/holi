@@ -191,6 +191,46 @@ describe('BRIDGE_JS', () => {
     expect(() => new Function(BRIDGE_JS)).not.toThrow()
   })
 
+  it('defines <holi-note> and holi.on', () => {
+    expect(BRIDGE_JS).toContain("customElements.define('holi-note'")
+    expect(BRIDGE_JS).toContain('    on,')
+  })
+
+  it('routes a push to its listeners and a reply to its caller', () => {
+    // Run the shim against a minimal fake frame: parent, message events, crypto.
+    const handlers: ((e: { source: unknown; data: unknown }) => void)[] = []
+    const sent: { id: string; method: string }[] = []
+    const parent = { postMessage: (m: { id: string; method: string }) => sent.push(m) }
+    const win: Record<string, unknown> = {}
+    const fake = {
+      addEventListener: (_: string, fn: (e: { source: unknown; data: unknown }) => void) =>
+        handlers.push(fn),
+      parent,
+      window: win,
+      crypto: { randomUUID: () => `id${sent.length}` },
+      HTMLElement: class {},
+      customElements: { get: () => undefined, define: () => {} },
+    }
+    new Function(...Object.keys(fake), BRIDGE_JS)(...Object.values(fake))
+    const holi = win.holi as {
+      on(t: string, fn: () => void): () => void
+      sync: { status(): Promise<unknown> }
+    }
+    const heard: string[] = []
+    const off = holi.on('docs', () => heard.push('docs'))
+    const deliver = (data: unknown) => handlers.forEach((h) => h({ source: parent, data }))
+
+    deliver({ push: 'docs' })
+    off()
+    deliver({ push: 'docs' })
+    expect(heard).toEqual(['docs'])
+
+    const status = holi.sync.status()
+    expect(sent.at(-1)).toMatchObject({ method: 'sync.status' })
+    deliver({ id: sent.at(-1)!.id, ok: true, value: { kind: 'up-to-date' } })
+    return expect(status).resolves.toEqual({ kind: 'up-to-date' })
+  })
+
   it('does not reach for anything the frame cannot have', () => {
     // The origin is opaque: localStorage throws, and there is no origin string
     // to target a postMessage at — which is why '*' is correct here and the
