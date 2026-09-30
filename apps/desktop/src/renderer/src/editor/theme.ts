@@ -23,6 +23,10 @@ const POPUP = `.cm-tooltip.cm-tooltip-autocomplete.${COMPLETION_CLASS}`
  * The radius tokens carry fallbacks because Tailwind's `@theme` tree-shakes
  * what it cannot see referenced, and Tailwind never scans this file.
  */
+/** A task checkbox's font against its line's: its box and gap are in its own
+ *  ems, and the list's hang has to scale them back. */
+const TASK_CHECK_SCALE = 0.8
+
 export const completionChrome = {
   [POPUP]: {
     // An animation, not a transition: the element is created already in place,
@@ -326,17 +330,43 @@ export const editorTheme = EditorView.baseTheme({
    * caret lands on it.
    */
   '.cm-list': {
-    marginLeft: 'calc(var(--list-indent, 2em) * var(--list-depth, 1))',
+    marginLeft: 'calc(var(--list-indent, 2em) * var(--list-depth, 1) + var(--list-hang))',
+    // The hang: the line starts where the text of its wrapped rows does, and
+    // the first row pulls the marker back out into the indent.
+    textIndent: 'calc(-1 * var(--list-hang))',
     // Padding, not margin: adjacent margins collapse, and CodeMirror measures
     // line heights itself. Above, not below, so the next paragraph does not sit
     // inside a trailing gap.
     paddingTop: 'var(--list-space, 0.7em)',
   },
+  // A later line of an item's text, under the text.
+  '.cm-list-cont': {
+    marginLeft: 'calc(var(--list-indent, 2em) * var(--list-depth, 1) + var(--list-hang))',
+  },
+  // `text-indent` is inherited, and every box in the line (the marker's, a
+  // checkbox, a wiki-link chip) would take the hang into its own first row.
+  '.cm-list *': { textIndent: '0' },
+  // The marker's box plus the gap after it, one per kind of marker. Declared
+  // on the line, which carries the ordered marker's `--list-mark`.
+  '.cm-list-bullet-item': {
+    '--list-hang': 'calc(var(--list-bullet, 0.6em) + var(--list-gap, 0.5em))',
+  },
+  // The checkbox sets its own smaller font, so its box and gap are in its ems.
+  '.cm-list-task-item': {
+    '--list-hang': `calc(${TASK_CHECK_SCALE} * (var(--list-check, 1.15em) + var(--list-gap, 0.5em)))`,
+  },
+  '.cm-list-number-item': { '--list-hang': 'calc(var(--list-mark) + var(--list-gap, 0.5em))' },
   '.cm-list-mark': { marginRight: 'var(--list-gap, 0.5em)' },
   // One box for the raw `-`/`*`/`+` and the dot that replaces it off the active
   // line, so the line does not move when the caret arrives. Ordered markers are
   // never swapped.
   '.cm-list-bullet': { display: 'inline-block', width: 'var(--list-bullet, 0.6em)' },
+  '.cm-list-number': {
+    display: 'inline-block',
+    width: 'var(--list-mark)',
+    textAlign: 'right',
+    fontVariantNumeric: 'tabular-nums',
+  },
   /**
    * Clickable objects react; prose never does. Paint only: never width,
    * height, font-size, padding or margin, which pegs CodeMirror's measure loop
@@ -357,7 +387,7 @@ export const editorTheme = EditorView.baseTheme({
     marginRight: 'var(--list-gap, 0.5em)',
     verticalAlign: '-0.12em',
     textAlign: 'center',
-    fontSize: '0.8em',
+    fontSize: `${TASK_CHECK_SCALE}em`,
     border: '1px solid var(--muted-foreground)',
     borderRadius: '50%',
     cursor: 'pointer',

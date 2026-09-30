@@ -54,7 +54,7 @@ it('stamps each list line with its own depth', () => {
     // lands as a real custom property rather than as an unparsed string.
     '--list-depth: 1;',
     '--list-depth: 2;',
-    '--list-depth: 1;',
+    '--list-depth: 1; --list-mark: 3ch;',
   ])
 })
 
@@ -69,9 +69,10 @@ it('renders a bullet in place of the marker', () => {
 it('hides the indentation the author typed', () => {
   const v = mount('para\n\n- top\n  - child\n')
   // The two spaces before the child's marker are gone from the rendered line,
-  // which is what lets the depth alone decide where it sits.
+  // which is what lets the depth alone decide where it sits. So is the space
+  // after each marker: the theme's gap stands in for it.
   const lines = [...v.contentDOM.querySelectorAll('.cm-line')].map((el) => el.textContent)
-  expect(lines).toEqual(['para', '', '• top', '◦ child', ''])
+  expect(lines).toEqual(['para', '', '•top', '◦child', ''])
 })
 
 it('leaves prose alone', () => {

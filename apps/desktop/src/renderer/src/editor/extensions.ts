@@ -27,7 +27,7 @@ import {
   type TaskChip,
 } from './livePreview'
 import { mentionSource, type MentionData } from './mentions'
-import { alphaListKeymap } from './lists'
+import { alphaListKeymap, alphaLists, listKindByTyping, renumberOrderedLists } from './lists'
 import { slashCommands, tableSizes } from './slash'
 import { wikiHoverPreview, type ReadNote } from './wikiHover'
 import { colorModeAware } from './color-mode'
@@ -105,7 +105,7 @@ export function baseEditorExtensions(deps: EditorDeps): Extension[] {
     markdown({
       base: markdownLanguage,
       codeLanguages: fenceLanguage,
-      extensions: emptyTaskMarker,
+      extensions: [emptyTaskMarker, alphaLists],
     }),
     // Colours the code nested in fences. Overlap: markdown's `#`/`**` marks take
     // the punctuation grey, visible only on the active line.
@@ -150,9 +150,13 @@ export function baseEditorExtensions(deps: EditorDeps): Extension[] {
     // Multi-cursor is off by default; ⌘D's next-occurrence selections need it.
     EditorState.allowMultipleSelections.of(true),
     formattingKeymap, // ⌘B / ⌘I / ⌘E / ⌘K / ⌘⇧X — higher precedence than defaults
-    // `markdown()`'s Enter continues parsed lists; this one continues `a.` /
-    // `A.` / `a)`, which the parser does not know.
+    // `markdown()`'s Enter continues decimal and bullet lists; this one
+    // continues `a.` / `A.` / `a)`, which it cannot write.
     alphaListKeymap,
+    // Tab, Enter and Backspace inside an ordered list keep its numbers right.
+    renumberOrderedLists,
+    // `1. a.` in a list's empty first item makes it a letter list, and back.
+    listKindByTyping,
     keymap.of([
       ...completionKeymap,
       // ⌘D: select the word, then each press adds the next matching occurrence.

@@ -13,12 +13,13 @@ import {
   touches,
 } from '../src/renderer/src/editor/livePreview'
 import type { WikiLinkChip } from '../src/renderer/src/editor/wikiLinkChips'
+import { alphaLists } from '../src/renderer/src/editor/lists'
 
 function stateFor(doc: string, cursor = 0, extra: Extension[] = []) {
   const state = EditorState.create({
     doc,
     selection: EditorSelection.single(cursor),
-    extensions: [markdown(), ...extra],
+    extensions: [markdown({ extensions: alphaLists }), ...extra],
   })
   ensureSyntaxTree(state, state.doc.length, 5_000)
   return state
@@ -169,7 +170,7 @@ describe('buildDecorations — list indentation', () => {
     const state = EditorState.create({
       doc,
       selection: EditorSelection.single(cursor),
-      extensions: [markdown({ base: markdownLanguage })],
+      extensions: [markdown({ base: markdownLanguage, extensions: alphaLists })],
     })
     ensureSyntaxTree(state, state.doc.length, 5_000)
     return state
@@ -184,8 +185,25 @@ describe('buildDecorations — list indentation', () => {
   function depthOf(doc: string, text: string, cursor = 0): string | undefined {
     const { state, all } = decos(doc, cursor)
     const line = state.doc.lineAt(doc.indexOf(text))
-    const found = all.find((d) => d.from === line.from && d.spec['class'] === 'cm-list')
-    return (found?.spec['attributes'] as { style?: string } | undefined)?.style
+    const found = all.find((d) => d.from === line.from && classes(d).includes('cm-list'))
+    return /--list-depth:\d+/.exec(styleOf(found))?.[0]
+  }
+
+  function classes(d: { spec: Record<string, unknown> } | undefined): string[] {
+    return String(d?.spec['class'] ?? '').split(' ')
+  }
+
+  function styleOf(d: { spec: Record<string, unknown> } | undefined): string {
+    return (d?.spec['attributes'] as { style?: string } | undefined)?.style ?? ''
+  }
+
+  /** The line decoration on the line that `text` starts. */
+  function lineDeco(doc: string, text: string) {
+    const { state, all } = decos(doc)
+    const line = state.doc.lineAt(doc.indexOf(text))
+    return all.find(
+      (d) => d.from === line.from && d.to === line.from && d.spec['class'] !== undefined,
+    )
   }
 
   it('indents a top-level bullet, which the raw source does not', () => {
@@ -325,7 +343,7 @@ describe('buildDecorations — list indentation', () => {
     const { all } = decos('1. one')
     const marker = all.find((d) => d.from === 0 && d.to === 2)
     expect(marker?.spec['widget']).toBeUndefined()
-    expect(marker?.spec['class']).toBe('cm-list-mark')
+    expect(classes(marker)).toContain('cm-list-mark')
   })
 
   // Same contract as every other mark in the file, and the two states wear the
@@ -339,8 +357,36 @@ describe('buildDecorations — list indentation', () => {
 
   it('holds the text off the marker', () => {
     const { all } = decos('1. top')
-    const mark = all.find((d) => d.spec['class'] === 'cm-list-mark')
+    const mark = all.find((d) => classes(d).includes('cm-list-mark'))
     expect(mark).toEqual(expect.objectContaining({ from: 0, to: 2 }))
+  })
+
+  // The theme hangs wrapped rows by the marker's box; these are what it reads.
+  it('tells the theme which marker box the text hangs from', () => {
+    expect(classes(lineDeco('- dot', '- dot'))).toContain('cm-list-bullet-item')
+    expect(classes(lineDeco('- [ ] task', '- [ ]'))).toContain('cm-list-task-item')
+    expect(classes(lineDeco('1. one', '1. one'))).toContain('cm-list-number-item')
+  })
+
+  it('sizes an ordered box for the longest marker in its list', () => {
+    const doc = '9. nine\n10. ten'
+    expect(styleOf(lineDeco(doc, '9. nine'))).toContain('--list-mark:3ch')
+    expect(styleOf(lineDeco(doc, '10. ten'))).toContain('--list-mark:3ch')
+  })
+
+  it("hangs an item's later lines under its text, and conceals their indent", () => {
+    const doc = '- one\n  more\nlazy\n  - two'
+    expect(classes(lineDeco(doc, '  more'))).toContain('cm-list-cont')
+    expect(classes(lineDeco(doc, 'lazy'))).toContain('cm-list-cont')
+    const { all } = decos(doc)
+    expect(
+      all.some(
+        (d) => d.from === 6 && d.to === 8 && d.spec['widget'] === undefined && !d.spec['class'],
+      ),
+    ).toBe(true)
+    // A sublist is its own item, not more of this one's text.
+    expect(classes(lineDeco(doc, '  - two'))).not.toContain('cm-list-cont')
+    expect(depthOf(doc, '  - two')).toBe('--list-depth:2')
   })
 
   it('indents every marker markdown has: -, * and 1.', () => {

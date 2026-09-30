@@ -18,7 +18,7 @@ import {
 } from '@codemirror/view'
 import { fileKind, parseWikiLinks, resolveImageRef, type TaskStatus } from '@holi/shared'
 import { frontmatterRegion } from './frontmatter-region'
-import { alphaListAt } from './lists'
+import { isListNode } from './lists'
 import { ImageWidget } from './imageWidget'
 import { vaultAssetUrl } from '../lib/vault-asset'
 import { WikiLinkChip } from './wikiLinkChips'
@@ -55,8 +55,7 @@ export const taskByPathFacet = Facet.define<
 /**
  * Set on a table cell's editor only: a cell has no blocks. The plugin already
  * strips most block nodes from a cell's parser, but that list is theirs, not
- * ours. Not covered by it: the alphabetic-list regex scan, and images, which
- * markdown counts as inline.
+ * ours. Not covered by it: images, which markdown counts as inline.
  */
 export const inlineOnlyFacet = Facet.define<boolean, boolean>({
   combine: (values) => values[0] ?? false,
@@ -100,16 +99,68 @@ const headingMark = Decoration.mark({ class: 'cm-heading-mark' })
 const codeLine = Decoration.line({ class: 'cm-code-line' })
 
 /**
- * A list line's indent, as its nesting depth; the length is in `theme.ts`.
- * Hanging a wrapped line under its text was rejected: it needs the measured
- * width of `- ` in the vault's font, too much machinery for the result.
+ * What sits in front of a list item's text. Each kind has a box of known
+ * width, so the theme can hang the item's wrapped rows and continuation lines
+ * under its text without measuring anything.
  */
-const listLine = (depth: number) =>
-  Decoration.line({ class: 'cm-list', attributes: { style: `--list-depth:${depth}` } })
+type ListKind =
+  | { kind: 'bullet' }
+  | { kind: 'task' }
+  /** `1.`, `a)`: the box is as wide as the list's longest marker. */
+  | { kind: 'number'; width: string }
 
-/** The marker, so the theme can hold the text off it. The one space markdown
- *  requires is not much of a gap in a proportional face. */
-const listMark = Decoration.mark({ class: 'cm-list-mark' })
+function listStyle(depth: number, kind: ListKind): string {
+  return kind.kind === 'number'
+    ? `--list-depth:${depth};--list-mark:${kind.width}`
+    : `--list-depth:${depth}`
+}
+
+/** A list item's first line: its indent as a nesting depth, and its marker's
+ *  kind, which the theme turns into distances. */
+const listLine = (depth: number, kind: ListKind) =>
+  Decoration.line({
+    class: `cm-list cm-list-${kind.kind}-item`,
+    attributes: { style: listStyle(depth, kind) },
+  })
+
+/** A later line of an item's text (a soft break, or a lazy continuation):
+ *  placed under the text, where the item's wrapped rows land too. */
+const listContinuation = (depth: number, kind: ListKind) =>
+  Decoration.line({
+    class: `cm-list-cont cm-list-${kind.kind}-item`,
+    attributes: { style: listStyle(depth, kind) },
+  })
+
+/** The widest decimal marker in a list, as a box width: digits are tabular,
+ *  so `ch` fits them exactly, and the delimiter gets a whole one. */
+function numberWidth(state: EditorState, list: SyntaxNode): string {
+  let widest = 0
+  for (const item of list.getChildren('ListItem')) {
+    const mark = item.getChild('ListMark')
+    if (mark !== null) widest = Math.max(widest, mark.to - mark.from)
+  }
+  return `${widest}ch`
+}
+
+/** An alphabetic marker's box. Letters are not tabular, so it is sized for a
+ *  wide one, `W.`, rather than in `ch`. */
+const ALPHA_WIDTH = '1.4em'
+
+type DecoRange = { from: number; to: number; deco: Decoration }
+
+/**
+ * The one space markdown requires after a marker, concealed on every line,
+ * active or not: the theme's gap stands in for it. Its width is the font's,
+ * and a hang that had to include it could not be written in CSS.
+ */
+function concealSpaceAfter(state: EditorState, pos: number, ranges: DecoRange[]): void {
+  if (/[ \t]/.test(state.sliceDoc(pos, pos + 1)))
+    ranges.push({ from: pos, to: pos + 1, deco: conceal })
+}
+
+/** An ordered marker (`1.`, `a)`) in its fixed box, right-aligned so `9.` and
+ *  `10.` put their text in one column. */
+const listNumber = Decoration.mark({ class: 'cm-list-mark cm-list-number' })
 /** A bullet marker, raw. Same box as the dot below, so swapping one for the
  *  other on the active line moves nothing. */
 const listBullet = Decoration.mark({ class: 'cm-list-mark cm-list-bullet' })
@@ -299,7 +350,7 @@ export function buildDecorations(state: EditorState, from: number, to: number): 
   // GFM parses the leading `---` lines as thematic breaks.
   const fmEnd = frontmatterRegion(state.doc.toString())?.to ?? 0
   // Collect first (tree iteration + regex scan), sort, then feed the builder
-  const ranges: { from: number; to: number; deco: Decoration }[] = []
+  const ranges: DecoRange[] = []
   const notePath = state.facet(notePathFacet)
 
   syntaxTree(state).iterate({
@@ -382,10 +433,40 @@ export function buildDecorations(state: EditorState, from: number, to: number): 
           // Depth from the tree's parent chain, never from the leading spaces.
           let depth = 0
           for (let p = node.node.parent; p !== null; p = p.parent) {
-            if (p.name === 'BulletList' || p.name === 'OrderedList') depth++
+            if (isListNode(p.name)) depth++
           }
           const line = state.doc.lineAt(node.from)
-          ranges.push({ from: line.from, to: line.from, deco: listLine(depth) })
+          const isBullet = /^[-*+]$/.test(state.sliceDoc(mark.from, mark.to))
+          const task = mark.nextSibling
+          const taskFirst = task?.name === 'Task' ? task.firstChild : null
+          const taskMark = taskFirst?.name === 'TaskMarker' ? taskFirst : null
+          const kind: ListKind =
+            taskMark !== null
+              ? { kind: 'task' }
+              : isBullet
+                ? { kind: 'bullet' }
+                : {
+                    kind: 'number',
+                    width:
+                      node.node.parent!.name === 'AlphaList'
+                        ? ALPHA_WIDTH
+                        : numberWidth(state, node.node.parent!),
+                  }
+          ranges.push({ from: line.from, to: line.from, deco: listLine(depth, kind) })
+          // The item's own text on later lines, not its sublists: they hang
+          // under the text, their typed indentation concealed like the marker
+          // line's.
+          for (let child = mark.nextSibling; child !== null; child = child.nextSibling) {
+            if (child.name !== 'Paragraph' && child.name !== 'Task') continue
+            const last = state.doc.lineAt(child.to).number
+            for (let n = state.doc.lineAt(child.from).number; n <= last; n++) {
+              const cont = state.doc.line(n)
+              if (n === line.number || cont.from < from || cont.from > to) continue
+              ranges.push({ from: cont.from, to: cont.from, deco: listContinuation(depth, kind) })
+              const lead = /^[ \t]*/.exec(cont.text)![0].length
+              if (lead > 0) ranges.push({ from: cont.from, to: cont.from + lead, deco: conceal })
+            }
+          }
           // Conceal the author's indentation, always, so the depth alone places
           // the line. Only the whitespace right before the marker: a blockquote's
           // `> ` is styled, not hidden.
@@ -393,9 +474,7 @@ export function buildDecorations(state: EditorState, from: number, to: number): 
           while (lead > line.from && /[ \t]/.test(state.sliceDoc(lead - 1, lead))) lead--
           if (lead < mark.from) ranges.push({ from: lead, to: mark.from, deco: conceal })
           // A task's checkbox is its marker, so the `- ` in front of it goes.
-          const task = mark.nextSibling
-          const taskMark = task?.name === 'Task' ? task.firstChild : null
-          if (taskMark !== null && taskMark !== undefined && taskMark.name === 'TaskMarker') {
+          if (taskMark !== null) {
             ranges.push({ from: mark.from, to: mark.to + 1, deco: conceal })
             ranges.push({
               from: taskMark.from,
@@ -406,10 +485,10 @@ export function buildDecorations(state: EditorState, from: number, to: number): 
                 ),
               }),
             })
+            concealSpaceAfter(state, taskMark.to, ranges)
             break
           }
           // A bullet glyph, except on the active line; both wear the same box.
-          const isBullet = /^[-*+]$/.test(state.sliceDoc(mark.from, mark.to))
           const glyph = BULLETS[Math.min(depth, BULLETS.length) - 1] ?? BULLETS[0]!
           ranges.push({
             from: mark.from,
@@ -419,8 +498,9 @@ export function buildDecorations(state: EditorState, from: number, to: number): 
                 ? Decoration.replace({ widget: new BulletWidget(glyph) })
                 : isBullet
                   ? listBullet
-                  : listMark,
+                  : listNumber,
           })
+          concealSpaceAfter(state, mark.to, ranges)
           break
         }
         case 'QuoteMark':
@@ -475,20 +555,6 @@ export function buildDecorations(state: EditorState, from: number, to: number): 
       }
     },
   })
-
-  // Alphabetic ordered lists, which the parser does not report (predicate in
-  // `lists.ts`). A regex over lines, so it is switched off by hand in a cell.
-  const lastLine = inlineOnly ? 0 : state.doc.lineAt(to).number
-  for (let n = state.doc.lineAt(from).number; n <= lastLine; n++) {
-    const line = state.doc.line(n)
-    const item = alphaListAt(state, line)
-    if (item === null) continue
-    ranges.push({ from: line.from, to: line.from, deco: listLine(item.depth) })
-    if (item.markFrom > line.from) {
-      ranges.push({ from: line.from, to: item.markFrom, deco: conceal })
-    }
-    ranges.push({ from: item.markFrom, to: item.markTo, deco: listMark })
-  }
 
   // wiki-links via the shared grammar (not part of the markdown tree)
   const docExists = state.facet(docExistsFacet)
