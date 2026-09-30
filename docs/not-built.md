@@ -29,9 +29,12 @@ shared changes become proposals.
 
 ## Vault apps
 
-**The rest of the bridge and manifest.** `holi.open` opens a vault path as a note or one of Holi's
-views, so it cannot open another app, even by its bundle path. No theme-change event (a mode
-change reloads the frame). `app.yaml`'s `description` is written but never read.
+**Location for apps.** A `location` affordance, approved like mail and calendar. Electron's
+geolocation needs Google's network location service (an API key) and does not answer on macOS even
+with one, so it needs a native source first (CoreLocation on macOS) behind a bridge call.
+
+**The rest of the bridge and manifest.** No theme-change event (a mode change reloads the
+frame). `app.yaml`'s `description` is written but never read.
 
 **Backend, hot reload.** A `utilityProcess` backend (`server.mjs`), and reloading an open app when
 its files change (today reload is a button).

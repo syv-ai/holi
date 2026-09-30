@@ -10,6 +10,10 @@
  *   current destination) and **open** (a menu trigger, Radix's
  *   `data-state=open`) all look like the hover, and stay.
  * - **Focus** is the one ring, `ring-1 ring-ring`; state never draws an edge.
+ * - **Disabled** is `aria-disabled`, not the native attribute: a native
+ *   disabled button takes no pointer events, so its tooltip, the one place
+ *   that says why it is off, could never show. It stays focusable and
+ *   hoverable, ignores its click, and dims with no hover look.
  * - **The label** is both the accessible name and the tooltip, so there is no
  *   route to a native `title`. `tooltip` replaces the tooltip's content (a
  *   hotkey beside the name) or, `false`, drops it where the holder shows one.
@@ -88,6 +92,8 @@ export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(functio
     className,
     children,
     type = 'button',
+    disabled = false,
+    onClick,
     ...props
   },
   ref,
@@ -98,17 +104,21 @@ export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(functio
       type={type}
       aria-label={label}
       aria-pressed={pressed}
+      aria-disabled={disabled || undefined}
+      onClick={disabled ? (e) => e.preventDefault() : onClick}
       data-slot="icon-button"
       data-active={active ? '' : undefined}
       className={cn(
         'relative inline-flex shrink-0 cursor-default items-center justify-center text-icon outline-none motion-respond',
-        quiet
-          ? 'hover:text-icon-active data-[state=open]:text-icon-active'
-          : [
-              'hover:scale-110 hover:bg-accent hover:text-icon-active active:scale-95',
-              'aria-pressed:bg-accent aria-pressed:text-icon-active data-active:bg-accent data-active:text-icon-active data-[state=open]:bg-accent data-[state=open]:text-icon-active',
-            ],
-        'focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50',
+        disabled
+          ? 'opacity-50'
+          : quiet
+            ? 'hover:text-icon-active data-[state=open]:text-icon-active'
+            : [
+                'hover:scale-110 hover:bg-accent hover:text-icon-active active:scale-95',
+                'aria-pressed:bg-accent aria-pressed:text-icon-active data-active:bg-accent data-active:text-icon-active data-[state=open]:bg-accent data-[state=open]:text-icon-active',
+              ],
+        'focus-visible:ring-1 focus-visible:ring-ring',
         BOX[size],
         shape === 'round' ? 'rounded-full' : 'rounded-md',
         className,

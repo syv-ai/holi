@@ -68,7 +68,9 @@ One place decides how an icon looks, so every icon in the app agrees.
   the whole look: muted at rest (`text-icon`), and under the pointer the foreground
   (`text-icon-active`), the neutral `accent` background and a slight grow (`scale-110`). Pressed,
   active and an open menu trigger look like the hover and stay. The label is both the accessible
-  name and the tooltip. `className` is for layout and reveal only.
+  name and the tooltip. Disabled is `aria-disabled`, dimmed with no hover look, never the native
+  attribute: a natively disabled button takes no pointer events, so its tooltip, the one place
+  that says why it is off, would never show. `className` is for layout and reveal only.
 - **Menus** colour their row icons `text-icon` through the row, so a menu item passes a bare
   `Icon`.
 - **Outside React** (CodeMirror widgets, the completion popup, the PDF viewer's registry) glyphs

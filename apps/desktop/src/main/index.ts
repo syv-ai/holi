@@ -367,31 +367,15 @@ async function main(): Promise<void> {
   const appGrants = createAppGrants(join(app.getPath('userData'), 'app-grants.json'))
 
   /**
-   * The browser permissions a page may use. Only location is decided here:
-   * a vault app gets it when its manifest opts in (`dangerously-allow:
-   * [location]`) and this person has approved that app, the same gate as its
-   * mail and calendar reads; Holi's own page never asks. Every other
+   * Geolocation is refused outright. Electron answers it through Google's
+   * network location service, which needs an API key and does not answer on
+   * macOS, so a request would hang until the page's timeout. Refused, it fails
+   * at once and an app can offer a place search instead. Every other
    * permission keeps Electron's answer.
    */
-  electronSession.defaultSession.setPermissionRequestHandler(
-    (_contents, permission, callback, details) => {
-      if (permission !== 'geolocation') {
-        callback(true)
-        return
-      }
-      const vault = host.active()
-      const app = parseAppUrl(details.requestingUrl)
-      if (vault === null || app === null) {
-        callback(false)
-        return
-      }
-      appGrants.status(vault.remote, vault.root, app.bundle).then(
-        (status) =>
-          callback(status.affordances.some((a) => a.affordance === 'location' && a.granted)),
-        () => callback(false),
-      )
-    },
-  )
+  electronSession.defaultSession.setPermissionRequestHandler((_contents, permission, callback) => {
+    callback(permission !== 'geolocation')
+  })
   // Settings' member list reads the same cache as an app and the agent.
   const members = createMembersCache((remote) => session.api.collaborators(remote))
   const capabilityServices = createCapabilityServices(

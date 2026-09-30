@@ -4,9 +4,15 @@
  * atoms. An agent session is an ordinary tab.
  */
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
-import { History, PanelLeftClose, PanelLeftOpen, PanelRight, RotateCw } from 'lucide-react'
+import { History, Logs, PanelLeftClose, PanelLeftOpen, PanelRight, RotateCw } from 'lucide-react'
 import { Fragment, useEffect, useRef, useState } from 'react'
-import { fileKind, isAppBundlePath, isTaskFilePath, isVaultConfigPath } from '@holi/shared'
+import {
+  APP_LOG_FILE,
+  fileKind,
+  isAppBundlePath,
+  isTaskFilePath,
+  isVaultConfigPath,
+} from '@holi/shared'
 import {
   Button,
   IconButton,
@@ -82,6 +88,7 @@ import {
   activeRemoteAtom,
   heldBackAtom,
   openVaultAtom,
+  snapshotAtom,
   syncStateAtom,
   vaultsAtom,
 } from '../state/vaults'
@@ -425,6 +432,13 @@ export function Shell() {
                             }}
                           />
                         )}
+                        {/* The app's log, in a pane beside it. */}
+                        <AppLogButton
+                          tab={p.tabs[p.active]}
+                          onOpen={(log) =>
+                            setWorkspace((w) => openInNewPane(w, { kind: 'note', path: log }))
+                          }
+                        />
                         {/* Version history for the focused note. Only on the
                               active pane: `historyTargetPathAtom` reads its tab,
                               the drawer's own predicate. */}
@@ -548,5 +562,33 @@ export function Shell() {
         />
       )}
     </div>
+  )
+}
+
+/**
+ * Open an app's log (`log.local.txt`), what went wrong while it ran here, in
+ * a new pane beside it. Disabled until the snapshot holds one: the log is not
+ * watched, so a first one shows on the next rescan.
+ */
+function AppLogButton({
+  tab,
+  onOpen,
+}: {
+  /** The pane's active tab: an app's shows the button, any other nothing. */
+  tab: Tab | undefined
+  onOpen: (log: string) => void
+}): React.JSX.Element | null {
+  const files = useAtomValue(snapshotAtom).files
+  if (tab?.kind !== 'app') return null
+  const log = `${tab.path}/${APP_LOG_FILE}`
+  const exists = files.some((f) => f.path === log)
+  return (
+    <IconButton
+      icon={Logs}
+      label={exists ? "open this app's log" : 'no log yet'}
+      className="ml-1"
+      disabled={!exists}
+      onClick={() => onOpen(log)}
+    />
   )
 }

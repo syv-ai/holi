@@ -72,7 +72,6 @@ function fieldOf(params: unknown, key: 'path' | 'surface'): string | null {
 const AFFORDANCE_TEXT: Record<AppAffordance, string> = {
   mail: 'your mail',
   calendar: 'your calendar',
-  location: 'where you are',
 }
 
 /** The topics this frame is told about: the vault's, and its own collections'. */
@@ -192,9 +191,6 @@ export function AppFrame({ path }: { path: string }): React.JSX.Element {
   // The app's own words for why it asks, from its manifest.
   const [reasons, setReasons] = useState<Partial<Record<AppAffordance, string>>>({})
   const [gateOpen, setGateOpen] = useState(false)
-  // Location is the browser's, not a bridge call: the frame is allowed to ask
-  // only once it is approved, and main refuses it otherwise.
-  const [locating, setLocating] = useState(false)
   // Bumped when an approval comes back refused because the code changed while
   // the dialog was up: the new code is asked about, not waved through.
   const [recheck, setRecheck] = useState(0)
@@ -207,7 +203,6 @@ export function AppFrame({ path }: { path: string }): React.JSX.Element {
       .then((status) => {
         if (!live) return
         const ungranted = status.affordances.filter((s) => !s.granted).map((s) => s.affordance)
-        setLocating(status.affordances.some((s) => s.affordance === 'location' && s.granted))
         setAsk(ungranted.length > 0 ? { affordances: ungranted, codeHash: status.codeHash } : null)
         setAuthorship({ added: status.added ?? null, last: status.lastChange ?? null })
         setReasons(status.reasons ?? {})
@@ -239,7 +234,6 @@ export function AppFrame({ path }: { path: string }): React.JSX.Element {
           setRecheck((n) => n + 1)
           return
         }
-        if (shown.affordances.includes('location')) setLocating(true)
         setGateOpen(true)
       },
       (e: unknown) => {
@@ -330,10 +324,6 @@ export function AppFrame({ path }: { path: string }): React.JSX.Element {
           // feature rests on. `allow-popups` only lets a `target=_blank` link
           // reach main, which opens it in the browser and makes no window.
           sandbox="allow-scripts allow-popups"
-          // `*`, not the default `src`: the sandbox makes the document's origin
-          // opaque, which matches no origin. Main's permission handler is the
-          // gate that checks this app's approval.
-          allow={locating ? 'geolocation *' : undefined}
           // Hidden until its document has loaded, then faded in: a frame paints
           // whatever it has as it goes, and an app half-styled for a frame or
           // two reads as a glitch. A reload or a mode change starts it over.

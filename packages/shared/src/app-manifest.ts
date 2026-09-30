@@ -37,7 +37,7 @@ export interface AppManifest {
   /**
    * Why, in the app's own words, per affordance: shown in the approval
    * dialog, quoted and attributed to the app. Written as the map form of
-   * `dangerously-allow` (`{ location: To show the weather where you are }`).
+   * `dangerously-allow` (`{ calendar: To show your next meeting }`).
    */
   allowReasons?: Partial<Record<AppAffordance, string>>
 }
@@ -47,8 +47,9 @@ export const MAX_ALLOW_REASON = 200
 
 /** The reads an app must opt into, because what they return is one person's,
  *  not the vault's: an app can keep it in synced records or send it anywhere.
- *  `location` is the browser's geolocation, allowed to that app's frame only. */
-export const APP_AFFORDANCES = ['mail', 'calendar', 'location'] as const
+ *  There is no `location`: Electron's geolocation needs Google's network
+ *  service and does not answer on macOS, so no app is offered it. */
+export const APP_AFFORDANCES = ['mail', 'calendar'] as const
 
 export type AppAffordance = (typeof APP_AFFORDANCES)[number]
 
@@ -156,7 +157,7 @@ export function appManifestText(description?: string): string {
     '',
     `# One person\u2019s data this app reads, approved by each person before it runs:`,
     `# any of ${APP_AFFORDANCES.join(', ')}. As a map, each with a reason the approval shows:`,
-    '#   { location: To show the weather where you are }',
+    '#   { calendar: To show your next meeting }',
     'dangerously-allow:',
     '',
   ].join('\n')

@@ -63,12 +63,11 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   still applies, and the signatures leave the agent surface out, so an app is not told a memory
   was written.
 - **One person's data is opt-in, twice.** `calendar.events` and `mail.threads` read the Google
-  account of whoever has the app open, not the vault's, and the browser's geolocation reads where
-  they are; an app can keep what it reads in records that sync to every member, or send it over
-  the network. So the app declares `dangerously-allow: [mail, calendar, location]` (any of them)
-  in `app.yaml`, or as a map giving each one a reason (`{ location: To show the weather }`,
-  plain text, at most 200 characters) that the dialog quotes as the developer's explanation (without the
-  flag a Google call fails and names it, and geolocation is refused), and each person approves the app in a dialog before its frame loads. The approval is
+  account of whoever has the app open, not the vault's; an app can keep what it reads in records
+  that sync to every member, or send it over the network. So the app declares
+  `dangerously-allow: [mail, calendar]` in `app.yaml`, or as a map giving each one a reason
+  (`{ calendar: To show your next meeting }`, plain text, at most 200 characters) that the dialog
+  quotes as the developer's explanation (without the flag the call fails and names it), and each person approves the app in a dialog before its frame loads. The approval is
   kept in main (`userData/app-grants.json`), never the renderer, which is the process running the
   app. It lapses after 30 days and whenever the app's code (anything but `data/`) changes, whoever
   changed it: approving a teammate's app approves that code, not what it becomes after a pull. A
@@ -78,9 +77,11 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   dialog showed (a hash of every file, link and folder the protocol can serve, `data/` and the log
   aside), so
   a pull that lands while the dialog is up is asked about again rather than approved unseen. The agent has `holi-google` and its own gate, so these open to the app
-  door only. Location is a browser permission, not a bridge call: an approved frame gets
-  `allow="geolocation *"` (its origin is opaque, so no narrower allowlist matches it), and main's
-  permission handler grants geolocation only to a `holi-app:` frame whose app is approved.
+  door only.
+- **No location.** Main refuses the browser's geolocation to every page. Electron answers it
+  through Google's network location service, which needs an API key and does not answer on macOS
+  even with one, so a request would hang until the page's timeout; refused, it fails at once and
+  the app can offer a place search or an IP-based estimate.
 - **The approval dialog** is asked in the app's own pane, over the app's markup and styles drawn
   blurred and without scripts (`sandbox=""`), so what is approved is seen and nothing of it runs
   first. It quotes the app's reasons, and names who added the app's code and who last changed it
@@ -98,7 +99,8 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   Each line is timed; a stack continues indented. It keeps the last day and at most 500 entries,
   trimmed as it is written (`appendAppLog`). It is for the agent: `.local.`, so it never syncs;
   not served to the app, not readable through the bridge, not in the approval hash, and not
-  watched, so it never triggers a rescan.
+  watched, so it never triggers a rescan. The pane header's log button, beside reload, opens it in a
+  new pane; it is disabled until a rescan has seen one.
 - **Showing.** The frame is hidden until its document has loaded, then fades in
   (`motion-in-fade`), so a half-styled first paint is never seen; a reload or a mode change starts
   it over.

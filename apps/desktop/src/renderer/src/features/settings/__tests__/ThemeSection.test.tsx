@@ -101,7 +101,10 @@ test('cannot reset a token that is already the default', async () => {
   setup()
   await waitFor(() => expect(screen.getByText('--primary')).toBeInTheDocument())
 
-  expect(screen.getByRole('button', { name: 'reset Primary' })).toBeDisabled()
+  expect(screen.getByRole('button', { name: 'reset Primary' })).toHaveAttribute(
+    'aria-disabled',
+    'true',
+  )
 })
 
 test('writes into the mode on screen, and switching mode switches the target', async () => {

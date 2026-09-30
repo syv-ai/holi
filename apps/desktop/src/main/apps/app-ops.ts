@@ -93,8 +93,9 @@ export async function initAppOp(root: string, path: string): Promise<AppInitResu
 }
 
 /** A placeholder that renders something rather than a blank tab, which is
- *  indistinguishable from a broken app. It carries no bridge script: the bridge
- *  is injected on serve, and a hand-added one is what the validator refuses. */
+ *  indistinguishable from a broken app. No heading with the app's name: the tab
+ *  and the tree already say it. It carries no bridge script: the bridge is
+ *  injected on serve, and a hand-added one is what the validator refuses. */
 function entryFor(rawName: string): string {
   const name = rawName.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   return `<!doctype html>
@@ -104,7 +105,6 @@ function entryFor(rawName: string): string {
   *, *::before, *::after { box-sizing: border-box; }
   body { font: 16px/1.5 system-ui, sans-serif; margin: 0; padding: 1rem; }
 </style>
-<h1>${name}</h1>
 <p>Scaffolded by <code>holi app init</code>. Replace this with the app.</p>
 `
 }

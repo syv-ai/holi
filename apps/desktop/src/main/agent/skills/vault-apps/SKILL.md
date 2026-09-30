@@ -176,16 +176,15 @@ function that stops it. `fn` gets no arguments: read the data again.
 Prefer this to polling. A put or delete from the app itself fires
 `store:<collection>` too, a moment later.
 
-## Reading someone's mail, calendar or location
+## Reading someone's mail or calendar
 
 `holi.calendar.events({ from, to })` (ISO instants, at most 92 days apart) and
 `holi.mail.threads(query)` (Gmail's search grammar; none means the inbox) read
-the Google account of **whoever has the app open**, not the vault's. The
-browser's `navigator.geolocation` reads where that person is. All three are off
-until the app opts in, in `app.yaml`:
+the Google account of **whoever has the app open**, not the vault's. So they are
+off until the app opts in, in `app.yaml`:
 
 ```yaml
-dangerously-allow: [mail, calendar, location] # any of them
+dangerously-allow: [mail, calendar] # either or both
 ```
 
 Better, say why: written as a map, each one carries a short reason that the
@@ -194,11 +193,13 @@ One plain sentence about what the app does with it (at most 200 characters):
 
 ```yaml
 dangerously-allow:
-  location: To show the weather where you are
+  calendar: To show your next meeting
 ```
 
-Without `location`, `navigator.geolocation` fails with a permissions error: say
-so in the page, or ask for a place instead.
+**There is no location.** `navigator.geolocation` is always refused in an app:
+Holi cannot get a position on every platform, so it offers none. Ask the person
+for a place (a search box), or estimate one from their IP address with a public
+web service, and say that it is an estimate.
 
 Then each person sees a dialog the first time they open the app, and Holi asks
 again after 30 days and whenever the app's code changes. Until they allow it,
@@ -206,7 +207,7 @@ the call rejects. A personal app (`Name.local.app`) needs the flag but no dialog
 
 Before you add the flag to a shared app, tell the user plainly: whatever the app
 keeps in its records syncs to everyone in the vault, so do not store someone's
-mail or whereabouts in a shared app's store unless they asked for exactly that.
+mail in a shared app's store unless they asked for exactly that.
 
 ## Keeping data
 
@@ -302,7 +303,7 @@ failure is legible in the page itself too:
 - **Wrap the startup in a try/catch and render the error into the page.** A
   visible message is the only diagnostic the user can read back to you.
 - **Put something on screen before the first `await`**, so a failing call
-  leaves a page with a heading on it rather than a blank one.
+  leaves a page with something on it rather than a blank one.
 - Prefer plain DOM over anything clever: no build step, no bundler, no source
   map, and nothing that needs compiling.
 
@@ -365,6 +366,10 @@ A text button is `color: var(--brand)` with no background. Mixing the two —
 reliably comes out unreadable.
 
 ## Fitting the pane
+
+**Do not title the page with the app's name.** The tab above it and the file
+tree already say it, so a heading repeating it is a line of nothing. Start with
+the content; a heading is for a part of the page, not the page.
 
 The tab is the page's whole viewport, and it is whatever size the user's pane
 is: anywhere from 240px wide to the full window, and it changes when they split
@@ -462,7 +467,6 @@ pane.
   </head>
   <body>
     <!-- Rendered before anything awaits, so a failure still leaves a page. -->
-    <h1>vault dashboard</h1>
     <p><span class="n" id="docs">…</span> notes</p>
     <p><span class="n" id="open">…</span> open tasks</p>
     <ul id="recent"></ul>

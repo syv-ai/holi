@@ -121,11 +121,11 @@ describe('dangerously-allow as a map', () => {
     const long = 'x'.repeat(MAX_ALLOW_REASON + 50)
     expect(
       parseAppManifest(
-        `dangerously-allow:\n  location: " To show the weather "\n  mail: ${long}\n  drive: nope\n`,
+        `dangerously-allow:\n  calendar: " To show your next meeting "\n  mail: ${long}\n  drive: nope\n`,
       ),
     ).toEqual({
-      dangerouslyAllow: ['location', 'mail'],
-      allowReasons: { location: 'To show the weather', mail: 'x'.repeat(MAX_ALLOW_REASON) },
+      dangerouslyAllow: ['calendar', 'mail'],
+      allowReasons: { calendar: 'To show your next meeting', mail: 'x'.repeat(MAX_ALLOW_REASON) },
     })
   })
 
