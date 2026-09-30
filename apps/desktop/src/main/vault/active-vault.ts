@@ -28,6 +28,7 @@ import {
   writeHookEndpoint,
   type HeldBackFile,
 } from './large-files'
+import { installRecordMergeDriver } from './record-merge'
 import { readMaxCommittedFileBytes } from './vault-settings'
 import type { VaultRegistry } from './registry'
 import { scanVault } from './vault-store'
@@ -189,6 +190,12 @@ export async function openActiveVault(args: {
   // failed install must not block opening the vault.
   await installGitHook(root, maxCommittedFileBytes).catch((err) =>
     console.error('[vault] pre-commit hook install failed:', err),
+  )
+  // App records merge field by field, through a driver that asks us, so two
+  // people editing one record do not pause sync. Machine-local and
+  // best-effort, like the hook: without it git merges the text.
+  await installRecordMergeDriver(root).catch((err) =>
+    console.error('[vault] record merge driver install failed:', err),
   )
   // Tell that hook how to reach us. Rewritten every open because the port is
   // ephemeral and moves on every restart; best-effort for the same reason as

@@ -14,14 +14,20 @@
  * is broken" rather than "that app has no manifest yet". A thrown dep becomes
  * `{ok:false,error}` for the same reason.
  *
- * **`/pdf/comments` is the one exception**: its output is the answer itself, so
- * it answers `text/plain`, 200 with the comments or 422 with one line, and the
- * script routes them to stdout and stderr the way `cat` would.
+ * **`/pdf/comments` and `/cap/<method>` are the exceptions**: their output is
+ * the answer itself, so they answer `text/plain`, 200 with it or 422 with one
+ * line, and the script routes them to stdout and stderr the way `cat` would.
+ * `/merge/record` is git's, not the agent's: 200 with the merged record, or 409.
  *
  * NOTE: no `electron` import, here or in `hook-server.ts`: both load under
  * vitest.
  */
-import { commentThreadsJson, formatCommentThreads, type PdfCommentThread } from '@holi/shared'
+import {
+  commentThreadsJson,
+  formatCommentThreads,
+  mergeRecordText,
+  type PdfCommentThread,
+} from '@holi/shared'
 import type { TaskDoneResult } from '../vault/task-done'
 import type { SkillsUpdate } from './seed-content'
 
@@ -46,6 +52,13 @@ export interface AgentOpsDeps {
   /** `holi task done`: complete a task the way the app does, so a recurring
    *  one rolls forward. `path` is as the agent typed it. */
   taskDone(path: string): Promise<TaskDoneResult>
+  /** The CLI door into the capability registry (`apps/capabilities.ts`): run
+   *  `name` for this vault with the command's fields as params. Throws the
+   *  refusal, whose message is the one line the command prints. */
+  capability(
+    name: string,
+    params: Record<string, string>,
+  ): Promise<{ value: unknown; text: string }>
 }
 
 export interface OpsReply {
@@ -130,8 +143,31 @@ export function createAgentOps(deps: AgentOpsDeps): AgentOps {
           return json({ ok: false, error: message(error) })
         }
       }
-      default:
-        return null
+      case '/merge/record': {
+        // Git's merge driver, not the agent: the three versions of one app
+        // record. An empty base is two additions of one id.
+        const base = params.get('base') ?? ''
+        const out = mergeRecordText(
+          base === '' ? null : base,
+          params.get('ours') ?? '',
+          params.get('theirs') ?? '',
+        )
+        return out.ok ? text(200, out.text) : text(409, out.reason)
+      }
+      default: {
+        if (!pathname.startsWith('/cap/')) return null
+        const fields: Record<string, string> = {}
+        for (const [key, value] of params) if (key !== 't' && key !== 'json') fields[key] = value
+        try {
+          const result = await deps.capability(pathname.slice('/cap/'.length), fields)
+          return text(
+            200,
+            params.get('json') === 'true' ? JSON.stringify(result.value, null, 2) : result.text,
+          )
+        } catch (error) {
+          return text(422, message(error))
+        }
+      }
     }
   }
 }

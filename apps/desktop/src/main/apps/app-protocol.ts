@@ -14,6 +14,7 @@
 import { join } from 'node:path'
 import {
   bundleFromAppHost,
+  isAppDataPath,
   isAppBundlePath,
   themeBlockToVars,
   vaultRelPath,
@@ -66,11 +67,16 @@ export function parseAppUrl(
  */
 export function appFileAbsPath(vaultRoot: string, bundle: string, rel: string): string | null {
   if (!isAppBundlePath(bundle)) return null
+  let safe
   try {
-    return absPathFor(join(vaultRoot, bundle), vaultRelPath(rel))
+    safe = vaultRelPath(rel)
   } catch {
     return null
   }
+  // The store's records are never served: the bridge is the only way in, so
+  // a `fetch('data/…')` cannot read past its checks.
+  if (isAppDataPath(safe)) return null
+  return absPathFor(join(vaultRoot, bundle), safe)
 }
 
 /**

@@ -84,8 +84,10 @@ write).
 additions are commands in a directory prepended to `PATH`, plus skills that document them:
 
 - `holi`: `app open` (which reloads an app already open), `app init`, `task done <path>`,
-  `skills update`, `pdf comments <path> [--json]`. It posts to the hook server with the token in
-  `holi.env`. All reversible or read-only, so none is gated.
+  `skills update`, `pdf comments <path> [--json]`, and `store list|get|put|delete|check` over an
+  app's records, the CLI door into the capability registry ([vault apps](vault-apps.md)). It posts
+  to the hook server with the token in `holi.env`. All reversible or read-only (a record write is a
+  file change in git history), so none is gated.
 - `holi-google`: mail and calendar through main, which holds the tokens ([google.md](google.md)).
 - `$TYPST_BIN` for PDF export ([pdf.md](pdf.md)).
 - Shipped skills: `memory`, `using-tasks`, `vault-apps`, `theme`, `gmail-calendar`, `md-to-pdf`,

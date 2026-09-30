@@ -43,3 +43,43 @@ describe('parseAppManifest', () => {
     expect(parseAppManifest('null')).toBeNull()
   })
 })
+
+describe('parseAppManifest collections', () => {
+  it('reads a map of collections, each with an optional schema', () => {
+    const yaml = [
+      'description: d',
+      'collections:',
+      '  items:',
+      '    schema:',
+      '      type: object',
+      '      required: [title]',
+      '  notes: {}',
+      '',
+    ].join('\n')
+    expect(parseAppManifest(yaml)).toEqual({
+      description: 'd',
+      collections: {
+        items: { schema: { type: 'object', required: ['title'] } },
+        notes: {},
+      },
+    })
+  })
+
+  it('reads a list as schema-less collections', () => {
+    expect(parseAppManifest('collections: [items, notes]\n')).toEqual({
+      collections: { items: {}, notes: {} },
+    })
+  })
+
+  it('drops a collection with an unusable name, and a schema that is not a mapping', () => {
+    const yaml = [
+      'collections:',
+      '  ../x: {}',
+      '  a.local.b: {}',
+      '  items:',
+      '    schema: 42',
+      '',
+    ].join('\n')
+    expect(parseAppManifest(yaml)).toEqual({ collections: { items: {} } })
+  })
+})

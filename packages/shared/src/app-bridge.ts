@@ -13,14 +13,30 @@
  */
 
 /**
- * Everything an app can ask for: read-only notes and tasks, and "open this note
- * in Holi". No writes and no storage (docs/features/vault-apps.md), and no theme
+ * Everything an app can ask for: read-only notes and tasks, "open this note in
+ * Holi", and its own store (records in its bundle's `data/`). No other writes
+ * (docs/features/vault-apps.md), and no theme
  * getter: the theme is injected as CSS custom properties when the entry document
  * is served, so an app reads it with `var(--primary)`.
  */
-export const APP_METHODS = ['docs.list', 'docs.read', 'tasks.list', 'open'] as const
+export const APP_METHODS = [
+  'docs.list',
+  'docs.read',
+  'tasks.list',
+  'open',
+  'store.get',
+  'store.put',
+  'store.delete',
+  'store.list',
+] as const
 
 export type AppMethod = (typeof APP_METHODS)[number]
+
+/** The methods the renderer answers itself, because only it can do them
+ *  (open a tab). Every other method is a main-side capability. */
+export const RENDERER_METHODS = ['open'] as const satisfies readonly AppMethod[]
+
+export type MainAppMethod = Exclude<AppMethod, (typeof RENDERER_METHODS)[number]>
 
 /** One call, from the app's shim to the renderer. `id` is the app's own
  *  correlation token and means nothing outside the frame's pending map. */
@@ -33,5 +49,4 @@ export interface AppRequest {
 /** The answer, back to the frame. A refusal is a value, not a thrown error:
  *  the app must be able to render "this is not available" rather than break. */
 export type AppResponse =
-  | { id: string; ok: true; value: unknown }
-  | { id: string; ok: false; error: string }
+  { id: string; ok: true; value: unknown } | { id: string; ok: false; error: string }

@@ -44,10 +44,34 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   rewritten: Holi injects a `<style>` of theme tokens
   (Holi's base palette, `APP_BASE_TOKENS`, with the vault's resolved theme laid over it) and the
   `window.holi` bridge script. Every other file is served byte for byte.
-- **The bridge** is `postMessage` from the frame to `AppFrame`, which forwards into the `apps.*`
-  router in main. Methods: `holi.docs.list()`, `holi.docs.read(path)`, `holi.tasks.list()`, and
-  `holi.open(path)`, which opens a vault file in Holi. The theme is ambient CSS variables, not a
-  call. There is no write method and no state store: an app holds nothing across a reload.
+- **The bridge** is `postMessage` from the frame to `AppFrame`, which answers `holi.open(path)`
+  itself (it opens a vault file in Holi) and forwards every other method to `apps.bridge` in main
+  with the bundle it mounted. Methods: `holi.docs.list()`, `holi.docs.read(path)`,
+  `holi.tasks.list()`, `holi.open(path)` and `holi.store(collection)`. The theme is ambient CSS
+  variables, not a call. The store is the only write.
+- **One registry, two doors.** What main answers is the capability registry
+  (`main/apps/capabilities.ts`): each entry has its params, its refusals, and the doors it opens
+  to, the app's bridge and the agent's `holi` CLI (`/cap/<method>` on the hook server). An app sees
+  exactly what the agent can inspect from the terminal, written once. At the app door the bundle
+  is the frame's, and a `bundle` param is ignored; at the CLI door the agent names it.
+- **State.** An app declares `collections` in `app.yaml`, each with an optional JSON Schema
+  subset (`type`, `properties`, `required`, `additionalProperties`, `enum`, `items`,
+  `minimum`/`maximum`, `minLength`/`maxLength`; other keywords are ignored). A record is one JSON
+  object in one file, `<bundle>/data/<collection>/<id>.json`, keys sorted and pretty-printed so a
+  diff shows only what changed. `holi.store(c)` has `get`, `put(value)` (a time-sortable ULID id),
+  `put(id, value)`, `delete`, `list` and `query(fn)`, which filters the listed collection inside
+  the frame. Main does every write: the collection is declared, the id is one safe filename
+  segment with no `.local.`, the value fits its schema and 256 KiB. A file broken by hand is
+  skipped and named rather than failing the list. Rename, move and duplicate carry the data with
+  the bundle. The agent reaches the same records with `holi store list|get|put|delete`, and the
+  check hook asks `holi store check` about a record it wrote by hand.
+- **Merging records.** Holi installs a git merge driver for `**/*.app/data/**/*.json` on every
+  vault open, in `.git/config` and `.git/info/attributes`, so nothing committed changes and every
+  existing vault gets it. It merges field by field: edits of different fields both land; a field
+  both sides changed differently, or a record deleted on one side and edited on the other (git
+  never asks a driver about that), is an ordinary conflict for reconcile. The driver is a sh shim
+  that posts the three versions to Holi (`/merge/record`), and fails to a conflict when Holi does
+  not answer.
 - **The authoring loop.** A seeded skill (`.claude/skills/vault-apps/SKILL.md`) documents the
   contract. The `holi` CLI gives the agent `holi app open <path>` and `holi app init <path>`
   (never overwrites). A `PostToolUse` hook (`vault-app-check.mjs`) reports, on every write inside
@@ -65,15 +89,16 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   (`AGENTS.md`, `CLAUDE.md`, `MEMORY.md`, `USER.local.md`, `.claude/`, `memory/`; see the
   [glossary](../glossary.md)). The reason is escalation, not privacy: an app that could write
   `.claude/hooks/google-send-gate.mjs` could make the agent send mail unprompted.
-- The agent-surface refusal lives in main (`apps.*`), not the renderer. The process rendering
+- The agent-surface refusal lives in main (the capability registry), not the renderer. The process rendering
   untrusted code must not be the one deciding what it may read. `read` answers `FORBIDDEN`,
   distinct from `NOT_FOUND`.
 - The frame is `sandbox="allow-scripts"` and never also `allow-same-origin`. Both together let the
   frame drop its own sandbox. The opaque origin is also why `localStorage` throws.
 - `AppFrame` identifies a message by `event.source === contentWindow`, never by origin (it is the
   string `"null"`), and the app never names itself: every call carries the bundle the frame was
-  mounted with. It answers with an exhaustive switch over `APP_METHODS`; never turn that into a passthrough,
-  since `apps.*` also holds Holi's own `register`.
+  mounted with. It refuses a name not in `APP_METHODS` and forwards the rest to `apps.bridge`,
+  which dispatches only into the registry's app door. Never dispatch outside the registry: `apps.*`
+  also holds Holi's own `register`, which is not an entry, so no name an app sends reaches it.
 - The host decodes only to a path `isAppBundlePath` accepts, so a crafted host cannot name the
   agent surface or a folder that is not a bundle.
 - One app cannot reach another's files or the vault's: the handler resolves only under its own
@@ -97,6 +122,10 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   bundle, or an app the agent writes would not appear until the heal.
 - An app inside another app is just files of the outer one; otherwise the outer app could serve
   the inner one's code as its own.
+- Records are reached through the store only. The protocol never serves `data/`, and
+  `holi.docs.read` refuses any app's `data/`, its own included, so no app reads another's records,
+  a personal app's least of all. Both checks ignore case, as macOS's filesystem does.
+- Records are always objects, because the merge works field by field.
 
 ## Rejected
 
@@ -109,6 +138,10 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
 - A generated app id in the manifest: an invented id, where a path already identifies it.
 
 - A per-app shared Yjs doc on a relay: there is no relay.
+- SQLite for app state, local or shared: a database file neither diffs nor merges, and a local
+  one splits an app's state from the vault it lives in. Personal data belongs in a personal app.
+- A record's deletion as a tombstone file, so the driver could keep an edit over a delete: deleted
+  records would linger as files for a rare case reconcile already handles.
 - Reusing `holi-vault://`: one shared origin with no `.local.` exclusion, so any app could read
   `USER.local.md`.
 - Doing the bridge purely in the renderer with existing `notes.read`: makes the renderer the
@@ -122,8 +155,11 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
 
 ## Code
 
-- `apps/desktop/src/main/apps/`: the protocol helpers, bridge shim, base tokens, open/init ops and
-  the move out of `.holi/apps`.
+- `apps/desktop/src/main/apps/`: the protocol helpers, bridge shim, base tokens, open/init ops,
+  the move out of `.holi/apps`, the capability registry (`capabilities.ts`) and the store
+  (`app-store.ts`).
+- `apps/desktop/src/main/vault/record-merge.ts`: the record merge driver's install;
+  `apps/desktop/src/main/agent/ops.ts`: `/cap/<method>` and `/merge/record`.
 - `apps/desktop/src/main/index.ts`: scheme registration and the `holi-app` handler.
 - `apps/desktop/src/main/router.ts`: the `apps` namespace.
 - `apps/desktop/src/main/agent/hooks/vault-app-check.mjs`, `apps/desktop/src/main/agent/cli.ts`.
@@ -131,5 +167,6 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
 - `apps/desktop/src/renderer/src/state/apps.ts`: the app lists and actions.
 - `apps/desktop/src/renderer/src/features/explorer/FileTree.tsx`, `RowMenu.tsx`: the app row.
 - `packages/shared/src/app-bundle.ts` (`isAppBundlePath`, `appBundleOf`, `appName`, `appHost`),
-  `packages/shared/src/app-manifest.ts`, `packages/shared/src/path-safety.ts`
+  `packages/shared/src/app-manifest.ts`, `packages/shared/src/app-store.ts` (schema subset, ids,
+  record format, field merge), `packages/shared/src/path-safety.ts`
   (`isAgentSurfacePath`).

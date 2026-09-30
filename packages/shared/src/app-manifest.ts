@@ -14,6 +14,7 @@
  * text that is not a mapping at all (a list, a number, a bare scalar) is refused.
  */
 import { parse as parseYaml } from 'yaml'
+import { isRecordId, type CollectionSchema } from './app-store'
 
 /** The registration marker, at the app's own root. */
 export const APP_MANIFEST_FILE = 'app.yaml'
@@ -22,9 +23,37 @@ export interface AppManifest {
   /** Free text, for the launchers. The name is the bundle's folder name,
    *  and the icon is the vault icon map's, as for any row. */
   description?: string
+  /** The collections the app's store may use, by name, each with an optional
+   *  schema main validates writes against. An undeclared collection is
+   *  refused, so the data's shape is known up front. */
+  collections?: Record<string, { schema?: CollectionSchema }>
 }
 
 const KNOWN_KEYS = ['description'] as const
+
+/**
+ * `collections:` as a map (`items: {schema: …}`) or, for an app that wants no
+ * schemas, a list of names. A name that is not a safe filename segment, or a
+ * schema that is not a mapping, is dropped on its own; the keywords inside a
+ * schema are the validator's business, which ignores what it does not know.
+ */
+function parseCollections(raw: unknown): AppManifest['collections'] | undefined {
+  const isMap = (v: unknown): v is Record<string, unknown> =>
+    v !== null && typeof v === 'object' && !Array.isArray(v)
+  const entries: [string, unknown][] = Array.isArray(raw)
+    ? raw.filter((n): n is string => typeof n === 'string').map((n) => [n, {}])
+    : isMap(raw)
+      ? Object.entries(raw)
+      : []
+  const out: NonNullable<AppManifest['collections']> = {}
+  for (const [name, spec] of entries) {
+    // `__proto__` would set the object's prototype rather than name a collection.
+    if (!isRecordId(name) || name === '__proto__') continue
+    const schema = isMap(spec) ? spec.schema : undefined
+    out[name] = isMap(schema) ? { schema: schema as CollectionSchema } : {}
+  }
+  return entries.length > 0 ? out : undefined
+}
 
 /**
  * Never throws. `{}` for an empty, comment-only, or malformed manifest; `null`
@@ -49,6 +78,8 @@ export function parseAppManifest(yaml: string): AppManifest | null {
     const value = (raw as Record<string, unknown>)[key]
     if (typeof value === 'string') manifest[key] = value
   }
+  const collections = parseCollections((raw as Record<string, unknown>).collections)
+  if (collections !== undefined) manifest.collections = collections
   return manifest
 }
 

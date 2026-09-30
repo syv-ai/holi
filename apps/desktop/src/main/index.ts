@@ -44,6 +44,7 @@ import { installGoogleCli } from './google/cli'
 import { installHoliCli } from './agent/cli'
 import { createAgentOps } from './agent/ops'
 import { initAppOp, openAppOp } from './apps/app-ops'
+import { runCapability } from './apps/capabilities'
 import { taskDoneOp } from './vault/task-done'
 import {
   describeUpdate,
@@ -549,6 +550,29 @@ async function main(): Promise<void> {
           const root = await rootFor(remote)
           if (root === null) return { ok: false, error: 'no vault is open' }
           return taskDoneOp(root, path, localToday())
+        },
+        // `holi store …` and the rest of the CLI door into the capability
+        // registry, for the vault the command was typed in.
+        capability: async (name, params) => {
+          const root = await rootFor(remote)
+          if (root === null) throw new Error('no vault is open')
+          const active = host.active()
+          const result = await runCapability(
+            name,
+            'cli',
+            {
+              remote,
+              root,
+              bundle: null,
+              snapshot: async () =>
+                active?.remote === remote ? active.snapshot() : scanVault(root),
+            },
+            params,
+          )
+          if (result.writes && active?.remote === remote) {
+            await active.refresh().catch((e) => console.error('[apps] post-write rescan:', e))
+          }
+          return result
         },
       }),
   })

@@ -68,6 +68,7 @@ const docs = await holi.docs.list() // every markdown note
 const text = await holi.docs.read(path) // that note's markdown, as a string
 const tasks = await holi.tasks.list() // every task.*.md
 await holi.open('projects/q2.md') // opens that note in a Holi tab
+const items = holi.store('items') // this app's own records (see Keeping data)
 ```
 
 That is the whole API. There is nothing else on `holi`.
@@ -107,13 +108,13 @@ takes the same kind of path.
 
 These are not oversights — build within them rather than around them.
 
-- **It cannot write anything.** No file writing, no task editing, no note
-  creation. An app shows; the agent changes.
-- **It cannot store anything.** `localStorage` and `sessionStorage` _throw_ (the
-  page has an opaque origin), cookies do nothing, and there is no `holi.data`.
-  Reloading the tab starts the app from scratch, so it must be useful holding
-  nothing: derive the view from the vault every time rather than keeping state.
-  In-memory state within one session (a selected filter, a sort order) is fine.
+- **It cannot write the vault.** No file writing, no task editing, no note
+  creation. An app shows; the agent changes. The one thing it writes is its own
+  records, through `holi.store` (below).
+- **It has no browser storage.** `localStorage` and `sessionStorage` _throw_ (the
+  page has an opaque origin) and cookies do nothing. Anything that must survive
+  a reload goes in `holi.store`; in-memory state within one session (a selected
+  filter, a sort order) is fine.
 - **It cannot submit a form.** The frame is sandboxed without forms, so a
   `<form>` is blocked before its submit handler runs, and pressing Enter or the
   button does nothing at all. Use a plain button's click, and a `keydown` on the
@@ -130,6 +131,60 @@ These are not oversights — build within them rather than around them.
 
 It _can_ use the network — a CDN, an API — but a vault is often used offline, so
 prefer writing the code inline over depending on something remote.
+
+## Keeping data
+
+An app keeps records in **collections** it declares in `app.yaml`. A record is a
+plain JSON object, stored as one file at `<app>/data/<collection>/<id>.json`, so
+it is readable, diffable and syncs with the vault like a note.
+
+```yaml
+description: Reading list
+collections:
+  books:
+    schema: # optional, JSON Schema; Holi refuses a write that does not fit
+      type: object
+      required: [title]
+      properties:
+        title: { type: string }
+        read: { type: boolean }
+        rating: { type: integer, minimum: 1, maximum: 5 }
+```
+
+`collections: [books, notes]` declares collections with no schema. A collection
+that is not declared is refused, so declare it before the app uses it.
+
+```js
+const books = holi.store('books')
+const id = await books.put({ title: 'Dune', read: false }) // makes an id
+await books.put('2026-09-30', { title: 'Log' }) // or use your own id
+const book = await books.get(id) // the object, or null
+const all = await books.list() // [{ id, value }], in id order
+const unread = await books.query((r) => !r.value.read) // filter, in the page
+await books.delete(id)
+```
+
+- A put **replaces** the record. To change one field, get it, change it, put it.
+- An id is letters, digits, `.`, `_` and `-`. A made id sorts by time, so
+  `list()` is oldest first. A readable id (a date, a slug) is a good choice when
+  there is one.
+- Keep records small and collections modest (hundreds, not millions): `list()`
+  and `query()` read the whole collection.
+- Two people editing **different fields** of one record merge cleanly. The same
+  field edited on both sides becomes a sync conflict, so prefer small records
+  over one big one that everybody edits.
+- The app **cannot fetch** `data/`; the store is the only way in. You can read
+  and edit those files yourself, and the check below tells you if one no longer
+  fits its schema.
+
+From the terminal, the same records:
+
+```sh
+holi store list <app> <collection>          # one line per record
+holi store get <app> <collection> <id>
+holi store put <app> <collection> [<id>] '<json>'
+holi store delete <app> <collection> <id>
+```
 
 ## Seeing whether it works
 

@@ -16,6 +16,7 @@
 // It never uses a dependency: Node's own parser does the syntax check, and
 // everything else is a regex over the file the tool just wrote.
 
+import { spawnSync } from 'node:child_process'
 import { readFileSync, existsSync } from 'node:fs'
 import { dirname, extname, join } from 'node:path'
 import { Script } from 'node:vm'
@@ -42,6 +43,12 @@ function main(payload) {
   // What `holi app init` takes: the vault-relative bundle when it is known.
   const bundle = inVault ? appDir.slice(base) : match[1]
   if (/^(\.claude|memory)[/\\]/.test(bundle)) return []
+
+  // A record the agent wrote by hand: Holi's own store check says whether it
+  // fits its collection's schema, so there is one validator and not two.
+  if (/^data[/\\][^/\\]+[/\\][^/\\]+\.json$/.test(filePath.slice(bundleEnd + 1))) {
+    return record(inVault ? rel : filePath)
+  }
 
   const source = readFileSync(filePath, 'utf8')
   const ext = extname(filePath).toLowerCase()
@@ -219,6 +226,23 @@ function registration(appDir, bundle) {
         `it LAST: it is what finishes the app.`,
     ],
   ]
+}
+
+/**
+ * `holi store check` on one record. Silent without Holi (no `HOLI_BIN`), on
+ * any failure, and on a record that is fine: the vault works in any Claude
+ * Code, and a check that cannot run has nothing to say.
+ */
+function record(path) {
+  const bin = process.env.HOLI_BIN
+  if (!bin) return []
+  const run = spawnSync(bin, ['store', 'check', path], { encoding: 'utf8', timeout: 5000 })
+  if (run.status !== 0 || typeof run.stdout !== 'string') return []
+  return run.stdout
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line !== '')
+    .map((line) => [ERROR, `${path}: ${line}`])
 }
 
 function readStdin() {

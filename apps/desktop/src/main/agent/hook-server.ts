@@ -70,8 +70,11 @@ export interface HookServer {
 }
 
 /** Cap the request body: a guard against a runaway sender holding the socket
- *  open. A turn signal sends nothing; a status JSON is a few kilobytes. */
-const MAX_BODY_BYTES = 64 * 1024
+ *  open. A turn signal sends nothing and a status JSON is a few kilobytes, but
+ *  the record merge driver sends three versions of a record of up to
+ *  `MAX_RECORD_BYTES`, URL-encoded (which can triple JSON), so the cap sits
+ *  above that rather than failing a merge git could have made cleanly. */
+const MAX_BODY_BYTES = 4 * 1024 * 1024
 
 /** A Claude Code job id: eight hex characters, the name of its `jobs/` dir. */
 const JOB_ID = /^[0-9a-f]{8}$/

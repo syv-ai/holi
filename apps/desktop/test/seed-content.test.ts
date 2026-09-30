@@ -950,7 +950,7 @@ describe('the vault-apps skill teaches the loop that now exists', () => {
   it('still teaches the boundaries the validator enforces', () => {
     // The hook reports these; the skill is where the reason lives. If one drifts
     // the agent gets a rule with no argument behind it.
-    for (const rule of ['localStorage', 'holi.data', 'opaque origin']) {
+    for (const rule of ['localStorage', 'holi.store', 'opaque origin']) {
       expect(flat).toContain(rule)
     }
   })

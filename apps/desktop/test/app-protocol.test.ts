@@ -78,6 +78,20 @@ describe('appFileAbsPath', () => {
     expect(appFileAbsPath(ROOT, BUNDLE, '')).toBeNull()
   })
 
+  it('never serves the store: records are reached through the bridge only', () => {
+    // Otherwise `fetch('data/…')` would read past the store's checks.
+    expect(appFileAbsPath(ROOT, BUNDLE, 'data/items/a.json')).toBeNull()
+    expect(appFileAbsPath(ROOT, BUNDLE, 'data')).toBeNull()
+    expect(appFileAbsPath(ROOT, BUNDLE, './data/a.json')).toBeNull()
+    // macOS's filesystem is case-insensitive: these are the same files.
+    expect(appFileAbsPath(ROOT, BUNDLE, 'Data/items/a.json')).toBeNull()
+    expect(appFileAbsPath(ROOT, BUNDLE, 'DATA/items/a.json')).toBeNull()
+    expect(appFileAbsPath(ROOT, BUNDLE, 'database.js')).toBe(`${APP}${sep}database.js`)
+    expect(appFileAbsPath(ROOT, BUNDLE, 'lib/data/x.js')).toBe(
+      `${APP}${sep}lib${sep}data${sep}x.js`,
+    )
+  })
+
   it('refuses a path that is not a bundle even when the file path is fine', () => {
     expect(appFileAbsPath(ROOT, '../x.app', 'index.html')).toBeNull()
     expect(appFileAbsPath(ROOT, 'notes', 'index.html')).toBeNull()
@@ -171,6 +185,10 @@ describe('BRIDGE_JS', () => {
     for (const method of APP_METHODS) {
       expect(BRIDGE_JS).toContain(`'${method}'`)
     }
+  })
+
+  it('parses: a syntax slip in the string is an app that silently does nothing', () => {
+    expect(() => new Function(BRIDGE_JS)).not.toThrow()
   })
 
   it('does not reach for anything the frame cannot have', () => {

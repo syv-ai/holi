@@ -16,18 +16,19 @@ import { AppFrame } from '../AppFrame'
 import { snapshotAtom, activeRemoteAtom } from '../../../state/vaults'
 import { appOpensAtom, workspaceAtom, openApp } from '../../../state/panes'
 
-const docsMock = vi.fn((_input: unknown) =>
-  Promise.resolve([{ path: 'a.md', kind: 'note', updatedAt: '' }]),
-)
-const readMock = vi.fn((_input: unknown) => Promise.resolve('# A'))
-const tasksMock = vi.fn((_input: unknown) => Promise.resolve([]))
+/** Main's side of the app door, answering the way the registry would. */
+const bridgeMock = vi.fn((input: { method: string }): Promise<unknown> => {
+  if (input.method === 'docs.read') return Promise.resolve('# A')
+  if (input.method === 'docs.list') {
+    return Promise.resolve([{ path: 'a.md', kind: 'note', updatedAt: '' }])
+  }
+  return Promise.resolve([])
+})
 
 vi.mock('../../../lib/trpc', () => ({
   trpc: {
     apps: {
-      docs: { query: (input: unknown) => docsMock(input) },
-      read: { query: (input: unknown) => readMock(input) },
-      tasks: { query: (input: unknown) => tasksMock(input) },
+      bridge: { mutate: (input: { method: string }) => bridgeMock(input) },
     },
   },
 }))
@@ -85,7 +86,7 @@ test('ignores a message that did not come from the frame', async () => {
   // as identity. The source is what says who spoke.
   fromFrame({ id: '1', method: 'docs.list' }, window)
   await Promise.resolve()
-  expect(docsMock).not.toHaveBeenCalled()
+  expect(bridgeMock).not.toHaveBeenCalled()
 })
 
 test('answers a docs.read with the value, addressed to the frame', async () => {
@@ -93,7 +94,13 @@ test('answers a docs.read with the value, addressed to the frame', async () => {
   const post = vi.spyOn(frameOf().contentWindow!, 'postMessage')
   fromFrame({ id: 'r1', method: 'docs.read', params: { path: 'a.md' } })
   await waitFor(() => expect(post).toHaveBeenCalled())
-  expect(readMock).toHaveBeenCalledWith({ remote: REMOTE, path: 'a.md' })
+  // The bundle is the one this frame was mounted with: the app never names itself.
+  expect(bridgeMock).toHaveBeenCalledWith({
+    remote: REMOTE,
+    bundle: 'Team/Retro.app',
+    method: 'docs.read',
+    params: { path: 'a.md' },
+  })
   expect(post.mock.calls[0]![0]).toEqual({ id: 'r1', ok: true, value: '# A' })
 })
 
@@ -103,12 +110,15 @@ test('answers docs.list and tasks.list from the vault the frame is in', async ()
   fromFrame({ id: 'd', method: 'docs.list' })
   fromFrame({ id: 't', method: 'tasks.list' })
   await waitFor(() => expect(post).toHaveBeenCalledTimes(2))
-  expect(docsMock).toHaveBeenCalledWith({ remote: REMOTE })
-  expect(tasksMock).toHaveBeenCalledWith({ remote: REMOTE })
+  for (const method of ['docs.list', 'tasks.list']) {
+    expect(bridgeMock).toHaveBeenCalledWith(
+      expect.objectContaining({ remote: REMOTE, bundle: 'Team/Retro.app', method }),
+    )
+  }
 })
 
 test('a refusal comes back as a value, not as a thrown error', async () => {
-  readMock.mockRejectedValueOnce(new Error('FORBIDDEN'))
+  bridgeMock.mockRejectedValueOnce(new Error('FORBIDDEN'))
   render(<AppFrame path="Team/Retro.app" />)
   const post = vi.spyOn(frameOf().contentWindow!, 'postMessage')
   fromFrame({ id: 'r1', method: 'docs.read', params: { path: 'MEMORY.md' } })
@@ -122,6 +132,8 @@ test('an unknown method is refused rather than ignored', async () => {
   fromFrame({ id: 'x', method: 'docs.write', params: { path: 'a.md', text: 'no' } })
   await waitFor(() => expect(post).toHaveBeenCalled())
   expect(post.mock.calls[0]![0]).toMatchObject({ id: 'x', ok: false })
+  // Refused here, before main: a name that is not a bridge method never crosses.
+  expect(bridgeMock).not.toHaveBeenCalled()
 })
 
 // The pane header's reload button and `holi app open` both bump this count.

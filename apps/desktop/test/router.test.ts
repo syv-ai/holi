@@ -1989,23 +1989,28 @@ describe('google forwarding', () => {
  * also be the process deciding what it may read.
  */
 describe('apps', () => {
-  const appsRig = () =>
-    rig({
+  const appsRig = async () => {
+    const r = await rig({
       'inbox.md': '# Inbox\n\nnotes\n',
       'USER.local.md': '# Ada Holm\n\nada@syv.ai\n',
       'task.review.md': '---\ntitle: Review\nstatus: todo\n---\n',
     })
+    /** One bridge call, as `AppFrame` makes it for the frame it mounted. */
+    const call = (method: string, params?: unknown, bundle = 'Tracker.app') =>
+      r.caller.apps.bridge({ remote: REMOTE, bundle, method, params })
+    return { ...r, call }
+  }
 
   it('reads an ordinary note', async () => {
-    const { caller } = await appsRig()
-    expect(await caller.apps.read({ remote: REMOTE, path: 'inbox.md' })).toContain('# Inbox')
+    const { call } = await appsRig()
+    expect(await call('docs.read', { path: 'inbox.md' })).toContain('# Inbox')
   })
 
   it('refuses every file that configures the agent', async () => {
     // `.claude/hooks/google-send-gate.mjs` IS the mail send gate, so a readable
     // agent surface is an app reading its way toward the agent's configuration —
     // and MEMORY.md/USER.local.md are what the user told the assistant privately.
-    const { caller } = await appsRig()
+    const { call } = await appsRig()
     for (const path of [
       'AGENTS.md',
       'CLAUDE.md',
@@ -2017,31 +2022,29 @@ describe('apps', () => {
       'memory/index.md',
       'memory/shell-quirks.md',
     ]) {
-      await expect(caller.apps.read({ remote: REMOTE, path })).rejects.toMatchObject({
+      await expect(call('docs.read', { path })).rejects.toMatchObject({
         code: 'FORBIDDEN',
       })
     }
   })
 
   it('refuses a path that leaves the vault, at the same boundary notes.read uses', async () => {
-    const { caller } = await appsRig()
-    await expect(caller.apps.read({ remote: REMOTE, path: '../outside.md' })).rejects.toMatchObject(
-      {
-        code: 'BAD_REQUEST',
-      },
-    )
+    const { call } = await appsRig()
+    await expect(call('docs.read', { path: '../outside.md' })).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+    })
   })
 
   it('says NOT_FOUND for a missing note, distinguishably from a refusal', async () => {
-    const { caller } = await appsRig()
-    await expect(caller.apps.read({ remote: REMOTE, path: 'nope.md' })).rejects.toMatchObject({
+    const { call } = await appsRig()
+    await expect(call('docs.read', { path: 'nope.md' })).rejects.toMatchObject({
       code: 'NOT_FOUND',
     })
   })
 
   it('lists the vault docs with the agent surface removed', async () => {
-    const { caller } = await appsRig()
-    const paths = (await caller.apps.docs({ remote: REMOTE })).map((d) => d.path)
+    const { call } = await appsRig()
+    const paths = ((await call('docs.list')) as { path: string }[]).map((d) => d.path)
     expect(paths).toContain('inbox.md')
     // Seeded by ensureSeeded, so their absence here is a filter doing work
     // rather than a fixture that never had them.
@@ -2054,9 +2057,22 @@ describe('apps', () => {
     expect(paths.some((p) => p.startsWith('memory/'))).toBe(false)
   })
 
+  it('refuses a method no app may call, and a caller that is not an app', async () => {
+    const { call } = await appsRig()
+    await expect(call('register', { path: 'x.app' })).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+    })
+    await expect(call('nope')).rejects.toMatchObject({ code: 'BAD_REQUEST' })
+    await expect(call('docs.list', undefined, 'notes')).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+    })
+  })
+
   it('lists the vault tasks', async () => {
-    const { caller } = await appsRig()
-    expect((await caller.apps.tasks({ remote: REMOTE })).map((t) => t.title)).toContain('Review')
+    const { call } = await appsRig()
+    expect(((await call('tasks.list')) as { title: string }[]).map((t) => t.title)).toContain(
+      'Review',
+    )
   })
 })
 

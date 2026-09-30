@@ -24,9 +24,11 @@ interface Run {
 }
 
 /** Bare `node` is broken in this environment — spawn the running interpreter. */
-function runHook(payload: unknown): Promise<Run> {
+function runHook(payload: unknown, env: Record<string, string> = {}): Promise<Run> {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [HOOK], { env: { PATH: process.env.PATH ?? '' } })
+    const child = spawn(process.execPath, [HOOK], {
+      env: { PATH: process.env.PATH ?? '', ...env },
+    })
     let stdout = ''
     child.stdout.on('data', (d: Buffer) => (stdout += d.toString('utf8')))
     child.on('error', reject)
@@ -48,11 +50,11 @@ afterEach(async () => {
 })
 
 /** Write a file into an app and report it as a `Write` the agent just made. */
-async function wrote(rel: string, content: string): Promise<Run> {
+async function wrote(rel: string, content: string, env: Record<string, string> = {}): Promise<Run> {
   const abs = join(root, 'Team', rel)
   await mkdir(join(abs, '..'), { recursive: true })
   await writeFile(abs, content)
-  return runHook({ cwd: root, tool_name: 'Write', tool_input: { file_path: abs, content } })
+  return runHook({ cwd: root, tool_name: 'Write', tool_input: { file_path: abs, content } }, env)
 }
 
 /** The advisory text the hook produced, or '' when it stayed quiet. */
@@ -221,5 +223,44 @@ describe('registration', () => {
     // ignored.
     await mkdir(join(root, 'Team/retro.app'), { recursive: true })
     expect(said(await wrote('retro.app/app.js', 'const a = 1\n'))).toBe('')
+  })
+})
+
+describe('a record written by hand', () => {
+  /** A stand-in `holi` that answers `store check` and notes what it was asked. */
+  async function fakeHoli(answer: string): Promise<{ bin: string; asked: string }> {
+    const bin = join(root, 'fake-holi')
+    const asked = join(root, 'asked.txt')
+    await writeFile(bin, `#!/bin/sh\necho "$@" > "${asked}"\nprintf '%s' '${answer}'\n`, {
+      mode: 0o755,
+    })
+    return { bin, asked }
+  }
+
+  it('reports what `holi store check` finds, for the vault-relative path', async () => {
+    const { bin, asked } = await fakeHoli('title: is required')
+    const run = await wrote('Tracker.app/data/items/a.json', '{"done": true}', { HOLI_BIN: bin })
+    expect(said(run)).toContain('title: is required')
+    const { readFile } = await import('node:fs/promises')
+    expect((await readFile(asked, 'utf8')).trim()).toBe(
+      'store check Team/Tracker.app/data/items/a.json',
+    )
+  })
+
+  it('is silent when the record is fine', async () => {
+    const { bin } = await fakeHoli('')
+    const run = await wrote('Tracker.app/data/items/a.json', '{"title": "a"}', { HOLI_BIN: bin })
+    expect(said(run)).toBe('')
+  })
+
+  it('is silent without Holi: the vault works in any Claude Code', async () => {
+    const run = await wrote('Tracker.app/data/items/a.json', '{"done": true}')
+    expect(said(run)).toBe('')
+  })
+
+  it('asks only about record files', async () => {
+    const { bin } = await fakeHoli('title: is required')
+    const run = await wrote('Tracker.app/config.json', '{}', { HOLI_BIN: bin })
+    expect(said(run)).toBe('')
   })
 })

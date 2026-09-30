@@ -213,3 +213,85 @@ describe('auth and routing', () => {
     expect(res.status).toBe(404)
   })
 })
+
+describe('merge/record', () => {
+  const enc = (fields: Record<string, string>) => new URLSearchParams(fields).toString()
+
+  it('answers the merged record for edits of different fields', async () => {
+    const r = await rig()
+    const res = await post(
+      r.port(),
+      `/merge/record?t=${r.token()}`,
+      enc({ base: '{"a":1,"b":1}', ours: '{"a":2,"b":1}', theirs: '{"a":1,"b":3}' }),
+    )
+    expect(res.status).toBe(200)
+    expect(JSON.parse(res.body)).toEqual({ a: 2, b: 3 })
+  })
+
+  it('answers 409 with the field when both sides changed it', async () => {
+    const r = await rig()
+    const res = await post(
+      r.port(),
+      `/merge/record?t=${r.token()}`,
+      enc({ base: '{"a":1}', ours: '{"a":2}', theirs: '{"a":3}' }),
+    )
+    expect(res.status).toBe(409)
+    expect(res.body).toBe('both changed: a')
+  })
+
+  it('takes three versions of a record at the store size cap', async () => {
+    // URL-encoding can triple JSON, and the driver sends base, ours and theirs.
+    const r = await rig()
+    const big = JSON.stringify({ text: '"{}"'.repeat(60_000) })
+    const res = await post(
+      r.port(),
+      `/merge/record?t=${r.token()}`,
+      enc({ base: big, ours: big, theirs: big }),
+    )
+    expect(res.status).toBe(200)
+  })
+
+  it('reads an empty base as two additions of one id', async () => {
+    const r = await rig()
+    const res = await post(
+      r.port(),
+      `/merge/record?t=${r.token()}`,
+      enc({ base: '', ours: '{"a":1}', theirs: '{"b":2}' }),
+    )
+    expect(res.status).toBe(200)
+    expect(JSON.parse(res.body)).toEqual({ a: 1, b: 2 })
+  })
+})
+
+describe('cap/<method>', () => {
+  it('runs a capability with the form fields as params, answering its text', async () => {
+    const capability = vi.fn((_name: string, _params: Record<string, string>) =>
+      Promise.resolve({ value: ['x'], text: 'x' }),
+    )
+    const r = await rig({ capability })
+    const res = await post(
+      r.port(),
+      `/cap/store.list?t=${r.token()}`,
+      'bundle=A.app&collection=items',
+    )
+    expect(res.status).toBe(200)
+    expect(res.body).toBe('x')
+    expect(capability).toHaveBeenCalledWith('store.list', { bundle: 'A.app', collection: 'items' })
+  })
+
+  it('answers JSON when asked', async () => {
+    const r = await rig({
+      capability: () => Promise.resolve({ value: { a: 1 }, text: 'a' }),
+    })
+    const res = await post(r.port(), `/cap/store.get?t=${r.token()}`, 'json=true')
+    expect(res.status).toBe(200)
+    expect(JSON.parse(res.body)).toEqual({ a: 1 })
+  })
+
+  it('refuses with a 422 and the reason, so the command can exit non-zero', async () => {
+    const r = await rig({ capability: () => Promise.reject(new Error('no such method: nope')) })
+    const res = await post(r.port(), `/cap/nope?t=${r.token()}`)
+    expect(res.status).toBe(422)
+    expect(res.body).toBe('no such method: nope')
+  })
+})

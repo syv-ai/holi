@@ -12,6 +12,7 @@ import { initTRPC, TRPCError } from '@trpc/server'
 import {
   completeTask,
   isAgentSurfacePath,
+  isAppBundlePath,
   parseTaskFile,
   parseTaskPatch,
   serializeTaskFile,
@@ -30,6 +31,7 @@ import {
 } from '@holi/shared'
 import { ensureSeeded } from './agent/seed-content'
 import { initAppOp, type AppInitResult } from './apps/app-ops'
+import { CapabilityError, runCapability, type CapabilityContext } from './apps/capabilities'
 import { migrateApps as moveLegacyApps } from './apps/migrate-apps'
 import { scanBackrefs, scanBackrefsMany } from './vault/backrefs'
 import { fileHistory, type FileHistory } from './vault/file-facts'
@@ -1223,55 +1225,59 @@ export function createRouter(deps: RouterDeps) {
   /**
    * What a vault app may ask the vault for.
    *
-   * **The refusal lives here and not in the renderer.** The renderer could do
-   * every check in this namespace with no new IPC at all — and must not: it is
-   * the process that hosts the app's own code, and the process rendering
-   * untrusted code must not also be the process deciding what it may read. The
-   * renderer only forwards, and it supplies the `remote` and the path from the
-   * frame it mounted, so an app cannot address a vault or a file by claim.
+   * **The refusal lives in main and not in the renderer.** The renderer is the
+   * process that hosts the app's own code, and the process rendering untrusted
+   * code must not also be the process deciding what it may read. The renderer
+   * only forwards, and it supplies the `remote` and the bundle from the frame it
+   * mounted, so an app cannot address a vault or another app by claim.
    *
-   * Read-only, and narrower than `notes`: the agent surface (`AGENTS.md`,
-   * `CLAUDE.md`, `USER.local.md`, `.claude/`, `memory/`) is refused outright,
-   * because `.claude/hooks/google-send-gate.mjs` IS the mail send gate and
-   * `memory/` is what the user told the assistant.
-   *
-   * Two audiences, and the split matters.
-   *
-   * `read` / `docs` / `tasks` are what a **vault app** reaches, through the
-   * postMessage bridge — which is why they are read-only and why `read` refuses
-   * the agent surface. `register` is what **Holi's own launchers** reach, and it
-   * mutates.
-   *
-   * They share a namespace safely only because `AppFrame` answers the bridge
-   * with an exhaustive `switch` over `APP_METHODS`, never by forwarding a
-   * method name into tRPC. **Do not turn that switch into a passthrough** — it
-   * is the only thing standing between an app and finishing its neighbours.
+   * Two audiences, and the split matters. `bridge` is what a **vault app**
+   * reaches, and it dispatches only into the capability registry's app door
+   * (`apps/capabilities.ts`), which holds every refusal: the agent surface
+   * (`AGENTS.md`, `CLAUDE.md`, `USER.local.md`, `.claude/`, `memory/`) is
+   * refused outright, because `.claude/hooks/google-send-gate.mjs` IS the mail
+   * send gate and `memory/` is what the user told the assistant. `register` is
+   * what **Holi's own launchers** reach; it is not in the registry, so no method
+   * name an app sends can land on it. **Never dispatch outside the registry.**
    */
   const apps = t.router({
-    read: t.procedure
-      .input(fields({ remote: 'string', path: 'string' }))
-      .query(async ({ input }): Promise<string> => {
-        // FORBIDDEN, distinct from NOT_FOUND: the UI (and the app's own error
-        // handling) must be able to tell "you may not" from "it is not there".
-        if (isAgentSurfacePath(input.path)) {
-          throw new TRPCError({ code: 'FORBIDDEN', message: input.path })
+    /**
+     * The app door: one bridge call from the frame `AppFrame` mounted for
+     * `bundle`. It reaches only capabilities that open to the app door, so
+     * `register` below is unreachable from an app however it is named.
+     */
+    bridge: t.procedure
+      .input((raw: unknown) => ({
+        ...fields({ remote: 'string', bundle: 'string', method: 'string' })(raw),
+        params: (raw as { params?: unknown }).params,
+      }))
+      .mutation(async ({ input }): Promise<unknown> => {
+        if (!isAppBundlePath(input.bundle)) {
+          throw new TRPCError({ code: 'BAD_REQUEST', message: `not an app: ${input.bundle}` })
         }
-        const abs = absPathFor(await rootFor(input.remote), safe(input.path))
-        const text = await readFile(abs, 'utf8').catch(() => null)
-        if (text === null) throw new TRPCError({ code: 'NOT_FOUND', message: input.path })
-        return text
+        const ctx: CapabilityContext = {
+          remote: input.remote,
+          root: await rootFor(input.remote),
+          bundle: input.bundle,
+          snapshot: () => snapshotFor(input.remote),
+        }
+        let result
+        try {
+          result = await runCapability(input.method, 'app', ctx, input.params)
+        } catch (err) {
+          if (err instanceof CapabilityError) {
+            throw new TRPCError({ code: err.code, message: err.message })
+          }
+          throw err
+        }
+        if (result.writes) {
+          const active = deps.host.active()
+          if (active?.remote === input.remote) {
+            await active.refresh().catch((e) => console.error('[apps] post-write rescan:', e))
+          }
+        }
+        return result.value
       }),
-
-    docs: t.procedure
-      .input(fields({ remote: 'string' }))
-      .query(async ({ input }): Promise<VaultSnapshot['docs']> => {
-        const snapshot = await snapshotFor(input.remote)
-        return snapshot.docs.filter((d) => !isAgentSurfacePath(d.path))
-      }),
-
-    tasks: t.procedure
-      .input(fields({ remote: 'string' }))
-      .query(async ({ input }): Promise<Task[]> => (await snapshotFor(input.remote)).tasks),
 
     // ---- Holi's own UI from here down. Not reachable from an app. ----
 

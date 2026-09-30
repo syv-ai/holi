@@ -73,6 +73,11 @@ beforeEach(async () => {
             },
       ),
     ),
+    capability: vi.fn((name: string, params: Record<string, string>) =>
+      params.id === 'gone'
+        ? Promise.reject(new Error('no such record'))
+        : Promise.resolve({ value: { name, params }, text: `${name} ok` }),
+    ),
     updateSkills: vi.fn(() =>
       Promise.resolve({
         ok: true as const,
@@ -129,6 +134,7 @@ describe('usage', () => {
     expect(res.stderr).toContain('app init')
     expect(res.stderr).toContain('skills update')
     expect(res.stderr).toContain('pdf comments')
+    expect(res.stderr).toContain('store list')
   })
 
   it('refuses an unknown subcommand rather than doing something adjacent', async () => {
@@ -229,5 +235,67 @@ describe('skills update', () => {
     const res = await run(bin, ['skills', 'update'], env)
     expect(res.code).not.toBe(0)
     expect(res.stderr).toContain('No vault is open.')
+  })
+})
+
+describe('store', () => {
+  const cap = () => deps.capability as ReturnType<typeof vi.fn>
+
+  it('lists a collection through the capability door', async () => {
+    const res = await run(bin, ['store', 'list', 'Work/Tracker.app', 'items'], env)
+    expect(res.code).toBe(0)
+    expect(res.stdout).toBe('store.list ok\n')
+    expect(cap()).toHaveBeenCalledWith('store.list', {
+      bundle: 'Work/Tracker.app',
+      collection: 'items',
+    })
+  })
+
+  it('prints JSON with --json', async () => {
+    const res = await run(bin, ['store', 'get', '--json', 'A.app', 'items', 'x'], env)
+    expect(res.code).toBe(0)
+    expect(JSON.parse(res.stdout)).toMatchObject({ name: 'store.get' })
+  })
+
+  it('puts a value verbatim, with or without an id', async () => {
+    const value = '{"title": "a b & c=d"}'
+    await run(bin, ['store', 'put', 'My Apps/T.app', 'items', value], env)
+    expect(cap()).toHaveBeenLastCalledWith('store.put', {
+      bundle: 'My Apps/T.app',
+      collection: 'items',
+      value,
+    })
+    await run(bin, ['store', 'put', 'T.app', 'items', '2026-09-30', value], env)
+    expect(cap()).toHaveBeenLastCalledWith('store.put', {
+      bundle: 'T.app',
+      collection: 'items',
+      id: '2026-09-30',
+      value,
+    })
+  })
+
+  it('checks one data file', async () => {
+    await run(bin, ['store', 'check', 'T.app/data/items/x.json'], env)
+    expect(cap()).toHaveBeenLastCalledWith('store.check', { path: 'T.app/data/items/x.json' })
+  })
+
+  it('puts a refusal on stderr and exits non-zero', async () => {
+    const res = await run(bin, ['store', 'delete', 'T.app', 'items', 'gone'], env)
+    expect(res.code).toBe(1)
+    expect(res.stdout).toBe('')
+    expect(res.stderr).toBe('holi store delete: no such record\n')
+  })
+
+  it('needs its arguments', async () => {
+    for (const args of [
+      ['list', 'T.app'],
+      ['get', 'T.app', 'items'],
+      ['put', 'T.app'],
+      ['check'],
+    ]) {
+      const res = await run(bin, ['store', ...args], env)
+      expect(res.code).toBe(2)
+    }
+    expect(cap()).not.toHaveBeenCalled()
   })
 })

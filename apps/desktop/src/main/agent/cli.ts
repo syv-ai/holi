@@ -28,6 +28,8 @@ const SCRIPT = `#!/bin/sh
 #   skills update            merge this release's skills and hooks into the
 #                            vault's (a conflict gets a session of its own)
 #   pdf comments <path>      print a PDF's comments (reads, changes nothing)
+#   store …                  read and write an app's records (a write is a
+#                            file change in git history, so it can be undone)
 #
 # If this says Holi is not running, it is not running, or you are in a shell it
 # did not start.
@@ -60,6 +62,14 @@ usage: holi <command>
                                 marked text, author, dates and replies
   task done <path>              complete a task file; a recurring one rolls
                                 forward to its next occurrence
+  store list <bundle> <collection> [--json]
+                                an app's records, one per line
+  store get <bundle> <collection> <id> [--json]
+  store put <bundle> <collection> [<id>] <json>
+                                write a record (checked against its schema);
+                                prints its id
+  store delete <bundle> <collection> <id>
+  store check <path>            problems with a data file you wrote by hand
 
 An app is a folder ending in .app, anywhere in the vault, e.g. Finance/Budget.app.
 It is finished when it has app.yaml next to index.html. Write the manifest LAST:
@@ -75,6 +85,24 @@ USAGE
 post() {
   op="\$1"; shift
   curl -sS --fail-with-body -X POST "\$base/\$op?t=\$HOLI_HOOK_TOKEN" "\$@"
+}
+
+# One capability through the CLI door. The answer is the output itself, so
+# the status decides where it goes, as for pdf comments below: 200 to stdout,
+# anything else to stderr and a failing exit. Every field rides in the body so
+# curl encodes it.
+cap() {
+  label="\$1"; method="\$2"; shift 2
+  body=\$(mktemp)
+  trap 'rm -f "\$body"' EXIT
+  code=\$(curl -sS -X POST -o "\$body" -w '%{http_code}' \\
+    "\$base/cap/\$method?t=\$HOLI_HOOK_TOKEN" --data-urlencode "json=\$json" "\$@") || exit 1
+  if [ "\$code" = 200 ]; then
+    cat "\$body"; echo
+  else
+    echo "holi \$label: \$(cat "\$body")" >&2
+    exit 1
+  fi
 }
 
 cmd="\${1:-}"
@@ -124,6 +152,49 @@ case "\$cmd" in
       done)
         [ $# -ge 1 ] || { echo "holi task done <path>" >&2; exit 2; }
         post task/done --data-urlencode "path=\$1"
+        ;;
+      *) usage ;;
+    esac
+    ;;
+  store)
+    sub="\${1:-}"
+    [ $# -gt 0 ] && shift
+    # --json may come anywhere; drop it from the positional arguments. The
+    # list \`for\` walks is fixed when it starts, so rebuilding "\$@" is safe.
+    json=false
+    for a in "\$@"; do
+      shift
+      if [ "\$a" = --json ]; then json=true; else set -- "\$@" "\$a"; fi
+    done
+    case "\$sub" in
+      list)
+        [ $# -eq 2 ] || { echo "holi store list <bundle> <collection> [--json]" >&2; exit 2; }
+        cap "store list" store.list --data-urlencode "bundle=\$1" --data-urlencode "collection=\$2"
+        ;;
+      get)
+        [ $# -eq 3 ] || { echo "holi store get <bundle> <collection> <id> [--json]" >&2; exit 2; }
+        cap "store get" store.get --data-urlencode "bundle=\$1" --data-urlencode "collection=\$2" \\
+          --data-urlencode "id=\$3"
+        ;;
+      put)
+        if [ $# -eq 3 ]; then
+          cap "store put" store.put --data-urlencode "bundle=\$1" \\
+            --data-urlencode "collection=\$2" --data-urlencode "value=\$3"
+        elif [ $# -eq 4 ]; then
+          cap "store put" store.put --data-urlencode "bundle=\$1" \\
+            --data-urlencode "collection=\$2" --data-urlencode "id=\$3" --data-urlencode "value=\$4"
+        else
+          echo "holi store put <bundle> <collection> [<id>] <json>" >&2; exit 2
+        fi
+        ;;
+      delete)
+        [ $# -eq 3 ] || { echo "holi store delete <bundle> <collection> <id>" >&2; exit 2; }
+        cap "store delete" store.delete --data-urlencode "bundle=\$1" \\
+          --data-urlencode "collection=\$2" --data-urlencode "id=\$3"
+        ;;
+      check)
+        [ $# -eq 1 ] || { echo "holi store check <path>" >&2; exit 2; }
+        cap "store check" store.check --data-urlencode "path=\$1"
         ;;
       *) usage ;;
     esac

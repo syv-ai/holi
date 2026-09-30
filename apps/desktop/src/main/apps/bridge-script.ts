@@ -42,5 +42,21 @@ export const BRIDGE_JS = `(() => {
       list: () => call('tasks.list'),
     },
     open: (path) => call('open', { path }),
+    // The app's own records, one JSON object each. put(value) makes an id;
+    // put(id, value) uses yours. query(fn) filters the whole collection here,
+    // in the frame: a collection is small, and a function cannot cross.
+    store: (collection) => {
+      const list = () => call('store.list', { collection }).then((r) => r.records)
+      return {
+        get: (id) => call('store.get', { collection, id }),
+        put: (a, b) =>
+          b === undefined
+            ? call('store.put', { collection, value: a })
+            : call('store.put', { collection, id: a, value: b }),
+        delete: (id) => call('store.delete', { collection, id }),
+        list,
+        query: (fn) => list().then((records) => records.filter(fn)),
+      }
+    },
   }
 })()`

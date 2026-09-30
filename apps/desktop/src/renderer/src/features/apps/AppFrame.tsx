@@ -17,9 +17,10 @@
  *    an id in its message would be ignored: otherwise one app could address
  *    another's directory by asking nicely.
  *
- * What it may ask for at all is decided in main (`apps.*`), not here: the
- * process rendering untrusted code must not be the process deciding what that
- * code may read. This side only forwards.
+ * What it may ask for at all is decided in main (`apps.bridge`, which reaches
+ * only the capability registry's app door), not here: the process rendering
+ * untrusted code must not be the process deciding what that code may read.
+ * This side only forwards, after refusing a name that is not a bridge method.
  */
 import { useAtomValue, useSetAtom } from 'jotai'
 import { useCallback, useEffect, useRef } from 'react'
@@ -55,25 +56,18 @@ export function AppFrame({ path }: { path: string }): React.JSX.Element {
   const answer = useCallback(
     async (method: AppMethod, params: unknown): Promise<unknown> => {
       if (remote === null) throw new Error('no vault is open')
-      switch (method) {
-        case 'docs.list':
-          return await trpc.apps.docs.query({ remote })
-        case 'tasks.list':
-          return await trpc.apps.tasks.query({ remote })
-        case 'docs.read': {
-          const path = pathOf(params)
-          if (path === null) throw new Error('docs.read needs a path')
-          return await trpc.apps.read.query({ remote, path })
-        }
-        case 'open': {
-          const path = pathOf(params)
-          if (path === null) throw new Error('open needs a path')
-          openNote(path)
-          return { ok: true }
-        }
+      // `open` is the one thing only this process can do. Everything else goes
+      // to main with the bundle this frame was mounted with, where the registry
+      // decides what an app may reach.
+      if (method === 'open') {
+        const path = pathOf(params)
+        if (path === null) throw new Error('open needs a path')
+        openNote(path)
+        return { ok: true }
       }
+      return await trpc.apps.bridge.mutate({ remote, bundle: path, method, params })
     },
-    [remote, openNote],
+    [remote, path, openNote],
   )
 
   useEffect(() => {
