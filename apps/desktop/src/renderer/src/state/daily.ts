@@ -6,7 +6,7 @@
  *
  * This layer is the *mechanism* only: mint today's daily and land on it.
  * **Whether** to is `dailyNotes` in the vault's settings, asked by
- * `state/landing.ts`, which is what lets ⌘⇧D still mint one on demand in a
+ * `state/home.ts`, which is what lets ⌘⇧D still mint one on demand in a
  * vault that keeps no daily notes automatically.
  */
 import { atom } from 'jotai'
@@ -29,9 +29,9 @@ export const todayDailyPathAtom = atom((get) => dailyNoteFilename(get(todayAtom)
  * Mint today's daily if it is not there yet, and say where it is. Lands on
  * nothing: that is the caller's business.
  *
- * **Split from the landing on purpose.** Minting is a property of `dailyNotes`,
- * and `landing` only decides what you are looking at. Folded together, a vault
- * that lands on its board would quietly stop journalling.
+ * **Split from Home on purpose.** Minting is a property of `dailyNotes`, and
+ * `home` only decides what you are looking at. Folded together, a vault whose
+ * Home is its board would quietly stop journalling.
  */
 export const ensureTodaysDailyAtom = atom(null, async (get, set): Promise<string | null> => {
   const remote = get(activeRemoteAtom)
@@ -46,7 +46,7 @@ export const ensureTodaysDailyAtom = atom(null, async (get, set): Promise<string
  * Returns the path, or null when there is no active vault. Opens the note
  * **pinned**: you are here to write in it, not browse it.
  *
- * **Unconditional.** The policy lives one layer up, in `landing`; anything
+ * **Unconditional.** The policy lives one layer up, in `state/home.ts`; anything
  * calling this is asking for today's note on purpose.
  */
 export const openTodaysDailyAtom = atom(null, async (get, set): Promise<string | null> => {
@@ -68,7 +68,7 @@ export const openTodaysDailyAtom = atom(null, async (get, set): Promise<string |
 export const sweepDailyAtom = atom(null, async (get, set) => {
   const remote = get(activeRemoteAtom)
   if (!remote) return
-  // Cached by the landing that ran immediately before this on the launch path,
+  // Cached by the vault's opening, which ran immediately before this,
   // so the pair costs one read rather than two.
   const settings = await set(loadVaultSettingsAtom)
   if (settings?.dailyNotes !== true) return

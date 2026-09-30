@@ -1,7 +1,7 @@
 /**
  * One setting, rendered from its descriptor. The layout is `SettingsRow`; this
  * file decides only what a *setting* adds to a row: the layer badge, the
- * next-open caveat, the three control kinds, and the resolver's complaint.
+ * three control kinds, and the resolver's complaint.
  */
 import { useAtomValue } from 'jotai'
 import { TriangleAlert } from 'lucide-react'
@@ -18,10 +18,6 @@ import { Button, Checkbox, Icon, Tooltip } from '@/primitives'
 import { useAck } from '@/lib/use-ack'
 import { appPathsAtom } from '@/state/apps'
 import { SettingsRow } from './settings-ui'
-
-/** The one setting whose value is a statement about an event that has already
- *  happened by the time you can change it. Everything else applies as you go. */
-const APPLIES_ON_NEXT_OPEN = new Set<string>(['landing'])
 
 export function Layer({ target }: { target: VaultSettingDescriptor['target'] }): React.JSX.Element {
   const committed = target === 'committed'
@@ -57,7 +53,9 @@ export function SettingRow({
   const value = settings[key] ?? descriptor.default
   const appPaths = useAtomValue(appPathsAtom)
   const options: readonly VaultSettingOption[] =
-    control.kind === 'app' ? appOptions(appPaths, value) : availableOptions(descriptor, settings)
+    control.kind === 'choice' && control.apps === true
+      ? withApps(availableOptions(descriptor, settings), appPaths, value)
+      : availableOptions(descriptor, settings)
 
   // Changing a setting WRITES A FILE in the vault, so the row flashes once to
   // make the write visible where it happened.
@@ -75,16 +73,7 @@ export function SettingRow({
       data-setting={key}
       label={label}
       description={explanation}
-      meta={
-        <>
-          <Layer target={descriptor.target} />
-          {APPLIES_ON_NEXT_OPEN.has(key) && (
-            <span className="text-[10px] leading-4 text-muted-foreground">
-              takes effect next time this vault opens
-            </span>
-          )}
-        </>
-      }
+      meta={<Layer target={descriptor.target} />}
       // A switch and a pick-one are both one answer to the row's question, so
       // both sit on the label's line, right-aligned. Only the flag group is
       // below, in `children`.
@@ -95,7 +84,7 @@ export function SettingRow({
             onCheckedChange={(next) => change(key, next === true)}
             aria-label={label}
           />
-        ) : control.kind === 'choice' || control.kind === 'app' ? (
+        ) : control.kind === 'choice' ? (
           // `justify-end` so a group that has wrapped onto its own line stays
           // against the right edge, and so does a second row of options.
           <div role="radiogroup" aria-label={label} className="flex flex-wrap justify-end gap-1.5">
@@ -110,8 +99,8 @@ export function SettingRow({
                 }
                 size="xs"
                 role="radio"
-                // Structural equality: a `landing` option's value is an object, and
-                // the answer is a different object with the same shape.
+                // Structural equality: an option's value may be any value the
+                // setting holds, and the answer a different object of that shape.
                 aria-checked={JSON.stringify(option.value) === JSON.stringify(value)}
                 onClick={() => change(key, option.value)}
               >
@@ -163,14 +152,25 @@ export function SettingRow({
 }
 
 /**
- * An app row's options: the vault's shared apps, and the current answer even
- * when it names none of them (an app not made yet, or a personal one from the
- * local file), so the row always shows what is in force. A personal app is not
- * offered: this row writes the committed file, and a `.local.` app named there
- * would point everyone else at nothing.
+ * Home's options: the fixed ones, the vault's shared apps, and the current
+ * answer even when it is none of them (a file, or an app not made yet), so the
+ * row always shows what is in force. A personal app is not offered: this row
+ * writes the committed file, and a `.local.` app named there would point
+ * everyone else at nothing.
  */
-function appOptions(appPaths: readonly string[], value: unknown): VaultSettingOption[] {
-  const shared = appPaths.filter((p) => !isLocalOnlyPath(p))
-  const current = typeof value === 'string' && !shared.includes(value) ? [value] : []
-  return [...shared, ...current].map((path) => ({ value: path, label: appName(path) }))
+function withApps(
+  fixed: readonly VaultSettingOption[],
+  appPaths: readonly string[],
+  value: unknown,
+): VaultSettingOption[] {
+  const listed = new Set(fixed.map((o) => o.value))
+  const apps = appPaths
+    .filter((p) => !isLocalOnlyPath(p) && !listed.has(p))
+    .map((path) => ({ value: path, label: appName(path) }))
+  const all = [...fixed, ...apps]
+  const current =
+    typeof value === 'string' && !all.some((o) => o.value === value)
+      ? [{ value, label: value }]
+      : []
+  return [...all, ...current]
 }

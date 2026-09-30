@@ -22,6 +22,61 @@ export function isAppDataPath(rest: string): boolean {
   return rest.split('/')[0]!.toLowerCase() === DATA_DIR
 }
 
+/**
+ * The app's log, at its bundle's root: what went wrong while it ran, for the
+ * vault's agent to read when someone says the app is broken. `.local.`, so it
+ * never syncs; written by main from what the app's frame reports; never
+ * served to the app, and trimmed to the last day as it is written.
+ */
+export const APP_LOG_FILE = 'log.local.txt'
+
+/** How long a log entry is kept, and the most the file holds. */
+export const APP_LOG_TTL_MS = 24 * 60 * 60 * 1000
+export const APP_LOG_MAX_ENTRIES = 500
+/** One entry's text past this is cut: a log line, not a dump. */
+export const APP_LOG_MAX_TEXT = 4000
+
+export type AppLogLevel = 'error' | 'warn' | 'info'
+
+/**
+ * Is a path inside a bundle (`rest`) one that is Holi's to reach, not the
+ * app's as a file: its records, and its log. Case-insensitive like
+ * `isAppDataPath`.
+ */
+export function isAppPrivatePath(rest: string): boolean {
+  return isAppDataPath(rest) || rest.toLowerCase() === APP_LOG_FILE
+}
+
+/**
+ * The log with one entry added and what is past its day (or over the cap)
+ * dropped. An entry is a line starting with its ISO time and level; a
+ * multi-line text (a stack) continues on lines indented by two spaces, so it
+ * stays one entry when the log is trimmed.
+ */
+export function appendAppLog(
+  existing: string | null,
+  entry: { level: AppLogLevel; text: string },
+  now: Date,
+): string {
+  const entries: string[] = []
+  for (const line of (existing ?? '').split('\n')) {
+    if (line === '') continue
+    if (/^\d{4}-\d\d-\d\dT/.test(line) || entries.length === 0) entries.push(line)
+    else entries[entries.length - 1] += `\n${line}`
+  }
+  const cutoff = now.getTime() - APP_LOG_TTL_MS
+  const kept = entries.filter((e) => {
+    const at = Date.parse(e.slice(0, e.indexOf(' ')))
+    return Number.isFinite(at) && at >= cutoff
+  })
+  const text = entry.text.slice(0, APP_LOG_MAX_TEXT).replace(/\r\n?/g, '\n')
+  const [first = '', ...rest] = text.split('\n')
+  kept.push(
+    [`${now.toISOString()} ${entry.level} ${first}`, ...rest.map((l) => `  ${l}`)].join('\n'),
+  )
+  return `${kept.slice(-APP_LOG_MAX_ENTRIES).join('\n')}\n`
+}
+
 /** The largest record main will write, formatted. A record is a row, not a file store. */
 export const MAX_RECORD_BYTES = 256 * 1024
 

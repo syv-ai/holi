@@ -1,7 +1,7 @@
 /**
  * A vault app, running.
  *
- * The frame is `sandbox="allow-scripts"` and deliberately **not**
+ * The frame is `sandbox="allow-scripts allow-popups"` and deliberately **not**
  * `allow-same-origin`: the app's origin is opaque, so it has no cookies, no
  * `localStorage` (it throws), no reach into this document, and no way to fetch
  * `holi-vault://`. Its one route to the vault is `postMessage` to us, and this
@@ -40,6 +40,7 @@ import {
   type AppPush,
   type AppResponse,
 } from '@holi/shared'
+import { cn } from '@/lib/cn'
 import { Button, Dialog } from '@/primitives'
 import { trpc } from '../../lib/trpc'
 import { appPushSignaturesAtom, storeSignatures } from '../../state/app-push'
@@ -52,6 +53,7 @@ import {
   openSingleton,
   workspaceAtom,
 } from '../../state/panes'
+import { openHomeAtom } from '../../state/home'
 import { activeRemoteAtom, snapshotAtom } from '../../state/vaults'
 
 function isAppMethod(value: unknown): value is AppMethod {
@@ -69,6 +71,7 @@ function fieldOf(params: unknown, key: 'path' | 'surface'): string | null {
 const AFFORDANCE_TEXT: Record<AppAffordance, string> = {
   mail: 'your mail',
   calendar: 'your calendar',
+  location: 'where you are',
 }
 
 /** The topics this frame is told about: the vault's, and its own collections'. */
@@ -88,6 +91,7 @@ export function AppFrame({ path }: { path: string }): React.JSX.Element {
   const openNote = useSetAtom(openNoteTabAtom)
   const setWorkspace = useSetAtom(workspaceAtom)
   const closeApp = useSetAtom(closeAppAtom)
+  const openHome = useSetAtom(openHomeAtom)
   const reloads = useAtomValue(appOpensAtom)[path] ?? 0
   const frameRef = useRef<HTMLIFrameElement>(null)
   const exists = appPaths.includes(path)
@@ -103,7 +107,8 @@ export function AppFrame({ path }: { path: string }): React.JSX.Element {
         const surface = fieldOf(params, 'surface')
         if (surface !== null) {
           if (!isAppSurface(surface)) throw new Error(`no such view: ${surface}`)
-          setWorkspace((w) => openSingleton(w, surface))
+          if (surface === 'home') void openHome()
+          else setWorkspace((w) => openSingleton(w, surface))
           return { ok: true }
         }
         const path = fieldOf(params, 'path')
@@ -115,15 +120,30 @@ export function AppFrame({ path }: { path: string }): React.JSX.Element {
       }
       return await trpc.apps.bridge.mutate({ remote, bundle: path, method, params })
     },
-    [remote, path, openNote, setWorkspace],
+    [remote, path, openNote, setWorkspace, openHome],
   )
 
   useEffect(() => {
     const onMessage = (event: MessageEvent): void => {
       const frame = frameRef.current
       if (frame === null || event.source !== frame.contentWindow) return
-      const msg = event.data as { id?: unknown; method?: unknown; params?: unknown }
-      if (msg === null || typeof msg !== 'object' || typeof msg.id !== 'string') return
+      const msg = event.data as {
+        id?: unknown
+        method?: unknown
+        params?: unknown
+        log?: { level?: unknown; text?: unknown }
+      }
+      if (msg === null || typeof msg !== 'object') return
+      // A line for the app's log: no answer, and a failure to write it is not
+      // the app's to hear about. Main checks the level and the bundle.
+      if (typeof msg.log === 'object' && msg.log !== null && remote !== null) {
+        const { level, text } = msg.log
+        if (typeof level === 'string' && typeof text === 'string') {
+          trpc.apps.log.mutate({ remote, bundle: path, level, text }).catch(() => {})
+        }
+        return
+      }
+      if (typeof msg.id !== 'string') return
       const id = msg.id
       const reply = (response: AppResponse): void => frame.contentWindow?.postMessage(response, '*')
 
@@ -141,7 +161,7 @@ export function AppFrame({ path }: { path: string }): React.JSX.Element {
     }
     window.addEventListener('message', onMessage)
     return () => window.removeEventListener('message', onMessage)
-  }, [answer])
+  }, [answer, remote, path])
 
   // Push: post a topic whenever its signature changes, never on mount (the
   // app reads what it needs when it starts). Sent to whatever document the
@@ -166,6 +186,9 @@ export function AppFrame({ path }: { path: string }): React.JSX.Element {
   // approved lapses with time or with a change to the app's code.
   const [ask, setAsk] = useState<{ affordances: AppAffordance[]; codeHash: string } | null>(null)
   const [gateOpen, setGateOpen] = useState(false)
+  // Location is the browser's, not a bridge call: the frame is allowed to ask
+  // only once it is approved, and main refuses it otherwise.
+  const [locating, setLocating] = useState(false)
   // Bumped when an approval comes back refused because the code changed while
   // the dialog was up: the new code is asked about, not waved through.
   const [recheck, setRecheck] = useState(0)
@@ -178,6 +201,7 @@ export function AppFrame({ path }: { path: string }): React.JSX.Element {
       .then((status) => {
         if (!live) return
         const ungranted = status.affordances.filter((s) => !s.granted).map((s) => s.affordance)
+        setLocating(status.affordances.some((s) => s.affordance === 'location' && s.granted))
         setAsk(ungranted.length > 0 ? { affordances: ungranted, codeHash: status.codeHash } : null)
         setGateOpen(ungranted.length === 0)
       })
@@ -187,6 +211,10 @@ export function AppFrame({ path }: { path: string }): React.JSX.Element {
     }
   }, [remote, path, exists, reloads, recheck])
 
+  // Which document the frame holds: the fade-in waits for this one's load.
+  const documentKey = `${path}\n${reloads}\n${mode}`
+  const [loaded, setLoaded] = useState<string | null>(null)
+
   const decide = (allow: boolean): void => {
     const shown = ask
     setAsk(null)
@@ -195,7 +223,14 @@ export function AppFrame({ path }: { path: string }): React.JSX.Element {
       return
     }
     trpc.apps.grant.mutate({ remote, bundle: path, ...shown }).then(
-      (recorded) => (recorded ? setGateOpen(true) : setRecheck((n) => n + 1)),
+      (recorded) => {
+        if (!recorded) {
+          setRecheck((n) => n + 1)
+          return
+        }
+        if (shown.affordances.includes('location')) setLocating(true)
+        setGateOpen(true)
+      },
       (e: unknown) => {
         console.warn('[apps] grant failed:', e)
         setGateOpen(true)
@@ -263,11 +298,23 @@ export function AppFrame({ path }: { path: string }): React.JSX.Element {
           // iframe and is the one the gate bans (it is a browser tooltip on every
           // other element), so the label goes on aria-label.
           aria-label={name}
-          // `allow-scripts` alone. Adding `allow-same-origin` would let the app
-          // remove its own sandbox and give it a real origin, which is the
-          // isolation this whole feature rests on.
-          sandbox="allow-scripts"
-          className="min-h-0 flex-1 border-0"
+          // Never `allow-same-origin`: it would let the app remove its own
+          // sandbox and give it a real origin, which is the isolation this whole
+          // feature rests on. `allow-popups` only lets a `target=_blank` link
+          // reach main, which opens it in the browser and makes no window.
+          sandbox="allow-scripts allow-popups"
+          // `*`, not the default `src`: the sandbox makes the document's origin
+          // opaque, which matches no origin. Main's permission handler is the
+          // gate that checks this app's approval.
+          allow={locating ? 'geolocation *' : undefined}
+          // Hidden until its document has loaded, then faded in: a frame paints
+          // whatever it has as it goes, and an app half-styled for a frame or
+          // two reads as a glitch. A reload or a mode change starts it over.
+          onLoad={() => setLoaded(documentKey)}
+          className={cn(
+            'min-h-0 flex-1 border-0',
+            loaded === documentKey ? 'motion-in-fade' : 'opacity-0',
+          )}
         />
       )}
     </div>

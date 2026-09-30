@@ -700,16 +700,15 @@ describe('ensureSeeded — the vault-apps skill', () => {
     expect(skill).toContain('holi.tasks.list()')
     expect(skill).toContain('holi.open(')
     expect(skill).toMatch(/localStorage/)
-    // The three facts an agent gets WRONG rather than misses, each learned by
+    // The facts an agent gets WRONG rather than misses, each learned by
     // reading the skill back as a reader who knows nothing about Holi:
-    // the status union (it guesses `done: true`), that an open tab does not
-    // pick up an edit, and that opening the app is not the same as seeing it.
+    // the status union (it guesses `done: true`), and that an open tab does not
+    // pick up an edit.
     // Matched against whitespace-normalized text: the file is hand-wrapped at
     // 80 columns, so any phrase long enough to be worth asserting is wrapped.
     const prose = skill.replace(/\s+/g, ' ')
     expect(prose).toContain("'todo' | 'doing' | 'done'")
     expect(prose).toMatch(/reload/i)
-    expect(prose).toMatch(/no console, no screenshot/i)
   })
 
   it('never rewrites one the user has edited', async () => {

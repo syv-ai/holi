@@ -19,6 +19,8 @@ import {
   nativeTheme,
   Notification,
   protocol,
+  session as electronSession,
+  shell,
   type Tray,
 } from 'electron'
 import { requestFlush, type FlushChannel } from './flush'
@@ -151,7 +153,13 @@ function createWindow(): BrowserWindow {
   // After the load, so the guard knows what "the app" is. A drop the renderer
   // does not claim is a navigation, and Electron answers a navigation with a
   // window — see window-guard.ts.
-  guardNavigation(win, devUrl ?? pathToFileURL(join(__dirname, '../renderer/index.html')).href)
+  guardNavigation(
+    win,
+    devUrl ?? pathToFileURL(join(__dirname, '../renderer/index.html')).href,
+    (url) => {
+      void shell.openExternal(url)
+    },
+  )
   return win
 }
 
@@ -356,6 +364,34 @@ async function main(): Promise<void> {
   // Both doors into the capability registry read the running app through
   // these: the app's bridge (the router) and the agent's `holi` CLI (below).
   const uiReports = createUiReports()
+  const appGrants = createAppGrants(join(app.getPath('userData'), 'app-grants.json'))
+
+  /**
+   * The browser permissions a page may use. Only location is decided here:
+   * a vault app gets it when its manifest opts in (`dangerously-allow:
+   * [location]`) and this person has approved that app, the same gate as its
+   * mail and calendar reads; Holi's own page never asks. Every other
+   * permission keeps Electron's answer.
+   */
+  electronSession.defaultSession.setPermissionRequestHandler(
+    (_contents, permission, callback, details) => {
+      if (permission !== 'geolocation') {
+        callback(true)
+        return
+      }
+      const vault = host.active()
+      const app = parseAppUrl(details.requestingUrl)
+      if (vault === null || app === null) {
+        callback(false)
+        return
+      }
+      appGrants.status(vault.remote, vault.root, app.bundle).then(
+        (status) =>
+          callback(status.affordances.some((a) => a.affordance === 'location' && a.granted)),
+        () => callback(false),
+      )
+    },
+  )
   // Settings' member list reads the same cache as an app and the agent.
   const members = createMembersCache((remote) => session.api.collaborators(remote))
   const capabilityServices = createCapabilityServices(
@@ -367,7 +403,7 @@ async function main(): Promise<void> {
       members,
       googleDataFor,
       calendarOverrides: async () => (await calendarPrefs.read()) ?? {},
-      grants: createAppGrants(join(app.getPath('userData'), 'app-grants.json')),
+      grants: appGrants,
     },
     uiReports,
   )

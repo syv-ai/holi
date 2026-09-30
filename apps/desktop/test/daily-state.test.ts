@@ -3,18 +3,22 @@
  *
  * `openTodaysDailyAtom` used to decide *whether* to mint a daily by asking
  * GitHub how many collaborators the vault had. It no longer decides anything:
- * the vault says so itself via `dailyNotes`, `state/landing.ts` reads it, and
+ * the vault says so itself via `dailyNotes`, `state/home.ts` reads it, and
  * this layer is the verb. That is what makes ⌘⇧D still work in a vault that
  * keeps no daily notes automatically.
  *
  * What the collaborator check protected — never auto-creating a daily in a
- * shared vault — is now covered in `landing.test.ts` against the setting, and
+ * shared vault — is now covered in `home.test.ts` against the setting, and
  * being offline is no longer a case at all: there is no network call left to
  * fail.
  */
 import { createStore } from 'jotai'
 import { afterEach, describe, expect, it } from 'vitest'
-import type { ResolvedVaultSettings, VaultSnapshot } from '@holi/shared'
+import {
+  VAULT_SETTING_DEFAULTS,
+  type ResolvedVaultSettings,
+  type VaultSnapshot,
+} from '@holi/shared'
 import { installFakeHoli, type FakeHoli } from './helpers/fake-holi'
 import { workspaceAtom } from '../src/renderer/src/state/panes'
 import { activeRemoteAtom } from '../src/renderer/src/state/vaults'
@@ -27,11 +31,9 @@ afterEach(() => {
 })
 
 const settings = (over: Partial<ResolvedVaultSettings> = {}): ResolvedVaultSettings => ({
-  landing: { kind: 'daily' },
+  ...VAULT_SETTING_DEFAULTS,
+  hooks: { ...VAULT_SETTING_DEFAULTS.hooks },
   dailyNotes: true,
-  colorScheme: 'system',
-  hooks: { relink: true, 'archive-done': false, 'normalize-md': true },
-  maxCommittedFileBytes: 10 * 1024 * 1024,
   warnings: [],
   ...over,
 })

@@ -35,7 +35,7 @@ import { ImageViewer } from '@/features/files/ImageViewer'
 import { VaultPicker } from '@/features/vault/VaultPicker'
 import { trpc } from '../lib/trpc'
 import { sweepDailyAtom } from '../state/daily'
-import { openLandingAtom } from '../state/landing'
+import { openLandingAtom } from '../state/home'
 import { useSettingsFollowDisk } from '../state/settings'
 import {
   activeTab,
@@ -177,8 +177,8 @@ export function Shell() {
   // remote, deliberately sequential. The ONLY caller of `vaults.open`, so cold
   // start and a switch both open here.
   //
-  // Landing needs the vault scanned, to tell a live target from a rotted one.
-  // The sweep reuses the settings landing just cached: one file read.
+  // Opening on Home needs the vault scanned, to tell a live target from a
+  // missing one. The sweep reuses the settings it just cached: one file read.
   useEffect(() => {
     if (!activeRemote || openedRemote.current === activeRemote) return
     openedRemote.current = activeRemote

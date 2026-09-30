@@ -6,7 +6,7 @@ import {
   initialState,
   canAdvance,
   atFloor,
-  reduce
+  reduce,
 } from '../src/renderer/src/state/onboarding-flow'
 
 describe('slugify', () => {
@@ -74,7 +74,10 @@ describe('reduce', () => {
 
   it('failInPlace shows the error without leaving the current act/view (join adopt)', () => {
     const onJoin = reduce(reduce(s0, { type: 'advance' }), { type: 'toJoin' })
-    const failed = reduce({ ...onJoin, submitting: true }, { type: 'failInPlace', error: 'no push' })
+    const failed = reduce(
+      { ...onJoin, submitting: true },
+      { type: 'failInPlace', error: 'no push' },
+    )
     expect(failed).toMatchObject({ act: 2, view: 'join', submitting: false, error: 'no push' })
   })
 
@@ -99,21 +102,21 @@ describe('the settings the ritual collects', () => {
     const answered = reduce(s0, { type: 'setSetting', key: 'colorScheme', value: 'dark' })
     expect(answered.settings.colorScheme).toBe('dark')
     expect(answered.settings.dailyNotes).toEqual(s0.settings.dailyNotes)
-    expect(answered.settings.landing).toEqual(s0.settings.landing)
+    expect(answered.settings.home).toEqual(s0.settings.home)
   })
 
-  it('moves the landing target when its option is withdrawn', () => {
-    // Turning daily notes off takes "today's note" off the landing row. Leaving
-    // the answer there would leave a value the user can neither see nor change,
-    // and it resolves to an empty pane.
-    const off = reduce(s0, { type: 'setSetting', key: 'dailyNotes', value: false })
-    expect(off.settings.landing).toEqual({ kind: 'board' })
+  it('moves Home off today’s note when its option is withdrawn', () => {
+    // Turning daily notes off takes "today's note" off the Home row. Leaving
+    // the answer there would leave a value the user can neither see nor change.
+    const daily = reduce(s0, { type: 'setSetting', key: 'home', value: 'daily' })
+    const off = reduce(daily, { type: 'setSetting', key: 'dailyNotes', value: false })
+    expect(off.settings.home).not.toBe('daily')
   })
 
-  it('leaves a landing target that is still on offer', () => {
-    const chosen = reduce(s0, { type: 'setSetting', key: 'landing', value: { kind: 'mail' } })
+  it('leaves a Home that is still on offer', () => {
+    const chosen = reduce(s0, { type: 'setSetting', key: 'home', value: 'mail' })
     const off = reduce(chosen, { type: 'setSetting', key: 'dailyNotes', value: false })
-    expect(off.settings.landing).toEqual({ kind: 'mail' })
+    expect(off.settings.home).toBe('mail')
   })
 
   it('takes the last answer when one is changed twice', () => {

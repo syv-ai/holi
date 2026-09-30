@@ -39,10 +39,10 @@ test('an enum offers its values, with the pane’s own wording beside them', () 
   expect(result?.options.map((o) => o.detail)).toEqual(['Match my system', 'Light', 'Dark'])
 })
 
-test('a landing target is offered as it must be WRITTEN, not as it is shown', () => {
-  // `{ kind: daily }`, because `landing: kind: daily` is a parse error and the
-  // label "Today’s note" is not a value at all.
-  expect(labels('landing: ')).toContain('{ kind: board }')
+test('Home is offered as it must be WRITTEN, not as it is shown', () => {
+  // The label "Today’s note" is not a value at all.
+  expect(labels('home: ')).toContain('daily')
+  expect(labels('home: ')).not.toContain('Today’s note')
 })
 
 test('a number offers the sizes the pane offers — a suggestion is not a closed set', () => {

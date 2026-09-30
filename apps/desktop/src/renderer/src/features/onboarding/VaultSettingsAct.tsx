@@ -87,8 +87,8 @@ function Row({
               <ChoicePill
                 key={option.label}
                 label={option.label}
-                // Structural equality: a `landing` option's value is an object,
-                // and the answer is a different object with the same shape.
+                // Structural equality: an option's value may be any value the
+                // setting holds, and the answer a different object of that shape.
                 checked={JSON.stringify(option.value) === JSON.stringify(value)}
                 onSelect={() => onChange(key, option.value)}
               />

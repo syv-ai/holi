@@ -10,8 +10,8 @@
  * **Changes apply now.** The hooks and the file-size cap are read by main on
  * every commit, `colorScheme` re-applies through `useVaultTheme`, and
  * `editorFont` is a CSS custom property, so a write here forces the cache and
- * the app follows. `landing` is the exception and says so on its own row: it
- * describes what happens when a vault opens.
+ * the app follows. `home` does too; the part of it that is what a vault opens
+ * on acts when a vault opens.
  *
  * **The scroll container lives here, not in a section.** The rail jumps to a
  * heading by scrolling this element, so a section that owned its own scrolling

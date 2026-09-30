@@ -39,7 +39,7 @@ describe('a seeded settings file', () => {
     // read at the moment somebody is typing one.
     expect(seeded).toContain('One of: true, false')
     expect(seededLocal).toContain('One of: system (Match my system)')
-    expect(seeded).toContain('{ kind: board }')
+    expect(seeded).toContain('mail (Mail)')
   })
 
   it('comments out a setting the ritual does not ask, so no default is frozen', () => {
@@ -56,17 +56,14 @@ describe('a seeded settings file', () => {
     const resolved = resolveVaultSettings(seeded, seededLocal)
     expect(resolved.warnings).toEqual([])
     expect(resolved.dailyNotes).toBe(true)
-    expect(resolved.landing).toEqual({ kind: 'daily' })
+    expect(resolved.home).toBe(VAULT_SETTING_DEFAULTS.home)
     // The commented ones fall through to the default rather than being absent.
     expect(resolved.editorFont).toBe(VAULT_SETTING_DEFAULTS.editorFont)
   })
 
-  it('is block YAML, and a map beside its key is flow', () => {
+  it('is block YAML', () => {
     expect(seeded.startsWith('{')).toBe(false)
     expect(seeded).toMatch(/^hooks:\n {2}relink: true$/m)
-    // `stringify` hands a one-entry map back as `kind: daily`, which becomes
-    // `landing: kind: daily` after a key — a parse error, not a value.
-    expect(seeded).toContain('landing: { kind: daily }')
   })
 })
 

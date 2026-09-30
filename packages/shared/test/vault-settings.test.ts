@@ -7,7 +7,8 @@ import {
   VAULT_SETTINGS,
   VAULT_SETTING_DEFAULTS,
   VAULT_SETTING_DESCRIPTORS,
-  parseLandingTarget,
+  homeTargetOf,
+  parseHome,
   availableOptions,
   normaliseAnswers,
   parseSettingsPatch,
@@ -21,8 +22,8 @@ import {
 const committed = (value: unknown): string => JSON.stringify(value)
 
 describe('VAULT_SETTING_DEFAULTS', () => {
-  it('lands on today’s daily when nothing says otherwise', () => {
-    expect(VAULT_SETTING_DEFAULTS.landing).toEqual({ kind: 'daily' })
+  it('opens on Home, an app, when nothing says otherwise', () => {
+    expect(homeTargetOf(VAULT_SETTING_DEFAULTS.home).kind).toBe('app')
     expect(VAULT_SETTING_DEFAULTS.dailyNotes).toBe(true)
   })
 
@@ -66,7 +67,7 @@ describe('VAULT_SETTING_DEFAULTS', () => {
 describe('resolveVaultSettings — absent and empty files', () => {
   it('resolves to the defaults when neither file exists', () => {
     const s = resolveVaultSettings(null, null)
-    expect(s.landing).toEqual({ kind: 'daily' })
+    expect(s.home).toBe(VAULT_SETTING_DEFAULTS.home)
     expect(s.dailyNotes).toBe(true)
     expect(s.colorScheme).toBe('system')
     expect(s.hooks).toEqual(VAULT_SETTING_DEFAULTS.hooks)
@@ -76,14 +77,13 @@ describe('resolveVaultSettings — absent and empty files', () => {
 
   it('treats an empty file as an absent one', () => {
     expect(resolveVaultSettings('', '   ').warnings).toEqual([])
-    expect(resolveVaultSettings('', '   ').landing).toEqual({ kind: 'daily' })
+    expect(resolveVaultSettings('', '   ').home).toBe(VAULT_SETTING_DEFAULTS.home)
   })
 
   it('never returns the shared defaults object itself', () => {
     // A caller mutating what it got back must not rewrite every later resolve.
     const a = resolveVaultSettings(null, null)
     const b = resolveVaultSettings(null, null)
-    expect(a.landing).not.toBe(b.landing)
     expect(a.hooks).not.toBe(b.hooks)
     expect(a.hooks).not.toBe(VAULT_SETTING_DEFAULTS.hooks)
   })
@@ -93,7 +93,7 @@ describe('resolveVaultSettings — the committed file', () => {
   it('reads every setting from the committed file', () => {
     const s = resolveVaultSettings(
       committed({
-        landing: { kind: 'board' },
+        home: 'board',
         dailyNotes: false,
         colorScheme: 'light',
         hooks: { 'archive-done': true },
@@ -101,7 +101,7 @@ describe('resolveVaultSettings — the committed file', () => {
       }),
       null,
     )
-    expect(s.landing).toEqual({ kind: 'board' })
+    expect(s.home).toBe('board')
     expect(s.dailyNotes).toBe(false)
     expect(s.colorScheme).toBe('light')
     expect(s.hooks['archive-done']).toBe(true)
@@ -123,12 +123,12 @@ describe('resolveVaultSettings — the committed file', () => {
 describe('resolveVaultSettings — the local override', () => {
   it('overrides per key, inheriting the rest of the committed file', () => {
     const s = resolveVaultSettings(
-      committed({ landing: { kind: 'board' }, dailyNotes: false, colorScheme: 'light' }),
+      committed({ home: 'board', dailyNotes: false, colorScheme: 'light' }),
       committed({ colorScheme: 'dark' }),
     )
     expect(s.colorScheme).toBe('dark')
     // Inherited, not wiped out by a one-key local file.
-    expect(s.landing).toEqual({ kind: 'board' })
+    expect(s.home).toBe('board')
     expect(s.dailyNotes).toBe(false)
   })
 
@@ -156,11 +156,8 @@ describe('resolveVaultSettings — the local override', () => {
   })
 
   it('lets local win over committed, not the other way round', () => {
-    const s = resolveVaultSettings(
-      committed({ landing: { kind: 'mail' } }),
-      committed({ landing: { kind: 'agenda' } }),
-    )
-    expect(s.landing).toEqual({ kind: 'agenda' })
+    const s = resolveVaultSettings(committed({ home: 'mail' }), committed({ home: 'agenda' }))
+    expect(s.home).toBe('agenda')
   })
 })
 
@@ -169,7 +166,7 @@ describe('resolveVaultSettings — malformed input never throws', () => {
     const s = resolveVaultSettings('{ not json', committed({ colorScheme: 'light' }))
     expect(s.colorScheme).toBe('light')
     // The corrupt committed file contributes nothing, not an exception.
-    expect(s.landing).toEqual({ kind: 'daily' })
+    expect(s.home).toBe(VAULT_SETTING_DEFAULTS.home)
   })
 
   it('ignores a corrupt local file and keeps the committed one', () => {
@@ -181,7 +178,7 @@ describe('resolveVaultSettings — malformed input never throws', () => {
     'treats a non-object top level (%s) as no settings',
     (json) => {
       const s = resolveVaultSettings(json, null)
-      expect(s.landing).toEqual({ kind: 'daily' })
+      expect(s.home).toBe(VAULT_SETTING_DEFAULTS.home)
       expect(s.dailyNotes).toBe(true)
     },
   )
@@ -214,74 +211,27 @@ describe('resolveVaultSettings — malformed input never throws', () => {
   })
 })
 
-describe('parseLandingTarget — the trust boundary', () => {
+describe('parseHome and homeTargetOf', () => {
   it.each([
-    [{ kind: 'daily' }],
-    [{ kind: 'board' }],
-    [{ kind: 'agenda' }],
-    [{ kind: 'mail' }],
-    [{ kind: 'note', path: 'Notes/Standup.md' }],
-    [{ kind: 'app', path: 'Finance/Budget.app' }],
-  ])('round-trips %j', (value) => {
-    expect(parseLandingTarget(value)).toEqual(value)
-  })
-
-  it('reads an old app id as the bundle opening the vault moved it to', () => {
-    expect(parseLandingTarget({ kind: 'app', appId: 'retro' })).toEqual({
-      kind: 'app',
-      path: 'retro.app',
-    })
-  })
-
-  it('builds a fresh narrow object rather than passing the input through', () => {
-    // Returning the parsed value would let whatever else was in that JSON ride
-    // into the workspace. Same rule as parseTabPayload (lib/tab-drop.ts).
-    const hostile = { kind: 'note', path: 'a.md', __proto__: { evil: true }, extra: 'x' }
-    const parsed = parseLandingTarget(hostile)
-    expect(parsed).toEqual({ kind: 'note', path: 'a.md' })
-    expect(parsed).not.toBe(hostile)
-    expect(parsed).not.toHaveProperty('extra')
+    ['daily', 'daily', { kind: 'daily' }],
+    ['board', 'board', { kind: 'board' }],
+    ['./Finance/Budget.app/', 'Finance/Budget.app', { kind: 'app', path: 'Finance/Budget.app' }],
+    [' Notes/Standup.md ', 'Notes/Standup.md', { kind: 'file', path: 'Notes/Standup.md' }],
+    ['plan.pdf', 'plan.pdf', { kind: 'file', path: 'plan.pdf' }],
+  ])('reads %j as %j', (raw, home, target) => {
+    expect(parseHome(raw)).toBe(home)
+    expect(homeTargetOf(home)).toEqual(target)
   })
 
   it.each([
-    ['an empty note path', { kind: 'note', path: '' }],
-    ['a missing note path', { kind: 'note' }],
-    ['a non-string note path', { kind: 'note', path: 42 }],
-    ['an empty app path', { kind: 'app', path: '' }],
-    ['an empty app id', { kind: 'app', appId: '' }],
-    ['a missing app path', { kind: 'app' }],
-    ['an unknown kind', { kind: 'nowhere' }],
-    ['a missing kind', { path: 'a.md' }],
-    ['an array', [{ kind: 'daily' }]],
-    ['a string', 'daily'],
+    ['an empty string', ''],
+    ['a path outside the vault', '../x.md'],
+    ['an absolute path', '/etc/passwd'],
+    ['an object', { kind: 'board' }],
     ['null', null],
     ['a number', 7],
   ])('refuses %s', (_label, value) => {
-    expect(parseLandingTarget(value)).toBeNull()
-  })
-
-  it('does not accept a note tab’s preview flag', () => {
-    // `landing` is not the renderer's Tab union and must not grow its fields.
-    expect(parseLandingTarget({ kind: 'note', path: 'a.md', preview: true })).toEqual({
-      kind: 'note',
-      path: 'a.md',
-    })
-  })
-})
-
-describe('resolveVaultSettings — landing', () => {
-  it('warns and falls back when landing is unusable', () => {
-    const s = resolveVaultSettings(committed({ landing: { kind: 'note', path: '' } }), null)
-    expect(s.landing).toEqual({ kind: 'daily' })
-    expect(s.warnings.length).toBeGreaterThan(0)
-  })
-
-  it('keeps a valid committed landing when the local file says nothing about it', () => {
-    const s = resolveVaultSettings(
-      committed({ landing: { kind: 'app', path: 'retro.app' } }),
-      committed({ colorScheme: 'dark' }),
-    )
-    expect(s.landing).toEqual({ kind: 'app', path: 'retro.app' })
+    expect(parseHome(value)).toBeNull()
   })
 })
 
@@ -330,16 +280,14 @@ describe('VAULT_SETTING_DESCRIPTORS', () => {
     expect(new Set(keys).size).toBe(keys.length)
   })
 
-  it('offers only landing targets a brand-new vault can express', () => {
-    // No notes and no apps exist yet, so the step cannot offer them. Pointing
-    // `landing` at either stays a file edit.
-    const landing = VAULT_SETTING_DESCRIPTORS.find((d) => d.key === 'landing')!
-    expect(landing.control.kind).toBe('choice')
-    const values =
-      landing.control.kind === 'choice'
-        ? landing.control.options.map((o) => (o.value as { kind: string }).kind)
-        : []
-    expect(values).toEqual(['daily', 'board', 'agenda', 'mail'])
+  it('offers Home the views and the vault’s apps', () => {
+    const home = VAULT_SETTING_DESCRIPTORS.find((d) => d.key === 'home')!
+    expect(home.control.kind).toBe('choice')
+    if (home.control.kind !== 'choice') return
+    expect(home.control.apps).toBe(true)
+    const values = home.control.options.map((o) => o.value)
+    expect(values).toContain(VAULT_SETTING_DEFAULTS.home)
+    expect(values).toEqual(expect.arrayContaining(['daily', 'board', 'agenda', 'mail']))
   })
 
   it('gives the file-size cap a row without seeding it', () => {
@@ -380,7 +328,7 @@ describe('VAULT_SETTING_DESCRIPTORS', () => {
 describe('seedSettings', () => {
   it('writes the committed rows into the vault’s settings file', () => {
     const seeded = seedSettings('committed')
-    expect(Object.keys(seeded).sort()).toEqual(['dailyNotes', 'hooks', 'landing'])
+    expect(Object.keys(seeded).sort()).toEqual(['dailyNotes', 'home', 'hooks'])
   })
 
   it('still declares every transform the hooks expect, with archive-done off', () => {
@@ -415,7 +363,7 @@ describe('seedSettings', () => {
       JSON.stringify(seedSettings('local')),
     )
     expect(resolved.warnings).toEqual([])
-    expect(resolved.landing).toEqual(VAULT_SETTING_DEFAULTS.landing)
+    expect(resolved.home).toBe(VAULT_SETTING_DEFAULTS.home)
     expect(resolved.dailyNotes).toBe(VAULT_SETTING_DEFAULTS.dailyNotes)
     expect(resolved.colorScheme).toBe(VAULT_SETTING_DEFAULTS.colorScheme)
     expect(resolved.hooks).toEqual(VAULT_SETTING_DEFAULTS.hooks)
@@ -432,15 +380,13 @@ describe('parseSettingsPatch — the write-side trust boundary', () => {
     expect(patch).toEqual({ dailyNotes: false })
   })
 
-  it('validates a landing target exactly as a read does', () => {
-    const { patch } = parseSettingsPatch(
-      JSON.stringify({ landing: { kind: 'note', path: 'a.md', extra: 'x' } }),
-    )
-    expect(patch.landing).toEqual({ kind: 'note', path: 'a.md' })
+  it('normalises a home exactly as a read does', () => {
+    const { patch } = parseSettingsPatch(JSON.stringify({ home: './Notes/a.md' }))
+    expect(patch.home).toBe('Notes/a.md')
   })
 
   it.each([
-    ['an unusable landing target', { landing: { kind: 'note', path: '' } }],
+    ['a home outside the vault', { home: '../a.md' }],
     ['a non-boolean dailyNotes', { dailyNotes: 'yes' }],
     ['an unknown colour scheme', { colorScheme: 'sepia' }],
     ['a non-object hooks block', { hooks: 'all' }],
@@ -497,13 +443,13 @@ describe('splitAnswersByTarget', () => {
   it('sends each answer to the file its descriptor names', () => {
     const { committed, local } = splitAnswersByTarget({
       dailyNotes: false,
-      landing: { kind: 'board' },
+      home: 'board',
       hooks: { relink: false },
       colorScheme: 'dark',
     })
     expect(committed).toEqual({
       dailyNotes: false,
-      landing: { kind: 'board' },
+      home: 'board',
       hooks: { relink: false },
     })
     expect(local).toEqual({ colorScheme: 'dark' })
@@ -545,19 +491,18 @@ describe('splitAnswersByTarget', () => {
 })
 
 describe('a row that depends on another row', () => {
-  const landing = VAULT_SETTING_DESCRIPTORS.find((d) => d.key === 'landing')!
+  const home = VAULT_SETTING_DESCRIPTORS.find((d) => d.key === 'home')!
   const labels = (answers: Record<string, unknown>) =>
-    availableOptions(landing, answers).map((o) => o.label)
+    availableOptions(home, answers).map((o) => o.label)
 
   it('offers today’s note while the vault keeps one', () => {
     expect(labels({ dailyNotes: true })).toContain('Today’s note')
   })
 
   it('withdraws it when the vault keeps no daily note', () => {
-    // Landing on a daily a vault does not make resolves to an empty pane. That
-    // is coherent, and it reads as a broken choice.
+    // A Home on a daily the vault does not make would read as a broken choice.
     expect(labels({ dailyNotes: false })).not.toContain('Today’s note')
-    expect(labels({ dailyNotes: false })).toEqual(['The board', 'Your agenda', 'Mail'])
+    expect(labels({ dailyNotes: false })).toHaveLength(labels({ dailyNotes: true }).length - 1)
   })
 
   it('falls back to the descriptor default when the answer is absent', () => {
@@ -576,29 +521,39 @@ describe('a row that depends on another row', () => {
 })
 
 describe('normaliseAnswers', () => {
-  it('moves a landing target that has just been withdrawn', () => {
-    const fixed = normaliseAnswers({ dailyNotes: false, landing: { kind: 'daily' } })
-    expect(fixed.landing).toEqual({ kind: 'board' })
+  const home = VAULT_SETTING_DESCRIPTORS.find((d) => d.key === 'home')!
+
+  it('moves a Home that has just been withdrawn', () => {
+    const fixed = normaliseAnswers({ dailyNotes: false, home: 'daily' })
+    expect(fixed.home).toBe(availableOptions(home, { dailyNotes: false })[0]!.value)
   })
 
   it('leaves a still-valid answer exactly where it is', () => {
-    const answers = { dailyNotes: false, landing: { kind: 'mail' } }
-    expect(normaliseAnswers(answers).landing).toEqual({ kind: 'mail' })
+    const answers = { dailyNotes: false, home: 'mail' }
+    expect(normaliseAnswers(answers).home).toBe('mail')
+  })
+
+  it('leaves an app or a file it does not list alone', () => {
+    // Home takes values beyond its options: they are not withdrawn, only unlisted.
+    for (const value of ['retro.app', 'Notes/Standup.md']) {
+      const answers = { dailyNotes: false, home: value }
+      expect(normaliseAnswers(answers)).toBe(answers)
+    }
   })
 
   it('returns the same object when nothing needed repairing', () => {
-    const answers = { dailyNotes: true, landing: { kind: 'daily' } }
+    const answers = { dailyNotes: true, home: 'daily' }
     expect(normaliseAnswers(answers)).toBe(answers)
   })
 
   it('does not mutate what it was given', () => {
-    const answers = { dailyNotes: false, landing: { kind: 'daily' } }
+    const answers = { dailyNotes: false, home: 'daily' }
     normaliseAnswers(answers)
-    expect(answers.landing).toEqual({ kind: 'daily' })
+    expect(answers.home).toBe('daily')
   })
 
   it('is idempotent', () => {
-    const once = normaliseAnswers({ dailyNotes: false, landing: { kind: 'daily' } })
+    const once = normaliseAnswers({ dailyNotes: false, home: 'daily' })
     expect(normaliseAnswers(once)).toBe(once)
   })
 })
@@ -664,10 +619,11 @@ describe('editorFont', () => {
 })
 
 describe('home', () => {
-  it('takes any app bundle path, normalised', () => {
+  it('takes any app bundle or file path, normalised', () => {
     for (const [raw, path] of [
       ['Home.app', 'Home.app'],
       ['./Dash/Home.local.app/', 'Dash/Home.local.app'],
+      ['Notes/Standup.md', 'Notes/Standup.md'],
     ]) {
       const s = resolveVaultSettings(committed({ home: raw }), null)
       expect(s.home).toBe(path)
@@ -683,13 +639,13 @@ describe('home', () => {
     expect(s.home).toBe('Me.local.app')
   })
 
-  it('refuses what is not an app, and says so', () => {
-    for (const raw of ['notes', '../x.app', '.claude/x.app', 3]) {
+  it('refuses what is not a view or a path in the vault, and says so', () => {
+    for (const raw of ['../x.app', '/abs.app', '', 3]) {
       const s = resolveVaultSettings(committed({ home: raw }), null)
       expect(s.home).toBe(VAULT_SETTING_DEFAULTS.home)
       expect(s.warnings.join(' ')).toContain('home')
     }
-    expect(parseSettingsPatch(committed({ home: 'notes' })).patch).not.toHaveProperty('home')
+    expect(parseSettingsPatch(committed({ home: '../x.app' })).patch).not.toHaveProperty('home')
   })
 })
 
@@ -701,13 +657,7 @@ describe('the schema is the only declaration', () => {
 
   it('accepts every value it offers, on both the read and the write', () => {
     for (const setting of VAULT_SETTINGS) {
-      if (
-        setting.type.kind === 'boolean' ||
-        setting.type.kind === 'flags' ||
-        setting.type.kind === 'app'
-      ) {
-        continue
-      }
+      if (setting.type.kind === 'boolean' || setting.type.kind === 'flags') continue
       for (const option of setting.type.options) {
         const file = committed({ [setting.key]: option.value })
 
@@ -741,7 +691,6 @@ describe('the schema is the only declaration', () => {
       const control = VAULT_SETTING_DESCRIPTORS.find((d) => d.key === setting.key)!.control
       if (setting.type.kind === 'boolean') expect(control.kind).toBe('toggle')
       else if (setting.type.kind === 'flags') expect(control.kind).toBe('group')
-      else if (setting.type.kind === 'app') expect(control.kind).toBe('app')
       else expect(control.kind).toBe('choice')
     }
   })
@@ -755,8 +704,8 @@ describe('the schema is the only declaration', () => {
   })
 
   it('hands out a default nobody can mutate for the next reader', () => {
-    // The defaults object is frozen and shared; `landing` and `hooks` are
-    // objects, so a caller that edited what it was handed would change every
+    // The defaults object is frozen and shared; `hooks` is an
+    // object, so a caller that edited what it was handed would change every
     // later read of a vault that says nothing.
     const first = resolveVaultSettings(null, null)
     ;(first.hooks as Record<string, boolean>).relink = false

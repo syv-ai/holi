@@ -37,7 +37,7 @@ The workspace is one or more side-by-side panes, each with its own tab strip. Ta
 - The edge counts float and stay mounted, fading while showing their last non-empty number, so the strip never re-lays out mid-scroll.
 - Drop and overflow arithmetic lives in pure modules because jsdom computes no layout.
 - The `DataTransfer` payload is validated (`parseTabPayload`); it is a trust boundary.
-- Tabs and the pane layout are not persisted. A stored layout is keyed to a panel count, and panes come and go. What a vault opens on is the `landing` setting ([settings.md](settings.md)).
+- Tabs and the pane layout are not persisted. A stored layout is keyed to a panel count, and panes come and go. What a vault opens on is Home, the `home` setting ([settings.md](settings.md)).
 
 ## Rejected
 

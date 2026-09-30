@@ -6,6 +6,7 @@ import { mkdir, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join, relative, sep } from 'node:path'
 import {
   GITKEEP,
+  APP_LOG_FILE,
   SETTINGS_LOCAL_FILE,
   THEME_LOCAL_FILE,
   appBundleOf,
@@ -87,6 +88,9 @@ export function isWatchIgnoredPath(rel: string): boolean {
   // Only a bundle that is itself local: a `.local.` file inside a shared app
   // stays unwatched like any other.
   const bundle = isAppBundlePath(rel) ? rel : appBundleOf(rel)
+  // An app's log is written as it runs; watching it would rescan the vault on
+  // every line, in a personal app most of all.
+  if (bundle !== null && rel.slice(bundle.length + 1).toLowerCase() === APP_LOG_FILE) return true
   if (bundle !== null && isLocalOnlyPath(bundle)) return false
   return isLocalOnlyPath(rel)
 }

@@ -59,7 +59,6 @@ function legalValues(type: SettingType): string[] {
   if (type.kind === 'flags') {
     return ['Each one is true or false. Naming one says nothing about the others.']
   }
-  if (type.kind === 'app') return ['Any app in the vault: a folder path ending in .app.']
   const shown = type.options.map((o) => `${inline(o.value)} (${o.label})`).join(', ')
   if (type.kind === 'number') {
     // The options are what the PANE offers; the validator takes any positive
@@ -67,9 +66,8 @@ function legalValues(type: SettingType): string[] {
     return [`Any positive number of bytes. What the pane offers: ${shown}`]
   }
   if (type.kind === 'enum') return [`One of: ${shown}`]
-  // `parsed`: `landing`, whose value is an object and some of whose shapes are
-  // deliberately not offered by the pane.
-  return [`One of: ${shown}`, `Or anything else that is ${type.expected}, written by hand.`]
+  // `home`: the options, and any app or file the vault holds.
+  return [`One of: ${shown}`, 'Or any app or file in the vault, by its path.']
 }
 
 /**
@@ -77,7 +75,7 @@ function legalValues(type: SettingType): string[] {
  *
  * **A map has to be written in flow style here, not block.** `stringify` gives
  * a one-entry map back as `kind: daily`, which is correct YAML on its own and
- * becomes `landing: kind: daily`, a parse error, the moment it follows a key.
+ * becomes `key: kind: daily`, a parse error, the moment it follows a key.
  */
 function inline(value: unknown): string {
   if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
@@ -88,7 +86,7 @@ function inline(value: unknown): string {
 }
 
 /** How many entries a map may have before it is written under its key rather
- *  than beside it. `landing` has one and reads as a value; `hooks` has five and
+ *  than beside it. A map of one or two reads as a value; `hooks` has five and
  *  reads as a list of switches, which is also how the settings tab shows it. */
 const FLOW_LIMIT = 2
 
@@ -105,7 +103,7 @@ function block(value: unknown): string | undefined {
 }
 
 /** Wrapped to something a terminal and a narrow editor pane can both read.
- *  A `{ ... }` is one word, so a landing target is never split across lines. */
+ *  A `{ ... }` is one word, so a small map is never split across lines. */
 function wrap(text: string, width = 76): string[] {
   const out: string[] = []
   let line = ''

@@ -11,19 +11,18 @@
  * button on its Home tab.
  */
 import { lstat } from 'node:fs/promises'
-import { vaultRelPath } from '@holi/shared'
+import { appManifestText, vaultRelPath } from '@holi/shared'
 import { exactPath } from '@holi/shared/path-safety-node'
 import { writeAtomic } from '../vault/vault-files'
 import homeJs from './home-app/home.js?raw'
 import indexHtml from './home-app/index.html?raw'
-import manifest from './home-app/app.yaml?raw'
 
 /** Bundle-relative. The manifest last: it is what makes the app appear, and
  *  it should appear whole. */
 export const HOME_APP_FILES: readonly (readonly [string, string])[] = [
   ['index.html', indexHtml],
   ['home.js', homeJs],
-  ['app.yaml', manifest],
+  ['app.yaml', appManifestText('What the Home tab shows. Ask the vault assistant to change it.')],
 ]
 
 /** Write the Home app's files under `bundle` that are not there yet. Returns

@@ -11,7 +11,13 @@
  */
 import { stat } from 'node:fs/promises'
 import { join } from 'node:path'
-import { APP_MANIFEST_FILE, appName, isAppBundlePath, vaultRelPath } from '@holi/shared'
+import {
+  APP_MANIFEST_FILE,
+  appManifestText,
+  appName,
+  isAppBundlePath,
+  vaultRelPath,
+} from '@holi/shared'
 import { writeAtomic } from '../vault/vault-files'
 
 const ENTRY_FILE = 'index.html'
@@ -75,7 +81,7 @@ export async function initAppOp(root: string, path: string): Promise<AppInitResu
 
   const created: string[] = []
   for (const [file, content] of [
-    [APP_MANIFEST_FILE, MANIFEST],
+    [APP_MANIFEST_FILE, appManifestText()],
     [ENTRY_FILE, entryFor(appName(bundle))],
   ] as const) {
     const rel = `${bundle}/${file}`
@@ -85,14 +91,6 @@ export async function initAppOp(root: string, path: string): Promise<AppInitResu
   }
   return { ok: true, created }
 }
-
-const MANIFEST = [
-  '# This file is what finishes the app. Write it LAST when you author by hand:',
-  '# the app appears the moment it exists, so a manifest written first opens a',
-  '# tab onto half a page. The name is the folder name.',
-  '# description: ...',
-  '',
-].join('\n')
 
 /** A placeholder that renders something rather than a blank tab, which is
  *  indistinguishable from a broken app. It carries no bridge script: the bridge

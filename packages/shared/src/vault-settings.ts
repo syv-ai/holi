@@ -78,33 +78,46 @@ export const EDITOR_FONT_STACKS: Readonly<Record<EditorFont, string>> = Object.f
   serif: 'ui-serif, Georgia, Cambria, "Times New Roman", serif',
 })
 
-/** The unique surfaces a vault can land on. Mirrors the renderer's
- *  `SingletonTab` deliberately rather than importing it: see `LandingTarget`. */
-export type SingletonLanding = 'board' | 'agenda' | 'mail'
+/** What Home can be besides an app or a file: one of Holi's own views. */
+export type HomeView = 'daily' | 'board' | 'agenda' | 'mail'
 
-const SINGLETON_LANDINGS: readonly SingletonLanding[] = ['board', 'agenda', 'mail']
+export const HOME_VIEWS: readonly HomeView[] = ['daily', 'board', 'agenda', 'mail']
 
 /**
- * What a vault opens on.
+ * What Home is, classified. The file holds one string (`homeTargetOf` reads
+ * it): a view's name, or a vault path to an app or a file.
  *
- * **`daily` is a kind, not a path.** `{kind:'note', path:'22-08-2026.md'}` would
- * rot overnight; naming the daily by kind means the target keeps pointing at it
- * as the daily note grows into a dashboard.
- *
- * **Not the renderer's `Tab` union**, though it covers the same ground. Its
- * `SingletonTab` is a *named* literal so `openSingleton(w, 'app')` cannot
- * typecheck (`state/panes.ts`). Parse to this, then dispatch per kind, and that
- * property survives the crossing.
+ * **`daily` is a view, not a path.** `22-08-2026.md` would rot overnight;
+ * naming the daily by kind keeps Home on it as the days turn.
  */
-export type LandingTarget =
-  | { kind: 'daily' }
-  | { kind: 'note'; path: string }
+export type HomeTarget =
+  | { kind: HomeView }
   | { kind: 'app'; path: string }
-  | { kind: SingletonLanding }
+  | { kind: 'file'; path: string }
+
+/** What Home is, from its setting. Never throws: a validated value. */
+export function homeTargetOf(home: string): HomeTarget {
+  if ((HOME_VIEWS as readonly string[]).includes(home)) return { kind: home as HomeView }
+  return isAppBundlePath(home) ? { kind: 'app', path: home } : { kind: 'file', path: home }
+}
+
+/**
+ * An untrusted value as a `home`, or `null`: a view's name, or a path inside
+ * the vault (an app bundle, or any file), normalised.
+ */
+export function parseHome(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  const trimmed = value.trim()
+  if ((HOME_VIEWS as readonly string[]).includes(trimmed)) return trimmed
+  try {
+    return vaultRelPath(trimmed.replace(/\/+$/, ''))
+  } catch {
+    return null
+  }
+}
 
 export interface ResolvedVaultSettings {
-  landing: LandingTarget
-  /** The app the Home tab shows: a bundle path, which may not exist yet. */
+  /** What Home is, and what the vault opens on: see `homeTargetOf`. */
   home: string
   dailyNotes: boolean
   colorScheme: ColorScheme
@@ -130,44 +143,6 @@ function parseFile(text: string | null): Record<string, unknown> {
       : {}
   } catch {
     return {}
-  }
-}
-
-/**
- * Read an untrusted value as a landing target, or `null`.
- *
- * Exported because a *write* has to cross the same boundary a read does, so
- * nothing can reach the file by a route that skips this check.
- */
-export function parseLandingTarget(value: unknown): LandingTarget | null {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null
-
-  const { kind, path, appId } = value as Record<string, unknown>
-  if (kind === 'daily') return { kind: 'daily' }
-  if (kind === 'note') {
-    return typeof path === 'string' && path !== '' ? { kind: 'note', path } : null
-  }
-  if (kind === 'app') {
-    if (typeof path === 'string' && path !== '') return { kind: 'app', path }
-    // Before bundles an app was `.holi/apps/<id>`, and opening a vault moves it to
-    // `<id>.app` at the root, so a landing written then still lands.
-    if (typeof appId === 'string' && appId !== '') return { kind: 'app', path: `${appId}.app` }
-    return null
-  }
-  if (SINGLETON_LANDINGS.includes(kind as SingletonLanding)) {
-    return { kind: kind as SingletonLanding }
-  }
-  return null
-}
-
-/** An untrusted value as an app bundle path, normalised, or `null`. */
-export function parseAppPath(value: unknown): string | null {
-  if (typeof value !== 'string') return null
-  try {
-    const path = vaultRelPath(value.replace(/\/+$/, ''))
-    return isAppBundlePath(path) ? path : null
-  } catch {
-    return null
   }
 }
 
@@ -226,9 +201,8 @@ export function resolveVaultSettings(
   return { ...(out as Omit<ResolvedVaultSettings, 'warnings'>), warnings }
 }
 
-/** A default, detached from the frozen shared object. Only `landing` and the
- *  flags blocks are objects, and both are one level deep, so a shallow copy is
- *  enough. */
+/** A default, detached from the frozen shared object. Only the flags block is
+ *  an object, one level deep, so a shallow copy is enough. */
 function clone(value: unknown): unknown {
   return typeof value === 'object' && value !== null ? { ...(value as object) } : value
 }
@@ -240,8 +214,8 @@ function clone(value: unknown): unknown {
 /** Which of the two files a row's answer is written to. */
 export type SettingTarget = 'committed' | 'local'
 
-/** One option in a `choice`. `value` is whatever the key holds (a `LandingTarget`
- *  for `landing`, a `ColorScheme` for `colorScheme`) and is written verbatim. */
+/** One option in a `choice`. `value` is whatever the key holds (a `home` string
+ *  for `home`, a `ColorScheme` for `colorScheme`) and is written verbatim. */
 export interface VaultSettingOption {
   value: unknown
   label: string
@@ -257,20 +231,23 @@ export interface VaultSettingOption {
  */
 export type VaultSettingControl =
   | { kind: 'toggle' }
-  | { kind: 'choice'; options: readonly VaultSettingOption[] }
+  | {
+      kind: 'choice'
+      options: readonly VaultSettingOption[]
+      /** The vault's apps are options too, and the settings tab lists them. */
+      apps?: true
+    }
   | {
       kind: 'group'
       toggles: readonly { key: TransformName; label: string; explanation: string }[]
     }
-  /** Pick one of the vault's apps: the options are the renderer's to list. */
-  | { kind: 'app' }
+
 
 /** A key a descriptor can describe: every setting the resolver answers, each
  *  with a row in the settings tab. A superset of what the ritual asks
  *  (`askedAtBirth`). */
 export type VaultSettingKey =
   | 'dailyNotes'
-  | 'landing'
   | 'home'
   | 'hooks'
   | 'colorScheme'
@@ -317,7 +294,7 @@ const LOCAL_FILE_HINT = `Change it any time in ${SETTINGS_LOCAL_FILE}, which sta
  * refuses. Here the kind decides the control (`toggle`, `choice`, `group`) and
  * the entry supplies only the labels, so that class of bug cannot be written.
  *
- * Six kinds cover seven settings; `parsed` and `app` exist for one each.
+ * Five kinds cover six settings, and the fifth exists for exactly one of them.
  */
 export type SettingType =
   | { kind: 'boolean' }
@@ -339,21 +316,10 @@ export type SettingType =
       flags: readonly { key: TransformName; label: string; explanation: string }[]
     }
   /**
-   * Anything with its own parser. The escape hatch, used once: a `landing`
-   * value is an object, and two of its four shapes are not offered in the UI.
+   * What Home is: one of `options`, or any app or file in the vault by its
+   * path (`parseHome`). The settings tab adds the vault's apps to the options.
    */
-  | {
-      kind: 'parsed'
-      parse: (value: unknown) => unknown | null
-      /** How the refusal reads: `expected <this>`. */
-      expected: string
-      options: readonly VaultSettingOption[]
-    }
-  /**
-   * An app bundle path (`parseAppPath`). The legal values are whatever apps
-   * the vault holds, so the pane lists them itself and there are no options.
-   */
-  | { kind: 'app' }
+  | { kind: 'home'; options: readonly VaultSettingOption[] }
 
 /**
  * One setting, declared once.
@@ -420,49 +386,30 @@ export const VAULT_SETTINGS: readonly VaultSetting[] = [
     section: 'general',
   },
   {
-    key: 'landing',
-    label: 'Open on',
-    explanation: 'What you see when you open this vault.',
+    key: 'home',
+    label: 'Home is',
+    explanation: 'What Home shows, and what you see when you open this vault.',
     type: {
-      // The one escape hatch. A landing target is an OBJECT, and two of its
-      // shapes (`note`, `app`) are deliberately not offered here, so no generic
-      // kind can validate it.
-      kind: 'parsed',
-      parse: parseLandingTarget,
-      expected: 'a usable landing target',
-      // Only what a brand-new vault can express: it holds no notes and no apps
-      // yet. Pointing `landing` at either stays a file edit, which is where
-      // authoring belongs.
+      kind: 'home',
       options: [
-        // Only on offer while the vault actually keeps one: landing on a daily
-        // note a vault does not make would read as a broken choice.
+        { value: 'Home.app', label: 'The Home app' },
+        // Only on offer while the vault actually keeps one: a Home on a daily
+        // note the vault does not make would read as a broken choice.
         {
-          value: { kind: 'daily' },
+          value: 'daily',
           label: 'Today’s note',
           requires: { key: 'dailyNotes', equals: true },
         },
-        { value: { kind: 'board' }, label: 'The board' },
-        { value: { kind: 'agenda' }, label: 'Your agenda' },
-        { value: { kind: 'mail' }, label: 'Mail' },
+        { value: 'board', label: 'The board' },
+        { value: 'agenda', label: 'Your agenda' },
+        { value: 'mail', label: 'Mail' },
       ],
     },
-    default: { kind: 'daily' } as LandingTarget,
-    target: 'committed',
-    askedAtBirth: true,
-    whereToChange: `${SETTINGS_FILE_HINT}, including pointing it at a note or an app`,
-    section: 'general',
-  },
-  {
-    key: 'home',
-    label: 'Home shows',
-    explanation:
-      'The app on the Home tab. Ask the vault assistant to change it, or pick another app.',
-    type: { kind: 'app' },
+    // The app a new vault is created with (`main/apps/home-app.ts`).
     default: 'Home.app',
     target: 'committed',
-    // An app a new vault is given, not a question for someone who has none.
-    askedAtBirth: false,
-    whereToChange: `${SETTINGS_FILE_HINT}, or in ${SETTINGS_LOCAL_FILE} for a home of your own`,
+    askedAtBirth: true,
+    whereToChange: `${SETTINGS_FILE_HINT}, where it can also name any app or file by its path. A home of your own goes in ${SETTINGS_LOCAL_FILE}`,
     section: 'general',
   },
   {
@@ -633,9 +580,9 @@ function controlFor(type: SettingType): VaultSettingControl {
       return { kind: 'toggle' }
     case 'flags':
       return { kind: 'group', toggles: type.flags }
-    case 'app':
-      return { kind: 'app' }
-    // enum, number and parsed are all "pick one of these", and differ only in
+    case 'home':
+      return { kind: 'choice', options: type.options, apps: true }
+    // enum and number are both "pick one of these", and differ only in
     // what ELSE is legal, which is the validator's business, not the control's.
     default:
       return { kind: 'choice', options: type.options }
@@ -670,19 +617,15 @@ function readValue(
       return typeof value === 'number' && Number.isFinite(value) && value > 0
         ? { ok: true, value }
         : { ok: false, expected: 'a positive number' }
-    case 'parsed': {
-      const parsed = type.parse(value)
-      return parsed === null ? { ok: false, expected: type.expected } : { ok: true, value: parsed }
-    }
     case 'flags':
       return typeof value === 'object' && value !== null && !Array.isArray(value)
         ? { ok: true, value }
         : { ok: false, expected: 'an object' }
-    case 'app': {
-      const path = parseAppPath(value)
-      return path === null
-        ? { ok: false, expected: 'an app, a folder path ending in .app' }
-        : { ok: true, value: path }
+    case 'home': {
+      const home = parseHome(value)
+      return home === null
+        ? { ok: false, expected: `one of ${HOME_VIEWS.join(', ')}, or a path in the vault` }
+        : { ok: true, value: home }
     }
   }
 }
@@ -825,7 +768,7 @@ export function splitAnswersByTarget(answers: Record<string, unknown>): {
 /**
  * The options a choice can offer, given the answers so far.
  *
- * A row can depend on another row: landing on today's note is only on offer
+ * A row can depend on another row: a Home on today's note is only on offer
  * while the vault actually keeps one. Filtering rather than disabling: the
  * reason is already visible one row up.
  *
@@ -846,7 +789,7 @@ export function availableOptions(
 /**
  * Repair answers that another answer has just invalidated.
  *
- * Turning daily notes off takes "today's note" off the landing row, and the
+ * Turning daily notes off takes "today's note" off the Home row, and the
  * answer sitting there can no longer be seen or changed. Move it to the first
  * option still on offer, visibly, rather than leaving a row with nothing
  * selected or writing a value that was silently withdrawn.
@@ -864,6 +807,14 @@ export function normaliseAnswers(answers: Record<string, unknown>): Record<strin
     if (options.length === 0) continue
     const current = JSON.stringify(out[descriptor.key])
     if (options.some((o) => JSON.stringify(o.value) === current)) continue
+    // A row that takes values beyond its options (Home's apps and files) is
+    // repaired only when its answer was one of them and has been withdrawn.
+    if (
+      descriptor.control.apps === true &&
+      !descriptor.control.options.some((o) => JSON.stringify(o.value) === current)
+    ) {
+      continue
+    }
     // Copy on first change only, so an untouched object comes back identical.
     if (out === answers) out = { ...answers }
     out[descriptor.key] = options[0]!.value

@@ -8,7 +8,7 @@
  * its own hand-rolled `JSON.parse`.
  */
 import { parse as parseYaml } from 'yaml'
-import { SETTINGS_FILE, SETTINGS_LOCAL_FILE } from '@holi/shared'
+import { SETTINGS_FILE, SETTINGS_LOCAL_FILE, VAULT_SETTING_DEFAULTS } from '@holi/shared'
 import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -70,25 +70,22 @@ describe('readMaxCommittedFileBytes', () => {
 describe('readVaultSettings', () => {
   it('resolves to the defaults in a vault with no settings files', async () => {
     const s = await readVaultSettings(await vault())
-    expect(s.landing).toEqual({ kind: 'daily' })
+    expect(s.home).toBe(VAULT_SETTING_DEFAULTS.home)
     expect(s.dailyNotes).toBe(true)
     expect(s.hooks).toEqual(DEFAULT_HOOKS)
     expect(s.warnings).toEqual([])
   })
 
   it('reads the committed file', async () => {
-    const s = await readVaultSettings(await vault('{"landing":{"kind":"board"}}'))
-    expect(s.landing).toEqual({ kind: 'board' })
+    const s = await readVaultSettings(await vault('{"home":"board"}'))
+    expect(s.home).toBe('board')
   })
 
   it('lets the local file override the committed one, per key', async () => {
     const s = await readVaultSettings(
-      await vault(
-        '{"landing":{"kind":"board"},"dailyNotes":false}',
-        '{"landing":{"kind":"agenda"}}',
-      ),
+      await vault('{"home":"board","dailyNotes":false}', '{"home":"agenda"}'),
     )
-    expect(s.landing).toEqual({ kind: 'agenda' })
+    expect(s.home).toBe('agenda')
     // Untouched by a local file that says nothing about it.
     expect(s.dailyNotes).toBe(false)
   })
@@ -145,10 +142,10 @@ describe('writeVaultSettings', () => {
   })
 
   it('merges over what is already there, key by key', async () => {
-    const root = await vault('{"landing":{"kind":"board"},"maxCommittedFileBytes":2048}')
+    const root = await vault('{"home":"board","maxCommittedFileBytes":2048}')
     await writeVaultSettings(root, { committed: { dailyNotes: false } })
     expect(await settingsAt(root, SETTINGS_FILE)).toEqual({
-      landing: { kind: 'board' },
+      home: 'board',
       maxCommittedFileBytes: 2048,
       dailyNotes: false,
     })
@@ -185,10 +182,10 @@ describe('writeVaultSettings', () => {
   it('writes both files in one call', async () => {
     const root = await vault()
     await writeVaultSettings(root, {
-      committed: { landing: { kind: 'board' } },
+      committed: { home: 'board' },
       local: { colorScheme: 'dark' },
     })
-    expect(await settingsAt(root, SETTINGS_FILE)).toEqual({ landing: { kind: 'board' } })
+    expect(await settingsAt(root, SETTINGS_FILE)).toEqual({ home: 'board' })
     expect(await settingsAt(root, SETTINGS_LOCAL_FILE)).toEqual({ colorScheme: 'dark' })
   })
 
@@ -216,11 +213,11 @@ describe('writeVaultSettings', () => {
   it('round-trips through the reader', async () => {
     const root = await vault()
     await writeVaultSettings(root, {
-      committed: { landing: { kind: 'agenda' }, dailyNotes: false },
+      committed: { home: 'agenda', dailyNotes: false },
       local: { colorScheme: 'dark' },
     })
     const s = await readVaultSettings(root)
-    expect(s.landing).toEqual({ kind: 'agenda' })
+    expect(s.home).toBe('agenda')
     expect(s.dailyNotes).toBe(false)
     expect(s.colorScheme).toBe('dark')
     expect(s.warnings).toEqual([])

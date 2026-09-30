@@ -7,21 +7,16 @@
  * `resolveVaultSettings`.
  *
  * **Cached, and keyed by remote.** The launch sequence asks twice in quick
- * succession (the landing and the sweep both need `dailyNotes`). Keying on the
+ * succession (the vault's opening and the sweep both need `dailyNotes`). Keying on the
  * remote is the whole invalidation rule.
  *
  * A settings file edited on disk while the app runs (by the agent, by hand, or
  * by a pull) is re-read through `useSettingsFollowDisk`, so the Home tab and
- * the live settings follow it. `landing` still acts only when a vault opens.
+ * the live settings follow it.
  */
 import { atom, useAtomValue, useSetAtom } from 'jotai'
 import { useEffect, useRef } from 'react'
-import {
-  SETTINGS_FILE,
-  SETTINGS_LOCAL_FILE,
-  VAULT_SETTING_DEFAULTS,
-  type ResolvedVaultSettings,
-} from '@holi/shared'
+import { SETTINGS_FILE, SETTINGS_LOCAL_FILE, type ResolvedVaultSettings } from '@holi/shared'
 import { trpc } from '../lib/trpc'
 import { activeRemoteAtom, snapshotAtom } from './vaults'
 
@@ -55,15 +50,6 @@ export const loadVaultSettingsAtom = atom(
     return settings
   },
 )
-
-/** The app the Home tab shows: the setting once this vault's settings are read,
- *  the default until then. It may name an app that does not exist yet. */
-export const homeAppAtom = atom((get): string => {
-  const cached = get(vaultSettingsAtom)
-  return cached !== null && cached.remote === get(activeRemoteAtom)
-    ? cached.settings.home
-    : VAULT_SETTING_DEFAULTS.home
-})
 
 /** The two settings files as the snapshot last saw them. */
 const settingsFilesAtom = atom((get): string =>

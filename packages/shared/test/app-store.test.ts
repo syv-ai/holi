@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
+  APP_LOG_MAX_ENTRIES,
+  appendAppLog,
   formatRecord,
   isAppDataPath,
   isRecordId,
@@ -186,5 +188,40 @@ describe('isAppDataPath', () => {
     expect(isAppDataPath('DATA')).toBe(true)
     expect(isAppDataPath('database.js')).toBe(false)
     expect(isAppDataPath('lib/data/x.js')).toBe(false)
+  })
+})
+
+describe('appendAppLog', () => {
+  const at = (iso: string) => new Date(iso)
+
+  it('appends one entry per line, a stack continuing indented', () => {
+    const one = appendAppLog(
+      null,
+      { level: 'error', text: 'boom\n  at f()' },
+      at('2026-10-01T10:00:00Z'),
+    )
+    expect(one).toBe('2026-10-01T10:00:00.000Z error boom\n    at f()\n')
+    const two = appendAppLog(one, { level: 'info', text: 'ok' }, at('2026-10-01T10:01:00Z'))
+    expect(two.split('\n').filter((l) => /^\d{4}/.test(l))).toHaveLength(2)
+  })
+
+  it('drops what is past its day, stack and all', () => {
+    const old = appendAppLog(
+      null,
+      { level: 'error', text: 'old\nstack' },
+      at('2026-09-29T10:00:00Z'),
+    )
+    const next = appendAppLog(old, { level: 'warn', text: 'new' }, at('2026-10-01T10:00:00Z'))
+    expect(next).toBe('2026-10-01T10:00:00.000Z warn new\n')
+  })
+
+  it('keeps at most the cap, newest last', () => {
+    let log: string | null = null
+    for (let i = 0; i < APP_LOG_MAX_ENTRIES + 5; i++) {
+      log = appendAppLog(log, { level: 'info', text: `n${i}` }, at('2026-10-01T10:00:00Z'))
+    }
+    const lines = log!.trimEnd().split('\n')
+    expect(lines).toHaveLength(APP_LOG_MAX_ENTRIES)
+    expect(lines.at(-1)).toContain(`n${APP_LOG_MAX_ENTRIES + 4}`)
   })
 })

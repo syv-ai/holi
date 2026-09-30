@@ -37,8 +37,9 @@ export interface AppManifest {
 }
 
 /** The reads an app must opt into, because what they return is one person's,
- *  not the vault's: an app can keep it in synced records or send it anywhere. */
-export const APP_AFFORDANCES = ['mail', 'calendar'] as const
+ *  not the vault's: an app can keep it in synced records or send it anywhere.
+ *  `location` is the browser's geolocation, allowed to that app's frame only. */
+export const APP_AFFORDANCES = ['mail', 'calendar', 'location'] as const
 
 export type AppAffordance = (typeof APP_AFFORDANCES)[number]
 
@@ -104,6 +105,31 @@ export function parseAppManifest(yaml: string): AppManifest | null {
   const allow = parseAffordances((raw as Record<string, unknown>)['dangerously-allow'])
   if (allow !== undefined) manifest.dangerouslyAllow = allow
   return manifest
+}
+
+/**
+ * A new app's manifest, every key written out and the unused ones blank, so
+ * whoever opens it (a person or the agent) sees everything an app can say
+ * without looking it up. A blank key parses as unused.
+ */
+export function appManifestText(description?: string): string {
+  return [
+    '# This app\u2019s manifest. It is what makes the app appear, so it is written',
+    '# last. Every key is optional; a blank one is unused.',
+    '',
+    '# What the app is for, shown where apps are listed. Its name is the folder\u2019s.',
+    `description:${description === undefined ? '' : ` ${JSON.stringify(description)}`}`,
+    '',
+    '# The collections holi.store(name) may use, each with an optional JSON Schema:',
+    '#   items:',
+    '#     schema: { type: object, required: [title], properties: { title: { type: string } } }',
+    'collections:',
+    '',
+    `# One person\u2019s data this app reads, approved by each person before it runs:`,
+    `# any of ${APP_AFFORDANCES.join(', ')}.`,
+    'dangerously-allow:',
+    '',
+  ].join('\n')
 }
 
 /** A file of nothing but comments parses to `null` like an empty one does, and

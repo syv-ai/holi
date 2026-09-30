@@ -40,14 +40,38 @@ export const BRIDGE_JS = `(() => {
     if (!entry) return
     pending.delete(msg.id)
     if (msg.ok) entry.resolve(msg.value)
-    else entry.reject(new Error(String(msg.error)))
+    else {
+      report('warn', ['holi ' + entry.method + ' refused: ' + String(msg.error)])
+      entry.reject(new Error(String(msg.error)))
+    }
   })
   const call = (method, params) =>
     new Promise((resolve, reject) => {
       const id = crypto.randomUUID()
-      pending.set(id, { resolve, reject })
+      pending.set(id, { resolve, reject, method })
       parent.postMessage({ id, method, params }, '*')
     })
+  // The app's log (log.local.txt beside its code, for the vault's agent):
+  // console errors and warnings, uncaught errors, refused calls, and
+  // holi.log(). A burst is capped, so a loop that logs cannot flood Holi.
+  let budget = 50
+  setInterval(() => { budget = 50 }, 1000)
+  const describe = (part) => {
+    if (part instanceof Error) return part.stack || String(part)
+    if (typeof part === 'string') return part
+    try { return JSON.stringify(part) } catch { return String(part) }
+  }
+  const report = (level, parts) => {
+    if (budget <= 0) return
+    budget -= 1
+    parent.postMessage({ log: { level, text: parts.map(describe).join(' ') } }, '*')
+  }
+  for (const level of ['error', 'warn']) {
+    const original = console[level].bind(console)
+    console[level] = (...args) => { report(level, args); original(...args) }
+  }
+  addEventListener('error', (e) => report('error', [e.error || e.message]))
+  addEventListener('unhandledrejection', (e) => report('error', ['unhandled rejection:', e.reason]))
   // Listen for a topic: docs, tasks, sync, agent, recents, history, or store:<collection>.
   // Returns the unsubscribe.
   const on = (topic, fn) => {
@@ -90,6 +114,8 @@ export const BRIDGE_JS = `(() => {
       threads: (query) => call('mail.threads', query === undefined ? {} : { query }),
     },
     on,
+    // A line in the app's log, for whoever debugs it next.
+    log: (...parts) => report('info', parts),
     // The app's own records, one JSON object each. put(value) makes an id;
     // put(id, value) uses yours. query(fn) filters the whole collection here,
     // in the frame: a collection is small, and a function cannot cross. The

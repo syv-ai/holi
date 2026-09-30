@@ -228,14 +228,6 @@ test('shows the resolver’s complaint beside the setting it names', async () =>
   expect(within(daily).getByText(/expected a boolean/)).toBeInTheDocument()
 })
 
-test('says which settings wait for the next vault open', async () => {
-  setup()
-  const landing = await screen.findByRole('group', { name: 'Open on' })
-  expect(within(landing).getByText(/next time this vault opens/)).toBeInTheDocument()
-  // And only that one: everything else applies as you click it.
-  expect(screen.getAllByText(/next time this vault opens/)).toHaveLength(1)
-})
-
 test('offers the files the section on screen is a view of', async () => {
   // Per section: the point is saying WHICH file backs what you are looking at.
   setup()

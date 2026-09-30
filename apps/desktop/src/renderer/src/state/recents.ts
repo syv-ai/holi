@@ -10,7 +10,7 @@
  * `runCommandAtom` records each command it runs.
  */
 import { atom, type Getter } from 'jotai'
-import { atomWithStorage } from 'jotai/utils'
+import { atomWithStorage, selectAtom } from 'jotai/utils'
 import { entryOfTab, prune, touch, type RecentEntry } from '../lib/recents'
 import { agentSessionsAtom, agentTerminalsAtom } from './agent'
 import { appPathsAtom } from './apps'
@@ -74,3 +74,25 @@ export const touchRecentAtom = atom(null, (get, set, entry: RecentEntry): void =
 export function recentOfTab(tab: Tab): RecentEntry {
   return entryOfTab(tab)
 }
+
+/**
+ * The finished apps, most recently opened first, then the rest by name: the
+ * nav's Apps list, where the app you just used is the one you want again.
+ */
+const appPathsByRecencyRawAtom = atom((get): string[] => {
+  const order = new Map<string, number>()
+  get(recentsAtom).forEach((r, i) => {
+    if (r.kind === 'app' && !order.has(r.key)) order.set(r.key, i)
+  })
+  const rank = (p: string) => order.get(p) ?? Infinity
+  // `appPathsAtom` is by name, and the sort is stable, so the unused keep it.
+  return [...get(appPathsAtom)].sort((a, b) => rank(a) - rank(b))
+})
+
+/** The same array until the order changes: the recents move on every tab
+ *  switch, and a new list restarts the nav menu's layout pass. */
+export const appPathsByRecencyAtom = selectAtom(
+  appPathsByRecencyRawAtom,
+  (paths) => paths,
+  (a, b) => a.length === b.length && a.every((p, i) => p === b[i]),
+)

@@ -3,7 +3,7 @@
  * something; these are not).
  *
  * The one list. The renderer's `SingletonTab` is this union, a vault app's
- * `holi.open('board')` accepts exactly these, and a landing is a subset of them.
+ * `holi.open('board')` accepts exactly these, and Home's views are a subset of them.
  */
 export const SINGLETON_SURFACES = [
   'home',

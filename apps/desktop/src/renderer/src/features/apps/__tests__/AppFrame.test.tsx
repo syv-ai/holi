@@ -86,7 +86,9 @@ test('is sandboxed WITHOUT allow-same-origin', async () => {
   // here it would also give the app a real origin, and with it localStorage,
   // cookies, and a reachable holi-vault://.
   await renderApp()
-  expect(frameOf().getAttribute('sandbox')).toBe('allow-scripts')
+  const sandbox = frameOf().getAttribute('sandbox')!.split(' ')
+  expect(sandbox).toContain('allow-scripts')
+  expect(sandbox).not.toContain('allow-same-origin')
 })
 
 test('ignores a message that did not come from the frame', async () => {

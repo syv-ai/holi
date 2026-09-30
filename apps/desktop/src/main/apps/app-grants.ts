@@ -23,6 +23,7 @@ import { readdir, readFile, readlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
   APP_MANIFEST_FILE,
+  isAppPrivatePath,
   isLocalOnlyPath,
   parseAppManifest,
   vaultRelPath,
@@ -76,8 +77,8 @@ type GrantFile = Record<string, GrantRecord>
  * of its bytes, each symlink's path and target, every directory (records
  * aside, `node_modules` included, since the protocol serves it), in name
  * order. Each entry is framed by JSON, so no file's bytes can pass for the
- * boundary between two entries. `data/` is left out because records change
- * every time the app is used, and the approval is of the code.
+ * boundary between two entries. `data/` and the log are left out because they
+ * change every time the app is used, and the approval is of the code.
  */
 export async function bundleCodeHash(root: string, bundle: string): Promise<string> {
   const hash = createHash('sha256')
@@ -86,7 +87,7 @@ export async function bundleCodeHash(root: string, bundle: string): Promise<stri
     entries.sort((x, y) => (x.name < y.name ? -1 : x.name > y.name ? 1 : 0))
     for (const e of entries) {
       const path = rel === '' ? e.name : `${rel}/${e.name}`
-      if (rel === '' && e.name === 'data') continue
+      if (rel === '' && isAppPrivatePath(e.name)) continue
       const abs = join(root, bundle, path)
       if (e.isSymbolicLink()) {
         const target = await readlink(abs).catch(() => '')

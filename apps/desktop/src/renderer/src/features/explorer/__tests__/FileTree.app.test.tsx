@@ -74,10 +74,10 @@ test('→ shows its contents, and ← hides them again', async () => {
   expect(rowFor('Finance/Budget.app')?.getAttribute('aria-expanded')).toBe('false')
 })
 
-test('Show Contents in its menu lists its files', async () => {
+test('Show App Files in its menu lists its files', async () => {
   tree(FINISHED)
   await userEvent.pointer({ target: rowFor('Finance/Budget.app')!, keys: '[MouseRight]' })
-  await userEvent.click(await screen.findByText('Show Contents'))
+  await userEvent.click(await screen.findByText('Show App Files'))
   expect(rowFor('Finance/Budget.app/app.yaml')).not.toBeNull()
 })
 

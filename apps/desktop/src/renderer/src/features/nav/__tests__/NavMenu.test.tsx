@@ -4,13 +4,16 @@
  * expanded list: jsdom lays nothing out, so the vertical dock has no room and
  * holds only More, whose list is then every item.
  */
-import { render, screen, within } from '@/test/render'
+import { render, screen, waitFor, within } from '@/test/render'
 import userEvent from '@testing-library/user-event'
 import { Provider, atom, createStore } from 'jotai'
 import { expect, test, vi } from 'vitest'
+import { VAULT_SETTING_DEFAULTS } from '@holi/shared'
 import { googleAccountAtom } from '@/state/google'
 import { paletteAtom } from '@/state/palette'
 import { activeTab, workspaceAtom } from '@/state/panes'
+import { vaultSettingsAtom } from '@/state/settings'
+import { activeRemoteAtom } from '@/state/vaults'
 import { NavMenu } from '../NavMenu'
 
 const { apps, tasks, overdue } = vi.hoisted(() => ({
@@ -96,10 +99,16 @@ test('with nothing overdue the board count is plain', async () => {
 })
 
 test('Home opens the home surface', async () => {
-  const { store, user } = setup()
+  const { store, user } = setup({ appPaths: [VAULT_SETTING_DEFAULTS.home] })
+  // A vault open, its settings already read: Home is the app it holds.
+  store.set(activeRemoteAtom, 'me/notes')
+  store.set(vaultSettingsAtom, {
+    remote: 'me/notes',
+    settings: { ...VAULT_SETTING_DEFAULTS, warnings: [] },
+  })
   await openList(user)
   await user.click(screen.getByRole('button', { name: 'Home' }))
-  expect(activeTab(store.get(workspaceAtom))).toEqual({ kind: 'home' })
+  await waitFor(() => expect(activeTab(store.get(workspaceAtom))).toEqual({ kind: 'home' }))
 })
 
 test('Search opens the palette', async () => {

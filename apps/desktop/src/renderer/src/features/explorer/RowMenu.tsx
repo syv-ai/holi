@@ -78,7 +78,7 @@ export function RowMenu({
             </>
           )}
           <ContextMenuItem onSelect={onToggleContents}>
-            {app.open ? 'Hide Contents' : 'Show Contents'}
+            {app.open ? 'Hide App Files' : 'Show App Files'}
           </ContextMenuItem>
           <ContextMenuSeparator />
         </>

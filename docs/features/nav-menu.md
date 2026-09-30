@@ -8,7 +8,7 @@ hidden, the same menu runs down the rail.
 ## How it works
 
 - **Items, in order:** Home, Search, Apps, Board, Email, Agenda, Agents, Sync, Settings, so
-  Settings always ends the dock. Home opens the home tab; Search opens quick open
+  Settings always ends the dock. Home goes Home (below); Search opens quick open
   ([command palette](command-palette.md)); Board opens the board and carries the open-task count,
   red while any task is overdue (the board's own `overdue` label); Email, Agenda and Settings open
   their tabs. Agents goes to Claude Code's agent list, the tab ⌘J goes to, and is green while any
@@ -16,7 +16,8 @@ hidden, the same menu runs down the rail.
   a panel with the state in words, its action and the history ([vaults and sync](vaults-sync.md)).
 - **An item may carry a state on its glyph:** `tone` colours it (busy, warn, alert, live) and
   `motion` loops it (`orbit`, `pulse`), only while that state is in flight.
-- **Apps is a drill-down.** Its children are the vault's finished apps by name
+- **Apps is a drill-down.** Its children are the vault's finished apps, most recently opened
+  first (the recents), then the rest by name
   ([vault apps](vault-apps.md)); from the dock it opens straight into them, from the list it
   drills in. Back goes to where it was opened from: from the dock it closes the menu, from the list
   it returns to the list. It is absent when the vault has no finished apps.
@@ -44,10 +45,11 @@ hidden, the same menu runs down the rail.
   parent Apps item with it.
 - **Sessions** are one row each directly above the menu, under the file tree, only while running:
   no header, nothing to resize or collapse ([agent sessions](agent-sessions.md)).
-- **Home** is a singleton tab (`home`), opened leftmost like the board. It shows the app the
-  vault's `home` setting names, `Home.app` by default ([vault apps](vault-apps.md)). When there is
-  no such app, as in every vault made before Home was one, it says so and offers **Create Home
-  app**, which writes the default app at that path. Nothing is written unasked.
+- **Home** goes where the vault's `home` setting says ([settings](settings.md)): an app shows in
+  the Home tab (`home`, a singleton opened leftmost like the board), `Home.app` by default
+  ([vault apps](vault-apps.md)); today's note, the board, agenda, mail or a file open as
+  themselves. When the target is not there, the Home tab says so, and for a missing app offers
+  **Create Home app**, which writes the default app at that path. Nothing is written unasked.
 
 ## Rules
 
@@ -77,7 +79,7 @@ hidden, the same menu runs down the rail.
 
 - A separate Radix dropdown for the apps: two popup styles side by side, when the menu already
   has a one-level drill-down.
-- The sidebar's Apps section: Finish this app is on the tree's app row, and Show Contents there
+- The sidebar's Apps section: Finish this app is on the tree's app row, and Show App Files there
   replaces its Edit Source.
 - Home as closing all tabs or emptying the pane: the first destroys the working set, and neither
   can grow into a dashboard.

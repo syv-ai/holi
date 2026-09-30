@@ -98,7 +98,7 @@ export const reduce = (s: OnboardingState, a: Action): OnboardingState => {
     case 'setSetting':
       // A fresh object rather than a mutation: the view re-renders off identity.
       // Normalised, because one answer can withdraw another's options: turning
-      // daily notes off takes "today's note" off the landing row, and the value
+      // daily notes off takes "today's note" off the Home row, and the value
       // sitting there becomes one the user can neither see nor change.
       return { ...s, settings: normaliseAnswers({ ...s.settings, [a.key]: a.value }) }
     case 'submitStart':

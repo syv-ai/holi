@@ -11,7 +11,7 @@ import { isLockedForReconcile } from '@/lib/reconcile-lock'
 import type { ConflictResolvers } from '@/lib/editor-reload'
 import { agentGeometryAtom, agentTerminalsAtom } from '@/state/agent'
 import { appPathsAtom } from '@/state/apps'
-import { homeAppAtom } from '@/state/settings'
+import { homeTargetAtom } from '@/state/home'
 import { syncStateAtom } from '@/state/vaults'
 import { useEffect, useState, type ReactNode } from 'react'
 import { TAB_MIME, paneDropZone, parseTabPayload, type PaneDropZone } from '@/lib/tab-drop'
@@ -125,7 +125,7 @@ export function PaneView({
   const tab = pane.active < 0 ? null : (pane.tabs[pane.active] ?? null)
   const syncState = useAtomValue(syncStateAtom)
   const appPaths = useAtomValue(appPathsAtom)
-  const home = useAtomValue(homeAppAtom)
+  const home = useAtomValue(homeTargetAtom)
   /** The last geometry a visible terminal measured, for sessions spawned
    *  without a tab of their own to measure. */
   const setGeometry = useSetAtom(agentGeometryAtom)
@@ -184,12 +184,12 @@ export function PaneView({
             {tab?.kind === 'app' ? (
               <AppFrame path={tab.path} />
             ) : tab?.kind === 'home' ? (
-              // Home is an app when the vault has the one its settings name,
-              // and otherwise the offer to create it.
-              appPaths.includes(home) ? (
-                <AppFrame path={home} />
+              // The Home tab shows Home's app; anything else Home is opens as
+              // itself, so here it is only ever said (`state/home.ts`).
+              home.kind === 'app' && appPaths.includes(home.path) ? (
+                <AppFrame path={home.path} />
               ) : (
-                <HomeView path={home} />
+                <HomeView target={home} />
               )
             ) : tab?.kind === 'board' ? (
               <BoardView />

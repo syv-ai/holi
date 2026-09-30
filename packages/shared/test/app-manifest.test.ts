@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { APP_MANIFEST_FILE, parseAppManifest } from '../src/app-manifest'
+import { APP_MANIFEST_FILE, appManifestText, parseAppManifest } from '../src/app-manifest'
 
 describe('APP_MANIFEST_FILE', () => {
   it('is app.yaml', () => {
@@ -100,5 +100,13 @@ describe('parseAppManifest dangerously-allow', () => {
   it('ignores a value that is not a list', () => {
     expect(parseAppManifest('dangerously-allow: mail\n')).toEqual({})
     expect(parseAppManifest('dangerously-allow: [drive]\n')).toEqual({})
+  })
+})
+
+describe('appManifestText', () => {
+  // Every key is written out; the blank ones must read as unused.
+  it('reads back as the manifest it describes', () => {
+    expect(parseAppManifest(appManifestText())).toEqual({})
+    expect(parseAppManifest(appManifestText('Says: "hi"'))).toEqual({ description: 'Says: "hi"' })
   })
 })

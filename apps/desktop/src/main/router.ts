@@ -12,6 +12,7 @@ import { initTRPC, TRPCError } from '@trpc/server'
 import {
   completeTask,
   isAgentSurfacePath,
+  homeTargetOf,
   isAppBundlePath,
   parseTaskFile,
   parseTaskPatch,
@@ -35,6 +36,7 @@ import { ensureSeeded } from './agent/seed-content'
 import { initAppOp, type AppInitResult } from './apps/app-ops'
 import { searchBodies, type SearchHit } from './apps/app-search'
 import { writeHomeApp } from './apps/home-app'
+import { writeAppLog } from './apps/app-log'
 import { CapabilityError, runCapability, type CapabilityContext } from './apps/capabilities'
 import { noServices, type CapabilityServices, type UiReport } from './apps/capability-services'
 import { migrateApps as moveLegacyApps } from './apps/migrate-apps'
@@ -1366,14 +1368,33 @@ export function createRouter(deps: RouterDeps) {
         initAppOp(await rootFor(input.remote), input.path),
       ),
 
-    /** The Home tab's "Create Home app": the default Home app, at the path the
+    /**
+     * One line of an app's log, from its frame: what it reported going wrong
+     * (`apps/app-log.ts`). Not a vault mutation: the log is machine-local and
+     * the vault's cache does not need to hear about it.
+     */
+    log: t.procedure
+      .input(fields({ remote: 'string', bundle: 'string', level: 'string', text: 'string' }))
+      .mutation(async ({ input }) => {
+        const level = (['error', 'warn', 'info'] as const).find((l) => l === input.level)
+        if (level === undefined || !isAppBundlePath(input.bundle)) {
+          throw new TRPCError({ code: 'BAD_REQUEST', message: 'not a log entry' })
+        }
+        await writeAppLog(await rootFor(input.remote), input.bundle, { level, text: input.text })
+        return { ok: true as const }
+      }),
+
+    /** The Home tab's "Create Home app": the default Home app, at the app the
      *  vault's `home` setting names. Never overwrites. */
     createHome: vaultMutation
       .input(fields({ remote: 'string' }))
       .mutation(async ({ input }): Promise<{ created: string[] }> => {
         const root = await rootFor(input.remote)
-        const { home } = await readVaultSettings(root)
-        return { created: await writeHomeApp(root, home) }
+        const home = homeTargetOf((await readVaultSettings(root)).home)
+        if (home.kind !== 'app') {
+          throw new TRPCError({ code: 'BAD_REQUEST', message: 'Home is not an app' })
+        }
+        return { created: await writeHomeApp(root, home.path) }
       }),
   })
 

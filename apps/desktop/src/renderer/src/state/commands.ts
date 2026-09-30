@@ -21,6 +21,7 @@ import { useEffect } from 'react'
 import { saveAllBuffers } from '../lib/buffer-registry'
 import { matchHotkey } from '../lib/hotkey'
 import { trpc } from '../lib/trpc'
+import { openHomeAtom } from './home'
 import { showAgentsAtom, startSessionAtom, updateSkillsAtom } from './agent-send'
 import { openTodaysDailyAtom } from './daily'
 import { openDialogAtom } from './dialogs'
@@ -70,7 +71,7 @@ export function untitledPath(taken: ReadonlySet<string>): string {
 
 export const STATIC_COMMANDS: readonly Command[] = [
   // ⌘⇧D jumps to today's daily (creating it if needed). Deliberately NOT
-  // routed through the landing: it still works in a vault whose `dailyNotes`
+  // routed through Home: it still works in a vault whose `dailyNotes`
   // is off, which only stops the daily being opened automatically.
   {
     id: 'daily.open',
@@ -157,7 +158,9 @@ export const STATIC_COMMANDS: readonly Command[] = [
   ...SURFACES.map(({ kind, label }): Command => ({
     id: `${kind}.open`,
     label,
-    run: (_get, set) => set(workspaceAtom, (w) => openSingleton(w, kind)),
+    // Home is wherever the vault's `home` setting says, not always its tab.
+    run: (_get, set) =>
+      kind === 'home' ? set(openHomeAtom) : set(workspaceAtom, (w) => openSingleton(w, kind)),
   })),
   // The tree names a new note inline; a command has no row to type into, so
   // the note starts untitled, as VS Code's New File does, and opens pinned.

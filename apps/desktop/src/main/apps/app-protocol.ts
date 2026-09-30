@@ -15,7 +15,7 @@ import { join } from 'node:path'
 import { exactPath } from '@holi/shared/path-safety-node'
 import {
   bundleFromAppHost,
-  isAppDataPath,
+  isAppPrivatePath,
   isAppBundlePath,
   themeBlockToVars,
   vaultRelPath,
@@ -74,9 +74,10 @@ export function appFileAbsPath(vaultRoot: string, bundle: string, rel: string): 
   } catch {
     return null
   }
-  // The store's records are never served: the bridge is the only way in, so
-  // a `fetch('data/…')` cannot read past its checks.
-  if (isAppDataPath(safe)) return null
+  // The store's records and the log are never served: the bridge is the only
+  // way to records, so a `fetch('data/…')` cannot read past its checks, and
+  // the log is Holi's record of the app, not the app's.
+  if (isAppPrivatePath(safe)) return null
   return absPathFor(join(vaultRoot, bundle), safe)
 }
 

@@ -10,7 +10,7 @@
  * UI may search everything.
  */
 import { readFile } from 'node:fs/promises'
-import { appBundleOf, isAgentSurfacePath, isAppDataPath, type DocMeta } from '@holi/shared'
+import { appBundleOf, isAgentSurfacePath, isAppPrivatePath, type DocMeta } from '@holi/shared'
 import { exactPath } from '@holi/shared/path-safety-node'
 
 export interface SearchHit {
@@ -27,7 +27,7 @@ const SNIPPET_RADIUS = 60
 export function isSearchable(path: string): boolean {
   if (isAgentSurfacePath(path)) return false
   const bundle = appBundleOf(path)
-  return bundle === null || !isAppDataPath(path.slice(bundle.length + 1))
+  return bundle === null || !isAppPrivatePath(path.slice(bundle.length + 1))
 }
 
 function snippetAround(text: string, at: number, length: number): string {

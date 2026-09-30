@@ -26,7 +26,7 @@ import {
   formatCommentThreads,
   isAgentSurfacePath,
   isAppBundlePath,
-  isAppDataPath,
+  isAppPrivatePath,
   syncLabel,
   vaultRelPath,
   type AppAffordance,
@@ -169,7 +169,7 @@ function readablePath(path: string): VaultRelPath {
   // Checked again on the normalised path: `./memory/x.md` is `memory/x.md`.
   if (isAgentSurfacePath(rel)) throw new CapabilityError('FORBIDDEN', path)
   const bundle = appBundleOf(rel)
-  if (bundle !== null && isAppDataPath(rel.slice(bundle.length + 1))) {
+  if (bundle !== null && isAppPrivatePath(rel.slice(bundle.length + 1))) {
     throw new CapabilityError('FORBIDDEN', path)
   }
   return rel

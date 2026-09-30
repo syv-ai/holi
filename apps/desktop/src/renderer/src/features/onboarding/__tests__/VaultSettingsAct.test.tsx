@@ -1,11 +1,7 @@
 import { render, screen, within } from '@/test/render'
 import userEvent from '@testing-library/user-event'
 import { expect, test, vi } from 'vitest'
-import {
-  RITUAL_SETTING_DESCRIPTORS,
-  TRANSFORM_NAMES,
-  VAULT_SETTING_DEFAULTS,
-} from '@holi/shared'
+import { RITUAL_SETTING_DESCRIPTORS, TRANSFORM_NAMES, VAULT_SETTING_DEFAULTS } from '@holi/shared'
 import { VaultSettingsAct } from '../VaultSettingsAct'
 
 function setup(over: Record<string, unknown> = {}) {
@@ -47,14 +43,14 @@ test('a toggle reports its key and its new value', async () => {
 
 test('a choice reports the option’s value, not its label', async () => {
   const { onChange } = setup()
-  const row = screen.getByRole('group', { name: 'Open on' })
+  const row = screen.getByRole('group', { name: 'Home is' })
   await userEvent.click(within(row).getByRole('radio', { name: 'The board' }))
-  expect(onChange).toHaveBeenCalledWith('landing', { kind: 'board' })
+  expect(onChange).toHaveBeenCalledWith('home', 'board')
 })
 
 test('a choice shows which option is currently selected', () => {
-  setup({ landing: { kind: 'agenda' } })
-  const row = screen.getByRole('group', { name: 'Open on' })
+  setup({ home: 'agenda' })
+  const row = screen.getByRole('group', { name: 'Home is' })
   expect(within(row).getByRole('radio', { name: 'Your agenda' })).toBeChecked()
   expect(within(row).getByRole('radio', { name: 'Today’s note' })).not.toBeChecked()
 })
@@ -102,7 +98,12 @@ test('warns about the shared-vault collision on the daily-note row', () => {
 
 test('falls back to the descriptor default when an answer is missing', () => {
   // A vault whose settings file predates a row still renders it.
-  setup({ landing: undefined })
-  const row = screen.getByRole('group', { name: 'Open on' })
-  expect(within(row).getByRole('radio', { name: 'Today’s note' })).toBeChecked()
+  setup({ home: undefined })
+  const row = screen.getByRole('group', { name: 'Home is' })
+  const fallback = RITUAL_SETTING_DESCRIPTORS.find((d) => d.key === 'home')!
+  const label =
+    fallback.control.kind === 'choice'
+      ? fallback.control.options.find((o) => o.value === VAULT_SETTING_DEFAULTS.home)!.label
+      : ''
+  expect(within(row).getByRole('radio', { name: label })).toBeChecked()
 })

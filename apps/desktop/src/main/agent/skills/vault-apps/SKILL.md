@@ -47,13 +47,18 @@ Projects/Q2/Burndown.app/app.yaml     ← required: write this LAST
   a time, and without a marker it would open onto half a page the moment
   `index.html` landed.
 
+  Write every key, and leave the ones the app does not use blank, so whoever
+  opens the file sees everything an app can say:
+
   ```yaml
-  description: Sprint retros # optional: shown where the app is listed
+  description: Sprint retros # shown where the app is listed
+  collections: # the records it keeps: see Keeping data
+  dangerously-allow: # one person's data it reads: mail, calendar, location
   ```
 
-  An **empty file is enough**, so if you have nothing to say, write nothing.
-  There is no `name` or `icon` key: the name is the folder, and the user sets an
-  icon the way they do for any file. `holi app init <path>` scaffolds one for you.
+  A blank key is unused, and an empty file is still a valid manifest. There is
+  no `name` or `icon` key: the name is the folder, and the user sets an icon the
+  way they do for any file. `holi app init <path>` writes this file for you.
 
 - It appears in the file tree and the apps list as soon as the manifest lands.
   No restart.
@@ -148,6 +153,11 @@ These are not oversights — build within them rather than around them.
 It _can_ use the network — a CDN, an API — but a vault is often used offline, so
 prefer writing the code inline over depending on something remote.
 
+**Links leave Holi.** A link to a web page or a `mailto:` opens in the person's
+browser or mail app, whether it is a plain `<a href>`, `target="_blank"` or
+`window.open`; the app stays where it is. Any other link out of the app does
+nothing. To go somewhere inside Holi, use `holi.open` (below).
+
 ## Hearing about changes
 
 `holi.on(topic, fn)` calls `fn` whenever that topic changes, and returns a
@@ -166,16 +176,20 @@ function that stops it. `fn` gets no arguments: read the data again.
 Prefer this to polling. A put or delete from the app itself fires
 `store:<collection>` too, a moment later.
 
-## Reading someone's mail or calendar
+## Reading someone's mail, calendar or location
 
 `holi.calendar.events({ from, to })` (ISO instants, at most 92 days apart) and
 `holi.mail.threads(query)` (Gmail's search grammar; none means the inbox) read
-the Google account of **whoever has the app open**, not the vault's. So they are
-off until the app opts in, in `app.yaml`:
+the Google account of **whoever has the app open**, not the vault's. The
+browser's `navigator.geolocation` reads where that person is. All three are off
+until the app opts in, in `app.yaml`:
 
 ```yaml
-dangerously-allow: [mail, calendar] # either or both
+dangerously-allow: [mail, calendar, location] # any of them
 ```
+
+Without `location`, `navigator.geolocation` fails with a permissions error: say
+so in the page, or ask for a place instead.
 
 Then each person sees a dialog the first time they open the app, and Holi asks
 again after 30 days and whenever the app's code changes. Until they allow it,
@@ -183,7 +197,7 @@ the call rejects. A personal app (`Name.local.app`) needs the flag but no dialog
 
 Before you add the flag to a shared app, tell the user plainly: whatever the app
 keeps in its records syncs to everyone in the vault, so do not store someone's
-mail in a shared app's store unless they asked for exactly that.
+mail or whereabouts in a shared app's store unless they asked for exactly that.
 
 ## Keeping data
 
@@ -241,8 +255,8 @@ holi store delete <app> <collection> <id>
 
 ## Seeing whether it works
 
-You have two things and no more: a check that runs on every file you write, and
-a command that opens the app.
+You have three things: a check that runs on every file you write, a command
+that opens the app, and the app's log.
 
 ```sh
 holi app open <path>        # opens the app's tab in Holi, or reloads it if open
@@ -263,12 +277,18 @@ run. So the loop is:
 1. Write the files, manifest last.
 2. Read what the check says, if it says anything.
 3. `holi app open <path>`, e.g. `holi app open Projects/Q2/Burndown.app`.
-4. **Ask the user what they see.** You still have no console, no screenshot
-   and no way to read the rendered page — opening the tab puts it in front of
-   them, not in front of you.
+4. **Ask the user what they see.** You have no screenshot and no way to read
+   the rendered page: opening the tab puts it in front of them, not you.
+5. **Read the log**, `log.local.txt` at the app's root, when they say something
+   is wrong. Holi writes into it what went wrong while the app ran on this
+   machine: `console.error` and `console.warn`, uncaught errors and rejected
+   promises (with their stacks), and every bridge call Holi refused, each line
+   timed. `holi.log(...)` adds a line of your own, so log what you would want to
+   know next time. It keeps the last day, never syncs, and the app cannot read
+   it. No file means nothing has gone wrong here yet.
 
-Because step 4 is the only real verification, build so that a failure is
-legible in the page itself:
+The log is your console, but only the user sees the page, so build so that a
+failure is legible in the page itself too:
 
 - **Wrap the startup in a try/catch and render the error into the page.** A
   visible message is the only diagnostic the user can read back to you.
@@ -466,15 +486,20 @@ pane.
 
 ## The Home tab
 
-Home is an app too: the one `home:` in `.holi/settings/app.yaml` names,
-`Home.app` unless it says otherwise. When the user asks to change or customize
-their home page, or says "customize this page" while Home is open, edit that
-app's files; it is plain HTML and `home.js`, with nothing to build. Keep what it
-shows unless they ask for it gone.
+Home is what `home:` in `.holi/settings/app.yaml` says, and it is also what the
+vault opens on. By default it is `Home.app`, an app like any other. It can
+instead be `daily` (today's note), `board`, `agenda`, `mail`, or any app or file
+in the vault by its path.
 
-- A home for everyone in the vault is the shared app. A home for one person is
-  a personal app, `Home.local.app`, named by `home: Home.local.app` in
-  `.holi/settings/app.local.yaml`, which never syncs.
+When the user asks to change or customize their home page, or says "customize
+this page" while Home is open, edit the app Home names; it is plain HTML and
+`home.js`, with nothing to build. Keep what it shows unless they ask for it
+gone. If they want Home to be something else entirely (their board, a note),
+change `home:` instead.
+
+- A home for everyone in the vault is the shared setting. A home for one person
+  is `home:` in `.holi/settings/app.local.yaml`, which never syncs, pointing at
+  a personal app (`Home.local.app`) or anything else.
 - If Home says there is no app yet, the user can press **Create Home app**, or
   you can write the folder yourself.
 - To see a change, ask the user to open Home again (or reload it from its tab).

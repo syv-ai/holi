@@ -48,7 +48,7 @@ import {
   withMdExtension,
 } from '@/lib/tree-paths'
 import { useArrivals } from '@/lib/use-arrivals'
-import { Button, ContextMenu, ContextMenuTrigger, Icon, Input } from '@/primitives'
+import { Button, ContextMenu, ContextMenuTrigger, Icon, Input, Tooltip } from '@/primitives'
 import { registerAppAtom, unregisteredAppPathsAtom } from '@/state/apps'
 import { todayDailyPathAtom } from '@/state/daily'
 import { revealRequestAtom } from '@/state/reveal'
@@ -73,7 +73,8 @@ import { useTreeProjection } from './useTreeProjection'
  * file is drawn in the brand colour.
  *
  * An app bundle is a folder that behaves as a file: a click opens the
- * app, and its files show only when it is expanded, by → or Show Contents.
+ * app, and its files show only when it is expanded: by →, by Show App Files,
+ * or by the chevron at the row's right end that hover or focus reveals.
  *
  * A view of the snapshot that owns no vault data. Its rules (which rows show,
  * ranges, typeahead, where a drop may go) are in `lib/tree-view.ts`; this is
@@ -588,6 +589,7 @@ export function FileTree({
             className={cn(
               TREE_ROW_RESET,
               className,
+              node.isApp && 'group/app',
               // Hover-proof: ROW_RESET clears the ghost hover fill, which would
               // otherwise wipe these under the pointer.
               selected.size > 1 &&
@@ -613,6 +615,25 @@ export function FileTree({
             {/* Today's daily, marked where it lives (docs/features/daily-notes.md):
                 at the row's right end, boxed to its x-height like the name so
                 the row's centring lines the two up. */}
+            {/* An app's files are behind it: this is the way in that a
+                newcomer can see, on hover or focus. Not a button: it sits in
+                the row's, and the keyboard's way is → as for any folder. */}
+            {node.isApp && (
+              <Tooltip content={isOpen ? 'Hide app files' : 'Show app files'}>
+                <span
+                  aria-hidden="true"
+                  data-slot="app-files"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    toggle(id)
+                  }}
+                  onDoubleClick={(e) => e.stopPropagation()}
+                  className="motion-respond ml-auto flex shrink-0 rounded-sm px-1 text-muted-foreground opacity-0 group-hover/app:opacity-100 group-focus-visible/app:opacity-100 hover:text-foreground"
+                >
+                  <Icon icon={ChevronRight} size="sm" className={cn(isOpen && 'rotate-90')} />
+                </span>
+              </Tooltip>
+            )}
             {id === todayDailyPath && (
               <span className="ml-auto shrink-0 text-[11px] text-brand [text-box:trim-both_ex_alphabetic]">
                 today{todayLinkCount > 0 && ` · ${todayLinkCount}`}

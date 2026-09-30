@@ -5,7 +5,7 @@
  * (`SyncItem`), then Settings beside More.
  *
  * Reads shared state only, never another feature's components: the apps from
- * `appPathsAtom`, the count from `openTaskCountAtom`, Google from the account
+ * `appPathsByRecencyAtom`, the count from `openTaskCountAtom`, Google from the account
  * atom Shell's `useGoogleAccount` fills. `undefined` there means "not asked
  * yet", and hides Email and Agenda too, so they never flash in.
  */
@@ -15,7 +15,6 @@ import { useMemo } from 'react'
 import { appName } from '@holi/shared'
 import { MorphingMenu, type MorphingMenuItem } from '@/primitives'
 import { AppIcon } from '@/composites/file-icons'
-import { appPathsAtom } from '@/state/apps'
 import { googleAccountAtom } from '@/state/google'
 import { openPaletteAtom } from '@/state/palette'
 import {
@@ -23,12 +22,13 @@ import {
   openAgenda,
   openApp,
   openBoard,
-  openHome,
   openMail,
   openSettings,
   workspaceAtom,
   type Tab,
 } from '@/state/panes'
+import { openHomeAtom } from '@/state/home'
+import { appPathsByRecencyAtom } from '@/state/recents'
 import { openTaskCountAtom, overdueTaskCountAtom } from '@/state/tasks'
 import { useAgentItem } from './AgentItem'
 import { useSyncItem } from './SyncItem'
@@ -60,8 +60,10 @@ export function NavMenu({
 }): React.JSX.Element {
   const workspace = useAtomValue(workspaceAtom)
   const setWorkspace = useSetAtom(workspaceAtom)
+  const openHome = useSetAtom(openHomeAtom)
   const openPalette = useSetAtom(openPaletteAtom)
-  const appPaths = useAtomValue(appPathsAtom)
+  // Most recently opened first; the same array until the order changes.
+  const appOrder = useAtomValue(appPathsByRecencyAtom)
   const openTaskCount = useAtomValue(openTaskCountAtom)
   const overdueCount = useAtomValue(overdueTaskCountAtom)
   const googleConnected = useAtomValue(googleAccountAtom) != null
@@ -72,15 +74,15 @@ export function NavMenu({
   // restarts its morph when its items change.
   const items = useMemo((): MorphingMenuItem[] => {
     return [
-      { id: 'home', label: 'Home', icon: House, onSelect: () => setWorkspace(openHome) },
+      { id: 'home', label: 'Home', icon: House, onSelect: () => void openHome() },
       { id: 'search', label: 'Search', icon: Search, onSelect: () => openPalette('open') },
-      ...(appPaths.length > 0
+      ...(appOrder.length > 0
         ? [
             {
               id: 'apps',
               label: 'Apps',
               icon: AppIcon,
-              children: appPaths.map((path) => ({
+              children: appOrder.map((path) => ({
                 id: appItemId(path),
                 label: appName(path),
                 icon: AppIcon,
@@ -124,7 +126,7 @@ export function NavMenu({
       },
     ]
   }, [
-    appPaths,
+    appOrder,
     openTaskCount,
     overdueCount,
     googleConnected,
@@ -132,6 +134,7 @@ export function NavMenu({
     sync,
     setWorkspace,
     openPalette,
+    openHome,
   ])
 
   return (

@@ -11,8 +11,10 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   `app.yaml`**, both at its root, anywhere in the vault except the agent surface, and not inside
   another bundle. Like a note it is identified by its vault-relative path (`Finance/Budget.app`);
   its name is the folder name without `.app`, as a note drops `.md`. `app.yaml` is the "finished"
-  marker: an agent writes an app file by file, so the manifest is written last. Its one key is
-  `description`, optional, and an empty file finishes the app. The icon is the vault icon map's,
+  marker: an agent writes an app file by file, so the manifest is written last. Its keys are
+  `description`, `collections` and `dangerously-allow`, all optional; `holi app init` and the
+  Home app write all three with the unused ones blank (`appManifestText`), so the file shows what
+  an app can say, and an empty file still finishes the app. The icon is the vault icon map's,
   as for any row. The parser never throws; a typo costs a field, never the app.
 - **A personal app is `<name>.local.app`.** The `.local.` marker on the folder makes every file
   in it machine-local, so it never syncs; its name drops `.local.app`, and a rename or duplicate
@@ -20,17 +22,18 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
 - **Discovery is the snapshot.** A bundle's files are in `snapshot.files`, so the app list is
   derived in the renderer with no extra IPC, and an app appears on the next rescan.
 - **In the file tree** a bundle is one row with an app glyph that opens the app with a note's
-  gestures (click, double click, ⌘-click for a new pane, Enter). → or **Show Contents** expands it
-  in place so its files are edited as ordinary files; the chevron shows only while it is expanded.
+  gestures (click, double click, ⌘-click for a new pane, Enter). →, **Show App Files** or the chevron at the row's right end (shown on hover or focus) expands it
+  in place so its files are edited as ordinary files; the leading chevron shows only while it is
+  expanded.
   Rename, move, drag, copy, duplicate and delete are the tree's folder operations: a rename edits
   the name without `.app`, and Duplicate makes `Budget copy.app`. A drop on the row lands beside
   it, not among its files. A personal app's row shows only under show-hidden, like any local
   file; the launchers always list it. See [file tree](file-tree.md).
 - **Launchers.** The tree's app row, the [nav menu](nav-menu.md)'s Apps drill-down (every
-  finished app by name, in the sidebar and on the rail; absent when there are none), and the
+  finished app, most recently opened first, in the sidebar and on the rail; absent when there are none), and the
   [command palette](command-palette.md), which lists them with their folder. There is no separate
   Apps section. Its Finish this app is on the tree's app row, and its Edit Source gave way to the
-  row's Show Contents, which expands the bundle so `index.html` opens like any file.
+  row's Show App Files, which expands the bundle so `index.html` opens like any file.
 - **Tabs.** An app opens as an ordinary tab keyed by its bundle path, deduped across panes like a
   note (see [tabs and panes](tabs-panes.md)). Reload is a button in the pane header, beside the other per-file buttons, that remounts the
   frame. If the bundle disappears under an open tab (a teammate's pull), the tab stays as a
@@ -59,20 +62,38 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   never on mount. A push carries no data: the app reads again through main, so every refusal
   still applies, and the signatures leave the agent surface out, so an app is not told a memory
   was written.
-- **Google data is opt-in, twice.** `calendar.events` and `mail.threads` read the Google account
-  of whoever has the app open, not the vault's, and an app can keep what it reads in records that
-  sync to every member, or send it over the network. So the app declares
-  `dangerously-allow: [mail, calendar]` in `app.yaml` (without it the call fails and names the
-  flag), and each person approves the app in a dialog before its frame loads. The approval is
+- **One person's data is opt-in, twice.** `calendar.events` and `mail.threads` read the Google
+  account of whoever has the app open, not the vault's, and the browser's geolocation reads where
+  they are; an app can keep what it reads in records that sync to every member, or send it over
+  the network. So the app declares `dangerously-allow: [mail, calendar, location]` (any of them)
+  in `app.yaml` (without it a Google call fails and names the flag, and geolocation is refused), and each person approves the app in a dialog before its frame loads. The approval is
   kept in main (`userData/app-grants.json`), never the renderer, which is the process running the
   app. It lapses after 30 days and whenever the app's code (anything but `data/`) changes, whoever
   changed it: approving a teammate's app approves that code, not what it becomes after a pull. A
   personal `.local.app` needs the flag but no approval, while git tracks none of it: its code was
   written on this machine and its records never sync. One someone force-added and pushed is shared
   code with a personal name, and is asked about like any other. An approval names the code the
-  dialog showed (a hash of every file, link and folder the protocol can serve, `data/` aside), so
+  dialog showed (a hash of every file, link and folder the protocol can serve, `data/` and the log
+  aside), so
   a pull that lands while the dialog is up is asked about again rather than approved unseen. The agent has `holi-google` and its own gate, so these open to the app
-  door only.
+  door only. Location is a browser permission, not a bridge call: an approved frame gets
+  `allow="geolocation *"` (its origin is opaque, so no narrower allowlist matches it), and main's
+  permission handler grants geolocation only to a `holi-app:` frame whose app is approved.
+- **Links leave Holi.** A web or `mailto:` link from an app opens in the system browser or mail
+  app, whether it is a plain link (main's `will-frame-navigate` stops the frame leaving its bundle)
+  or `target=_blank`/`window.open` (the sandbox's `allow-popups` lets it reach
+  `setWindowOpenHandler`, which never makes a window). Any other scheme opens nothing.
+- **The log.** `log.local.txt` at the bundle's root is what went wrong while the app ran here: the
+  bridge shim reports `console.error`/`warn`, uncaught errors, unhandled rejections and refused
+  bridge calls, plus `holi.log(...)`, capped at 50 a second, and main appends them
+  (`apps/app-log.ts`, one write at a time, never through a link, never into a deleted bundle).
+  Each line is timed; a stack continues indented. It keeps the last day and at most 500 entries,
+  trimmed as it is written (`appendAppLog`). It is for the agent: `.local.`, so it never syncs;
+  not served to the app, not readable through the bridge, not in the approval hash, and not
+  watched, so it never triggers a rescan.
+- **Showing.** The frame is hidden until its document has loaded, then fades in
+  (`motion-in-fade`), so a half-styled first paint is never seen; a reload or a mode change starts
+  it over.
 - **One registry, two doors.** What main answers is the capability registry
   (`main/apps/capabilities.ts`): each entry has its params, its refusals, and the doors it opens
   to, the app's bridge and the agent's `holi` CLI (`/cap/<method>` on the hook server). An app sees
@@ -104,8 +125,8 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   a `<name>.app` folder below the session's cwd, a syntax error and its line, a `.ts`/`.tsx`/`.jsx` file nothing will build, a
   `localStorage` call, a missing manifest, and a hard-coded colour. It is advisory, exits 0, and is
   silent when nothing is wrong. See [agent config](agent-config.md) for the CLI and hooks.
-- **Home is an app.** The Home tab shows the app the `home` setting names, `Home.app` by default
-  ([settings](settings.md)). A new vault is created with it: plain HTML and a script, no build and
+- **Home is an app by default.** The `home` setting ([settings](settings.md)) is `Home.app`
+  unless the vault says otherwise, and the Home tab shows it. A new vault is created with it: plain HTML and a script, no build and
   no vendored code, listing the recents (`holi.recents()`, kept live by `on('recents')`) over the
   line "You can customize this page. Explain your vision to the vault assistant". It is written
   at creation only, not as a once-file, since those return on every open: an existing vault's Home
@@ -114,7 +135,7 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
 - **Migration.** Apps used to live in `.holi/apps/<id>/`, hidden with the other dotfiles. On
   vault open, before the first snapshot, `migrate-apps.ts` moves each to `<id>.app/` at the root
   with one `rename`, then rewrites inbound `[[links]]`; the autosave commits it. An app whose
-  destination exists is left in place. A `landing` setting naming an app id reads as that bundle.
+  destination exists is left in place.
 
 ## Rules
 

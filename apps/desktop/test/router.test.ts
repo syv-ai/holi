@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
-import { parseTaskFile, SETTINGS_FILE } from '@holi/shared'
+import { parseTaskFile, SETTINGS_FILE, VAULT_SETTING_DEFAULTS } from '@holi/shared'
 import { afterAll, describe, expect, it, vi } from 'vitest'
 import { createVaultHost, type VaultHost } from '../src/main/vault/active-vault'
 import { ensureSeeded } from '../src/main/agent/seed-content'
@@ -126,7 +126,7 @@ describe('settings', () => {
   it('answers with the seeded vault’s settings', async () => {
     const { caller } = await rig()
     const settings = await caller.settings.read({ remote: REMOTE })
-    expect(settings.landing).toEqual({ kind: 'daily' })
+    expect(settings.home).toBe(VAULT_SETTING_DEFAULTS.home)
     expect(settings.dailyNotes).toBe(true)
     // The seed writes a hooks block; `archive-done` is opt-in.
     expect(settings.hooks).toEqual({
@@ -139,27 +139,23 @@ describe('settings', () => {
     expect(settings.warnings).toEqual([])
   })
 
-  it('reads a landing target the vault actually committed', async () => {
+  it('reads a Home the vault actually committed', async () => {
     const { caller, root } = await rig()
-    await writeFile(
-      join(root, SETTINGS_FILE),
-      JSON.stringify({ landing: { kind: 'board' } }),
-      'utf8',
-    )
-    expect((await caller.settings.read({ remote: REMOTE })).landing).toEqual({ kind: 'board' })
+    await writeFile(join(root, SETTINGS_FILE), JSON.stringify({ home: 'board' }), 'utf8')
+    expect((await caller.settings.read({ remote: REMOTE })).home).toBe('board')
   })
 
   it('writes the step’s answers into both files, and reads them back', async () => {
     const { caller } = await rig()
     const result = await caller.settings.write({
       remote: REMOTE,
-      committedJson: JSON.stringify({ landing: { kind: 'agenda' }, dailyNotes: false }),
+      committedJson: JSON.stringify({ home: 'agenda', dailyNotes: false }),
       localJson: JSON.stringify({ colorScheme: 'dark' }),
     })
     expect(result.warnings).toEqual([])
 
     const settings = await caller.settings.read({ remote: REMOTE })
-    expect(settings.landing).toEqual({ kind: 'agenda' })
+    expect(settings.home).toBe('agenda')
     expect(settings.dailyNotes).toBe(false)
     expect(settings.colorScheme).toBe('dark')
   })
@@ -199,11 +195,11 @@ describe('settings', () => {
     const { caller } = await rig()
     const result = await caller.settings.write({
       remote: REMOTE,
-      committedJson: JSON.stringify({ landing: { kind: 'nowhere' } }),
+      committedJson: JSON.stringify({ home: '../nowhere' }),
     })
     expect(result.warnings.length).toBeGreaterThan(0)
     // The vault still opens the way it did before.
-    expect((await caller.settings.read({ remote: REMOTE })).landing).toEqual({ kind: 'daily' })
+    expect((await caller.settings.read({ remote: REMOTE })).home).toBe(VAULT_SETTING_DEFAULTS.home)
   })
 })
 
