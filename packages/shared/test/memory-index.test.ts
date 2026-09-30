@@ -11,6 +11,7 @@ import {
   MEMORY_INDEX,
   MEMORY_INDEX_EMPTY,
   MEMORY_INDEX_HEADER,
+  MEMORY_INDEX_LOCAL_NOTE,
   isMemoryPath,
   isSharedMemoryPath,
   readMemoryEntry,
@@ -166,7 +167,7 @@ describe('renderMemoryIndex', () => {
       entry('memory/a.md', 'convention', 'A'),
     ])
     expect(out).toBe(
-      `${MEMORY_INDEX_HEADER}\n\n` +
+      `${MEMORY_INDEX_HEADER}\n\n${MEMORY_INDEX_LOCAL_NOTE}\n\n` +
         '## convention\n\n- [[memory/a.md|A]]\n- [[memory/z.md|Z]]\n\n' +
         '## environment\n\n- [[memory/shell.md|Shell]]\n',
     )

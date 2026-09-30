@@ -18,7 +18,7 @@ never leaves the clone and needs no other machinery. Anything about one individu
 **`memory/index.md` is generated** by the `memory-index` pre-commit transform, so the index lands in
 the same commit as the memory it describes, and a burst of writes in one turn is one commit. It is
 grouped by type, one `[[path|Title]]` line per memory with its description, sorted by path, under
-a "generated" header. One sorted line per file is also why concurrent additions merge cleanly. It lists shared memories only. The transform runs last among the transforms, because it is
+a "generated" header. One sorted line per file is also why concurrent additions merge cleanly. It lists shared memories only, and says so in a line under the header. The transform runs last among the transforms, because it is
 the only one that reads the whole tree rather than the staged set, and it returns at once when
 nothing under `memory/` is staged. The transform framework is in [vaults-sync.md](vaults-sync.md).
 
