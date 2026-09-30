@@ -67,7 +67,7 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   they are; an app can keep what it reads in records that sync to every member, or send it over
   the network. So the app declares `dangerously-allow: [mail, calendar, location]` (any of them)
   in `app.yaml`, or as a map giving each one a reason (`{ location: To show the weather }`,
-  plain text, at most 200 characters) that the dialog quotes as the app's own words (without the
+  plain text, at most 200 characters) that the dialog quotes as the developer's explanation (without the
   flag a Google call fails and names it, and geolocation is refused), and each person approves the app in a dialog before its frame loads. The approval is
   kept in main (`userData/app-grants.json`), never the renderer, which is the process running the
   app. It lapses after 30 days and whenever the app's code (anything but `data/`) changes, whoever

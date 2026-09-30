@@ -189,7 +189,7 @@ dangerously-allow: [mail, calendar, location] # any of them
 ```
 
 Better, say why: written as a map, each one carries a short reason that the
-person reads, quoted as the app's own words, in the dialog that asks them.
+person reads, quoted as the developer's explanation, in the dialog that asks them.
 One plain sentence about what the app does with it (at most 200 characters):
 
 ```yaml

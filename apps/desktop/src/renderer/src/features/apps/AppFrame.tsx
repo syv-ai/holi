@@ -286,13 +286,13 @@ export function AppFrame({ path }: { path: string }): React.JSX.Element {
             {name} wants permission to read {reads}
           </Dialog.Header>
           <Dialog.Body>
-            <AppsWords name={name} asked={ask.affordances} reasons={reasons} />
             <div className="grid gap-3 text-xs leading-relaxed text-muted-foreground">
               <p>
                 What it reads, it can store, which may sync to others in this vault or over the
                 network. Sounds scary, but it doesn&rsquo;t mean it does these things, just that it
                 requests a permission that can potentially be used like that.
               </p>
+              <AppsWords asked={ask.affordances} reasons={reasons} />
               <p>
                 Allow it if you trust them. Holi will ask again in 30 days, or if the app changes.
               </p>
@@ -354,21 +354,19 @@ export function AppFrame({ path }: { path: string }): React.JSX.Element {
  * text, capped by the parser. Nothing when the app gave no reason.
  */
 function AppsWords({
-  name,
   asked,
   reasons,
 }: {
-  name: string
   asked: readonly AppAffordance[]
   reasons: Partial<Record<AppAffordance, string>>
 }): React.JSX.Element | null {
   const said = asked.flatMap((a) => (reasons[a] === undefined ? [] : [[a, reasons[a]!] as const]))
   if (said.length === 0) return null
   return (
-    <figure className="grid gap-1.5 text-xs">
-      <figcaption className="text-muted-foreground">In {name}&rsquo;s words</figcaption>
+    <figure className="grid gap-1">
+      <figcaption>The dev&rsquo;s explanation:</figcaption>
       {said.map(([affordance, reason]) => (
-        <blockquote key={affordance} className="text-foreground">
+        <blockquote key={affordance} className="pt-1.5 italic text-foreground">
           &ldquo;{reason}&rdquo;
         </blockquote>
       ))}
