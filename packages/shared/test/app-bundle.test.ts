@@ -3,6 +3,7 @@ import {
   appBundleOf,
   appHost,
   appName,
+  appSuffix,
   bundleFromAppHost,
   isAppBundlePath,
 } from '../src/app-bundle'
@@ -18,6 +19,12 @@ describe('isAppBundlePath', () => {
     expect(isAppBundlePath('.app')).toBe(false)
     expect(isAppBundlePath('Finance/.app')).toBe(false)
     expect(isAppBundlePath('Finance/Budget')).toBe(false)
+    expect(isAppBundlePath('.local.app')).toBe(false)
+  })
+
+  it('includes a personal app, whose folder carries the .local. marker', () => {
+    expect(isAppBundlePath('Home.local.app')).toBe(true)
+    expect(isAppBundlePath('Me/Home.local.app')).toBe(true)
   })
 
   it('refuses the agent surface', () => {
@@ -53,6 +60,17 @@ describe('appName', () => {
   it('drops the folder and the suffix', () => {
     expect(appName('Finance/Budget.app')).toBe('Budget')
     expect(appName('char-count.app')).toBe('char-count')
+  })
+
+  it('drops the .local. marker too: a personal Home is called Home', () => {
+    expect(appName('Me/Home.local.app')).toBe('Home')
+  })
+})
+
+describe('appSuffix', () => {
+  it('is what a rename must keep, so renaming never publishes a personal app', () => {
+    expect(appSuffix('Finance/Budget.app')).toBe('.app')
+    expect(appSuffix('Me/Home.local.app')).toBe('.local.app')
   })
 })
 

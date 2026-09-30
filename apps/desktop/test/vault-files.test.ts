@@ -2,11 +2,12 @@ import { mkdtemp, readFile, rm, writeFile, mkdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
-import { vaultRelPath } from '@holi/shared'
+import { THEME_LOCAL_FILE, vaultRelPath } from '@holi/shared'
 import {
   absPathFor,
   isIgnoredPath,
   isNonContentPath,
+  isWatchIgnoredPath,
   listFiles,
   moveDocFile,
   removeDocFile,
@@ -48,6 +49,21 @@ describe('vault-files', () => {
     expect(isIgnoredPath('.claude/settings.json')).toBe(false)
     // A bare USER.md is ordinary content now — no special case.
     expect(isIgnoredPath('USER.md')).toBe(false)
+  })
+
+  it('isWatchIgnoredPath: local files stay unwatched, except the theme and a personal app', () => {
+    // A personal app is written by the agent and must appear live; pruning
+    // its folder would hide it until the periodic heal.
+    expect(isWatchIgnoredPath('Home.local.app')).toBe(false)
+    expect(isWatchIgnoredPath('Me/Home.local.app/index.html')).toBe(false)
+    expect(isWatchIgnoredPath(THEME_LOCAL_FILE)).toBe(false)
+    // Rewritten every agent turn: watching it would storm the rescan loop.
+    expect(isWatchIgnoredPath('.holi/state/context.local.json')).toBe(true)
+    expect(isWatchIgnoredPath('USER.local.md')).toBe(true)
+    expect(isWatchIgnoredPath('Home.local.app/node_modules/x.js')).toBe(true)
+    expect(isWatchIgnoredPath('Home.local.app/.DS_Store')).toBe(true)
+    expect(isWatchIgnoredPath('notes/a.md')).toBe(false)
+    expect(isWatchIgnoredPath('Budget.app/cache.local.json')).toBe(true)
   })
 
   it('isNonContentPath (what the store excludes): junk/tmp/dirs, but NOT local-only', () => {

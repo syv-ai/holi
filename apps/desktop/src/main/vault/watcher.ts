@@ -10,9 +10,7 @@
  * rescan. See the comment in `vitest.config.ts`.
  */
 import { watch, type FSWatcher } from 'chokidar'
-import { isIgnoredPath } from './vault-files'
-import { toVaultRel } from './vault-files'
-import { THEME_LOCAL_FILE } from './theme'
+import { isWatchIgnoredPath, toVaultRel } from './vault-files'
 
 export interface VaultWatcher {
   close(): Promise<void>
@@ -39,15 +37,9 @@ export async function watchVault(args: {
       const rel = toVaultRel(args.root, abs)
       // Outside the root, or a path `vaultRelPath` refuses — never ours.
       if (rel === null) return true
-      // The personal theme override is `*.local.*`, so `isIgnoredPath` would
-      // filter it out (right for the store + sync — it stays uncommitted). But
-      // the watcher must still SEE it, or editing your theme wouldn't live-
-      // reload. This is a watch-only carve-out; it does not put the file into
-      // the snapshot or a commit.
-      if (rel === THEME_LOCAL_FILE) return false
       // `toVaultRel` also rejects anything `vaultRelPath` refuses, so an unsafe
       // path never reaches the callback.
-      return isIgnoredPath(rel)
+      return isWatchIgnoredPath(rel)
     },
   })
 

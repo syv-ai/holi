@@ -57,6 +57,12 @@ describe('freeCopyPath', () => {
     }
   })
 
+  it('keeps a duplicate of a personal app personal', () => {
+    const copy = freeCopyPath((p) => p === 'Home.local.app', 'Home.local.app')
+    expect(copy).toBe('Home copy.local.app')
+    expect(isLocalOnlyPath(copy)).toBe(true)
+  })
+
   it('counts up on a local file without losing the marker', () => {
     const taken = (p: string) => ['a.local.md', 'a copy.local.md'].includes(p)
     const copy = freeCopyPath(taken, 'a.local.md')

@@ -14,6 +14,9 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   marker: an agent writes an app file by file, so the manifest is written last. Its one key is
   `description`, optional, and an empty file finishes the app. The icon is the vault icon map's,
   as for any row. The parser never throws; a typo costs a field, never the app.
+- **A personal app is `<name>.local.app`.** The `.local.` marker on the folder makes every file
+  in it machine-local, so it never syncs; its name drops `.local.app`, and a rename or duplicate
+  keeps the marker. Otherwise it is an app like any other.
 - **Discovery is the snapshot.** A bundle's files are in `snapshot.files`, so the app list is
   derived in the renderer with no extra IPC, and an app appears on the next rescan.
 - **In the file tree** a bundle is one row with an app glyph that opens the app with a note's
@@ -21,7 +24,8 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   in place so its files are edited as ordinary files; the chevron shows only while it is expanded.
   Rename, move, drag, copy, duplicate and delete are the tree's folder operations: a rename edits
   the name without `.app`, and Duplicate makes `Budget copy.app`. A drop on the row lands beside
-  it, not among its files. See [file tree](file-tree.md).
+  it, not among its files. A personal app's row shows only under show-hidden, like any local
+  file; the launchers always list it. See [file tree](file-tree.md).
 - **Launchers.** The tree's app row, the [nav menu](nav-menu.md)'s Apps drill-down (every
   finished app by name, in the sidebar and on the rail; absent when there are none), and the
   [command palette](command-palette.md), which lists them with their folder. There is no separate
@@ -87,8 +91,10 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   while the agent is still writing.
 - No `allow-forms`: a form's submission is blocked before its submit handler runs, so the check
   flags `<form>` and the skill says to handle the click and Enter instead.
-- Personal apps, when they exist, are told apart by location (`userData`), not by the `.local.`
-  marker, which is a basename rule and cannot mark a directory.
+- A personal app is told apart by the `.local.` marker on its folder, which marks every path
+  under it. Git already agrees: `*.local.*` has no slash, so it matches the folder. The watcher,
+  which ignores local paths so per-turn state files do not storm the rescan, still watches a local
+  bundle, or an app the agent writes would not appear until the heal.
 - An app inside another app is just files of the outer one; otherwise the outer app could serve
   the inner one's code as its own.
 

@@ -44,14 +44,15 @@ export function vaultRelPath(raw: string): VaultRelPath {
 
 /** Machine-local paths that sync and export layers must never treat as
  * committed vault content, identified **solely** by the `.local.` marker in the
- * basename (`.holi/settings/app.local.yaml`, `.holi/state/context.local.json`,
- * `.holi/settings/theme.local.css`, `CLAUDE.local.md`, `USER.local.md`).
+ * file's name or in any folder above it (`.holi/settings/app.local.yaml`,
+ * `USER.local.md`, and everything in a personal app, `Home.local.app/…`).
  *
  * The marker is the whole rule on purpose: a file's git-vs-local status
- * must be legible from its name, never a special-cased exception. */
+ * must be legible from its path, never a special-cased exception. A folder
+ * counts because git already says so: `*.local.*` has no slash, so it matches
+ * a directory and ignores everything under it. */
 export function isLocalOnlyPath(path: string): boolean {
-  const base = path.split('/').at(-1) ?? path
-  return /\.local\./.test(base)
+  return path.split('/').some((segment) => /\.local\./.test(segment))
 }
 
 /**

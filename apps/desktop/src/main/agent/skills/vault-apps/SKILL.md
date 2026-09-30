@@ -35,6 +35,9 @@ Projects/Q2/Burndown.app/app.yaml     ← required: write this LAST
 
 - The name is yours to choose: `Burndown.app`, `Retro board.app`. It cannot sit
   inside another `.app` folder, nor under `.claude/` or `memory/`.
+- A personal app, one only this person should have, is named `Name.local.app`.
+  The `.local.` keeps the whole folder on this machine: it never syncs, and it is
+  still called `Name`. Everything else about it is the same.
 - `index.html` is required. A folder without one is not an app, so write the
   entry document even if it is a stub.
 - Every other file is served beside it, untouched. Relative `src`/`href` work:

@@ -11,8 +11,18 @@ import { isAgentSurfacePath, vaultRelPath } from './path-safety'
 
 export const APP_SUFFIX = '.app'
 
+/** A personal app's suffix: the `.local.` marker keeps the folder, and so
+ *  every file in it, on this machine (`isLocalOnlyPath`). */
+export const LOCAL_APP_SUFFIX = '.local.app'
+
+/** The suffix a bundle's name carries, which a rename must keep: renaming a
+ *  personal `Home.local.app` to `Home.app` would publish it. */
+export function appSuffix(bundle: string): string {
+  return bundle.endsWith(LOCAL_APP_SUFFIX) ? LOCAL_APP_SUFFIX : APP_SUFFIX
+}
+
 const isBundleName = (segment: string): boolean =>
-  segment.length > APP_SUFFIX.length && segment.endsWith(APP_SUFFIX)
+  segment.endsWith(APP_SUFFIX) && segment.length > appSuffix(segment).length
 
 /**
  * Is `path` an app bundle?
@@ -46,9 +56,10 @@ export function appBundleOf(filePath: string): string | null {
   return null
 }
 
-/** What the app is called: its folder name without `.app`, as a note drops `.md`. */
+/** What the app is called: its folder name without `.app` (or `.local.app`),
+ *  as a note drops `.md`. */
 export function appName(bundle: string): string {
-  return bundle.slice(bundle.lastIndexOf('/') + 1, -APP_SUFFIX.length)
+  return bundle.slice(bundle.lastIndexOf('/') + 1, -appSuffix(bundle).length)
 }
 
 /** DNS allows 63; any fixed width under it will do. */

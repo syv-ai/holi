@@ -11,7 +11,7 @@ import {
   type ReactNode,
 } from 'react'
 import { ChevronRight } from 'lucide-react'
-import { APP_SUFFIX } from '@holi/shared'
+import { APP_SUFFIX, appSuffix } from '@holi/shared'
 import { useAtomValue, useSetAtom } from 'jotai'
 import {
   DeleteConfirm,
@@ -277,8 +277,9 @@ export function FileTree({
 
   const rename = (from: string, node: TreeItemData, name: string) => {
     setRenaming(null)
-    // An app is named without its `.app`, as a note is without its `.md`.
-    if (node.isApp) return actions.renameFolder(from, `${name}${APP_SUFFIX}`)
+    // An app is named without its `.app`, as a note is without its `.md`. A
+    // personal app keeps its `.local.app`: dropping it would publish the app.
+    if (node.isApp) return actions.renameFolder(from, `${name}${appSuffix(from)}`)
     if (node.isFolder) return actions.renameFolder(from, name)
     const to = joinPath(parentOf(from), withMdExtension(name))
     if (to !== from) void renameNote({ from, to })

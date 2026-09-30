@@ -116,8 +116,8 @@ less trusted than the user (a vault app, a hook) is kept off them.
 
 ### Local file
 
-Any file with `.local.` in its name. Machine-local: shown under _show hidden files_, never synced.
-The marker is the whole rule.
+Any file with `.local.` in its name, or anything under a folder with `.local.` in its name.
+Machine-local: shown under _show hidden files_, never synced. The marker is the whole rule.
 
 ### Vault app
 

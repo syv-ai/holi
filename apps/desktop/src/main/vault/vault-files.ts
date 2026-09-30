@@ -4,7 +4,15 @@
 import { randomBytes } from 'node:crypto'
 import { mkdir, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join, relative, sep } from 'node:path'
-import { GITKEEP, isLocalOnlyPath, vaultRelPath, type VaultRelPath } from '@holi/shared'
+import {
+  GITKEEP,
+  THEME_LOCAL_FILE,
+  appBundleOf,
+  isAppBundlePath,
+  isLocalOnlyPath,
+  vaultRelPath,
+  type VaultRelPath,
+} from '@holi/shared'
 
 export const TMP_MARKER = '.holi-tmp-'
 const JUNK = new Set(['.DS_Store', 'Thumbs.db'])
@@ -47,13 +55,37 @@ export function isNonContentPath(rel: string): boolean {
 }
 
 /**
- * Non-content **plus** local-only. This is what the *watcher* ignores: a change
- * to `.holi/state/context.local.json` (rewritten every agent turn) must not storm the
- * rescan loop. The snapshot uses `isNonContentPath` instead, so those files
+ * Non-content **plus** local-only: the base of what the watcher ignores
+ * (`isWatchIgnoredPath`). A change to `.holi/state/context.local.json`
+ * (rewritten every agent turn) must not storm the rescan loop. The snapshot uses `isNonContentPath` instead, so those files
  * still appear in the tree — refreshed on the periodic heal rather than live.
  */
 export function isIgnoredPath(rel: string): boolean {
   return isNonContentPath(rel) || isLocalOnlyPath(rel)
+}
+
+/**
+ * What the watcher ignores: `isIgnoredPath`, minus the local files that must
+ * still reload live.
+ *
+ *  - **The personal theme.** It stays uncommitted and out of the snapshot's
+ *    notes, but editing it has to restyle the app at once.
+ *  - **A personal app** (`Home.local.app`) and everything in it. The watcher
+ *    prunes an ignored directory's whole subtree, so without this the agent
+ *    writes the app and nothing appears until the periodic heal. A bundle
+ *    inside a local folder that is not itself a bundle (`x.local/Foo.app`) is
+ *    pruned with that folder and still waits for the heal.
+ *
+ * Seeing them is watch-only: it puts nothing into a commit.
+ */
+export function isWatchIgnoredPath(rel: string): boolean {
+  if (isNonContentPath(rel)) return true
+  if (rel === THEME_LOCAL_FILE) return false
+  // Only a bundle that is itself local: a `.local.` file inside a shared app
+  // stays unwatched like any other.
+  const bundle = isAppBundlePath(rel) ? rel : appBundleOf(rel)
+  if (bundle !== null && isLocalOnlyPath(bundle)) return false
+  return isLocalOnlyPath(rel)
 }
 
 export async function writeAtomic(

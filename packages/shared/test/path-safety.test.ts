@@ -130,18 +130,20 @@ describe('vaultRelPath (pure lexical validation)', () => {
 
 describe('LOCAL_ONLY_IGNORE_LINES', () => {
   /** A minimal gitignore matcher, covering only the forms this constant uses.
-   *  Enough to prove the lines and the predicate agree. */
+   *  Enough to prove the lines and the predicate agree. A pattern with no
+   *  slash matches any segment, a directory included, and ignoring a
+   *  directory ignores everything under it. */
   const ignoredBy = (lines: readonly string[], path: string) =>
     lines.some((line) => {
-      const base = path.split('/').at(-1)!
-      if (!line.includes('*')) return path === line || base === line
+      const segments = path.split('/')
+      if (!line.includes('*')) return path === line || segments.includes(line)
       const re = new RegExp(
         `^${line
           .split('*')
           .map((s) => s.replace(/[.+?^${}()|[\]\\]/g, '\\$&'))
           .join('.*')}$`,
       )
-      return re.test(base)
+      return segments.some((s) => re.test(s))
     })
 
   it('ignores exactly what isLocalOnlyPath refuses to treat as vault content', () => {
@@ -160,6 +162,15 @@ describe('LOCAL_ONLY_IGNORE_LINES', () => {
     }
   })
 
+  it('treats everything under a .local. folder as local, as git does', () => {
+    // A personal app is `Name.local.app`: its files carry no marker of their
+    // own, and `*.local.*` already ignores the folder they sit in.
+    for (const path of ['Home.local.app', 'Home.local.app/index.html', 'a/x.local.d/y.md']) {
+      expect(isLocalOnlyPath(path)).toBe(true)
+      expect(ignoredBy(LOCAL_ONLY_IGNORE_LINES, path)).toBe(true)
+    }
+  })
+
   it('does not ignore ordinary vault content — incl. a bare USER.md (local-ness is only the .local. marker)', () => {
     // USER.md is no longer special-cased: a synced-looking name IS synced. The
     // personal model lives at USER.local.md, whose name declares its locality.
@@ -169,6 +180,9 @@ describe('LOCAL_ONLY_IGNORE_LINES', () => {
       'USER.md',
       'notes/user.md',
       'projects/local-plans.md',
+      'notes/local/a.md',
+      'a.localx.md',
+      'Home.app/index.html',
     ]) {
       expect(isLocalOnlyPath(path)).toBe(false)
       expect(ignoredBy(LOCAL_ONLY_IGNORE_LINES, path)).toBe(false)

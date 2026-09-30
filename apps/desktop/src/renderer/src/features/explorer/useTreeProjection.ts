@@ -37,7 +37,11 @@ export function useTreeProjection() {
     const paths = showHidden
       ? docPaths
       : docPaths.filter((p) => p === revealPath || (!isHiddenPath(p) && !isLocalOnlyPath(p)))
-    const dirs = showHidden ? snapshot.dirs : snapshot.dirs.filter((d) => !isHiddenPath(d))
+    // A local folder goes with its files: a personal app's `index.html` is
+    // hidden, so its folder would otherwise show as a plain `Home.local.app`.
+    const dirs = showHidden
+      ? snapshot.dirs
+      : snapshot.dirs.filter((d) => !isHiddenPath(d) && !isLocalOnlyPath(d))
     return { paths, dirs }
   }, [docPaths, snapshot.dirs, showHidden, revealPath])
 
