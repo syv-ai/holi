@@ -441,12 +441,12 @@ export const editorTheme = EditorView.baseTheme({
   },
   // Two classes, so they outrank a list line's own air above it.
   '.cm-quote.cm-quote-first': {
-    paddingTop: '0.6em',
+    paddingTop: '0.9em',
     borderTopLeftRadius: 'var(--radius-md, 6px)',
     borderTopRightRadius: 'var(--radius-md, 6px)',
   },
   '.cm-quote.cm-quote-last': {
-    paddingBottom: '0.6em',
+    paddingBottom: '0.9em',
     borderBottomLeftRadius: 'var(--radius-md, 6px)',
     borderBottomRightRadius: 'var(--radius-md, 6px)',
   },
@@ -504,13 +504,14 @@ export const editorTheme = EditorView.baseTheme({
   },
   '&.cm-mod-held .cm-md-link': { cursor: 'pointer' },
 
-  // A hairline across the line's middle, in the row its `---` takes.
+  // A hairline across the line's middle, in the row its `---` takes. Mixed
+  // toward the text: `--border` all but vanished on the dark page.
   '.cm-hr': {
     display: 'inline-block',
     width: '100%',
     height: '1px',
     verticalAlign: 'middle',
-    background: 'var(--border)',
+    background: 'color-mix(in srgb, var(--foreground) 30%, var(--background))',
   },
 
   /**
