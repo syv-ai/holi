@@ -502,6 +502,13 @@ export const editorTheme = EditorView.baseTheme({
     textDecorationColor: 'color-mix(in srgb, var(--link) 45%, transparent)',
     textUnderlineOffset: '0.2em',
   },
+  /**
+   * A link's colour reaches everything inside it. GFM parses `www.…` and
+   * `https://…` as `URL` nodes, and `tags.url` descends from `literal`, which
+   * `codeHighlighting` (loaded here for fenced code) paints as a number. A
+   * domain linkify finds is no node, so without this the two looked different.
+   */
+  '.cm-md-link.cm-md-link *': { color: 'inherit' },
   '&.cm-mod-held .cm-md-link': { cursor: 'pointer' },
 
   // A hairline across the line's middle, in the row its `---` takes. Mixed
