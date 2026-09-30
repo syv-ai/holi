@@ -821,7 +821,9 @@
  * blanket rule would also inset every `overflow: hidden` box by 10px. It is
  * keyed to the utilities that make a vertical scroller instead.
  * `overflow-x-auto` is absent: it would reserve a vertical bar that never
- * comes.
+ * comes. So is a table cell's editor, a `.cm-scroller` the table plugin
+ * makes `overflow: hidden`: the lane widened the cell as it took focus, and
+ * the centred table shifted with it.
  *
  * `::-webkit-scrollbar`, not `scrollbar-color`: setting the latter makes
  * Chromium ignore these pseudo-elements, and thumb hover is what buys the fade.
@@ -831,7 +833,7 @@
   .overflow-y-auto,
   .overflow-scroll,
   .overflow-y-scroll,
-  .cm-scroller,
+  .cm-scroller:not(.tbl-cell-editor *),
   .xterm-viewport
 ) {
   scrollbar-gutter: stable;
