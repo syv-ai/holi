@@ -15,6 +15,7 @@ import { linkClickHandler, type LinkNav } from './links'
 import { askAgentTooltip, type AskAgentSeam } from './askAgent'
 import { frontmatterExtension } from './frontmatter'
 import { mermaidExtension } from './mermaid'
+import { commentExtension } from './comments'
 import { languageForPath, validityStatus } from './languages'
 import { settingsCompletion } from './settings-completion'
 import { headingSlide } from './heading-slide'
@@ -28,6 +29,7 @@ import {
 } from './livePreview'
 import { mentionSource, type MentionData } from './mentions'
 import { alphaListKeymap, alphaLists, listKindByTyping, renumberOrderedLists } from './lists'
+import { arrowsByTyping } from './arrows'
 import { slashCommands, tableSizes } from './slash'
 import { wikiHoverPreview, type ReadNote } from './wikiHover'
 import { colorModeAware } from './color-mode'
@@ -123,6 +125,8 @@ export function baseEditorExtensions(deps: EditorDeps): Extension[] {
     deps.frontmatter === false ? [] : frontmatterExtension,
     // Also a StateField: CodeMirror refuses block decorations from a plugin.
     mermaidExtension,
+    // `<!-- … -->` on its own lines, as a banner. A StateField for the same reason.
+    commentExtension,
     linkClickHandler(deps.nav),
     wikiHoverPreview(deps.readNote),
     // Styles a rendered table's cells, which only a HighlightStyle reaches
@@ -157,6 +161,8 @@ export function baseEditorExtensions(deps: EditorDeps): Extension[] {
     renumberOrderedLists,
     // `1. a.` in a list's empty first item makes it a letter list, and back.
     listKindByTyping,
+    // ` -> ` becomes ` → ` in the file, its own undo step.
+    arrowsByTyping,
     keymap.of([
       ...completionKeymap,
       // ⌘D: select the word, then each press adds the next matching occurrence.

@@ -5,6 +5,7 @@ import {
   rewriteWikiLinks,
   rewriteWikiLinksMulti,
   type WikiLinkMatch,
+  wikiLinkChipText,
   wikiLinkDisplay,
   wikiLinksToText,
 } from '../src/wiki-links'
@@ -125,6 +126,32 @@ describe('wikiLinkDisplay', () => {
 
   it('handles a bare name with no path', () => {
     expect(wikiLinkDisplay(link('Home'))).toBe('Home')
+  })
+})
+
+describe('wikiLinkChipText', () => {
+  const link = (target: string, label?: string): WikiLinkMatch => ({
+    raw: '',
+    target,
+    label,
+    start: 0,
+    end: 0,
+  })
+
+  it('shows a markdown target as its path without the .md', () => {
+    expect(wikiLinkChipText(link('projects/q2/plan.md'))).toBe('projects/q2/plan')
+  })
+
+  it('lets an explicit label win', () => {
+    expect(wikiLinkChipText(link('projects/q2/plan.md', 'The Plan'))).toBe('The Plan')
+  })
+
+  it('keeps any other extension', () => {
+    expect(wikiLinkChipText(link('assets/report.pdf'))).toBe('assets/report.pdf')
+  })
+
+  it('drops only a trailing .md', () => {
+    expect(wikiLinkChipText(link('notes/a.md.bak'))).toBe('notes/a.md.bak')
   })
 })
 

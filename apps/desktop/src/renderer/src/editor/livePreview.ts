@@ -16,7 +16,14 @@ import {
   type DecorationSet,
   type ViewUpdate,
 } from '@codemirror/view'
-import { fileKind, parseWikiLinks, resolveImageRef, type TaskStatus } from '@holi/shared'
+import {
+  fileKind,
+  parseWikiLinks,
+  resolveImageRef,
+  wikiLinkChipText,
+  type TaskStatus,
+} from '@holi/shared'
+import { bareLinks } from './bare-links'
 import { frontmatterRegion } from './frontmatter-region'
 import { isListNode } from './lists'
 import { ImageWidget } from './imageWidget'
@@ -79,12 +86,40 @@ const BLOCK_NODES = new Set([
   'Image',
 ])
 
+/** Where a bare `github.com` is not a link: code, comments, and text that is
+ *  a link already. */
+const NO_BARE_LINKS = new Set([
+  'InlineCode',
+  'FencedCode',
+  'CodeBlock',
+  'Link',
+  'Autolink',
+  'Image',
+  'Comment',
+  'CommentBlock',
+  'HTMLBlock',
+  'HTMLTag',
+])
+
+/** Link text that opens `href` on ⌘/Ctrl-click (`links.ts`). */
+const hrefLink = (href: string) =>
+  Decoration.mark({ class: 'cm-md-link', attributes: { 'data-href': href } })
+
 const conceal = Decoration.replace({})
 const strong = Decoration.mark({ class: 'cm-strong' })
 const emphasis = Decoration.mark({ class: 'cm-emphasis' })
 const strike = Decoration.mark({ class: 'cm-strikethrough' })
 const inlineCode = Decoration.mark({ class: 'cm-inline-code' })
 const quoteMark = Decoration.mark({ class: 'cm-quote-mark' })
+/** A comment inside a paragraph, left as text; one on its own lines is a
+ *  banner (`comments.ts`). */
+const inlineComment = Decoration.mark({ class: 'cm-comment-inline' })
+/** A line of a blockquote, and whether it opens or closes one: the quote is a
+ *  surface, and only its ends are rounded. */
+const quoteLine = (first: boolean, last: boolean) =>
+  Decoration.line({
+    class: `cm-quote${first ? ' cm-quote-first' : ''}${last ? ' cm-quote-last' : ''}`,
+  })
 const linkText = Decoration.mark({ class: 'cm-md-link' })
 /**
  * `raw` lives on the LINE, not the mark, so the `#` can slide: the unchanged
@@ -281,8 +316,8 @@ export function revealedSpans(spans: Span[], sel: Span): Set<string> {
  * Usually the element itself; a heading's `#` and a list marker belong to their
  * LINE, so the caret need not land on the marker itself.
  *
- * `null` for everything not concealed conditionally: fenced code, quote marks,
- * the frontmatter block, a list's leading indent.
+ * `null` for everything not concealed conditionally: fenced code, the
+ * frontmatter block, a list's leading indent.
  */
 function revealSpan(
   state: EditorState,
@@ -314,6 +349,12 @@ function revealSpan(
     case 'ListItem': {
       const mark = node.node.firstChild
       if (mark === null || mark.name !== 'ListMark') return null
+      const line = state.doc.lineAt(node.from)
+      return { from: line.from, to: line.to }
+    }
+    // Per line, like a list marker: the caret on one line of a long quote
+    // shows that line's `>`, and the rest of the quote stays still.
+    case 'QuoteMark': {
       const line = state.doc.lineAt(node.from)
       return { from: line.from, to: line.to }
     }
@@ -352,12 +393,14 @@ export function buildDecorations(state: EditorState, from: number, to: number): 
   // Collect first (tree iteration + regex scan), sort, then feed the builder
   const ranges: DecoRange[] = []
   const notePath = state.facet(notePathFacet)
+  const noBareLinks: Span[] = [...wikiSpans]
 
   syntaxTree(state).iterate({
     from,
     to,
     enter(node) {
       if (inlineOnly && BLOCK_NODES.has(node.name)) return
+      if (NO_BARE_LINKS.has(node.name)) noBareLinks.push({ from: node.from, to: node.to })
       const activeHere = isActive(revealSpan(state, node, inlineOnly))
       switch (node.name) {
         case 'ATXHeading1':
@@ -468,10 +511,15 @@ export function buildDecorations(state: EditorState, from: number, to: number): 
             }
           }
           // Conceal the author's indentation, always, so the depth alone places
-          // the line. Only the whitespace right before the marker: a blockquote's
-          // `> ` is styled, not hidden.
+          // the line. Only the whitespace right before the marker, short of a
+          // blockquote's `> `, which the quote conceals itself.
           let lead = mark.from
-          while (lead > line.from && /[ \t]/.test(state.sliceDoc(lead - 1, lead))) lead--
+          while (
+            lead > line.from &&
+            /[ \t]/.test(state.sliceDoc(lead - 1, lead)) &&
+            state.sliceDoc(lead - 2, lead - 1) !== '>'
+          )
+            lead--
           if (lead < mark.from) ranges.push({ from: lead, to: mark.from, deco: conceal })
           // A task's checkbox is its marker, so the `- ` in front of it goes.
           if (taskMark !== null) {
@@ -503,8 +551,33 @@ export function buildDecorations(state: EditorState, from: number, to: number): 
           concealSpaceAfter(state, mark.to, ranges)
           break
         }
+        case 'Blockquote': {
+          // The outermost quote draws the surface; a nested one sits inside it.
+          let nested = false
+          for (let p = node.node.parent; p !== null; p = p.parent) {
+            if (p.name === 'Blockquote') nested = true
+          }
+          if (nested) break
+          const first = state.doc.lineAt(node.from).number
+          const last = state.doc.lineAt(node.to).number
+          for (let n = first; n <= last; n++) {
+            const line = state.doc.line(n)
+            if (line.from < from || line.from > to) continue
+            ranges.push({
+              from: line.from,
+              to: line.from,
+              deco: quoteLine(n === first, n === last),
+            })
+          }
+          break
+        }
         case 'QuoteMark':
-          ranges.push({ from: node.from, to: node.to, deco: quoteMark })
+          // `> ` shows only on the caret's line; the surface says "quote".
+          if (activeHere) ranges.push({ from: node.from, to: node.to, deco: quoteMark })
+          else {
+            const space = /[ \t]/.test(state.sliceDoc(node.to, node.to + 1)) ? 1 : 0
+            ranges.push({ from: node.from, to: node.to + space, deco: conceal })
+          }
           break
         case 'HorizontalRule':
           if (!activeHere) {
@@ -521,11 +594,7 @@ export function buildDecorations(state: EditorState, from: number, to: number): 
           const close = text.indexOf('](')
           if (close !== -1 && text.endsWith(')')) {
             const url = text.slice(close + 2, -1)
-            ranges.push({
-              from: node.from + 1,
-              to: node.from + close,
-              deco: Decoration.mark({ class: 'cm-md-link', attributes: { 'data-href': url } }),
-            })
+            ranges.push({ from: node.from + 1, to: node.from + close, deco: hrefLink(url) })
             if (!activeHere) {
               ranges.push({ from: node.from, to: node.from + 1, deco: conceal })
               ranges.push({ from: node.from + close, to: node.to, deco: conceal })
@@ -533,6 +602,17 @@ export function buildDecorations(state: EditorState, from: number, to: number): 
           } else {
             ranges.push({ from: node.from, to: node.to, deco: linkText })
           }
+          break
+        }
+        case 'Comment':
+          ranges.push({ from: node.from, to: node.to, deco: inlineComment })
+          break
+        case 'Autolink': {
+          // `<https://…>`: the address opens like a link. An email one stays text.
+          const url = node.node.getChild('URL')
+          const href = url === null ? '' : state.sliceDoc(url.from, url.to)
+          if (url !== null && /^https?:\/\//i.test(href))
+            ranges.push({ from: url.from, to: url.to, deco: hrefLink(href) })
           break
         }
         case 'Image': {
@@ -556,6 +636,15 @@ export function buildDecorations(state: EditorState, from: number, to: number): 
     },
   })
 
+  // Bare links (`github.com`, `https://…`) in prose. Clickable in Holi only:
+  // the file is left as it was written.
+  for (const link of bareLinks(visible)) {
+    const start = from + link.from
+    const end = from + link.to
+    if (noBareLinks.some((s) => start < s.to && end > s.from)) continue
+    ranges.push({ from: start, to: end, deco: hrefLink(link.url) })
+  }
+
   // wiki-links via the shared grammar (not part of the markdown tree)
   const docExists = state.facet(docExistsFacet)
   const taskByPath = state.facet(taskByPathFacet)
@@ -575,11 +664,12 @@ export function buildDecorations(state: EditorState, from: number, to: number): 
       continue
     }
     // A path that resolves to a task renders a task chip (orb + title); everything else
-    // is a note chip, existing or missing. An explicit `|Label` wins over the live title.
+    // is a note chip, existing or missing. An explicit `|Label` wins over the live title,
+    // and a note chip drops its `.md` (`wikiLinkChipText`).
     const task = taskByPath(link.target)
     const chip = task
       ? new WikiLinkChip(link.target, link.label ?? task.title, true, { status: task.status })
-      : new WikiLinkChip(link.target, link.label ?? link.target, docExists(link.target))
+      : new WikiLinkChip(link.target, wikiLinkChipText(link), docExists(link.target))
     ranges.push({ from: start, to: end, deco: Decoration.replace({ widget: chip }) })
   }
 

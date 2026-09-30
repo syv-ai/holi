@@ -97,6 +97,12 @@
   --task-todo: #6e7681;
   --task-doing: #388bfd;
   --task-done: #3fb950;
+  /* Inline code is told apart by colour alone, with no fill behind it. */
+  --code: var(--color-orange-300);
+  /* An HTML comment floats over the note. Mixed toward the text rather than
+     `--popover`, which sat too close to the page to tell apart. */
+  --comment: var(--muted-foreground);
+  --comment-background: color-mix(in srgb, var(--foreground) 13%, var(--background));
 
   /* ── File-type tokens ───────────────────────────────────────────────
    * The type colour of a file glyph in the tree, tabs and palette
@@ -152,13 +158,15 @@
    * A cell edge is `--border`: a cell is an object. Hover and drag mix toward
    * `--foreground`, not black as the package does, so they show on dark too.
    * Even/odd rows already default to the row background. */
-  --tbl-theme-row-background: var(--background);
-  /* `--card`, not `--muted`: dark-first, `--muted` equals `--border`, so the
-     header swallowed its own cell borders. */
-  --tbl-theme-header-row-background: var(--card);
+  /* A step off the page toward the text, so a table reads as an object in
+     either mode, and the header a step further. Not `--muted`: dark-first,
+     `--muted` equals `--border`, so the header swallowed its own cell borders. */
+  --tbl-theme-row-background: color-mix(in srgb, var(--foreground) 4%, var(--background));
+  --tbl-theme-header-row-background: color-mix(in srgb, var(--foreground) 8%, var(--background));
   --tbl-theme-border-color: var(--border);
-  --tbl-theme-border-hover-color: color-mix(in srgb, var(--border), var(--foreground) 25%);
-  --tbl-theme-border-active-color: color-mix(in srgb, var(--border), var(--foreground) 55%);
+  /* Also the handles' grips, which at a quarter of the way were lost on dark. */
+  --tbl-theme-border-hover-color: color-mix(in srgb, var(--border), var(--foreground) 50%);
+  --tbl-theme-border-active-color: color-mix(in srgb, var(--border), var(--foreground) 75%);
   --tbl-theme-outline-color: var(--ring);
   --tbl-theme-text-color: var(--foreground);
   --tbl-theme-menu-background: var(--popover);
@@ -214,6 +222,16 @@
   --syntax-comment: var(--color-neutral-500);
   --syntax-punctuation: var(--color-neutral-600);
   --syntax-invalid: var(--color-red-600);
+  --code: var(--color-orange-700);
+  /* Every token derived by `var()` is re-declared here with the dark arm's
+     expression. A `var()` resolves where it is declared, so without these,
+     reading light's defaults inside a `[data-theme='light']` probe
+     (`theme-defaults.ts`) inherits dark's results, and a vault's theme file is
+     filled with dark values in its light block. */
+  --divider: color-mix(in srgb, var(--border) 55%, var(--background));
+  --selection: color-mix(in srgb, var(--primary) 30%, transparent);
+  --comment: var(--muted-foreground);
+  --comment-background: color-mix(in srgb, var(--foreground) 13%, var(--background));
 
   /* Text, so a light arm; the diff tints deliberately have none. */
   --diff-added-foreground: var(--color-green-700);
@@ -221,8 +239,7 @@
   --context-warm: var(--color-amber-600);
   --context-full: var(--color-red-600);
 
-  /* Softer on white, where the dark-first weight reads as smudge. --selection
-     is brand-derived and needs no light arm. */
+  /* Softer on white, where the dark-first weight reads as smudge. */
   --shadow-popover: 0 10px 24px -6px rgb(0 0 0 / 0.14), 0 4px 8px -4px rgb(0 0 0 / 0.1);
 }
 

@@ -125,7 +125,7 @@ describe('buildDecorations — task-path chips', () => {
   // A path the store does not know is an ordinary note chip — never a task, never a lie.
   it('renders a note chip for a non-task path', () => {
     const chip = chipIn('first\nsee [[notes/plan.md]] ok', [known])
-    expect(chip).toMatchObject({ target: 'notes/plan.md', label: 'notes/plan.md' })
+    expect(chip).toMatchObject({ target: 'notes/plan.md', label: 'notes/plan' })
     expect(chip?.task).toBeUndefined()
   })
 
@@ -140,7 +140,7 @@ describe('buildDecorations — task-path chips', () => {
   // plain note chip — no invented tombstone.
   it('with no store, a task path is just a note chip', () => {
     const chip = chipIn(`first\nsee [[${TASK}]] ok`, [])
-    expect(chip).toMatchObject({ target: TASK, label: TASK })
+    expect(chip).toMatchObject({ target: TASK, label: TASK.replace(/\.md$/, '') })
     expect(chip?.task).toBeUndefined()
   })
 
@@ -236,16 +236,20 @@ describe('buildDecorations — list indentation', () => {
     expect(all.some((d) => d.from === markAt - 2 && d.to === markAt)).toBe(true)
   })
 
-  // A list inside a blockquote has `> ` in front of the marker, and the quote
-  // mark is styled, not hidden.
-  it('conceals whitespace only, never a quote mark', () => {
+  // A list inside a blockquote has `> ` in front of the marker. The `> ` is
+  // the quote's: shown on the caret's line, concealed by the quote elsewhere,
+  // and never swallowed by the list's own indent conceal.
+  it("leaves a quote's `> ` to the quote", () => {
     const doc = '> - quoted'
-    const { all } = decos(doc)
     const markAt = doc.indexOf('- quoted')
-    // The quote mark keeps its own styling, and nothing swallows it.
-    expect(all.some((d) => d.from === 0 && d.spec['class'] === 'cm-quote-mark')).toBe(true)
-    expect(all.some((d) => d.from === 0 && d.to === markAt)).toBe(false)
-    expect(all.some((d) => d.from === markAt - 1 && d.to === markAt)).toBe(true)
+    const onLine = decos(doc).all
+    expect(onLine.some((d) => d.from === 0 && d.spec['class'] === 'cm-quote-mark')).toBe(true)
+    expect(onLine.some((d) => d.to === markAt && d.from < markAt)).toBe(false)
+    const offLine = decos(`para\n\n${doc}`).all
+    const quoteAt = `para\n\n`.length
+    expect(offLine.filter((d) => d.to === quoteAt + 2 && d.from < quoteAt + 2)).toEqual([
+      expect.objectContaining({ from: quoteAt }),
+    ])
   })
 
   // The parser calls a bare `-` a list item with nothing in it, so without this

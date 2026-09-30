@@ -6,9 +6,11 @@ Every note is a `.md` file, edited in CodeMirror 6 with live preview: markdown r
 
 **Three stacks.** `baseEditorExtensions` is the notes editor. `mailComposerExtensions` is the same markdown editing with every vault layer removed. `plainTextExtensions` opens other text files with highlighting and validity checks, no markdown layers.
 
-**Live preview.** A `ViewPlugin` decorates the visible ranges and rebuilds on doc, selection or viewport change. The **element** the selection touches renders raw; the rest of its line stays rendered. Touching an edge counts, and when elements nest only the innermost opens. A heading's `#` and a list marker reveal with their whole line. The swap is instant, except a heading's `#`, which slides (`heading-slide.ts`).
+**Live preview.** A `ViewPlugin` decorates the visible ranges and rebuilds on doc, selection or viewport change. The **element** the selection touches renders raw; the rest of its line stays rendered. Touching an edge counts, and when elements nest only the innermost opens. A heading's `#`, a list marker and a quote's `>` reveal with their whole line. The swap is instant, except a heading's `#`, which slides (`heading-slide.ts`).
 
-**Keys and links.** ⌘B, ⌘I, ⌘E, ⌘⇧X and ⌘K wrap or unwrap the selection or word. A wiki-link chip opens on click; a markdown link needs ⌘-click, since a plain click means "edit this text".
+**Keys and links.** ⌘B, ⌘I, ⌘E, ⌘⇧X and ⌘K wrap or unwrap the selection or word. A wiki-link chip opens on click; a markdown link needs ⌘-click, since a plain click means "edit this text". A bare `github.com`, `www.` or `https://` address in prose opens the same way; `linkify-it` finds them, without emails and without the country domains that are also source-file extensions (`notes.md`, `main.py`). Code, comments and existing links are skipped, and the file is left as written.
+
+**Arrows are rewritten as you type.** `->` becomes `→` in the file once the space after it goes in, and `<-`, `<->` and `=>` become `←`, `↔` and `⇒`. Only with whitespace or the line's start before it, never in code or frontmatter. It is its own undo step, so ⌘Z gives back the typed arrow.
 
 **Lists.** Nesting comes from the tree, never from counting spaces; the typed indentation is concealed and depth alone places a line. An item's wrapped rows and its later lines (a soft break, a lazy continuation) hang under its text. Every marker sits in a box of known width, so no measuring is needed: a bullet, a checkbox, an ordered marker as wide as its list's longest in `ch` with tabular digits, so `9.` and `10.` share a column. The one space after a marker is concealed and the theme's gap stands in for it, since its width is the font's. `a.`, `A.` and `a)` lists are Holi's own, since CommonMark has only decimal ones: a parser extension (`alphaLists` in `lists.ts`) puts them in the tree as an `AlphaList` of ordinary `ListItem`s, so they nest, wrap and continue like any list. One may start inside a list or at the start of a block, never mid-paragraph, so "A. Smith said" stays a sentence. Markdown's own Enter cannot write a letter, and builds its indent only from lists it knows, so Enter in a letter list, or in any list inside one, is Holi's.
 
@@ -16,9 +18,15 @@ Every note is a `.md` file, edited in CodeMirror 6 with live preview: markdown r
 
 **Ordered numbers are rewritten in the file.** After an edit that reshapes a list (Tab, Shift+Tab, Enter, deleting a marker or a line break, moving a line), a transaction filter renumbers every decimal or letter list it touched from its start. A list keeps its start only if its first item was already one; otherwise it starts at 1. A nested list with no blank line above it always starts at 1, because CommonMark, GitHub included, reads `2.` under an item's text as more of that text. Letters keep the case of the list's first item and stop at `z`. Typing inside an item, a number included, is left alone, as are undo and reloads.
 
-**Tables** (`codemirror-markdown-tables`). A focused cell is a nested editor given inline live preview under `inlineOnlyFacet`. An unfocused cell is rendered by the package from the root highlighter, so a `HighlightStyle` is the only thing that styles it: it can hide `**`, `*` and `` ` ``, and keeps a link's brackets.
+**Tables** (`codemirror-markdown-tables`) sit centred in the column, their cells keeping their own alignment; a table wider than the column scrolls from its left edge. A focused cell is a nested editor given inline live preview under `inlineOnlyFacet`. An unfocused cell is rendered by the package from the root highlighter, so a `HighlightStyle` is the only thing that styles it: it can hide `**`, `*` and `` ` ``, and keeps a link's brackets.
 
 **Images and binaries.** Any file may live in a vault; markdown is what you write. `![](path)` (note-relative) and `[[img.png]]` (vault-relative) render inline via `holi-vault://`. An image opens in its own tab on a light checkerboard plate, a PDF in the viewer ([pdf.md](pdf.md)), other known binaries in a typed placeholder. Binaries stay out of the link graph.
+
+**Inline code** is the prose's size, in mono scaled to the prose face's x-height (`font-size-adjust: from-font`), with no fill: the `--code` theme token colours it.
+
+**Quotes** are a flat translucent surface, centred and narrower than the column, holding what the quote holds (lists hang inside it as outside). The `> ` shows only on the caret's line.
+
+**Comments.** An HTML comment on lines of its own draws as a small floating banner, centred, in the `--comment` and `--comment-background` tokens, and shows its source when touched. One inside a paragraph stays text in the comment colour.
 
 **Mermaid.** A mermaid fence draws as a diagram and shows source when touched. Mermaid loads on first use, a broken diagram shows its source, and the palette follows light/dark at render time.
 
@@ -58,7 +66,7 @@ Every note is a `.md` file, edited in CodeMirror 6 with live preview: markdown r
 
 ## Code
 
-- `apps/desktop/src/renderer/src/editor/`: `extensions.ts` (stacks), `livePreview.ts` (`revealedSpans`), `heading-slide.ts`, `mermaid.ts`, `completion.ts`, `slash.ts`, `mentions.ts`, `askAgent.ts`, `theme.ts`
+- `apps/desktop/src/renderer/src/editor/`: `extensions.ts` (stacks), `livePreview.ts` (`revealedSpans`), `heading-slide.ts`, `mermaid.ts`, `comments.ts`, `arrows.ts`, `bare-links.ts`, `completion.ts`, `slash.ts`, `mentions.ts`, `askAgent.ts`, `theme.ts`
 - `apps/desktop/src/renderer/src/features/editor/EditorPane.tsx`: load, save, flush, reload
 - `apps/desktop/src/renderer/src/lib/editor-reload.ts`, `apply-reload.ts`
 - `packages/shared/src/merge3.ts`, `normalize-md.ts`, `file-kind.ts`, `image-ref.ts`

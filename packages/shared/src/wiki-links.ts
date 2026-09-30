@@ -69,6 +69,13 @@ export function wikiLinkDisplay(link: WikiLinkMatch): string {
   return base.replace(/\.md$/i, '')
 }
 
+/** What an editor chip reads as: the explicit label, else the target's whole
+ *  path, which tells two `plan.md`s apart, less a trailing `.md`, which says
+ *  nothing about a link to a note. */
+export function wikiLinkChipText(link: WikiLinkMatch): string {
+  return link.label ?? link.target.replace(/\.md$/i, '')
+}
+
 /**
  * Replace every wiki-link with its display text (`wikiLinkDisplay`), for
  * pipelines that render note markdown *outside* the editor (PDF export), where

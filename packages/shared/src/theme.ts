@@ -100,6 +100,11 @@ export const THEME_COLOR_TOKENS = [
   'task-todo',
   'task-doing',
   'task-done',
+  // Inline code's text colour in a note; it has no fill of its own.
+  'code',
+  // An HTML comment's banner in a note: its text, and the surface it floats on.
+  'comment',
+  'comment-background',
 ] as const
 
 /** Length-valued chrome tokens (corner rounding). */
@@ -353,8 +358,18 @@ export const THEME_TOKEN_GROUPS: readonly ThemeTokenGroup[] = [
   },
   {
     title: 'In a note',
-    blurb: 'Wiki-link chips and task orbs, inside the editor.',
-    tokens: ['link', 'link-missing', 'task', 'task-todo', 'task-doing', 'task-done'],
+    blurb: 'Links, task orbs, inline code and comments, inside the editor.',
+    tokens: [
+      'link',
+      'link-missing',
+      'task',
+      'task-todo',
+      'task-doing',
+      'task-done',
+      'code',
+      'comment',
+      'comment-background',
+    ],
   },
   {
     title: 'Chrome',

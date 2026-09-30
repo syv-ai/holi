@@ -202,13 +202,21 @@ export const editorTheme = EditorView.baseTheme({
   '.cm-line': { padding: '0 var(--editor-inset)' },
   /**
    * `codemirror-markdown-tables` pulls its widget back by 10px so drag handles
-   * hang off the left; the inset is added to that offset. `.cm-content div…`
-   * because the plugin's own rules are two classes deep.
+   * hang off the left; the inset is added to that offset, on both sides so the
+   * widget's middle is the column's. `.cm-content div…` because the plugin's
+   * own rules are two classes deep.
    */
   '.cm-content div.tbl-table-widget': {
     marginLeft: 'calc(var(--editor-inset) - 10px)',
-    marginRight: 'var(--editor-inset)',
+    marginRight: 'calc(var(--editor-inset) - 10px)',
   },
+  /**
+   * A table sits centred in the column; its cells keep their own alignment.
+   * The wrapper is the plugin's fit-content box that its handles are placed
+   * in, so they come along. Wider than the column, the auto margins are zero
+   * and the widget scrolls from the left edge as before.
+   */
+  '.cm-content div.tbl-table-wrapper': { marginInline: 'auto' },
 
   // drawSelection() draws its own cursor and hides the native one, so caretColor
   // alone is invisible — the drawn cursor is a border-left element, style it.
@@ -273,17 +281,14 @@ export const editorTheme = EditorView.baseTheme({
    */
   '@media (prefers-reduced-motion: reduce)': {
     '&.cm-heading-sliding .cm-heading-mark': { transition: 'none' },
-    '.cm-ask-agent-open, .cm-ask-agent-leaving': { animation: 'none' },
+    '.cm-ask-agent-open, .cm-ask-agent-leaving, .cm-comment-body': { animation: 'none' },
   },
 
   '.cm-strong': { fontWeight: '700' },
   '.cm-emphasis': { fontStyle: 'italic' },
   '.cm-strikethrough': { textDecoration: 'line-through' },
-  '.cm-inline-code': {
-    background: 'rgba(255,255,255,0.08)',
-    borderRadius: '3px',
-    padding: '0 3px',
-  },
+  // Colour alone marks it: no fill, no padding, so it sits in the sentence.
+  '.cm-inline-code': { color: 'var(--code)' },
   /**
    * An unfocused table cell hides its `**`, `*` and `` ` ``.
    *
@@ -299,12 +304,7 @@ export const editorTheme = EditorView.baseTheme({
   '.tbl-cell-view .cm-md-mark:not(.cm-cell-link)': { display: 'none' },
   // In a cell only. The classes exist wherever the highlight style does (a
   // fenced block carries `cm-cell-code` too), so the selector scopes them.
-  '.tbl-cell-view .cm-cell-code': {
-    background: 'rgba(255,255,255,0.08)',
-    borderRadius: '3px',
-    padding: '0 3px',
-    fontFamily: MONO,
-  },
+  '.tbl-cell-view .cm-cell-code': { color: 'var(--code)', fontFamily: MONO },
   '.tbl-cell-view .cm-cell-link': { color: 'var(--link)' },
   '.cm-code-line': { background: 'rgba(255,255,255,0.04)' },
   /**
@@ -330,7 +330,8 @@ export const editorTheme = EditorView.baseTheme({
    * caret lands on it.
    */
   '.cm-list': {
-    marginLeft: 'calc(var(--list-indent, 2em) * var(--list-depth, 1) + var(--list-hang))',
+    marginLeft:
+      'calc(var(--quote-inset, 0px) + var(--list-indent, 2em) * var(--list-depth, 1) + var(--list-hang))',
     // The hang: the line starts where the text of its wrapped rows does, and
     // the first row pulls the marker back out into the indent.
     textIndent: 'calc(-1 * var(--list-hang))',
@@ -341,7 +342,8 @@ export const editorTheme = EditorView.baseTheme({
   },
   // A later line of an item's text, under the text.
   '.cm-list-cont': {
-    marginLeft: 'calc(var(--list-indent, 2em) * var(--list-depth, 1) + var(--list-hang))',
+    marginLeft:
+      'calc(var(--quote-inset, 0px) + var(--list-indent, 2em) * var(--list-depth, 1) + var(--list-hang))',
   },
   // `text-indent` is inherited, and every box in the line (the marker's, a
   // checkbox, a wiki-link chip) would take the hang into its own first row.
@@ -406,11 +408,88 @@ export const editorTheme = EditorView.baseTheme({
     strokeWidth: 'var(--icon-stroke)',
     verticalAlign: 'middle',
   },
-  '.cm-quote-mark': { color: '#737373' },
+  /**
+   * A blockquote: a flat surface, narrower than the column and centred in it,
+   * holding whatever the quote holds. Each line paints its own slice, so only
+   * the first and last round their corners.
+   *
+   * Translucent, because CodeMirror draws the selection behind the lines, and
+   * an opaque fill would hide a selection inside the quote.
+   *
+   * Margins, not padding, for the same reason a list's are (see `.cm-line`).
+   * A list line in a quote adds `--quote-inset` to its own margin, so the
+   * hang lines up in there as it does outside.
+   */
+  '.cm-quote': {
+    '--quote-inset': '2em',
+    // Toward the text, so it lifts off the page in either mode.
+    '--quote-surface': 'color-mix(in srgb, var(--foreground) 10%, transparent)',
+    marginRight: 'var(--quote-inset)',
+    background: 'var(--quote-surface)',
+  },
+  '.cm-quote:not(.cm-list):not(.cm-list-cont)': { marginLeft: 'var(--quote-inset)' },
+  /**
+   * A list line's margin starts its box, and so its fill, further in than the
+   * quote's edge. An outer shadow the width of that extra margin fills the gap:
+   * it paints outside the line's box only, so nothing is tinted twice.
+   */
+  '.cm-quote.cm-list, .cm-quote.cm-list-cont': {
+    boxShadow:
+      'calc(-1 * (var(--list-indent, 2em) * var(--list-depth, 1) + var(--list-hang))) 0 0 0 var(--quote-surface)',
+  },
+  // Two classes, so they outrank a list line's own air above it.
+  '.cm-quote.cm-quote-first': {
+    paddingTop: '0.6em',
+    borderTopLeftRadius: 'var(--radius-md, 6px)',
+    borderTopRightRadius: 'var(--radius-md, 6px)',
+  },
+  '.cm-quote.cm-quote-last': {
+    paddingBottom: '0.6em',
+    borderBottomLeftRadius: 'var(--radius-md, 6px)',
+    borderBottomRightRadius: 'var(--radius-md, 6px)',
+  },
+  '.cm-quote-mark': { color: 'var(--muted-foreground)' },
+  /**
+   * An HTML comment on its own lines (`comments.ts`): a small note floating over
+   * the page, centred in the column, so it has a surface and the popover's
+   * shadow. Its own `--comment` and `--comment-background` tokens, so a vault
+   * can recolour it. Text-aligned to the left, however many lines it has. The
+   * side margin is the block-widget inset (see `.cm-line`).
+   */
+  '.cm-comment': {
+    display: 'flex',
+    justifyContent: 'center',
+    margin: '0 var(--editor-inset)',
+    padding: '0.4em 0',
+    cursor: 'text',
+  },
+  '.cm-comment-body': {
+    maxWidth: '100%',
+    padding: '0.45em 0.9em 0.45em 1.05em',
+    borderRadius: 'var(--radius-md, 6px)',
+    background: 'var(--comment-background)',
+    color: 'var(--comment)',
+    boxShadow: 'var(--shadow-popover)',
+    fontSize: '0.9em',
+    lineHeight: '1.55',
+    whiteSpace: 'pre-wrap',
+    overflowWrap: 'anywhere',
+    // Opacity only: anything that moves geometry pegs CodeMirror's measure loop.
+    animation: 'cm-comment-in var(--motion-arrive, 300ms) var(--ease-settle, ease-out) both',
+  },
+  '@keyframes cm-comment-in': { from: { opacity: '0' }, to: { opacity: '1' } },
+  '.cm-comment-inline': { color: 'var(--comment)' },
   // A plain click on a markdown link places the caret; only ⌘/Ctrl-click
   // navigates (links.ts), so the pointer shows only while the modifier is held.
   // Wiki-link chips navigate on a plain click and keep theirs.
-  '.cm-md-link': { color: 'var(--link)', textDecoration: 'underline' },
+  // A hairline, part-transparent underline: the colour already says "link".
+  '.cm-md-link': {
+    color: 'var(--link)',
+    textDecoration: 'underline',
+    textDecorationThickness: '1px',
+    textDecorationColor: 'color-mix(in srgb, var(--link) 45%, transparent)',
+    textUnderlineOffset: '0.2em',
+  },
   '&.cm-mod-held .cm-md-link': { cursor: 'pointer' },
 
   // Compact HR: thin rule, minimal margins.
@@ -721,6 +800,14 @@ export const notesFontTheme = EditorView.theme({
   '.cm-content': { color: 'var(--prose)' },
   '.cm-code-line': { fontFamily: MONO },
   '.cm-inline-code': { fontFamily: MONO },
+  /**
+   * Inline code as tall as the prose around it. Mono at the prose's size reads
+   * larger, and by how much depends on the vault's face, so no fixed `em`
+   * fits. `from-font` computes to the line's own face's x-height ratio, and
+   * the code inherits that number, scaling its mono to the prose's x-height.
+   * The prose itself is left as it is: its own ratio is the one it has.
+   */
+  '.cm-line, .tbl-cell-view': { fontSizeAdjust: 'from-font' },
   '.cm-fm .cm-scroller': { fontFamily: MONO },
   // Reaches the ask popover because CodeMirror mounts tooltips inside `.cm-editor`.
   '.cm-ask-agent-field': { fontFamily: `var(--editor-font, ${MONO})` },
