@@ -45,21 +45,38 @@ export function decideReload(
   // Our own save echoing back, or a push about some other file.
   if (disk === base) return { kind: 'none' }
 
-  // Clean buffer: nothing to lose. The common case, since autosave fires on
-  // idle.
-  if (buffer === base) return { kind: 'reload', text: disk }
-
   // Holi's commit-time tidy (`normalize-md`, pre-commit), which rewrites the
   // file after `base` advanced. Keeping the buffer is safe because the tidy is
   // idempotent and reapplied next commit. Scoped to normalization alone:
   // `relink` rewrites carry real content, and dropping one would undo a rename.
-  // After the clean-buffer check, which simply takes the tidied bytes.
+  // Before the clean-buffer check, and for a clean buffer too: the commit
+  // lands seconds after autosave, while someone who stopped to think is
+  // looking at the line, and taking the tidied bytes would pull the space
+  // they just typed out from under the caret. `hasNewText` then keeps the
+  // untidied buffer from being written back.
   if (disk === normalizeText(base, path)) return { kind: 'rebase', text: disk }
+
+  // Clean buffer: nothing to lose. The common case, since autosave fires on
+  // idle.
+  if (buffer === base) return { kind: 'reload', text: disk }
 
   const merged = merge3(base, buffer, disk)
   return merged.kind === 'merged'
     ? { kind: 'merged', text: merged.text }
     : { kind: 'conflict', regions: merged.regions }
+}
+
+/**
+ * Whether the buffer holds anything `base` does not, the commit-time tidy
+ * aside. A buffer that differs only by what the tidy strips has nothing to
+ * save: writing it would just be tidied again, and after a `rebase` it is the
+ * normal state of an editor whose file was tidied under it.
+ */
+export function hasNewText(base: string, buffer: string, path: string): boolean {
+  if (buffer === base) return false
+  // The hook tidies markdown only; in a `.env` a trailing space is content.
+  if (!path.endsWith('.md')) return true
+  return normalizeText(buffer, path) !== normalizeText(base, path)
 }
 
 /**

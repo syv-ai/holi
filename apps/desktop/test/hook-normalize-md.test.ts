@@ -116,6 +116,22 @@ describe('what it must never touch', () => {
     expect(result.changed).toEqual([])
   })
 
+  // Without its space `a.` is not a list item, and `#` then text is not a
+  // heading: the line would change what it is while someone pauses on it.
+  it('keeps the one space after the marker of an empty item or heading', async () => {
+    const text = '1. first\n    a. \n- \n- [ ] \n> 2. \n## \n'
+    await file('a.md', text)
+    const result = await normalizeMd(root, staging(['a.md']))
+    expect(await read('a.md')).toBe(text)
+    expect(result.changed).toEqual([])
+  })
+
+  it('trims the rest after a bare marker to that one space', async () => {
+    await file('a.md', '-   \n1.\t\n')
+    await normalizeMd(root, staging(['a.md']))
+    expect(await read('a.md')).toBe('- \n1. \n')
+  })
+
   it('keeps a markdown hard line break (two trailing spaces)', async () => {
     // Two trailing spaces are a <br>. Stripping them is not whitespace tidying,
     // it silently changes how the note renders.

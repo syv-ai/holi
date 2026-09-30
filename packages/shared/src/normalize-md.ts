@@ -23,10 +23,17 @@ export function normalizeText(text: string, path: string): string {
   return isTaskFilePath(path) ? canonicalizeTask(tidied) : tidied
 }
 
+/** A line that is only block markup waiting for its text: a bullet, number or
+ *  letter marker (a task's box included), or a heading's `#`s, under any
+ *  quote markers and indent. */
+const BARE_MARKER =
+  /^[ \t]*(?:>[ \t]?)*[ \t]*(?:(?:[-*+]|\d{1,9}[.)]|[A-Za-z][.)])(?:[ \t]+\[[ xX]?\])?|#{1,6})[ \t]+$/
+
 /**
  * Trailing whitespace off, exactly one final newline on — outside code fences.
  *
  * **Two trailing spaces are preserved**: in markdown that is a hard line break.
+ * **So is the space after a bare marker** (`- `, `1. `, `a. `, `# `).
  */
 function tidyWhitespace(text: string): string {
   const lines = text.split('\n')
@@ -48,6 +55,10 @@ function tidyWhitespace(text: string): string {
     // Inside a fence the whitespace IS the content — indentation in a code
     // sample, a deliberate trailing space in a diff.
     if (inFence) return line
+    // An empty list item or heading keeps the one space after its marker:
+    // without it `a.` is not an item and `#` followed by text is not a
+    // heading, so the tidy would change what the line is.
+    if (BARE_MARKER.test(line)) return line.replace(/[ \t]+$/, ' ')
     if (/\S {2,}$/.test(line)) return line // a hard line break
     return line.replace(/[ \t]+$/, '')
   })

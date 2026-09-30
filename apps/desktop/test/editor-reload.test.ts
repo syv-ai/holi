@@ -13,7 +13,7 @@
  */
 import { describe, expect, it } from 'vitest'
 import { normalizeText } from '@holi/shared'
-import { decideReload, minimalChange } from '../src/renderer/src/lib/editor-reload'
+import { decideReload, hasNewText, minimalChange } from '../src/renderer/src/lib/editor-reload'
 
 describe('decideReload', () => {
   it('does nothing when disk matches base, whoever did the writing', () => {
@@ -89,11 +89,12 @@ describe('decideReload', () => {
       })
     })
 
-    it('still reloads rather than rebasing when the buffer is clean', () => {
-      // Nothing to protect, so take the tidied bytes outright. Rebasing here
-      // would leave `base` and the buffer agreeing on text disk does not have.
+    // A clean buffer is someone who stopped to think, looking at the line the
+    // tidy would change: taking the tidied bytes pulls the space they just
+    // typed out from under the caret.
+    it('rebases for a clean buffer too, leaving the line being looked at alone', () => {
       expect(decideReload(withSpace, withSpace, tidied, '22-08-2026.md')).toEqual({
-        kind: 'reload',
+        kind: 'rebase',
         text: tidied,
       })
     })
@@ -108,6 +109,21 @@ describe('decideReload', () => {
 
       expect(decideReload(base, mine, relinked, 'note.md').kind).not.toBe('rebase')
     })
+  })
+})
+
+describe('hasNewText', () => {
+  it('sees nothing new in a buffer that differs only by the tidy', () => {
+    // The normal state after a rebase: the buffer keeps its space, disk does not.
+    expect(hasNewText('- a\nword\n', '- a\nword \n', 'n.md')).toBe(false)
+  })
+
+  it('sees what was typed', () => {
+    expect(hasNewText('word\n', 'word more\n', 'n.md')).toBe(true)
+  })
+
+  it('counts every change in a file the tidy does not touch', () => {
+    expect(hasNewText('KEY=a\n', 'KEY=a \n', '.env')).toBe(true)
   })
 })
 

@@ -24,7 +24,7 @@ import type { MentionData } from '@/editor/mentions'
 import { playOnce } from '@/lib/motion'
 import { applyReload } from '@/lib/apply-reload'
 import { registerBuffer } from '@/lib/buffer-registry'
-import { decideReload, type ConflictResolvers } from '@/lib/editor-reload'
+import { decideReload, hasNewText, type ConflictResolvers } from '@/lib/editor-reload'
 import { askTargetsAtom, defaultAgentTargetAtom } from '@/state/agent'
 import { historyOpenAtom } from '@/state/history'
 import { sendToAgentAtom } from '@/state/agent-send'
@@ -160,7 +160,7 @@ export function EditorPane({
       const view = viewRef.current
       if (view === null || disposed) return
       const text = view.state.doc.toString()
-      if (text === baseRef.current) return
+      if (!hasNewText(baseRef.current, text, path)) return
       baseRef.current = text
       await trpc.notes.write.mutate({ remote, path, text })
     }
@@ -176,7 +176,7 @@ export function EditorPane({
       // `tags: [` is never the committed state. Markdown gates on its
       // frontmatter YAML; a plain file on its own language (`syntaxValid`).
       if (plain ? !syntaxValid(path, text) : !frontmatterValid(view.state)) return false
-      if (text !== baseRef.current) {
+      if (hasNewText(baseRef.current, text, path)) {
         baseRef.current = text
         await trpc.notes.write.mutate({ remote, path, text })
       }
@@ -261,7 +261,9 @@ export function EditorPane({
       const view = viewRef.current
       if (view !== null) {
         const text = view.state.doc.toString()
-        if (text !== baseRef.current) void trpc.notes.write.mutate({ remote, path, text })
+        if (hasNewText(baseRef.current, text, path)) {
+          void trpc.notes.write.mutate({ remote, path, text })
+        }
         view.destroy()
       }
       viewRef.current = null
