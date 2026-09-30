@@ -10,7 +10,7 @@ import { atom } from 'jotai'
 import { flushAllBuffers } from '../lib/buffer-registry'
 import { trpc } from '../lib/trpc'
 import { fileHistoryAtom } from './file-history'
-import { workspaceAtom } from './panes'
+import { openSingleton, workspaceAtom } from './panes'
 import { activeRemoteAtom } from './vaults'
 
 /** One commit that touched the open file: the git `Commit` shape. */
@@ -131,8 +131,16 @@ export const commitFilesAtom = atom<string[]>([])
  *  diff has not arrived yet. */
 export const commitDiffsAtom = atom<Record<string, FileDiff>>({})
 
-export const loadVaultLogAtom = atom(null, async (_get, set) => {
-  set(vaultCommitsAtom, await trpc.history.log.query())
+export const loadVaultLogAtom = atom(null, async (get, set) => {
+  const commits = await trpc.history.log.query()
+  set(vaultCommitsAtom, commits)
+  // Opened on a commit: select it now the log holds it. One older than the
+  // log reaches stays unselected rather than guessed at.
+  const focus = get(historyFocusShaAtom)
+  if (focus === null) return
+  set(historyFocusShaAtom, null)
+  const match = commitNamed(commits, focus)
+  if (match !== undefined) await set(selectCommitAtom, match.sha)
 })
 
 /** One file's diff within the selected commit. Each collapsible asks for its
@@ -154,6 +162,26 @@ export const selectCommitAtom = atom(null, async (_get, set, sha: string) => {
   set(commitFilesAtom, [])
   set(commitDiffsAtom, {})
   set(commitFilesAtom, await trpc.history.changed.query({ sha }))
+})
+
+/**
+ * A commit to open the History view on, from somewhere else (an app's
+ * approval names the commits its code came from). A History tab already open
+ * selects it at once; one that is only now opening resets and reloads its log
+ * as it mounts, so the load takes it from here once the log is in.
+ */
+const historyFocusShaAtom = atom<string | null>(null)
+
+/** The commit whose sha is, or starts with, `sha`: a short hash names one. */
+const commitNamed = (commits: readonly Version[], sha: string) =>
+  commits.find((c) => c.sha === sha || c.sha.startsWith(sha))
+
+export const openCommitInHistoryAtom = atom(null, (get, set, sha: string) => {
+  const open = get(workspaceAtom).panes.some((p) => p.tabs.some((t) => t.kind === 'history'))
+  set(workspaceAtom, (w) => openSingleton(w, 'history'))
+  const match = open ? commitNamed(get(vaultCommitsAtom), sha) : undefined
+  if (match !== undefined) void set(selectCommitAtom, match.sha)
+  else set(historyFocusShaAtom, sha)
 })
 
 export const resetVaultLogAtom = atom(null, (_get, set) => {

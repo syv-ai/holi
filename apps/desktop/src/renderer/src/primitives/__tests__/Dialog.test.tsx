@@ -38,7 +38,7 @@ test('size maps to the panel width class', () => {
       {body}
     </Dialog>,
   )
-  expect(screen.getByRole('dialog')).toHaveClass('max-w-2xl')
+  expect(screen.getByRole('dialog')).toHaveClass('max-w-3xl')
 })
 
 test('full size is a fixed-height workspace panel (wide, scrolls internally)', () => {

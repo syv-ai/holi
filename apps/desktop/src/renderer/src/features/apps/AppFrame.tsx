@@ -53,6 +53,7 @@ import {
   openSingleton,
   workspaceAtom,
 } from '../../state/panes'
+import { openCommitInHistoryAtom } from '../../state/history'
 import { openHomeAtom } from '../../state/home'
 import { activeRemoteAtom, snapshotAtom } from '../../state/vaults'
 
@@ -185,6 +186,11 @@ export function AppFrame({ path }: { path: string }): React.JSX.Element {
   // The approval gate, asked again on every open and reload, since what was
   // approved lapses with time or with a change to the app's code.
   const [ask, setAsk] = useState<{ affordances: AppAffordance[]; codeHash: string } | null>(null)
+  // Who added the code being approved and who last changed it, so the person
+  // can place it.
+  const [authorship, setAuthorship] = useState<Authorship>({ added: null, last: null })
+  // The app's own words for why it asks, from its manifest.
+  const [reasons, setReasons] = useState<Partial<Record<AppAffordance, string>>>({})
   const [gateOpen, setGateOpen] = useState(false)
   // Location is the browser's, not a bridge call: the frame is allowed to ask
   // only once it is approved, and main refuses it otherwise.
@@ -203,6 +209,8 @@ export function AppFrame({ path }: { path: string }): React.JSX.Element {
         const ungranted = status.affordances.filter((s) => !s.granted).map((s) => s.affordance)
         setLocating(status.affordances.some((s) => s.affordance === 'location' && s.granted))
         setAsk(ungranted.length > 0 ? { affordances: ungranted, codeHash: status.codeHash } : null)
+        setAuthorship({ added: status.added ?? null, last: status.lastChange ?? null })
+        setReasons(status.reasons ?? {})
         setGateOpen(ungranted.length === 0)
       })
       .catch(() => live && setGateOpen(true))
@@ -210,6 +218,9 @@ export function AppFrame({ path }: { path: string }): React.JSX.Element {
       live = false
     }
   }, [remote, path, exists, reloads, recheck])
+
+  // The pane the approval is asked in.
+  const [pane, setPane] = useState<HTMLDivElement | null>(null)
 
   // Which document the frame holds: the fade-in waits for this one's load.
   const documentKey = `${path}\n${reloads}\n${mode}`
@@ -254,23 +265,39 @@ export function AppFrame({ path }: { path: string }): React.JSX.Element {
   const reads = (ask?.affordances ?? []).map((a) => AFFORDANCE_TEXT[a]).join(' and ')
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div ref={setPane} className="relative flex h-full min-h-0 flex-col">
       {ask !== null && (
-        <Dialog open onClose={() => decide(false)} size="sm" closable={false}>
+        // The app as its markup and styles draw it, blurred behind the question:
+        // what is being approved, seen. No scripts (`sandbox=""`), so nothing
+        // of it runs before the answer, and it takes no pointer or focus.
+        <iframe
+          src={`holi-app://${appHost(path)}/index.html?mode=${mode}`}
+          sandbox=""
+          aria-hidden="true"
+          tabIndex={-1}
+          className="pointer-events-none absolute inset-0 size-full border-0 opacity-60 blur-sm"
+        />
+      )}
+      {ask !== null && (
+        // Asked in the app's own pane, where the app would be: the question is
+        // about this app, and the rest of Holi stays usable meanwhile.
+        <Dialog open onClose={() => decide(false)} size="sm" closable={false} within={pane}>
           <Dialog.Header>
-            {name} wants to read {reads}
+            {name} wants permission to read {reads}
           </Dialog.Header>
           <Dialog.Body>
-            <div className="grid gap-3 text-xs text-muted-foreground">
+            <AppsWords name={name} asked={ask.affordances} reasons={reasons} />
+            <div className="grid gap-3 text-xs leading-relaxed text-muted-foreground">
               <p>
-                Whoever wrote this app asked for it. What it reads, it can keep in its records,
-                which sync to everyone in this vault, or send over the network.
+                What it reads, it can store, which may sync to others in this vault or over the
+                network. Sounds scary, but it doesn&rsquo;t mean it does these things, just that it
+                requests a permission that can potentially be used like that.
               </p>
               <p>
-                Only allow it if you trust this app. Holi asks again in 30 days, or as soon as the
-                app changes.
+                Allow it if you trust them. Holi will ask again in 30 days, or if the app changes.
               </p>
             </div>
+            <WrittenBy authorship={authorship} />
           </Dialog.Body>
           <Dialog.Footer>
             <Button variant="ghost" size="sm" onClick={() => decide(false)}>
@@ -318,5 +345,91 @@ export function AppFrame({ path }: { path: string }): React.JSX.Element {
         />
       )}
     </div>
+  )
+}
+
+/**
+ * Why the app asks, in its own words (`dangerously-allow` as a map): quoted
+ * and attributed, so it reads as the app's claim rather than Holi's. Plain
+ * text, capped by the parser. Nothing when the app gave no reason.
+ */
+function AppsWords({
+  name,
+  asked,
+  reasons,
+}: {
+  name: string
+  asked: readonly AppAffordance[]
+  reasons: Partial<Record<AppAffordance, string>>
+}): React.JSX.Element | null {
+  const said = asked.flatMap((a) => (reasons[a] === undefined ? [] : [[a, reasons[a]!] as const]))
+  if (said.length === 0) return null
+  return (
+    <figure className="grid gap-1.5 text-xs">
+      <figcaption className="text-muted-foreground">In {name}&rsquo;s words</figcaption>
+      {said.map(([affordance, reason]) => (
+        <blockquote key={affordance} className="text-foreground">
+          &ldquo;{reason}&rdquo;
+        </blockquote>
+      ))}
+    </figure>
+  )
+}
+
+type AppCommit = { sha: string; author: string; date: string; login: string | null }
+type Authorship = { added: AppCommit | null; last: AppCommit | null }
+
+const day = (iso: string) =>
+  new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })
+
+/** Who wrote the code being approved: the commit that added it and the last
+ *  one to change it, from main. The name opens their GitHub profile when main
+ *  could tell their login; the hash opens the commit in History. A personal
+ *  app never committed was written on this machine. */
+function WrittenBy({ authorship }: { authorship: Authorship }): React.JSX.Element {
+  const { added, last } = authorship
+  return (
+    <div className="grid gap-1.5 rounded-xl bg-muted/60 px-4 py-3 text-xs text-muted-foreground">
+      {added == null ? (
+        <span>Not committed yet: written on this machine.</span>
+      ) : (
+        <>
+          <CommitLine lead="Added by" commit={added} />
+          {last != null && last.sha !== added.sha && (
+            <CommitLine lead="Last changed by" commit={last} />
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
+function CommitLine({ lead, commit }: { lead: string; commit: AppCommit }): React.JSX.Element {
+  const openCommit = useSetAtom(openCommitInHistoryAtom)
+  const link = 'h-auto p-0 text-xs text-foreground'
+  return (
+    <span className="min-w-0">
+      {lead}{' '}
+      {commit.login === null ? (
+        <span className="text-foreground">{commit.author}</span>
+      ) : (
+        <Button
+          variant="link"
+          className={link}
+          onClick={() => void window.holi.openExternal(`https://github.com/${commit.login}`)}
+        >
+          {commit.author}
+        </Button>
+      )}{' '}
+      in{' '}
+      <Button
+        variant="link"
+        className={cn(link, 'font-mono')}
+        onClick={() => openCommit(commit.sha)}
+      >
+        {commit.sha.slice(0, 7)}
+      </Button>
+      , {day(commit.date)}
+    </span>
   )
 }

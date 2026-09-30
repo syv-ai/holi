@@ -34,7 +34,16 @@ export interface AppManifest {
    * Keyed `dangerously-allow` in the YAML.
    */
   dangerouslyAllow?: AppAffordance[]
+  /**
+   * Why, in the app's own words, per affordance: shown in the approval
+   * dialog, quoted and attributed to the app. Written as the map form of
+   * `dangerously-allow` (`{ location: To show the weather where you are }`).
+   */
+  allowReasons?: Partial<Record<AppAffordance, string>>
 }
+
+/** The longest reason the approval dialog shows: a sentence, not a pitch. */
+export const MAX_ALLOW_REASON = 200
 
 /** The reads an app must opt into, because what they return is one person's,
  *  not the vault's: an app can keep it in synced records or send it anywhere.
@@ -43,12 +52,33 @@ export const APP_AFFORDANCES = ['mail', 'calendar', 'location'] as const
 
 export type AppAffordance = (typeof APP_AFFORDANCES)[number]
 
-function parseAffordances(raw: unknown): AppAffordance[] | undefined {
-  if (!Array.isArray(raw)) return undefined
-  const known = raw.filter((v): v is AppAffordance =>
-    (APP_AFFORDANCES as readonly unknown[]).includes(v),
-  )
-  return known.length > 0 ? [...new Set(known)] : undefined
+const isAffordance = (v: unknown): v is AppAffordance =>
+  (APP_AFFORDANCES as readonly unknown[]).includes(v)
+
+/**
+ * `dangerously-allow:` as a list (`[mail, location]`) or as a map from each
+ * affordance to the app's reason for it. A reason that is not text is no
+ * reason, and the affordance still counts; one too long is cut.
+ */
+function parseAffordances(raw: unknown): Pick<AppManifest, 'dangerouslyAllow' | 'allowReasons'> {
+  if (Array.isArray(raw)) {
+    const known = raw.filter(isAffordance)
+    return known.length > 0 ? { dangerouslyAllow: [...new Set(known)] } : {}
+  }
+  if (raw === null || typeof raw !== 'object') return {}
+  const allow: AppAffordance[] = []
+  const reasons: Partial<Record<AppAffordance, string>> = {}
+  for (const [key, value] of Object.entries(raw)) {
+    if (!isAffordance(key)) continue
+    allow.push(key)
+    if (typeof value === 'string' && value.trim() !== '') {
+      reasons[key] = value.trim().slice(0, MAX_ALLOW_REASON)
+    }
+  }
+  if (allow.length === 0) return {}
+  return Object.keys(reasons).length > 0
+    ? { dangerouslyAllow: allow, allowReasons: reasons }
+    : { dangerouslyAllow: allow }
 }
 
 const KNOWN_KEYS = ['description'] as const
@@ -102,8 +132,7 @@ export function parseAppManifest(yaml: string): AppManifest | null {
   }
   const collections = parseCollections((raw as Record<string, unknown>).collections)
   if (collections !== undefined) manifest.collections = collections
-  const allow = parseAffordances((raw as Record<string, unknown>)['dangerously-allow'])
-  if (allow !== undefined) manifest.dangerouslyAllow = allow
+  Object.assign(manifest, parseAffordances((raw as Record<string, unknown>)['dangerously-allow']))
   return manifest
 }
 
@@ -126,7 +155,8 @@ export function appManifestText(description?: string): string {
     'collections:',
     '',
     `# One person\u2019s data this app reads, approved by each person before it runs:`,
-    `# any of ${APP_AFFORDANCES.join(', ')}.`,
+    `# any of ${APP_AFFORDANCES.join(', ')}. As a map, each with a reason the approval shows:`,
+    '#   { location: To show the weather where you are }',
     'dangerously-allow:',
     '',
   ].join('\n')

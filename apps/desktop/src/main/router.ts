@@ -37,6 +37,7 @@ import { initAppOp, type AppInitResult } from './apps/app-ops'
 import { searchBodies, type SearchHit } from './apps/app-search'
 import { writeHomeApp } from './apps/home-app'
 import { writeAppLog } from './apps/app-log'
+import { bundleAuthorship, commitLogin, manifestOf, type BundleCommit } from './apps/app-grants'
 import { CapabilityError, runCapability, type CapabilityContext } from './apps/capabilities'
 import { noServices, type CapabilityServices, type UiReport } from './apps/capability-services'
 import { migrateApps as moveLegacyApps } from './apps/migrate-apps'
@@ -1330,7 +1331,22 @@ export function createRouter(deps: RouterDeps) {
           throw new TRPCError({ code: 'BAD_REQUEST', message: `not an app: ${input.bundle}` })
         }
         const root = await rootFor(input.remote)
-        return servicesFor(input.remote, root).grants.status(input.remote, root, input.bundle)
+        const status = await servicesFor(input.remote, root).grants.status(
+          input.remote,
+          root,
+          input.bundle,
+        )
+        // Only asked when there is something to approve: it names the code.
+        if (!status.affordances.some((a) => !a.granted)) {
+          return { ...status, reasons: {}, added: null, lastChange: null }
+        }
+        // The app's own words for why, shown quoted beside the ask.
+        const reasons = (await manifestOf(root, input.bundle))?.allowReasons ?? {}
+        const { added, last } = await bundleAuthorship(root, input.bundle)
+        const logins = (await members.get(input.remote).catch(() => [])).map((m) => m.login)
+        const withLogin = (c: BundleCommit | null) =>
+          c === null ? null : { ...c, login: commitLogin(c, logins) }
+        return { ...status, reasons, added: withLogin(added), lastChange: withLogin(last) }
       }),
 
     /** The person approved the dialog. Here and not in the registry, so an

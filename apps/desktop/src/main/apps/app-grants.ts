@@ -22,12 +22,15 @@ import { createHash } from 'node:crypto'
 import { readdir, readFile, readlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
+  APP_LOG_FILE,
   APP_MANIFEST_FILE,
+  DATA_DIR,
   isAppPrivatePath,
   isLocalOnlyPath,
   parseAppManifest,
   vaultRelPath,
   type AppAffordance,
+  type AppManifest,
 } from '@holi/shared'
 import { runGit } from '../git'
 import { jsonFileStore } from '../json-file-store'
@@ -119,13 +122,68 @@ async function isPersonal(root: string, bundle: string): Promise<boolean> {
   return tracked !== null && tracked.trim() === ''
 }
 
-/** The affordances the bundle's manifest declares; none when it has no manifest. */
-export async function declaredAffordances(root: string, bundle: string): Promise<AppAffordance[]> {
+/** One commit to an app's code: who, which, when. */
+export interface BundleCommit {
+  sha: string
+  author: string
+  email: string
+  /** ISO 8601, author date. */
+  date: string
+}
+
+/**
+ * The commit that added an app's code and the last one that changed it: what
+ * the approval dialog names, so a person approves code they can place.
+ * Records and the log are left out, as the approval's hash leaves them out:
+ * they change as the app is used. Both null when no commit touches the code (a
+ * personal app, never committed); the same commit when it was changed once.
+ */
+export async function bundleAuthorship(
+  root: string,
+  bundle: string,
+): Promise<{ added: BundleCommit | null; last: BundleCommit | null }> {
+  const out = await runGit(root, [
+    'log',
+    '--format=%H%x1f%an%x1f%ae%x1f%aI',
+    '--',
+    `:(literal)${bundle}`,
+    `:(exclude,literal)${bundle}/${DATA_DIR}`,
+    `:(exclude,literal)${bundle}/${APP_LOG_FILE}`,
+  ]).catch(() => '')
+  const commits = out
+    .split('\n')
+    .filter((line) => line !== '')
+    .map((line): BundleCommit => {
+      const [sha = '', author = '', email = '', date = ''] = line.split('\x1f')
+      return { sha, author, email, date }
+    })
+  return { added: commits.at(-1) ?? null, last: commits[0] ?? null }
+}
+
+/**
+ * The GitHub login behind a commit, or null: a GitHub noreply address says
+ * it outright, and otherwise a name that is one of the vault's members'
+ * logins is taken as that member (Holi commits under the machine's git
+ * name, which is often the login). Nothing is guessed beyond those.
+ */
+export function commitLogin(commit: BundleCommit, members: readonly string[]): string | null {
+  const noreply = /^(?:\d+\+)?([A-Za-z0-9-]+)@users\.noreply\.github\.com$/i.exec(commit.email)
+  if (noreply !== null) return noreply[1]!
+  return members.find((login) => login.toLowerCase() === commit.author.toLowerCase()) ?? null
+}
+
+/** The bundle's manifest, or null when it has none. */
+export async function manifestOf(root: string, bundle: string): Promise<AppManifest | null> {
   const text = await readFile(
     absPathFor(root, vaultRelPath(`${bundle}/${APP_MANIFEST_FILE}`)),
     'utf8',
   ).catch(() => null)
-  return (text === null ? null : parseAppManifest(text))?.dangerouslyAllow ?? []
+  return text === null ? null : parseAppManifest(text)
+}
+
+/** The affordances the bundle's manifest declares; none when it has no manifest. */
+export async function declaredAffordances(root: string, bundle: string): Promise<AppAffordance[]> {
+  return (await manifestOf(root, bundle))?.dangerouslyAllow ?? []
 }
 
 const keyOf = (remote: string, bundle: string, affordance: string) =>

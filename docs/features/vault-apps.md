@@ -66,7 +66,9 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   account of whoever has the app open, not the vault's, and the browser's geolocation reads where
   they are; an app can keep what it reads in records that sync to every member, or send it over
   the network. So the app declares `dangerously-allow: [mail, calendar, location]` (any of them)
-  in `app.yaml` (without it a Google call fails and names the flag, and geolocation is refused), and each person approves the app in a dialog before its frame loads. The approval is
+  in `app.yaml`, or as a map giving each one a reason (`{ location: To show the weather }`,
+  plain text, at most 200 characters) that the dialog quotes as the app's own words (without the
+  flag a Google call fails and names it, and geolocation is refused), and each person approves the app in a dialog before its frame loads. The approval is
   kept in main (`userData/app-grants.json`), never the renderer, which is the process running the
   app. It lapses after 30 days and whenever the app's code (anything but `data/`) changes, whoever
   changed it: approving a teammate's app approves that code, not what it becomes after a pull. A
@@ -79,6 +81,12 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   door only. Location is a browser permission, not a bridge call: an approved frame gets
   `allow="geolocation *"` (its origin is opaque, so no narrower allowlist matches it), and main's
   permission handler grants geolocation only to a `holi-app:` frame whose app is approved.
+- **The approval dialog** is asked in the app's own pane, over the app's markup and styles drawn
+  blurred and without scripts (`sandbox=""`), so what is approved is seen and nothing of it runs
+  first. It quotes the app's reasons, and names who added the app's code and who last changed it
+  (`bundleAuthorship`: the first and last commits to the bundle, records and log aside). A name
+  links to the person's GitHub profile when their login is known (a GitHub noreply email, or a git
+  name that is a member's login), and a short hash opens that commit in History.
 - **Links leave Holi.** A web or `mailto:` link from an app opens in the system browser or mail
   app, whether it is a plain link (main's `will-frame-navigate` stops the frame leaving its bundle)
   or `target=_blank`/`window.open` (the sandbox's `allow-popups` lets it reach

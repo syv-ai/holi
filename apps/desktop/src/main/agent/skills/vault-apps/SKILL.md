@@ -188,6 +188,15 @@ until the app opts in, in `app.yaml`:
 dangerously-allow: [mail, calendar, location] # any of them
 ```
 
+Better, say why: written as a map, each one carries a short reason that the
+person reads, quoted as the app's own words, in the dialog that asks them.
+One plain sentence about what the app does with it (at most 200 characters):
+
+```yaml
+dangerously-allow:
+  location: To show the weather where you are
+```
+
 Without `location`, `navigator.geolocation` fails with a permissions error: say
 so in the page, or ask for a place instead.
 

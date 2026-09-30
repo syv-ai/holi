@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { APP_MANIFEST_FILE, appManifestText, parseAppManifest } from '../src/app-manifest'
+import {
+  APP_MANIFEST_FILE,
+  MAX_ALLOW_REASON,
+  appManifestText,
+  parseAppManifest,
+} from '../src/app-manifest'
 
 describe('APP_MANIFEST_FILE', () => {
   it('is app.yaml', () => {
@@ -108,5 +113,25 @@ describe('appManifestText', () => {
   it('reads back as the manifest it describes', () => {
     expect(parseAppManifest(appManifestText())).toEqual({})
     expect(parseAppManifest(appManifestText('Says: "hi"'))).toEqual({ description: 'Says: "hi"' })
+  })
+})
+
+describe('dangerously-allow as a map', () => {
+  it('reads each affordance with its reason, trimmed and capped', () => {
+    const long = 'x'.repeat(MAX_ALLOW_REASON + 50)
+    expect(
+      parseAppManifest(
+        `dangerously-allow:\n  location: " To show the weather "\n  mail: ${long}\n  drive: nope\n`,
+      ),
+    ).toEqual({
+      dangerouslyAllow: ['location', 'mail'],
+      allowReasons: { location: 'To show the weather', mail: 'x'.repeat(MAX_ALLOW_REASON) },
+    })
+  })
+
+  it('counts an affordance given no reason', () => {
+    expect(parseAppManifest('dangerously-allow:\n  calendar:\n')).toEqual({
+      dangerouslyAllow: ['calendar'],
+    })
   })
 })

@@ -4,7 +4,13 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { beforeEach, describe, expect, it } from 'vitest'
-import { bundleCodeHash, createAppGrants, GRANT_TTL_MS } from '../src/main/apps/app-grants'
+import {
+  bundleCodeHash,
+  bundleAuthorship,
+  commitLogin,
+  createAppGrants,
+  GRANT_TTL_MS,
+} from '../src/main/apps/app-grants'
 
 const git = promisify(execFile)
 
@@ -145,5 +151,42 @@ describe('app grants', () => {
     await Promise.all([approve(g, 'Mail.app', ['mail']), approve(g, 'Cal.app', ['calendar'])])
     expect((await granted(g, 'Mail.app'))[0]!.granted).toBe(true)
     expect((await granted(g, 'Cal.app'))[0]!.granted).toBe(true)
+  })
+})
+
+describe('bundleAuthorship', () => {
+  const commit = async (as: string, message: string) => {
+    await git('git', ['add', '-A'], { cwd: root })
+    await git(
+      'git',
+      ['-c', `user.name=${as}`, '-c', 'user.email=ada@syv.ai', 'commit', '-qm', message],
+      { cwd: root },
+    )
+  }
+
+  it('is nothing before the code is committed', async () => {
+    expect(await bundleAuthorship(root, 'Mail.app')).toEqual({ added: null, last: null })
+  })
+
+  // The dialog names the code being approved, and records are not code.
+  it('names who added the code and who last changed it, not its records', async () => {
+    await commit('Ada Holm', 'the app')
+    await put('Mail.app/index.html', '<p>v2</p>')
+    await commit('Bo Lind', 'v2')
+    await put('Mail.app/data/items/a.json', '{}')
+    await commit('Cy Ray', 'a record')
+    const { added, last } = await bundleAuthorship(root, 'Mail.app')
+    expect(added?.author).toBe('Ada Holm')
+    expect(last?.author).toBe('Bo Lind')
+  })
+})
+
+describe('commitLogin', () => {
+  const by = (author: string, email: string) => ({ sha: 'a', author, email, date: '' })
+
+  it('reads a GitHub noreply address, or a name that is a member login, and guesses nothing else', () => {
+    expect(commitLogin(by('Ada Holm', '123+adaholm@users.noreply.github.com'), [])).toBe('adaholm')
+    expect(commitLogin(by('AdaHolm', 'ada@syv.ai'), ['adaholm'])).toBe('adaholm')
+    expect(commitLogin(by('Ada Holm', 'ada@syv.ai'), ['adaholm'])).toBeNull()
   })
 })

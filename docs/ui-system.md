@@ -107,7 +107,8 @@ One place decides how an icon looks, so every icon in the app agrees.
   families: the morph shared by the [nav menu](features/nav-menu.md), the
   [command palette](features/command-palette.md) and every select and dropdown menu
   (`primitives/morph-popup.tsx`: the list grows out of its trigger and shrinks back into it),
-  which keeps its bounce; and the [board](features/tasks.md)'s `settle` (a card taking its place,
+  and every dialog (`primitives/Dialog.tsx`: the menu's surface, no scrim, springing in while its
+  header, body and footer cascade like the menu's rows), which keeps its bounce; and the [board](features/tasks.md)'s `settle` (a card taking its place,
   a drag's gap, a lane group opening), restrained to a hint of bounce because it runs all day,
   with the completion beats ported from rare-ui (`check`). A spring may overshoot; the CSS
   vocabulary's curves stay overshoot-free.
@@ -147,6 +148,10 @@ DOM: they copy width, motion, header and edge through the injected stylesheet an
   fill, not an edge; focus is the one exception, defined above.
 - Sidebars are flat `--background` with no separator from the pane.
 - Only floating things (dialogs, menus, popovers, tooltips) get `--popover` and a shadow.
+- A dialog is the menu's surface, not a modal page: no dimmed backdrop, the menu's radius, a
+  little see-through, and pill buttons (the primary act in the theme colour, a destructive one in
+  red). A question about one thing is asked where that thing is (`Dialog`'s `within`), leaving
+  the rest of the app usable.
 - Never coloured text on a tinted background of the same hue: coloured text on no background, or
   default text.
 - Tokens or nothing: no colour literal and no motion number at a call site.
