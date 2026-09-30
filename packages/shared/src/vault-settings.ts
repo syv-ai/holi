@@ -532,7 +532,7 @@ export const VAULT_SETTINGS: readonly VaultSetting[] = [
         { value: 'serif', label: 'Serif' },
       ],
     },
-    default: 'mono' as EditorFont,
+    default: 'serif' as EditorFont,
     target: 'committed',
     // Not asked at birth, deliberately: it has a good default and no
     // consequence at a vault's first moment.

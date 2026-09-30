@@ -202,7 +202,7 @@ describe('resolveVaultSettings — malformed input never throws', () => {
     expect(s.warnings.length).toBeGreaterThan(0)
     expect(s.dailyNotes).toBe(true)
     expect(s.colorScheme).toBe('system')
-    expect(s.editorFont).toBe('mono')
+    expect(s.editorFont).toBe(VAULT_SETTING_DEFAULTS.editorFont)
     expect(s.maxCommittedFileBytes).toBe(VAULT_SETTING_DEFAULTS.maxCommittedFileBytes)
     expect(s.hooks.relink).toBe(true)
   })
@@ -621,11 +621,6 @@ describe('resolveColorMode', () => {
 })
 
 describe('editorFont', () => {
-  it('is mono until a vault says otherwise', () => {
-    expect(VAULT_SETTING_DEFAULTS.editorFont).toBe('mono')
-    expect(resolveVaultSettings(null, null).editorFont).toBe('mono')
-  })
-
   it.each(EDITOR_FONTS)('takes %s from the committed file', (font) => {
     expect(resolveVaultSettings(committed({ editorFont: font }), null).editorFont).toBe(font)
   })
@@ -647,7 +642,7 @@ describe('editorFont', () => {
    */
   it('refuses a CSS string from a collaborator, and says so', () => {
     const s = resolveVaultSettings(committed({ editorFont: "'X'; background: url(y)" }), null)
-    expect(s.editorFont).toBe('mono')
+    expect(s.editorFont).toBe(VAULT_SETTING_DEFAULTS.editorFont)
     expect(s.warnings.join(' ')).toContain('editorFont')
   })
 

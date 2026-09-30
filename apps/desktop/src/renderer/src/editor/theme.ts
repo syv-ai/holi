@@ -1,6 +1,7 @@
 import { HighlightStyle, syntaxHighlighting } from '@codemirror/language'
 import { tags as t } from '@lezer/highlight'
 import { EditorView } from '@codemirror/view'
+import { EDITOR_FONT_STACKS, VAULT_SETTING_DEFAULTS } from '@holi/shared'
 import { COMPLETION_CLASS, OPTION_CLASS } from './completion'
 
 /** The one mono stack, named once so the places that must *stay* mono when the
@@ -777,6 +778,10 @@ const markdownHighlightStyle = HighlightStyle.define([
  *  point is to see it raw. */
 export const markdownHighlighting = syntaxHighlighting(markdownHighlightStyle)
 
+/** The prose face before `useEditorFont` has stamped `--editor-font`: the
+ *  setting's own default, so the two cannot drift. */
+const PROSE = EDITOR_FONT_STACKS[VAULT_SETTING_DEFAULTS.editorFont]
+
 /**
  * The notes editor's prose font.
  *
@@ -793,8 +798,8 @@ export const markdownHighlighting = syntaxHighlighting(markdownHighlightStyle)
  * of the inherited font.
  */
 export const notesFontTheme = EditorView.theme({
-  '&': { '--tbl-style-font-family': `var(--editor-font, ${MONO})` },
-  '.cm-scroller': { fontFamily: `var(--editor-font, ${MONO})` },
+  '&': { '--tbl-style-font-family': `var(--editor-font, ${PROSE})` },
+  '.cm-scroller': { fontFamily: `var(--editor-font, ${PROSE})` },
   // The running text's colour (`--prose` in index.css); marks, links and chips
   // keep their own.
   '.cm-content': { color: 'var(--prose)' },
@@ -810,5 +815,5 @@ export const notesFontTheme = EditorView.theme({
   '.cm-line, .tbl-cell-view': { fontSizeAdjust: 'from-font' },
   '.cm-fm .cm-scroller': { fontFamily: MONO },
   // Reaches the ask popover because CodeMirror mounts tooltips inside `.cm-editor`.
-  '.cm-ask-agent-field': { fontFamily: `var(--editor-font, ${MONO})` },
+  '.cm-ask-agent-field': { fontFamily: `var(--editor-font, ${PROSE})` },
 })

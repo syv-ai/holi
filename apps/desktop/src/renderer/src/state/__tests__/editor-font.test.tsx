@@ -51,9 +51,9 @@ test('a vault asking for sans gets the sans stack', () => {
   expect(stamped()).toBe(EDITOR_FONT_STACKS.sans)
 })
 
-test('no vault open is mono, not unset', () => {
+test('no vault open stamps the default, not nothing', () => {
   mount(null)
-  expect(stamped()).toBe(EDITOR_FONT_STACKS.mono)
+  expect(stamped()).toBe(EDITOR_FONT_STACKS[VAULT_SETTING_DEFAULTS.editorFont])
 })
 
 test('a vault switch re-stamps it', () => {

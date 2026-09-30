@@ -9,7 +9,7 @@
  *
  * **A variable rather than a CodeMirror compartment**: the setting only changes
  * on a vault switch, and one property restyles every open editor at once. The
- * theme carries the mono stack as the var's fallback.
+ * theme carries the default's stack as the var's fallback.
  *
  * No atom, unlike `useColorScheme`: the CSS is the only consumer.
  */

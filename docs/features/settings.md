@@ -13,7 +13,7 @@ A vault's settings are two YAML files it carries itself: `.holi/settings/app.yam
 | `hooks` (five transform flags) | committed | yes            | all on except `archive-done` |
 | `maxCommittedFileBytes`        | committed | no             | 10 MB                        |
 | `colorScheme`                  | local     | yes            | `system`                     |
-| `editorFont`                   | committed | no             | `mono`                       |
+| `editorFont`                   | committed | no             | `serif`                      |
 
 `landing` is one target: `daily`, `board`, `agenda`, `mail`, `{kind: note, path}` or `{kind: app, path}` (an app's bundle; an older `appId` reads as `<appId>.app`). The daily is named by kind, not by path, so it does not rot overnight. The ritual and the tab offer only the first four; a note or an app is a file edit. A target that no longer exists re-resolves as if `landing` were unset, which in a vault without daily notes is an empty pane.
 
