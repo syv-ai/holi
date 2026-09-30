@@ -308,6 +308,7 @@ export const editorTheme = EditorView.baseTheme({
   '.tbl-cell-view .cm-cell-code': { color: 'var(--code)', fontFamily: MONO },
   '.tbl-cell-view .cm-cell-link': { color: 'var(--link)' },
   '.cm-code-line': { background: 'rgba(255,255,255,0.04)' },
+  '.cm-code-info': { color: 'var(--muted-foreground)', fontSize: '0.85em' },
   /**
    * A rendered mermaid diagram. No box, and vertical padding close to the
    * source's, so a note does not lurch when it opens or closes. It scrolls

@@ -132,6 +132,8 @@ const headingLine = (level: number, raw: boolean) =>
 /** The `# `, always in the DOM, its box opened and closed by the theme. */
 const headingMark = Decoration.mark({ class: 'cm-heading-mark' })
 const codeLine = Decoration.line({ class: 'cm-code-line' })
+/** A fence's language, left as a quiet label once its backticks are hidden. */
+const codeInfo = Decoration.mark({ class: 'cm-code-info' })
 
 /**
  * What sits in front of a list item's text. Each kind has a box of known
@@ -321,8 +323,8 @@ export function revealedSpans(spans: Span[], sel: Span): Set<string> {
  * Usually the element itself; a heading's `#` and a list marker belong to their
  * LINE, so the caret need not land on the marker itself.
  *
- * `null` for everything not concealed conditionally: fenced code, the
- * frontmatter block, a list's leading indent.
+ * `null` for everything not concealed conditionally: the frontmatter block, a
+ * list's leading indent.
  */
 function revealSpan(
   state: EditorState,
@@ -347,6 +349,8 @@ function revealSpan(
     case 'Link':
     case 'Image':
     case 'HorizontalRule':
+    // The whole block: the caret anywhere in it shows both fences.
+    case 'FencedCode':
       return { from: node.from, to: node.to }
     // A `#` is revealed by its heading, not by its own two columns.
     case 'HeaderMark':
@@ -467,6 +471,17 @@ export function buildDecorations(state: EditorState, from: number, to: number): 
           for (let n = first; n <= last; n++) {
             const line = state.doc.line(n)
             ranges.push({ from: line.from, to: line.from, deco: codeLine })
+          }
+          // The fence lines stay, so the block keeps its height when the caret
+          // arrives; only the backticks go.
+          if (!activeHere) {
+            for (const mark of node.node.getChildren('CodeMark')) {
+              let end = mark.to
+              while (/[ \t]/.test(state.sliceDoc(end, end + 1))) end++
+              ranges.push({ from: mark.from, to: end, deco: conceal })
+            }
+            const info = node.node.getChild('CodeInfo')
+            if (info !== null) ranges.push({ from: info.from, to: info.to, deco: codeInfo })
           }
           break
         }
