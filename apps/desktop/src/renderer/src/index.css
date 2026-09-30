@@ -99,10 +99,11 @@
   --task-done: #3fb950;
   /* Inline code is told apart by colour alone, with no fill behind it. */
   --code: var(--color-orange-300);
-  /* An HTML comment floats over the note. Mixed toward the text rather than
-     `--popover`, which sat too close to the page to tell apart. */
-  --comment: var(--muted-foreground);
-  --comment-background: color-mix(in srgb, var(--foreground) 13%, var(--background));
+  /* An HTML comment floats over the note, its text in the prose colour like
+     a heading's. Its surface is mixed toward the text rather than `--popover`,
+     which sat too close to the page to tell apart. */
+  --comment: var(--prose);
+  --comment-background: color-mix(in srgb, var(--foreground) 20%, var(--background));
 
   /* ── File-type tokens ───────────────────────────────────────────────
    * The type colour of a file glyph in the tree, tabs and palette
@@ -230,8 +231,8 @@
      filled with dark values in its light block. */
   --divider: color-mix(in srgb, var(--border) 55%, var(--background));
   --selection: color-mix(in srgb, var(--primary) 30%, transparent);
-  --comment: var(--muted-foreground);
-  --comment-background: color-mix(in srgb, var(--foreground) 13%, var(--background));
+  --comment: var(--prose);
+  --comment-background: color-mix(in srgb, var(--foreground) 20%, var(--background));
 
   /* Text, so a light arm; the diff tints deliberately have none. */
   --diff-added-foreground: var(--color-green-700);

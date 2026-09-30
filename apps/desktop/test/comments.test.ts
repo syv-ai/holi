@@ -19,8 +19,8 @@ function banners(doc: string, caret = 0): { from: number; to: number; text: stri
   const out: { from: number; to: number; text: string }[] = []
   const iter = commentDecorations(state).iter()
   while (iter.value) {
-    const widget = iter.value.spec.widget as { text: string }
-    out.push({ from: iter.from, to: iter.to, text: widget.text })
+    const widget = iter.value.spec.widget as { text: string } | undefined
+    if (widget !== undefined) out.push({ from: iter.from, to: iter.to, text: widget.text })
     iter.next()
   }
   return out
@@ -54,6 +54,12 @@ describe('commentDecorations', () => {
 
   it('leaves a comment inside a paragraph to the text', () => {
     expect(banners('text <!-- aside --> more\n\nnext')).toEqual([])
+  })
+
+  // Markdown runs an unclosed `<!--` to the end of the document, so a banner
+  // would swallow everything written after it.
+  it('leaves a comment that is not closed yet as source', () => {
+    expect(banners('text\n\n<!-- hi--\n\nThis is some text under\n')).toEqual([])
   })
 
   it('leaves an empty comment as source', () => {

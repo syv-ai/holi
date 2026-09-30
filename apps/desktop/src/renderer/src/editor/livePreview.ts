@@ -265,9 +265,14 @@ class TaskCheckWidget extends WidgetType {
   }
 }
 
+/**
+ * Inline, not a block: a block element inside a line gets an empty line box
+ * on either side (CodeMirror's cursor anchors), and the rule's row stood
+ * more than twice the height of its `---`.
+ */
 class HrWidget extends WidgetType {
   override toDOM(): HTMLElement {
-    const el = document.createElement('div')
+    const el = document.createElement('span')
     el.className = 'cm-hr'
     return el
   }

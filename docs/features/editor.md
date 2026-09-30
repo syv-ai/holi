@@ -26,7 +26,7 @@ Every note is a `.md` file, edited in CodeMirror 6 with live preview: markdown r
 
 **Quotes** are a flat translucent surface, centred and narrower than the column, holding what the quote holds (lists hang inside it as outside). The `> ` shows only on the caret's line.
 
-**Comments.** An HTML comment on lines of its own draws as a small floating banner, centred, in the `--comment` and `--comment-background` tokens, and shows its source when touched. One inside a paragraph stays text in the comment colour.
+**Comments.** An HTML comment on lines of its own draws as a small floating banner, centred, in the `--comment` and `--comment-background` tokens, and shows its source when touched. One inside a paragraph stays text in the comment colour. The banner is exactly as tall as its source, whose first and last lines take the banner's padding while they show, so opening a comment does not move the note.
 
 **Mermaid.** A mermaid fence draws as a diagram and shows source when touched. Mermaid loads on first use, a broken diagram shows its source, and the palette follows light/dark at render time.
 
@@ -53,6 +53,7 @@ Every note is a `.md` file, edited in CodeMirror 6 with live preview: markdown r
 - A widget's `eq` compares only what it renders from; live preview rebuilds on every arrow key.
 - The wiki grammar owns its range, or the parser's phantom inner link shadows the chip.
 - Block widgets apply `--editor-inset` themselves.
+- A widget standing in for source keeps the source's height (the comment banner, the divider). A block element inside a line gets an empty line box on either side from CodeMirror's cursor anchors, so a line's widget is inline.
 - The ask button uses `mousedown` + `preventDefault`, and is absent on read-only files and outside the notes stack.
 - Completion chrome is scoped by the `cm-holi-completion` class to outrank CodeMirror, holds no hex, and keeps `icons` on (the table menu styles off it).
 

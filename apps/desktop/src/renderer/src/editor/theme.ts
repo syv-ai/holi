@@ -424,7 +424,7 @@ export const editorTheme = EditorView.baseTheme({
   '.cm-quote': {
     '--quote-inset': '2em',
     // Toward the text, so it lifts off the page in either mode.
-    '--quote-surface': 'color-mix(in srgb, var(--foreground) 10%, transparent)',
+    '--quote-surface': 'color-mix(in srgb, var(--foreground) 16%, transparent)',
     marginRight: 'var(--quote-inset)',
     background: 'var(--quote-surface)',
   },
@@ -461,24 +461,34 @@ export const editorTheme = EditorView.baseTheme({
     display: 'flex',
     justifyContent: 'center',
     margin: '0 var(--editor-inset)',
-    padding: '0.4em 0',
     cursor: 'text',
   },
+  /**
+   * The banner is exactly as tall as its source: the note's line height, and
+   * a vertical padding (`--comment-pad`) that the source's first and last
+   * lines take too while it shows (`.cm-comment-source-*`). A comment whose
+   * `<!--` and `-->` sit on lines of their own has that many more source
+   * lines, and the banner pads by half a line for each.
+   */
+  '.cm-comment, .cm-comment-source': { '--comment-pad': '0.75em' },
   '.cm-comment-body': {
     maxWidth: '100%',
-    padding: '0.45em 0.9em 0.45em 1.05em',
+    padding:
+      'calc(var(--comment-pad) + var(--comment-extra-lines, 0) * 0.8em) 1.6em calc(var(--comment-pad) + var(--comment-extra-lines, 0) * 0.8em) 1.9em',
     borderRadius: 'var(--radius-md, 6px)',
     background: 'var(--comment-background)',
     color: 'var(--comment)',
     boxShadow: 'var(--shadow-popover)',
-    fontSize: '0.9em',
-    lineHeight: '1.55',
+    lineHeight: '1.6',
     whiteSpace: 'pre-wrap',
     overflowWrap: 'anywhere',
     // Opacity only: anything that moves geometry pegs CodeMirror's measure loop.
     animation: 'cm-comment-in var(--motion-arrive, 300ms) var(--ease-settle, ease-out) both',
   },
   '@keyframes cm-comment-in': { from: { opacity: '0' }, to: { opacity: '1' } },
+  // Two classes, so they outrank `.cm-line`'s own padding whatever the order.
+  '.cm-line.cm-comment-source-first': { paddingTop: 'var(--comment-pad)' },
+  '.cm-line.cm-comment-source-last': { paddingBottom: 'var(--comment-pad)' },
   '.cm-comment-inline': { color: 'var(--comment)' },
   // A plain click on a markdown link places the caret; only ⌘/Ctrl-click
   // navigates (links.ts), so the pointer shows only while the modifier is held.
@@ -493,11 +503,13 @@ export const editorTheme = EditorView.baseTheme({
   },
   '&.cm-mod-held .cm-md-link': { cursor: 'pointer' },
 
-  // Compact HR: thin rule, minimal margins.
+  // A hairline across the line's middle, in the row its `---` takes.
   '.cm-hr': {
-    borderTop: '1px solid #404040',
-    margin: '0.3em 0',
+    display: 'inline-block',
+    width: '100%',
     height: '1px',
+    verticalAlign: 'middle',
+    background: 'var(--border)',
   },
 
   /**

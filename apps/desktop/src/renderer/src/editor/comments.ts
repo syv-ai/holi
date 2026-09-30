@@ -28,13 +28,27 @@ export function commentText(source: string): string {
     .trim()
 }
 
+/**
+ * The first and last source lines, while the source shows: they take the
+ * banner's padding, so opening a comment does not move the note.
+ */
+const sourceLine = (first: boolean, last: boolean) =>
+  Decoration.line({
+    class: `cm-comment-source${first ? ' cm-comment-source-first' : ''}${last ? ' cm-comment-source-last' : ''}`,
+  })
+
 class CommentWidget extends WidgetType {
-  constructor(readonly text: string) {
+  constructor(
+    readonly text: string,
+    /** Source lines beyond the banner's own (`<!--` and `-->` on lines of
+     *  their own): the banner pads by as much, to stay the source's height. */
+    readonly extraLines: number,
+  ) {
     super()
   }
 
   override eq(other: CommentWidget): boolean {
-    return other.text === this.text
+    return other.text === this.text && other.extraLines === this.extraLines
   }
 
   override toDOM(view: EditorView): HTMLElement {
@@ -42,6 +56,7 @@ class CommentWidget extends WidgetType {
     block.className = 'cm-comment'
     const body = document.createElement('div')
     body.className = 'cm-comment-body'
+    body.style.setProperty('--comment-extra-lines', String(this.extraLines))
     body.textContent = this.text
     block.append(body)
     // A press opens the source, with the caret just inside the `<!--`.
@@ -74,13 +89,27 @@ export function commentDecorations(state: EditorState): DecorationSet {
       // after the `-->` that the banner would swallow.
       if (node.from !== first.from || state.sliceDoc(node.to, last.to).trim() !== '') return
       if (first.from < fmEnd) return
-      if (touches(sel, { from: first.from, to: last.to })) return
-      const text = commentText(state.sliceDoc(node.from, node.to))
+      // Not closed yet: markdown runs the comment to the end of the document,
+      // and a banner would swallow whatever is being written below it.
+      const source = state.sliceDoc(node.from, node.to)
+      if (!source.trimEnd().endsWith('-->')) return
+      const text = commentText(source)
       if (text === '') return
+      if (touches(sel, { from: first.from, to: last.to })) {
+        ranges.push({
+          from: first.from,
+          to: first.from,
+          deco: sourceLine(true, last.number === first.number),
+        })
+        if (last.number !== first.number)
+          ranges.push({ from: last.from, to: last.from, deco: sourceLine(false, true) })
+        return
+      }
+      const extraLines = last.number - first.number + 1 - text.split('\n').length
       ranges.push({
         from: first.from,
         to: last.to,
-        deco: Decoration.replace({ widget: new CommentWidget(text), block: true }),
+        deco: Decoration.replace({ widget: new CommentWidget(text, extraLines), block: true }),
       })
     },
   })
