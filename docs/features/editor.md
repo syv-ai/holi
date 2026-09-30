@@ -6,7 +6,7 @@ Every note is a `.md` file, edited in CodeMirror 6 with live preview: markdown r
 
 **Three stacks.** `baseEditorExtensions` is the notes editor. `mailComposerExtensions` is the same markdown editing with every vault layer removed. `plainTextExtensions` opens other text files with highlighting and validity checks, no markdown layers.
 
-**Live preview.** A `ViewPlugin` decorates the visible ranges and rebuilds on doc, selection or viewport change. The **element** the selection touches renders raw; the rest of its line stays rendered. Touching an edge counts, and when elements nest only the innermost opens. A heading's `#`, a list marker and a quote's `>` reveal with their whole line. The swap is instant, except a heading's `#`, which slides (`heading-slide.ts`).
+**Live preview.** A `ViewPlugin` decorates the visible ranges and rebuilds on doc, selection or viewport change. The **element** the selection touches renders raw; the rest of its line stays rendered. Touching an edge counts, and when elements nest only the innermost opens. A heading's `#`, a list marker and a quote's `>` reveal with their whole line. The swap is instant, except the marks that move a whole line's text: a heading's `#`, a quote's `>` and a fence's backticks slide (`mark-slide.ts`). Each is a mark that is never replaced, opened by its own line class (`cm-heading-raw`, `cm-quote-raw`, `cm-code-raw`), so a fence inside a quote opens only what the caret is on. Inline marks (`**`, a link's `](url)`) and rendered widgets stay a plain swap: they have no line of their own to carry the state, and a long URL would rewrap its paragraph for the length of the slide.
 
 **Keys and links.** ⌘B, ⌘I, ⌘E, ⌘⇧X and ⌘K wrap or unwrap the selection or word. A wiki-link chip opens on click; a markdown link needs ⌘-click, since a plain click means "edit this text". A bare `github.com`, `www.` or `https://` address in prose opens the same way; `linkify-it` finds them, without emails and without the country domains that are also source-file extensions (`notes.md`, `main.py`). Code, comments and existing links are skipped, and the file is left as written. All three forms look alike: everything inside a link takes the link's colour, since GFM parses `www.` and `https://` addresses as `URL` nodes that the code highlighter would otherwise paint.
 
@@ -50,7 +50,7 @@ Every note is a `.md` file, edited in CodeMirror 6 with live preview: markdown r
 - A reload is never an undo step, or ⌘Z restores stale text and autosave clobbers the other writer.
 - Block decorations come from a `StateField`, never a `ViewPlugin`: CodeMirror throws in `new EditorView` and the note opens blank.
 - Motion inside CodeMirror is paint only. Animating width, height, font-size or padding pegs the measure loop ([ui-system.md](../ui-system.md)).
-- The heading mark is `white-space: pre`, and transitions only under `.cm-heading-sliding`, or `## ` wraps three lines tall and headings animate shut on open.
+- A slide mark is `white-space: pre`, and transitions only under `.cm-marks-sliding`, or `## ` wraps three lines tall and headings animate shut on open. That class sits on `.cm-content`: CodeMirror rewrites the editor element's `class` when focus changes, which wiped it on the click that should have slid.
 - `requestMeasure()` does not move the caret layer. The slide does one `coordsAtPos` per frame, never a transaction per frame.
 - A widget's `eq` compares only what it renders from; live preview rebuilds on every arrow key.
 - The wiki grammar owns its range, or the parser's phantom inner link shadows the chip.
@@ -69,7 +69,7 @@ Every note is a `.md` file, edited in CodeMirror 6 with live preview: markdown r
 
 ## Code
 
-- `apps/desktop/src/renderer/src/editor/`: `extensions.ts` (stacks), `livePreview.ts` (`revealedSpans`), `heading-slide.ts`, `mermaid.ts`, `comments.ts`, `arrows.ts`, `bare-links.ts`, `completion.ts`, `slash.ts`, `mentions.ts`, `askAgent.ts`, `theme.ts`
+- `apps/desktop/src/renderer/src/editor/`: `extensions.ts` (stacks), `livePreview.ts` (`revealedSpans`), `mark-slide.ts`, `mermaid.ts`, `comments.ts`, `arrows.ts`, `bare-links.ts`, `completion.ts`, `slash.ts`, `mentions.ts`, `askAgent.ts`, `theme.ts`
 - `apps/desktop/src/renderer/src/features/editor/EditorPane.tsx`: load, save, flush, reload
 - `apps/desktop/src/renderer/src/lib/editor-reload.ts`, `apply-reload.ts`
 - `packages/shared/src/merge3.ts`, `normalize-md.ts`, `file-kind.ts`, `image-ref.ts`

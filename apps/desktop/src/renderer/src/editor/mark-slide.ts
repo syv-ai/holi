@@ -6,13 +6,16 @@ import { EditorView, ViewPlugin, type ViewUpdate } from '@codemirror/view'
 const WINDOW_MS = 600
 
 /**
- * The two parts of a heading's `#` slide that CSS cannot do alone.
+ * The two parts of a mark's slide (a heading's `#`, a quote's `>`, a fence's
+ * backticks) that CSS cannot do alone.
  *
- * When it may run: the transition exists only under `.cm-heading-sliding`,
+ * When it may run: the transition exists only under `.cm-marks-sliding`,
  * added on a selection move and removed shortly after. Without the gate every
  * heading animated shut as a file opened (see `theme.ts`). `ViewPlugin.update`
  * runs before the DOM is written (`updatePlugins` precedes `docView.update`),
- * so the class arrives in time.
+ * so the class arrives in time. It goes on `.cm-content`, not the editor:
+ * CodeMirror rewrites the editor's whole `class` when focus changes, which
+ * wiped it on the very click that should have slid.
  *
  * Where the caret goes: `drawSelection` reads coordinates once per update, so
  * the caret stays where the text was when the slide started. `requestMeasure()`
@@ -21,9 +24,9 @@ const WINDOW_MS = 600
  * A transaction per frame would rebuild every decoration in the viewport, so
  * this moves the drawn caret by hand while a slide is in flight.
  */
-export const headingSlide = ViewPlugin.fromClass(
+export const markSlide = ViewPlugin.fromClass(
   class {
-    /** Marks in flight. Leaving one heading for another runs two transitions, and
+    /** Marks in flight. Leaving one line for another runs two transitions, and
      *  the first `transitionend` must not stop the pump the second still needs. */
     private running = 0
     private frame = 0
@@ -38,7 +41,7 @@ export const headingSlide = ViewPlugin.fromClass(
     update(update: ViewUpdate): void {
       // A pure scroll must not arm this, or newly rendered marks animate shut.
       if (!update.selectionSet) return
-      this.view.dom.classList.add('cm-heading-sliding')
+      this.view.contentDOM.classList.add('cm-marks-sliding')
       if (this.timer !== null) clearTimeout(this.timer)
       this.timer = setTimeout(this.disarm, WINDOW_MS)
     }
@@ -53,7 +56,7 @@ export const headingSlide = ViewPlugin.fromClass(
 
     private disarm = (): void => {
       this.timer = null
-      this.view.dom.classList.remove('cm-heading-sliding')
+      this.view.contentDOM.classList.remove('cm-marks-sliding')
     }
 
     private isSlide(event: TransitionEvent): boolean {
@@ -61,7 +64,7 @@ export const headingSlide = ViewPlugin.fromClass(
       return (
         event.propertyName === 'width' &&
         target instanceof HTMLElement &&
-        target.classList.contains('cm-heading-mark')
+        target.classList.contains('cm-slide-mark')
       )
     }
 
@@ -93,6 +96,8 @@ export const headingSlide = ViewPlugin.fromClass(
       // element's own origin, scroll offset included — CodeMirror's `getBase`.
       const box = this.view.scrollDOM.getBoundingClientRect()
       caret.style.left = `${coords.left - box.left + this.view.scrollDOM.scrollLeft}px`
+      // A quote line the slide rewraps carries the caret onto another row.
+      caret.style.top = `${coords.top - box.top + this.view.scrollDOM.scrollTop}px`
     }
 
     private stop(): void {

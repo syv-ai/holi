@@ -18,7 +18,7 @@ import { mermaidExtension } from './mermaid'
 import { commentExtension } from './comments'
 import { languageForPath, validityStatus } from './languages'
 import { settingsCompletion } from './settings-completion'
-import { headingSlide } from './heading-slide'
+import { markSlide } from './mark-slide'
 import {
   docExistsFacet,
   inlineOnlyFacet,
@@ -117,9 +117,9 @@ export function baseEditorExtensions(deps: EditorDeps): Extension[] {
     notePathFacet.of(deps.notePath),
     askAgentTooltip(deps.notePath, deps.askAgent),
     livePreview,
-    // The caret's half of the heading slide: the transition is CSS, and
-    // CodeMirror has to be told to measure again while it runs.
-    headingSlide,
+    // The caret's half of a mark's slide: the transition is CSS, and the
+    // drawn caret has to be moved along while it runs.
+    markSlide,
     // After livePreview: the block-replace owns the frontmatter region, and
     // livePreview skips it.
     deps.frontmatter === false ? [] : frontmatterExtension,

@@ -170,7 +170,7 @@ export const editorTheme = EditorView.baseTheme({
     // The column's side inset. It cannot live on `.cm-content` (see `.cm-line`),
     // so the line, the frontmatter widget and the table widget each read it.
     '--editor-inset': '24px',
-    // Makes `width: auto` interpolable, so a heading's `#` can slide.
+    // Makes `width: auto` interpolable, so a line's marks can slide (`.cm-slide-mark`).
     interpolateSize: 'allow-keywords',
     // List lengths: one nesting level, the gap between marker and text on top
     // of markdown's required space, and the air above each item.
@@ -240,8 +240,10 @@ export const editorTheme = EditorView.baseTheme({
   '.cm-heading-2': { fontSize: '1.25em' },
   '.cm-heading-3': { fontSize: '1.1em' },
   /**
-   * The one animation in the editor text. A heading's `#` slides rather
-   * than blinks, because the heading's text moves furthest when marks appear.
+   * The editor text's one animation: a mark at the start of a line slides
+   * rather than blinks. A heading's `#`, a quote's `>` and a fence's
+   * backticks, the marks that move a whole line's text when they appear.
+   * Each is a mark that is never replaced, opened by a class on its line.
    *
    * `width: 0` to `width: auto` (interpolable via `interpolate-size` on the
    * root) needs no measurement: the marks' width in the vault's face is
@@ -252,9 +254,10 @@ export const editorTheme = EditorView.baseTheme({
    * from its bottom margin edge, which lifts the `#` by a descender.
    *
    * Decorations that move CodeMirror's geometry peg its measure loop, so the
-   * rest of live preview is a plain swap.
+   * rest of live preview is a plain swap. These are the exception because
+   * each moves one line's text sideways by a few characters.
    */
-  '.cm-heading-mark': {
+  '.cm-slide-mark': {
     display: 'inline-block',
     overflow: 'hidden',
     // `.cm-line` is `pre-wrap`, which at `width: 0` wraps the `## ` one
@@ -264,15 +267,18 @@ export const editorTheme = EditorView.baseTheme({
     width: '0',
     opacity: '0',
   },
-  '.cm-heading-raw .cm-heading-mark': { width: 'auto', opacity: '1' },
+  '.cm-heading-raw .cm-heading-mark, .cm-quote-raw .cm-quote-mark, .cm-code-raw .cm-code-mark': {
+    width: 'auto',
+    opacity: '1',
+  },
   /**
-   * The transition only applies under a class `heading-slide.ts` sets briefly
+   * The transition only applies under a class `mark-slide.ts` sets briefly
    * after the caret moves. Unconditionally, every heading animated shut as a
    * file opened: CodeMirror creates the mark span and settles its style in two
    * steps, so its first resolved width is `auto`. `@starting-style` does not
    * help because this is not an insertion.
    */
-  '&.cm-heading-sliding .cm-heading-mark': {
+  '.cm-content.cm-marks-sliding .cm-slide-mark': {
     transition:
       'width var(--motion-respond, 150ms) var(--ease-settle, ease-out), opacity var(--motion-respond, 150ms) var(--ease-settle, ease-out)',
   },
@@ -281,7 +287,7 @@ export const editorTheme = EditorView.baseTheme({
    * not wait for a fade that is not happening.
    */
   '@media (prefers-reduced-motion: reduce)': {
-    '&.cm-heading-sliding .cm-heading-mark': { transition: 'none' },
+    '.cm-content.cm-marks-sliding .cm-slide-mark': { transition: 'none' },
     '.cm-ask-agent-open, .cm-ask-agent-leaving, .cm-comment-body': { animation: 'none' },
   },
 
@@ -308,7 +314,11 @@ export const editorTheme = EditorView.baseTheme({
   '.tbl-cell-view .cm-cell-code': { color: 'var(--code)', fontFamily: MONO },
   '.tbl-cell-view .cm-cell-link': { color: 'var(--link)' },
   '.cm-code-line': { background: 'rgba(255,255,255,0.04)' },
-  '.cm-code-info': { color: 'var(--muted-foreground)', fontSize: '0.85em' },
+  // A quiet label while its backticks are shut, the raw text while they are open.
+  '.cm-code-line:not(.cm-code-raw) .cm-code-info': {
+    color: 'var(--muted-foreground)',
+    fontSize: '0.85em',
+  },
   /**
    * A rendered mermaid diagram. No box, and vertical padding close to the
    * source's, so a note does not lurch when it opens or closes. It scrolls

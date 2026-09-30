@@ -36,10 +36,10 @@ function specs(set: DecorationSet): { from: number; to: number; spec: Record<str
 }
 
 describe('buildDecorations', () => {
-  // A heading's `#` is the one mark that is never replaced: it stays in the DOM
-  // as `.cm-heading-mark` so its box can be transitioned, and whether it is open
+  // A heading's `#` is a mark that is never replaced: it stays in the DOM as
+  // `.cm-heading-mark` so its box can be transitioned, and whether it is open
   // is the LINE's `cm-heading-raw`. Both are asserted here because the pair is
-  // the contract the slide depends on.
+  // the contract the slide depends on. Quotes and fences follow below.
   const headingLineClass = (doc: string, caret: number) => {
     const state = stateFor(doc, caret)
     const line = specs(buildDecorations(state, 0, state.doc.length)).find(
@@ -54,7 +54,7 @@ describe('buildDecorations', () => {
       const mark = specs(buildDecorations(state, 0, state.doc.length)).find(
         (d) => d.from === 0 && d.to === 2,
       )
-      expect(mark?.spec['class']).toBe('cm-heading-mark')
+      expect(mark?.spec['class']).toContain('cm-heading-mark')
       expect(mark?.spec['widget']).toBeUndefined()
     }
   })
@@ -237,19 +237,63 @@ describe('buildDecorations — list indentation', () => {
   })
 
   // A list inside a blockquote has `> ` in front of the marker. The `> ` is
-  // the quote's: shown on the caret's line, concealed by the quote elsewhere,
-  // and never swallowed by the list's own indent conceal.
+  // the quote's: its slide mark on every line, open on the caret's, and never
+  // swallowed by the list's own indent conceal.
   it("leaves a quote's `> ` to the quote", () => {
     const doc = '> - quoted'
     const markAt = doc.indexOf('- quoted')
+    const quoteMarkAt = (all: ReturnType<typeof decos>['all'], at: number) =>
+      all.filter((d) => d.to === at + 2 && d.from < at + 2)
     const onLine = decos(doc).all
-    expect(onLine.some((d) => d.from === 0 && d.spec['class'] === 'cm-quote-mark')).toBe(true)
-    expect(onLine.some((d) => d.to === markAt && d.from < markAt)).toBe(false)
+    expect(quoteMarkAt(onLine, 0)).toEqual([
+      expect.objectContaining({
+        from: 0,
+        spec: expect.objectContaining({ class: 'cm-slide-mark cm-quote-mark' }),
+      }),
+    ])
+    expect(onLine.some((d) => d.to === markAt && d.from < markAt && d.from > 0)).toBe(false)
     const offLine = decos(`para\n\n${doc}`).all
     const quoteAt = `para\n\n`.length
-    expect(offLine.filter((d) => d.to === quoteAt + 2 && d.from < quoteAt + 2)).toEqual([
-      expect.objectContaining({ from: quoteAt }),
+    expect(quoteMarkAt(offLine, quoteAt)).toEqual([
+      expect.objectContaining({
+        from: quoteAt,
+        spec: expect.objectContaining({ class: 'cm-slide-mark cm-quote-mark' }),
+      }),
     ])
+  })
+
+  // The same contract as a heading's: the mark never changes, its line opens it.
+  const lineClass = (doc: string, caret: number, at: number) => {
+    const state = stateFor(doc, caret)
+    const line = specs(buildDecorations(state, 0, doc.length)).find(
+      (d) => d.from === at && d.to === at && d.spec['class'] !== undefined,
+    )
+    return String(line?.spec['class'] ?? '')
+  }
+
+  it("opens a quote's `>` on the caret's line only", () => {
+    const doc = 'para\n\n> one\n> two'
+    const one = doc.indexOf('> one')
+    const two = doc.indexOf('> two')
+    expect(lineClass(doc, 0, one)).not.toContain('cm-quote-raw')
+    expect(lineClass(doc, two + 3, one)).not.toContain('cm-quote-raw')
+    expect(lineClass(doc, two + 3, two)).toContain('cm-quote-raw')
+  })
+
+  it("marks a fence's backticks rather than replacing them, open while the caret is in the block", () => {
+    const doc = 'para\n\n```ts\nx\n```'
+    const open = doc.indexOf('```ts')
+    const close = doc.lastIndexOf('```')
+    for (const caret of [0, doc.indexOf('x')]) {
+      const all = specs(buildDecorations(stateFor(doc, caret), 0, doc.length))
+      for (const at of [open, close]) {
+        const mark = all.find((d) => d.from === at && d.to === at + 3)
+        expect(mark?.spec['class']).toContain('cm-code-mark')
+        expect(mark?.spec['widget']).toBeUndefined()
+      }
+    }
+    expect(lineClass(doc, 0, open)).not.toContain('cm-code-raw')
+    expect(lineClass(doc, doc.indexOf('x'), close)).toContain('cm-code-raw')
   })
 
   // The parser calls a bare `-` a list item with nothing in it, so without this

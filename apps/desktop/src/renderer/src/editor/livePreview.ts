@@ -110,28 +110,34 @@ const strong = Decoration.mark({ class: 'cm-strong' })
 const emphasis = Decoration.mark({ class: 'cm-emphasis' })
 const strike = Decoration.mark({ class: 'cm-strikethrough' })
 const inlineCode = Decoration.mark({ class: 'cm-inline-code' })
-const quoteMark = Decoration.mark({ class: 'cm-quote-mark' })
+/** A quote's `> `, always in the DOM, like a heading's `#` (`headingLine`). */
+const quoteMark = Decoration.mark({ class: 'cm-slide-mark cm-quote-mark' })
 /** A comment inside a paragraph, left as text; one on its own lines is a
  *  banner (`comments.ts`). */
 const inlineComment = Decoration.mark({ class: 'cm-comment-inline' })
 /** A line of a blockquote, and whether it opens or closes one: the quote is a
- *  surface, and only its ends are rounded. */
-const quoteLine = (first: boolean, last: boolean) =>
+ *  surface, and only its ends are rounded. `raw` opens the line's `> `. */
+const quoteLine = (first: boolean, last: boolean, raw: boolean) =>
   Decoration.line({
-    class: `cm-quote${first ? ' cm-quote-first' : ''}${last ? ' cm-quote-last' : ''}`,
+    class: `cm-quote${first ? ' cm-quote-first' : ''}${last ? ' cm-quote-last' : ''}${raw ? ' cm-quote-raw' : ''}`,
   })
 const linkText = Decoration.mark({ class: 'cm-md-link' })
 /**
  * `raw` lives on the LINE, not the mark, so the `#` can slide: the unchanged
  * mark keeps its DOM element across a selection move. A class flip on the mark
- * would rebuild it, and a transition cannot cross a recreated node.
+ * would rebuild it, and a transition cannot cross a recreated node. A quote's
+ * `>` and a fence's backticks slide the same way, each kind with its own line
+ * class, so a fence inside a quote opens only what the caret is on.
  */
 const headingLine = (level: number, raw: boolean) =>
   Decoration.line({ class: `cm-heading cm-heading-${level}${raw ? ' cm-heading-raw' : ''}` })
 
 /** The `# `, always in the DOM, its box opened and closed by the theme. */
-const headingMark = Decoration.mark({ class: 'cm-heading-mark' })
-const codeLine = Decoration.line({ class: 'cm-code-line' })
+const headingMark = Decoration.mark({ class: 'cm-slide-mark cm-heading-mark' })
+const codeLine = (raw: boolean) =>
+  Decoration.line({ class: `cm-code-line${raw ? ' cm-code-raw' : ''}` })
+/** A fence's backticks, always in the DOM, like a heading's `#`. */
+const codeMark = Decoration.mark({ class: 'cm-slide-mark cm-code-mark' })
 /** A fence's language, left as a quiet label once its backticks are hidden. */
 const codeInfo = Decoration.mark({ class: 'cm-code-info' })
 
@@ -470,19 +476,18 @@ export function buildDecorations(state: EditorState, from: number, to: number): 
           const last = state.doc.lineAt(node.to).number
           for (let n = first; n <= last; n++) {
             const line = state.doc.line(n)
-            ranges.push({ from: line.from, to: line.from, deco: codeLine })
+            ranges.push({ from: line.from, to: line.from, deco: codeLine(activeHere) })
           }
           // The fence lines stay, so the block keeps its height when the caret
-          // arrives; only the backticks go.
-          if (!activeHere) {
-            for (const mark of node.node.getChildren('CodeMark')) {
-              let end = mark.to
-              while (/[ \t]/.test(state.sliceDoc(end, end + 1))) end++
-              ranges.push({ from: mark.from, to: end, deco: conceal })
-            }
-            const info = node.node.getChild('CodeInfo')
-            if (info !== null) ranges.push({ from: info.from, to: info.to, deco: codeInfo })
+          // arrives; only the backticks go, sliding shut under `cm-code-raw`'s
+          // absence.
+          for (const mark of node.node.getChildren('CodeMark')) {
+            let end = mark.to
+            while (/[ \t]/.test(state.sliceDoc(end, end + 1))) end++
+            ranges.push({ from: mark.from, to: end, deco: codeMark })
           }
+          const info = node.node.getChild('CodeInfo')
+          if (info !== null) ranges.push({ from: info.from, to: info.to, deco: codeInfo })
           break
         }
         case 'ListItem': {
@@ -586,19 +591,19 @@ export function buildDecorations(state: EditorState, from: number, to: number): 
             ranges.push({
               from: line.from,
               to: line.from,
-              deco: quoteLine(n === first, n === last),
+              // The span a `QuoteMark` reveals by (`revealSpan`).
+              deco: quoteLine(n === first, n === last, isActive({ from: line.from, to: line.to })),
             })
           }
           break
         }
-        case 'QuoteMark':
-          // `> ` shows only on the caret's line; the surface says "quote".
-          if (activeHere) ranges.push({ from: node.from, to: node.to, deco: quoteMark })
-          else {
-            const space = /[ \t]/.test(state.sliceDoc(node.to, node.to + 1)) ? 1 : 0
-            ranges.push({ from: node.from, to: node.to + space, deco: conceal })
-          }
+        case 'QuoteMark': {
+          // `> ` opens only on the caret's line (`cm-quote-raw`); the surface
+          // says "quote".
+          const space = /[ \t]/.test(state.sliceDoc(node.to, node.to + 1)) ? 1 : 0
+          ranges.push({ from: node.from, to: node.to + space, deco: quoteMark })
           break
+        }
         case 'HorizontalRule':
           if (!activeHere) {
             ranges.push({
