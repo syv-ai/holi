@@ -609,9 +609,11 @@ export function FileTree({
             >
               {label(id, node)}
             </span>
-            {/* Today's daily, marked where it lives (docs/features/daily-notes.md). */}
+            {/* Today's daily, marked where it lives (docs/features/daily-notes.md):
+                at the row's right end, boxed to its x-height like the name so
+                the row's centring lines the two up. */}
             {id === todayDailyPath && (
-              <span className="shrink-0 text-[11px] text-brand">
+              <span className="ml-auto shrink-0 text-[11px] text-brand [text-box:trim-both_ex_alphabetic]">
                 today{todayLinkCount > 0 && ` · ${todayLinkCount}`}
               </span>
             )}
