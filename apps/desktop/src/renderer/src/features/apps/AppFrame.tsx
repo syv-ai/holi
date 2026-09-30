@@ -22,10 +22,9 @@
  * code may read. This side only forwards.
  */
 import { useAtomValue, useSetAtom } from 'jotai'
-import { RotateCw } from 'lucide-react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 import { APP_METHODS, appHost, appName, type AppMethod, type AppResponse } from '@holi/shared'
-import { Button, IconButton } from '@/primitives'
+import { Button } from '@/primitives'
 import { trpc } from '../../lib/trpc'
 import { appPathsAtom, closeAppAtom } from '../../state/apps'
 import { activeModeAtom } from '../../state/color-scheme'
@@ -49,8 +48,7 @@ export function AppFrame({ path }: { path: string }): React.JSX.Element {
   const mode = useAtomValue(activeModeAtom)
   const openNote = useSetAtom(openNoteTabAtom)
   const closeApp = useSetAtom(closeAppAtom)
-  const [reloads, setReloads] = useState(0)
-  const opens = useAtomValue(appOpensAtom)[path] ?? 0
+  const reloads = useAtomValue(appOpensAtom)[path] ?? 0
   const frameRef = useRef<HTMLIFrameElement>(null)
   const exists = appPaths.includes(path)
 
@@ -118,20 +116,13 @@ export function AppFrame({ path }: { path: string }): React.JSX.Element {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex h-8 items-center justify-end px-2">
-        <IconButton
-          icon={RotateCw}
-          label="reload"
-          tooltip="reload this app"
-          onClick={() => setReloads((n) => n + 1)}
-        />
-      </div>
       <iframe
         // Remounting is the reload: an app holds nothing across one (its origin
         // is opaque, so there is no storage to keep), so a fresh document IS the
         // fresh start, and it is the only way a frame sheds what it has loaded.
-        // The agent's `holi app open` reloads it the same way.
-        key={`${reloads}:${opens}`}
+        // The pane header's reload button and the agent's `holi app open` both
+        // bump the count (`appOpensAtom`).
+        key={reloads}
         ref={frameRef}
         // The mode in force goes in the URL, since main themes the document and
         // cannot see the renderer. A mode change reloads the frame.

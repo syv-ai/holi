@@ -176,10 +176,10 @@ export function openApp(workspace: Workspace, path: string): Workspace {
 }
 
 /**
- * How many times the agent has asked for each app since launch, by bundle path.
- * `holi app open` on an app that is already open reloads it, so an agent that
- * just edited one shows the new version with the command it already knows.
- * The frame's own reload button counts separately.
+ * How many times each app has been reloaded since launch, by bundle path. Both
+ * reloads count here: the pane header's reload button, and the agent's `holi
+ * app open` on an app that is already open, so an agent that just edited one
+ * shows the new version with the command it already knows.
  */
 export const appOpensAtom = atom<Record<string, number>>({})
 

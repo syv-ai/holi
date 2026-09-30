@@ -28,7 +28,7 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   Apps section. Its Finish this app is on the tree's app row, and its Edit Source gave way to the
   row's Show Contents, which expands the bundle so `index.html` opens like any file.
 - **Tabs.** An app opens as an ordinary tab keyed by its bundle path, deduped across panes like a
-  note (see [tabs and panes](tabs-panes.md)). Reload is a button in the tab that remounts the
+  note (see [tabs and panes](tabs-panes.md)). Reload is a button in the pane header, beside the other per-file buttons, that remounts the
   frame. If the bundle disappears under an open tab (a teammate's pull), the tab stays as a
   tombstone saying the app was deleted. Deleting from a menu removes the files and closes the tab
   instead. A move of the bundle carries its tab along, like a note's.

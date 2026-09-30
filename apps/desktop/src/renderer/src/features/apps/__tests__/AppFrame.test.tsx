@@ -9,11 +9,12 @@
 import { appHost, emptyVaultSnapshot } from '@holi/shared'
 import { getDefaultStore } from 'jotai'
 import { beforeEach, expect, test, vi } from 'vitest'
+import { act } from 'react'
 import { render, screen, waitFor } from '@/test/render'
 import userEvent from '@testing-library/user-event'
 import { AppFrame } from '../AppFrame'
 import { snapshotAtom, activeRemoteAtom } from '../../../state/vaults'
-import { workspaceAtom, openApp } from '../../../state/panes'
+import { appOpensAtom, workspaceAtom, openApp } from '../../../state/panes'
 
 const docsMock = vi.fn((_input: unknown) =>
   Promise.resolve([{ path: 'a.md', kind: 'note', updatedAt: '' }]),
@@ -123,10 +124,13 @@ test('an unknown method is refused rather than ignored', async () => {
   expect(post.mock.calls[0]![0]).toMatchObject({ id: 'x', ok: false })
 })
 
-test('reload rebuilds the frame rather than reusing it', async () => {
+// The pane header's reload button and `holi app open` both bump this count.
+test('reload rebuilds the frame rather than reusing it', () => {
   render(<AppFrame path="Team/Retro.app" />)
   const before = frameOf()
-  await userEvent.click(screen.getByRole('button', { name: /reload/i }))
+  act(() =>
+    store.set(appOpensAtom, (n) => ({ ...n, 'Team/Retro.app': (n['Team/Retro.app'] ?? 0) + 1 })),
+  )
   expect(frameOf()).not.toBe(before)
 })
 

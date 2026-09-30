@@ -4,7 +4,7 @@
  * atoms. An agent session is an ordinary tab.
  */
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
-import { History, PanelLeftClose, PanelLeftOpen, PanelRight } from 'lucide-react'
+import { History, PanelLeftClose, PanelLeftOpen, PanelRight, RotateCw } from 'lucide-react'
 import { Fragment, useEffect, useRef, useState } from 'react'
 import { fileKind, isAppBundlePath, isTaskFilePath, isVaultConfigPath } from '@holi/shared'
 import {
@@ -38,6 +38,7 @@ import { sweepDailyAtom } from '../state/daily'
 import { openLandingAtom } from '../state/landing'
 import {
   activeTab,
+  appOpensAtom,
   dropZones,
   focusPane,
   moveTab,
@@ -108,6 +109,7 @@ export function Shell() {
   const startPendingPrompt = useSetAtom(startPendingVaultPromptAtom)
   const setPendingPrompt = useSetAtom(pendingVaultPromptAtom)
   const setHistoryOpen = useSetAtom(historyOpenAtom)
+  const setAppReloads = useSetAtom(appOpensAtom)
   const [navOpen, setNavOpen] = useAtom(navOpenAtom)
   const historyTarget = useAtomValue(historyTargetPathAtom)
   // The one place that asks main whether Google is connected; settings and the
@@ -425,6 +427,19 @@ export function Shell() {
                       <>
                         {/* An assistant tab's actions (`SessionActions`). */}
                         {p.tabs[p.active]?.kind === 'agent' && <SessionActions />}
+                        {/* A vault app's reload: it remounts the frame. */}
+                        {p.tabs[p.active]?.kind === 'app' && (
+                          <IconButton
+                            icon={RotateCw}
+                            label="reload this app"
+                            className="ml-1"
+                            onClick={() => {
+                              const tab = p.tabs[p.active]
+                              if (tab?.kind !== 'app') return
+                              setAppReloads((n) => ({ ...n, [tab.path]: (n[tab.path] ?? 0) + 1 }))
+                            }}
+                          />
+                        )}
                         {/* Version history for the focused note. Only on the
                               active pane: `historyTargetPathAtom` reads its tab,
                               the drawer's own predicate. */}
