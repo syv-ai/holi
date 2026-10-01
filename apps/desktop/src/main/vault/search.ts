@@ -5,12 +5,18 @@
  * A grep, not an index, like `vault/backrefs.ts`: an index is a second copy of
  * the vault that can drift, and a vault is small enough to read on demand.
  * What may be searched is the caller's: a vault app passes `isSearchable`
- * (never the agent surface or any app's `data/`, the same refusals as
+ * (never the agent surface, machine state or any app's `data/`, the same refusals as
  * `docs.read`, or a search would read what a read may not), while Holi's own
  * UI may search everything.
  */
 import { readFile } from 'node:fs/promises'
-import { appBundleOf, isAgentSurfacePath, isAppPrivatePath, type DocMeta } from '@holi/shared'
+import {
+  appBundleOf,
+  isAgentSurfacePath,
+  isAppPrivatePath,
+  isMachineStatePath,
+  type DocMeta,
+} from '@holi/shared'
 import { exactPath } from '@holi/shared/path-safety-node'
 
 export interface SearchHit {
@@ -25,7 +31,7 @@ const SNIPPET_RADIUS = 60
 
 /** What a search may look at: not the agent surface, not any app's records. */
 export function isSearchable(path: string): boolean {
-  if (isAgentSurfacePath(path)) return false
+  if (isAgentSurfacePath(path) || isMachineStatePath(path)) return false
   const bundle = appBundleOf(path)
   return bundle === null || !isAppPrivatePath(path.slice(bundle.length + 1))
 }

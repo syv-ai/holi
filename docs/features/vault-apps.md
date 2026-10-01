@@ -156,6 +156,9 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
 - The agent-surface refusal lives in main (the capability registry), not the renderer. The process rendering
   untrusted code must not be the one deciding what it may read. `read` answers `FORBIDDEN`,
   distinct from `NOT_FOUND`.
+- This machine's state under `.holi/state/` (`isMachineStatePath`) is refused the same way and left
+  out of every listing: it holds the loopback bridge's tokens, and an app holding one could drive
+  Holi as the agent does.
 - The frame is `sandbox="allow-scripts"` and never also `allow-same-origin`. Both together let the
   frame drop its own sandbox. The opaque origin is also why `localStorage` throws.
 - `AppFrame` identifies a message by `event.source === contentWindow`, never by origin (it is the

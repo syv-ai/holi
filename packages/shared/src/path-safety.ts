@@ -168,3 +168,14 @@ export function isAgentSurfacePath(path: string): boolean {
     path.startsWith(`${MEMORY_DIR}/`)
   )
 }
+
+/** Where Holi keeps this machine's running state inside a vault: logs, the
+ *  agent's per-turn files, and the loopback endpoints with their tokens. */
+export const MACHINE_STATE_DIR = '.holi/state'
+
+/** Whether a vault-relative path is machine state. A vault app may never read
+ *  it, list it or learn its names: a bridge token there would let untrusted app
+ *  code drive Holi as the agent does. Root-anchored, like the agent surface. */
+export function isMachineStatePath(path: string): boolean {
+  return path.startsWith(`${MACHINE_STATE_DIR}/`)
+}

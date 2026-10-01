@@ -192,6 +192,19 @@ describe('history', () => {
   })
 })
 
+describe('docs.read', () => {
+  it("refuses this machine's state", async () => {
+    await put('.holi/state/hook-endpoint.local.txt', 'http://127.0.0.1:1/?t=secret')
+    expect(
+      await refusal(
+        runCapability('docs.read', 'app', ctx({}), {
+          path: '.holi/state/hook-endpoint.local.txt',
+        }),
+      ),
+    ).toMatchObject({ code: 'FORBIDDEN' })
+  })
+})
+
 describe('docs.render', () => {
   it('refuses what docs.read refuses', async () => {
     await put('memory/x.md', 'secret')

@@ -27,6 +27,7 @@ import {
   isAgentSurfacePath,
   isAppBundlePath,
   isAppPrivatePath,
+  isMachineStatePath,
   syncLabel,
   vaultRelPath,
   type AppAffordance,
@@ -154,7 +155,8 @@ function limitParam(raw: Record<string, unknown>, key: string, fallback: number,
 
 /**
  * The note a read may reach, or a refusal: not the agent surface, a real
- * vault path, and not any app's records, its own included (the store is the
+ * vault path, not this machine's state under `.holi/state/` (it holds the
+ * bridge's tokens), and not any app's records, its own included (the store is the
  * only way in, so one app cannot read another's data, a personal app's least
  * of all). `docs.read`, `docs.render` and `tasks.complete` share it.
  */
@@ -167,7 +169,9 @@ function readablePath(path: string): VaultRelPath {
     throw new CapabilityError('BAD_REQUEST', (err as Error).message)
   }
   // Checked again on the normalised path: `./memory/x.md` is `memory/x.md`.
-  if (isAgentSurfacePath(rel)) throw new CapabilityError('FORBIDDEN', path)
+  if (isAgentSurfacePath(rel) || isMachineStatePath(rel)) {
+    throw new CapabilityError('FORBIDDEN', path)
+  }
   const bundle = appBundleOf(rel)
   if (bundle !== null && isAppPrivatePath(rel.slice(bundle.length + 1))) {
     throw new CapabilityError('FORBIDDEN', path)
@@ -268,7 +272,7 @@ const ENTRIES = {
     // The listing, not just the read: an app that cannot open a memory but can
     // see every memory's path has still been told what the vault remembers.
     run: async (ctx): Promise<VaultSnapshot['docs']> =>
-      (await ctx.snapshot()).docs.filter((d) => !isAgentSurfacePath(d.path)),
+      (await ctx.snapshot()).docs.filter((d) => readableOrNull(d.path) !== null),
     text: (docs) => docs.map((d) => d.path).join('\n'),
   }),
 
