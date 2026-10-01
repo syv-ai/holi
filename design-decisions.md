@@ -370,3 +370,16 @@ and activation.
   branch that recognised the agent by name.
 - **`RecentKind` is `path | surface | command`.** Agent tabs are surface recents, and
   unlisted surfaces' recents never reach vault apps.
+
+### Phase 4 (started)
+
+- **The snapshot carries `claimed[pluginId]`, not typed task fields.** Tasks is still a core part
+  contributing the `task.*.md` claim. With the claim absent, task files are plain notes. Any
+  error thrown by a claim's `parse` marks the file broken.
+- **A transform's settings toggle lives on `PluginInfo`,** because the settings tab (renderer)
+  needs it and `info.ts` is the one file both halves read. `MainPlugin.transforms` is just
+  `{name, run}`.
+- **Unknown transform names are kept on read and refused on write,** so a hand-written key
+  survives, but the settings tab can never write an arbitrary one.
+- **The tree keeps its existing task-files toggle** rather than a per-claim `hideable`, which
+  would need new header UI. Broken task files now show under it so they can be fixed.
