@@ -13,7 +13,7 @@ import {
 } from '../src/main/capabilities/registry'
 
 const registry = createCapabilityRegistry()
-registry.register(APP_NAMESPACES, appCapabilities({ showApp: () => {} }))
+registry.register(APP_NAMESPACES, appCapabilities({ events: { emit: () => {} } }))
 // `docs.read`, for the refusal of records read as files.
 registry.register(VAULT_NAMESPACES, vaultCapabilities({ updateSkills: async () => '' }))
 

@@ -79,6 +79,13 @@ and its `rowMenu` items join the file tree's menu. A plugin adds `surfaces` (tab
 items to the nav menu ([tabs and panes](features/tabs-panes.md)), registered beside core's own, and
 `settingsSections` to the settings tab ([settings](features/settings.md)).
 Its dialogs open as `{id: 'plugin', render}`.
+Main tells a plugin's renderer something through events: `ctx.emit(remote, name, payload)` sends
+`{remote, name, payload}` on the plugin's one channel, `plugin:<id>`, read by one preload member,
+`window.holi.plugin.on(id, cb)`. Main sends only about a vault that runs the plugin, so the renderer
+subscribes every installed plugin's `events` handlers at boot, and a handler drops an event about a
+vault it does not care about. The other way, `window.holi.plugin.send(id, event)` is ordered and
+unanswered, and `ctx.on(name, handler)` hears only messages about the open vault. Vault apps,
+still core, use the same channel as `apps` (the agent's `holi apps open`).
 A plugin's own code sits in `main/`, `renderer/`, `shared/` and `test/` under its folder; its
 renderer imports its main side as types only, for `capClient`. The plugins are PDF
 ([pdf](features/pdf.md)) and Google ([google](features/google.md)).

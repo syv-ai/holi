@@ -1,6 +1,7 @@
 import type { VaultSnapshot } from '@holi/shared'
 import type { SyncState } from '../../main/vault/active-vault'
 import type { HeldBackFile } from '../../main/vault/large-files'
+import type { PluginEvent } from '../../main/plugin-host/events'
 import type { TrpcEnvelope, TrpcOpWire } from './lib/ipc-link'
 import type { AgentSession, AgentTerminal } from './state/agent'
 
@@ -43,11 +44,14 @@ declare global {
       reminders: {
         onOpen(cb: (payload: { remote: string; path: string }) => void): () => void
       }
-      /** The agent ran `holi apps open <path>`. Nothing else opens an app tab by
-       *  itself: apps sync, so opening on *appearance* would put a teammate in
-       *  charge of your screen. Returns its unsubscribe. */
-      apps: {
-        onOpen(cb: (bundle: string) => void): () => void
+      /** Plugin events (docs/architecture.md, Plugins). Main sends on
+       *  `plugin:<id>` only for a vault that runs the plugin; the renderer's
+       *  messages are dropped unless they are about the open vault. */
+      plugin: {
+        /** Returns its unsubscribe. */
+        on(id: string, cb: (event: PluginEvent) => void): () => void
+        /** Ordered and fire-and-forget: a terminal's keystrokes ride it. */
+        send(id: string, event: PluginEvent): void
       }
       /** The Developer menu, dev builds only. Returns its unsubscribe. */
       dev: {

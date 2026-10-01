@@ -3,7 +3,7 @@
  * surfaces it adds. Declared here, beside the surface plugins import, so
  * core's state and the plugins read one definition.
  */
-import type { Atom } from 'jotai'
+import type { Atom, createStore } from 'jotai'
 import type { ComponentType } from 'react'
 import type { PluginInfo } from '@holi/shared'
 import type { IconGlyph } from '@/primitives'
@@ -78,8 +78,24 @@ export interface SettingsSection {
   Component: (props: { remote: string }) => React.JSX.Element
 }
 
+/** The renderer's one store, as an event handler gets it. */
+export type PluginStore = Pick<ReturnType<typeof createStore>, 'get' | 'set'>
+
+/**
+ * What a plugin does when its main side emits `name`. Main sends an event
+ * only for a vault that runs the plugin, but it may be about a vault other
+ * than the open one: `remote` says which, and the handler decides.
+ */
+export type PluginEventHandler = (
+  event: { remote: string; payload: unknown },
+  store: PluginStore,
+) => void
+
 export interface RendererPlugin {
   info: PluginInfo
+  /** Handlers for the plugin's events, by name. Subscribed at boot for every
+   *  installed plugin. */
+  events?: Readonly<Record<string, PluginEventHandler>>
   claims?: readonly PathClaim[]
   surfaces?: readonly Surface[]
   rail?: readonly RailItem[]

@@ -28,6 +28,18 @@ export interface AppContext {
    * also runs at quit.
    */
   register(namespaces: readonly string[], table: CapabilityTable): () => void
+  /**
+   * Tell this plugin's renderer side something about the vault `remote`.
+   * `name` is kebab-case and `payload` must survive structured clone. Nothing
+   * is sent while that vault has the plugin off.
+   */
+  emit(remote: string, name: string, payload: unknown): void
+  /**
+   * Hear `name` from this plugin's renderer side, in the order it was sent.
+   * A message about any vault but the open one, or one with the plugin off,
+   * is dropped. Returns the undo, which the host also runs at quit.
+   */
+  on(name: string, handler: (remote: string, payload: unknown) => void): () => void
 }
 
 export interface MainPlugin {

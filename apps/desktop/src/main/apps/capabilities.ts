@@ -9,6 +9,7 @@ import { appBundleOf, isAppBundlePath } from '@holi/shared'
 import { CapabilityError } from '../capabilities/error'
 import { paramsObject, pathParams, stringParam } from '../capabilities/params'
 import { cap, type CapabilityContext } from '../capabilities/registry'
+import type { PluginEvents } from '../plugin-host/events'
 import { initAppOp, openAppOp } from './app-ops'
 import { storeCheck, storeDelete, storeGet, storeList, storePut } from './app-store'
 
@@ -45,8 +46,9 @@ const compact = (value: unknown) => JSON.stringify(value)
 export const APP_NAMESPACES = ['apps', 'store'] as const
 
 export interface AppCapabilitiesDeps {
-  /** Open (or reload) this bundle's tab in the active pane. */
-  showApp(bundle: string): void
+  /** The apps' events: `open` asks the renderer to open (or reload) a
+   *  bundle's tab in the active pane, if that vault is the one on screen. */
+  events: Pick<PluginEvents, 'emit'>
 }
 
 export const appCapabilities = (deps: AppCapabilitiesDeps) => ({
@@ -64,7 +66,7 @@ export const appCapabilities = (deps: AppCapabilitiesDeps) => ({
       // that still opened a tab would show the agent a blank frame and tell it
       // the reason at the same time.
       if (!result.ok) throw new CapabilityError('BAD_REQUEST', result.error)
-      deps.showApp(result.bundle)
+      deps.events.emit(ctx.remote, 'open', { bundle: result.bundle })
       return { bundle: result.bundle }
     },
     text: ({ bundle }) => `opened ${bundle}`,

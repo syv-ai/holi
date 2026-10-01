@@ -50,6 +50,7 @@ import { MAIN_PLUGINS } from '../plugins/main'
 import type { GoogleCapabilities } from '../plugins/google/main/capabilities'
 import { install } from './plugin-host/installed'
 import { createPluginHost } from './plugin-host/host'
+import { pluginEvents, type PluginEventsDeps } from './plugin-host/events'
 import {
   describeUpdate,
   updateConflictPrompt,
@@ -195,8 +196,20 @@ async function main(): Promise<void> {
     return () => undo.forEach((u) => u())
   }
 
+  /** Plugin events, both ways, over the one window. */
+  const eventsDeps: PluginEventsDeps = {
+    send,
+    listen: (channel, handler) => {
+      const listener = (_e: unknown, message: unknown) => handler(message)
+      ipcMain.on(channel, listener)
+      return () => void ipcMain.removeListener(channel, listener)
+    },
+    liveRemote: () => host.active()?.remote ?? null,
+  }
+
   // Every capability, from every door. Created ahead of the vault host so
-  // the plugin host can register into it; `host` is read lazily.
+  // the plugin host can register into it; `host` and `rootFor` are read
+  // lazily.
   const capabilities = createCapabilityRegistry()
   const plugins = createPluginHost({
     plugins: MAIN_PLUGINS,
@@ -204,6 +217,8 @@ async function main(): Promise<void> {
     userData: userDataDir,
     coreSeeds: CORE_SEEDS,
     liveRoot: () => host.active()?.root ?? null,
+    rootFor: (remote) => rootFor(remote),
+    events: eventsDeps,
   })
 
   const host = createVaultHost({
@@ -353,8 +368,9 @@ async function main(): Promise<void> {
       return result.summary
     },
   })
-  // The agent's `holi apps open`: the renderer opens the tab.
-  const appCaps = appCapabilities({ showApp: (bundle) => send('apps:open', bundle) })
+  // The agent's `holi apps open`: the renderer opens the tab. Vault apps are
+  // still core, so their events are not gated on a plugin.
+  const appCaps = appCapabilities({ events: pluginEvents(eventsDeps, 'apps') })
   const taskCaps = taskCapabilities({ today: localToday })
   const agentCaps = agentCapabilities({
     // `agent` is assigned below, before any vault can be open.

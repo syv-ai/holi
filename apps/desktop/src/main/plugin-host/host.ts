@@ -13,6 +13,7 @@
 import { enabledPlugins, type ResolvedVaultSettings } from '@holi/shared'
 import type { CapabilityRegistry } from '../capabilities/registry'
 import type { AppContext, Disposer, MainPlugin } from '../plugin-api'
+import { pluginEvents, type PluginEventsDeps } from './events'
 import { ensureSeeded } from '../vault/seed/seed'
 import type { SeedContribution, SeedResult } from '../vault/seed/types'
 import { readVaultSettings } from '../vault/settings'
@@ -25,6 +26,10 @@ export interface PluginHostDeps {
   coreSeeds: readonly SeedContribution[]
   /** The open vault's clone, whose answer is cached; null with none open. */
   liveRoot(): string | null
+  /** The clone of the vault `remote` names, open or not; null for none. */
+  rootFor(remote: string): Promise<string | null>
+  /** The window and `ipcMain`, for plugin events. */
+  events: PluginEventsDeps
   readSettings?: (root: string) => Promise<ResolvedVaultSettings>
 }
 
@@ -74,12 +79,31 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
     cache = null
   }
 
+  async function enabled(root: string): Promise<ReadonlySet<string>> {
+    if (cache !== null && cache.root === root && root === deps.liveRoot()) return cache.enabled
+    return read(root)
+  }
+
   async function start(plugin: MainPlugin): Promise<Started | null> {
+    const id = plugin.info.id
     const undos: (() => void)[] = []
+    // Asked per event, a terminal's every chunk: the open vault's answer is
+    // the cached one.
+    const runs = async (remote: string): Promise<boolean> => {
+      const root = await deps.rootFor(remote)
+      return root !== null && (await enabled(root)).has(id)
+    }
+    const events = pluginEvents(deps.events, id, runs)
     const ctx: AppContext = {
       userData: deps.userData,
       register: (namespaces, table) => {
-        const undo = deps.registry.register(namespaces, table, plugin.info.id)
+        const undo = deps.registry.register(namespaces, table, id)
+        undos.push(undo)
+        return undo
+      },
+      emit: events.emit,
+      on: (name, handler) => {
+        const undo = events.on(name, handler)
         undos.push(undo)
         return undo
       },
@@ -87,7 +111,7 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
     try {
       return { dispose: await plugin.activateApp!(ctx), undos }
     } catch (err) {
-      console.error(`[plugins] ${plugin.info.id} did not start:`, err)
+      console.error(`[plugins] ${id} did not start:`, err)
       undos.forEach((undo) => undo())
       return null
     }
@@ -107,10 +131,7 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
   }
 
   return {
-    async enabled(root) {
-      if (cache !== null && cache.root === root && root === deps.liveRoot()) return cache.enabled
-      return read(root)
-    },
+    enabled,
 
     contributions: async (root) => (await seeding(root)).contributions,
 

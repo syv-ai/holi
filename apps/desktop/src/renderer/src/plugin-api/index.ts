@@ -9,6 +9,8 @@
 export type {
   ClaimMenuItem,
   PathClaim,
+  PluginEventHandler,
+  PluginStore,
   RailItem,
   RendererPlugin,
   SettingsSection,

@@ -5,11 +5,12 @@
 import { mkdtemp, readFile, rm, unlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createCapabilityHost } from '../src/main/capabilities/dispatch'
 import { createCapabilityRegistry } from '../src/main/capabilities/registry'
 import { noCoreServices } from '../src/main/capabilities/services'
-import { cap, noParams, type MainPlugin } from '../src/main/plugin-api'
+import { cap, noParams, type AppContext, type MainPlugin } from '../src/main/plugin-api'
+import type { PluginEvent } from '../src/main/plugin-host/events'
 import { createPluginHost } from '../src/main/plugin-host/host'
 import { coreSeed } from '../src/main/vault/seed/core'
 import { readSeedState } from '../src/main/vault/seed/state'
@@ -28,12 +29,16 @@ async function tempDir(): Promise<string> {
   return dir
 }
 
-function rig(opts: { default?: boolean } = {}) {
+function rig(opts: { default?: boolean; roots?: Record<string, string>; live?: string } = {}) {
   const calls = { started: 0, stopped: 0 }
+  const sent: { channel: string; event: PluginEvent }[] = []
+  const listeners = new Map<string, (message: unknown) => void>()
+  let context: AppContext | null = null
   const fake: MainPlugin = {
     info: { id: 'fake', label: 'Fake', default: opts.default ?? true },
     seed: { id: 'fake', once: {}, shipped: { [SKILL]: '# fake\n' } },
     activateApp(ctx) {
+      context = ctx
       calls.started += 1
       ctx.register(['fake'], {
         'fake.ping': cap({ doors: ['ui'], params: noParams, run: async () => 'pong' }),
@@ -50,6 +55,15 @@ function rig(opts: { default?: boolean } = {}) {
     userData: '/nowhere',
     coreSeeds: [coreSeed([fake.info])],
     liveRoot: () => null,
+    rootFor: async (remote) => opts.roots?.[remote] ?? null,
+    events: {
+      send: (channel, event) => void sent.push({ channel, event }),
+      listen: (channel, handler) => {
+        listeners.set(channel, handler)
+        return () => void listeners.delete(channel)
+      },
+      liveRemote: () => opts.live ?? null,
+    },
   })
   let root = ''
   const { dispatch } = createCapabilityHost({
@@ -63,7 +77,9 @@ function rig(opts: { default?: boolean } = {}) {
     root = at
     return dispatch({ door: 'ui', remote: 'o/r', name: 'fake.ping', params: {} })
   }
-  return { host, registry, calls, ping }
+  /** What the renderer sends the plugin's main side. */
+  const fromRenderer = (message: unknown) => listeners.get('plugin:fake')?.(message)
+  return { host, registry, calls, ping, sent, fromRenderer, ctx: () => context! }
 }
 
 const turn = (root: string, on: boolean) =>
@@ -98,6 +114,45 @@ describe('the plugin host', () => {
 
     expect((await ping(on)).value).toBe('pong')
     await expect(ping(off)).rejects.toThrow('no such method: fake.ping')
+  })
+})
+
+describe('plugin events', () => {
+  it('reach the renderer only about a vault that runs the plugin, in order', async () => {
+    const on = await tempDir()
+    const off = await tempDir()
+    await turn(off, false)
+    const { host, ctx, sent } = rig({ roots: { 'o/on': on, 'o/off': off } })
+    await host.enter(on)
+
+    ctx().emit('o/on', 'tick', 1)
+    ctx().emit('o/off', 'tick', 2)
+    ctx().emit('o/on', 'tick', 3)
+    await vi.waitFor(() => expect(sent).toHaveLength(2))
+    expect(sent.map((s) => s.event.payload)).toEqual([1, 3])
+    expect(sent[0]).toEqual({
+      channel: 'plugin:fake',
+      event: { remote: 'o/on', name: 'tick', payload: 1 },
+    })
+    expect(() => ctx().emit('o/on', 'Not Kebab', null)).toThrow()
+  })
+
+  it("hear only the open vault's messages", async () => {
+    const root = await tempDir()
+    const { host, ctx, fromRenderer } = rig({ roots: { 'o/live': root }, live: 'o/live' })
+    await host.enter(root)
+    const heard: unknown[] = []
+    ctx().on('key', (remote, payload) => heard.push([remote, payload]))
+
+    fromRenderer({ remote: 'o/other', name: 'key', payload: 'x' })
+    fromRenderer({ remote: 'o/live', name: 'other', payload: 'y' })
+    fromRenderer({ remote: 'o/live', name: 'key', payload: 'a' })
+    fromRenderer({ remote: 'o/live', name: 'key', payload: 'b' })
+    await vi.waitFor(() => expect(heard).toHaveLength(2))
+    expect(heard).toEqual([
+      ['o/live', 'a'],
+      ['o/live', 'b'],
+    ])
   })
 })
 

@@ -24,6 +24,10 @@ export interface FakeHoli {
   pushSyncState(state: SyncState): void
   pushHeldBack(files: HeldBackFile[]): void
   pushCommitted(paths: string[] | null): void
+  /** Main emitting `name` for the plugin `id`. */
+  pushPluginEvent(id: string, event: { remote: string; name: string; payload: unknown }): void
+  /** What the renderer sent each plugin's main side, in order. */
+  pluginSent: { id: string; event: unknown }[]
   /** Fire `onFlushRequest` and resolve once the renderer calls `flushDone()`. */
   requestFlush(): Promise<void>
   restore(): void
@@ -43,15 +47,18 @@ export function installFakeHoli(handle: (op: TrpcOpWire) => unknown = () => unde
   const committedSubs = new Set<(p: string[] | null) => void>()
   const flushSubs = new Set<() => void>()
   const reminderSubs = new Set<(p: { remote: string; path: string }) => void>()
-  const appOpenSubs = new Set<(bundle: string) => void>()
+  const pluginSubs = new Map<string, Set<(e: unknown) => void>>()
+  const pluginSent: { id: string; event: unknown }[] = []
   const testOnboardingSubs = new Set<() => void>()
   const menuCommandSubs = new Set<(id: string) => void>()
   let onFlushed: (() => void) | null = null
 
-  const subscribe = <T>(subs: Set<(v: T) => void>) => (cb: (v: T) => void) => {
-    subs.add(cb)
-    return () => void subs.delete(cb)
-  }
+  const subscribe =
+    <T>(subs: Set<(v: T) => void>) =>
+    (cb: (v: T) => void) => {
+      subs.add(cb)
+      return () => void subs.delete(cb)
+    }
 
   const holi = {
     async trpc(op: TrpcOpWire): Promise<TrpcEnvelope> {
@@ -73,8 +80,13 @@ export function installFakeHoli(handle: (op: TrpcOpWire) => unknown = () => unde
     reminders: {
       onOpen: subscribe(reminderSubs),
     },
-    apps: {
-      onOpen: subscribe(appOpenSubs),
+    plugin: {
+      on: (id: string, cb: (e: unknown) => void) => {
+        let subs = pluginSubs.get(id)
+        if (subs === undefined) pluginSubs.set(id, (subs = new Set()))
+        return subscribe(subs)(cb)
+      },
+      send: (id: string, event: unknown) => void pluginSent.push({ id, event }),
     },
     // Dev-menu channel. Never fires here; present so anything that subscribes
     // (App does, unconditionally) does not trip over an absent namespace —
@@ -110,6 +122,10 @@ export function installFakeHoli(handle: (op: TrpcOpWire) => unknown = () => unde
     pushCommitted: (paths) => {
       for (const cb of committedSubs) cb(paths)
     },
+    pushPluginEvent: (id, event) => {
+      for (const cb of pluginSubs.get(id) ?? []) cb(event)
+    },
+    pluginSent,
     requestFlush: () =>
       new Promise<void>((resolve) => {
         onFlushed = resolve

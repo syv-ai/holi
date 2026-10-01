@@ -61,11 +61,17 @@ const onAgentTerminals = pushChannel<unknown>('agent:terminals')
  * switch keeps `activeRemoteAtom` truthful (a main-side switch could not). */
 const onReminderOpen = pushChannel<{ remote: string; path: string }>('reminders:open')
 
-/** The agent ran `holi apps open <path>` and Holi should show that app.
- *  A push rather than a snapshot-derived effect on purpose: apps sync, so
- *  opening a tab whenever one *appears* would let a teammate's finished app
- *  decide what is on your screen. Only local authorship opens a tab. */
-const onAppOpen = pushChannel<string>('apps:open')
+/** Each plugin's events (`plugin:<id>`), one fan-out per plugin, made the
+ *  first time that plugin is subscribed. */
+const pluginChannels = new Map<string, ReturnType<typeof pushChannel<unknown>>>()
+function onPlugin(id: string, cb: (event: unknown) => void): () => void {
+  let channel = pluginChannels.get(id)
+  if (channel === undefined) {
+    channel = pushChannel<unknown>(`plugin:${id}`)
+    pluginChannels.set(id, channel)
+  }
+  return channel(cb)
+}
 
 /** The Developer menu asked for the onboarding ritual, run against nothing.
  *  Dev builds only: main does not install the menu in a packaged app. */
@@ -90,8 +96,12 @@ contextBridge.exposeInMainWorld('holi', {
   reminders: {
     onOpen: onReminderOpen,
   },
-  apps: {
-    onOpen: onAppOpen,
+  /** Plugin events: main pushes `{remote, name, payload}` on `plugin:<id>`,
+   *  and the renderer sends the same shape back, in order and unanswered. */
+  plugin: {
+    on: onPlugin,
+    send: (id: string, event: { remote: string; name: string; payload: unknown }) =>
+      ipcRenderer.send(`plugin:${id}`, event),
   },
   dev: {
     onTestOnboarding,

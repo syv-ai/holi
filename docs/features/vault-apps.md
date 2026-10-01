@@ -189,6 +189,8 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
 - The injected palette must be complete. Injecting only the vault's overrides gives an unthemed
   vault `:root{}` and an unreadable app. A test pins that every themeable token has a base value.
 - Only local authorship opens a tab (`holi apps open`). An app arriving by sync never opens itself.
+  The open is an `apps` event carrying the vault's remote, so it opens nothing once you have
+  switched to another vault.
 - Reload is explicit, never automatic: the ⟳ button, or the agent's `holi apps open` on an app
   already open, run once it has finished writing. Auto-reload fires on the half-written state
   while the agent is still writing.

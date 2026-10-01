@@ -10,6 +10,7 @@ import {
 } from '@holi/shared'
 import type { SyncState } from '../../../main/vault/active-vault'
 import type { HeldBackFile } from '../../../main/vault/large-files'
+import type { PluginEventHandler, RendererPlugin } from '@/plugin-api/types'
 import { flushAllBuffers } from '../lib/buffer-registry'
 import { trpc } from '../lib/trpc'
 import {
@@ -174,6 +175,24 @@ export const createVaultAtom = atom(
 )
 
 /**
+ * Vault apps' events, while apps are still core: `open` is the agent's
+ * `holi apps open`, which opens the app, or reloads it when it is open
+ * (`appOpensAtom`). Local authorship only: apps sync, so opening a tab
+ * whenever one appears would let a teammate's finished app decide what is on
+ * your screen. An event about another vault is dropped.
+ */
+const CORE_EVENTS: Readonly<Record<string, Readonly<Record<string, PluginEventHandler>>>> = {
+  apps: {
+    open: ({ remote, payload }, store) => {
+      if (remote !== store.get(activeRemoteAtom)) return
+      const { bundle } = payload as { bundle: string }
+      store.set(workspaceAtom, (w) => openApp(w, bundle))
+      store.set(appOpensAtom, (n) => ({ ...n, [bundle]: (n[bundle] ?? 0) + 1 }))
+    },
+  },
+}
+
+/**
  * Subscribe to everything main pushes, for the lifetime of the app.
  *
  * Established once where the store is created, **not** from a component effect:
@@ -181,8 +200,15 @@ export const createVaultAtom = atom(
  *
  * The snapshot replaces rather than merges: the channel carries the whole vault
  * every time, so a missed push heals on the next tick.
+ *
+ * Every installed plugin's events are subscribed, enabled or not: main sends
+ * only for a vault that runs the plugin, and an event may be about a vault
+ * other than the open one, whose settings the renderer has not read.
  */
-export function subscribeToVault(store: JotaiStore): () => void {
+export function subscribeToVault(
+  store: JotaiStore,
+  plugins: readonly RendererPlugin[] = [],
+): () => void {
   const offSnapshot = window.holi.vault.onSnapshot((snapshot) => store.set(snapshotAtom, snapshot))
   const offSync = window.holi.vault.onSyncState((state) => store.set(syncStateAtom, state))
   const offHeldBack = window.holi.vault.onHeldBack((files) => store.set(heldBackAtom, files))
@@ -199,20 +225,22 @@ export function subscribeToVault(store: JotaiStore): () => void {
       store.set(openTaskAtom, path)
     }
   })
-  // `holi apps open <id>`, typed by the agent. Local authorship only: see the
-  // channel's own comment for why an app appearing in the snapshot does not
-  // open anything. An app already open reloads (`appOpensAtom`).
-  const offAppOpen = window.holi.apps.onOpen((bundle) => {
-    store.set(workspaceAtom, (w) => openApp(w, bundle))
-    store.set(appOpensAtom, (n) => ({ ...n, [bundle]: (n[bundle] ?? 0) + 1 }))
-  })
+  const tables = [
+    ...Object.entries(CORE_EVENTS),
+    ...plugins.flatMap((p) => (p.events === undefined ? [] : [[p.info.id, p.events] as const])),
+  ]
+  const offEvents = tables.map(([id, handlers]) =>
+    window.holi.plugin.on(id, ({ remote, name, payload }) => {
+      if (Object.hasOwn(handlers, name)) handlers[name]!({ remote, payload }, store)
+    }),
+  )
   return () => {
     offSnapshot()
     offSync()
     offHeldBack()
     offCommitted()
     offReminder()
-    offAppOpen()
+    offEvents.forEach((off) => off())
   }
 }
 

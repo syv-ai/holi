@@ -19,7 +19,7 @@ const store = createStore()
 // own surfaces go in beside them.
 store.set(installedPluginsAtom, RENDERER_PLUGINS)
 store.set(coreSurfacesAtom, CORE_SURFACES)
-subscribeToVault(store)
+subscribeToVault(store, RENDERER_PLUGINS)
 reportUiToMain(store)
 
 /**

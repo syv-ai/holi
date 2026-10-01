@@ -56,7 +56,7 @@ type Called = (name: string, params: Record<string, string>) => Promise<{ text: 
 function recording(called: Called): Record<string, AnyCapability> {
   const real: Record<string, AnyCapability> = {
     ...vaultCapabilities({ updateSkills: async () => '' }),
-    ...appCapabilities({ showApp: () => {} }),
+    ...appCapabilities({ events: { emit: () => {} } }),
     ...taskCapabilities({ today: () => '2026-09-30' }),
     ...pdfCapabilities({
       signatures: { read: async () => '[]', write: async () => {} },
