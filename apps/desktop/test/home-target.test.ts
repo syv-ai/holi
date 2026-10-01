@@ -17,6 +17,16 @@ const vault = {
 const on = (home: string) => ({ home, dailyNotes: true })
 const off = (home: string) => ({ home, dailyNotes: false })
 
+describe('the recents', () => {
+  test('are shown in the Home tab, whatever the vault holds', () => {
+    const empty = { filePaths: new Set<string>(), appPaths: new Set<string>() }
+    expect(resolveHome(off('recents'), empty)).toEqual({
+      reach: 'tab',
+      target: { kind: 'recents' },
+    })
+  })
+})
+
 describe('an app', () => {
   test('is shown in the Home tab when the vault holds it', () => {
     expect(resolveHome(on('retro.app'), vault)).toEqual({

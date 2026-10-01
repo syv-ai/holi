@@ -2,9 +2,9 @@
  * Going Home: the vault's `home` setting, opened.
  *
  * One atom for every way there: the vault opening, the nav's Home, "Go home",
- * and an app's `holi.open('home')`. An app is shown in the Home tab; a view or
- * a file opens as itself, the tab it would be anyway; a target that is not
- * there opens the Home tab to say so. The decision is `lib/home-target.ts`.
+ * and an app's `holi.open('home')`. The recents or an app are shown in the
+ * Home tab; another view or a file opens as itself, the tab it would be
+ * anyway; a target that is not there opens the Home tab to say so. The decision is `lib/home-target.ts`.
  */
 import { atom } from 'jotai'
 import { homeTargetOf, VAULT_SETTING_DEFAULTS, type HomeTarget } from '@holi/shared'
@@ -54,9 +54,6 @@ export const openHomeAtom = atom(null, async (get, set): Promise<void> => {
     }
     case 'file':
       openNote(target.path)
-      return
-    case 'app':
-      set(workspaceAtom, openSingleton(get(workspaceAtom), 'home'))
       return
     default:
       set(workspaceAtom, openSingleton(get(workspaceAtom), target.kind))

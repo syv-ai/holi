@@ -135,13 +135,13 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   a `<name>.app` folder below the session's cwd, a syntax error and its line, a `.ts`/`.tsx`/`.jsx` file nothing will build, a
   `localStorage` call, a missing manifest, and a hard-coded colour. It is advisory, exits 0, and is
   silent when nothing is wrong. See [agent config](agent-config.md) for the CLI and hooks.
-- **Home is an app by default.** The `home` setting ([settings](settings.md)) is `Home.app`
-  unless the vault says otherwise, and the Home tab shows it. A new vault is created with it: plain HTML and a script, no build and
-  no vendored code, listing the recents (`holi.recents()`, kept live by `on('recents')`) over the
-  line "You can customize this page. Explain your vision to the vault assistant". It is written
-  at creation only, not as a once-file, since those return on every open: an existing vault's Home
-  tab offers **Create Home app** instead (`apps.createHome`, never overwrites), and a deleted one
-  stays deleted.
+- **Home can be an app.** When the `home` setting ([settings](settings.md)) names an app the
+  vault has, the Home tab shows it. No vault is created with one: Home defaults to Holi's own
+  recents view ([nav menu](nav-menu.md)). When `home` names an app the vault lacks, the Home tab
+  offers **Create Home app** (`apps.createHome`, never overwrites), which writes the default Home
+  app there: plain HTML and a script, no build and no vendored code, listing the recents
+  (`holi.recents()`, kept live by `on('recents')`) over the line "You can customize this page.
+  Explain your vision to the vault assistant".
 - **Migration.** Apps used to live in `.holi/apps/<id>/`, hidden with the other dotfiles. On
   vault open, before the first snapshot, `migrate-apps.ts` moves each to `<id>.app/` at the root
   with one `rename`, then rewrites inbound `[[links]]`; the autosave commits it. An app whose

@@ -500,15 +500,16 @@ pane.
 ## The Home tab
 
 Home is what `home:` in `.holi/settings/app.yaml` says, and it is also what the
-vault opens on. By default it is `Home.app`, an app like any other. It can
-instead be `daily` (today's note), `board`, `agenda`, `mail`, or any app or file
-in the vault by its path.
+vault opens on. By default it is `recents`, Holi's own list of what was opened
+recently. It can instead be `daily` (today's note), `board`, `agenda`, `mail`,
+or any app or file in the vault by its path.
 
-When the user asks to change or customize their home page, or says "customize
-this page" while Home is open, edit the app Home names; it is plain HTML and
-`home.js`, with nothing to build. Keep what it shows unless they ask for it
-gone. If they want Home to be something else entirely (their board, a note),
-change `home:` instead.
+When the user asks to change or customize their home page, and Home names an
+app, edit that app. When Home is `recents` or another of Holi's views, build an
+app for it (`Home.app` is the usual name) and point `home:` at its path; start
+from what Home showed until now unless they ask for something else. If they
+want Home to be something else entirely (their board, a note), change `home:`
+instead.
 
 - A home for everyone in the vault is the shared setting. A home for one person
   is `home:` in `.holi/settings/app.local.yaml`, which never syncs, pointing at

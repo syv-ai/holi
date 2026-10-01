@@ -9,7 +9,6 @@ import { promisify } from 'node:util'
 import { LOCAL_ONLY_IGNORE_LINES, MEMORY_INDEX_EMPTY, VAULT_MARKER_FILE } from '@holi/shared'
 import { afterEach, describe, expect, it } from 'vitest'
 import { BRAND_BINARIES } from '../src/main/agent/templates/_brand/binary-assets.generated'
-import { HOME_APP_FILES } from '../src/main/apps/home-app'
 import {
   GITIGNORE,
   ONCE_FILES,
@@ -282,15 +281,9 @@ describe('ensureSeeded', () => {
     const { written } = await ensureSeeded(root)
     // The .gitignore is written too, but it is not in SEED_FILES: it is the one
     // managed file that is merged line-wise rather than created-if-missing. The
-    // brand binaries seed alongside the text files, from BRAND_BINARIES, and
-    // a new vault gets its Home app.
+    // brand binaries seed alongside the text files, from BRAND_BINARIES.
     expect(written.sort()).toEqual(
-      [
-        GITIGNORE,
-        ...Object.keys(SEED_FILES),
-        ...Object.keys(BRAND_BINARIES),
-        ...HOME_APP_FILES.map(([file]) => `Home.app/${file}`),
-      ].sort(),
+      [GITIGNORE, ...Object.keys(SEED_FILES), ...Object.keys(BRAND_BINARIES)].sort(),
     )
     expect(await readFile(join(root, 'AGENTS.md'), 'utf8')).toBe(SEED_FILES['AGENTS.md'])
     expect(await readFile(join(root, '.claude/hooks/user-prompt-submit.mjs'), 'utf8')).toBe(
@@ -335,16 +328,6 @@ describe('ensureSeeded', () => {
 
     const { written: second } = await ensureSeeded(root)
     expect(second).toEqual([]) // everything is on disk now
-  })
-
-  // An existing vault's Home tab offers the app instead; one its owner deleted
-  // stays deleted.
-  it('writes the Home app only while creating the vault', async () => {
-    const root = await tempDir()
-    await ensureSeeded(root)
-    await rm(join(root, 'Home.app'), { recursive: true })
-    const { written } = await ensureSeeded(root)
-    expect(written.filter((p) => p.startsWith('Home.app/'))).toEqual([])
   })
 
   it('does not seed USER.local.md — it is machine-local', async () => {

@@ -22,8 +22,8 @@ import {
 const committed = (value: unknown): string => JSON.stringify(value)
 
 describe('VAULT_SETTING_DEFAULTS', () => {
-  it('opens on Home, an app, when nothing says otherwise', () => {
-    expect(homeTargetOf(VAULT_SETTING_DEFAULTS.home).kind).toBe('app')
+  it('opens on a Home of Holi’s own, not an app, when nothing says otherwise', () => {
+    expect(homeTargetOf(VAULT_SETTING_DEFAULTS.home).kind).not.toBe('app')
     expect(VAULT_SETTING_DEFAULTS.dailyNotes).toBe(true)
   })
 
@@ -214,6 +214,7 @@ describe('resolveVaultSettings — malformed input never throws', () => {
 describe('parseHome and homeTargetOf', () => {
   it.each([
     ['daily', 'daily', { kind: 'daily' }],
+    ['recents', 'recents', { kind: 'recents' }],
     ['board', 'board', { kind: 'board' }],
     ['./Finance/Budget.app/', 'Finance/Budget.app', { kind: 'app', path: 'Finance/Budget.app' }],
     [' Notes/Standup.md ', 'Notes/Standup.md', { kind: 'file', path: 'Notes/Standup.md' }],

@@ -17,9 +17,9 @@ export interface VaultContents {
 
 export type ResolvedHome =
   /** Open this: a view, a file, or today's daily. */
-  | { reach: 'open'; target: HomeTarget }
-  /** The Home tab, showing this app. */
-  | { reach: 'tab'; target: HomeTarget & { kind: 'app' } }
+  | { reach: 'open'; target: Exclude<HomeTarget, { kind: 'recents' | 'app' }> }
+  /** The Home tab, showing this: the recents, or an app. */
+  | { reach: 'tab'; target: Extract<HomeTarget, { kind: 'recents' | 'app' }> }
   /** The Home tab, saying why this cannot be shown. */
   | { reach: 'missing'; target: HomeTarget }
 
@@ -29,6 +29,8 @@ export function resolveHome(
 ): ResolvedHome {
   const target = homeTargetOf(settings.home)
   switch (target.kind) {
+    case 'recents':
+      return { reach: 'tab', target }
     case 'app':
       return vault.appPaths.has(target.path)
         ? { reach: 'tab', target }

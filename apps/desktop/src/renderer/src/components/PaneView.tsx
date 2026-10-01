@@ -184,8 +184,9 @@ export function PaneView({
             {tab?.kind === 'app' ? (
               <AppFrame path={tab.path} />
             ) : tab?.kind === 'home' ? (
-              // The Home tab shows Home's app; anything else Home is opens as
-              // itself, so here it is only ever said (`state/home.ts`).
+              // The Home tab shows Home's app when it names one the vault has;
+              // otherwise HomeView shows the recents, or says why Home is not
+              // there (`state/home.ts`).
               home.kind === 'app' && appPaths.includes(home.path) ? (
                 <AppFrame path={home.path} />
               ) : (

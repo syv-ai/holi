@@ -78,10 +78,13 @@ export const EDITOR_FONT_STACKS: Readonly<Record<EditorFont, string>> = Object.f
   serif: 'ui-serif, Georgia, Cambria, "Times New Roman", serif',
 })
 
-/** What Home can be besides an app or a file: one of Holi's own views. */
-export type HomeView = 'daily' | 'board' | 'agenda' | 'mail'
+/**
+ * What Home can be besides an app or a file: one of Holi's own views.
+ * `recents` is what you opened recently, shown in the Home tab itself.
+ */
+export type HomeView = 'recents' | 'daily' | 'board' | 'agenda' | 'mail'
 
-export const HOME_VIEWS: readonly HomeView[] = ['daily', 'board', 'agenda', 'mail']
+export const HOME_VIEWS: readonly HomeView[] = ['recents', 'daily', 'board', 'agenda', 'mail']
 
 /**
  * What Home is, classified. The file holds one string (`homeTargetOf` reads
@@ -91,7 +94,8 @@ export const HOME_VIEWS: readonly HomeView[] = ['daily', 'board', 'agenda', 'mai
  * naming the daily by kind keeps Home on it as the days turn.
  */
 export type HomeTarget =
-  | { kind: HomeView }
+  // One member per view, so a caller can `Exclude` a view by its kind.
+  | { [V in HomeView]: { kind: V } }[HomeView]
   | { kind: 'app'; path: string }
   | { kind: 'file'; path: string }
 
@@ -242,17 +246,11 @@ export type VaultSettingControl =
       toggles: readonly { key: TransformName; label: string; explanation: string }[]
     }
 
-
 /** A key a descriptor can describe: every setting the resolver answers, each
  *  with a row in the settings tab. A superset of what the ritual asks
  *  (`askedAtBirth`). */
 export type VaultSettingKey =
-  | 'dailyNotes'
-  | 'home'
-  | 'hooks'
-  | 'colorScheme'
-  | 'editorFont'
-  | 'maxCommittedFileBytes'
+  'dailyNotes' | 'home' | 'hooks' | 'colorScheme' | 'editorFont' | 'maxCommittedFileBytes'
 
 export interface VaultSettingDescriptor {
   key: VaultSettingKey
@@ -392,7 +390,7 @@ export const VAULT_SETTINGS: readonly VaultSetting[] = [
     type: {
       kind: 'home',
       options: [
-        { value: 'Home.app', label: 'The Home app' },
+        { value: 'recents', label: 'Recently opened' },
         // Only on offer while the vault actually keeps one: a Home on a daily
         // note the vault does not make would read as a broken choice.
         {
@@ -405,8 +403,8 @@ export const VAULT_SETTINGS: readonly VaultSetting[] = [
         { value: 'mail', label: 'Mail' },
       ],
     },
-    // The app a new vault is created with (`main/apps/home-app.ts`).
-    default: 'Home.app',
+    // One of Holi's own views, so Home works in a vault with no apps.
+    default: 'recents',
     target: 'committed',
     askedAtBirth: true,
     whereToChange: `${SETTINGS_FILE_HINT}, where it can also name any app or file by its path. A home of your own goes in ${SETTINGS_LOCAL_FILE}`,

@@ -45,8 +45,10 @@ hidden, the same menu runs down the rail.
   parent Apps item with it.
 - **Sessions** are one row each directly above the menu, under the file tree, only while running:
   no header, nothing to resize or collapse ([agent sessions](agent-sessions.md)).
-- **Home** goes where the vault's `home` setting says ([settings](settings.md)): an app shows in
-  the Home tab (`home`, a singleton opened leftmost like the board), `Home.app` by default
+- **Home** goes where the vault's `home` setting says ([settings](settings.md)). By default it
+  is the recents: the Home tab (`home`, a singleton opened leftmost like the board) lists the
+  last eight notes, files, apps and views opened, under "Recently opened", each opening as the
+  palette would open it. An app named there shows in the Home tab instead
   ([vault apps](vault-apps.md)); today's note, the board, agenda, mail or a file open as
   themselves. When the target is not there, the Home tab says so, and for a missing app offers
   **Create Home app**, which writes the default app at that path. Nothing is written unasked.
@@ -93,7 +95,7 @@ hidden, the same menu runs down the rail.
 - `apps/desktop/src/renderer/src/primitives/springs.ts`: its springs, shared with the
   [command palette](command-palette.md).
 - `apps/desktop/src/renderer/src/features/nav/NavMenu.tsx`: the items.
-- `apps/desktop/src/renderer/src/components/PaneView.tsx` (which picks the app or the offer),
-  `features/home/HomeView.tsx` (the offer), `main/apps/home-app.ts` and `main/apps/home-app/`
-  (the default app).
+- `apps/desktop/src/renderer/src/components/PaneView.tsx` (which picks Home's app or
+  `HomeView`), `features/home/HomeView.tsx` (the recents, or why Home is not there),
+  `main/apps/home-app.ts` and `main/apps/home-app/` (the app **Create Home app** writes).
 - `apps/desktop/src/renderer/src/components/Shell.tsx`: the sidebar and rail placement.

@@ -36,9 +36,7 @@ import {
   THEME_LOCAL_FILE,
   vaultRelPath,
   VAULT_MARKER_FILE,
-  VAULT_SETTING_DEFAULTS,
 } from '@holi/shared'
-import { writeHomeApp } from '../apps/home-app'
 import { writeAtomic } from '../vault/vault-files'
 import { readSeedState, recordSeeded, untouched } from './seed-state'
 import userPromptSubmitHook from './hooks/user-prompt-submit.mjs?raw'
@@ -822,10 +820,6 @@ export async function ensureSeeded(root: string): Promise<SeedResult> {
       await recordSeeded(root, rel, content)
       result.written.push(rel)
     }
-    // The Home tab's app. At creation only, not a once-file: those come back
-    // on every open, which would write it into every existing vault and
-    // restore one its owner deleted. An existing vault's Home tab offers it.
-    result.written.push(...(await writeHomeApp(root, VAULT_SETTING_DEFAULTS.home)))
   }
 
   if (await mergeSettings(root)) result.written.push(SETTINGS)

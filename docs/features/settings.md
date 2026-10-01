@@ -9,13 +9,13 @@ A vault's settings are two YAML files it carries itself: `.holi/settings/app.yam
 | Key                            | File      | Asked at birth | Default                      |
 | ------------------------------ | --------- | -------------- | ---------------------------- |
 | `dailyNotes`                   | committed | yes            | `true`                       |
-| `home`                         | committed | yes            | `Home.app`                   |
+| `home`                         | committed | yes            | `recents`                    |
 | `hooks` (five transform flags) | committed | yes            | all on except `archive-done` |
 | `maxCommittedFileBytes`        | committed | no             | 10 MB                        |
 | `colorScheme`                  | local     | yes            | `system`                     |
 | `editorFont`                   | committed | no             | `serif`                      |
 
-`home` is Home: what the nav's Home and "Go home" go to, and what the vault opens on. One string: `daily` (today's note, offered while `dailyNotes` is on), `board`, `agenda`, `mail`, or any app or file by its vault path; the default is the `Home.app` a new vault is created with. An app is shown in the Home tab; anything else opens as itself. A target that is not there (a deleted file or app, `daily` with `dailyNotes` off) opens the Home tab saying so, and a missing app can be created there with the default Home app. The row offers the fixed choices and the vault's shared apps, plus the current value when it is none of them; a personal `.local.` app is not offered, since the row writes the committed file. A personal Home is `home:` in `app.local.yaml`.
+`home` is Home: what the nav's Home and "Go home" go to, and what the vault opens on. One string: `recents` (what was opened recently, the default), `daily` (today's note, offered while `dailyNotes` is on), `board`, `agenda`, `mail`, or any app or file by its vault path. The recents and an app are shown in the Home tab; anything else opens as itself. A target that is not there (a deleted file or app, `daily` with `dailyNotes` off) opens the Home tab saying so, and a missing app can be created there with the default Home app. The row offers the fixed choices and the vault's shared apps, plus the current value when it is none of them; a personal `.local.` app is not offered, since the row writes the committed file. A personal Home is `home:` in `app.local.yaml`.
 
 **Reading.** `resolveVaultSettings` parses both files, applies the local one per key (the `hooks` block per flag), validates every field, and answers the default for anything absent or malformed with a warning. It never throws. It builds a fresh narrow value per key and never returns what it parsed. Unknown top-level keys are ignored without a warning, because the reminder watermark lives in the local file.
 
