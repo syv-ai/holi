@@ -28,6 +28,7 @@
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml'
 import { parseStamp } from './dates'
 import { firstHeading } from './headings'
+import { FrontmatterError, splitFrontmatter } from './frontmatter'
 import type {
   Priority,
   Recurrence,
@@ -140,7 +141,15 @@ export function serializeTaskFile(
  * is required.
  */
 export function parseTaskFile(text: string, path: string): Task {
-  const { yaml, body } = splitFrontmatter(text)
+  let split: ReturnType<typeof splitFrontmatter>
+  try {
+    split = splitFrontmatter(text)
+  } catch (err) {
+    // A broken fence is a broken task, reported like any other bad value.
+    if (err instanceof FrontmatterError) throw new TaskFileError(err.message)
+    throw err
+  }
+  const { yaml, body } = split
 
   let front: Record<string, unknown> = {}
   if (yaml !== null) {
@@ -263,22 +272,6 @@ export function parseTaskPatch(raw: unknown): TaskPatch {
     patch[key] = read(value)
   }
   return patch as TaskPatch
-}
-
-/** `yaml: null` means the file had no frontmatter fence at all: a valid task
- * whose body is the whole file. */
-export function splitFrontmatter(text: string): { yaml: string | null; body: string } {
-  const normalized = text.replace(/\r\n/g, '\n')
-  if (!normalized.startsWith('---\n')) return { yaml: null, body: normalized.trim() }
-
-  const end = normalized.indexOf('\n---', 3)
-  if (end === -1) {
-    throw new TaskFileError('unterminated YAML frontmatter: no closing `---`')
-  }
-  const yaml = normalized.slice(4, end + 1)
-  const afterFence = normalized.indexOf('\n', end + 1)
-  const body = afterFence === -1 ? '' : normalized.slice(afterFence + 1)
-  return { yaml: yaml.trim() === '' ? null : yaml, body: body.trim() }
 }
 
 function enumOf<T extends string>(value: unknown, allowed: T[], field: string): T {

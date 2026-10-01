@@ -51,7 +51,7 @@ export function isDailyNote(content: string): boolean {
 
 /** Split `---\n…\n---\n` off the front, or null if there is no frontmatter block.
  *
- * Deliberately **not** `task-file.ts`'s splitter: that one *throws*, because malformed
+ * Deliberately **not** `frontmatter.ts`'s splitter: that one *throws*, because malformed
  * task frontmatter must fail loudly. Here anything unclassifiable must be silently kept,
  * since the caller's next move is a delete.
  */

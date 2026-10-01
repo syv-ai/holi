@@ -21,7 +21,7 @@
 
 import { parse as parseYaml } from 'yaml'
 import { MEMORY_DIR, isLocalOnlyPath } from './path-safety'
-import { splitFrontmatter } from './task-file'
+import { splitFrontmatter } from './frontmatter'
 
 /** `MEMORY_DIR` itself lives in `path-safety.ts`, the lower of the two modules,
  *  because `isAgentSurfacePath` needs it too. */
