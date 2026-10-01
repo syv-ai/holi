@@ -30,7 +30,7 @@ other rather than repeating each other.
 | [daily-notes](features/daily-notes.md)         | Idempotent daily notes and their archive                                 |
 | [agent-sessions](features/agent-sessions.md)   | Claude Code background sessions, agent tabs, turn review, reconcile      |
 | [agent-config](features/agent-config.md)       | Config layering, the per-vault silo, seeded files, tools, permissions    |
-| [agent-memory](features/agent-memory.md)       | The vault's `memory/` directory                                          |
+| [agent-memory](features/agent-memory.md)       | The vault's `.holi/memory/` directory                                    |
 | [google](features/google.md)                   | Gmail and Calendar per vault                                             |
 | [pdf](features/pdf.md)                         | Typst export, templates, the PDF viewer                                  |
 | [vault-apps](features/vault-apps.md)           | Agent-written apps in their own origin                                   |

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Holi PreToolUse hook: refuse writes to `memory/index.md`.
+// Holi PreToolUse hook: refuse writes to `.holi/memory/index.md`.
 //
 // The memory-index transform regenerates that file on every commit, so an edit
 // to it is always lost. Refusing it here tells the agent why and where to write
@@ -11,7 +11,7 @@
 import { resolve } from 'node:path'
 
 const root = process.env.CLAUDE_PROJECT_DIR || process.cwd()
-const INDEX = resolve(root, 'memory/index.md')
+const INDEX = resolve(root, '.holi/memory/index.md')
 
 function readStdin() {
   return new Promise((done) => {
@@ -38,8 +38,8 @@ if (typeof filePath === 'string' && resolve(root, filePath) === INDEX) {
         hookEventName: 'PreToolUse',
         permissionDecision: 'deny',
         permissionDecisionReason:
-          'memory/index.md is generated from the memory files on every commit, so an edit ' +
-          'here is discarded. Write or edit the memory file itself (memory/<name>.md) instead.',
+          '.holi/memory/index.md is generated from the memory files on every commit, so an edit ' +
+          'here is discarded. Write or edit the memory file itself (.holi/memory/<name>.md) instead.',
       },
     }),
   )

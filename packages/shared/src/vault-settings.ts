@@ -67,7 +67,8 @@ export const CORE_TRANSFORMS: readonly TransformToggle[] = [
   {
     name: 'memory-index',
     label: 'Keep the memory index current',
-    explanation: 'Rebuilds memory/index.md so what the vault knows stays listed in one place.',
+    explanation:
+      'Rebuilds .holi/memory/index.md so what the vault knows stays listed in one place.',
     default: true,
   },
   {
@@ -606,7 +607,7 @@ export const VAULT_SETTINGS: readonly VaultSetting[] = [
  *
  * `archive-done` is off: it moves task files, which changes what the board
  * shows, and a transform that rearranges someone's work is opt-in.
- * `memory-index` is on: it only ever rewrites `memory/index.md`, a file it
+ * `memory-index` is on: it only ever rewrites `.holi/memory/index.md`, a file it
  * generated. The 10 MB cap is read by `main/vault/large-files.ts`; notes-vault
  * assets sit well under it, and GitHub warns at 50.
  */

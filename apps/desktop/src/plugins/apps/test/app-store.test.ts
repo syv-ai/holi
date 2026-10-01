@@ -180,10 +180,10 @@ describe('the app store', () => {
   // A committed link would otherwise let an app's store write into the agent
   // surface, or out of the vault altogether.
   it('neither reads nor writes through a symlinked collection', async () => {
-    await mkdir(join(root, 'memory'))
-    await writeFile(join(root, 'memory/x.json'), '{"title":"secret"}')
+    await mkdir(join(root, '.holi/memory'), { recursive: true })
+    await writeFile(join(root, '.holi/memory/x.json'), '{"title":"secret"}')
     await mkdir(join(root, 'Work/Tracker.app/data'), { recursive: true })
-    await symlink('../../../memory', dataDir())
+    await symlink('../../../.holi/memory', dataDir())
     await expect(call('store.get', { collection: 'items', id: 'x' })).rejects.toMatchObject({
       code: 'FORBIDDEN',
     })
@@ -196,6 +196,6 @@ describe('the app store', () => {
     await expect(call('store.delete', { collection: 'items', id: 'x' })).rejects.toMatchObject({
       code: 'FORBIDDEN',
     })
-    expect(await readdir(join(root, 'memory'))).toEqual(['x.json'])
+    expect(await readdir(join(root, '.holi/memory'))).toEqual(['x.json'])
   })
 })

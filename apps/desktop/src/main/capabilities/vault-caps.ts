@@ -151,7 +151,7 @@ export const vaultCapabilities = (deps: VaultCapabilitiesDeps) => ({
       if (path !== undefined) {
         // A deleted file's history is still history, so the snapshot is not
         // asked here; `--literal-pathspecs` and git's own case-sensitive match
-        // are what keep `Memory/x.md` from naming `memory/x.md`.
+        // are what keep `.holi/Memory/x.md` from naming `.holi/memory/x.md`.
         const rel = readablePath(path)
         return (await repo.log({ path: rel, limit })).map(({ sha, subject, date, author }) => ({
           sha,

@@ -251,12 +251,12 @@ describe('servableAppFile', () => {
   it('serves a real file and refuses one reached through a symlink', async () => {
     const root = await mkdtemp(join(tmpdir(), 'holi-app-proto-'))
     try {
-      await mkdir(join(root, 'memory'))
-      await writeFile(join(root, 'memory/x.md'), 'secret')
+      await mkdir(join(root, '.holi/memory'), { recursive: true })
+      await writeFile(join(root, '.holi/memory/x.md'), 'secret')
       await mkdir(join(root, BUNDLE), { recursive: true })
       await writeFile(join(root, BUNDLE, 'index.html'), '<p></p>')
-      await symlink('../../memory/x.md', join(root, BUNDLE, 'x.txt'))
-      await symlink('../../memory', join(root, BUNDLE, 'lib'))
+      await symlink('../../.holi/memory/x.md', join(root, BUNDLE, 'x.txt'))
+      await symlink('../../.holi/memory', join(root, BUNDLE, 'lib'))
       expect(await servableAppFile(root, BUNDLE, 'index.html')).not.toBeNull()
       expect(await servableAppFile(root, BUNDLE, 'x.txt')).toBeNull()
       expect(await servableAppFile(root, BUNDLE, 'lib/x.md')).toBeNull()

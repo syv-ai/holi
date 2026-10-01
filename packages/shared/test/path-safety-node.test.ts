@@ -65,16 +65,16 @@ describe('exactPath (the path is what it says on disk)', () => {
   })
 
   it('refuses a symlink at any depth, even one that stays inside the vault', async () => {
-    await mkdir(join(vault, 'memory'))
-    await writeFile(join(vault, 'memory', 'x.md'), 'secret')
+    await mkdir(join(vault, '.holi', 'memory'), { recursive: true })
+    await writeFile(join(vault, '.holi', 'memory', 'x.md'), 'secret')
     await mkdir(join(vault, 'App.app'))
-    await symlink('../memory/x.md', join(vault, 'App.app', 'leaf.txt'))
-    await symlink('../memory', join(vault, 'App.app', 'dir'))
+    await symlink('../.holi/memory/x.md', join(vault, 'App.app', 'leaf.txt'))
+    await symlink('../.holi/memory', join(vault, 'App.app', 'dir'))
     await expect(exactPath(vault, 'App.app/leaf.txt')).resolves.toBeNull()
     await expect(exactPath(vault, 'App.app/dir/x.md')).resolves.toBeNull()
     // Writing through a linked directory is refused too.
     await expect(exactPath(vault, 'App.app/dir/new.json')).resolves.toBeNull()
-    await symlink('../memory/gone.json', join(vault, 'App.app', 'dangling.json'))
+    await symlink('../.holi/memory/gone.json', join(vault, 'App.app', 'dangling.json'))
     await expect(exactPath(vault, 'App.app/dangling.json')).resolves.toBeNull()
   })
 

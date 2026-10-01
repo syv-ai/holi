@@ -1375,7 +1375,7 @@ describe('vaults.add', () => {
       'AGENTS.md',
       'README.md',
       // A new vault is seeded with the memory directory, not a MEMORY.md.
-      'memory/index.md',
+      '.holi/memory/index.md',
     ])
     const entry = (await caller.vaults.list()).find((v) => v.remote === 'syv-ai/notes')
     expect(entry?.path).toBe(join(base, 'Holi', 'syv-ai', 'notes'))

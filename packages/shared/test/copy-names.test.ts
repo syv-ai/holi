@@ -35,13 +35,13 @@ describe('freeCopyPath', () => {
    * Splitting on the last dot alone produced `x.local copy.md`, where `local`
    * is followed by a space — so the marker stopped matching, `*.local.*`
    * stopped ignoring it, and the copy was committed. Observed in a real vault:
-   * a duplicated `memory/x.local.md` was pushed and listed in the shared index.
+   * a duplicated `.holi/memory/x.local.md` was pushed and listed in the shared index.
    */
   it('keeps a duplicate of a machine-local file machine-local', () => {
-    const taken = (p: string) => p === 'memory/roles.local.md'
-    const copy = freeCopyPath(taken, 'memory/roles.local.md')
+    const taken = (p: string) => p === '.holi/memory/roles.local.md'
+    const copy = freeCopyPath(taken, '.holi/memory/roles.local.md')
 
-    expect(copy).toBe('memory/roles copy.local.md')
+    expect(copy).toBe('.holi/memory/roles copy.local.md')
     // The assertion that actually matters — the name is a means to this.
     expect(isLocalOnlyPath(copy)).toBe(true)
   })

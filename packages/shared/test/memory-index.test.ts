@@ -22,8 +22,8 @@ const withFrontmatter = (yaml: string, body = 'The fact.\n') => `---\n${yaml}\n-
 
 describe('isMemoryPath', () => {
   it('is a prefix match on the directory, not an exact filename', () => {
-    expect(isMemoryPath('memory/shell.md')).toBe(true)
-    expect(isMemoryPath('memory/people/ada.md')).toBe(true)
+    expect(isMemoryPath('.holi/memory/shell.md')).toBe(true)
+    expect(isMemoryPath('.holi/memory/people/ada.md')).toBe(true)
   })
 
   it('excludes the generated index, which would otherwise index itself', () => {
@@ -37,7 +37,7 @@ describe('isMemoryPath', () => {
   })
 
   it('is markdown only', () => {
-    expect(isMemoryPath('memory/diagram.png')).toBe(false)
+    expect(isMemoryPath('.holi/memory/diagram.png')).toBe(false)
   })
 })
 
@@ -45,23 +45,23 @@ describe('isSharedMemoryPath', () => {
   // The one rule here whose failure is worse than untidiness: the index is
   // committed, and a personal memory's title must appear in no committed file.
   it('refuses a personal memory', () => {
-    expect(isSharedMemoryPath('memory/salary.local.md')).toBe(false)
-    expect(isSharedMemoryPath('memory/people/ada.local.md')).toBe(false)
+    expect(isSharedMemoryPath('.holi/memory/salary.local.md')).toBe(false)
+    expect(isSharedMemoryPath('.holi/memory/people/ada.local.md')).toBe(false)
   })
 
   it('accepts a shared one', () => {
-    expect(isSharedMemoryPath('memory/shell.md')).toBe(true)
+    expect(isSharedMemoryPath('.holi/memory/shell.md')).toBe(true)
   })
 })
 
 describe('readMemoryEntry fills gaps rather than refusing them', () => {
   it('takes all three keys from frontmatter when they are there', () => {
     const entry = readMemoryEntry(
-      'memory/shell.md',
+      '.holi/memory/shell.md',
       withFrontmatter('type: environment\ntitle: Shell quirks\ndescription: bare node is broken'),
     )
     expect(entry).toEqual({
-      path: 'memory/shell.md',
+      path: '.holi/memory/shell.md',
       type: 'environment',
       title: 'Shell quirks',
       description: 'bare node is broken',
@@ -69,12 +69,12 @@ describe('readMemoryEntry fills gaps rather than refusing them', () => {
   })
 
   it('falls back to `note` with no type', () => {
-    expect(readMemoryEntry('memory/x.md', withFrontmatter('title: X')).type).toBe('note')
+    expect(readMemoryEntry('.holi/memory/x.md', withFrontmatter('title: X')).type).toBe('note')
   })
 
   it('falls back to the H1 with no title', () => {
     const entry = readMemoryEntry(
-      'memory/x.md',
+      '.holi/memory/x.md',
       withFrontmatter('type: convention', '# Plan style\n\nPlans carry contracts.\n'),
     )
     expect(entry.title).toBe('Plan style')
@@ -82,13 +82,13 @@ describe('readMemoryEntry fills gaps rather than refusing them', () => {
 
   it('falls back to the filename with no title and no H1', () => {
     expect(
-      readMemoryEntry('memory/people/ada-holm.md', withFrontmatter('type: person')).title,
+      readMemoryEntry('.holi/memory/people/ada-holm.md', withFrontmatter('type: person')).title,
     ).toBe('ada-holm')
   })
 
   it('falls back to the first sentence of the body with no description', () => {
     const entry = readMemoryEntry(
-      'memory/x.md',
+      '.holi/memory/x.md',
       withFrontmatter('type: convention', 'Plans stay lean. They carry contracts and gotchas.\n'),
     )
     expect(entry.description).toBe('Plans stay lean.')
@@ -96,15 +96,15 @@ describe('readMemoryEntry fills gaps rather than refusing them', () => {
 
   it('does not repeat the H1 as the description', () => {
     // The H1 IS the title; printing it twice on one line says nothing twice.
-    const entry = readMemoryEntry('memory/x.md', '# Plan style\n\nPlans stay lean.\n')
+    const entry = readMemoryEntry('.holi/memory/x.md', '# Plan style\n\nPlans stay lean.\n')
     expect(entry.title).toBe('Plan style')
     expect(entry.description).toBe('Plans stay lean.')
   })
 
   it('treats a file with no frontmatter at all as a memory, not an error', () => {
-    const entry = readMemoryEntry('memory/loose.md', 'Just a fact someone typed.\n')
+    const entry = readMemoryEntry('.holi/memory/loose.md', 'Just a fact someone typed.\n')
     expect(entry).toEqual({
-      path: 'memory/loose.md',
+      path: '.holi/memory/loose.md',
       type: 'note',
       title: 'loose',
       description: 'Just a fact someone typed.',
@@ -112,7 +112,10 @@ describe('readMemoryEntry fills gaps rather than refusing them', () => {
   })
 
   it('treats malformed YAML exactly as if it were absent', () => {
-    const entry = readMemoryEntry('memory/half.md', '---\ntype: [unclosed\n---\n\nThe fact.\n')
+    const entry = readMemoryEntry(
+      '.holi/memory/half.md',
+      '---\ntype: [unclosed\n---\n\nThe fact.\n',
+    )
     expect(entry.type).toBe('note')
     expect(entry.description).toBe('The fact.')
   })
@@ -120,25 +123,29 @@ describe('readMemoryEntry fills gaps rather than refusing them', () => {
   it('survives an unterminated frontmatter fence — a file mid-edit', () => {
     // splitFrontmatter throws here, and a memory being typed must not be able to
     // take a commit down with it.
-    const entry = readMemoryEntry('memory/typing.md', '---\ntype: convention\n')
+    const entry = readMemoryEntry('.holi/memory/typing.md', '---\ntype: convention\n')
     expect(entry.type).toBe('note')
     expect(entry.title).toBe('typing')
   })
 
   it('reads frontmatter that is a bare scalar or a list as absent', () => {
-    expect(readMemoryEntry('memory/a.md', '---\njust a string\n---\n\nBody.\n').type).toBe('note')
-    expect(readMemoryEntry('memory/b.md', '---\n- one\n- two\n---\n\nBody.\n').type).toBe('note')
+    expect(readMemoryEntry('.holi/memory/a.md', '---\njust a string\n---\n\nBody.\n').type).toBe(
+      'note',
+    )
+    expect(readMemoryEntry('.holi/memory/b.md', '---\n- one\n- two\n---\n\nBody.\n').type).toBe(
+      'note',
+    )
   })
 
   it('falls through an emptied field rather than rendering a blank', () => {
-    const entry = readMemoryEntry('memory/x.md', withFrontmatter('type: "   "\ntitle: ""'))
+    const entry = readMemoryEntry('.holi/memory/x.md', withFrontmatter('type: "   "\ntitle: ""'))
     expect(entry.type).toBe('note')
     expect(entry.title).toBe('x')
   })
 
   it('truncates a long description at a word boundary', () => {
     const long = `${'word '.repeat(60)}end.`
-    const entry = readMemoryEntry('memory/x.md', withFrontmatter('type: t', long))
+    const entry = readMemoryEntry('.holi/memory/x.md', withFrontmatter('type: t', long))
     expect(entry.description.length).toBeLessThanOrEqual(121)
     expect(entry.description.endsWith('…')).toBe(true)
     expect(entry.description).not.toMatch(/wor…$/)
@@ -147,7 +154,10 @@ describe('readMemoryEntry fills gaps rather than refusing them', () => {
   it('collapses a multi-line description to one line', () => {
     // Everything it emits sits inside one list item, where a newline ends the
     // entry early.
-    const entry = readMemoryEntry('memory/x.md', withFrontmatter('type: t', 'One\nfact\nhere.\n'))
+    const entry = readMemoryEntry(
+      '.holi/memory/x.md',
+      withFrontmatter('type: t', 'One\nfact\nhere.\n'),
+    )
     expect(entry.description).toBe('One fact here.')
   })
 })
@@ -162,20 +172,22 @@ describe('renderMemoryIndex', () => {
 
   it('groups by type, sorts the types, and sorts entries by path within one', () => {
     const out = renderMemoryIndex([
-      entry('memory/z.md', 'convention', 'Z'),
-      entry('memory/shell.md', 'environment', 'Shell'),
-      entry('memory/a.md', 'convention', 'A'),
+      entry('.holi/memory/z.md', 'convention', 'Z'),
+      entry('.holi/memory/shell.md', 'environment', 'Shell'),
+      entry('.holi/memory/a.md', 'convention', 'A'),
     ])
     expect(out).toBe(
       `${MEMORY_INDEX_HEADER}\n\n${MEMORY_INDEX_LOCAL_NOTE}\n\n` +
-        '## convention\n\n- [[memory/a.md|A]]\n- [[memory/z.md|Z]]\n\n' +
-        '## environment\n\n- [[memory/shell.md|Shell]]\n',
+        '## convention\n\n- [[.holi/memory/a.md|A]]\n- [[.holi/memory/z.md|Z]]\n\n' +
+        '## environment\n\n- [[.holi/memory/shell.md|Shell]]\n',
     )
   })
 
   it('prints the description after an em dash when there is one', () => {
-    const out = renderMemoryIndex([entry('memory/a.md', 'convention', 'A', 'plans stay lean')])
-    expect(out).toContain('- [[memory/a.md|A]] — plans stay lean')
+    const out = renderMemoryIndex([
+      entry('.holi/memory/a.md', 'convention', 'A', 'plans stay lean'),
+    ])
+    expect(out).toContain('- [[.holi/memory/a.md|A]] — plans stay lean')
   })
 
   it('gives the empty vault a body that says so', () => {
@@ -185,20 +197,20 @@ describe('renderMemoryIndex', () => {
   it('substitutes a `]` in a title, which would otherwise break the link', () => {
     // The grammar is `\[\[([^\]\n]+)\]\]` and has no escape sequence, so a `]`
     // ends the body early and the reader gets raw brackets instead of a link.
-    const out = renderMemoryIndex([entry('memory/a.md', 't', 'The [redacted] fact')])
-    expect(out).toContain('[[memory/a.md|The [redacted) fact]]')
+    const out = renderMemoryIndex([entry('.holi/memory/a.md', 't', 'The [redacted] fact')])
+    expect(out).toContain('[[.holi/memory/a.md|The [redacted) fact]]')
   })
 
   it('leaves a `|` in a title alone, because the parser splits on the first one', () => {
-    const out = renderMemoryIndex([entry('memory/a.md', 't', 'A | B')])
-    expect(out).toContain('[[memory/a.md|A | B]]')
+    const out = renderMemoryIndex([entry('.holi/memory/a.md', 't', 'A | B')])
+    expect(out).toContain('[[.holi/memory/a.md|A | B]]')
   })
 
   it('ends with exactly one newline, so `normalize-md` has nothing to tidy', () => {
     // The two transforms would otherwise take turns rewriting this file.
     for (const out of [
       renderMemoryIndex([]),
-      renderMemoryIndex([entry('memory/a.md', 't', 'A')]),
+      renderMemoryIndex([entry('.holi/memory/a.md', 't', 'A')]),
     ]) {
       expect(out.endsWith('\n')).toBe(true)
       expect(out.endsWith('\n\n')).toBe(false)

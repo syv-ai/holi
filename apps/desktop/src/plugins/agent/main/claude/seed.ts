@@ -46,7 +46,7 @@ export const STATUS_LINE = [
 
 /** Claude Code's bundled skills a vault agent has no use for: code review,
  *  app launching, API and workflow authoring, Claude Code configuration, and
- *  importing another assistant's memory (a vault's memory is `memory/`). */
+ *  importing another assistant's memory (a vault's memory is `.holi/memory/`). */
 const OFF_SKILLS = [
   'code-review',
   'simplify',
@@ -84,7 +84,7 @@ const SETTINGS_BASE = {
    *
    * Claude Code's own auto-memory lives outside the vault, never syncs, and
    * is the surface its system prompt steers the agent to. This key closes
-   * that door so `memory/` is the one place to look.
+   * that door so `.holi/memory/` is the one place to look.
    *
    * **Off rather than redirected.** `autoMemoryDirectory` is ignored in
    * projectSettings, and its format addresses memories by `[[slug]]` where
@@ -138,7 +138,7 @@ const AGENT_SETTINGS: SettingsFragment = {
     // AND compact: after a compact the agent has just forgotten it has
     // memory at all.
     { event: 'SessionStart', script: 'memory-overview' },
-    // `memory/index.md` is regenerated on every commit, so an edit to it is
+    // `.holi/memory/index.md` is regenerated on every commit, so an edit to it is
     // always lost. Refused up front, with the reason.
     { event: 'PreToolUse', matcher: 'Write|Edit|MultiEdit', script: 'memory-index-guard' },
   ],

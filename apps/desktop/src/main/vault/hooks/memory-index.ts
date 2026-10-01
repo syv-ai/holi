@@ -1,5 +1,5 @@
 /**
- * `memory-index`: `memory/index.md` lands in the same commit as the memory it
+ * `memory-index`: `.holi/memory/index.md` lands in the same commit as the memory it
  * describes. It runs at the commit boundary so the index is never a
  * follow-up commit, and a burst of memory writes yields one correct index.
  *

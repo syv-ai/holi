@@ -33,7 +33,7 @@ notice into its scrollback. Holi never reads Claude Code's sign-in state. A left
 `.claude.json` `projects{}`.
 
 **Shared layer, committed.** `.claude/` (settings, hooks, skills), `AGENTS.md` (the vault's
-instructions, which Claude Code reads natively, so no `CLAUDE.md` is seeded), and `memory/`
+instructions, which Claude Code reads natively, so no `CLAUDE.md` is seeded), and `.holi/memory/`
 ([agent-memory.md](agent-memory.md)). Claude Code reads them from the cwd. **Personal layer:**
 `CLAUDE.local.md` and anything `*.local.*`, gitignored. A session reads `.claude/settings.json`,
 `CLAUDE.md` and `AGENTS.md` when its process starts, so a change reaches it on Restart; hooks and
@@ -55,7 +55,7 @@ beside its module, at their vault path, read in through `import.meta.glob` (bina
 brand fonts as `?inline` bytes). A path belongs to one contribution. Merged files go first, so
 core's `.gitignore` gets its `*.local.*` line, line-wise, before anything else is written. Then:
 
-- **Once files**: `AGENTS.md`, `memory/index.md`, `.holi/vault`,
+- **Once files**: `AGENTS.md`, `.holi/memory/index.md`, `.holi/vault`,
   `.holi/settings/app.yaml` and `app.local.yaml`, `theme.css`, `theme.local.css`, `icons.yaml`
   (core), `.holi/document-templates/**` (PDF). Created if absent, then the user's.
 - **Shipped files**: `.claude/hooks/**` and `.claude/skills/**` (the agent; PDF's two skills). Written only when the

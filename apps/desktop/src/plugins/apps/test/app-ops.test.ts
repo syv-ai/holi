@@ -88,7 +88,7 @@ describe('initAppOp', () => {
   })
 
   it('refuses a path that is not a bundle, naming the rule', async () => {
-    for (const path of ['Retro', '', 'memory/x.app']) {
+    for (const path of ['Retro', '', '.holi/memory/x.app']) {
       const result = await initAppOp(root, path)
       expect(result.ok === false && result.error).toMatch(/ends in \.app/)
     }

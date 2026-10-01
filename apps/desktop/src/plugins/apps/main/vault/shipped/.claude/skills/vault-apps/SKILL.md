@@ -34,7 +34,7 @@ Projects/Q2/Burndown.app/app.yaml     ← required: write this LAST
 ```
 
 - The name is yours to choose: `Burndown.app`, `Retro board.app`. It cannot sit
-  inside another `.app` folder, nor under `.claude/` or `memory/`.
+  inside another `.app` folder, nor under `.claude/` or `.holi/memory/`.
 - A personal app, one only this person should have, is named `Name.local.app`.
   The `.local.` keeps the whole folder on this machine: it never syncs, and it is
   still called `Name`. Everything else about it is the same.
@@ -141,7 +141,7 @@ These are not oversights — build within them rather than around them.
   button does nothing at all. Use a plain button's click, and a `keydown` on the
   input for Enter.
 - **It cannot read the agent's files.** `AGENTS.md`, `CLAUDE.md`, `MEMORY.md`,
-  `USER.local.md` and everything under `.claude/` **and `memory/`** are refused —
+  `USER.local.md` and everything under `.claude/` **and `.holi/memory/`** are refused —
   `holi.docs.read` rejects, and they are absent from `holi.docs.list()`. The
   vault's memory is on that list for the same reason as the rest of it:
   what the user told the assistant does not become readable to untrusted code by

@@ -7,10 +7,10 @@
 // `startup`, `resume` AND `compact`: after a compaction the agent has forgotten
 // it has memory at all.
 //
-// Reads only: `memory/index.md` (which the memory-index transform already
+// Reads only: `.holi/memory/index.md` (which the memory-index transform already
 // generated, so nothing is parsed twice), a scan for personal `*.local.md`
 // memories, and one `git log`. It never calls Holi's bridge: Claude Code spawns
-// this, not Holi, so it must work with no server anywhere. Absent `memory/`, it prints
+// this, not Holi, so it must work with no server anywhere. Absent `.holi/memory/`, it prints
 // nothing and exits 0, exactly as the focused-note hook does outside Holi.
 //
 // Dependency-free (`node:` builtins only), like the three hooks beside it.
@@ -20,7 +20,7 @@ import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 
 const root = process.env.CLAUDE_PROJECT_DIR || process.cwd()
-const MEMORY_DIR = join(root, 'memory')
+const MEMORY_DIR = join(root, '.holi/memory')
 
 // ~3,000 characters. Over it, descriptions go first and every TITLE survives:
 // a memory the agent cannot see the name of is a memory it will never Read, so
@@ -38,14 +38,14 @@ function readOr(path) {
 }
 
 /**
- * Every `.md` under `memory/`, recursively, split into personal and shared.
+ * Every `.md` under `.holi/memory/`, recursively, split into personal and shared.
  *
  * The personal half is the point — a `*.local.md` appears in no committed file,
  * so this hook is the only reader it has. The shared half is counted rather
  * than read: it exists solely to notice the case below where memory files are
  * present but `index.md` is not.
  */
-function memoryFiles(dir, prefix = 'memory') {
+function memoryFiles(dir, prefix = '.holi/memory') {
   const out = { personal: [], shared: [] }
   let entries
   try {
@@ -68,7 +68,7 @@ function memoryFiles(dir, prefix = 'memory') {
     } else if (name.endsWith('.md')) {
       const entry = { path: `${prefix}/${name}`, abs }
       if (name.includes('.local.')) out.personal.push(entry)
-      else if (entry.path !== 'memory/index.md') out.shared.push(entry)
+      else if (entry.path !== '.holi/memory/index.md') out.shared.push(entry)
     }
   }
   return out
@@ -117,13 +117,13 @@ const total = sections.reduce((n, s) => n + s.lines.length, 0)
 
 /** `Recent: <date> <subject>` × 3. One subprocess, once per session — a looser
  *  budget than the per-turn hook's 50 ms. Every failure is swallowed: a vault
- *  mid-rebase, or a `memory/` with no commits yet, prints the rest and says
+ *  mid-rebase, or a `.holi/memory/` with no commits yet, prints the rest and says
  *  nothing about recent changes rather than failing the session start. */
 function recent() {
   try {
     const out = execFileSync(
       'git',
-      ['log', '--format=%ad %s', '--date=short', '-n', '3', '--', 'memory/'],
+      ['log', '--format=%ad %s', '--date=short', '-n', '3', '--', '.holi/memory/'],
       { cwd: root, encoding: 'utf8', timeout: 2000, stdio: ['ignore', 'pipe', 'ignore'] },
     )
     return out.split('\n').filter((l) => l.trim() !== '')
@@ -162,14 +162,14 @@ function render({ descriptions }) {
   }
 
   // Memories exist but nothing has generated the index for them — a vault
-  // whose `memory/` was filled in outside Holi, or one whose index was deleted.
+  // whose `.holi/memory/` was filled in outside Holi, or one whose index was deleted.
   // Say so rather than printing an overview that silently omits every shared
   // memory. Deliberately NOT a fallback scan: reading and grouping the files
   // here would be a second copy of the indexer, kept in step by nobody.
   if (index === null && shared.length > 0) {
     out.push(
       '',
-      `${shared.length} shared memory file(s) are present but \`memory/index.md\` has not been generated yet. Read \`memory/\` directly; Holi will write the index on the next commit that touches one.`,
+      `${shared.length} shared memory file(s) are present but \`.holi/memory/index.md\` has not been generated yet. Read \`.holi/memory/\` directly; Holi will write the index on the next commit that touches one.`,
     )
   }
 
@@ -180,7 +180,7 @@ function render({ descriptions }) {
   // empty `MEMORY.md` is not worth suggesting work on.
   //
   // `USER.local.md` is auto-loaded by nothing (Claude Code reads `AGENTS.md`,
-  // not it) and appears in no index, whereas a `memory/<name>.local.md` is
+  // not it) and appears in no index, whereas a `.holi/memory/<name>.local.md` is
   // printed here at the start of every session.
   const legacy = ['MEMORY.md', 'USER.local.md'].filter((name) => {
     const text = readOr(join(root, name))
@@ -189,7 +189,7 @@ function render({ descriptions }) {
   if (legacy.length > 0) {
     out.push(
       '',
-      `This vault also has ${legacy.map((n) => `\`${n}\``).join(' and ')} in the older shape. Still read, never moved unasked; worth splitting into \`memory/\` when the user asks.`,
+      `This vault also has ${legacy.map((n) => `\`${n}\``).join(' and ')} in the older shape. Still read, never moved unasked; worth splitting into \`.holi/memory/\` when the user asks.`,
     )
   }
 
@@ -200,7 +200,7 @@ let text = render({ descriptions: true })
 if (text.length > CAP) text = render({ descriptions: false })
 if (text.length > CAP) {
   // Last resort, and it still names where the rest is rather than stopping dead.
-  const pointer = '\n…truncated. The whole list is in `memory/index.md`.\n'
+  const pointer = '\n…truncated. The whole list is in `.holi/memory/index.md`.\n'
   text = text.slice(0, CAP - pointer.length) + pointer
 }
 

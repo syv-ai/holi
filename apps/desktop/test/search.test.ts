@@ -32,7 +32,7 @@ describe('searchVault', () => {
   })
 
   it("never searches the agent surface or an app's records", async () => {
-    await note('memory/budget.md', 'budget')
+    await note('.holi/memory/budget.md', 'budget')
     await note('AGENTS.md', 'budget')
     await note('Fin.app/data/items/budget.md', 'budget')
     expect(await searchVault(root, docs, 'budget', isSearchable)).toEqual([])

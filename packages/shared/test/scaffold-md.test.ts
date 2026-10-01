@@ -52,12 +52,12 @@ describe('wantsScaffold', () => {
   })
 
   it('refuses a memory file, whose frontmatter is type + description', () => {
-    // This one has teeth beyond tidiness: `memory/index.md` is
+    // This one has teeth beyond tidiness: `.holi/memory/index.md` is
     // GENERATED, so a `created:`/`tags:` block prepended here would be rewritten
     // away by the memory-index transform on the same commit, every commit.
-    expect(wantsScaffold('memory/shell-quirks.md')).toBe(false)
-    expect(wantsScaffold('memory/people/ada.md')).toBe(false)
-    expect(wantsScaffold('memory/index.md')).toBe(false)
+    expect(wantsScaffold('.holi/memory/shell-quirks.md')).toBe(false)
+    expect(wantsScaffold('.holi/memory/people/ada.md')).toBe(false)
+    expect(wantsScaffold('.holi/memory/index.md')).toBe(false)
   })
 
   it('takes a note that merely shares a managed name deeper in the tree', () => {

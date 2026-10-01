@@ -127,7 +127,8 @@ export function isKeepFile(path: string): boolean {
  * reading the user's memory, or rewriting `.claude/hooks/google-send-gate.mjs`,
  * the hook that asks before mail leaves.
  *
- * `.holi/` is deliberately absent: that is Holi's own config, not the agent's.
+ * The rest of `.holi/` is deliberately absent: that is Holi's own config, not
+ * the agent's. `.holi/memory/` is the one agent subtree under it (`MEMORY_DIR`).
  */
 export const AGENT_SURFACE_FILES: readonly string[] = [
   'AGENTS.md',
@@ -136,26 +137,28 @@ export const AGENT_SURFACE_FILES: readonly string[] = [
   'USER.local.md',
 ]
 
-/** Where the vault's memory lives. **Content, not plumbing**: at the root
- *  rather than under `.holi/`, so the user need not unhide it to read it.
+/** Where the vault's memory lives: under `.holi/` with Holi's other vault
+ *  files, so the agent's notes to itself stay out of the user's notes. It is
+ *  hidden in the tree like the rest of `.holi/`, and committed and synced like
+ *  `.holi/settings/app.yaml`; only `.local.` files in it stay on one machine.
  *
  *  Declared here rather than in `memory-index.ts` because `isAgentSurfacePath`
  *  below needs it and that module imports this one. */
-export const MEMORY_DIR = 'memory'
+export const MEMORY_DIR = '.holi/memory'
 
 /** Whether a vault-relative path is part of the agent surface. The four named
  *  files match **exactly** (like `isVaultConfigPath`, so `notes/AGENTS.md` is an
- *  ordinary note someone wrote); `.claude/` and `memory/` match as whole
+ *  ordinary note someone wrote); `.claude/` and `.holi/memory/` match as whole
  *  subtrees.
  *
- *  **`memory/` is `MEMORY.md` subdivided**: what the user told the
+ *  **`.holi/memory/` is `MEMORY.md` subdivided**: what the user told the
  *  assistant does not become readable to untrusted app code by spreading it
  *  over more files. Root-anchored, so `notes/memory/x.md` stays an ordinary note.
  *
  *  **This is load-bearing for `scaffold-md` as well as for vault apps.**
  *  `wantsScaffold` refuses the agent surface, which stops the scaffolder
  *  prepending a `tags:` block to a memory file and to the generated
- *  `memory/index.md`.
+ *  `.holi/memory/index.md`.
  *
  *  **Git hooks are deliberately absent:** Holi's `pre-commit` lives in
  *  `.git/hooks/`, which the vault store never lists (`IGNORED_DIRS`), so it is

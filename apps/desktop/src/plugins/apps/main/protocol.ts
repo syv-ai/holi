@@ -83,7 +83,7 @@ export function appFileAbsPath(vaultRoot: string, bundle: string, rel: string): 
 /**
  * `appFileAbsPath`, and only when that name is the file on disk: nothing
  * reached through a symlink, nothing opened by a case alias. The lexical checks
- * above hold for the name; a committed `lib -> ../../memory` would otherwise
+ * above hold for the name; a committed `lib -> ../../.holi/memory` would otherwise
  * serve whatever the link points at, in the vault or out of it.
  */
 export async function servableAppFile(

@@ -175,12 +175,12 @@ describe('vault.recents', () => {
   it('keeps what an app may name, never the agent surface', async () => {
     const recents = () => [
       { kind: 'path' as const, key: 'a.md' },
-      { kind: 'path' as const, key: 'memory/x.md' },
+      { kind: 'path' as const, key: '.holi/memory/x.md' },
       { kind: 'terminal' as const, key: 't1' },
       { kind: 'command' as const, key: 'board.open' },
       { kind: 'surface' as const, key: 'board' },
       { kind: 'surface' as const, key: 'app', id: 'B.app' },
-      { kind: 'surface' as const, key: 'app', id: 'memory/x.app' },
+      { kind: 'surface' as const, key: 'app', id: '.holi/memory/x.app' },
     ]
     const { value } = await runCapability('vault.recents', 'app', ctx({ recents }), undefined)
     expect(value).toEqual([
@@ -263,7 +263,7 @@ describe('vault.history', () => {
       log: async () => [commit('3', 'mixed'), commit('2', 'memory only'), commit('1', 'notes')],
       commitFiles: async () => [
         { sha: '3', files: ['a.md', 'AGENTS.md', 'Fin.app/data/items/x.json'] },
-        { sha: '2', files: ['memory/x.md', 'memory/index.md'] },
+        { sha: '2', files: ['.holi/memory/x.md', '.holi/memory/index.md'] },
         { sha: '1', files: ['b.md'] },
       ],
     }) as unknown as ReturnType<CoreServices['repo']>
@@ -312,15 +312,15 @@ describe('docs.read', () => {
 
 describe('docs.render', () => {
   it('refuses what docs.read refuses', async () => {
-    await put('memory/x.md', 'secret')
+    await put('.holi/memory/x.md', 'secret')
     expect(
-      await refusal(runCapability('docs.render', 'app', ctx({}), { path: './memory/x.md' })),
+      await refusal(runCapability('docs.render', 'app', ctx({}), { path: './.holi/memory/x.md' })),
     ).toMatchObject({ code: 'FORBIDDEN' })
   })
 
   it('refuses the agent surface named in another case, as macOS would open it', async () => {
-    await put('memory/x.md', 'secret')
-    for (const path of ['Memory/x.md', 'MEMORY/x.md']) {
+    await put('.holi/memory/x.md', 'secret')
+    for (const path of ['.holi/Memory/x.md', '.HOLI/MEMORY/x.md']) {
       expect(await refusal(runCapability('docs.render', 'app', ctx({}), { path }))).toMatchObject({
         code: 'NOT_FOUND',
       })
@@ -349,15 +349,19 @@ describe('tasks.complete', () => {
   })
 
   it('refuses a task on the agent surface, in any case', async () => {
-    await put('memory/task.x.md', '---\nstatus: todo\n---\n\n# X\n')
+    await put('.holi/memory/task.x.md', '---\nstatus: todo\n---\n\n# X\n')
     expect(
-      await refusal(runCapability('tasks.complete', 'app', ctx({}), { path: 'Memory/task.x.md' })),
+      await refusal(
+        runCapability('tasks.complete', 'app', ctx({}), { path: '.holi/Memory/task.x.md' }),
+      ),
     ).toMatchObject({ code: 'NOT_FOUND' })
   })
 
   it('refuses a task on the agent surface', async () => {
     expect(
-      await refusal(runCapability('tasks.complete', 'app', ctx({}), { path: 'memory/task.x.md' })),
+      await refusal(
+        runCapability('tasks.complete', 'app', ctx({}), { path: '.holi/memory/task.x.md' }),
+      ),
     ).toMatchObject({ code: 'FORBIDDEN' })
   })
 })

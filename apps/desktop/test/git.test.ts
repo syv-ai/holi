@@ -553,7 +553,7 @@ describe('commitFiles', () => {
 describe('log', () => {
   it('reads a path as a name, never a glob', async () => {
     // A vault app may ask for one path's history; `memor?/x.md` must not
-    // answer with `memory/x.md`'s.
+    // answer with `.holi/memory/x.md`'s.
     const dir = await makeClone(await makeRemote())
     await commitFile(dir, 'secret.md', 's\n')
     expect(await openRepo(dir).log({ path: '*ecret.md' })).toEqual([])

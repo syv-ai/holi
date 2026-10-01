@@ -22,7 +22,7 @@ describe('isAppBundlePath', () => {
 
   it('refuses the agent surface', () => {
     expect(isAppBundlePath('.claude/x.app')).toBe(false)
-    expect(isAppBundlePath('memory/x.app')).toBe(false)
+    expect(isAppBundlePath('.holi/memory/x.app')).toBe(false)
   })
 
   it('refuses an app inside an app', () => {

@@ -31,7 +31,7 @@ export function readablePath(path: string): VaultRelPath {
   } catch (err) {
     throw new CapabilityError('BAD_REQUEST', (err as Error).message)
   }
-  // Checked again on the normalised path: `./memory/x.md` is `memory/x.md`.
+  // Checked again on the normalised path: `./.holi/memory/x.md` is `.holi/memory/x.md`.
   if (isAgentSurfacePath(rel) || isMachineStatePath(rel)) {
     throw new CapabilityError('FORBIDDEN', path)
   }
@@ -54,7 +54,7 @@ export function readableOrNull(path: string): VaultRelPath | null {
 /**
  * `readablePath`, and a path the vault's snapshot holds, exactly. The snapshot
  * is built from `readdir`, so its paths have the case they have on disk: on a
- * case-insensitive filesystem (macOS) `Memory/x.md` opens `memory/x.md`, and a
+ * case-insensitive filesystem (macOS) `.holi/Memory/x.md` opens `.holi/memory/x.md`, and a
  * check of the name as typed would wave it through. Matching the snapshot makes
  * the refusals see the real name.
  */

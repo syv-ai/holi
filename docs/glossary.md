@@ -110,7 +110,7 @@ stuck push is the exception: it submits its instruction as the first turn of its
 
 ### Agent surface
 
-The files that configure the agent rather than hold content: `AGENTS.md`, `CLAUDE.md`, `memory/`,
+The files that configure the agent rather than hold content: `AGENTS.md`, `CLAUDE.md`, `.holi/memory/`,
 `USER.local.md`, and all of `.claude/`. Writing them changes what the agent does next, so anything
 less trusted than the user (a vault app, a hook) is kept off them.
 

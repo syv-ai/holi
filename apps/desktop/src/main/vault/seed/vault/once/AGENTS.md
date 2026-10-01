@@ -19,4 +19,4 @@ Holi commits every few seconds and pushes and pulls on its own. It pauses that l
 
 ## Memory
 
-A memory is one fact in one file under `memory/`. Do not use a memory system of your own. Write one, with the memory skill, whenever you learn something this vault or its user will want again. `memory/<name>.local.md` stays on this machine, so personal facts go there. `memory/index.md` is generated on commit, and edits to it are discarded.
+A memory is one fact in one file under `.holi/memory/`. Do not use a memory system of your own. Write one, with the memory skill, whenever you learn something this vault or its user will want again. `.holi/memory/<name>.local.md` stays on this machine, so personal facts go there. `.holi/memory/index.md` is generated on commit, and edits to it are discarded.

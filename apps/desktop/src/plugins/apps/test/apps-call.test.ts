@@ -98,10 +98,10 @@ describe('apps.call', () => {
       'MEMORY.md',
       'USER.local.md',
       '.claude/settings.json',
-      // `memory/` is MEMORY.md subdivided, and does not become readable by
+      // `.holi/memory/` is MEMORY.md subdivided, and does not become readable by
       // being spread over more files.
-      'memory/index.md',
-      'memory/shell-quirks.md',
+      '.holi/memory/index.md',
+      '.holi/memory/shell-quirks.md',
     ]) {
       await expect(call('docs.read', { path })).rejects.toMatchObject({ code: 'FORBIDDEN' })
     }
@@ -131,7 +131,7 @@ describe('apps.call', () => {
     expect(paths).not.toContain('MEMORY.md')
     // The listing, not just the read: an app that cannot open a memory but can
     // see every memory's path has still been told what the vault remembers.
-    expect(paths.some((p) => p.startsWith('memory/'))).toBe(false)
+    expect(paths.some((p) => p.startsWith('.holi/memory/'))).toBe(false)
   })
 
   it('lists the vault tasks', async () => {

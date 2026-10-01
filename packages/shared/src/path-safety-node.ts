@@ -55,7 +55,7 @@ export async function resolveRelative(vaultRoot: string, rel: string): Promise<s
  * name must have the case it has on disk. The canonical path of the closest
  * existing ancestor has to equal the lexical one, which says both at once:
  * `realpath` resolves links and, on macOS, returns the case on disk, so a
- * `Data/` that opens `data/` is refused as surely as a link to `memory/`.
+ * `Data/` that opens `data/` is refused as surely as a link to `.holi/memory/`.
  *
  * For paths whose checks are lexical (an app's own bundle, its store, the
  * agent surface): a link or a case alias would let the name that was checked

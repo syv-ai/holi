@@ -66,7 +66,7 @@ first fitted into the six if it can be.
   provider interface starts as exactly what the host calls today, and is widened when a second
   provider (such as OpenCode) is actually written. Until then it has one implementation, so any
   extra abstraction in it is a guess.
-- **`AGENTS.md`, `memory/` and its pre-commit transform stay core.** `AGENTS.md` is a vault file
+- **`AGENTS.md`, `.holi/memory/` and its pre-commit transform stay core.** `AGENTS.md` is a vault file
   other agents read too. `isAgentSurfacePath` stays core as the protected-paths fence, because those
   files exist in synced vaults whether or not the plugin runs.
 

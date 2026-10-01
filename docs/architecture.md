@@ -156,7 +156,7 @@ cwd, and the renderer draws each in xterm as an ordinary tab. What a session is 
 Claude Code itself (its session listing and turn hooks), never inferred from terminal output.
 
 Each vault's agent gets its own `CLAUDE_CONFIG_DIR`, so it inherits the vault's committed `.claude/`,
-`AGENTS.md` and `memory/`, not the machine's global config. Claude Code's own permission prompts
+`AGENTS.md` and `.holi/memory/`, not the machine's global config. Claude Code's own permission prompts
 stay on. There is no MCP server: the agent uses its native tools plus one small Holi CLI (`holi`)
 that talks to main. Holi pauses sync while a turn runs and reviews a turn as the commit
 range it produced.

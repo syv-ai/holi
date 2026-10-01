@@ -158,7 +158,7 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
 ## Rules
 
 - An app is a web app the user wrote: it may reach all vault content except the agent surface
-  (`AGENTS.md`, `CLAUDE.md`, `MEMORY.md`, `USER.local.md`, `.claude/`, `memory/`; see the
+  (`AGENTS.md`, `CLAUDE.md`, `MEMORY.md`, `USER.local.md`, `.claude/`, `.holi/memory/`; see the
   [glossary](../glossary.md)). The reason is escalation, not privacy: an app that could write
   `.claude/hooks/google-send-gate.mjs` could make the agent send mail unprompted.
 - The agent-surface refusal lives in main (the capability registry), not the renderer. The process rendering
@@ -204,7 +204,7 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   a personal app's least of all. Both checks ignore case, as macOS's filesystem does.
 - Nothing an app reaches goes through a symlink. The protocol, the store and every read through
   the bridge open a path only when its real path is the path as named (`exactPath`), so a committed
-  `lib -> ../../memory` serves nothing and a store collection that is a link refuses reads and
+  `lib -> ../../.holi/memory` serves nothing and a store collection that is a link refuses reads and
   writes. The same comparison refuses a case alias such as `Data/`. The snapshot never lists a link
   either, so to Holi a symlink is simply not there.
 - Records are always objects, because the merge works field by field.

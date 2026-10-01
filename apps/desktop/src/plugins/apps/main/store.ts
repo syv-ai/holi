@@ -40,7 +40,7 @@ function relOrThrow(path: string) {
 
 /**
  * A store file's absolute path, refused unless its name is the file on disk.
- * A committed `data/items -> ../../memory` would otherwise let a record write
+ * A committed `data/items -> ../../.holi/memory` would otherwise let a record write
  * land in the agent surface, or out of the vault.
  */
 async function onDisk(root: string, path: string): Promise<string> {
