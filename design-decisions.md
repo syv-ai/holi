@@ -342,3 +342,15 @@ and activation.
   left, only one of them fits. The agent was the first item on the owner's list, and it is what
   makes another coding agent (OpenCode) possible. Tasks is the larger extraction and has no
   dependency on the agent move. Its design (DESIGN-4) stays ready.
+
+### Phase 5 (executed)
+
+- **Core parts run on the plugin contract.** Both hosts take a list of always-on parts shaped
+  exactly like plugins, so moving the agent out is moving files.
+- **Several quit questions join into one dialog,** so no guard is dropped.
+- **The agent service is atoms the plugin provides, bound to plain `ask`/`start` functions by
+  `useAgentService()`.**
+- **`Surface.unlisted` keeps a surface out of the palette and "Open X" commands.** The agent's
+  tab needs a terminal id, so opening it bare makes no sense.
+- **A pane move is not a close.** Agent tabs compare ids before and after each workspace change,
+  so dragging one between panes keeps its session attached.
