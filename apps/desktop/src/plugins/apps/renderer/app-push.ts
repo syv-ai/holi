@@ -12,10 +12,15 @@
  * written.
  */
 import { atom } from 'jotai'
-import { isAgentSurfacePath, storeTopic, type VaultSnapshot } from '@holi/shared'
-import { agentSessionsAtom } from './agent'
-import { recentsAtom } from './recents'
-import { historyEpochsAtom, snapshotAtom, syncStateAtom } from './vaults'
+import { isAgentSurfacePath, type VaultSnapshot } from '@holi/shared'
+import { storeTopic } from '../shared/bridge'
+import {
+  agentSessionsAtom,
+  historyEpochsAtom,
+  recentsAtom,
+  snapshotAtom,
+  syncStateAtom,
+} from '@/plugin-api'
 
 /** The vault-wide topics: docs, tasks, sync, agent, recents, history. */
 export const appPushSignaturesAtom = atom((get): Record<string, string> => {

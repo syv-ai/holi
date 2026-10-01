@@ -12,19 +12,16 @@
  * would go stale the moment the agent edits a schema.
  */
 import { readFile, readdir, rm } from 'node:fs/promises'
+import { DATA_DIR, formatRecord, vaultRelPath } from '@holi/shared'
+import { APP_MANIFEST_FILE, parseAppManifest } from '../shared/manifest'
 import {
-  APP_MANIFEST_FILE,
-  DATA_DIR,
   MAX_RECORD_BYTES,
-  formatRecord,
   isRecordId,
   newRecordId,
-  parseAppManifest,
   recordRel,
   validateRecord,
-  vaultRelPath,
   type CollectionSchema,
-} from '@holi/shared'
+} from '../shared/store'
 import { exactPath } from '@holi/shared/path-safety-node'
 import { CapabilityError, writeAtomic } from '../../../main/plugin-api'
 

@@ -14,7 +14,8 @@
  *
  * No `electron` import: this loads under plain Node in the tests.
  */
-import { appBundleOf, isAppBundlePath, type AppLogLevel } from '@holi/shared'
+import { appBundleOf, isAppBundlePath } from '@holi/shared'
+import { type AppLogLevel } from '../shared/store'
 import {
   cap,
   CapabilityError,

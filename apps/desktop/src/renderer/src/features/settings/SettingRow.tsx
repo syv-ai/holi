@@ -58,7 +58,7 @@ export function SettingRow({
   const installed = useAtomValue(installedPluginsAtom)
   const surfaces = useAtomValue(surfacesAtom)
   const options: readonly VaultSettingOption[] =
-    control.kind === 'choice' && control.apps === true
+    control.kind === 'choice' && control.openEnded === true
       ? homeOptions(availableOptions(descriptor, settings), surfaces, documents, value)
       : availableOptions(descriptor, settings)
 
@@ -193,11 +193,11 @@ export function SettingRow({
 /**
  * Home's options: core's fixed ones, the views that can be Home in this vault
  * (`homeable` surfaces, so one whose plugin is off is not offered), the
- * vault's shared folder documents (its apps), and the current answer even when
- * it is none of them (a file, or an app not made yet), so the row always shows
- * what is in force. A personal app is not offered: this row writes the
- * committed file, and a `.local.` app named there would point everyone else at
- * nothing.
+ * vault's shared folder documents (a vault app, say), and the current answer
+ * even when it is none of them (a file, or a document not made yet), so the row
+ * always shows what is in force. A personal (`.local.`) document is not
+ * offered: this row writes the committed file, and naming one there would point
+ * everyone else at nothing.
  */
 function homeOptions(
   fixed: readonly VaultSettingOption[],

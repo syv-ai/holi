@@ -6,15 +6,16 @@
  * answer only the frame it mounted, and it must pass the vault its own idea of
  * which app is speaking rather than the app's.
  */
-import { appHost, emptyVaultSnapshot } from '@holi/shared'
+import { emptyVaultSnapshot } from '@holi/shared'
+import { appHost } from '../shared/bundle'
 import { getDefaultStore } from 'jotai'
 import { beforeEach, expect, test, vi } from 'vitest'
 import { act } from 'react'
 import { render, screen, waitFor } from '@/test/render'
 import userEvent from '@testing-library/user-event'
-import { AppFrame } from '../AppFrame'
-import { snapshotAtom, activeRemoteAtom } from '../../../state/vaults'
-import { appOpensAtom, workspaceAtom, openSurface } from '../../../state/panes'
+import { activeRemoteAtom, snapshotAtom } from '@/plugin-api'
+import { AppFrame } from '../renderer/AppFrame'
+import { appOpensAtom } from '../renderer/apps'
 
 /** Main's side of the app door, answering the way the registry would. */
 const bridgeMock = vi.fn((input: { remote: string; method: string }): Promise<unknown> => {
@@ -25,13 +26,25 @@ const bridgeMock = vi.fn((input: { remote: string; method: string }): Promise<un
   return Promise.resolve([])
 })
 
-vi.mock('../apps-cap', () => ({
+vi.mock('../renderer/apps-cap', () => ({
   appsCap: {
     call: (remote: string, input: { method: string }) => bridgeMock({ remote, ...input }),
     // No `dangerously-allow` reads to approve, so the frame mounts at once.
     grants: () => Promise.resolve({ codeHash: 'h', affordances: [] }),
     log: () => Promise.resolve(true),
   },
+}))
+
+/** The tabs the tombstone's button closed, as `[surface, id]`. */
+const closed = vi.hoisted(() => [] as [string, string][])
+vi.mock('@/plugin-api', async (original) => ({
+  ...(await original<typeof import('@/plugin-api')>()),
+  closeSurfaceTabAtom: (await import('jotai')).atom(
+    null,
+    (_get, _set, surface: string, id: string) => {
+      closed.push([surface, id])
+    },
+  ),
 }))
 
 const REMOTE = 'syv-ai/1brain'
@@ -50,11 +63,8 @@ function withApps(...bundles: string[]) {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  closed.length = 0
   withApps('Team/Retro.app')
-  store.set(
-    workspaceAtom,
-    openSurface({ panes: [{ tabs: [], active: -1 }], active: 0 }, 'app', 'Team/Retro.app'),
-  )
 })
 
 const frameOf = () => document.querySelector('iframe')!
@@ -168,5 +178,5 @@ test('a deleted app leaves a tombstone, not a frame', async () => {
   // A tab that evaporates while you are looking at it reads as a crash, so
   // closing it is the user's move, not ours.
   await userEvent.click(screen.getByRole('button', { name: /close/i }))
-  expect(store.get(workspaceAtom).panes[0]!.tabs).toEqual([])
+  expect(closed).toEqual([['app', 'Team/Retro.app']])
 })

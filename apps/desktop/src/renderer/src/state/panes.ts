@@ -147,14 +147,6 @@ export function openSurface(workspace: Workspace, surface: string, id?: string):
   return updatePane(workspace, (pane) => ({ tabs: [tab, ...pane.tabs], active: 0 }))
 }
 
-/**
- * How many times each app has been reloaded since launch, by bundle path. Both
- * reloads count here: the pane header's reload button, and the agent's `holi
- * app open` on an app that is already open, so an agent that just edited one
- * shows the new version with the command it already knows.
- */
-export const appOpensAtom = atom<Record<string, number>>({})
-
 /** Show one agent terminal, or focus its tab if already open. Deduped by id:
  *  two views over one PTY would both be attached to it. */
 export function openAgentTab(workspace: Workspace, id: string): Workspace {

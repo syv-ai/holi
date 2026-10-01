@@ -11,13 +11,9 @@
  */
 import { stat } from 'node:fs/promises'
 import { join } from 'node:path'
-import {
-  APP_MANIFEST_FILE,
-  appManifestText,
-  appName,
-  isAppBundlePath,
-  vaultRelPath,
-} from '@holi/shared'
+import { isAppBundlePath, vaultRelPath } from '@holi/shared'
+import { APP_MANIFEST_FILE, appManifestText } from '../shared/manifest'
+import { appName } from '../shared/bundle'
 import { writeAtomic } from '../../../main/plugin-api'
 
 const ENTRY_FILE = 'index.html'

@@ -17,7 +17,7 @@ import type { ComponentType } from 'react'
 import { cn } from '@/lib/cn'
 
 /** Anything drawn as an svg that takes a class: a lucide or simple-icons
- *  glyph, or one of Holi's own (`AppIcon`, `PdfIcon`). */
+ *  glyph, or one of Holi's own (`PdfIcon`, a vault app's `AppIcon`). */
 export type IconGlyph = ComponentType<{ className?: string; 'aria-hidden'?: boolean }>
 
 export type IconSize = 'sm' | 'md'

@@ -8,20 +8,20 @@
  * to a half-written page. It is not sufficient on its own, since an app with no
  * entry document has nothing to open.
  *
- * The same rule is re-implemented in `main/apps/app-ops.ts` and the
+ * The same rule is re-implemented in `../main/ops.ts` and the
  * `vault-app-check` hook, deliberately: there is no shared layer, and inventing
  * one for three call sites is the mistake vault apps refused.
  *
  * Derived from the snapshot, so a finished app appears as soon as the watcher
  * rescans. An unfinished one (an entry document and no manifest) is a draft
- * of the app claim's folder document (`features/apps/app-surface.tsx`).
+ * of the app claim's folder document (`surface.tsx`).
  */
 import { atom } from 'jotai'
 import { selectAtom } from 'jotai/utils'
-import { APP_MANIFEST_FILE, appBundleOf, appName } from '@holi/shared'
-import { closeTab, workspaceAtom } from './panes'
-import { byRecency, recentsAtom } from './recents'
-import { snapshotAtom } from './vaults'
+import { appBundleOf } from '@holi/shared'
+import { APP_MANIFEST_FILE } from '../shared/manifest'
+import { appName } from '../shared/bundle'
+import { byRecency, recentsAtom, snapshotAtom } from '@/plugin-api'
 
 const ENTRY_FILE = 'index.html'
 
@@ -62,15 +62,10 @@ export const appInstancesAtom = selectAtom(
   (a, b) => a.length === b.length && a.every((p, i) => p === b[i]),
 )
 
-/** Close the tab showing the app at `path` in the active pane: the tombstone's
- *  button. */
-export const closeAppAtom = atom(null, (_get, set, path: string) => {
-  set(workspaceAtom, (w) => {
-    const pane = w.panes[w.active]
-    if (pane === undefined) return w
-    const index = pane.tabs.findIndex(
-      (t) => t.kind === 'surface' && t.surface === 'app' && t.id === path,
-    )
-    return index === -1 ? w : closeTab(w, index)
-  })
-})
+/**
+ * How many times each app has been reloaded since launch, by bundle path. Both
+ * reloads count here: the pane header's reload button, and the agent's `holi
+ * apps open` on an app that is already open, so an agent that just edited one
+ * shows the new version with the command it already knows.
+ */
+export const appOpensAtom = atom<Record<string, number>>({})

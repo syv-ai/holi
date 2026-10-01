@@ -71,9 +71,10 @@ export interface BridgeServer {
 
 /** Cap the request body: a guard against a runaway sender holding the socket
  *  open. A turn signal sends nothing and a status JSON is a few kilobytes, but
- *  the record merge driver sends three versions of a record of up to
- *  `MAX_RECORD_BYTES`, URL-encoded (which can triple JSON), so the cap sits
- *  above that rather than failing a merge git could have made cleanly. */
+ *  the record merge driver sends three versions of a record of up to 256 KiB
+ *  (the apps plugin's `MAX_RECORD_BYTES`), URL-encoded (which can triple
+ *  JSON), so the cap sits above that rather than failing a merge git could
+ *  have made cleanly. */
 const MAX_BODY_BYTES = 4 * 1024 * 1024
 
 const CLI_PATH = '/cli'

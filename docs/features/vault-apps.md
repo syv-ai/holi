@@ -36,7 +36,7 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   row's Show App Files, which expands the bundle so `index.html` opens like any file.
 - **Tabs.** An app is the surface `app` with its bundle path as the tab's id, deduped across panes
   like a note (see [tabs and panes](tabs-panes.md)). The bundle is a folder document: the app's
-  claim (`features/apps/app-surface.tsx`, registered from core until apps become a plugin) says a
+  claim (`renderer/surface.tsx` in the plugin) says a
   `.app` folder with its `index.html` is one, finished once `app.yaml` is there. Reload is the
   surface's pane-header action, beside the other per-file buttons, that remounts the
   frame. If the bundle disappears under an open tab (a teammate's pull), the tab stays as a
@@ -63,7 +63,7 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   which applies the board's rule. `<holi-note path>` is a custom element the shim defines: the
   note rendered, themed and live. The theme is ambient CSS variables, not a call.
 - **Push.** `holi.on(topic, fn)` hears `docs`, `tasks`, `sync`, `agent`, `recents`, `history` and
-  `store:<collection>`. `AppFrame` posts a topic when its signature changes (`state/app-push.ts`),
+  `store:<collection>`. `AppFrame` posts a topic when its signature changes (`renderer/app-push.ts`),
   never on mount. A push carries no data: the app reads again through main, so every refusal
   still applies, and the signatures leave the agent surface out, so an app is not told a memory
   was written.
@@ -243,7 +243,13 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   and `store.*` capabilities (`capabilities.ts`), the store (`store.ts`), the approvals
   (`grants.ts`), and its seed: the vault-apps skill and the `vault-app-check.mjs` hook under
   `main/vault/shipped/.claude/`. It opens the app door once it starts, and with it off a vault
-  serves no app, while what the vault holds (records, `.local.app`) is still core's.
+  serves no app, while what the vault holds (records, `.local.app`) is still core's. Its
+  `renderer/` holds `AppFrame` with the approval dialog, the push signatures (`app-push.ts`),
+  the app lists and reload counts (`apps.ts`), and the surface, claim, rail item and pane-header
+  actions (`surface.tsx`); its `open` event is the agent's `holi apps open`. Its `shared/` holds
+  the bridge vocabulary (`bridge.ts`: `APP_METHODS`, the topics), the manifest (`manifest.ts`),
+  an app's name and `holi-app:` host (`bundle.ts`), and the store's schema subset, ids and log
+  (`store.ts`).
 - `apps/desktop/src/main/capabilities/`: the registry, its dispatch and services, the read
   fences and core's entries, with note rendering (`render-note.ts`).
 - `apps/desktop/src/main/vault/search.ts`: the vault search behind `holi.search`, shared with
@@ -255,12 +261,10 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
 - `apps/desktop/src/main/bridge/cli.ts`: the `holi` CLI.
 - `apps/desktop/src/plugins/app-methods.test.ts`: every bridge method is answered by an app-door
   capability in this build.
-- `apps/desktop/src/renderer/src/features/apps/`: `AppFrame`, with the approval dialog.
-- `apps/desktop/src/renderer/src/state/app-push.ts`: the push signatures;
-  `state/ui-report.ts`: the one report of focus and recents to main.
-- `apps/desktop/src/renderer/src/state/apps.ts`: the app lists and actions.
-- `apps/desktop/src/renderer/src/features/explorer/FileTree.tsx`, `RowMenu.tsx`: the app row.
-- `packages/shared/src/app-bundle.ts` (`isAppBundlePath`, `appBundleOf`, `appName`, `appHost`),
-  `packages/shared/src/app-manifest.ts`, `packages/shared/src/app-store.ts` (schema subset, ids,
-  record format, field merge), `packages/shared/src/path-safety.ts`
-  (`isAgentSurfacePath`).
+- `apps/desktop/src/renderer/src/state/ui-report.ts`: the one report of focus and recents to main.
+- `apps/desktop/src/renderer/src/features/explorer/FileTree.tsx`, `RowMenu.tsx`: the folder
+  document row an app is.
+- `packages/shared/src/app-bundle.ts` (`isAppBundlePath`, `appBundleOf`, `appSuffix`) and
+  `packages/shared/src/app-store.ts` (where records and the log live, the record format and the
+  field merge): the bundle grammar core keeps, because a synced vault holds bundles whatever
+  this machine runs; `packages/shared/src/path-safety.ts` (`isAgentSurfacePath`).

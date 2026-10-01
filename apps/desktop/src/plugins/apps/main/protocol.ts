@@ -14,13 +14,13 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { exactPath } from '@holi/shared/path-safety-node'
 import {
-  bundleFromAppHost,
   isAppPrivatePath,
   isAppBundlePath,
   themeBlockToVars,
   vaultRelPath,
   type ThemeBlock,
 } from '@holi/shared'
+import { bundleFromAppHost } from '../shared/bundle'
 import { mimeFor, readVaultTheme, type PluginScheme } from '../../../main/plugin-api'
 import { BRIDGE_JS } from './bridge-script'
 import { APP_BASE_TOKENS } from './tokens'

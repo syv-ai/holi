@@ -1,13 +1,13 @@
 /**
- * An app bundle in the tree: one row that opens the app, whose files
- * show only once its contents are expanded.
+ * A folder document in the tree, as a vault app's bundle is one: one row that
+ * opens it, whose files show only once its contents are expanded.
  */
 import { emptyVaultSnapshot } from '@holi/shared'
 import { getDefaultStore } from 'jotai'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, expect, test, vi } from 'vitest'
 import { fireEvent, render, screen } from '@/test/render'
-import { CORE_CONTRIBUTION } from '@/components/core-surfaces'
+import { WITH_FOLDER_DOCUMENTS } from '@/test/folder-document'
 import { coreContributionAtom } from '@/state/plugins'
 import { FileTree } from '../FileTree'
 import { activeRemoteAtom, snapshotAtom, vaultsAtom } from '../../../state/vaults'
@@ -24,8 +24,8 @@ const FINISHED = ['Finance/Budget.app/index.html', 'Finance/Budget.app/app.yaml'
 
 function tree(files: string[]) {
   const open = { preview: vi.fn(), pinned: vi.fn(), pane: vi.fn() }
-  // Apps are core's claim, installed as `main.tsx` installs it.
-  store.set(coreContributionAtom, CORE_CONTRIBUTION)
+  // An app is a plugin's folder document: the claim is written out here.
+  store.set(coreContributionAtom, WITH_FOLDER_DOCUMENTS)
   store.set(activeRemoteAtom, REMOTE)
   store.set(vaultsAtom, [{ remote: REMOTE, path: '/vault' } as never])
   store.set(snapshotAtom, {

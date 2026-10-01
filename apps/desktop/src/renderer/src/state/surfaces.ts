@@ -8,6 +8,7 @@ import { tabForPath } from '@/lib/folder-documents'
 import { openHomeAtom } from './home'
 import {
   closeSurfaceTabs,
+  closeTab,
   openInNewPane,
   openPinned,
   openPreview,
@@ -27,6 +28,19 @@ import { snapshotAtom } from './vaults'
 export const openSurfaceAtom = atom(null, (_get, set, surface: string, id?: string): void => {
   if (surface === 'home') void set(openHomeAtom)
   else set(workspaceAtom, (w) => openSurface(w, surface, id))
+})
+
+/** Close the active pane's tab onto `surface` with `id`, if it has one: an
+ *  app's "close tab" once its bundle is gone. */
+export const closeSurfaceTabAtom = atom(null, (_get, set, surface: string, id: string): void => {
+  set(workspaceAtom, (w) => {
+    const pane = w.panes[w.active]
+    if (pane === undefined) return w
+    const index = pane.tabs.findIndex(
+      (t) => t.kind === 'surface' && t.surface === surface && t.id === id,
+    )
+    return index === -1 ? w : closeTab(w, index)
+  })
 })
 
 /** A surface's tabs close when it leaves the registry, as when its plugin is

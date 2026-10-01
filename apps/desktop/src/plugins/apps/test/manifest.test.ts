@@ -4,7 +4,7 @@ import {
   MAX_ALLOW_REASON,
   appManifestText,
   parseAppManifest,
-} from '../src/app-manifest'
+} from '../shared/manifest'
 
 describe('APP_MANIFEST_FILE', () => {
   it('is app.yaml', () => {

@@ -285,7 +285,7 @@ describe('VAULT_SETTING_DESCRIPTORS', () => {
     const home = VAULT_SETTING_DESCRIPTORS.find((d) => d.key === 'home')!
     expect(home.control.kind).toBe('choice')
     if (home.control.kind !== 'choice') return
-    expect(home.control.apps).toBe(true)
+    expect(home.control.openEnded).toBe(true)
     const values = home.control.options.map((o) => o.value)
     expect(values).toContain(VAULT_SETTING_DEFAULTS.home)
     expect(values).toEqual(expect.arrayContaining(['daily']))

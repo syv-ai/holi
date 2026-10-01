@@ -9,11 +9,20 @@ import { emptyVaultSnapshot, type Task } from '@holi/shared'
 import { getDefaultStore } from 'jotai'
 import { beforeEach, expect, test } from 'vitest'
 import { render, screen } from '@/test/render'
-import { APP_SURFACE } from '@/features/apps/app-surface'
+import { FileText } from 'lucide-react'
+import type { Surface } from '@/plugin-api/types'
 import type { Tab } from '@/state/panes'
 import { coreContributionAtom } from '@/state/plugins'
 import { snapshotAtom } from '@/state/vaults'
 import { TabStrip } from '../TabStrip'
+
+/** A surface with a tab per id, as a vault app's is: named by its id. */
+const APP_SURFACE: Surface = {
+  kind: 'app',
+  label: (id) => (id === undefined ? 'App' : (id.split('/').pop() ?? id).replace(/\.app$/, '')),
+  icon: FileText,
+  render: () => null,
+}
 
 const EMPTY = emptyVaultSnapshot()
 const store = getDefaultStore()

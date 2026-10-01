@@ -27,14 +27,27 @@ export { capClient, type CapClient, type UiCapability } from '@/lib/cap-client'
 export { useHasCapability } from '@/state/capabilities'
 export { cn } from '@/lib/cn'
 export { DRAWER_WIDTH } from '@/lib/drawer'
-export { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
+export { activeRemoteAtom, historyEpochsAtom, snapshotAtom, syncStateAtom } from '@/state/vaults'
 export { sessionAtom } from '@/state/session'
 export { activeModeAtom } from '@/state/color-scheme'
 export { openNoteTabAtom } from '@/state/panes'
-export { openPathAtom, openSurfaceAtom, tabForPathAtom } from '@/state/surfaces'
+export {
+  closeSurfaceTabAtom,
+  openPathAtom,
+  openSurfaceAtom,
+  tabForPathAtom,
+} from '@/state/surfaces'
+export { surfacesAtom } from '@/state/plugins'
+export { byRecency, recentsAtom } from '@/state/recents'
+export { openCommitInHistoryAtom } from '@/state/history'
 export { openDialogAtom, type ActiveDialog, type PluginDialog } from '@/state/dialogs'
 export { askPrompt } from '@/editor/askAgent'
-export { askTargetsAtom, defaultAgentTargetAtom, type AgentTarget } from '@/state/agent'
+export {
+  agentSessionsAtom,
+  askTargetsAtom,
+  defaultAgentTargetAtom,
+  type AgentTarget,
+} from '@/state/agent'
 export { sendToAgentAtom } from '@/state/agent-send'
 export { useGlobalPanelLayout } from '@/state/preferences'
 export { matchHotkey } from '@/lib/hotkey'

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { APP_METHODS, isAppTopic, storeTopic } from '../src/app-bridge'
+import { APP_METHODS, isAppTopic, storeTopic } from '../shared/bridge'
 
 describe('APP_METHODS', () => {
   it('is exactly the shipped set and no more', () => {

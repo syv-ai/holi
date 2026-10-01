@@ -25,10 +25,6 @@ const { apps, tasks, overdue } = vi.hoisted(() => ({
   tasks: { current: 0 },
   overdue: { current: 0 },
 }))
-vi.mock('@/state/apps', () => ({
-  appPathsAtom: atom(() => apps.current),
-  appInstancesAtom: atom(() => apps.current),
-}))
 vi.mock('@/state/tasks', () => ({
   openTaskCountAtom: atom(() => tasks.current),
   overdueTaskCountAtom: atom(() => overdue.current),
@@ -43,6 +39,22 @@ const FAKE_PLUGIN: RendererPlugin = {
   rail: [{ surface: 'inbox', order: 40, visible: shownAtom }],
 }
 
+/** A surface with a tab per thing, as vault apps' is: its rail item drills
+ *  down to its instances, and is there only while it has some. */
+const FAKE_APPS: RendererPlugin = {
+  info: { id: 'fake-apps', label: 'Fake apps', default: true },
+  surfaces: [
+    {
+      kind: 'app',
+      label: (id) => (id === undefined ? 'App' : (id.split('/').pop() ?? id).replace(/\.app$/, '')),
+      icon: Inbox,
+      render: () => null,
+      instances: atom(() => apps.current),
+    },
+  ],
+  rail: [{ surface: 'app', order: 20, label: 'Apps' }],
+}
+
 function setup({
   appPaths = [],
   openTasks = 0,
@@ -54,7 +66,7 @@ function setup({
   overdue.current = overdueTasks
   const store = createStore()
   store.set(coreContributionAtom, CORE_CONTRIBUTION)
-  store.set(installedPluginsAtom, [FAKE_PLUGIN])
+  store.set(installedPluginsAtom, [FAKE_PLUGIN, FAKE_APPS])
   store.set(shownAtom, shown)
   render(
     <Provider store={store}>

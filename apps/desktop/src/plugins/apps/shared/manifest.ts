@@ -14,7 +14,7 @@
  * text that is not a mapping at all (a list, a number, a bare scalar) is refused.
  */
 import { parse as parseYaml } from 'yaml'
-import { isRecordId, type CollectionSchema } from './app-store'
+import { isRecordId, type CollectionSchema } from './store'
 
 /** The registration marker, at the app's own root. */
 export const APP_MANIFEST_FILE = 'app.yaml'

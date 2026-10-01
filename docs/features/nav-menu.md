@@ -10,7 +10,7 @@ hidden, the same menu runs down the rail.
 - **Items, in order:** Home, Search, Apps, Board, Mail, Agenda, Agents, Sync, Settings, so
   Settings always ends the dock. The surface items are rail items from the surface registry
   (`{surface, order, visible?}`, label and icon from the surface; see [tabs and panes](tabs-panes.md)),
-  sorted by `order` among core's own Search (10), Agents (60) and Sync (70), with Apps (20) a rail item core registers; `visible`
+  sorted by `order` among core's own Search (10), Agents (60) and Sync (70), with Apps (20) the apps plugin's rail item; `visible`
   is an atom, read by one derived atom. Home goes Home (below); Search opens quick open
   ([command palette](command-palette.md)); Board opens the board and carries the open-task count,
   red while any task is overdue (the board's own `overdue` label); Mail, Agenda and Settings open

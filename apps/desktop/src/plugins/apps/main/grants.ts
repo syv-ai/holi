@@ -23,15 +23,17 @@ import { readdir, readFile, readlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
   APP_LOG_FILE,
-  APP_MANIFEST_FILE,
   DATA_DIR,
   isAppPrivatePath,
   isLocalOnlyPath,
-  parseAppManifest,
   vaultRelPath,
+} from '@holi/shared'
+import {
+  APP_MANIFEST_FILE,
+  parseAppManifest,
   type AppAffordance,
   type AppManifest,
-} from '@holi/shared'
+} from '../shared/manifest'
 import { CapabilityError, jsonFileStore, runGit, type Admit } from '../../../main/plugin-api'
 
 export const GRANT_TTL_MS = 30 * 24 * 60 * 60 * 1000

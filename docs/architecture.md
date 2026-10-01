@@ -97,6 +97,9 @@ renderer imports its main side as types only, for `capClient`. The plugins are P
 The app door, through which a vault app's frame calls capabilities, is core's, and the apps plugin
 is its one opener (`ctx.openAppDoor`), supplying the consent check for entries with an
 `appGrant`; with apps off, no entry is reachable through it.
+What a synced vault holds stays core whatever this machine runs: an app's records still merge
+field by field and a `.local.app` still never syncs with the apps plugin off, so that bundle
+grammar is in `packages/shared` and the merge driver and fences in core.
 
 Enablement has two layers: `.holi/settings/app.yaml` declares the vault's plugins for everyone,
 and `app.local.yaml` can only turn one off on this machine ([settings](features/settings.md)). The

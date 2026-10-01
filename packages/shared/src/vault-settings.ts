@@ -254,8 +254,9 @@ export type VaultSettingControl =
   | {
       kind: 'choice'
       options: readonly VaultSettingOption[]
-      /** The vault's apps are options too, and the settings tab lists them. */
-      apps?: true
+      /** It takes answers beyond `options` (Home's views, folder documents
+       *  and files), which the settings tab lists beside them. */
+      openEnded?: true
     }
   | {
       kind: 'group'
@@ -622,7 +623,7 @@ function controlFor(type: SettingType): VaultSettingControl {
     case 'flags':
       return { kind: 'group', toggles: type.flags }
     case 'home':
-      return { kind: 'choice', options: type.options, apps: true }
+      return { kind: 'choice', options: type.options, openEnded: true }
     case 'plugins':
       return { kind: 'plugins' }
     // enum and number are both "pick one of these", and differ only in
@@ -909,10 +910,10 @@ export function normaliseAnswers(answers: Record<string, unknown>): Record<strin
     if (options.length === 0) continue
     const current = JSON.stringify(out[descriptor.key])
     if (options.some((o) => JSON.stringify(o.value) === current)) continue
-    // A row that takes values beyond its options (Home's apps and files) is
+    // A row that takes values beyond its options (Home's views and files) is
     // repaired only when its answer was one of them and has been withdrawn.
     if (
-      descriptor.control.apps === true &&
+      descriptor.control.openEnded === true &&
       !descriptor.control.options.some((o) => JSON.stringify(o.value) === current)
     ) {
       continue

@@ -8,7 +8,7 @@ import { getDefaultStore } from 'jotai'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, expect, test, vi } from 'vitest'
 import { render, screen, waitFor } from '@/test/render'
-import { CORE_CONTRIBUTION } from '@/components/core-surfaces'
+import { WITH_FOLDER_DOCUMENTS, createFolderDocument } from '@/test/folder-document'
 import { coreContributionAtom } from '@/state/plugins'
 import { FileTree } from '../FileTree'
 import { activeRemoteAtom, snapshotAtom, vaultsAtom } from '../../../state/vaults'
@@ -18,12 +18,11 @@ const EMPTY = emptyVaultSnapshot()
 const store = getDefaultStore()
 
 const createTask = vi.fn(async (_input: unknown) => ({ path: 'Finance/task.call-the-bank.md' }))
-const init = vi.fn(async (_input: unknown) => ({ created: [] }))
 vi.mock('../../../lib/trpc', () => ({
   trpc: {
     vaults: { snapshot: { query: () => Promise.resolve(EMPTY) } },
-    // `tasks.create` and `apps.init` are capabilities at the UI door; the
-    // doubles see their params with the vault they run in.
+    // `tasks.create` is a capability at the UI door; the double sees its
+    // params with the vault they run in.
     cap: {
       run: {
         mutate: ({
@@ -37,9 +36,7 @@ vi.mock('../../../lib/trpc', () => ({
         }) =>
           name === 'tasks.create'
             ? createTask({ remote, ...(JSON.parse(paramsJson ?? '{}') as object) })
-            : name === 'apps.init'
-              ? init({ remote, ...(JSON.parse(paramsJson ?? '{}') as object) })
-              : Promise.reject(new Error(`no such method: ${name}`)),
+            : Promise.reject(new Error(`no such method: ${name}`)),
       },
     },
   },
@@ -47,8 +44,8 @@ vi.mock('../../../lib/trpc', () => ({
 
 function tree() {
   const open = { preview: vi.fn(), pinned: vi.fn(), pane: vi.fn() }
-  // Apps are core's claim, installed as `main.tsx` installs it.
-  store.set(coreContributionAtom, CORE_CONTRIBUTION)
+  // An app is a plugin's folder document: the claim is written out here.
+  store.set(coreContributionAtom, WITH_FOLDER_DOCUMENTS)
   store.set(activeRemoteAtom, REMOTE)
   store.set(vaultsAtom, [{ remote: REMOTE, path: '/vault' } as never])
   store.set(snapshotAtom, {
@@ -94,7 +91,7 @@ async function name(text: string) {
 
 beforeEach(() => {
   createTask.mockClear()
-  init.mockClear()
+  createFolderDocument.mockClear()
 })
 
 test('with nothing focused, the field is the first row at the root', async () => {
@@ -138,6 +135,12 @@ test('an app is scaffolded beside the focused file, and its index.html opens', a
   await make('New App')
   expect(order().at(-1)).toBe('<app name>')
   await name('Budget')
-  await waitFor(() => expect(init).toHaveBeenCalledWith({ remote: REMOTE, path: 'Budget.app' }))
+  await waitFor(() =>
+    expect(createFolderDocument).toHaveBeenCalledWith({
+      remote: REMOTE,
+      parent: '',
+      name: 'Budget',
+    }),
+  )
   await waitFor(() => expect(open.preview).toHaveBeenCalledWith('Budget.app/index.html'))
 })

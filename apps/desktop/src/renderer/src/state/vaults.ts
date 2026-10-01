@@ -10,17 +10,10 @@ import {
 } from '@holi/shared'
 import type { SyncState } from '../../../main/vault/active-vault'
 import type { HeldBackFile } from '../../../main/vault/large-files'
-import type { PluginEventHandler, RendererPlugin } from '@/plugin-api/types'
+import type { RendererPlugin } from '@/plugin-api/types'
 import { flushAllBuffers } from '../lib/buffer-registry'
 import { trpc } from '../lib/trpc'
-import {
-  appOpensAtom,
-  closeTabsForPaths,
-  openSurface,
-  retargetTab,
-  retargetTabs,
-  workspaceAtom,
-} from './panes'
+import { closeTabsForPaths, retargetTab, retargetTabs, workspaceAtom } from './panes'
 // A cycle (`plugins` reads `activeRemoteAtom`), safe because neither module
 // reads the other's atoms until a store does.
 import { folderSurfacesAtom } from './plugins'
@@ -178,24 +171,6 @@ export const createVaultAtom = atom(
 )
 
 /**
- * Vault apps' events, while apps are still core: `open` is the agent's
- * `holi apps open`, which opens the app, or reloads it when it is open
- * (`appOpensAtom`). Local authorship only: apps sync, so opening a tab
- * whenever one appears would let a teammate's finished app decide what is on
- * your screen. An event about another vault is dropped.
- */
-const CORE_EVENTS: Readonly<Record<string, Readonly<Record<string, PluginEventHandler>>>> = {
-  apps: {
-    open: ({ remote, payload }, store) => {
-      if (remote !== store.get(activeRemoteAtom)) return
-      const { bundle } = payload as { bundle: string }
-      store.set(workspaceAtom, (w) => openSurface(w, 'app', bundle))
-      store.set(appOpensAtom, (n) => ({ ...n, [bundle]: (n[bundle] ?? 0) + 1 }))
-    },
-  },
-}
-
-/**
  * Subscribe to everything main pushes, for the lifetime of the app.
  *
  * Established once where the store is created, **not** from a component effect:
@@ -228,10 +203,9 @@ export function subscribeToVault(
       store.set(openTaskAtom, path)
     }
   })
-  const tables = [
-    ...Object.entries(CORE_EVENTS),
-    ...plugins.flatMap((p) => (p.events === undefined ? [] : [[p.info.id, p.events] as const])),
-  ]
+  const tables = plugins.flatMap((p) =>
+    p.events === undefined ? [] : [[p.info.id, p.events] as const],
+  )
   const offEvents = tables.map(([id, handlers]) =>
     window.holi.plugin.on(id, ({ remote, name, payload }) => {
       if (Object.hasOwn(handlers, name)) handlers[name]!({ remote, payload }, store)

@@ -10,13 +10,8 @@
  */
 import { readFile, stat } from 'node:fs/promises'
 import { join } from 'node:path'
-import {
-  APP_LOG_FILE,
-  appendAppLog,
-  isAppBundlePath,
-  vaultRelPath,
-  type AppLogLevel,
-} from '@holi/shared'
+import { APP_LOG_FILE, isAppBundlePath, vaultRelPath } from '@holi/shared'
+import { appendAppLog, type AppLogLevel } from '../shared/store'
 import { exactPath } from '@holi/shared/path-safety-node'
 import { writeAtomic } from '../../../main/plugin-api'
 

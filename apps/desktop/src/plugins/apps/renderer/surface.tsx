@@ -1,27 +1,25 @@
 /**
  * Vault apps in the registry's shapes (docs/features/vault-apps.md): one
- * surface, `app`, whose tab id is the bundle's path; the claim that makes a
- * bundle one document in the tree; and the nav's Apps group. Apps are still
- * core, so `components/core-surfaces.tsx` installs these beside core's own.
+ * surface, `app`, whose tab id is the bundle's path and whose header has the
+ * app's reload and log; the claim that makes a bundle one document in the
+ * tree; and the nav's Apps group.
  */
 import { useAtomValue, useSetAtom } from 'jotai'
 import { AppWindow, Logs, RotateCw } from 'lucide-react'
+import { APP_LOG_FILE, APP_SUFFIX, appSuffix, isAppBundlePath } from '@holi/shared'
+import { APP_MANIFEST_FILE } from '../shared/manifest'
+import { appName } from '../shared/bundle'
 import {
-  APP_LOG_FILE,
-  APP_MANIFEST_FILE,
-  APP_SUFFIX,
-  appName,
-  appSuffix,
-  isAppBundlePath,
-} from '@holi/shared'
-import { AppIcon } from '@/composites/file-icons'
-import { joinPath } from '@/lib/tree-paths'
-import type { PathClaim, RailItem, Surface } from '@/plugin-api/types'
+  openPathAtom,
+  snapshotAtom,
+  type PathClaim,
+  type RailItem,
+  type Surface,
+} from '@/plugin-api'
 import { IconButton } from '@/primitives'
-import { appInstancesAtom } from '@/state/apps'
-import { appOpensAtom, openInNewPane, workspaceAtom } from '@/state/panes'
-import { snapshotAtom } from '@/state/vaults'
 import { AppFrame } from './AppFrame'
+import { AppIcon } from './AppIcon'
+import { appInstancesAtom, appOpensAtom } from './apps'
 import { appsCap } from './apps-cap'
 
 /** What makes a bundle an app at all: its entry document. */
@@ -34,7 +32,7 @@ const ENTRY = 'index.html'
 function AppHeaderActions({ id }: { id?: string }): React.JSX.Element | null {
   const files = useAtomValue(snapshotAtom).files
   const setReloads = useSetAtom(appOpensAtom)
-  const setWorkspace = useSetAtom(workspaceAtom)
+  const openPath = useSetAtom(openPathAtom)
   if (id === undefined) return null
   const log = `${id}/${APP_LOG_FILE}`
   const hasLog = files.some((f) => f.path === log)
@@ -51,7 +49,7 @@ function AppHeaderActions({ id }: { id?: string }): React.JSX.Element | null {
         label={hasLog ? "open this app's log" : 'no log yet'}
         className="ml-1"
         disabled={!hasLog}
-        onClick={() => setWorkspace((w) => openInNewPane(w, { kind: 'note', path: log }))}
+        onClick={() => openPath(log, 'pane')}
       />
     </>
   )
@@ -104,7 +102,8 @@ export const APP_CLAIM: PathClaim = {
     icon: AppWindow,
     placeholder: 'app name',
     run: async ({ remote, parent, name }) => {
-      const bundle = joinPath(parent, name.endsWith(APP_SUFFIX) ? name : `${name}${APP_SUFFIX}`)
+      const file = name.endsWith(APP_SUFFIX) ? name : `${name}${APP_SUFFIX}`
+      const bundle = parent === '' ? file : `${parent}/${file}`
       // A refusal (a name that is no app) opens nothing.
       return appsCap.init(remote, { path: bundle }).then(
         () => `${bundle}/${ENTRY}`,

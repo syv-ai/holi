@@ -29,27 +29,25 @@
  */
 import { useAtomValue, useSetAtom, useStore } from 'jotai'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { isSurfaceName } from '@holi/shared'
+import { APP_METHODS, type AppMethod, type AppPush, type AppResponse } from '../shared/bridge'
+import { appHost, appName } from '../shared/bundle'
+import { type AppAffordance } from '../shared/manifest'
 import {
-  APP_METHODS,
-  appHost,
-  appName,
-  isSurfaceName,
-  type AppAffordance,
-  type AppMethod,
-  type AppPush,
-  type AppResponse,
-} from '@holi/shared'
-import { cn } from '@/lib/cn'
+  activeModeAtom,
+  activeRemoteAtom,
+  closeSurfaceTabAtom,
+  cn,
+  openCommitInHistoryAtom,
+  openPathAtom,
+  openSurfaceAtom,
+  snapshotAtom,
+  surfacesAtom,
+} from '@/plugin-api'
 import { Button, Dialog } from '@/primitives'
+import { appPushSignaturesAtom, storeSignatures } from './app-push'
+import { appOpensAtom, appPathsAtom } from './apps'
 import { appsCap } from './apps-cap'
-import { appPushSignaturesAtom, storeSignatures } from '../../state/app-push'
-import { appPathsAtom, closeAppAtom } from '../../state/apps'
-import { activeModeAtom } from '../../state/color-scheme'
-import { appOpensAtom } from '../../state/panes'
-import { openCommitInHistoryAtom } from '../../state/history'
-import { surfacesAtom } from '../../state/plugins'
-import { openPathAtom, openSurfaceAtom } from '../../state/surfaces'
-import { activeRemoteAtom, snapshotAtom } from '../../state/vaults'
 
 function isAppMethod(value: unknown): value is AppMethod {
   return typeof value === 'string' && (APP_METHODS as readonly string[]).includes(value)
@@ -85,7 +83,7 @@ export function AppFrame({ path }: { path: string }): React.JSX.Element {
   const remote = useAtomValue(activeRemoteAtom)
   const mode = useAtomValue(activeModeAtom)
   const openPath = useSetAtom(openPathAtom)
-  const closeApp = useSetAtom(closeAppAtom)
+  const closeTab = useSetAtom(closeSurfaceTabAtom)
   const openSurface = useSetAtom(openSurfaceAtom)
   // Read when an app calls, not on every render: the registry and the
   // snapshot change far more often than an app opens anything.
@@ -250,7 +248,7 @@ export function AppFrame({ path }: { path: string }): React.JSX.Element {
         <p className="text-muted-foreground">
           <span className="text-foreground">{name}</span> was deleted.
         </p>
-        <Button variant="ghost" onClick={() => closeApp(path)}>
+        <Button variant="ghost" onClick={() => closeTab('app', path)}>
           close tab
         </Button>
       </div>

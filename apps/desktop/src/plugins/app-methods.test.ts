@@ -4,7 +4,7 @@
  * would be a call that an app makes and nothing answers.
  */
 import { expect, it } from 'vitest'
-import { APP_METHODS, RENDERER_METHODS } from '@holi/shared'
+import { APP_METHODS, RENDERER_METHODS } from './apps/shared/bridge'
 import { agentCapabilities, AGENT_NAMESPACES } from '../main/agent/capabilities'
 import { createCapabilityRegistry } from '../main/capabilities/registry'
 import { vaultCapabilities, VAULT_NAMESPACES } from '../main/capabilities/vault-caps'
