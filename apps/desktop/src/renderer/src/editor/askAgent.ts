@@ -5,7 +5,8 @@
  * passage appears twice.
  *
  * No new transport: the finished string and a target session go to a seam on
- * `EditorDeps`, which `EditorPane` routes through `sendToAgent`.
+ * `EditorDeps`, which the editors route through the agent service
+ * (`useAskAgentSeam`). With no agent there is no seam and no button.
  */
 import { EditorSelection, StateField, type EditorState, type Extension } from '@codemirror/state'
 import { showTooltip, type EditorView, type Tooltip, type TooltipView } from '@codemirror/view'

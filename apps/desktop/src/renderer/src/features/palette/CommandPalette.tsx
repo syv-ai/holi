@@ -62,14 +62,9 @@ import {
   Icon,
   Kbd,
 } from '@/primitives'
-import {
-  AGENT_SURFACE,
-  agentSessionsAtom,
-  agentTerminalsAtom,
-  defaultAgentTargetAtom,
-  terminalLabel,
-} from '@/state/agent'
-import { openSessionAtom, sendToAgentAtom } from '@/state/agent-send'
+import { AGENT_SURFACE, agentSessionsAtom, agentTerminalsAtom, terminalLabel } from '@/state/agent'
+import { openSessionAtom } from '@/state/agent-send'
+import { useAgentService } from '@/state/agent-service'
 import { commandsAtom, runCommandAtom, type Command } from '@/state/commands'
 import {
   closePaletteAtom,
@@ -168,8 +163,8 @@ export function CommandPalette(): React.JSX.Element {
   const run = useSetAtom(runCommandAtom)
   const setWorkspace = useSetAtom(workspaceAtom)
   const openSession = useSetAtom(openSessionAtom)
-  const askTarget = useAtomValue(defaultAgentTargetAtom)
-  const sendToAgent = useSetAtom(sendToAgentAtom)
+  /** The Ask row is offered only while a plugin provides an agent. */
+  const agent = useAgentService()
 
   const rows = useMemo(
     () =>
@@ -311,11 +306,12 @@ export function CommandPalette(): React.JSX.Element {
   }
 
   const ask = (): void => {
+    if (agent === null) return
     const text = query.trim()
     beside.current = false
     keepFocus.current = true
     close()
-    void sendToAgent({ text, target: askTarget })
+    void agent.ask({ text, target: store.get(agent.targets).default })
   }
 
   /** The sidebar's orb for a session row, from the same rule the rows use. */
@@ -324,7 +320,7 @@ export function CommandPalette(): React.JSX.Element {
     return session === undefined ? 'bg-muted-foreground' : agentIndicator(session).dot
   }
 
-  const showAsk = cmdQuery === null && !tabsMode && query.trim() !== ''
+  const showAsk = agent !== null && cmdQuery === null && !tabsMode && query.trim() !== ''
   const grouped = query.trim() === '' && !tabsMode
   const placeholder = tabsMode
     ? 'Switch to an open tab'

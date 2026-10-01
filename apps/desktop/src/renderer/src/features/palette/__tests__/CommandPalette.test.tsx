@@ -8,19 +8,43 @@
  * agent seam.
  */
 import { emptyVaultSnapshot } from '@holi/shared'
-import { getDefaultStore } from 'jotai'
+import { atom, getDefaultStore } from 'jotai'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, expect, test, vi } from 'vitest'
 import { render, screen, waitFor } from '@/test/render'
 import { useCommandHotkeys } from '@/state/commands'
-import { agentSessionsAtom, agentTerminalsAtom, type AgentSession } from '@/state/agent'
+import type { RendererPlugin } from '@/plugin-api/types'
+import {
+  agentSessionsAtom,
+  agentTerminalsAtom,
+  askTargetsAtom,
+  defaultAgentTargetAtom,
+  type AgentSession,
+} from '@/state/agent'
+import { sendToAgentAtom, startSessionAtom } from '@/state/agent-send'
 import { paletteAtom } from '@/state/palette'
+import { corePluginsAtom } from '@/state/plugins'
 import { emptyWorkspace, openSurface, workspaceAtom } from '@/state/panes'
 import { recentsByVaultAtom } from '@/state/recents'
 import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
 import { CommandPalette } from '../CommandPalette'
 
 const store = getDefaultStore()
+
+/** A stand-in for the agent part: its service over the real agent state. */
+const AGENT: RendererPlugin = {
+  info: { id: 'agent', label: 'Agent', default: true },
+  agent: {
+    name: 'Claude',
+    sessions: agentSessionsAtom,
+    targets: atom((get) => ({
+      sessions: get(askTargetsAtom),
+      default: get(defaultAgentTargetAtom),
+    })),
+    ask: sendToAgentAtom,
+    start: startSessionAtom,
+  },
+}
 
 /** Shell's part: the one keydown listener over the table. */
 function Hotkeys(): null {
@@ -51,6 +75,8 @@ beforeEach(() => {
   store.set(paletteAtom, { open: false, mode: 'open', query: '', step: 0, stepDirection: 1 })
   store.set(agentSessionsAtom, [])
   store.set(agentTerminalsAtom, [])
+  // The Ask row goes through the agent service.
+  store.set(corePluginsAtom, [AGENT])
 })
 
 function mount() {

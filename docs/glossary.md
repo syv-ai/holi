@@ -65,8 +65,8 @@ vault switch or quit. There is no publish step.
 ### Reconcile
 
 The conflict path. A pull that conflicts is aborted at once, leaving a clean tree, and a banner
-offers **Ask Claude to reconcile**, which pauses autosave, re-runs the merge and hands it to an
-agent session.
+offers **Ask Claude to reconcile** (named for the running agent, and offered only while one runs),
+which pauses autosave, re-runs the merge and hands it to an agent session.
 
 ### 3-way reload
 

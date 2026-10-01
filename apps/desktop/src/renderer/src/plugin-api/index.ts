@@ -44,19 +44,12 @@ export {
   surfaceTabIdsAtom,
   tabForPathAtom,
 } from '@/state/surfaces'
-export { useAgentService } from '@/state/agent-service'
+export { agentSessionRowsAtom, useAgentService } from '@/state/agent-service'
 export { surfacesAtom } from '@/state/plugins'
 export { byRecency, recentsAtom } from '@/state/recents'
 export { openCommitInHistoryAtom } from '@/state/history'
 export { openDialogAtom, type ActiveDialog, type PluginDialog } from '@/state/dialogs'
 export { askPrompt } from '@/editor/askAgent'
-export {
-  agentSessionsAtom,
-  askTargetsAtom,
-  defaultAgentTargetAtom,
-  type AgentTarget,
-} from '@/state/agent'
-export { sendToAgentAtom } from '@/state/agent-send'
 export { useGlobalPanelLayout } from '@/state/preferences'
 export { matchHotkey } from '@/lib/hotkey'
 export { plainMarkdownExtensions } from '@/editor/extensions'

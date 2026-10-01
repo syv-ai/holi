@@ -49,16 +49,24 @@ const seam = vi.hoisted(() => ({
   shadow: null as ShadowRoot | null,
   /** What the viewer's store holds, for a read at send time. */
   store: {} as unknown,
-  /** The agent seam: an ask handed to `sendToAgentAtom`. */
+  /** The agent seam: an ask handed to the agent service. */
   send: vi.fn(),
 }))
 
-vi.mock('@/state/agent-send', async () => {
+vi.mock('@/state/agent-service', async (original) => {
   const { atom } = await import('jotai')
+  // One service for the whole file: a new one per render would read as the
+  // agent coming and going.
+  const service = {
+    name: 'Claude',
+    sessions: atom([]),
+    targets: atom({ sessions: [], default: 'new' }),
+    ask: (args: { text: string; target: string }) => seam.send(args),
+    start: async () => ({ ok: true }),
+  }
   return {
-    sendToAgentAtom: atom(null, (_get, _set, args: { text: string; target: string }) =>
-      seam.send(args),
-    ),
+    ...(await original<typeof import('@/state/agent-service')>()),
+    useAgentService: () => service,
   }
 })
 

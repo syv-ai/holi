@@ -56,6 +56,7 @@ import {
   rankTasksAtom,
   tasksAtom,
 } from '@/state/tasks'
+import { useAgentService } from '@/state/agent-service'
 import { nowAtom } from '@/state/clock'
 import { BoardCard } from './BoardCard'
 import { BoardDock, FilterChips } from './BoardDock'
@@ -178,6 +179,7 @@ const columnPresence = {
 
 export function BoardView(): React.JSX.Element {
   const tasks = useAtomValue(tasksAtom)
+  const agent = useAgentService()
   const patch = useSetAtom(patchTaskAtom)
   const move = useSetAtom(moveTaskAtom)
   const rankAll = useSetAtom(rankTasksAtom)
@@ -428,7 +430,7 @@ export function BoardView(): React.JSX.Element {
         // "No tasks yet" versus "nothing matches your filters".
         <p className="absolute inset-x-0 top-1/3 text-center text-xs text-muted-foreground">
           {everything.length === 0
-            ? 'No tasks yet. Add one with ⌘T, or ask Claude to.'
+            ? `No tasks yet. Add one with ⌘T${agent === null ? '.' : `, or ask ${agent.name} to.`}`
             : 'Nothing matches your filters.'}
         </p>
       )}

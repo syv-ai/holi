@@ -18,16 +18,14 @@ import { useEffect, useRef } from 'react'
 import { baseEditorExtensions, plainTextExtensions } from '@/editor/extensions'
 import { bodyStart, frontmatterValid, setFrontmatterCommit } from '@/editor/frontmatter'
 import { syntaxValid } from '@/editor/languages'
-import type { AskAgentSeam } from '@/editor/askAgent'
 import type { LinkNav } from '@/editor/links'
 import type { MentionData } from '@/editor/mentions'
 import { playOnce } from '@/lib/motion'
 import { applyReload } from '@/lib/apply-reload'
 import { registerBuffer } from '@/lib/buffer-registry'
 import { decideReload, hasNewText, type ConflictResolvers } from '@/lib/editor-reload'
-import { askTargetsAtom, defaultAgentTargetAtom } from '@/state/agent'
+import { NO_AGENT, useAskAgentSeam } from '@/state/agent-service'
 import { historyOpenAtom } from '@/state/history'
-import { sendToAgentAtom } from '@/state/agent-send'
 import { trpc } from '@/lib/trpc'
 import { fileHistoryAtom } from '@/state/file-history'
 import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
@@ -116,20 +114,13 @@ export function EditorPane({
       ...(t.due === undefined ? {} : { due: t.due }),
     })),
   }
-  const sendToAgent = useSetAtom(sendToAgentAtom)
   const setHistoryOpen = useSetAtom(historyOpenAtom)
-  const askTargets = useAtomValue(askTargetsAtom)
-  const defaultTarget = useAtomValue(defaultAgentTargetAtom)
-  /** In a ref, like `nav`: the extensions must not rebuild on every render, and
-   *  a closure over a stale list would offer sessions that have gone. */
-  const askAgentRef = useRef<AskAgentSeam>({
-    targets: () => ({ sessions: [], initial: 'new' }),
-    onAsk: () => Promise.resolve({ ok: true }),
-  })
-  askAgentRef.current = {
-    targets: () => ({ sessions: askTargets, initial: defaultTarget }),
-    onAsk: (prompt, target) => sendToAgent({ text: prompt, target }),
-  }
+  /** In a ref, like `nav`: the extensions must not rebuild on every render.
+   *  Whether there is an agent at all does rebuild them, below. */
+  const askAgent = useAskAgentSeam()
+  const askAgentRef = useRef(askAgent)
+  askAgentRef.current = askAgent
+  const hasAgent = askAgent !== null
   const navRef = useRef<LinkNav>({ openNote: () => {}, openExternal: () => {} })
   navRef.current = {
     // A link to a missing note or task no-ops rather than inventing a file.
@@ -213,10 +204,16 @@ export function EditorPane({
                     ),
                   mentionData: () => mentionRef.current,
                   nav: () => navRef.current,
-                  askAgent: {
-                    targets: () => askAgentRef.current.targets(),
-                    onAsk: (prompt, target) => askAgentRef.current.onAsk(prompt, target),
-                  },
+                  ...(hasAgent
+                    ? {
+                        askAgent: {
+                          targets: () =>
+                            askAgentRef.current?.targets() ?? { sessions: [], initial: 'new' },
+                          onAsk: (prompt, target) =>
+                            askAgentRef.current?.onAsk(prompt, target) ?? Promise.resolve(NO_AGENT),
+                        },
+                      }
+                    : {}),
                   notePath: path,
                   readOnly,
                 })),
@@ -269,8 +266,9 @@ export function EditorPane({
       viewRef.current = null
     }
     // `readOnly` rebuilds the view: entering a reconcile re-reads the file, so
-    // you see the markers the agent is working on. The teardown flushes first.
-  }, [path, remote, plain, readOnly, store])
+    // you see the markers the agent is working on. So does an agent coming or
+    // going, which adds or drops the Ask button. The teardown flushes first.
+  }, [path, remote, plain, readOnly, store, hasAgent])
 
   /**
    * The vault changed somewhere: re-read our own file and decide. The snapshot

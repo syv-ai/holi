@@ -15,7 +15,7 @@ import { atom } from 'jotai'
 import { isAgentSurfacePath, type VaultSnapshot } from '@holi/shared'
 import { storeTopic } from '../shared/bridge'
 import {
-  agentSessionsAtom,
+  agentSessionRowsAtom,
   historyEpochsAtom,
   recentsAtom,
   snapshotAtom,
@@ -34,7 +34,7 @@ export const appPushSignaturesAtom = atom((get): Record<string, string> => {
       .join('\n'),
     tasks: JSON.stringify(snapshot.tasks),
     sync: JSON.stringify(get(syncStateAtom)),
-    agent: JSON.stringify(get(agentSessionsAtom)),
+    agent: JSON.stringify(get(agentSessionRowsAtom)),
     recents: JSON.stringify(get(recentsAtom)),
     history: `${epochs.all}:${visible.map(([p, n]) => `${p}=${n}`).join(',')}`,
   }

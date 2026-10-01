@@ -1,6 +1,6 @@
 /**
  * The reconcile seed message — turn one of an agent session started from the
- * "Ask Claude to reconcile" button. Passed as the positional prompt to `claude`
+ * "Ask <agent> to reconcile" button. Passed as the positional prompt to `claude`
  * (see `buildAgentArgs`), so it is a plain first-person instruction to the agent,
  * not a system prompt.
  */

@@ -150,12 +150,12 @@ function tabName(tab: Tab, agents: TabSources): string {
 
 function tabTooltip(tab: Tab, agents: TabSources): string {
   if (tab.kind === 'note') return tab.path
+  const surface = agents.surfaces.get(tab.surface)
   const agentId = agentTabId(tab)
   if (agentId !== null) {
     const session = sessionOf(agentId, agents)
-    return session === null ? 'Claude Code' : agentIndicator(session).title
+    if (session !== null) return agentIndicator(session).title
   }
-  const surface = agents.surfaces.get(tab.surface)
   if (surface === undefined) return tab.surface
   // One of many (an app): its label and its path.
   return tab.id === undefined

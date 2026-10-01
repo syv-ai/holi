@@ -48,14 +48,13 @@ import {
   Video,
   X,
 } from 'lucide-react'
-import { useAtomValue, useSetAtom } from 'jotai'
+import { useAtomValue, useSetAtom, useStore } from 'jotai'
 import {
   activeRemoteAtom,
-  defaultAgentTargetAtom,
   matchHotkey,
   openDialogAtom,
   openNoteTabAtom,
-  sendToAgentAtom,
+  useAgentService,
   useGlobalPanelLayout,
   useHasCapability,
 } from '@/plugin-api'
@@ -244,8 +243,9 @@ export function MailView() {
   )
   const openNote = useSetAtom(openNoteTabAtom)
   const openDialog = useSetAtom(openDialogAtom)
-  const sendToAgent = useSetAtom(sendToAgentAtom)
-  const agentTarget = useAtomValue(defaultAgentTargetAtom)
+  /** Summarize shows only while a plugin provides an agent. */
+  const agent = useAgentService()
+  const store = useStore()
   /** Account-scoped, not per-vault: mail is the same mail in every vault, and it
    *  opens with no vault at all. See `useGlobalPanelLayout`. */
   const layout = useGlobalPanelLayout('mail')
@@ -253,19 +253,20 @@ export function MailView() {
   /**
    * Hand the open thread to the agent.
    *
-   * The target was chosen at render, and the session can end before the click,
-   * so a refusal falls back to a new session rather than a click that does
+   * The default target can end between being read and being sent to, so a
+   * refusal falls back to a new session rather than a click that does
    * nothing.
    */
   const summarize = async () => {
-    if (open === null) return
+    if (open === null || agent === null) return
     const text = buildSummarizePrompt({
       subject: open.subject,
       threadId: open.id,
       webUrl: open.webUrl,
     })
-    const res = await sendToAgent({ text, target: agentTarget })
-    if (!res.ok && agentTarget !== 'new') await sendToAgent({ text, target: 'new' })
+    const target = store.get(agent.targets).default
+    const res = await agent.ask({ text, target })
+    if (!res.ok && target !== 'new') await agent.ask({ text, target: 'new' })
   }
 
   const showDrafts = view.kind === 'drafts'
@@ -899,17 +900,19 @@ export function MailView() {
                 )}
                 {/* Goes to a real session, where follow-up questions live. It
                     lands unsent like every other ask. */}
-                <Tooltip content="ask the vault assistant to summarise this thread">
-                  <Button
-                    variant="secondary"
-                    size="xs"
-                    className="shrink-0 gap-1"
-                    onClick={() => void summarize()}
-                  >
-                    <Icon icon={Sparkles} size="sm" />
-                    Summarize
-                  </Button>
-                </Tooltip>
+                {agent !== null && (
+                  <Tooltip content="ask the vault assistant to summarise this thread">
+                    <Button
+                      variant="secondary"
+                      size="xs"
+                      className="shrink-0 gap-1"
+                      onClick={() => void summarize()}
+                    >
+                      <Icon icon={Sparkles} size="sm" />
+                      Summarize
+                    </Button>
+                  </Tooltip>
+                )}
                 {canLinkToTask && (
                   <Tooltip content="make a task linking this thread">
                     <Button

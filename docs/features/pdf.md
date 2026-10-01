@@ -20,7 +20,7 @@ Holi turns a markdown note into a branded PDF through a Typst template, and open
 
 - **Signatures:** drawn, typed or uploaded; signature only, no initials. The list is kept in `userData/pdf-signatures.json`, one per machine and person, saved on every change. The panel states that a placed signature is committed to the vault and stays in history.
 - **Read-only** sets or clears the PDF `readOnly` flag on every mark, comment and signature; the flags are the whole state. Links, form fields and popups are untouched.
-- **Ask agent** opens the ask popover. With a comment selected it pastes that thread; otherwise it pastes the file path, the comment count and the `holi pdf comments` command, never the comments. Nothing is submitted.
+- **Ask agent** opens the ask popover, and shows only while the agent service exists. With a comment selected it pastes that thread; otherwise it pastes the file path, the comment count and the `holi pdf comments` command, never the comments. Nothing is submitted.
 
 **`holi pdf comments <path> [--json]`** reads a saved PDF's comment threads through PDFium running in main, so PDFs saved by other tools (compressed object streams, UTF-16) read too. The viewer and the command share one thread model and formatter in the plugin's `shared/`: page, mark kind, covered text, author, local time, comment, replies (text notes linked by `/IRT`). The set matches the viewer's comments panel. Both `holi pdf` commands are seeded into `permissions.allow`: one reads, the other only finds the engine.
 

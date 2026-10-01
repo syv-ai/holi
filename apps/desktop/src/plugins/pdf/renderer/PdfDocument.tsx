@@ -31,7 +31,7 @@
  * - **It opens at 150%, or fit-width if narrower** (`openingZoomCap`), both
  *   before the first paint.
  */
-import { useAtomValue, useSetAtom } from 'jotai'
+import { atom, useAtomValue } from 'jotai'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
@@ -100,20 +100,22 @@ import {
   activeModeAtom,
   activeRemoteAtom,
   askPrompt,
-  askTargetsAtom,
   capClient,
   cn,
-  defaultAgentTargetAtom,
-  sendToAgentAtom,
   sessionAtom,
   snapshotAtom,
   trpc,
+  useAgentService,
+  type AskTargets,
 } from '@/plugin-api'
 import type { PdfCapabilities } from '../main/capabilities'
 
 /** How long the marks have to be quiet before the file is rewritten. A file
  *  write the autosave commit then picks up, not a commit itself. */
 const pdfCaps = capClient<PdfCapabilities>('pdf')
+
+/** Read in place of the agent's targets while there is no agent. */
+const NO_TARGETS = atom<AskTargets>({ sessions: [], default: 'new' })
 
 const SAVE_QUIET_MS = 1000
 
@@ -292,9 +294,12 @@ export function PdfDocument({
     /** The label of the button that opened it, for a screen reader. */
     label: string
   } | null>(null)
-  const sendToAgent = useSetAtom(sendToAgentAtom)
-  const askTargets = useAtomValue(askTargetsAtom)
-  const defaultTarget = useAtomValue(defaultAgentTargetAtom)
+  // Ask agent shows only while a plugin provides an agent. The viewer's
+  // commands read it through the ref, since they are registered once.
+  const agent = useAgentService()
+  const agentRef = useRef(agent)
+  agentRef.current = agent
+  const askTargets = useAtomValue(agent?.targets ?? NO_TARGETS)
 
   const hostRef = useRef<HTMLDivElement>(null)
   const viewerRef = useRef<PDFViewerRef>(null)
@@ -546,7 +551,7 @@ export function PdfDocument({
           id: ASK_AGENT_THREAD,
           label: 'Ask agent about this comment',
           icon: 'holi-sparkles',
-          visible: (c) => selected(c) !== null,
+          visible: (c) => agentRef.current !== null && selected(c) !== null,
           action: (c) =>
             openAsk(
               c.documentId,
@@ -559,7 +564,7 @@ export function PdfDocument({
           id: ASK_AGENT_PDF,
           label: 'Ask agent about this PDF',
           icon: 'holi-sparkles',
-          visible: (c) => selected(c) === null,
+          visible: (c) => agentRef.current !== null && selected(c) === null,
           action: (c) =>
             openAsk(c.documentId, 'ask-agent-pdf-button', null, 'Ask agent about this PDF'),
         })
@@ -722,37 +727,40 @@ export function PdfDocument({
       {commentRows.map(({ row, input, send }) =>
         createPortal(<PdfCommentField input={input} send={send} />, row, rowKey(row)),
       )}
-      <AskAgentPopover
-        anchor={ask?.anchor ?? null}
-        label={ask?.label ?? ''}
-        targets={{ sessions: askTargets, initial: defaultTarget }}
-        onClose={() => setAsk(null)}
-        onSend={async (instruction, target) => {
-          const registry = registryRef.current
-          if (ask === null || registry === null) return { ok: false, message: 'The PDF is closed.' }
-          const state = registry.getStore().getState()
-          // Nothing selected: the PDF and its comment count, not the comments
-          // themselves; the agent reads them when the ask is about them.
-          if (ask.threadId === null) {
-            const count = threadsInViewer(state, ask.documentId).length
-            return sendToAgent({ text: askPrompt(instruction, pdfAskHeader(path, count)), target })
-          }
-          // Read now, from the viewer's store, so a mark made a moment ago is
-          // in the ask before its save.
-          const threads = (
-            await threadsForAsk(
-              state,
-              ask.documentId,
-              registry.getEngine() as unknown as GlyphEngine,
-            )
-          ).filter((t) => t.id === ask.threadId)
-          if (threads.length === 0) {
-            return { ok: false, message: 'That comment is not in the PDF any more.' }
-          }
-          const text = askPrompt(instruction, formatCommentThreads(path, threads))
-          return sendToAgent({ text, target })
-        }}
-      />
+      {agent !== null && (
+        <AskAgentPopover
+          anchor={ask?.anchor ?? null}
+          label={ask?.label ?? ''}
+          targets={{ sessions: [...askTargets.sessions], initial: askTargets.default }}
+          onClose={() => setAsk(null)}
+          onSend={async (instruction, target) => {
+            const registry = registryRef.current
+            if (ask === null || registry === null)
+              return { ok: false, message: 'The PDF is closed.' }
+            const state = registry.getStore().getState()
+            // Nothing selected: the PDF and its comment count, not the comments
+            // themselves; the agent reads them when the ask is about them.
+            if (ask.threadId === null) {
+              const count = threadsInViewer(state, ask.documentId).length
+              return agent.ask({ text: askPrompt(instruction, pdfAskHeader(path, count)), target })
+            }
+            // Read now, from the viewer's store, so a mark made a moment ago is
+            // in the ask before its save.
+            const threads = (
+              await threadsForAsk(
+                state,
+                ask.documentId,
+                registry.getEngine() as unknown as GlyphEngine,
+              )
+            ).filter((t) => t.id === ask.threadId)
+            if (threads.length === 0) {
+              return { ok: false, message: 'That comment is not in the PDF any more.' }
+            }
+            const text = askPrompt(instruction, formatCommentThreads(path, threads))
+            return agent.ask({ text, target })
+          }}
+        />
+      )}
       {signatureColumn !== null &&
         createPortal(<p className="holi-signature-note">{PDF_SIGNATURE_NOTE}</p>, signatureColumn)}
     </div>

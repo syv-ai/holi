@@ -11,9 +11,7 @@
  */
 import { atom, type Getter, type Setter } from 'jotai'
 import { agentCap } from '../lib/agent-cap'
-import { buildReconcilePrompt } from '../lib/reconcile-prompt'
 import { focusSessionTerminal } from '../lib/session-terminals'
-import { trpc } from '../lib/trpc'
 import {
   AGENT_SURFACE,
   agentGeometryAtom,
@@ -178,20 +176,3 @@ export const duplicateSessionAtom = atom(
     return { ok: true }
   },
 )
-
-/**
- * "Ask Claude to reconcile". Re-materialise the conflict in the working
- * tree (main re-runs the merge), then give it its own session with the conflicted
- * paths as a submitted first turn. If the merge now applies cleanly (no paths),
- * the banner is already cleared and there is nothing to hand the agent.
- *
- * **The one submitted send.** Everywhere else an ask is pasted and left for the
- * user to send; a reconcile is a job Holi asked for on their behalf, and it gets
- * a session of its own rather than a paste into a conversation already in
- * flight.
- */
-export const reconcileAtom = atom(null, async (_get, set) => {
-  const { paths } = await trpc.sync.reconcile.mutate()
-  if (paths.length === 0) return
-  await set(startSessionAtom, { name: 'Reconcile', prompt: buildReconcilePrompt(paths) })
-})

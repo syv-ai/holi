@@ -34,7 +34,8 @@ import {
 } from '@/primitives'
 import { cn } from '@/lib/cn'
 import { syncLabel } from '@/lib/sync-label'
-import { reconcileAtom } from '@/state/agent-send'
+import { useAgentService } from '@/state/agent-service'
+import { reconcileAtom } from '@/state/reconcile'
 import { openSurface, workspaceAtom } from '@/state/panes'
 import { abandonReconcileAtom, retrySyncAtom, syncStateAtom } from '@/state/vaults'
 
@@ -68,6 +69,7 @@ function SyncPanel({ close }: { close: () => void }): React.JSX.Element {
   const state = useAtomValue(syncStateAtom)
   const setWorkspace = useSetAtom(workspaceAtom)
   const reconcile = useSetAtom(reconcileAtom)
+  const agent = useAgentService()
   const abandon = useSetAtom(abandonReconcileAtom)
   const retry = useSetAtom(retrySyncAtom)
   const label = syncLabel(state)
@@ -105,7 +107,7 @@ function SyncPanel({ close }: { close: () => void }): React.JSX.Element {
           Try again
         </Button>
       )}
-      {contentConflict && (
+      {contentConflict && agent !== null && (
         <Button
           variant="ghost"
           data-morph-row=""
@@ -116,7 +118,7 @@ function SyncPanel({ close }: { close: () => void }): React.JSX.Element {
           }}
         >
           <Icon icon={GitMerge} />
-          Ask Claude to reconcile
+          Ask {agent.name} to reconcile
         </Button>
       )}
       {/* While a reconcile runs its files are read-only: the way out, which

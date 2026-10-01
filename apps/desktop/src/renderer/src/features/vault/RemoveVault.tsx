@@ -8,13 +8,15 @@
  *
  * Confirmed at the start, naming what is lost. Leave and Delete then push
  * first; work that still will not reach GitHub blocks the removal and goes to
- * a new assistant session instead. A clone always goes to the Trash.
+ * a new agent session instead, when an agent runs. A clone always goes to the
+ * Trash.
  */
 import { useAtomValue, useSetAtom } from 'jotai'
 import { useEffect, useState } from 'react'
 import type { VaultMembership } from '../../../../main/router'
 import { Button, Dialog } from '@/primitives'
 import { trpc } from '@/lib/trpc'
+import { useAgentService } from '@/state/agent-service'
 import type { RemoveVaultIntent } from '@/state/dialogs'
 import { investigateStuckPushAtom, vaultRemovedAtom } from '@/state/vault-removal'
 import { vaultsAtom } from '@/state/vaults'
@@ -51,6 +53,7 @@ export function RemoveVault({
   const name = useAtomValue(vaultsAtom).find((v) => v.remote === remote)?.name ?? remote
   const removed = useSetAtom(vaultRemovedAtom)
   const investigate = useSetAtom(investigateStuckPushAtom)
+  const agent = useAgentService()
   const [membership, setMembership] = useState<VaultMembership | null>(null)
   const [step, setStep] = useState<Step>({ kind: 'confirm' })
   const [error, setError] = useState<string | null>(null)
@@ -91,7 +94,7 @@ export function RemoveVault({
   const live = membership?.kind === 'live' ? membership : null
 
   /** Push first. Anything still only here blocks the removal and goes to a new
-   *  assistant session in this vault. */
+   *  agent session in this vault, when an agent runs. */
   async function pushFirst(): Promise<boolean> {
     setStep({ kind: 'pushing' })
     const { ahead, dirty } = await trpc.vaults.settle.mutate({ remote })
@@ -157,7 +160,14 @@ export function RemoveVault({
                   : 'There are changes Holi has not committed'}
                 , so nothing was removed.
               </p>
-              <p>A new assistant session is looking into why. Try again once it is sorted.</p>
+              {agent !== null ? (
+                <p>A new assistant session is looking into why. Try again once it is sorted.</p>
+              ) : (
+                <p>
+                  Pushing failed. Look at <code>git status</code> and <code>git push</code> in the
+                  vault folder.
+                </p>
+              )}
             </>
           ) : step.kind === 'kept' ? (
             <p>

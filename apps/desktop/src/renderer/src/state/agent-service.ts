@@ -3,9 +3,10 @@
  * (docs/features/agent-sessions.md): null while no running plugin does, so
  * every "Ask" gates on it.
  */
-import { useAtomValue, useStore } from 'jotai'
+import { atom, useAtomValue, useStore } from 'jotai'
 import { useMemo } from 'react'
-import type { AgentService } from '@/plugin-api/types'
+import type { AskAgentSeam } from '@/editor/askAgent'
+import type { AgentService, AgentSessionRow } from '@/plugin-api/types'
 import { agentSourceAtom } from './plugins'
 
 export function useAgentService(): AgentService | null {
@@ -25,3 +26,37 @@ export function useAgentService(): AgentService | null {
     [source, store],
   )
 }
+
+/** The agent's live sessions, for an atom that cannot call a hook; empty with
+ *  no agent. */
+export const agentSessionRowsAtom = atom((get): readonly AgentSessionRow[] => {
+  const source = get(agentSourceAtom)
+  return source === null ? [] : get(source.sessions)
+})
+
+/**
+ * The editors' "Ask agent" seam over the service, or null with no agent, in
+ * which case an editor leaves the button out. The targets are read when the
+ * popover opens, since sessions come and go.
+ */
+export function useAskAgentSeam(): AskAgentSeam | null {
+  const service = useAgentService()
+  const store = useStore()
+  return useMemo(
+    () =>
+      service === null
+        ? null
+        : {
+            targets: () => {
+              const targets = store.get(service.targets)
+              return { sessions: [...targets.sessions], initial: targets.default }
+            },
+            onAsk: (prompt, target) => service.ask({ text: prompt, target }),
+          },
+    [service, store],
+  )
+}
+
+/** For an editor built once: the seam it was built with may outlive the
+ *  agent, and then an ask says so. */
+export const NO_AGENT = { ok: false, message: 'No agent is running in this vault.' } as const

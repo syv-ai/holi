@@ -11,12 +11,10 @@ import { EditorView, placeholder } from '@codemirror/view'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { useEffect, useRef } from 'react'
 import { trpc } from '@/lib/trpc'
-import type { AskAgentSeam } from '@/editor/askAgent'
 import { baseEditorExtensions } from '@/editor/extensions'
 import type { LinkNav } from '@/editor/links'
 import type { MentionData } from '@/editor/mentions'
-import { askTargetsAtom, defaultAgentTargetAtom } from '@/state/agent'
-import { sendToAgentAtom } from '@/state/agent-send'
+import { NO_AGENT, useAskAgentSeam } from '@/state/agent-service'
 import { openNoteTabAtom } from '@/state/panes'
 import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
 
@@ -73,18 +71,11 @@ export function TaskDescriptionEditor({
     })),
   }
   /** Same Ask agent seam the notes editor has: a passage of a task's
-   *  description is as askable as a passage of a note. */
-  const sendToAgent = useSetAtom(sendToAgentAtom)
-  const askTargets = useAtomValue(askTargetsAtom)
-  const defaultTarget = useAtomValue(defaultAgentTargetAtom)
-  const askAgentRef = useRef<AskAgentSeam>({
-    targets: () => ({ sessions: [], initial: 'new' }),
-    onAsk: () => Promise.resolve({ ok: true }),
-  })
-  askAgentRef.current = {
-    targets: () => ({ sessions: askTargets, initial: defaultTarget }),
-    onAsk: (prompt, target) => sendToAgent({ text: prompt, target }),
-  }
+   *  description is as askable as a passage of a note. The view is built once,
+   *  so whether there is an agent is decided then. */
+  const askAgent = useAskAgentSeam()
+  const askAgentRef = useRef(askAgent)
+  askAgentRef.current = askAgent
   const navRef = useRef<LinkNav>({ openNote: () => {}, openExternal: () => {} })
   navRef.current = {
     openNote: (target) =>
@@ -115,10 +106,16 @@ export function TaskDescriptionEditor({
                   ),
             mentionData: () => mentionRef.current,
             nav: () => navRef.current,
-            askAgent: {
-              targets: () => askAgentRef.current.targets(),
-              onAsk: (prompt, target) => askAgentRef.current.onAsk(prompt, target),
-            },
+            ...(askAgentRef.current === null
+              ? {}
+              : {
+                  askAgent: {
+                    targets: () =>
+                      askAgentRef.current?.targets() ?? { sessions: [], initial: 'new' },
+                    onAsk: (prompt, target) =>
+                      askAgentRef.current?.onAsk(prompt, target) ?? Promise.resolve(NO_AGENT),
+                  },
+                }),
             notePath,
             frontmatter: false,
           }),

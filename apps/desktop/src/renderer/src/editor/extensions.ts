@@ -65,8 +65,9 @@ export interface EditorDeps {
   mentionData: () => MentionData
   /** Where a clicked link goes. */
   nav: () => LinkNav
-  /** Hand the current selection to one of the vault's agent sessions. */
-  askAgent: AskAgentSeam
+  /** Hand the current selection to one of the vault's agent sessions.
+   *  Absent with no agent, and then there is no button. */
+  askAgent?: AskAgentSeam
   /** The open note's vault path, for note-relative image resolution. */
   notePath: string
   /** The document is locked while a reconcile resolves this file
@@ -115,7 +116,7 @@ export function baseEditorExtensions(deps: EditorDeps): Extension[] {
     docExistsFacet.of(deps.docExists),
     taskByPathFacet.of(deps.taskByPath),
     notePathFacet.of(deps.notePath),
-    askAgentTooltip(deps.notePath, deps.askAgent),
+    deps.askAgent === undefined ? [] : askAgentTooltip(deps.notePath, deps.askAgent),
     livePreview,
     // The caret's half of a mark's slide: the transition is CSS, and the
     // drawn caret has to be moved along while it runs.

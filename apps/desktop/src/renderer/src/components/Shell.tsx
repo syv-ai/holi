@@ -63,7 +63,8 @@ import {
   runningPluginsAtom,
   surfacesAtom,
 } from '@/state/plugins'
-import { reconcileAtom } from '@/state/agent-send'
+import { useAgentService } from '@/state/agent-service'
+import { reconcileAtom } from '@/state/reconcile'
 
 /** One shared empty array, so a pane not being dragged over keeps the same
  *  `allowed` reference between renders. */
@@ -110,6 +111,7 @@ export function Shell() {
   const [navOpen, setNavOpen] = useAtom(navOpenAtom)
   const historyTarget = useAtomValue(historyTargetPathAtom)
   const reconcile = useSetAtom(reconcileAtom)
+  const agent = useAgentService()
   const retrySync = useSetAtom(retrySyncAtom)
   const [heldBack, setHeldBack] = useAtom(heldBackAtom)
   /** The pane playing its exit, if any; the timer is the atom's
@@ -459,16 +461,18 @@ export function Shell() {
           <Button variant="ghost" size="xs" className="shrink-0" onClick={() => void retrySync()}>
             Try again
           </Button>
-          <Tooltip content="Re-run the merge and hand the conflict to the vault assistant to resolve">
-            <Button
-              variant="destructive"
-              size="xs"
-              className="shrink-0"
-              onClick={() => void reconcile()}
-            >
-              Ask Claude to reconcile
-            </Button>
-          </Tooltip>
+          {agent !== null && (
+            <Tooltip content="Re-run the merge and hand the conflict to the vault assistant to resolve">
+              <Button
+                variant="destructive"
+                size="xs"
+                className="shrink-0"
+                onClick={() => void reconcile()}
+              >
+                Ask {agent.name} to reconcile
+              </Button>
+            </Tooltip>
+          )}
         </div>
       )}
 

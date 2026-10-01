@@ -56,7 +56,7 @@ Every note is a `.md` file, edited in CodeMirror 6 with live preview: markdown r
 - The wiki grammar owns its range, or the parser's phantom inner link shadows the chip.
 - Block widgets apply `--editor-inset` themselves.
 - A widget standing in for source keeps the source's height (the comment banner, the divider). A block element inside a line gets an empty line box on either side from CodeMirror's cursor anchors, so a line's widget is inline.
-- The ask button uses `mousedown` + `preventDefault`, and is absent on read-only files and outside the notes stack.
+- The ask button uses `mousedown` + `preventDefault`, and is absent on read-only files, outside the notes stack, and with no agent service.
 - Completion chrome is scoped by the `cm-holi-completion` class to outrank CodeMirror, holds no hex, and keeps `icons` on (the table menu styles off it).
 
 ## Rejected
