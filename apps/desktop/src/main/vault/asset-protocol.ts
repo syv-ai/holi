@@ -1,4 +1,6 @@
+import { readFile } from 'node:fs/promises'
 import { vaultRelPath } from '@holi/shared'
+import type { PluginScheme } from '../plugin-api'
 import { absPathFor } from './vault-files'
 
 const MIME: Record<string, string> = {
@@ -39,4 +41,31 @@ export function assetAbsPath(root: string, requestUrl: string): string | null {
   } catch {
     return null
   }
+}
+
+/**
+ * `holi-vault://vault/<vaultRelPath>`: the open vault's files, read-only, for
+ * the renderer's `<img>`. `standard` so URLs parse with a host and a path;
+ * `secure`, `supportFetchAPI` and `stream` so `<img>` and fetch treat it like
+ * https and can stream large files.
+ *
+ * Resolving against the open vault (not a remote in the URL) is safe: there
+ * is exactly one, and a vault switch resets the workspace, so the open note is
+ * always in it.
+ */
+export const vaultScheme: PluginScheme = {
+  scheme: 'holi-vault',
+  privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true },
+  async handle(request, ctx) {
+    const vault = ctx.active()
+    if (vault === null) return new Response(null, { status: 404 })
+    const abs = assetAbsPath(vault.root, request.url)
+    if (abs === null) return new Response(null, { status: 403 })
+    try {
+      const bytes = await readFile(abs)
+      return new Response(bytes, { headers: { 'content-type': mimeFor(abs) } })
+    } catch {
+      return new Response(null, { status: 404 })
+    }
+  },
 }

@@ -25,14 +25,8 @@ import {
 } from 'electron'
 import { requestFlush, type FlushChannel } from './flush'
 import { guardNavigation } from './window-guard'
-import { assetAbsPath, mimeFor } from './vault/asset-protocol'
-import {
-  appHeadHtml,
-  appMimeFor,
-  injectAppHead,
-  parseAppUrl,
-  servableAppFile,
-} from './apps/app-protocol'
+import { vaultScheme } from './vault/asset-protocol'
+import { appScheme } from './apps/app-protocol'
 import { createSession } from './github/electron'
 import { createMembersCache } from './github/members-cache'
 import { installHoliCli } from './bridge/cli'
@@ -51,6 +45,7 @@ import type { GoogleCapabilities } from '../plugins/google/main/capabilities'
 import { install } from './plugin-host/installed'
 import { createPluginHost } from './plugin-host/host'
 import { pluginEvents, type PluginEventsDeps } from './plugin-host/events'
+import { frameSchemes, schemeEntries, serveScheme } from './plugin-host/schemes'
 import {
   describeUpdate,
   updateConflictPrompt,
@@ -65,7 +60,6 @@ import { createCoreServices, createUiReports } from './capabilities/services'
 import { createVaultHost } from './vault/active-vault'
 import { VaultRegistry, vaultRoot } from './vault/registry'
 import { scanVault } from './vault/vault-store'
-import { readVaultTheme } from './vault/theme'
 import { createDeliveredLog, createReminderRuntime } from './reminders/runtime'
 import { createNotifier } from './reminders/notify'
 import type { VaultTasks } from './reminders/sweep'
@@ -96,23 +90,14 @@ let mainWindow: BrowserWindow | null = null
 // vanishes from the menu bar, so it must outlive the setup closure.
 let tray: Tray | null = null
 
-// Privileged custom scheme for vault binary assets (images). `standard` so URLs
-// parse with a host + path; `secure`/`supportFetchAPI`/`stream` so <img> and
-// fetch treat it like https and can stream large files. Must be declared before
-// app-ready, so it lives at module top level, not in main().
-protocol.registerSchemesAsPrivileged([
-  {
-    scheme: 'holi-vault',
-    privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true },
-  },
-  // The vault-app scheme. Same privileges, and `standard` is load-bearing
-  // for a second reason here: it is what makes the URL's HOST parse as the app
-  // id, which is how one app's frame is confined to one app's directory.
-  {
-    scheme: 'holi-app',
-    privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true },
-  },
-])
+// Every scheme this build serves, core's then each plugin's: vault assets,
+// vault apps, and whatever plugins add. Electron takes them only before
+// app-ready, so they are declared at module top level, not in main().
+const SCHEMES = schemeEntries([vaultScheme, appScheme], MAIN_PLUGINS)
+protocol.registerSchemesAsPrivileged(
+  SCHEMES.map(({ scheme }) => ({ scheme: scheme.scheme, privileges: scheme.privileges })),
+)
+const FRAME_SCHEMES = frameSchemes(SCHEMES)
 
 // A second launch must not happen at all: one Holi process owns every vault,
 // so excluding a second app excludes a second writer on every clone, without a
@@ -153,6 +138,7 @@ function createWindow(): BrowserWindow {
     (url) => {
       void shell.openExternal(url)
     },
+    FRAME_SCHEMES,
   )
   return win
 }
@@ -216,7 +202,7 @@ async function main(): Promise<void> {
     registry: capabilities,
     userData: userDataDir,
     coreSeeds: CORE_SEEDS,
-    liveRoot: () => host.active()?.root ?? null,
+    active: () => host.active(),
     rootFor: (remote) => rootFor(remote),
     events: eventsDeps,
   })
@@ -264,65 +250,16 @@ async function main(): Promise<void> {
     },
   })
 
-  // Serve `holi-vault://vault/<vaultRelPath>` from the active vault, read-only.
-  // Resolving against the active vault (not a remote in the URL) is safe: there
-  // is exactly one ActiveVault and a vault switch resets the workspace, so the
-  // open note is always in the active vault.
-  protocol.handle('holi-vault', async (request) => {
-    const vault = host.active()
-    if (vault === null) return new Response(null, { status: 404 })
-    const abs = assetAbsPath(vault.root, request.url)
-    if (abs === null) return new Response(null, { status: 403 })
-    try {
-      const bytes = await readFile(abs)
-      return new Response(bytes, { headers: { 'content-type': mimeFor(abs) } })
-    } catch {
-      return new Response(null, { status: 404 })
-    }
-  })
-
-  /**
-   * A vault app, served from its own directory and its own origin.
-   *
-   * The frame is `sandbox="allow-scripts"` with no `allow-same-origin`, so this
-   * origin is opaque: an app cannot fetch `holi-vault://`, cannot touch the
-   * renderer's DOM, and `localStorage` throws. Reaching the vault's content is
-   * the bridge's job, and the bridge refuses the agent surface in `apps.*`.
-   *
-   * **No `Content-Security-Policy` header, deliberately.** Network is allowed
-   * (`docs/features/vault-apps.md`): an app may `fetch` anywhere. If a policy is
-   * ever added it must name `holi-app:` explicitly: `'self'` matches NOTHING in
-   * an opaque origin, so `default-src 'self'` would block the app's own `app.js`
-   * and read as a path bug rather than as a policy.
-   */
-  protocol.handle('holi-app', async (request) => {
-    const vault = host.active()
-    if (vault === null) return new Response(null, { status: 404 })
-    const parsed = parseAppUrl(request.url)
-    if (parsed === null) return new Response(null, { status: 400 })
-    const abs = await servableAppFile(vault.root, parsed.bundle, parsed.rel)
-    if (abs === null) return new Response(null, { status: 403 })
-
-    // The entry document is the one file that is rewritten: it carries the
-    // theme and the bridge. Everything else is served byte-for-byte.
-    if (parsed.rel === 'index.html') {
-      const html = await readFile(abs, 'utf8').catch(() => null)
-      if (html === null) return new Response(null, { status: 404 })
-      const theme = await readVaultTheme(vault.root)
-      // The renderer's mode rides in on the URL (`?mode=`).
-      const block = theme[parsed.mode]
-      return new Response(injectAppHead(html, appHeadHtml(block)), {
-        headers: { 'content-type': appMimeFor(abs) },
-      })
-    }
-
-    try {
-      const bytes = await readFile(abs)
-      return new Response(bytes, { headers: { 'content-type': appMimeFor(abs) } })
-    } catch {
-      return new Response(null, { status: 404 })
-    }
-  })
+  // Serve every scheme. A plugin's answers 404 while the open vault has it off.
+  for (const entry of SCHEMES) {
+    protocol.handle(
+      entry.scheme.scheme,
+      serveScheme(entry, {
+        active: () => host.active(),
+        runs: async (owner, root) => (await plugins.enabled(root)).has(owner),
+      }),
+    )
+  }
 
   // What the renderer reports the person is looking at, and their approvals
   // of apps' Google reads: capabilities and the router both read these.

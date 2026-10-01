@@ -86,6 +86,11 @@ subscribes every installed plugin's `events` handlers at boot, and a handler dro
 vault it does not care about. The other way, `window.holi.plugin.send(id, event)` is ordered and
 unanswered, and `ctx.on(name, handler)` hears only messages about the open vault. Vault apps,
 still core, use the same channel as `apps` (the agent's `holi apps open`).
+A plugin may serve URL schemes (`MainPlugin.schemes`). Electron takes schemes only before the app
+is ready, so every scheme in the build is registered at boot beside core's `holi-vault:` and
+`holi-app:`, and a plugin's handler answers 404 while the open vault has the plugin off. A scheme
+marked `frame` serves framed pages: the window guard lets such a frame move within its scheme and
+sends a link out of it to the browser.
 A plugin's own code sits in `main/`, `renderer/`, `shared/` and `test/` under its folder; its
 renderer imports its main side as types only, for `capClient`. The plugins are PDF
 ([pdf](features/pdf.md)) and Google ([google](features/google.md)).

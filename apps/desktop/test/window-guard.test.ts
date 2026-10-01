@@ -70,21 +70,24 @@ test('a malformed URL is refused rather than throwing', () => {
 })
 
 const APP = 'holi-app://4865.app/index.html'
+const FRAMES = new Set(['holi-app'])
 
 test('a web or mail link out of a vault app opens in the browser instead', () => {
-  expect(appFrameExit(APP, 'https://example.com/a')).toEqual({ open: 'https://example.com/a' })
-  expect(appFrameExit(APP, 'mailto:ada@syv.ai')).toEqual({ open: 'mailto:ada@syv.ai' })
+  expect(appFrameExit(APP, 'https://example.com/a', FRAMES)).toEqual({
+    open: 'https://example.com/a',
+  })
+  expect(appFrameExit(APP, 'mailto:ada@syv.ai', FRAMES)).toEqual({ open: 'mailto:ada@syv.ai' })
 })
 
 test('any other way out of a vault app opens nothing, and still stops the frame', () => {
   for (const url of ['file:///etc/passwd', 'holi-vault://x/a.md', 'javascript:alert(1)']) {
-    expect(appFrameExit(APP, url)).toEqual({ open: null })
+    expect(appFrameExit(APP, url, FRAMES)).toEqual({ open: null })
   }
 })
 
 test('a move within the app, and a frame that is not an app, are left alone', () => {
-  expect(appFrameExit(APP, 'holi-app://4865.app/page.html')).toBeNull()
-  expect(appFrameExit('https://example.com/', 'https://example.org/')).toBeNull()
+  expect(appFrameExit(APP, 'holi-app://4865.app/page.html', FRAMES)).toBeNull()
+  expect(appFrameExit('https://example.com/', 'https://example.org/', FRAMES)).toBeNull()
 })
 
 test('only web and mail links are handed to the system', () => {

@@ -8,9 +8,10 @@
  * files, and no app can read a note off disk — the bridge is the only route to
  * vault content, and the bridge is where the refusals live.
  *
- * Everything here is pure; the `protocol.handle` that calls it stays in
- * `index.ts` beside the vault one, so the two handlers read as the pair they are.
+ * `appScheme` is the handler, in the shape a plugin's scheme takes; the
+ * composition root registers it.
  */
+import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { exactPath } from '@holi/shared/path-safety-node'
 import {
@@ -21,6 +22,8 @@ import {
   vaultRelPath,
   type ThemeBlock,
 } from '@holi/shared'
+import type { PluginScheme } from '../plugin-api'
+import { readVaultTheme } from '../vault/theme'
 import { absPathFor } from '../vault/vault-files'
 import { mimeFor } from '../vault/asset-protocol'
 import { BRIDGE_JS } from './bridge-script'
@@ -167,4 +170,56 @@ export function injectAppHead(html: string, head: string): string {
   if (open === null) return `${head}${html}`
   const at = open.index + open[0].length
   return `${html.slice(0, at)}${head}${html.slice(at)}`
+}
+
+/**
+ * A vault app, served from its own directory and its own origin.
+ *
+ * The privileges match `holi-vault:`'s, and `standard` is load-bearing for a
+ * second reason here: it is what makes the URL's host parse as the app id,
+ * which is how one app's frame is confined to one app's directory.
+ *
+ * The frame is `sandbox="allow-scripts"` with no `allow-same-origin`, so this
+ * origin is opaque: an app cannot fetch `holi-vault://`, cannot touch the
+ * renderer's DOM, and `localStorage` throws. Reaching the vault's content is
+ * the bridge's job, and the bridge refuses the agent surface in `apps.*`.
+ *
+ * **No `Content-Security-Policy` header, deliberately.** Network is allowed
+ * (`docs/features/vault-apps.md`): an app may `fetch` anywhere. If a policy is
+ * ever added it must name `holi-app:` explicitly: `'self'` matches NOTHING in
+ * an opaque origin, so `default-src 'self'` would block the app's own `app.js`
+ * and read as a path bug rather than as a policy.
+ */
+export const appScheme: PluginScheme = {
+  scheme: 'holi-app',
+  privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true },
+  frame: true,
+  async handle(request, ctx) {
+    const vault = ctx.active()
+    if (vault === null) return new Response(null, { status: 404 })
+    const parsed = parseAppUrl(request.url)
+    if (parsed === null) return new Response(null, { status: 400 })
+    const abs = await servableAppFile(vault.root, parsed.bundle, parsed.rel)
+    if (abs === null) return new Response(null, { status: 403 })
+
+    // The entry document is the one file that is rewritten: it carries the
+    // theme and the bridge. Everything else is served byte-for-byte.
+    if (parsed.rel === 'index.html') {
+      const html = await readFile(abs, 'utf8').catch(() => null)
+      if (html === null) return new Response(null, { status: 404 })
+      const theme = await readVaultTheme(vault.root)
+      // The renderer's mode rides in on the URL (`?mode=`).
+      const block = theme[parsed.mode]
+      return new Response(injectAppHead(html, appHeadHtml(block)), {
+        headers: { 'content-type': appMimeFor(abs) },
+      })
+    }
+
+    try {
+      const bytes = await readFile(abs)
+      return new Response(bytes, { headers: { 'content-type': appMimeFor(abs) } })
+    } catch {
+      return new Response(null, { status: 404 })
+    }
+  },
 }

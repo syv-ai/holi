@@ -53,14 +53,22 @@ export function externalUrl(url: string): string | null {
   }
 }
 
+const schemeOf = (url: string): string => url.slice(0, Math.max(0, url.indexOf(':')))
+
 /**
- * Where a vault app's frame is trying to go, when that is out of the app: a
- * link in an app is a link the person meant to follow, so it opens in their
- * browser rather than replacing the app inside its tab. Null for a navigation
- * that is the app's own (`holi-app:` to `holi-app:`) or not an app's at all.
+ * Where a frame on one of `frameSchemes` (a vault app's `holi-app:`) is
+ * trying to go, when that is out of it: a link in an app is a link the person
+ * meant to follow, so it opens in their browser rather than replacing the app
+ * inside its tab. Null for a navigation within the frame's own scheme, or of a
+ * frame on no such scheme.
  */
-export function appFrameExit(frameUrl: string, next: string): { open: string | null } | null {
-  if (!frameUrl.startsWith('holi-app:') || next.startsWith('holi-app:')) return null
+export function appFrameExit(
+  frameUrl: string,
+  next: string,
+  frameSchemes: ReadonlySet<string>,
+): { open: string | null } | null {
+  const scheme = schemeOf(frameUrl)
+  if (!frameSchemes.has(scheme) || schemeOf(next) === scheme) return null
   return { open: externalUrl(next) }
 }
 
@@ -78,6 +86,7 @@ export function guardNavigation(
   win: BrowserWindow,
   loaded: string,
   openExternal: (url: string) => void,
+  frameSchemes: ReadonlySet<string>,
 ): void {
   win.webContents.setWindowOpenHandler(({ url }) => {
     const external = externalUrl(url)
@@ -90,7 +99,7 @@ export function guardNavigation(
   })
   win.webContents.on('will-frame-navigate', (event) => {
     if (event.isMainFrame) return
-    const exit = appFrameExit(event.frame?.url ?? '', event.url)
+    const exit = appFrameExit(event.frame?.url ?? '', event.url, frameSchemes)
     if (exit === null) return
     event.preventDefault()
     if (exit.open !== null) openExternal(exit.open)

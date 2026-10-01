@@ -8,8 +8,10 @@
  * holds core to the other direction: nothing in main imports a plugin except
  * the composition root.
  *
- * No `electron` import: plugins load under plain Node in the tests.
+ * No `electron` value import (types only): plugins load under plain Node in
+ * the tests.
  */
+import type { Privileges } from 'electron'
 import type { PluginInfo } from '@holi/shared'
 import type { CapabilityTable } from './capabilities/registry'
 import type { SeedContribution } from './vault/seed/types'
@@ -17,8 +19,37 @@ import type { SeedContribution } from './vault/seed/types'
 /** Undoes what an activation started. Run at quit. */
 export type Disposer = () => void | Promise<void>
 
+/** The vault Holi has open. */
+export interface LiveVault {
+  remote: string
+  /** Its clone on this machine. */
+  root: string
+}
+
+/** What a scheme's handler gets with each request. */
+export interface SchemeContext {
+  /** The open vault, or null with none open. */
+  active(): LiveVault | null
+}
+
+/**
+ * A URL scheme a plugin serves, such as vault apps' `holi-app:`. Every
+ * scheme in the build is registered before the app is ready, whether or not
+ * any vault runs its plugin, because Electron allows no later registration:
+ * the handler is the fence, and core answers 404 for it while the open vault
+ * has its plugin off.
+ */
+export interface PluginScheme {
+  scheme: string
+  privileges: Privileges
+  /** It serves pages in frames: a frame on it may move within the scheme,
+   *  and a link out of it opens in the browser (`window-guard.ts`). */
+  frame?: true
+  handle(request: Request, ctx: SchemeContext): Response | Promise<Response>
+}
+
 /** What a plugin gets when it starts. */
-export interface AppContext {
+export interface AppContext extends SchemeContext {
   /** Holi's own data directory on this machine, for state a plugin keeps
    *  outside any vault. */
   userData: string
@@ -47,6 +78,7 @@ export interface MainPlugin {
   /** What the plugin writes into a vault that runs it. Its `id` is the
    *  plugin's id. */
   seed?: SeedContribution
+  schemes?: readonly PluginScheme[]
   /** Runs once per process, the first time a vault that enables the plugin
    *  is opened. */
   activateApp?(ctx: AppContext): Disposer | Promise<Disposer>

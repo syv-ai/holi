@@ -11,6 +11,7 @@ import { createCapabilityRegistry } from '../src/main/capabilities/registry'
 import { noCoreServices } from '../src/main/capabilities/services'
 import { cap, noParams, type AppContext, type MainPlugin } from '../src/main/plugin-api'
 import type { PluginEvent } from '../src/main/plugin-host/events'
+import { schemeEntries, serveScheme } from '../src/main/plugin-host/schemes'
 import { createPluginHost } from '../src/main/plugin-host/host'
 import { coreSeed } from '../src/main/vault/seed/core'
 import { readSeedState } from '../src/main/vault/seed/state'
@@ -54,7 +55,7 @@ function rig(opts: { default?: boolean; roots?: Record<string, string>; live?: s
     registry,
     userData: '/nowhere',
     coreSeeds: [coreSeed([fake.info])],
-    liveRoot: () => null,
+    active: () => null,
     rootFor: async (remote) => opts.roots?.[remote] ?? null,
     events: {
       send: (channel, event) => void sent.push({ channel, event }),
@@ -153,6 +154,26 @@ describe('plugin events', () => {
       ['o/live', 'a'],
       ['o/live', 'b'],
     ])
+  })
+})
+
+describe('plugin schemes', () => {
+  it("answer 404 while the open vault has the scheme's plugin off", async () => {
+    const plugin: MainPlugin = {
+      info: { id: 'fake', label: 'Fake', default: true },
+      schemes: [{ scheme: 'holi-fake', privileges: {}, handle: () => new Response('served') }],
+    }
+    const [entry] = schemeEntries([], [plugin])
+    const root = await tempDir()
+    let runs = true
+    const serve = serveScheme(entry!, {
+      active: () => ({ remote: 'o/r', root }),
+      runs: async () => runs,
+    })
+    expect(await (await serve(new Request('holi-fake://x/'))).text()).toBe('served')
+    runs = false
+    expect((await serve(new Request('holi-fake://x/'))).status).toBe(404)
+    expect(() => schemeEntries(plugin.schemes!, [plugin])).toThrow('served twice')
   })
 })
 

@@ -12,7 +12,7 @@
  */
 import { enabledPlugins, type ResolvedVaultSettings } from '@holi/shared'
 import type { CapabilityRegistry } from '../capabilities/registry'
-import type { AppContext, Disposer, MainPlugin } from '../plugin-api'
+import type { AppContext, Disposer, LiveVault, MainPlugin } from '../plugin-api'
 import { pluginEvents, type PluginEventsDeps } from './events'
 import { ensureSeeded } from '../vault/seed/seed'
 import type { SeedContribution, SeedResult } from '../vault/seed/types'
@@ -24,8 +24,8 @@ export interface PluginHostDeps {
   userData: string
   /** What core seeds into every vault, ahead of any plugin. */
   coreSeeds: readonly SeedContribution[]
-  /** The open vault's clone, whose answer is cached; null with none open. */
-  liveRoot(): string | null
+  /** The open vault, whose answer is cached; null with none open. */
+  active(): LiveVault | null
   /** The clone of the vault `remote` names, open or not; null for none. */
   rootFor(remote: string): Promise<string | null>
   /** The window and `ipcMain`, for plugin events. */
@@ -70,7 +70,7 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
   async function read(root: string): Promise<Set<string>> {
     const at = generation
     const enabled = enabledPlugins((await readSettings(root)).plugins, infos)
-    if (at === generation && root === deps.liveRoot()) cache = { root, enabled }
+    if (at === generation && root === deps.active()?.root) cache = { root, enabled }
     return enabled
   }
 
@@ -80,7 +80,7 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
   }
 
   async function enabled(root: string): Promise<ReadonlySet<string>> {
-    if (cache !== null && cache.root === root && root === deps.liveRoot()) return cache.enabled
+    if (cache !== null && cache.root === root && root === deps.active()?.root) return cache.enabled
     return read(root)
   }
 
@@ -96,6 +96,7 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
     const events = pluginEvents(deps.events, id, runs)
     const ctx: AppContext = {
       userData: deps.userData,
+      active: deps.active,
       register: (namespaces, table) => {
         const undo = deps.registry.register(namespaces, table, id)
         undos.push(undo)
