@@ -360,3 +360,13 @@ and activation.
 - **`skills.update` reports a conflict hand-off as data,** and the renderer starts the session
   through the agent service. With no agent, the staged `.shipped.local` files are left for the
   person.
+- **The agent is a plugin (`src/plugins/agent/`), with Claude Code as its provider in
+  `main/claude/`.** `AgentProvider` holds exactly what the host called before. With the agent off,
+  no `.claude/` is seeded, no agent capability answers, and no Ask button shows.
+- **`.claude/settings.json` fragments are a core type,** because other plugins contribute to that
+  file and may not import the agent plugin.
+- **A surface can describe its open tabs (`Surface.tabs`: label, tooltip, dot),** and a plugin
+  can feed the palette (`RendererPlugin.palette`) and contribute commands. Each replaced a core
+  branch that recognised the agent by name.
+- **`RecentKind` is `path | surface | command`.** Agent tabs are surface recents, and
+  unlisted surfaces' recents never reach vault apps.
