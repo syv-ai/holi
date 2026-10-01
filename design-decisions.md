@@ -247,3 +247,14 @@ and activation.
 - **A seed contribution can own a prefix (`.claude/`).** Other plugins' files and fragments under
   it are skipped while the owner is off, and seeded once when it turns on. Google's gate, the
   apps check, the tasks deny rules and PDF's skills all follow from this one rule.
+
+### Executed in phase 0
+
+- **`/cli` is the only CLI door.** `/cap/` was removed once nothing posted to it. The registry
+  refuses a capability that opens the `cli` door without a `cli` spec. Bare `holi` prints usage
+  and exits 2.
+- **The bridge env keys are `HOLI_BRIDGE_PORT`/`HOLI_BRIDGE_TOKEN`.** The scripts always assign
+  the variables they read, so an inherited environment cannot steer them.
+- **Existing vaults reach the new hooks only through `holi skills update`,** by the standing rule
+  for shipped files. Until then an old `turn-signal.mjs` finds no `holi.env` and stops pausing
+  sync. No legacy reader was added.
