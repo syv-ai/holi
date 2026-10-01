@@ -121,3 +121,57 @@ and activation.
   name an app, or Home breaks when the apps plugin is off. An app bundle stays a valid `home`
   value, and new vaults are no longer seeded with `Home.app`. The list leaves out terminals,
   because `holi.open` cannot open them either.
+
+### Phase 1
+
+- **Seeding is contributions, and a contribution is a folder.** Core, the agent and each plugin
+  contribute `vault/once/**` and `vault/shipped/**` via eager `import.meta.glob` in their own
+  module (the glob must be static, and core cannot glob plugins). Binaries ride `?inline`, which
+  retires the brand-asset generator and its 740 KB generated module. A merged file
+  (`.gitignore`, `.claude/settings.json`) has one owner, and others add fragments, replacing the
+  hand-written `settingsWithRequired` blocks.
+- **Plugins reach core through one module per process.** `src/main/plugin-api.ts` and
+  `src/renderer/src/plugin-api/` are the only core imports a plugin may make (plus primitives and
+  composites). One reviewable list instead of cross-imports. ESLint enforces it in the renderer;
+  a small test enforces it for main, which is not linted.
+- **Enablement is a `plugins` map setting** resolved by a pure function in shared: the vault's
+  value, else the plugin's default, minus the machine's local offs. A local `true` is ignored.
+  The settings tab shows a toggle per installed plugin.
+- **A disabled plugin's capabilities are refused at dispatch,** so `holi pdf ...` answers "no
+  such method" in a vault with PDF off, whatever the process has loaded.
+- **Enabling a plugin seeds its shipped files once,** recorded per machine in seed state, so a
+  skill the team deleted stays deleted.
+- **An unclaimed `.pdf` opens in the file placeholder.** The file still exists; only plugin
+  surfaces close when their plugin turns off.
+- **Typst's path reaches the agent through a capability, not the environment.** `holi pdf typst`
+  ensures the binary and prints its path. An environment contribution from one plugin to the
+  agent would be a seam outside the six concepts.
+
+### Phase 2
+
+- **Google needs neither events nor per-vault activation, so phase 2 adds neither.** Main pushes
+  nothing Google-related, and the vault-to-account map is machine-wide and resolved from the
+  caller's remote. Events arrive with the first real pusher, and `activateVault` with the agent.
+- **A surface is its own tab member, `{kind: 'surface', surface, id?}`.** An open `{kind: string}`
+  would break narrowing everywhere. The pane, tab strip, palette, commands, Home options and
+  `holi.open` all read the registry. Surface kinds are validated only in the renderer, where the
+  registry lives.
+- **Rail items carry visibility as an atom,** read by one derived atom, so plugins that toggle
+  cannot break React's hook order.
+- **Google's own loopback server, token and `holi-google` CLI are deleted.** The core bridge
+  already authenticates per vault and supplies the remote, so `holi google <verb>` needs nothing
+  more. The send gate matches the new spelling, and `/cli` rejects anything before the verb so
+  the gate's pattern stays sound.
+- **A command that reads a body from stdin asks for it explicitly.** If the body is missing, the
+  server answers 428 without running, and the script retries once with stdin. A write never runs
+  on the first leg, and `send --draft` never blocks waiting on stdin.
+- **An app's consent is a field on the capability (`appGrant`),** enforced by the app door, so a
+  plugin never imports the apps plugin's grants.
+- **Plugins call each other through capabilities they hand-type.** Google types only the slice of
+  `tasks` it calls and gates its buttons on `useHasCapability('tasks.create')`. Dispatch
+  validates at runtime.
+- **The capability registry is an instance, not a module singleton.** The composition root
+  creates it and each test builds its own, so tests stay isolated. The APP_METHODS
+  exhaustiveness check is a compile-time `satisfies` at the composition point.
+- **Each door maps `CapabilityError` itself** (tRPC error for the renderer, 422 text for the
+  CLI). It is three lines per door, so a shared mapper would be indirection.
