@@ -274,7 +274,7 @@ describe('a command that reads stdin', () => {
   const echo = cap({
     doors: ['cli'],
     writes: true,
-    cli: { args: ['to'], summary: 'echo a body', stdin: 'body' },
+    cli: { args: ['to'], summary: 'echo a body', stdin: 'body', stdinUnless: 'draft' },
     params: (raw) => raw as Record<string, string>,
     run: async (_ctx, p) => {
       ran(p)
@@ -303,5 +303,11 @@ describe('a command that reads stdin', () => {
     const res = await run(bin, ['x', 'echo', 'ada', '--body', 'hi'], env, 'ignored')
     expect(res).toMatchObject({ code: 0, stdout: 'hi\n' })
     expect(ran).toHaveBeenCalledWith({ to: 'ada', body: 'hi' })
+  })
+
+  it('never asks for stdin when the param that means "no body" is given', async () => {
+    const res = await run(bin, ['x', 'echo', 'ada', '--draft', 'd1'], env, 'ignored')
+    expect(res.code).toBe(0)
+    expect(ran).toHaveBeenCalledWith({ to: 'ada', draft: 'd1' })
   })
 })

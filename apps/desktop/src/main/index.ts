@@ -40,8 +40,6 @@ import { createCalendarPrefs } from './google/calendar-prefs'
 import { createImagePrefs } from './google/image-prefs'
 import { openGoogleCache } from './google/cache'
 import { createGoogleData, type GoogleData } from './google/data'
-import { createGoogleOpsServer } from './google/ops-server'
-import { installGoogleCli } from './google/cli'
 import { installHoliCli } from './bridge/cli'
 import type { MainAppMethod } from '@holi/shared'
 import { appCapabilities, APP_NAMESPACES } from './apps/capabilities'
@@ -65,16 +63,6 @@ import {
 } from './vault/seed/update'
 import { registerGitRoutes } from './vault/git-routes'
 import { GoogleApi } from './google/api'
-import { createEvent, deleteEvent, listAgenda, updateEvent } from './google/calendar'
-import {
-  createDraft,
-  listThreads,
-  readThread,
-  replyToThread,
-  sendDraft,
-  sendMessage,
-  textOnly,
-} from './google/gmail'
 import { registerIpc } from './ipc'
 import { createRouter, localToday } from './router'
 import { admitApps, createAppGrants } from './apps/app-grants'
@@ -193,8 +181,8 @@ async function main(): Promise<void> {
   // rather than renamed: it holds one account's mail.
   await rm(join(userDataDir, 'google-cache.db'), { force: true })
   const googleAccounts = await createGoogleAccountsManager()
-  // One file, two readers: the agenda panel (via the router) and the agent (via
-  // the ops server below). Plain JSON: it holds calendar ids, not a credential.
+  // One file, every reader: the agenda view, an app and the agent all read
+  // their agenda through it. Plain JSON: it holds calendar ids, not a credential.
   const calendarPrefs = createCalendarPrefs(join(app.getPath('userData'), 'google-calendars.json'))
   /**
    * Senders whose remote images always load.
@@ -265,10 +253,8 @@ async function main(): Promise<void> {
   const vaultEnv = new Map<string, () => void>()
   /**
    * What an open vault's `bridge.local.env` carries: the bridge's port and
-   * the vault's standing token (the same one git's hooks in the clone use),
-   * and the Google ops server's port with a bearer minted for this vault and
-   * revoked when Holi leaves it. Called at open; `bridge` and `googleOps`
-   * exist long before any vault can open.
+   * the vault's standing token (the same one git's hooks in the clone use).
+   * Called at open; `bridge` exists long before any vault can open.
    */
   const contributeVaultEnv = (remote: string): (() => void) => {
     const undo: Array<() => void> = []
@@ -279,17 +265,6 @@ async function main(): Promise<void> {
           HOLI_BRIDGE_PORT: String(bridgePort),
           HOLI_BRIDGE_TOKEN: bridge.tokenForVault(remote),
         }),
-      )
-    }
-    const googlePort = googleOps.port()
-    if (googlePort !== null) {
-      const token = googleOps.mintToken(remote)
-      undo.push(
-        bridgeEnv.contribute(remote, {
-          HOLI_GOOGLE_PORT: String(googlePort),
-          HOLI_GOOGLE_TOKEN: token,
-        }),
-        () => googleOps.revoke(token),
       )
     }
     return () => undo.forEach((u) => u())
@@ -461,8 +436,10 @@ async function main(): Promise<void> {
     sessionsFor: (remote) => (host.active()?.remote === remote ? (agent?.sessions() ?? []) : []),
   })
   const googleCaps = googleCapabilities({
+    accounts: googleAccounts,
     dataFor: googleDataFor,
-    overrides: async () => (await calendarPrefs.read()) ?? {},
+    calendarPrefs,
+    imagePrefs,
   })
   capabilities.register(VAULT_NAMESPACES, vaultCaps)
   capabilities.register(APP_NAMESPACES, appCaps)
@@ -511,10 +488,6 @@ async function main(): Promise<void> {
     },
     registry,
     session,
-    googleAccounts,
-    calendarPrefs,
-    googleDataFor,
-    imagePrefs,
     host,
     vaultRoot: vaultRoot(),
     openExternal: async (url) => {
@@ -537,77 +510,6 @@ async function main(): Promise<void> {
   // and drives the manager's pause/resume. The forward ref is safe: its
   // callbacks fire only at runtime, long after `agent` is assigned.
   let agent: AgentSessions
-  /**
-   * The agent's door to Google: a loopback server serving calendar
-   * and mail results, with main making the API calls using the token only it
-   * holds, plus the generated `holi-google` command. No MCP server.
-   *
-   * The reads are the raw fetchers, which take no cache and so cannot read one:
-   * the agent gets current data, structurally.
-   *
-   * The **label writes go through `googleData`'s bound methods**, the same ones
-   * the router calls, so an agent's archive lands in the cache the UI paints
-   * from. Passing the four methods rather than the object keeps the server
-   * unable to read the cache.
-   *
-   * `send`/`draft`/`reply` and the calendar writes are raw functions: they have
-   * no cache entry to patch.
-   */
-  /**
-   * The data layer for the vault whose bearer made the request, never
-   * the active vault. An agent session outlives a vault switch, so resolving by
-   * what is on screen would have a backgrounded agent write to another vault's
-   * mailbox.
-   */
-  const agentGoogleData = async (remote: string): Promise<GoogleData> => {
-    const data = await googleDataFor(remote)
-    if (data === null) throw new Error('this vault has no Google account connected')
-    return data
-  }
-
-  /** A Google client for one vault's account, for the raw (uncached) ops. */
-  const agentGoogleApi = (remote: string): GoogleApi =>
-    new GoogleApi({
-      accessToken: async () => {
-        const session = await googleAccounts.sessionFor(remote)
-        if (session === null) throw new Error('this vault has no Google account connected')
-        return session.getAccessToken()
-      },
-    })
-
-  const googleOps = createGoogleOpsServer((remote) => ({
-    // Through the SAME overrides file the panel writes: a calendar the user
-    // switched off is not fetched for the agent either.
-    agenda: async (window) =>
-      listAgenda(agentGoogleApi(remote), window, { overrides: await calendarPrefs.read() }),
-    // The agent gets the list itself, not the page envelope: `nextPageToken` is
-    // a UI affordance.
-    threads: async (query) => (await listThreads(agentGoogleApi(remote), { query })).threads,
-    // `textOnly` is the asymmetry, and it is deliberate: the UI renders
-    // sanitized HTML, the agent gets prose. See `google/gmail.ts`.
-    thread: async (id) => textOnly(await readThread(agentGoogleApi(remote), id)),
-
-    // Label writes, through the vault's `GoogleData`, so the UI's cached list
-    // learns about them at the same moment Gmail does.
-    setRead: async (id, read) => (await agentGoogleData(remote)).setRead(id, read),
-    star: async (id, on) => (await agentGoogleData(remote)).setStarred(id, on),
-    archive: async (id) => (await agentGoogleData(remote)).archive(id),
-    trash: async (id) => (await agentGoogleData(remote)).trash(id),
-
-    // New messages and events: nothing cached to patch.
-    draft: ({ threadId, ...mail }) => createDraft(agentGoogleApi(remote), mail, threadId),
-    send: (input) =>
-      'draftId' in input
-        ? sendDraft(agentGoogleApi(remote), input.draftId)
-        : sendMessage(agentGoogleApi(remote), input.mail),
-    reply: (threadId, body, all) => replyToThread(agentGoogleApi(remote), threadId, body, { all }),
-    schedule: (event) => createEvent(agentGoogleApi(remote), event),
-    reschedule: (id, patch) => updateEvent(agentGoogleApi(remote), id, patch),
-    unschedule: (id) => deleteEvent(agentGoogleApi(remote), id),
-  }))
-  await googleOps.start()
-  const googleCliPath = await installGoogleCli(app.getPath('userData'))
-  // Same bin directory, so one PATH prepend covers both.
   const holiCliPath = await installHoliCli(app.getPath('userData'))
 
   /**
@@ -649,7 +551,7 @@ async function main(): Promise<void> {
   })
   registerGitRoutes(bridge, { rootFor })
   await bridge.start()
-  const binDir = dirname(googleCliPath)
+  const binDir = dirname(holiCliPath)
   const terminals = createAgentTerminals({ getWindow: () => mainWindow })
   agent = createAgentSessions({
     host,
@@ -666,7 +568,7 @@ async function main(): Promise<void> {
         remote,
         root,
         systemPrefersDark: nativeTheme.shouldUseDarkColors,
-        env: { HOLI_BIN: holiCliPath, HOLI_GOOGLE_BIN: googleCliPath },
+        env: { HOLI_BIN: holiCliPath },
       }),
     takeFirstSpawn,
     binDir: () => binDir,
@@ -868,7 +770,6 @@ async function main(): Promise<void> {
         // teardown.
         await agent.leave().catch((err) => console.error('[quit] agent leave failed:', err))
         await bridge.stop().catch((err) => console.error('[quit] bridge stop failed:', err))
-        await googleOps.stop().catch((err) => console.error('[quit] google ops stop failed:', err))
         await plugins.disposeAll().catch((err) => console.error('[quit] plugins stop failed:', err))
         // A flush point is a flush THEN a commit, and only the renderer can do
         // the first half: the editor's newest words are not on disk until it

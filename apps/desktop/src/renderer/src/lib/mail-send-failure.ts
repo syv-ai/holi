@@ -5,7 +5,7 @@
  * perform, rate limits one worth offering, and the rest none, so the text is
  * handed back unchanged.
  *
- * The code first (`rethrowGoogle` maps Google's errors onto tRPC codes); the
+ * The code first (Google's capabilities map its errors onto refusal codes); the
  * regexes are the fallback for an error without one.
  */
 

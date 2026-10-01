@@ -78,10 +78,8 @@ export interface AgentEnvOpts {
   /**
    * The directory holding Holi's generated commands, **prepended to `PATH`**.
    *
-   * It exists for the send gate. The gate is a `PreToolUse` hook matching
-   * the command *text*, and `"$HOLI_GOOGLE_BIN" send` contains no `holi-google`
-   * at all, so the agent has to type the bare name. `holi` lives in the same
-   * directory.
+   * It exists for the send gate and the ask rules, which match the command
+   * *text*: with `holi` on `PATH` the agent types the bare name.
    */
   binDir?: string | null
   /**
@@ -138,15 +136,12 @@ export function buildAgentEnv(
   // `bridge.local.env`, which its commands read in preference to anything.
   delete env.HOLI_BRIDGE_PORT
   delete env.HOLI_BRIDGE_TOKEN
-  delete env.HOLI_GOOGLE_PORT
-  delete env.HOLI_GOOGLE_TOKEN
-  delete env.HOLI_GOOGLE_BIN
   delete env.HOLI_BIN
   // Reserved for the same reason: an inherited value would put the agent
   // back on the machine's `~/.claude`.
   delete env.CLAUDE_CONFIG_DIR
   if (opts.configDir) env.CLAUDE_CONFIG_DIR = opts.configDir
-  // Prepended, never appended: an earlier `holi-google` or `holi` on the
+  // Prepended, never appended: an earlier `holi` on the
   // inherited PATH would otherwise win under a name the gate trusts.
   if (opts.binDir) {
     env.PATH = env.PATH ? `${opts.binDir}:${env.PATH}` : opts.binDir

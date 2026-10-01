@@ -6,7 +6,7 @@
  * refresh may return a new one and invalidate the old. Two independent
  * refreshers racing on one stored refresh token invalidate each other, and the
  * symptom is an intermittent "reconnect Google" that nobody can reproduce. So
- * every consumer (including the agent's `holi-google`, via the ops server) asks
+ * every consumer (including the agent's `holi google`, via the bridge) asks
  * *this* object for a token; nothing else calls Google's token endpoint.
  *
  * `getAccessToken()` single-flights, so ten concurrent callers produce one

@@ -7,16 +7,23 @@ import { Provider, createStore } from 'jotai'
 import { beforeEach, expect, test, vi } from 'vitest'
 import { render, waitFor } from '@/test/render'
 import { googleAccountAtom, useGoogleAccount } from '../google'
+import { activeRemoteAtom } from '../vaults'
 
 const statusMock = vi.fn()
 const accountsMock = vi.fn()
 vi.mock('../../lib/trpc', () => ({
   trpc: {
-    google: {
-      status: { query: () => statusMock() },
-      // The same read also asks which accounts exist and which one
-      // this vault uses. Mocked here so these stay about the shared atom.
-      accounts: { query: () => accountsMock() },
+    cap: {
+      run: {
+        mutate: async ({ name }: { name: string }) =>
+          name === 'google.status'
+            ? statusMock()
+            : // The same read also asks which accounts exist and which one
+              // this vault uses. Mocked here so these stay about the shared atom.
+              name === 'google.accounts'
+              ? accountsMock()
+              : Promise.reject(new Error(`unexpected ${name}`)),
+      },
     },
   },
 }))
@@ -34,6 +41,7 @@ function Probe() {
 }
 
 const renderProbe = (store = createStore()) => {
+  store.set(activeRemoteAtom, 'syv-ai/vault')
   const view = render(
     <Provider store={store}>
       <Probe />

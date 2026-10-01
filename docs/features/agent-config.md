@@ -13,8 +13,8 @@ marketplaces, MCP servers) is excluded by construction, and one vault's plugins 
 It is also the key of the vault's Claude Code supervisor, so the agent list shows that vault's
 sessions only. Holi creates the directory when it opens the vault and merges into its
 `settings.json`: `disableClaudeAiConnectors` (only when absent), `theme` (dark or light, from the
-app's resolved colour mode) and an `env` block with Holi's static paths (`HOLI_BIN`,
-`HOLI_GOOGLE_BIN`), the one channel that reaches every background session. It
+app's resolved colour mode) and an `env` block with Holi's static paths (`HOLI_BIN`), the one
+channel that reaches every background session. It
 removes the `statusLine` older versions installed. A theme change reaches a running session on
 **Restart** (`claude respawn`).
 
@@ -22,8 +22,7 @@ removes the `statusLine` older versions installed. A theme change reaches a runn
 session's environment is its supervisor's, which may predate this Holi. Every command and hook
 walks up from its current directory to the folder holding `.holi/vault` and reads
 `.holi/state/bridge.local.env` there (mode 0600), written whole each time Holi opens the vault
-and deleted when it leaves: the bridge's port and the vault's token, and the Google port and a
-Google token minted for the vault. It is a map each part of Holi contributes to
+and deleted when it leaves: the bridge's port and the vault's token. It is a map each part of Holi contributes to
 (`bridgeEnv.contribute`), and it is parsed key by key, never sourced, because a collaborator
 could force-add one. `CLAUDE_CONFIG_DIR` stays the agent's config silo only.
 
@@ -103,13 +102,14 @@ additions are commands in a directory prepended to `PATH`, plus skills that docu
   argument can also be given as `--name value`, `--json` prints the value, and nothing may come
   before the verb. Exit 0 prints the answer, 1 a refusal, 2 a usage error. A command that reads a
   body from stdin and was not given one is answered 428 without running, and the script sends
-  stdin once. Today: `apps open|init`, `skills update`, `pdf comments`, `tasks list|complete`,
+  stdin once (`send --draft <id>` reads none). Today: `apps open|init`, `skills update`,
+  `pdf comments|typst`, `google agenda|search|read|mark-read|star|archive|trash|draft|send|reply|schedule|reschedule|unschedule`, `tasks list|complete`,
   `store list|get|put|delete|check`, `docs list|read|render`, `sync status`, `agent sessions`,
   `vault members|recents`. The registry's reads the agent already has as Grep, Read and git
   (search, history, settings) stay app-only rather than grow a second way in. The script finds
   the bridge through the vault's `bridge.local.env`. All reversible or read-only (a record write is a file
-  change in git history), so none is gated.
-- `holi-google`: mail and calendar through main, which holds the tokens ([google.md](google.md)).
+  change in git history) except `google send` and `google reply`, which the send gate asks about.
+- `holi google <verb>`: mail and calendar through main, which holds the tokens ([google.md](google.md)).
 - `holi pdf typst` for PDF export, which prints the Typst binary's path ([pdf.md](pdf.md)).
 - Shipped skills: `memory`, `using-tasks`, `vault-apps`, `theme`, `gmail-calendar`, `md-to-pdf`,
   `pdf-comments`, `holi-feedback` (a GitHub issue on syv-ai/holi, labelled `vault-assistant`,
@@ -125,7 +125,8 @@ outranks an allow in every scope, so getting a tool back means removing it from 
 `settings.json`; a skill comes back by setting it to `"on"`, which the merge leaves alone.
 
 **Permissions.** Claude Code's native prompts are the permission UX. The seeded rules ask for
-`curl`, `wget` and the undoable `holi-google` writes, and allow `holi pdf comments`. Sending mail is
+`curl`, `wget` and `holi google archive|trash|unschedule|send|reply` (one rule per verb), and allow
+`holi pdf comments`. Sending mail is
 behind a seeded `PreToolUse` hook that always asks ([google.md](google.md)). The agent's commits pass
 the vault's pre-commit transforms like anyone's ([vaults-sync.md](vaults-sync.md)).
 

@@ -8,9 +8,11 @@
  * This wrapper exists because the dialog registry carries only serialisable
  * entries, so `sendAs` and the address book are fetched here.
  */
+import { useAtomValue } from 'jotai'
 import { useEffect, useState } from 'react'
 import { MailComposer } from './MailComposer'
-import { trpc } from '../../lib/trpc'
+import { googleCap } from '../../state/google'
+import { activeRemoteAtom } from '../../state/vaults'
 import type { MailAddress } from '../../lib/mail-types'
 
 export function ComposeMailDialog({
@@ -22,19 +24,21 @@ export function ComposeMailDialog({
 }): React.JSX.Element {
   const [sendAs, setSendAs] = useState<string[]>([])
   const [contacts, setContacts] = useState<MailAddress[]>([])
+  const remote = useAtomValue(activeRemoteAtom)
 
   useEffect(() => {
     // Both are memoised per account in `googleData`, so opening this repeatedly
     // costs nothing. Neither failure is worth blocking the composer over.
-    void trpc.google.sendAs
-      .query()
+    if (remote === null) return
+    void googleCap
+      .sendAs(remote)
       .then(setSendAs)
       .catch(() => setSendAs([]))
-    void trpc.google.contacts
-      .query()
+    void googleCap
+      .contacts(remote)
       .then(setContacts)
       .catch(() => setContacts([]))
-  }, [])
+  }, [remote])
 
   return (
     <MailComposer

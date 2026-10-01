@@ -170,21 +170,18 @@ describe('buildAgentEnv', () => {
   })
 
   /**
-   * The gate matches command text, so the command text has to be predictable.
-   * With only `$HOLI_GOOGLE_BIN`, the agent types
-   * `"$HOLI_GOOGLE_BIN" send` and any rule keyed on the name `holi-google`
-   * matches nothing — which is exactly the hole the originally planned
-   * `Bash(holi-google send:*)` had.
+   * The send gate and the ask rules match command text, so the command text
+   * has to be predictable: the agent types the bare `holi`.
    */
   it('prepends the Holi bin dir to PATH so the bare names resolve', () => {
     const env = buildAgentEnv({ PATH: '/usr/bin:/bin' }, { binDir: '/data/bin' })
 
     expect(env.PATH).toBe('/data/bin:/usr/bin:/bin')
-    // Prepended, not appended: another holi-google earlier in PATH would win.
+    // Prepended, not appended: another `holi` earlier in PATH would win.
     expect(env.PATH!.startsWith('/data/bin:')).toBe(true)
   })
 
-  it('leaves PATH alone when there is no google bin dir', () => {
+  it('leaves PATH alone when there is no bin dir', () => {
     expect(buildAgentEnv({ PATH: '/usr/bin:/bin' }).PATH).toBe('/usr/bin:/bin')
     expect(buildAgentEnv({ PATH: '/usr/bin:/bin' }, { binDir: null }).PATH).toBe('/usr/bin:/bin')
   })
@@ -197,20 +194,6 @@ describe('buildAgentEnv', () => {
     const env = buildAgentEnv({ PATH: '/usr/bin', HOLI_BRIDGE_PORT: '9', HOLI_BRIDGE_TOKEN: 'ab' })
     expect(env.HOLI_BRIDGE_PORT).toBeUndefined()
     expect(env.HOLI_BRIDGE_TOKEN).toBeUndefined()
-  })
-
-  it('strips inherited Google keys so a vault cannot point the agent elsewhere', () => {
-    // The agent asks this channel for the user's mail; letting a committed
-    // `.env` redirect it would be a vault stealing another vault's inbox.
-    const env = buildAgentEnv({
-      PATH: '/usr/bin',
-      HOLI_GOOGLE_PORT: '9',
-      HOLI_GOOGLE_TOKEN: 'evil',
-      HOLI_GOOGLE_BIN: '/tmp/evil',
-    })
-    expect(env.HOLI_GOOGLE_PORT).toBeUndefined()
-    expect(env.HOLI_GOOGLE_TOKEN).toBeUndefined()
-    expect(env.HOLI_GOOGLE_BIN).toBeUndefined()
   })
 
   /**

@@ -5,7 +5,7 @@ description: Read and act on the user's Google Calendar and Gmail — their agen
 
 # Gmail & Calendar
 
-The user's Google account is connected to Holi. One command, `holi-google`,
+The user's Google account is connected to Holi. One command, `holi google`,
 reads and acts on both.
 
 **The rule that sorts everything you can do here: you may do anything the user
@@ -24,15 +24,15 @@ not something to work around.
 
 ## The command
 
-`holi-google` is on your `PATH`. (`$HOLI_GOOGLE_BIN` is its absolute path and
-also works.) Everything returns JSON on stdout.
+`holi` is on your `PATH`, and `holi google <verb>` is every command here
+(bare `holi` lists them all). Everything returns JSON on stdout.
 
 ```sh
-holi-google agenda                      # the next 7 days
-holi-google agenda 2026-08-04T00:00:00Z 2026-08-05T00:00:00Z
-holi-google search 'from:jane is:unread'
-holi-google search ''                   # the inbox
-holi-google read <threadId>
+holi google agenda                      # the next 7 days
+holi google agenda 2026-08-04T00:00:00Z 2026-08-05T00:00:00Z
+holi google search 'from:jane is:unread'
+holi google search ''                   # the inbox
+holi google read <threadId>
 ```
 
 If the command says Holi is not running or Google is not connected, tell the
@@ -85,39 +85,39 @@ because a table layout would cost you context and tell you nothing.
 ## Acting on mail
 
 ```sh
-holi-google mark-read <threadId> [--unread]
-holi-google star <threadId> [--off]
-holi-google archive <threadId>          # out of the inbox, still in All Mail
-holi-google trash <threadId>            # Gmail's trash, recoverable for 30 days
+holi google mark-read <threadId> [--unread]
+holi google star <threadId> [--off]
+holi google archive <threadId>          # out of the inbox, still in All Mail
+holi google trash <threadId>            # Gmail's trash, recoverable for 30 days
 ```
 
 **Writing mail — the body always comes from stdin**, so a multi-line message
 survives intact:
 
 ```sh
-holi-google draft --to ada@syv.ai --subject 'Q2 budget' <<'EOF'
+holi google draft --to ada@syv.ai --subject 'Q2 budget' <<'EOF'
 Hi Ada,
 
 Here are the numbers.
 EOF
 
-holi-google draft --thread <threadId> --to ada@syv.ai --subject 'Re: Q2 budget' <<'EOF'
+holi google draft --thread <threadId> --to ada@syv.ai --subject 'Re: Q2 budget' <<'EOF'
 Sounds good.
 EOF
 
-holi-google reply <threadId> <<'EOF'     # to the SENDER; subject from the thread
+holi google reply <threadId> <<'EOF'     # to the SENDER; subject from the thread
 Yes, Tuesday works.
 EOF
 
-holi-google reply <threadId> --all <<'EOF'   # to everyone on the thread
+holi google reply <threadId> --all <<'EOF'   # to everyone on the thread
 Yes, Tuesday works.
 EOF
 
-holi-google send --to ada@syv.ai --subject 'Q2 budget' [--cc bo@syv.ai] <<'EOF'
+holi google send --to ada@syv.ai --subject 'Q2 budget' [--cc bo@syv.ai] <<'EOF'
 Hi Ada,
 EOF
 
-holi-google send --draft <draftId>       # send a draft you already wrote
+holi google send --draft <draftId>       # send a draft you already wrote
 ```
 
 **If you drafted it, send it with `--draft`.** `draft` returns an `id`; pass
@@ -151,10 +151,10 @@ them.** So say what you are about to send, in chat, before you send it.
 ## Acting on the calendar
 
 ```sh
-holi-google schedule --title 'Deep work' --start 2026-08-06T09:00:00Z --end 2026-08-06T11:00:00Z
-holi-google schedule --title 'Off' --start 2026-08-06 --end 2026-08-07 --all-day
-holi-google reschedule <eventId> [--start <iso>] [--end <iso>] [--title <t>]
-holi-google unschedule <eventId>
+holi google schedule --title 'Deep work' --start 2026-08-06T09:00:00Z --end 2026-08-06T11:00:00Z
+holi google schedule --title 'Off' --start 2026-08-06 --end 2026-08-07 --all-day
+holi google reschedule <eventId> [--start <iso>] [--end <iso>] [--title <t>]
+holi google unschedule <eventId>
 ```
 
 This is for **the user's own time** — blocking out work, moving their own

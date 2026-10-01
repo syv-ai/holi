@@ -87,7 +87,7 @@ const items = holi.store('items') // this app's own records (see Keeping data)
 const off = holi.on('docs', () => redraw()) // see Hearing about changes
 ```
 
-Plus `holi.calendar.events({ from, to })` and `holi.mail.threads(query)`, which
+Plus `holi.google.agenda({ from, to })` and `holi.google.search(query)`, which
 need an opt-in (see Reading someone's mail or calendar). That is the whole API.
 
 `<holi-note path="projects/q2.md"></holi-note>` shows a note, rendered and themed,
@@ -178,8 +178,9 @@ Prefer this to polling. A put or delete from the app itself fires
 
 ## Reading someone's mail or calendar
 
-`holi.calendar.events({ from, to })` (ISO instants, at most 92 days apart) and
-`holi.mail.threads(query)` (Gmail's search grammar; none means the inbox) read
+`holi.google.agenda({ from, to })` (ISO instants, at most 92 days apart; none
+means the next 7 days) and `holi.google.search(query)` (Gmail's search grammar;
+none means the inbox; a page, `{ threads, nextPageToken }`) read
 the Google account of **whoever has the app open**, not the vault's. So they are
 off until the app opts in, in `app.yaml`:
 

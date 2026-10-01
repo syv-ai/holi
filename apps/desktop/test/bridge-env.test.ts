@@ -79,15 +79,15 @@ describe('the env file', () => {
   it('carries what each part contributes, as KEY=value lines, owner-only', async () => {
     const env = createBridgeEnv(() => {})
     env.contribute('syv/vault', { HOLI_BRIDGE_PORT: '5000', HOLI_BRIDGE_TOKEN: 'ab12' })
-    const google = env.contribute('syv/vault', { HOLI_GOOGLE_PORT: '6000' })
+    const other = env.contribute('syv/vault', { HOLI_OTHER_PORT: '6000' })
     await env.attach('syv/vault', dir)
     expect(await readFile(file(), 'utf8')).toBe(
-      'HOLI_BRIDGE_PORT=5000\nHOLI_BRIDGE_TOKEN=ab12\nHOLI_GOOGLE_PORT=6000\n',
+      'HOLI_BRIDGE_PORT=5000\nHOLI_BRIDGE_TOKEN=ab12\nHOLI_OTHER_PORT=6000\n',
     )
     expect((await stat(file())).mode & 0o777).toBe(0o600)
 
     // Withdrawn, it is rewritten without; Holi leaving, it is gone.
-    google()
+    other()
     await env.attach('syv/vault', dir)
     expect(await readFile(file(), 'utf8')).toBe('HOLI_BRIDGE_PORT=5000\nHOLI_BRIDGE_TOKEN=ab12\n')
     await env.detach('syv/vault')

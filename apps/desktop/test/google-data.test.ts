@@ -14,8 +14,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { GoogleApi } from '../src/main/google/api'
 import { openGoogleCache, type GoogleCache } from '../src/main/google/cache'
 import { createGoogleData, threadsCacheKey, type GoogleData } from '../src/main/google/data'
-import { listAgenda } from '../src/main/google/calendar'
-import { listThreads } from '../src/main/google/gmail'
 
 const CAL_LIST = 'https://www.googleapis.com/calendar/v3/users/me/calendarList'
 const WINDOW = { timeMin: '2026-08-04T00:00:00Z', timeMax: '2026-08-11T00:00:00Z' }
@@ -234,21 +232,6 @@ describe('createGoogleData', () => {
 
       expect(calls()).toBe(4)
     })
-  })
-
-  it('the agent’s ops server never reads the cache', async () => {
-    const g = google()
-    // Exactly what `main/index.ts` hands `createGoogleOpsServer`: the raw
-    // functions. They take no cache parameter, so the exclusion is structural
-    // rather than a rule someone has to keep remembering.
-    await listAgenda(g.api(), WINDOW, { overrides: {} })
-    await listThreads(g.api(), {})
-
-    // The agent asks for current data ("Do not cache"); nothing it did
-    // touched the store, so nothing it reads can be stale.
-    expect(cache.readAgenda('')).toBeNull()
-    expect(cache.readThreads('')).toBeNull()
-    expect(existsSync(path)).toBe(true)
   })
 })
 

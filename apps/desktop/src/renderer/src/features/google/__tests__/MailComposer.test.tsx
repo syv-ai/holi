@@ -12,7 +12,9 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { getDefaultStore } from 'jotai'
 import { MailComposer } from '../MailComposer'
+import { activeRemoteAtom } from '../../../state/vaults'
 import type { ComposeIntent } from '../../../lib/compose-intent'
 import type { ThreadMessage } from '../../../lib/mail-types'
 
@@ -21,13 +23,24 @@ const send = vi.fn()
 const discardDraft = vi.fn()
 const draftQuery = vi.fn()
 
+/** Google's capabilities, by name, through the UI door. */
+const google: Record<string, (params: unknown) => unknown> = {
+  'google.saveDraft': (p) => saveDraft(p),
+  'google.send': (p) => send(p),
+  'google.discardDraft': (p) => discardDraft(p),
+  'google.draftBody': (p) => draftQuery(p),
+}
+
 vi.mock('../../../lib/trpc', () => ({
   trpc: {
-    google: {
-      saveDraft: { mutate: (input: unknown) => saveDraft(input) },
-      send: { mutate: (input: unknown) => send(input) },
-      discardDraft: { mutate: (input: unknown) => discardDraft(input) },
-      draft: { query: (input: unknown) => draftQuery(input) },
+    cap: {
+      run: {
+        mutate: async ({ name, paramsJson }: { name: string; paramsJson?: string }) => {
+          const verb = google[name]
+          if (verb === undefined) throw new Error(`unexpected ${name}`)
+          return verb(paramsJson === undefined ? undefined : JSON.parse(paramsJson))
+        },
+      },
     },
   },
 }))
@@ -79,6 +92,8 @@ const saveState = (): string => screen.getByTestId('save-state').textContent ?? 
 
 beforeEach(() => {
   vi.clearAllMocks()
+  // The composer writes in the vault open when it mounts.
+  getDefaultStore().set(activeRemoteAtom, 'syv-ai/vault')
   saveDraft.mockResolvedValue({ id: 'd-1' })
   send.mockResolvedValue({ id: 'm-9' })
   discardDraft.mockResolvedValue(undefined)

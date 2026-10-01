@@ -123,8 +123,8 @@ Claude Code itself (its session listing and turn hooks), never inferred from ter
 
 Each vault's agent gets its own `CLAUDE_CONFIG_DIR`, so it inherits the vault's committed `.claude/`,
 `AGENTS.md` and `memory/`, not the machine's global config. Claude Code's own permission prompts
-stay on. There is no MCP server: the agent uses its native tools plus small Holi CLIs (`holi`,
-`holi-google`) that talk to main. Holi pauses sync while a turn runs and reviews a turn as the commit
+stay on. There is no MCP server: the agent uses its native tools plus one small Holi CLI (`holi`)
+that talks to main. Holi pauses sync while a turn runs and reviews a turn as the commit
 range it produced.
 
 See [agent-sessions](features/agent-sessions.md), [agent-config](features/agent-config.md) and

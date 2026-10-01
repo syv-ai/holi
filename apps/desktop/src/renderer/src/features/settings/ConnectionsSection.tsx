@@ -19,12 +19,13 @@
  * because the shell shows the agenda and mail chips on the same answer. Only
  * the flow's transient state is local.
  */
+import { useAtomValue } from 'jotai'
 import { useEffect, useRef, useState } from 'react'
 import { Button } from '@/primitives'
 import { SettingsHeading, SettingsNote } from './settings-ui'
-import { useGoogleAccount } from '@/state/google'
+import { googleCap, useGoogleAccount } from '@/state/google'
 import { useAlwaysAllowedSenders, useForgetImageSenders } from '@/state/mail-images'
-import { trpc } from '@/lib/trpc'
+import { activeRemoteAtom } from '@/state/vaults'
 
 /** The flow's transient state. "Connected" is deliberately absent: that is the
  *  shared atom's to know. */
@@ -47,23 +48,27 @@ export function ConnectionsSection(): React.JSX.Element {
     currentSub,
     refresh: refreshGoogle,
   } = useGoogleAccount()
+  const remote = useAtomValue(activeRemoteAtom)
   const [phase, setPhase] = useState<Phase>({ kind: 'idle' })
-  /** Set while a connect is in flight, so unmounting cancels it rather than
-   *  leaving a listener holding a port for the life of the app. */
-  const connecting = useRef(false)
+  /** The vault a connect in flight is for, so unmounting cancels it rather
+   *  than leaving a listener holding a port for the life of the app. */
+  const connecting = useRef<string | null>(null)
 
   useEffect(() => {
     return () => {
-      if (connecting.current) void trpc.google.cancelConnect.mutate()
+      if (connecting.current !== null) void googleCap.cancelConnect(connecting.current)
     }
   }, [])
 
   const connect = async () => {
+    if (remote === null) return
     setPhase({ kind: 'connecting' })
-    connecting.current = true
+    connecting.current = remote
     try {
-      await trpc.google.connect.mutate()
-      const result = await trpc.google.awaitConnect.mutate()
+      await googleCap.connect(remote)
+      // Settles when the browser comes back, the person cancels, or the flow
+      // times out: there is no IPC timeout to race.
+      const result = await googleCap.awaitConnect(remote)
       if (result.kind === 'granted' && result.account !== null) {
         // Writing the shared atom makes the shell's chips appear on the same
         // tick. `refreshGoogle` then re-reads what was actually granted: a user
@@ -81,13 +86,13 @@ export function ConnectionsSection(): React.JSX.Element {
         error: err instanceof Error ? err.message : 'Could not connect to Google.',
       })
     } finally {
-      connecting.current = false
+      connecting.current = null
     }
   }
 
   /** Unlink THIS vault. The account and every other vault using it survive. */
   const disconnect = async () => {
-    await trpc.google.disconnectVault.mutate().catch(() => undefined)
+    if (remote !== null) await googleCap.disconnectVault(remote).catch(() => undefined)
     setAccount(null)
     void refreshGoogle()
     setPhase({ kind: 'idle' })
@@ -95,14 +100,14 @@ export function ConnectionsSection(): React.JSX.Element {
 
   /** Reuse an account already connected here. No consent: the grant exists. */
   const useAccount = async (sub: string) => {
-    await trpc.google.useAccount.mutate({ sub }).catch(() => undefined)
+    if (remote !== null) await googleCap.useAccount(remote, { sub }).catch(() => undefined)
     setAccount(undefined) // back to "not asked", so the shell re-reads with it
     void refreshGoogle()
   }
 
   /** Revoke at Google and drop it everywhere. The destructive one. */
   const removeAccount = async (sub: string) => {
-    await trpc.google.removeAccount.mutate({ sub }).catch(() => undefined)
+    if (remote !== null) await googleCap.removeAccount(remote, { sub }).catch(() => undefined)
     setAccount(undefined)
     void refreshGoogle()
   }

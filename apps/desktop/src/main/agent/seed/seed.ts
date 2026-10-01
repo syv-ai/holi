@@ -182,11 +182,11 @@ const GOOGLE_SETTINGS: SettingsFragment = {
   ],
   permissions: {
     ask: [
-      'Bash(holi-google archive:*)',
-      'Bash(holi-google trash:*)',
-      'Bash(holi-google unschedule:*)',
-      'Bash(holi-google send:*)',
-      'Bash(holi-google reply:*)',
+      'Bash(holi google archive:*)',
+      'Bash(holi google trash:*)',
+      'Bash(holi google unschedule:*)',
+      'Bash(holi google send:*)',
+      'Bash(holi google reply:*)',
     ],
   },
 }

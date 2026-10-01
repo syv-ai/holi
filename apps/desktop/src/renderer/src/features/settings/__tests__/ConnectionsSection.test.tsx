@@ -10,15 +10,19 @@ import userEvent from '@testing-library/user-event'
 import { Provider, createStore } from 'jotai'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ConnectionsSection } from '../ConnectionsSection'
+import { activeRemoteAtom } from '@/state/vaults'
 
 /** A fresh jotai store per test: the google atoms are module level, so one
  *  case's answer would otherwise still be held when the next one renders. */
-const render = () =>
-  rtlRender(
-    <Provider store={createStore()}>
+const render = () => {
+  const store = createStore()
+  store.set(activeRemoteAtom, 'syv-ai/vault')
+  return rtlRender(
+    <Provider store={store}>
       <ConnectionsSection />
     </Provider>,
   )
+}
 
 const status = vi.fn()
 const accounts = vi.fn()
@@ -26,18 +30,26 @@ const useAccount = vi.fn()
 const removeAccount = vi.fn()
 const disconnectVault = vi.fn()
 
+/** Google's capabilities, by name, through the UI door. */
+const google: Record<string, (params: unknown) => unknown> = {
+  'google.status': () => status(),
+  'google.accounts': () => accounts(),
+  'google.useAccount': (p) => useAccount(p),
+  'google.removeAccount': (p) => removeAccount(p),
+  'google.disconnectVault': () => disconnectVault(),
+  'google.imageSenders': async () => [],
+}
+
 vi.mock('../../../lib/trpc', () => ({
   trpc: {
-    google: {
-      status: { query: () => status() },
-      accounts: { query: () => accounts() },
-      useAccount: { mutate: (input: unknown) => useAccount(input) },
-      removeAccount: { mutate: (input: unknown) => removeAccount(input) },
-      disconnectVault: { mutate: () => disconnectVault() },
-      connect: { mutate: vi.fn() },
-      awaitConnect: { mutate: vi.fn() },
-      cancelConnect: { mutate: vi.fn() },
-      imageSenders: { query: async () => [] },
+    cap: {
+      run: {
+        mutate: async ({ name, paramsJson }: { name: string; paramsJson?: string }) => {
+          const verb = google[name]
+          if (verb === undefined) throw new Error(`unexpected ${name}`)
+          return verb(paramsJson === undefined ? undefined : JSON.parse(paramsJson))
+        },
+      },
     },
   },
 }))

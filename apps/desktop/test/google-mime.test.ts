@@ -175,7 +175,7 @@ describe('buildRfc822 — the marker', () => {
 
 describe('buildRfc822 — single part, unchanged', () => {
   /**
-   * The agent's `holi-google send` still takes this path, so its shape is
+   * The agent's `holi google send` still takes this path, so its shape is
    * pinned byte for byte. The one difference from before the composer landed is
    * the `X-Holi-Source` line; everything else — order, spelling, CRLF, the blank
    * line before the body — is asserted here rather than described.

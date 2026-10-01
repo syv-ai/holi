@@ -193,7 +193,7 @@ describe('the seed tables', () => {
   it('seeds the gmail-calendar skill with the command and the linking rule', () => {
     const skill = SEED_FILES['.claude/skills/gmail-calendar/SKILL.md']!
     expect(skill).toContain('name: gmail-calendar')
-    expect(skill).toContain('$HOLI_GOOGLE_BIN')
+    expect(skill).toContain('holi google')
     // The two things the agent gets wrong without being told: that a link is a
     // body markdown link (not frontmatter, not a wiki-link), and that a Gmail
     // URL must not be hand-assembled.
@@ -272,11 +272,11 @@ describe('the seed tables', () => {
     expect(settings.permissions.ask).toEqual([
       'Bash(curl:*)',
       'Bash(wget:*)',
-      'Bash(holi-google archive:*)',
-      'Bash(holi-google trash:*)',
-      'Bash(holi-google unschedule:*)',
-      'Bash(holi-google send:*)',
-      'Bash(holi-google reply:*)',
+      'Bash(holi google archive:*)',
+      'Bash(holi google trash:*)',
+      'Bash(holi google unschedule:*)',
+      'Bash(holi google send:*)',
+      'Bash(holi google reply:*)',
     ])
   })
 
@@ -287,7 +287,7 @@ describe('the seed tables', () => {
    * `matcher: 'Bash'` with **no `if` condition** is deliberate. An `if` keyed on
    * one spelling of the command would miss the other two the agent can produce,
    * and a gate that misses fails OPEN while still reading like protection —
-   * which is exactly what the originally planned `Bash(holi-google send:*)` rule did.
+   * which is exactly what the originally planned `Bash(holi google send:*)` rule did.
    */
   it('wires the send gate to every Bash call, deciding in the hook rather than in a matcher', () => {
     const settings = JSON.parse(SETTINGS_SEED)
@@ -546,7 +546,7 @@ describe('mergedSettings', () => {
     const after = parse(mergedSettings(before))
 
     expect(gateOf(after.hooks.PreToolUse).hooks[0].command).toContain('google-send-gate.mjs')
-    expect(after.permissions.ask).toContain('Bash(holi-google send:*)')
+    expect(after.permissions.ask).toContain('Bash(holi google send:*)')
     expect(after.permissions.deny).toContain('SendFeedback')
     expect(after.skillOverrides['code-review']).toBe('off')
   })
@@ -577,7 +577,7 @@ describe('mergedSettings', () => {
     expect(after.model).toBe('opus')
     // Added, not replaced
     expect(after.permissions.ask).toContain('Bash(rm:*)')
-    expect(after.permissions.ask).toContain('Bash(holi-google send:*)')
+    expect(after.permissions.ask).toContain('Bash(holi google send:*)')
   })
 
   it('allows the read-only holi pdf commands without a prompt, in a vault that predates them', () => {
@@ -613,7 +613,7 @@ describe('mergedSettings', () => {
 
   it('opts the vault out of claude.ai cloud connectors', () => {
     // The agent reached for a claude.ai Gmail connector in preference to
-    // `holi-google`, routing around main-as-sole-token-authority, the send gate
+    // `holi google`, routing around main-as-sole-token-authority, the send gate
     // and the cache. `true` in any scope wins, so this checked-in file settles it.
     const seeded = mergedSettings(JSON.stringify({ hooks: {}, permissions: {} }))
 
@@ -680,11 +680,11 @@ describe('the connector opt-out reaches vaults that already exist', () => {
         ask: [
           'Bash(curl:*)',
           'Bash(wget:*)',
-          'Bash(holi-google archive:*)',
-          'Bash(holi-google trash:*)',
-          'Bash(holi-google unschedule:*)',
-          'Bash(holi-google send:*)',
-          'Bash(holi-google reply:*)',
+          'Bash(holi google archive:*)',
+          'Bash(holi google trash:*)',
+          'Bash(holi google unschedule:*)',
+          'Bash(holi google send:*)',
+          'Bash(holi google reply:*)',
         ],
       },
       disableClaudeAiConnectors: false,

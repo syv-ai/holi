@@ -38,8 +38,8 @@ export const APP_METHODS = [
   'vault.history',
   'sync.status',
   'agent.sessions',
-  'calendar.events',
-  'mail.threads',
+  'google.agenda',
+  'google.search',
   'tasks.complete',
 ] as const
 

@@ -55,7 +55,8 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   `docs.list`, `docs.read`, `docs.render` (a note as HTML, inline HTML escaped and only web links
   kept, so a note cannot run script as the app), `tasks.list`, `vault.recents`, `docs.search` (names, then
   bodies), `vault.settings`, `vault.members`, `vault.history`, `sync.status`, `agent.sessions`, and, opted into,
-  `calendar.events` and `mail.threads`. Writes: `holi.store(collection)` and `tasks.complete`,
+  `google.agenda` and `google.search` (`holi.google.agenda({ from, to })`,
+  `holi.google.search(query)`, a page: `{ threads, nextPageToken }`). Writes: `holi.store(collection)` and `tasks.complete`,
   which applies the board's rule. `<holi-note path>` is a custom element the shim defines: the
   note rendered, themed and live. The theme is ambient CSS variables, not a call.
 - **Push.** `holi.on(topic, fn)` hears `docs`, `tasks`, `sync`, `agent`, `recents`, `history` and
@@ -63,7 +64,7 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   never on mount. A push carries no data: the app reads again through main, so every refusal
   still applies, and the signatures leave the agent surface out, so an app is not told a memory
   was written.
-- **One person's data is opt-in, twice.** `calendar.events` and `mail.threads` read the Google
+- **One person's data is opt-in, twice.** `google.agenda` and `google.search` read the Google
   account of whoever has the app open, not the vault's; an app can keep what it reads in records
   that sync to every member, or send it over the network. So the app declares
   `dangerously-allow: [mail, calendar]` in `app.yaml`, or as a map giving each one a reason
@@ -80,8 +81,8 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   a pull that lands while the dialog is up is asked about again rather than approved unseen.
   The check is a field on the capability (`appGrant: 'mail'`), so Google's entries never import
   the approvals: the app door's one opener, the apps code, supplies it (`admitApps`), and an
-  entry with an `appGrant` is refused at an app door with no check. The agent has `holi-google` and its own gate, so these open to the app
-  door only.
+  entry with an `appGrant` is refused at an app door with no check. The same entries open to the
+  UI and CLI doors too, where no grant is asked: the views and the agent are this person's own.
 - **No location.** Main refuses the browser's geolocation to every page. Electron answers it
   through Google's network location service, which needs an API key and does not answer on macOS
   even with one, so a request would hang until the page's timeout; refused, it fails at once and

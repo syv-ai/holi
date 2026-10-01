@@ -962,7 +962,7 @@ describe('textOnly', () => {
       body: 'the plain one',
     })
     // Not merely falsy — the key must be absent, or it lands in the JSON the
-    // agent reads and doubles the size of every `holi-google read`.
+    // agent reads and doubles the size of every `holi google read`.
     expect('html' in projected.messages[0]!).toBe(false)
   })
 })

@@ -1,13 +1,11 @@
 /**
- * The **UI's** Google data: the one place caching is decided.
+ * A vault's Google data: the one place caching is decided.
  *
- * **The agent does not come through here to read, and does to write**.
- * It must never be handed a stale *answer*, so the ops server in
- * `main/index.ts` is wired straight to `listAgenda` / `listThreads`, which take
- * no cache and therefore cannot read one. Its *writes* go through the methods
- * below, so a thread the agent archived leaves the list the UI is painting from
- * at the same moment it leaves Gmail. `main/index.ts` passes those methods,
- * never this object, so the ops server has no way to read a cached anything.
+ * Every door reads and writes through here (`capabilities.ts`): the views,
+ * an app and the agent. Nothing it answers is stale: mail is the cache brought
+ * up to date by a delta, and the agenda is always fetched. A write calls
+ * Google first and then moves the cache, so a thread the agent archived
+ * leaves the list the view paints from at the same moment it leaves Gmail.
  *
  * The two surfaces are cached differently because the APIs differ:
  *

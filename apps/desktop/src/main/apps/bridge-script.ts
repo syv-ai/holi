@@ -105,11 +105,9 @@ export const BRIDGE_JS = `(() => {
     },
     // One person's Google data: needs dangerously-allow in app.yaml, and the
     // person's approval on their machine.
-    calendar: {
-      events: (range) => call('calendar.events', range),
-    },
-    mail: {
-      threads: (query) => call('mail.threads', query === undefined ? {} : { query }),
+    google: {
+      agenda: (range) => call('google.agenda', range || {}),
+      search: (query) => call('google.search', query === undefined ? {} : { query }),
     },
     on,
     // A line in the app's log, for whoever debugs it next.

@@ -2,7 +2,7 @@
  * Which calendars the user has switched on, remembered between launches.
  *
  * **It lives in main, and that is the whole point.** The agenda panel and the
- * agent's `holi-google agenda` both resolve their calendars through this file,
+ * agent's `holi google agenda` both resolve their calendars through this file,
  * so switching a colleague's calendar off also hides it from the agent.
  *
  * Plain JSON, unencrypted, unlike `token-store.ts`: there is no credential

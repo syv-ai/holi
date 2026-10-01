@@ -13,6 +13,7 @@ import { getDefaultStore } from 'jotai'
 import { resetMailImagesForTests } from '../../../state/mail-images'
 import { resetMailFramesForTests } from '../../../state/mail-frames'
 import { activeDialogAtom } from '../../../state/dialogs'
+import { activeRemoteAtom } from '../../../state/vaults'
 
 const threadMock = vi.fn()
 const readMock = vi.fn()
@@ -33,31 +34,44 @@ const discardDraftMock = vi.fn()
 const draftMock = vi.fn()
 const draftsMock = vi.fn()
 const meetingMock = vi.fn()
+const createTaskMock = vi.fn()
+
+/** Google's capabilities, by name, through the UI door. */
+const google: Record<string, (params: unknown) => unknown> = {
+  search: (p) => threadMock(p),
+  thread: (p) => readMock(p),
+  mailCounts: () => countsMock(),
+  contacts: () => contactsMock(),
+  'mark-read': (p) => setReadMock(p),
+  star: (p) => setStarredMock(p),
+  archive: (p) => archiveMock(p),
+  trash: (p) => trashMock(p),
+  categoryCounts: () => categoryCountsMock(),
+  imageSenders: () => imageSendersMock(),
+  allowImagesFrom: (p) => allowImagesFromMock(p),
+  forgetImageSenders: () => forgetImageSendersMock(),
+  sendAs: () => sendAsMock(),
+  saveDraft: (p) => saveDraftMock(p),
+  send: (p) => sendMock(p),
+  discardDraft: (p) => discardDraftMock(p),
+  draftBody: (p) => draftMock(p),
+  drafts: () => draftsMock(),
+  meeting: (p) => meetingMock(p),
+}
 
 vi.mock('../../../lib/trpc', () => ({
   trpc: {
-    google: {
-      threads: { query: (input: unknown) => threadMock(input) },
-      thread: { query: (input: { id: string }) => readMock(input) },
-      mailCounts: { query: () => countsMock() },
-      contacts: { query: () => contactsMock() },
-      setRead: { mutate: (input: unknown) => setReadMock(input) },
-      setStarred: { mutate: (input: unknown) => setStarredMock(input) },
-      archive: { mutate: (input: { id: string }) => archiveMock(input) },
-      trash: { mutate: (input: { id: string }) => trashMock(input) },
-      categoryCounts: { query: () => categoryCountsMock() },
-      imageSenders: { query: () => imageSendersMock() },
-      allowImagesFrom: { mutate: (input: unknown) => allowImagesFromMock(input) },
-      forgetImageSenders: { mutate: () => forgetImageSendersMock() },
-      sendAs: { query: () => sendAsMock() },
-      saveDraft: { mutate: (input: unknown) => saveDraftMock(input) },
-      send: { mutate: (input: unknown) => sendMock(input) },
-      discardDraft: { mutate: (input: unknown) => discardDraftMock(input) },
-      draft: { query: (input: unknown) => draftMock(input) },
-      drafts: { query: () => draftsMock() },
-      meeting: { query: (input: { id: string }) => meetingMock(input) },
+    cap: {
+      run: {
+        mutate: async ({ name, paramsJson }: { name: string; paramsJson?: string }) => {
+          const params = paramsJson === undefined ? undefined : JSON.parse(paramsJson)
+          if (name === 'tasks.create') return createTaskMock(params)
+          const verb = google[name.replace(/^google\./, '')]
+          if (verb === undefined) throw new Error(`unexpected ${name}`)
+          return verb(params)
+        },
+      },
     },
-    tasks: { create: { mutate: vi.fn() } },
   },
 }))
 
@@ -193,6 +207,9 @@ beforeEach(() => {
   discardDraftMock.mockReset().mockResolvedValue({ ok: true })
   draftMock.mockReset().mockResolvedValue(null)
   draftsMock.mockReset().mockResolvedValue([])
+  createTaskMock.mockReset().mockResolvedValue({ path: 'Q2 budget.md' })
+  // Every Google call names the vault it is for.
+  getDefaultStore().set(activeRemoteAtom, 'syv-ai/vault')
   // The remote-content choice outlives a component, so reset it or one test's
   // "Load images" satisfies the next test's assertion.
   resetMailImagesForTests()
@@ -1034,7 +1051,7 @@ test('opening an unread thread marks it read, once, and the row stops being bold
 
   await user.click(row)
 
-  await waitFor(() => expect(setReadMock).toHaveBeenCalledWith({ id: 't1', read: true }))
+  await waitFor(() => expect(setReadMock).toHaveBeenCalledWith({ id: 't1', unread: false }))
   expect(setReadMock).toHaveBeenCalledTimes(1)
   // Locally, with no second `threads.query`.
   await waitFor(() =>
@@ -1079,11 +1096,11 @@ test('stars and unstars the open thread', async () => {
 
   await user.click(screen.getByRole('button', { name: 'star this thread' }))
 
-  await waitFor(() => expect(setStarredMock).toHaveBeenCalledWith({ id: 't1', starred: true }))
+  await waitFor(() => expect(setStarredMock).toHaveBeenCalledWith({ id: 't1', off: false }))
   // The button becomes its own inverse.
   const unstar = await screen.findByRole('button', { name: 'unstar this thread' })
   await user.click(unstar)
-  await waitFor(() => expect(setStarredMock).toHaveBeenLastCalledWith({ id: 't1', starred: false }))
+  await waitFor(() => expect(setStarredMock).toHaveBeenLastCalledWith({ id: 't1', off: true }))
 })
 
 test('archiving removes the row and closes the reader', async () => {
@@ -1637,7 +1654,7 @@ test('puts a read thread back on the pile', async () => {
   const menu = await openRowMenu(user)
   await user.click(within(menu).getByRole('menuitem', { name: 'Mark unread' }))
 
-  await waitFor(() => expect(setReadMock).toHaveBeenCalledWith({ id: 't1', read: false }))
+  await waitFor(() => expect(setReadMock).toHaveBeenCalledWith({ id: 't1', unread: true }))
 })
 
 test('offers Unsubscribe only when the sender advertised one', async () => {

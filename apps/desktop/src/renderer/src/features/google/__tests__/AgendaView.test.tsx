@@ -19,24 +19,26 @@ const setCalendarMock = vi.fn()
 const createTaskMock = vi.fn()
 const imageSendersMock = vi.fn(() => Promise.resolve<string[]>([]))
 
+/** Google's capabilities, by name, through the UI door. */
+const google: Record<string, (params: unknown) => unknown> = {
+  'google.agenda': () => agendaMock(),
+  'google.agendaCached': () => agendaCachedMock(),
+  'google.calendars': () => calendarsMock(),
+  'google.setCalendar': (p) => setCalendarMock(p),
+  // Reached through `SandboxedHtml`, which every event description renders
+  // in. The double has to carry it or the panel throws on mount.
+  'google.imageSenders': () => imageSendersMock(),
+  'google.allowImagesFrom': () => Promise.resolve({ ok: true }),
+  'google.forgetImageSenders': () => Promise.resolve({ ok: true }),
+}
+
 vi.mock('../../../lib/trpc', () => ({
   trpc: {
-    google: {
-      agenda: { query: () => agendaMock() },
-      agendaCached: { query: () => agendaCachedMock() },
-      calendars: { query: () => calendarsMock() },
-      setCalendar: { mutate: (input: unknown) => setCalendarMock(input) },
-      // Reached through `SandboxedHtml`, which every event description renders
-      // in. The double has to carry it or the panel throws on mount.
-      imageSenders: { query: () => imageSendersMock() },
-      allowImagesFrom: { mutate: () => Promise.resolve({ ok: true }) },
-      forgetImageSenders: { mutate: () => Promise.resolve({ ok: true }) },
-    },
     // `tasks.create` is a capability at the UI door; the double sees its
-    // params with the vault they run in, as the old procedure took them.
+    // params with the vault they run in.
     cap: {
       run: {
-        mutate: ({
+        mutate: async ({
           remote,
           name,
           paramsJson,
@@ -44,10 +46,13 @@ vi.mock('../../../lib/trpc', () => ({
           remote: string
           name: string
           paramsJson?: string
-        }) =>
-          name === 'tasks.create'
-            ? createTaskMock({ remote, ...(JSON.parse(paramsJson ?? '{}') as object) })
-            : Promise.reject(new Error(`no such method: ${name}`)),
+        }) => {
+          const params = JSON.parse(paramsJson ?? '{}') as object
+          if (name === 'tasks.create') return createTaskMock({ remote, ...params })
+          const verb = google[name]
+          if (verb === undefined) throw new Error(`no such method: ${name}`)
+          return verb(params)
+        },
       },
     },
   },
@@ -102,6 +107,8 @@ beforeEach(() => {
   imageSendersMock.mockReset().mockResolvedValue([])
   // Module state on jotai's default store, shared by every test in this file.
   resetMailImagesForTests()
+  // Every Google call names the vault it is for.
+  getDefaultStore().set(activeRemoteAtom, 'git@github.com:syv-ai/notes.git')
   openExternal.mockReset()
   // @ts-expect-error — the preload bridge is not typed onto window in tests.
   window.holi = { openExternal }
@@ -239,7 +246,6 @@ test('offers the video link for a Zoom conference, not just Meet', async () => {
 })
 
 test('puts the event description into the task it creates', async () => {
-  getDefaultStore().set(activeRemoteAtom, 'git@github.com:syv-ai/notes.git')
   agendaMock.mockResolvedValue([event({ description: 'Dial-in 555-0100, agenda in the deck' })])
   const user = userEvent.setup()
 

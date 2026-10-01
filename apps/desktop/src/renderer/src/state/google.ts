@@ -10,11 +10,15 @@
  */
 import { atom, useAtom, useAtomValue } from 'jotai'
 import { useCallback, useEffect } from 'react'
+import type { GoogleCapabilities } from '../../../main/google/capabilities'
 import type { GoogleAccount } from '../../../main/google/session'
-import { trpc } from '../lib/trpc'
+import { capClient } from '../lib/cap-client'
 import { activeRemoteAtom } from './vaults'
 
 export type { GoogleAccount }
+
+/** Google's capabilities at the UI door, each call naming the vault it is for. */
+export const googleCap = capClient<GoogleCapabilities>('google')
 
 /** `undefined`: not asked yet. `null`: asked, nothing connected. */
 export const googleAccountAtom = atom<GoogleAccount | null | undefined>(undefined)
@@ -88,9 +92,10 @@ export function useGoogleAccount(): GoogleAccountState {
    */
   const refresh = useCallback(async () => {
     try {
+      if (activeRemote === null) throw new Error('no vault is open')
       const [status, connected] = await Promise.all([
-        trpc.google.status.query(),
-        trpc.google.accounts.query(),
+        googleCap.status(activeRemote),
+        googleCap.accounts(activeRemote),
       ])
       setAccount(status.account)
       setMissingScopes(status.missingScopes)

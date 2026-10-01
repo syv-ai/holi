@@ -14,9 +14,10 @@
  * **`undefined` means "not asked yet"**, as in `state/google.ts`: the banner
  * must not flash for an already-allowed sender while the query is in flight.
  */
-import { atom, getDefaultStore, useAtom, useSetAtom } from 'jotai'
+import { atom, getDefaultStore, useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { useCallback, useEffect } from 'react'
-import { trpc } from '../lib/trpc'
+import { googleCap } from './google'
+import { activeRemoteAtom } from './vaults'
 
 /** Message keys unblocked this session. A `ReadonlySet` replaced wholesale, so
  *  a mutation cannot fail to notify. */
@@ -55,16 +56,18 @@ export interface RemoteContentChoice {
  */
 export function useAlwaysAllowedSenders(): ReadonlySet<string> | undefined {
   const [senders, setSenders] = useAtom(alwaysAllowedSendersAtom)
+  const remote = useAtomValue(activeRemoteAtom)
 
   useEffect(() => {
-    if (senders !== undefined) return
-    void trpc.google.imageSenders
-      .query()
+    // Kept per machine, but every UI-door call names a vault.
+    if (senders !== undefined || remote === null) return
+    void googleCap
+      .imageSenders(remote)
       .then((list) => setSenders(new Set(list)))
       // Not configured, or a read that failed. Blocking is the safe direction
       // to fail in, and an empty set settles rather than re-querying forever.
       .catch(() => setSenders(new Set<string>()))
-  }, [senders, setSenders])
+  }, [senders, setSenders, remote])
 
   return senders
 }
@@ -73,10 +76,11 @@ export function useAlwaysAllowedSenders(): ReadonlySet<string> | undefined {
  *  atom, so the UI updates without a refetch. */
 export function useForgetImageSenders(): () => Promise<void> {
   const setSenders = useSetAtom(alwaysAllowedSendersAtom)
+  const remote = useAtomValue(activeRemoteAtom)
   return useCallback(async () => {
-    await trpc.google.forgetImageSenders.mutate().catch(() => undefined)
+    if (remote !== null) await googleCap.forgetImageSenders(remote).catch(() => undefined)
     setSenders(new Set<string>())
-  }, [setSenders])
+  }, [setSenders, remote])
 }
 
 /** Whether this block's remote content may load, and the two ways to say yes. */
@@ -84,6 +88,7 @@ export function useRemoteContent(identity: RemoteContentIdentity): RemoteContent
   const [unblocked, setUnblocked] = useAtom(unblockedMessagesAtom)
   const senders = useAlwaysAllowedSenders()
   const setSenders = useSetAtom(alwaysAllowedSendersAtom)
+  const remote = useAtomValue(activeRemoteAtom)
 
   const { key, sender } = identity
   const normalisedSender = sender === null || sender === '' ? null : sender.toLowerCase()
@@ -106,8 +111,10 @@ export function useRemoteContent(identity: RemoteContentIdentity): RemoteContent
     // unblock below in place, so the images the user asked for still load.
     setSenders((previous) => new Set(previous ?? []).add(normalisedSender))
     if (key !== null) setUnblocked((previous) => new Set(previous).add(key))
-    void trpc.google.allowImagesFrom.mutate({ sender: normalisedSender }).catch(() => undefined)
-  }, [normalisedSender, key, setSenders, setUnblocked])
+    if (remote !== null) {
+      void googleCap.allowImagesFrom(remote, { sender: normalisedSender }).catch(() => undefined)
+    }
+  }, [normalisedSender, key, setSenders, setUnblocked, remote])
 
   return { allowed, sender: normalisedSender, allowOnce, allowSenderAlways }
 }

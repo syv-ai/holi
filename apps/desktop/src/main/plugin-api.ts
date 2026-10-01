@@ -52,5 +52,13 @@ export {
 } from './capabilities/registry'
 export { CapabilityError } from './capabilities/error'
 export { knownPath } from './capabilities/fences'
-export { limitParam, noParams, paramsObject, pathParams, stringParam } from './capabilities/params'
+export {
+  flagParam,
+  limitParam,
+  noParams,
+  optionalStringParam,
+  paramsObject,
+  pathParams,
+  stringParam,
+} from './capabilities/params'
 export { seedFolder } from './vault/seed/folder'

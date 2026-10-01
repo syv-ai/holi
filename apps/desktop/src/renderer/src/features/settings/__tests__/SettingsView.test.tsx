@@ -47,16 +47,16 @@ vi.mock('@/lib/trpc', () => ({
       collaborators: { query: () => collaborators() },
       openCollaboratorSettings: { mutate: vi.fn() },
     },
-    google: {
-      status: { query: async () => ({ account: null, missingScopes: [] }) },
-      accounts: { query: async () => ({ accounts: [], current: null }) },
-      connect: { mutate: vi.fn() },
-      awaitConnect: { mutate: vi.fn() },
-      cancelConnect: { mutate: vi.fn() },
-      disconnectVault: { mutate: vi.fn() },
-      useAccount: { mutate: vi.fn() },
-      removeAccount: { mutate: vi.fn() },
-      imageSenders: { query: async () => [] },
+    // Google's capabilities, through the UI door.
+    cap: {
+      run: {
+        mutate: async ({ name }: { name: string }) =>
+          ({
+            'google.status': { account: null, missingScopes: [] },
+            'google.accounts': { accounts: [], current: null },
+            'google.imageSenders': [],
+          })[name] ?? { ok: true },
+      },
     },
     vaults: {
       unpushed: { query: async () => [] },

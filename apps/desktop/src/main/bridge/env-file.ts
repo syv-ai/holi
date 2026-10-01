@@ -2,7 +2,7 @@
  * Where whatever runs inside a vault finds the running Holi:
  * `.holi/state/bridge.local.env` at the vault's root.
  *
- * The `holi` and `holi-google` commands, the agent's turn-signal hook and
+ * The `holi` command, the agent's turn-signal hook and
  * status line, and git's pre-commit hook and merge driver all walk up from
  * their current directory to the folder holding `.holi/vault` and read this
  * file. Any process in the vault finds it, whichever agent or terminal it runs
@@ -10,7 +10,7 @@
  * supervisor's, not Holi's) finds it too.
  *
  * **A map that features contribute to.** The bridge contributes its port and
- * the vault's token, Google its own; `contribute` returns the undo. Holi writes
+ * the vault's token; `contribute` returns the undo. Holi writes
  * the file whole when it opens the vault, rewrites it on every change, and
  * deletes it when it leaves, so a command run after Holi quits finds nothing
  * rather than a dead port.

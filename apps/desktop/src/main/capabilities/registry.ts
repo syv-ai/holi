@@ -63,6 +63,10 @@ export interface CliSpec {
    *  asks for it (428) without running anything, and the script sends stdin
    *  once, so a write never runs on the first leg. */
   stdin?: string
+  /** A param that, given, means the command has no body to read, so the
+   *  bridge never asks for stdin and the script never waits on it
+   *  (`holi google send --draft <id>`). */
+  stdinUnless?: string
 }
 
 export interface Capability<P = unknown, R = unknown> {

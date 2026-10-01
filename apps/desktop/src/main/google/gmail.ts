@@ -780,7 +780,7 @@ export async function readThread(api: GoogleApi, threadId: string): Promise<Mail
 /**
  * The thread as the agent should see it: text bodies, no markup.
  *
- * Applied at the ops server (`main/index.ts`) rather than left to the agent to
+ * Applied at the CLI door (`google.read`) rather than left to the agent to
  * ignore: an HTML body is many times the size of its text twin, and
  * unsanitized markup should reach exactly one consumer, the renderer that
  * sanitizes it.

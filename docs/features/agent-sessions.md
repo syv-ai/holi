@@ -16,7 +16,7 @@ bracket, turn records. The id survives `/clear`, which changes the conversation'
 **One way to run `claude`.** `claude-cli.ts` runs every command Holi issues for a vault in the vault
 clone, on its config directory, with one environment. The supervisor takes its environment from
 whichever `claude` process started it and hands it to every session, so every call carrying Holi's
-bin directory first on `PATH` is what keeps `holi` and `holi-google` resolvable in all of them.
+bin directory first on `PATH` is what keeps `holi` resolvable in all of them.
 
 **Terminals are windows.** A Holi terminal is a PTY running `claude agents` (the list) or
 `claude attach <id>` (one session), with a headless-xterm `TerminalMirror` as its record. Closing

@@ -12,6 +12,7 @@
  * **Nothing is ever read-only.** A draft written outside Holi is converted with
  * `turndown` and opens for editing with a notice saying so.
  */
+import { useAtomValue } from 'jotai'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
@@ -24,7 +25,8 @@ import { mailHtmlToMarkdown } from '../../lib/mail-unmarkdown'
 import { sanitizeMailHtml } from '../../lib/mail-html'
 import { describeSendFailure, type SendFailure } from '../../lib/mail-send-failure'
 import type { MailAddress } from '../../lib/mail-types'
-import { trpc } from '../../lib/trpc'
+import { googleCap } from '../../state/google'
+import { activeRemoteAtom } from '../../state/vaults'
 
 /**
  * Idle time before an autosave. A keystroke-rate debounce turns a paragraph
@@ -79,6 +81,16 @@ export function MailComposer({
   onClose,
   onReconnect,
 }: MailComposerProps): React.JSX.Element {
+  /**
+   * The vault whose account this message is written in, fixed at mount: a
+   * draft started in one vault is saved and sent there, whatever is open by
+   * the time Send is pressed.
+   */
+  const [remote] = useState(useAtomValue(activeRemoteAtom))
+  const vault = useCallback((): string => {
+    if (remote === null) throw new Error('No vault is open.')
+    return remote
+  }, [remote])
   /**
    * The thread every save and the send rebuild the threading headers from.
    *
@@ -158,8 +170,9 @@ export function MailComposer({
   useEffect(() => {
     if (draftId === undefined) return
     let cancelled = false
-    void trpc.google.draft
-      .query({ id: draftId })
+    if (remote === null) return
+    void googleCap
+      .draftBody(remote, { id: draftId })
       .then((draft) => {
         if (cancelled) return
         // `markdown` is null exactly when `X-Holi-Source` was absent: the
@@ -185,7 +198,7 @@ export function MailComposer({
     return () => {
       cancelled = true
     }
-  }, [draftId])
+  }, [draftId, remote])
 
   // ---- the payload --------------------------------------------------------
 
@@ -217,7 +230,7 @@ export function MailComposer({
     savingRef.current = true
     if (mountedRef.current) setSaveState('saving')
     try {
-      const result = await trpc.google.saveDraft.mutate({
+      const result = await googleCap.saveDraft(vault(), {
         ...(draftRef.current === null ? {} : { draftId: draftRef.current }),
         ...(threadId === undefined ? {} : { threadId }),
         ...(forwardOf === undefined ? {} : { forwardOf }),
@@ -246,7 +259,7 @@ export function MailComposer({
       queuedRef.current = false
       await runSave()
     }
-  }, [payload, threadId, forwardOf])
+  }, [payload, threadId, forwardOf, vault])
 
   /** The chain currently in flight, so a caller arriving mid-save can await the
    *  whole of it rather than just setting the queued flag and walking away. */
@@ -309,7 +322,7 @@ export function MailComposer({
       // Forced save first, so a draft that exists is the one being sent and a
       // failure leaves the newest text in Gmail rather than an older copy.
       if (dirtyRef.current) await save()
-      const result = await trpc.google.send.mutate({
+      const result = await googleCap.send(vault(), {
         ...(draftRef.current === null ? {} : { draftId: draftRef.current }),
         ...(threadId === undefined ? {} : { threadId }),
         ...(forwardOf === undefined ? {} : { forwardOf }),
@@ -323,7 +336,7 @@ export function MailComposer({
     } finally {
       setSending(false)
     }
-  }, [onSent, payload, save, threadId, forwardOf])
+  }, [onSent, payload, save, threadId, forwardOf, vault])
 
   const attemptSend = (): void => {
     if (subject.trim() === '' && !confirmingSubject) {
@@ -339,7 +352,7 @@ export function MailComposer({
   const discard = async (): Promise<void> => {
     if (draftRef.current !== null) {
       try {
-        await trpc.google.discardDraft.mutate({
+        await googleCap.discardDraft(vault(), {
           draftId: draftRef.current,
           ...(threadId === undefined ? {} : { threadId }),
         })

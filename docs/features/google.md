@@ -1,6 +1,6 @@
 # Google
 
-A vault can connect a Google account to read and triage Gmail, read its calendar, block out the user's own time, compose mail, and turn a thread or event into a task. Mail and Agenda open as tabs; the agent gets the same surface through `holi-google`. Google is a data connector, not identity: without it Holi works fully.
+A vault can connect a Google account to read and triage Gmail, read its calendar, block out the user's own time, compose mail, and turn a thread or event into a task. Mail and Agenda open as tabs; the agent gets the same surface through `holi google <verb>`. Google is a data connector, not identity: without it Holi works fully.
 
 ## How it works
 
@@ -13,7 +13,7 @@ A vault can connect a Google account to read and triage Gmail, read its calendar
 - **Calendar** shows calendars the user owns by default; per-calendar overrides live in main so the agent honours them. Events carry `mine`. Joining uses `conferenceData`, then the body, then the location, matching a join-link shape. A thread with an `.ics` is joined to its event by the invite's `UID`.
 - **Composer:** markdown with a preview through the reader's sanitiser and frame; main sends exactly the previewed HTML as `multipart/alternative`, the markdown as the plain part, marked `X-Holi-Source: markdown`. Drafts live in Gmail and all of them open (unmarked ones via `turndown`). Autosave from the first edit, 2 s idle, single-flight. Reply is sender-only unless reply-all.
 - **Linking** a thread or event makes a task with the permalink as a plain markdown link in its body ([tasks](tasks.md)).
-- **The agent:** `holi-google` curls a loopback ops server in main with a bearer minted per vault and written into that vault's `bridge.local.env` when Holi opens it ([agent-config.md](agent-config.md)), revoked when Holi leaves the vault. Its reads cannot see the cache; its writes are the router's own functions. `send` takes a composed message or `--draft <id>`.
+- **One set of capabilities, three doors** (`google.*`, [architecture](../architecture.md)): the views call them at the UI door, the agent as `holi google <verb>` through the core bridge, which already authenticates per vault and names the caller's remote, and a vault app reads `google.agenda` and `google.search` at the app door behind its `appGrant`. Every call resolves the account from the caller's remote, never the vault on screen. Reads and writes go through the account's data layer, which is never stale: mail is the cache brought current by a delta, the agenda is always fetched. The agent's `read` is prose only (`textOnly`), a separate entry from the reader's `thread`, so unsanitised HTML reaches only the renderer. `send` takes a composed message with its body on stdin, or `--draft <id>`, which reads no stdin. Google's error kinds cross as refusal codes (`UNAUTHORIZED`, `FORBIDDEN`, `RATE_LIMITED`, `NOT_FOUND`), so the UI picks Reconnect or Retry by code.
 
 ## Rules
 
@@ -23,7 +23,7 @@ A vault can connect a Google account to read and triage Gmail, read its calendar
 - Remote content is blocked and counted until allowed once or always per sender. `data:` is never counted. Allowing it builds a new frame, because a `<meta>` CSP cannot be loosened by rewriting.
 - Links never navigate in the frame; only `https:`, `http:`, `mailto:` reach `openExternal`.
 - The renderer's own CSP (no `script-src`, no `frame-src`) is not an XSS defence and must not be described as one.
-- **The agent may do what the user can undo.** Permanent delete is impossible by scope. Calendar writes refuse attendee events inside the functions main hands over, since they email people. `send`/`reply` always ask via a seeded `PreToolUse` hook: its `ask` beats allow rules and "don't ask again", it matches all `Bash` plus `mcp__.*[Gg]mail.*` because an `if` on one spelling fails open, and it fails closed. It gates a cooperative agent, not an adversarial one ([agent-config](agent-config.md)).
+- **The agent may do what the user can undo.** Permanent delete is impossible by scope. Calendar writes refuse attendee events inside the functions main hands over, since they email people. `holi google send|reply` always ask via a seeded `PreToolUse` hook: its `ask` beats allow rules and "don't ask again", it matches all `Bash` plus `mcp__.*[Gg]mail.*` because an `if` on one spelling fails open, it matches the bare `holi`, `$HOLI_BIN` and an absolute path with any word quoted, and it fails closed. The bridge refuses any word before the verb, so nothing can be slipped between `holi` and `google send`. It gates a cooperative agent, not an adversarial one ([agent-config](agent-config.md)).
 - Never write "the agent cannot send": `gmail.modify` permits it; the gate is the wall. Do not widen past `gmail.modify`.
 - A send with unknown outcome is never retried. UI send is not gated.
 - Mail data stays in `userData`, per account, never in a vault.
@@ -33,6 +33,7 @@ A vault can connect a Google account to read and triage Gmail, read its calendar
 
 - Google's device flow: not approved for these scopes.
 - An MCP server: a lifecycle and handshake to deliver JSON a command already returns.
+- A Google loopback server and `holi-google` script of its own: the core bridge already authenticates per vault and supplies the remote.
 - Plain-text mail: a mail reader must render mail.
 - Encrypting the cache: needs a native module and forecloses FTS5.
 - Per-vault cache or wipe-on-switch: mail is account data, and wiping refetches on every switch.
@@ -45,7 +46,7 @@ A vault can connect a Google account to read and triage Gmail, read its calendar
 
 ## Code
 
-- `apps/desktop/src/main/google/`: auth (`loopback-flow`, `pkce`, `credentials`, `session`, `accounts`, `vault-accounts`, `token-store`, `electron`), data (`gmail`, `mail-sync`, `cache`, `data`, `calendar`, `invite`, `people`, `mime`), agent (`ops-server`, `cli`).
+- `apps/desktop/src/main/google/`: auth (`loopback-flow`, `pkce`, `credentials`, `session`, `accounts`, `vault-accounts`, `token-store`, `electron`), data (`gmail`, `mail-sync`, `cache`, `data`, `calendar`, `invite`, `people`, `mime`), and `capabilities` (every door).
 - `apps/desktop/src/main/agent/seed/vault/shipped/.claude/hooks/google-send-gate.mjs`, `skills/gmail-calendar/`.
 - `apps/desktop/src/renderer/src/features/google/`, `lib/mail-html.ts`, `lib/mail-frame.ts`.
 - `apps/desktop/src/renderer/src/features/settings/ConnectionsSection.tsx`.

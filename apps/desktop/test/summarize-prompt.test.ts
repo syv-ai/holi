@@ -16,11 +16,11 @@ const thread = {
 
 describe('buildSummarizePrompt', () => {
   it('hands over the id the mail tool actually takes', () => {
-    // `holi-google read <threadId>` is how the agent gets the messages. The
+    // `holi google read <threadId>` is how the agent gets the messages. The
     // permalink is for the human; the id is the only part the tool can use, and
     // leaving it out makes the agent search for a thread it was already handed.
     const prompt = buildSummarizePrompt(thread)
-    expect(prompt).toContain('holi-google read 18c9a2f')
+    expect(prompt).toContain('holi google read 18c9a2f')
   })
 
   it('names the thread so the drawer reads as being about something', () => {

@@ -40,8 +40,8 @@ import {
   Tooltip,
 } from '@/primitives'
 import { SandboxedHtml } from './SandboxedHtml'
-import { trpc } from '../../lib/trpc'
 import { activeRemoteAtom } from '../../state/vaults'
+import { googleCap } from '../../state/google'
 import { openNoteTabAtom } from '../../state/panes'
 import { tasksCap } from '../../state/tasks'
 import { useGlobalPanelLayout } from '../../state/preferences'
@@ -109,12 +109,18 @@ const DAYS_AHEAD = 7
  * a main-side `new Date()` disagrees with it across a timezone boundary. Same
  * rule daily notes follow.
  */
-function agendaWindow(): { timeMin: string; timeMax: string } {
+function agendaWindow(): { from: string; to: string } {
   const start = new Date()
   start.setHours(0, 0, 0, 0)
   const end = new Date(start)
   end.setDate(end.getDate() + DAYS_AHEAD)
-  return { timeMin: start.toISOString(), timeMax: end.toISOString() }
+  return { from: start.toISOString(), to: end.toISOString() }
+}
+
+/** tRPC's verdict, as `ipcLink` rebuilt it onto `err.data.code`. */
+function codeOf(error: unknown): string | null {
+  const data = (error as { data?: { code?: unknown } } | null)?.data
+  return typeof data?.code === 'string' ? data.code : null
 }
 
 /** `2026-08-04` for a timed instant or an all-day date, in local time. */
@@ -211,21 +217,26 @@ export function AgendaView() {
   const loadCalendars = useCallback(() => {
     // No error surface of its own: the agenda's error state already covers
     // "Google is unreachable", and one message per outage is enough.
-    void trpc.google.calendars
-      .query()
+    if (remote === null) return
+    void googleCap
+      .calendars(remote)
       .then(setCalendars)
       .catch(() => setCalendars([]))
-  }, [])
+  }, [remote])
 
   const load = useCallback(() => {
+    if (remote === null) {
+      setState({ kind: 'disconnected' })
+      return
+    }
     const window = agendaWindow()
     setState({ kind: 'loading' })
 
     // Paint the last agenda for this exact day and calendar set, if there is
     // one, then let the live fetch below replace it. It only fills the gap
     // while loading and never stands in for the real answer.
-    void trpc.google.agendaCached
-      .query(window)
+    void googleCap
+      .agendaCached(remote, window)
       .then((events) => {
         if (events !== null && events.length > 0) {
           setState((current) => (current.kind === 'loading' ? { kind: 'ready', events } : current))
@@ -233,20 +244,23 @@ export function AgendaView() {
       })
       .catch(() => {})
 
-    void trpc.google.agenda
-      .query(window)
+    void googleCap
+      .agenda(remote, window)
       .then((events) => setState({ kind: 'ready', events }))
       .catch((err: unknown) => {
         const message = err instanceof Error ? err.message : 'Could not load your agenda.'
         // A missing/expired connection is not an error to apologise for — it is
         // a state with an obvious next action, so it gets its own surface.
+        const code = codeOf(err)
         setState(
-          /not connected|connect Google|no longer valid|not configured/i.test(message)
+          code === 'UNAUTHORIZED' ||
+            code === 'PRECONDITION_FAILED' ||
+            /not connected|connect Google|no longer valid|not configured/i.test(message)
             ? { kind: 'disconnected' }
             : { kind: 'error', message },
         )
       })
-  }, [])
+  }, [remote])
 
   useEffect(load, [load])
   useEffect(loadCalendars, [loadCalendars])
@@ -258,8 +272,9 @@ export function AgendaView() {
    */
   const toggleCalendar = (calendar: CalendarChoice, enabled: boolean) => {
     setCalendars((previous) => previous.map((c) => (c.id === calendar.id ? { ...c, enabled } : c)))
-    void trpc.google.setCalendar
-      .mutate({ id: calendar.id, enabled })
+    if (remote === null) return
+    void googleCap
+      .setCalendar(remote, { id: calendar.id, enabled })
       .then(load)
       // Put the checkbox back rather than leaving it lying about what main holds.
       .catch(() => loadCalendars())

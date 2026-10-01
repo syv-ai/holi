@@ -84,8 +84,8 @@ import type { ComposeIntent } from '../../lib/compose-intent'
 import { matchHotkey } from '../../lib/hotkey'
 import { listStamp, messageStamp } from '../../lib/mail-stamp'
 import type { MailAddress, MailAttachment as Attachment, ThreadMessage } from '../../lib/mail-types'
-import { trpc } from '../../lib/trpc'
 import { activeRemoteAtom } from '../../state/vaults'
+import { googleCap } from '../../state/google'
 import { openNoteTabAtom } from '../../state/panes'
 import { tasksCap } from '../../state/tasks'
 import { openDialogAtom } from '../../state/dialogs'
@@ -230,6 +230,12 @@ export function MailView() {
   /** The Gmail draft the composer is continuing, if any. */
   const [continuing, setContinuing] = useState<string | undefined>(undefined)
   const remote = useAtomValue(activeRemoteAtom)
+  /** One of Google's calls, for the open vault; refused with none open. */
+  const call = useCallback(
+    <T,>(work: (remote: string) => Promise<T>): Promise<T> =>
+      remote === null ? Promise.reject(new Error('No vault is open.')) : work(remote),
+    [remote],
+  )
   const openNote = useSetAtom(openNoteTabAtom)
   const openDialog = useSetAtom(openDialogAtom)
   const sendToAgent = useSetAtom(sendToAgentAtom)
@@ -275,8 +281,9 @@ export function MailView() {
   const load = useCallback(() => {
     setList({ kind: 'loading' })
     listGeneration.current++
-    void trpc.google.threads
-      .query({ query: submitted, category: filter, unread: unreadFilter, mailbox })
+    void call((r) =>
+      googleCap.search(r, { query: submitted, category: filter, unread: unreadFilter, mailbox }),
+    )
       .then((page) =>
         setList({
           kind: 'ready',
@@ -287,20 +294,24 @@ export function MailView() {
       )
       .catch((err: unknown) => {
         const message = err instanceof Error ? err.message : 'Could not load your mail.'
-        setList(NOT_CONNECTED.test(message) ? { kind: 'disconnected' } : { kind: 'error', message })
+        const code = codeOf(err)
+        setList(
+          code === 'UNAUTHORIZED' || code === 'PRECONDITION_FAILED' || NOT_CONNECTED.test(message)
+            ? { kind: 'disconnected' }
+            : { kind: 'error', message },
+        )
       })
-  }, [submitted, filter, unreadFilter, mailbox])
+  }, [submitted, filter, unreadFilter, mailbox, call])
 
   useEffect(load, [load])
 
   /** The footer's numbers. One request, and a failure leaves the footer
    *  numberless rather than the list broken. */
   const loadCounts = useCallback(() => {
-    void trpc.google.mailCounts
-      .query()
+    void call((r) => googleCap.mailCounts(r))
       .then(setCounts)
       .catch(() => setCounts(null))
-  }, [])
+  }, [call])
 
   useEffect(loadCounts, [loadCounts])
 
@@ -309,12 +320,11 @@ export function MailView() {
    * first opened. Once opened, they refresh with everything else.
    */
   const loadCategoryCounts = useCallback(() => {
-    void trpc.google.categoryCounts
-      .query()
+    void call((r) => googleCap.categoryCounts(r))
       .then(setCategoryCounts)
       // The tabs still work with no numbers on them.
       .catch(() => setCategoryCounts(null))
-  }, [])
+  }, [call])
 
   /**
    * The address book, once per mount.
@@ -324,11 +334,10 @@ export function MailView() {
    * `contacts.readonly`, which settings reports, not a dropdown.
    */
   useEffect(() => {
-    void trpc.google.contacts
-      .query()
+    void call((r) => googleCap.contacts(r))
       .then(setContacts)
       .catch(() => setContacts([]))
-  }, [])
+  }, [call])
 
   /**
    * The send-as aliases, for reply-all.
@@ -338,11 +347,10 @@ export function MailView() {
    * remove.
    */
   useEffect(() => {
-    void trpc.google.sendAs
-      .query()
+    void call((r) => googleCap.sendAs(r))
       .then(setSendAs)
       .catch(() => setSendAs([]))
-  }, [])
+  }, [call])
 
   /**
    * The message a reply should answer.
@@ -376,7 +384,7 @@ export function MailView() {
    * Continue a draft from the Drafts list.
    *
    * The intent is `new` even for a draft that belongs to a thread: the composer
-   * loads recipients, subject, body and thread from `google.draft`, and an
+   * loads recipients, subject, body and thread from `google.draftBody`, and an
    * intent that also computed them would flicker when overwritten.
    */
   const continueDraft = (draft: DraftSummary): void => {
@@ -405,8 +413,7 @@ export function MailView() {
    */
   const openThreadDraft = (): void => {
     if (open === null) return
-    void trpc.google.drafts
-      .query()
+    void call((r) => googleCap.drafts(r))
       .then((drafts) => {
         const mine = drafts.filter((draft) => draft.threadId === open.id)
         // Newest by date: `listDrafts` makes no ordering promise.
@@ -431,8 +438,7 @@ export function MailView() {
     closeComposer()
     if (open === null || intent === null || intent.kind === 'new') return
 
-    void trpc.google.thread
-      .query({ id: open.id })
+    void call((r) => googleCap.thread(r, { id: open.id }))
       .then(setOpen)
       .catch(() => {
         // The send succeeded; only the refetch failed. Leave the thread as it
@@ -447,8 +453,15 @@ export function MailView() {
    */
   const loadMore = (pageToken: string) => {
     setLoadingMore(true)
-    void trpc.google.threads
-      .query({ query: submitted, category: filter, unread: unreadFilter, mailbox, pageToken })
+    void call((r) =>
+      googleCap.search(r, {
+        query: submitted,
+        category: filter,
+        unread: unreadFilter,
+        mailbox,
+        pageToken,
+      }),
+    )
       .then((page) => {
         listGeneration.current++
         setList((previous) =>
@@ -479,16 +492,14 @@ export function MailView() {
     setOpenSummary(thread)
     setOpen(null)
     setMeeting(null)
-    void trpc.google.thread
-      .query({ id: thread.id })
+    void call((r) => googleCap.thread(r, { id: thread.id }))
       .then(setOpen)
       .catch(() => setOpenId(null))
     // Only for a thread the list already says holds an `.ics`, to avoid two
     // requests per open. A failure is swallowed deliberately: the badge still
     // says this is a meeting, and a convenience lookup does not merit a banner.
     if (thread.hasInvite) {
-      void trpc.google.meeting
-        .query({ id: thread.id })
+      void call((r) => googleCap.meeting(r, { id: thread.id }))
         .then((found) => {
           if (found !== null) setMeeting({ ...found, threadId: thread.id })
         })
@@ -543,13 +554,13 @@ export function MailView() {
 
   const setRead = (id: string, read: boolean) =>
     write(
-      () => trpc.google.setRead.mutate({ id, read }),
+      () => call((r) => googleCap['mark-read'](r, { id, unread: !read })),
       (threads) => threads.map((t) => (t.id === id ? { ...t, unread: !read } : t)),
     )
 
   const setStarred = (id: string, starred: boolean) =>
     write(
-      () => trpc.google.setStarred.mutate({ id, starred }),
+      () => call((r) => googleCap.star(r, { id, off: !starred })),
       (threads) => threads.map((t) => (t.id === id ? { ...t, starred } : t)),
     )
 
@@ -592,8 +603,8 @@ export function MailView() {
   const threadActions: ThreadActions = {
     setRead,
     setStarred,
-    archive: (id) => void removeThread(id, () => trpc.google.archive.mutate({ id })),
-    trash: (id) => void removeThread(id, () => trpc.google.trash.mutate({ id })),
+    archive: (id) => void removeThread(id, () => call((r) => googleCap.archive(r, { id }))),
+    trash: (id) => void removeThread(id, () => call((r) => googleCap.trash(r, { id }))),
     linkToTask: (thread) => void linkToTask(thread),
     canLinkToTask: remote !== null,
     openExternal: (url) => void window.holi.openExternal(url),
@@ -927,7 +938,9 @@ export function MailView() {
                   label="archive this thread"
                   tooltip="archive — removes it from the inbox, keeps it in All Mail"
                   onClick={() =>
-                    void removeThread(open.id, () => trpc.google.archive.mutate({ id: open.id }))
+                    void removeThread(open.id, () =>
+                      call((r) => googleCap.archive(r, { id: open.id })),
+                    )
                   }
                 />
                 {/* Trash, which Gmail keeps for 30 days. Not called Delete:
@@ -937,7 +950,9 @@ export function MailView() {
                   label="move this thread to trash"
                   tooltip="move to trash — recoverable for 30 days"
                   onClick={() =>
-                    void removeThread(open.id, () => trpc.google.trash.mutate({ id: open.id }))
+                    void removeThread(open.id, () =>
+                      call((r) => googleCap.trash(r, { id: open.id })),
+                    )
                   }
                 />
                 {/* Reply, reply-all and forward all open the same inline
@@ -1037,8 +1052,8 @@ function codeOf(err: unknown): string | null {
  * The scope case is singled out: it is the likeliest, the user can fix it, and
  * its symptom is otherwise silence (mail loads, only writes fail).
  *
- * **The code first, the prose second.** The router maps `GoogleApiError.code`
- * onto a tRPC code (`rethrowGoogle`) so this does not read Google's sentences.
+ * **The code first, the prose second.** Google's capabilities map
+ * `GoogleApiError.code` onto a refusal code, so this does not read Google's sentences.
  * The regexes are the fallback for an error that arrives without a code.
  */
 function explainWriteFailure(err: unknown): string {

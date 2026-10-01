@@ -6,10 +6,12 @@
  * - **A thread with two drafts shows both.** The thread's *Continue draft* chip
  *   opens the newest; the other one lives here.
  */
+import { useAtomValue } from 'jotai'
 import { useEffect, useState } from 'react'
 import { FilePen } from 'lucide-react'
 import { Button, Icon } from '@/primitives'
-import { trpc } from '../../lib/trpc'
+import { googleCap } from '../../state/google'
+import { activeRemoteAtom } from '../../state/vaults'
 import type { MailAddress } from '../../lib/mail-types'
 
 export interface DraftSummary {
@@ -45,12 +47,14 @@ export function DraftsList({
 }): React.JSX.Element {
   const [drafts, setDrafts] = useState<DraftSummary[] | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const remote = useAtomValue(activeRemoteAtom)
 
   useEffect(() => {
+    if (remote === null) return
     let cancelled = false
     setError(null)
-    void trpc.google.drafts
-      .query()
+    void googleCap
+      .drafts(remote)
       .then((result) => {
         if (!cancelled) setDrafts(result)
       })
@@ -62,7 +66,7 @@ export function DraftsList({
     return () => {
       cancelled = true
     }
-  }, [reloadKey])
+  }, [reloadKey, remote])
 
   if (error !== null) {
     return <p className="p-6 text-center text-sm text-muted-foreground">{error}</p>

@@ -90,24 +90,27 @@ function audienceOf(command) {
 }
 
 /**
- * Does this command line invoke `holi-google send` or `holi-google reply`?
+ * Does this command line invoke `holi google send` or `holi google reply`?
  *
  * Matched on the *invocation*, not on the presence of the word: `grep send
  * notes.md` is not a send, and a gate that prompts on it teaches the user to
  * click through prompts.
  *
- * Three spellings are live, and all three must match: the bare name (resolved
- * via PATH), `$HOLI_GOOGLE_BIN` (still exported), and an absolute path to the
- * generated script. Missing any one of them is a gate that never fires.
+ * Three spellings of the command are live, and all must match: the bare name
+ * (resolved via PATH), `$HOLI_BIN`, and an absolute path to the generated
+ * script, any of them quoted, as `google` and the verb may be too. Missing one
+ * is a gate that never fires. Holi refuses any word between `holi` and the
+ * verb, so nothing can be slipped in between to step around this.
  */
 function isSend(command) {
-  // The command word, however it was spelled, followed by the subcommand.
-  // `[^|;&]*` keeps the two adjacent within one pipeline stage, so
-  // `holi-google search x | grep send` does not match.
+  // The command word, however it was spelled, then `google`, then the verb.
+  // `[^\s|;&]*` keeps them adjacent within one pipeline stage, so
+  // `holi google search x | grep send` does not match.
   const invocation = new RegExp(
     String.raw`(^|[|;&]|\s)` + // start of a command
-      String.raw`(?:["']?\$\{?HOLI_GOOGLE_BIN\}?["']?|[^\s|;&]*\bholi-google)` + // the binary
-      String.raw`\s+(?:${REACHES_A_HUMAN.join('|')})\b`, // the subcommand
+      String.raw`(?:["']?\$\{?HOLI_BIN\}?["']?|[^\s|;&]*\bholi["']?)` + // the binary
+      String.raw`\s+["']?google["']?` + // the group
+      String.raw`\s+["']?(?:${REACHES_A_HUMAN.join('|')})\b`, // the verb
   )
   return invocation.test(command)
 }

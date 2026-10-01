@@ -13,6 +13,7 @@ import { admitApps, type AppGrants } from '../src/main/apps/app-grants'
 import { createCapabilityHost } from '../src/main/capabilities/dispatch'
 import { noCoreServices, type CoreServices } from '../src/main/capabilities/services'
 import { vaultCapabilities, VAULT_NAMESPACES } from '../src/main/capabilities/vault-caps'
+import type { GoogleAccountsManager } from '../src/main/google/accounts'
 import { googleCapabilities, GOOGLE_NAMESPACES } from '../src/main/google/capabilities'
 import { taskCapabilities, TASK_NAMESPACES } from '../src/main/vault/task-capabilities'
 import { MEMBERS_TTL_MS, createMembersCache } from '../src/main/github/members-cache'
@@ -24,7 +25,12 @@ registry.register(TASK_NAMESPACES, taskCapabilities({ today: () => '2026-09-30' 
 let grantStatus: AppGrants['status'] = async () => ({ codeHash: '', affordances: [] })
 registry.register(
   GOOGLE_NAMESPACES,
-  googleCapabilities({ dataFor: async () => null, overrides: async () => ({}) }),
+  googleCapabilities({
+    accounts: {} as GoogleAccountsManager,
+    dataFor: async () => null,
+    calendarPrefs: { read: async () => ({}), set: async () => {} },
+    imagePrefs: { read: async () => [], allow: async () => {}, clear: async () => {} },
+  }),
 )
 /** The app door's consent check, as the vault apps code opens it. */
 const admit = admitApps({ status: (...args) => grantStatus(...args), grant: async () => true })
@@ -356,7 +362,7 @@ describe('Google reads', () => {
   it('need the manifest flag first', async () => {
     await put('A.app/app.yaml', '')
     grantStatus = async () => ({ codeHash: 'h', affordances: [] })
-    expect(await refusal(runCapability('mail.threads', 'app', ctx({}), {}, admit))).toMatchObject({
+    expect(await refusal(runCapability('google.search', 'app', ctx({}), {}, admit))).toMatchObject({
       code: 'FORBIDDEN',
       message: expect.stringContaining('dangerously-allow'),
     })
@@ -368,7 +374,7 @@ describe('Google reads', () => {
       affordances: [{ affordance: 'calendar' as const, granted: false }],
     })
     expect(
-      await refusal(runCapability('calendar.events', 'app', ctx({}), range, admit)),
+      await refusal(runCapability('google.agenda', 'app', ctx({}), range, admit)),
     ).toMatchObject({
       code: 'FORBIDDEN',
       message: expect.stringContaining('not approved'),
@@ -380,14 +386,14 @@ describe('Google reads', () => {
       codeHash: 'h',
       affordances: [{ affordance: 'mail' as const, granted: true }],
     })
-    expect(await refusal(runCapability('mail.threads', 'app', ctx({}), {}, admit))).toMatchObject({
+    expect(await refusal(runCapability('google.search', 'app', ctx({}), {}, admit))).toMatchObject({
       code: 'UNAVAILABLE',
     })
   })
 
-  it('are not CLI commands', async () => {
-    expect(await refusal(runCapability('mail.threads', 'cli', ctx({}, null), {}))).toMatchObject({
-      code: 'BAD_REQUEST',
+  it('ask no grant at the CLI door, only a connected account', async () => {
+    expect(await refusal(runCapability('google.search', 'cli', ctx({}, null), {}))).toMatchObject({
+      code: 'UNAVAILABLE',
     })
   })
 
@@ -395,7 +401,7 @@ describe('Google reads', () => {
     expect(
       await refusal(
         runCapability(
-          'calendar.events',
+          'google.agenda',
           'app',
           ctx({}),
           { from: '2026-01-01T00:00:00Z', to: '2026-12-01T00:00:00Z' },

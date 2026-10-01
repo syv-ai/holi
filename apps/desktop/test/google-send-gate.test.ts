@@ -55,37 +55,48 @@ const decisionOf = (d: Decision) => d.hookSpecificOutput?.permissionDecision
 
 describe('the send gate asks', () => {
   it('asks for a bare-name send', async () => {
-    expect(decisionOf(await decide(bash('holi-google send --to ada@syv.ai --subject x')))).toBe(
+    expect(decisionOf(await decide(bash('holi google send --to ada@syv.ai --subject x')))).toBe(
       'ask',
     )
   })
 
   it('asks for a reply', async () => {
-    expect(decisionOf(await decide(bash('holi-google reply t1')))).toBe('ask')
+    expect(decisionOf(await decide(bash('holi google reply t1')))).toBe('ask')
   })
 
-  // The spelling the skill used before the send gate, and which still works. Missing this
-  // is how the gate would be believed in while never firing.
-  it('asks for the $HOLI_GOOGLE_BIN spelling', async () => {
-    expect(decisionOf(await decide(bash('"$HOLI_GOOGLE_BIN" send --to ada@syv.ai')))).toBe('ask')
-    expect(decisionOf(await decide(bash('$HOLI_GOOGLE_BIN reply t1')))).toBe('ask')
+  // The agent's env names the script as `$HOLI_BIN`. Missing this spelling is
+  // how the gate would be believed in while never firing.
+  it('asks for the $HOLI_BIN spelling', async () => {
+    expect(decisionOf(await decide(bash('"$HOLI_BIN" google send --to ada@syv.ai')))).toBe('ask')
+    expect(decisionOf(await decide(bash('$HOLI_BIN google reply t1')))).toBe('ask')
+    expect(decisionOf(await decide(bash('${HOLI_BIN} google reply t1')))).toBe('ask')
+  })
+
+  it('asks when the words are quoted', async () => {
+    expect(decisionOf(await decide(bash('holi "google" "send" --to ada@syv.ai')))).toBe('ask')
+    expect(decisionOf(await decide(bash("holi 'google' reply t1")))).toBe('ask')
   })
 
   it('asks for an absolute path to the generated script', async () => {
     expect(
       decisionOf(
         await decide(
-          bash('/Users/x/Library/Application Support/Holi/bin/holi-google send --to a@b.c'),
+          bash('/Users/x/Library/Application Support/Holi/bin/holi google send --to a@b.c'),
         ),
+      ),
+    ).toBe('ask')
+    expect(
+      decisionOf(
+        await decide(bash('"/Users/x/Library/Application Support/Holi/bin/holi" google reply t1')),
       ),
     ).toBe('ask')
   })
 
   it('asks when the send is buried in a pipeline or a chain', async () => {
-    expect(decisionOf(await decide(bash('cat body.txt | holi-google send --to ada@syv.ai')))).toBe(
+    expect(decisionOf(await decide(bash('cat body.txt | holi google send --to ada@syv.ai')))).toBe(
       'ask',
     )
-    expect(decisionOf(await decide(bash('cd /tmp && holi-google send --to ada@syv.ai')))).toBe(
+    expect(decisionOf(await decide(bash('cd /tmp && holi google send --to ada@syv.ai')))).toBe(
       'ask',
     )
   })
@@ -97,7 +108,7 @@ describe('the send gate asks', () => {
    * to approve something they cannot see.
    */
   it('names the recipients in the reason, so the prompt is not blind', async () => {
-    const reason = (await decide(bash('holi-google send --to ada@syv.ai --subject x')))
+    const reason = (await decide(bash('holi google send --to ada@syv.ai --subject x')))
       .hookSpecificOutput?.permissionDecisionReason
 
     expect(reason).toContain('ada@syv.ai')
@@ -105,7 +116,7 @@ describe('the send gate asks', () => {
 
   it('names every recipient, including cc', async () => {
     const reason = (
-      await decide(bash('holi-google send --to ada@syv.ai --cc bo@syv.ai --subject x'))
+      await decide(bash('holi google send --to ada@syv.ai --cc bo@syv.ai --subject x'))
     ).hookSpecificOutput?.permissionDecisionReason
 
     expect(reason).toContain('ada@syv.ai')
@@ -116,7 +127,7 @@ describe('the send gate asks', () => {
   // command. Saying so is the honest answer; implying the prompt showed them
   // would be worse than saying nothing.
   it('says plainly that a reply’s recipients are not visible in the command', async () => {
-    const reason = (await decide(bash('holi-google reply t1'))).hookSpecificOutput
+    const reason = (await decide(bash('holi google reply t1'))).hookSpecificOutput
       ?.permissionDecisionReason
 
     expect(reason).toMatch(/thread/i)
@@ -124,14 +135,14 @@ describe('the send gate asks', () => {
   })
 
   it('warns that reply --all widens the audience', async () => {
-    const reason = (await decide(bash('holi-google reply t1 --all'))).hookSpecificOutput
+    const reason = (await decide(bash('holi google reply t1 --all'))).hookSpecificOutput
       ?.permissionDecisionReason
 
     expect(reason).toMatch(/everyone|all/i)
   })
 
   it('still says it cannot be recalled, and that allowing it before does not skip this', async () => {
-    const reason = (await decide(bash('holi-google send --to ada@syv.ai'))).hookSpecificOutput
+    const reason = (await decide(bash('holi google send --to ada@syv.ai'))).hookSpecificOutput
       ?.permissionDecisionReason
 
     expect(reason).toMatch(/recall|undo|cannot be/i)
@@ -143,19 +154,19 @@ describe('the send gate defers', () => {
   // Returning `allow` here would silently widen every other command the agent runs.
   it('defers the undoable writes', async () => {
     for (const command of [
-      'holi-google archive t1',
-      'holi-google trash t1',
-      'holi-google draft --to ada@syv.ai --subject x',
-      'holi-google mark-read t1',
-      'holi-google unschedule ev-1',
+      'holi google archive t1',
+      'holi google trash t1',
+      'holi google draft --to ada@syv.ai --subject x',
+      'holi google mark-read t1',
+      'holi google unschedule ev-1',
     ]) {
       expect(decisionOf(await decide(bash(command)))).toBe('defer')
     }
   })
 
   it('defers the reads', async () => {
-    expect(decisionOf(await decide(bash("holi-google search 'is:unread'")))).toBe('defer')
-    expect(decisionOf(await decide(bash('holi-google agenda')))).toBe('defer')
+    expect(decisionOf(await decide(bash("holi google search 'is:unread'")))).toBe('defer')
+    expect(decisionOf(await decide(bash('holi google agenda')))).toBe('defer')
   })
 
   it('defers an unrelated command that merely contains the word send', async () => {
@@ -172,7 +183,7 @@ describe('the send gate defers', () => {
         await decide({
           hook_event_name: 'PreToolUse',
           tool_name: 'Read',
-          tool_input: { file_path: '/tmp/holi-google send' },
+          tool_input: { file_path: '/tmp/holi google send' },
         }),
       ),
     ).toBe('defer')
@@ -198,7 +209,7 @@ describe('the send gate fails closed', () => {
   })
 
   it('always exits 0 — a non-zero exit is a hook error, not a decision', async () => {
-    expect((await decide(bash('holi-google send --to a@b.c'))).code).toBe(0)
+    expect((await decide(bash('holi google send --to a@b.c'))).code).toBe(0)
     expect((await decide('garbage')).code).toBe(0)
   })
 })
@@ -214,11 +225,11 @@ describe('sending an existing draft', () => {
   const reasonOf = (d: Decision) => d.hookSpecificOutput?.permissionDecisionReason ?? ''
 
   it('asks, exactly as a composed send does', async () => {
-    expect(decisionOf(await decide(bash('holi-google send --draft d-1')))).toBe('ask')
+    expect(decisionOf(await decide(bash('holi google send --draft d-1')))).toBe('ask')
   })
 
   it('says the recipients are in the draft rather than pretending to show them', async () => {
-    const reason = reasonOf(await decide(bash('holi-google send --draft d-1')))
+    const reason = reasonOf(await decide(bash('holi google send --draft d-1')))
 
     expect(reason).toMatch(/draft/i)
     expect(reason).toMatch(/not in this command|in the draft rather than/i)
@@ -228,17 +239,17 @@ describe('sending an existing draft', () => {
     // The generic fallback would be a lie here: nothing failed to parse, there
     // is simply nothing to parse. Telling the user to "check the command" sends
     // them to look at something that does not contain the answer.
-    const reason = reasonOf(await decide(bash('holi-google send --draft d-1')))
+    const reason = reasonOf(await decide(bash('holi google send --draft d-1')))
 
     expect(reason).not.toMatch(/could not read the recipients/i)
   })
 
-  it('still asks through $HOLI_GOOGLE_BIN', async () => {
-    expect(decisionOf(await decide(bash('"$HOLI_GOOGLE_BIN" send --draft d-1')))).toBe('ask')
+  it('still asks through $HOLI_BIN', async () => {
+    expect(decisionOf(await decide(bash('"$HOLI_BIN" google send --draft d-1')))).toBe('ask')
   })
 
   it('does not fire on a draft subcommand, which reaches nobody', async () => {
-    expect(decisionOf(await decide(bash('holi-google draft --to ada@syv.ai --subject x')))).toBe(
+    expect(decisionOf(await decide(bash('holi google draft --to ada@syv.ai --subject x')))).toBe(
       'defer',
     )
   })
@@ -247,7 +258,7 @@ describe('sending an existing draft', () => {
 /**
  * Gmail's MCP connectors (2026-08-14).
  *
- * The agent used one in preference to `holi-google`, and every such call sailed
+ * The agent used one in preference to `holi google`, and every such call sailed
  * past this gate — an MCP tool call is not a shell command, so a `Bash` matcher
  * never saw it. `disableClaudeAiConnectors` is the real fix; this is the
  * fallback for a vault whose settings regress.

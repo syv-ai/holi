@@ -42,3 +42,20 @@ export const noParams = (): Record<string, never> => ({})
 export const pathParams = (raw: unknown): { path: string } => ({
   path: stringParam(paramsObject(raw), 'path'),
 })
+
+/** A CLI flag, or the boolean the UI and app doors send for it. A bare
+ *  `--name` arrives as `'true'`; absent is false. */
+export function flagParam(raw: Record<string, unknown>, key: string): boolean {
+  const value = raw[key]
+  if (value === undefined || value === false) return false
+  if (value === true || value === 'true') return true
+  throw new CapabilityError('BAD_REQUEST', `${key} is a flag`)
+}
+
+/** An optional string param: absent, or empty, is undefined. */
+export function optionalStringParam(raw: Record<string, unknown>, key: string): string | undefined {
+  const value = raw[key]
+  if (value === undefined || value === null || value === '') return undefined
+  if (typeof value !== 'string') throw new CapabilityError('BAD_REQUEST', `${key} must be a string`)
+  return value
+}

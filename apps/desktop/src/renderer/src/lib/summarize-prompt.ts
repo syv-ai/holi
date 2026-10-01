@@ -15,7 +15,7 @@ export function buildSummarizePrompt(thread: {
   return [
     `Summarise this email thread for me: **${thread.subject}**.`,
     '',
-    `Read it with \`holi-google read ${thread.threadId}\`.`,
+    `Read it with \`holi google read ${thread.threadId}\`.`,
     '',
     'Tell me what it is about, what was decided, and what — if anything — is waiting on me. ' +
       'Keep it short; I can ask for more.',
