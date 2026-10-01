@@ -3,7 +3,10 @@ import { useSetAtom } from 'jotai'
 import { useEffect, useMemo, useState } from 'react'
 import { FormField } from '@/composites/FormField'
 import { FieldWidget } from '@/features/pdf/FieldWidget'
+import { capClient } from '@/lib/cap-client'
 import { trpc } from '@/lib/trpc'
+// eslint-disable-next-line no-restricted-imports, boundaries/element-types -- until Convert moves into the PDF plugin
+import type { PdfCapabilities } from '../../../../plugins/pdf/main/capabilities'
 import { metaFromValues, missingRequired, parseFrontmatter, prefillValues } from '@/lib/pdf-fields'
 import { openNoteTabAtom } from '@/state/panes'
 import {
@@ -15,6 +18,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/primitives'
+
+const pdf = capClient<PdfCapabilities>('pdf')
 
 interface TemplateOption {
   name: string
@@ -59,8 +64,8 @@ export function ConvertToPdf({
 
   useEffect(() => {
     let live = true
-    void trpc.pdf.templates
-      .query({ remote })
+    void pdf
+      .templates(remote)
       .then((list) => {
         if (!live) return
         setTemplates(list)
@@ -123,8 +128,7 @@ export function ConvertToPdf({
         return // user cancelled the save dialog
       }
       const meta = metaFromValues(selected.fields, values)
-      const { pdfPath, vaultPath } = await trpc.pdf.render.mutate({
-        remote,
+      const { pdfPath, vaultPath } = await pdf.render(remote, {
         path,
         template: slug,
         outPath,

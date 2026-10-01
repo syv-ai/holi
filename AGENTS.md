@@ -114,7 +114,7 @@ legacy alias with the same behavior as `pnpm lint`.
   committed content, whatever an older vault's `.gitignore` says.
 - A vault's seed files are real files in seed folders: `vault/once/**` and
   `vault/shipped/**` beside the module that contributes them
-  (`main/vault/seed/core.ts`, `main/agent/seed/`, `main/pdf/seed.ts`), at the
+  (`main/vault/seed/core.ts`, `main/agent/seed/`, a plugin's `main/seed.ts`), at the
   path they get in the vault. Binaries such as the brand fonts and logo are
   read in with `?inline`; edit the file itself, there is nothing to regenerate.
 - Holi seeds a vault's root `AGENTS.md` as user-owned vault content, distinct

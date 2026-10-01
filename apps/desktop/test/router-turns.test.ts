@@ -74,7 +74,6 @@ async function rig() {
     openExternal: async () => {},
     trashItem: async () => {},
     downloadsDir: join(base, 'Downloads'),
-    typstCacheDir: join(base, 'typst'),
     now: () => '2026-09-09T12:00:00Z',
     today: () => '2026-09-09',
   }).createCaller({})

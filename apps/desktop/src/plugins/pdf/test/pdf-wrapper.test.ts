@@ -1,6 +1,6 @@
 import type { TemplateField } from '@holi/shared'
 import { describe, expect, it } from 'vitest'
-import { coerceMeta, composeWrapper, typstString } from '../src/main/pdf/wrapper'
+import { coerceMeta, composeWrapper, typstString } from '../main/wrapper'
 
 const f = (over: Partial<TemplateField>): TemplateField => ({
   key: 'k',

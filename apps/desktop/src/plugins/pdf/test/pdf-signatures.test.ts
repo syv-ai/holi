@@ -13,7 +13,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { createSignatureStore } from '../src/main/pdf/signatures'
+import { createSignatureStore } from '../main/signatures'
 
 let dir: string
 const pathFor = () => join(dir, 'pdf-signatures.json')

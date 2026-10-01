@@ -18,7 +18,7 @@ export interface ResolveTypstOpts {
 
 /**
  * Absolute path to a usable typst binary, or null. Resolution order:
- *   1. `TYPST_BIN` env override (tests, power users, the agent front door).
+ *   1. `TYPST_BIN` env override (tests, power users).
  *   2. a cached download under `cacheDir`.
  *   3. `PATH` (dev — `which typst`).
  * This finds an EXISTING binary only; `ensureTypst` adds the download.
@@ -68,7 +68,11 @@ export function typstReleaseAsset(platform: string, arch: string): TypstAsset {
   if (target === undefined) throw new Error(`no typst release for ${platform}/${arch}`)
   const dir = `typst-${target.triple}`
   const bin = platform === 'win32' ? 'typst.exe' : 'typst'
-  return { archive: `${dir}.${target.format}`, binInArchive: `${dir}/${bin}`, format: target.format }
+  return {
+    archive: `${dir}.${target.format}`,
+    binInArchive: `${dir}/${bin}`,
+    format: target.format,
+  }
 }
 
 /** The pinned GitHub release download URL for an asset. */
@@ -102,6 +106,20 @@ export async function ensureTypst(opts: ResolveTypstOpts = {}): Promise<string |
   if (existing !== null) return existing
   if (!opts.cacheDir) return null
   return downloadTypst(opts.cacheDir)
+}
+
+/**
+ * `ensureTypst` for one cache, one download at a time: the background warm-up,
+ * a render and the agent can all ask before the first download lands.
+ */
+export function sharedTypst(cacheDir: string): () => Promise<string | null> {
+  let pending: Promise<string | null> | null = null
+  return () => {
+    pending ??= ensureTypst({ cacheDir }).finally(() => {
+      pending = null
+    })
+    return pending
+  }
 }
 
 async function downloadTypst(cacheDir: string): Promise<string | null> {

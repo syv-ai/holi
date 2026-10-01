@@ -261,6 +261,12 @@ export default [
     files: PLUGIN_FILES,
     rules: { 'no-restricted-imports': ['error', { patterns: pluginImports }] },
   },
+  // A plugin's node tests drive core's registry with the plugin's table, so
+  // they may import core's main side. Shipped plugin code may not.
+  {
+    files: ['src/plugins/*/test/**/*.ts'],
+    rules: { 'no-restricted-imports': ['error', { patterns: [pluginImports[0]] }] },
+  },
   // primitives/ is the ONE place native elements + Radix are allowed.
   // The colour ban still applies (tokens or nothing, everywhere).
   {

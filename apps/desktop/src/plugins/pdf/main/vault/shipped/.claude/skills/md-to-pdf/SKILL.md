@@ -5,9 +5,9 @@ description: Render a vault note to a PDF using Holi's bundled Typst engine and 
 
 # Render a note to PDF
 
-Holi ships a Typst engine; its absolute path is in the `$TYPST_BIN` environment
-variable. If `$TYPST_BIN` is empty, Typst is not installed yet — tell the user to
-run **Convert to PDF** once from a note's ⋯ menu (that installs it), then retry.
+Holi ships a Typst engine. `holi pdf typst` prints its absolute path,
+downloading it first if this machine does not have it yet. If the command fails,
+Typst could not be had: tell the user what it printed.
 
 ## Templates
 
@@ -68,9 +68,10 @@ Omit an optional field to leave it unset — the template reads
 3. Compile with the bundled engine:
 
    ```sh
+   TYPST=$(holi pdf typst)
    DIR=$(mktemp -d)
    # …write "$DIR/wrapper.typ" per above…
-   "$TYPST_BIN" compile "$DIR/wrapper.typ" "$DIR/the-note.pdf" --root /
+   "$TYPST" compile "$DIR/wrapper.typ" "$DIR/the-note.pdf" --root /
    ```
 
 4. Move it to where it goes (below), and tell the user where that is.

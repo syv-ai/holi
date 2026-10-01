@@ -15,9 +15,6 @@ import { noCoreServices } from '../src/main/capabilities/services'
 import { vaultCapabilities, VAULT_NAMESPACES } from '../src/main/capabilities/vault-caps'
 import { taskCapabilities, TASK_NAMESPACES } from '../src/main/vault/task-capabilities'
 import { createRouter } from '../src/main/router'
-import { resolveTypstBin } from '../src/main/pdf/typst-bin'
-import { createSignatureStore } from '../src/main/pdf/signatures'
-import plainTemplateTyp from '../src/main/pdf/vault/once/.holi/document-templates/plain/template.typ?raw'
 
 const exec = promisify(execFile)
 import { GitHubSession } from '../src/main/github/session'
@@ -128,8 +125,6 @@ async function rig(files: Record<string, string> = {}, auth?: StoredAuth) {
     vaultRoot: join(base, 'Holi'),
     openExternal: async () => {},
     trashItem,
-    typstCacheDir: join(base, 'typst'),
-    signatures: createSignatureStore(join(base, 'pdf-signatures.json')),
     now: () => '2026-07-21T12:00:00Z',
     today: () => TODAY,
   }).createCaller({})
@@ -1114,7 +1109,6 @@ async function authRig(routes: Record<string, Scripted[]>, seed?: StoredAuth) {
     vaultRoot: join(base, 'Holi'),
     openExternal,
     trashItem: async () => {},
-    typstCacheDir: join(base, 'typst'),
   }).createCaller({})
   return { caller, session, store, openExternal }
 }
@@ -1629,93 +1623,6 @@ describe('sync', () => {
   })
 })
 
-describe('pdf', () => {
-  const TEMPLATE_FILES = {
-    '.holi/document-templates/plain/template.json': JSON.stringify({
-      name: 'Plain',
-      description: 'Clean.',
-      fields: [
-        { key: 'date', label: 'Date', required: false },
-        { key: 'recipient', label: 'Recipient', required: true },
-      ],
-    }),
-    '.holi/document-templates/plain/template.typ': '#let doc(p, meta: (:), assets: "") = []',
-  }
-
-  it('templates returns each template with its declared fields', async () => {
-    const { caller } = await rig(TEMPLATE_FILES)
-    // The vault also carries the seeded templates; this is about the one the
-    // fixture declares.
-    expect(await caller.pdf.templates({ remote: REMOTE })).toEqual(
-      expect.arrayContaining([
-        {
-          name: 'Plain',
-          slug: 'plain',
-          description: 'Clean.',
-          fields: [
-            { key: 'date', label: 'Date', type: 'text', required: false },
-            { key: 'recipient', label: 'Recipient', type: 'text', required: true },
-          ],
-          warnings: [],
-        },
-      ]),
-    )
-  })
-
-  it('keeps the signatures made in the viewer, outside the vault', async () => {
-    const { caller, root } = await rig()
-    expect(await caller.pdf.signatures()).toBe('[]')
-
-    const entries = [{ id: 'sig-1', createdAt: 1, signature: { creationType: 'draw' } }]
-    await caller.pdf.saveSignatures({ entriesJson: JSON.stringify(entries) })
-
-    expect(JSON.parse(await caller.pdf.signatures())).toEqual(entries)
-    // Never in the clone: a vault is a shared repo.
-    await expect(readFile(join(root, 'pdf-signatures.json'), 'utf8')).rejects.toThrow()
-  })
-
-  it('saveSignatures refuses anything but a list', async () => {
-    const { caller } = await rig()
-    await expect(caller.pdf.saveSignatures({ entriesJson: '{}' })).rejects.toThrow(/list/)
-  })
-
-  it('render rejects a meta value that is not a string', async () => {
-    const { caller } = await rig({ ...TEMPLATE_FILES, 'note.md': '# Hi\n' })
-    await expect(
-      caller.pdf.render({
-        remote: REMOTE,
-        path: 'note.md',
-        template: 'plain',
-        meta: { date: 5 } as never,
-      }),
-    ).rejects.toThrow(/meta/)
-  })
-
-  it('render writes to the given outPath and threads meta through (needs typst)', async () => {
-    const typst = await resolveTypstBin()
-    if (typst === null) return // no typst — skip, don't fail
-    const { caller, base } = await rig({
-      '.holi/document-templates/plain/template.json': JSON.stringify({
-        name: 'Plain',
-        fields: [{ key: 'date', label: 'Date', type: 'date', required: false }],
-      }),
-      '.holi/document-templates/plain/template.typ': plainTemplateTyp,
-      'note.md': '---\ntitle: T\n---\n\n## Heading\n\nBody.\n',
-    })
-    const outPath = join(base, 'chosen.pdf')
-    const { pdfPath } = await caller.pdf.render({
-      remote: REMOTE,
-      path: 'note.md',
-      template: 'plain',
-      outPath,
-      meta: { date: '2026-07-26', recipient: 'ACME' },
-    })
-    expect(pdfPath).toBe(outPath)
-    const bytes = await readFile(outPath)
-    expect(bytes.subarray(0, 5).toString('latin1')).toBe('%PDF-')
-  }, 30_000)
-})
-
 describe('history', () => {
   // rig() makes a plain dir; version history needs real git material, so init a
   // repo and land two commits on note.md (v1 = "write", v2 = "Update") first.
@@ -1827,7 +1734,6 @@ describe('google composer procedures', () => {
       vaultRoot: join(base, 'Holi'),
       openExternal: async () => {},
       trashItem: async () => {},
-      typstCacheDir: join(base, 'typst'),
       googleDataFor: async () => googleData as never,
     }).createCaller({})
 
@@ -1933,7 +1839,6 @@ describe('google composer procedures', () => {
       vaultRoot: join(base, 'Holi'),
       openExternal: async () => {},
       trashItem: async () => {},
-      typstCacheDir: join(base, 'typst'),
     }).createCaller({})
 
     await expect(caller.google.send({ mail: MAIL })).rejects.toMatchObject({
@@ -1959,7 +1864,6 @@ describe('google forwarding', () => {
       vaultRoot: join(base, 'Holi'),
       openExternal: async () => {},
       trashItem: async () => {},
-      typstCacheDir: join(base, 'typst'),
       googleDataFor: async () =>
         ({
           sendMail: async (input: unknown) => {
@@ -1992,7 +1896,6 @@ describe('google forwarding', () => {
       vaultRoot: join(base, 'Holi'),
       openExternal: async () => {},
       trashItem: async () => {},
-      typstCacheDir: join(base, 'typst'),
       googleDataFor: async () => ({ sendMail: async () => ({ id: 'm-1' }) }) as never,
     }).createCaller({})
 
@@ -2182,7 +2085,6 @@ describe('google accounts per vault', () => {
       vaultRoot: join(base, 'Holi'),
       openExternal: async () => {},
       trashItem: async () => {},
-      typstCacheDir: join(base, 'typst'),
       googleAccounts: googleAccounts as never,
     }).createCaller({})
 
@@ -2251,7 +2153,6 @@ describe('google status and accounts with no vault open', () => {
       vaultRoot: join(base, 'Holi'),
       openExternal: async () => {},
       trashItem: async () => {},
-      typstCacheDir: join(base, 'typst'),
       googleAccounts: {
         list: () => [{ sub: 'sub-1', email: 'ada@syv.ai' }],
         sessionFor: async () => null,

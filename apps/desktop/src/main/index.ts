@@ -38,7 +38,6 @@ import { createMembersCache } from './github/members-cache'
 import { createGoogleAccountsManager } from './google/electron'
 import { createCalendarPrefs } from './google/calendar-prefs'
 import { createImagePrefs } from './google/image-prefs'
-import { createSignatureStore } from './pdf/signatures'
 import { openGoogleCache } from './google/cache'
 import { createGoogleData, type GoogleData } from './google/data'
 import { createGoogleOpsServer } from './google/ops-server'
@@ -52,10 +51,8 @@ import { CapabilityError } from './capabilities/error'
 import { createCapabilityRegistry } from './capabilities/registry'
 import { vaultCapabilities, VAULT_NAMESPACES } from './capabilities/vault-caps'
 import { googleCapabilities, GOOGLE_NAMESPACES } from './google/capabilities'
-import { PDF_CAPABILITIES, PDF_NAMESPACES } from './pdf/capabilities'
 import { taskCapabilities, TASK_NAMESPACES } from './vault/task-capabilities'
 import { agentSeed } from './agent/seed/seed'
-import { pdfSeed } from './pdf/seed'
 import { coreSeed } from './vault/seed/core'
 import { MAIN_PLUGINS } from '../plugins/main'
 import { install } from './plugin-host/installed'
@@ -99,7 +96,6 @@ import { openTurnLog } from './agent/turn-log'
 import { createBridgeEnv } from './bridge/env-file'
 import { createBridgeServer } from './bridge/server'
 import { registerAgentRoutes } from './agent/bridge-routes'
-import { ensureTypst, resolveTypstBin } from './pdf/typst-bin'
 import { registerAgentIpc } from './agent-ipc'
 
 // The plugins this build has: the one place main imports them.
@@ -107,7 +103,7 @@ install(MAIN_PLUGINS)
 
 /** What seeds every vault, core first: its `.gitignore` is written before
  *  any file that could be committed. Enabled plugins' seeds follow. */
-const CORE_SEEDS = [coreSeed(MAIN_PLUGINS.map((p) => p.info)), agentSeed, pdfSeed]
+const CORE_SEEDS = [coreSeed(MAIN_PLUGINS.map((p) => p.info)), agentSeed]
 
 // Declared before the launch check below, which starts `main()` synchronously:
 // a `let` still in its temporal dead zone would throw during startup.
@@ -208,8 +204,6 @@ async function main(): Promise<void> {
    * be a disclosure, not a preference.
    */
   const imagePrefs = createImagePrefs(join(app.getPath('userData'), 'google-image-senders.json'))
-  /** The PDF viewer's saved signatures: `userData` too, never a vault. */
-  const signatures = createSignatureStore(join(app.getPath('userData'), 'pdf-signatures.json'))
   /**
    * The UI's Google cache. In `userData` rather than in a vault: mail
    * is **account** data, and a vault is a shared git repo.
@@ -415,9 +409,6 @@ async function main(): Promise<void> {
     }
   })
 
-  // Shared by the UI's Convert-to-PDF router and the agent's $TYPST_BIN.
-  const typstCacheDir = join(app.getPath('userData'), 'typst')
-
   // What the renderer reports the person is looking at, and their approvals
   // of apps' Google reads: capabilities and the router both read these.
   const uiReports = createUiReports()
@@ -465,7 +456,6 @@ async function main(): Promise<void> {
   // The agent's `holi apps open`: the renderer opens the tab.
   const appCaps = appCapabilities({ showApp: (bundle) => send('apps:open', bundle) })
   const taskCaps = taskCapabilities({ today: localToday })
-  const pdfCaps = PDF_CAPABILITIES
   const agentCaps = agentCapabilities({
     // `agent` is assigned below, before any vault can be open.
     sessionsFor: (remote) => (host.active()?.remote === remote ? (agent?.sessions() ?? []) : []),
@@ -478,7 +468,6 @@ async function main(): Promise<void> {
   capabilities.register(VAULT_NAMESPACES, vaultCaps)
   capabilities.register(APP_NAMESPACES, appCaps)
   capabilities.register(TASK_NAMESPACES, taskCaps)
-  capabilities.register(PDF_NAMESPACES, pdfCaps)
   capabilities.register(AGENT_NAMESPACES, agentCaps)
   capabilities.register(GOOGLE_NAMESPACES, googleCaps)
   // Every method the frame's bridge may call and main answers is registered
@@ -522,7 +511,6 @@ async function main(): Promise<void> {
     calendarPrefs,
     googleDataFor,
     imagePrefs,
-    signatures,
     host,
     vaultRoot: vaultRoot(),
     openExternal: async (url) => {
@@ -533,7 +521,6 @@ async function main(): Promise<void> {
       const { shell } = await import('electron')
       await shell.trashItem(path)
     },
-    typstCacheDir,
   })
 
   registerIpc({ router, rootFor: (remote) => rootFor(remote) })
@@ -669,23 +656,14 @@ async function main(): Promise<void> {
     // stamped into its directory tracks a setting the user can flip while the
     // app runs. Static paths every session needs ride in the settings `env`
     // block, the one channel that reaches a background session.
-    resolveConfig: async ({ remote, root }) => {
-      // Find-only for the env; download-warm fire-and-forget so a machine that
-      // never rendered has typst next time.
-      const typstBin = await resolveTypstBin({ cacheDir: typstCacheDir }).catch(() => null)
-      void ensureTypst({ cacheDir: typstCacheDir })
-      return resolveVaultAgentConfig({
+    resolveConfig: async ({ remote, root }) =>
+      resolveVaultAgentConfig({
         userDataDir,
         remote,
         root,
         systemPrefersDark: nativeTheme.shouldUseDarkColors,
-        env: {
-          HOLI_BIN: holiCliPath,
-          HOLI_GOOGLE_BIN: googleCliPath,
-          ...(typstBin === null ? {} : { TYPST_BIN: typstBin }),
-        },
-      })
-    },
+        env: { HOLI_BIN: holiCliPath, HOLI_GOOGLE_BIN: googleCliPath },
+      }),
     takeFirstSpawn,
     binDir: () => binDir,
     // What each turn changed, as a commit range, in the vault it ran in.

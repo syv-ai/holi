@@ -9,10 +9,11 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { commentThreadsJson, emptyVaultSnapshot, formatCommentThreads } from '@holi/shared'
-import { createCapabilityRegistry } from '../src/main/capabilities/registry'
-import { noCoreServices } from '../src/main/capabilities/services'
-import { PDF_CAPABILITIES, PDF_NAMESPACES } from '../src/main/pdf/capabilities'
-import { pdfCommentsInVault, readPdfComments } from '../src/main/pdf/comments'
+import { createCapabilityRegistry } from '../../../main/capabilities/registry'
+import { noCoreServices } from '../../../main/capabilities/services'
+import { PDF_NAMESPACES, pdfCapabilities } from '../main/capabilities'
+import { pdfCommentsInVault, readPdfComments } from '../main/comments'
+import { createSignatureStore } from '../main/signatures'
 
 const FIXTURES = join(__dirname, 'fixtures', 'pdf-comments')
 
@@ -133,7 +134,13 @@ describe('pdfCommentsInVault', () => {
       core: noCoreServices(),
     }
     const registry = createCapabilityRegistry()
-    registry.register(PDF_NAMESPACES, PDF_CAPABILITIES)
+    registry.register(
+      PDF_NAMESPACES,
+      pdfCapabilities({
+        signatures: createSignatureStore(join(root, '..', 'signatures.json')),
+        typst: async () => null,
+      }),
+    )
     const runCapability = registry.run
     const path = 'client docs/msa.pdf'
     const expected = await threads('embedpdf.pdf')

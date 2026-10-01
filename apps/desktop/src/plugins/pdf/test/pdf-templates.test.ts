@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { listTemplates } from '../src/main/pdf/templates'
+import { listTemplates } from '../main/templates'
 
 const dirs: string[] = []
 async function vault(): Promise<string> {
@@ -40,7 +40,7 @@ describe('listTemplates', () => {
   it('reads a template dir + manifest into a Template', async () => {
     const root = await vault()
     await seed(root, 'plain', { name: 'Plain', description: 'Clean.', fields: [] })
-    const [t] = await listTemplates(root)
+    const t = (await listTemplates(root))[0]!
     expect(t).toMatchObject({ name: 'Plain', description: 'Clean.', fields: [], slug: 'plain' })
     expect(t.dir).toBe(join(root, '.holi/document-templates/plain'))
   })
@@ -51,7 +51,7 @@ describe('listTemplates', () => {
       name: 'P',
       fields: [{ key: 'date', label: 'Date', required: true }, { key: 'to' }],
     })
-    const [t] = await listTemplates(root)
+    const t = (await listTemplates(root))[0]!
     expect(t.fields).toEqual([
       { key: 'date', label: 'Date', type: 'text', required: true },
       { key: 'to', label: 'to', type: 'text', required: false },
@@ -70,10 +70,16 @@ describe('listTemplates', () => {
         { key: 'plain', label: 'Plain' },
       ],
     })
-    const [t] = await listTemplates(root)
+    const t = (await listTemplates(root))[0]!
     expect(t.fields).toEqual([
       { key: 'when', label: 'When', type: 'date', required: false, default: 'today' },
-      { key: 'status', label: 'Status', type: 'select', required: false, options: ['Draft', 'Final'] },
+      {
+        key: 'status',
+        label: 'Status',
+        type: 'select',
+        required: false,
+        options: ['Draft', 'Final'],
+      },
       { key: 'count', label: 'Count', type: 'number', required: false },
       { key: 'weird', label: 'Weird', type: 'text', required: false },
       { key: 'plain', label: 'Plain', type: 'text', required: false },
@@ -83,7 +89,7 @@ describe('listTemplates', () => {
   it('a select with no usable options degrades to text', async () => {
     const root = await vault()
     await seed(root, 's', { name: 'S', fields: [{ key: 'x', type: 'select' }] })
-    const [t] = await listTemplates(root)
+    const t = (await listTemplates(root))[0]!
     expect(t.fields).toEqual([{ key: 'x', label: 'x', type: 'text', required: false }])
   })
 
@@ -111,7 +117,7 @@ describe('listTemplates', () => {
         { key: 'd', type: 'date', default: '2026-13-40' },
       ],
     })
-    const [t] = await listTemplates(root)
+    const t = (await listTemplates(root))[0]!
     expect(t.warnings.length).toBe(2)
     expect(t.warnings.some((w) => w.includes('select'))).toBe(true)
     expect(t.warnings.some((w) => w.includes('"d"'))).toBe(true)
@@ -122,7 +128,7 @@ describe('listTemplates', () => {
   it('a clean manifest has no warnings', async () => {
     const root = await vault()
     await seed(root, 'p', { name: 'P', fields: [{ key: 'a', type: 'text' }] })
-    const [t] = await listTemplates(root)
+    const t = (await listTemplates(root))[0]!
     expect(t.warnings).toEqual([])
   })
 })

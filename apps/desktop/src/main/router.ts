@@ -7,7 +7,7 @@
  * theatre. GitHub decides what leaves, at push time (docs/features/auth.md).
  */
 import { readFile, rm, stat } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
 import { initTRPC, TRPCError } from '@trpc/server'
 import {
   completeTask,
@@ -96,17 +96,10 @@ import {
 } from './google/gmail'
 import type { OutgoingMail } from './google/mime'
 import type { ImagePrefsStore } from './google/image-prefs'
-import type { SignatureStore } from './pdf/signatures'
 import { listContacts } from './google/people'
 import type { ActiveVault, SyncState, VaultHost } from './vault/active-vault'
 import { ensureClone } from './vault/clone'
-import {
-  pruneEmptiedFolder,
-  removeDocFile,
-  writeAtomic,
-  absPathFor,
-  toVaultRel,
-} from './vault/vault-files'
+import { pruneEmptiedFolder, removeDocFile, writeAtomic, absPathFor } from './vault/vault-files'
 import { renameNote } from './vault/rename'
 import { scanVault, type VaultSnapshot } from './vault/vault-store'
 import { readVaultTheme, resetVaultTheme, writeVaultTheme } from './vault/theme'
@@ -114,10 +107,6 @@ import { readVaultSettings, writeVaultSettings } from './vault/settings'
 import { parseSettingsPatch } from '@holi/shared'
 import type { ResolvedTheme, ResolvedVaultSettings } from '@holi/shared'
 import { isRemote, repoName, type VaultRegistry } from './vault/registry'
-import { listTemplates } from './pdf/templates'
-import type { TemplateField } from '@holi/shared'
-import { renderPdf } from './pdf/render'
-import { ensureTypst } from './pdf/typst-bin'
 
 const t = initTRPC.create()
 
@@ -177,12 +166,6 @@ export interface RouterDeps {
    * until the user says otherwise — the safe direction to degrade in.
    */
   imagePrefs?: ImagePrefsStore
-  /**
-   * The signatures made in the PDF viewer, in `userData` (`pdf/signatures.ts`).
-   * Optional like the other stores: absent, there are simply none saved, and a
-   * save says why it could not be.
-   */
-  signatures?: SignatureStore
   /** Which vault is open, and everything running behind it. */
   host: VaultHost
   /**
@@ -227,9 +210,6 @@ export interface RouterDeps {
    * destructive account action should be undoable.
    */
   trashItem: (path: string) => Promise<void>
-  /** Where a downloaded typst binary is cached (userData/typst). Injected for
-   *  the same reason; the resolver only reads it, never electron. */
-  typstCacheDir: string
   /** Wall-clock, injected so `lastOpenedAt` is testable. */
   now?: () => string
   /**
@@ -480,37 +460,6 @@ function deleteManyInput(raw: unknown): { remote: string; paths: string[]; folde
     ...pathsInput(raw),
     folders: folders === undefined ? [] : stringList(raw, 'folders'),
   }
-}
-
-/** The Convert-to-PDF render input. `meta` (the template's declared fields to
- * user values) is not something `fields` can express, so it is validated here.
- * `outPath` is an absolute destination the native save dialog chose; absent,
- * the procedure writes beside the note. */
-function renderPdfInput(raw: unknown): {
-  remote: string
-  path: string
-  template: string
-  outPath?: string
-  meta?: Record<string, string>
-} {
-  const base = fields({ remote: 'string', path: 'string', template: 'string', outPath: 'string?' })(
-    raw,
-  )
-  return { ...base, meta: metaOf(raw) }
-}
-
-/** A flat string→string metadata map from the render input. Missing → `{}`. Any
- *  non-string value throws (tRPC → BAD_REQUEST) rather than reaching `typst`. */
-function metaOf(raw: unknown): Record<string, string> {
-  const m = (raw as Record<string, unknown>).meta
-  if (m === undefined || m === null) return {}
-  if (typeof m !== 'object') throw new Error('meta must be an object')
-  const out: Record<string, string> = {}
-  for (const [k, v] of Object.entries(m as Record<string, unknown>)) {
-    if (typeof v !== 'string') throw new Error(`meta value for ${k} must be a string`)
-    out[k] = v
-  }
-  return out
 }
 
 export function createRouter(deps: RouterDeps) {
@@ -1909,92 +1858,6 @@ export function createRouter(deps: RouterDeps) {
       }),
   })
 
-  const pdf = t.router({
-    // The signatures made in the PDF viewer, as the library's serialized list.
-    // Not vault-scoped: one list per machine and person, kept out of every
-    // vault because a vault is a shared repo.
-    signatures: t.procedure.query(async (): Promise<string> => {
-      return (await deps.signatures?.read()) ?? '[]'
-    }),
-
-    saveSignatures: t.procedure
-      .input(fields({ entriesJson: 'string' }))
-      .mutation(async ({ input }) => {
-        if (deps.signatures === undefined) {
-          throw new TRPCError({
-            code: 'PRECONDITION_FAILED',
-            message: 'signatures cannot be saved here',
-          })
-        }
-        try {
-          await deps.signatures.write(input.entriesJson)
-        } catch (error) {
-          throw new TRPCError({
-            code: 'BAD_REQUEST',
-            message: error instanceof Error ? error.message : String(error),
-          })
-        }
-        return { ok: true as const }
-      }),
-
-    // The vault's templates, for the Convert picker and its metadata inputs.
-    templates: t.procedure.input(fields({ remote: 'string' })).query(
-      async ({
-        input,
-      }): Promise<
-        {
-          name: string
-          slug: string
-          description: string
-          fields: TemplateField[]
-          warnings: string[]
-        }[]
-      > => {
-        const root = await rootFor(input.remote)
-        return (await listTemplates(root)).map(({ name, slug, description, fields, warnings }) => ({
-          name,
-          slug,
-          description,
-          fields,
-          warnings,
-        }))
-      },
-    ),
-
-    // Render `path` through `template` to a PDF and return its path. Writes to
-    // `outPath` when given (the native save dialog's choice); otherwise beside
-    // the note. `vaultPath` is set when the PDF is inside the vault, so the
-    // caller can open it in a tab; the watcher picks the new file up.
-    render: t.procedure
-      .input(renderPdfInput)
-      .mutation(async ({ input }): Promise<{ pdfPath: string; vaultPath: string | null }> => {
-        const root = await rootFor(input.remote)
-        const noteAbs = absPathFor(root, safe(input.path))
-        const tpl = (await listTemplates(root)).find((t) => t.slug === input.template)
-        if (tpl === undefined) {
-          throw new TRPCError({ code: 'NOT_FOUND', message: `template ${input.template}` })
-        }
-        const typstBin = await ensureTypst({ cacheDir: deps.typstCacheDir })
-        if (typstBin === null) {
-          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'typst is not available' })
-        }
-        const base = input.path
-          .split('/')
-          .at(-1)!
-          .replace(/\.(md|markdown)$/i, '')
-        const outPath = input.outPath ?? join(dirname(noteAbs), `${base}.pdf`)
-        await renderPdf({
-          typstBin,
-          templateDir: tpl.dir,
-          notePath: noteAbs,
-          outPath,
-          fields: tpl.fields,
-          meta: input.meta ?? {},
-        })
-        return { pdfPath: outPath, vaultPath: toVaultRel(root, outPath) }
-      }),
-  })
-
   /**
    * The Google connection: a **data connector**, not identity.
    *
@@ -2592,7 +2455,6 @@ export function createRouter(deps: RouterDeps) {
     sync,
     history,
     turns,
-    pdf,
     theme,
     settings,
     google,

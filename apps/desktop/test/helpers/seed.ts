@@ -3,7 +3,7 @@
  * the way a real one is.
  */
 import { agentSeed } from '../../src/main/agent/seed/seed'
-import { pdfSeed } from '../../src/main/pdf/seed'
+import { pdfSeed } from '../../src/plugins/pdf/main/seed'
 import { coreSeed } from '../../src/main/vault/seed/core'
 import { ensureSeeded } from '../../src/main/vault/seed/seed'
 import type { SeedResult } from '../../src/main/vault/seed/types'

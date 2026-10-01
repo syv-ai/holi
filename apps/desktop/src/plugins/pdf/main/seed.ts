@@ -6,8 +6,7 @@
  * `_brand/` is skipped by the template picker (underscore prefix): it is the
  * foundation the branded templates import.
  */
-import { seedFolder } from '../vault/seed/folder'
-import type { SeedContribution } from '../vault/seed/types'
+import { seedFolder, type SeedContribution } from '../../../main/plugin-api'
 
 const folder = seedFolder(
   import.meta.glob(['./vault/**', '!**/*.{ttf,png}', '!**/.DS_Store'], {
@@ -28,8 +27,11 @@ export const pdfSeed: SeedContribution = {
   id: 'pdf',
   once: folder.once,
   shipped: folder.shipped,
-  // `holi pdf comments` only reads, so it asks nothing.
+  // `holi pdf comments` only reads and `holi pdf typst` only finds the
+  // engine, so neither asks.
   fragments: {
-    '.claude/settings.json': [{ permissions: { allow: ['Bash(holi pdf comments:*)'] } }],
+    '.claude/settings.json': [
+      { permissions: { allow: ['Bash(holi pdf comments:*)', 'Bash(holi pdf typst:*)'] } },
+    ],
   },
 }

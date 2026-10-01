@@ -14,7 +14,7 @@ It is also the key of the vault's Claude Code supervisor, so the agent list show
 sessions only. Holi creates the directory when it opens the vault and merges into its
 `settings.json`: `disableClaudeAiConnectors` (only when absent), `theme` (dark or light, from the
 app's resolved colour mode) and an `env` block with Holi's static paths (`HOLI_BIN`,
-`HOLI_GOOGLE_BIN`, `TYPST_BIN`), the one channel that reaches every background session. It
+`HOLI_GOOGLE_BIN`), the one channel that reaches every background session. It
 removes the `statusLine` older versions installed. A theme change reaches a running session on
 **Restart** (`claude respawn`).
 
@@ -47,8 +47,8 @@ report `holi vault recents` answers from. Tasks, backlinks and sync state the ag
 finds itself with `Glob`, `grep` and `git`.
 
 **Seeding.** `ensureSeeded` runs on create, adopt and every open, over a list of seed
-contributions: core (`main/vault/seed/core.ts`), the agent (`main/agent/seed/`), PDF
-(`main/pdf/seed.ts`) and each plugin the vault enables (`main/plugin-host/`). Each keeps its files as real files under `vault/once/` and `vault/shipped/`
+contributions: core (`main/vault/seed/core.ts`), the agent (`main/agent/seed/`), and each plugin the vault
+enables (`src/plugins/<id>/main/`, through `main/plugin-host/`). Each keeps its files as real files under `vault/once/` and `vault/shipped/`
 beside its module, at their vault path, read in through `import.meta.glob` (binaries such as the
 brand fonts as `?inline` bytes). A path belongs to one contribution. Merged files go first, so
 core's `.gitignore` gets its `*.local.*` line, line-wise, before anything else is written. Then:
@@ -110,7 +110,7 @@ additions are commands in a directory prepended to `PATH`, plus skills that docu
   the bridge through the vault's `bridge.local.env`. All reversible or read-only (a record write is a file
   change in git history), so none is gated.
 - `holi-google`: mail and calendar through main, which holds the tokens ([google.md](google.md)).
-- `$TYPST_BIN` for PDF export ([pdf.md](pdf.md)).
+- `holi pdf typst` for PDF export, which prints the Typst binary's path ([pdf.md](pdf.md)).
 - Shipped skills: `memory`, `using-tasks`, `vault-apps`, `theme`, `gmail-calendar`, `md-to-pdf`,
   `pdf-comments`, `holi-feedback` (a GitHub issue on syv-ai/holi, labelled `vault-assistant`,
   through `.github/ISSUE_TEMPLATE/vault-assistant.yml`).

@@ -23,7 +23,7 @@ import {
 } from '../src/main/capabilities/registry'
 import { noCoreServices } from '../src/main/capabilities/services'
 import { vaultCapabilities } from '../src/main/capabilities/vault-caps'
-import { PDF_CAPABILITIES } from '../src/main/pdf/capabilities'
+import { pdfCapabilities } from '../src/plugins/pdf/main/capabilities'
 import { taskCapabilities } from '../src/main/vault/task-capabilities'
 import { bridgeLines, writeVaultEnv } from './helpers/bridge-env'
 
@@ -58,7 +58,10 @@ function recording(called: Called): Record<string, AnyCapability> {
     ...vaultCapabilities({ updateSkills: async () => '' }),
     ...appCapabilities({ showApp: () => {} }),
     ...taskCapabilities({ today: () => '2026-09-30' }),
-    ...PDF_CAPABILITIES,
+    ...pdfCapabilities({
+      signatures: { read: async () => '[]', write: async () => {} },
+      typst: async () => null,
+    }),
     ...agentCapabilities({ sessionsFor: () => [] }),
   }
   return Object.fromEntries(

@@ -70,9 +70,16 @@ vi.mock('@/lib/trpc', () => ({
       read: { query: (input: unknown) => seam.read(input) },
       write: { mutate: (input: unknown) => seam.write(input) },
     },
-    pdf: {
-      signatures: { query: () => seam.savedSignatures() },
-      saveSignatures: { mutate: (input: unknown) => seam.saveSignatures(input) },
+    // PDF's capabilities, through the UI door.
+    cap: {
+      run: {
+        mutate: ({ name, paramsJson }: { name: string; paramsJson?: string }) =>
+          name === 'pdf.signatures'
+            ? seam.savedSignatures()
+            : name === 'pdf.saveSignatures'
+              ? seam.saveSignatures(JSON.parse(paramsJson!))
+              : Promise.reject(new Error(`unexpected ${name}`)),
+      },
     },
   },
 }))

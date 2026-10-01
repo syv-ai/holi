@@ -3,10 +3,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
-import { fontPathArgs, renderPdf } from '../src/main/pdf/render'
-import { resolveTypstBin } from '../src/main/pdf/typst-bin'
+import { fontPathArgs, renderPdf } from '../main/render'
+import { resolveTypstBin } from '../main/typst-bin'
 // The ACTUAL seeded template — this test proves that exact file compiles.
-import plainTemplateTyp from '../src/main/pdf/vault/once/.holi/document-templates/plain/template.typ?raw'
+import plainTemplateTyp from '../main/vault/once/.holi/document-templates/plain/template.typ?raw'
 
 const dirs: string[] = []
 async function work(): Promise<string> {
@@ -141,7 +141,7 @@ describe('renderPdf (integration — needs typst on PATH; first run fetches cmar
 // `../_brand` imports and the Raleway `--font-path` resolve exactly as in a real
 // vault. Proves the branded set compiles end-to-end through renderPdf.
 const SRC_TEMPLATES = fileURLToPath(
-  new URL('../src/main/pdf/vault/once/.holi/document-templates', import.meta.url),
+  new URL('../main/vault/once/.holi/document-templates', import.meta.url),
 )
 
 describe('renderPdf — branded set (integration — needs typst on PATH)', () => {

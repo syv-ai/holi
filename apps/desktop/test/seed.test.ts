@@ -10,7 +10,7 @@ import { LOCAL_ONLY_IGNORE_LINES, MEMORY_INDEX_EMPTY, VAULT_MARKER_FILE } from '
 import { afterEach, describe, expect, it } from 'vitest'
 import type { SettingsFragment } from '../src/main/agent/seed/claude-settings'
 import { agentSeed, agentSettings } from '../src/main/agent/seed/seed'
-import { pdfSeed } from '../src/main/pdf/seed'
+import { pdfSeed } from '../src/plugins/pdf/main/seed'
 import { coreSeed, GITIGNORE } from '../src/main/vault/seed/core'
 import { ensureSeeded as ensureSeededWith } from '../src/main/vault/seed/seed'
 import { stagedPath, updateShipped as updateWith } from '../src/main/vault/seed/update'
@@ -185,7 +185,7 @@ describe('the seed tables', () => {
   it('seeds the md-to-pdf skill with the Typst render recipe', () => {
     const skill = SEED_FILES['.claude/skills/md-to-pdf/SKILL.md']!
     expect(skill).toContain('name: md-to-pdf')
-    expect(skill).toContain('$TYPST_BIN')
+    expect(skill).toContain('holi pdf typst')
     expect(skill).toContain('doc(') // the template contract
     expect(skill).toContain('--root /') // the compile recipe
   })
@@ -358,7 +358,7 @@ describe('ensureSeeded', () => {
     const source = await readFile(
       fileURLToPath(
         new URL(
-          '../src/main/pdf/vault/once/.holi/document-templates/_brand/fonts/Raleway-regular.ttf',
+          '../src/plugins/pdf/main/vault/once/.holi/document-templates/_brand/fonts/Raleway-regular.ttf',
           import.meta.url,
         ),
       ),
@@ -567,7 +567,11 @@ describe('mergedSettings', () => {
     // Untouched
     expect(after.hooks.PostToolUse[0].hooks[0].command).toBe('format')
     expect(after.hooks.UserPromptSubmit[0].hooks[0].command).toBe('mine')
-    expect(after.permissions.allow).toEqual(['Bash(ls:*)', 'Bash(holi pdf comments:*)'])
+    expect(after.permissions.allow).toEqual([
+      'Bash(ls:*)',
+      'Bash(holi pdf comments:*)',
+      'Bash(holi pdf typst:*)',
+    ])
     expect(after.permissions.deny[0]).toBe('Bash(sudo:*)')
     expect(after.skillOverrides.init).toBe('on')
     expect(after.model).toBe('opus')
@@ -576,11 +580,11 @@ describe('mergedSettings', () => {
     expect(after.permissions.ask).toContain('Bash(holi-google send:*)')
   })
 
-  it('allows the read-only holi pdf comments without a prompt, in a vault that predates it', () => {
+  it('allows the read-only holi pdf commands without a prompt, in a vault that predates them', () => {
     const before = JSON.parse(SETTINGS_SEED) as Record<string, any>
     delete before.permissions.allow
     const after = parse(mergedSettings(JSON.stringify(before)))
-    expect(after.permissions.allow).toEqual(['Bash(holi pdf comments:*)'])
+    expect(after.permissions.allow).toEqual(['Bash(holi pdf comments:*)', 'Bash(holi pdf typst:*)'])
     expect(after.permissions.ask).toEqual(before.permissions.ask)
   })
 

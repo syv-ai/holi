@@ -99,6 +99,9 @@ import {
   withoutReadOnly,
 } from '@/lib/pdf-read-only'
 import { trpc } from '@/lib/trpc'
+import { capClient } from '@/lib/cap-client'
+// eslint-disable-next-line no-restricted-imports, boundaries/element-types -- until the viewer moves into the PDF plugin
+import type { PdfCapabilities } from '../../../../plugins/pdf/main/capabilities'
 import { askTargetsAtom, defaultAgentTargetAtom } from '@/state/agent'
 import { sendToAgentAtom } from '@/state/agent-send'
 import { activeModeAtom } from '@/state/color-scheme'
@@ -107,6 +110,8 @@ import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
 
 /** How long the marks have to be quiet before the file is rewritten. A file
  *  write the autosave commit then picks up, not a commit itself. */
+const pdfCaps = capClient<PdfCapabilities>('pdf')
+
 const SAVE_QUIET_MS = 1000
 
 /** How long the viewer may stay invisible waiting for a page. Measured opens
@@ -604,11 +609,11 @@ export function PdfDocument({
         })
       })
       const signatures = provided(registry, 'signature')
-      if (signatures !== null) {
+      if (signatures !== null && remote !== null) {
         // Subscribed only once the saved list is in, so loading it is never
         // taken for a change and written straight back.
-        void trpc.pdf.signatures
-          .query()
+        void pdfCaps
+          .signatures(remote)
           .then((json) => {
             signatures.loadEntries(
               deserializeEntries(JSON.parse(json) as SerializedSignatureEntry[]),
@@ -618,8 +623,8 @@ export function PdfDocument({
           .finally(() => {
             signatures.onEntriesChange((entries) => {
               const entriesJson = JSON.stringify(serializeEntries(entries))
-              void trpc.pdf.saveSignatures
-                .mutate({ entriesJson })
+              void pdfCaps
+                .saveSignatures(remote, { entriesJson })
                 .catch((err: unknown) => console.error('[pdf] could not save signatures:', err))
             })
           })
@@ -633,7 +638,7 @@ export function PdfDocument({
         if (cap !== null) zoom.forDocument(event.documentId).requestZoom(cap)
       })
     },
-    [scheduleSave],
+    [scheduleSave, remote],
   )
 
   useLayoutEffect(() => {

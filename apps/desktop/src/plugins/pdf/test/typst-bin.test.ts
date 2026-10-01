@@ -4,7 +4,7 @@ import {
   TYPST_VERSION,
   typstDownloadUrl,
   typstReleaseAsset,
-} from '../src/main/pdf/typst-bin'
+} from '../main/typst-bin'
 
 describe('typstReleaseAsset', () => {
   it('maps darwin/arm64 to the aarch64-apple-darwin tar.xz', () => {
