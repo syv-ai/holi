@@ -9,15 +9,15 @@
     "dev:debug": "pnpm --filter @holi/desktop dev:debug",
     "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck",
-    "lint": "pnpm --filter @holi/desktop exec eslint \"src/renderer/src/**/*.{ts,tsx}\"",
-    "lint:gate": "GATE_LEVEL=error pnpm --filter @holi/desktop exec eslint \"src/renderer/src/**/*.{ts,tsx}\"",
+    "lint": "pnpm --filter @holi/desktop exec eslint \"src/renderer/src/**/*.{ts,tsx}\" \"src/plugins/**/*.{ts,tsx}\"",
+    "lint:gate": "GATE_LEVEL=error pnpm --filter @holi/desktop exec eslint \"src/renderer/src/**/*.{ts,tsx}\" \"src/plugins/**/*.{ts,tsx}\"",
     "format": "prettier --write ."
   },
   "simple-git-hooks": {
     "pre-commit": "pnpm exec lint-staged"
   },
   "lint-staged": {
-    "apps/desktop/src/renderer/src/**/*.{ts,tsx}": "pnpm --filter @holi/desktop exec eslint"
+    "apps/desktop/src/{renderer/src,plugins}/**/*.{ts,tsx}": "pnpm --filter @holi/desktop exec eslint"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

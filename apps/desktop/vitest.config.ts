@@ -13,7 +13,7 @@ export default defineConfig({
         resolve: { alias },
         test: {
           name: 'node',
-          include: ['test/**/*.test.ts'],
+          include: ['test/**/*.test.ts', 'src/plugins/*/test/**/*.test.ts'],
           environment: 'node',
           passWithNoTests: true,
           // One file at a time — do NOT let test files run in parallel.
@@ -60,7 +60,7 @@ export default defineConfig({
         plugins: [react()],
         test: {
           name: 'dom',
-          include: ['src/renderer/**/*.test.tsx'],
+          include: ['src/renderer/**/*.test.tsx', 'src/plugins/**/*.test.tsx'],
           environment: 'jsdom',
           setupFiles: ['test/setup.dom.ts'],
           // `codemirror-markdown-tables` depends on `@mobily/ts-belt`, whose ESM

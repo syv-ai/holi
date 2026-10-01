@@ -1,5 +1,9 @@
 @import 'tailwindcss';
 
+/* Plugins' renderer code lives outside this tree (src/plugins/), so Tailwind
+   is told to scan it for class names too. */
+@source '../../plugins';
+
 /* Dark mode follows the `data-theme` root stamp, not prefers-color-scheme or
    shadcn's `.dark`. */
 @custom-variant dark (&:where([data-theme='dark'] *));

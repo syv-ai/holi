@@ -101,13 +101,17 @@ const elementTypes = {
       from: ['features'],
       allow: ['primitives', 'composites', ['features', { feature: '${from.feature}' }]],
     },
+    {
+      from: ['plugins'],
+      allow: ['primitives', 'composites', ['plugins', { plugin: '${from.plugin}' }]],
+    },
   ],
 }
 const external = {
   default: 'allow',
   rules: [
     {
-      from: ['composites', 'features'],
+      from: ['composites', 'features', 'plugins'],
       disallow: ['@radix-ui/*', 'radix-ui', 'radix-ui/*', '@base-ui/react', '@base-ui/react/*'],
       message:
         'Radix (radix-ui / @radix-ui/*) and Base UI (@base-ui/react) are primitive dependencies — import them only inside primitives/.',
@@ -176,7 +180,42 @@ const holi = {
   },
 }
 
-const LINTED = ['src/renderer/src/**/*.{ts,tsx}', 'test/fixtures/gate/**/*.{ts,tsx}']
+const LINTED = [
+  'src/renderer/src/**/*.{ts,tsx}',
+  'src/plugins/**/*.{ts,tsx}',
+  'test/fixtures/gate/**/*.{ts,tsx}',
+]
+
+// Plugins (src/plugins/<id>/) and core meet at two modules, one per process:
+// `@/plugin-api` and `src/main/plugin-api.ts` (docs/architecture.md, Plugins).
+// Core never imports a plugin; only the two composition roots install the lists.
+const PLUGIN_FILES = ['src/plugins/**/*.{ts,tsx}']
+const CORE_RENDERER_FILES = ['src/renderer/src/**/*.{ts,tsx}']
+const ROOT_FILES = ['src/renderer/src/main.tsx']
+const intoPlugins = {
+  regex: '^(\\.\\./)+plugins(/|$)',
+  message: 'core does not import a plugin: only main.tsx installs the list.',
+}
+const pluginImports = [
+  {
+    group: [
+      '@/*',
+      '!@/primitives',
+      '!@/primitives/*',
+      '!@/composites',
+      '!@/composites/*',
+      '!@/plugin-api',
+      '!@/test/*',
+    ],
+    message: 'a plugin reaches core through @/plugin-api (plus primitives and composites).',
+  },
+  {
+    // Into core's main or renderer by a relative path: from inside
+    // src/plugins/<id>/, anything two levels up is outside the plugin.
+    regex: '^(\\.\\./){2,}(?!main/plugin-api$)(main|renderer|preload)(/|$)',
+    message: "a plugin's main side reaches core only through main/plugin-api.",
+  },
+]
 
 export default [
   { ignores: ['out/**', 'dist/**', '**/node_modules/**'] },
@@ -193,6 +232,7 @@ export default [
         { type: 'primitives', pattern: '**/primitives', mode: 'folder' },
         { type: 'composites', pattern: '**/composites', mode: 'folder' },
         { type: 'features', pattern: '**/features/*', mode: 'folder', capture: ['feature'] },
+        { type: 'plugins', pattern: 'src/plugins/*', mode: 'folder', capture: ['plugin'] },
       ],
       'import/resolver': {
         typescript: { alwaysTryTypes: true, project: 'tsconfig.json' },
@@ -210,6 +250,16 @@ export default [
       'boundaries/external': [LEVEL, external],
       'holi/icon-through-primitive': LEVEL,
     },
+  },
+  // The plugin seam, in both directions.
+  {
+    files: CORE_RENDERER_FILES,
+    ignores: ROOT_FILES,
+    rules: { 'no-restricted-imports': ['error', { patterns: [intoPlugins] }] },
+  },
+  {
+    files: PLUGIN_FILES,
+    rules: { 'no-restricted-imports': ['error', { patterns: pluginImports }] },
   },
   // primitives/ is the ONE place native elements + Radix are allowed.
   // The colour ban still applies (tokens or nothing, everywhere).
