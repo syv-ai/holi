@@ -258,3 +258,12 @@ and activation.
 - **Existing vaults reach the new hooks only through `holi skills update`,** by the standing rule
   for shipped files. Until then an old `turn-signal.mjs` finds no `holi.env` and stops pausing
   sync. No legacy reader was added.
+- **Seed fragments are a list per file,** so Google, apps and tasks stay separate pieces inside
+  the agent contribution until each moves out. Merged files run first in `ensureSeeded`, so the
+  settings merge already sees the hooks the same run writes. A fragment for a file nobody merges
+  is ignored, which is how a disabled owner skips other plugins' pieces.
+- **The router's seed dependency is required,** because a router that silently skips seeding
+  leaves `.gitignore` without the `.local.` rule.
+- **Legacy migrations are deleted** (`migrate-layout`, `migrate-settings-format`, the shared
+  agent-config migration). The remaining ones (`migrate-apps`, the old Google cache delete, the
+  old seed-state record format) go with the phase that owns their code.
