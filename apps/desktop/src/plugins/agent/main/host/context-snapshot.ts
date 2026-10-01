@@ -11,7 +11,7 @@
  * atomic: a stale focus line is fine, a hook that blocks a turn is not.
  */
 import { vaultRelPath } from '@holi/shared'
-import { writeAtomic } from '../vault/vault-files'
+import { writeAtomic } from '../../../../main/plugin-api'
 
 export const CONTEXT_FILE = '.holi/state/context.local.json'
 
@@ -79,6 +79,10 @@ export class ContextSnapshot {
       openPaths: this.focus.openPaths,
       updatedAt: new Date().toISOString(),
     }
-    await writeAtomic(this.deps.workRoot, vaultRelPath(CONTEXT_FILE), `${JSON.stringify(context, null, 2)}\n`)
+    await writeAtomic(
+      this.deps.workRoot,
+      vaultRelPath(CONTEXT_FILE),
+      `${JSON.stringify(context, null, 2)}\n`,
+    )
   }
 }

@@ -1,52 +1,35 @@
 /**
- * The vault's assistant, as Claude Code runs it.
+ * The vault's assistant sessions, as the provider runs them.
  *
- * **A session is Claude Code's background session.** Its supervisor runs it,
- * its short job id names it, and it outlives any window onto it. Holi does not
- * spawn conversations; it asks Claude Code to (`claude --bg`), opens terminals
- * onto them (`agent-terminals.ts`), and reads what they are doing
- * (`claude-sessions.ts`). This module ties those to the vault it is attached
- * to (`ensure`), which is the open one.
+ * **A session is the provider's background session.** Its supervisor runs
+ * it, its short job id names it, and it outlives any window onto it. Holi
+ * does not spawn conversations; it asks the provider to (`cli.startBg`),
+ * opens terminals onto them (`terminals.ts`), and reads what they are doing
+ * (the provider's listing). This module ties those to the vault it is
+ * attached to (`ensure`), which is the open one.
  *
  * Three things belong to the **vault**, not to any session, and live here: the
  * config directory, the sync pause (owned by
  * the turn coordinator), and the focus file the per-turn hook reads.
  *
- * **Holi does not decide what a session is doing.** Claude Code's listing says
- * so; the hook bracket stays as the floor under it, because a slow or missing
- * CLI must still report a live turn, and the sync pause has a deadline a
- * watcher cannot meet.
+ * **Holi does not decide what a session is doing.** The listing says so; the
+ * hook bracket stays as the floor under it, because a slow or missing CLI
+ * must still report a live turn, and the sync pause has a deadline a watcher
+ * cannot meet.
  *
  * The session list is told to the renderer as the agent's `sessions` event,
  * whenever it changes.
  *
  * NOTE: no `electron` import, so this loads under vitest.
  */
-import type { VaultCtx } from '../plugin-api'
-import type { AgentTerminals } from './agent-terminals'
-import { sessionName, type ClaudeCli, type VaultCliTarget } from './claude-cli'
-import {
-  isLive,
-  parseListing,
-  readContextPercent,
-  summarise,
-  watchConfigDir,
-  type ClaudeRow,
-  type SessionSummary,
-} from './claude-sessions'
+import type { VaultCtx } from '../../../../main/plugin-api'
+import type { VaultCliTarget } from '../claude/cli'
+import type { ClaudeRow, SessionSummary } from '../claude/listing'
+import type { AgentProvider, VaultRef } from '../provider'
+import type { AgentTerminals } from './terminals'
 import { ContextSnapshot, type FocusInput } from './context-snapshot'
 import { createTurnCoordinator, type TurnCoordinator, type TurnVault } from './turn-coordinator'
 import type { TurnLog } from './turn-log'
-
-/**
- * Printed into the first terminal Holi opens on a fresh config directory.
- * Credentials are keyed to the directory, so one Holi has never used cannot be
- * signed in. In the scrollback, because `/login` fires nothing Holi sees.
- */
-export const SIGN_IN_NOTICE =
-  '\x1b[33mThis vault needs its own Claude sign-in. Type /login below.\r\n' +
-  'Each vault keeps its own Claude Code config, so signing in here\r\n' +
-  'does not touch your other vaults.\x1b[0m\r\n\r\n'
 
 /** How long after an `idle` reading to take the second one that confirms it.
  *  A quiet session produces no watcher edge, so nothing else would. */
@@ -65,10 +48,7 @@ export interface Geometry {
   rows?: number
 }
 
-export interface VaultRef {
-  remote: string
-  root: string
-}
+export type { VaultRef }
 
 /** The vault the sessions run in, as its activation hands it over. */
 export type AgentVault = Pick<VaultCtx, 'remote' | 'root'> & TurnVault
@@ -76,18 +56,21 @@ export type AgentVault = Pick<VaultCtx, 'remote' | 'root'> & TurnVault
 export interface AgentSessionsDeps {
   /** Tell the renderer `name` about the vault `remote`. */
   emit(remote: string, name: string, payload: unknown): void
-  cli: ClaudeCli
+  provider: Pick<
+    AgentProvider,
+    | 'cli'
+    | 'parseListing'
+    | 'isLive'
+    | 'summarise'
+    | 'readContextPercent'
+    | 'watch'
+    | 'configure'
+    | 'takeFirstSpawn'
+    | 'signInNotice'
+  >
   terminals: AgentTerminals
-  /** Provision the vault's config directory. Null leaves the vault
-   *  without an assistant. */
-  resolveConfig(vault: VaultRef): Promise<{ dir: string } | null>
-  /** True the first time Holi opens a terminal on this config directory,
-   *  consumed on read (`takeFirstSpawn`). */
-  takeFirstSpawn(configDir: string): Promise<boolean>
   /** Holi's generated commands, first on every session's `PATH`. */
   binDir(): string | null
-  /** Injected so tests need no filesystem. */
-  watch?: (configDir: string, onChange: () => void) => () => void
   turnLogFor?: (vaultRoot: string) => TurnLog
   turnSafetyMs?: number
   idleRecheckMs?: number
@@ -144,7 +127,7 @@ interface Current {
 
 export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
   const log = deps.log ?? ((msg: string) => console.log(`[agent] ${msg}`))
-  const watch = deps.watch ?? ((dir: string, cb: () => void) => watchConfigDir(dir, cb, log))
+  const provider = deps.provider
   let current: Current | null = null
   /** The vault `ensure` attached to, until `leave`. */
   let attached: AgentVault | null = null
@@ -184,9 +167,9 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     log,
   })
 
-  const live = (): ClaudeRow[] => rows.filter(isLive)
+  const live = (): ClaudeRow[] => rows.filter((row) => provider.isLive(row))
   const summaries = (): SessionSummary[] =>
-    live().map((row) => summarise(row, coordinator.working, contextPercent.get(row.id)))
+    live().map((row) => provider.summarise(row, coordinator.working, contextPercent.get(row.id)))
 
   /** Tell the renderer the list, when it changed: the vault's, or `remote`'s
    *  as Holi lets go of it. */
@@ -206,8 +189,8 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
   })
 
   async function activate(vault: AgentVault): Promise<Current | null> {
-    const config = await deps
-      .resolveConfig({ remote: vault.remote, root: vault.root })
+    const config = await provider
+      .configure({ remote: vault.remote, root: vault.root })
       .catch((err: unknown) => {
         log(`config directory unresolved: ${String(err)}`)
         return null
@@ -222,7 +205,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
       unwatch: () => {},
       seeded: false,
     }
-    next.unwatch = watch(config.dir, () => void refresh())
+    next.unwatch = provider.watch(config.dir, () => void refresh(), log)
     return next
   }
 
@@ -257,9 +240,9 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
   async function readOnce(): Promise<void> {
     const c = current
     if (c === null) return
-    const stdout = await deps.cli.list(targetOf(c))
+    const stdout = await provider.cli.list(targetOf(c))
     if (current !== c) return // the vault moved while we read
-    rows = parseListing(stdout, c.root)
+    rows = provider.parseListing(stdout, c.root)
     const liveRows = live()
     const liveIds = new Set(liveRows.map((r) => r.id))
 
@@ -328,9 +311,9 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     let firstSpawn = false
     if (!c.spawnChecked) {
       c.spawnChecked = true
-      firstSpawn = await deps.takeFirstSpawn(c.configDir).catch(() => false)
+      firstSpawn = await provider.takeFirstSpawn(c.configDir).catch(() => false)
     }
-    const notice = firstSpawn ? SIGN_IN_NOTICE : undefined
+    const notice = firstSpawn ? provider.signInNotice : undefined
     const res = deps.terminals.open({
       remote: c.remote,
       target: targetOf(c),
@@ -362,7 +345,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     async start({ name, prompt, cols, rows: r }) {
       const c = await ensureCurrent()
       if (c === null) return noVault
-      const res = await deps.cli.startBg(targetOf(c), {
+      const res = await provider.cli.startBg(targetOf(c), {
         ...(name === undefined ? {} : { name }),
         ...(prompt === undefined ? {} : { prompt }),
       })
@@ -378,7 +361,8 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
       if (c === null) return noVault
       let terminalId: string
       if (target === 'new') {
-        const started = await api.start({ name: sessionName(text) ?? undefined, cols, rows: r })
+        // The CLI makes a name of the text's first line.
+        const started = await api.start({ name: text, cols, rows: r })
         if (!started.ok) return started
         terminalId = started.terminalId
       } else {
@@ -400,7 +384,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     async stop(id) {
       const c = await ensureCurrent()
       if (c === null) return noVault
-      const res = await deps.cli.stop(targetOf(c), id)
+      const res = await provider.cli.stop(targetOf(c), id)
       await refresh()
       return res
     },
@@ -408,7 +392,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     async respawn(id) {
       const c = await ensureCurrent()
       if (c === null) return noVault
-      const res = await deps.cli.respawn(targetOf(c), id)
+      const res = await provider.cli.respawn(targetOf(c), id)
       await refresh()
       return res
     },
@@ -420,9 +404,9 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
       if (row?.sessionId === undefined) {
         return { ok: false, message: 'Claude Code has not said which conversation this is yet.' }
       }
-      const label = summarise(row, coordinator.working).name
+      const label = provider.summarise(row, coordinator.working).name
       const name = label === 'New session' ? undefined : `${label} (copy)`
-      const res = await deps.cli.forkBg(targetOf(c), row.sessionId, name)
+      const res = await provider.cli.forkBg(targetOf(c), row.sessionId, name)
       if (!res.ok) return res
       await refresh()
       const opened = await openOn(c, { attach: res.id, ...geometry })
@@ -441,7 +425,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     noteStatus(remote, jobId, status) {
       // Only the vault Holi is showing has rows to put a number on.
       if (current?.remote !== remote) return
-      const percent = readContextPercent(status)
+      const percent = provider.readContextPercent(status)
       if (percent === null) contextPercent.delete(jobId)
       else contextPercent.set(jobId, percent)
       push()
@@ -478,8 +462,8 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
       // Stop, then remove the ones that never had a turn (`unprompted`).
       const stops = Promise.all(
         live().map(async (row) => {
-          const stopped = await deps.cli.stop(targetOf(c), row.id)
-          if (stopped.ok && unprompted.has(row.id)) await deps.cli.rm(targetOf(c), row.id)
+          const stopped = await provider.cli.stop(targetOf(c), row.id)
+          if (stopped.ok && unprompted.has(row.id)) await provider.cli.rm(targetOf(c), row.id)
         }),
       )
       await Promise.race([

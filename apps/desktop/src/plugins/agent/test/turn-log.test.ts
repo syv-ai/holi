@@ -9,7 +9,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { openTurnLog, TURNS_FILE } from '../src/main/agent/turn-log'
+import { openTurnLog, TURNS_FILE } from '../main/host/turn-log'
 
 let root: string
 const dirs: string[] = []

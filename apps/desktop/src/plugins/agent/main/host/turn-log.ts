@@ -13,7 +13,7 @@
  * every write is best-effort at the call site: the turn bracket this hangs off
  * also resumes sync, and a lost record beats a vault left paused.
  *
- * No Electron import: this loads under plain Node like the rest of `agent/`.
+ * No Electron import: this loads under plain Node like the rest of the plugin.
  */
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'

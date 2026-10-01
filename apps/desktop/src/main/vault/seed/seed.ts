@@ -34,7 +34,7 @@ function tables(contributions: readonly SeedContribution[]) {
     owner.set(rel, id)
   }
   const once: [string, string | Uint8Array][] = []
-  /** Path, text, and the contribution's id. */
+  /** Path, text, and the id it is seeded under (`seedId`). */
   const shipped: [string, string, string][] = []
   const merged: [string, NonNullable<SeedContribution['merge']>[string]][] = []
   for (const c of contributions) {
@@ -48,10 +48,46 @@ function tables(contributions: readonly SeedContribution[]) {
     }
     for (const [rel, content] of Object.entries(c.shipped)) {
       claim(rel, c.id)
-      shipped.push([rel, content, c.id])
+      shipped.push([rel, content, seedId(contributions, c, rel)])
     }
   }
   return { once, shipped, merged }
+}
+
+const under = (rel: string, prefixes: readonly string[] | undefined): boolean =>
+  prefixes?.some((prefix) => rel.startsWith(prefix)) ?? false
+
+/**
+ * The id a file is seeded under: its contribution's, or `<id>@<owner>` for a
+ * file under a prefix another contribution owns (`google@agent`), so turning
+ * the owner on later is told apart in the seed state like turning on a plugin.
+ */
+function seedId(
+  contributions: readonly SeedContribution[],
+  c: SeedContribution,
+  rel: string,
+): string {
+  const owner = contributions.find((o) => o !== c && under(rel, o.owns))
+  return owner === undefined ? c.id : `${c.id}@${owner.id}`
+}
+
+/**
+ * `contributions` without what they seed under `prefixes`, the prefixes of
+ * owners that are off: files and fragments both.
+ */
+export function withoutOwned(
+  contributions: readonly SeedContribution[],
+  prefixes: readonly string[],
+): SeedContribution[] {
+  if (prefixes.length === 0) return [...contributions]
+  const keep = <T>(table: Record<string, T>): Record<string, T> =>
+    Object.fromEntries(Object.entries(table).filter(([rel]) => !under(rel, prefixes)))
+  return contributions.map((c) => ({
+    ...c,
+    once: keep(c.once),
+    shipped: keep(c.shipped),
+    ...(c.fragments === undefined ? {} : { fragments: keep(c.fragments) }),
+  }))
 }
 
 /** The shipped files of every contribution, for `holi skills update`. */
@@ -98,6 +134,9 @@ export async function runMerges(
  * for the first time on this machine, told by the plugin baseline in the
  * seed state. The first open of a clone on a machine has no baseline yet,
  * and only records one: the vault already has whatever its plugins seeded.
+ * Another contribution's files under an owned prefix (`owns`) count as
+ * their own entry, `<id>@<owner>`, so they are written once when the owner
+ * is turned on.
  */
 export async function ensureSeeded(
   root: string,
@@ -108,8 +147,10 @@ export async function ensureSeeded(
   // Read before the once files below write it.
   const creating = !(await exists(root, VAULT_MARKER_FILE))
   const baseline = (await readSeedState(root)).plugins
+  // A plugin, or another's files under a prefix a plugin owns (`seedId`).
+  const ids = [...plugins, ...shipped.map(([, , id]) => id).filter((id) => id.includes('@'))]
   const turnedOn = new Set(
-    creating || baseline === undefined ? [] : plugins.filter((id) => !baseline.includes(id)),
+    creating || baseline === undefined ? [] : ids.filter((id) => !baseline.includes(id)),
   )
   const toShip = shipped.filter(([, , id]) => creating || turnedOn.has(id))
 
@@ -129,7 +170,7 @@ export async function ensureSeeded(
   }
 
   // Only ever grows: a plugin turned off and on again is not new here.
-  const seen = [...new Set([...(baseline ?? []), ...plugins])]
+  const seen = [...new Set([...(baseline ?? []), ...ids])]
   if (baseline === undefined || seen.length > baseline.length) await recordPlugins(root, seen)
   return { written }
 }

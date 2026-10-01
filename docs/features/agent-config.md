@@ -46,8 +46,11 @@ report `holi vault recents` answers from. Tasks, backlinks and sync state the ag
 finds itself with `Glob`, `grep` and `git`.
 
 **Seeding.** `ensureSeeded` runs on create, adopt and every open, over a list of seed
-contributions: core (`main/vault/seed/core.ts`), the agent (`main/agent/seed/`), and each plugin the vault
-enables (`src/plugins/<id>/main/`, through `main/plugin-host/`). Each keeps its files as real files under `vault/once/` and `vault/shipped/`
+contributions: core (`main/vault/seed/core.ts`), and each plugin the vault
+enables (`src/plugins/<id>/main/`, through `main/plugin-host/`), the agent's included
+(`src/plugins/agent/main/claude/`). The agent's contribution owns `.claude/`: while the agent is
+off, no plugin's file or settings fragment under it is written, and turning the agent on seeds
+them once, recorded in the seed state as `<plugin>@agent`. Each keeps its files as real files under `vault/once/` and `vault/shipped/`
 beside its module, at their vault path, read in through `import.meta.glob` (binaries such as the
 brand fonts as `?inline` bytes). A path belongs to one contribution. Merged files go first, so
 core's `.gitignore` gets its `*.local.*` line, line-wise, before anything else is written. Then:
@@ -65,7 +68,7 @@ core's `.gitignore` gets its `*.local.*` line, line-wise, before anything else i
 - **Merged files** have one owner, which merges what the vault has with what Holi needs; any
   contribution adds to one with a fragment. `.gitignore` is core's: its `*.local.*` lines plus
   any fragment's, appended line-wise. `.claude/settings.json` is the agent's, merged key-wise
-  (`agent/seed/claude-settings.ts`). Fragments add hooks, each only where its script is (a hook a
+  (`src/plugins/agent/main/claude/settings.ts`). Fragments add hooks, each only where its script is (a hook a
   later release adds is wired when its script arrives), and `permissions.ask`, `allow` and `deny`
   rules: the agent's own (the turn bracket's `turn-signal.mjs` among them), Google's send gate
   and ask rules, the vault-app check, the tasks deny of Claude Code's `Task*` tools, and PDF's
@@ -159,14 +162,14 @@ the vault's pre-commit transforms like anyone's ([vaults-sync.md](vaults-sync.md
 
 ## Code
 
-- `apps/desktop/src/main/agent/agent-config-dir.ts`: per-vault config dir, first-spawn marker
+- `apps/desktop/src/plugins/agent/main/claude/config-dir.ts`: per-vault config dir, first-spawn marker
 - `apps/desktop/src/main/vault/seed/`: the seeder (`seed.ts`), `holi skills update` (`update.ts`),
   seed folders (`folder.ts`), core's contribution (`core.ts`, `vault/once/AGENTS.md`), and
   `state.ts`: what Holi seeded, the base an update merges from
-- `apps/desktop/src/main/agent/seed/seed.ts`: the agent's contribution and its `settings.json`
-  fragments; `claude-settings.ts`: the merge
+- `apps/desktop/src/plugins/agent/main/claude/seed.ts`: the agent's contribution and its `settings.json`
+  fragments; `settings.ts`: the merge
 - `apps/desktop/src/main/bridge/cli.ts`: the `holi` script and its argv; `bridge/server.ts`: `/cli`;
-  `agent/bridge-routes.ts`: the turn and status-line routes
+  `apps/desktop/src/plugins/agent/main/claude/routes.ts`: the turn and status-line routes
 - `apps/desktop/src/main/bridge/env-file.ts`: `bridge.local.env` and its shell reader
-- `apps/desktop/src/main/agent/seed/vault/shipped/.claude/`: shipped hook scripts and skills
+- `apps/desktop/src/plugins/agent/main/claude/vault/shipped/.claude/`: shipped hook scripts and skills
 - `packages/shared/src/path-safety.ts`: `isAgentSurfacePath`

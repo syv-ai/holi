@@ -13,7 +13,7 @@
  * moved*, and the listing says *what*. A turn ending touches both; a stop, or
  * the supervisor retiring an idle process, touches only `sessions/`.
  *
- * No Electron import: this loads under plain Node like the rest of `agent/`.
+ * No Electron import: this loads under plain Node like the rest of the plugin.
  */
 import { watch, type FSWatcher } from 'node:fs'
 import { join } from 'node:path'

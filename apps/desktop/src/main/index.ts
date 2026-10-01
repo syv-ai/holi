@@ -16,7 +16,6 @@ import {
   BrowserWindow,
   dialog,
   ipcMain,
-  nativeTheme,
   protocol,
   session as electronSession,
   shell,
@@ -28,13 +27,11 @@ import { vaultScheme } from './vault/asset-protocol'
 import { createSession } from './github/electron'
 import { createMembersCache } from './github/members-cache'
 import { installHoliCli } from './bridge/cli'
-import { agentCapabilities, AGENT_NAMESPACES } from './agent/capabilities'
 import { createCapabilityHost } from './capabilities/dispatch'
 import { CapabilityError } from './capabilities/error'
 import { createCapabilityRegistry } from './capabilities/registry'
 import { vaultCapabilities, VAULT_NAMESPACES } from './capabilities/vault-caps'
 import { taskCapabilities, TASK_NAMESPACES } from './vault/task-capabilities'
-import { agentSeed } from './agent/seed/seed'
 import { coreSeed } from './vault/seed/core'
 import { MAIN_PLUGINS } from '../plugins/main'
 import { install } from './plugin-host/installed'
@@ -54,22 +51,15 @@ import { createNotifier } from './reminders/notify'
 import type { VaultTasks } from './reminders/sweep'
 import { createTray } from './tray'
 import { installAppMenu } from './menu'
-import { resolveVaultAgentConfig, takeFirstSpawn } from './agent/agent-config-dir'
-import { createAgentSessions, type AgentSessions } from './agent/agent-sessions'
-import { createAgentTerminals } from './agent/agent-terminals'
-import { createClaudeCli } from './agent/claude-cli'
-import { openTurnLog } from './agent/turn-log'
 import { createBridgeEnv } from './bridge/env-file'
 import { createBridgeServer } from './bridge/server'
-import { registerAgentRoutes } from './agent/bridge-routes'
-import type { MainPlugin } from './plugin-api'
 
 // The plugins this build has: the one place main imports them.
 install(MAIN_PLUGINS)
 
 /** What seeds every vault, core first: its `.gitignore` is written before
  *  any file that could be committed. Enabled plugins' seeds follow. */
-const CORE_SEEDS = [coreSeed(MAIN_PLUGINS.map((p) => p.info)), agentSeed]
+const CORE_SEEDS = [coreSeed(MAIN_PLUGINS.map((p) => p.info))]
 
 // Declared before the launch check below, which starts `main()` synchronously:
 // a `let` still in its temporal dead zone would throw during startup.
@@ -182,115 +172,12 @@ async function main(): Promise<void> {
     liveRemote: () => host.active()?.remote ?? null,
   }
 
-  /**
-   * The vault agent, written to the plugin contract while it is still core:
-   * any number of live `claude` sessions, all in the open vault's clone. It
-   * starts once per process with its capabilities, events and hook routes,
-   * attaches to each vault once it is open and lets go when Holi leaves it,
-   * and quitting asks first while a session is busy. Its capabilities and
-   * events are under the plugin id `agent` already, so moving it into a
-   * plugin renames nothing.
-   */
-  let agent: AgentSessions | null = null
-  const agentPart: MainPlugin = {
-    info: { id: 'agent', label: 'Agent', default: true },
-    activateApp(ctx) {
-      const terminals = createAgentTerminals({ emit: ctx.emit })
-      const sessions = createAgentSessions({
-        emit: ctx.emit,
-        cli: createClaudeCli(),
-        terminals,
-        // Per vault open, not per launch: the open vault moves, and the theme
-        // stamped into its directory tracks a setting the user can flip while
-        // the app runs. Static paths every session needs ride in the settings
-        // `env` block, the one channel that reaches a background session.
-        resolveConfig: async ({ remote, root }) =>
-          resolveVaultAgentConfig({
-            userDataDir,
-            remote,
-            root,
-            systemPrefersDark: nativeTheme.shouldUseDarkColors,
-            env: { HOLI_BIN: holiCliPath },
-          }),
-        takeFirstSpawn,
-        binDir: ctx.binDir,
-        // What each turn changed, as a commit range, in the vault it ran in.
-        turnLogFor: openTurnLog,
-      })
-      agent = sessions
-      ctx.register(
-        AGENT_NAMESPACES,
-        agentCapabilities({
-          sessions,
-          terminals,
-          liveRemote: () => host.active()?.remote ?? null,
-          commitNow: async () => {
-            const active = host.active()
-            if (active === null) throw new CapabilityError('UNAVAILABLE', 'No vault is open.')
-            return active.commitNow()
-          },
-        }),
-      )
-      // Keystrokes and resizes, in the order they were typed. The host drops
-      // any about a vault that is not the open one.
-      ctx.on('pty-write', (_remote, payload) => {
-        const p = payload as { id?: unknown; data?: unknown }
-        if (typeof p?.id === 'string' && typeof p.data === 'string') terminals.write(p.id, p.data)
-      })
-      ctx.on('pty-resize', (_remote, payload) => {
-        const p = payload as { id?: unknown; cols?: unknown; rows?: unknown }
-        if (typeof p?.id === 'string' && typeof p.cols === 'number' && typeof p.rows === 'number') {
-          terminals.resize(p.id, p.cols, p.rows)
-        }
-      })
-      const unroute = registerAgentRoutes(ctx, {
-        // A turn edge in one of a vault's background sessions, by job id.
-        onJobTurn: (remote, jobId, active) => sessions.noteTurn(remote, jobId, active),
-        // A session's status line: how much of its context is used.
-        onStatus: (remote, jobId, status) => sessions.noteStatus(remote, jobId, status),
-      })
-      // Quitting stops the vault's sessions, so it asks first when one of
-      // them is working or waiting on you: that turn is cut short. Idle
-      // sessions stop without a question; their conversations stay in Claude
-      // Code's agent list.
-      ctx.guardQuit(() => {
-        const busy = sessions.sessions().filter((s) => s.state !== 'idle')
-        if (busy.length === 0) return null
-        const one = busy.length === 1
-        return {
-          message: one
-            ? `Quit and stop ${busy[0]!.name}?`
-            : `Quit and stop ${busy.length} sessions?`,
-          detail: `${one ? 'Its' : 'Their'} current turn is cut short. The conversation${one ? '' : 's'} stay in the agents list.`,
-        }
-      })
-      return unroute
-    },
-    activateVault(ctx) {
-      const sessions = agent
-      if (sessions === null) return () => {}
-      void sessions.ensure(ctx)
-      // The per-turn hook reads the focused note from a file in this clone.
-      const unreport = ctx.onReport((report) =>
-        sessions.setFocus({ focusedPath: report.focusedPath, openPaths: report.openPaths }),
-      )
-      // A switch stops the vault's sessions (the renderer asked first if one
-      // was busy). They stay in Claude Code's agent list and resume when
-      // opened.
-      return async () => {
-        unreport()
-        await sessions.leave().catch((err) => console.error('[vault] agent leave failed:', err))
-      }
-    },
-  }
-
   // Every capability, from every door. Created ahead of the vault host so
   // the plugin host can register into it; `host` and `rootFor` are read
   // lazily.
   const capabilities = createCapabilityRegistry()
   const plugins = createPluginHost({
     plugins: MAIN_PLUGINS,
-    core: [agentPart],
     registry: capabilities,
     userData: userDataDir,
     coreSeeds: CORE_SEEDS,

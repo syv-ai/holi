@@ -1,11 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
-import {
-  createAgentSessions,
-  SIGN_IN_NOTICE,
-  type AgentVault,
-} from '../src/main/agent/agent-sessions'
-import type { AgentTerminals, OpenArgs } from '../src/main/agent/agent-terminals'
-import type { ClaudeCli } from '../src/main/agent/claude-cli'
+import type { ClaudeCli } from '../main/claude/cli'
+import { SIGN_IN_NOTICE } from '../main/claude/config-dir'
+import { isLive, parseListing, readContextPercent, summarise } from '../main/claude/listing'
+import { createAgentSessions, type AgentVault } from '../main/host/sessions'
+import type { AgentTerminals, OpenArgs } from '../main/host/terminals'
 
 const ROOT = '/Users/ada/Holi/syv/vault'
 const REMOTE = 'syv/vault'
@@ -82,12 +80,19 @@ function setup(initial: Row[] = []) {
   }
   const sessions = createAgentSessions({
     emit: (_remote: string, name: string, payload: unknown) => sent.push([name, payload]),
-    cli,
+    provider: {
+      cli,
+      parseListing,
+      isLive,
+      summarise,
+      readContextPercent,
+      watch: () => () => {},
+      configure: async () => ({ dir: '/cfg/vault' }),
+      takeFirstSpawn: async () => true,
+      signInNotice: SIGN_IN_NOTICE,
+    },
     terminals,
-    resolveConfig: async () => ({ dir: '/cfg/vault' }),
-    takeFirstSpawn: async () => true,
     binDir: () => '/holi/bin',
-    watch: () => () => {},
     idleRecheckMs: 5,
     idleConfirmMs: 10,
     leaveCapMs: 50,
@@ -206,7 +211,10 @@ describe('agent sessions', () => {
     const t = setup()
     await t.attach()
     const res = await t.sessions.send({ text: 'Tidy the inbox\nplease', target: 'new' })
-    expect(t.cli.startBg).toHaveBeenCalledWith(expect.anything(), { name: 'Tidy the inbox' })
+    // The ask is the name; the CLI keeps its first line (`sessionName`).
+    expect(t.cli.startBg).toHaveBeenCalledWith(expect.anything(), {
+      name: 'Tidy the inbox\nplease',
+    })
     expect(res.ok).toBe(true)
     expect(t.opened.at(-1)?.attach).toBe('newnew00')
     expect(t.pastes).toEqual([['term-1', 'Tidy the inbox\nplease']])

@@ -17,20 +17,20 @@
  * No `electron` import: this loads under plain Node in the tests.
  */
 import { vaultRelPath, type VaultRelPath } from '@holi/shared'
-import { CapabilityError } from '../capabilities/error'
-import { noParams, optionalStringParam, paramsObject, stringParam } from '../capabilities/params'
-import { cap, type CapabilityContext } from '../capabilities/registry'
-import type { RangeFile } from '../git'
-import { writeAtomic } from '../vault/vault-files'
-import type {
-  ActionResult,
-  AgentSessions,
-  Geometry,
-  OpenResult,
-  StartResult,
-} from './agent-sessions'
-import type { AgentTerminals, TerminalSummary } from './agent-terminals'
-import type { SessionSummary } from './claude-sessions'
+import {
+  cap,
+  CapabilityError,
+  noParams,
+  optionalStringParam,
+  paramsObject,
+  stringParam,
+  writeAtomic,
+  type CapabilityContext,
+  type RangeFile,
+} from '../../../../main/plugin-api'
+import type { ActionResult, AgentSessions, Geometry, OpenResult, StartResult } from './sessions'
+import type { AgentTerminals, TerminalSummary } from './terminals'
+import type { SessionSummary } from '../claude/listing'
 import { openTurnLog, type TurnRecord } from './turn-log'
 
 export const AGENT_NAMESPACES = ['agent'] as const

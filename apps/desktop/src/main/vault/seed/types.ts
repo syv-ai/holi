@@ -13,6 +13,12 @@
 export interface SeedContribution {
   /** Who contributes, for errors: `core`, `agent`, `pdf`. */
   id: string
+  /**
+   * Path prefixes this contribution owns, such as the agent's `.claude/`.
+   * Another contribution's files and fragments under one are left out while
+   * the owner is off, and seeded once when it turns on.
+   */
+  owns?: readonly string[]
   /** Vault path to content. Bytes for a binary such as a font. */
   once: Record<string, string | Uint8Array>
   /** Vault path to text. */
@@ -44,4 +50,17 @@ export type MergeFile = (
 /** What one run of `ensureSeeded` wrote. */
 export interface SeedResult {
   written: string[]
+}
+
+/**
+ * What a contribution adds to `.claude/settings.json`, which the agent owns
+ * and merges. Core names the shape so a plugin can contribute to it without
+ * importing the agent; with the agent off nobody merges the file and every
+ * fragment for it is ignored.
+ */
+export interface SettingsFragment {
+  /** Hooks, each running `.claude/hooks/<script>.mjs` with `args`. */
+  hooks?: { event: string; matcher?: string; script: string; args?: string[] }[]
+  /** Rules appended to the vault's own, each only when absent. */
+  permissions?: { ask?: string[]; allow?: string[]; deny?: string[] }
 }

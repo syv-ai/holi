@@ -3,14 +3,8 @@ import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import {
-  AgentRuntime,
-  buildAgentEnv,
-  defaultProbePid,
-  resolveClaudeBin,
-  type PidState,
-  type PtyProcess,
-} from '../src/main/agent/agent-runtime'
+import { buildAgentEnv, resolveClaudeBin } from '../main/claude/cli'
+import { AgentRuntime, defaultProbePid, type PidState, type PtyProcess } from '../main/host/pty'
 
 /** Above the OS pid ceiling — nothing real can ever share it. */
 const NO_SUCH_PID = 999_999

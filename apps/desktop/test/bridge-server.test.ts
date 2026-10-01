@@ -1,6 +1,6 @@
 import { request } from 'node:http'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { registerAgentRoutes } from '../src/main/agent/bridge-routes'
+import { registerAgentRoutes } from '../src/plugins/agent/main/claude/routes'
 import {
   createBridgeServer,
   type BridgeServer,

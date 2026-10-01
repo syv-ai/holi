@@ -151,7 +151,7 @@ export type { UiReport } from './capabilities/services'
 
 export type { PluginInfo } from '@holi/shared'
 export type { SeedContribution } from './vault/seed/types'
-export type { SettingsFragment } from './agent/seed/claude-settings'
+export type { SettingsFragment } from './vault/seed/types'
 export {
   cap,
   type Capability,
@@ -175,7 +175,9 @@ export {
 } from './capabilities/params'
 export { seedFolder } from './vault/seed/folder'
 export { jsonFileStore, type JsonFileStore } from './json-file-store'
-export { runGit } from './git'
+export { runGit, type RangeFile } from './git'
 export { writeAtomic } from './vault/vault-files'
 export { readVaultTheme } from './vault/theme'
+export { readVaultSettings } from './vault/settings'
+export { shellReadBridgeEnv } from './bridge/env-file'
 export { mimeFor } from './vault/asset-protocol'

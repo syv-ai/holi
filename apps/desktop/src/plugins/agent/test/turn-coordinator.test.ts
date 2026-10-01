@@ -7,8 +7,8 @@
  * and which of them are told they overlapped another session.
  */
 import { describe, expect, it, vi } from 'vitest'
-import { createTurnCoordinator, type TurnVault } from '../src/main/agent/turn-coordinator'
-import type { TurnRecord } from '../src/main/agent/turn-log'
+import { createTurnCoordinator, type TurnVault } from '../main/host/turn-coordinator'
+import type { TurnRecord } from '../main/host/turn-log'
 
 const VAULT = 'owner/repo'
 

@@ -9,7 +9,7 @@ import {
   ensureAgentConfigDir,
   takeFirstSpawn,
   resolveVaultAgentConfig,
-} from '../src/main/agent/agent-config-dir'
+} from '../main/claude/config-dir'
 
 const dirs: string[] = []
 async function tempDir(): Promise<string> {

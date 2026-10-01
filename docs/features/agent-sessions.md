@@ -35,8 +35,9 @@ stop, respawn, duplicate, attach, detach, and the turn review's turns, turnFiles
 revert). Main tells it the session and terminal lists and each terminal's bytes as the events
 `sessions`, `terminals`, `pty-data` and `pty-exit`; keystrokes and resizes go back as the events
 `pty-write` and `pty-resize`, which keep their order. A terminal's bytes go straight to its xterm
-(`lib/session-terminals.ts`), never through an atom. Its capabilities and events are under the
-plugin id `agent` already; while it is core they are not gated by the vault's settings.
+(`lib/session-terminals.ts`), never through an atom. Its main side is the plugin `agent`
+(`src/plugins/agent/main/`), so in a vault with the agent off its capabilities are refused, its
+events are not sent and nothing under `.claude/` is seeded.
 
 **Where you meet it.** ⌘J and the nav menu's agent item focus a terminal showing the list, or
 open one. Which terminal shows it is read from its title, since `←` and Enter move a terminal
@@ -145,14 +146,17 @@ showing it busy, crosses it off), so a session resumed from the list is never re
 
 ## Code
 
-- `apps/desktop/src/main/agent/claude-cli.ts`: every `claude` command, one environment
-- `apps/desktop/src/main/agent/claude-sessions.ts`: the listing, state rules, the watch
-- `apps/desktop/src/main/agent/agent-terminals.ts`, `agent-runtime.ts`, `terminal-mirror.ts`:
-  terminals, the PTY and kill path
-- `apps/desktop/src/main/agent/agent-sessions.ts`: the vault controller
-- `apps/desktop/src/main/agent/capabilities.ts`: the `agent.*` capabilities
-- `apps/desktop/src/main/bridge/env-file.ts`, `agent/seed/vault/shipped/.claude/hooks/turn-signal.mjs`, `agent/seed/seed.ts`
-  (`STATUS_LINE`): how sessions find Holi
-- `apps/desktop/src/main/agent/turn-coordinator.ts`, `turn-log.ts`: working set and turn records
+- `apps/desktop/src/plugins/agent/main/index.ts`: the plugin's main side; `provider.ts`: the line between the host and
+  the agent it runs
+- `apps/desktop/src/plugins/agent/main/claude/`: Claude Code as the provider: `cli.ts` (every `claude` command, one
+  environment, the binary), `listing.ts` (the listing, state rules, the watch), `routes.ts` (the
+  turn and status-line routes)
+- `apps/desktop/src/plugins/agent/main/host/terminals.ts`, `pty.ts`, `terminal-mirror.ts`: terminals, the PTY and
+  kill path
+- `apps/desktop/src/plugins/agent/main/host/sessions.ts`: the vault controller
+- `apps/desktop/src/plugins/agent/main/host/capabilities.ts`: the `agent.*` capabilities
+- `apps/desktop/src/main/bridge/env-file.ts`, `apps/desktop/src/plugins/agent/main/claude/vault/shipped/.claude/hooks/turn-signal.mjs`,
+  `apps/desktop/src/plugins/agent/main/claude/seed.ts` (`STATUS_LINE`): how sessions find Holi
+- `apps/desktop/src/plugins/agent/main/host/turn-coordinator.ts`, `turn-log.ts`: working set and turn records
 - `apps/desktop/src/renderer/src/features/agent/`: rows, orbs, terminal, turn chip and review
 - `apps/desktop/src/renderer/src/state/agent.ts`, `agent-send.ts`: the lists, and what you do

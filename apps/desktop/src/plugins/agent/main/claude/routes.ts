@@ -1,5 +1,5 @@
 /**
- * The agent's routes on the bridge (`bridge/server.ts`): how Holi learns when a
+ * Claude Code's routes on the bridge: how Holi learns when a
  * turn starts and ends, and how full a session's context is, WITHOUT parsing
  * PTY output (docs/features/agent-sessions.md).
  *
@@ -15,7 +15,7 @@
  *
  * NOTE: no runtime `electron` import: this loads under vitest.
  */
-import type { BridgeServer } from '../bridge/server'
+import type { RouteServer } from '../provider'
 
 export interface AgentRoutesDeps {
   /** A turn began or ended in one of this vault's background sessions, named
@@ -34,10 +34,7 @@ const JOB_ID = /^[0-9a-f]{8}$/
 const EMPTY = { status: 204 } as const
 
 /** Registers the routes; returns the undo. */
-export function registerAgentRoutes(
-  server: Pick<BridgeServer, 'route'>,
-  deps: AgentRoutesDeps,
-): () => void {
+export function registerAgentRoutes(server: RouteServer, deps: AgentRoutesDeps): () => void {
   const log = deps.log ?? ((msg: string) => console.log(`[agent] ${msg}`))
 
   // A signal that names no job cannot say which session's turn it is, and with

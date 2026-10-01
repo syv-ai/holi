@@ -91,9 +91,12 @@ core's `holi-vault:`, and a plugin's handler answers 404 while the open vault ha
 marked `frame` serves framed pages: the window guard lets such a frame move within its scheme and
 sends a link out of it to the browser.
 A plugin's own code sits in `main/`, `renderer/`, `shared/` and `test/` under its folder; its
-renderer imports its main side as types only, for `capClient`. The plugins are PDF
-([pdf](features/pdf.md)), Google ([google](features/google.md)) and vault apps
-([vault apps](features/vault-apps.md)).
+renderer imports its main side as types only, for `capClient`. The plugins are the agent
+([agent-sessions](features/agent-sessions.md)), PDF ([pdf](features/pdf.md)), Google
+([google](features/google.md)) and vault apps ([vault apps](features/vault-apps.md)).
+A seed contribution can own a path prefix (`owns`): the agent owns `.claude/`, so every other
+plugin's skills, hooks and settings fragments there are left out while the agent is off and
+seeded once when it turns on.
 The app door, through which a vault app's frame calls capabilities, is core's, and the apps plugin
 is its one opener (`ctx.openAppDoor`), supplying the consent check for entries with an
 `appGrant`; with apps off, no entry is reachable through it.
@@ -109,7 +112,7 @@ is open it runs `activateVault` with a context bound to that vault (hold sync, c
 head, hear the renderer's focus report, emit), at most once per open; the disposer runs when Holi
 leaves the vault, while it is still open, and at quit before the bridge stops and the editor
 flushes. A plugin can also ask before Holi quits (`guardQuit`) and serve a bridge route
-(`route`). The agent is still core but is wired through these same hooks. Dispatch refuses a
+(`route`). Dispatch refuses a
 capability whose plugin is off in the calling vault, as "no such method".
 
 Whatever runs inside a vault (the `holi` CLI, the agent's hooks, git's pre-commit hook and merge
@@ -139,6 +142,9 @@ See [vaults-sync](features/vaults-sync.md), [history](features/history.md),
 
 ## 5. The agent
 
+The agent is a plugin (`src/plugins/agent/`): a host (`main/host/`: PTYs, terminal mirror, turn
+coordinator, turn review) and a provider (`main/claude/`: Claude Code's CLI, session listing,
+config directory, hook routes and seed), with the line between them in `main/provider.ts`.
 Every session is a Claude Code background session: the vault's supervisor runs it, its job
 id names it, and it keeps running with no window open. Main opens terminals onto them in `node-pty`
 PTYs (`claude agents` for the list, `claude attach <id>` for one session) with the vault clone as

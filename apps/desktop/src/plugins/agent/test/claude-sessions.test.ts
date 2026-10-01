@@ -7,14 +7,14 @@ import {
   parseBackgrounded,
   sessionName,
   type RunOptions,
-} from '../src/main/agent/claude-cli'
+} from '../main/claude/cli'
 import {
   isLive,
   parseListing,
   summarise,
   watchConfigDir,
   type ClaudeRow,
-} from '../src/main/agent/claude-sessions'
+} from '../main/claude/listing'
 
 const ROOT = '/Users/ada/Holi/syv/vault'
 

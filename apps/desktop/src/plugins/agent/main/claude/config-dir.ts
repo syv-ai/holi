@@ -20,7 +20,7 @@ import { createHash } from 'node:crypto'
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { resolveColorMode } from '@holi/shared'
-import { readVaultSettings } from '../vault/settings'
+import { readVaultSettings } from '../../../../main/plugin-api'
 
 /** Under `userData/`, beside `vaults.json`, `google-cache.db` and the rest. */
 export const AGENT_CONFIG_DIR_NAME = 'agent-config'
@@ -155,6 +155,16 @@ export async function ensureAgentConfigDir(
 }
 
 /**
+ * Printed into the first terminal Holi opens on a fresh config directory.
+ * Credentials are keyed to the directory, so one Holi has never used cannot be
+ * signed in. In the scrollback, because `/login` fires nothing Holi sees.
+ */
+export const SIGN_IN_NOTICE =
+  '\x1b[33mThis vault needs its own Claude sign-in. Type /login below.\r\n' +
+  'Each vault keeps its own Claude Code config, so signing in here\r\n' +
+  'does not touch your other vaults.\x1b[0m\r\n\r\n'
+
+/**
  * Has Holi ever spawned an agent in this config directory? Consumes the answer:
  * true once, false forever after.
  *
@@ -197,9 +207,9 @@ export interface AgentConfigResolution {
  * `colorScheme` and the OS preference), through the same `resolveColorMode`, so
  * `system` cannot mean one thing to the app and another to the agent.
  *
- * `systemPrefersDark` is **injected** rather than read here: this module sits on
- * `agent-sessions`' path, which must load under vitest, so no runtime `electron`
- * import may appear in it. The caller owns `nativeTheme`.
+ * `systemPrefersDark` is **injected** rather than read here: this module must
+ * load under vitest, so no runtime `electron` import may appear in it. The
+ * caller owns `nativeTheme`.
  */
 export async function resolveVaultAgentConfig(args: {
   userDataDir: string

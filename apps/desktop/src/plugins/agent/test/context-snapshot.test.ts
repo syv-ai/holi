@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { ContextSnapshot, CONTEXT_FILE } from '../src/main/agent/context-snapshot'
+import { ContextSnapshot, CONTEXT_FILE } from '../main/host/context-snapshot'
 
 const NOTE_PATH = 'notes/plan.md'
 const OTHER_PATH = 'notes/other.md'

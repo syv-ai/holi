@@ -20,7 +20,7 @@
  * NOTE: no runtime `electron` import — this loads under vitest like the rest of
  * `agent/`.
  */
-import type { VaultCtx } from '../plugin-api'
+import type { VaultCtx } from '../../../../main/plugin-api'
 import type { TurnLog } from './turn-log'
 
 /** What the coordinator needs of the vault its sessions run in. */

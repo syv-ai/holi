@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { TerminalMirror } from '../src/main/agent/terminal-mirror'
+import { TerminalMirror } from '../main/host/terminal-mirror'
 
 describe('TerminalMirror', () => {
   it('serializes the output it was fed', async () => {

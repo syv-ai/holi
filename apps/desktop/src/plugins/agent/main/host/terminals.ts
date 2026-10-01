@@ -1,10 +1,11 @@
 /**
- * Holi's terminals onto Claude Code.
+ * Holi's terminals onto the agent.
  *
- * A session is Claude Code's background session, run by its supervisor. What
- * Holi owns is a **window onto it**: a PTY running `claude agents` (the list,
- * where sessions are started and picked) or `claude attach <id>` (one
- * session). Closing one only detaches: the session keeps running.
+ * A session is the provider's background session, run by its supervisor.
+ * What Holi owns is a **window onto it**: a PTY running the provider's list
+ * (where sessions are started and picked) or one session, as
+ * `AgentProvider.terminal` says. Closing one only detaches: the session keeps
+ * running.
  *
  * **A terminal's launch says nothing about what it shows now.** `←` inside an
  * attached session turns the same process into the list, and Enter there
@@ -19,8 +20,9 @@
  * NOTE: no `electron` import, so this loads under vitest.
  */
 import { randomUUID } from 'node:crypto'
-import { AgentRuntime, resolveClaudeBin, type PidState, type SpawnPty } from './agent-runtime'
-import { cliEnv, type VaultCliTarget } from './claude-cli'
+import { NOT_INSTALLED, type VaultCliTarget } from '../claude/cli'
+import type { AgentProvider } from '../provider'
+import { AgentRuntime, type PidState, type SpawnPty } from './pty'
 import { TerminalMirror } from './terminal-mirror'
 
 /** Text pasted into a terminal, unsent: the framing is the terminal's own, and
@@ -58,11 +60,12 @@ export interface OpenArgs {
 export interface AgentTerminalsDeps {
   /** Tell the renderer `name` about the vault `remote`. */
   emit(remote: string, name: string, payload: unknown): void
+  /** What a terminal runs. */
+  command: AgentProvider['terminal']
   spawnPty?: SpawnPty
   /** Liveness probe before every signal. Tests must inject one: a fake PTY's
    *  pid may belong to a real process on the machine running them. */
   probePid?: (pid: number) => PidState
-  resolveBin?: () => string | null
   killGraceMs?: number
   killBackstopMs?: number
   pasteSettleMs?: number
@@ -107,7 +110,6 @@ interface Terminal {
 
 export function createAgentTerminals(deps: AgentTerminalsDeps): AgentTerminals {
   const log = deps.log ?? ((msg: string) => console.log(`[agent-terminals] ${msg}`))
-  const resolveBin = deps.resolveBin ?? (() => resolveClaudeBin())
   const settleMs = deps.pasteSettleMs ?? PASTE_SETTLE_MS
   const backstopMs = deps.pasteBackstopMs ?? PASTE_BACKSTOP_MS
   /** Insertion-ordered: the order they were opened. */
@@ -141,14 +143,8 @@ export function createAgentTerminals(deps: AgentTerminalsDeps): AgentTerminals {
 
   const api: AgentTerminals = {
     open({ remote, target, attach, cols, rows, notice }) {
-      const bin = resolveBin()
-      if (bin === null) {
-        return {
-          ok: false,
-          message:
-            'Claude CLI not found on PATH. Install it (https://claude.com/claude-code) and restart Holi.',
-        }
-      }
+      const command = deps.command(target, attach)
+      if (command === null) return { ok: false, message: NOT_INSTALLED }
       const id = randomUUID()
       const mirror = new TerminalMirror(cols ?? 80, rows ?? 24)
       if (notice !== undefined) mirror.write(notice)
@@ -194,10 +190,10 @@ export function createAgentTerminals(deps: AgentTerminalsDeps): AgentTerminals {
       })
       try {
         runtime.start({
-          bin,
-          args: attach === undefined ? ['agents'] : ['attach', attach],
+          bin: command.bin,
+          args: command.args,
           cwd: target.root,
-          env: cliEnv(process.env, target),
+          env: command.env,
           ...(cols === undefined ? {} : { cols }),
           ...(rows === undefined ? {} : { rows }),
         })

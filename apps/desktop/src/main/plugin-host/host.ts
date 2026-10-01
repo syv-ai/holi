@@ -26,7 +26,7 @@ import type {
 } from '../plugin-api'
 import type { ActiveVault } from '../vault/active-vault'
 import { pluginEvents, type PluginEventsDeps } from './events'
-import { ensureSeeded } from '../vault/seed/seed'
+import { ensureSeeded, withoutOwned } from '../vault/seed/seed'
 import type { SeedContribution, SeedResult } from '../vault/seed/types'
 import { readVaultSettings } from '../vault/settings'
 
@@ -203,7 +203,9 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
         enabled.has(p.info.id) && p.seed !== undefined ? [p.seed] : [],
       ),
     ]
-    return { enabled, contributions }
+    // What a plugin that is off owns (the agent's `.claude/`) waits for it.
+    const off = deps.plugins.flatMap((p) => (enabled.has(p.info.id) ? [] : (p.seed?.owns ?? [])))
+    return { enabled, contributions: withoutOwned(contributions, off) }
   }
 
   /** Start `plugin` for the process, once; null when it failed to start. */

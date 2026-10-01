@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { PtyProcess } from '../src/main/agent/agent-runtime'
-import { createAgentTerminals } from '../src/main/agent/agent-terminals'
+import type { PtyProcess } from '../main/host/pty'
+import { terminalCommand } from '../main/claude/cli'
+import { createAgentTerminals } from '../main/host/terminals'
 
 class FakePty implements PtyProcess {
   readonly writes: string[] = []
@@ -41,7 +42,7 @@ function setup() {
       spawns.push({ pty, file, args, opts })
       return pty
     },
-    resolveBin: () => '/usr/local/bin/claude',
+    command: (target, attach) => terminalCommand(target, attach, () => '/usr/local/bin/claude'),
     // Never probe the real OS for a fake pid: it may be someone else's.
     probePid: () => 'alive',
     killGraceMs: 5,
@@ -148,7 +149,7 @@ describe('agent terminals', () => {
   it('refuses without a binary', () => {
     const terminals = createAgentTerminals({
       emit: () => {},
-      resolveBin: () => null,
+      command: () => null,
       log: () => {},
     })
     expect(terminals.open({ remote: 'syv/vault', target: TARGET }).ok).toBe(false)

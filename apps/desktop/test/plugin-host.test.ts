@@ -282,3 +282,49 @@ describe('seeding by enablement', () => {
     await expect(readFile(join(root, SKILL), 'utf8')).rejects.toThrow()
   })
 })
+
+describe('an owned prefix', () => {
+  it("holds another plugin's files under it until the owner is on, then seeds them once", async () => {
+    const OWN = '.claude/settings.json'
+    const owner: MainPlugin = {
+      info: { id: 'owner', label: 'Owner', default: true },
+      seed: { id: 'owner', owns: ['.claude/'], once: { [OWN]: '{}\n' }, shipped: {} },
+    }
+    const fake: MainPlugin = {
+      info: { id: 'fake', label: 'Fake', default: true },
+      seed: { id: 'fake', once: {}, shipped: { [SKILL]: '# fake\n', 'fake.md': '# fake\n' } },
+    }
+    const host = createPluginHost({
+      plugins: [owner, fake],
+      registry: createCapabilityRegistry(),
+      userData: '/nowhere',
+      coreSeeds: [coreSeed([owner.info, fake.info])],
+      active: () => null,
+      rootFor: async () => null,
+      events: { send: () => {}, listen: () => () => {}, liveRemote: () => null },
+      openAppDoor: () => {
+        throw new Error('unused')
+      },
+      route: () => () => {},
+      binDir: () => '/holi/bin',
+    })
+    const root = await tempDir()
+    const set = (on: boolean) => writeVaultSettings(root, { committed: { plugins: { owner: on } } })
+
+    await set(false)
+    await host.seed(root)
+    expect(await readFile(join(root, 'fake.md'), 'utf8')).toBe('# fake\n')
+    await expect(readFile(join(root, OWN), 'utf8')).rejects.toThrow()
+    await expect(readFile(join(root, SKILL), 'utf8')).rejects.toThrow()
+
+    await set(true)
+    await host.seed(root)
+    expect(await readFile(join(root, SKILL), 'utf8')).toBe('# fake\n')
+    expect((await readSeedState(root)).plugins).toContain('fake@owner')
+
+    // Deleted while the owner runs: it stays deleted.
+    await unlink(join(root, SKILL))
+    await host.seed(root)
+    await expect(readFile(join(root, SKILL), 'utf8')).rejects.toThrow()
+  })
+})

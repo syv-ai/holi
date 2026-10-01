@@ -5,7 +5,7 @@
  */
 import { expect, it } from 'vitest'
 import { APP_METHODS, RENDERER_METHODS } from './apps/shared/bridge'
-import { agentCapabilities, AGENT_NAMESPACES } from '../main/agent/capabilities'
+import { agentCapabilities, AGENT_NAMESPACES } from './agent/main/host/capabilities'
 import { createCapabilityRegistry } from '../main/capabilities/registry'
 import { vaultCapabilities, VAULT_NAMESPACES } from '../main/capabilities/vault-caps'
 import { taskCapabilities, TASK_NAMESPACES } from '../main/vault/task-capabilities'

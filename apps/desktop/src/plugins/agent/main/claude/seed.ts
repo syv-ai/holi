@@ -1,15 +1,19 @@
 /**
- * What the agent seeds into a vault: its hooks and skills (`vault/shipped/`
+ * What Claude Code seeds into a vault: its hooks and skills (`vault/shipped/`
  * beside this module) and the `.claude/settings.json` it owns and merges
- * (`claude-settings.ts`).
+ * (`settings.ts`). It owns `.claude/`, so every other plugin's files and
+ * fragments there wait until the agent runs.
  *
  * The tasks settings ride here too for now, as their own fragment, until
  * tasks becomes its own plugin.
  */
-import { shellReadBridgeEnv } from '../../bridge/env-file'
-import { seedFolder } from '../../vault/seed/folder'
-import type { SeedContribution } from '../../vault/seed/types'
-import { hookScript, mergeClaudeSettings, type SettingsFragment } from './claude-settings'
+import {
+  seedFolder,
+  shellReadBridgeEnv,
+  type SeedContribution,
+  type SettingsFragment,
+} from '../../../../main/plugin-api'
+import { hookScript, mergeClaudeSettings } from './settings'
 
 const folder = seedFolder(
   import.meta.glob(['./vault/**', '!**/.DS_Store'], {
@@ -174,8 +178,9 @@ export const agentSettings = (
   has: (rel: string) => boolean,
 ): string | null => mergeClaudeSettings(existing, SETTINGS_BASE, fragments, has)
 
-export const agentSeed: SeedContribution = {
+export const claudeSeed: SeedContribution = {
   id: 'agent',
+  owns: ['.claude/'],
   once: folder.once,
   shipped: folder.shipped,
   fragments: { [SETTINGS]: [AGENT_SETTINGS, TASKS_SETTINGS] },

@@ -8,8 +8,8 @@ import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import { LOCAL_ONLY_IGNORE_LINES, MEMORY_INDEX_EMPTY, VAULT_MARKER_FILE } from '@holi/shared'
 import { afterEach, describe, expect, it } from 'vitest'
-import type { SettingsFragment } from '../src/main/agent/seed/claude-settings'
-import { agentSeed, agentSettings } from '../src/main/agent/seed/seed'
+import type { SettingsFragment } from '../src/main/vault/seed/types'
+import { claudeSeed, agentSettings } from '../src/plugins/agent/main/claude/seed'
 import { appsSeed } from '../src/plugins/apps/main/seed'
 import { googleSeed } from '../src/plugins/google/main/seed'
 import { pdfSeed } from '../src/plugins/pdf/main/seed'
@@ -23,7 +23,7 @@ const exec = promisify(execFile)
 
 // no __dirname under vitest's ESM transform
 const HOOKS_DIR = fileURLToPath(
-  new URL('../src/main/agent/seed/vault/shipped/.claude/hooks/', import.meta.url),
+  new URL('../src/plugins/agent/main/claude/vault/shipped/.claude/hooks/', import.meta.url),
 )
 
 const updateShipped = (root: string) => updateWith(root, SEED_CONTRIBUTIONS)
@@ -121,8 +121,8 @@ describe('the seed tables', () => {
   })
 
   it('the agent ships its hooks and skills and merges .claude/settings.json', () => {
-    expect(keys(agentSeed.once)).toEqual([])
-    expect(keys(agentSeed.shipped)).toEqual([
+    expect(keys(claudeSeed.once)).toEqual([])
+    expect(keys(claudeSeed.shipped)).toEqual([
       '.claude/hooks/memory-index-guard.mjs',
       '.claude/hooks/memory-overview.mjs',
       '.claude/hooks/turn-signal.mjs',
@@ -132,7 +132,7 @@ describe('the seed tables', () => {
       '.claude/skills/theme/SKILL.md',
       '.claude/skills/using-tasks/SKILL.md',
     ])
-    expect(keys(agentSeed.merge!)).toEqual(['.claude/settings.json'])
+    expect(keys(claudeSeed.merge!)).toEqual(['.claude/settings.json'])
   })
 
   it('vault apps ship their check hook and their skill, and nothing once', () => {

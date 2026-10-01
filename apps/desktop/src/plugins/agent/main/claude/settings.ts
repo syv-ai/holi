@@ -11,14 +11,7 @@
  * touches nothing else, so a vault that sets a default back (here or in
  * `settings.local.json`) keeps its choice.
  */
-
-/** What a contribution adds to `.claude/settings.json`. */
-export interface SettingsFragment {
-  /** Hooks, each running `.claude/hooks/<script>.mjs` with `args`. */
-  hooks?: { event: string; matcher?: string; script: string; args?: string[] }[]
-  /** Rules appended to the vault's own, each only when absent. */
-  permissions?: { ask?: string[]; allow?: string[]; deny?: string[] }
-}
+import type { SettingsFragment } from '../../../../main/plugin-api'
 
 export const hookScript = (script: string) => `.claude/hooks/${script}.mjs`
 

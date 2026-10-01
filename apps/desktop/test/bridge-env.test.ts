@@ -10,14 +10,17 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { registerAgentRoutes } from '../src/main/agent/bridge-routes'
-import { STATUS_LINE } from '../src/main/agent/seed/seed'
+import { registerAgentRoutes } from '../src/plugins/agent/main/claude/routes'
+import { STATUS_LINE } from '../src/plugins/agent/main/claude/seed'
 import { BRIDGE_ENV_FILE, createBridgeEnv } from '../src/main/bridge/env-file'
 import { createBridgeServer, type BridgeServer } from '../src/main/bridge/server'
 import { bridgeLines, writeVaultEnv } from './helpers/bridge-env'
 
 const execFileAsync = promisify(execFile)
-const HOOK = join(__dirname, '../src/main/agent/seed/vault/shipped/.claude/hooks/turn-signal.mjs')
+const HOOK = join(
+  __dirname,
+  '../src/plugins/agent/main/claude/vault/shipped/.claude/hooks/turn-signal.mjs',
+)
 
 async function run(
   file: string,

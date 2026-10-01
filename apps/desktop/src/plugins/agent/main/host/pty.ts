@@ -1,16 +1,12 @@
 /**
- * One `claude` client in a node-pty PTY (`claude agents` or `claude attach`),
- * its bytes forwarded to the renderer's xterm, and the environment and
- * binary lookup every `claude` Holi runs shares.
+ * One agent client in a node-pty PTY, its bytes forwarded to the renderer's
+ * xterm. What runs in it (binary, arguments, environment) is the provider's
+ * (`AgentProvider.terminal`).
  *
  * node-pty is an Electron-ABI native module, so it loads lazily inside the
- * real spawn path only; tests inject a fake PTY and never touch it. Everything
- * above the PTY (env, binary discovery) is a pure function.
+ * real spawn path only; tests inject a fake PTY and never touch it.
  */
 import { execFileSync } from 'node:child_process'
-import { accessSync, constants } from 'node:fs'
-import { homedir } from 'node:os'
-import { join } from 'node:path'
 
 /** The slice of node-pty's IPty we depend on (tests implement it directly). */
 export interface PtyProcess {
@@ -34,7 +30,6 @@ export type SpawnPty = (file: string, args: string[], opts: SpawnPtyOptions) => 
 
 /** The only place node-pty is loaded — never reached under vitest. */
 export const defaultSpawnPty: SpawnPty = (file, args, opts) => {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const pty = require('node-pty') as typeof import('node-pty')
   return pty.spawn(file, args, { name: 'xterm-256color', ...opts }) as unknown as PtyProcess
 }
@@ -65,126 +60,6 @@ export const defaultProbePid = (pid: number): PidState => {
   } catch {
     return 'gone' // ps exits non-zero when the pid does not exist
   }
-}
-
-/**
- * The child's env. Strips the nested-session guards (`claude` refuses to run
- * inside another Claude Code session) and keeps PATH/HOME.
- *
- * `CLAUDE_CODE_NO_FLICKER=1` is forced on here rather than in the user's
- * `~/.claude/settings.json`, which Holi never touches.
- */
-export interface AgentEnvOpts {
-  /**
-   * The directory holding Holi's generated commands, **prepended to `PATH`**.
-   *
-   * It exists for the send gate and the ask rules, which match the command
-   * *text*: with `holi` on `PATH` the agent types the bare name.
-   */
-  binDir?: string | null
-  /**
-   * Holi's own Claude Code config directory, as `$CLAUDE_CONFIG_DIR`.
-   *
-   * This is the whole of the isolation: the variable relocates *every*
-   * `~/.claude` path, and `~/.claude.json` with them, so a vault session sees
-   * nothing from the machine's config. Absolute path only.
-   */
-  configDir?: string | null
-}
-
-export function buildAgentEnv(
-  base: NodeJS.ProcessEnv,
-  opts: AgentEnvOpts = {},
-): Record<string, string> {
-  const env: Record<string, string> = {}
-  for (const [key, value] of Object.entries(base)) {
-    if (value !== undefined) env[key] = value
-  }
-  // The parent session's identity, when Holi itself was launched from a Claude
-  // Code terminal. None of it is true of the vault agent: `CHILD_SESSION`
-  // disables transcript saving, and the messaging pair is a live channel back
-  // into the parent.
-  //
-  // Named individually rather than stripped by prefix: several other
-  // `CLAUDE_CODE_*` variables are documented configuration, and swallowing those
-  // would break someone tuning the agent on purpose.
-  delete env.CLAUDECODE
-  delete env.CLAUDE_CODE_ENTRYPOINT
-  delete env.CLAUDE_CODE_CHILD_SESSION
-  delete env.CLAUDE_CODE_SESSION_ID
-  delete env.CLAUDE_CODE_MESSAGING_SOCKET
-  delete env.CLAUDE_CODE_MESSAGING_TOKEN
-  delete env.CLAUDE_CODE_EXECPATH
-  env.TERM = 'xterm-256color'
-  /**
-   * The flicker-free alt-screen renderer, for every session Holi starts.
-   *
-   * The classic renderer redraws the whole screen and visibly flickers inside
-   * the embedded xterm.js; this one patches a virtual viewport instead.
-   *
-   * **The `delete` is the load-bearing half.** Claude Code checks an explicit
-   * "off" BEFORE our "on", and `CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN` being set
-   * at all counts as off, so an inherited one would silently win.
-   *
-   * `CLAUDE_CODE_ACCESSIBILITY` is deliberately NOT stripped: it disables this
-   * renderer too, and a screen-reader user's choice outranks ours.
-   */
-  delete env.CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN
-  env.CLAUDE_CODE_NO_FLICKER = '1'
-  // Reserved keys: strip any inherited value so a vault/user env can't spoof
-  // them. Holi sets none of these: where it is comes from the vault's
-  // `bridge.local.env`, which its commands read in preference to anything.
-  delete env.HOLI_BRIDGE_PORT
-  delete env.HOLI_BRIDGE_TOKEN
-  delete env.HOLI_BIN
-  // Reserved for the same reason: an inherited value would put the agent
-  // back on the machine's `~/.claude`.
-  delete env.CLAUDE_CONFIG_DIR
-  if (opts.configDir) env.CLAUDE_CONFIG_DIR = opts.configDir
-  // Prepended, never appended: an earlier `holi` on the
-  // inherited PATH would otherwise win under a name the gate trusts.
-  if (opts.binDir) {
-    env.PATH = env.PATH ? `${opts.binDir}:${env.PATH}` : opts.binDir
-  }
-  return env
-}
-
-/** GUI apps don't inherit a login shell's PATH — check the usual install dirs. */
-const FALLBACK_BIN_DIRS = [
-  '/opt/homebrew/bin',
-  '/usr/local/bin',
-  '.local/bin',
-  '.bun/bin',
-  '.volta/bin',
-  '.npm-global/bin',
-  'n/bin',
-]
-
-function isExecutable(path: string): boolean {
-  try {
-    accessSync(path, constants.X_OK)
-    return true
-  } catch {
-    return false
-  }
-}
-
-export function resolveClaudeBin(env: NodeJS.ProcessEnv = process.env): string | null {
-  const override = env.HOLI_CLAUDE_BIN
-  if (override && isExecutable(override)) return override
-
-  for (const dir of (env.PATH ?? '').split(':')) {
-    if (!dir) continue
-    const candidate = join(dir, 'claude')
-    if (isExecutable(candidate)) return candidate
-  }
-
-  const home = env.HOME ?? homedir()
-  for (const dir of FALLBACK_BIN_DIRS) {
-    const candidate = dir.startsWith('/') ? join(dir, 'claude') : join(home, dir, 'claude')
-    if (isExecutable(candidate)) return candidate
-  }
-  return null
 }
 
 /**

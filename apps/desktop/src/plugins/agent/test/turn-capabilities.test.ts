@@ -11,11 +11,11 @@
 import { readFile, rm, writeFile } from 'node:fs/promises'
 import { describe, expect, it } from 'vitest'
 import { join } from 'node:path'
-import { agentCapabilities } from '../src/main/agent/capabilities'
-import { openTurnLog } from '../src/main/agent/turn-log'
-import type { CapabilityContext } from '../src/main/capabilities/registry'
-import { openRepo } from '../src/main/git'
-import { commitFile, makeClone, makeRemote, plainGit } from './helpers/git-fixtures'
+import { agentCapabilities } from '../main/host/capabilities'
+import { openTurnLog } from '../main/host/turn-log'
+import type { CapabilityContext } from '../../../main/capabilities/registry'
+import { openRepo } from '../../../main/git'
+import { commitFile, makeClone, makeRemote, plainGit } from '../../../../test/helpers/git-fixtures'
 
 const REMOTE = 'syv-ai/turns'
 
