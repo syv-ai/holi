@@ -7,7 +7,8 @@
  *   - **shipped**: written when the vault is created, and refreshed only by
  *     `holi skills update` (`update.ts`), which 3-way merges, so they are text.
  *   - **merged**: one contribution owns the file and says how to merge what
- *     the vault already has with what Holi needs (`merge`).
+ *     the vault already has with what Holi needs (`merge`). Any contribution,
+ *     the owner included, adds to it with `fragments`, in the owner's shape.
  */
 export interface SeedContribution {
   /** Who contributes, for errors: `core`, `agent`, `pdf`. */
@@ -17,9 +18,16 @@ export interface SeedContribution {
   /** Vault path to text. */
   shipped: Record<string, string>
   /**
+   * What this contribution adds to merged files, by vault path: one entry
+   * per concern, in the shape the file's owner reads. A fragment for a file
+   * no contribution merges is ignored.
+   */
+  fragments?: Record<string, readonly unknown[]>
+  /**
    * The files this contribution owns and merges: vault path to a function
-   * from the text on disk (`null` when absent) to the text to write, or
-   * `null` when there is nothing to write.
+   * from the text on disk (`null` when absent) and every contribution's
+   * fragments for it, in list order, to the text to write, or `null` when
+   * there is nothing to write.
    *
    * `has` answers whether a vault path exists, or is about to be written by
    * this same run, so a merge can refer only to files that are there.
@@ -29,6 +37,7 @@ export interface SeedContribution {
 
 export type MergeFile = (
   existing: string | null,
+  fragments: readonly unknown[],
   has: (rel: string) => Promise<boolean>,
 ) => Promise<string | null>
 

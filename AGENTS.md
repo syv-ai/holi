@@ -126,8 +126,9 @@ legacy alias with the same behavior as `pnpm lint`.
   that bites: vaults seeded earlier still tell the agent that `USER.md` is
   gitignored, which stopped being true when local-ness became the `.local.`
   marker. When a decision changes what the agent is _told_, ask how existing
-  vaults are reached before assuming the seed covers it — `settingsWithRequired`
-  is the pattern that does reach them, and it only covers `.claude/settings.json`.
+  vaults are reached before assuming the seed covers it — a merged file's
+  fragment is the pattern that does reach them, and it only covers the merged
+  files (`.claude/settings.json`, `.gitignore`).
   A shipped skill or hook (`vault/shipped/`) is written only at vault creation and
   reaches an existing vault only when its user runs `holi skills update`.
 - **A file whose writer regenerates it is the third answer to that question, and

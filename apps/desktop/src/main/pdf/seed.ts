@@ -28,4 +28,8 @@ export const pdfSeed: SeedContribution = {
   id: 'pdf',
   once: folder.once,
   shipped: folder.shipped,
+  // `holi pdf comments` only reads, so it asks nothing.
+  fragments: {
+    '.claude/settings.json': [{ permissions: { allow: ['Bash(holi pdf comments:*)'] } }],
+  },
 }

@@ -43,7 +43,8 @@ export const GITIGNORE = '.gitignore'
 
 /**
  * The `.gitignore` text this vault should have, or **null** if it already has
- * every line it needs.
+ * every line it needs: core's `*.local.*` lines plus any a contribution adds
+ * as a fragment (a list of lines).
  *
  * Merged rather than create-if-missing: an adopted repo usually already has
  * one, and the sync engine commits with `git add -A`, so skipping it would let
@@ -52,9 +53,9 @@ export const GITIGNORE = '.gitignore'
  * trailing newline is added first, or the append would produce
  * `node_modules*.local.*`, which ignores nothing.
  */
-export function gitignoreWithLocalOnly(existing: string | null): string | null {
+export function gitignoreWith(existing: string | null, lines: readonly string[]): string | null {
   const present = new Set((existing ?? '').split('\n').map((l) => l.trim()))
-  const missing = LOCAL_ONLY_IGNORE_LINES.filter((line) => !present.has(line))
+  const missing = [...new Set(lines)].filter((line) => !present.has(line))
   if (missing.length === 0) return null
 
   if (existing === null || existing.trim() === '') {
@@ -80,5 +81,8 @@ export const coreSeed: SeedContribution = {
     [MEMORY_INDEX]: MEMORY_INDEX_EMPTY,
   },
   shipped: folder.shipped,
-  merge: { [GITIGNORE]: async (existing) => gitignoreWithLocalOnly(existing) },
+  merge: {
+    [GITIGNORE]: async (existing, fragments) =>
+      gitignoreWith(existing, [...LOCAL_ONLY_IGNORE_LINES, ...(fragments as string[][]).flat()]),
+  },
 }

@@ -69,8 +69,9 @@ export async function runMerges(
   const written: string[] = []
   const has = async (rel: string) => pending.has(rel) || (await exists(root, rel))
   for (const [rel, merge] of tables(contributions).merged) {
+    const fragments = contributions.flatMap((c) => c.fragments?.[rel] ?? [])
     const onDisk = await readFile(join(root, rel), 'utf8').catch(() => null)
-    const next = await merge(onDisk, has)
+    const next = await merge(onDisk, fragments, has)
     if (next === null) continue
     await writeAtomic(root, vaultRelPath(rel), next)
     written.push(rel)

@@ -61,18 +61,20 @@ core's `.gitignore` gets its `*.local.*` line, line-wise, before anything else i
   writes one, so a deleted skill stays deleted. They are plain committed files because a vault
   works in any Claude Code, the web and the desktop app included; a Claude Code plugin would not
   reach cloud sessions or a machine it was never installed on.
-- **`.claude/settings.json`**: owned by the agent, merged key-wise by `settingsWithRequired`. Holi adds its hooks, each
-  only where its script is (a hook a later release adds is wired when its script arrives)
-  (the turn bracket's `turn-signal.mjs` among them, replacing the inline `curl` older vaults
-  carry), `permissions.ask`, `permissions.allow` and `permissions.deny` rules, each
-  `skillOverrides` entry that is absent, `disableClaudeAiConnectors`,
-  `autoMemoryEnabled`, `awaySummaryEnabled` and `promptSuggestionEnabled` (all `false`: no
-  session recap, no next-prompt suggestion) and `worktree.bgIsolation: "none"` (only when absent,
-  so sessions edit the vault rather than a worktree of it), the inline `statusLine`
-  (when absent or Holi's own, so a vault's own footer stays), and keeps everything
-  else. A vault
-  turns a default back by setting it here or in `settings.local.json`; Claude Code's `/config`
-  writes user settings, which a project value outranks. Malformed JSON is left alone.
+- **Merged files** have one owner, which merges what the vault has with what Holi needs; any
+  contribution adds to one with a fragment. `.gitignore` is core's: its `*.local.*` lines plus
+  any fragment's, appended line-wise. `.claude/settings.json` is the agent's, merged key-wise
+  (`agent/seed/claude-settings.ts`). Fragments add hooks, each only where its script is (a hook a
+  later release adds is wired when its script arrives), and `permissions.ask`, `allow` and `deny`
+  rules: the agent's own (the turn bracket's `turn-signal.mjs` among them), Google's send gate
+  and ask rules, the vault-app check, the tasks deny of Claude Code's `Task*` tools, and PDF's
+  allow of `holi pdf comments`. The agent's own keys go in only when absent: each `skillOverrides`
+  entry, `disableClaudeAiConnectors`, `autoMemoryEnabled`, `awaySummaryEnabled` and
+  `promptSuggestionEnabled` (all `false`: no session recap, no next-prompt suggestion),
+  `worktree.bgIsolation: "none"` (so sessions edit the vault rather than a worktree of it) and the
+  inline `statusLine`. Everything else stays. A vault turns a default back by setting it here or
+  in `settings.local.json`; Claude Code's `/config` writes user settings, which a project value
+  outranks. Malformed JSON is left alone.
 
 **Updating skills and hooks**. A Holi release may ship newer versions; they reach a vault
 only when its user asks, with `holi skills update` or the palette's **Update skills**. Against the
@@ -86,7 +88,7 @@ native notification. Holi's side of each hook stays backward-compatible, since a
 older script indefinitely.
 
 Changing a once file's seed text reaches new vaults only. To tell existing vaults something, use a
-shipped skill (through the update), a `settingsWithRequired` key, or a file whose writer
+shipped skill (through the update), a `settings.json` key or fragment, or a file whose writer
 regenerates it (`app.yaml` and the theme files are rewritten whole from the schema on every
 write).
 
@@ -156,7 +158,8 @@ the vault's pre-commit transforms like anyone's ([vaults-sync.md](vaults-sync.md
 - `apps/desktop/src/main/vault/seed/`: the seeder (`seed.ts`), `holi skills update` (`update.ts`),
   seed folders (`folder.ts`), core's contribution (`core.ts`, `vault/once/AGENTS.md`), and
   `state.ts`: what Holi seeded, the base an update merges from
-- `apps/desktop/src/main/agent/seed/seed.ts`: the agent's contribution and `settingsWithRequired`
+- `apps/desktop/src/main/agent/seed/seed.ts`: the agent's contribution and its `settings.json`
+  fragments; `claude-settings.ts`: the merge
 - `apps/desktop/src/main/bridge/cli.ts`: the `holi` script and its argv; `bridge/server.ts`: `/cli`;
   `agent/bridge-routes.ts`: the turn and status-line routes
 - `apps/desktop/src/main/bridge/env-file.ts`: `bridge.local.env` and its shell reader

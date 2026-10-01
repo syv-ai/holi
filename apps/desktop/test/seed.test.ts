@@ -8,7 +8,8 @@ import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import { LOCAL_ONLY_IGNORE_LINES, MEMORY_INDEX_EMPTY, VAULT_MARKER_FILE } from '@holi/shared'
 import { afterEach, describe, expect, it } from 'vitest'
-import { agentSeed, settingsWithRequired } from '../src/main/agent/seed/seed'
+import type { SettingsFragment } from '../src/main/agent/seed/claude-settings'
+import { agentSeed, agentSettings } from '../src/main/agent/seed/seed'
 import { pdfSeed } from '../src/main/pdf/seed'
 import { coreSeed, GITIGNORE } from '../src/main/vault/seed/core'
 import { ensureSeeded as ensureSeededWith } from '../src/main/vault/seed/seed'
@@ -41,8 +42,23 @@ const ONCE_FILES: Record<string, string> = Object.fromEntries(
 const BINARIES: Record<string, Uint8Array> = Object.fromEntries(
   Object.entries(ONCE_ALL).filter((e): e is [string, Uint8Array] => !isText(e[1])),
 )
+/** The agent's settings merge over every contribution's fragments, with the
+ *  hook scripts the vault has named by script (`turn-signal`). */
+const SETTINGS_FRAGMENTS = SEED_CONTRIBUTIONS.flatMap(
+  (c) => c.fragments?.['.claude/settings.json'] ?? [],
+) as SettingsFragment[]
+const mergedSettings = (existing: string | null, hasHook: (name: string) => boolean = () => true) =>
+  agentSettings(existing, SETTINGS_FRAGMENTS, (rel) =>
+    hasHook(rel.replace(/^\.claude\/hooks\/(.*)\.mjs$/, '$1')),
+  )
+const hookEntry = (script: string) => ({
+  type: 'command',
+  command: `node "$CLAUDE_PROJECT_DIR/.claude/hooks/${script}.mjs"`,
+})
+const gateOf = (pre: { matcher?: string }[]) => pre.find((e) => e.matcher === 'Bash') as any
+
 /** The merged `.claude/settings.json` a vault gets when it has none. */
-const SETTINGS_SEED = settingsWithRequired(null)!
+const SETTINGS_SEED = mergedSettings(null)!
 const SEED_FILES: Record<string, string> = {
   ...ONCE_FILES,
   ...SHIPPED_FILES,
@@ -246,12 +262,12 @@ describe('the seed tables', () => {
     )
     // UserPromptSubmit + Stop bracket a turn for git coexistence (hook-server
     // signal); PreToolUse is the send gate and is unrelated to the bracket.
-    expect(Object.keys(settings.hooks)).toEqual([
-      'UserPromptSubmit',
-      'Stop',
-      'SessionStart',
+    expect(Object.keys(settings.hooks).sort()).toEqual([
       'PostToolUse',
       'PreToolUse',
+      'SessionStart',
+      'Stop',
+      'UserPromptSubmit',
     ])
     expect(settings.permissions.ask).toEqual([
       'Bash(curl:*)',
@@ -275,7 +291,7 @@ describe('the seed tables', () => {
    */
   it('wires the send gate to every Bash call, deciding in the hook rather than in a matcher', () => {
     const settings = JSON.parse(SETTINGS_SEED)
-    const gate = settings.hooks.PreToolUse[0]
+    const gate = gateOf(settings.hooks.PreToolUse)
 
     expect(gate.matcher).toBe('Bash')
     expect(gate.hooks[0].command).toContain('.claude/hooks/google-send-gate.mjs')
@@ -293,7 +309,7 @@ describe('the seed tables', () => {
 
   it('the turn hooks run the turn-signal script with their edge', () => {
     const settings = JSON.parse(SETTINGS_SEED)
-    expect(settings.hooks.UserPromptSubmit[0].hooks[1].command).toBe(
+    expect(settings.hooks.UserPromptSubmit[1].hooks[0].command).toBe(
       'node "$CLAUDE_PROJECT_DIR/.claude/hooks/turn-signal.mjs" start',
     )
     expect(settings.hooks.Stop[0].hooks[0].command).toBe(
@@ -518,7 +534,7 @@ describe('hook scripts', () => {
  * the same contract, key-wise: add what Holi requires, keep everything the user
  * put there, and return `null` when there is nothing to do.
  */
-describe('settingsWithRequired', () => {
+describe('mergedSettings', () => {
   const parse = (s: string | null) => JSON.parse(s!) as Record<string, any>
 
   it('adds the gate to a settings.json that predates it', () => {
@@ -527,9 +543,9 @@ describe('settingsWithRequired', () => {
       permissions: { ask: ['Bash(curl:*)'] },
     })
 
-    const after = parse(settingsWithRequired(before))
+    const after = parse(mergedSettings(before))
 
-    expect(after.hooks.PreToolUse[0].hooks[0].command).toContain('google-send-gate.mjs')
+    expect(gateOf(after.hooks.PreToolUse).hooks[0].command).toContain('google-send-gate.mjs')
     expect(after.permissions.ask).toContain('Bash(holi-google send:*)')
     expect(after.permissions.deny).toContain('SendFeedback')
     expect(after.skillOverrides['code-review']).toBe('off')
@@ -546,7 +562,7 @@ describe('settingsWithRequired', () => {
       model: 'opus',
     })
 
-    const after = parse(settingsWithRequired(before))
+    const after = parse(mergedSettings(before))
 
     // Untouched
     expect(after.hooks.PostToolUse[0].hooks[0].command).toBe('format')
@@ -563,31 +579,31 @@ describe('settingsWithRequired', () => {
   it('allows the read-only holi pdf comments without a prompt, in a vault that predates it', () => {
     const before = JSON.parse(SETTINGS_SEED) as Record<string, any>
     delete before.permissions.allow
-    const after = parse(settingsWithRequired(JSON.stringify(before)))
+    const after = parse(mergedSettings(JSON.stringify(before)))
     expect(after.permissions.allow).toEqual(['Bash(holi pdf comments:*)'])
     expect(after.permissions.ask).toEqual(before.permissions.ask)
   })
 
   it('is null when the gate is already wired — no pointless rewrite', () => {
-    expect(settingsWithRequired(SETTINGS_SEED)).toBeNull()
+    expect(mergedSettings(SETTINGS_SEED)).toBeNull()
   })
 
   it('writes the full seed when there is no settings.json at all', () => {
-    expect(settingsWithRequired(null)).toBe(SETTINGS_SEED)
+    expect(mergedSettings(null)).toBe(SETTINGS_SEED)
   })
 
   it('does not add a second copy of a gate the user already has', () => {
-    const once = settingsWithRequired(JSON.stringify({ hooks: {}, permissions: {} }))
-    const twice = settingsWithRequired(once)
+    const once = mergedSettings(JSON.stringify({ hooks: {}, permissions: {} }))
+    const twice = mergedSettings(once)
 
     expect(twice).toBeNull()
-    // Two gate matchers, not two copies: `Bash` for the CLI and `mcp__…Gmail…`
-    // for the claude.ai connector, which a Bash matcher cannot see; then the
-    // memory index guard. Seeding again adds none of them.
+    // The memory index guard, then two gate matchers, not two copies: `Bash`
+    // for the CLI and `mcp__…Gmail…` for the claude.ai connector, which a Bash
+    // matcher cannot see. Seeding again adds none of them.
     expect(parse(once).hooks.PreToolUse.map((e: { matcher: string }) => e.matcher)).toEqual([
+      'Write|Edit|MultiEdit',
       'Bash',
       'mcp__.*[Gg]mail.*',
-      'Write|Edit|MultiEdit',
     ])
   })
 
@@ -595,7 +611,7 @@ describe('settingsWithRequired', () => {
     // The agent reached for a claude.ai Gmail connector in preference to
     // `holi-google`, routing around main-as-sole-token-authority, the send gate
     // and the cache. `true` in any scope wins, so this checked-in file settles it.
-    const seeded = settingsWithRequired(JSON.stringify({ hooks: {}, permissions: {} }))
+    const seeded = mergedSettings(JSON.stringify({ hooks: {}, permissions: {} }))
 
     expect(parse(seeded).disableClaudeAiConnectors).toBe(true)
   })
@@ -603,7 +619,7 @@ describe('settingsWithRequired', () => {
   // Their file, and unparseable JSON is not something to "fix" by overwriting.
   // The cost is an ungated vault, which the caller reports rather than hides.
   it('leaves a malformed settings.json alone rather than destroying it', () => {
-    expect(settingsWithRequired('{ not json')).toBeNull()
+    expect(mergedSettings('{ not json')).toBeNull()
   })
 })
 
@@ -624,8 +640,10 @@ describe('ensureSeeded — settings.json', () => {
     const { written } = await ensureSeeded(root)
 
     const settings = parseYaml(await readFile(join(root, '.claude/settings.json'), 'utf8'))
-    expect(settings.hooks.PreToolUse[0].hooks[0].command).toContain('google-send-gate.mjs')
+    expect(gateOf(settings.hooks.PreToolUse).hooks[0].command).toContain('google-send-gate.mjs')
     expect(written).toContain('.claude/settings.json')
+    // A fragment from a contribution that does not own the file reaches it.
+    expect(settings.permissions.allow).toContain('Bash(holi pdf comments:*)')
     // And the hook it invokes actually landed, or the wiring points at nothing.
     expect(await readFile(join(root, '.claude/hooks/google-send-gate.mjs'), 'utf8')).toBe(
       SEED_FILES['.claude/hooks/google-send-gate.mjs'],
@@ -640,11 +658,11 @@ describe('the connector opt-out reaches vaults that already exist', () => {
   // settings.json, so the creation path reaches none of them.
   it('adds the opt-out to an established vault on the merge path', () => {
     const before = JSON.stringify({
-      hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ command: 'google-send-gate' }] }] },
+      hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [hookEntry('google-send-gate')] }] },
       permissions: { ask: [] },
     })
 
-    const after = settingsWithRequired(before)
+    const after = mergedSettings(before)
 
     expect(JSON.parse(after!).disableClaudeAiConnectors).toBe(true)
   })
@@ -653,7 +671,7 @@ describe('the connector opt-out reaches vaults that already exist', () => {
     // Re-asserting it every vault open would be Holi overruling a stated choice
     // once a session. The vault is theirs.
     const before = JSON.stringify({
-      hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ command: 'google-send-gate' }] }] },
+      hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [hookEntry('google-send-gate')] }] },
       permissions: {
         ask: [
           'Bash(curl:*)',
@@ -670,13 +688,13 @@ describe('the connector opt-out reaches vaults that already exist', () => {
 
     // It still merges the vault-app validator in, which this fixture predates —
     // so assert the stated choice survives rather than that nothing changed.
-    const after = JSON.parse(settingsWithRequired(before)!)
+    const after = JSON.parse(mergedSettings(before)!)
     expect(after.disableClaudeAiConnectors).toBe(false)
     expect(JSON.stringify(after.hooks.PostToolUse)).toContain('vault-app-check')
   })
 })
 
-describe('settingsWithRequired — the memory index guard', () => {
+describe('mergedSettings — the memory index guard', () => {
   it('seeds a PreToolUse guard on memory/index.md for the writing tools', () => {
     const pre = JSON.parse(SETTINGS_SEED).hooks.PreToolUse
     const guard = pre.find((e: { hooks: { command: string }[] }) =>
@@ -687,9 +705,9 @@ describe('settingsWithRequired — the memory index guard', () => {
 
   it('merges it into a vault that already has the send gate', () => {
     const before = JSON.stringify({
-      hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ command: 'google-send-gate' }] }] },
+      hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [hookEntry('google-send-gate')] }] },
     })
-    const pre = JSON.parse(settingsWithRequired(before)!).hooks.PreToolUse
+    const pre = JSON.parse(mergedSettings(before)!).hooks.PreToolUse
     const text = JSON.stringify(pre)
     expect(text).toContain('memory-index-guard')
     // The gate is not added twice.
@@ -698,7 +716,7 @@ describe('settingsWithRequired — the memory index guard', () => {
 
   it('leaves settings that already carry it alone', () => {
     const seeded = SETTINGS_SEED
-    expect(settingsWithRequired(seeded)).toBeNull()
+    expect(mergedSettings(seeded)).toBeNull()
   })
 })
 
@@ -1036,7 +1054,7 @@ describe('vault memory', () => {
     // The same lesson restated: a seed that only runs at creation is a migration
     // that never happens, and every vault that exists today has a settings.json.
     const before = JSON.stringify({ hooks: {}, permissions: { ask: [] } })
-    const after = parse(settingsWithRequired(before))
+    const after = parse(mergedSettings(before))
 
     expect(after.autoMemoryEnabled).toBe(false)
     expect(JSON.stringify(after.hooks.SessionStart)).toContain('memory-overview')
@@ -1045,73 +1063,42 @@ describe('vault memory', () => {
   it('does not argue with a user who turned auto-memory back on', () => {
     // Only ever set when absent. `true` here is somebody saying something.
     const before = JSON.stringify({
-      hooks: { SessionStart: [{ hooks: [{ command: 'memory-overview' }] }] },
+      hooks: { SessionStart: [{ hooks: [hookEntry('memory-overview')] }] },
       permissions: { ask: [] },
       autoMemoryEnabled: true,
     })
-    const after = settingsWithRequired(before)
+    const after = mergedSettings(before)
 
     // Something else may still be merged in, so assert the key rather than null.
     expect(parse(after ?? before).autoMemoryEnabled).toBe(true)
   })
 
   it('turns recaps and prompt suggestions off, unless the vault turned them on', () => {
-    const merged = parse(settingsWithRequired(JSON.stringify({ hooks: {} })))
+    const merged = parse(mergedSettings(JSON.stringify({ hooks: {} })))
     expect(merged.awaySummaryEnabled).toBe(false)
     expect(merged.promptSuggestionEnabled).toBe(false)
 
     const chosen = JSON.stringify({ ...merged, awaySummaryEnabled: true })
-    expect(parse(settingsWithRequired(chosen) ?? chosen).awaySummaryEnabled).toBe(true)
+    expect(parse(mergedSettings(chosen) ?? chosen).awaySummaryEnabled).toBe(true)
   })
 
   it('does not add a second overview hook for a user who reordered the block', () => {
-    const once = settingsWithRequired(JSON.stringify({ hooks: {}, permissions: {} }))
-    const twice = settingsWithRequired(once)
+    const once = mergedSettings(JSON.stringify({ hooks: {}, permissions: {} }))
+    const twice = mergedSettings(once)
 
     expect(twice).toBeNull()
     expect(parse(once).hooks.SessionStart).toHaveLength(1)
   })
 })
 
-describe('settingsWithRequired — background sessions', () => {
-  const OLD_START =
-    '[ -n "$HOLI_HOOK_PORT" ] || exit 0; curl -s --max-time 2 -X POST "http://127.0.0.1:$HOLI_HOOK_PORT/turn/start?t=$HOLI_HOOK_TOKEN" >/dev/null 2>&1'
-  const OLD_END = OLD_START.replace('/turn/start', '/turn/end')
+describe('mergedSettings — background sessions', () => {
   const commands = (entries: Array<{ hooks: Array<{ command: string }> }>) =>
     entries.flatMap((e) => e.hooks.map((h) => h.command))
 
   it('reaches a vault that never had the turn bracket', () => {
-    const merged = JSON.parse(settingsWithRequired('{"hooks":{}}')!)
-    expect(commands(merged.hooks.UserPromptSubmit)).toEqual([
-      'node "$CLAUDE_PROJECT_DIR/.claude/hooks/turn-signal.mjs" start',
-    ])
-    expect(commands(merged.hooks.Stop)).toEqual([
-      'node "$CLAUDE_PROJECT_DIR/.claude/hooks/turn-signal.mjs" end',
-    ])
-  })
-
-  it('replaces the old inline curl, keeping the user’s own hooks beside it', () => {
-    const existing = JSON.stringify({
-      hooks: {
-        UserPromptSubmit: [
-          {
-            hooks: [
-              {
-                type: 'command',
-                command: 'node "$CLAUDE_PROJECT_DIR/.claude/hooks/user-prompt-submit.mjs"',
-              },
-              { type: 'command', command: OLD_START },
-            ],
-          },
-          { hooks: [{ type: 'command', command: 'echo mine' }] },
-        ],
-        Stop: [{ hooks: [{ type: 'command', command: OLD_END }] }],
-      },
-    })
-    const merged = JSON.parse(settingsWithRequired(existing)!)
+    const merged = JSON.parse(mergedSettings('{"hooks":{}}')!)
     expect(commands(merged.hooks.UserPromptSubmit)).toEqual([
       'node "$CLAUDE_PROJECT_DIR/.claude/hooks/user-prompt-submit.mjs"',
-      'echo mine',
       'node "$CLAUDE_PROJECT_DIR/.claude/hooks/turn-signal.mjs" start',
     ])
     expect(commands(merged.hooks.Stop)).toEqual([
@@ -1119,33 +1106,27 @@ describe('settingsWithRequired — background sessions', () => {
     ])
   })
 
-  it("reaches every vault at once, replaces an earlier release's, and keeps a vault's own", () => {
+  it("reaches every vault at once, and keeps a vault's own", () => {
     const holis = JSON.parse(SETTINGS_SEED).statusLine
     expect(holis.type).toBe('command')
     // No script to wait for: an existing vault gets it on its next open.
-    expect(JSON.parse(settingsWithRequired('{}', () => false)!).statusLine).toEqual(holis)
-    const shipped = {
-      type: 'command',
-      command: 'node "$CLAUDE_PROJECT_DIR/.claude/hooks/status-line.mjs"',
-    }
-    const replaced = settingsWithRequired(JSON.stringify({ statusLine: shipped }))
-    expect(JSON.parse(replaced!).statusLine).toEqual(holis)
+    expect(JSON.parse(mergedSettings('{}', () => false)!).statusLine).toEqual(holis)
     const mine = { type: 'command', command: 'mine.sh' }
-    const kept = settingsWithRequired(JSON.stringify({ statusLine: mine }))
+    const kept = mergedSettings(JSON.stringify({ statusLine: mine }))
     expect(kept === null ? mine : JSON.parse(kept).statusLine).toEqual(mine)
   })
 
   it('keeps background sessions in the vault itself, unless the user chose otherwise', () => {
-    expect(JSON.parse(settingsWithRequired('{}')!).worktree).toEqual({ bgIsolation: 'none' })
-    const chosen = JSON.parse(settingsWithRequired('{"worktree":{"bgIsolation":"worktree"}}')!)
+    expect(JSON.parse(mergedSettings('{}')!).worktree).toEqual({ bgIsolation: 'none' })
+    const chosen = JSON.parse(mergedSettings('{"worktree":{"bgIsolation":"worktree"}}')!)
     expect(chosen.worktree).toEqual({ bgIsolation: 'worktree' })
   })
 
   it('is a fixed point: a second merge changes nothing', () => {
-    const once = settingsWithRequired(
+    const once = mergedSettings(
       '{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"x"}]}]}}',
     )!
-    expect(settingsWithRequired(once)).toBeNull()
-    expect(settingsWithRequired(SETTINGS_SEED)).toBeNull()
+    expect(mergedSettings(once)).toBeNull()
+    expect(mergedSettings(SETTINGS_SEED)).toBeNull()
   })
 })
