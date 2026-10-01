@@ -7,7 +7,6 @@ import {
   ContextMenuShortcut,
 } from '@/primitives'
 import { parentOf } from '@/lib/tree-paths'
-import { registerAppAtom } from '@/state/apps'
 import { openDialogAtom } from '@/state/dialogs'
 import { claimsAtom } from '@/state/plugins'
 import { activeRemoteAtom, snapshotAtom, vaultsAtom } from '@/state/vaults'
@@ -21,7 +20,7 @@ import type { ExplorerActions } from './useExplorerActions'
 export function RowMenu({
   path,
   isFolder,
-  app,
+  document,
   onToggleContents,
   targets,
   actions,
@@ -32,10 +31,11 @@ export function RowMenu({
 }: {
   path: string
   isFolder: boolean
-  /** Set when the row is an app bundle: whether its files are showing,
-   *  and whether it still lacks the manifest that finishes it. */
-  app: { open: boolean; unfinished: boolean } | null
-  /** Show or hide an app's files in the tree. */
+  /** Set when the row is a folder document (an app): whether its files are
+   *  showing, whether there is anything to open yet, and what it is called as
+   *  a kind ("App"). */
+  document: { open: boolean; ready: boolean; noun: string } | null
+  /** Show or hide a document's files in the tree. */
   onToggleContents: () => void
   /** The whole selection when the row is part of it, else just the row. */
   targets: string[]
@@ -48,17 +48,18 @@ export function RowMenu({
 }) {
   const activeRemote = useAtomValue(activeRemoteAtom)
   const vaults = useAtomValue(vaultsAtom)
-  const icons = useAtomValue(snapshotAtom).icons
+  const snapshot = useAtomValue(snapshotAtom)
+  const icons = snapshot.icons
   const openDialog = useSetAtom(openDialogAtom)
-  // What enabled plugins add for this path, in plugin order.
+  // What enabled claims add for this path, in claim order: those whose
+  // condition holds.
   const claimItems = useAtomValue(claimsAtom).flatMap((c) =>
-    c.match(path) ? (c.rowMenu ?? []) : [],
+    c.match(path) ? (c.rowMenu ?? []).filter((item) => item.when?.(path, snapshot) ?? true) : [],
   )
-  const registerApp = useSetAtom(registerAppAtom)
   const entry = vaults.find((v) => v.remote === activeRemote)
   const absPathFor = (rel: string) => (entry ? `${entry.path}/${rel}` : rel)
-  // Something made or pasted on an app lands beside it, as on a file.
-  const folderDest = isFolder && app === null ? path : parentOf(path)
+  // Something made or pasted on a document lands beside it, as on a file.
+  const folderDest = isFolder && document === null ? path : parentOf(path)
   const multi = targets.length > 1
   return (
     <ContextMenuContent
@@ -66,15 +67,11 @@ export function RowMenu({
       // instead of Radix pulling it back to the row when the menu closes.
       onCloseAutoFocus={(e) => e.preventDefault()}
     >
-      {!multi && app !== null && (
+      {!multi && document !== null && (
         <>
-          {app.unfinished ? (
-            // It has no manifest, so there is nothing to open yet. This writes
-            // the manifest and nothing else.
-            <ContextMenuItem onSelect={() => void registerApp(path)}>
-              Finish this app
-            </ContextMenuItem>
-          ) : (
+          {/* A draft has nothing to open yet; its claim may offer a way to
+              finish it, below. */}
+          {document.ready && (
             <>
               <ContextMenuItem onSelect={() => onOpenPinned(path)}>Open</ContextMenuItem>
               <ContextMenuItem onSelect={() => onOpenInNewPane(path)}>
@@ -83,7 +80,7 @@ export function RowMenu({
             </>
           )}
           <ContextMenuItem onSelect={onToggleContents}>
-            {app.open ? 'Hide App Files' : 'Show App Files'}
+            {`${document.open ? 'Hide' : 'Show'} ${document.noun} Files`}
           </ContextMenuItem>
           <ContextMenuSeparator />
         </>

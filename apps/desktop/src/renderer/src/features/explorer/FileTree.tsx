@@ -11,7 +11,6 @@ import {
   type ReactNode,
 } from 'react'
 import { ChevronRight } from 'lucide-react'
-import { APP_SUFFIX, appSuffix } from '@holi/shared'
 import { useAtomValue, useSetAtom } from 'jotai'
 import {
   DeleteConfirm,
@@ -31,6 +30,7 @@ import {
 } from '@/composites'
 import { fileIconFor, pathGlyph, pathLabel } from '@/composites/file-icons'
 import { cn } from '@/lib/cn'
+import { folderDocumentAt, surfaceLabel } from '@/lib/folder-documents'
 import {
   canMoveInto,
   dropFolder,
@@ -49,8 +49,8 @@ import {
 } from '@/lib/tree-paths'
 import { useArrivals } from '@/lib/use-arrivals'
 import { Button, ContextMenu, ContextMenuTrigger, Icon, Input, Tooltip } from '@/primitives'
-import { registerAppAtom, unregisteredAppPathsAtom } from '@/state/apps'
 import { todayDailyPathAtom } from '@/state/daily'
+import { claimsAtom, folderClaimsAtom, surfacesAtom } from '@/state/plugins'
 import { revealRequestAtom } from '@/state/reveal'
 import { createTaskAtom, todayLinkCountAtom } from '@/state/tasks'
 import {
@@ -58,6 +58,7 @@ import {
   createFolderAtom,
   createNoteAtom,
   importFilesAtom,
+  loadSnapshotAtom,
   renameNoteAtom,
   vaultsAtom,
 } from '@/state/vaults'
@@ -72,9 +73,11 @@ import { useTreeProjection } from './useTreeProjection'
  * open folder's contents hung from a rounded connector whose path to the open
  * file is drawn in the brand colour.
  *
- * An app bundle is a folder that behaves as a file: a click opens the
- * app, and its files show only when it is expanded: by →, by Show App Files,
- * or by the chevron at the row's right end that hover or focus reveals.
+ * A folder document (a claim's `folder`, such as an app bundle) is a folder
+ * that behaves as a file: a click opens it, and its files show only when it
+ * is expanded: by →, by Show App Files, or by the chevron at the row's right
+ * end that hover or focus reveals. A draft one (an unfinished app) has
+ * nothing to open yet, so a click shows its files.
  *
  * A view of the snapshot that owns no vault data. Its rules (which rows show,
  * ranges, typeahead, where a drop may go) are in `lib/tree-view.ts`; this is
@@ -90,15 +93,18 @@ const SPRING_OPEN_MS = 600
 const TYPEAHEAD_MS = 700
 
 /** The new item's field says what it is naming. */
-const PLACEHOLDERS: Record<NewKind, string> = {
+const PLACEHOLDERS: Record<'task' | 'file' | 'folder', string> = {
   task: 'task title',
   file: 'note name',
   folder: 'folder name',
-  app: 'app name',
 }
 
-/** A folder for grouping: an app sits with the files, as it sorts. */
-const isGroupFolder = (node: TreeItemData | undefined) => node?.isFolder === true && !node.isApp
+const placeholderOf = (kind: NewKind): string =>
+  typeof kind === 'string' ? PLACEHOLDERS[kind] : kind.placeholder
+
+/** A folder for grouping: a folder document sits with the files, as it sorts. */
+const isGroupFolder = (node: TreeItemData | undefined) =>
+  node?.isFolder === true && !node.isDocument
 
 /**
  * The inline name field, for a rename and for a new file, folder, task or app. Enter
@@ -162,20 +168,39 @@ export function FileTree({
   const projection = useTreeProjection()
   const { visible, taskByPath, iconByPath, ignored } = projection
   const actions = useExplorerActions(projection.docPaths)
+  const folderClaims = useAtomValue(folderClaimsAtom)
+  const surfaces = useAtomValue(surfacesAtom)
+  /** What enabled claims add to the New menu (an app). */
+  const claims = useAtomValue(claimsAtom)
+  const creates = useMemo(() => claims.flatMap((c) => (c.create ? [c.create] : [])), [claims])
+  const present = useMemo(() => new Set(projection.docPaths), [projection.docPaths])
+  /** The folder at `id` as a document (an app), or null. */
+  const documentAt = (id: string) => folderDocumentAt(folderClaims, id, (p) => present.has(p))
+  /** A document with nothing to open yet (an unfinished app). */
+  const isDraft = (id: string) => documentAt(id)?.ready === false
+  /** What a document is called as a kind ("App"), from its surface. */
+  const nounOf = (id: string) => {
+    const surface = surfaces.get(documentAt(id)?.folder.surface ?? '')
+    return surface === undefined ? 'Document' : surfaceLabel(surface)
+  }
   const data = useMemo(
-    () => buildTreeData(visible.paths, [...visible.dirs, ...actions.pendingFolders]),
-    [visible, actions.pendingFolders],
+    () =>
+      buildTreeData(
+        visible.paths,
+        [...visible.dirs, ...actions.pendingFolders],
+        (dir, has) => folderDocumentAt(folderClaims, dir, has) !== null,
+      ),
+    [visible, actions.pendingFolders, folderClaims],
   )
   const renameNote = useSetAtom(renameNoteAtom)
   const createNote = useSetAtom(createNoteAtom)
   const createFolder = useSetAtom(createFolderAtom)
   const createTask = useSetAtom(createTaskAtom)
-  const registerApp = useSetAtom(registerAppAtom)
+  const loadSnapshot = useSetAtom(loadSnapshotAtom)
   const importFiles = useSetAtom(importFilesAtom)
   const revealRequest = useAtomValue(revealRequestAtom)
   const todayDailyPath = useAtomValue(todayDailyPathAtom)
   const todayLinkCount = useAtomValue(todayLinkCountAtom)
-  const unfinished = useAtomValue(unregisteredAppPathsAtom)
   const activeRemote = useAtomValue(activeRemoteAtom)
   const vault = useAtomValue(vaultsAtom).find((v) => v.remote === activeRemote)
   const vaultPrefix = vault ? `${vault.path}/` : null
@@ -278,9 +303,12 @@ export function FileTree({
 
   const rename = (from: string, node: TreeItemData, name: string) => {
     setRenaming(null)
-    // An app is named without its `.app`, as a note is without its `.md`. A
-    // personal app keeps its `.local.app`: dropping it would publish the app.
-    if (node.isApp) return actions.renameFolder(from, `${name}${appSuffix(from)}`)
+    // A folder document is named without its suffix, as a note is without its
+    // `.md`, and keeps it: an app its `.app`, a personal one its `.local.app`.
+    if (node.isDocument) {
+      const suffix = documentAt(from)?.claim.decorate?.suffix(from) ?? ''
+      return actions.renameFolder(from, `${name}${suffix}`)
+    }
     if (node.isFolder) return actions.renameFolder(from, name)
     const to = joinPath(parentOf(from), withMdExtension(name))
     if (to !== from) void renameNote({ from, to })
@@ -317,11 +345,13 @@ export function FileTree({
           (path) => path !== null && onOpenPinned(path),
         )
         return
-      case 'app': {
-        // `holi apps init`'s scaffold. Opening its entry expands the bundle.
-        const bundle = joinPath(parent, name.endsWith(APP_SUFFIX) ? name : `${name}${APP_SUFFIX}`)
-        void registerApp(bundle).then((result) => {
-          if (result.ok) onOpenPreview(`${bundle}/index.html`)
+      default: {
+        // A claim's own kind (an app). It opens what it made, once the
+        // snapshot holds it.
+        if (activeRemote === null) return
+        void kind.run({ remote: activeRemote, parent, name }).then(async (path) => {
+          await loadSnapshot()
+          if (path !== null) onOpenPreview(path)
         })
       }
     }
@@ -344,8 +374,8 @@ export function FileTree({
     if (e.shiftKey && anchor !== null) return setSelected(new Set(rangeBetween(rows, anchor, id)))
     select([id], id)
     setFocusRoot(id.split('/')[0]!)
-    // An unfinished app has nothing to open yet, so it shows its files instead.
-    if (node.isFolder && (!node.isApp || unfinished.includes(id))) toggle(id)
+    // A draft document has nothing to open yet, so it shows its files instead.
+    if (node.isFolder && (!node.isDocument || isDraft(id))) toggle(id)
     else if (e.metaKey) onOpenInNewPane(id)
     else onOpenPreview(id)
   }
@@ -354,7 +384,7 @@ export function FileTree({
 
   /** A key on a focused row. Returns whether it acted, so the caller can claim it. */
   const rowKey = (e: KeyboardEvent, id: string, node: TreeItemData): boolean => {
-    const { isFolder, isApp } = node
+    const { isFolder, isDocument } = node
     const mod = e.metaKey || e.ctrlKey
     const i = rows.findIndex((r) => r.id === id)
     const next = rows[i + 1]
@@ -388,7 +418,7 @@ export function FileTree({
         )
       else if (e.code === 'KeyX') actions.cut(targets(id))
       else if (e.code === 'KeyC') actions.copy(targets(id))
-      else if (e.code === 'KeyV') actions.paste(isFolder && !isApp ? id : parentOf(id))
+      else if (e.code === 'KeyV') actions.paste(isFolder && !isDocument ? id : parentOf(id))
       else if (e.code === 'KeyD') actions.duplicate(targets(id))
       else return false
       return true
@@ -408,7 +438,7 @@ export function FileTree({
         moveTo(rows[rows.length - 1]?.id)
         break
       case 'ArrowRight':
-        // Opens a folder, then steps into it. An app's contents open the same way.
+        // Opens a folder, then steps into it. A document's contents open the same way.
         if (isFolder && !open.has(id)) toggle(id)
         else if (isFolder && next && parentOf(next.id) === id) moveTo(next.id)
         break
@@ -418,7 +448,7 @@ export function FileTree({
         else moveTo(parentOf(id) || undefined)
         break
       case 'Enter':
-        if (isFolder && (!isApp || unfinished.includes(id))) toggle(id)
+        if (isFolder && (!isDocument || isDraft(id))) toggle(id)
         else onOpenPreview(id)
         break
       case 'Escape':
@@ -452,8 +482,8 @@ export function FileTree({
   const dropAt = (e: DragEvent) => {
     const row = (e.target as HTMLElement).closest<HTMLElement>('[data-path]')
     const id = row?.getAttribute('data-path') ?? null
-    // A drop on an app lands beside it, as on a file, not among its files.
-    const isFolder = id !== null && data[id]?.isFolder === true && !data[id]?.isApp
+    // A drop on a document lands beside it, as on a file, not among its files.
+    const isFolder = id !== null && data[id]?.isFolder === true && !data[id]?.isDocument
     return { id, isFolder, dest: dropFolder(id, isFolder) }
   }
   const onDragOver = (e: DragEvent) => {
@@ -489,7 +519,11 @@ export function FileTree({
    * `pathLabel`/`pathGlyph`, which the tabs share.
    */
   const label = (id: string, node: TreeItemData) =>
-    node.isFolder && !node.isApp ? node.name : pathLabel(id)
+    node.isDocument
+      ? (documentAt(id)?.claim.decorate?.name(id) ?? node.name)
+      : node.isFolder
+        ? node.name
+        : pathLabel(id)
 
   /**
    * What a row leads with: a folder's chevron, or a file's type glyph in the
@@ -500,9 +534,11 @@ export function FileTree({
   const lead = (id: string, node: TreeItemData, isOpen: boolean) => {
     const slot = cn(treeLead(onPath(id)), ignored.has(id) && 'opacity-50')
     const emoji = iconByPath.get(id)
-    // An app leads with its glyph, as a file does; the chevron joins it only
-    // while its contents are shown, which is when there is something to close.
-    if (node.isApp) {
+    // A document leads with its glyph, as a file does; the chevron joins it
+    // only while its contents are shown, which is when there is something to
+    // close.
+    if (node.isDocument) {
+      const icon = documentAt(id)?.claim.decorate?.icon
       return (
         <>
           {isOpen && (
@@ -511,7 +547,7 @@ export function FileTree({
             </span>
           )}
           <span data-slot="row-icon" className={slot}>
-            {pathGlyph(id, { emoji })}
+            {emoji || icon === undefined ? fileIconFor(id, emoji) : <Icon icon={icon} size="sm" />}
           </span>
         </>
       )
@@ -582,14 +618,14 @@ export function FileTree({
               if (vaultPrefix) window.holi.startDrag(targets(id).map((p) => vaultPrefix + p))
             }}
             onClick={(e) => onRowClick(e, id, node)}
-            onDoubleClick={() => (!node.isFolder || node.isApp) && onOpenPinned(id)}
+            onDoubleClick={() => (!node.isFolder || node.isDocument) && onOpenPinned(id)}
             onKeyDown={(e) => {
               if (rowKey(e, id, node)) e.preventDefault()
             }}
             className={cn(
               TREE_ROW_RESET,
               className,
-              node.isApp && 'group/app',
+              node.isDocument && 'group/doc',
               // Hover-proof: ROW_RESET clears the ghost hover fill, which would
               // otherwise wipe these under the pointer.
               selected.size > 1 &&
@@ -607,7 +643,7 @@ export function FileTree({
               className={cn(
                 TREE_LABEL,
                 taskByPath.get(id)?.status === 'done' && 'line-through',
-                (ignored.has(id) || unfinished.includes(id)) && 'opacity-50',
+                (ignored.has(id) || (node.isDocument && isDraft(id))) && 'opacity-50',
               )}
             >
               {label(id, node)}
@@ -615,20 +651,20 @@ export function FileTree({
             {/* Today's daily, marked where it lives (docs/features/daily-notes.md):
                 at the row's right end, boxed to its x-height like the name so
                 the row's centring lines the two up. */}
-            {/* An app's files are behind it: this is the way in that a
+            {/* A document's files are behind it: this is the way in that a
                 newcomer can see, on hover or focus. Not a button: it sits in
                 the row's, and the keyboard's way is → as for any folder. */}
-            {node.isApp && (
-              <Tooltip content={isOpen ? 'Hide app files' : 'Show app files'}>
+            {node.isDocument && (
+              <Tooltip content={`${isOpen ? 'Hide' : 'Show'} ${nounOf(id).toLowerCase()} files`}>
                 <span
                   aria-hidden="true"
-                  data-slot="app-files"
+                  data-slot="document-files"
                   onClick={(e) => {
                     e.stopPropagation()
                     toggle(id)
                   }}
                   onDoubleClick={(e) => e.stopPropagation()}
-                  className="motion-respond ml-auto flex shrink-0 rounded-sm px-1 text-muted-foreground opacity-0 group-hover/app:opacity-100 group-focus-visible/app:opacity-100 hover:text-foreground"
+                  className="motion-respond ml-auto flex shrink-0 rounded-sm px-1 text-muted-foreground opacity-0 group-hover/doc:opacity-100 group-focus-visible/doc:opacity-100 hover:text-foreground"
                 >
                   <Icon icon={ChevronRight} size="sm" className={cn(isOpen && 'rotate-90')} />
                 </span>
@@ -644,7 +680,9 @@ export function FileTree({
         <RowMenu
           path={id}
           isFolder={node.isFolder}
-          app={node.isApp ? { open: isOpen, unfinished: unfinished.includes(id) } : null}
+          document={
+            node.isDocument ? { open: isOpen, ready: !isDraft(id), noun: nounOf(id) } : null
+          }
           onToggleContents={() => toggle(id)}
           targets={targets(id)}
           actions={actions}
@@ -668,7 +706,7 @@ export function FileTree({
           </span>
           <NameInput
             initial=""
-            placeholder={PLACEHOLDERS[pending.kind]}
+            placeholder={placeholderOf(pending.kind)}
             onCommit={create}
             onCancel={() => setPending(null)}
           />
@@ -726,6 +764,7 @@ export function FileTree({
   return (
     <div className="group/explorer relative flex min-h-0 flex-1 flex-col">
       <ExplorerHeader
+        creates={creates}
         onNew={(kind) => {
           const { parent, after } = newItemPlace(focusId, data)
           startNew(kind, parent, after)

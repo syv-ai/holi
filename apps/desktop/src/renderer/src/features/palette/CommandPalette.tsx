@@ -33,7 +33,7 @@
  * starting a session when there is none.
  */
 import { useAtomValue, useSetAtom, useStore } from 'jotai'
-import { AppWindow, Bot, Sparkles } from 'lucide-react'
+import { Bot, Sparkles } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { fileIconFor } from '@/composites/file-icons'
 import { agentIndicator } from '@/lib/agent-notices'
@@ -45,9 +45,11 @@ import {
   openTabRows,
   rankCommands,
   rankRows,
+  rowId,
   type PaletteRow,
   type RankedRow,
 } from '@/lib/palette-rows'
+import { surfaceLabel } from '@/lib/folder-documents'
 import { trpc } from '@/lib/trpc'
 import {
   CommandDialog,
@@ -67,7 +69,6 @@ import {
   terminalLabel,
 } from '@/state/agent'
 import { openSessionAtom, sendToAgentAtom } from '@/state/agent-send'
-import { appPathsAtom } from '@/state/apps'
 import { commandsAtom, runCommandAtom, type Command } from '@/state/commands'
 import {
   closePaletteAtom,
@@ -78,7 +79,6 @@ import {
 } from '@/state/palette'
 import {
   activeTab,
-  openApp,
   openBeside,
   openInNewPane,
   openAgentTab,
@@ -87,7 +87,7 @@ import {
   workspaceAtom,
   type Tab,
 } from '@/state/panes'
-import { surfacesAtom } from '@/state/plugins'
+import { instancesAtom, surfacesAtom } from '@/state/plugins'
 import { recentsAtom } from '@/state/recents'
 import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
 
@@ -97,18 +97,18 @@ function tabOf(row: PaletteRow): Tab | null {
   switch (row.kind) {
     case 'path':
       return { kind: 'note', path: row.key }
-    case 'app':
-      return { kind: 'app', path: row.key }
     case 'terminal':
       return { kind: 'agent', id: row.key }
     case 'session':
       return null
     case 'surface':
-      return { kind: 'surface', surface: row.key }
+      return row.id === undefined
+        ? { kind: 'surface', surface: row.key }
+        : { kind: 'surface', surface: row.key, id: row.id }
   }
 }
 
-const rowValue = (row: PaletteRow): string => `${row.kind}:${row.key}`
+const rowValue = (row: PaletteRow): string => rowId(row)
 
 type BodyHit = { path: string; snippet?: string }
 
@@ -158,8 +158,8 @@ export function CommandPalette(): React.JSX.Element {
   const store = useStore()
   const snapshot = useAtomValue(snapshotAtom)
   const remote = useAtomValue(activeRemoteAtom)
-  const appPaths = useAtomValue(appPathsAtom)
   const surfaces = useAtomValue(surfacesAtom)
+  const instances = useAtomValue(instancesAtom)
   const sessions = useAtomValue(agentSessionsAtom)
   const terminals = useAtomValue(agentTerminalsAtom)
   const recents = useAtomValue(recentsAtom)
@@ -175,13 +175,16 @@ export function CommandPalette(): React.JSX.Element {
     () =>
       buildRows({
         snapshot,
-        appPaths,
         sessions,
         terminals: terminals.map((t) => ({ id: t.id, label: terminalLabel(t, sessions) })),
         // Home has no row: "Go home" is the command, and Home is where it says.
-        surfaces: [...surfaces.values()].filter((s) => s.kind !== 'home'),
+        // A surface of instances (apps) is listed by them, not as itself.
+        surfaces: [...surfaces.values()]
+          .filter((s) => s.kind !== 'home' && s.instances === undefined)
+          .map((s) => ({ kind: s.kind, label: surfaceLabel(s) })),
+        instances,
       }),
-    [snapshot, appPaths, sessions, terminals, surfaces],
+    [snapshot, sessions, terminals, surfaces, instances],
   )
   const tabsMode = state.mode === 'tabs'
   const query = state.query
@@ -291,14 +294,12 @@ export function CommandPalette(): React.JSX.Element {
       switch (row.kind) {
         case 'path':
           return openPinned(w, row.key)
-        case 'app':
-          return openApp(w, row.key)
         case 'terminal':
           return openAgentTab(w, row.key)
         case 'session':
           return w // opened above, through main
         case 'surface':
-          return openSurface(w, row.key)
+          return openSurface(w, row.key, row.id)
       }
     })
   }
@@ -431,8 +432,6 @@ function RowIconView({ row, orb }: { row: PaletteRow; orb?: string }): React.JSX
       )
     case 'terminal':
       return <Icon icon={Bot} />
-    case 'app':
-      return <Icon icon={AppWindow} />
     case 'surface': {
       const surface = surfaces.get(row.key)
       return surface === undefined ? null : <Icon icon={surface.icon} />

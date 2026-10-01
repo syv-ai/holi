@@ -8,6 +8,8 @@ import { getDefaultStore } from 'jotai'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, expect, test, vi } from 'vitest'
 import { render, screen, waitFor } from '@/test/render'
+import { CORE_CONTRIBUTION } from '@/components/core-surfaces'
+import { coreContributionAtom } from '@/state/plugins'
 import { FileTree } from '../FileTree'
 import { activeRemoteAtom, snapshotAtom, vaultsAtom } from '../../../state/vaults'
 
@@ -44,6 +46,8 @@ vi.mock('../../../lib/trpc', () => ({
 
 function tree() {
   const open = { preview: vi.fn(), pinned: vi.fn(), pane: vi.fn() }
+  // Apps are core's claim, installed as `main.tsx` installs it.
+  store.set(coreContributionAtom, CORE_CONTRIBUTION)
   store.set(activeRemoteAtom, REMOTE)
   store.set(vaultsAtom, [{ remote: REMOTE, path: '/vault' } as never])
   store.set(snapshotAtom, {

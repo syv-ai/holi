@@ -10,6 +10,7 @@
 import { createStore } from 'jotai'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
+  isAppBundlePath,
   VAULT_SETTING_DEFAULTS,
   type ResolvedVaultSettings,
   type VaultSnapshot,
@@ -17,7 +18,7 @@ import {
 import { installFakeHoli, type FakeHoli } from './helpers/fake-holi'
 import { homeTargetAtom, openHomeAtom, openLandingAtom } from '../src/renderer/src/state/home'
 import { workspaceAtom } from '../src/renderer/src/state/panes'
-import { coreSurfacesAtom } from '../src/renderer/src/state/plugins'
+import { coreContributionAtom } from '../src/renderer/src/state/plugins'
 import { activeDocAtom, activeRemoteAtom, snapshotAtom } from '../src/renderer/src/state/vaults'
 
 let holi: FakeHoli | null = null
@@ -35,7 +36,7 @@ const settings = (over: Partial<ResolvedVaultSettings> = {}): ResolvedVaultSetti
 })
 
 /** A vault holding one ordinary note plus an app (entry + manifest, which is
- *  what `appPathsAtom` requires before it will call an app real). */
+ *  what the app claim requires before it calls an app finished). */
 const snapshot: VaultSnapshot = {
   docs: [
     { path: 'Notes/Standup.md', kind: 'note', updatedAt: '2026-08-22T00:00:00Z' },
@@ -48,7 +49,7 @@ const snapshot: VaultSnapshot = {
 
 /** The views Home can name, as the registry would hold them. */
 function registerViews(store: ReturnType<typeof createStore>): void {
-  store.set(coreSurfacesAtom, {
+  store.set(coreContributionAtom, {
     surfaces: ['home', 'board', 'agenda', 'mail'].map((kind) => ({
       kind,
       label: kind,
@@ -57,6 +58,17 @@ function registerViews(store: ReturnType<typeof createStore>): void {
       ...(kind === 'home' ? {} : { homeable: true as const }),
     })),
     rail: [],
+    // An app is a folder document, finished once it has its manifest.
+    claims: [
+      {
+        match: isAppBundlePath,
+        folder: {
+          surface: 'app',
+          entry: 'index.html',
+          ready: (path, has) => has(`${path}/app.yaml`),
+        },
+      },
+    ],
   })
 }
 

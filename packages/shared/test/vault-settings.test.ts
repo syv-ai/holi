@@ -23,7 +23,7 @@ const committed = (value: unknown): string => JSON.stringify(value)
 
 describe('VAULT_SETTING_DEFAULTS', () => {
   it('opens on a Home of Holi’s own, not an app, when nothing says otherwise', () => {
-    expect(homeTargetOf(VAULT_SETTING_DEFAULTS.home).kind).not.toBe('app')
+    expect(homeTargetOf(VAULT_SETTING_DEFAULTS.home).kind).not.toBe('file')
     expect(VAULT_SETTING_DEFAULTS.dailyNotes).toBe(true)
   })
 
@@ -216,7 +216,7 @@ describe('parseHome and homeTargetOf', () => {
     ['daily', 'daily', { kind: 'daily' }],
     ['recents', 'recents', { kind: 'recents' }],
     ['board', 'board', { kind: 'surface', surface: 'board' }],
-    ['./Finance/Budget.app/', 'Finance/Budget.app', { kind: 'app', path: 'Finance/Budget.app' }],
+    ['./Finance/Budget.app/', 'Finance/Budget.app', { kind: 'file', path: 'Finance/Budget.app' }],
     [' Notes/Standup.md ', 'Notes/Standup.md', { kind: 'file', path: 'Notes/Standup.md' }],
     ['plan.pdf', 'plan.pdf', { kind: 'file', path: 'plan.pdf' }],
   ])('reads %j as %j', (raw, home, target) => {

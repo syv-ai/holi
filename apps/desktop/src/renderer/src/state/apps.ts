@@ -13,13 +13,15 @@
  * one for three call sites is the mistake vault apps refused.
  *
  * Derived from the snapshot, so a finished app appears as soon as the watcher
- * rescans.
+ * rescans. An unfinished one (an entry document and no manifest) is a draft
+ * of the app claim's folder document (`features/apps/app-surface.tsx`).
  */
 import { atom } from 'jotai'
+import { selectAtom } from 'jotai/utils'
 import { APP_MANIFEST_FILE, appBundleOf, appName } from '@holi/shared'
-import { trpc } from '../lib/trpc'
 import { closeTab, workspaceAtom } from './panes'
-import { activeRemoteAtom, loadSnapshotAtom, snapshotAtom } from './vaults'
+import { byRecency, recentsAtom } from './recents'
+import { snapshotAtom } from './vaults'
 
 const ENTRY_FILE = 'index.html'
 
@@ -49,16 +51,16 @@ export const appPathsAtom = atom((get) => {
 })
 
 /**
- * Bundles that have an entry document but no manifest: an app someone started
- * and has not finished.
- *
- * Kept apart rather than dropped so the absence is *legible*: otherwise the agent
- * writes an app, nothing shows up, and there is nowhere to look.
+ * The finished apps, most recently opened first, then the rest by name: the
+ * `app` surface's instances. The same array until the order changes: the
+ * recents move on every tab switch, and a new list restarts the nav menu's
+ * layout pass.
  */
-export const unregisteredAppPathsAtom = atom((get) => {
-  const { entries, manifests } = get(rootFilesAtom)
-  return [...entries].filter((p) => !manifests.has(p)).sort(byName)
-})
+export const appInstancesAtom = selectAtom(
+  atom((get) => byRecency(get(recentsAtom), 'app', get(appPathsAtom))),
+  (paths) => paths,
+  (a, b) => a.length === b.length && a.every((p, i) => p === b[i]),
+)
 
 /** Close the tab showing the app at `path` in the active pane: the tombstone's
  *  button. */
@@ -66,29 +68,9 @@ export const closeAppAtom = atom(null, (_get, set, path: string) => {
   set(workspaceAtom, (w) => {
     const pane = w.panes[w.active]
     if (pane === undefined) return w
-    const index = pane.tabs.findIndex((t) => t.kind === 'app' && t.path === path)
+    const index = pane.tabs.findIndex(
+      (t) => t.kind === 'surface' && t.surface === 'app' && t.id === path,
+    )
     return index === -1 ? w : closeTab(w, index)
   })
 })
-
-/** A refusal is a value, not a throw: the caller has somewhere to put the
- *  reason. */
-export type AppActionResult = { ok: true } | { ok: false; error: string }
-
-/**
- * Write the manifest that turns a half-finished directory into an app.
- *
- * The same op as `holi apps init`, which never overwrites: running it on a
- * finished app is a success with nothing created.
- */
-export const registerAppAtom = atom(
-  null,
-  async (get, set, path: string): Promise<AppActionResult> => {
-    const remote = get(activeRemoteAtom)
-    if (remote === null) return { ok: false, error: 'no vault is open' }
-    const result = await trpc.apps.register.mutate({ remote, path })
-    if (!result.ok) return result
-    await set(loadSnapshotAtom)
-    return { ok: true }
-  },
-)

@@ -1,6 +1,6 @@
 /**
  * A tab names and marks a file as its tree row does (`pathLabel`/`pathGlyph`):
- * a note has no `.md` and no glyph, an app no `.app` and the app glyph, a task
+ * a note has no `.md` and no glyph, an app (a surface tab) no `.app` and its surface's glyph, a task
  * its status, anything else its type glyph, and an icon-map emoji beats
  * all of them. Which glyph is which is the tree's tests' question; the strip is
  * tested for the plumbing from the snapshot.
@@ -9,7 +9,9 @@ import { emptyVaultSnapshot, type Task } from '@holi/shared'
 import { getDefaultStore } from 'jotai'
 import { beforeEach, expect, test } from 'vitest'
 import { render, screen } from '@/test/render'
+import { APP_SURFACE } from '@/features/apps/app-surface'
 import type { Tab } from '@/state/panes'
+import { coreContributionAtom } from '@/state/plugins'
 import { snapshotAtom } from '@/state/vaults'
 import { TabStrip } from '../TabStrip'
 
@@ -32,6 +34,7 @@ function strip(
 
 beforeEach(() => {
   store.set(snapshotAtom, EMPTY)
+  store.set(coreContributionAtom, { surfaces: [APP_SURFACE], rail: [], claims: [] })
 })
 
 test('a note is named without .md and leads with nothing', () => {
@@ -65,6 +68,6 @@ test('a task leads with its status glyph', () => {
 })
 
 test('an app is named without .app and leads with the app glyph', () => {
-  const pill = strip({ kind: 'app', path: 'Finance/Budget.app' }, 'Budget')
+  const pill = strip({ kind: 'surface', surface: 'app', id: 'Finance/Budget.app' }, 'Budget')
   expect(pill.innerHTML).toContain('<svg')
 })

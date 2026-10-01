@@ -10,7 +10,7 @@ hidden, the same menu runs down the rail.
 - **Items, in order:** Home, Search, Apps, Board, Mail, Agenda, Agents, Sync, Settings, so
   Settings always ends the dock. The surface items are rail items from the surface registry
   (`{surface, order, visible?}`, label and icon from the surface; see [tabs and panes](tabs-panes.md)),
-  sorted by `order` among core's own Search (10), Apps (20), Agents (60) and Sync (70); `visible`
+  sorted by `order` among core's own Search (10), Agents (60) and Sync (70), with Apps (20) a rail item core registers; `visible`
   is an atom, read by one derived atom. Home goes Home (below); Search opens quick open
   ([command palette](command-palette.md)); Board opens the board and carries the open-task count,
   red while any task is overdue (the board's own `overdue` label); Mail, Agenda and Settings open
@@ -19,9 +19,9 @@ hidden, the same menu runs down the rail.
   a panel with the state in words, its action and the history ([vaults and sync](vaults-sync.md)).
 - **An item may carry a state on its glyph:** `tone` colours it (busy, warn, alert, live) and
   `motion` loops it (`orbit`, `pulse`), only while that state is in flight.
-- **Apps is a drill-down.** Its children are the vault's finished apps, most recently opened
-  first (the recents), then the rest by name
-  ([vault apps](vault-apps.md)); from the dock it opens straight into them, from the list it
+- **Apps is a drill-down.** A rail item whose surface has `instances` is one: Apps is the `app`
+  surface's, and its children are the vault's finished apps, most recently opened first (the
+  recents), then the rest by name ([vault apps](vault-apps.md)); from the dock it opens straight into them, from the list it
   drills in. Back goes to where it was opened from: from the dock it closes the menu, from the list
   it returns to the list. It is absent when the vault has no finished apps.
 - **Mail and Agenda** appear only while a Google account is connected. `undefined` (not asked
@@ -51,10 +51,10 @@ hidden, the same menu runs down the rail.
 - **Home** goes where the vault's `home` setting says ([settings](settings.md)). By default it
   is the recents: the Home tab (the `home` surface, opened leftmost like the board) lists the
   last eight notes, files, apps and views opened, under "Recently opened", each opening as the
-  palette would open it. An app named there shows in the Home tab instead
-  ([vault apps](vault-apps.md)); today's note, a view that can be Home (the board, agenda, mail)
-  or a file open as themselves. When the target is not there, the Home tab says so, and for a missing app offers
-  **Create Home app**, which writes the default app at that path. Nothing is written unasked.
+  palette would open it. A folder document named there (an app) shows in the Home tab instead,
+  in its own surface, found through the claims ([vault apps](vault-apps.md)); today's note, a
+  view that can be Home (the board, agenda, mail) or a file open as themselves. When the target
+  is not there, the Home tab says so.
 
 ## Rules
 
@@ -98,7 +98,7 @@ hidden, the same menu runs down the rail.
 - `apps/desktop/src/renderer/src/primitives/springs.ts`: its springs, shared with the
   [command palette](command-palette.md).
 - `apps/desktop/src/renderer/src/features/nav/NavMenu.tsx`: the items.
-- `apps/desktop/src/renderer/src/components/PaneView.tsx` (which picks Home's app or
-  `HomeView`), `features/home/HomeView.tsx` (the recents, or why Home is not there),
-  `main/apps/home-app.ts` and `main/apps/home-app/` (the app **Create Home app** writes).
+- `apps/desktop/src/renderer/src/components/core-surfaces.tsx` (whose Home surface picks Home's
+  folder document or `HomeView`), `features/home/HomeView.tsx` (the recents, or why Home is not there),
+  `main/apps/home-app.ts` and `main/apps/home-app/` (the default Home app `apps.createHome` writes).
 - `apps/desktop/src/renderer/src/components/Shell.tsx`: the sidebar and rail placement.

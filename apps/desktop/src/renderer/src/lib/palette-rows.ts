@@ -4,7 +4,8 @@
  * what `rankRows` returns.
  *
  * A row is one openable thing: a vault path (a note or any other file), a
- * vault app, a live agent session, or a registered surface. Before
+ * live agent session, a registered surface, or one of a surface's instances
+ * (a vault app). Before
  * anything is typed the recents come first, then the rest by modified time;
  * with a query, every row is scored by `command-score` (the scorer cmdk
  * bundles) on its name and then, at a discount, on its key, so a folder name
@@ -12,7 +13,7 @@
  * thousands of files from mounting thousands of items.
  */
 import commandScore from 'command-score'
-import { appName, isHiddenPath, type VaultSnapshot } from '@holi/shared'
+import { isHiddenPath, type VaultSnapshot } from '@holi/shared'
 import type { Tab } from '../state/panes'
 import { entryOfTab, type RecentEntry, type RecentKind } from './recents'
 
@@ -21,15 +22,17 @@ export type RowKind = Exclude<RecentKind, 'command'>
 /** A surface row's icon is its surface's, read from the registry where the
  *  row is drawn. */
 export type RowIcon =
-  { emoji: string } | { glyph: 'note' | 'daily' | 'file' | 'app' | 'session' | 'surface' }
+  { emoji: string } | { glyph: 'note' | 'daily' | 'file' | 'session' | 'surface' }
 
 export interface PaletteRow {
   kind: RowKind
-  /** The path, app bundle, session id or surface kind — what opens it, and what
-   *  a recent of the same kind is keyed by. */
+  /** The path, session id or surface kind: what opens it, and what a recent
+   *  of the same kind is keyed by. */
   key: string
+  /** Which instance of a surface: a vault app's bundle path. */
+  id?: string
   name: string
-  /** The folder for a path or an app; nothing for the rest. */
+  /** The folder for a path or an instance; nothing for the rest. */
   detail?: string
   icon: RowIcon
   /** A git-ignored path: shown, dimmed, as VS Code does. */
@@ -55,21 +58,22 @@ function splitPath(path: string): { name: string; detail?: string } {
 
 export interface RowSources {
   snapshot: VaultSnapshot
-  appPaths: readonly string[]
   /** The vault's live sessions, by job id. */
   sessions: readonly { id: string; name: string }[]
   /** Holi's open agent terminals, by terminal id, with their tab labels. */
   terminals?: readonly { id: string; label: string }[]
   /** The surfaces the palette offers, by kind, with their labels. */
   surfaces?: readonly { kind: string; label: string }[]
+  /** Surfaces' instances (each vault app), with their labels. */
+  instances?: readonly { surface: string; id: string; label: string }[]
 }
 
 export function buildRows({
   snapshot,
-  appPaths,
   sessions,
   terminals = [],
   surfaces = [],
+  instances = [],
 }: RowSources): PaletteRow[] {
   const ignored = new Set(snapshot.ignored)
   const pathRow = (
@@ -94,12 +98,13 @@ export function buildRows({
     ...snapshot.files
       .filter((f) => !isHiddenPath(f.path))
       .map((f) => pathRow(f.path, 'file', f.updatedAt)),
-    ...appPaths.map((path): PaletteRow => ({
-      kind: 'app',
-      key: path,
-      ...splitPath(path),
-      name: appName(path),
-      icon: { glyph: 'app' },
+    ...instances.map(({ surface, id, label }): PaletteRow => ({
+      kind: 'surface',
+      key: surface,
+      id,
+      ...splitPath(id),
+      name: label,
+      icon: { glyph: 'surface' },
     })),
     ...sessions.map((s): PaletteRow => ({
       kind: 'session',
@@ -122,13 +127,15 @@ export function buildRows({
   ]
 }
 
-const rowId = (kind: string, key: string): string => `${kind}:${key}`
+/** What a row or a recent is, as one string: its kind, key and id. */
+export const rowId = ({ kind, key, id }: { kind: string; key: string; id?: string }): string =>
+  id === undefined ? `${kind}:${key}` : `${kind}:${key}:${id}`
 
 /** Position of each recent, so a lower number is more recent. */
 function recentOrder(recents: readonly RecentEntry[]): Map<string, number> {
   const order = new Map<string, number>()
   recents.forEach((r, i) => {
-    if (!order.has(rowId(r.kind, r.key))) order.set(rowId(r.kind, r.key), i)
+    if (!order.has(rowId(r))) order.set(rowId(r), i)
   })
   return order
 }
@@ -154,17 +161,17 @@ export function rankRows(
   const q = query.trim()
 
   if (q === '') {
-    const byId = new Map(rows.map((r) => [rowId(r.kind, r.key), r]))
+    const byId = new Map(rows.map((r) => [rowId(r), r]))
     const recent: RankedRow[] = []
     for (const r of recents) {
-      const row = byId.get(rowId(r.kind, r.key))
-      if (row !== undefined && !recent.some((x) => x.key === row.key && x.kind === row.kind)) {
+      const row = byId.get(rowId(r))
+      if (row !== undefined && !recent.some((x) => rowId(x) === rowId(row))) {
         recent.push({ ...row, recent: true })
       }
     }
-    const seen = new Set(recent.map((r) => rowId(r.kind, r.key)))
+    const seen = new Set(recent.map(rowId))
     const rest = rows
-      .filter((r) => r.kind === 'path' && !seen.has(rowId(r.kind, r.key)))
+      .filter((r) => r.kind === 'path' && !seen.has(rowId(r)))
       .sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''))
       .map((r): RankedRow => ({ ...r, recent: false }))
     return [...recent, ...rest].slice(0, cap)
@@ -176,12 +183,11 @@ export function rankRows(
     .sort(
       (a, b) =>
         b.score - a.score ||
-        (order.get(rowId(a.row.kind, a.row.key)) ?? Infinity) -
-          (order.get(rowId(b.row.kind, b.row.key)) ?? Infinity) ||
+        (order.get(rowId(a.row)) ?? Infinity) - (order.get(rowId(b.row)) ?? Infinity) ||
         a.row.name.localeCompare(b.row.name),
     )
     .slice(0, cap)
-    .map(({ row }): RankedRow => ({ ...row, recent: order.has(rowId(row.kind, row.key)) }))
+    .map(({ row }): RankedRow => ({ ...row, recent: order.has(rowId(row)) }))
 }
 
 /**
@@ -223,22 +229,20 @@ export function openTabRows(
   current: Tab | null,
   recents: readonly RecentEntry[],
 ): RankedRow[] {
-  const byId = new Map(rows.map((r) => [rowId(r.kind, r.key), r]))
-  const currentId =
-    current === null ? null : rowId(entryOfTab(current).kind, entryOfTab(current).key)
+  const byId = new Map(rows.map((r) => [rowId(r), r]))
+  const currentId = current === null ? null : rowId(entryOfTab(current))
   const open = new Map<string, PaletteRow>()
   for (const tab of openTabs) {
-    const e = entryOfTab(tab)
-    const id = rowId(e.kind, e.key)
+    const id = rowId(entryOfTab(tab))
     const row = byId.get(id)
     if (row !== undefined && id !== currentId) open.set(id, row)
   }
   const ordered: RankedRow[] = []
   for (const r of recents) {
-    const row = open.get(rowId(r.kind, r.key))
+    const row = open.get(rowId(r))
     if (row !== undefined) {
       ordered.push({ ...row, recent: true })
-      open.delete(rowId(r.kind, r.key))
+      open.delete(rowId(r))
     }
   }
   for (const row of open.values()) ordered.push({ ...row, recent: false })
@@ -273,8 +277,9 @@ export function rankCommands<C extends CommandRowSource>(
 ): RankedCommand<C>[] {
   const order = recentOrder(recents.filter((r) => r.kind === 'command'))
   const q = query.trim()
-  const pos = (c: C): number => order.get(rowId('command', c.id)) ?? Infinity
-  const recent = (c: C): boolean => order.has(rowId('command', c.id))
+  const key = (c: C): string => rowId({ kind: 'command', key: c.id })
+  const pos = (c: C): number => order.get(key(c)) ?? Infinity
+  const recent = (c: C): boolean => order.has(key(c))
 
   if (q === '') {
     return [...commands]

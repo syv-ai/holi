@@ -4,9 +4,9 @@
  * atoms. An agent session is an ordinary tab.
  */
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
-import { History, Logs, PanelLeftClose, PanelLeftOpen, PanelRight, RotateCw } from 'lucide-react'
+import { History, PanelLeftClose, PanelLeftOpen, PanelRight } from 'lucide-react'
 import { Fragment, useEffect, useRef, useState } from 'react'
-import { APP_LOG_FILE, isAppBundlePath, isVaultConfigPath } from '@holi/shared'
+import { isVaultConfigPath } from '@holi/shared'
 import {
   Button,
   IconButton,
@@ -33,23 +33,20 @@ import { openLandingAtom } from '../state/home'
 import { useSettingsFollowDisk } from '../state/settings'
 import {
   activeTab,
-  appOpensAtom,
   dropZones,
   focusPane,
   moveTab,
   moveTabToNewPane,
-  openApp,
-  openPinned,
-  openInNewPane,
-  openPreview,
   pinActive,
   pinTab,
   workspaceAtom,
   type Tab,
 } from '../state/panes'
+import { pathOfTab } from '@/lib/folder-documents'
 import { historyOpenAtom, historyTargetPathAtom } from '../state/history'
 import { tickNowAtom } from '../state/clock'
 import type { PaneDropZone } from '@/lib/tab-drop'
+import type { Surface } from '@/plugin-api/types'
 import type { ConflictResolvers } from '@/lib/editor-reload'
 import { ConflictBanner } from '@/composites/ConflictBanner'
 import { SessionRows } from '@/features/agent/SessionRows'
@@ -63,7 +60,8 @@ import { closePaneWithExitAtom, closeTabWithExitAtom, leavingPaneAtom } from '..
 import { applyVaultSwitchAtom, leavingVaultAtom, switchVaultAtom } from '../state/vault-switch'
 import { pendingVaultPromptAtom, startPendingVaultPromptAtom } from '../state/vault-removal'
 import { agentSessionsAtom, useAgentSessions, useAgentTabs } from '@/state/agent'
-import { useSurfaceTabs } from '@/state/surfaces'
+import { openPathAtom, useSurfaceTabs } from '@/state/surfaces'
+import { folderClaimsAtom, surfacesAtom } from '@/state/plugins'
 import { reconcileAtom } from '@/state/agent-send'
 import { sessionsWorthAsking } from '@/lib/agent-notices'
 
@@ -76,7 +74,6 @@ import {
   activeRemoteAtom,
   heldBackAtom,
   openVaultAtom,
-  snapshotAtom,
   syncStateAtom,
   vaultsAtom,
 } from '../state/vaults'
@@ -105,7 +102,9 @@ export function Shell() {
   const startPendingPrompt = useSetAtom(startPendingVaultPromptAtom)
   const setPendingPrompt = useSetAtom(pendingVaultPromptAtom)
   const setHistoryOpen = useSetAtom(historyOpenAtom)
-  const setAppReloads = useSetAtom(appOpensAtom)
+  const openPath = useSetAtom(openPathAtom)
+  const folderClaims = useAtomValue(folderClaimsAtom)
+  const surfaces = useAtomValue(surfacesAtom)
   const [navOpen, setNavOpen] = useAtom(navOpenAtom)
   const historyTarget = useAtomValue(historyTargetPathAtom)
   const reconcile = useSetAtom(reconcileAtom)
@@ -215,12 +214,10 @@ export function Shell() {
 
   // Single-click / link-nav opens a preview tab (browsing costs one tab);
   // double-click pins. Editing a preview promotes it (see EditorPane onEdit).
-  // A bundle path is an app: the tree opens one with a note's gestures,
-  // and it opens as an app tab, which has no preview state.
-  const open = (path: string) =>
-    setWorkspace((w) => (isAppBundlePath(path) ? openApp(w, path) : openPreview(w, path)))
-  const openPin = (path: string) =>
-    setWorkspace((w) => (isAppBundlePath(path) ? openApp(w, path) : openPinned(w, path)))
+  // A folder document (an app) opens with a note's gestures as its surface's
+  // tab, which has no preview state.
+  const open = (path: string) => openPath(path, 'preview')
+  const openPin = (path: string) => openPath(path, 'pinned')
 
   /** Both live in `state/vault-switch.ts`: a switch is a command, and
    *  the confirm it may need is asked there, before the remote moves. */
@@ -325,17 +322,10 @@ export function Shell() {
                   clear band between a scrolled tree and what sits below it. */}
               <div className="mb-3 flex min-h-0 flex-1 flex-col">
                 <FileTree
-                  activePath={tab?.kind === 'note' || tab?.kind === 'app' ? tab.path : null}
+                  activePath={pathOfTab(folderClaims, tab)}
                   onOpenPreview={open}
                   onOpenPinned={openPin}
-                  onOpenInNewPane={(path) =>
-                    setWorkspace((w) =>
-                      openInNewPane(
-                        w,
-                        isAppBundlePath(path) ? { kind: 'app', path } : { kind: 'note', path },
-                      ),
-                    )
-                  }
+                  onOpenInNewPane={(path) => openPath(path, 'pane')}
                 />
               </div>
               {/* Many sessions scroll rather than squeeze the tree away. */}
@@ -403,26 +393,9 @@ export function Shell() {
                       <>
                         {/* An assistant tab's actions (`SessionActions`). */}
                         {p.tabs[p.active]?.kind === 'agent' && <SessionActions />}
-                        {/* A vault app's reload: it remounts the frame. */}
-                        {p.tabs[p.active]?.kind === 'app' && (
-                          <IconButton
-                            icon={RotateCw}
-                            label="reload this app"
-                            className="ml-1"
-                            onClick={() => {
-                              const tab = p.tabs[p.active]
-                              if (tab?.kind !== 'app') return
-                              setAppReloads((n) => ({ ...n, [tab.path]: (n[tab.path] ?? 0) + 1 }))
-                            }}
-                          />
-                        )}
-                        {/* The app's log, in a pane beside it. */}
-                        <AppLogButton
-                          tab={p.tabs[p.active]}
-                          onOpen={(log) =>
-                            setWorkspace((w) => openInNewPane(w, { kind: 'note', path: log }))
-                          }
-                        />
+                        {/* The active surface's own controls (an app's reload
+                            and log). */}
+                        <SurfaceActions tab={p.tabs[p.active]} surfaces={surfaces} />
                         {/* Version history for the focused note. Only on the
                               active pane: `historyTargetPathAtom` reads its tab,
                               the drawer's own predicate. */}
@@ -549,30 +522,15 @@ export function Shell() {
   )
 }
 
-/**
- * Open an app's log (`log.local.txt`), what went wrong while it ran here, in
- * a new pane beside it. Disabled until the snapshot holds one: the log is not
- * watched, so a first one shows on the next rescan.
- */
-function AppLogButton({
+/** The pane-header actions of the surface its active tab is, if it has any. */
+function SurfaceActions({
   tab,
-  onOpen,
+  surfaces,
 }: {
-  /** The pane's active tab: an app's shows the button, any other nothing. */
   tab: Tab | undefined
-  onOpen: (log: string) => void
+  surfaces: ReadonlyMap<string, Surface>
 }): React.JSX.Element | null {
-  const files = useAtomValue(snapshotAtom).files
-  if (tab?.kind !== 'app') return null
-  const log = `${tab.path}/${APP_LOG_FILE}`
-  const exists = files.some((f) => f.path === log)
-  return (
-    <IconButton
-      icon={Logs}
-      label={exists ? "open this app's log" : 'no log yet'}
-      className="ml-1"
-      disabled={!exists}
-      onClick={() => onOpen(log)}
-    />
-  )
+  const Actions = tab?.kind === 'surface' ? surfaces.get(tab.surface)?.headerActions : undefined
+  if (tab?.kind !== 'surface' || Actions === undefined) return null
+  return <Actions {...(tab.id === undefined ? {} : { id: tab.id })} />
 }

@@ -13,16 +13,20 @@ import { homeTargetOf, type HomeTarget, type ResolvedVaultSettings } from '@holi
 export interface VaultContents {
   /** Every file: notes and anything else. */
   filePaths: ReadonlySet<string>
-  appPaths: ReadonlySet<string>
   /** The registered surfaces that may be Home, by kind. */
   homeable: ReadonlySet<string>
+  /** The surface a directory opens in when it is a finished folder document
+   *  (a vault app), else null. */
+  documentSurface(path: string): string | null
 }
 
 export type ResolvedHome =
   /** Open this: a surface, a file, or today's daily. */
-  | { reach: 'open'; target: Exclude<HomeTarget, { kind: 'recents' | 'app' }> }
-  /** The Home tab, showing this: the recents, or an app. */
-  | { reach: 'tab'; target: Extract<HomeTarget, { kind: 'recents' | 'app' }> }
+  | { reach: 'open'; target: Exclude<HomeTarget, { kind: 'recents' }> }
+  /** The Home tab, showing the recents. */
+  | { reach: 'tab'; target: Extract<HomeTarget, { kind: 'recents' }> }
+  /** The Home tab, showing a folder document (an app) in its surface. */
+  | { reach: 'tab'; target: Extract<HomeTarget, { kind: 'file' }>; surface: string }
   /** The Home tab, saying why this cannot be shown. */
   | { reach: 'missing'; target: HomeTarget }
 
@@ -34,14 +38,13 @@ export function resolveHome(
   switch (target.kind) {
     case 'recents':
       return { reach: 'tab', target }
-    case 'app':
-      return vault.appPaths.has(target.path)
-        ? { reach: 'tab', target }
-        : { reach: 'missing', target }
-    case 'file':
+    case 'file': {
+      const surface = vault.documentSurface(target.path)
+      if (surface !== null) return { reach: 'tab', target, surface }
       return vault.filePaths.has(target.path)
         ? { reach: 'open', target }
         : { reach: 'missing', target }
+    }
     case 'daily':
       return settings.dailyNotes ? { reach: 'open', target } : { reach: 'missing', target }
     case 'surface':

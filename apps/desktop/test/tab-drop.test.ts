@@ -111,7 +111,6 @@ describe('the DataTransfer payload', () => {
   it('round-trips every kind of tab', () => {
     const tabs = [
       { kind: 'note', path: 'notes/a.md' },
-      { kind: 'app', path: 'Team/burndown.app' },
       { kind: 'surface', surface: 'board' },
       { kind: 'surface', surface: 'app', id: 'Team/burndown.app' },
     ] as const

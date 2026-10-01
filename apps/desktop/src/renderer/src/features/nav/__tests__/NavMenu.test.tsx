@@ -11,9 +11,9 @@ import { Provider, atom, createStore } from 'jotai'
 import { expect, test, vi } from 'vitest'
 import { VAULT_SETTING_DEFAULTS } from '@holi/shared'
 import { paletteAtom } from '@/state/palette'
-import { CORE_SURFACES } from '@/components/core-surfaces'
+import { CORE_CONTRIBUTION } from '@/components/core-surfaces'
 import { activeTab, workspaceAtom } from '@/state/panes'
-import { coreSurfacesAtom, installedPluginsAtom } from '@/state/plugins'
+import { coreContributionAtom, installedPluginsAtom } from '@/state/plugins'
 import { vaultSettingsAtom } from '@/state/settings'
 import { activeRemoteAtom } from '@/state/vaults'
 import { NavMenu } from '../NavMenu'
@@ -25,7 +25,10 @@ const { apps, tasks, overdue } = vi.hoisted(() => ({
   tasks: { current: 0 },
   overdue: { current: 0 },
 }))
-vi.mock('@/state/apps', () => ({ appPathsAtom: atom(() => apps.current) }))
+vi.mock('@/state/apps', () => ({
+  appPathsAtom: atom(() => apps.current),
+  appInstancesAtom: atom(() => apps.current),
+}))
 vi.mock('@/state/tasks', () => ({
   openTaskCountAtom: atom(() => tasks.current),
   overdueTaskCountAtom: atom(() => overdue.current),
@@ -50,7 +53,7 @@ function setup({
   tasks.current = openTasks
   overdue.current = overdueTasks
   const store = createStore()
-  store.set(coreSurfacesAtom, CORE_SURFACES)
+  store.set(coreContributionAtom, CORE_CONTRIBUTION)
   store.set(installedPluginsAtom, [FAKE_PLUGIN])
   store.set(shownAtom, shown)
   render(
@@ -151,8 +154,9 @@ test('Apps drills into the apps by name, and picking one opens it', async () => 
   ).toEqual(['Back', 'char-count', 'tasks-by-area'])
   await user.click(within(group).getByRole('button', { name: 'tasks-by-area' }))
   expect(activeTab(store.get(workspaceAtom))).toEqual({
-    kind: 'app',
-    path: 'Areas/tasks-by-area.app',
+    kind: 'surface',
+    surface: 'app',
+    id: 'Areas/tasks-by-area.app',
   })
 })
 

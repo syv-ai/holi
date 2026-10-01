@@ -2,16 +2,23 @@
  * What is on screen: panes, each holding tabs (`docs/features/tabs-panes.md`).
  *
  * **A tab is not a note** (`architecture.md`). A flat `Map<path, …>` would
- * foreclose app, session and surface tabs, so a tab is a discriminated union
- * and the state is `panes[] → tabs[]`.
+ * foreclose session and surface tabs, so a tab is a discriminated union and
+ * the state is `panes[] → tabs[]`.
  */
 
-import { isAppBundlePath } from '@holi/shared'
 import { atom } from 'jotai'
 import type { PaneDropZone } from '@/lib/tab-drop'
 
-/** An app's entry document, which is what says where its bundle went. */
-const APP_ENTRY = 'index.html'
+/**
+ * A directory that is one document, as the panes need it: the surface its
+ * tabs are, by path, and the entry file whose move or delete says where the
+ * directory went (`PathClaim.folder`).
+ */
+export interface FolderSurface {
+  surface: string
+  entry: string
+  match(path: string): boolean
+}
 
 /** Open a note as a preview tab in the active pane — the action behind a
  *  wiki-link click from a surface that is not the editor (e.g. a task
@@ -26,8 +33,9 @@ export const openBesideAtom = atom(null, (_get, set, path: string) => {
 })
 
 /** A tab onto a surface from the registry (`state/plugins.ts`): Home, the
- *  board, settings, a plugin's view. `id` names which one, for a surface that
- *  is one tab per thing; without it there is one of the surface, ever. */
+ *  board, settings, a plugin's view, a vault app. `id` names which one, for a
+ *  surface that is one tab per thing (an app's is its bundle's path); without
+ *  it there is one of the surface, ever. */
 export interface SurfaceTab {
   kind: 'surface'
   surface: string
@@ -35,8 +43,8 @@ export interface SurfaceTab {
 }
 
 /**
- * A tab is either *of* something (a note or app by path, a session by id) or
- * a surface.
+ * A tab is either *of* something (a note by path, a session by id) or a
+ * surface.
  *
  * The `preview` flag is VS Code's two-state model: a preview tab (italic) is the
  * single one that a single-click *replaces* rather than adding to, so browsing a
@@ -44,9 +52,6 @@ export interface SurfaceTab {
  */
 export type Tab =
   | { kind: 'note'; path: string; preview?: boolean }
-  /** A vault app, identified by its bundle's path, `Finance/Budget.app`.
-   * There is one tab per app, not one per vault. */
-  | { kind: 'app'; path: string }
   /**
    * A terminal onto Claude Code, by the id main minted for it: the
    * agents list, or one background session.
@@ -83,7 +88,6 @@ export const workspaceAtom = atom<Workspace>(emptyWorkspace())
 function sameTab(a: Tab, b: Tab): boolean {
   if (a.kind !== b.kind) return false
   if (a.kind === 'note' && b.kind === 'note') return a.path === b.path
-  if (a.kind === 'app' && b.kind === 'app') return a.path === b.path
   if (a.kind === 'agent' && b.kind === 'agent') return a.id === b.id
   if (a.kind === 'surface' && b.kind === 'surface') {
     return a.surface === b.surface && a.id === b.id
@@ -126,26 +130,21 @@ export function openTab(workspace: Workspace, tab: Tab): Workspace {
 }
 
 /**
- * Open a surface, always as a leftmost tab.
+ * Open a surface, or focus it where it is.
  *
- * If it is already open, focus it **in place** (moving it would shuffle the
- * strip under the user on a second click); otherwise insert it at the front.
- * Home goes through `openHomeAtom` instead, which decides what Home is.
+ * A surface is a leftmost tab: if it is already open, it is focused **in
+ * place** (moving it would shuffle the strip under the user on a second
+ * click); otherwise it goes in at the front. A surface tab with an `id` is one
+ * thing among many, a vault app say, opened like a file, so it is appended.
+ * Deduped by id: two frames over one app are two running copies of it. Home
+ * goes through `openHomeAtom` instead, which decides what Home is.
  */
 export function openSurface(workspace: Workspace, surface: string, id?: string): Workspace {
-  const tab: SurfaceTab =
-    id === undefined ? { kind: 'surface', surface } : { kind: 'surface', surface, id }
+  if (id !== undefined) return openTab(workspace, { kind: 'surface', surface, id })
+  const tab: SurfaceTab = { kind: 'surface', surface }
   const existing = findTab(workspace, tab)
   if (existing !== null) return focusExisting(workspace, existing)
   return updatePane(workspace, (pane) => ({ tabs: [tab, ...pane.tabs], active: 0 }))
-}
-
-/** Open a vault app, or focus it if already open. Deduped by `path`: two frames
- *  over one app are two running copies of it. Appended rather than inserted
- *  leftmost: an app is opened from the sidebar like a file, not from the nav
- *  rail like a surface. */
-export function openApp(workspace: Workspace, path: string): Workspace {
-  return openTab(workspace, { kind: 'app', path })
 }
 
 /**
@@ -306,21 +305,25 @@ export function retargetTab(workspace: Workspace, from: string, to: string): Wor
 /**
  * `retargetTab` for a whole batch (folder or multi-move).
  *
- * An app tab follows its bundle, and the moves name files, so the bundle is
- * followed by its entry document: `A.app/index.html` to `B/A.app/index.html`
- * moves the tab to `B/A.app`. Only the entry document, and only to another
- * bundle: a note dragged out of an expanded app is not the app moving.
+ * A folder document's tab (a vault app's) follows its directory, and the
+ * moves name files, so the directory is followed by its entry file:
+ * `A.app/index.html` to `B/A.app/index.html` moves the tab to `B/A.app`. Only
+ * the entry file, and only to another directory its claim matches: a note
+ * dragged out of an expanded app is not the app moving.
  */
 export function retargetTabs(
   workspace: Workspace,
   moves: { from: string; to: string }[],
+  folders: readonly FolderSurface[] = [],
 ): Workspace {
   const map = new Map(moves.map((m) => [m.from, m.to]))
-  const bundleTo = (bundle: string): string | undefined => {
-    const to = map.get(`${bundle}/${APP_ENTRY}`)
-    if (to === undefined || !to.endsWith(`/${APP_ENTRY}`)) return undefined
-    const dest = to.slice(0, -APP_ENTRY.length - 1)
-    return isAppBundlePath(dest) ? dest : undefined
+  const folderTo = (tab: SurfaceTab): string | undefined => {
+    const folder = folders.find((f) => f.surface === tab.surface)
+    if (folder === undefined || tab.id === undefined) return undefined
+    const to = map.get(`${tab.id}/${folder.entry}`)
+    if (to === undefined || !to.endsWith(`/${folder.entry}`)) return undefined
+    const dest = to.slice(0, -folder.entry.length - 1)
+    return folder.match(dest) ? dest : undefined
   }
   return {
     ...workspace,
@@ -328,9 +331,9 @@ export function retargetTabs(
       ...pane,
       tabs: pane.tabs.map((tab) => {
         if (tab.kind === 'note' && map.has(tab.path)) return { ...tab, path: map.get(tab.path)! }
-        if (tab.kind !== 'app') return tab
-        const to = bundleTo(tab.path)
-        return to === undefined ? tab : { ...tab, path: to }
+        if (tab.kind !== 'surface') return tab
+        const to = folderTo(tab)
+        return to === undefined ? tab : { ...tab, id: to }
       }),
     })),
   }
@@ -344,14 +347,22 @@ export function retargetTabs(
  * the deleted, the pane falls back to the nearest surviving neighbour, and an
  * emptied pane stays as the empty-editor state (`active: -1`), never disappears.
  */
-export function closeTabsForPaths(workspace: Workspace, paths: string[]): Workspace {
+export function closeTabsForPaths(
+  workspace: Workspace,
+  paths: string[],
+  folders: readonly FolderSurface[] = [],
+): Workspace {
+  // A folder document goes with its entry file: deleting the directory from
+  // the tree closes its tab.
+  const entryOf = (t: SurfaceTab): string | null => {
+    const folder = folders.find((f) => f.surface === t.surface)
+    return folder === undefined || t.id === undefined ? null : `${t.id}/${folder.entry}`
+  }
   return closeTabsWhere(
     workspace,
     (t) =>
-      // An app goes with its entry document: deleting the bundle from the tree
-      // closes its tab, as deleting it from the apps list does.
       (t.kind === 'note' && paths.includes(t.path)) ||
-      (t.kind === 'app' && paths.includes(`${t.path}/${APP_ENTRY}`)),
+      (t.kind === 'surface' && paths.includes(entryOf(t) ?? '')),
   )
 }
 

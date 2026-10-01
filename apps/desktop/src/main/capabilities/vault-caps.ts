@@ -15,12 +15,7 @@ import { cap } from './registry'
 import { renderNote } from './render-note'
 
 /** Recents an app may see: things it can name or open, never the agent surface. */
-const APP_RECENT_KINDS: ReadonlySet<RecentEntry['kind']> = new Set([
-  'path',
-  'app',
-  'surface',
-  'session',
-])
+const APP_RECENT_KINDS: ReadonlySet<RecentEntry['kind']> = new Set(['path', 'surface', 'session'])
 
 /** The nav's words for the state, and the conflicting paths, which the nav's
  *  banner carries. */
@@ -97,8 +92,14 @@ export const vaultCapabilities = (deps: VaultCapabilitiesDeps) => ({
       ctx.core
         .recents()
         .filter((e) => APP_RECENT_KINDS.has(e.kind))
-        .filter((e) => (e.kind === 'path' || e.kind === 'app' ? readableOrNull(e.key) : true)),
-    text: (entries) => entries.map((e) => `${e.kind}\t${e.key}`).join('\n'),
+        // A path, and a surface's id when it has one (an app's is its
+        // bundle's path), go through the same fence a read does.
+        .filter((e) => (e.kind === 'path' ? readableOrNull(e.key) : true))
+        .filter((e) => e.id === undefined || readableOrNull(e.id) !== null),
+    text: (entries) =>
+      entries
+        .map((e) => [e.kind, e.key, ...(e.id === undefined ? [] : [e.id])].join('\t'))
+        .join('\n'),
   }),
 
   'vault.settings': cap({

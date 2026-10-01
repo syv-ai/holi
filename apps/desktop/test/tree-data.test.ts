@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest'
+import { isAppBundlePath } from '@holi/shared'
+import { folderClaims, folderDocumentAt } from '../src/renderer/src/lib/folder-documents'
 import { buildTreeData, ROOT_ID } from '../src/renderer/src/lib/tree-data'
+
+/** A claim's folder documents, as an app's claim makes them. */
+const apps = folderClaims([
+  { match: isAppBundlePath, folder: { surface: 'app', entry: 'index.html' } },
+])
+const isDocument = (dir: string, has: (path: string) => boolean) =>
+  folderDocumentAt(apps, dir, has) !== null
 
 describe('buildTreeData', () => {
   it('nests docs under folder ids and lists top-level under root', () => {
@@ -22,7 +31,12 @@ describe('buildTreeData', () => {
   it('includes an empty pending folder that has no docs', () => {
     const data = buildTreeData(['note.md'], ['drafts'])
     expect(data[ROOT_ID].children).toEqual(['drafts', 'note.md'])
-    expect(data['drafts']).toEqual({ name: 'drafts', isFolder: true, isApp: false, children: [] })
+    expect(data['drafts']).toEqual({
+      name: 'drafts',
+      isFolder: true,
+      isDocument: false,
+      children: [],
+    })
   })
 
   it('does not duplicate a folder that is both pending and has a doc', () => {
@@ -31,16 +45,20 @@ describe('buildTreeData', () => {
     expect(data[ROOT_ID].children).toEqual(['drafts'])
   })
 
-  it('marks an app bundle, and sorts it with the files rather than the folders', () => {
-    const data = buildTreeData(['Zed.app/index.html', 'zoo/x.md', 'alpha.md', 'site/index.html'])
-    expect(data['Zed.app']).toMatchObject({ isFolder: true, isApp: true })
-    expect(data['site']?.isApp).toBe(false)
+  it('marks a folder document, and sorts it with the files rather than the folders', () => {
+    const data = buildTreeData(
+      ['Zed.app/index.html', 'zoo/x.md', 'alpha.md', 'site/index.html'],
+      [],
+      isDocument,
+    )
+    expect(data['Zed.app']).toMatchObject({ isFolder: true, isDocument: true })
+    expect(data['site']?.isDocument).toBe(false)
     expect(data[ROOT_ID].children).toEqual(['site', 'zoo', 'alpha.md', 'Zed.app'])
   })
 
-  it('is not an app until it has an entry document', () => {
-    const data = buildTreeData(['Mac.app/Contents/Info.plist', 'Half.app/app.js'])
-    expect(data['Mac.app']?.isApp).toBe(false)
-    expect(data['Half.app']?.isApp).toBe(false)
+  it('is not a document until it has its entry file', () => {
+    const data = buildTreeData(['Mac.app/Contents/Info.plist', 'Half.app/app.js'], [], isDocument)
+    expect(data['Mac.app']?.isDocument).toBe(false)
+    expect(data['Half.app']?.isDocument).toBe(false)
   })
 })

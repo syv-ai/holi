@@ -8,7 +8,6 @@ import { TriangleAlert } from 'lucide-react'
 import {
   SETTINGS_FILE,
   SETTINGS_LOCAL_FILE,
-  appName,
   availableOptions,
   isLocalOnlyPath,
   type PluginSettings,
@@ -17,8 +16,9 @@ import {
 } from '@holi/shared'
 import { Button, Checkbox, Icon, Tooltip } from '@/primitives'
 import { useAck } from '@/lib/use-ack'
+import { surfaceLabel } from '@/lib/folder-documents'
 import type { Surface } from '@/plugin-api/types'
-import { appPathsAtom } from '@/state/apps'
+import { homeDocumentsAtom } from '@/state/home'
 import { installedPluginsAtom, surfacesAtom } from '@/state/plugins'
 import { SettingsRow } from '@/composites'
 
@@ -54,12 +54,12 @@ export function SettingRow({
 }): React.JSX.Element | null {
   const { key, label, explanation, control } = descriptor
   const value = settings[key] ?? descriptor.default
-  const appPaths = useAtomValue(appPathsAtom)
+  const documents = useAtomValue(homeDocumentsAtom)
   const installed = useAtomValue(installedPluginsAtom)
   const surfaces = useAtomValue(surfacesAtom)
   const options: readonly VaultSettingOption[] =
     control.kind === 'choice' && control.apps === true
-      ? homeOptions(availableOptions(descriptor, settings), surfaces, appPaths, value)
+      ? homeOptions(availableOptions(descriptor, settings), surfaces, documents, value)
       : availableOptions(descriptor, settings)
 
   // Changing a setting WRITES A FILE in the vault, so the row flashes once to
@@ -193,25 +193,26 @@ export function SettingRow({
 /**
  * Home's options: core's fixed ones, the views that can be Home in this vault
  * (`homeable` surfaces, so one whose plugin is off is not offered), the
- * vault's shared apps, and the current answer even when it is none of them (a
- * file, or an app not made yet), so the row always shows what is in force. A
- * personal app is not offered: this row writes the committed file, and a
- * `.local.` app named there would point everyone else at nothing.
+ * vault's shared folder documents (its apps), and the current answer even when
+ * it is none of them (a file, or an app not made yet), so the row always shows
+ * what is in force. A personal app is not offered: this row writes the
+ * committed file, and a `.local.` app named there would point everyone else at
+ * nothing.
  */
 function homeOptions(
   fixed: readonly VaultSettingOption[],
   surfaces: ReadonlyMap<string, Surface>,
-  appPaths: readonly string[],
+  documents: readonly { path: string; label: string }[],
   value: unknown,
 ): VaultSettingOption[] {
   const listed = new Set(fixed.map((o) => o.value))
   const views = [...surfaces.values()]
     .filter((s) => s.homeable === true && !listed.has(s.kind))
-    .map((s) => ({ value: s.kind, label: s.label }))
-  const apps = appPaths
-    .filter((p) => !isLocalOnlyPath(p) && !listed.has(p))
-    .map((path) => ({ value: path, label: appName(path) }))
-  const all = [...fixed, ...views, ...apps]
+    .map((s) => ({ value: s.kind, label: surfaceLabel(s) }))
+  const docs = documents
+    .filter((d) => !isLocalOnlyPath(d.path) && !listed.has(d.path))
+    .map((d) => ({ value: d.path, label: d.label }))
+  const all = [...fixed, ...views, ...docs]
   const current =
     typeof value === 'string' && !all.some((o) => o.value === value)
       ? [{ value, label: value }]

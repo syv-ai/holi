@@ -11,6 +11,7 @@ import {
   openTabRows,
   rankCommands,
   rankRows,
+  rowId,
   type PaletteRow,
 } from '../src/renderer/src/lib/palette-rows'
 import type { RecentEntry } from '../src/renderer/src/lib/recents'
@@ -34,7 +35,6 @@ function snapshot(over: Partial<VaultSnapshot> = {}): VaultSnapshot {
 const rows = (over: Partial<VaultSnapshot> = {}): PaletteRow[] =>
   buildRows({
     snapshot: snapshot(over),
-    appPaths: ['Work/plan.app'],
     // Only live sessions are listed at all: `s2` has stopped.
     sessions: [{ id: 's1', name: 'refactor' }],
     terminals: [{ id: 't1', label: 'Agents' }],
@@ -42,18 +42,19 @@ const rows = (over: Partial<VaultSnapshot> = {}): PaletteRow[] =>
       { kind: 'board', label: 'Board' },
       { kind: 'settings', label: 'Settings' },
     ],
+    instances: [{ surface: 'app', id: 'Work/plan.app', label: 'plan' }],
   })
 
-const keys = (list: readonly PaletteRow[]) => list.map((r) => `${r.kind}:${r.key}`)
+const keys = (list: readonly PaletteRow[]) => list.map(rowId)
 
 describe('buildRows', () => {
-  it('lists docs, files, apps, live sessions, agent tabs and the surfaces; hides hidden paths', () => {
+  it('lists docs, files, instances, live sessions, agent tabs and the surfaces; hides hidden paths', () => {
     expect(keys(rows())).toEqual([
       'path:notes/alpha.md',
       'path:notes/beta.md',
       'path:2026-09-21.md',
       'path:notes/deck.pdf',
-      'app:Work/plan.app',
+      'surface:app:Work/plan.app',
       'session:s1',
       'terminal:t1',
       'surface:board',
@@ -69,9 +70,9 @@ describe('buildRows', () => {
     expect(daily.detail).toBeUndefined()
   })
 
-  it('names an app without .app, with its folder as detail', () => {
-    const plan = rows().find((r) => r.kind === 'app')!
-    expect(plan).toMatchObject({ key: 'Work/plan.app', name: 'plan', detail: 'Work' })
+  it('names an instance by its label, with its folder as detail', () => {
+    const plan = rows().find((r) => r.id !== undefined)!
+    expect(plan).toMatchObject({ key: 'app', id: 'Work/plan.app', name: 'plan', detail: 'Work' })
   })
 
   it('dims an ignored path rather than dropping it', () => {
@@ -83,12 +84,12 @@ describe('buildRows', () => {
 describe('rankRows with nothing typed', () => {
   it('lists the recents first, in order, then paths newest-modified first', () => {
     const recents: RecentEntry[] = [
-      { kind: 'app', key: 'Work/plan.app' },
+      { kind: 'surface', key: 'app', id: 'Work/plan.app' },
       { kind: 'path', key: 'notes/alpha.md' },
     ]
     const ranked = rankRows(rows(), '', recents)
     expect(keys(ranked)).toEqual([
-      'app:Work/plan.app',
+      'surface:app:Work/plan.app',
       'path:notes/alpha.md',
       'path:2026-09-21.md',
       'path:notes/beta.md',
@@ -136,7 +137,6 @@ describe('rankRows with a query', () => {
         icons: {},
         ignored: [],
       }),
-      appPaths: [],
       sessions: [],
     })
     const ranked = rankRows(two, 'plan', [{ kind: 'path', key: 'b/plan.md' }])
@@ -151,7 +151,7 @@ describe('rankRows with a query', () => {
 })
 
 describe('bodyRows', () => {
-  const rows = buildRows({ snapshot: snapshot(), appPaths: [], sessions: [] })
+  const rows = buildRows({ snapshot: snapshot(), sessions: [] })
 
   it('lists text matches after the name rows, leaving out what those already show', () => {
     const ranked = rankRows(rows, 'alpha', [])
@@ -179,7 +179,7 @@ describe('bodyRows', () => {
 describe('openTabRows', () => {
   const tabs = [
     { kind: 'note', path: 'notes/alpha.md' },
-    { kind: 'app', path: 'Work/plan.app' },
+    { kind: 'surface', surface: 'app', id: 'Work/plan.app' },
     { kind: 'surface', surface: 'board' },
     { kind: 'agent', id: 't1' },
   ] as const
@@ -191,7 +191,11 @@ describe('openTabRows', () => {
       { kind: 'path', key: 'notes/alpha.md' },
     ]
     const ranked = openTabRows(rows(), [...tabs], { kind: 'surface', surface: 'board' }, recents)
-    expect(keys(ranked)).toEqual(['terminal:t1', 'path:notes/alpha.md', 'app:Work/plan.app'])
+    expect(keys(ranked)).toEqual([
+      'terminal:t1',
+      'path:notes/alpha.md',
+      'surface:app:Work/plan.app',
+    ])
     expect(ranked.map((r) => r.recent)).toEqual([true, true, false])
   })
 

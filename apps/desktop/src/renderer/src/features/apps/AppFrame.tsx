@@ -33,7 +33,6 @@ import {
   APP_METHODS,
   appHost,
   appName,
-  isAppBundlePath,
   isSurfaceName,
   type AppAffordance,
   type AppMethod,
@@ -46,10 +45,10 @@ import { trpc } from '../../lib/trpc'
 import { appPushSignaturesAtom, storeSignatures } from '../../state/app-push'
 import { appPathsAtom, closeAppAtom } from '../../state/apps'
 import { activeModeAtom } from '../../state/color-scheme'
-import { appOpensAtom, openApp, openNoteTabAtom, workspaceAtom } from '../../state/panes'
+import { appOpensAtom } from '../../state/panes'
 import { openCommitInHistoryAtom } from '../../state/history'
 import { surfacesAtom } from '../../state/plugins'
-import { openSurfaceAtom } from '../../state/surfaces'
+import { openPathAtom, openSurfaceAtom } from '../../state/surfaces'
 import { activeRemoteAtom, snapshotAtom } from '../../state/vaults'
 
 function isAppMethod(value: unknown): value is AppMethod {
@@ -83,8 +82,7 @@ export function AppFrame({ path }: { path: string }): React.JSX.Element {
   const appPaths = useAtomValue(appPathsAtom)
   const remote = useAtomValue(activeRemoteAtom)
   const mode = useAtomValue(activeModeAtom)
-  const openNote = useSetAtom(openNoteTabAtom)
-  const setWorkspace = useSetAtom(workspaceAtom)
+  const openPath = useSetAtom(openPathAtom)
   const closeApp = useSetAtom(closeAppAtom)
   const openSurface = useSetAtom(openSurfaceAtom)
   // Read when an app calls, not on every render: the registry and the
@@ -115,13 +113,12 @@ export function AppFrame({ path }: { path: string }): React.JSX.Element {
         const isFile = [...snapshot.docs, ...snapshot.files].some((f) => f.path === target)
         if (isSurfaceName(target) && !isFile) throw new Error(`no such view: ${target}`)
         // An app's bundle is a folder: it opens as the app, not as a file.
-        if (isAppBundlePath(target)) setWorkspace((w) => openApp(w, target))
-        else openNote(target)
+        openPath(target, 'preview')
         return { ok: true }
       }
       return await trpc.apps.bridge.mutate({ remote, bundle: path, method, params })
     },
-    [remote, path, openNote, setWorkspace, openSurface, store],
+    [remote, path, openPath, openSurface, store],
   )
 
   useEffect(() => {

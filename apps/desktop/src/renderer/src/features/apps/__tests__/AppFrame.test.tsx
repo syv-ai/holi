@@ -14,7 +14,7 @@ import { render, screen, waitFor } from '@/test/render'
 import userEvent from '@testing-library/user-event'
 import { AppFrame } from '../AppFrame'
 import { snapshotAtom, activeRemoteAtom } from '../../../state/vaults'
-import { appOpensAtom, workspaceAtom, openApp } from '../../../state/panes'
+import { appOpensAtom, workspaceAtom, openSurface } from '../../../state/panes'
 
 /** Main's side of the app door, answering the way the registry would. */
 const bridgeMock = vi.fn((input: { method: string }): Promise<unknown> => {
@@ -54,7 +54,7 @@ beforeEach(() => {
   withApps('Team/Retro.app')
   store.set(
     workspaceAtom,
-    openApp({ panes: [{ tabs: [], active: -1 }], active: 0 }, 'Team/Retro.app'),
+    openSurface({ panes: [{ tabs: [], active: -1 }], active: 0 }, 'app', 'Team/Retro.app'),
   )
 })
 

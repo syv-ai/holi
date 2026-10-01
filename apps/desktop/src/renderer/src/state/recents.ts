@@ -10,11 +10,11 @@
  * `runCommandAtom` records each command it runs.
  */
 import { atom, type Getter } from 'jotai'
-import { atomWithStorage, selectAtom } from 'jotai/utils'
+import { atomWithStorage } from 'jotai/utils'
 import { entryOfTab, prune, touch, type RecentEntry } from '../lib/recents'
 import { agentSessionsAtom, agentTerminalsAtom } from './agent'
-import { appPathsAtom } from './apps'
 import type { Tab } from './panes'
+import { surfacesAtom } from './plugins'
 import { activeRemoteAtom, snapshotAtom } from './vaults'
 
 export const recentsByVaultAtom = atomWithStorage<Record<string, RecentEntry[]>>('holi:recents', {})
@@ -23,24 +23,29 @@ const NONE: RecentEntry[] = []
 
 /**
  * Whether an entry still names something. Sessions do not survive a restart,
- * so a session recent is live only while main lists it. Paths and apps are
- * judged only once the vault has been scanned: an empty snapshot is a vault
- * that has not loaded yet, not a vault with nothing in it, and pruning
- * against it would wipe every path.
+ * so a session recent is live only while main lists it. Paths, and the
+ * instances of a surface that lists them (a vault app), are judged only once
+ * the vault has been scanned: an empty snapshot is a vault that has not
+ * loaded yet, not a vault with nothing in it, and pruning against it would
+ * wipe every path.
  */
 function isLive(get: Getter): (entry: RecentEntry) => boolean {
   const snapshot = get(snapshotAtom)
   const scanned = snapshot.docs.length + snapshot.files.length > 0
   const paths = new Set([...snapshot.docs, ...snapshot.files].map((d) => d.path))
-  const apps = new Set(get(appPathsAtom))
+  const surfaces = get(surfacesAtom)
+  const instances = (surface: string): ReadonlySet<string> | null => {
+    const of = surfaces.get(surface)?.instances
+    return of === undefined ? null : new Set(get(of))
+  }
   const sessions = new Set(get(agentSessionsAtom).map((s) => s.id))
   const terminals = new Set(get(agentTerminalsAtom).map((t) => t.id))
   return (entry) => {
     switch (entry.kind) {
       case 'path':
         return !scanned || paths.has(entry.key)
-      case 'app':
-        return !scanned || apps.has(entry.key)
+      case 'surface':
+        return !scanned || entry.id === undefined || (instances(entry.key)?.has(entry.id) ?? true)
       case 'session':
         return sessions.has(entry.key)
       case 'terminal':
@@ -76,23 +81,22 @@ export function recentOfTab(tab: Tab): RecentEntry {
 }
 
 /**
- * The finished apps, most recently opened first, then the rest by name: the
- * nav's Apps list, where the app you just used is the one you want again.
+ * A surface's ids most recently opened first, then the rest in the order
+ * given: what a surface's `instances` is, so the app you just used is the one
+ * you want again.
  */
-const appPathsByRecencyRawAtom = atom((get): string[] => {
+export function byRecency(
+  recents: readonly RecentEntry[],
+  surface: string,
+  ids: readonly string[],
+) {
   const order = new Map<string, number>()
-  get(recentsAtom).forEach((r, i) => {
-    if (r.kind === 'app' && !order.has(r.key)) order.set(r.key, i)
+  recents.forEach((r, i) => {
+    if (r.kind === 'surface' && r.key === surface && r.id !== undefined && !order.has(r.id)) {
+      order.set(r.id, i)
+    }
   })
-  const rank = (p: string) => order.get(p) ?? Infinity
-  // `appPathsAtom` is by name, and the sort is stable, so the unused keep it.
-  return [...get(appPathsAtom)].sort((a, b) => rank(a) - rank(b))
-})
-
-/** The same array until the order changes: the recents move on every tab
- *  switch, and a new list restarts the nav menu's layout pass. */
-export const appPathsByRecencyAtom = selectAtom(
-  appPathsByRecencyRawAtom,
-  (paths) => paths,
-  (a, b) => a.length === b.length && a.every((p, i) => p === b[i]),
-)
+  const rank = (id: string) => order.get(id) ?? Infinity
+  // The sort is stable, so the unused keep the order given.
+  return [...ids].sort((a, b) => rank(a) - rank(b))
+}

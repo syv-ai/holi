@@ -15,18 +15,18 @@ export function entryOfTab(tab: Tab): RecentEntry {
   switch (tab.kind) {
     case 'note':
       return { kind: 'path', key: tab.path }
-    case 'app':
-      return { kind: 'app', key: tab.path }
     // An agent tab is a terminal, whatever session it shows now.
     case 'agent':
       return { kind: 'terminal', key: tab.id }
     case 'surface':
-      return { kind: 'surface', key: tab.surface }
+      return tab.id === undefined
+        ? { kind: 'surface', key: tab.surface }
+        : { kind: 'surface', key: tab.surface, id: tab.id }
   }
 }
 
 export function sameEntry(a: RecentEntry, b: RecentEntry): boolean {
-  return a.kind === b.kind && a.key === b.key
+  return a.kind === b.kind && a.key === b.key && a.id === b.id
 }
 
 /** `entry` to the front, once; the tail past `cap` dropped. */

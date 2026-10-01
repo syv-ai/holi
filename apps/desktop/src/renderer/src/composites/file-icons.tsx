@@ -14,7 +14,7 @@
  * for choosing an editor). Unmapped extensions fall back to a neutral file.
  */
 import type { JSX } from 'react'
-import { appName, fileKind, isAppBundlePath, type TaskStatus } from '@holi/shared'
+import { fileKind, type TaskStatus } from '@holi/shared'
 import {
   Braces,
   Circle,
@@ -192,27 +192,26 @@ export function TaskIcon({ status }: { status: TaskStatus }) {
 }
 
 /**
- * What a file or app is called wherever it is listed: the tree and the tabs
+ * What a file is called wherever it is listed: the tree and the tabs
  * (`docs/features/file-tree.md`). A note is the unmarked thing and drops its
- * `.md`; an app drops its `.app`; anything else keeps its extension.
+ * `.md`; anything else keeps its extension. A folder document (an app) is
+ * named by its claim instead.
  */
 export function pathLabel(path: string): string {
-  if (isAppBundlePath(path)) return appName(path)
   const base = path.slice(path.lastIndexOf('/') + 1)
   return fileKind(path) === 'markdown' ? base.replace(/\.md$/i, '') : base
 }
 
 /**
- * What a file or app leads with, by the same rule: the vault icon map's emoji
- * first, then an app's glyph, a task's status, nothing for a note, and the type
- * glyph for anything else. `null` is a note's empty slot.
+ * What a file leads with, by the same rule: the vault icon map's emoji first,
+ * then a task's status, nothing for a note, and the type glyph for anything
+ * else. `null` is a note's empty slot.
  */
 export function pathGlyph(
   path: string,
   { emoji, task }: { emoji?: string; task?: TaskStatus } = {},
 ): JSX.Element | null {
   if (emoji) return fileIconFor(path, emoji)
-  if (isAppBundlePath(path)) return <Icon icon={AppIcon} size="sm" />
   if (task) return <TaskIcon status={task} />
   if (fileKind(path) === 'markdown') return null
   return fileIconFor(path)

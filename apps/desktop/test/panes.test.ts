@@ -13,7 +13,6 @@ import {
   closingTabRemovesPane,
   closeTabsForPaths,
   emptyWorkspace,
-  openApp,
   openBeside,
   openInNewPane,
   openPinned,
@@ -30,8 +29,18 @@ import {
   dropZones,
   moveTab,
   moveTabToNewPane,
+  type FolderSurface,
+  type Tab,
   type Workspace,
 } from '../src/renderer/src/state/panes'
+
+/** A vault app's tab: the surface `app`, by bundle path. */
+const app = (id: string): Tab => ({ kind: 'surface', surface: 'app', id })
+const openApp = (w: Workspace, id: string): Workspace => openTab(w, app(id))
+/** The app claim's folder, as the panes are told about it. */
+const APPS: FolderSurface[] = [
+  { surface: 'app', entry: 'index.html', match: (p) => /\.app$/.test(p) },
+]
 
 const paths = (w: Workspace) =>
   w.panes[0]!.tabs.map((t) =>
@@ -185,8 +194,12 @@ describe('closeTabsForPaths', () => {
   it('closes an app whose bundle was deleted, and leaves one that only lost a file', () => {
     let w = openApp(emptyWorkspace(), 'A.app')
     w = openApp(w, 'B.app')
-    const next = closeTabsForPaths(w, ['A.app/index.html', 'A.app/app.yaml', 'B.app/notes.md'])
-    expect(next.panes[0]!.tabs).toEqual([{ kind: 'app', path: 'B.app' }])
+    const next = closeTabsForPaths(
+      w,
+      ['A.app/index.html', 'A.app/app.yaml', 'B.app/notes.md'],
+      APPS,
+    )
+    expect(next.panes[0]!.tabs).toEqual([app('B.app')])
   })
 
   it('closes deleted tabs and keeps the user on a surviving document', () => {
@@ -211,10 +224,10 @@ describe('closeTabsForPaths', () => {
   })
 })
 
-describe('openApp', () => {
+describe('an app tab', () => {
   it('opens an app tab and focuses it', () => {
     const w = openApp(emptyWorkspace(), 'retro.app')
-    expect(w.panes[0]!.tabs).toEqual([{ kind: 'app', path: 'retro.app' }])
+    expect(w.panes[0]!.tabs).toEqual([app('retro.app')])
     expect(w.panes[0]!.active).toBe(0)
   })
 
@@ -231,10 +244,7 @@ describe('openApp', () => {
   it('keeps two different apps apart', () => {
     let w = openApp(emptyWorkspace(), 'a.app')
     w = openApp(w, 'Sub/b.app')
-    expect(w.panes[0]!.tabs).toEqual([
-      { kind: 'app', path: 'a.app' },
-      { kind: 'app', path: 'Sub/b.app' },
-    ])
+    expect(w.panes[0]!.tabs).toEqual([app('a.app'), app('Sub/b.app')])
     expect(w.panes[0]!.active).toBe(1)
   })
 
@@ -248,7 +258,7 @@ describe('openApp', () => {
 
 describe('retargetTabs, for an app', () => {
   const kinds = (w: Workspace) =>
-    w.panes[0]!.tabs.map((t) => (t.kind === 'app' ? `app:${t.path}` : t.kind))
+    w.panes[0]!.tabs.map((t) => (t.kind === 'surface' ? `app:${t.id}` : t.kind))
   const moveBundle = (from: string, to: string, files = ['index.html', 'app.yaml']) =>
     files.map((f) => ({ from: `${from}/${f}`, to: `${to}/${f}` }))
 
@@ -257,7 +267,7 @@ describe('retargetTabs, for an app', () => {
     w = openApp(w, 'retro.app')
     w = openApp(w, 'burndown.app')
 
-    const next = retargetTabs(w, moveBundle('retro.app', 'Team/standup.app'))
+    const next = retargetTabs(w, moveBundle('retro.app', 'Team/standup.app'), APPS)
 
     expect(kinds(next)).toEqual(['app:Team/standup.app', 'app:burndown.app'])
     // The active selection is untouched — the user stays on what they were on.
@@ -267,32 +277,36 @@ describe('retargetTabs, for an app', () => {
   it('follows a folder move that carries the bundle with it', () => {
     let w = emptyWorkspace()
     w = openApp(w, 'Team/retro.app')
-    const next = retargetTabs(w, [
-      { from: 'Team/notes.md', to: 'Old/Team/notes.md' },
-      { from: 'Team/retro.app/index.html', to: 'Old/Team/retro.app/index.html' },
-      { from: 'Team/retro.app/lib/a.js', to: 'Old/Team/retro.app/lib/a.js' },
-    ])
+    const next = retargetTabs(
+      w,
+      [
+        { from: 'Team/notes.md', to: 'Old/Team/notes.md' },
+        { from: 'Team/retro.app/index.html', to: 'Old/Team/retro.app/index.html' },
+        { from: 'Team/retro.app/lib/a.js', to: 'Old/Team/retro.app/lib/a.js' },
+      ],
+      APPS,
+    )
     expect(kinds(next)).toEqual(['app:Old/Team/retro.app'])
   })
 
   it('stays put when a file is dragged out of the expanded app, or within it', () => {
     let w = emptyWorkspace()
     w = openApp(w, 'A.app')
-    expect(retargetTabs(w, [{ from: 'A.app/notes.md', to: 'Docs/notes.md' }])).toEqual(w)
-    expect(retargetTabs(w, [{ from: 'A.app/index.html', to: 'Docs/index.html' }])).toEqual(w)
-    expect(retargetTabs(w, [{ from: 'A.app/foo.md', to: 'A.app/lib/foo.md' }])).toEqual(w)
+    expect(retargetTabs(w, [{ from: 'A.app/notes.md', to: 'Docs/notes.md' }], APPS)).toEqual(w)
+    expect(retargetTabs(w, [{ from: 'A.app/index.html', to: 'Docs/index.html' }], APPS)).toEqual(w)
+    expect(retargetTabs(w, [{ from: 'A.app/foo.md', to: 'A.app/lib/foo.md' }], APPS)).toEqual(w)
   })
 
   it('leaves an app alone when only a sibling whose name it prefixes moves', () => {
     let w = emptyWorkspace()
     w = openApp(w, 'retro.app')
-    expect(retargetTabs(w, moveBundle('retro.apple', 'x.apple'))).toEqual(w)
+    expect(retargetTabs(w, moveBundle('retro.apple', 'x.apple'), APPS)).toEqual(w)
   })
 
   it('is a no-op when the moved app has no tab open', () => {
     let w = emptyWorkspace()
     w = openApp(w, 'burndown.app')
-    expect(retargetTabs(w, moveBundle('retro.app', 'standup.app'))).toEqual(w)
+    expect(retargetTabs(w, moveBundle('retro.app', 'standup.app'), APPS)).toEqual(w)
   })
 })
 
@@ -430,7 +444,7 @@ describe('one buffer per file, across panes', () => {
       {
         panes: [
           { tabs: [], active: -1 },
-          { tabs: [{ kind: 'app', path: 'dash.app' }], active: 0 },
+          { tabs: [app('dash.app')], active: 0 },
         ],
         active: 0,
       },

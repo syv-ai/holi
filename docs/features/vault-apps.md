@@ -34,8 +34,11 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   [command palette](command-palette.md), which lists them with their folder. There is no separate
   Apps section. Its Finish this app is on the tree's app row, and its Edit Source gave way to the
   row's Show App Files, which expands the bundle so `index.html` opens like any file.
-- **Tabs.** An app opens as an ordinary tab keyed by its bundle path, deduped across panes like a
-  note (see [tabs and panes](tabs-panes.md)). Reload is a button in the pane header, beside the other per-file buttons, that remounts the
+- **Tabs.** An app is the surface `app` with its bundle path as the tab's id, deduped across panes
+  like a note (see [tabs and panes](tabs-panes.md)). The bundle is a folder document: the app's
+  claim (`features/apps/app-surface.tsx`, registered from core until apps become a plugin) says a
+  `.app` folder with its `index.html` is one, finished once `app.yaml` is there. Reload is the
+  surface's pane-header action, beside the other per-file buttons, that remounts the
   frame. If the bundle disappears under an open tab (a teammate's pull), the tab stays as a
   tombstone saying the app was deleted. Deleting from a menu removes the files and closes the tab
   instead. A move of the bundle carries its tab along, like a note's.
@@ -146,13 +149,10 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   a `<name>.app` folder below the session's cwd, a syntax error and its line, a `.ts`/`.tsx`/`.jsx` file nothing will build, a
   `localStorage` call, a missing manifest, and a hard-coded colour. It is advisory, exits 0, and is
   silent when nothing is wrong. See [agent config](agent-config.md) for the CLI and hooks.
-- **Home can be an app.** When the `home` setting ([settings](settings.md)) names an app the
-  vault has, the Home tab shows it. No vault is created with one: Home defaults to Holi's own
-  recents view ([nav menu](nav-menu.md)). When `home` names an app the vault lacks, the Home tab
-  offers **Create Home app** (`apps.createHome`, never overwrites), which writes the default Home
-  app there: plain HTML and a script, no build and no vendored code, listing the recents
-  (`holi.recents()`, kept live by `on('recents')`) over the line "You can customize this page.
-  Explain your vision to the vault assistant".
+- **Home can be an app.** When the `home` setting ([settings](settings.md)) names a finished app
+  the vault has, the Home tab shows it, through the claim like any folder document. No vault is
+  created with one: Home defaults to Holi's own recents view ([nav menu](nav-menu.md)). When
+  `home` names an app the vault lacks, the Home tab says so.
 - **Migration.** Apps used to live in `.holi/apps/<id>/`, hidden with the other dotfiles. On
   vault open, before the first snapshot, `migrate-apps.ts` moves each to `<id>.app/` at the root
   with one `rename`, then rewrites inbound `[[links]]`; the autosave commits it. An app whose

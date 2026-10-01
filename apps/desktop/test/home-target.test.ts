@@ -8,12 +8,12 @@
 import { describe, expect, test } from 'vitest'
 import { resolveHome } from '../src/renderer/src/lib/home-target'
 
-/** A vault holding one note, one other file and one app, with the board as
- *  the one view that can be Home. */
+/** A vault holding one note, one other file and one app (a folder document
+ *  in the surface `app`), with the board as the one view that can be Home. */
 const vault = {
   filePaths: new Set(['Notes/Standup.md', 'plan.pdf']),
-  appPaths: new Set(['retro.app']),
   homeable: new Set(['board']),
+  documentSurface: (path: string) => (path === 'retro.app' ? 'app' : null),
 }
 
 const on = (home: string) => ({ home, dailyNotes: true })
@@ -23,8 +23,8 @@ describe('the recents', () => {
   test('are shown in the Home tab, whatever the vault holds', () => {
     const empty = {
       filePaths: new Set<string>(),
-      appPaths: new Set<string>(),
       homeable: new Set<string>(),
+      documentSurface: () => null,
     }
     expect(resolveHome(off('recents'), empty)).toEqual({
       reach: 'tab',
@@ -33,18 +33,19 @@ describe('the recents', () => {
   })
 })
 
-describe('an app', () => {
-  test('is shown in the Home tab when the vault holds it', () => {
+describe('a folder document (an app)', () => {
+  test('is shown in the Home tab, in its surface, when the vault holds it', () => {
     expect(resolveHome(on('retro.app'), vault)).toEqual({
       reach: 'tab',
-      target: { kind: 'app', path: 'retro.app' },
+      target: { kind: 'file', path: 'retro.app' },
+      surface: 'app',
     })
   })
 
   test('is reported missing when the vault does not', () => {
     expect(resolveHome(on('gone.app'), vault)).toEqual({
       reach: 'missing',
-      target: { kind: 'app', path: 'gone.app' },
+      target: { kind: 'file', path: 'gone.app' },
     })
   })
 })

@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
+import { isAppBundlePath } from '@holi/shared'
+import { folderClaims, folderDocumentAt } from '../src/renderer/src/lib/folder-documents'
 import { buildTreeData } from '../src/renderer/src/lib/tree-data'
+
 import {
   canMoveInto,
   dropFolder,
@@ -8,6 +11,12 @@ import {
   typeahead,
   visibleRows,
 } from '../src/renderer/src/lib/tree-view'
+
+const apps = folderClaims([
+  { match: isAppBundlePath, folder: { surface: 'app', entry: 'index.html' } },
+])
+const isDocument = (dir: string, has: (path: string) => boolean) =>
+  folderDocumentAt(apps, dir, has) !== null
 
 const data = buildTreeData(['a/x.md', 'a/y.md', 'a/b/z.md', 'root.md'])
 const ids = (open: string[]) => visibleRows(data, new Set(open)).map((r) => r.id)
@@ -20,7 +29,7 @@ describe('visibleRows', () => {
   })
 
   it("shows an app's files only once it is expanded, like a folder's", () => {
-    const withApp = buildTreeData(['Budget.app/index.html', 'Budget.app/app.yaml'])
+    const withApp = buildTreeData(['Budget.app/index.html', 'Budget.app/app.yaml'], [], isDocument)
     const rows = (open: string[]) => visibleRows(withApp, new Set(open)).map((r) => r.id)
     expect(rows([])).toEqual(['Budget.app'])
     expect(rows(['Budget.app'])).toEqual([
@@ -84,7 +93,11 @@ describe('dropFolder', () => {
 })
 
 describe('newItemPlace', () => {
-  const withApp = buildTreeData(['a/x.md', 'a/b/z.md', 'root.md', 'a/Budget.app/index.html'])
+  const withApp = buildTreeData(
+    ['a/x.md', 'a/b/z.md', 'root.md', 'a/Budget.app/index.html'],
+    [],
+    isDocument,
+  )
   it('is the root, first, with nothing focused or a focus that is gone', () => {
     expect(newItemPlace(null, withApp)).toEqual({ parent: '', after: null })
     expect(newItemPlace('gone.md', withApp)).toEqual({ parent: '', after: null })

@@ -1137,7 +1137,7 @@ export function createRouter(deps: RouterDeps) {
       .mutation(async ({ input }): Promise<{ created: string[] }> => {
         const root = await rootFor(input.remote)
         const home = homeTargetOf((await readVaultSettings(root)).home)
-        if (home.kind !== 'app') {
+        if (home.kind !== 'file' || !isAppBundlePath(home.path)) {
           throw new TRPCError({ code: 'BAD_REQUEST', message: 'Home is not an app' })
         }
         return { created: await writeHomeApp(root, home.path) }
@@ -1649,7 +1649,7 @@ export function createRouter(deps: RouterDeps) {
               typeof (e as RecentEntry).key === 'string',
           )
           .slice(0, RECENTS_CAP)
-          .map(({ kind, key }) => ({ kind, key }))
+          .map(({ kind, key, id }) => (typeof id === 'string' ? { kind, key, id } : { kind, key }))
         return {
           remote,
           focusedPath: typeof r.focusedPath === 'string' ? r.focusedPath : null,

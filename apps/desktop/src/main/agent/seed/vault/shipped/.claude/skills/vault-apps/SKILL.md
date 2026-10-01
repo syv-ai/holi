@@ -76,7 +76,7 @@ const tasks = await holi.tasks.list() // every task.*.md
 await holi.tasks.complete(path) // done; a recurring task rolls forward instead
 await holi.open('projects/q2.md') // opens that note in a Holi tab
 await holi.open('board') // or a view: home, board, agenda, mail, settings, history
-const recents = await holi.recents() // [{ kind: 'path'|'app'|'surface'|'session', key }], newest first
+const recents = await holi.recents() // [{ kind: 'path'|'surface'|'session', key, id? }], newest first; an app is { kind: 'surface', key: 'app', id: bundle }
 const hits = await holi.search('budget') // [{ path, match: 'name'|'body', snippet? }]
 const settings = await holi.settings() // the vault's resolved settings
 const people = await holi.members() // [{ login, avatarUrl? }], who can reach the vault

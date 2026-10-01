@@ -15,7 +15,6 @@ import { syncStateAtom } from '@/state/vaults'
 import { useEffect, useState, type ReactNode } from 'react'
 import { TAB_MIME, paneDropZone, parseTabPayload, type PaneDropZone } from '@/lib/tab-drop'
 import { EditorPane } from '@/features/editor/EditorPane'
-import { AppFrame } from '@/features/apps/AppFrame'
 import { SessionTerminal } from '@/features/agent/SessionTerminal'
 import { TurnChip } from '@/features/agent/TurnChip'
 import { FilePlaceholder } from '@/features/files/FilePlaceholder'
@@ -182,9 +181,7 @@ export function PaneView({
             box, which would take the terminals' height. */}
         {tab?.kind === 'agent' ? null : (
           <div ref={bodyRef} className="flex min-h-0 flex-1 flex-col">
-            {tab?.kind === 'app' ? (
-              <AppFrame path={tab.path} />
-            ) : tab?.kind === 'surface' ? (
+            {tab?.kind === 'surface' ? (
               SurfaceView === null ? null : (
                 <SurfaceView {...(tab.id === undefined ? {} : { id: tab.id })} />
               )

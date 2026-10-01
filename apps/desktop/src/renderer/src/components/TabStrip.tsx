@@ -23,8 +23,9 @@ import {
   Tooltip,
 } from '@/primitives'
 import { Bot, ChevronLeft, ChevronRight, X } from 'lucide-react'
-import { appName, type TaskStatus } from '@holi/shared'
+import type { TaskStatus } from '@holi/shared'
 import { pathGlyph, pathLabel } from '@/composites/file-icons'
+import { surfaceLabel } from '@/lib/folder-documents'
 import { offscreenTabs, type Offscreen } from '@/lib/tab-overflow'
 import { reorderOffsets } from '@/lib/tab-reorder'
 import {
@@ -88,14 +89,12 @@ function settleMotion(): { duration: number; easing: string } {
 export function tabKey(tab: Tab): string {
   return tab.kind === 'note'
     ? `note:${tab.path}`
-    : tab.kind === 'app'
-      ? `app:${tab.path}`
-      : tab.kind === 'agent'
-        ? `agent:${tab.id}`
-        : `surface:${tab.surface}:${tab.id ?? ''}`
+    : tab.kind === 'agent'
+      ? `agent:${tab.id}`
+      : `surface:${tab.surface}:${tab.id ?? ''}`
 }
 
-/** What a vault file or app is marked with here and in the tree alike. `icons`
+/** What a vault file is marked with here and in the tree alike. `icons`
  *  is `.holi/settings/icons.yaml` as the snapshot resolved it, and
  *  `tasks` each task file's status, both keyed by vault-relative path. */
 interface PathMarks {
@@ -120,12 +119,16 @@ function sessionOf(tab: Tab & { kind: 'agent' }, agents: TabSources): AgentSessi
 /** A note leads with nothing, as its tree row does; the pill keeps no empty
  *  slot, since nothing here lines up with it. */
 function tabIcon(tab: Tab, marks: PathMarks, agents: TabSources): ReactNode {
-  if (tab.kind === 'note' || tab.kind === 'app') {
+  if (tab.kind === 'note') {
     return pathGlyph(tab.path, { emoji: marks.icons[tab.path], task: marks.tasks.get(tab.path) })
   }
   if (tab.kind === 'surface') {
     const surface = agents.surfaces.get(tab.surface)
-    return surface === undefined ? null : <Icon icon={surface.icon} size="sm" />
+    if (surface === undefined) return null
+    // A folder document (an app) wears the vault icon map's emoji, as its
+    // tree row does.
+    const emoji = tab.id === undefined ? undefined : marks.icons[tab.id]
+    return emoji ? pathGlyph(tab.id!, { emoji }) : <Icon icon={surface.icon} size="sm" />
   }
   // A tab opened for a session that is still live carries its state: the same
   // dot, from the same derivation, as its sidebar row. Anything else (the list,
@@ -137,12 +140,13 @@ function tabIcon(tab: Tab, marks: PathMarks, agents: TabSources): ReactNode {
 }
 
 function tabName(tab: Tab, agents: TabSources): string {
-  if (tab.kind === 'note' || tab.kind === 'app') return pathLabel(tab.path)
+  if (tab.kind === 'note') return pathLabel(tab.path)
   // The terminal's own title, which Claude Code sets to what it is showing.
   if (tab.kind === 'agent') {
     return terminalLabel(agents.terminals.find((t) => t.id === tab.id) ?? null, agents.sessions)
   }
-  return agents.surfaces.get(tab.surface)?.label ?? tab.surface
+  const surface = agents.surfaces.get(tab.surface)
+  return surface === undefined ? tab.surface : surfaceLabel(surface, tab.id)
 }
 
 function tabTooltip(tab: Tab, agents: TabSources): string {
@@ -151,8 +155,12 @@ function tabTooltip(tab: Tab, agents: TabSources): string {
     return session === null ? 'Claude Code' : agentIndicator(session).title
   }
   if (tab.kind === 'note') return tab.path
-  if (tab.kind === 'app') return `the ${appName(tab.path)} app`
-  return agents.surfaces.get(tab.surface)?.label ?? tab.surface
+  const surface = agents.surfaces.get(tab.surface)
+  if (surface === undefined) return tab.surface
+  // One of many (an app): its label and its path.
+  return tab.id === undefined
+    ? surfaceLabel(surface)
+    : `${surfaceLabel(surface, tab.id)}, ${tab.id}`
 }
 
 /**

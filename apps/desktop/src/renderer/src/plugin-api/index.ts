@@ -7,7 +7,10 @@
  * importing a plugin (only `main.tsx` installs the list).
  */
 export type {
+  ClaimCreate,
+  ClaimDecoration,
   ClaimMenuItem,
+  FolderClaim,
   PathClaim,
   PluginEventHandler,
   PluginStore,
@@ -28,7 +31,7 @@ export { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
 export { sessionAtom } from '@/state/session'
 export { activeModeAtom } from '@/state/color-scheme'
 export { openNoteTabAtom } from '@/state/panes'
-export { openSurfaceAtom } from '@/state/surfaces'
+export { openPathAtom, openSurfaceAtom, tabForPathAtom } from '@/state/surfaces'
 export { openDialogAtom, type ActiveDialog, type PluginDialog } from '@/state/dialogs'
 export { askPrompt } from '@/editor/askAgent'
 export { askTargetsAtom, defaultAgentTargetAtom, type AgentTarget } from '@/state/agent'

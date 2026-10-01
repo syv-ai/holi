@@ -6,10 +6,22 @@
 import { render, screen } from '@/test/render'
 import userEvent from '@testing-library/user-event'
 import { expect, test, vi } from 'vitest'
+import { AppWindow } from 'lucide-react'
+import type { ClaimCreate } from '@/plugin-api/types'
 import { ExplorerHeader } from '../ExplorerHeader'
+
+/** A claim's kind, as the app claim adds New App. */
+const APP: ClaimCreate = {
+  id: 'app',
+  label: 'New App',
+  icon: AppWindow,
+  placeholder: 'app name',
+  run: async () => null,
+}
 
 function setup(over: Partial<Parameters<typeof ExplorerHeader>[0]> = {}) {
   const props = {
+    creates: [APP],
     onNew: vi.fn(),
     onCollapseAll: vi.fn(),
     hiddenShown: false,
@@ -22,13 +34,13 @@ function setup(over: Partial<Parameters<typeof ExplorerHeader>[0]> = {}) {
   return props
 }
 
-test('"+" unfolds into task, file, folder and app, each asking for its kind', async () => {
+test('"+" unfolds into task, file, folder and what claims make, each asking for its kind', async () => {
   const p = setup()
   for (const [label, kind] of [
     ['New Task', 'task'],
     ['New File', 'file'],
     ['New Folder', 'folder'],
-    ['New App', 'app'],
+    ['New App', APP],
   ] as const) {
     await userEvent.click(screen.getByRole('button', { name: 'New' }))
     await userEvent.click(screen.getByRole('button', { name: label }))

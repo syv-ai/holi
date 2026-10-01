@@ -1,42 +1,39 @@
 /**
  * The morphing menu at the foot of the nav, and down the rail while the nav is
- * hidden: the registry's rail items (Home, the board, mail and the agenda once
- * Google is connected, Settings), around core's own Search, Apps, the vault's
+ * hidden: the registry's rail items (Home, Apps, the board, mail and the agenda
+ * once Google is connected, Settings), around core's own Search, the vault's
  * assistant (`AgentItem`) and the vault's sync state (`SyncItem`), all sorted
- * by `order` (docs/features/nav-menu.md).
+ * by `order` (docs/features/nav-menu.md). A surface with instances (vault
+ * apps) is a group that drills down to them.
  *
- * Reads shared state only, never another feature's components: the rail from
- * `railAtom`, the apps from `appPathsByRecencyAtom`, the board's count from
- * `openTaskCountAtom`.
+ * Reads shared state only, never another feature's components: the rail and
+ * its instances from `railAtom`, the board's count from `openTaskCountAtom`.
  */
 import { useAtomValue, useSetAtom } from 'jotai'
 import { Search } from 'lucide-react'
 import { useMemo } from 'react'
-import { appName } from '@holi/shared'
+import { surfaceLabel } from '@/lib/folder-documents'
 import { MorphingMenu, type MorphingMenuItem } from '@/primitives'
-import { AppIcon } from '@/composites/file-icons'
 import { openPaletteAtom } from '@/state/palette'
-import { activeTab, openApp, workspaceAtom, type Tab } from '@/state/panes'
+import { activeTab, workspaceAtom, type Tab } from '@/state/panes'
 import { railAtom } from '@/state/plugins'
-import { appPathsByRecencyAtom } from '@/state/recents'
 import { openSurfaceAtom } from '@/state/surfaces'
 import { openTaskCountAtom, overdueTaskCountAtom } from '@/state/tasks'
 import { useAgentItem } from './AgentItem'
 import { useSyncItem } from './SyncItem'
 
-/** An app's child id: its bundle path, kept apart from the fixed ids. */
-const appItemId = (path: string): string => `app:${path}`
+/** An instance's child id: its surface and id, kept apart from the fixed ids. */
+const instanceItemId = (surface: string, id: string): string => `${surface}:${id}`
 
 /** Where core's own items sit among the rail's (`RailItem.order`). */
-const ORDER = { search: 10, apps: 20, agent: 60, sync: 70 } as const
+const ORDER = { search: 10, agent: 60, sync: 70 } as const
 
 /** The item the active tab is, if it is one of the menu's destinations. */
 function activeItemId(tab: Tab | null, rail: ReadonlySet<string>): string | null {
   if (tab === null) return null
-  if (tab.kind === 'app') return appItemId(tab.path)
   if (tab.kind === 'agent') return 'agent'
-  if (tab.kind === 'surface' && rail.has(tab.surface)) return tab.surface
-  return null
+  if (tab.kind !== 'surface' || !rail.has(tab.surface)) return null
+  return tab.id === undefined ? tab.surface : instanceItemId(tab.surface, tab.id)
 }
 
 export function NavMenu({
@@ -45,12 +42,9 @@ export function NavMenu({
   orientation?: 'horizontal' | 'vertical'
 }): React.JSX.Element {
   const workspace = useAtomValue(workspaceAtom)
-  const setWorkspace = useSetAtom(workspaceAtom)
   const openSurface = useSetAtom(openSurfaceAtom)
   const openPalette = useSetAtom(openPaletteAtom)
   const rail = useAtomValue(railAtom)
-  // Most recently opened first; the same array until the order changes.
-  const appOrder = useAtomValue(appPathsByRecencyAtom)
   const openTaskCount = useAtomValue(openTaskCountAtom)
   const overdueCount = useAtomValue(overdueTaskCountAtom)
   const sync = useSyncItem()
@@ -60,57 +54,39 @@ export function NavMenu({
   // restarts its morph when its items change.
   const items = useMemo((): MorphingMenuItem[] => {
     const placed: { order: number; item: MorphingMenuItem }[] = [
-      ...rail.map(({ surface, order, of }) => ({
+      ...rail.map(({ surface, order, of, label, instances }) => ({
         order,
         item: {
           id: surface,
-          label: of.label,
+          label: label ?? surfaceLabel(of),
           icon: of.icon,
           // The board's count stays core's until rail items carry badges.
           ...(surface === 'board'
             ? { badge: openTaskCount, badgeTone: overdueCount > 0 ? ('alert' as const) : undefined }
             : {}),
-          onSelect: () => openSurface(surface),
+          // Instances, most recently used first, drill down; the rest open.
+          ...(instances === undefined
+            ? { onSelect: () => openSurface(surface) }
+            : {
+                children: instances.map((id) => ({
+                  id: instanceItemId(surface, id),
+                  label: surfaceLabel(of, id),
+                  icon: of.icon,
+                  onSelect: () => openSurface(surface, id),
+                })),
+              }),
         },
       })),
       {
         order: ORDER.search,
         item: { id: 'search', label: 'Search', icon: Search, onSelect: () => openPalette('open') },
       },
-      ...(appOrder.length > 0
-        ? [
-            {
-              order: ORDER.apps,
-              item: {
-                id: 'apps',
-                label: 'Apps',
-                icon: AppIcon,
-                children: appOrder.map((path) => ({
-                  id: appItemId(path),
-                  label: appName(path),
-                  icon: AppIcon,
-                  onSelect: () => setWorkspace((w) => openApp(w, path)),
-                })),
-              },
-            },
-          ]
-        : []),
       { order: ORDER.agent, item: agent },
       { order: ORDER.sync, item: sync },
     ]
     // Stable, so items of one order keep the order they were listed in.
     return placed.sort((a, b) => a.order - b.order).map((p) => p.item)
-  }, [
-    rail,
-    appOrder,
-    openTaskCount,
-    overdueCount,
-    agent,
-    sync,
-    setWorkspace,
-    openPalette,
-    openSurface,
-  ])
+  }, [rail, openTaskCount, overdueCount, agent, sync, openPalette, openSurface])
 
   const railKinds = useMemo(() => new Set(rail.map((r) => r.surface)), [rail])
 

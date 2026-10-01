@@ -26,7 +26,6 @@
  */
 
 import { parse as parseYaml } from 'yaml'
-import { isAppBundlePath } from './app-bundle'
 import { vaultRelPath } from './path-safety'
 import { isSurfaceName } from './surfaces'
 import { isPluginId, type PluginSettings } from './plugins'
@@ -91,7 +90,8 @@ export const HOME_VIEWS: readonly HomeView[] = ['recents', 'daily']
 /**
  * What Home is, classified. The file holds one string (`homeTargetOf` reads
  * it): a core view's name, a surface's name (`board`, `mail`), or a vault
- * path to an app or a file.
+ * path. A path may be a directory that is one document, such as a vault app:
+ * the renderer's claims decide that, since they depend on the plugins too.
  *
  * **`daily` is a view, not a path.** `22-08-2026.md` would rot overnight;
  * naming the daily by kind keeps Home on it as the days turn.
@@ -104,14 +104,13 @@ export type HomeTarget =
   | { kind: 'recents' }
   | { kind: 'daily' }
   | { kind: 'surface'; surface: string }
-  | { kind: 'app'; path: string }
   | { kind: 'file'; path: string }
 
 /** What Home is, from its setting. Never throws: a validated value. */
 export function homeTargetOf(home: string): HomeTarget {
   if ((HOME_VIEWS as readonly string[]).includes(home)) return { kind: home as HomeView }
   if (isSurfaceName(home)) return { kind: 'surface', surface: home }
-  return isAppBundlePath(home) ? { kind: 'app', path: home } : { kind: 'file', path: home }
+  return { kind: 'file', path: home }
 }
 
 /**

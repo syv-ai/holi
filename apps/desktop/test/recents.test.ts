@@ -28,9 +28,15 @@ describe('touch', () => {
     ])
   })
 
-  it('tells kinds apart: an app and a path with one key are two entries', () => {
-    const list = touch([path('x')], { kind: 'app', key: 'x' })
+  it('tells kinds apart: a surface and a path with one key are two entries', () => {
+    const list = touch([path('x')], { kind: 'surface', key: 'x' })
     expect(list).toHaveLength(2)
+  })
+
+  it("tells a surface's instances apart by id", () => {
+    const app = (id: string): RecentEntry => ({ kind: 'surface', key: 'app', id })
+    expect(touch([app('a.app')], app('b.app'))).toHaveLength(2)
+    expect(touch([app('a.app')], app('a.app'))).toHaveLength(1)
   })
 
   it('caps the list', () => {
@@ -103,7 +109,11 @@ describe('pruning on write', () => {
 describe('recentOfTab', () => {
   it('maps every tab kind', () => {
     expect(recentOfTab({ kind: 'note', path: 'a.md' })).toEqual(path('a.md'))
-    expect(recentOfTab({ kind: 'app', path: 'plan.app' })).toEqual({ kind: 'app', key: 'plan.app' })
+    expect(recentOfTab({ kind: 'surface', surface: 'app', id: 'plan.app' })).toEqual({
+      kind: 'surface',
+      key: 'app',
+      id: 'plan.app',
+    })
     expect(recentOfTab({ kind: 'agent', id: 't1' })).toEqual({ kind: 'terminal', key: 't1' })
     expect(recentOfTab({ kind: 'surface', surface: 'board' })).toEqual({
       kind: 'surface',

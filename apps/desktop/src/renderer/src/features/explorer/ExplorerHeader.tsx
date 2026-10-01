@@ -1,5 +1,4 @@
 import {
-  AppWindow,
   ChevronsDownUp,
   CircleCheck,
   Eye,
@@ -10,10 +9,12 @@ import {
   Plus,
 } from 'lucide-react'
 import { useMemo, useRef } from 'react'
+import type { ClaimCreate } from '@/plugin-api/types'
 import { MorphingMenu, type MorphingMenuItem } from '@/primitives'
 
-/** What "+" makes. Where it lands is the tree's to decide. */
-export type NewKind = 'task' | 'file' | 'folder' | 'app'
+/** What "+" makes: core's kinds, or what a claim makes (an app). Where it
+ *  lands is the tree's to decide. */
+export type NewKind = 'task' | 'file' | 'folder' | ClaimCreate
 
 /**
  * The explorer's toolbar: the nav menu's morphing menu, anchored at the tree's
@@ -24,6 +25,7 @@ export type NewKind = 'task' | 'file' | 'folder' | 'app'
  * and kept while the menu is open. The parent FileTree carries `group/explorer`.
  */
 export function ExplorerHeader({
+  creates = [],
   onNew,
   onCollapseAll,
   hiddenShown,
@@ -31,6 +33,8 @@ export function ExplorerHeader({
   tasksShown,
   onToggleTasks,
 }: {
+  /** What enabled claims add to "+", after core's own. */
+  creates?: readonly ClaimCreate[]
   onNew: (kind: NewKind) => void
   onCollapseAll: () => void
   /** Whether hidden (dot-prefixed) entries are currently shown. */
@@ -41,7 +45,8 @@ export function ExplorerHeader({
   onToggleTasks: () => void
 }) {
   // The menu restarts its layout pass when its items change identity, so the
-  // items depend on the two states only and call the latest handlers.
+  // items depend on the two states and what claims make only, and call the
+  // latest handlers.
   const handlers = useRef({ onNew, onCollapseAll, onToggleHidden, onToggleTasks })
   handlers.current = { onNew, onCollapseAll, onToggleHidden, onToggleTasks }
 
@@ -71,7 +76,12 @@ export function ExplorerHeader({
             icon: FolderPlus,
             onSelect: make('folder'),
           },
-          { id: 'new-app', label: 'New App', icon: AppWindow, onSelect: make('app') },
+          ...creates.map((c) => ({
+            id: `new-${c.id}`,
+            label: c.label,
+            icon: c.icon,
+            onSelect: make(c),
+          })),
         ],
       },
       {
@@ -95,7 +105,7 @@ export function ExplorerHeader({
         onSelect: () => handlers.current.onToggleHidden(),
       },
     ]
-  }, [tasksShown, hiddenShown])
+  }, [tasksShown, hiddenShown, creates])
 
   return (
     <div className="motion-respond pointer-events-none absolute top-1 right-3 left-3 z-10 opacity-0 focus-within:pointer-events-auto focus-within:opacity-100 group-hover/explorer:pointer-events-auto group-hover/explorer:opacity-100 has-[nav:not([data-view=collapsed])]:pointer-events-auto has-[nav:not([data-view=collapsed])]:opacity-100">

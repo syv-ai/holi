@@ -174,13 +174,14 @@ describe('vault.recents', () => {
       { kind: 'terminal' as const, key: 't1' },
       { kind: 'command' as const, key: 'board.open' },
       { kind: 'surface' as const, key: 'board' },
-      { kind: 'app' as const, key: 'B.app' },
+      { kind: 'surface' as const, key: 'app', id: 'B.app' },
+      { kind: 'surface' as const, key: 'app', id: 'memory/x.app' },
     ]
     const { value } = await runCapability('vault.recents', 'app', ctx({ recents }), undefined)
     expect(value).toEqual([
       { kind: 'path', key: 'a.md' },
       { kind: 'surface', key: 'board' },
-      { kind: 'app', key: 'B.app' },
+      { kind: 'surface', key: 'app', id: 'B.app' },
     ])
   })
 

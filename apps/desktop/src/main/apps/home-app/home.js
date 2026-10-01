@@ -7,14 +7,15 @@ const list = section.querySelector('ul')
 
 /** What a recent is called on this page, and where it lives. */
 function label(entry) {
-  if (entry.kind === 'surface') {
+  if (entry.kind === 'surface' && entry.id === undefined) {
     return { name: entry.key.charAt(0).toUpperCase() + entry.key.slice(1), where: '' }
   }
-  const slash = entry.key.lastIndexOf('/')
-  const file = entry.key.slice(slash + 1)
+  // A path, or one of a surface's things by its path (an app).
+  const path = entry.id ?? entry.key
+  const slash = path.lastIndexOf('/')
   return {
-    name: file.replace(/\.(md|app)$/, ''),
-    where: slash < 0 ? '' : entry.key.slice(0, slash),
+    name: path.slice(slash + 1).replace(/\.(md|app)$/, ''),
+    where: slash < 0 ? '' : path.slice(0, slash),
   }
 }
 
@@ -31,7 +32,7 @@ async function render() {
       button.innerHTML = '<span class="name"></span><span class="where"></span>'
       button.children[0].textContent = name
       button.children[1].textContent = where
-      button.addEventListener('click', () => holi.open(entry.key))
+      button.addEventListener('click', () => holi.open(entry.id ?? entry.key))
       const item = document.createElement('li')
       item.append(button)
       return item

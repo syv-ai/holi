@@ -90,15 +90,13 @@ export function tabPayload(tab: Tab): string {
   return JSON.stringify(
     tab.kind === 'note'
       ? { kind: 'note', path: tab.path }
-      : tab.kind === 'app'
-        ? { kind: 'app', path: tab.path }
-        : tab.kind === 'surface'
-          ? {
-              kind: 'surface',
-              surface: tab.surface,
-              ...(tab.id === undefined ? {} : { id: tab.id }),
-            }
-          : { kind: tab.kind },
+      : tab.kind === 'surface'
+        ? {
+            kind: 'surface',
+            surface: tab.surface,
+            ...(tab.id === undefined ? {} : { id: tab.id }),
+          }
+        : { kind: tab.kind },
   )
 }
 
@@ -122,9 +120,6 @@ export function parseTabPayload(text: string): Tab | null {
   const { kind, path, surface, id } = value as Record<string, unknown>
   if (kind === 'note') {
     return typeof path === 'string' && path !== '' ? { kind: 'note', path } : null
-  }
-  if (kind === 'app') {
-    return typeof path === 'string' && path !== '' ? { kind: 'app', path } : null
   }
   if (kind === 'surface') {
     if (typeof surface !== 'string' || !isSurfaceName(surface)) return null

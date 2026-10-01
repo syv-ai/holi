@@ -16,11 +16,14 @@ import { trpc } from '../lib/trpc'
 import {
   appOpensAtom,
   closeTabsForPaths,
-  openApp,
+  openSurface,
   retargetTab,
   retargetTabs,
   workspaceAtom,
 } from './panes'
+// A cycle (`plugins` reads `activeRemoteAtom`), safe because neither module
+// reads the other's atoms until a store does.
+import { folderSurfacesAtom } from './plugins'
 import { openTaskAtom } from './view'
 
 type JotaiStore = ReturnType<typeof createStore>
@@ -186,7 +189,7 @@ const CORE_EVENTS: Readonly<Record<string, Readonly<Record<string, PluginEventHa
     open: ({ remote, payload }, store) => {
       if (remote !== store.get(activeRemoteAtom)) return
       const { bundle } = payload as { bundle: string }
-      store.set(workspaceAtom, (w) => openApp(w, bundle))
+      store.set(workspaceAtom, (w) => openSurface(w, 'app', bundle))
       store.set(appOpensAtom, (n) => ({ ...n, [bundle]: (n[bundle] ?? 0) + 1 }))
     },
   },
@@ -324,7 +327,7 @@ export const moveNotesAtom = atom(
     await flushAllBuffers()
     await trpc.sync.commitNow.mutate()
     await trpc.notes.move.mutate({ remote, moves })
-    set(workspaceAtom, retargetTabs(get(workspaceAtom), moves))
+    set(workspaceAtom, retargetTabs(get(workspaceAtom), moves, get(folderSurfacesAtom)))
     const active = get(activeDocAtom)
     const moved = active ? moves.find((m) => m.from === active.path) : undefined
     await set(loadSnapshotAtom)
@@ -414,7 +417,7 @@ export const deleteManyAtom = atom(
     await trpc.notes.deleteMany.mutate({ remote, paths, folders })
     const gone = new Set(paths)
     if (gone.has(get(activeDocAtom)?.path ?? '')) set(activeDocAtom, null)
-    set(workspaceAtom, closeTabsForPaths(get(workspaceAtom), paths))
+    set(workspaceAtom, closeTabsForPaths(get(workspaceAtom), paths, get(folderSurfacesAtom)))
     await set(loadSnapshotAtom)
     await trpc.sync.commitNow.mutate()
   },
