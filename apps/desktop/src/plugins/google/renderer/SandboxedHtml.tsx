@@ -22,11 +22,11 @@ import {
   openableLink,
   useMailPalette,
   type MailPalette,
-} from '../../lib/mail-frame'
-import { sanitizeMailHtml } from '../../lib/mail-html'
-import { useRemoteContent, type RemoteContentIdentity } from '../../state/mail-images'
-import { registerMailFrame } from '../../state/mail-frames'
-import { matchHotkey } from '../../lib/hotkey'
+} from './mail-frame'
+import { sanitizeMailHtml } from './mail-html'
+import { useRemoteContent, type RemoteContentIdentity } from './mail-images'
+import { registerMailFrame } from './mail-frames'
+import { matchHotkey } from '@/plugin-api'
 
 interface SandboxedHtmlProps {
   /** Raw and untrusted. Sanitizing happens **here**; a caller must not pre-sanitize. */
@@ -50,7 +50,7 @@ const NO_IDENTITY: RemoteContentIdentity = { key: null, sender: null }
  * stripped URLs, so whatever renders has been through the sanitizer under the
  * current setting.
  *
- * **The unblock is remembered outside this component** ([[state/mail-images]])
+ * **The unblock is remembered outside this component** (`mail-images.ts`)
  * because the reader unmounts every time a thread closes. Local state is only
  * the fallback for a block with no identity.
  */
@@ -129,7 +129,7 @@ interface HtmlFrameProps {
   label: string
   /**
    * Publish this frame's document under this key, so in-thread find can reach
-   * it ([[state/mail-frames]]). `null` for a block with no stable identity,
+   * it (`mail-frames.ts`). `null` for a block with no stable identity,
    * such as a calendar event description.
    */
   registerAs: string | null

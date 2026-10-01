@@ -12,7 +12,13 @@
  */
 import { atom } from 'jotai'
 import { enabledPlugins, VAULT_SETTING_DEFAULTS } from '@holi/shared'
-import type { PathClaim, RailItem, RendererPlugin, Surface } from '@/plugin-api/types'
+import type {
+  PathClaim,
+  RailItem,
+  RendererPlugin,
+  SettingsSection,
+  Surface,
+} from '@/plugin-api/types'
 import { vaultSettingsAtom } from './settings'
 import { activeRemoteAtom } from './vaults'
 
@@ -42,6 +48,14 @@ export const enabledPluginsAtom = atom((get): ReadonlySet<string> => {
 export const claimsAtom = atom((get): readonly PathClaim[] => {
   const enabled = get(enabledPluginsAtom)
   return get(installedPluginsAtom).flatMap((p) => (enabled.has(p.info.id) ? (p.claims ?? []) : []))
+})
+
+/** Every enabled plugin's settings sections, in list order. */
+export const pluginSettingsSectionsAtom = atom((get): readonly SettingsSection[] => {
+  const enabled = get(enabledPluginsAtom)
+  return get(installedPluginsAtom).flatMap((p) =>
+    enabled.has(p.info.id) ? (p.settingsSections ?? []) : [],
+  )
 })
 
 /** Core's contribution, then every enabled plugin's, in list order. */

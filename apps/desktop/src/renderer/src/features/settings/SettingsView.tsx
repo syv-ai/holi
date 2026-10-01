@@ -2,7 +2,7 @@
  * Every setting this vault has, in a tab with a rail.
  *
  * **Renders the sections; does not know the sections.** Rail items come from
- * `SETTINGS_SECTIONS` and rows from `VAULT_SETTING_DESCRIPTORS`, the same list
+ * `settingsSectionsAtom` and rows from `VAULT_SETTING_DESCRIPTORS`, the same list
  * the onboarding ritual renders. Adding a setting is adding a descriptor.
  *
  * **A tab, not a modal**, so it can split beside the note it is changing.
@@ -24,12 +24,13 @@ import { Icon } from '@/primitives'
 import { openPinned, workspaceAtom } from '@/state/panes'
 import { activeRemoteAtom } from '@/state/vaults'
 import { SettingsPicker, SettingsRail } from './SettingsRail'
-import { DEFAULT_SECTION_ID, SETTINGS_SECTIONS } from './sections'
-import { SettingsLink, SettingsNote } from './settings-ui'
+import { DEFAULT_SECTION_ID, settingsSectionsAtom } from './sections'
+import { SettingsLink, SettingsNote } from '@/composites'
 import { useVaultSettings } from './useVaultSettings'
 
 export function SettingsView(): React.JSX.Element {
   const remote = useAtomValue(activeRemoteAtom)
+  const sections = useAtomValue(settingsSectionsAtom)
   const { resolved, error, unattributed } = useVaultSettings()
   const setWorkspace = useSetAtom(workspaceAtom)
   const [activeId, setActiveId] = useState(DEFAULT_SECTION_ID)
@@ -55,7 +56,7 @@ export function SettingsView(): React.JSX.Element {
     return <Placeholder>Reading this vault&rsquo;s settings…</Placeholder>
   }
 
-  const section = SETTINGS_SECTIONS.find((s) => s.id === activeId) ?? SETTINGS_SECTIONS[0]!
+  const section = sections.find((s) => s.id === activeId) ?? sections[0]!
 
   return (
     // **A container query, not a media query**: only the pane's own width
@@ -70,7 +71,7 @@ export function SettingsView(): React.JSX.Element {
       <div className="flex h-full min-h-0 flex-col @min-[560px]:flex-row">
         <div className="hidden w-56 shrink-0 overflow-y-auto @min-[560px]:block">
           <SettingsRail
-            sections={SETTINGS_SECTIONS}
+            sections={sections}
             activeId={section.id}
             onSelect={setActiveId}
             onJump={jump}
@@ -79,7 +80,7 @@ export function SettingsView(): React.JSX.Element {
 
         <div className="shrink-0 border-b border-divider p-2 @min-[560px]:hidden">
           <SettingsPicker
-            sections={SETTINGS_SECTIONS}
+            sections={sections}
             activeId={section.id}
             onSelect={setActiveId}
             onJump={jump}

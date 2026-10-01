@@ -1,7 +1,7 @@
 /**
  * Senders whose remote images always load.
  *
- * Blocking remote content is the default (see `renderer/src/lib/mail-html.ts`):
+ * Blocking remote content is the default (see `renderer/mail-html.ts`):
  * an image fetched from a sender's server is a read receipt nobody agreed to.
  * This holds the *exceptions*: addresses the user has decided they do not mind
  * telling.

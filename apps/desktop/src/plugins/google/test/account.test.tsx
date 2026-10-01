@@ -1,17 +1,17 @@
 /**
- * The connected-Google account, shared: vault settings, which changes it, and
- * the shell, which decides whether the agenda/mail chips exist at all, must not
- * disagree.
+ * The connected-Google account, shared: the Connections section, which changes
+ * it, and the nav menu, which decides whether Mail and Agenda show at all, must
+ * not disagree.
  */
 import { Provider, createStore } from 'jotai'
 import { beforeEach, expect, test, vi } from 'vitest'
 import { render, waitFor } from '@/test/render'
-import { googleAccountAtom, useGoogleAccount } from '../google'
-import { activeRemoteAtom } from '../vaults'
+import { googleConnectedAtom, refreshGoogleAtom, useGoogleAccount } from '../renderer/account'
+import { activeRemoteAtom } from '@/plugin-api'
 
 const statusMock = vi.fn()
 const accountsMock = vi.fn()
-vi.mock('../../lib/trpc', () => ({
+vi.mock('@/lib/trpc', () => ({
   trpc: {
     cap: {
       run: {
@@ -120,15 +120,18 @@ test('an unreachable connector reports no missing scopes rather than a stale lis
   expect(getByTestId('missing').textContent).toBe('0')
 })
 
-test('a write is visible to every reader — connecting lights the chips up', async () => {
+test('a refresh is visible to every reader: connecting lights the nav up', async () => {
   statusMock.mockResolvedValue({ account: null, missingScopes: [] })
   const store = createStore()
 
   const { getByTestId } = renderProbe(store)
   await waitFor(() => expect(getByTestId('account').textContent).toBe('none'))
+  expect(store.get(googleConnectedAtom)).toBe(false)
 
-  // What vault settings does on a successful connect.
-  store.set(googleAccountAtom, { email: 'ada@syv.ai' })
+  // What the Connections section does after a successful connect.
+  statusMock.mockResolvedValue({ account: { email: 'ada@syv.ai' }, missingScopes: [] })
+  store.set(refreshGoogleAtom)
 
   await waitFor(() => expect(getByTestId('account').textContent).toBe('ada@syv.ai'))
+  expect(store.get(googleConnectedAtom)).toBe(true)
 })

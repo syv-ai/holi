@@ -52,6 +52,11 @@ export default defineConfig({
           // a duration. Raising it changes what a failure looks like, not whether one
           // is detected.
           testTimeout: 20_000,
+          // As in the dom project below: a plugin's pure renderer modules
+          // import `@/plugin-api`, which re-exports the editor stack, and
+          // `codemirror-markdown-tables` reaches `@mobily/ts-belt`, whose ESM
+          // build uses directory imports Node will not resolve.
+          server: { deps: { inline: [/codemirror-markdown-tables/, /@mobily[/\\]ts-belt/] } },
         },
       },
       {

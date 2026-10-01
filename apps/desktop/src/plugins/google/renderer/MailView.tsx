@@ -49,9 +49,17 @@ import {
   X,
 } from 'lucide-react'
 import { useAtomValue, useSetAtom } from 'jotai'
-import { defaultAgentTargetAtom } from '@/state/agent'
-import { sendToAgentAtom } from '@/state/agent-send'
-import { buildSummarizePrompt } from '@/lib/summarize-prompt'
+import {
+  activeRemoteAtom,
+  defaultAgentTargetAtom,
+  matchHotkey,
+  openDialogAtom,
+  openNoteTabAtom,
+  sendToAgentAtom,
+  useGlobalPanelLayout,
+  useHasCapability,
+} from '@/plugin-api'
+import { buildSummarizePrompt } from './summarize-prompt'
 import {
   Button,
   Checkbox,
@@ -67,6 +75,7 @@ import {
   Tooltip,
 } from '@/primitives'
 import { SandboxedHtml } from './SandboxedHtml'
+import { ComposeMailDialog } from './ComposeMailDialog'
 import { MailComposer } from './MailComposer'
 import { DraftsList, type DraftSummary } from './DraftsList'
 import { ThreadMenu, type ThreadActions } from './ThreadMenu'
@@ -80,16 +89,11 @@ import {
   type MailCategory,
   type MailboxView,
 } from './MailboxPicker'
-import type { ComposeIntent } from '../../lib/compose-intent'
-import { matchHotkey } from '../../lib/hotkey'
-import { listStamp, messageStamp } from '../../lib/mail-stamp'
-import type { MailAddress, MailAttachment as Attachment, ThreadMessage } from '../../lib/mail-types'
-import { activeRemoteAtom } from '../../state/vaults'
-import { googleCap } from '../../state/google'
-import { openNoteTabAtom } from '../../state/panes'
-import { tasksCap } from '../../state/tasks'
-import { openDialogAtom } from '../../state/dialogs'
-import { useGlobalPanelLayout } from '../../state/preferences'
+import type { ComposeIntent } from './compose-intent'
+import { listStamp, messageStamp } from './mail-stamp'
+import type { MailAddress, MailAttachment as Attachment, ThreadMessage } from './mail-types'
+import { googleCap } from './account'
+import { TASKS_CREATE, tasksCap } from './tasks'
 
 interface ThreadSummary {
   id: string
@@ -230,6 +234,8 @@ export function MailView() {
   /** The Gmail draft the composer is continuing, if any. */
   const [continuing, setContinuing] = useState<string | undefined>(undefined)
   const remote = useAtomValue(activeRemoteAtom)
+  /** Offered only in a vault that runs tasks. */
+  const canLinkToTask = useHasCapability(TASKS_CREATE) && remote !== null
   /** One of Google's calls, for the open vault; refused with none open. */
   const call = useCallback(
     <T,>(work: (remote: string) => Promise<T>): Promise<T> =>
@@ -606,7 +612,7 @@ export function MailView() {
     archive: (id) => void removeThread(id, () => call((r) => googleCap.archive(r, { id }))),
     trash: (id) => void removeThread(id, () => call((r) => googleCap.trash(r, { id }))),
     linkToTask: (thread) => void linkToTask(thread),
-    canLinkToTask: remote !== null,
+    canLinkToTask,
     openExternal: (url) => void window.holi.openExternal(url),
   }
 
@@ -743,7 +749,16 @@ export function MailView() {
               inboxUnread={counts?.unread ?? null}
               categoryCounts={categoryCounts}
               onCategoryMenuOpen={loadCategoryCounts}
-              onCompose={() => openDialog({ id: 'compose-mail', size: 'lg' })}
+              onCompose={() =>
+                // A dialog, where a reply is inline: a fresh message has no
+                // thread to keep in view. Closing is safe: the composer saves
+                // on unmount and the Drafts view finds it again.
+                openDialog({
+                  id: 'plugin',
+                  size: 'lg',
+                  render: (close) => <ComposeMailDialog onClose={close} />,
+                })
+              }
               onRefresh={() => {
                 load()
                 loadCounts()
@@ -895,18 +910,19 @@ export function MailView() {
                     Summarize
                   </Button>
                 </Tooltip>
-                <Tooltip content="make a task linking this thread">
-                  <Button
-                    variant="secondary"
-                    size="xs"
-                    className="shrink-0 gap-1"
-                    disabled={remote === null}
-                    onClick={() => void linkToTask(open)}
-                  >
-                    <Icon icon={Link2} size="sm" />
-                    Task
-                  </Button>
-                </Tooltip>
+                {canLinkToTask && (
+                  <Tooltip content="make a task linking this thread">
+                    <Button
+                      variant="secondary"
+                      size="xs"
+                      className="shrink-0 gap-1"
+                      onClick={() => void linkToTask(open)}
+                    >
+                      <Icon icon={Link2} size="sm" />
+                      Task
+                    </Button>
+                  </Tooltip>
+                )}
                 {/* Advertised by the sender in List-Unsubscribe. Opened, never
                     requested: it is a URL a stranger chose. */}
                 {openRow?.unsubscribeUrl != null && (

@@ -48,7 +48,6 @@ import {
   type Tab,
 } from '../state/panes'
 import { historyOpenAtom, historyTargetPathAtom } from '../state/history'
-import { useGoogleAccount } from '../state/google'
 import { tickNowAtom } from '../state/clock'
 import type { PaneDropZone } from '@/lib/tab-drop'
 import type { ConflictResolvers } from '@/lib/editor-reload'
@@ -109,9 +108,6 @@ export function Shell() {
   const setAppReloads = useSetAtom(appOpensAtom)
   const [navOpen, setNavOpen] = useAtom(navOpenAtom)
   const historyTarget = useAtomValue(historyTargetPathAtom)
-  // The one place that asks main whether Google is connected; settings and the
-  // nav menu share this atom.
-  useGoogleAccount()
   const reconcile = useSetAtom(reconcileAtom)
   const [heldBack, setHeldBack] = useAtom(heldBackAtom)
   /** The pane playing its exit, if any; the timer is the atom's

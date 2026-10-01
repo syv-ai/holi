@@ -6,11 +6,19 @@
  * where it lives. ESLint holds plugins to it, and holds core to never
  * importing a plugin (only `main.tsx` installs the list).
  */
-export type { ClaimMenuItem, PathClaim, RailItem, RendererPlugin, Surface } from './types'
+export type {
+  ClaimMenuItem,
+  PathClaim,
+  RailItem,
+  RendererPlugin,
+  SettingsSection,
+  SettingsSectionHeading,
+  Surface,
+} from './types'
 export type { PluginInfo } from '@holi/shared'
 
 export { trpc } from '@/lib/trpc'
-export { capClient, type CapClient } from '@/lib/cap-client'
+export { capClient, type CapClient, type UiCapability } from '@/lib/cap-client'
 export { useHasCapability } from '@/state/capabilities'
 export { cn } from '@/lib/cn'
 export { DRAWER_WIDTH } from '@/lib/drawer'
@@ -23,3 +31,6 @@ export { openDialogAtom, type ActiveDialog, type PluginDialog } from '@/state/di
 export { askPrompt } from '@/editor/askAgent'
 export { askTargetsAtom, defaultAgentTargetAtom, type AgentTarget } from '@/state/agent'
 export { sendToAgentAtom } from '@/state/agent-send'
+export { useGlobalPanelLayout } from '@/state/preferences'
+export { matchHotkey } from '@/lib/hotkey'
+export { plainMarkdownExtensions } from '@/editor/extensions'

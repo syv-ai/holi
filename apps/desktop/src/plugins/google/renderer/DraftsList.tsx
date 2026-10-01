@@ -10,9 +10,9 @@ import { useAtomValue } from 'jotai'
 import { useEffect, useState } from 'react'
 import { FilePen } from 'lucide-react'
 import { Button, Icon } from '@/primitives'
-import { googleCap } from '../../state/google'
-import { activeRemoteAtom } from '../../state/vaults'
-import type { MailAddress } from '../../lib/mail-types'
+import { googleCap } from './account'
+import { activeRemoteAtom } from '@/plugin-api'
+import type { MailAddress } from './mail-types'
 
 export interface DraftSummary {
   draftId: string

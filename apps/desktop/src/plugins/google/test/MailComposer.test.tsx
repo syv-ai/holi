@@ -6,17 +6,17 @@
  * messages the user does not remember making.
  *
  * The body editor is CodeMirror and is exercised in
- * `editor/__tests__/mail-composer-extensions.test.tsx`; dirtiness is driven
+ * core's `editor/__tests__/plain-markdown-extensions.test.tsx`; dirtiness is driven
  * here through the header fields, which is the same state machine.
  */
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { getDefaultStore } from 'jotai'
-import { MailComposer } from '../MailComposer'
-import { activeRemoteAtom } from '../../../state/vaults'
-import type { ComposeIntent } from '../../../lib/compose-intent'
-import type { ThreadMessage } from '../../../lib/mail-types'
+import { MailComposer } from '../renderer/MailComposer'
+import { activeRemoteAtom } from '@/plugin-api'
+import type { ComposeIntent } from '../renderer/compose-intent'
+import type { ThreadMessage } from '../renderer/mail-types'
 
 const saveDraft = vi.fn()
 const send = vi.fn()
@@ -31,7 +31,7 @@ const google: Record<string, (params: unknown) => unknown> = {
   'google.draftBody': (p) => draftQuery(p),
 }
 
-vi.mock('../../../lib/trpc', () => ({
+vi.mock('@/lib/trpc', () => ({
   trpc: {
     cap: {
       run: {
@@ -46,7 +46,7 @@ vi.mock('../../../lib/trpc', () => ({
 }))
 
 /** The composer's own mail-image store reads preferences over IPC. */
-vi.mock('../../../state/mail-images', () => ({
+vi.mock('../renderer/mail-images', () => ({
   useRemoteContent: () => ({ allowed: false, allow: () => {} }),
 }))
 

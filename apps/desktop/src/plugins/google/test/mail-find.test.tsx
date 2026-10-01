@@ -6,7 +6,7 @@
  * coordination across a thread's several frames is the component's job.
  */
 import { beforeEach, describe, expect, test } from 'vitest'
-import { clearIn, findIn, setActiveMark } from '../mail-find'
+import { clearIn, findIn, setActiveMark } from '../renderer/mail-find'
 
 let root: HTMLElement
 

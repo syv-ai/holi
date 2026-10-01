@@ -9,8 +9,8 @@ import { render as rtlRender, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { Provider, createStore } from 'jotai'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { ConnectionsSection } from '../ConnectionsSection'
-import { activeRemoteAtom } from '@/state/vaults'
+import { ConnectionsSection } from '../renderer/ConnectionsSection'
+import { activeRemoteAtom } from '@/plugin-api'
 
 /** A fresh jotai store per test: the google atoms are module level, so one
  *  case's answer would otherwise still be held when the next one renders. */
@@ -40,7 +40,7 @@ const google: Record<string, (params: unknown) => unknown> = {
   'google.imageSenders': async () => [],
 }
 
-vi.mock('../../../lib/trpc', () => ({
+vi.mock('@/lib/trpc', () => ({
   trpc: {
     cap: {
       run: {

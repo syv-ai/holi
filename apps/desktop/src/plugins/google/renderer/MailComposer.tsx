@@ -16,17 +16,16 @@ import { useAtomValue } from 'jotai'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
-import { Button, ChipInput, Input } from '../../primitives'
+import { Button, ChipInput, Input } from '@/primitives'
 import { SandboxedHtml } from './SandboxedHtml'
-import { mailComposerExtensions } from '../../editor/extensions'
-import { composeFrom, type ComposeIntent } from '../../lib/compose-intent'
-import { renderMailMarkdown } from '../../lib/mail-markdown'
-import { mailHtmlToMarkdown } from '../../lib/mail-unmarkdown'
-import { sanitizeMailHtml } from '../../lib/mail-html'
-import { describeSendFailure, type SendFailure } from '../../lib/mail-send-failure'
-import type { MailAddress } from '../../lib/mail-types'
-import { googleCap } from '../../state/google'
-import { activeRemoteAtom } from '../../state/vaults'
+import { activeRemoteAtom, plainMarkdownExtensions } from '@/plugin-api'
+import { composeFrom, type ComposeIntent } from './compose-intent'
+import { renderMailMarkdown } from './mail-markdown'
+import { mailHtmlToMarkdown } from './mail-unmarkdown'
+import { sanitizeMailHtml } from './mail-html'
+import { describeSendFailure, type SendFailure } from './mail-send-failure'
+import type { MailAddress } from './mail-types'
+import { googleCap } from './account'
 
 /**
  * Idle time before an autosave. A keystroke-rate debounce turns a paragraph
@@ -588,7 +587,7 @@ function MarkdownEditor({
       state: EditorState.create({
         doc: initial.current,
         extensions: [
-          ...mailComposerExtensions(),
+          ...plainMarkdownExtensions(),
           EditorView.updateListener.of((update) => {
             if (update.docChanged) notify.current(update.state.doc.toString())
             if (update.focusChanged && !update.view.hasFocus) blurred.current()

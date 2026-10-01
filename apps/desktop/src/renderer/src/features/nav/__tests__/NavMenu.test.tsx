@@ -1,6 +1,6 @@
 /**
  * The nav menu's items do what their names say, and the ones that depend on
- * something (apps, Google) appear only when it is there. Core's surfaces are
+ * something (apps, a plugin's own condition) appear only when it is there. Core's surfaces are
  * installed as `main.tsx` installs them. Driven through the
  * expanded list: jsdom lays nothing out, so the vertical dock has no room and
  * holds only More, whose list is then every item.
@@ -10,14 +10,15 @@ import userEvent from '@testing-library/user-event'
 import { Provider, atom, createStore } from 'jotai'
 import { expect, test, vi } from 'vitest'
 import { VAULT_SETTING_DEFAULTS } from '@holi/shared'
-import { googleAccountAtom } from '@/state/google'
 import { paletteAtom } from '@/state/palette'
 import { CORE_SURFACES } from '@/components/core-surfaces'
 import { activeTab, workspaceAtom } from '@/state/panes'
-import { coreSurfacesAtom } from '@/state/plugins'
+import { coreSurfacesAtom, installedPluginsAtom } from '@/state/plugins'
 import { vaultSettingsAtom } from '@/state/settings'
 import { activeRemoteAtom } from '@/state/vaults'
 import { NavMenu } from '../NavMenu'
+import type { RendererPlugin } from '@/plugin-api/types'
+import { Inbox } from 'lucide-react'
 
 const { apps, tasks, overdue } = vi.hoisted(() => ({
   apps: { current: [] as string[] },
@@ -30,20 +31,28 @@ vi.mock('@/state/tasks', () => ({
   overdueTaskCountAtom: atom(() => overdue.current),
 }))
 
-type Account = { email: string } | null | undefined
+/** A plugin's rail item, shown while its own condition holds, as Google's
+ *  Mail shows once an account is connected. */
+const shownAtom = atom(false)
+const FAKE_PLUGIN: RendererPlugin = {
+  info: { id: 'fake', label: 'Fake', default: true },
+  surfaces: [{ kind: 'inbox', label: 'Inbox', icon: Inbox, render: () => null }],
+  rail: [{ surface: 'inbox', order: 40, visible: shownAtom }],
+}
 
 function setup({
   appPaths = [],
   openTasks = 0,
   overdueTasks = 0,
-  account = null,
-}: { appPaths?: string[]; openTasks?: number; overdueTasks?: number; account?: Account } = {}) {
+  shown = false,
+}: { appPaths?: string[]; openTasks?: number; overdueTasks?: number; shown?: boolean } = {}) {
   apps.current = appPaths
   tasks.current = openTasks
   overdue.current = overdueTasks
   const store = createStore()
   store.set(coreSurfacesAtom, CORE_SURFACES)
-  store.set(googleAccountAtom, account as never)
+  store.set(installedPluginsAtom, [FAKE_PLUGIN])
+  store.set(shownAtom, shown)
   render(
     <Provider store={store}>
       <NavMenu orientation="vertical" />
@@ -58,7 +67,7 @@ async function openList(user: ReturnType<typeof userEvent.setup>) {
   return screen.getByRole('button', { name: 'Home' }).parentElement!
 }
 
-test('the items are in their order, without apps or Google when there are none', async () => {
+test("the items are in their order, without apps or a plugin's hidden item", async () => {
   const { user } = setup()
   const list = await openList(user)
   expect(
@@ -68,24 +77,14 @@ test('the items are in their order, without apps or Google when there are none',
   ).toEqual(['Home', 'Search', 'Board', 'Agents', 'Sync: up to date', 'Settings'])
 })
 
-test('Settings comes last, after Google, so it sits beside More', async () => {
-  const { user } = setup({ appPaths: ['char-count.app'], account: { email: 'ada@syv.ai' } })
+test("Settings comes last, after a plugin's items, so it sits beside More", async () => {
+  const { user } = setup({ appPaths: ['char-count.app'], shown: true })
   const list = await openList(user)
   expect(
     within(list)
       .getAllByRole('button')
       .map((b) => b.textContent),
-  ).toEqual([
-    'Home',
-    'Search',
-    'Apps',
-    'Board',
-    'Mail',
-    'Agenda',
-    'Agents',
-    'Sync: up to date',
-    'Settings',
-  ])
+  ).toEqual(['Home', 'Search', 'Apps', 'Board', 'Inbox', 'Agents', 'Sync: up to date', 'Settings'])
 })
 
 test('the board count turns to an alert while a task is overdue', async () => {
@@ -112,7 +111,9 @@ test('Home opens the home surface', async () => {
   })
   await openList(user)
   await user.click(screen.getByRole('button', { name: 'Home' }))
-  await waitFor(() => expect(activeTab(store.get(workspaceAtom))).toEqual({ kind: 'surface', surface: 'home' }))
+  await waitFor(() =>
+    expect(activeTab(store.get(workspaceAtom))).toEqual({ kind: 'surface', surface: 'home' }),
+  )
 })
 
 test('Search opens the palette', async () => {
@@ -155,21 +156,17 @@ test('Apps drills into the apps by name, and picking one opens it', async () => 
   })
 })
 
-test('Mail and Agenda appear once Google is connected, and open their panes', async () => {
-  const { store, user } = setup({ account: { email: 'ada@syv.ai' } })
+test("a plugin's item appears when its condition holds, and opens its pane", async () => {
+  const { store, user } = setup({ shown: true })
   await openList(user)
-  await user.click(screen.getByRole('button', { name: 'Mail' }))
-  expect(activeTab(store.get(workspaceAtom))).toEqual({ kind: 'surface', surface: 'mail' })
-  await openList(user)
-  await user.click(screen.getByRole('button', { name: 'Agenda' }))
-  expect(activeTab(store.get(workspaceAtom))).toEqual({ kind: 'surface', surface: 'agenda' })
+  await user.click(screen.getByRole('button', { name: 'Inbox' }))
+  expect(activeTab(store.get(workspaceAtom))).toEqual({ kind: 'surface', surface: 'inbox' })
 })
 
-test('before Google has been asked about, Mail and Agenda stay hidden', async () => {
-  const { user } = setup({ account: undefined })
+test("a plugin's item stays hidden while its condition does not hold", async () => {
+  const { user } = setup({ shown: false })
   await openList(user)
-  expect(screen.queryByRole('button', { name: 'Mail', hidden: true })).toBeNull()
-  expect(screen.queryByRole('button', { name: 'Agenda', hidden: true })).toBeNull()
+  expect(screen.queryByRole('button', { name: 'Inbox', hidden: true })).toBeNull()
 })
 
 test('the active surface reads as the current page', async () => {

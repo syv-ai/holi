@@ -1,5 +1,5 @@
 /**
- * The composer's editor stack.
+ * The plain markdown editor stack, which the mail composer writes in.
  *
  * The point of a third stack is what it does *not* carry. `baseEditorExtensions`
  * decorates `[[wiki links]]` into chips and completes `@` against vault notes —
@@ -10,7 +10,7 @@
 import { EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import { afterEach, describe, expect, it } from 'vitest'
-import { mailComposerExtensions } from '../extensions'
+import { plainMarkdownExtensions } from '../extensions'
 
 let view: EditorView | null = null
 
@@ -18,7 +18,7 @@ function mount(doc: string): EditorView {
   const parent = document.createElement('div')
   document.body.appendChild(parent)
   view = new EditorView({
-    state: EditorState.create({ doc, extensions: mailComposerExtensions() }),
+    state: EditorState.create({ doc, extensions: plainMarkdownExtensions() }),
     parent,
   })
   return view
@@ -30,7 +30,7 @@ afterEach(() => {
   document.body.innerHTML = ''
 })
 
-describe('mailComposerExtensions', () => {
+describe('plainMarkdownExtensions', () => {
   it('leaves a [[wiki link]] as literal text, with no chip', () => {
     // The assertion the whole stack exists for. In the notes editor this
     // becomes a `.cm-wikilink` widget pointing at a vault path.
@@ -64,6 +64,6 @@ describe('mailComposerExtensions', () => {
   it('takes no vault dependencies at all', () => {
     // If this ever needs an argument, the composer has been given a way to
     // reach the vault and the separation above has been lost.
-    expect(mailComposerExtensions).toHaveLength(0)
+    expect(plainMarkdownExtensions).toHaveLength(0)
   })
 })

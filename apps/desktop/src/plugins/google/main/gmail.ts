@@ -9,7 +9,7 @@
  * untouched, or `null`.
  *
  * - The **UI** reads `html`, and sanitizes it in the renderer
- *   (`renderer/src/lib/mail-html.ts`, which also blocks remote content by
+ *   (`renderer/mail-html.ts`, which also blocks remote content by
  *   default).
  * - The **agent** reads `body`, via `textOnly()` below. An LLM wants prose, not
  *   a table layout.

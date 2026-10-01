@@ -1,8 +1,10 @@
 /**
- * The settings tab's sections, in rail order.
+ * The settings tab's sections, in rail order: core's, with every enabled
+ * plugin's after the vault's own content and before Vault and Account.
  *
- * The rail, the section view and the narrow-pane picker all read this list, so
- * adding a section is adding an entry here and nothing else.
+ * The rail, the section view and the narrow-pane picker all read
+ * `settingsSectionsAtom`, so adding a section is adding an entry here, or a
+ * plugin's `settingsSections`, and nothing else.
  *
  * `headings` is what the rail shows beneath the section you are in. They are
  * **declared** rather than scraped from the DOM, which could only happen after
@@ -18,34 +20,24 @@ import {
   THEME_LOCAL_FILE,
   THEME_TOKEN_GROUPS,
 } from '@holi/shared'
+import { atom } from 'jotai'
+import type { SettingsSection, SettingsSectionHeading } from '@/plugin-api/types'
+import { pluginSettingsSectionsAtom } from '@/state/plugins'
 import { AccountSection } from './AccountSection'
-import { ConnectionsSection } from './ConnectionsSection'
 import { DescriptorSection } from './DescriptorSection'
 import { IconsSection } from './IconsSection'
 import { ThemeSection } from './ThemeSection'
 import { VaultSection } from './VaultSection'
-import { headingId } from './settings-ui'
+import { headingId } from '@/composites'
 import { LIGHT_AND_DARK } from './appearance-headings'
 import { COLLABORATORS, LEAVE_OR_DELETE, WHERE_IT_LIVES } from './vault-headings'
 
-export interface SettingsSectionHeading {
-  /** The anchor the rail scrolls to: `headingId(title)`, never hand-written. */
-  id: string
-  title: string
-}
-
-export interface SettingsSection {
-  id: string
-  label: string
-  headings: readonly SettingsSectionHeading[]
-  /** The files this section is a view of, offered at the bottom of it. */
-  files: readonly string[]
-  Component: (props: { remote: string }) => React.JSX.Element
-}
+export type { SettingsSection, SettingsSectionHeading }
 
 const heading = (title: string): SettingsSectionHeading => ({ id: headingId(title), title })
 
-export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
+/** What the vault holds: its settings, its look, its commits. */
+const VAULT_CONTENT: readonly SettingsSection[] = [
   {
     id: 'general',
     label: 'General',
@@ -83,15 +75,10 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
     files: [SETTINGS_FILE, SETTINGS_LOCAL_FILE],
     Component: () => <DescriptorSection section="commits" />,
   },
-  {
-    id: 'connections',
-    label: 'Connections',
-    headings: [],
-    // Nothing on disk in the vault: a Google grant is the machine's, held by
-    // main's credential storage, and the renderer never sees a token.
-    files: [],
-    Component: () => <ConnectionsSection />,
-  },
+]
+
+/** The vault itself and who you are: always last. */
+const VAULT_AND_ACCOUNT: readonly SettingsSection[] = [
   {
     id: 'vault',
     label: 'Vault',
@@ -110,4 +97,17 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
   },
 ]
 
-export const DEFAULT_SECTION_ID = SETTINGS_SECTIONS[0]!.id
+/** Core's sections alone. */
+export const CORE_SETTINGS_SECTIONS: readonly SettingsSection[] = [
+  ...VAULT_CONTENT,
+  ...VAULT_AND_ACCOUNT,
+]
+
+/** Every section there is in the open vault. */
+export const settingsSectionsAtom = atom((get): readonly SettingsSection[] => [
+  ...VAULT_CONTENT,
+  ...get(pluginSettingsSectionsAtom),
+  ...VAULT_AND_ACCOUNT,
+])
+
+export const DEFAULT_SECTION_ID = VAULT_CONTENT[0]!.id

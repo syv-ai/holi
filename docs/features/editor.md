@@ -4,7 +4,7 @@ Every note is a `.md` file, edited in CodeMirror 6 with live preview: markdown r
 
 ## How it works
 
-**Three stacks.** `baseEditorExtensions` is the notes editor. `mailComposerExtensions` is the same markdown editing with every vault layer removed. `plainTextExtensions` opens other text files with highlighting and validity checks, no markdown layers.
+**Three stacks.** `baseEditorExtensions` is the notes editor. `plainMarkdownExtensions` is the same markdown editing with every vault layer removed, for text that leaves the vault (the Google plugin's mail composer, through the plugin api). `plainTextExtensions` opens other text files with highlighting and validity checks, no markdown layers.
 
 **Live preview.** A `ViewPlugin` decorates the visible ranges and rebuilds on doc, selection or viewport change. The **element** the selection touches renders raw; the rest of its line stays rendered. Touching an edge counts, and when elements nest only the innermost opens. A heading's `#`, a list marker and a quote's `>` reveal with their whole line. The swap is instant, except the marks that move a whole line's text: a heading's `#`, a quote's `>` and a fence's backticks slide (`mark-slide.ts`). Each is a mark that is never replaced, opened by its own line class (`cm-heading-raw`, `cm-quote-raw`, `cm-code-raw`), so a fence inside a quote opens only what the caret is on. Inline marks (`**`, a link's `](url)`) and rendered widgets stay a plain swap: they have no line of their own to carry the state, and a long URL would rewrap its paragraph for the length of the slide.
 

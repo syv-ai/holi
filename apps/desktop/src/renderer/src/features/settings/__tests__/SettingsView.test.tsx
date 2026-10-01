@@ -15,7 +15,7 @@ import { Provider, createStore } from 'jotai'
 import { beforeEach, expect, test, vi } from 'vitest'
 import { VAULT_SETTING_DEFAULTS, VAULT_SETTING_DESCRIPTORS } from '@holi/shared'
 import { SettingsView } from '../SettingsView'
-import { SETTINGS_SECTIONS } from '../sections'
+import { CORE_SETTINGS_SECTIONS } from '../sections'
 import { descriptorsIn } from '../DescriptorSection'
 import { activeRemoteAtom } from '@/state/vaults'
 import { installedPluginsAtom } from '@/state/plugins'
@@ -41,22 +41,11 @@ vi.mock('@/lib/trpc', () => ({
       reset: { mutate: vi.fn() },
     },
     // The tests below walk EVERY section, so this mock has to answer for the
-    // Vault, Connections and Account sections too, only so the walk does not
+    // Vault and Account sections too, only so the walk does not
     // throw.
     github: {
       collaborators: { query: () => collaborators() },
       openCollaboratorSettings: { mutate: vi.fn() },
-    },
-    // Google's capabilities, through the UI door.
-    cap: {
-      run: {
-        mutate: async ({ name }: { name: string }) =>
-          ({
-            'google.status': { account: null, missingScopes: [] },
-            'google.accounts': { accounts: [], current: null },
-            'google.imageSenders': [],
-          })[name] ?? { ok: true },
-      },
     },
     vaults: {
       unpushed: { query: async () => [] },
@@ -109,7 +98,7 @@ test('every descriptor is filed under a section that exists', () => {
   // The check a union type would have given for free, in the layer that owns
   // the list: `@holi/shared` cannot import the registry, so `section` is a
   // plain string there and a typo would render the setting nowhere at all.
-  const ids = new Set(SETTINGS_SECTIONS.map((s) => s.id))
+  const ids = new Set(CORE_SETTINGS_SECTIONS.map((s) => s.id))
   for (const descriptor of VAULT_SETTING_DESCRIPTORS) {
     expect(ids, `${descriptor.key} is filed under "${descriptor.section}"`).toContain(
       descriptor.section,
@@ -122,7 +111,7 @@ test('every setting renders, across the sections', async () => {
   // Against the list, never a number. This is the FULL list, unlike the
   // ritual: `editorFont` has no birth question and still belongs here.
   const seen: string[] = []
-  for (const section of SETTINGS_SECTIONS) {
+  for (const section of CORE_SETTINGS_SECTIONS) {
     await go(section.label)
     // The rail's tree has groups of its own.
     const rail = screen.getByRole('navigation', { name: 'Settings sections' })
@@ -139,7 +128,7 @@ test('every heading the rail offers is a heading the section renders', async () 
   // The rail scrolls by `[data-heading]`, so a declared heading the section
   // never renders is a link that silently scrolls nowhere.
   setup()
-  for (const section of SETTINGS_SECTIONS) {
+  for (const section of CORE_SETTINGS_SECTIONS) {
     if (section.headings.length === 0) continue
     await go(section.label)
     for (const heading of section.headings) {

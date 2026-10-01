@@ -30,8 +30,8 @@ import {
   THEME_LOCAL_FILE,
 } from '@holi/shared'
 import { Button, ColorSwatch, Dialog, IconButton, Input, Tooltip } from '@/primitives'
-import { SettingsList, SettingsNote, SettingsRow } from './settings-ui'
-import { SettingsHeading } from './settings-ui'
+import { SettingsList, SettingsNote, SettingsRow } from '@/composites'
+import { SettingsHeading } from '@/composites'
 import { LIGHT_AND_DARK } from './appearance-headings'
 import { DescriptorSection } from './DescriptorSection'
 import { tokenToHex } from '@/lib/css-color'

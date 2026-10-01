@@ -7,7 +7,7 @@
  */
 import { VAULT_SETTING_DESCRIPTORS } from '@holi/shared'
 import { SettingRow } from './SettingRow'
-import { SettingsList } from './settings-ui'
+import { SettingsList } from '@/composites'
 import { useVaultSettings } from './useVaultSettings'
 
 /** The descriptors filed under a section, in the order the shared list declares

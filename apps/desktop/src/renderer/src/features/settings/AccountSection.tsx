@@ -11,7 +11,7 @@ import { Button, Checkbox, Dialog } from '@/primitives'
 import { trpc } from '@/lib/trpc'
 import { unpushedWarning } from '@/lib/unpushed-warning'
 import { sessionAtom, signOutAtom } from '@/state/session'
-import { ExternalLink, SettingsNote } from './settings-ui'
+import { ExternalLink, SettingsNote } from '@/composites'
 
 const userUrl = (login: string) => `https://github.com/${login}`
 

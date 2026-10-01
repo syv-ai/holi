@@ -938,5 +938,5 @@
   background: var(--selection);
 }
 
-/* A mail message's styling is in `lib/mail-frame.ts`: it renders in a
+/* A mail message's styling is in the Google plugin's `mail-frame.ts`: it renders in a
    sandboxed frame the app's cascade deliberately cannot reach. */

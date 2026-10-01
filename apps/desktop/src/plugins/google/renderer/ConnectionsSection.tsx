@@ -1,9 +1,6 @@
 /**
- * The Connections section: the Google account behind mail + calendar.
- *
- * **Lives under `features/settings/`, not `features/google/`, because a feature
- * may only import primitives, composites and itself.** It shares only
- * `state/google.ts` with the mail and agenda views.
+ * The Connections section of the settings tab: the Google account behind mail
+ * and calendar. The plugin contributes it as a settings section.
  *
  * **Two scopes, and the panel's job is keeping them apart**. An account is
  * connected on this *machine*; a *vault* uses one of them. So the rows offer
@@ -15,17 +12,18 @@
  * browser is open, `awaitConnect` resolves when the grant lands. Nothing here
  * ever sees a token: the renderer is handed an email address and nothing else.
  *
- * **Whether an account is connected lives in `state/google.ts`, not here**,
- * because the shell shows the agenda and mail chips on the same answer. Only
- * the flow's transient state is local.
+ * **Whether an account is connected lives in `account.ts`, not here**, because
+ * the nav menu shows Mail and Agenda on the same answer. Only the flow's
+ * transient state is local, and every change here asks main again
+ * (`refreshGoogle`) rather than assuming what it produced.
  */
 import { useAtomValue } from 'jotai'
 import { useEffect, useRef, useState } from 'react'
+import { SettingsHeading, SettingsNote } from '@/composites'
+import { activeRemoteAtom } from '@/plugin-api'
 import { Button } from '@/primitives'
-import { SettingsHeading, SettingsNote } from './settings-ui'
-import { googleCap, useGoogleAccount } from '@/state/google'
-import { useAlwaysAllowedSenders, useForgetImageSenders } from '@/state/mail-images'
-import { activeRemoteAtom } from '@/state/vaults'
+import { googleCap, useGoogleAccount } from './account'
+import { useAlwaysAllowedSenders, useForgetImageSenders } from './mail-images'
 
 /** The flow's transient state. "Connected" is deliberately absent: that is the
  *  shared atom's to know. */
@@ -42,7 +40,6 @@ const OUTCOME: Record<string, string> = {
 export function ConnectionsSection(): React.JSX.Element {
   const {
     account,
-    setAccount,
     missingScopes,
     accounts,
     currentSub,
@@ -69,13 +66,11 @@ export function ConnectionsSection(): React.JSX.Element {
       // Settles when the browser comes back, the person cancels, or the flow
       // times out: there is no IPC timeout to race.
       const result = await googleCap.awaitConnect(remote)
-      if (result.kind === 'granted' && result.account !== null) {
-        // Writing the shared atom makes the shell's chips appear on the same
-        // tick. `refreshGoogle` then re-reads what was actually granted: a user
-        // can approve Gmail and decline contacts, which lands here as `granted`
-        // with scopes still missing.
-        setAccount(result.account)
-        void refreshGoogle()
+      if (result.kind === 'granted') {
+        // Re-read what was actually granted: a person can approve Gmail and
+        // decline contacts, which lands here as `granted` with scopes still
+        // missing. The nav menu's items appear when the answer does.
+        refreshGoogle()
         setPhase({ kind: 'idle' })
       } else {
         setPhase({ kind: 'idle', error: OUTCOME[result.kind] || undefined })
@@ -93,23 +88,20 @@ export function ConnectionsSection(): React.JSX.Element {
   /** Unlink THIS vault. The account and every other vault using it survive. */
   const disconnect = async () => {
     if (remote !== null) await googleCap.disconnectVault(remote).catch(() => undefined)
-    setAccount(null)
-    void refreshGoogle()
+    refreshGoogle()
     setPhase({ kind: 'idle' })
   }
 
   /** Reuse an account already connected here. No consent: the grant exists. */
-  const useAccount = async (sub: string) => {
+  const linkAccount = async (sub: string) => {
     if (remote !== null) await googleCap.useAccount(remote, { sub }).catch(() => undefined)
-    setAccount(undefined) // back to "not asked", so the shell re-reads with it
-    void refreshGoogle()
+    refreshGoogle()
   }
 
   /** Revoke at Google and drop it everywhere. The destructive one. */
   const removeAccount = async (sub: string) => {
     if (remote !== null) await googleCap.removeAccount(remote, { sub }).catch(() => undefined)
-    setAccount(undefined)
-    void refreshGoogle()
+    refreshGoogle()
   }
 
   /** Connected here, but not the one this vault uses. */
@@ -190,7 +182,7 @@ export function ConnectionsSection(): React.JSX.Element {
                 {other.email}
               </span>
               <span className="flex shrink-0 items-center gap-2">
-                <Button size="xs" variant="secondary" onClick={() => void useAccount(other.sub)}>
+                <Button size="xs" variant="secondary" onClick={() => void linkAccount(other.sub)}>
                   Use in this vault
                 </Button>
                 <Button size="xs" variant="ghost" onClick={() => void removeAccount(other.sub)}>

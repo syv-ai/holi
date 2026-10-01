@@ -5,7 +5,7 @@
  * risks a duplicate reaching a real person.
  */
 import { describe, expect, it } from 'vitest'
-import { describeSendFailure } from '../mail-send-failure'
+import { describeSendFailure } from '../renderer/mail-send-failure'
 
 /** An error as `ipcLink` rebuilds it: main's verdict on `err.data.code`. */
 function withCode(code: string): Error {

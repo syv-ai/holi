@@ -11,13 +11,13 @@
  * - **This sender, always**: persisted in main (`google/image-prefs.ts`) and
  *   applied to every message from that address.
  *
- * **`undefined` means "not asked yet"**, as in `state/google.ts`: the banner
+ * **`undefined` means "not asked yet"**, as in `account.ts`: the banner
  * must not flash for an already-allowed sender while the query is in flight.
  */
 import { atom, getDefaultStore, useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { useCallback, useEffect } from 'react'
-import { googleCap } from './google'
-import { activeRemoteAtom } from './vaults'
+import { googleCap } from './account'
+import { activeRemoteAtom } from '@/plugin-api'
 
 /** Message keys unblocked this session. A `ReadonlySet` replaced wholesale, so
  *  a mutation cannot fail to notify. */

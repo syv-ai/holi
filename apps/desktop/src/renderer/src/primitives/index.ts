@@ -94,4 +94,4 @@ export {
 export { Textarea } from './Textarea'
 export { Tooltip, TooltipProvider } from './Tooltip'
 
-export { ChipInput, type ChipInputProps } from './ChipInput'
+export { ChipInput, type ChipAddress, type ChipInputProps } from './ChipInput'

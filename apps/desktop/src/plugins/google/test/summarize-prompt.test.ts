@@ -6,7 +6,7 @@
  * question rather than handing back one paragraph and closing.
  */
 import { describe, expect, it } from 'vitest'
-import { buildSummarizePrompt } from '../src/renderer/src/lib/summarize-prompt'
+import { buildSummarizePrompt } from '../renderer/summarize-prompt'
 
 const thread = {
   subject: 'Q2 budget',

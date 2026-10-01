@@ -3,7 +3,7 @@
  * through `toLocaleString`, so "Aug 14" would pin CI's locale.
  */
 import { describe, expect, test } from 'vitest'
-import { listStamp, messageStamp } from '../mail-stamp'
+import { listStamp, messageStamp } from '../renderer/mail-stamp'
 
 /** A wall-clock time appears in the output. */
 const HAS_TIME = /\d{1,2}:\d{2}/

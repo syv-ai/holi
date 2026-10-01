@@ -15,8 +15,7 @@ import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { useState } from 'react'
-import { ChipInput } from '../ChipInput'
-import type { MailAddress } from '@/lib/mail-types'
+import { ChipInput, type ChipAddress } from '../ChipInput'
 
 /** Controlled, the way the composer uses it. */
 function Harness({
@@ -24,11 +23,11 @@ function Harness({
   suggestions,
   onChange,
 }: {
-  initial?: MailAddress[]
-  suggestions?: MailAddress[]
-  onChange?: (next: MailAddress[]) => void
+  initial?: ChipAddress[]
+  suggestions?: ChipAddress[]
+  onChange?: (next: ChipAddress[]) => void
 }) {
-  const [value, setValue] = useState<MailAddress[]>(initial)
+  const [value, setValue] = useState<ChipAddress[]>(initial)
   return (
     <ChipInput
       label="To"
@@ -205,7 +204,7 @@ describe('pasting', () => {
 })
 
 describe('suggestions', () => {
-  const CONTACTS: MailAddress[] = [
+  const CONTACTS: ChipAddress[] = [
     { name: 'Ada Holm', email: 'ada@syv.ai' },
     { name: 'Adam Berg', email: 'adam@example.com' },
     { name: 'Bo Berg', email: 'bo@example.com' },

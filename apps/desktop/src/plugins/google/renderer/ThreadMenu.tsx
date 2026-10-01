@@ -88,12 +88,11 @@ export function ThreadMenu({
 
         <ContextMenuSeparator />
 
-        <ContextMenuItem
-          disabled={!actions.canLinkToTask}
-          onSelect={() => actions.linkToTask(thread)}
-        >
-          Link to task
-        </ContextMenuItem>
+        {actions.canLinkToTask && (
+          <ContextMenuItem onSelect={() => actions.linkToTask(thread)}>
+            Link to task
+          </ContextMenuItem>
+        )}
         <ContextMenuItem onSelect={() => actions.openExternal(thread.webUrl)}>
           Open in Gmail
         </ContextMenuItem>

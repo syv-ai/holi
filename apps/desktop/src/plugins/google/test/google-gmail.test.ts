@@ -230,7 +230,7 @@ describe('htmlToText', () => {
   it('strips tags without executing anything — it is a formatter, not a sanitizer', () => {
     // Its consumers are the agent CLI and the text fallback, and both put the
     // result in a text node or a JSON string. Nothing renders this as markup —
-    // the UI reads `html` and sanitizes it (renderer/src/lib/mail-html.ts).
+    // the UI reads `html` and sanitizes it (renderer/mail-html.ts).
     expect(htmlToText('<img src=x onerror=alert(1)><b>bold</b>')).toBe('bold')
   })
 })

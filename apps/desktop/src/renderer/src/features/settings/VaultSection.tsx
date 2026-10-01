@@ -19,7 +19,7 @@ import { collaboratorsErrorText, errorCodeOf } from '@/lib/collaborators-error'
 import { trpc } from '@/lib/trpc'
 import { openDialogAtom } from '@/state/dialogs'
 import { activeRemoteAtom, vaultsAtom } from '@/state/vaults'
-import { ExternalLink, SettingsField, SettingsHeading, SettingsNote } from './settings-ui'
+import { ExternalLink, SettingsField, SettingsHeading, SettingsNote } from '@/composites'
 import { COLLABORATORS, LEAVE_OR_DELETE, WHERE_IT_LIVES } from './vault-headings'
 
 /** Mirrors `remoteUrl` in `main/git.ts`, minus the `.git`: this one is for a

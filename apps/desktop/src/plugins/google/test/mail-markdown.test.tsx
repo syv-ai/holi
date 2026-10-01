@@ -6,7 +6,7 @@
  * boundary, not the security one; `dompurify` still runs downstream.
  */
 import { describe, expect, it } from 'vitest'
-import { renderMailMarkdown } from '../mail-markdown'
+import { renderMailMarkdown } from '../renderer/mail-markdown'
 
 describe('renderMailMarkdown', () => {
   it('renders the ordinary marks', () => {

@@ -8,9 +8,9 @@ import { render, screen, waitFor, within } from '@/test/render'
 import userEvent from '@testing-library/user-event'
 import { getDefaultStore } from 'jotai'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
-import { AgendaView } from '../AgendaView'
-import { activeRemoteAtom } from '../../../state/vaults'
-import { resetMailImagesForTests } from '../../../state/mail-images'
+import { AgendaView } from '../renderer/AgendaView'
+import { activeRemoteAtom } from '@/plugin-api'
+import { resetMailImagesForTests } from '../renderer/mail-images'
 
 const agendaMock = vi.fn()
 const agendaCachedMock = vi.fn()
@@ -32,11 +32,13 @@ const google: Record<string, (params: unknown) => unknown> = {
   'google.forgetImageSenders': () => Promise.resolve({ ok: true }),
 }
 
-vi.mock('../../../lib/trpc', () => ({
+vi.mock('@/lib/trpc', () => ({
   trpc: {
     // `tasks.create` is a capability at the UI door; the double sees its
     // params with the vault they run in.
     cap: {
+      // The vault runs tasks, so a task can be made from an event.
+      names: { query: async () => ['tasks.create'] },
       run: {
         mutate: async ({
           remote,

@@ -20,7 +20,7 @@ import { useAck } from '@/lib/use-ack'
 import type { Surface } from '@/plugin-api/types'
 import { appPathsAtom } from '@/state/apps'
 import { installedPluginsAtom, surfacesAtom } from '@/state/plugins'
-import { SettingsRow } from './settings-ui'
+import { SettingsRow } from '@/composites'
 
 export function Layer({ target }: { target: VaultSettingDescriptor['target'] }): React.JSX.Element {
   const committed = target === 'committed'
@@ -33,7 +33,7 @@ export function Layer({ target }: { target: VaultSettingDescriptor['target'] }):
       }
     >
       {/* `--border`, not `--divider`: this is a chip, and a chip is an object
-          whose edge has to be seen. See the note in `settings-ui.tsx`. */}
+          whose edge has to be seen. See the note in `composites/settings-ui.tsx`. */}
       <span className="rounded border border-border px-1.5 py-0.5 text-[10px] leading-4 text-muted-foreground">
         {committed ? 'vault' : 'this machine'}
       </span>

@@ -40,11 +40,14 @@ import {
   Tooltip,
 } from '@/primitives'
 import { SandboxedHtml } from './SandboxedHtml'
-import { activeRemoteAtom } from '../../state/vaults'
-import { googleCap } from '../../state/google'
-import { openNoteTabAtom } from '../../state/panes'
-import { tasksCap } from '../../state/tasks'
-import { useGlobalPanelLayout } from '../../state/preferences'
+import {
+  activeRemoteAtom,
+  openNoteTabAtom,
+  useGlobalPanelLayout,
+  useHasCapability,
+} from '@/plugin-api'
+import { googleCap } from './account'
+import { TASKS_CREATE, tasksCap } from './tasks'
 
 /** Mirrors `main/google/calendar.ts`. */
 type RsvpStatus = 'needsAction' | 'tentative' | 'accepted' | 'declined'
@@ -208,6 +211,8 @@ export function AgendaView() {
   const remote = useAtomValue(activeRemoteAtom)
   const openNote = useSetAtom(openNoteTabAtom)
   const [creating, setCreating] = useState<string | null>(null)
+  /** Offered only in a vault that runs tasks. */
+  const canCreateTask = useHasCapability(TASKS_CREATE) && remote !== null
   /** Which row the detail pane is showing, by `eventKey`. */
   const [selected, setSelected] = useState<string | null>(null)
   /** Account-scoped, not per-vault: the agenda is the same calendar in every
@@ -455,7 +460,7 @@ export function AgendaView() {
         ) : (
           <EventDetail
             event={openEvent}
-            canCreateTask={remote !== null}
+            canCreateTask={canCreateTask}
             creating={creating === eventKey(openEvent)}
             onCreateTask={() => void createTask(openEvent)}
           />
@@ -496,16 +501,13 @@ function EventDetail({
             </Button>
           </Tooltip>
         )}
-        <Tooltip content="make a task linking this event">
-          <Button
-            variant="secondary"
-            size="xs"
-            disabled={!canCreateTask || creating}
-            onClick={onCreateTask}
-          >
-            {creating ? 'Creating…' : 'Task'}
-          </Button>
-        </Tooltip>
+        {canCreateTask && (
+          <Tooltip content="make a task linking this event">
+            <Button variant="secondary" size="xs" disabled={creating} onClick={onCreateTask}>
+              {creating ? 'Creating…' : 'Task'}
+            </Button>
+          </Tooltip>
+        )}
         <IconButton
           icon={ExternalLink}
           label={`open ${event.title} in Google Calendar`}

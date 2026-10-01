@@ -3,8 +3,8 @@
  * to the sender and obvious to everybody else on the thread.
  */
 import { describe, expect, it } from 'vitest'
-import { composeFrom, type ComposeIntent } from '../compose-intent'
-import type { ThreadMessage } from '../mail-types'
+import { composeFrom, type ComposeIntent } from '../renderer/compose-intent'
+import type { ThreadMessage } from '../renderer/mail-types'
 
 const SELF = ['ada@syv.ai', 'ada.holm@syv.ai']
 

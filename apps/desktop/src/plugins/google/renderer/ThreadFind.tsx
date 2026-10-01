@@ -6,7 +6,7 @@
  * harder than an ordinary find:
  *
  * 1. **The text is in other documents**, one per message, reached through
- *    [[state/mail-frames]]. Result order comes from the thread's message order.
+ *    `mail-frames.ts`. Result order comes from the thread's message order.
  * 2. **A collapsed message has no frame at all**, so a search expands the whole
  *    thread while it is open: a count that silently excludes what is collapsed
  *    reads as "not in this thread".
@@ -16,8 +16,8 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { ChevronDown, ChevronUp, Search, X } from 'lucide-react'
 import { Icon, IconButton, Input } from '@/primitives'
-import { clearIn, findIn, setActiveMark } from '../../lib/mail-find'
-import { mailFrameFor, useMailFrameVersion } from '../../state/mail-frames'
+import { clearIn, findIn, setActiveMark } from './mail-find'
+import { mailFrameFor, useMailFrameVersion } from './mail-frames'
 
 /** Where a plain-text message body is marked in the app's own document, since a
  *  text-only message has no frame to register. Set by [[MailView]]'s `MessageBody`. */

@@ -4,7 +4,7 @@
  * pixel, a restyling `<style>`, a form that posts on click.
  */
 import { describe, expect, it } from 'vitest'
-import { sanitizeMailHtml } from '../mail-html'
+import { sanitizeMailHtml } from '../renderer/mail-html'
 
 /** Parse the result so assertions ask about the DOM, not string spelling. */
 function parse(html: string): HTMLElement {

@@ -54,6 +54,18 @@ export type CapClient<T> = {
   ]: T[K] extends UiEntry ? Verb<T[K]> : never
 }
 
+/**
+ * One UI-door verb as a caller types it by hand: another plugin's capability,
+ * whose table it does not import. Dispatch checks the params at runtime.
+ *
+ *   capClient<{ 'tasks.create': UiCapability<{ title: string }, { path: string }> }>('tasks')
+ */
+export interface UiCapability<P, R> {
+  doors: readonly ['ui']
+  params(raw: unknown): P
+  run(...args: never[]): Promise<R>
+}
+
 export function capClient<T>(namespace: string): CapClient<T> {
   return new Proxy({} as CapClient<T>, {
     get: (_target, verb) =>

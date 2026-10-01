@@ -5,15 +5,15 @@
  * context to preserve, so a modal costs nothing. Closing is safe: the composer
  * forces a save on unmount, and the Drafts view finds it again.
  *
- * This wrapper exists because the dialog registry carries only serialisable
- * entries, so `sendAs` and the address book are fetched here.
+ * Opened as the plugin dialog, so it fetches `sendAs` and the address book
+ * itself rather than being handed them.
  */
 import { useAtomValue } from 'jotai'
 import { useEffect, useState } from 'react'
 import { MailComposer } from './MailComposer'
-import { googleCap } from '../../state/google'
-import { activeRemoteAtom } from '../../state/vaults'
-import type { MailAddress } from '../../lib/mail-types'
+import { googleCap } from './account'
+import { activeRemoteAtom } from '@/plugin-api'
+import type { MailAddress } from './mail-types'
 
 export function ComposeMailDialog({
   draftId,

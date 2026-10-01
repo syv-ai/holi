@@ -76,7 +76,8 @@ whose owner the vault runs), so a button for another plugin's verb hides while t
 Core's `tasks.create` is one: the board and the Google views create tasks through it.
 A plugin claims vault paths: the first enabled claim with a `view` opens a note tab of that path,
 and its `rowMenu` items join the file tree's menu. A plugin adds `surfaces` (tab kinds) and `rail`
-items to the nav menu ([tabs and panes](features/tabs-panes.md)), registered beside core's own.
+items to the nav menu ([tabs and panes](features/tabs-panes.md)), registered beside core's own, and
+`settingsSections` to the settings tab ([settings](features/settings.md)).
 Its dialogs open as `{id: 'plugin', render}`.
 A plugin's own code sits in `main/`, `renderer/`, `shared/` and `test/` under its folder; its
 renderer imports its main side as types only, for `capClient`. The plugins are PDF

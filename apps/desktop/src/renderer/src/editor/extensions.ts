@@ -183,12 +183,12 @@ export function baseEditorExtensions(deps: EditorDeps): Extension[] {
 }
 
 /**
- * The editor stack for writing a mail. A separate stack, not a
- * parameterised notes stack: its markdown layers are about the vault, and
- * `[[wiki links]]` or `@`-mentions would paste vault paths into an email. It
- * keeps the markdown typing comforts and nothing that knows a vault exists.
+ * Markdown typing comforts with nothing that knows a vault exists, for text
+ * that leaves the vault (a mail, written in the Google plugin). A separate
+ * stack, not a parameterised notes stack: its markdown layers are about the
+ * vault, and `[[wiki links]]` or `@`-mentions would paste vault paths into it.
  */
-export function mailComposerExtensions(): Extension[] {
+export function plainMarkdownExtensions(): Extension[] {
   return [
     history(),
     drawSelection(),

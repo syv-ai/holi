@@ -18,7 +18,7 @@ import {
   type AskAgentSeam,
   type AskTarget,
 } from '../askAgent'
-import { baseEditorExtensions, mailComposerExtensions, plainTextExtensions } from '../extensions'
+import { baseEditorExtensions, plainMarkdownExtensions, plainTextExtensions } from '../extensions'
 
 describe('selectionPrompt', () => {
   it('names the note and the line range, then quotes every line', () => {
@@ -534,7 +534,7 @@ describe('which stacks get it', () => {
   })
 
   it('the mail composer does not — it knows nothing about a vault', () => {
-    mount('one\ntwo', EditorSelection.single(0, 3), mailComposerExtensions())
+    mount('one\ntwo', EditorSelection.single(0, 3), plainMarkdownExtensions())
     expect(button()).toBeNull()
   })
 

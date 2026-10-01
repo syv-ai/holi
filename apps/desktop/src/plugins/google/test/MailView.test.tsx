@@ -8,12 +8,11 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@/test/render'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
-import { MailView, matchPeople, mentionAt, replaceMention } from '../MailView'
+import { MailView, matchPeople, mentionAt, replaceMention } from '../renderer/MailView'
 import { getDefaultStore } from 'jotai'
-import { resetMailImagesForTests } from '../../../state/mail-images'
-import { resetMailFramesForTests } from '../../../state/mail-frames'
-import { activeDialogAtom } from '../../../state/dialogs'
-import { activeRemoteAtom } from '../../../state/vaults'
+import { resetMailImagesForTests } from '../renderer/mail-images'
+import { resetMailFramesForTests } from '../renderer/mail-frames'
+import { activeRemoteAtom } from '@/plugin-api'
 
 const threadMock = vi.fn()
 const readMock = vi.fn()
@@ -34,6 +33,8 @@ const discardDraftMock = vi.fn()
 const draftMock = vi.fn()
 const draftsMock = vi.fn()
 const meetingMock = vi.fn()
+/** What `openDialogAtom` was asked to open. */
+const openedDialog = vi.fn()
 const createTaskMock = vi.fn()
 
 /** Google's capabilities, by name, through the UI door. */
@@ -59,7 +60,15 @@ const google: Record<string, (params: unknown) => unknown> = {
   meeting: (p) => meetingMock(p),
 }
 
-vi.mock('../../../lib/trpc', () => ({
+vi.mock('@/plugin-api', async (original) => {
+  const { atom } = await import('jotai')
+  return {
+    ...(await original<typeof import('@/plugin-api')>()),
+    openDialogAtom: atom(null, (_get, _set, dialog: unknown) => openedDialog(dialog)),
+  }
+})
+
+vi.mock('@/lib/trpc', () => ({
   trpc: {
     cap: {
       run: {
@@ -208,6 +217,7 @@ beforeEach(() => {
   draftMock.mockReset().mockResolvedValue(null)
   draftsMock.mockReset().mockResolvedValue([])
   createTaskMock.mockReset().mockResolvedValue({ path: 'Q2 budget.md' })
+  openedDialog.mockReset()
   // Every Google call names the vault it is for.
   getDefaultStore().set(activeRemoteAtom, 'syv-ai/vault')
   // The remote-content choice outlives a component, so reset it or one test's
@@ -2178,23 +2188,24 @@ test('the thread list comes back when Mail is chosen again', async () => {
  * preserve.
  */
 test('new message opens the compose dialog rather than an inline composer', async () => {
-  // Asserted against the real registry atom: the entry IS the contract with
-  // `DialogHost`.
-  const store = getDefaultStore()
-  store.set(activeDialogAtom, null)
   const user = userEvent.setup()
   threadMock.mockResolvedValue(page([summary()]))
   render(<MailView />)
 
   await user.click(await screen.findByRole('button', { name: 'new message' }))
 
-  expect(store.get(activeDialogAtom)).toEqual({ id: 'compose-mail', size: 'lg' })
+  // The plugin dialog is the contract with core's dialog host: it renders
+  // what the plugin hands it.
+  expect(openedDialog).toHaveBeenCalledWith(expect.objectContaining({ id: 'plugin', size: 'lg' }))
+  const { render: content } = openedDialog.mock.calls[0]![0] as {
+    render: (close: () => void) => React.ReactNode
+  }
+  render(<>{content(() => {})}</>)
+  expect(await screen.findByRole('textbox', { name: 'Subject' })).toBeInTheDocument()
 })
 
 test('new message does not disturb an open thread', async () => {
   // The dialog must not close what is being read behind it.
-  const store = getDefaultStore()
-  store.set(activeDialogAtom, null)
   const user = userEvent.setup()
   threadMock.mockResolvedValue(page([summary()]))
   render(<MailView />)

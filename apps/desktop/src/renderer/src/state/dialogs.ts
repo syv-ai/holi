@@ -19,12 +19,6 @@ export type ActiveDialog = { closable?: boolean } & (
    */
   | { id: 'plugin'; size: DialogSize; render: (close: () => void) => ReactNode }
   /**
-   * A brand-new mail. Carries no payload, and `draftId` is deliberately
-   * absent: continuing a draft happens in the Drafts view, which has the thread
-   * context this does not.
-   */
-  | { id: 'compose-mail'; size: 'lg' }
-  /**
    * Set or clear a path's icon in `.holi/settings/icons.yaml`. Carries the
    * map's current entry, which the tree already has, so the dialog opens filled.
    */

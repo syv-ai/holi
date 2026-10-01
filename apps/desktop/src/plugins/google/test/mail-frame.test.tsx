@@ -13,8 +13,8 @@ import {
   readMailPalette,
   useMailPalette,
   type MailPalette,
-} from '../mail-frame'
-import { sanitizeMailHtml } from '../mail-html'
+} from '../renderer/mail-frame'
+import { sanitizeMailHtml } from '../renderer/mail-html'
 
 const PALETTE: MailPalette = {
   background: '#101010',

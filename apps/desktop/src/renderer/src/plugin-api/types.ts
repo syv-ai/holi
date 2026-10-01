@@ -56,9 +56,32 @@ export interface RailItem {
   visible?: Atom<boolean>
 }
 
+export interface SettingsSectionHeading {
+  /** The anchor the rail scrolls to: `headingId(title)`, never hand-written. */
+  id: string
+  title: string
+}
+
+/**
+ * A section of the settings tab (docs/features/settings.md). Core's own and
+ * every enabled plugin's are listed in one rail; a plugin's come after core's
+ * vault sections and before Vault and Account.
+ */
+export interface SettingsSection {
+  id: string
+  label: string
+  /** What the rail shows beneath the section you are in: declared, so a test
+   *  can hold the section to rendering each one. */
+  headings: readonly SettingsSectionHeading[]
+  /** The files this section is a view of, offered at the bottom of it. */
+  files: readonly string[]
+  Component: (props: { remote: string }) => React.JSX.Element
+}
+
 export interface RendererPlugin {
   info: PluginInfo
   claims?: readonly PathClaim[]
   surfaces?: readonly Surface[]
   rail?: readonly RailItem[]
+  settingsSections?: readonly SettingsSection[]
 }

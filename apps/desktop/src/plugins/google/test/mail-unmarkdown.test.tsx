@@ -6,8 +6,8 @@
  * which builds a DOM from its input.
  */
 import { describe, expect, it } from 'vitest'
-import { renderMailMarkdown } from '../mail-markdown'
-import { mailHtmlToMarkdown, quoteAsMarkdown } from '../mail-unmarkdown'
+import { renderMailMarkdown } from '../renderer/mail-markdown'
+import { mailHtmlToMarkdown, quoteAsMarkdown } from '../renderer/mail-unmarkdown'
 
 describe('mailHtmlToMarkdown', () => {
   it('round-trips the ordinary marks', () => {

@@ -10,14 +10,19 @@
 import * as React from 'react'
 import { X } from 'lucide-react'
 import { cn } from '@/lib/cn'
-import type { MailAddress } from '@/lib/mail-types'
 import { IconButton } from './IconButton'
 
+/** One address: a name, `''` when there is none, and the address itself. */
+export interface ChipAddress {
+  name: string
+  email: string
+}
+
 export interface ChipInputProps {
-  value: MailAddress[]
-  onChange: (next: MailAddress[]) => void
-  /** Already ranked by `google.contacts`: filtered here, never re-sorted. */
-  suggestions?: MailAddress[]
+  value: ChipAddress[]
+  onChange: (next: ChipAddress[]) => void
+  /** Already ranked by the caller: filtered here, never re-sorted. */
+  suggestions?: ChipAddress[]
   placeholder?: string
   label: string
 }
@@ -29,7 +34,7 @@ export interface ChipInputProps {
 const PLAUSIBLE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
 /** `Ada Holm <ada@syv.ai>` or a bare address. `null` when neither. */
-function parseOne(text: string): MailAddress | null {
+function parseOne(text: string): ChipAddress | null {
   const trimmed = text.trim().replace(/,$/, '')
   if (trimmed === '') return null
 
@@ -46,7 +51,7 @@ function parseOne(text: string): MailAddress | null {
   return { name: trimmed, email: trimmed.toLowerCase() }
 }
 
-function has(value: MailAddress[], email: string): boolean {
+function has(value: ChipAddress[], email: string): boolean {
   return value.some((address) => address.email === email.toLowerCase())
 }
 
@@ -72,7 +77,7 @@ export function ChipInput({
             (person.email.includes(query) || person.name.toLowerCase().includes(query)),
         )
 
-  const add = (address: MailAddress): void => {
+  const add = (address: ChipAddress): void => {
     if (!has(value, address.email)) onChange([...value, address])
     setText('')
     setInvalid(false)
@@ -131,7 +136,7 @@ export function ChipInput({
     event.preventDefault()
 
     const parts = pasted.split(/[,;]/)
-    const added: MailAddress[] = []
+    const added: ChipAddress[] = []
     const leftover: string[] = []
     for (const part of parts) {
       if (part.trim() === '') continue
