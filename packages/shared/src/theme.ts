@@ -294,8 +294,8 @@ export function themeBlockToVars(block: ThemeBlock): Record<string, string> {
  * The groups the settings tab renders the tokens in, and the order it renders
  * them.
  *
- * **Grouping is the only thing hand-written here.** A label is derived from the
- * slug (`card-foreground` → "Card foreground") rather than restated. A note
+ * **Grouping and the roles are what is hand-written here.** A label is the token’s
+ * role (`THEME_TOKEN_ROLES`), with the slug shown beneath it. A note
  * (`THEME_TOKEN_NOTES`) is written only where two tokens sound interchangeable
  * and are not.
  *
@@ -387,8 +387,56 @@ export const THEME_TOKEN_NOTES: Readonly<Record<string, string>> = Object.freeze
   selection: 'Highlighted text. Follows the brand unless you set it.',
 })
 
-/** `card-foreground` → `Card foreground`. */
+/**
+ * What a token paints, in the words of someone looking at the screen, where
+ * the slug is shadcn's jargon (`muted-foreground` is "Quiet text"). The
+ * settings tab shows the slug beneath, for whoever edits the file.
+ */
+export const THEME_TOKEN_ROLES: Readonly<Record<string, string>> = Object.freeze({
+  background: 'Page',
+  foreground: 'Text',
+  card: 'Card',
+  'card-foreground': 'Text on a card',
+  popover: 'Menus and popovers',
+  'popover-foreground': 'Text in a menu',
+  primary: 'Brand, as a fill',
+  'primary-foreground': 'Text on the brand fill',
+  brand: 'Brand, as text',
+  ring: 'Focus ring',
+  selection: 'Selected text',
+  secondary: 'Secondary button',
+  'secondary-foreground': 'Text on a secondary button',
+  muted: 'Quiet fill',
+  'muted-foreground': 'Quiet text',
+  accent: 'Hover',
+  'accent-foreground': 'Text on hover',
+  destructive: 'Danger',
+  'destructive-foreground': 'Text on danger',
+  border: 'Edge of an object',
+  divider: 'Seam between panes',
+  'drawer-edge': 'Sidebar edge',
+  input: 'Field edge',
+  'scrollbar-thumb': 'Scrollbar',
+  'scrollbar-thumb-hover': 'Scrollbar under the pointer',
+  link: 'Link',
+  'link-missing': 'Link to nothing',
+  task: 'Task link',
+  'task-todo': 'To do',
+  'task-doing': 'Doing',
+  'task-done': 'Done',
+  code: 'Inline code',
+  comment: 'Comment text',
+  'comment-background': 'Comment banner',
+  radius: 'Corner rounding',
+  'shadow-popover': 'Menu shadow',
+  'shadow-dialog': 'Dialog shadow',
+})
+
+/** A token's role (`THEME_TOKEN_ROLES`), else its slug as words:
+ *  `card-foreground` → `Card foreground`. */
 export function themeTokenLabel(slug: string): string {
+  const role = THEME_TOKEN_ROLES[slug]
+  if (role !== undefined) return role
   const words = slug.replace(/-/g, ' ')
   return words.charAt(0).toUpperCase() + words.slice(1)
 }

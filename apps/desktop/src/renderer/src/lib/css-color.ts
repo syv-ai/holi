@@ -27,8 +27,22 @@ const CHANNELS = /(-?[\d.]+)/g
  * Silent on purpose: an unresolvable colour opens the picker on black rather
  * than taking the pane down.
  */
-export function cssColorToHex(value: string): string {
-  const el = probeElement()
+export function cssColorToHex(value: string, within?: Element): string {
+  // Inside `within` when given, so a `var()` resolves as that element sees it:
+  // a cell painted in the palette that is not showing.
+  const scoped = within === undefined ? null : document.createElement('span')
+  if (scoped !== null) {
+    scoped.style.display = 'none'
+    within!.appendChild(scoped)
+  }
+  try {
+    return toHex(scoped ?? probeElement(), value)
+  } finally {
+    scoped?.remove()
+  }
+}
+
+function toHex(el: HTMLSpanElement, value: string): string {
   el.style.color = ''
   el.style.color = value
   // An unparseable value computes to the inherited colour, indistinguishable
@@ -46,8 +60,9 @@ export function cssColorToHex(value: string): string {
     .join('')}`
 }
 
-/** A root custom property's effective value as hex. Resolved through `color`,
- *  since a `color-mix(...)` token is only a string to `getPropertyValue`. */
-export function tokenToHex(slug: string): string {
-  return cssColorToHex(`var(--${slug})`)
+/** A custom property's effective value as hex, at the root or as `within`
+ *  sees it. Resolved through `color`, since a `color-mix(...)` token is only a
+ *  string to `getPropertyValue`. */
+export function tokenToHex(slug: string, within?: Element): string {
+  return cssColorToHex(`var(--${slug})`, within)
 }

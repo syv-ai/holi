@@ -2,8 +2,8 @@
  * The theme's controls.
  *
  * The pane renders every whitelisted token rather than a list of its own, a
- * reset DELETES the key rather than writing a blank, and the two axes (mode and
- * layer) decide where a write lands rather than what is shown.
+ * reset DELETES the key rather than writing a blank, a cell writes into its own
+ * palette, and the layer decides where a write lands rather than what is shown.
  */
 import { render, screen, waitFor } from '@/test/render'
 import userEvent from '@testing-library/user-event'
@@ -76,13 +76,17 @@ test('renders a control for every whitelisted token', async () => {
   }
 })
 
-test('marks a token the vault has not set as a default', async () => {
+test('offers a reset only where the vault set a value', async () => {
   setup({ dark: { primary: '#ff0000' } })
   await waitFor(() => expect(screen.getByText('--primary')).toBeInTheDocument())
 
-  // One row is set, so it carries no "default" marker; the rest do.
-  const defaults = screen.getAllByText('default')
-  expect(defaults.length).toBe(THEME_TOKENS.length - 1)
+  // One cell is set, so one reset is live; every other cell, in both
+  // palettes, is the default.
+  const live = screen
+    .getAllByRole('button', { name: /^reset / })
+    .filter((b) => b.getAttribute('aria-disabled') !== 'true')
+  expect(live.map((b) => b.getAttribute('aria-label'))).toEqual(['reset Brand, as a fill in dark'])
+  expect(screen.getAllByRole('button', { name: /^reset / })).toHaveLength(THEME_TOKENS.length * 2)
 })
 
 test('a reset writes null, which is what deletes the key', async () => {
@@ -91,7 +95,7 @@ test('a reset writes null, which is what deletes the key', async () => {
   setup({ dark: { primary: '#ff0000' } })
   await waitFor(() => expect(screen.getByText('--primary')).toBeInTheDocument())
 
-  await userEvent.click(screen.getByRole('button', { name: 'reset Primary' }))
+  await userEvent.click(screen.getByRole('button', { name: 'reset Brand, as a fill in dark' }))
 
   await waitFor(() => expect(themeWrite).toHaveBeenCalled())
   expect(patchOf()).toEqual({ dark: { primary: null } })
@@ -101,18 +105,17 @@ test('cannot reset a token that is already the default', async () => {
   setup()
   await waitFor(() => expect(screen.getByText('--primary')).toBeInTheDocument())
 
-  expect(screen.getByRole('button', { name: 'reset Primary' })).toHaveAttribute(
+  expect(screen.getByRole('button', { name: 'reset Brand, as a fill in dark' })).toHaveAttribute(
     'aria-disabled',
     'true',
   )
 })
 
-test('writes into the mode on screen, and switching mode switches the target', async () => {
+test('a cell writes into its own palette', async () => {
   setup()
   await waitFor(() => expect(screen.getByText('--radius')).toBeInTheDocument())
 
-  await userEvent.click(screen.getByRole('radio', { name: 'Light palette' }))
-  await userEvent.type(screen.getByRole('textbox', { name: 'Radius' }), '1rem')
+  await userEvent.type(screen.getByRole('textbox', { name: 'Corner rounding in light' }), '1rem')
   await userEvent.tab()
 
   await waitFor(() => expect(themeWrite).toHaveBeenCalled())
@@ -125,7 +128,7 @@ test('the layer decides which file a write lands in', async () => {
 
   expect(themeWrite).not.toHaveBeenCalled()
   await userEvent.click(screen.getByRole('radio', { name: 'This machine' }))
-  await userEvent.type(screen.getByRole('textbox', { name: 'Radius' }), '1rem')
+  await userEvent.type(screen.getByRole('textbox', { name: 'Corner rounding in dark' }), '1rem')
   await userEvent.tab()
 
   await waitFor(() => expect(themeWrite).toHaveBeenCalled())
@@ -136,7 +139,7 @@ test('defaults to writing the shared file', async () => {
   setup()
   await waitFor(() => expect(screen.getByText('--radius')).toBeInTheDocument())
 
-  await userEvent.type(screen.getByRole('textbox', { name: 'Radius' }), '1rem')
+  await userEvent.type(screen.getByRole('textbox', { name: 'Corner rounding in dark' }), '1rem')
   await userEvent.tab()
 
   await waitFor(() => expect(themeWrite).toHaveBeenCalled())
@@ -157,7 +160,7 @@ test('surfaces a refused value rather than swallowing it', async () => {
   )
   await waitFor(() => expect(screen.getByText('--radius')).toBeInTheDocument())
 
-  await userEvent.type(screen.getByRole('textbox', { name: 'Radius' }), '5 dogs')
+  await userEvent.type(screen.getByRole('textbox', { name: 'Corner rounding in dark' }), '5 dogs')
   await userEvent.tab()
 
   await waitFor(() => expect(screen.getByText(/refused "radius"/)).toBeInTheDocument())

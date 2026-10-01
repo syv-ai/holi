@@ -233,9 +233,9 @@ describe('THEME_TOKEN_GROUPS', () => {
     expect(themeTokenKind('not-a-token')).toBeNull()
   })
 
-  it('derives a label from the slug rather than restating it', () => {
-    expect(themeTokenLabel('card-foreground')).toBe('Card foreground')
-    expect(themeTokenLabel('background')).toBe('Background')
+  it('names a token by what it paints, else by its slug', () => {
+    expect(themeTokenLabel('card-foreground')).toBe('Text on a card')
+    expect(themeTokenLabel('some-new-token')).toBe('Some new token')
   })
 
   it('notes only tokens that actually exist', () => {

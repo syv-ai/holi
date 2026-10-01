@@ -1,27 +1,30 @@
 /**
  * The vault's colours and chrome, with real controls.
  *
- * **Two axes, chosen once for the whole section rather than per token:**
+ * **Both palettes side by side.** The theme files carry a `light` and a `dark`
+ * block; each token is a row and each palette a column, so a colour is edited
+ * beside its counterpart, and the column the app is showing says so. Which one
+ * shows is the Appearance setting above, not this table.
  *
- * - **Mode.** The theme files carry a `light` and a `dark` block. The picker
- *   starts on the mode the app is in, so what you see is what you are editing.
- * - **Layer.** `THEME_FILE` is committed and shared; `THEME_LOCAL_FILE` is this
- *   machine's and overrides it per key. Same split as settings, same badge.
+ * **Layer, chosen once for the section.** `THEME_FILE` is committed and
+ * shared; `THEME_LOCAL_FILE` is this machine's and overrides it per key. Same
+ * split as settings.
  *
- * **A token with no value is the normal case.** Every row shows the colour *in
- * force* (Holi's default, resolved by the browser) and says whether this vault
- * set it. Clearing a row deletes the key rather than writing a blank, which is
- * why the patch carries `null`.
+ * **A token with no value is the normal case.** Every cell shows the colour *in
+ * force* (Holi's default, resolved by the browser), and offers a reset only
+ * where this vault set it. A reset deletes the key rather than writing a
+ * blank, which is why the patch carries `null`.
  *
  * **Rendered from `THEME_TOKEN_GROUPS`**, so adding a token to the whitelist
  * puts it in this pane.
  */
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useAtomValue } from 'jotai'
 import { RotateCcw } from 'lucide-react'
 import {
   THEME_TOKEN_GROUPS,
   THEME_TOKEN_NOTES,
+  themeBlockToVars,
   themeTokenKind,
   themeTokenLabel,
   type ResolvedTheme,
@@ -30,10 +33,11 @@ import {
   THEME_LOCAL_FILE,
 } from '@holi/shared'
 import { Button, ColorSwatch, Dialog, IconButton, Input, Tooltip } from '@/primitives'
-import { SettingsList, SettingsNote, SettingsRow } from '@/composites'
+import { SettingsNote } from '@/composites'
 import { SettingsHeading } from '@/composites'
 import { LIGHT_AND_DARK } from './appearance-headings'
 import { DescriptorSection } from './DescriptorSection'
+import { cn } from '@/lib/cn'
 import { tokenToHex } from '@/lib/css-color'
 import { trpc } from '@/lib/trpc'
 import { activeModeAtom } from '@/state/color-scheme'
@@ -73,83 +77,87 @@ function Segmented<T extends string>({
   )
 }
 
-function TokenRow({
+/** The palettes, in the order their columns stand. */
+const MODES: readonly ThemeMode[] = ['light', 'dark']
+
+/** Label column, then one per palette. Shared by the header and every row, so
+ *  the columns line up down the whole table. */
+const GRID = 'grid grid-cols-[minmax(0,1fr)_9.5rem_9.5rem] items-center gap-3'
+
+/**
+ * One token in one palette: the value in force there, and its reset.
+ *
+ * Painted inside `[data-theme=mode]` with the vault's block for that mode, so
+ * the swatch shows that palette's colour whichever mode the app is in (the
+ * selector is not anchored to the root). The picker starts from the colour as
+ * this cell resolves it, for the same reason.
+ */
+function TokenCell({
   slug,
+  mode,
+  block,
   set,
   onSet,
   onClear,
 }: {
   slug: string
-  /** What this vault says, for the mode and layer on screen. Absent when it
-   *  says nothing, which is most tokens most of the time. */
+  mode: ThemeMode
+  /** The vault's whole block for this mode: what the cell is painted with. */
+  block: Record<string, string>
+  /** What this vault says for this token here. Absent when it says nothing. */
   set: string | undefined
   onSet: (value: string) => void
   onClear: () => void
 }): React.JSX.Element {
   const kind = themeTokenKind(slug)
-  const note = THEME_TOKEN_NOTES[slug]
-  // The colour IN FORCE, whoever decided it. Painted as `var(--slug)` so the
-  // browser resolves it; the hex is only where the picker opens.
-  const shown = `var(--${slug})`
+  const label = `${themeTokenLabel(slug)} in ${mode}`
+  const scope = useRef<HTMLDivElement>(null)
+  const [hex, setHex] = useState('#000000')
+  useLayoutEffect(() => {
+    if (scope.current !== null) setHex(tokenToHex(slug, scope.current))
+  }, [slug, block])
   const [draft, setDraft] = useState(set ?? '')
   useEffect(() => setDraft(set ?? ''), [set])
 
   return (
-    <SettingsRow
-      className="py-2"
-      label={themeTokenLabel(slug)}
-      description={note}
-      meta={
-        <>
-          <code className="text-[10px] text-muted-foreground">--{slug}</code>
-          {set === undefined && (
-            <span className="text-[10px] leading-4 text-muted-foreground">default</span>
-          )}
-        </>
-      }
-      control={
-        <div className="flex items-center gap-3">
-          {kind === 'color' ? (
-            <ColorSwatch
-              shown={shown}
-              hex={tokenToHex(slug)}
-              onPick={onSet}
-              label={`${themeTokenLabel(slug)} colour`}
-            />
-          ) : (
-            // A length or a shadow: typed rather than picked, since a swatch cannot
-            // express it and the validator says what it accepts.
-            <Input
-              value={draft}
-              aria-label={themeTokenLabel(slug)}
-              placeholder={kind === 'length' ? '0.5rem' : 'inherits'}
-              onChange={(e) => setDraft(e.target.value)}
-              onBlur={() => {
-                if (draft.trim() === '') onClear()
-                else if (draft !== set) onSet(draft.trim())
-              }}
-              className="h-6 w-44 shrink-0 px-1.5 py-0 font-mono text-[11px]"
-            />
-          )}
-
-          <IconButton
-            icon={RotateCcw}
-            label={`reset ${themeTokenLabel(slug)}`}
-            tooltip={set === undefined ? 'already the default' : 'back to the default'}
-            disabled={set === undefined}
-            onClick={onClear}
-          />
-        </div>
-      }
-    />
+    <div
+      ref={scope}
+      data-theme={mode}
+      style={themeBlockToVars(block) as React.CSSProperties}
+      className="flex items-center justify-center gap-1"
+    >
+      {kind === 'color' ? (
+        <ColorSwatch shown={`var(--${slug})`} hex={hex} onPick={onSet} label={label} />
+      ) : (
+        // A length or a shadow: typed rather than picked, since a swatch cannot
+        // express it and the validator says what it accepts.
+        <Input
+          value={draft}
+          aria-label={label}
+          placeholder={kind === 'length' ? '0.5rem' : 'default'}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={() => {
+            if (draft.trim() === '') onClear()
+            else if (draft !== set) onSet(draft.trim())
+          }}
+          className="h-6 min-w-0 flex-1 px-1.5 py-0 font-mono text-[11px]"
+        />
+      )}
+      {/* Invisible rather than absent while there is nothing to reset, so a
+          cell keeps its width and the column does not move. */}
+      <IconButton
+        icon={RotateCcw}
+        label={`reset ${label}`}
+        tooltip="back to Holi’s default"
+        disabled={set === undefined}
+        onClick={onClear}
+        className={set === undefined ? 'invisible' : undefined}
+      />
+    </div>
   )
 }
 
 export function ThemeSection({ remote }: { remote: string }): React.JSX.Element {
-  const appMode = useAtomValue(activeModeAtom)
-  // Starts on the mode the app is in, then free to diverge: editing the other
-  // palette without switching the app to it is the point of the control.
-  const [mode, setMode] = useState<ThemeMode>(appMode === 'light' ? 'light' : 'dark')
   const [layer, setLayer] = useState<Layer>('committed')
   const [theme, setTheme] = useState<ResolvedTheme | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -162,7 +170,7 @@ export function ThemeSection({ remote }: { remote: string }): React.JSX.Element 
     void read()
   }, [read])
 
-  const write = async (slug: string, value: string | null): Promise<void> => {
+  const write = async (mode: ThemeMode, slug: string, value: string | null): Promise<void> => {
     setError(null)
     try {
       const result = await trpc.theme.write.mutate({
@@ -172,23 +180,13 @@ export function ThemeSection({ remote }: { remote: string }): React.JSX.Element 
       })
       if (result.warnings.length > 0) setError(result.warnings.join('; '))
       // The watcher re-applies the theme to the document on its own; this is
-      // only so the pane's own "default" markers agree with the file.
+      // only so the cells agree with the file.
       await read()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'could not write the theme file')
       await read()
     }
   }
-
-  /**
-   * What this vault says for the mode on screen.
-   *
-   * **Read from the RESOLVED theme, which is committed merged under local.** So
-   * with the layer set to shared, a locally overridden token still shows the
-   * local value, the colour in force. The layer decides where a write LANDS,
-   * not what is displayed.
-   */
-  const values = useMemo(() => (theme === null ? {} : theme[mode]), [theme, mode])
 
   return (
     <div>
@@ -205,9 +203,6 @@ export function ThemeSection({ remote }: { remote: string }): React.JSX.Element 
         <ThemeTokens
           remote={remote}
           theme={theme}
-          values={values}
-          mode={mode}
-          setMode={setMode}
           layer={layer}
           setLayer={setLayer}
           error={error}
@@ -218,12 +213,16 @@ export function ThemeSection({ remote }: { remote: string }): React.JSX.Element 
   )
 }
 
+/**
+ * Every token, a row each, with the light and dark palettes side by side: a
+ * palette is the set of colours for one mode, and the Appearance setting above
+ * says which one is showing. Values are the RESOLVED theme, committed merged
+ * under local, so a cell shows the colour in force; the layer decides only
+ * where a write lands.
+ */
 function ThemeTokens({
   remote,
   theme,
-  values,
-  mode,
-  setMode,
   layer,
   setLayer,
   error,
@@ -231,39 +230,25 @@ function ThemeTokens({
 }: {
   remote: string
   theme: ResolvedTheme
-  /** What this vault says for the mode on screen. */
-  values: Record<string, string | undefined>
-  mode: ThemeMode
-  setMode: (next: ThemeMode) => void
   layer: Layer
   setLayer: (next: Layer) => void
   error: string | null
-  write: (slug: string, value: string | null) => Promise<void>
+  write: (mode: ThemeMode, slug: string, value: string | null) => Promise<void>
 }): React.JSX.Element {
+  const showing = useAtomValue(activeModeAtom)
   return (
     <>
       {/* **Sticky, because they govern everything below them.** Scrolled away,
-          every swatch would be ambiguous about its mode and layer. */}
-      <div className="sticky top-0 z-10 -mx-1 mt-4 flex flex-wrap items-center justify-between gap-3 bg-background px-1 py-2">
-        <div>
-          <h3 className="text-xs font-medium">Theme</h3>
-          <SettingsNote>
-            Colours and chrome, and nothing else — a theme cannot move or resize anything.
-          </SettingsNote>
-        </div>
-        <div className="flex flex-wrap items-center gap-3">
-          {/* **"palette", not "Dark"/"Light".** The `colorScheme` row above is
-              also Light/Dark and sets what the app IS; this sets which block of
-              the theme file a swatch edits. */}
-          <Segmented
-            label="Which palette you are editing"
-            value={mode}
-            onChange={setMode}
-            options={[
-              { value: 'dark' as const, label: 'Dark palette' },
-              { value: 'light' as const, label: 'Light palette' },
-            ]}
-          />
+          a column would be ambiguous about its palette and a write about its
+          file. */}
+      <div className="sticky top-0 z-10 -mx-1 mt-4 flex flex-col gap-2 bg-background px-1 py-2">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h3 className="text-xs font-medium">Theme</h3>
+            <SettingsNote>
+              Colours and chrome, and nothing else: a theme cannot move or resize anything.
+            </SettingsNote>
+          </div>
           <Segmented
             label="Where changes go"
             value={layer}
@@ -273,6 +258,33 @@ function ThemeTokens({
               { value: 'local' as const, label: 'This machine', hint: THEME_LOCAL_FILE },
             ]}
           />
+        </div>
+        <div className={GRID}>
+          <span />
+          {MODES.map((mode) => (
+            <span key={mode} className="flex flex-col items-center gap-0.5">
+              <span
+                className={cn(
+                  'w-full rounded-md py-1 text-center text-xs',
+                  mode === showing
+                    ? 'bg-secondary text-secondary-foreground'
+                    : 'text-muted-foreground',
+                )}
+              >
+                {mode === 'light' ? 'Light palette' : 'Dark palette'}
+              </span>
+              {/* Its own line, in both columns, hidden where it is not true:
+                  switching mode moves the words, never the layout. */}
+              <span
+                className={cn(
+                  'text-[10px] leading-4 text-muted-foreground',
+                  mode !== showing && 'invisible',
+                )}
+              >
+                showing now
+              </span>
+            </span>
+          ))}
         </div>
       </div>
 
@@ -293,17 +305,33 @@ function ThemeTokens({
           {/* The rail's jump target for this group, derived from the same title
               the rail derives its id from. */}
           <SettingsHeading title={group.title} blurb={group.blurb} />
-          <SettingsList>
-            {group.tokens.map((slug) => (
-              <TokenRow
-                key={slug}
-                slug={slug}
-                set={values[slug]}
-                onSet={(value) => void write(slug, value)}
-                onClear={() => void write(slug, null)}
-              />
-            ))}
-          </SettingsList>
+          <div className="flex flex-col">
+            {group.tokens.map((slug) => {
+              const note = THEME_TOKEN_NOTES[slug]
+              return (
+                <div key={slug} className={cn(GRID, 'rounded-md px-1 py-1.5 hover:bg-accent/50')}>
+                  <span className="flex min-w-0 flex-col">
+                    <span className="text-xs">{themeTokenLabel(slug)}</span>
+                    <code className="text-[10px] text-muted-foreground">--{slug}</code>
+                    {note !== undefined && (
+                      <span className="text-[11px] text-muted-foreground">{note}</span>
+                    )}
+                  </span>
+                  {MODES.map((mode) => (
+                    <TokenCell
+                      key={mode}
+                      slug={slug}
+                      mode={mode}
+                      block={theme[mode]}
+                      set={theme[mode][slug]}
+                      onSet={(value) => void write(mode, slug, value)}
+                      onClear={() => void write(mode, slug, null)}
+                    />
+                  ))}
+                </div>
+              )
+            })}
+          </div>
         </section>
       ))}
 
