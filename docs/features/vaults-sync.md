@@ -22,7 +22,7 @@ A vault is a GitHub repository cloned into a directory Holi owns. Sync runs both
 
 **How git runs.** System `git`, token via `GIT_ASKPASS`, `LC_ALL=C`. Only plumbing, `--porcelain=v2 -z` and `push --porcelain` are parsed; the permission case, which exists only in stderr, is the one exception. An index-lock failure retries 5 times and is never called offline. A missing `git` is a clear error.
 
-**Commit hooks.** Each open writes `.git/hooks/pre-commit`: the large-file guard, then a `curl` to the running Holi on loopback with a per-vault token from `.holi/state/hook-endpoint.local.txt` (0600, removed on close), then `exit 0`. Holi reads the staged set (`git diff --cached -M -z`, deletions included) and runs the enabled transforms in order: `relink` (rewrite `[[links]]` for renames git detected), `archive-done` (off by default; see [tasks](tasks.md)), `scaffold-md` (see [frontmatter](frontmatter.md)), `normalize-md` (invisible tidy), `memory-index` (see [agent memory](agent-memory.md); last, because it reads the whole tree). Rewritten files are restaged into the same commit. Every run appends to `.holi/state/hooks.local.log`, capped at 2000 lines.
+**Commit hooks.** Each open writes `.git/hooks/pre-commit`: the large-file guard, then a `curl` to the running Holi on loopback with the port and a per-vault token parsed from `.holi/state/bridge.local.env` (0600, removed on close; see [agent-config](agent-config.md)), then `exit 0`. Holi reads the staged set (`git diff --cached -M -z`, deletions included) and runs the enabled transforms in order: `relink` (rewrite `[[links]]` for renames git detected), `archive-done` (off by default; see [tasks](tasks.md)), `scaffold-md` (see [frontmatter](frontmatter.md)), `normalize-md` (invisible tidy), `memory-index` (see [agent memory](agent-memory.md); last, because it reads the whole tree). Rewritten files are restaged into the same commit. Every run appends to `.holi/state/hooks.local.log`, capped at 2000 lines.
 
 **Large files.** Autosave stages only files at or under `maxCommittedFileBytes` (default 10 MB, re-read on every commit); deletions always commit. Oversized files stay on disk, unpushed, and a tree holding only those reads as clean. A callout at the window's foot offers **Commit anyway** (`--no-verify`) or **Keep local** (`.git/info/exclude`). The hook applies the same cap to the agent and terminal commits and points at Git LFS without setting it up.
 
@@ -54,7 +54,7 @@ A vault is a GitHub repository cloned into a directory Holi owns. Sync runs both
 - `apps/desktop/src/main/vault/active-vault.ts`: the sync loop, timings, sync state, reconcile, abandon
 - `apps/desktop/src/main/git.ts`: every git command and output parser
 - `apps/desktop/src/main/vault/clone.ts`, `registry.ts`, `watcher.ts`: clone, registry, watcher
-- `apps/desktop/src/main/vault/large-files.ts`: size partition, hook script, endpoint file
+- `apps/desktop/src/main/vault/large-files.ts`: size partition, hook script
 - `apps/desktop/src/main/vault/hooks/`, `main/vault/git-routes.ts`: staged set, runner, transforms, run log, the hook's route
 - `apps/desktop/src/main/router.ts` (`vaults.membership`, `settle`, `leave`, `forgetDeleted`), `renderer/src/features/vault/RemoveVault.tsx`, `state/vault-removal.ts`: leaving and deleting
 - `apps/desktop/src/renderer/src/lib/sync-label.ts`, `lib/reconcile-lock.ts`, `components/Shell.tsx`, `features/nav/SyncItem.tsx`: sync item, callouts, read-only lock

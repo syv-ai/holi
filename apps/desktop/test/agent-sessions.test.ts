@@ -65,8 +65,6 @@ function setup(initial: Row[] = []) {
     listTerminal: () => null,
   }
   const sent: Array<[string, unknown]> = []
-  const released = vi.fn(async () => {})
-  const claimed = vi.fn(async () => {})
   const pauses: string[] = []
   const vault = {
     remote: REMOTE,
@@ -86,8 +84,6 @@ function setup(initial: Row[] = []) {
     resolveConfig: async () => ({ dir: '/cfg/vault' }),
     takeFirstSpawn: async () => true,
     binDir: () => '/holi/bin',
-    claimEndpoint: claimed,
-    releaseEndpoint: released,
     watch: () => () => {},
     idleRecheckMs: 5,
     idleConfirmMs: 10,
@@ -100,8 +96,6 @@ function setup(initial: Row[] = []) {
     opened,
     pastes,
     sent,
-    claimed,
-    released,
     terminals,
     setListing: (rows: Row[]) => {
       listing = rows
@@ -114,12 +108,11 @@ function setup(initial: Row[] = []) {
 }
 
 describe('agent sessions', () => {
-  it('lists only live sessions, and claims the endpoint for the vault', async () => {
+  it('lists only live sessions', async () => {
     const t = setup([row('aaaaaaaa'), row('bbbbbbbb', { pid: undefined, status: undefined })])
     await t.sessions.ensure()
 
     expect(t.sessions.sessions().map((s) => s.id)).toEqual(['aaaaaaaa'])
-    expect(t.claimed).toHaveBeenCalledWith({ remote: REMOTE, root: ROOT, configDir: '/cfg/vault' })
     expect(t.sent.at(-1)).toEqual([
       'agent:sessions',
       [{ id: 'aaaaaaaa', name: 'Session aaaaaaaa', state: 'idle' }],
@@ -235,13 +228,12 @@ describe('agent sessions', () => {
     expect(res).toEqual({ ok: true, sessionId: 'copy0000', terminalId: 'term-1' })
   })
 
-  it('leaves: stops live sessions, closes windows, releases the endpoint', async () => {
+  it('leaves: stops live sessions, closes windows', async () => {
     const t = setup([row('aaaaaaaa'), row('bbbbbbbb')])
     await t.sessions.ensure()
     await t.sessions.leave()
     expect(t.cli.stop).toHaveBeenCalledTimes(2)
     expect(t.terminals.closeAll).toHaveBeenCalled()
-    expect(t.released).toHaveBeenCalled()
     expect(t.sessions.sessions()).toEqual([])
   })
 
@@ -275,6 +267,5 @@ describe('agent sessions', () => {
     const t = setup()
     t.setActive(null)
     expect(await t.sessions.open({})).toEqual({ ok: false, message: 'No vault is open.' })
-    expect(t.claimed).not.toHaveBeenCalled()
   })
 })

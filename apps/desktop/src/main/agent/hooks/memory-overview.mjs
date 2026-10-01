@@ -9,8 +9,8 @@
 //
 // Reads only: `memory/index.md` (which the memory-index transform already
 // generated, so nothing is parsed twice), a scan for personal `*.local.md`
-// memories, and one `git log`. No HOLI_HOOK_PORT — Claude Code spawns this, not
-// Holi, so it must work with no server anywhere. Absent `memory/`, it prints
+// memories, and one `git log`. It never calls Holi's bridge: Claude Code spawns
+// this, not Holi, so it must work with no server anywhere. Absent `memory/`, it prints
 // nothing and exits 0, exactly as the focused-note hook does outside Holi.
 //
 // Dependency-free (`node:` builtins only), like the three hooks beside it.

@@ -62,7 +62,7 @@ command in the vault's settings, with no script. Claude Code runs it on its own 
 background session with no client attached included, and hands it JSON on stdin. `jq` (which ships
 with macOS) prints the footer, `Opus 5.5 · 42% context`, so it reads the same in any Claude Code.
 Inside a Holi background session the command also posts the JSON, detached, to the bridge's
-`/statusline` with the vault's token from `holi.env` and the job id from `$CLAUDE_JOB_DIR`,
+`/statusline` with the vault's token from its `bridge.local.env` and the job id from `$CLAUDE_JOB_DIR`,
 answered empty. Main keeps `context_window.used_percentage` per job id on the pushed session list
 and drops it when the session stops. A `null` reading (before the first message, after `/clear`)
 clears it.
@@ -74,7 +74,7 @@ holds the paste until its TUI has printed and settled, with a 5 s backstop. **Re
 push are the exception**: their first turn is the command's prompt.
 
 **Git coexistence.** The seeded `UserPromptSubmit` and `Stop` hooks run `turn-signal.mjs`, which
-reads `holi.env` in the session's config directory for the port and the vault's token, and posts
+reads the vault's `bridge.local.env` ([agent-config](agent-config.md)) for the port and the vault's token, and posts
 the job id from `$CLAUDE_JOB_DIR`. The vault has one working set: the first turn to start pauses
 sync, the last to end resumes it and takes one settle commit. A session also leaves the set when
 its process goes, on two consecutive `idle` readings (escaping a permission prompt fires no `Stop`),
@@ -93,7 +93,7 @@ view. The sync side is in [vaults-sync.md](vaults-sync.md).
 
 **Leaving a vault stops its sessions.** A vault switch, adding a vault, and quitting Holi each
 `claude stop` the vault's live sessions, asking first if one is working or needs you, then close
-every terminal and delete `holi.env`. The conversations stay in the agent list, except a session
+every terminal; closing the vault deletes its `bridge.local.env`. The conversations stay in the agent list, except a session
 Holi started with no prompt that never had a turn: it is `claude rm`'d, since it would sit there
 as a nameless row that resumes blank. That is Holi's own record (a turn hook, or the listing
 showing it busy, crosses it off), so a session resumed from the list is never removed.
@@ -138,7 +138,7 @@ showing it busy, crosses it off), so a session resumed from the list is never re
 - `apps/desktop/src/main/agent/agent-terminals.ts`, `agent-runtime.ts`, `terminal-mirror.ts`:
   terminals, the PTY and kill path
 - `apps/desktop/src/main/agent/agent-sessions.ts`: the vault controller
-- `apps/desktop/src/main/agent/endpoint-file.ts`, `hooks/turn-signal.mjs`, `seed-content.ts`
+- `apps/desktop/src/main/bridge/env-file.ts`, `agent/hooks/turn-signal.mjs`, `agent/seed-content.ts`
   (`STATUS_LINE`): how sessions find Holi
 - `apps/desktop/src/main/agent/turn-coordinator.ts`, `turn-log.ts`: working set and turn records
 - `apps/desktop/src/renderer/src/features/agent/`: rows, orbs, terminal, turn chip and review

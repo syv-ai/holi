@@ -6,7 +6,7 @@
  * a quoting bug in it does not fail loudly, it sends a different argument.
  */
 import { execFile } from 'node:child_process'
-import { mkdtemp, rm, stat } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
@@ -25,6 +25,7 @@ import { noCoreServices } from '../src/main/capabilities/services'
 import { vaultCapabilities } from '../src/main/capabilities/vault-caps'
 import { PDF_CAPABILITIES } from '../src/main/pdf/capabilities'
 import { taskCapabilities } from '../src/main/vault/task-capabilities'
+import { bridgeLines, writeVaultEnv } from './helpers/bridge-env'
 
 const execFileAsync = promisify(execFile)
 
@@ -35,9 +36,11 @@ async function run(
   /** What the script reads on stdin. Always passed, even empty: a pipe nobody
    *  closes is a script that never returns. */
   input = '',
+  /** Where it runs: inside the test's vault, unless said otherwise. */
+  cwd = dir,
 ): Promise<{ stdout: string; stderr: string; code: number }> {
   try {
-    const child = execFileAsync(bin, args, { env })
+    const child = execFileAsync(bin, args, { env, cwd })
     child.child.stdin?.end(input)
     const { stdout, stderr } = await child
     return { stdout, stderr, code: 0 }
@@ -105,11 +108,8 @@ beforeEach(async () => {
   const table = recording(capability)
   server = bridge(table, [...new Set(Object.keys(table).map((n) => n.split('.')[0]!))])
   await server.start()
-  env = {
-    PATH: process.env.PATH ?? '',
-    HOLI_HOOK_PORT: String(server.port()),
-    HOLI_HOOK_TOKEN: server.tokenForVault('owner/repo'),
-  }
+  env = { PATH: process.env.PATH ?? '' }
+  await writeVaultEnv(dir, bridgeLines(server.port()!, server.tokenForVault('owner/repo')))
 })
 
 afterEach(async () => {
@@ -125,9 +125,28 @@ describe('the installed script', () => {
 
 describe('when Holi is not running', () => {
   it('exits non-zero with a sentence a human can read', async () => {
-    const res = await run(bin, ['apps', 'open', 'retro'], { PATH: env.PATH })
-    expect(res.code).not.toBe(0)
+    await writeVaultEnv(dir, null)
+    const res = await run(bin, ['apps', 'open', 'retro'], env)
+    expect(res.code).toBe(1)
     expect(res.stderr).toMatch(/holi: Holi is not running/)
+  })
+
+  it('finds the vault from a folder inside it, and nothing outside one', async () => {
+    await mkdir(join(dir, 'Notes/deep'), { recursive: true })
+    expect((await run(bin, ['sync', 'status'], env, '', join(dir, 'Notes/deep'))).code).toBe(0)
+    expect((await run(bin, ['sync', 'status'], env, '', tmpdir())).code).toBe(1)
+  })
+
+  it('reads the file, never runs it', async () => {
+    // A collaborator could force-add one: a line that would run as shell must
+    // not, and a value that is not digits or hex is no value at all.
+    await writeVaultEnv(
+      dir,
+      `HOLI_BRIDGE_PORT=${server.port()}\nHOLI_BRIDGE_TOKEN=$(touch ${dir}/ran)\ntouch ${dir}/ran\n`,
+    )
+    const res = await run(bin, ['sync', 'status'], env)
+    expect(res.code).toBe(1)
+    await expect(stat(join(dir, 'ran'))).rejects.toThrow()
   })
 })
 
@@ -265,11 +284,7 @@ describe('a command that reads stdin', () => {
     ran.mockClear()
     server = bridge({ 'x.echo': echo }, ['x'])
     await server.start()
-    env = {
-      ...env,
-      HOLI_HOOK_PORT: String(server.port()),
-      HOLI_HOOK_TOKEN: server.tokenForVault('owner/repo'),
-    }
+    await writeVaultEnv(dir, bridgeLines(server.port()!, server.tokenForVault('owner/repo')))
   })
 
   it('runs once, with stdin, when the body is not an argument', async () => {

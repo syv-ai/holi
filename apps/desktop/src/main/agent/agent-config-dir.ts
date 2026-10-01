@@ -76,7 +76,7 @@ export interface ConfigDirStamp {
    * settings `env` block. A background session's environment is the
    * supervisor's, not Holi's, but a settings `env` block reaches every session,
    * a pre-warmed one included. Only static paths go here: anything that changes
-   * per app run lives in `holi.env` (see `endpoint-file.ts`).
+   * per app run lives in the vault's `bridge.local.env` (`bridge/env-file.ts`).
    */
   env?: Record<string, string>
   /** Holi's retired status-line script path. A `statusLine` running exactly

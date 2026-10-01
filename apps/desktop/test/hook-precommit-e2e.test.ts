@@ -19,7 +19,8 @@ import { promisify } from 'node:util'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createBridgeServer, type BridgeServer } from '../src/main/bridge/server'
 import { registerGitRoutes } from '../src/main/vault/git-routes'
-import { installGitHook, writeHookEndpoint } from '../src/main/vault/large-files'
+import { installGitHook } from '../src/main/vault/large-files'
+import { bridgeLines, writeVaultEnv } from './helpers/bridge-env'
 import { resetBreaker } from '../src/main/vault/hooks/runner'
 
 const exec = promisify(execFile)
@@ -62,7 +63,7 @@ async function vault(settings: Record<string, boolean> = {}): Promise<string> {
   await server.start()
 
   await installGitHook(dir, 10 * 1024 * 1024)
-  await writeHookEndpoint(dir, { port: server.port()!, token: server.tokenForVault('owner/repo') })
+  await writeVaultEnv(dir, bridgeLines(server.port()!, server.tokenForVault('owner/repo')))
   return dir
 }
 
@@ -184,10 +185,7 @@ describe('nothing here can stop a commit', () => {
     servers.push(server)
     await server.start()
     await installGitHook(dir, 10 * 1024 * 1024)
-    await writeHookEndpoint(dir, {
-      port: server.port()!,
-      token: server.tokenForVault('owner/repo'),
-    })
+    await writeVaultEnv(dir, bridgeLines(server.port()!, server.tokenForVault('owner/repo')))
 
     await writeFile(join(dir, 'a.md'), '# a\n', 'utf8')
     await git(dir, ['add', '-A'])
@@ -196,7 +194,7 @@ describe('nothing here can stop a commit', () => {
 
   it('commits fine when Holi has quit and the endpoint is gone', async () => {
     const dir = await vault()
-    await writeHookEndpoint(dir, null) // what close() does
+    await writeVaultEnv(dir, null) // what close() does
     await writeFile(join(dir, 'a.md'), '# a\n', 'utf8')
     await git(dir, ['add', '-A'])
     await expect(git(dir, ['commit', '-q', '-m', 'x'])).resolves.toBeDefined()

@@ -1,24 +1,20 @@
 /**
- * How a background session finds the running Holi: the endpoint file in
- * its config dir, the job-keyed turn route, and the readers of the file (the
- * seeded `turn-signal.mjs` hook, the seeded status line and the `holi` script),
- * run for real.
+ * How whatever runs inside a vault finds the running Holi: the vault's
+ * `.holi/state/bridge.local.env`, the job-keyed turn route, and the readers of
+ * the file (the seeded `turn-signal.mjs` hook and the seeded status line), run
+ * for real. The `holi` script's reading is in `bridge-cli.test.ts`.
  */
 import { execFile } from 'node:child_process'
-import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { installHoliCli } from '../src/main/bridge/cli'
-import {
-  endpointText,
-  removeEndpointFile,
-  writeEndpointFile,
-} from '../src/main/agent/endpoint-file'
 import { registerAgentRoutes } from '../src/main/agent/bridge-routes'
-import { createBridgeServer, type BridgeServer } from '../src/main/bridge/server'
 import { SEED_FILES } from '../src/main/agent/seed-content'
+import { BRIDGE_ENV_FILE, createBridgeEnv } from '../src/main/bridge/env-file'
+import { createBridgeServer, type BridgeServer } from '../src/main/bridge/server'
+import { bridgeLines, writeVaultEnv } from './helpers/bridge-env'
 
 const execFileAsync = promisify(execFile)
 const HOOK = join(__dirname, '../src/main/agent/hooks/turn-signal.mjs')
@@ -28,9 +24,10 @@ async function run(
   args: string[],
   env: NodeJS.ProcessEnv,
   input = '',
+  cwd = dir,
 ): Promise<{ stdout: string; stderr: string; code: number }> {
   try {
-    const child = execFileAsync(file, args, { env })
+    const child = execFileAsync(file, args, { env, cwd })
     child.child.stdin?.end(input)
     const { stdout, stderr } = await child
     return { stdout, stderr, code: 0 }
@@ -44,24 +41,12 @@ let dir: string
 let server: BridgeServer
 let turns: Array<[string, string, boolean]>
 let statuses: Array<[string, string, unknown]>
-const capability = vi.fn((_name: string, params: Record<string, string>) =>
-  Promise.resolve({ value: params, text: '' }),
-)
 
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), 'holi-endpoint-'))
   turns = []
   statuses = []
-  server = createBridgeServer({
-    log: () => {},
-    cli: {
-      dispatch: async ({ name, params }) => ({
-        ...(await capability(name, params as Record<string, string>)),
-        writes: false,
-      }),
-      commands: () => [{ name: 'pdf.comments', cli: { args: ['path'], summary: 'comments' } }],
-    },
-  })
+  server = createBridgeServer({ log: () => {} })
   registerAgentRoutes(server, {
     onJobTurn: (remote, job, active) => turns.push([remote, job, active]),
     onStatus: (remote, job, status) => statuses.push([remote, job, status]),
@@ -75,41 +60,47 @@ afterEach(async () => {
   await rm(dir, { recursive: true, force: true })
 })
 
-/** The environment of a background session: its config dir and job dir, and
- *  none of Holi's variables. */
+/** The environment of a background session: its job dir, and none of Holi's
+ *  variables. */
 function sessionEnv(job = '1234abcd'): NodeJS.ProcessEnv {
   return {
     PATH: process.env.PATH,
-    CLAUDE_CONFIG_DIR: dir,
     CLAUDE_JOB_DIR: `/Users/ada/.config/jobs/${job}`,
   }
 }
 
 async function writeFor(remote = 'syv/vault'): Promise<void> {
-  await writeEndpointFile(dir, {
-    hookPort: server.port() ?? 0,
-    hookToken: server.tokenForVault(remote),
-  })
+  await writeVaultEnv(dir, bridgeLines(server.port() ?? 0, server.tokenForVault(remote)))
 }
 
-describe('endpoint file', () => {
-  it('writes KEY=value lines, owner-only', async () => {
-    await writeEndpointFile(dir, { hookPort: 5000, hookToken: 'ab12', googlePort: 6000 })
-    expect(await readFile(join(dir, 'holi.env'), 'utf8')).toBe(
-      'HOLI_HOOK_PORT=5000\nHOLI_HOOK_TOKEN=ab12\nHOLI_GOOGLE_PORT=6000\n',
+describe('the env file', () => {
+  const file = () => join(dir, BRIDGE_ENV_FILE)
+
+  it('carries what each part contributes, as KEY=value lines, owner-only', async () => {
+    const env = createBridgeEnv(() => {})
+    env.contribute('syv/vault', { HOLI_BRIDGE_PORT: '5000', HOLI_BRIDGE_TOKEN: 'ab12' })
+    const google = env.contribute('syv/vault', { HOLI_GOOGLE_PORT: '6000' })
+    await env.attach('syv/vault', dir)
+    expect(await readFile(file(), 'utf8')).toBe(
+      'HOLI_BRIDGE_PORT=5000\nHOLI_BRIDGE_TOKEN=ab12\nHOLI_GOOGLE_PORT=6000\n',
     )
-    expect((await stat(join(dir, 'holi.env'))).mode & 0o777).toBe(0o600)
+    expect((await stat(file())).mode & 0o777).toBe(0o600)
+
+    // Withdrawn, it is rewritten without; Holi leaving, it is gone.
+    google()
+    await env.attach('syv/vault', dir)
+    expect(await readFile(file(), 'utf8')).toBe('HOLI_BRIDGE_PORT=5000\nHOLI_BRIDGE_TOKEN=ab12\n')
+    await env.detach('syv/vault')
+    await env.detach('syv/vault')
+    await expect(stat(file())).rejects.toThrow()
   })
 
-  it('refuses a value a shell could run', () => {
-    expect(() => endpointText({ hookPort: 1, hookToken: '$(rm -rf ~)' })).toThrow()
-  })
-
-  it('is gone after remove, and remove of nothing is fine', async () => {
-    await writeFor()
-    await removeEndpointFile(dir)
-    await removeEndpointFile(dir)
-    await expect(stat(join(dir, 'holi.env'))).rejects.toThrow()
+  it('refuses a value a shell could run, a key outside HOLI_, and a key twice', () => {
+    const env = createBridgeEnv(() => {})
+    expect(() => env.contribute('a/b', { HOLI_BRIDGE_TOKEN: '$(rm -rf ~)' })).toThrow()
+    expect(() => env.contribute('a/b', { PATH: '0' })).toThrow()
+    env.contribute('a/b', { HOLI_BRIDGE_PORT: '1' })
+    expect(() => env.contribute('a/b', { HOLI_BRIDGE_PORT: '2' })).toThrow(/already/)
   })
 })
 
@@ -138,21 +129,29 @@ describe('job-keyed turn route', () => {
 })
 
 describe('turn-signal.mjs', () => {
-  it('reports its job to Holi through the endpoint file, printing nothing', async () => {
+  it('reports its job to Holi through the env file, from anywhere in the vault, printing nothing', async () => {
     await writeFor()
-    const res = await run(process.execPath, [HOOK, 'start'], sessionEnv('abcd1234'))
+    await mkdir(join(dir, 'Notes'), { recursive: true })
+    const res = await run(
+      process.execPath,
+      [HOOK, 'start'],
+      sessionEnv('abcd1234'),
+      '',
+      join(dir, 'Notes'),
+    )
     expect(res).toMatchObject({ code: 0, stdout: '' })
     expect(turns).toEqual([['syv/vault', 'abcd1234', true]])
   })
 
   it('does nothing, silently, when Holi is not there or this is not a background session', async () => {
-    // No endpoint file.
+    // No env file.
+    await writeVaultEnv(dir, null)
     expect(await run(process.execPath, [HOOK, 'start'], sessionEnv())).toMatchObject({
       code: 0,
       stdout: '',
     })
     // A file pointing at a closed port.
-    await writeEndpointFile(dir, { hookPort: 1, hookToken: 'ab' })
+    await writeVaultEnv(dir, bridgeLines(1, 'ab'))
     expect(await run(process.execPath, [HOOK, 'end'], sessionEnv())).toMatchObject({
       code: 0,
       stdout: '',
@@ -182,12 +181,13 @@ describe('the seeded status line', () => {
 
   it('prints the same footer without Holi, and only the model before the first message', async () => {
     const json = JSON.stringify(status)
-    // No endpoint file, then a closed port, then not a background session.
+    // No env file, then a closed port, then not a background session.
+    await writeVaultEnv(dir, null)
     expect(await statusLine(sessionEnv(), json)).toMatchObject({
       code: 0,
       stdout: 'Opus 5.5 · 42% context',
     })
-    await writeEndpointFile(dir, { hookPort: 1, hookToken: 'ab' })
+    await writeVaultEnv(dir, bridgeLines(1, 'ab'))
     expect(await statusLine(sessionEnv(), json)).toMatchObject({
       code: 0,
       stdout: 'Opus 5.5 · 42% context',
@@ -204,22 +204,5 @@ describe('the seeded status line', () => {
       stdout: 'Opus 5.5',
     })
     expect(statuses).toEqual([])
-  })
-})
-
-describe('holi with only CLAUDE_CONFIG_DIR', () => {
-  it('reaches Holi through the endpoint file', async () => {
-    const bin = await installHoliCli(dir)
-    await writeFor()
-    const res = await run(bin, ['pdf', 'comments', 'a.pdf', '--json'], sessionEnv())
-    expect(res.code).toBe(0)
-    expect(capability).toHaveBeenCalledWith('pdf.comments', { path: 'a.pdf' })
-  })
-
-  it('says Holi is not running when there is no file', async () => {
-    const bin = await installHoliCli(dir)
-    const res = await run(bin, ['pdf', 'comments', 'a.pdf'], sessionEnv())
-    expect(res.code).not.toBe(0)
-    expect(res.stderr).toMatch(/not running/)
   })
 })

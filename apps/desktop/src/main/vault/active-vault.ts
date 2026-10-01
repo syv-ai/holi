@@ -22,12 +22,7 @@ import { join } from 'node:path'
 import type { SyncState, VaultSnapshot } from '@holi/shared'
 import type { GitDeps, GitRepo, PullResult, RepoStatus } from '../git'
 import { isIndexLockError, openRepo } from '../git'
-import {
-  installGitHook,
-  partitionBySize,
-  writeHookEndpoint,
-  type HeldBackFile,
-} from './large-files'
+import { installGitHook, partitionBySize, type HeldBackFile } from './large-files'
 import { installRecordMergeDriver } from './record-merge'
 import { readMaxCommittedFileBytes } from './vault-settings'
 import type { VaultRegistry } from './registry'
@@ -38,6 +33,12 @@ import { watchVault, type VaultWatcher } from './watcher'
 // (`sync-state.ts`), so the nav and the agent's `holi sync status` agree.
 // `computeState` below decides which state is in force.
 export type { SyncState }
+
+/** What a vault's open and close do to its `bridge.local.env`. */
+export interface VaultBridgeEnv {
+  attach(remote: string, root: string): Promise<void>
+  detach(remote: string): Promise<void>
+}
 
 export interface SyncTimings {
   /** Quiet before a rescan. Short: the file tree has to feel live. */
@@ -148,11 +149,8 @@ export async function openActiveVault(args: {
    * is committed, so the snapshot says nothing.
    */
   onCommitted?: (paths: string[] | null) => void
-  /** Where this vault's git hook calls back. Takes the remote so the
-   *  token is minted for THIS vault: the endpoint is written into this
-   *  clone's `.git/hooks`, and a shared token would let a commit here run the
-   *  staged transforms against whichever vault is on screen. */
-  hookEndpoint?: (remote: string) => { port: number; token: string } | null
+  /** Where this vault finds the running Holi: its `bridge.local.env`. */
+  bridgeEnv?: VaultBridgeEnv
   timings?: Partial<SyncTimings>
 }): Promise<ActiveVault> {
   const timings: SyncTimings = { ...DEFAULT_TIMINGS, ...args.timings }
@@ -173,12 +171,12 @@ export async function openActiveVault(args: {
   await installRecordMergeDriver(root).catch((err) =>
     console.error('[vault] record merge driver install failed:', err),
   )
-  // Tell that hook how to reach us. Rewritten every open because the port is
-  // ephemeral and moves on every restart; best-effort for the same reason as
-  // the install above.
-  await writeHookEndpoint(root, args.hookEndpoint?.(args.remote) ?? null).catch((err) =>
-    console.error('[vault] hook endpoint write failed:', err),
-  )
+  // Tell that hook, the merge driver and every command in the vault how to
+  // reach us. Rewritten every open because the port is ephemeral and moves on
+  // every restart; best-effort for the same reason as the install above.
+  await args.bridgeEnv
+    ?.attach(args.remote, root)
+    .catch((err) => console.error('[vault] bridge env write failed:', err))
 
   /** The cap as the settings file says now. When it moved, the git hook the
    *  agent's commits go through has the old number baked in, so reinstall it. */
@@ -706,7 +704,7 @@ export async function openActiveVault(args: {
       await watcher.close()
       // Leave no stale port behind: a terminal commit after Holi quits would
       // otherwise spend its curl timeout on a socket nobody is listening to.
-      await writeHookEndpoint(root, null).catch(() => {})
+      await args.bridgeEnv?.detach(args.remote).catch(() => {})
     },
   }
 }
@@ -729,13 +727,9 @@ export function createVaultHost(args: {
   onSyncState: (state: SyncState) => void
   onHeldBack?: (files: HeldBackFile[]) => void
   onCommitted?: (paths: string[] | null) => void
-  /** Where this vault's git hook calls back. Takes the remote so the
-   *  token is minted for THIS vault: the endpoint is written into this
-   *  clone's `.git/hooks`, and a shared token would let a commit here run the
-   *  staged transforms against whichever vault is on screen. Read per open:
-   *  the hook server binds after the host is built, and the port moves on
-   *  restart. */
-  hookEndpoint?: (remote: string) => { port: number; token: string } | null
+  /** Writes each opened vault's `bridge.local.env`, and deletes it when the
+   *  vault closes (`bridge/env-file.ts`). */
+  bridgeEnv?: VaultBridgeEnv
   /**
    * Let go of whatever is running against this vault, before it closes.
    *
@@ -815,7 +809,7 @@ export function createVaultHost(args: {
           onSyncState: args.onSyncState,
           onHeldBack: args.onHeldBack,
           onCommitted: args.onCommitted,
-          hookEndpoint: args.hookEndpoint,
+          bridgeEnv: args.bridgeEnv,
           timings: args.timings,
         })
         return current

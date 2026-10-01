@@ -18,10 +18,14 @@ app's resolved colour mode) and an `env` block with Holi's static paths (`HOLI_B
 removes the `statusLine` older versions installed. A theme change reaches a running session on
 **Restart** (`claude respawn`).
 
-**Where a session finds Holi.** `holi.env` in the same directory (mode 0600), written whole each
-time Holi opens the vault and deleted when it leaves: the bridge's port and the vault's token,
-and the Google port and the vault's Google token. A background session's environment is its
-supervisor's, which may predate this Holi, so nothing per-run rides in it.
+**Where a session finds Holi.** Not in this directory, and not in the environment: a background
+session's environment is its supervisor's, which may predate this Holi. Every command and hook
+walks up from its current directory to the folder holding `.holi/vault` and reads
+`.holi/state/bridge.local.env` there (mode 0600), written whole each time Holi opens the vault
+and deleted when it leaves: the bridge's port and the vault's token, and the Google port and a
+Google token minted for the vault. It is a map each part of Holi contributes to
+(`bridgeEnv.contribute`), and it is parsed key by key, never sourced, because a collaborator
+could force-add one. `CLAUDE_CONFIG_DIR` stays the agent's config silo only.
 
 **Sign-in is lazy.** Credentials are keyed to the config directory, so each vault needs its own
 `/login`. The first terminal Holi opens on a directory writes a `.holi-spawned` marker and prints a
@@ -95,7 +99,7 @@ additions are commands in a directory prepended to `PATH`, plus skills that docu
   `store list|get|put|delete|check`, `docs list|read|render`, `sync status`, `agent sessions`,
   `vault members|recents`. The registry's reads the agent already has as Grep, Read and git
   (search, history, settings) stay app-only rather than grow a second way in. The script finds
-  the bridge with the token in `holi.env`. All reversible or read-only (a record write is a file
+  the bridge through the vault's `bridge.local.env`. All reversible or read-only (a record write is a file
   change in git history), so none is gated.
 - `holi-google`: mail and calendar through main, which holds the tokens ([google.md](google.md)).
 - `$TYPST_BIN` for PDF export ([pdf.md](pdf.md)).
@@ -149,6 +153,6 @@ the vault's pre-commit transforms like anyone's ([vaults-sync.md](vaults-sync.md
 - `apps/desktop/src/main/agent/seed-state.ts`: what Holi seeded, the base an update merges from
 - `apps/desktop/src/main/bridge/cli.ts`: the `holi` script and its argv; `bridge/server.ts`: `/cli`;
   `agent/bridge-routes.ts`: the turn and status-line routes
-- `apps/desktop/src/main/agent/endpoint-file.ts`: `holi.env`
+- `apps/desktop/src/main/bridge/env-file.ts`: `bridge.local.env` and its shell reader
 - `apps/desktop/src/main/agent/hooks/`, `skills/`: shipped hook scripts and skills
 - `packages/shared/src/path-safety.ts`: `isAgentSurfacePath`

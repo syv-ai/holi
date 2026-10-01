@@ -169,12 +169,6 @@ describe('buildAgentEnv', () => {
     expect(buildAgentEnv({ PATH: '/usr/bin' }).CLAUDE_CODE_NO_FLICKER).toBe('1')
   })
 
-  it('strips inherited hook keys so a vault cannot spoof them (reserved)', () => {
-    const env = buildAgentEnv({ PATH: '/usr/bin', HOLI_HOOK_PORT: '9', HOLI_HOOK_TOKEN: 'evil' })
-    expect(env.HOLI_HOOK_PORT).toBeUndefined()
-    expect(env.HOLI_HOOK_TOKEN).toBeUndefined()
-  })
-
   /**
    * The gate matches command text, so the command text has to be predictable.
    * With only `$HOLI_GOOGLE_BIN`, the agent types
@@ -197,6 +191,12 @@ describe('buildAgentEnv', () => {
 
   it('still sets a usable PATH when the parent had none', () => {
     expect(buildAgentEnv({}, { binDir: '/data/bin' }).PATH).toBe('/data/bin')
+  })
+
+  it('strips inherited bridge keys so a vault cannot spoof them (reserved)', () => {
+    const env = buildAgentEnv({ PATH: '/usr/bin', HOLI_BRIDGE_PORT: '9', HOLI_BRIDGE_TOKEN: 'ab' })
+    expect(env.HOLI_BRIDGE_PORT).toBeUndefined()
+    expect(env.HOLI_BRIDGE_TOKEN).toBeUndefined()
   })
 
   it('strips inherited Google keys so a vault cannot point the agent elsewhere', () => {

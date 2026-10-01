@@ -93,8 +93,8 @@ import {
 import { createAgentSessions, type AgentSessions } from './agent/agent-sessions'
 import { createAgentTerminals } from './agent/agent-terminals'
 import { createClaudeCli } from './agent/claude-cli'
-import { removeEndpointFile, writeEndpointFile } from './agent/endpoint-file'
 import { openTurnLog } from './agent/turn-log'
+import { createBridgeEnv } from './bridge/env-file'
 import { createBridgeServer } from './bridge/server'
 import { registerAgentRoutes } from './agent/bridge-routes'
 import { ensureTypst, resolveTypstBin } from './pdf/typst-bin'
@@ -257,6 +257,41 @@ async function main(): Promise<void> {
 
   const send = (channel: string, payload: unknown) => mainWindow?.webContents.send(channel, payload)
 
+  const bridgeEnv = createBridgeEnv()
+  /** remote → the undo of what the open vault's env file carries. */
+  const vaultEnv = new Map<string, () => void>()
+  /**
+   * What an open vault's `bridge.local.env` carries: the bridge's port and
+   * the vault's standing token (the same one git's hooks in the clone use),
+   * and the Google ops server's port with a bearer minted for this vault and
+   * revoked when Holi leaves it. Called at open; `bridge` and `googleOps`
+   * exist long before any vault can open.
+   */
+  const contributeVaultEnv = (remote: string): (() => void) => {
+    const undo: Array<() => void> = []
+    const bridgePort = bridge.port()
+    if (bridgePort !== null) {
+      undo.push(
+        bridgeEnv.contribute(remote, {
+          HOLI_BRIDGE_PORT: String(bridgePort),
+          HOLI_BRIDGE_TOKEN: bridge.tokenForVault(remote),
+        }),
+      )
+    }
+    const googlePort = googleOps.port()
+    if (googlePort !== null) {
+      const token = googleOps.mintToken(remote)
+      undo.push(
+        bridgeEnv.contribute(remote, {
+          HOLI_GOOGLE_PORT: String(googlePort),
+          HOLI_GOOGLE_TOKEN: token,
+        }),
+        () => googleOps.revoke(token),
+      )
+    }
+    return () => undo.forEach((u) => u())
+  }
+
   const host = createVaultHost({
     registry,
     // A GETTER, not a string. Read lazily on every git operation, so a sign-out
@@ -270,13 +305,20 @@ async function main(): Promise<void> {
       void agent?.ensure()
     },
     onSyncState: (state) => send('vault:sync', state),
-    // How the seeded pre-commit hook reaches us. A getter, read at open, so a
-    // vault opened before the server bound still gets the live port.
-    hookEndpoint: (remote) => {
-      const port = bridge.port()
-      // This vault's standing token: it is written into that clone's
-      // `.git/hooks`, so it must outlast any agent session and any switch.
-      return port === null ? null : { port, token: bridge.tokenForVault(remote) }
+    // How everything inside the vault reaches us: its `bridge.local.env`,
+    // with what each part of Holi contributes while the vault is open. Made
+    // at open, so the file names this run's ports, which move on restart.
+    bridgeEnv: {
+      attach: async (remote, root) => {
+        vaultEnv.get(remote)?.()
+        vaultEnv.set(remote, contributeVaultEnv(remote))
+        await bridgeEnv.attach(remote, root)
+      },
+      detach: async (remote) => {
+        vaultEnv.get(remote)?.()
+        vaultEnv.delete(remote)
+        await bridgeEnv.detach(remote)
+      },
     },
     // The large-file gate's held-back set (empty clears the callout). Pushed
     // every commit tick and once at open, so a vault switch resets it.
@@ -607,9 +649,6 @@ async function main(): Promise<void> {
     },
   )
   if (movedTo) console.log(`[agent] shared config directory is now ${movedTo}'s`)
-  /** The Google bearer each open vault's sessions hold: one per vault
-   *  per app run, written into its `holi.env` and revoked when Holi leaves it. */
-  const googleTokens = new Map<string, string>()
   const binDir = dirname(googleCliPath)
   const terminals = createAgentTerminals({ getWindow: () => mainWindow })
   agent = createAgentSessions({
@@ -640,28 +679,6 @@ async function main(): Promise<void> {
     },
     takeFirstSpawn,
     binDir: () => binDir,
-    claimEndpoint: async ({ remote, configDir }) => {
-      const hookPort = bridge.port()
-      if (hookPort === null) return
-      let googleToken = googleTokens.get(remote)
-      if (googleToken === undefined) {
-        googleToken = googleOps.mintToken(remote)
-        googleTokens.set(remote, googleToken)
-      }
-      await writeEndpointFile(configDir, {
-        hookPort,
-        // The vault's standing token: the same one its `.git/hooks` carry.
-        hookToken: bridge.tokenForVault(remote),
-        googlePort: googleOps.port(),
-        googleToken,
-      })
-    },
-    releaseEndpoint: async ({ remote, configDir }) => {
-      const googleToken = googleTokens.get(remote)
-      if (googleToken !== undefined) googleOps.revoke(googleToken)
-      googleTokens.delete(remote)
-      await removeEndpointFile(configDir)
-    },
     // What each turn changed, as a commit range, in the vault it ran in.
     turnLogFor: openTurnLog,
   })

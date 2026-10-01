@@ -15,8 +15,13 @@ import { promisify } from 'node:util'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { GOOGLE_CLI_SCRIPT, installGoogleCli } from '../src/main/google/cli'
 import { createGoogleOpsServer, type GoogleOpsServer } from '../src/main/google/ops-server'
+import { writeVaultEnv } from './helpers/bridge-env'
 
-const run = promisify(execFile)
+const execFileAsync = promisify(execFile)
+
+/** Run the script inside the test's vault, where it finds Holi. */
+const run = (command: string, args: string[], options: { env: NodeJS.ProcessEnv; cwd?: string }) =>
+  execFileAsync(command, args, { cwd: dir, ...options })
 
 /**
  * Run the script with a body on **stdin**.
@@ -32,7 +37,7 @@ function runWithInput(
   options: { env: NodeJS.ProcessEnv; input: string },
 ): Promise<{ stdout: string; stderr: string; code: number }> {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { env: options.env })
+    const child = spawn(command, args, { env: options.env, cwd: dir })
     let stdout = ''
     let stderr = ''
     child.stdout.on('data', (chunk: Buffer) => (stdout += chunk.toString('utf8')))
@@ -100,11 +105,11 @@ beforeEach(async () => {
   // main resolves the vault from the bearer. One vault is all these need.
   server = createGoogleOpsServer(() => ops)
   await server.start()
-  env = {
-    ...process.env,
-    HOLI_GOOGLE_PORT: String(server.port()),
-    HOLI_GOOGLE_TOKEN: server.mintToken('nthomsencph/privat'),
-  }
+  env = { ...process.env }
+  await writeVaultEnv(
+    dir,
+    `HOLI_GOOGLE_PORT=${server.port()}\nHOLI_GOOGLE_TOKEN=${server.mintToken('nthomsencph/privat')}\n`,
+  )
 })
 
 afterEach(async () => {
@@ -151,9 +156,8 @@ describe('holi-google', () => {
 
   it('says what to do when Holi is not running, rather than failing obscurely', async () => {
     await expect(
-      run(bin, ['agenda'], {
-        env: { ...process.env, HOLI_GOOGLE_PORT: '', HOLI_GOOGLE_TOKEN: '' },
-      }),
+      // Outside any vault: nothing to find.
+      run(bin, ['agenda'], { env: process.env, cwd: tmpdir() }),
     ).rejects.toMatchObject({ stderr: expect.stringMatching(/not running|not connected/) })
   })
 

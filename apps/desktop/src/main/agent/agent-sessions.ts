@@ -8,7 +8,7 @@
  * (`claude-sessions.ts`). This module ties those to the active vault.
  *
  * Three things belong to the **vault**, not to any session, and live here: the
- * config directory with its endpoint file, the sync pause (owned by
+ * config directory, the sync pause (owned by
  * the turn coordinator), and the focus file the per-turn hook reads.
  *
  * **Holi does not decide what a session is doing.** Claude Code's listing says
@@ -80,10 +80,6 @@ export interface AgentSessionsDeps {
   takeFirstSpawn(configDir: string): Promise<boolean>
   /** Holi's generated commands, first on every session's `PATH`. */
   binDir(): string | null
-  /** Write the vault's `holi.env`: where its sessions find this Holi. */
-  claimEndpoint(vault: VaultRef & { configDir: string }): Promise<void>
-  /** Holi is leaving the vault: delete `holi.env` and revoke what it held. */
-  releaseEndpoint(vault: VaultRef & { configDir: string }): Promise<void>
   /** Injected so tests need no filesystem. */
   watch?: (configDir: string, onChange: () => void) => () => void
   turnLogFor?: (vaultRoot: string) => TurnLog
@@ -122,7 +118,7 @@ export interface AgentSessions {
   /** The focus file is the vault's, so this names no session. */
   setFocus(focus: FocusInput): void
   /** Let go of the vault: optionally stop its live sessions, close every
-   *  terminal, release the endpoint. Bounded; never rejects. */
+   *  terminal, stop watching its config directory. Bounded; never rejects. */
   leave(opts?: { stopSessions?: boolean }): Promise<void>
 }
 
@@ -144,7 +140,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
   let current: Current | null = null
   let activating: Promise<Current | null> | null = null
   /** Set while `leave` runs: nothing may attach to a vault on its way out,
-   *  which would rewrite the `holi.env` just deleted and mint a new token. */
+   *  which would watch a directory Holi is letting go of. */
   let leaving: Promise<void> | null = null
   /** The latest listing for the current vault, live or not. */
   let rows: ClaudeRow[] = []
@@ -206,9 +202,6 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
       return null
     })
     if (config === null) return null
-    await deps
-      .claimEndpoint({ ...vault, configDir: config.dir })
-      .catch((err: unknown) => log(`endpoint not written: ${String(err)}`))
     const next: Current = {
       remote: vault.remote,
       root: vault.root,
@@ -228,7 +221,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     if (current?.remote === vault.remote) return current
     if (activating !== null) return activating
     // A different vault without a `leave` in between: let go of the old one's
-    // watch and endpoint, but its sessions are not ours to stop from here.
+    // watch, but its sessions are not ours to stop from here.
     // Inside the one `activating` promise, so a second caller during the
     // release waits on it rather than activating the vault twice.
     const previous = current
@@ -315,9 +308,6 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
 
   async function release(c: Current): Promise<void> {
     c.unwatch()
-    await deps
-      .releaseEndpoint({ remote: c.remote, root: c.root, configDir: c.configDir })
-      .catch((err: unknown) => log(`endpoint not released: ${String(err)}`))
   }
 
   async function openOn(c: Current, args: Geometry & { attach?: string }): Promise<OpenResult> {

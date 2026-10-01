@@ -222,11 +222,11 @@ describe('vault.history', () => {
 
 describe('docs.read', () => {
   it("refuses this machine's state", async () => {
-    await put('.holi/state/hook-endpoint.local.txt', 'http://127.0.0.1:1/?t=secret')
+    await put('.holi/state/bridge.local.env', 'HOLI_BRIDGE_TOKEN=abc123\n')
     expect(
       await refusal(
         runCapability('docs.read', 'app', ctx({}), {
-          path: '.holi/state/hook-endpoint.local.txt',
+          path: '.holi/state/bridge.local.env',
         }),
       ),
     ).toMatchObject({ code: 'FORBIDDEN' })

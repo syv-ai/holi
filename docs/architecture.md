@@ -60,7 +60,8 @@ app's bridge, the CLI) and holds its own refusals. Core registers its namespaces
 registers its own from the composition root (`src/main/index.ts`); a namespace has one owner.
 
 Whatever runs inside a vault (the `holi` CLI, the agent's hooks, git's pre-commit hook and merge
-driver) reaches main through one loopback bridge (`src/main/bridge/`) with a token per vault. The
+driver) reaches main through one loopback bridge (`src/main/bridge/`) with a token per vault,
+found by walking up to the vault's root and parsing `.holi/state/bridge.local.env`. The
 CLI's verbs are capabilities; the few callers that are not (the agent's turn and status-line hooks,
 which must answer empty, and git's two) are routes their owner registers.
 

@@ -37,6 +37,7 @@ import {
   vaultRelPath,
   VAULT_MARKER_FILE,
 } from '@holi/shared'
+import { shellReadBridgeEnv } from '../bridge/env-file'
 import { writeAtomic } from '../vault/vault-files'
 import { readSeedState, recordSeeded, untouched } from './seed-state'
 import userPromptSubmitHook from './hooks/user-prompt-submit.mjs?raw'
@@ -96,8 +97,8 @@ const hookCommand = (name: string) => `node "$CLAUDE_PROJECT_DIR/.claude/hooks/$
 
 /**
  * A turn-bracket hook: tells Holi a turn started or ended so it can pause
- * sync while the agent works. The script finds Holi through `holi.env` in the
- * session's config dir and names the session by its job id, because a
+ * sync while the agent works. The script finds Holi through the vault's
+ * `bridge.local.env` and names the session by its job id, because a
  * background session's environment is Claude Code's supervisor's, not Holi's.
  * It is a silent no-op outside Holi. Hook commands are not the agent's Bash
  * tool, so `permissions.ask` does not gate it.
@@ -115,15 +116,16 @@ const isOldTurnHook = (command: string): boolean =>
  *
  * `jq` prints the footer (`Opus 5.5 · 42% context`, the model alone before the
  * first message); it ships with macOS. Inside a Holi background session the
- * same JSON goes to the hook server, found through `holi.env` and keyed by the
- * job id, the way `turn-signal.mjs` does it. The post is detached with its
+ * same JSON goes to the bridge, found through the vault's `bridge.local.env`
+ * (parsed, never sourced) and keyed by the job id, the way `turn-signal.mjs`
+ * does it. The post is detached with its
  * output discarded, so a slow or absent Holi never holds up the footer, and
  * outside Holi the command only prints.
  */
 const STATUS_LINE = [
   'input=$(cat)',
   `printf '%s' "$input" | jq -j '[.model.display_name, (.context_window.used_percentage // empty | round | tostring + "% context")] | map(select(. != null and . != "")) | join(" · ")'`,
-  `if [ -n "\${CLAUDE_JOB_DIR:-}" ] && [ -f "\${CLAUDE_CONFIG_DIR:-}/holi.env" ]; then . "$CLAUDE_CONFIG_DIR/holi.env"; printf '%s' "$input" | curl -s -m 2 -o /dev/null -H 'content-type: application/json' --data-binary @- "http://127.0.0.1:\${HOLI_HOOK_PORT:-0}/statusline?t=\${HOLI_HOOK_TOKEN:-}&job=\${CLAUDE_JOB_DIR##*/}" >/dev/null 2>&1 & fi`,
+  `if [ -n "\${CLAUDE_JOB_DIR:-}" ]; then ${shellReadBridgeEnv(['HOLI_BRIDGE_PORT', 'HOLI_BRIDGE_TOKEN']).join('; ')}; if [ -n "$HOLI_BRIDGE_PORT" ] && [ -n "$HOLI_BRIDGE_TOKEN" ]; then printf '%s' "$input" | curl -s -m 2 -o /dev/null -H 'content-type: application/json' --data-binary @- "http://127.0.0.1:$HOLI_BRIDGE_PORT/statusline?t=$HOLI_BRIDGE_TOKEN&job=\${CLAUDE_JOB_DIR##*/}" >/dev/null 2>&1 & fi; fi`,
   'true',
 ].join('; ')
 

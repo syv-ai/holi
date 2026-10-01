@@ -19,6 +19,7 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, describe, expect, it } from 'vitest'
 import { installGitHook } from '../src/main/vault/large-files'
+import { bridgeLines, writeVaultEnv } from './helpers/bridge-env'
 
 const exec = promisify(execFile)
 const dirs: string[] = []
@@ -105,13 +106,8 @@ describe('the transform half never vetoes', () => {
   it('exits 0 when the endpoint file points nowhere', async () => {
     const dir = await repo()
     await installGitHook(dir, 1024)
-    await mkdir(join(dir, '.holi/state'), { recursive: true })
     // A stale endpoint from a previous run: the port is closed now.
-    await writeFile(
-      join(dir, '.holi/state/hook-endpoint.local.txt'),
-      '1\nstale\n',
-      'utf8',
-    )
+    await writeVaultEnv(dir, bridgeLines(1, 'abc'))
     await stage(dir, 'a.md', '# a\n')
     expect((await commit(dir)).code).toBe(0)
   })
@@ -119,8 +115,7 @@ describe('the transform half never vetoes', () => {
   it('exits 0 when the endpoint file is junk', async () => {
     const dir = await repo()
     await installGitHook(dir, 1024)
-    await mkdir(join(dir, '.holi/state'), { recursive: true })
-    await writeFile(join(dir, '.holi/state/hook-endpoint.local.txt'), 'not an endpoint at all', 'utf8')
+    await writeVaultEnv(dir, 'not an endpoint at all')
     await stage(dir, 'a.md', '# a\n')
     expect((await commit(dir)).code).toBe(0)
   })
@@ -130,12 +125,7 @@ describe('the transform half never vetoes', () => {
     // user's point of view. The curl gets a hard timeout.
     const dir = await repo()
     await installGitHook(dir, 1024)
-    await mkdir(join(dir, '.holi/state'), { recursive: true })
-    await writeFile(
-      join(dir, '.holi/state/hook-endpoint.local.txt'),
-      '9\nx\n', // discard port: accepts, never answers
-      'utf8',
-    )
+    await writeVaultEnv(dir, bridgeLines(9, 'ab')) // discard port: accepts, never answers
     await stage(dir, 'a.md', '# a\n')
 
     const started = Date.now()
@@ -161,18 +151,13 @@ describe('it actually reaches Holi', () => {
     const port = (server.address() as AddressInfo).port
 
     try {
-      await mkdir(join(dir, '.holi/state'), { recursive: true })
-      await writeFile(
-        join(dir, '.holi/state/hook-endpoint.local.txt'),
-        `${port}\ntok-123\n`,
-        'utf8',
-      )
+      await writeVaultEnv(dir, bridgeLines(port, 'abc123'))
       await stage(dir, 'a.md', '# a\n')
 
       expect((await commit(dir)).code).toBe(0)
       expect(hits).toHaveLength(1)
       expect(hits[0]!.url).toContain('/hooks/pre-commit')
-      expect(hits[0]!.url).toContain('t=tok-123')
+      expect(hits[0]!.url).toContain('t=abc123')
     } finally {
       await new Promise<void>((r) => server.close(() => r()))
     }
@@ -190,12 +175,7 @@ describe('it actually reaches Holi', () => {
     const port = (server.address() as AddressInfo).port
 
     try {
-      await mkdir(join(dir, '.holi/state'), { recursive: true })
-      await writeFile(
-        join(dir, '.holi/state/hook-endpoint.local.txt'),
-        `${port}\nx\n`,
-        'utf8',
-      )
+      await writeVaultEnv(dir, bridgeLines(port, 'ab'))
       await stage(dir, 'a.md', '# a\n')
       expect((await commit(dir)).code).toBe(0)
     } finally {

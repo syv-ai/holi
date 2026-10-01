@@ -8,9 +8,10 @@
  * hook (below) is the same gate for the agent's own direct commits.
  */
 
-import { chmod, mkdir, rm, writeFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { chmod, mkdir, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { VAULT_SETTING_DEFAULTS } from '@holi/shared'
+import { shellReadBridgeEnv } from '../bridge/env-file'
 
 /** The default cap when `.holi/settings/app.yaml` sets no `maxCommittedFileBytes`.
  *  10 MB: notes-vault assets (images, PDFs) sit well under; this catches videos,
@@ -44,42 +45,6 @@ export function partitionBySize(
     }
   }
   return { commit, heldBack }
-}
-
-/**
- * Where Holi tells its own git hook how to reach it: **port on line 1, token on
- * line 2**, and nothing else.
- *
- * Two lines rather than JSON because the reader is POSIX `sh` inside a
- * TypeScript template literal, where every backslash has to survive two
- * readers, and a `sed` backreference does not.
- *
- * **Machine-local** (`.local.`): it holds this instance's ephemeral port
- * and per-instance token, both meaningless on another machine and one of them a
- * credential. Rewritten on every vault open, because the port moves on every
- * app restart. Mode 0600.
- *
- * A file rather than the environment, because a `git commit` typed in an
- * ordinary terminal inherits nothing from Holi — and that terminal commit is
- * exactly the case these transforms exist for: a `git mv` outside the app is
- * what `relink` fixes.
- */
-export const ENDPOINT_FILE = '.holi/state/hook-endpoint.local.txt'
-
-export async function writeHookEndpoint(
-  root: string,
-  endpoint: { port: number; token: string } | null,
-): Promise<void> {
-  const abs = join(root, ENDPOINT_FILE)
-  if (endpoint === null) {
-    await rm(abs, { force: true }).catch(() => {})
-    return
-  }
-  await mkdir(dirname(abs), { recursive: true })
-  await writeFile(abs, `${endpoint.port}\n${endpoint.token}\n`, {
-    encoding: 'utf8',
-    mode: 0o600,
-  })
 }
 
 /**
@@ -123,19 +88,15 @@ fi
 # in TypeScript where it is tested. Holi not running is the normal case for a
 # terminal commit and must cost nothing.
 #
-# The endpoint file is two lines, port then token, precisely so this parses with
-# no backslashes: it is generated inside a TypeScript template literal, where
-# every escape has to survive two readers.
-endpoint="$(git rev-parse --show-toplevel)/${ENDPOINT_FILE}"
-if [ -f "$endpoint" ]; then
-  port=$(sed -n 1p "$endpoint")
-  token=$(sed -n 2p "$endpoint")
-  if [ -n "$port" ] && [ -n "$token" ]; then
-    # --max-time is not optional: a commit that blocks for thirty seconds has
-    # failed, as far as the person waiting on it is concerned.
-    curl -sS --max-time 10 -X POST \\
-      "http://127.0.0.1:$port/hooks/pre-commit?t=$token" >/dev/null 2>&1 || true
-  fi
+# Holi is found the way every command in a vault finds it: the vault's
+# .holi/state/bridge.local.env, read key by key, never sourced. Git runs this
+# at the top of the clone.
+${shellReadBridgeEnv(['HOLI_BRIDGE_PORT', 'HOLI_BRIDGE_TOKEN']).join('\n')}
+if [ -n "$HOLI_BRIDGE_PORT" ] && [ -n "$HOLI_BRIDGE_TOKEN" ]; then
+  # --max-time is not optional: a commit that blocks for thirty seconds has
+  # failed, as far as the person waiting on it is concerned.
+  curl -sS --max-time 10 -X POST \\
+    "http://127.0.0.1:$HOLI_BRIDGE_PORT/hooks/pre-commit?t=$HOLI_BRIDGE_TOKEN" >/dev/null 2>&1 || true
 fi
 exit 0
 `

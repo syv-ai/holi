@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { formatRecord, mergeRecordText } from '@holi/shared'
 import { runGit, tryGit } from '../src/main/git'
-import { writeHookEndpoint } from '../src/main/vault/large-files'
+import { bridgeLines, writeVaultEnv } from './helpers/bridge-env'
 import { installRecordMergeDriver, RECORD_ATTRIBUTES_LINE } from '../src/main/vault/record-merge'
 
 let root: string
@@ -87,7 +87,7 @@ describe('the driver, end to end through git', () => {
   }
 
   it('merges edits of different fields of one record cleanly', async () => {
-    await writeHookEndpoint(root, { port: await listen(), token: 't' })
+    await writeVaultEnv(root, bridgeLines(await listen(), 'ab'))
     await installRecordMergeDriver(root)
     await branches({ title: 'a', done: true, points: 1 }, { title: 'b', done: false, points: 1 })
 
@@ -99,7 +99,7 @@ describe('the driver, end to end through git', () => {
   })
 
   it('leaves a conflict for reconcile when both changed one field', async () => {
-    await writeHookEndpoint(root, { port: await listen(), token: 't' })
+    await writeVaultEnv(root, bridgeLines(await listen(), 'ab'))
     await installRecordMergeDriver(root)
     await branches({ title: 'x', done: false, points: 1 }, { title: 'y', done: false, points: 1 })
 

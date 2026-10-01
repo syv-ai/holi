@@ -3,8 +3,9 @@
  *
  * A generated shell script rather than a shipped binary, for three reasons: it
  * needs no build step or packaging entry, it is readable by the person whose
- * machine it is on, and it re-reads `$HOLI_GOOGLE_PORT`/`$HOLI_GOOGLE_TOKEN` at
- * every invocation, so it keeps working across app restarts that move the port.
+ * machine it is on, and it re-reads the vault's `bridge.local.env`
+ * (`bridge/env-file.ts`) at every invocation, so it keeps working across app
+ * restarts that move the port.
  *
  * It is a thin curl wrapper on purpose. All it does is name the operations, so
  * the agent has one documented command instead of a URL to assemble, and so
@@ -13,6 +14,7 @@
  */
 import { chmod, mkdir, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
+import { shellReadBridgeEnv } from '../bridge/env-file'
 
 /** The script. `$1` is the subcommand; the rest are its arguments. */
 const SCRIPT = `#!/bin/sh
@@ -33,14 +35,13 @@ const SCRIPT = `#!/bin/sh
 # that has attendees (Holi refuses, because it would email them).
 set -eu
 
-# The port and tokens live in a file in the vault's Claude Code config dir,
-# rewritten by Holi each time it opens the vault. A background session's
-# environment comes from Claude Code's supervisor, so it cannot carry them.
-if [ -n "\${CLAUDE_CONFIG_DIR:-}" ] && [ -f "\$CLAUDE_CONFIG_DIR/holi.env" ]; then
-  . "\$CLAUDE_CONFIG_DIR/holi.env"
-fi
+# The port and token are in .holi/state/bridge.local.env at the vault's root,
+# found by walking up from here to the folder holding .holi/vault. Holi writes
+# it when it opens the vault and deletes it when it leaves. Read key by key
+# and checked, never sourced: a file in a synced folder is not code to run.
+${shellReadBridgeEnv(['HOLI_GOOGLE_PORT', 'HOLI_GOOGLE_TOKEN']).join('\n')}
 
-if [ -z "\${HOLI_GOOGLE_PORT:-}" ] || [ -z "\${HOLI_GOOGLE_TOKEN:-}" ]; then
+if [ -z "\$HOLI_GOOGLE_PORT" ] || [ -z "\$HOLI_GOOGLE_TOKEN" ]; then
   echo "holi-google: Holi is not running, or Google is not connected." >&2
   exit 1
 fi

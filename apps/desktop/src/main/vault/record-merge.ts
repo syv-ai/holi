@@ -22,7 +22,7 @@
 import { appendFile, chmod, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { runGit } from '../git'
-import { ENDPOINT_FILE } from './large-files'
+import { shellReadBridgeEnv } from '../bridge/env-file'
 
 /** The attribute line naming which paths the driver merges. The leading `**\/`
  *  matches a bundle at the root as well as a nested one. */
@@ -33,15 +33,14 @@ const SCRIPT = `#!/bin/sh
 # Git passes the base, ours and theirs versions of one record; Holi merges them
 # field by field. Any failure exits 1, which git records as a normal conflict.
 base="$1"; ours="$2"; theirs="$3"
-endpoint="$(git rev-parse --show-toplevel)/${ENDPOINT_FILE}"
-[ -f "$endpoint" ] || exit 1
-port=$(sed -n 1p "$endpoint")
-token=$(sed -n 2p "$endpoint")
-{ [ -n "$port" ] && [ -n "$token" ]; } || exit 1
+# Holi is found the way every command in a vault finds it: the vault's
+# .holi/state/bridge.local.env, read key by key, never sourced.
+${shellReadBridgeEnv(['HOLI_BRIDGE_PORT', 'HOLI_BRIDGE_TOKEN']).join('\n')}
+{ [ -n "$HOLI_BRIDGE_PORT" ] && [ -n "$HOLI_BRIDGE_TOKEN" ]; } || exit 1
 out=$(mktemp) || exit 1
 # --data-urlencode with @file keeps the file's bytes, newlines included.
 code=$(curl -sS --max-time 10 -o "$out" -w '%{http_code}' -X POST \\
-  "http://127.0.0.1:$port/merge/record?t=$token" \\
+  "http://127.0.0.1:$HOLI_BRIDGE_PORT/merge/record?t=$HOLI_BRIDGE_TOKEN" \\
   --data-urlencode "base@$base" --data-urlencode "ours@$ours" \\
   --data-urlencode "theirs@$theirs") || { rm -f "$out"; exit 1; }
 if [ "$code" = 200 ]; then

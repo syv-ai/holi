@@ -160,8 +160,8 @@ export interface GoogleOpsServer {
   stop(): Promise<void>
   port(): number | null
   /**
-   * A bearer bound to one vault, minted once per vault per app run,
-   * written into that vault's `holi.env`, and revoked when Holi leaves it.
+   * A bearer bound to one vault, minted when Holi opens the vault, written
+   * into that vault's `bridge.local.env`, and revoked when Holi leaves it.
    *
    * Bound to a vault rather than resolved by "whatever is active": a
    * background session **outlives a vault switch**, and must not then read a

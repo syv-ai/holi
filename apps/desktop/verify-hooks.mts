@@ -18,7 +18,8 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { createBridgeServer } from './src/main/bridge/server'
 import { registerGitRoutes } from './src/main/vault/git-routes'
-import { installGitHook, writeHookEndpoint } from './src/main/vault/large-files'
+import { createBridgeEnv } from './src/main/bridge/env-file'
+import { installGitHook } from './src/main/vault/large-files'
 
 const exec = promisify(execFile)
 const dir = process.argv[2]
@@ -45,7 +46,13 @@ const server = createBridgeServer()
 registerGitRoutes(server, { rootFor: async () => dir })
 await server.start()
 await installGitHook(dir, 10 * 1024 * 1024)
-await writeHookEndpoint(dir, { port: server.port()!, token: server.tokenForVault('scratch/vault') })
+await writeFile(join(dir, '.holi/vault'), '', 'utf8')
+const env = createBridgeEnv()
+env.contribute('scratch/vault', {
+  HOLI_BRIDGE_PORT: String(server.port()),
+  HOLI_BRIDGE_TOKEN: server.tokenForVault('scratch/vault'),
+})
+await env.attach('scratch/vault', dir)
 
 console.log(`\nScratch vault ready at ${dir}`)
 console.log(`Bridge server on 127.0.0.1:${server.port()}\n`)

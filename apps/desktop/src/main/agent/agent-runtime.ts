@@ -134,10 +134,10 @@ export function buildAgentEnv(
   delete env.CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN
   env.CLAUDE_CODE_NO_FLICKER = '1'
   // Reserved keys: strip any inherited value so a vault/user env can't spoof
-  // the hook target. Holi sets none of them any more: sessions find it through
-  // `holi.env` in their config dir.
-  delete env.HOLI_HOOK_PORT
-  delete env.HOLI_HOOK_TOKEN
+  // them. Holi sets none of these: where it is comes from the vault's
+  // `bridge.local.env`, which its commands read in preference to anything.
+  delete env.HOLI_BRIDGE_PORT
+  delete env.HOLI_BRIDGE_TOKEN
   delete env.HOLI_GOOGLE_PORT
   delete env.HOLI_GOOGLE_TOKEN
   delete env.HOLI_GOOGLE_BIN

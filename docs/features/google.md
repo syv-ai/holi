@@ -13,7 +13,7 @@ A vault can connect a Google account to read and triage Gmail, read its calendar
 - **Calendar** shows calendars the user owns by default; per-calendar overrides live in main so the agent honours them. Events carry `mine`. Joining uses `conferenceData`, then the body, then the location, matching a join-link shape. A thread with an `.ics` is joined to its event by the invite's `UID`.
 - **Composer:** markdown with a preview through the reader's sanitiser and frame; main sends exactly the previewed HTML as `multipart/alternative`, the markdown as the plain part, marked `X-Holi-Source: markdown`. Drafts live in Gmail and all of them open (unmarked ones via `turndown`). Autosave from the first edit, 2 s idle, single-flight. Reply is sender-only unless reply-all.
 - **Linking** a thread or event makes a task with the permalink as a plain markdown link in its body ([tasks](tasks.md)).
-- **The agent:** `holi-google` curls a loopback ops server in main with a bearer minted per vault and written into that vault's `holi.env` ([agent-config.md](agent-config.md)), revoked when Holi leaves the vault. Its reads cannot see the cache; its writes are the router's own functions. `send` takes a composed message or `--draft <id>`.
+- **The agent:** `holi-google` curls a loopback ops server in main with a bearer minted per vault and written into that vault's `bridge.local.env` when Holi opens it ([agent-config.md](agent-config.md)), revoked when Holi leaves the vault. Its reads cannot see the cache; its writes are the router's own functions. `send` takes a composed message or `--draft <id>`.
 
 ## Rules
 

@@ -69,7 +69,6 @@ describe('agent terminals', () => {
       expect(opts.cwd).toBe(TARGET.root)
       expect(opts.env.CLAUDE_CONFIG_DIR).toBe('/cfg/vault')
       expect(opts.env.PATH.split(':')[0]).toBe('/holi/bin')
-      expect(opts.env.HOLI_HOOK_TOKEN).toBeUndefined()
     }
     expect(terminals.list().map((t) => t.launchedFor)).toEqual([null, '1234abcd'])
   })
