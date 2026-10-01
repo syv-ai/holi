@@ -299,3 +299,18 @@ and activation.
 - **The capability host has two faces.** `dispatch` serves the ui and cli doors, and
   `openAppDoor` is the app door, opened once by the apps code with its consent check. An
   `appGrant` capability fails closed when the door was opened without one.
+- **Google is a plugin, on by default.** Nothing shows until someone connects an account, and the
+  OAuth client admits only the organisation's accounts. Electron loads inside `activateApp`, so
+  the plugin stays importable under plain Node in tests.
+- **The agent's mail read (`google.read`, prose only) is separate from the view's
+  (`google.thread`, the full thread),** so `--json` can never hand the agent unsanitised HTML.
+- **`CliSpec.stdinUnless`:** a flag such as `--draft` means the bridge never asks for stdin, so
+  `send --draft` never blocks.
+- **Capability errors carry `UNAUTHORIZED` and `RATE_LIMITED`,** so the UI picks Reconnect or
+  Retry by code, never by message text.
+- **A mail draft is pinned to the vault it was started in.**
+- **Plugin buttons that need another plugin are hidden, not disabled,** while its capability is
+  absent.
+- **Test flakes are fixed at the cause.** The PDF viewer test acted before the fake viewer's
+  mount effect had run. The fake now shows its test id only once it is live, matching the real
+  viewer's `onReady`.
