@@ -31,7 +31,6 @@ const MOVES: readonly (readonly [string, string])[] = [
   ['.holi/seed-state.local.json', '.holi/state/seed-state.local.json'],
   ['.holi/context.local.json', '.holi/state/context.local.json'],
   ['.holi/hooks.local.log', '.holi/state/hooks.local.log'],
-  ['.holi/hook-endpoint.local.txt', '.holi/state/hook-endpoint.local.txt'],
   ['.holi/turns.local.json', '.holi/state/turns.local.json'],
   // Settings, theme and icons. These are COMMITTED (bar the `.local.` ones), so
   // this half of the move is a change collaborators see.

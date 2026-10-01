@@ -12,7 +12,6 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { SEED_STATE_FILE } from '../src/main/agent/seed-state'
 import { CONTEXT_FILE } from '../src/main/agent/context-snapshot'
 import { HOOKS_LOG_FILE } from '../src/main/vault/hooks/log'
-import { ENDPOINT_FILE } from '../src/main/vault/large-files'
 import { VAULT_MARKER_FILE } from '@holi/shared'
 
 /**
@@ -50,19 +49,16 @@ const gone = async (root: string, rel: string) =>
   )
 
 describe('migrateVaultLayout', () => {
-  it('moves all four, keeping their contents', async () => {
+  it('moves all three, keeping their contents', async () => {
     const root = await vault({
       '.holi/seed-state.local.json': '{"a":1}',
       '.holi/context.local.json': '{"focusedPath":"a.md"}',
       '.holi/hooks.local.log': 'a log line\n',
-      '.holi/hook-endpoint.local.txt': '4000\ntok\n',
     })
 
     const moved = await migrateVaultLayout(root)
 
-    expect(moved.sort()).toEqual(
-      [CONTEXT_FILE, ENDPOINT_FILE, HOOKS_LOG_FILE, SEED_STATE_FILE].sort(),
-    )
+    expect(moved.sort()).toEqual([CONTEXT_FILE, HOOKS_LOG_FILE, SEED_STATE_FILE].sort())
     expect(await read(root, SEED_STATE_FILE)).toBe('{"a":1}')
     expect(await read(root, HOOKS_LOG_FILE)).toBe('a log line\n')
     expect(await gone(root, '.holi/seed-state.local.json')).toBe(true)
@@ -153,7 +149,7 @@ describe('migrateVaultLayout', () => {
     // Local-ness is that marker and nothing else, and the seeded
     // `.gitignore` carries exactly `*.local.*`. A rename to a bare name under a
     // directory that merely sounds private is a published private file.
-    for (const rel of [SEED_STATE_FILE, CONTEXT_FILE, HOOKS_LOG_FILE, ENDPOINT_FILE]) {
+    for (const rel of [SEED_STATE_FILE, CONTEXT_FILE, HOOKS_LOG_FILE]) {
       expect(rel.startsWith(`${STATE_DIR}/`)).toBe(true)
       expect(rel.split('/').at(-1)).toMatch(/\.local\./)
     }
