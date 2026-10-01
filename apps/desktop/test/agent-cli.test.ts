@@ -281,8 +281,8 @@ describe('reads through the capability door', () => {
     for (const [args, name] of [
       [['sync', 'status'], 'sync.status'],
       [['sessions'], 'agent.sessions'],
-      [['members'], 'members'],
-      [['recents'], 'recents'],
+      [['members'], 'vault.members'],
+      [['recents'], 'vault.recents'],
     ] as const) {
       const res = await run(bin, [...args], env)
       expect(res.code, args.join(' ')).toBe(0)

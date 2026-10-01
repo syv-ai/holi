@@ -83,7 +83,7 @@ const refusal = (p: Promise<unknown>) =>
     (e: CapabilityError) => ({ code: e.code, message: e.message }),
   )
 
-describe('recents', () => {
+describe('vault.recents', () => {
   it('keeps what an app may name, never the agent surface', async () => {
     const recents = () => [
       { kind: 'path' as const, key: 'a.md' },
@@ -93,7 +93,7 @@ describe('recents', () => {
       { kind: 'surface' as const, key: 'board' },
       { kind: 'app' as const, key: 'B.app' },
     ]
-    const { value } = await runCapability('recents', 'app', ctx({ recents }), undefined)
+    const { value } = await runCapability('vault.recents', 'app', ctx({ recents }), undefined)
     expect(value).toEqual([
       { kind: 'path', key: 'a.md' },
       { kind: 'surface', key: 'board' },
@@ -103,7 +103,7 @@ describe('recents', () => {
 
   it('reaches the agent too, one per line', async () => {
     const recents = () => [{ kind: 'path' as const, key: 'a.md' }]
-    const { text } = await runCapability('recents', 'cli', ctx({ recents }, null), {})
+    const { text } = await runCapability('vault.recents', 'cli', ctx({ recents }, null), {})
     expect(text).toBe('path\ta.md')
   })
 })
@@ -116,13 +116,13 @@ describe('sync.status', () => {
   })
 })
 
-describe('members', () => {
+describe('vault.members', () => {
   it('gives logins and avatars only', async () => {
     const members = async () => [
       { accountId: 1, login: 'ada', avatarUrl: 'https://x/a.png', permission: 'admin' },
     ]
     const { value } = await runCapability(
-      'members',
+      'vault.members',
       'app',
       ctx({ members } as Partial<CapabilityServices>),
       {},
@@ -134,7 +134,7 @@ describe('members', () => {
     const members = async () => {
       throw new Error('rate limited')
     }
-    expect(await refusal(runCapability('members', 'app', ctx({ members }), {}))).toEqual({
+    expect(await refusal(runCapability('vault.members', 'app', ctx({ members }), {}))).toEqual({
       code: 'UNAVAILABLE',
       message: 'rate limited',
     })
@@ -160,7 +160,7 @@ describe('members', () => {
   })
 })
 
-describe('history', () => {
+describe('vault.history', () => {
   const commit = (sha: string, subject: string) => ({
     sha,
     subject,
@@ -180,7 +180,7 @@ describe('history', () => {
     }) as unknown as ReturnType<CapabilityServices['repo']>
 
   it('hides commits that touched only the agent surface, and its paths in the rest', async () => {
-    const { value } = await runCapability('history', 'app', ctx({ repo }), {})
+    const { value } = await runCapability('vault.history', 'app', ctx({ repo }), {})
     expect(value).toEqual([
       {
         sha: '3',
@@ -202,7 +202,7 @@ describe('history', () => {
   it('refuses the history of an agent-surface path', async () => {
     expect(
       await refusal(
-        runCapability('history', 'app', ctx({ repo }), { path: '.claude/settings.json' }),
+        runCapability('vault.history', 'app', ctx({ repo }), { path: '.claude/settings.json' }),
       ),
     ).toMatchObject({ code: 'FORBIDDEN' })
   })

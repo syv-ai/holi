@@ -32,15 +32,7 @@ function syncText(state: SyncState | null): string {
 }
 
 /** The namespaces core owns. */
-export const VAULT_NAMESPACES = [
-  'docs',
-  'sync',
-  'search',
-  'recents',
-  'settings',
-  'members',
-  'history',
-] as const
+export const VAULT_NAMESPACES = ['docs', 'vault', 'sync', 'skills'] as const
 
 export const VAULT_CAPABILITIES = {
   'docs.list': cap({
@@ -67,8 +59,8 @@ export const VAULT_CAPABILITIES = {
     text: (html) => html,
   }),
 
-  search: cap({
-    // The app door only, like `settings` and `history`: the agent has Grep,
+  'docs.search': cap({
+    // The app door only, like `vault.settings` and `vault.history`: the agent has Grep,
     // Read and git, and a CLI twin would be a second way to do the same.
     doors: ['app'],
     params: (raw) => {
@@ -83,7 +75,7 @@ export const VAULT_CAPABILITIES = {
     text: (hits) => hits.map((h) => `${h.path}\t${h.snippet ?? ''}`).join('\n'),
   }),
 
-  recents: cap({
+  'vault.recents': cap({
     // Both: "the note I had open before this one" is what the agent cannot
     // find with its own tools.
     doors: ['app', 'cli'],
@@ -96,7 +88,7 @@ export const VAULT_CAPABILITIES = {
     text: (entries) => entries.map((e) => `${e.kind}\t${e.key}`).join('\n'),
   }),
 
-  settings: cap({
+  'vault.settings': cap({
     doors: ['app'],
     params: noParams,
     run: async (ctx) => {
@@ -105,7 +97,7 @@ export const VAULT_CAPABILITIES = {
     },
   }),
 
-  members: cap({
+  'vault.members': cap({
     doors: ['app', 'cli'],
     params: noParams,
     // Login and avatar only: an app has no use for who may push.
@@ -119,7 +111,7 @@ export const VAULT_CAPABILITIES = {
     text: (members) => members.map((m) => m.login).join('\n'),
   }),
 
-  history: cap({
+  'vault.history': cap({
     doors: ['app'],
     params: (raw) => {
       const p = paramsObject(raw)

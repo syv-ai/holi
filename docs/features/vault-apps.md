@@ -52,8 +52,8 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   settings, history) and
   forwards every other method to `apps.bridge` in main with the bundle it mounted. Reads:
   `docs.list`, `docs.read`, `docs.render` (a note as HTML, inline HTML escaped and only web links
-  kept, so a note cannot run script as the app), `tasks.list`, `recents`, `search` (names, then
-  bodies), `settings`, `members`, `history`, `sync.status`, `agent.sessions`, and, opted into,
+  kept, so a note cannot run script as the app), `tasks.list`, `vault.recents`, `docs.search` (names, then
+  bodies), `vault.settings`, `vault.members`, `vault.history`, `sync.status`, `agent.sessions`, and, opted into,
   `calendar.events` and `mail.threads`. Writes: `holi.store(collection)` and `tasks.complete`,
   which applies the board's rule. `<holi-note path>` is a custom element the shim defines: the
   note rendered, themed and live. The theme is ambient CSS variables, not a call.

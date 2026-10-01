@@ -94,11 +94,11 @@ export const BRIDGE_JS = `(() => {
     // A note's path, or one of Holi's views: home, board, agenda, mail, settings.
     open: (target) =>
       SURFACES.includes(target) ? call('open', { surface: target }) : call('open', { path: target }),
-    recents: () => call('recents'),
-    search: (q) => call('search', { q }),
-    settings: () => call('settings'),
-    members: () => call('members'),
-    history: (opts) => call('history', opts || {}),
+    recents: () => call('vault.recents'),
+    search: (q) => call('docs.search', { q }),
+    settings: () => call('vault.settings'),
+    members: () => call('vault.members'),
+    history: (opts) => call('vault.history', opts || {}),
     sync: {
       status: () => call('sync.status'),
     },

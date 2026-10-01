@@ -188,8 +188,8 @@ case "\$cmd" in
     case "\$cmd" in
       sync) cap "sync status" sync.status ;;
       sessions) cap sessions agent.sessions ;;
-      members) cap members members ;;
-      recents) cap recents recents ;;
+      members) cap members vault.members ;;
+      recents) cap recents vault.recents ;;
     esac
     ;;
   store)

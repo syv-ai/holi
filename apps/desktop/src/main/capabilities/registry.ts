@@ -84,9 +84,10 @@ export interface CapabilityRegistry {
   ): Promise<CapabilityResult>
 }
 
-const namespaceOf = (name: string): string => {
+/** A name's namespace, or null for a name that is not `<namespace>.<verb>`. */
+const namespaceOf = (name: string): string | null => {
   const dot = name.indexOf('.')
-  return dot === -1 ? name : name.slice(0, dot)
+  return dot <= 0 || dot === name.length - 1 ? null : name.slice(0, dot)
 }
 
 export function createCapabilityRegistry(): CapabilityRegistry {
@@ -99,7 +100,8 @@ export function createCapabilityRegistry(): CapabilityRegistry {
         if (owners.has(ns)) throw new Error(`capability namespace ${ns} is already registered`)
       }
       for (const name of Object.keys(table)) {
-        if (!namespaces.includes(namespaceOf(name))) {
+        const ns = namespaceOf(name)
+        if (ns === null || !namespaces.includes(ns)) {
           throw new Error(`capability ${name} is outside its owner's namespaces`)
         }
       }
