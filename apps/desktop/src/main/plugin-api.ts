@@ -16,8 +16,11 @@ import type { PluginInfo } from '@holi/shared'
 import type { AppDoor, AppDoorOpener } from './capabilities/dispatch'
 import type { CapabilityTable } from './capabilities/registry'
 import type { SeedContribution } from './vault/seed/types'
+import type { Route } from './bridge/server'
+import type { UiReport } from './capabilities/services'
 
-/** Undoes what an activation started. Run at quit. */
+/** Undoes what an activation started: at leave for a vault's, at quit for
+ *  the process's. */
 export type Disposer = () => void | Promise<void>
 
 /** The vault Holi has open. */
@@ -79,6 +82,50 @@ export interface AppContext extends SchemeContext {
    * second call throws.
    */
   openAppDoor(opener: AppDoorOpener): AppDoor
+  /**
+   * Ask before Holi quits. `check` runs when someone quits: null lets the
+   * quit go on, a question puts it to them, and Cancel keeps Holi open. A
+   * disposer cannot ask, because disposers run after the decision to quit.
+   * Returns the undo, which the host also runs at quit.
+   */
+  guardQuit(check: () => QuitQuestion | null): () => void
+  /**
+   * Serve one exact path on the bridge (`bridge/server.ts`), for a caller
+   * that is not a `holi` verb, such as a hook that must answer empty.
+   * Returns the undo, which the host also runs at quit.
+   */
+  route(path: string, route: BridgeRoute): () => void
+  /** The directory holding the `holi` command, for a process a plugin starts. */
+  binDir(): string
+}
+
+/** What a quit guard asks. */
+export interface QuitQuestion {
+  message: string
+  detail: string
+}
+
+/**
+ * What a plugin gets in a vault it runs, from when the vault is open until
+ * it is left. Everything is bound to that vault.
+ */
+export interface VaultCtx extends LiveVault {
+  /**
+   * Hold the vault's sync loop: no autosave commit, pull or push until the
+   * returned release runs. Holds from several callers stack; the loop runs
+   * again when the last is released, and a release after the vault is left
+   * does nothing. Throws if the vault is not open, which is a bug in the
+   * caller.
+   */
+  pauseSync(reason: string): () => void
+  /** Commit whatever is dirty now. The new commit's sha, or null for none. */
+  commitNow(): Promise<string | null>
+  /** The checked-out commit, or null on an unborn branch. */
+  head(): Promise<string | null>
+  /** Hear what the renderer reports the person is looking at in this vault. */
+  onReport(cb: (report: UiReport) => void): () => void
+  /** `AppContext.emit` about this vault. */
+  emit(name: string, payload: unknown): void
 }
 
 export interface MainPlugin {
@@ -90,7 +137,17 @@ export interface MainPlugin {
   /** Runs once per process, the first time a vault that enables the plugin
    *  is opened. */
   activateApp?(ctx: AppContext): Disposer | Promise<Disposer>
+  /**
+   * Runs once a vault that enables the plugin is open, after `activateApp`.
+   * Opening the vault again while it is open does not run it again. The
+   * disposer runs when Holi leaves the vault, while it is still the open one,
+   * and at quit before anything else is torn down.
+   */
+  activateVault?(ctx: VaultCtx): Disposer | Promise<Disposer>
 }
+
+export type BridgeRoute = Route
+export type { UiReport } from './capabilities/services'
 
 export type { PluginInfo } from '@holi/shared'
 export type { SeedContribution } from './vault/seed/types'

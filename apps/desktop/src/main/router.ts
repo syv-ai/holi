@@ -98,8 +98,9 @@ export interface RouterDeps {
   /**
    * Start the plugins the vault at `root` enables (`plugin-host/host.ts`).
    * Run after the seed on add and open, and after a write to its plugins.
+   * `opened` activates them in the vault once it is open.
    */
-  plugins: { enter(root: string): Promise<void> }
+  plugins: { enter(root: string): Promise<void>; opened(): Promise<void> }
   /** The managed root clones live under — `~/Holi` in the app, a tmpdir in
    *  tests. Passed in rather than read from `vaultRoot()` here so the router
    *  has no ambient dependency on the environment. */
@@ -372,6 +373,7 @@ export function createRouter(deps: RouterDeps) {
       lastOpenedAt: now(),
     })
     const active = await deps.host.open(remote)
+    await deps.plugins.opened()
     return active.snapshot()
   }
 
@@ -643,6 +645,7 @@ export function createRouter(deps: RouterDeps) {
         await deps.plugins.enter(root)
         await deps.registry.touch(input.remote, now())
         const active = await deps.host.open(input.remote)
+        await deps.plugins.opened()
         return active.snapshot()
       }),
 
@@ -1442,6 +1445,7 @@ export function createRouter(deps: RouterDeps) {
         if ('plugins' in committed.patch || 'plugins' in local.patch) {
           await deps.seed(root)
           await deps.plugins.enter(root)
+          await deps.plugins.opened()
         }
         return { ok: true as const, warnings: [...committed.warnings, ...local.warnings] }
       }),

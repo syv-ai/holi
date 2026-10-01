@@ -106,7 +106,7 @@ async function rig(files: Record<string, string> = {}, auth?: StoredAuth) {
   })
   const caller = createRouter({
     seed: seedVault,
-    plugins: { enter: async () => {} },
+    plugins: { enter: async () => {}, opened: async () => {} },
     capabilities: capabilityHost,
     registry,
     session,
@@ -1103,7 +1103,7 @@ async function authRig(routes: Record<string, Scripted[]>, seed?: StoredAuth) {
   hosts.push(host)
   const caller = createRouter({
     seed: seedVault,
-    plugins: { enter: async () => {} },
+    plugins: { enter: async () => {}, opened: async () => {} },
     registry,
     session,
     host,

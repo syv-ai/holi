@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createAgentSessions, SIGN_IN_NOTICE } from '../src/main/agent/agent-sessions'
+import {
+  createAgentSessions,
+  SIGN_IN_NOTICE,
+  type AgentVault,
+} from '../src/main/agent/agent-sessions'
 import type { AgentTerminals, OpenArgs } from '../src/main/agent/agent-terminals'
 import type { ClaudeCli } from '../src/main/agent/claude-cli'
 
@@ -66,17 +70,17 @@ function setup(initial: Row[] = []) {
   }
   const sent: Array<[string, unknown]> = []
   const pauses: string[] = []
-  const vault = {
+  const vault: AgentVault = {
     remote: REMOTE,
     root: ROOT,
-    repo: { head: () => Promise.resolve('base-sha') },
+    head: () => Promise.resolve('base-sha'),
     commitNow: () => Promise.resolve(null),
-    pause: (reason: string) => pauses.push(reason),
-    resume: () => {},
+    pauseSync: (reason: string) => {
+      pauses.push(reason)
+      return () => {}
+    },
   }
-  let active: typeof vault | null = vault
   const sessions = createAgentSessions({
-    host: { active: () => active as never },
     getWindow: () =>
       ({ webContents: { send: (c: string, p: unknown) => sent.push([c, p]) } }) as never,
     cli,
@@ -101,16 +105,15 @@ function setup(initial: Row[] = []) {
       listing = rows
     },
     pauses,
-    setActive: (v: typeof active) => {
-      active = v
-    },
+    /** The vault opened: what its activation does. */
+    attach: () => sessions.ensure(vault),
   }
 }
 
 describe('agent sessions', () => {
   it('lists only live sessions', async () => {
     const t = setup([row('aaaaaaaa'), row('bbbbbbbb', { pid: undefined, status: undefined })])
-    await t.sessions.ensure()
+    await t.attach()
 
     expect(t.sessions.sessions().map((s) => s.id)).toEqual(['aaaaaaaa'])
     expect(t.sent.at(-1)).toEqual([
@@ -121,7 +124,7 @@ describe('agent sessions', () => {
 
   it('holds sync for a session found mid-turn when the vault opens', async () => {
     const t = setup([row('aaaaaaaa', { status: 'busy', state: 'working' })])
-    await t.sessions.ensure()
+    await t.attach()
     expect(t.sessions.sessions()[0]?.state).toBe('working')
     expect(t.pauses).toEqual(['the assistant is working'])
 
@@ -133,7 +136,7 @@ describe('agent sessions', () => {
 
   it('takes the turn bracket from the hook, for this vault only', async () => {
     const t = setup([row('aaaaaaaa')])
-    await t.sessions.ensure()
+    await t.attach()
     t.sessions.noteTurn('someone/else', 'aaaaaaaa', true)
     expect(t.sessions.sessions()[0]?.state).toBe('idle')
     t.sessions.noteTurn(REMOTE, 'aaaaaaaa', true)
@@ -142,7 +145,7 @@ describe('agent sessions', () => {
 
   it("puts a session's context reading on its row, by job id and for this vault only", async () => {
     const t = setup([row('aaaaaaaa'), row('bbbbbbbb')])
-    await t.sessions.ensure()
+    await t.attach()
     const status = (used: number | null) => ({
       model: { display_name: 'Opus 5.5' },
       context_window: { used_percentage: used },
@@ -167,7 +170,7 @@ describe('agent sessions', () => {
 
   it('stops a session: it leaves the list', async () => {
     const t = setup([row('aaaaaaaa'), row('bbbbbbbb')])
-    await t.sessions.ensure()
+    await t.attach()
     expect(await t.sessions.stop('aaaaaaaa')).toEqual({ ok: true })
     expect(t.cli.stop).toHaveBeenCalledWith(
       { root: ROOT, configDir: '/cfg/vault', binDir: '/holi/bin' },
@@ -178,6 +181,7 @@ describe('agent sessions', () => {
 
   it('prints the sign-in notice into the first terminal only', async () => {
     const t = setup()
+    await t.attach()
     await t.sessions.open({})
     await t.sessions.open({ attach: 'aaaaaaaa' })
     expect(t.opened[0]?.notice).toBe(SIGN_IN_NOTICE)
@@ -187,6 +191,7 @@ describe('agent sessions', () => {
 
   it('sends an ask into the window Holi already has on that session, unsent', async () => {
     const t = setup([row('aaaaaaaa')])
+    await t.attach()
     const first = await t.sessions.send({ text: 'look', target: 'aaaaaaaa' })
     const second = await t.sessions.send({ text: 'again', target: 'aaaaaaaa' })
     expect(first).toEqual({ ok: true, terminalId: 'term-1' })
@@ -200,6 +205,7 @@ describe('agent sessions', () => {
 
   it('starts a new session named from the ask, and pastes into it', async () => {
     const t = setup()
+    await t.attach()
     const res = await t.sessions.send({ text: 'Tidy the inbox\nplease', target: 'new' })
     expect(t.cli.startBg).toHaveBeenCalledWith(expect.anything(), { name: 'Tidy the inbox' })
     expect(res.ok).toBe(true)
@@ -209,6 +215,7 @@ describe('agent sessions', () => {
 
   it('refuses an ask to a session that has ended', async () => {
     const t = setup([row('aaaaaaaa', { pid: undefined, status: undefined })])
+    await t.attach()
     expect(await t.sessions.send({ text: 'x', target: 'aaaaaaaa' })).toEqual({
       ok: false,
       message: 'That session has ended. Pick another one.',
@@ -218,7 +225,7 @@ describe('agent sessions', () => {
 
   it('duplicates by the conversation id, named as a copy, and opens it', async () => {
     const t = setup([row('aaaaaaaa')])
-    await t.sessions.ensure()
+    await t.attach()
     const res = await t.sessions.duplicate('aaaaaaaa')
     expect(t.cli.forkBg).toHaveBeenCalledWith(
       expect.anything(),
@@ -230,7 +237,7 @@ describe('agent sessions', () => {
 
   it('leaves: stops live sessions, closes windows', async () => {
     const t = setup([row('aaaaaaaa'), row('bbbbbbbb')])
-    await t.sessions.ensure()
+    await t.attach()
     await t.sessions.leave()
     expect(t.cli.stop).toHaveBeenCalledTimes(2)
     expect(t.terminals.closeAll).toHaveBeenCalled()
@@ -239,7 +246,7 @@ describe('agent sessions', () => {
 
   it('leaving removes only the sessions Holi started empty that never had a turn', async () => {
     const t = setup([row('aaaaaaaa')]) // there before: never Holi's to remove
-    await t.sessions.ensure()
+    await t.attach()
     await t.sessions.start({})
     await t.sessions.leave()
     expect(t.cli.rm).toHaveBeenCalledTimes(1)
@@ -248,7 +255,7 @@ describe('agent sessions', () => {
 
   it('leaving keeps a session Holi started empty once it has had a turn', async () => {
     const t = setup()
-    await t.sessions.ensure()
+    await t.attach()
     await t.sessions.start({})
     t.sessions.noteTurn(REMOTE, 'newnew00', true)
     await t.sessions.leave()
@@ -258,14 +265,13 @@ describe('agent sessions', () => {
 
   it('can leave without stopping anything', async () => {
     const t = setup([row('aaaaaaaa')])
-    await t.sessions.ensure()
+    await t.attach()
     await t.sessions.leave({ stopSessions: false })
     expect(t.cli.stop).not.toHaveBeenCalled()
   })
 
   it('does nothing without a vault', async () => {
     const t = setup()
-    t.setActive(null)
     expect(await t.sessions.open({})).toEqual({ ok: false, message: 'No vault is open.' })
   })
 })

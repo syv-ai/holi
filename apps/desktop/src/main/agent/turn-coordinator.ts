@@ -20,13 +20,16 @@
  * NOTE: no runtime `electron` import — this loads under vitest like the rest of
  * `agent/`.
  */
-import type { ActiveVault } from '../vault/active-vault'
+import type { VaultCtx } from '../plugin-api'
 import type { TurnLog } from './turn-log'
 
+/** What the coordinator needs of the vault its sessions run in. */
+export type TurnVault = Pick<VaultCtx, 'root' | 'pauseSync' | 'commitNow' | 'head'>
+
 export interface TurnCoordinatorDeps {
-  /** The vault these sessions run in, or null when none is open. Read per call
-   *  rather than held: the active vault moves under this coordinator. */
-  activeVault(): ActiveVault | null
+  /** The vault these sessions run in, or null when none is attached. Read per
+   *  call rather than held: the agent attaches to each vault as it opens. */
+  vault(): TurnVault | null
   /** Records what a turn changed, as a commit range. Keyed by vault ROOT.
    *  Absent means no recording rather than a broken one. */
   turnLogFor?: (vaultRoot: string) => TurnLog
@@ -72,10 +75,6 @@ export interface TurnCoordinator {
 /** One session's open turn. */
 interface Turn {
   sessionId: string
-  /** The vault it began in, or null if none was open. A record is written only
-   *  while that is still the active vault, never attributed to whichever vault
-   *  is open now. */
-  remote: string | null
   base: string | null
   /** `head()` is async and `begin` is not, so the end of the turn waits on the
    *  start of it rather than racing it. */
@@ -98,6 +97,8 @@ export function createTurnCoordinator(deps: TurnCoordinatorDeps): TurnCoordinato
   /** Turns that have ended while others were still running, held until the set
    *  empties so they share the one settle commit. */
   let settling: Turn[] = []
+  /** The vault's sync hold, taken by the first session in. */
+  let release: (() => void) | null = null
 
   /**
    * Write the batch's records against one settle commit.
@@ -106,16 +107,14 @@ export function createTurnCoordinator(deps: TurnCoordinatorDeps): TurnCoordinato
    * under a hook request that must answer immediately with an empty body, and a
    * failed record must never disturb the sync resume it shares that body with.
    */
-  async function settleBatch(batch: Turn[]): Promise<void> {
+  async function settleBatch(vault: TurnVault, batch: Turn[]): Promise<void> {
     const turnLogFor = deps.turnLogFor
     if (turnLogFor === undefined) return
     await Promise.all(batch.map((turn) => turn.basePending))
-    const vault = deps.activeVault()
-    if (vault === null) return
 
     const recordable: Array<{ sessionId: string; base: string; overlapped: boolean }> = []
     for (const turn of batch) {
-      if (turn.remote !== vault.remote || turn.base === null) continue
+      if (turn.base === null) continue
       recordable.push({ sessionId: turn.sessionId, base: turn.base, overlapped: turn.overlapped })
     }
     if (recordable.length === 0) return
@@ -124,7 +123,7 @@ export function createTurnCoordinator(deps: TurnCoordinatorDeps): TurnCoordinato
     // fire on its own would make the end sha race a 3-second timer that the
     // safety-cap path does not respect; `commitNow` returns null on a clean
     // tree, which is the ordinary outcome of a turn that only read.
-    const end = (await vault.commitNow()) ?? (await vault.repo.head())
+    const end = (await vault.commitNow()) ?? (await vault.head())
     if (end === null) return
     const at = new Date().toISOString()
     const turnLog = turnLogFor(vault.root)
@@ -156,11 +155,17 @@ export function createTurnCoordinator(deps: TurnCoordinatorDeps): TurnCoordinato
       // Resume BEFORE the settle commit: `commitAll` refuses to run while the
       // vault reads as paused, and a turn that never resumed the vault is the
       // failure the safety cap exists to prevent.
-      deps.activeVault()?.resume()
+      release?.()
+      release = null
       const batch = settling
       settling = []
-      if (batch.length > 0) {
-        void settleBatch(batch).catch((err: unknown) => log(`turn record failed: ${String(err)}`))
+      // The vault the turns ran in, held: a commit in a vault left meanwhile
+      // throws rather than landing in the next one.
+      const vault = deps.vault()
+      if (batch.length > 0 && vault !== null) {
+        void settleBatch(vault, batch).catch((err: unknown) =>
+          log(`turn record failed: ${String(err)}`),
+        )
       }
     }
     deps.onChange?.()
@@ -172,7 +177,7 @@ export function createTurnCoordinator(deps: TurnCoordinatorDeps): TurnCoordinato
       // turn continuing, not a new one: it must not re-capture the base or push
       // the safety cap out.
       if (turns.has(sessionId)) return
-      const vault = deps.activeVault()
+      const vault = deps.vault()
       const wasEmpty = turns.size === 0
       // Two spans open at the same instant crossed each other, both ways. Marked
       // as the second one starts, because by the time either ends the other may
@@ -181,7 +186,6 @@ export function createTurnCoordinator(deps: TurnCoordinatorDeps): TurnCoordinato
 
       const turn: Turn = {
         sessionId,
-        remote: vault?.remote ?? null,
         base: null,
         basePending: Promise.resolve(),
         overlapped: !wasEmpty,
@@ -191,7 +195,7 @@ export function createTurnCoordinator(deps: TurnCoordinatorDeps): TurnCoordinato
       // Captured BEFORE the pause: the base is the tree the turn started
       // against. Skipped with no log to record into.
       if (vault !== null && deps.turnLogFor !== undefined) {
-        turn.basePending = vault.repo
+        turn.basePending = vault
           .head()
           .then((sha) => {
             turn.base = sha
@@ -200,7 +204,7 @@ export function createTurnCoordinator(deps: TurnCoordinatorDeps): TurnCoordinato
       }
       turns.set(sessionId, turn)
       // The pause belongs to the vault, so only the first session in takes it.
-      if (wasEmpty) vault?.pause('the assistant is working')
+      if (wasEmpty && vault !== null) release = vault.pauseSync('the assistant is working')
       turn.safety = setTimeout(() => {
         log(`session ${sessionId} released by the ${turnSafetyMs}ms safety cap`)
         leave(sessionId, true)

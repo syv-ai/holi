@@ -69,6 +69,7 @@ import { createBridgeEnv } from './bridge/env-file'
 import { createBridgeServer } from './bridge/server'
 import { registerAgentRoutes } from './agent/bridge-routes'
 import { registerAgentIpc } from './agent-ipc'
+import type { MainPlugin } from './plugin-api'
 
 // The plugins this build has: the one place main imports them.
 install(MAIN_PLUGINS)
@@ -188,12 +189,61 @@ async function main(): Promise<void> {
     liveRemote: () => host.active()?.remote ?? null,
   }
 
+  /**
+   * The vault agent, written to the plugin contract while it is still core:
+   * it attaches to each vault once it is open and lets go when Holi leaves
+   * it, its hooks' routes are on the bridge, and quitting asks first while a
+   * session is busy. `agent` is assigned below, before any vault can open.
+   */
+  const agentPart: MainPlugin = {
+    info: { id: 'agent', label: 'Agent', default: true },
+    activateApp(ctx) {
+      const unroute = registerAgentRoutes(ctx, {
+        // A turn edge in one of a vault's background sessions, by job id.
+        onJobTurn: (remote, jobId, active) => agent.noteTurn(remote, jobId, active),
+        // A session's status line: how much of its context is used.
+        onStatus: (remote, jobId, status) => agent.noteStatus(remote, jobId, status),
+      })
+      // Quitting stops the vault's sessions, so it asks first when one of
+      // them is working or waiting on you: that turn is cut short. Idle
+      // sessions stop without a question; their conversations stay in Claude
+      // Code's agent list.
+      ctx.guardQuit(() => {
+        const busy = agent.sessions().filter((s) => s.state !== 'idle')
+        if (busy.length === 0) return null
+        const one = busy.length === 1
+        return {
+          message: one
+            ? `Quit and stop ${busy[0]!.name}?`
+            : `Quit and stop ${busy.length} sessions?`,
+          detail: `${one ? 'Its' : 'Their'} current turn is cut short. The conversation${one ? '' : 's'} stay in the agents list.`,
+        }
+      })
+      return unroute
+    },
+    activateVault(ctx) {
+      void agent.ensure(ctx)
+      // The per-turn hook reads the focused note from a file in this clone.
+      const unreport = ctx.onReport((report) =>
+        agent.setFocus({ focusedPath: report.focusedPath, openPaths: report.openPaths }),
+      )
+      // A switch stops the vault's sessions (the renderer asked first if one
+      // was busy). They stay in Claude Code's agent list and resume when
+      // opened.
+      return async () => {
+        unreport()
+        await agent.leave().catch((err) => console.error('[vault] agent leave failed:', err))
+      }
+    },
+  }
+
   // Every capability, from every door. Created ahead of the vault host so
   // the plugin host can register into it; `host` and `rootFor` are read
   // lazily.
   const capabilities = createCapabilityRegistry()
   const plugins = createPluginHost({
     plugins: MAIN_PLUGINS,
+    core: [agentPart],
     registry: capabilities,
     userData: userDataDir,
     coreSeeds: CORE_SEEDS,
@@ -202,6 +252,9 @@ async function main(): Promise<void> {
     events: eventsDeps,
     // `capabilityHost` is built below, long before any vault opens.
     openAppDoor: (opener) => capabilityHost.openAppDoor(opener),
+    // The bridge and the `holi` command exist before any vault can open.
+    route: (path, route) => bridge.route(path, route),
+    binDir: () => binDir,
   })
 
   const host = createVaultHost({
@@ -213,10 +266,6 @@ async function main(): Promise<void> {
       send('vault:snapshot', snapshot)
       // A hand edit to the settings files arrives this way too.
       plugins.invalidate()
-      // A snapshot is also how main learns a vault opened: attach the assistant
-      // to it (a no-op for the vault it is already on). `agent` is assigned
-      // below, long before any snapshot fires.
-      void agent?.ensure()
     },
     onSyncState: (state) => send('vault:sync', state),
     // How everything inside the vault reaches us: its `bridge.local.env`,
@@ -238,13 +287,9 @@ async function main(): Promise<void> {
     // every commit tick and once at open, so a vault switch resets it.
     onHeldBack: (files) => send('vault:heldback', files),
     onCommitted: (paths) => send('vault:committed', paths),
-    // A switch stops the vault's sessions (the renderer asked first if
-    // one was busy), and this is the only place that still holds the vault
-    // they ran in. They stay in Claude Code's agent list and resume when opened.
-    onLeave: async () => {
-      await agent?.leave().catch((err) => console.error('[vault] agent leave failed:', err))
-      plugins.leave()
-    },
+    // What plugins run in the vault is disposed here, the only place that
+    // still holds the vault they ran in.
+    onLeave: () => plugins.leave(),
   })
 
   // Serve every scheme. A plugin's answers 404 while the open vault has it off.
@@ -327,11 +372,7 @@ async function main(): Promise<void> {
     members,
     reportUi: (remote, report) => {
       uiReports.set(remote, report)
-      // The agent's per-turn hook reads the focused note from a file in the
-      // open vault's clone; a report about another vault has no file to feed.
-      if (host.active()?.remote === remote) {
-        agent?.setFocus({ focusedPath: report.focusedPath, openPaths: report.openPaths })
-      }
+      plugins.report(remote, report)
     },
     registry,
     session,
@@ -390,18 +431,11 @@ async function main(): Promise<void> {
   const bridge = createBridgeServer({
     cli: { dispatch, commands: () => capabilities.commands() },
   })
-  registerAgentRoutes(bridge, {
-    // A turn edge in one of a vault's background sessions, by job id.
-    onJobTurn: (remote, jobId, active) => agent.noteTurn(remote, jobId, active),
-    // A session's status line: how much of its context is used.
-    onStatus: (remote, jobId, status) => agent.noteStatus(remote, jobId, status),
-  })
   registerGitRoutes(bridge, { rootFor })
   await bridge.start()
   const binDir = dirname(holiCliPath)
   const terminals = createAgentTerminals({ getWindow: () => mainWindow })
   agent = createAgentSessions({
-    host,
     getWindow: () => mainWindow,
     cli: createClaudeCli(),
     terminals,
@@ -568,22 +602,19 @@ async function main(): Promise<void> {
   /** A quit confirm is on screen: a second ⌘Q must not stack another. */
   let confirmingQuit = false
   /**
-   * Quitting stops the vault's sessions, so ask first when one of them
-   * is working or waiting on you: that turn is cut short. Asked at the start,
-   * before anything is torn down. Idle sessions stop without a question; their
-   * conversations stay in Claude Code's agent list.
+   * What the plugins' quit guards ask, asked at the start, before anything
+   * is torn down. Several questions are put as one.
    */
   async function confirmQuit(): Promise<boolean> {
-    const busy = agent.sessions().filter((s) => s.state !== 'idle')
-    if (busy.length === 0) return true
-    const one = busy.length === 1
+    const questions = plugins.quitQuestions()
+    if (questions.length === 0) return true
     const options: Electron.MessageBoxOptions = {
       type: 'warning',
       buttons: ['Quit', 'Cancel'],
       defaultId: 1,
       cancelId: 1,
-      message: one ? `Quit and stop ${busy[0]!.name}?` : `Quit and stop ${busy.length} sessions?`,
-      detail: `${one ? 'Its' : 'Their'} current turn is cut short. The conversation${one ? '' : 's'} stay in the agents list.`,
+      message: questions.map((q) => q.message).join(' '),
+      detail: questions.map((q) => q.detail).join('\n\n'),
     }
     const { response } =
       mainWindow === null
@@ -612,10 +643,10 @@ async function main(): Promise<void> {
     tray = null
     await (async () => {
       try {
-        // Stop the vault's sessions and close every terminal before we flush
-        // and commit: nothing a session was mid-writing should race the
-        // teardown.
-        await agent.leave().catch((err) => console.error('[quit] agent leave failed:', err))
+        // Dispose what runs in the vault (the agent's sessions and terminals)
+        // before we flush and commit: nothing a session was mid-writing
+        // should race the teardown.
+        await plugins.leave().catch((err) => console.error('[quit] plugins leave failed:', err))
         await bridge.stop().catch((err) => console.error('[quit] bridge stop failed:', err))
         await plugins.disposeAll().catch((err) => console.error('[quit] plugins stop failed:', err))
         // A flush point is a flush THEN a commit, and only the renderer can do

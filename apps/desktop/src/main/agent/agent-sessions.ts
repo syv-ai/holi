@@ -5,7 +5,8 @@
  * its short job id names it, and it outlives any window onto it. Holi does not
  * spawn conversations; it asks Claude Code to (`claude --bg`), opens terminals
  * onto them (`agent-terminals.ts`), and reads what they are doing
- * (`claude-sessions.ts`). This module ties those to the active vault.
+ * (`claude-sessions.ts`). This module ties those to the vault it is attached
+ * to (`ensure`), which is the open one.
  *
  * Three things belong to the **vault**, not to any session, and live here: the
  * config directory, the sync pause (owned by
@@ -19,7 +20,7 @@
  * NOTE: no runtime `electron` import (types only), so this loads under vitest.
  */
 import type { BrowserWindow } from 'electron'
-import type { VaultHost } from '../vault/active-vault'
+import type { VaultCtx } from '../plugin-api'
 import type { AgentTerminals } from './agent-terminals'
 import { sessionName, type ClaudeCli, type VaultCliTarget } from './claude-cli'
 import {
@@ -32,7 +33,7 @@ import {
   type SessionSummary,
 } from './claude-sessions'
 import { ContextSnapshot, type FocusInput } from './context-snapshot'
-import { createTurnCoordinator, type TurnCoordinator } from './turn-coordinator'
+import { createTurnCoordinator, type TurnCoordinator, type TurnVault } from './turn-coordinator'
 import type { TurnLog } from './turn-log'
 
 /**
@@ -67,8 +68,10 @@ export interface VaultRef {
   root: string
 }
 
+/** The vault the sessions run in, as its activation hands it over. */
+export type AgentVault = Pick<VaultCtx, 'remote' | 'root'> & TurnVault
+
 export interface AgentSessionsDeps {
-  host: Pick<VaultHost, 'active'>
   getWindow(): BrowserWindow | null
   cli: ClaudeCli
   terminals: AgentTerminals
@@ -92,9 +95,10 @@ export interface AgentSessionsDeps {
 }
 
 export interface AgentSessions {
-  /** Make sure Holi is attached to the active vault's sessions. Cheap when it
-   *  already is; call it whenever a vault may have opened. */
-  ensure(): Promise<void>
+  /** Attach to the open vault's sessions; until the next `leave`, every verb
+   *  acts in this vault. Without one, finish attaching to the vault already
+   *  given. Cheap when already attached. */
+  ensure(vault?: AgentVault): Promise<void>
   /** The vault's live sessions, in listing order. */
   sessions(): SessionSummary[]
   /** Re-read the listing now. Never rejects. */
@@ -125,6 +129,7 @@ export interface AgentSessions {
 interface Current {
   remote: string
   root: string
+  vault: AgentVault
   configDir: string
   /** Set once this run's first terminal has asked about the sign-in marker:
    *  the marker is the directory's, so no later terminal needs to. */
@@ -138,6 +143,8 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
   const log = deps.log ?? ((msg: string) => console.log(`[agent] ${msg}`))
   const watch = deps.watch ?? ((dir: string, cb: () => void) => watchConfigDir(dir, cb, log))
   let current: Current | null = null
+  /** The vault `ensure` attached to, until `leave`. */
+  let attached: AgentVault | null = null
   let activating: Promise<Current | null> | null = null
   /** Set while `leave` runs: nothing may attach to a vault on its way out,
    *  which would watch a directory Holi is letting go of. */
@@ -170,7 +177,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
   }
 
   const coordinator: TurnCoordinator = createTurnCoordinator({
-    activeVault: () => deps.host.active(),
+    vault: () => current?.vault ?? null,
     ...(deps.turnLogFor === undefined ? {} : { turnLogFor: deps.turnLogFor }),
     ...(deps.turnSafetyMs === undefined ? {} : { turnSafetyMs: deps.turnSafetyMs }),
     ...(deps.idleConfirmMs === undefined ? {} : { idleConfirmMs: deps.idleConfirmMs }),
@@ -196,15 +203,18 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     binDir: deps.binDir(),
   })
 
-  async function activate(vault: VaultRef): Promise<Current | null> {
-    const config = await deps.resolveConfig(vault).catch((err: unknown) => {
-      log(`config directory unresolved: ${String(err)}`)
-      return null
-    })
+  async function activate(vault: AgentVault): Promise<Current | null> {
+    const config = await deps
+      .resolveConfig({ remote: vault.remote, root: vault.root })
+      .catch((err: unknown) => {
+        log(`config directory unresolved: ${String(err)}`)
+        return null
+      })
     if (config === null) return null
     const next: Current = {
       remote: vault.remote,
       root: vault.root,
+      vault,
       configDir: config.dir,
       spawnChecked: false,
       unwatch: () => {},
@@ -216,7 +226,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
 
   async function ensureCurrent(): Promise<Current | null> {
     if (leaving !== null) return null
-    const vault = deps.host.active()
+    const vault = attached
     if (vault === null) return null
     if (current?.remote === vault.remote) return current
     if (activating !== null) return activating
@@ -227,7 +237,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     const previous = current
     activating = (async () => {
       if (previous !== null) await release(previous)
-      return activate({ remote: vault.remote, root: vault.root })
+      return activate(vault)
     })()
     try {
       current = await activating
@@ -332,7 +342,8 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
   const noVault = { ok: false as const, message: 'No vault is open.' }
 
   const api: AgentSessions = {
-    async ensure() {
+    async ensure(vault) {
+      if (vault !== undefined) attached = vault
       await ensureCurrent()
     },
 
@@ -434,7 +445,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     },
 
     setFocus(focus) {
-      const vault = deps.host.active()
+      const vault = attached
       if (vault === null) return
       if (focusWriter?.root !== vault.root) {
         focusWriter?.snapshot.stop()
@@ -457,6 +468,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
   async function leaveNow(stopSessions: boolean): Promise<void> {
     // A vault still attaching is the one being left: let it land first.
     if (activating !== null) await activating
+    attached = null
     const c = current
     if (c === null) return
     if (stopSessions) {

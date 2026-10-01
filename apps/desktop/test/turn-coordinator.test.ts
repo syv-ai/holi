@@ -7,9 +7,8 @@
  * and which of them are told they overlapped another session.
  */
 import { describe, expect, it, vi } from 'vitest'
-import { createTurnCoordinator } from '../src/main/agent/turn-coordinator'
+import { createTurnCoordinator, type TurnVault } from '../src/main/agent/turn-coordinator'
 import type { TurnRecord } from '../src/main/agent/turn-log'
-import type { ActiveVault } from '../src/main/vault/active-vault'
 
 const VAULT = 'owner/repo'
 
@@ -31,22 +30,25 @@ function rig(
   let resumes = 0
   const appended: TurnRecord[] = []
 
-  const activeVault = (): ActiveVault | null =>
-    activeRemote === null
-      ? null
-      : ({
-          remote: activeRemote,
-          root: '/work',
-          repo: { head: () => Promise.resolve(head) },
-          commitNow: opts.commitNow ?? (() => Promise.resolve('end-sha')),
-          pause: (reason: string) => pauses.push(reason),
-          resume: () => {
-            resumes += 1
-          },
-        } as unknown as ActiveVault)
+  /** Like a plugin's vault context: bound to one vault, and it refuses to
+   *  commit in a vault Holi has left. */
+  const left = () => Promise.reject(new Error(`${VAULT} is not open`))
+  const ctx: TurnVault = {
+    root: '/work',
+    head: () => (activeRemote === VAULT ? Promise.resolve(head) : left()),
+    commitNow: () =>
+      activeRemote === VAULT ? (opts.commitNow ?? (() => Promise.resolve('end-sha')))() : left(),
+    pauseSync: (reason) => {
+      pauses.push(reason)
+      return () => {
+        resumes += 1
+      }
+    },
+  }
+  const vault = (): TurnVault | null => (activeRemote === null ? null : ctx)
 
   const coordinator = createTurnCoordinator({
-    activeVault,
+    vault,
     log: () => {},
     now: () => clock,
     ...(opts.turnSafetyMs === undefined ? {} : { turnSafetyMs: opts.turnSafetyMs }),

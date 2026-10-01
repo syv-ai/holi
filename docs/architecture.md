@@ -104,7 +104,12 @@ grammar is in `packages/shared` and the merge driver and fences in core.
 Enablement has two layers: `.holi/settings/app.yaml` declares the vault's plugins for everyone,
 and `app.local.yaml` can only turn one off on this machine ([settings](features/settings.md)). The
 plugin host (`src/main/plugin-host/`) starts a plugin once per process when a vault that enables it
-opens, seeds only enabled plugins' files, and stops them all at quit. Dispatch refuses a
+opens (`activateApp`), seeds only enabled plugins' files, and stops them all at quit. Once the vault
+is open it runs `activateVault` with a context bound to that vault (hold sync, commit, read the
+head, hear the renderer's focus report, emit), at most once per open; the disposer runs when Holi
+leaves the vault, while it is still open, and at quit before the bridge stops and the editor
+flushes. A plugin can also ask before Holi quits (`guardQuit`) and serve a bridge route
+(`route`). The agent is still core but is wired through these same hooks. Dispatch refuses a
 capability whose plugin is off in the calling vault, as "no such method".
 
 Whatever runs inside a vault (the `holi` CLI, the agent's hooks, git's pre-commit hook and merge

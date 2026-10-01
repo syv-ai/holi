@@ -9,10 +9,16 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createCapabilityHost } from '../src/main/capabilities/dispatch'
 import { createCapabilityRegistry } from '../src/main/capabilities/registry'
 import { noCoreServices } from '../src/main/capabilities/services'
-import { cap, noParams, type AppContext, type MainPlugin } from '../src/main/plugin-api'
+import {
+  cap,
+  noParams,
+  type AppContext,
+  type MainPlugin,
+  type VaultCtx,
+} from '../src/main/plugin-api'
 import type { PluginEvent } from '../src/main/plugin-host/events'
 import { schemeEntries, serveScheme } from '../src/main/plugin-host/schemes'
-import { createPluginHost } from '../src/main/plugin-host/host'
+import { createPluginHost, type OpenVault } from '../src/main/plugin-host/host'
 import { coreSeed } from '../src/main/vault/seed/core'
 import { readSeedState } from '../src/main/vault/seed/state'
 import { writeVaultSettings } from '../src/main/vault/settings'
@@ -30,7 +36,15 @@ async function tempDir(): Promise<string> {
   return dir
 }
 
-function rig(opts: { default?: boolean; roots?: Record<string, string>; live?: string } = {}) {
+function rig(
+  opts: {
+    default?: boolean
+    roots?: Record<string, string>
+    live?: string
+    open?: () => OpenVault | null
+    activateVault?: MainPlugin['activateVault']
+  } = {},
+) {
   const calls = { started: 0, stopped: 0 }
   const sent: { channel: string; event: PluginEvent }[] = []
   const listeners = new Map<string, (message: unknown) => void>()
@@ -48,6 +62,7 @@ function rig(opts: { default?: boolean; roots?: Record<string, string>; live?: s
         calls.stopped += 1
       }
     },
+    ...(opts.activateVault === undefined ? {} : { activateVault: opts.activateVault }),
   }
   const registry = createCapabilityRegistry()
   const host = createPluginHost({
@@ -55,7 +70,7 @@ function rig(opts: { default?: boolean; roots?: Record<string, string>; live?: s
     registry,
     userData: '/nowhere',
     coreSeeds: [coreSeed([fake.info])],
-    active: () => null,
+    active: opts.open ?? (() => null),
     rootFor: async (remote) => opts.roots?.[remote] ?? null,
     events: {
       send: (channel, event) => void sent.push({ channel, event }),
@@ -66,6 +81,8 @@ function rig(opts: { default?: boolean; roots?: Record<string, string>; live?: s
       liveRemote: () => opts.live ?? null,
     },
     openAppDoor: (opener) => capabilities.openAppDoor(opener),
+    route: () => () => {},
+    binDir: () => '/holi/bin',
   })
   let root = ''
   const capabilities = createCapabilityHost({
@@ -116,6 +133,51 @@ describe('the plugin host', () => {
 
     expect((await ping(on)).value).toBe('pong')
     await expect(ping(off)).rejects.toThrow('no such method: fake.ping')
+  })
+})
+
+describe('vault activation', () => {
+  it('runs once the vault is open, once per open, and is disposed at leave while still open', async () => {
+    const root = await tempDir()
+    const log: string[] = []
+    let open: OpenVault | null = null
+    let ctx: VaultCtx | null = null
+    const { host } = rig({
+      open: () => open,
+      activateVault(c) {
+        ctx = c
+        log.push(`activate ${c.remote}`)
+        return () => void log.push(`dispose, open: ${open?.remote ?? 'none'}`)
+      },
+    })
+    await host.opened()
+    expect(log).toEqual([])
+
+    open = {
+      remote: 'o/r',
+      root,
+      pause: (reason) => void log.push(`pause ${reason}`),
+      resume: () => void log.push('resume'),
+      commitNow: async () => null,
+      repo: { head: async () => 'sha' },
+    }
+    await host.enter(root)
+    await host.opened()
+    await host.opened()
+    expect(log).toEqual(['activate o/r'])
+
+    // Holds stack: the loop runs again only when the last is released.
+    const first = ctx!.pauseSync('one')
+    const second = ctx!.pauseSync('two')
+    first()
+    first()
+    second()
+    expect(log.slice(1)).toEqual(['pause one', 'pause two', 'pause two', 'resume'])
+
+    await host.leave()
+    expect(log.at(-1)).toBe('dispose, open: o/r')
+    open = null
+    expect(() => ctx!.pauseSync('late')).toThrow('not the open vault')
   })
 })
 
