@@ -1,6 +1,6 @@
 import { readdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { parseFields, type TemplateField } from '@holi/shared'
+import { parseFields, type TemplateField } from '../shared/template-fields'
 
 export interface Template {
   /** Display name from the manifest. */

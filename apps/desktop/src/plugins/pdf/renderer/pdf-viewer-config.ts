@@ -5,7 +5,7 @@
  * spelling. No React, no DOM globals beyond the `KeyboardEvent` type.
  */
 import { Lock, LockOpen, Sparkles, type IconNode } from 'lucide'
-import { DRAWER_WIDTH } from './drawer'
+import { DRAWER_WIDTH } from '@/plugin-api'
 import { ASK_AGENT_PDF, ASK_AGENT_THREAD } from './pdf-comments'
 import { MAKE_EDITABLE, MAKE_READ_ONLY } from './pdf-read-only'
 
@@ -400,7 +400,7 @@ export const PDF_SIDEBAR_WIDTHS: Readonly<Record<string, { width: string }>> = O
 )
 
 /** The class on the stand-in that plays a closing sidebar's slide out
- *  (`features/files/pdf-sidebar-leave.ts`). */
+ *  (`pdf-sidebar-leave.ts`). */
 export const PDF_SIDEBAR_LEAVING = 'holi-sidebar-leaving'
 
 /** The width for a sidebar the list above does not name, should the viewer
@@ -452,7 +452,7 @@ export const PDF_SIDEBAR_MOTION_CSS = [
 ].join('\n')
 
 /**
- * Holi's comment field (`features/files/PdfCommentField.tsx`) in the viewer's
+ * Holi's comment field (`PdfCommentField.tsx`) in the viewer's
  * comment row, in place of the viewer's one-line input.
  *
  * The textarea is portalled in after the viewer's input and send button, so

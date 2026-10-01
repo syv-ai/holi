@@ -6,7 +6,7 @@
  * No `electron` import: this loads under plain Node in the tests.
  */
 import { dirname, join, relative, sep } from 'node:path'
-import { commentThreadsJson, formatCommentThreads, vaultRelPath } from '@holi/shared'
+import { vaultRelPath } from '@holi/shared'
 import {
   cap,
   CapabilityError,
@@ -16,6 +16,7 @@ import {
   stringParam,
   type CapabilityTable,
 } from '../../../main/plugin-api'
+import { commentThreadsJson, formatCommentThreads } from '../shared/pdf-comments'
 import { pdfCommentsInVault } from './comments'
 import { renderPdf } from './render'
 import type { SignatureStore } from './signatures'

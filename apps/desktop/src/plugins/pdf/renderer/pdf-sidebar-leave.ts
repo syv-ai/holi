@@ -9,7 +9,7 @@
  * reads or types into. Fed the shadow root's mutation records, from the
  * observer `PdfDocument` already keeps there.
  */
-import { PDF_SIDEBAR_LEAVING } from '@/lib/pdf-viewer-config'
+import { PDF_SIDEBAR_LEAVING } from './pdf-viewer-config'
 
 /** A sidebar docked beside the pages; the narrow-pane bottom sheet is neither. */
 const DOCKED = '[data-sidebar-id]:is(.border-l, .border-r)'

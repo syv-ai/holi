@@ -141,7 +141,7 @@ DOM: they copy width, motion, header and edge through the injected stylesheet an
   `document.documentElement`, so Radix portals inherit them. A malformed file degrades to no theme.
   The agent authors themes through the seeded `theme` skill.
 - A third-party UI in a shadow root is themed by a token map, not restyled: the PDF viewer's
-  palette is `var(--token)` strings (`lib/pdf-viewer-config.ts`), which inherit across the shadow
+  palette is `var(--token)` strings (`plugins/pdf/renderer/pdf-viewer-config.ts`), which inherit across the shadow
   boundary.
 
 ## Rules
@@ -178,6 +178,6 @@ DOM: they copy width, motion, header and edge through the injected stylesheet an
 - `apps/desktop/src/renderer/src/primitives/Icon.tsx`, `IconButton.tsx`, `composites/file-icons.tsx`.
 - `apps/desktop/src/renderer/src/lib/motion.ts`, `lib/use-ack.ts`, `lib/use-arrivals.ts`.
 - `apps/desktop/src/renderer/src/composites/DrawerShell.tsx`, `lib/drawer.ts`.
-- `apps/desktop/src/renderer/src/state/theme.ts`, `lib/theme-applicator.ts`, `lib/pdf-viewer-config.ts`.
+- `apps/desktop/src/renderer/src/state/theme.ts`, `lib/theme-applicator.ts`; `apps/desktop/src/plugins/pdf/renderer/pdf-viewer-config.ts`.
 - `packages/shared/src/theme.ts`: parse, whitelist, validate, merge.
 - `apps/desktop/test/focus-treatment.test.ts`, `test/motion.test.ts`, `test/theme-tokens.test.ts`.

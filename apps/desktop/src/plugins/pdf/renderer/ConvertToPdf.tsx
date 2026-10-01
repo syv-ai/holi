@@ -1,14 +1,11 @@
-import type { TemplateField } from '@holi/shared'
+import type { TemplateField } from '../shared/template-fields'
 import { useSetAtom } from 'jotai'
 import { useEffect, useMemo, useState } from 'react'
 import { FormField } from '@/composites/FormField'
-import { FieldWidget } from '@/features/pdf/FieldWidget'
-import { capClient } from '@/lib/cap-client'
-import { trpc } from '@/lib/trpc'
-// eslint-disable-next-line no-restricted-imports, boundaries/element-types -- until Convert moves into the PDF plugin
-import type { PdfCapabilities } from '../../../../plugins/pdf/main/capabilities'
-import { metaFromValues, missingRequired, parseFrontmatter, prefillValues } from '@/lib/pdf-fields'
-import { openNoteTabAtom } from '@/state/panes'
+import { capClient, openNoteTabAtom, trpc } from '@/plugin-api'
+import type { PdfCapabilities } from '../main/capabilities'
+import { FieldWidget } from './FieldWidget'
+import { metaFromValues, missingRequired, parseFrontmatter, prefillValues } from './pdf-fields'
 import {
   Button,
   Dialog,

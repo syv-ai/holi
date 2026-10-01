@@ -1,11 +1,11 @@
-import type { TemplateField } from '@holi/shared'
+import type { TemplateField } from '../shared/template-fields'
 import { describe, expect, it } from 'vitest'
 import {
   metaFromValues,
   missingRequired,
   parseFrontmatter,
   prefillValues,
-} from '../src/renderer/src/lib/pdf-fields'
+} from '../renderer/pdf-fields'
 
 const field = (over: Partial<TemplateField>): TemplateField => ({
   key: 'k',

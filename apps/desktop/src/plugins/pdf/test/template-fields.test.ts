@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { initialValue, parseFields, type TemplateField } from '../src/template-fields'
+import { initialValue, parseFields, type TemplateField } from '../shared/template-fields'
 
 const f = (over: Partial<TemplateField>): TemplateField => ({
   key: 'k',

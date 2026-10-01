@@ -1,4 +1,4 @@
-import type { TemplateField } from '@holi/shared'
+import type { TemplateField } from '../shared/template-fields'
 import { describe, expect, it } from 'vitest'
 import { coerceMeta, composeWrapper, typstString } from '../main/wrapper'
 

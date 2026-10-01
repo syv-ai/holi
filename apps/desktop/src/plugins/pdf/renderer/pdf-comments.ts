@@ -12,7 +12,7 @@ import {
   PDF_TEXT_MARKUP_SUBTYPES,
   type PdfAnnotationInput,
   type PdfCommentThread,
-} from '@holi/shared'
+} from '../shared/pdf-comments'
 
 export const ASK_AGENT_THREAD = 'holi:ask-agent-thread'
 /** With no comment selected the button asks about the PDF itself: the way

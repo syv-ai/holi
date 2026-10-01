@@ -5,12 +5,12 @@
  */
 import type { ComponentType } from 'react'
 import type { PluginInfo } from '@holi/shared'
-import type { ActiveDialog } from '@/state/dialogs'
+import type { PluginDialog } from '@/state/dialogs'
 
 /** One item a claim adds to a file's row menu. */
 export interface ClaimMenuItem {
   label: string
-  run(ctx: { remote: string; path: string; openDialog: (dialog: ActiveDialog) => void }): void
+  run(ctx: { remote: string; path: string; openDialog: (dialog: PluginDialog) => void }): void
 }
 
 /**

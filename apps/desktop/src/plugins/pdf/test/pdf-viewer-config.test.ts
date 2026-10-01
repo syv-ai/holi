@@ -1,4 +1,4 @@
-import { DRAWER_WIDTH } from '../src/renderer/src/lib/drawer'
+import { DRAWER_WIDTH } from '@/plugin-api'
 import { THEME_TOKENS } from '@holi/shared'
 import { describe, expect, it } from 'vitest'
 import {
@@ -27,7 +27,7 @@ import {
   shortcutOf,
   singleLine,
   themedToolDefaults,
-} from '../src/renderer/src/lib/pdf-viewer-config'
+} from '../renderer/pdf-viewer-config'
 
 describe('PDF_DISABLED_CATEGORIES', () => {
   it('removes every viewer command whose shortcut Holi or the OS already owns', () => {
@@ -368,7 +368,7 @@ describe('withHoliButtons', () => {
   it('puts Ask agent right after the comments button, whatever follows it', () => {
     const withMore = items.map((i) =>
       'items' in i && i.id === 'right-group'
-        ? { ...i, items: [...i.items, { type: 'command-button', id: 'later' }] }
+        ? { ...i, items: [...(i.items ?? []), { type: 'command-button', id: 'later' }] }
         : i,
     )
     const right = withHoliButtons(withMore).find((i) => i.id === 'right-group') as {

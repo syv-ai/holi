@@ -53,10 +53,8 @@ import '@fontsource/caveat/400.css'
 import '@fontsource/dancing-script/400.css'
 import '@fontsource/great-vibes/400.css'
 import '@fontsource/pacifico/400.css'
-import { formatCommentThreads, pdfAskHeader } from '@holi/shared'
+import { formatCommentThreads, pdfAskHeader } from '../shared/pdf-comments'
 import { AskAgentPopover } from '@/composites/AskAgentPopover'
-import { askPrompt } from '@/editor/askAgent'
-import { cn } from '@/lib/cn'
 import {
   ASK_AGENT_PDF,
   ASK_AGENT_THREAD,
@@ -65,7 +63,7 @@ import {
   threadsForAsk,
   threadsInViewer,
   type GlyphEngine,
-} from '@/lib/pdf-comments'
+} from './pdf-comments'
 import { PdfCommentField } from './PdfCommentField'
 import { playSidebarLeaves } from './pdf-sidebar-leave'
 import {
@@ -88,7 +86,7 @@ import {
   themedToolDefaults,
   withoutMovedTools,
   type PdfTool,
-} from '@/lib/pdf-viewer-config'
+} from './pdf-viewer-config'
 import {
   MAKE_EDITABLE,
   MAKE_READ_ONLY,
@@ -97,16 +95,21 @@ import {
   readOnlyState,
   withReadOnly,
   withoutReadOnly,
-} from '@/lib/pdf-read-only'
-import { trpc } from '@/lib/trpc'
-import { capClient } from '@/lib/cap-client'
-// eslint-disable-next-line no-restricted-imports, boundaries/element-types -- until the viewer moves into the PDF plugin
-import type { PdfCapabilities } from '../../../../plugins/pdf/main/capabilities'
-import { askTargetsAtom, defaultAgentTargetAtom } from '@/state/agent'
-import { sendToAgentAtom } from '@/state/agent-send'
-import { activeModeAtom } from '@/state/color-scheme'
-import { sessionAtom } from '@/state/session'
-import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
+} from './pdf-read-only'
+import {
+  activeModeAtom,
+  activeRemoteAtom,
+  askPrompt,
+  askTargetsAtom,
+  capClient,
+  cn,
+  defaultAgentTargetAtom,
+  sendToAgentAtom,
+  sessionAtom,
+  snapshotAtom,
+  trpc,
+} from '@/plugin-api'
+import type { PdfCapabilities } from '../main/capabilities'
 
 /** How long the marks have to be quiet before the file is rewritten. A file
  *  write the autosave commit then picks up, not a commit itself. */
@@ -444,7 +447,7 @@ export function PdfDocument({
     (registry: PluginRegistry) => {
       registryRef.current = registry
       provided(registry, 'annotation')?.onAnnotationEvent(scheduleSave)
-      // The read-only toggle (`lib/pdf-read-only.ts`): two commands, one per
+      // The read-only toggle (`pdf-read-only.ts`): two commands, one per
       // direction, each computed from the annotations in the viewer's store so
       // the button follows every change without Holi keeping any state.
       const annotation = provided(registry, 'annotation')

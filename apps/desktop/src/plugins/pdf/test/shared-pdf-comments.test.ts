@@ -6,7 +6,7 @@ import {
   glyphRuns,
   pdfAskHeader,
   type PdfAnnotationInput,
-} from '../src/pdf-comments'
+} from '../shared/pdf-comments'
 
 const HIGHLIGHT = 9
 const TEXT = 1

@@ -22,7 +22,7 @@ Holi turns a markdown note into a branded PDF through a Typst template, and open
 - **Read-only** sets or clears the PDF `readOnly` flag on every mark, comment and signature; the flags are the whole state. Links, form fields and popups are untouched.
 - **Ask agent** opens the ask popover. With a comment selected it pastes that thread; otherwise it pastes the file path, the comment count and the `holi pdf comments` command, never the comments. Nothing is submitted.
 
-**`holi pdf comments <path> [--json]`** reads a saved PDF's comment threads through PDFium running in main, so PDFs saved by other tools (compressed object streams, UTF-16) read too. The viewer and the command share one thread model and formatter in `packages/shared`: page, mark kind, covered text, author, local time, comment, replies (text notes linked by `/IRT`). The set matches the viewer's comments panel. Both `holi pdf` commands are seeded into `permissions.allow`: one reads, the other only finds the engine.
+**`holi pdf comments <path> [--json]`** reads a saved PDF's comment threads through PDFium running in main, so PDFs saved by other tools (compressed object streams, UTF-16) read too. The viewer and the command share one thread model and formatter in the plugin's `shared/`: page, mark kind, covered text, author, local time, comment, replies (text notes linked by `/IRT`). The set matches the viewer's comments panel. Both `holi pdf` commands are seeded into `permissions.allow`: one reads, the other only finds the engine.
 
 ## Rules
 
@@ -54,6 +54,7 @@ PDF is a plugin (`apps/desktop/src/plugins/pdf/`, default on; [architecture](../
 - `plugins/pdf/main/`: `templates.ts`, `wrapper.ts`, `render.ts`, `typst-bin.ts`, `comments.ts`, `signatures.ts`.
 - `plugins/pdf/main/capabilities.ts`: `pdf.comments` and `pdf.typst` (CLI door); `pdf.templates`, `pdf.render`, `pdf.signatures`, `pdf.saveSignatures` (UI door).
 - `plugins/pdf/main/seed.ts`, `main/vault/once/.holi/document-templates/`: seeded templates and `_brand/`, whose fonts and logo seed as bytes (`?inline`); `main/vault/shipped/.claude/skills/md-to-pdf/`, `skills/pdf-comments/`.
-- `apps/desktop/src/renderer/src/features/pdf/ConvertToPdf.tsx`, `FieldWidget.tsx`; `lib/pdf-fields.ts`.
-- `apps/desktop/src/renderer/src/features/files/PdfViewer.tsx`, `PdfDocument.tsx`, `PdfCommentField.tsx`; `lib/pdf-viewer-config.ts`, `lib/pdf-read-only.ts`, `lib/pdf-comments.ts`.
-- `packages/shared/src/pdf-comments.ts`, `packages/shared/src/template-fields.ts`.
+- `plugins/pdf/renderer/index.tsx`: the claims: a `.pdf` opens in `PdfViewer`, a markdown note's row menu offers Convert to PDF in the plugin dialog. With the plugin off, a `.pdf` opens in the file placeholder.
+- `plugins/pdf/renderer/`: `ConvertToPdf.tsx`, `FieldWidget.tsx`, `pdf-fields.ts`; `PdfViewer.tsx`, `PdfDocument.tsx`, `PdfCommentField.tsx`, `pdf-sidebar-leave.ts`, `pdf-viewer-config.ts`, `pdf-read-only.ts`, `pdf-comments.ts`. They call the main side through `capClient` over a type import of its table.
+- `plugins/pdf/shared/`: `pdf-comments.ts` (the thread model and formatter both sides use), `template-fields.ts`.
+- `plugins/pdf/test/`: the plugin's node and DOM tests.

@@ -1,4 +1,4 @@
-import type { TemplateField } from '@holi/shared'
+import type { TemplateField } from '../shared/template-fields'
 import {
   Checkbox,
   Input,

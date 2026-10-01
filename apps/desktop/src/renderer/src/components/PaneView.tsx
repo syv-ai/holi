@@ -27,7 +27,6 @@ import { SessionTerminal } from '@/features/agent/SessionTerminal'
 import { TurnChip } from '@/features/agent/TurnChip'
 import { FilePlaceholder } from '@/features/files/FilePlaceholder'
 import { ImageViewer } from '@/features/files/ImageViewer'
-import { PdfViewer } from '@/features/files/PdfViewer'
 import { HomeView } from '@/features/home/HomeView'
 import type { Pane, Tab } from '@/state/panes'
 import { useArrivalOnChange } from '@/lib/use-arrivals'
@@ -214,12 +213,11 @@ export function PaneView({
               <ClaimedView path={tab.path} />
             ) : tab?.kind === 'note' && fileKind(tab.path) === 'image' ? (
               <ImageViewer path={tab.path} />
-            ) : tab?.kind === 'note' && fileKind(tab.path) === 'pdf' ? (
-              <PdfViewer path={tab.path} />
-            ) : tab?.kind === 'note' && fileKind(tab.path) === 'doc' ? (
-              // Rich formats we cannot render open a typed placeholder. Text
-              // files fall through to the plain editor below.
-              <FilePlaceholder path={tab.path} kind="doc" />
+            ) : tab?.kind === 'note' &&
+              (fileKind(tab.path) === 'doc' || fileKind(tab.path) === 'pdf') ? (
+              // Rich formats nothing renders (a PDF with its plugin off) open a
+              // typed placeholder. Text files fall through to the plain editor.
+              <FilePlaceholder path={tab.path} kind={fileKind(tab.path) as 'doc' | 'pdf'} />
             ) : (
               <EditorPane
                 path={tab?.kind === 'note' ? tab.path : null}

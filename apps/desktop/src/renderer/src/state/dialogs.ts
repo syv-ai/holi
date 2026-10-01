@@ -13,7 +13,6 @@ import type { DialogSize } from '@/primitives'
  */
 export type ActiveDialog = { closable?: boolean } & (
   | { id: 'create-task'; size: 'md' } // Full create (⌘⇧T); quick add (⌘T) is `QuickAdd`.
-  | { id: 'convert-to-pdf'; size: 'md'; remote: string; path: string }
   /**
    * A plugin's dialog. Core knows nothing of its content: the plugin renders
    * it, and calls `close` when it is done.
@@ -43,6 +42,9 @@ export type ActiveDialog = { closable?: boolean } & (
    *  not only the open one. */
   | { id: 'remove-vault'; size: 'sm'; remote: string; intent: RemoveVaultIntent }
 )
+
+/** The one dialog a plugin may open. */
+export type PluginDialog = Extract<ActiveDialog, { id: 'plugin' }>
 
 /** Leave a vault, delete it, or let go of one GitHub no longer shows. */
 export type RemoveVaultIntent = 'leave' | 'delete' | 'forget'

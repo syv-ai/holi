@@ -1,4 +1,4 @@
-import type { TemplateField, TemplateFieldType } from '@holi/shared'
+import type { TemplateField, TemplateFieldType } from '../shared/template-fields'
 
 /** Escape a JS string for a Typst double-quoted string literal. Backslash first,
  * then quote, so the escape characters themselves aren't re-escaped. */

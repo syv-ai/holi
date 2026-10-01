@@ -1,4 +1,5 @@
-import { type TemplateField, initialValue, splitFrontmatter } from '@holi/shared'
+import { splitFrontmatter } from '@holi/shared'
+import { type TemplateField, initialValue } from '../shared/template-fields'
 import { parse as parseYaml } from 'yaml'
 
 /**

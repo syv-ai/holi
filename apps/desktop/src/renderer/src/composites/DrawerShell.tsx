@@ -2,7 +2,7 @@
  * The one drawer every sidebar in Holi is: the nav on the left, history and the
  * last turn on the right. The PDF viewer's sidebars are the PDF library's own
  * DOM and cannot be this component, so they copy its width, motion, header and
- * edge through the stylesheet Holi injects (`lib/pdf-viewer-config.ts`).
+ * edge through the stylesheet Holi injects (the PDF plugin's `pdf-viewer-config.ts`).
  *
  * **It pushes.** The column's width runs 0 → w (`index.css`,
  * `[data-slot='drawer']`) and the content beside it moves over. A transition,

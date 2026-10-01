@@ -19,10 +19,6 @@ vi.mock('@/features/agent/SessionTerminal', () => ({
   ),
 }))
 vi.mock('@/features/agent/TurnChip', () => ({ TurnChip: () => <div data-turn-chip /> }))
-// Stubbed too: these tests open `.pdf` tabs precisely so the body is cheap.
-vi.mock('@/features/files/PdfViewer', () => ({
-  PdfViewer: ({ path }: { path: string }) => <div data-pdf-viewer={path} />,
-}))
 
 /** Empty, so the body renders the placeholder rather than CodeMirror. */
 const empty: Pane = { tabs: [], active: -1 }
@@ -52,8 +48,8 @@ function pane(props: Partial<Parameters<typeof PaneView>[0]> = {}) {
   return { onDropTab, onDropEdge }
 }
 
-/** A `.pdf` note renders the stubbed `PdfViewer` above, so a pane can hold
- *  real tabs here without mounting the editor stack. */
+/** A `.pdf` note, which no installed plugin claims here, opens in the file
+ *  placeholder, so a pane can hold real tabs without mounting the editor stack. */
 const note = (name: string): Tab => ({ kind: 'note', path: `notes/${name}.pdf` })
 
 /** Pick a pill up from this pane's own strip. */
@@ -236,5 +232,4 @@ test('a note tab opens in the view of the first enabled plugin claiming its path
 
   expect(document.querySelector('[data-claimed="notes/plan.pdf"]')).not.toBeNull()
   expect(document.querySelector('[data-second-claim]')).toBeNull()
-  expect(document.querySelector('[data-pdf-viewer]')).toBeNull()
 })

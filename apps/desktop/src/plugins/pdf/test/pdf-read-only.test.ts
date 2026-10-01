@@ -16,7 +16,7 @@ import {
   readOnlyState,
   withReadOnly,
   withoutReadOnly,
-} from '../src/renderer/src/lib/pdf-read-only'
+} from '../renderer/pdf-read-only'
 
 const mark = (type: number, flags: string[] = ['print']) => ({ type, flags })
 

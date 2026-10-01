@@ -178,19 +178,6 @@ export function RowMenu({
               ))}
             </>
           )}
-          {fileKind(path) === 'markdown' && (
-            <>
-              <ContextMenuSeparator />
-              <ContextMenuItem
-                onSelect={() =>
-                  activeRemote !== null &&
-                  openDialog({ id: 'convert-to-pdf', size: 'md', remote: activeRemote, path })
-                }
-              >
-                Convert to PDF…
-              </ContextMenuItem>
-            </>
-          )}
           <ContextMenuSeparator />
           <ContextMenuItem onSelect={() => void navigator.clipboard.writeText(absPathFor(path))}>
             Copy Path

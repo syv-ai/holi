@@ -16,7 +16,7 @@
  * on here.
  */
 import { useEffect, useRef, useState } from 'react'
-import { singleLine } from '@/lib/pdf-viewer-config'
+import { singleLine } from './pdf-viewer-config'
 import { Textarea } from '@/primitives'
 
 export function PdfCommentField({

@@ -205,6 +205,7 @@ const pluginImports = [
       '!@/composites',
       '!@/composites/*',
       '!@/plugin-api',
+      '!@/test',
       '!@/test/*',
     ],
     message: 'a plugin reaches core through @/plugin-api (plus primitives and composites).',
@@ -260,6 +261,26 @@ export default [
   {
     files: PLUGIN_FILES,
     rules: { 'no-restricted-imports': ['error', { patterns: pluginImports }] },
+  },
+  // A plugin's renderer names its own capability table for `capClient`, as a
+  // type: a value import would bundle main-process code into the renderer.
+  {
+    files: ['src/plugins/*/renderer/**/*.{ts,tsx}'],
+    plugins: { '@typescript-eslint': tseslint.plugin },
+    rules: {
+      '@typescript-eslint/no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              regex: '^\\.\\./main(/|$)',
+              allowTypeImports: true,
+              message: "a plugin's renderer imports its main side as types only.",
+            },
+          ],
+        },
+      ],
+    },
   },
   // A plugin's node tests drive core's registry with the plugin's table, so
   // they may import core's main side. Shipped plugin code may not.

@@ -27,8 +27,8 @@ import {
   PDF_TEXT_MARKUP_SUBTYPES,
   type PdfAnnotationInput,
   type PdfCommentThread,
-  vaultRelPath,
-} from '@holi/shared'
+} from '../shared/pdf-comments'
+import { vaultRelPath } from '@holi/shared'
 import { resolveRelative } from '@holi/shared/path-safety-node'
 
 export type PdfCommentsResult =

@@ -72,6 +72,9 @@ A plugin's renderer reaches its main side only through capabilities that open th
 verbs with their types read from the table (params cross as JSON, results by structured clone).
 A plugin claims vault paths: the first enabled claim with a `view` opens a note tab of that path,
 and its `rowMenu` items join the file tree's menu. Its dialogs open as `{id: 'plugin', render}`.
+A plugin's own code sits in `main/`, `renderer/`, `shared/` and `test/` under its folder; its
+renderer imports its main side as types only, for `capClient`. PDF is the first plugin
+([pdf](features/pdf.md)).
 
 Enablement has two layers: `.holi/settings/app.yaml` declares the vault's plugins for everyone,
 and `app.local.yaml` can only turn one off on this machine ([settings](features/settings.md)). The

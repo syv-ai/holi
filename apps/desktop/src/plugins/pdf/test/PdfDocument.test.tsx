@@ -4,15 +4,13 @@
  * it was given, hands `onReady` a registry, and binds a keydown listener on
  * `document` from an effect. What a PDF looks like is the library's business.
  */
-import { DRAWER_WIDTH } from '@/lib/drawer'
 import { Provider, createStore } from 'jotai'
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import { emptyVaultSnapshot } from '@holi/shared'
 import { act, fireEvent, render, screen, waitFor } from '@/test/render'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
-import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
-import { sessionAtom } from '@/state/session'
-import { PDF_FONTS, PDF_SIGNATURE_NOTE, shortcutOf } from '@/lib/pdf-viewer-config'
+import { activeRemoteAtom, DRAWER_WIDTH, sessionAtom, snapshotAtom } from '@/plugin-api'
+import { PDF_FONTS, PDF_SIGNATURE_NOTE, shortcutOf } from '../renderer/pdf-viewer-config'
 
 const REMOTE = 'syv-ai/vault'
 const PATH = 'docs/case.pdf'
@@ -226,7 +224,7 @@ vi.mock('@embedpdf/react-pdf-viewer', () => {
   }
 })
 
-import { PdfDocument } from '../PdfDocument'
+import { PdfDocument } from '../renderer/PdfDocument'
 
 let store: ReturnType<typeof createStore>
 let urlCounter = 0

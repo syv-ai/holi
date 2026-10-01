@@ -4,7 +4,8 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
-import { type TemplateField, wikiLinksToText } from '@holi/shared'
+import { wikiLinksToText } from '@holi/shared'
+import type { TemplateField } from '../shared/template-fields'
 import { composeWrapper } from './wrapper'
 
 const exec = promisify(execFile)
