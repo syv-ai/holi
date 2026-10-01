@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { emptyVaultSnapshot, formatRecord } from '@holi/shared'
-import { appCapabilities, APP_NAMESPACES } from '../src/main/apps/capabilities'
+import { storeCapabilities } from '../src/main/apps/capabilities'
 import { noCoreServices } from '../src/main/capabilities/services'
 import { vaultCapabilities, VAULT_NAMESPACES } from '../src/main/capabilities/vault-caps'
 import {
@@ -13,7 +13,7 @@ import {
 } from '../src/main/capabilities/registry'
 
 const registry = createCapabilityRegistry()
-registry.register(APP_NAMESPACES, appCapabilities({ events: { emit: () => {} } }))
+registry.register(['store'], storeCapabilities())
 // `docs.read`, for the refusal of records read as files.
 registry.register(VAULT_NAMESPACES, vaultCapabilities({ updateSkills: async () => '' }))
 

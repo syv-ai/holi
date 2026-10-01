@@ -12,7 +12,7 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { agentCapabilities } from '../src/main/agent/capabilities'
-import { appCapabilities } from '../src/main/apps/capabilities'
+import { appsCapabilities, storeCapabilities } from '../src/main/apps/capabilities'
 import { installHoliCli } from '../src/main/bridge/cli'
 import { createBridgeServer, type BridgeServer } from '../src/main/bridge/server'
 import { createCapabilityHost } from '../src/main/capabilities/dispatch'
@@ -56,7 +56,14 @@ type Called = (name: string, params: Record<string, string>) => Promise<{ text: 
 function recording(called: Called): Record<string, AnyCapability> {
   const real: Record<string, AnyCapability> = {
     ...vaultCapabilities({ updateSkills: async () => '' }),
-    ...appCapabilities({ events: { emit: () => {} } }),
+    ...appsCapabilities({
+      events: { emit: () => {} },
+      appDoor: () => {
+        throw new Error('no app door here')
+      },
+      grants: { status: async () => ({ codeHash: '', affordances: [] }), grant: async () => true },
+    }),
+    ...storeCapabilities(),
     ...taskCapabilities({ today: () => '2026-09-30' }),
     ...pdfCapabilities({
       signatures: { read: async () => '[]', write: async () => {} },

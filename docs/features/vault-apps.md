@@ -12,8 +12,8 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   another bundle. Like a note it is identified by its vault-relative path (`Finance/Budget.app`);
   its name is the folder name without `.app`, as a note drops `.md`. `app.yaml` is the "finished"
   marker: an agent writes an app file by file, so the manifest is written last. Its keys are
-  `description`, `collections` and `dangerously-allow`, all optional; `holi apps init` and the
-  Home app write all three with the unused ones blank (`appManifestText`), so the file shows what
+  `description`, `collections` and `dangerously-allow`, all optional; `holi apps init` writes
+  all three with the unused ones blank (`appManifestText`), so the file shows what
   an app can say, and an empty file still finishes the app. The icon is the vault icon map's,
   as for any row. The parser never throws; a typo costs a field, never the app.
 - **A personal app is `<name>.local.app`.** The `.local.` marker on the folder makes every file
@@ -54,7 +54,7 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   (the shim sends `{target}`: a view registered in this vault by name wins, such as home, board,
   agenda, mail, settings or history; else a vault file, or an app's bundle as that app; a bare
   name that is neither answers "no such view") and
-  forwards every other method to `apps.bridge` in main with the bundle it mounted. Reads:
+  forwards every other method to `apps.call` in main with the bundle it mounted. Reads:
   `docs.list`, `docs.read`, `docs.render` (a note as HTML, inline HTML escaped and only web links
   kept, so a note cannot run script as the app), `tasks.list`, `vault.recents`, `docs.search` (names, then
   bodies), `vault.settings`, `vault.members`, `vault.history`, `sync.status`, `agent.sessions`, and, opted into,
@@ -114,14 +114,15 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   it over.
 - **One registry, two doors.** What main answers is the capability registry
   (`main/capabilities/`, see [architecture](../architecture.md)); the apps feature registers
-  `store.*`, `apps.open` and `apps.init` (`main/apps/capabilities.ts`). Each entry has its params, its refusals, and the doors
-  it opens to, the app's bridge and the agent's `holi` CLI (`/cli` on the bridge server). An app sees
+  `store.*` and `apps.*` (`main/apps/capabilities.ts`). Each entry has its params, its refusals, and the doors
+  it opens to: the app's bridge, the agent's `holi` CLI (`/cli` on the bridge server), and Holi's
+  own UI, which reaches `apps.call`, `apps.grants`, `apps.grant`, `apps.log` and `apps.init`. An app sees
   exactly what the agent can inspect from the terminal, written once. At the app door the bundle
   is the frame's, and a `bundle` param is ignored; at the CLI door the agent names it. One
   capability host (`capabilities/dispatch.ts`) runs a call for every door: the clone, the open
   vault's cached snapshot or a fresh scan, and a rescan after a write. The UI and CLI doors call
   its `dispatch`; the app door exists only once the apps code opens it (`openAppDoor`, once per
-  process), and `apps.bridge` calls through what that returns. What core's entries need beyond
+  process), and `apps.call` calls through what that returns. What core's entries need beyond
   the files (sync, members cached ten minutes, the recents) comes from one services factory
   (`capabilities/services.ts`); a feature's entries close over their own (sessions, Google,
   approvals) when the composition root registers them.
@@ -153,10 +154,6 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   the vault has, the Home tab shows it, through the claim like any folder document. No vault is
   created with one: Home defaults to Holi's own recents view ([nav menu](nav-menu.md)). When
   `home` names an app the vault lacks, the Home tab says so.
-- **Migration.** Apps used to live in `.holi/apps/<id>/`, hidden with the other dotfiles. On
-  vault open, before the first snapshot, `migrate-apps.ts` moves each to `<id>.app/` at the root
-  with one `rename`, then rewrites inbound `[[links]]`; the autosave commits it. An app whose
-  destination exists is left in place.
 
 ## Rules
 
@@ -174,9 +171,9 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   frame drop its own sandbox. The opaque origin is also why `localStorage` throws.
 - `AppFrame` identifies a message by `event.source === contentWindow`, never by origin (it is the
   string `"null"`), and the app never names itself: every call carries the bundle the frame was
-  mounted with. It refuses a name not in `APP_METHODS` and forwards the rest to `apps.bridge`,
-  which dispatches only into the registry's app door. Never dispatch outside the registry: `apps.*`
-  also holds Holi's own `register`, which is not an entry, so no name an app sends reaches it.
+  mounted with. It refuses a name not in `APP_METHODS` and forwards the rest to `apps.call`,
+  which dispatches only into the registry's app door. `apps.call` and `apps.grant` open only the
+  UI door, so no name an app sends reaches them: an app cannot call as another, or approve itself.
 - The host decodes only to a path `isAppBundlePath` accepts, so a crafted host cannot name the
   agent surface or a folder that is not a bundle.
 - One app cannot reach another's files or the vault's: the handler resolves only under its own
@@ -242,7 +239,7 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
 ## Code
 
 - `apps/desktop/src/main/apps/`: the protocol helpers, bridge shim, base tokens, open/init ops,
-  the move out of `.holi/apps`, the `store.*` capabilities (`capabilities.ts`), the store
+  the `apps.*` and `store.*` capabilities (`capabilities.ts`), the store
   (`app-store.ts`) and the approvals (`app-grants.ts`).
 - `apps/desktop/src/main/capabilities/`: the registry, its dispatch and services, the read
   fences and core's entries, with note rendering (`render-note.ts`).
@@ -252,7 +249,6 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   `apps/desktop/src/main/vault/git-routes.ts`: `/merge/record`;
   `apps/desktop/src/main/bridge/server.ts`: `/cli`.
 - `apps/desktop/src/main/index.ts`: scheme registration and the `holi-app` handler.
-- `apps/desktop/src/main/router.ts`: the `apps` namespace.
 - `apps/desktop/src/main/agent/seed/vault/shipped/.claude/hooks/vault-app-check.mjs`, `apps/desktop/src/main/bridge/cli.ts`.
 - `apps/desktop/src/renderer/src/features/apps/`: `AppFrame`, with the approval dialog.
 - `apps/desktop/src/renderer/src/state/app-push.ts`: the push signatures;

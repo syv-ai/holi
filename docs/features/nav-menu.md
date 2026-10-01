@@ -99,6 +99,5 @@ hidden, the same menu runs down the rail.
   [command palette](command-palette.md).
 - `apps/desktop/src/renderer/src/features/nav/NavMenu.tsx`: the items.
 - `apps/desktop/src/renderer/src/components/core-surfaces.tsx` (whose Home surface picks Home's
-  folder document or `HomeView`), `features/home/HomeView.tsx` (the recents, or why Home is not there),
-  `main/apps/home-app.ts` and `main/apps/home-app/` (the default Home app `apps.createHome` writes).
+  folder document or `HomeView`), `features/home/HomeView.tsx` (the recents, or why Home is not there).
 - `apps/desktop/src/renderer/src/components/Shell.tsx`: the sidebar and rail placement.

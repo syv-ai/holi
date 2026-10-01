@@ -12,8 +12,6 @@ import { initTRPC, TRPCError } from '@trpc/server'
 import {
   completeTask,
   isAgentSurfacePath,
-  homeTargetOf,
-  isAppBundlePath,
   parseTaskFile,
   parseTaskPatch,
   serializeTaskFile,
@@ -30,22 +28,11 @@ import {
   VAULT_MARKER_FILE,
 } from '@holi/shared'
 import type { SeedResult } from './vault/seed/types'
-import { initAppOp, type AppInitResult } from './apps/app-ops'
 import { searchBodies, type SearchHit } from './vault/search'
-import { writeHomeApp } from './apps/home-app'
-import { writeAppLog } from './apps/app-log'
-import {
-  bundleAuthorship,
-  commitLogin,
-  manifestOf,
-  type AppGrants,
-  type BundleCommit,
-} from './apps/app-grants'
 import { CapabilityError, trpcCodeOf } from './capabilities/error'
-import { createCapabilityHost, type AppDoor, type CapabilityHost } from './capabilities/dispatch'
+import { createCapabilityHost, type CapabilityHost } from './capabilities/dispatch'
 import { createCapabilityRegistry } from './capabilities/registry'
 import { noCoreServices, type UiReport } from './capabilities/services'
-import { migrateApps as moveLegacyApps } from './apps/migrate-apps'
 import { scanBackrefs, scanBackrefsMany } from './vault/backrefs'
 import { fileHistory, type FileHistory } from './vault/file-facts'
 import { copyNotes } from './vault/copy'
@@ -161,13 +148,6 @@ export interface RouterDeps {
    * method is "no such method".
    */
   capabilities?: CapabilityHost
-  /** The app door, which the vault apps code opened; `apps.bridge` goes
-   *  through it. Absent, an app reaches nothing. */
-  appDoor?: AppDoor
-  /** The approvals of apps' `dangerously-allow` reads, which `apps.grants`
-   *  and `apps.grant` ask and record. Optional: absent, nothing is declared
-   *  and nothing can be approved. */
-  grants?: AppGrants
   /** The collaborator lists the capability services read too, so Settings
    *  and an app share one. Optional: absent, the router keeps its own. */
   members?: MembersCache
@@ -308,10 +288,6 @@ export function createRouter(deps: RouterDeps) {
       core: noCoreServices,
       pluginEnabled: async () => true,
     })
-  const grants: AppGrants = deps.grants ?? {
-    status: async () => ({ codeHash: '', affordances: [] }),
-    grant: async () => false,
-  }
   const members =
     deps.members ?? createMembersCache((remote) => deps.session.api.collaborators(remote))
 
@@ -389,7 +365,6 @@ export function createRouter(deps: RouterDeps) {
     }
     await deps.seed(repo.root)
     await deps.plugins.enter(repo.root)
-    await migrateApps(repo.root)
     await deps.registry.add({
       remote,
       path: repo.root,
@@ -398,20 +373,6 @@ export function createRouter(deps: RouterDeps) {
     })
     const active = await deps.host.open(remote)
     return active.snapshot()
-  }
-
-  /**
-   * Move the apps kept in `.holi/apps/` to `<id>.app/` at the root.
-   *
-   * Runs wherever the seed does and always **ahead of `host.open`**, for
-   * the seed's reason and a sharper one: the first snapshot the renderer sees
-   * already has the apps where the tree shows them, and the moves reach git
-   * through the ordinary autosave.
-   */
-  async function migrateApps(root: string): Promise<void> {
-    const { moved, skipped } = await moveLegacyApps(root)
-    if (moved.length > 0) console.log(`[apps] moved: ${moved.map((m) => m.to).join(', ')}`)
-    if (skipped.length > 0) console.log(`[apps] target exists, left: ${skipped.join(', ')}`)
   }
 
   /** remote -> the clone's root on this machine. Every path-taking procedure
@@ -680,7 +641,6 @@ export function createRouter(deps: RouterDeps) {
          */
         await deps.seed(root)
         await deps.plugins.enter(root)
-        await migrateApps(root)
         await deps.registry.touch(input.remote, now())
         const active = await deps.host.open(input.remote)
         return active.snapshot()
@@ -1004,145 +964,6 @@ export function createRouter(deps: RouterDeps) {
     const next = { ...task, ...patch }
     return patch.status === 'done' ? { ...next, ...completeTask(next, today()) } : next
   }
-
-  /**
-   * What a vault app may ask the vault for.
-   *
-   * **The refusal lives in main and not in the renderer.** The renderer is the
-   * process that hosts the app's own code, and the process rendering untrusted
-   * code must not also be the process deciding what it may read. The renderer
-   * only forwards, and it supplies the `remote` and the bundle from the frame it
-   * mounted, so an app cannot address a vault or another app by claim.
-   *
-   * Two audiences, and the split matters. `bridge` is what a **vault app**
-   * reaches, and it dispatches only into the capability registry's app door
-   * (`capabilities/registry.ts`), which holds every refusal: the agent surface
-   * (`AGENTS.md`, `CLAUDE.md`, `USER.local.md`, `.claude/`, `memory/`) is
-   * refused outright, because `.claude/hooks/google-send-gate.mjs` IS the mail
-   * send gate and `memory/` is what the user told the assistant. `register` is
-   * what **Holi's own launchers** reach; it is not in the registry, so no method
-   * name an app sends can land on it. **Never dispatch outside the registry.**
-   */
-  const apps = t.router({
-    /**
-     * The app door: one bridge call from the frame `AppFrame` mounted for
-     * `bundle`. It reaches only capabilities that open to the app door, so
-     * `register` below is unreachable from an app however it is named.
-     */
-    bridge: t.procedure
-      .input((raw: unknown) => ({
-        ...fields({ remote: 'string', bundle: 'string', method: 'string' })(raw),
-        params: (raw as { params?: unknown }).params,
-      }))
-      .mutation(async ({ input }): Promise<unknown> => {
-        if (!isAppBundlePath(input.bundle)) {
-          throw new TRPCError({ code: 'BAD_REQUEST', message: `not an app: ${input.bundle}` })
-        }
-        try {
-          if (deps.appDoor === undefined) {
-            throw new CapabilityError('BAD_REQUEST', `no such method: ${input.method}`)
-          }
-          const result = await deps.appDoor.call(
-            input.remote,
-            input.bundle,
-            input.method,
-            input.params,
-          )
-          return result.value
-        } catch (err) {
-          if (err instanceof CapabilityError) {
-            throw new TRPCError({
-              code: trpcCodeOf(err.code),
-              message: err.message,
-            })
-          }
-          throw err
-        }
-      }),
-
-    // ---- Holi's own UI from here down. Not reachable from an app. ----
-
-    /** Which of the app's `dangerously-allow` reads this person has approved
-     *  on this machine: what `AppFrame` asks before it mounts the frame. */
-    grants: t.procedure
-      .input(fields({ remote: 'string', bundle: 'string' }))
-      .query(async ({ input }) => {
-        if (!isAppBundlePath(input.bundle)) {
-          throw new TRPCError({ code: 'BAD_REQUEST', message: `not an app: ${input.bundle}` })
-        }
-        const root = await rootFor(input.remote)
-        const status = await grants.status(input.remote, root, input.bundle)
-        // Only asked when there is something to approve: it names the code.
-        if (!status.affordances.some((a) => !a.granted)) {
-          return { ...status, reasons: {}, added: null, lastChange: null }
-        }
-        // The app's own words for why, shown quoted beside the ask.
-        const reasons = (await manifestOf(root, input.bundle))?.allowReasons ?? {}
-        const { added, last } = await bundleAuthorship(root, input.bundle)
-        const logins = (await members.get(input.remote).catch(() => [])).map((m) => m.login)
-        const withLogin = (c: BundleCommit | null) =>
-          c === null ? null : { ...c, login: commitLogin(c, logins) }
-        return { ...status, reasons, added: withLogin(added), lastChange: withLogin(last) }
-      }),
-
-    /** The person approved the dialog. Here and not in the registry, so an
-     *  app can never approve itself. */
-    grant: t.procedure
-      .input((raw: unknown) => {
-        const base = fields({ remote: 'string', bundle: 'string', codeHash: 'string' })(raw)
-        const affordances = (raw as { affordances?: unknown }).affordances
-        if (!Array.isArray(affordances) || !affordances.every((a) => typeof a === 'string')) {
-          throw new TRPCError({ code: 'BAD_REQUEST', message: 'affordances must be strings' })
-        }
-        return { ...base, affordances: affordances as string[] }
-      })
-      .mutation(async ({ input }): Promise<boolean> => {
-        if (!isAppBundlePath(input.bundle)) {
-          throw new TRPCError({ code: 'BAD_REQUEST', message: `not an app: ${input.bundle}` })
-        }
-        const root = await rootFor(input.remote)
-        // False: the app changed since the dialog was shown, so ask again.
-        return grants.grant(input.remote, root, input.bundle, input.affordances, input.codeHash)
-      }),
-
-    /** Write the manifest that finishes a bundle — the launchers' "Finish this
-     *  app", and the same op as `holi apps init`. Never overwrites, so it cannot
-     *  clobber a manifest someone is mid-way through. A rename is a tree move. */
-    register: vaultMutation
-      .input(fields({ remote: 'string', path: 'string' }))
-      .mutation(async ({ input }): Promise<AppInitResult> =>
-        initAppOp(await rootFor(input.remote), input.path),
-      ),
-
-    /**
-     * One line of an app's log, from its frame: what it reported going wrong
-     * (`apps/app-log.ts`). Not a vault mutation: the log is machine-local and
-     * the vault's cache does not need to hear about it.
-     */
-    log: t.procedure
-      .input(fields({ remote: 'string', bundle: 'string', level: 'string', text: 'string' }))
-      .mutation(async ({ input }) => {
-        const level = (['error', 'warn', 'info'] as const).find((l) => l === input.level)
-        if (level === undefined || !isAppBundlePath(input.bundle)) {
-          throw new TRPCError({ code: 'BAD_REQUEST', message: 'not a log entry' })
-        }
-        await writeAppLog(await rootFor(input.remote), input.bundle, { level, text: input.text })
-        return { ok: true as const }
-      }),
-
-    /** The Home tab's "Create Home app": the default Home app, at the app the
-     *  vault's `home` setting names. Never overwrites. */
-    createHome: vaultMutation
-      .input(fields({ remote: 'string' }))
-      .mutation(async ({ input }): Promise<{ created: string[] }> => {
-        const root = await rootFor(input.remote)
-        const home = homeTargetOf((await readVaultSettings(root)).home)
-        if (home.kind !== 'file' || !isAppBundlePath(home.path)) {
-          throw new TRPCError({ code: 'BAD_REQUEST', message: 'Home is not an app' })
-        }
-        return { created: await writeHomeApp(root, home.path) }
-      }),
-  })
 
   /**
    * Bytes for a file the renderer renders itself (the PDF viewer). The
@@ -1728,7 +1549,6 @@ export function createRouter(deps: RouterDeps) {
     turns,
     theme,
     settings,
-    apps,
     ui,
     cap,
   })

@@ -17,7 +17,7 @@ import { snapshotAtom, activeRemoteAtom } from '../../../state/vaults'
 import { appOpensAtom, workspaceAtom, openSurface } from '../../../state/panes'
 
 /** Main's side of the app door, answering the way the registry would. */
-const bridgeMock = vi.fn((input: { method: string }): Promise<unknown> => {
+const bridgeMock = vi.fn((input: { remote: string; method: string }): Promise<unknown> => {
   if (input.method === 'docs.read') return Promise.resolve('# A')
   if (input.method === 'docs.list') {
     return Promise.resolve([{ path: 'a.md', kind: 'note', updatedAt: '' }])
@@ -25,13 +25,12 @@ const bridgeMock = vi.fn((input: { method: string }): Promise<unknown> => {
   return Promise.resolve([])
 })
 
-vi.mock('../../../lib/trpc', () => ({
-  trpc: {
-    apps: {
-      bridge: { mutate: (input: { method: string }) => bridgeMock(input) },
-      // No `dangerously-allow` reads to approve, so the frame mounts at once.
-      grants: { query: () => Promise.resolve({ codeHash: 'h', affordances: [] }) },
-    },
+vi.mock('../apps-cap', () => ({
+  appsCap: {
+    call: (remote: string, input: { method: string }) => bridgeMock({ remote, ...input }),
+    // No `dangerously-allow` reads to approve, so the frame mounts at once.
+    grants: () => Promise.resolve({ codeHash: 'h', affordances: [] }),
+    log: () => Promise.resolve(true),
   },
 }))
 

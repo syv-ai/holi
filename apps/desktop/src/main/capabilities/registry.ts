@@ -2,7 +2,7 @@
  * What a vault app, and the agent, can ask Holi for: one registry, every door.
  *
  * **The app door** is the `window.holi` bridge: `postMessage` from the
- * sandboxed frame to `AppFrame`, which forwards into `apps.bridge`. **The CLI
+ * sandboxed frame to `AppFrame`, which forwards into `apps.call`. **The CLI
  * door** is `holi <group> <verb>` over the bridge's loopback port (`bridge/`). **The
  * UI door** is Holi's own renderer, through `cap.run` (`router.ts`), which is
  * how a plugin's renderer reaches its main side. Each

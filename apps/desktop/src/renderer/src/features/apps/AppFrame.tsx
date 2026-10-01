@@ -17,7 +17,7 @@
  *    an id in its message would be ignored: otherwise one app could address
  *    another's directory by asking nicely.
  *
- * What it may ask for at all is decided in main (`apps.bridge`, which reaches
+ * What it may ask for at all is decided in main (`apps.call`, which reaches
  * only the capability registry's app door), not here: the process rendering
  * untrusted code must not be the process deciding what that code may read.
  * This side only forwards, after refusing a name that is not a bridge method.
@@ -41,7 +41,7 @@ import {
 } from '@holi/shared'
 import { cn } from '@/lib/cn'
 import { Button, Dialog } from '@/primitives'
-import { trpc } from '../../lib/trpc'
+import { appsCap } from './apps-cap'
 import { appPushSignaturesAtom, storeSignatures } from '../../state/app-push'
 import { appPathsAtom, closeAppAtom } from '../../state/apps'
 import { activeModeAtom } from '../../state/color-scheme'
@@ -54,6 +54,8 @@ import { activeRemoteAtom, snapshotAtom } from '../../state/vaults'
 function isAppMethod(value: unknown): value is AppMethod {
   return typeof value === 'string' && (APP_METHODS as readonly string[]).includes(value)
 }
+
+const LOG_LEVELS = ['error', 'warn', 'info'] as const
 
 /** A string field out of a call's params, or null when there isn't one. */
 function fieldOf(params: unknown, key: 'target'): string | null {
@@ -116,7 +118,7 @@ export function AppFrame({ path }: { path: string }): React.JSX.Element {
         openPath(target, 'preview')
         return { ok: true }
       }
-      return await trpc.apps.bridge.mutate({ remote, bundle: path, method, params })
+      return await appsCap.call(remote, { bundle: path, method, params })
     },
     [remote, path, openPath, openSurface, store],
   )
@@ -133,11 +135,12 @@ export function AppFrame({ path }: { path: string }): React.JSX.Element {
       }
       if (msg === null || typeof msg !== 'object') return
       // A line for the app's log: no answer, and a failure to write it is not
-      // the app's to hear about. Main checks the level and the bundle.
+      // the app's to hear about. Main checks it again, with the bundle.
       if (typeof msg.log === 'object' && msg.log !== null && remote !== null) {
-        const { level, text } = msg.log
-        if (typeof level === 'string' && typeof text === 'string') {
-          trpc.apps.log.mutate({ remote, bundle: path, level, text }).catch(() => {})
+        const { text } = msg.log
+        const level = LOG_LEVELS.find((l) => l === msg.log?.level)
+        if (level !== undefined && typeof text === 'string') {
+          appsCap.log(remote, { bundle: path, level, text }).catch(() => {})
         }
         return
       }
@@ -196,8 +199,8 @@ export function AppFrame({ path }: { path: string }): React.JSX.Element {
     if (remote === null || !exists) return
     let live = true
     setGateOpen(false)
-    trpc.apps.grants
-      .query({ remote, bundle: path })
+    appsCap
+      .grants(remote, { bundle: path })
       .then((status) => {
         if (!live) return
         const ungranted = status.affordances.filter((s) => !s.granted).map((s) => s.affordance)
@@ -226,7 +229,7 @@ export function AppFrame({ path }: { path: string }): React.JSX.Element {
       setGateOpen(true)
       return
     }
-    trpc.apps.grant.mutate({ remote, bundle: path, ...shown }).then(
+    appsCap.grant(remote, { bundle: path, ...shown }).then(
       (recorded) => {
         if (!recorded) {
           setRecheck((n) => n + 1)

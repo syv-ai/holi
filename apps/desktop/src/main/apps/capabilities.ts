@@ -1,15 +1,33 @@
 /**
- * Vault apps' capabilities: an app's own records (`store.*`), reached by the
- * app through its bridge and by the agent through `holi store`, and the
- * agent's `apps.open` and `apps.init`.
+ * Vault apps' capabilities (docs/features/vault-apps.md): `apps.*`, which is
+ * Holi's own UI driving an app (its bridge calls, approvals and log) and the
+ * agent's `holi apps open` and `holi apps init`; and `store.*`, an app's own
+ * records, reached by the app through its bridge and by the agent through
+ * `holi store`.
+ *
+ * **`apps.call` is how a frame's call reaches main**, and it opens only the
+ * UI door: `AppFrame` forwards each bridge call through it, naming the bundle
+ * it mounted, and it hands the call to the app door. A frame's own calls go
+ * through the app door, whose allowlist is what was registered for it, so no
+ * method name an app sends can reach `apps.call` or `apps.grant`: an app can
+ * neither call on another's behalf nor approve itself.
  *
  * No `electron` import: this loads under plain Node in the tests.
  */
-import { appBundleOf, isAppBundlePath } from '@holi/shared'
+import { appBundleOf, isAppBundlePath, type AppLogLevel } from '@holi/shared'
+import type { AppDoor } from '../capabilities/dispatch'
 import { CapabilityError } from '../capabilities/error'
 import { paramsObject, pathParams, stringParam } from '../capabilities/params'
 import { cap, type CapabilityContext } from '../capabilities/registry'
 import type { PluginEvents } from '../plugin-host/events'
+import {
+  bundleAuthorship,
+  commitLogin,
+  manifestOf,
+  type AppGrants,
+  type BundleCommit,
+} from './app-grants'
+import { writeAppLog } from './app-log'
 import { initAppOp, openAppOp } from './app-ops'
 import { storeCheck, storeDelete, storeGet, storeList, storePut } from './app-store'
 
@@ -20,6 +38,13 @@ import { storeCheck, storeDelete, storeGet, storeList, storePut } from './app-st
  */
 function bundleOf(ctx: CapabilityContext, named: unknown): string {
   const bundle = ctx.bundle ?? (typeof named === 'string' ? named : '')
+  if (!isAppBundlePath(bundle)) throw new CapabilityError('BAD_REQUEST', `not an app: ${bundle}`)
+  return bundle
+}
+
+/** A `bundle` param from Holi's own UI, which must name an app. */
+function bundleParam(p: Record<string, unknown>): string {
+  const bundle = stringParam(p, 'bundle')
   if (!isAppBundlePath(bundle)) throw new CapabilityError('BAD_REQUEST', `not an app: ${bundle}`)
   return bundle
 }
@@ -42,16 +67,95 @@ function valueParam(value: unknown): unknown {
 
 const compact = (value: unknown) => JSON.stringify(value)
 
-/** The namespaces vault apps own. */
-export const APP_NAMESPACES = ['apps', 'store'] as const
+const LOG_LEVELS: readonly AppLogLevel[] = ['error', 'warn', 'info']
 
 export interface AppCapabilitiesDeps {
   /** The apps' events: `open` asks the renderer to open (or reload) a
    *  bundle's tab in the active pane, if that vault is the one on screen. */
   events: Pick<PluginEvents, 'emit'>
+  /** The app door, which the apps code opened. Read when a call arrives. */
+  appDoor(): AppDoor
+  /** This machine's approvals of apps' `dangerously-allow` reads. */
+  grants: AppGrants
 }
 
-export const appCapabilities = (deps: AppCapabilitiesDeps) => ({
+export const appsCapabilities = (deps: AppCapabilitiesDeps) => ({
+  /**
+   * One bridge call from the frame `AppFrame` mounted for `bundle`, through
+   * the app door. Not a write itself: the call it carries refreshes the vault
+   * when it writes.
+   */
+  'apps.call': cap({
+    doors: ['ui'],
+    params: (raw) => {
+      const p = paramsObject(raw)
+      return { bundle: bundleParam(p), method: stringParam(p, 'method'), params: p.params }
+    },
+    run: async (ctx, { bundle, method, params }) =>
+      (await deps.appDoor().call(ctx.remote, bundle, method, params)).value,
+  }),
+
+  /** Which of the app's `dangerously-allow` reads this person has approved
+   *  on this machine: what `AppFrame` asks before it mounts the frame. */
+  'apps.grants': cap({
+    doors: ['ui'],
+    params: (raw) => ({ bundle: bundleParam(paramsObject(raw)) }),
+    run: async (ctx, { bundle }) => {
+      const status = await deps.grants.status(ctx.remote, ctx.root, bundle)
+      // Only asked when there is something to approve: it names the code.
+      if (!status.affordances.some((a) => !a.granted)) {
+        return { ...status, reasons: {}, added: null, lastChange: null }
+      }
+      // The app's own words for why, shown quoted beside the ask.
+      const reasons = (await manifestOf(ctx.root, bundle))?.allowReasons ?? {}
+      const { added, last } = await bundleAuthorship(ctx.root, bundle)
+      const logins = (await ctx.core.members().catch(() => [])).map((m) => m.login)
+      const withLogin = (c: BundleCommit | null) =>
+        c === null ? null : { ...c, login: commitLogin(c, logins) }
+      return { ...status, reasons, added: withLogin(added), lastChange: withLogin(last) }
+    },
+  }),
+
+  /** The person approved the dialog. UI door only, so an app can never
+   *  approve itself. False: the app changed since the dialog was shown, so
+   *  ask again. */
+  'apps.grant': cap({
+    doors: ['ui'],
+    params: (raw) => {
+      const p = paramsObject(raw)
+      const affordances = p.affordances
+      if (!Array.isArray(affordances) || !affordances.every((a) => typeof a === 'string')) {
+        throw new CapabilityError('BAD_REQUEST', 'affordances must be strings')
+      }
+      return {
+        bundle: bundleParam(p),
+        codeHash: stringParam(p, 'codeHash'),
+        affordances: affordances as string[],
+      }
+    },
+    run: (ctx, { bundle, affordances, codeHash }) =>
+      deps.grants.grant(ctx.remote, ctx.root, bundle, affordances, codeHash),
+  }),
+
+  /**
+   * One line of an app's log, from its frame: what it reported going wrong
+   * (`app-log.ts`). Not a write: the log is machine-local and the vault's
+   * cache does not need to hear about it.
+   */
+  'apps.log': cap({
+    doors: ['ui'],
+    params: (raw) => {
+      const p = paramsObject(raw)
+      const level = LOG_LEVELS.find((l) => l === p.level)
+      if (level === undefined) throw new CapabilityError('BAD_REQUEST', 'not a log entry')
+      return { bundle: bundleParam(p), level, text: typeof p.text === 'string' ? p.text : '' }
+    },
+    run: async (ctx, { bundle, level, text }) => {
+      await writeAppLog(ctx.root, bundle, { level, text })
+      return true
+    },
+  }),
+
   /** Open a finished app's tab, or reload it. Reversible: the tab closes. */
   'apps.open': cap({
     doors: ['cli'],
@@ -72,9 +176,11 @@ export const appCapabilities = (deps: AppCapabilitiesDeps) => ({
     text: ({ bundle }) => `opened ${bundle}`,
   }),
 
-  /** Scaffold a bundle. Never overwrites, so it is safe to run twice. */
+  /** Scaffold a bundle, or finish one by writing its manifest: the agent's
+   *  `holi apps init`, the explorer's New App and the tree's "Finish this
+   *  app". Never overwrites, so it is safe to run twice. */
   'apps.init': cap({
-    doors: ['cli'],
+    doors: ['ui', 'cli'],
     cli: { args: ['path'], summary: 'scaffold <path>, a folder ending in .app' },
     writes: true,
     params: pathParams,
@@ -86,7 +192,11 @@ export const appCapabilities = (deps: AppCapabilitiesDeps) => ({
     text: ({ created }) =>
       created.length === 0 ? 'nothing to create' : created.map((p) => `created ${p}`).join('\n'),
   }),
+})
 
+export type AppsCapabilities = ReturnType<typeof appsCapabilities>
+
+export const storeCapabilities = () => ({
   'store.list': cap({
     doors: ['app', 'cli'],
     cli: { args: ['bundle', 'collection'], summary: "an app's records, one per line" },

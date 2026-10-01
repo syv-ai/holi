@@ -15,7 +15,6 @@ import {
   isAppBundlePath,
 } from '@holi/shared'
 import { AppIcon } from '@/composites/file-icons'
-import { trpc } from '@/lib/trpc'
 import { joinPath } from '@/lib/tree-paths'
 import type { PathClaim, RailItem, Surface } from '@/plugin-api/types'
 import { IconButton } from '@/primitives'
@@ -23,6 +22,7 @@ import { appInstancesAtom } from '@/state/apps'
 import { appOpensAtom, openInNewPane, workspaceAtom } from '@/state/panes'
 import { snapshotAtom } from '@/state/vaults'
 import { AppFrame } from './AppFrame'
+import { appsCap } from './apps-cap'
 
 /** What makes a bundle an app at all: its entry document. */
 const ENTRY = 'index.html'
@@ -93,7 +93,8 @@ export const APP_CLAIM: PathClaim = {
         const has = (p: string) => snapshot.files.some((f) => f.path === p)
         return has(`${path}/${ENTRY}`) && !has(`${path}/${APP_MANIFEST_FILE}`)
       },
-      run: ({ remote, path }) => void trpc.apps.register.mutate({ remote, path }),
+      run: ({ remote, path }) =>
+        void appsCap.init(remote, { path }).catch((e: unknown) => console.warn('[apps]', e)),
     },
   ],
   // `holi apps init`'s scaffold. Opening its entry expands the bundle.
@@ -104,8 +105,14 @@ export const APP_CLAIM: PathClaim = {
     placeholder: 'app name',
     run: async ({ remote, parent, name }) => {
       const bundle = joinPath(parent, name.endsWith(APP_SUFFIX) ? name : `${name}${APP_SUFFIX}`)
-      const result = await trpc.apps.register.mutate({ remote, path: bundle })
-      return result.ok ? `${bundle}/${ENTRY}` : null
+      // A refusal (a name that is no app) opens nothing.
+      return appsCap.init(remote, { path: bundle }).then(
+        () => `${bundle}/${ENTRY}`,
+        (e: unknown) => {
+          console.warn('[apps]', e)
+          return null
+        },
+      )
     },
   },
 }

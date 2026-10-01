@@ -31,9 +31,9 @@ import { createSession } from './github/electron'
 import { createMembersCache } from './github/members-cache'
 import { installHoliCli } from './bridge/cli'
 import type { MainAppMethod } from '@holi/shared'
-import { appCapabilities, APP_NAMESPACES } from './apps/capabilities'
+import { appsCapabilities, storeCapabilities } from './apps/capabilities'
 import { agentCapabilities, AGENT_NAMESPACES } from './agent/capabilities'
-import { createCapabilityHost } from './capabilities/dispatch'
+import { createCapabilityHost, type AppDoor } from './capabilities/dispatch'
 import { CapabilityError } from './capabilities/error'
 import { createCapabilityRegistry } from './capabilities/registry'
 import { vaultCapabilities, VAULT_NAMESPACES } from './capabilities/vault-caps'
@@ -305,16 +305,23 @@ async function main(): Promise<void> {
       return result.summary
     },
   })
-  // The agent's `holi apps open`: the renderer opens the tab. Vault apps are
-  // still core, so their events are not gated on a plugin.
-  const appCaps = appCapabilities({ events: pluginEvents(eventsDeps, 'apps') })
+  // Vault apps are still core, so their events are not gated on a plugin.
+  // The app door is opened below, once the host exists.
+  let appDoor: AppDoor | null = null
+  const appsCaps = appsCapabilities({
+    events: pluginEvents(eventsDeps, 'apps'),
+    appDoor: () => appDoor!,
+    grants: appGrants,
+  })
+  const storeCaps = storeCapabilities()
   const taskCaps = taskCapabilities({ today: localToday })
   const agentCaps = agentCapabilities({
     // `agent` is assigned below, before any vault can be open.
     sessionsFor: (remote) => (host.active()?.remote === remote ? (agent?.sessions() ?? []) : []),
   })
   capabilities.register(VAULT_NAMESPACES, vaultCaps)
-  capabilities.register(APP_NAMESPACES, appCaps)
+  capabilities.register(['apps'], appsCaps)
+  capabilities.register(['store'], storeCaps)
   capabilities.register(TASK_NAMESPACES, taskCaps)
   capabilities.register(AGENT_NAMESPACES, agentCaps)
   // Every method the frame's bridge may call and main answers is registered
@@ -322,7 +329,7 @@ async function main(): Promise<void> {
   // hung promise in an app.
   void ({} as Record<
     keyof (typeof vaultCaps &
-      typeof appCaps &
+      typeof storeCaps &
       typeof taskCaps &
       typeof agentCaps &
       GoogleCapabilities),
@@ -340,14 +347,12 @@ async function main(): Promise<void> {
   const dispatch = capabilityHost.dispatch
   // The app door's one opener is the vault apps code, which keeps the
   // approvals an entry's `appGrant` asks for.
-  const appDoor = capabilityHost.openAppDoor({ admit: admitApps(appGrants) })
+  appDoor = capabilityHost.openAppDoor({ admit: admitApps(appGrants) })
 
   const router = createRouter({
     capabilities: capabilityHost,
-    appDoor,
     seed: (root) => plugins.seed(root),
     plugins,
-    grants: appGrants,
     members,
     reportUi: (remote, report) => {
       uiReports.set(remote, report)

@@ -515,8 +515,8 @@ instead.
 - A home for everyone in the vault is the shared setting. A home for one person
   is `home:` in `.holi/settings/app.local.yaml`, which never syncs, pointing at
   a personal app (`Home.local.app`) or anything else.
-- If Home says there is no app yet, the user can press **Create Home app**, or
-  you can write the folder yourself.
+- If Home names an app the vault does not have yet, write the folder yourself
+  (`holi apps init <path>` scaffolds it).
 - To see a change, ask the user to open Home again (or reload it from its tab).
   `holi apps open <path>` works too, but opens it in a tab of its own beside
   Home rather than reloading the Home tab.

@@ -18,12 +18,12 @@ const EMPTY = emptyVaultSnapshot()
 const store = getDefaultStore()
 
 const createTask = vi.fn(async (_input: unknown) => ({ path: 'Finance/task.call-the-bank.md' }))
-const register = vi.fn(async (_input: unknown) => ({ ok: true, created: [] }))
+const init = vi.fn(async (_input: unknown) => ({ created: [] }))
 vi.mock('../../../lib/trpc', () => ({
   trpc: {
     vaults: { snapshot: { query: () => Promise.resolve(EMPTY) } },
-    // `tasks.create` is a capability at the UI door; the double sees its
-    // params with the vault they run in, as the old procedure took them.
+    // `tasks.create` and `apps.init` are capabilities at the UI door; the
+    // doubles see their params with the vault they run in.
     cap: {
       run: {
         mutate: ({
@@ -37,10 +37,11 @@ vi.mock('../../../lib/trpc', () => ({
         }) =>
           name === 'tasks.create'
             ? createTask({ remote, ...(JSON.parse(paramsJson ?? '{}') as object) })
-            : Promise.reject(new Error(`no such method: ${name}`)),
+            : name === 'apps.init'
+              ? init({ remote, ...(JSON.parse(paramsJson ?? '{}') as object) })
+              : Promise.reject(new Error(`no such method: ${name}`)),
       },
     },
-    apps: { register: { mutate: (input: unknown) => register(input) } },
   },
 }))
 
@@ -93,7 +94,7 @@ async function name(text: string) {
 
 beforeEach(() => {
   createTask.mockClear()
-  register.mockClear()
+  init.mockClear()
 })
 
 test('with nothing focused, the field is the first row at the root', async () => {
@@ -137,6 +138,6 @@ test('an app is scaffolded beside the focused file, and its index.html opens', a
   await make('New App')
   expect(order().at(-1)).toBe('<app name>')
   await name('Budget')
-  await waitFor(() => expect(register).toHaveBeenCalledWith({ remote: REMOTE, path: 'Budget.app' }))
+  await waitFor(() => expect(init).toHaveBeenCalledWith({ remote: REMOTE, path: 'Budget.app' }))
   await waitFor(() => expect(open.preview).toHaveBeenCalledWith('Budget.app/index.html'))
 })

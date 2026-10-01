@@ -92,7 +92,7 @@ async function rig(files: Record<string, string> = {}, auth?: StoredAuth) {
   })
   hosts.push(host)
   const trashItem = vi.fn(async () => {})
-  // The capabilities `apps.bridge` reaches here: core's and the tasks'.
+  // Core's capabilities and the tasks', for `cap.run`.
   const capabilities = createCapabilityRegistry()
   capabilities.register(VAULT_NAMESPACES, vaultCapabilities({ updateSkills: async () => '' }))
   capabilities.register(TASK_NAMESPACES, taskCapabilities({ today: () => TODAY }))
@@ -108,8 +108,6 @@ async function rig(files: Record<string, string> = {}, auth?: StoredAuth) {
     seed: seedVault,
     plugins: { enter: async () => {} },
     capabilities: capabilityHost,
-    // No entry here asks for an app's consent.
-    appDoor: capabilityHost.openAppDoor({ admit: async () => {} }),
     registry,
     session,
     host,
@@ -1680,102 +1678,6 @@ describe('history', () => {
     expect(await readFile(join(root, 'note.md'), 'utf8')).toBe('v1\n')
     const after = await caller.history.list({ path: 'note.md' })
     expect(after.length).toBe(before.length + 1)
-  })
-})
-
-/**
- * The `apps.*` namespace — what a vault app may ask the vault for.
- *
- * These tests are the security boundary, not a convenience check. The refusal
- * lives in main and is asserted here because the renderer is the process that
- * hosts untrusted app code, and the process rendering untrusted code must not
- * also be the process deciding what it may read.
- */
-describe('apps', () => {
-  const appsRig = async () => {
-    const r = await rig({
-      'inbox.md': '# Inbox\n\nnotes\n',
-      'USER.local.md': '# Ada Holm\n\nada@syv.ai\n',
-      'task.review.md': '---\ntitle: Review\nstatus: todo\n---\n',
-    })
-    /** One bridge call, as `AppFrame` makes it for the frame it mounted. */
-    const call = (method: string, params?: unknown, bundle = 'Tracker.app') =>
-      r.caller.apps.bridge({ remote: REMOTE, bundle, method, params })
-    return { ...r, call }
-  }
-
-  it('reads an ordinary note', async () => {
-    const { call } = await appsRig()
-    expect(await call('docs.read', { path: 'inbox.md' })).toContain('# Inbox')
-  })
-
-  it('refuses every file that configures the agent', async () => {
-    // `.claude/hooks/google-send-gate.mjs` IS the mail send gate, so a readable
-    // agent surface is an app reading its way toward the agent's configuration —
-    // and MEMORY.md/USER.local.md are what the user told the assistant privately.
-    const { call } = await appsRig()
-    for (const path of [
-      'AGENTS.md',
-      'CLAUDE.md',
-      'MEMORY.md',
-      'USER.local.md',
-      '.claude/settings.json',
-      // `memory/` is MEMORY.md subdivided, and does not become readable by
-      // being spread over more files.
-      'memory/index.md',
-      'memory/shell-quirks.md',
-    ]) {
-      await expect(call('docs.read', { path })).rejects.toMatchObject({
-        code: 'FORBIDDEN',
-      })
-    }
-  })
-
-  it('refuses a path that leaves the vault, at the same boundary notes.read uses', async () => {
-    const { call } = await appsRig()
-    await expect(call('docs.read', { path: '../outside.md' })).rejects.toMatchObject({
-      code: 'BAD_REQUEST',
-    })
-  })
-
-  it('says NOT_FOUND for a missing note, distinguishably from a refusal', async () => {
-    const { call } = await appsRig()
-    await expect(call('docs.read', { path: 'nope.md' })).rejects.toMatchObject({
-      code: 'NOT_FOUND',
-    })
-  })
-
-  it('lists the vault docs with the agent surface removed', async () => {
-    const { call } = await appsRig()
-    const paths = ((await call('docs.list')) as { path: string }[]).map((d) => d.path)
-    expect(paths).toContain('inbox.md')
-    // Seeded at creation, so their absence here is a filter doing work
-    // rather than a fixture that never had them.
-    expect(paths).not.toContain('AGENTS.md')
-    expect(paths).not.toContain('CLAUDE.md')
-    expect(paths).not.toContain('MEMORY.md')
-    // The listing, not just the read: an app that cannot open a memory but can
-    // see every memory's path has still been told what the vault remembers.
-    expect(paths).not.toContain('memory/index.md')
-    expect(paths.some((p) => p.startsWith('memory/'))).toBe(false)
-  })
-
-  it('refuses a method no app may call, and a caller that is not an app', async () => {
-    const { call } = await appsRig()
-    await expect(call('register', { path: 'x.app' })).rejects.toMatchObject({
-      code: 'BAD_REQUEST',
-    })
-    await expect(call('nope')).rejects.toMatchObject({ code: 'BAD_REQUEST' })
-    await expect(call('docs.list', undefined, 'notes')).rejects.toMatchObject({
-      code: 'BAD_REQUEST',
-    })
-  })
-
-  it('lists the vault tasks', async () => {
-    const { call } = await appsRig()
-    expect(((await call('tasks.list')) as { title: string }[]).map((t) => t.title)).toContain(
-      'Review',
-    )
   })
 })
 
