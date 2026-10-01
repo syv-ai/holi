@@ -54,12 +54,16 @@ import { vaultCapabilities, VAULT_NAMESPACES } from './capabilities/vault-caps'
 import { googleCapabilities, GOOGLE_NAMESPACES } from './google/capabilities'
 import { PDF_CAPABILITIES, PDF_NAMESPACES } from './pdf/capabilities'
 import { taskCapabilities, TASK_NAMESPACES } from './vault/task-capabilities'
+import { agentSeed } from './agent/seed/seed'
+import { pdfSeed } from './pdf/seed'
+import { coreSeed } from './vault/seed/core'
+import { ensureSeeded } from './vault/seed/seed'
 import {
   describeUpdate,
   updateConflictPrompt,
   updateShipped,
   type SkillsUpdate,
-} from './agent/seed-content'
+} from './vault/seed/update'
 import { registerGitRoutes } from './vault/git-routes'
 import { GoogleApi } from './google/api'
 import { createEvent, deleteEvent, listAgenda, updateEvent } from './google/calendar'
@@ -99,6 +103,10 @@ import { createBridgeServer } from './bridge/server'
 import { registerAgentRoutes } from './agent/bridge-routes'
 import { ensureTypst, resolveTypstBin } from './pdf/typst-bin'
 import { registerAgentIpc } from './agent-ipc'
+
+/** Everything that seeds a vault, core first: its `.gitignore` is written
+ *  before any file that could be committed. */
+const SEED_CONTRIBUTIONS = [coreSeed, agentSeed, pdfSeed]
 
 // Declared before the launch check below, which starts `main()` synchronously:
 // a `let` still in its temporal dead zone would throw during startup.
@@ -481,6 +489,7 @@ async function main(): Promise<void> {
 
   const router = createRouter({
     dispatch,
+    seed: (root) => ensureSeeded(root, SEED_CONTRIBUTIONS),
     grants: appGrants,
     members,
     reportUi: (remote, report) => {
@@ -602,7 +611,7 @@ async function main(): Promise<void> {
   const updateSkills = async (remote: string): Promise<SkillsUpdate> => {
     const root = await rootFor(remote)
     if (root === null) return { ok: false, message: 'No vault is open.' }
-    const report = await updateShipped(root)
+    const report = await updateShipped(root, SEED_CONTRIBUTIONS)
     let terminalId: string | undefined
     if (report.conflicts.length > 0 && host.active()?.remote === remote) {
       const started = await agent.start({

@@ -9,7 +9,7 @@ import {
   recordSeeded,
   sha256,
   untouched,
-} from '../src/main/agent/seed-state'
+} from '../src/main/vault/seed/state'
 
 const dirs: string[] = []
 

@@ -84,6 +84,6 @@ and the `scaffold-md` transform does not prepend frontmatter to a memory or to t
 
 - `packages/shared/src/memory-index.ts`: the pure indexer, header and empty stub
 - `apps/desktop/src/main/vault/hooks/memory-index.ts`: the pre-commit transform
-- `apps/desktop/src/main/agent/hooks/memory-overview.mjs`: the `SessionStart` overview
-- `apps/desktop/src/main/agent/skills/memory/SKILL.md`: the memory contract given to the agent
+- `apps/desktop/src/main/agent/seed/vault/shipped/.claude/hooks/memory-overview.mjs`: the `SessionStart` overview
+- `apps/desktop/src/main/agent/seed/vault/shipped/.claude/skills/memory/SKILL.md`: the memory contract given to the agent
 - `packages/shared/src/path-safety.ts`: `MEMORY_DIR`, `isAgentSurfacePath`

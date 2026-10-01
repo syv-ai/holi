@@ -11,13 +11,13 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { registerAgentRoutes } from '../src/main/agent/bridge-routes'
-import { SEED_FILES } from '../src/main/agent/seed-content'
+import { STATUS_LINE } from '../src/main/agent/seed/seed'
 import { BRIDGE_ENV_FILE, createBridgeEnv } from '../src/main/bridge/env-file'
 import { createBridgeServer, type BridgeServer } from '../src/main/bridge/server'
 import { bridgeLines, writeVaultEnv } from './helpers/bridge-env'
 
 const execFileAsync = promisify(execFile)
-const HOOK = join(__dirname, '../src/main/agent/hooks/turn-signal.mjs')
+const HOOK = join(__dirname, '../src/main/agent/seed/vault/shipped/.claude/hooks/turn-signal.mjs')
 
 async function run(
   file: string,
@@ -166,7 +166,7 @@ describe('turn-signal.mjs', () => {
 
 describe('the seeded status line', () => {
   /** Run as Claude Code runs it: the settings command, through a shell. */
-  const command = JSON.parse(SEED_FILES['.claude/settings.json']!).statusLine.command as string
+  const command = STATUS_LINE
   const status = { model: { display_name: 'Opus 5.5' }, context_window: { used_percentage: 41.6 } }
   const statusLine = (env: NodeJS.ProcessEnv, input: string) =>
     run('/bin/sh', ['-c', command], env, input)

@@ -112,26 +112,27 @@ legacy alias with the same behavior as `pnpm lint`.
   token is kept by the app's credential storage, not in source. Local-ness is
   the `.local.` marker and nothing else: a bare `USER.md` is ordinary
   committed content, whatever an older vault's `.gitignore` says.
-- `apps/desktop/src/main/agent/templates/_brand/binary-assets.generated.ts` is
-  generated. Do not edit it by hand. After changing the raw brand fonts/logo,
-  run `node apps/desktop/scripts/gen-brand-assets.mjs` and include the generated
-  result when appropriate.
+- A vault's seed files are real files in seed folders: `vault/once/**` and
+  `vault/shipped/**` beside the module that contributes them
+  (`main/vault/seed/core.ts`, `main/agent/seed/`, `main/pdf/seed.ts`), at the
+  path they get in the vault. Binaries such as the brand fonts and logo are
+  read in with `?inline`; edit the file itself, there is nothing to regenerate.
 - Holi seeds a vault's root `AGENTS.md` as user-owned vault content, distinct
   from this repository guide. Neither has a `CLAUDE.md`: Claude Code reads
   `AGENTS.md` directly. Treat seeded files as user content once present; do not
   overwrite them casually.
-- **A seeded `ONCE_FILE` is frozen from the moment it exists, so changing its
-  text in `seed-content.ts` reaches new vaults only.** `AGENTS.md` is the one
+- **A seeded once file is frozen from the moment it exists, so changing its
+  text in its seed folder reaches new vaults only.** `AGENTS.md` is the one
   that bites: vaults seeded earlier still tell the agent that `USER.md` is
   gitignored, which stopped being true when local-ness became the `.local.`
   marker. When a decision changes what the agent is _told_, ask how existing
   vaults are reached before assuming the seed covers it — `settingsWithRequired`
   is the pattern that does reach them, and it only covers `.claude/settings.json`.
-  A shipped skill or hook (`SHIPPED_FILES`) is written only at vault creation and
+  A shipped skill or hook (`vault/shipped/`) is written only at vault creation and
   reaches an existing vault only when its user runs `holi skills update`.
 - **A file whose writer regenerates it is the third answer to that question, and
   the cheapest.** `.holi/settings/app.yaml`, `app.local.yaml` and the two theme
-  files are `ONCE_FILE`s, but `writeSettingsText`/`writeThemeText` emit the whole
+  files are once files, but `writeSettingsText`/`writeThemeText` emit the whole
   document on every write rather than merging into it — so the list of settings
   and theme tokens they carry is rebuilt from `VAULT_SETTINGS` and
   `THEME_TOKEN_GROUPS` each time, and a vault seeded years earlier gains a newly

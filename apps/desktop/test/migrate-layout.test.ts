@@ -9,7 +9,7 @@ import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { SEED_STATE_FILE } from '../src/main/agent/seed-state'
+import { SEED_STATE_FILE } from '../src/main/vault/seed/state'
 import { CONTEXT_FILE } from '../src/main/agent/context-snapshot'
 import { HOOKS_LOG_FILE } from '../src/main/vault/hooks/log'
 import { VAULT_MARKER_FILE } from '@holi/shared'

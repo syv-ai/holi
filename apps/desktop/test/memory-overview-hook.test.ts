@@ -20,7 +20,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 const HOOK = join(
   dirname(fileURLToPath(import.meta.url)),
-  '../src/main/agent/hooks/memory-overview.mjs',
+  '../src/main/agent/seed/vault/shipped/.claude/hooks/memory-overview.mjs',
 )
 
 const roots: string[] = []

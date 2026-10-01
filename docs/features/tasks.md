@@ -131,4 +131,4 @@ Todo / Doing / Done, with one swim lane per folder.
   `composites/DateTimePicker.tsx`, `composites/RecurrenceField.tsx`.
 - `apps/desktop/src/renderer/src/primitives/TaskCheck.tsx`, `StrikeText.tsx`, `ConfirmInPlace.tsx`,
   `RollingCount.tsx`, `Choice.tsx`, and the board's springs in `springs.ts`.
-- `apps/desktop/src/main/agent/skills/using-tasks/SKILL.md`: the seeded agent skill.
+- `apps/desktop/src/main/agent/seed/vault/shipped/.claude/skills/using-tasks/SKILL.md`: the seeded agent skill.

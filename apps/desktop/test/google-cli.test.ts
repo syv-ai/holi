@@ -187,7 +187,7 @@ describe('holi-google', () => {
   // read. It said "it can only read (the granted scopes are readonly)" for a
   // day after mail became read-write and made the Gmail grant `gmail.modify` — true when written, and
   // silently false afterwards. The same claim in SKILL.md is pinned by
-  // `seed-content.test.ts`; this is its twin, so the pair cannot drift apart
+  // `seed.test.ts`; this is its twin, so the pair cannot drift apart
   // again the next time the scopes move.
   it('does not claim the grant is read-only, nor that it cannot write', () => {
     expect(GOOGLE_CLI_SCRIPT).not.toMatch(/scopes are readonly|only read \(/)

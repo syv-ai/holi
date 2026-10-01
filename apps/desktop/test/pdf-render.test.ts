@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { fontPathArgs, renderPdf } from '../src/main/pdf/render'
 import { resolveTypstBin } from '../src/main/pdf/typst-bin'
 // The ACTUAL seeded template — this test proves that exact file compiles.
-import plainTemplateTyp from '../src/main/agent/templates/plain/template.typ?raw'
+import plainTemplateTyp from '../src/main/pdf/vault/once/.holi/document-templates/plain/template.typ?raw'
 
 const dirs: string[] = []
 async function work(): Promise<string> {
@@ -140,7 +140,9 @@ describe('renderPdf (integration — needs typst on PATH; first run fetches cmar
 // The seeded source templates, copied into a temp vault so the relative
 // `../_brand` imports and the Raleway `--font-path` resolve exactly as in a real
 // vault. Proves the branded set compiles end-to-end through renderPdf.
-const SRC_TEMPLATES = fileURLToPath(new URL('../src/main/agent/templates', import.meta.url))
+const SRC_TEMPLATES = fileURLToPath(
+  new URL('../src/main/pdf/vault/once/.holi/document-templates', import.meta.url),
+)
 
 describe('renderPdf — branded set (integration — needs typst on PATH)', () => {
   async function vaultWithBrandedSet(): Promise<string> {
@@ -198,7 +200,12 @@ describe('renderPdf — branded set (integration — needs typst on PATH)', () =
         { key: 'closing', label: 'Closing', type: 'text', required: false },
         { key: 'sender', label: 'Sender', type: 'text', required: false },
       ],
-      meta: { recipient: 'ACME A/S', date: '2026-07-08', closing: 'Med venlig hilsen', sender: 'Ada' },
+      meta: {
+        recipient: 'ACME A/S',
+        date: '2026-07-08',
+        closing: 'Med venlig hilsen',
+        sender: 'Ada',
+      },
     })
     expect((await readFile(letterOut)).subarray(0, 5).toString('latin1')).toBe('%PDF-')
 
@@ -250,7 +257,10 @@ describe('renderPdf — branded set (integration — needs typst on PATH)', () =
 
     const root = await vaultWithBrandedSet()
     const notePath = join(root, 'rapport.md')
-    await writeFile(notePath, '---\nx: 1\n---\n\n# Rapport\n\n## Indledning\n\nBrødtekst.\n\n## Metode\n\nMere.\n')
+    await writeFile(
+      notePath,
+      '---\nx: 1\n---\n\n# Rapport\n\n## Indledning\n\nBrødtekst.\n\n## Metode\n\nMere.\n',
+    )
     const outPath = join(root, 'rapport.pdf')
     await renderPdf({
       typstBin: typst,

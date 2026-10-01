@@ -15,7 +15,7 @@ import { ipcMain } from 'electron'
 import type { AgentSessions, Geometry } from './agent/agent-sessions'
 import type { AgentTerminals, TerminalSummary } from './agent/agent-terminals'
 import type { SessionSummary } from './agent/claude-sessions'
-import type { SkillsUpdate } from './agent/seed-content'
+import type { SkillsUpdate } from './vault/seed/update'
 
 export function registerAgentIpc(deps: {
   agent: AgentSessions

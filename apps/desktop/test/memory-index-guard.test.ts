@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
 const HOOK = fileURLToPath(
-  new URL('../src/main/agent/hooks/memory-index-guard.mjs', import.meta.url),
+  new URL('../src/main/agent/seed/vault/shipped/.claude/hooks/memory-index-guard.mjs', import.meta.url),
 )
 const ROOT = '/vaults/o/r'
 

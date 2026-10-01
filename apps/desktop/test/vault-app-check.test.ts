@@ -15,7 +15,7 @@ import { fileURLToPath } from 'node:url'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 const HOOK = fileURLToPath(
-  new URL('../src/main/agent/hooks/vault-app-check.mjs', import.meta.url),
+  new URL('../src/main/agent/seed/vault/shipped/.claude/hooks/vault-app-check.mjs', import.meta.url),
 )
 
 interface Run {

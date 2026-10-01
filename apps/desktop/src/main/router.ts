@@ -32,7 +32,7 @@ import {
   type RecentEntry,
   VAULT_MARKER_FILE,
 } from '@holi/shared'
-import { ensureSeeded } from './agent/seed-content'
+import type { SeedResult } from './vault/seed/types'
 import { initAppOp, type AppInitResult } from './apps/app-ops'
 import { searchBodies, type SearchHit } from './vault/search'
 import { writeHomeApp } from './apps/home-app'
@@ -187,6 +187,12 @@ export interface RouterDeps {
   signatures?: SignatureStore
   /** Which vault is open, and everything running behind it. */
   host: VaultHost
+  /**
+   * Write what a vault must have (`vault/seed/seed.ts`), over the seed
+   * contributions the composition root assembled. Run before a vault goes
+   * live, on add and on every open.
+   */
+  seed: (root: string) => Promise<SeedResult>
   /** The managed root clones live under — `~/Holi` in the app, a tmpdir in
    *  tests. Passed in rather than read from `vaultRoot()` here so the router
    *  has no ambient dependency on the environment. */
@@ -584,7 +590,7 @@ export function createRouter(deps: RouterDeps) {
       deps: { token: () => deps.session.token() },
     })
     // Joining an existing vault (not creating one) — refuse anything that is not
-    // already a vault. `ensureSeeded` below would otherwise write `AGENTS.md`,
+    // already a vault. The seed below would otherwise write `AGENTS.md`,
     // `.claude/` and friends into a plain code repo and the auto-push would carry
     // them upstream, quietly turning someone's codebase into a half-vault. The
     // marker is the `.holi/vault` the seed commits at creation. A repo we
@@ -596,7 +602,7 @@ export function createRouter(deps: RouterDeps) {
         `${remote} is not a Holi vault. Create a new vault instead of adopting this repo.`,
       )
     }
-    await ensureSeeded(repo.root)
+    await deps.seed(repo.root)
     await migrateApps(repo.root)
     await migrateVaultLayout(repo.root)
     await migrateSettingsFormat(repo.root)
@@ -613,7 +619,7 @@ export function createRouter(deps: RouterDeps) {
   /**
    * Move the apps kept in `.holi/apps/` to `<id>.app/` at the root.
    *
-   * Runs wherever `ensureSeeded` does and always **ahead of `host.open`**, for
+   * Runs wherever the seed does and always **ahead of `host.open`**, for
    * the seed's reason and a sharper one: the first snapshot the renderer sees
    * already has the apps where the tree shows them, and the moves reach git
    * through the ordinary autosave.
@@ -888,7 +894,7 @@ export function createRouter(deps: RouterDeps) {
          * Before `host.open`, for `addVault`'s reason: nothing can be committed
          * ahead of the `.gitignore`.
          */
-        await ensureSeeded(root)
+        await deps.seed(root)
         await migrateApps(root)
         await migrateVaultLayout(root)
         await migrateSettingsFormat(root)

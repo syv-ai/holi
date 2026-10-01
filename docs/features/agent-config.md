@@ -46,18 +46,22 @@ the person is looking at (`ui.report`: the focused note, the open ones, the rece
 report `holi vault recents` answers from. Tasks, backlinks and sync state the agent
 finds itself with `Glob`, `grep` and `git`.
 
-**Seeding.** `ensureSeeded` runs on create, adopt and every open. It writes `.gitignore`'s
-`*.local.*` line first, line-wise, then three classes:
+**Seeding.** `ensureSeeded` runs on create, adopt and every open, over a list of seed
+contributions: core (`main/vault/seed/core.ts`), the agent (`main/agent/seed/`) and PDF
+(`main/pdf/seed.ts`). Each keeps its files as real files under `vault/once/` and `vault/shipped/`
+beside its module, at their vault path, read in through `import.meta.glob` (binaries such as the
+brand fonts as `?inline` bytes). A path belongs to one contribution. Merged files go first, so
+core's `.gitignore` gets its `*.local.*` line, line-wise, before anything else is written. Then:
 
 - **Once files**: `AGENTS.md`, `memory/index.md`, `.holi/vault`,
-  `.holi/settings/app.yaml` and `app.local.yaml`, `theme.css`, `theme.local.css`, `icons.yaml`,
-  `.holi/document-templates/**`. Created if absent, then the user's.
-- **Shipped files**: `.claude/hooks/**` and `.claude/skills/**`. Written only when the
+  `.holi/settings/app.yaml` and `app.local.yaml`, `theme.css`, `theme.local.css`, `icons.yaml`
+  (core), `.holi/document-templates/**` (PDF). Created if absent, then the user's.
+- **Shipped files**: `.claude/hooks/**` and `.claude/skills/**` (the agent; PDF's two skills). Written only when the
   vault is created (`.holi/vault` does not exist yet), and the vault's from then on: an open never
   writes one, so a deleted skill stays deleted. They are plain committed files because a vault
   works in any Claude Code, the web and the desktop app included; a Claude Code plugin would not
   reach cloud sessions or a machine it was never installed on.
-- **`.claude/settings.json`**: merged key-wise by `settingsWithRequired`. Holi adds its hooks, each
+- **`.claude/settings.json`**: owned by the agent, merged key-wise by `settingsWithRequired`. Holi adds its hooks, each
   only where its script is (a hook a later release adds is wired when its script arrives)
   (the turn bracket's `turn-signal.mjs` among them, replacing the inline `curl` older vaults
   carry), `permissions.ask`, `permissions.allow` and `permissions.deny` rules, each
@@ -149,10 +153,12 @@ the vault's pre-commit transforms like anyone's ([vaults-sync.md](vaults-sync.md
 ## Code
 
 - `apps/desktop/src/main/agent/agent-config-dir.ts`: per-vault config dir, first-spawn marker, migration
-- `apps/desktop/src/main/agent/seed-content.ts`: seed classes, `AGENTS.md` text, `settingsWithRequired`
-- `apps/desktop/src/main/agent/seed-state.ts`: what Holi seeded, the base an update merges from
+- `apps/desktop/src/main/vault/seed/`: the seeder (`seed.ts`), `holi skills update` (`update.ts`),
+  seed folders (`folder.ts`), core's contribution (`core.ts`, `vault/once/AGENTS.md`), and
+  `state.ts`: what Holi seeded, the base an update merges from
+- `apps/desktop/src/main/agent/seed/seed.ts`: the agent's contribution and `settingsWithRequired`
 - `apps/desktop/src/main/bridge/cli.ts`: the `holi` script and its argv; `bridge/server.ts`: `/cli`;
   `agent/bridge-routes.ts`: the turn and status-line routes
 - `apps/desktop/src/main/bridge/env-file.ts`: `bridge.local.env` and its shell reader
-- `apps/desktop/src/main/agent/hooks/`, `skills/`: shipped hook scripts and skills
+- `apps/desktop/src/main/agent/seed/vault/shipped/.claude/`: shipped hook scripts and skills
 - `packages/shared/src/path-safety.ts`: `isAgentSurfacePath`

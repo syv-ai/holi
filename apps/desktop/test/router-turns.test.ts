@@ -14,6 +14,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import { createRouter } from '../src/main/router'
+import { seedVault } from './helpers/seed'
 import { createVaultHost, type VaultHost } from '../src/main/vault/active-vault'
 import { GitHubSession } from '../src/main/github/session'
 import { TokenStore, type SafeStorageLike } from '../src/main/github/token-store'
@@ -64,6 +65,7 @@ async function rig() {
   })
   hosts.push(host)
   const caller = createRouter({
+    seed: seedVault,
     registry,
     session,
     host,

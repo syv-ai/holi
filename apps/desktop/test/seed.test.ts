@@ -8,23 +8,46 @@ import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import { LOCAL_ONLY_IGNORE_LINES, MEMORY_INDEX_EMPTY, VAULT_MARKER_FILE } from '@holi/shared'
 import { afterEach, describe, expect, it } from 'vitest'
-import { BRAND_BINARIES } from '../src/main/agent/templates/_brand/binary-assets.generated'
-import {
-  GITIGNORE,
-  ONCE_FILES,
-  SEED_FILES,
-  SHIPPED_FILES,
-  ensureSeeded,
-  settingsWithRequired,
-  stagedPath,
-  updateShipped,
-} from '../src/main/agent/seed-content'
-import { readSeedState, recordSeeded, sha256, SEED_STATE_FILE } from '../src/main/agent/seed-state'
+import { agentSeed, settingsWithRequired } from '../src/main/agent/seed/seed'
+import { pdfSeed } from '../src/main/pdf/seed'
+import { coreSeed, GITIGNORE } from '../src/main/vault/seed/core'
+import { ensureSeeded as ensureSeededWith } from '../src/main/vault/seed/seed'
+import { stagedPath, updateShipped as updateWith } from '../src/main/vault/seed/update'
+import { readSeedState, recordSeeded, sha256, SEED_STATE_FILE } from '../src/main/vault/seed/state'
+import { SEED_CONTRIBUTIONS, seedVault as ensureSeeded } from './helpers/seed'
 
 const exec = promisify(execFile)
 
 // no __dirname under vitest's ESM transform
-const HOOKS_DIR = fileURLToPath(new URL('../src/main/agent/hooks/', import.meta.url))
+const HOOKS_DIR = fileURLToPath(
+  new URL('../src/main/agent/seed/vault/shipped/.claude/hooks/', import.meta.url),
+)
+
+const updateShipped = (root: string) => updateWith(root, SEED_CONTRIBUTIONS)
+
+/** Every contribution's text tables, by vault path. */
+const SHIPPED_FILES: Record<string, string> = Object.assign(
+  {},
+  ...SEED_CONTRIBUTIONS.map((c) => c.shipped),
+)
+const ONCE_ALL: Record<string, string | Uint8Array> = Object.assign(
+  {},
+  ...SEED_CONTRIBUTIONS.map((c) => c.once),
+)
+const isText = (v: string | Uint8Array): v is string => typeof v === 'string'
+const ONCE_FILES: Record<string, string> = Object.fromEntries(
+  Object.entries(ONCE_ALL).filter((e): e is [string, string] => isText(e[1])),
+)
+const BINARIES: Record<string, Uint8Array> = Object.fromEntries(
+  Object.entries(ONCE_ALL).filter((e): e is [string, Uint8Array] => !isText(e[1])),
+)
+/** The merged `.claude/settings.json` a vault gets when it has none. */
+const SETTINGS_SEED = settingsWithRequired(null)!
+const SEED_FILES: Record<string, string> = {
+  ...ONCE_FILES,
+  ...SHIPPED_FILES,
+  '.claude/settings.json': SETTINGS_SEED,
+}
 
 const dirs: string[] = []
 
@@ -61,26 +84,52 @@ function runHook(
   })
 }
 
-describe('SEED_FILES', () => {
-  it('covers exactly the managed set (USER.local.md is machine-local, never seeded)', () => {
-    expect(Object.keys(SEED_FILES).sort()).toEqual([
+describe('the seed tables', () => {
+  const keys = (t: Record<string, unknown>) => Object.keys(t).sort()
+
+  it('core seeds the vault marker, AGENTS.md, settings, theme, icons and memory', () => {
+    expect(keys(coreSeed.once)).toEqual([
+      '.holi/settings/app.local.yaml',
+      '.holi/settings/app.yaml',
+      '.holi/settings/icons.yaml',
+      '.holi/settings/theme.css',
+      '.holi/settings/theme.local.css',
+      '.holi/vault',
+      'AGENTS.md',
+      'memory/index.md',
+    ])
+    expect(keys(coreSeed.shipped)).toEqual([])
+    expect(keys(coreSeed.merge!)).toEqual(['.gitignore'])
+  })
+
+  it('the agent ships its hooks and skills and merges .claude/settings.json', () => {
+    expect(keys(agentSeed.once)).toEqual([])
+    expect(keys(agentSeed.shipped)).toEqual([
       '.claude/hooks/google-send-gate.mjs',
       '.claude/hooks/memory-index-guard.mjs',
       '.claude/hooks/memory-overview.mjs',
       '.claude/hooks/turn-signal.mjs',
       '.claude/hooks/user-prompt-submit.mjs',
       '.claude/hooks/vault-app-check.mjs',
-      '.claude/settings.json',
       '.claude/skills/gmail-calendar/SKILL.md',
       '.claude/skills/holi-feedback/SKILL.md',
-      '.claude/skills/md-to-pdf/SKILL.md',
       '.claude/skills/memory/SKILL.md',
-      '.claude/skills/pdf-comments/SKILL.md',
       '.claude/skills/theme/SKILL.md',
       '.claude/skills/using-tasks/SKILL.md',
       '.claude/skills/vault-apps/SKILL.md',
+    ])
+    expect(keys(agentSeed.merge!)).toEqual(['.claude/settings.json'])
+  })
+
+  it('PDF seeds its templates once, with the brand binaries as bytes, and ships two skills', () => {
+    expect(keys(pdfSeed.once)).toEqual([
       '.holi/document-templates/_brand/brand.typ',
       '.holi/document-templates/_brand/figures.typ',
+      '.holi/document-templates/_brand/fonts/Raleway-bold.ttf',
+      '.holi/document-templates/_brand/fonts/Raleway-boldItalic.ttf',
+      '.holi/document-templates/_brand/fonts/Raleway-italic.ttf',
+      '.holi/document-templates/_brand/fonts/Raleway-regular.ttf',
+      '.holi/document-templates/_brand/logo.png',
       '.holi/document-templates/contract/template.json',
       '.holi/document-templates/contract/template.typ',
       '.holi/document-templates/letter/template.json',
@@ -93,29 +142,13 @@ describe('SEED_FILES', () => {
       '.holi/document-templates/proposal/template.typ',
       '.holi/document-templates/report/template.json',
       '.holi/document-templates/report/template.typ',
-      '.holi/settings/app.local.yaml',
-      '.holi/settings/app.yaml',
-      '.holi/settings/icons.yaml',
-      '.holi/settings/theme.css',
-      '.holi/settings/theme.local.css',
-      '.holi/vault',
-      'AGENTS.md',
-      'memory/index.md',
     ])
-  })
-
-  it('carries only the brand text; the brand binaries seed from BRAND_BINARIES', () => {
-    // The 4 Raleway TTFs + logo are binary, base64 in the generated module, not
-    // strings in SEED_FILES. brand.typ imports Raleway by family name only.
-    expect(Object.keys(SEED_FILES).filter((k) => k.endsWith('.ttf') || k.endsWith('.png'))).toEqual(
-      [],
+    expect(keys(BINARIES)).toEqual(
+      keys(pdfSeed.once).filter((k) => k.endsWith('.ttf') || k.endsWith('.png')),
     )
-    expect(Object.keys(BRAND_BINARIES).sort()).toEqual([
-      '.holi/document-templates/_brand/fonts/Raleway-bold.ttf',
-      '.holi/document-templates/_brand/fonts/Raleway-boldItalic.ttf',
-      '.holi/document-templates/_brand/fonts/Raleway-italic.ttf',
-      '.holi/document-templates/_brand/fonts/Raleway-regular.ttf',
-      '.holi/document-templates/_brand/logo.png',
+    expect(keys(pdfSeed.shipped)).toEqual([
+      '.claude/skills/md-to-pdf/SKILL.md',
+      '.claude/skills/pdf-comments/SKILL.md',
     ])
   })
 
@@ -206,7 +239,7 @@ describe('SEED_FILES', () => {
   })
 
   it('settings.json wires the focus + turn hooks and gates network egress', () => {
-    const settings = JSON.parse(SEED_FILES['.claude/settings.json']!)
+    const settings = JSON.parse(SETTINGS_SEED)
     expect(settings.hooks.UserPromptSubmit[0].hooks[0].command).toContain(
       '.claude/hooks/user-prompt-submit.mjs',
       '.claude/hooks/vault-app-check.mjs',
@@ -241,7 +274,7 @@ describe('SEED_FILES', () => {
    * which is exactly what the originally planned `Bash(holi-google send:*)` rule did.
    */
   it('wires the send gate to every Bash call, deciding in the hook rather than in a matcher', () => {
-    const settings = JSON.parse(SEED_FILES['.claude/settings.json']!)
+    const settings = JSON.parse(SETTINGS_SEED)
     const gate = settings.hooks.PreToolUse[0]
 
     expect(gate.matcher).toBe('Bash')
@@ -259,7 +292,7 @@ describe('SEED_FILES', () => {
   })
 
   it('the turn hooks run the turn-signal script with their edge', () => {
-    const settings = JSON.parse(SEED_FILES['.claude/settings.json']!)
+    const settings = JSON.parse(SETTINGS_SEED)
     expect(settings.hooks.UserPromptSubmit[0].hooks[1].command).toBe(
       'node "$CLAUDE_PROJECT_DIR/.claude/hooks/turn-signal.mjs" start',
     )
@@ -279,11 +312,10 @@ describe('ensureSeeded', () => {
   it('seeds every managed file into a fresh working dir', async () => {
     const root = await tempDir()
     const { written } = await ensureSeeded(root)
-    // The .gitignore is written too, but it is not in SEED_FILES: it is the one
-    // managed file that is merged line-wise rather than created-if-missing. The
-    // brand binaries seed alongside the text files, from BRAND_BINARIES.
+    // The .gitignore is written too: it is merged line-wise rather than
+    // created-if-missing.
     expect(written.sort()).toEqual(
-      [GITIGNORE, ...Object.keys(SEED_FILES), ...Object.keys(BRAND_BINARIES)].sort(),
+      [GITIGNORE, ...Object.keys(SEED_FILES), ...Object.keys(BINARIES)].sort(),
     )
     expect(await readFile(join(root, 'AGENTS.md'), 'utf8')).toBe(SEED_FILES['AGENTS.md'])
     expect(await readFile(join(root, '.claude/hooks/user-prompt-submit.mjs'), 'utf8')).toBe(
@@ -303,15 +335,19 @@ describe('ensureSeeded', () => {
       await readFile(join(root, '.holi/document-templates/proposal/template.typ'), 'utf8'),
     ).toContain('render-body')
 
-    // Binaries: bytes match the decoded base64, and a font is a real TrueType file.
+    // Binaries: the bytes of the source file, and a font is a real TrueType file.
     const font = await readFile(
       join(root, '.holi/document-templates/_brand/fonts/Raleway-regular.ttf'),
     )
-    const expected = Buffer.from(
-      BRAND_BINARIES['.holi/document-templates/_brand/fonts/Raleway-regular.ttf']!,
-      'base64',
+    const source = await readFile(
+      fileURLToPath(
+        new URL(
+          '../src/main/pdf/vault/once/.holi/document-templates/_brand/fonts/Raleway-regular.ttf',
+          import.meta.url,
+        ),
+      ),
     )
-    expect(font.equals(expected)).toBe(true)
+    expect(font.equals(source)).toBe(true)
     expect(font.length).toBeGreaterThan(50_000) // a real font, not a stub
     const logo = await readFile(join(root, '.holi/document-templates/_brand/logo.png'))
     expect(logo.subarray(1, 4).toString('latin1')).toBe('PNG') // PNG magic
@@ -525,7 +561,7 @@ describe('settingsWithRequired', () => {
   })
 
   it('allows the read-only holi pdf comments without a prompt, in a vault that predates it', () => {
-    const before = JSON.parse(SEED_FILES['.claude/settings.json']!) as Record<string, any>
+    const before = JSON.parse(SETTINGS_SEED) as Record<string, any>
     delete before.permissions.allow
     const after = parse(settingsWithRequired(JSON.stringify(before)))
     expect(after.permissions.allow).toEqual(['Bash(holi pdf comments:*)'])
@@ -533,11 +569,11 @@ describe('settingsWithRequired', () => {
   })
 
   it('is null when the gate is already wired — no pointless rewrite', () => {
-    expect(settingsWithRequired(SEED_FILES['.claude/settings.json']!)).toBeNull()
+    expect(settingsWithRequired(SETTINGS_SEED)).toBeNull()
   })
 
   it('writes the full seed when there is no settings.json at all', () => {
-    expect(settingsWithRequired(null)).toBe(SEED_FILES['.claude/settings.json'])
+    expect(settingsWithRequired(null)).toBe(SETTINGS_SEED)
   })
 
   it('does not add a second copy of a gate the user already has', () => {
@@ -642,7 +678,7 @@ describe('the connector opt-out reaches vaults that already exist', () => {
 
 describe('settingsWithRequired — the memory index guard', () => {
   it('seeds a PreToolUse guard on memory/index.md for the writing tools', () => {
-    const pre = JSON.parse(SEED_FILES['.claude/settings.json']!).hooks.PreToolUse
+    const pre = JSON.parse(SETTINGS_SEED).hooks.PreToolUse
     const guard = pre.find((e: { hooks: { command: string }[] }) =>
       e.hooks[0]!.command.includes('memory-index-guard'),
     )
@@ -661,7 +697,7 @@ describe('settingsWithRequired — the memory index guard', () => {
   })
 
   it('leaves settings that already carry it alone', () => {
-    const seeded = SEED_FILES['.claude/settings.json']!
+    const seeded = SETTINGS_SEED
     expect(settingsWithRequired(seeded)).toBeNull()
   })
 })
@@ -705,32 +741,12 @@ describe('ensureSeeded — the vault-apps skill', () => {
 })
 
 describe('the shipped / once split', () => {
-  it('classifies every seed file exactly once', () => {
-    const shipped = Object.keys(SHIPPED_FILES).sort()
-    const once = Object.keys(ONCE_FILES).sort()
-    // Disjoint, and together exactly SEED_FILES: a new seed file has to be
-    // classified deliberately rather than defaulting into a class.
-    expect(shipped.filter((k) => once.includes(k))).toEqual([])
-    expect([...shipped, ...once].sort()).toEqual(Object.keys(SEED_FILES).sort())
-  })
-
-  it('ships exactly the code and documentation `holi skills update` may bring', () => {
-    expect(Object.keys(SHIPPED_FILES).sort()).toEqual([
-      '.claude/hooks/google-send-gate.mjs',
-      '.claude/hooks/memory-index-guard.mjs',
-      '.claude/hooks/memory-overview.mjs',
-      '.claude/hooks/turn-signal.mjs',
-      '.claude/hooks/user-prompt-submit.mjs',
-      '.claude/hooks/vault-app-check.mjs',
-      '.claude/skills/gmail-calendar/SKILL.md',
-      '.claude/skills/holi-feedback/SKILL.md',
-      '.claude/skills/md-to-pdf/SKILL.md',
-      '.claude/skills/memory/SKILL.md',
-      '.claude/skills/pdf-comments/SKILL.md',
-      '.claude/skills/theme/SKILL.md',
-      '.claude/skills/using-tasks/SKILL.md',
-      '.claude/skills/vault-apps/SKILL.md',
-    ])
+  it('refuses two contributions seeding one path', async () => {
+    const root = await tempDir()
+    const twin = { id: 'twin', once: { 'AGENTS.md': '# twin\n' }, shipped: {} }
+    await expect(ensureSeededWith(root, [...SEED_CONTRIBUTIONS, twin])).rejects.toThrow(
+      /AGENTS\.md is seeded by both core and twin/,
+    )
   })
 
   it("leaves the files that become the user's in the once class", () => {
@@ -965,7 +981,7 @@ describe('the vault-apps skill teaches the loop that now exists', () => {
  * problem item 13 names).
  */
 describe('vault memory', () => {
-  const settings = () => JSON.parse(SEED_FILES['.claude/settings.json']!)
+  const settings = () => JSON.parse(SETTINGS_SEED)
   const parse = (s: string | null) => JSON.parse(s!) as Record<string, any>
 
   it('switches Claude Code’s own auto-memory off, so there is one surface', () => {
@@ -1104,7 +1120,7 @@ describe('settingsWithRequired — background sessions', () => {
   })
 
   it("reaches every vault at once, replaces an earlier release's, and keeps a vault's own", () => {
-    const holis = JSON.parse(SEED_FILES['.claude/settings.json']!).statusLine
+    const holis = JSON.parse(SETTINGS_SEED).statusLine
     expect(holis.type).toBe('command')
     // No script to wait for: an existing vault gets it on its next open.
     expect(JSON.parse(settingsWithRequired('{}', () => false)!).statusLine).toEqual(holis)
@@ -1130,6 +1146,6 @@ describe('settingsWithRequired — background sessions', () => {
       '{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"x"}]}]}}',
     )!
     expect(settingsWithRequired(once)).toBeNull()
-    expect(settingsWithRequired(SEED_FILES['.claude/settings.json']!)).toBeNull()
+    expect(settingsWithRequired(SETTINGS_SEED)).toBeNull()
   })
 })

@@ -7,7 +7,7 @@ import { promisify } from 'node:util'
 import { parseTaskFile, SETTINGS_FILE, VAULT_SETTING_DEFAULTS } from '@holi/shared'
 import { afterAll, describe, expect, it, vi } from 'vitest'
 import { createVaultHost, type VaultHost } from '../src/main/vault/active-vault'
-import { ensureSeeded } from '../src/main/agent/seed-content'
+import { seedVault } from './helpers/seed'
 import { makeClone, makeNonVaultRemote, makeRemote, plainGit } from './helpers/git-fixtures'
 import { createDispatch } from '../src/main/capabilities/dispatch'
 import { createCapabilityRegistry } from '../src/main/capabilities/registry'
@@ -17,7 +17,7 @@ import { taskCapabilities, TASK_NAMESPACES } from '../src/main/vault/task-capabi
 import { createRouter } from '../src/main/router'
 import { resolveTypstBin } from '../src/main/pdf/typst-bin'
 import { createSignatureStore } from '../src/main/pdf/signatures'
-import plainTemplateTyp from '../src/main/agent/templates/plain/template.typ?raw'
+import plainTemplateTyp from '../src/main/pdf/vault/once/.holi/document-templates/plain/template.typ?raw'
 
 const exec = promisify(execFile)
 import { GitHubSession } from '../src/main/github/session'
@@ -87,7 +87,7 @@ async function rig(files: Record<string, string> = {}, auth?: StoredAuth) {
   // without them made every snapshot assertion here describe a vault that
   // cannot exist.
   await mkdir(root, { recursive: true })
-  await ensureSeeded(root)
+  await seedVault(root)
   const registry = new VaultRegistry(join(base, 'vaults.json'))
   await registry.add({
     remote: REMOTE,
@@ -112,6 +112,7 @@ async function rig(files: Record<string, string> = {}, auth?: StoredAuth) {
   capabilities.register(VAULT_NAMESPACES, vaultCapabilities({ updateSkills: async () => '' }))
   capabilities.register(TASK_NAMESPACES, taskCapabilities({ today: () => TODAY }))
   const caller = createRouter({
+    seed: seedVault,
     dispatch: createDispatch({
       registry: capabilities,
       rootFor: async (remote) =>
@@ -1103,6 +1104,7 @@ async function authRig(routes: Record<string, Scripted[]>, seed?: StoredAuth) {
   const host = createVaultHost({ registry, onSnapshot: () => {}, onSyncState: () => {} })
   hosts.push(host)
   const caller = createRouter({
+    seed: seedVault,
     registry,
     session,
     host,
@@ -1814,6 +1816,7 @@ describe('google composer procedures', () => {
     } as never
 
     const caller = createRouter({
+      seed: seedVault,
       registry,
       session: await idleSession(base),
       host: withActiveVault(host, root),
@@ -1918,6 +1921,7 @@ describe('google composer procedures', () => {
     const host = createVaultHost({ registry, onSnapshot: () => {}, onSyncState: () => {} })
     hosts.push(host)
     const caller = createRouter({
+      seed: seedVault,
       registry,
       session: await idleSession(base),
       host,
@@ -1942,6 +1946,7 @@ describe('google forwarding', () => {
     hosts.push(host)
     const calls: unknown[] = []
     const caller = createRouter({
+      seed: seedVault,
       registry,
       session: await idleSession(base),
       host: withActiveVault(host, base),
@@ -1973,6 +1978,7 @@ describe('google forwarding', () => {
     const host = createVaultHost({ registry, onSnapshot: () => {}, onSyncState: () => {} })
     hosts.push(host)
     const caller = createRouter({
+      seed: seedVault,
       registry,
       session: await idleSession(base),
       host: withActiveVault(host, base),
@@ -2058,7 +2064,7 @@ describe('apps', () => {
     const { call } = await appsRig()
     const paths = ((await call('docs.list')) as { path: string }[]).map((d) => d.path)
     expect(paths).toContain('inbox.md')
-    // Seeded by ensureSeeded, so their absence here is a filter doing work
+    // Seeded at creation, so their absence here is a filter doing work
     // rather than a fixture that never had them.
     expect(paths).not.toContain('AGENTS.md')
     expect(paths).not.toContain('CLAUDE.md')
@@ -2129,6 +2135,7 @@ describe('google accounts per vault', () => {
     }
 
     const caller = createRouter({
+      seed: seedVault,
       registry,
       session: await idleSession(base),
       host: withActiveVault(host, base, remote),
@@ -2196,6 +2203,7 @@ describe('google status and accounts with no vault open', () => {
     const host = createVaultHost({ registry, onSnapshot: () => {}, onSyncState: () => {} })
     hosts.push(host)
     return createRouter({
+      seed: seedVault,
       registry,
       session: await idleSession(base),
       host, // nothing opened: `active()` is null

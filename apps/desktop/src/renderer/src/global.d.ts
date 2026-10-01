@@ -8,7 +8,7 @@ type AgentActionResult = { ok: true } | { ok: false; message: string }
 type AgentOpenResult = { ok: true; terminalId: string } | { ok: false; message: string }
 type AgentStartResult =
   { ok: true; sessionId: string; terminalId: string } | { ok: false; message: string }
-/** Mirrors `SkillsUpdate` in main/agent/seed-content.ts; the report stays in main. */
+/** Mirrors `SkillsUpdate` in main/vault/seed/update.ts; the report stays in main. */
 type SkillsUpdateResult =
   { ok: true; summary: string; terminalId?: string } | { ok: false; message: string }
 

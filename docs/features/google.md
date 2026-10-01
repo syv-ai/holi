@@ -46,6 +46,6 @@ A vault can connect a Google account to read and triage Gmail, read its calendar
 ## Code
 
 - `apps/desktop/src/main/google/`: auth (`loopback-flow`, `pkce`, `credentials`, `session`, `accounts`, `vault-accounts`, `token-store`, `electron`), data (`gmail`, `mail-sync`, `cache`, `data`, `calendar`, `invite`, `people`, `mime`), agent (`ops-server`, `cli`).
-- `apps/desktop/src/main/agent/hooks/google-send-gate.mjs`, `skills/gmail-calendar/`.
+- `apps/desktop/src/main/agent/seed/vault/shipped/.claude/hooks/google-send-gate.mjs`, `skills/gmail-calendar/`.
 - `apps/desktop/src/renderer/src/features/google/`, `lib/mail-html.ts`, `lib/mail-frame.ts`.
 - `apps/desktop/src/renderer/src/features/settings/ConnectionsSection.tsx`.

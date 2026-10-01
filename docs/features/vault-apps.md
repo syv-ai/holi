@@ -244,7 +244,7 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   `apps/desktop/src/main/bridge/server.ts`: `/cli`.
 - `apps/desktop/src/main/index.ts`: scheme registration and the `holi-app` handler.
 - `apps/desktop/src/main/router.ts`: the `apps` namespace.
-- `apps/desktop/src/main/agent/hooks/vault-app-check.mjs`, `apps/desktop/src/main/bridge/cli.ts`.
+- `apps/desktop/src/main/agent/seed/vault/shipped/.claude/hooks/vault-app-check.mjs`, `apps/desktop/src/main/bridge/cli.ts`.
 - `apps/desktop/src/renderer/src/features/apps/`: `AppFrame`, with the approval dialog.
 - `apps/desktop/src/renderer/src/state/app-push.ts`: the push signatures;
   `state/ui-report.ts`: the one report of focus and recents to main.

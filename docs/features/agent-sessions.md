@@ -138,7 +138,7 @@ showing it busy, crosses it off), so a session resumed from the list is never re
 - `apps/desktop/src/main/agent/agent-terminals.ts`, `agent-runtime.ts`, `terminal-mirror.ts`:
   terminals, the PTY and kill path
 - `apps/desktop/src/main/agent/agent-sessions.ts`: the vault controller
-- `apps/desktop/src/main/bridge/env-file.ts`, `agent/hooks/turn-signal.mjs`, `agent/seed-content.ts`
+- `apps/desktop/src/main/bridge/env-file.ts`, `agent/seed/vault/shipped/.claude/hooks/turn-signal.mjs`, `agent/seed/seed.ts`
   (`STATUS_LINE`): how sessions find Holi
 - `apps/desktop/src/main/agent/turn-coordinator.ts`, `turn-log.ts`: working set and turn records
 - `apps/desktop/src/renderer/src/features/agent/`: rows, orbs, terminal, turn chip and review

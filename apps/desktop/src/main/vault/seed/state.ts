@@ -21,7 +21,7 @@ import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { vaultRelPath } from '@holi/shared'
-import { writeAtomic } from '../vault/vault-files'
+import { writeAtomic } from '../vault-files'
 
 export const SEED_STATE_FILE = '.holi/state/seed-state.local.json'
 

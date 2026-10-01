@@ -18,7 +18,7 @@ import { describe, expect, it } from 'vitest'
 
 const GATE = join(
   dirname(fileURLToPath(import.meta.url)),
-  '../src/main/agent/hooks/google-send-gate.mjs',
+  '../src/main/agent/seed/vault/shipped/.claude/hooks/google-send-gate.mjs',
 )
 
 interface Decision {
