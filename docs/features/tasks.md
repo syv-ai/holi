@@ -91,7 +91,7 @@ Todo / Doing / Done, with one swim lane per folder.
 - The marker is in the filename, never frontmatter. A pasted `type: task` must not make tasks.
 - Done is completion wherever the app writes it: `tasks.update` and `tasks.move` apply
   `completeTask`, and the frontmatter widget writes its result into the buffer, as does the
-  agent's `holi task done <path>`. Only a hand edit of the file can write a bare
+  agent's `holi tasks complete <path>`. Only a hand edit of the file can write a bare
   `status: done`, and that ends a recurring series.
 - A reminder is an absolute moment. A non-stamp reminder is inert, never an error, so a legacy
   `1d` costs a notification rather than the task. `due` is strict.

@@ -78,7 +78,7 @@ export type AppActionResult = { ok: true } | { ok: false; error: string }
 /**
  * Write the manifest that turns a half-finished directory into an app.
  *
- * The same op as `holi app init`, which never overwrites: running it on a
+ * The same op as `holi apps init`, which never overwrites: running it on a
  * finished app is a success with nothing created.
  */
 export const registerAppAtom = atom(

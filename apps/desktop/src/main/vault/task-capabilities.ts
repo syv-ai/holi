@@ -22,6 +22,7 @@ export interface TaskCapabilitiesDeps {
 export const taskCapabilities = (deps: TaskCapabilitiesDeps) => ({
   'tasks.list': cap({
     doors: ['app', 'cli'],
+    cli: { args: [], summary: 'every task: status, title and path' },
     params: noParams,
     run: async (ctx): Promise<Task[]> => (await ctx.snapshot()).tasks,
     text: (tasks) => tasks.map((t) => `${t.status}\t${t.title}\t${t.path}`).join('\n'),
@@ -29,6 +30,10 @@ export const taskCapabilities = (deps: TaskCapabilitiesDeps) => ({
 
   'tasks.complete': cap({
     doors: ['app', 'cli'],
+    cli: {
+      args: ['path'],
+      summary: 'complete a task file; a recurring one rolls forward to its next occurrence',
+    },
     writes: true,
     params: pathParams,
     run: async (ctx, { path }) => {

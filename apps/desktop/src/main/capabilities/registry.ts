@@ -39,8 +39,28 @@ export interface CapabilityContext {
   core: CoreServices
 }
 
+/**
+ * How an entry reads as a `holi <namespace> <verb>` command: required at the
+ * CLI door, where the bridge resolves argv against it (`bridge/cli.ts`).
+ */
+export interface CliSpec {
+  /** Positional params, in order. A trailing `?` marks an optional one, and
+   *  only the last ones may be optional. Any param can also be given as
+   *  `--name value`. */
+  args: readonly string[]
+  /** One line for `holi`'s usage. */
+  summary: string
+  /** Params given as a bare `--name`, which reads as `'true'`. */
+  flags?: readonly string[]
+  /** The param a command reads from stdin when it is not given. The bridge
+   *  asks for it (428) without running anything, and the script sends stdin
+   *  once, so a write never runs on the first leg. */
+  stdin?: string
+}
+
 export interface Capability<P = unknown, R = unknown> {
   doors: readonly Door[]
+  cli?: CliSpec
   /** Changes the vault, so the open vault's cache is refreshed after it. */
   writes?: true
   /** Reads untrusted params, or throws a `CapabilityError('BAD_REQUEST')`. */
@@ -67,11 +87,18 @@ export interface CapabilityResult {
   writes: boolean
 }
 
+export interface CliCommand {
+  name: string
+  cli: CliSpec
+}
+
 export interface CapabilityRegistry {
   /** Adds `table`, whose every name must sit under one of `namespaces`, which
    *  no other caller may already own. Throws otherwise. Returns the undo. */
   register(namespaces: readonly string[], table: CapabilityTable): () => void
   has(name: string): boolean
+  /** Every entry open at the CLI door, as a command, by name. */
+  commands(): CliCommand[]
   /**
    * Run one capability through one door. An unknown name, or one that does
    * not open to this door, is refused as "no such method", which is what it is
@@ -100,10 +127,19 @@ export function createCapabilityRegistry(): CapabilityRegistry {
       for (const ns of namespaces) {
         if (owners.has(ns)) throw new Error(`capability namespace ${ns} is already registered`)
       }
-      for (const name of Object.keys(table)) {
+      for (const [name, entry] of Object.entries(table)) {
         const ns = namespaceOf(name)
         if (ns === null || !namespaces.includes(ns)) {
           throw new Error(`capability ${name} is outside its owner's namespaces`)
+        }
+        if (entry.doors.includes('cli') !== (entry.cli !== undefined)) {
+          throw new Error(
+            `capability ${name} must say how it reads at the CLI door, and only there`,
+          )
+        }
+        const optional = entry.cli?.args.findIndex((a) => a.endsWith('?')) ?? -1
+        if (optional >= 0 && entry.cli!.args.slice(optional).some((a) => !a.endsWith('?'))) {
+          throw new Error(`capability ${name} has a required argument after an optional one`)
         }
       }
       for (const ns of namespaces) owners.set(ns, table)
@@ -117,6 +153,11 @@ export function createCapabilityRegistry(): CapabilityRegistry {
     },
 
     has: (name) => entries.has(name),
+
+    commands: () =>
+      [...entries]
+        .flatMap(([name, entry]) => (entry.cli === undefined ? [] : [{ name, cli: entry.cli }]))
+        .sort((a, b) => a.name.localeCompare(b.name)),
 
     async run(name, door, ctx, rawParams) {
       const entry = entries.get(name)

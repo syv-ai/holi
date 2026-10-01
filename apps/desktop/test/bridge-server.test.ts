@@ -1,8 +1,13 @@
 import { request } from 'node:http'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { registerAgentRoutes } from '../src/main/agent/bridge-routes'
-import { createBridgeServer, type BridgeServer } from '../src/main/bridge/server'
+import {
+  createBridgeServer,
+  type BridgeServer,
+  type BridgeServerDeps,
+} from '../src/main/bridge/server'
 import type { Dispatch } from '../src/main/capabilities/dispatch'
+import type { CliCommand } from '../src/main/capabilities/registry'
 
 /** POST to the running server; resolve with the status and (drained) body. */
 function post(
@@ -29,12 +34,19 @@ afterEach(async () => {
 
 const VAULT = 'nthomsencph/privat'
 
-async function rig(dispatch?: Dispatch) {
+const LIST: CliCommand = {
+  name: 'store.list',
+  cli: { args: ['bundle', 'collection'], summary: 'records' },
+}
+
+const argv = (...words: string[]) => words.map((w) => `argv=${encodeURIComponent(w)}`).join('&')
+
+async function rig(cli?: BridgeServerDeps['cli']) {
   // The job ids the callback was handed, in order: a turn signal is only
   // useful if it says WHICH session turned.
   const starts: string[] = []
   const ends: string[] = []
-  const server = createBridgeServer({ dispatch, log: () => {} })
+  const server = createBridgeServer({ cli, log: () => {} })
   registerAgentRoutes(server, {
     onJobTurn: (remote, job, active) => (active ? starts : ends).push(`${remote}:${job}`),
     log: () => {},
@@ -221,19 +233,15 @@ describe('routes and the capability door', () => {
     ).toThrow(/taken/)
   })
 
-  it('serves no capability without a dispatch', async () => {
+  it('serves no CLI without one', async () => {
     const r = await rig()
-    expect((await post(r.port(), `/cap/store.list?t=${r.token()}`)).status).toBe(404)
+    expect((await post(r.port(), `/cli?t=${r.token()}`)).status).toBe(404)
   })
 
-  it("runs a capability for the token's vault, with the form fields as params", async () => {
+  it("runs a command for the token's vault, its argv in order", async () => {
     const dispatch = vi.fn<Dispatch>(async () => ({ value: ['x'], text: 'x', writes: false }))
-    const r = await rig(dispatch)
-    const res = await post(
-      r.port(),
-      `/cap/store.list?t=${r.token()}`,
-      'bundle=A.app&collection=items',
-    )
+    const r = await rig({ dispatch, commands: () => [LIST] })
+    const res = await post(r.port(), `/cli?t=${r.token()}`, argv('store', 'list', 'A.app', 'items'))
     expect(res).toEqual({ status: 200, body: 'x' })
     expect(dispatch).toHaveBeenCalledWith({
       door: 'cli',
@@ -245,17 +253,30 @@ describe('routes and the capability door', () => {
   })
 
   it('answers JSON when asked', async () => {
-    const r = await rig(async () => ({ value: { a: 1 }, text: 'a', writes: false }))
-    const res = await post(r.port(), `/cap/store.get?t=${r.token()}`, 'json=true')
+    const r = await rig({
+      dispatch: async () => ({ value: { a: 1 }, text: 'a', writes: false }),
+      commands: () => [LIST],
+    })
+    const res = await post(
+      r.port(),
+      `/cli?t=${r.token()}`,
+      argv('store', 'list', 'A', 'b', '--json'),
+    )
     expect(res.status).toBe(200)
     expect(JSON.parse(res.body)).toEqual({ a: 1 })
   })
 
-  it('refuses with a 422 and the reason, so the command can exit non-zero', async () => {
-    const r = await rig(async () => {
-      throw new Error('no such method: nope')
+  it('answers usage with a 400, and a refusal with a 422 after the command', async () => {
+    const r = await rig({
+      dispatch: async () => {
+        throw new Error('no such record')
+      },
+      commands: () => [LIST],
     })
-    const res = await post(r.port(), `/cap/nope?t=${r.token()}`)
-    expect(res).toEqual({ status: 422, body: 'no such method: nope' })
+    const usage = await post(r.port(), `/cli?t=${r.token()}`, argv('store', 'nope'))
+    expect(usage.status).toBe(400)
+    expect(usage.body).toContain('holi store list <bundle> <collection>')
+    const refused = await post(r.port(), `/cli?t=${r.token()}`, argv('store', 'list', 'A', 'b'))
+    expect(refused).toEqual({ status: 422, body: 'holi store list: no such record' })
   })
 })

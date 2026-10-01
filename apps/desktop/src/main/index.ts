@@ -43,7 +43,7 @@ import { openGoogleCache } from './google/cache'
 import { createGoogleData, type GoogleData } from './google/data'
 import { createGoogleOpsServer } from './google/ops-server'
 import { installGoogleCli } from './google/cli'
-import { installHoliCli } from './agent/cli'
+import { installHoliCli } from './bridge/cli'
 import type { MainAppMethod } from '@holi/shared'
 import { appCapabilities, APP_NAMESPACES } from './apps/capabilities'
 import { agentCapabilities, AGENT_NAMESPACES } from './agent/capabilities'
@@ -580,7 +580,9 @@ async function main(): Promise<void> {
 
   // The bridge: what runs inside a vault (the `holi` command, the agent's
   // hooks, git's hook and merge driver) reaching this Holi on loopback.
-  const bridge = createBridgeServer({ dispatch })
+  const bridge = createBridgeServer({
+    cli: { dispatch, commands: () => capabilities.commands() },
+  })
   registerAgentRoutes(bridge, {
     // A turn edge in one of a vault's background sessions, by job id.
     onJobTurn: (remote, jobId, active) => agent.noteTurn(remote, jobId, active),

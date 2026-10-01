@@ -931,7 +931,7 @@ describe('the vault-apps skill teaches the loop that now exists', () => {
   })
 
   it('tells the agent it can open the app itself', () => {
-    expect(flat).toContain('holi app open <path>')
+    expect(flat).toContain('holi apps open <path>')
   })
 
   it('says a check is reported back on write', () => {

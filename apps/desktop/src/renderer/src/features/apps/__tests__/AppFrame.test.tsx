@@ -147,7 +147,7 @@ test('an unknown method is refused rather than ignored', async () => {
   expect(bridgeMock).not.toHaveBeenCalled()
 })
 
-// The pane header's reload button and `holi app open` both bump this count.
+// The pane header's reload button and `holi apps open` both bump this count.
 test('reload rebuilds the frame rather than reusing it', async () => {
   await renderApp()
   const before = frameOf()

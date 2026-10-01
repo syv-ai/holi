@@ -318,7 +318,7 @@ export function FileTree({
         )
         return
       case 'app': {
-        // `holi app init`'s scaffold. Opening its entry expands the bundle.
+        // `holi apps init`'s scaffold. Opening its entry expands the bundle.
         const bundle = joinPath(parent, name.endsWith(APP_SUFFIX) ? name : `${name}${APP_SUFFIX}`)
         void registerApp(bundle).then((result) => {
           if (result.ok) onOpenPreview(`${bundle}/index.html`)

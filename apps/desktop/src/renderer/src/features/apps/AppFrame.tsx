@@ -308,7 +308,7 @@ export function AppFrame({ path }: { path: string }): React.JSX.Element {
           // Remounting is the reload: an app holds nothing across one (its origin
           // is opaque, so there is no storage to keep), so a fresh document IS the
           // fresh start, and it is the only way a frame sheds what it has loaded.
-          // The pane header's reload button and the agent's `holi app open` both
+          // The pane header's reload button and the agent's `holi apps open` both
           // bump the count (`appOpensAtom`).
           key={reloads}
           ref={frameRef}

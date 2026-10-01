@@ -50,7 +50,7 @@ Holi turns a markdown note into a branded PDF through a Typst template, and open
 
 - `apps/desktop/src/main/pdf/`: `templates.ts`, `wrapper.ts`, `render.ts`, `typst-bin.ts`, `comments.ts`, `signatures.ts`.
 - `apps/desktop/src/main/agent/templates/`: seeded templates and `_brand/` (`binary-assets.generated.ts` is generated).
-- `apps/desktop/src/main/agent/skills/md-to-pdf/`, `skills/pdf-comments/`, `cli.ts`; `pdf/capabilities.ts` (`pdf.comments`, the CLI door only).
+- `apps/desktop/src/main/agent/skills/md-to-pdf/`, `skills/pdf-comments/`, `main/bridge/cli.ts`; `pdf/capabilities.ts` (`pdf.comments`, the CLI door only).
 - `apps/desktop/src/renderer/src/features/pdf/ConvertToPdf.tsx`, `FieldWidget.tsx`; `lib/pdf-fields.ts`.
 - `apps/desktop/src/renderer/src/features/files/PdfViewer.tsx`, `PdfDocument.tsx`, `PdfCommentField.tsx`; `lib/pdf-viewer-config.ts`, `lib/pdf-read-only.ts`, `lib/pdf-comments.ts`.
 - `packages/shared/src/pdf-comments.ts`, `packages/shared/src/template-fields.ts`.

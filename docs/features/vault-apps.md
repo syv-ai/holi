@@ -12,7 +12,7 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   another bundle. Like a note it is identified by its vault-relative path (`Finance/Budget.app`);
   its name is the folder name without `.app`, as a note drops `.md`. `app.yaml` is the "finished"
   marker: an agent writes an app file by file, so the manifest is written last. Its keys are
-  `description`, `collections` and `dangerously-allow`, all optional; `holi app init` and the
+  `description`, `collections` and `dangerously-allow`, all optional; `holi apps init` and the
   Home app write all three with the unused ones blank (`appManifestText`), so the file shows what
   an app can say, and an empty file still finishes the app. The icon is the vault icon map's,
   as for any row. The parser never throws; a typo costs a field, never the app.
@@ -107,7 +107,7 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
 - **One registry, two doors.** What main answers is the capability registry
   (`main/capabilities/`, see [architecture](../architecture.md)); the apps feature registers
   `store.*`, `apps.open` and `apps.init` (`main/apps/capabilities.ts`). Each entry has its params, its refusals, and the doors
-  it opens to, the app's bridge and the agent's `holi` CLI (`/cap/<method>` on the bridge server). An app sees
+  it opens to, the app's bridge and the agent's `holi` CLI (`/cli` on the bridge server). An app sees
   exactly what the agent can inspect from the terminal, written once. At the app door the bundle
   is the frame's, and a `bundle` param is ignored; at the CLI door the agent names it. One
   dispatch (`capabilities/dispatch.ts`) runs a call for both doors: the clone, the open vault's
@@ -134,7 +134,7 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   that posts the three versions to Holi (`/merge/record`), and fails to a conflict when Holi does
   not answer.
 - **The authoring loop.** A seeded skill (`.claude/skills/vault-apps/SKILL.md`) documents the
-  contract. The `holi` CLI gives the agent `holi app open <path>` and `holi app init <path>`
+  contract. The `holi` CLI gives the agent `holi apps open <path>` and `holi apps init <path>`
   (never overwrites). A `PostToolUse` hook (`vault-app-check.mjs`) reports, on every write inside
   a `<name>.app` folder below the session's cwd, a syntax error and its line, a `.ts`/`.tsx`/`.jsx` file nothing will build, a
   `localStorage` call, a missing manifest, and a hard-coded colour. It is advisory, exits 0, and is
@@ -181,8 +181,8 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
 - The bridge is injected, not a required tag: a forgotten tag is an app that silently does nothing.
 - The injected palette must be complete. Injecting only the vault's overrides gives an unthemed
   vault `:root{}` and an unreadable app. A test pins that every themeable token has a base value.
-- Only local authorship opens a tab (`holi app open`). An app arriving by sync never opens itself.
-- Reload is explicit, never automatic: the ⟳ button, or the agent's `holi app open` on an app
+- Only local authorship opens a tab (`holi apps open`). An app arriving by sync never opens itself.
+- Reload is explicit, never automatic: the ⟳ button, or the agent's `holi apps open` on an app
   already open, run once it has finished writing. Auto-reload fires on the half-written state
   while the agent is still writing.
 - No `allow-forms`: a form's submission is blocked before its submit handler runs, so the check
@@ -241,10 +241,10 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   Holi's own search.
 - `apps/desktop/src/main/vault/record-merge.ts`: the record merge driver's install;
   `apps/desktop/src/main/vault/git-routes.ts`: `/merge/record`;
-  `apps/desktop/src/main/bridge/server.ts`: `/cap/<method>`.
+  `apps/desktop/src/main/bridge/server.ts`: `/cli`.
 - `apps/desktop/src/main/index.ts`: scheme registration and the `holi-app` handler.
 - `apps/desktop/src/main/router.ts`: the `apps` namespace.
-- `apps/desktop/src/main/agent/hooks/vault-app-check.mjs`, `apps/desktop/src/main/agent/cli.ts`.
+- `apps/desktop/src/main/agent/hooks/vault-app-check.mjs`, `apps/desktop/src/main/bridge/cli.ts`.
 - `apps/desktop/src/renderer/src/features/apps/`: `AppFrame`, with the approval dialog.
 - `apps/desktop/src/renderer/src/state/app-push.ts`: the push signatures;
   `state/ui-report.ts`: the one report of focus and recents to main.

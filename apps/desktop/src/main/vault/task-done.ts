@@ -1,5 +1,5 @@
 /**
- * What `holi task done` does: complete a task file the way the app does.
+ * What `holi tasks complete` does: complete a task file the way the app does.
  *
  * The agent can only write files, and writing `status: done` into a recurring
  * task ends the series instead of rolling it forward. This applies the same

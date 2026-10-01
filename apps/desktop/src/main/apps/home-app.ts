@@ -7,7 +7,7 @@
  * setting's path. Core's own Home is the recents view in the renderer; no
  * vault is seeded with this app.
  *
- * **Never overwrites**, and never writes through a link, like `holi app init`:
+ * **Never overwrites**, and never writes through a link, like `holi apps init`:
  * a file already there is someone's work. Never written unasked: only the
  * button on the Home tab writes it.
  */

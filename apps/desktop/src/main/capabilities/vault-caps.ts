@@ -46,6 +46,7 @@ export interface VaultCapabilitiesDeps {
 export const vaultCapabilities = (deps: VaultCapabilitiesDeps) => ({
   'docs.list': cap({
     doors: ['app', 'cli'],
+    cli: { args: [], summary: 'every note an app may read, one path per line' },
     params: noParams,
     // The listing, not just the read: an app that cannot open a memory but can
     // see every memory's path has still been told what the vault remembers.
@@ -56,6 +57,7 @@ export const vaultCapabilities = (deps: VaultCapabilitiesDeps) => ({
 
   'docs.read': cap({
     doors: ['app', 'cli'],
+    cli: { args: ['path'], summary: "a note's text, as an app reads it" },
     params: pathParams,
     run: (ctx, { path }): Promise<string> => readNote(ctx, path),
     text: (body) => body,
@@ -63,6 +65,7 @@ export const vaultCapabilities = (deps: VaultCapabilitiesDeps) => ({
 
   'docs.render': cap({
     doors: ['app', 'cli'],
+    cli: { args: ['path'], summary: 'a note as the HTML a vault app shows' },
     params: pathParams,
     run: async (ctx, { path }): Promise<string> => renderNote(await readNote(ctx, path)),
     text: (html) => html,
@@ -88,6 +91,7 @@ export const vaultCapabilities = (deps: VaultCapabilitiesDeps) => ({
     // Both: "the note I had open before this one" is what the agent cannot
     // find with its own tools.
     doors: ['app', 'cli'],
+    cli: { args: [], summary: 'what the user opened recently, newest first' },
     params: noParams,
     run: async (ctx): Promise<RecentEntry[]> =>
       ctx.core
@@ -108,6 +112,7 @@ export const vaultCapabilities = (deps: VaultCapabilitiesDeps) => ({
 
   'vault.members': cap({
     doors: ['app', 'cli'],
+    cli: { args: [], summary: 'the people who can reach this vault on GitHub' },
     params: noParams,
     // Login and avatar only: an app has no use for who may push.
     run: (ctx) =>
@@ -162,6 +167,7 @@ export const vaultCapabilities = (deps: VaultCapabilitiesDeps) => ({
 
   'sync.status': cap({
     doors: ['app', 'cli'],
+    cli: { args: [], summary: "the vault's sync state, as the nav shows it" },
     params: noParams,
     run: async (ctx): Promise<SyncState | null> => {
       const state = ctx.core.syncState()
@@ -177,6 +183,10 @@ export const vaultCapabilities = (deps: VaultCapabilitiesDeps) => ({
   /** `holi skills update`. A conflict gets a session of its own. */
   'skills.update': cap({
     doors: ['cli'],
+    cli: {
+      args: [],
+      summary: "bring this release's skills and hooks into the vault, merged with its own changes",
+    },
     writes: true,
     params: noParams,
     run: (ctx): Promise<string> => deps.updateSkills(ctx.remote),

@@ -99,7 +99,7 @@ recurring task advances `due` by the rule, moves `reminder` by the same number o
 days (keeping its own time of day), and sets `status` back to `todo`. A recurring
 task with no `due` never rolls — there is nothing to advance from.
 
-**Complete a task with `holi task done <path>`**, never by writing `done` into the
+**Complete a task with `holi tasks complete <path>`**, never by writing `done` into the
 file. On a recurring task, writing `done` by hand ends the series instead of
 rolling it forward; the command applies the same rule as the board's checkbox
 and prints what it wrote. On any other task it simply sets `status: done`.

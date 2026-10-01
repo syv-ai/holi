@@ -199,7 +199,7 @@ export function subscribeToVault(store: JotaiStore): () => void {
       store.set(openTaskAtom, path)
     }
   })
-  // `holi app open <id>`, typed by the agent. Local authorship only: see the
+  // `holi apps open <id>`, typed by the agent. Local authorship only: see the
   // channel's own comment for why an app appearing in the snapshot does not
   // open anything. An app already open reloads (`appOpensAtom`).
   const offAppOpen = window.holi.apps.onOpen((bundle) => {

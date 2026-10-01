@@ -209,7 +209,7 @@ describe('registration', () => {
     await writeFile(join(dir, 'index.html'), '<!doctype html><h1>hi</h1>\n')
     const text = said(await wrote('retro.app/app.js', 'const a = 1\n'))
     expect(text).toMatch(/app\.yaml/)
-    expect(text).toMatch(/holi app init Team\/retro\.app/)
+    expect(text).toMatch(/holi apps init Team\/retro\.app/)
   })
 
   it('says nothing about registration once the manifest is there', async () => {

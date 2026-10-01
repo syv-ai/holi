@@ -3,7 +3,7 @@
 // cannot work.
 //
 // Without it a syntax error shows up as a blank tab. This catches the mistake
-// at the moment it is made, while the file is still in mind; `holi app open`
+// at the moment it is made, while the file is still in mind; `holi apps open`
 // covers the rest of the loop.
 //
 // **Advisory, never blocking.** It reports and exits 0. Only `google-send-gate`
@@ -40,7 +40,7 @@ function main(payload) {
   if (match === null) return []
   const bundleEnd = base + match.index + match[0].length - 1
   const appDir = filePath.slice(0, bundleEnd)
-  // What `holi app init` takes: the vault-relative bundle when it is known.
+  // What `holi apps init` takes: the vault-relative bundle when it is known.
   const bundle = inVault ? appDir.slice(base) : match[1]
   if (/^(\.claude|memory)[/\\]/.test(bundle)) return []
 
@@ -222,7 +222,7 @@ function registration(appDir, bundle) {
     [
       ERROR,
       `${bundle} has no app.yaml, so it is not finished and will not open. Write ` +
-        `one (an empty file is enough), or run \`holi app init ${bundle}\`. Write ` +
+        `one (an empty file is enough), or run \`holi apps init ${bundle}\`. Write ` +
         `it LAST: it is what finishes the app.`,
     ],
   ]

@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { installHoliCli } from '../src/main/agent/cli'
+import { installHoliCli } from '../src/main/bridge/cli'
 import {
   endpointText,
   removeEndpointFile,
@@ -54,10 +54,13 @@ beforeEach(async () => {
   statuses = []
   server = createBridgeServer({
     log: () => {},
-    dispatch: async ({ name, params }) => ({
-      ...(await capability(name, params as Record<string, string>)),
-      writes: false,
-    }),
+    cli: {
+      dispatch: async ({ name, params }) => ({
+        ...(await capability(name, params as Record<string, string>)),
+        writes: false,
+      }),
+      commands: () => [{ name: 'pdf.comments', cli: { args: ['path'], summary: 'comments' } }],
+    },
   })
   registerAgentRoutes(server, {
     onJobTurn: (remote, job, active) => turns.push([remote, job, active]),

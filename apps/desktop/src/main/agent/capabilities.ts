@@ -17,6 +17,7 @@ export interface AgentCapabilitiesDeps {
 export const agentCapabilities = (deps: AgentCapabilitiesDeps) => ({
   'agent.sessions': cap({
     doors: ['app', 'cli'],
+    cli: { args: [], summary: "the vault's live agent sessions and their state" },
     params: noParams,
     run: async (ctx): Promise<SessionSummary[]> => deps.sessionsFor(ctx.remote),
     text: (sessions) => sessions.map((s) => `${s.state}\t${s.name}`).join('\n'),

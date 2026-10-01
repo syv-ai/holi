@@ -53,6 +53,10 @@ export const appCapabilities = (deps: AppCapabilitiesDeps) => ({
   /** Open a finished app's tab, or reload it. Reversible: the tab closes. */
   'apps.open': cap({
     doors: ['cli'],
+    cli: {
+      args: ['path'],
+      summary: 'open a finished app in a tab, or reload it if it is already open',
+    },
     params: pathParams,
     run: async (ctx, { path }) => {
       const result = await openAppOp(ctx.root, path)
@@ -69,6 +73,7 @@ export const appCapabilities = (deps: AppCapabilitiesDeps) => ({
   /** Scaffold a bundle. Never overwrites, so it is safe to run twice. */
   'apps.init': cap({
     doors: ['cli'],
+    cli: { args: ['path'], summary: 'scaffold <path>, a folder ending in .app' },
     writes: true,
     params: pathParams,
     run: async (ctx, { path }) => {
@@ -82,6 +87,7 @@ export const appCapabilities = (deps: AppCapabilitiesDeps) => ({
 
   'store.list': cap({
     doors: ['app', 'cli'],
+    cli: { args: ['bundle', 'collection'], summary: "an app's records, one per line" },
     params: storeParams,
     run: (ctx, { bundle, collection }) => storeList(ctx.root, bundleOf(ctx, bundle), collection),
     text: ({ records, skipped }) =>
@@ -93,6 +99,7 @@ export const appCapabilities = (deps: AppCapabilitiesDeps) => ({
 
   'store.get': cap({
     doors: ['app', 'cli'],
+    cli: { args: ['bundle', 'collection', 'id'], summary: 'one record' },
     params: (raw) => {
       const base = storeParams(raw)
       return { ...base, id: stringParam(base.p, 'id') }
@@ -103,6 +110,10 @@ export const appCapabilities = (deps: AppCapabilitiesDeps) => ({
 
   'store.put': cap({
     doors: ['app', 'cli'],
+    cli: {
+      args: ['bundle', 'collection', 'value', 'id?'],
+      summary: 'write a record, checked against its schema; prints its id',
+    },
     writes: true,
     params: (raw) => {
       const base = storeParams(raw)
@@ -119,6 +130,7 @@ export const appCapabilities = (deps: AppCapabilitiesDeps) => ({
 
   'store.delete': cap({
     doors: ['app', 'cli'],
+    cli: { args: ['bundle', 'collection', 'id'], summary: 'delete a record' },
     writes: true,
     params: (raw) => {
       const base = storeParams(raw)
@@ -132,6 +144,7 @@ export const appCapabilities = (deps: AppCapabilitiesDeps) => ({
   /** The check hook's question: is this hand-written data file valid? */
   'store.check': cap({
     doors: ['cli'],
+    cli: { args: ['path'], summary: 'problems with a data file you wrote by hand' },
     params: pathParams,
     run: async (ctx, { path }) => {
       // The hook passes the path the agent's tool wrote, which may be absolute.

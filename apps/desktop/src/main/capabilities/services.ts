@@ -35,7 +35,7 @@ export interface CoreServicesDeps {
 /**
  * What the renderer says the person is looking at, per vault: the focused
  * note and the open ones (for the agent's per-turn focus file), and the
- * recents (for `holi recents` and an app's `holi.recents()`). One report, sent
+ * recents (for `holi vault recents` and an app's `holi.recents()`). One report, sent
  * whenever any of it changes (`state/ui-report.ts`); main keeps the last.
  */
 export interface UiReport {

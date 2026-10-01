@@ -33,7 +33,7 @@ the editor rather than past the window's edge.
   its first row, right after a focused file or app in its folder, and at the root when nothing is
   focused. The name field slides in there, making room with the disclose motion.
 - **A task** is named by its title; main names the file and it opens pinned, as ⌘⇧T's does, whether
-  or not the tree shows task files. **An app** is `holi app init`'s scaffold (`index.html` and an
+  or not the tree shows task files. **An app** is `holi apps init`'s scaffold (`index.html` and an
   `app.yaml`, never overwriting), and its `index.html` opens, which expands the bundle. A typed
   `.app` is not doubled.
 

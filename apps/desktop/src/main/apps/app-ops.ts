@@ -1,5 +1,5 @@
 /**
- * What `holi app open` and `holi app init` actually do.
+ * What `holi apps open` and `holi apps init` actually do.
  *
  * Kept out of `capabilities.ts`, which is params and refusals: these are
  * filesystem questions about a specific vault, and they are the part worth
@@ -7,7 +7,7 @@
  *
  * **Every refusal names the fix.** The agent is the caller, and the worst
  * failure is an app that does not appear with nothing saying why. "no app.yaml,
- * write one, or run holi app init Retro.app" is a next step.
+ * write one, or run holi apps init Retro.app" is a next step.
  */
 import { stat } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -62,7 +62,7 @@ export async function openAppOp(
       ok: false,
       error:
         `${bundle} has no ${APP_MANIFEST_FILE}, so it is not finished yet. ` +
-        `Write one (it can be empty), or run \`holi app init ${bundle}\`.`,
+        `Write one (it can be empty), or run \`holi apps init ${bundle}\`.`,
     }
   }
   return { ok: true, bundle }
@@ -105,7 +105,7 @@ function entryFor(rawName: string): string {
   *, *::before, *::after { box-sizing: border-box; }
   body { font: 16px/1.5 system-ui, sans-serif; margin: 0; padding: 1rem; }
 </style>
-<p>Scaffolded by <code>holi app init</code>. Replace this with the app.</p>
+<p>Scaffolded by <code>holi apps init</code>. Replace this with the app.</p>
 `
 }
 

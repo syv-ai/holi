@@ -1381,7 +1381,7 @@ export function createRouter(deps: RouterDeps) {
       }),
 
     /** Write the manifest that finishes a bundle — the launchers' "Finish this
-     *  app", and the same op as `holi app init`. Never overwrites, so it cannot
+     *  app", and the same op as `holi apps init`. Never overwrites, so it cannot
      *  clobber a manifest someone is mid-way through. A rename is a tree move. */
     register: vaultMutation
       .input(fields({ remote: 'string', path: 'string' }))
@@ -2501,7 +2501,7 @@ export function createRouter(deps: RouterDeps) {
     /**
      * The focused note, the open notes and the recents, for one vault: main
      * writes the agent's per-turn focus file from it and answers
-     * `holi recents` / `holi.recents()` with it. One report, sent whenever any
+     * `holi vault recents` / `holi.recents()` with it. One report, sent whenever any
      * of it changes; main keeps only the last, in memory.
      */
     report: t.procedure

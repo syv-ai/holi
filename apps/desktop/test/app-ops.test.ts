@@ -42,7 +42,7 @@ describe('openAppOp', () => {
     const result = await openAppOp(root, 'Retro.app')
     expect(result.ok).toBe(false)
     expect(result.ok === false && result.error).toMatch(/app\.yaml/)
-    expect(result.ok === false && result.error).toMatch(/holi app init Retro\.app/)
+    expect(result.ok === false && result.error).toMatch(/holi apps init Retro\.app/)
   })
 
   it('refuses a manifest with no entry document', async () => {

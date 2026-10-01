@@ -58,7 +58,7 @@ Projects/Q2/Burndown.app/app.yaml     ← required: write this LAST
 
   A blank key is unused, and an empty file is still a valid manifest. There is
   no `name` or `icon` key: the name is the folder, and the user sets an icon the
-  way they do for any file. `holi app init <path>` writes this file for you.
+  way they do for any file. `holi apps init <path>` writes this file for you.
 
 - It appears in the file tree and the apps list as soon as the manifest lands.
   No restart.
@@ -259,7 +259,7 @@ From the terminal, the same records:
 ```sh
 holi store list <app> <collection>          # one line per record
 holi store get <app> <collection> <id>
-holi store put <app> <collection> [<id>] '<json>'
+holi store put <app> <collection> '<json>' [<id>]
 holi store delete <app> <collection> <id>
 ```
 
@@ -269,8 +269,8 @@ You have three things: a check that runs on every file you write, a command
 that opens the app, and the app's log.
 
 ```sh
-holi app open <path>        # opens the app's tab in Holi, or reloads it if open
-holi app init <path>        # scaffolds <path>, a folder ending in .app
+holi apps open <path>       # opens the app's tab in Holi, or reloads it if open
+holi apps init <path>       # scaffolds <path>, a folder ending in .app
 ```
 
 **The check speaks on its own.** Every time you write a file inside a `.app`
@@ -286,7 +286,7 @@ run. So the loop is:
 
 1. Write the files, manifest last.
 2. Read what the check says, if it says anything.
-3. `holi app open <path>`, e.g. `holi app open Projects/Q2/Burndown.app`.
+3. `holi apps open <path>`, e.g. `holi apps open Projects/Q2/Burndown.app`.
 4. **Ask the user what they see.** You have no screenshot and no way to read
    the rendered page: opening the tab puts it in front of them, not you.
 5. **Read the log**, `log.local.txt` at the app's root, when they say something
@@ -313,7 +313,7 @@ failure is legible in the page itself too:
 auto-reload, deliberately: writing `index.html` and then `app.js` would
 otherwise reload on the half-written state and show a broken app.
 
-So when you have finished changing an app, run `holi app open <path>` again. On
+So when you have finished changing an app, run `holi apps open <path>` again. On
 an app that is already open it reloads the tab, so the user sees the new
 version. Outside Holi, where the command is not there, ask them to reload it
 with the ⟳ button at the top right of the tab.
@@ -517,19 +517,19 @@ instead.
 - If Home says there is no app yet, the user can press **Create Home app**, or
   you can write the folder yourself.
 - To see a change, ask the user to open Home again (or reload it from its tab).
-  `holi app open <path>` works too, but opens it in a tab of its own beside
+  `holi apps open <path>` works too, but opens it in a tab of its own beside
   Home rather than reloading the Home tab.
 
 ## Before you say it is done
 
 - **Write `app.yaml`**, if you have not. Without it the app does not open.
-- **Open it: `holi app open <path>`.** Then say what it should show, so the
+- **Open it: `holi apps open <path>`.** Then say what it should show, so the
   user can tell you when it does not — you have still never seen it render, so
   do not claim to have looked at it.
 - **Check it fits the pane** (above): nothing with a pixel width, grids that
   wrap, long text that breaks, and one scrolling region rather than a page that
   scrolls. Ask the user to narrow the pane and say whether anything scrolls
   sideways.
-- If they already had it open, `holi app open` again reloads it (see above).
+- If they already had it open, `holi apps open` again reloads it (see above).
 - Ask what the user wants it to answer before adding a second screen to it. A
   small app that answers one question beats a dashboard nobody reads.

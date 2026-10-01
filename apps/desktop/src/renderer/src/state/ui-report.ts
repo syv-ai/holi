@@ -1,7 +1,7 @@
 /**
  * Tell main what the person is looking at: the focused note and the open ones
  * (main writes the agent's per-turn focus file, the one thing the agent cannot
- * discover itself), and the recents (`holi recents`, and a vault app's
+ * discover itself), and the recents (`holi vault recents`, and a vault app's
  * `holi.recents()`). One report to main whenever any of it changes.
  *
  * Set up once beside the vault's push subscriptions, not in a component, so it

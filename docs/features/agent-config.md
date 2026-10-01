@@ -39,7 +39,7 @@ skills are re-read per use.
 **Per-turn context is one line.** The `UserPromptSubmit` hook prints `Focused note: <path>` from
 `.holi/state/context.local.json`, which main keeps current from the renderer's one report of what
 the person is looking at (`ui.report`: the focused note, the open ones, the recents), the same
-report `holi recents` answers from. Tasks, backlinks and sync state the agent
+report `holi vault recents` answers from. Tasks, backlinks and sync state the agent
 finds itself with `Glob`, `grep` and `git`.
 
 **Seeding.** `ensureSeeded` runs on create, adopt and every open. It writes `.gitignore`'s
@@ -85,14 +85,18 @@ write).
 **Tool surface.** Native `Read`, `Write`, `Edit`, `Bash`, `Glob`, `Grep`. No MCP server. Holi's
 additions are commands in a directory prepended to `PATH`, plus skills that document them:
 
-- `holi`: `app open` (which reloads an app already open), `app init`, `skills update`, and,
-  through the CLI door into the capability registry ([vault apps](vault-apps.md)),
-  `pdf comments <path> [--json]`, `task done <path>`, `store list|get|put|delete|check` over an
-  app's records, `docs render <path>`, `sync status`, `sessions`, `members` and `recents` (each
-  with `--json`). The registry's reads the agent already has as Grep, Read and git (search,
-  history, settings) stay app-only rather than grow a second way in. It posts to the bridge server
-  with the token in `holi.env`. All reversible or read-only (a record write is a file change in git
-  history), so none is gated.
+- `holi <namespace> <verb>`: generic. It posts its argv to the bridge's `/cli`, and main reads
+  it against the capabilities open at the CLI door ([vault apps](vault-apps.md)), each of which
+  declares its positional arguments and a one-line summary; bare `holi` prints them all. Any
+  argument can also be given as `--name value`, `--json` prints the value, and nothing may come
+  before the verb. Exit 0 prints the answer, 1 a refusal, 2 a usage error. A command that reads a
+  body from stdin and was not given one is answered 428 without running, and the script sends
+  stdin once. Today: `apps open|init`, `skills update`, `pdf comments`, `tasks list|complete`,
+  `store list|get|put|delete|check`, `docs list|read|render`, `sync status`, `agent sessions`,
+  `vault members|recents`. The registry's reads the agent already has as Grep, Read and git
+  (search, history, settings) stay app-only rather than grow a second way in. The script finds
+  the bridge with the token in `holi.env`. All reversible or read-only (a record write is a file
+  change in git history), so none is gated.
 - `holi-google`: mail and calendar through main, which holds the tokens ([google.md](google.md)).
 - `$TYPST_BIN` for PDF export ([pdf.md](pdf.md)).
 - Shipped skills: `memory`, `using-tasks`, `vault-apps`, `theme`, `gmail-calendar`, `md-to-pdf`,
@@ -143,7 +147,7 @@ the vault's pre-commit transforms like anyone's ([vaults-sync.md](vaults-sync.md
 - `apps/desktop/src/main/agent/agent-config-dir.ts`: per-vault config dir, first-spawn marker, migration
 - `apps/desktop/src/main/agent/seed-content.ts`: seed classes, `AGENTS.md` text, `settingsWithRequired`
 - `apps/desktop/src/main/agent/seed-state.ts`: what Holi seeded, the base an update merges from
-- `apps/desktop/src/main/agent/cli.ts`: the `holi` script; `bridge/server.ts`: what it posts to;
+- `apps/desktop/src/main/bridge/cli.ts`: the `holi` script and its argv; `bridge/server.ts`: `/cli`;
   `agent/bridge-routes.ts`: the turn and status-line routes
 - `apps/desktop/src/main/agent/endpoint-file.ts`: `holi.env`
 - `apps/desktop/src/main/agent/hooks/`, `skills/`: shipped hook scripts and skills

@@ -32,7 +32,12 @@ registry.register(
 const runCapability = registry.run
 
 describe('the capability registry', () => {
-  const ping = cap({ doors: ['cli'], params: () => ({}), run: async () => 'pong' })
+  const ping = cap({
+    doors: ['cli'],
+    cli: { args: [], summary: 'ping' },
+    params: () => ({}),
+    run: async () => 'pong',
+  })
 
   it('gives a namespace one owner, and keeps a name inside its owner', () => {
     const caps = createCapabilityRegistry()

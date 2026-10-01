@@ -61,7 +61,7 @@ const onAgentTerminals = pushChannel<unknown>('agent:terminals')
  * switch keeps `activeRemoteAtom` truthful (a main-side switch could not). */
 const onReminderOpen = pushChannel<{ remote: string; path: string }>('reminders:open')
 
-/** The agent ran `holi app open <path>` and Holi should show that app.
+/** The agent ran `holi apps open <path>` and Holi should show that app.
  *  A push rather than a snapshot-derived effect on purpose: apps sync, so
  *  opening a tab whenever one *appears* would let a teammate's finished app
  *  decide what is on your screen. Only local authorship opens a tab. */

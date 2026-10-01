@@ -8,8 +8,9 @@
  * ephemeral, but this closes the "some other localhost thing toggles our sync
  * pause" gap. The token is checked on the headers, before any body is read.
  *
- * **Two kinds of path.** A capability call is built in (`/cap/<name>`, through
- * `dispatch`), so every verb the agent can type is a capability and not a
+ * **Two kinds of path.** The `holi` command's `/cli` is built in: it reads
+ * argv against the capabilities open at the CLI door (`cli.ts`) and runs one
+ * through `dispatch`, so every verb anyone can type is a capability and not a
  * route. A route is for a caller that is not an agent verb: the agent's turn
  * and status-line hooks, which must answer empty because a body would be
  * injected into Claude's context (`agent/bridge-routes.ts`), and git's
@@ -21,6 +22,8 @@
 import { createServer, type RequestListener, type Server } from 'node:http'
 import { randomBytes } from 'node:crypto'
 import type { Dispatch } from '../capabilities/dispatch'
+import type { CliCommand } from '../capabilities/registry'
+import { resolveArgv } from './cli'
 
 /** What a route answers. No body is an empty one. */
 export interface Reply {
@@ -39,8 +42,12 @@ export interface Route {
 }
 
 export interface BridgeServerDeps {
-  /** The capability door. Absent leaves `/cap/` a 404. */
-  dispatch?: Dispatch
+  /** The CLI door. Absent leaves `/cli` a 404. */
+  cli?: {
+    dispatch: Dispatch
+    /** The capabilities open at the CLI door, read per call. */
+    commands(): readonly CliCommand[]
+  }
   log?: (msg: string) => void
 }
 
@@ -69,7 +76,7 @@ export interface BridgeServer {
  *  above that rather than failing a merge git could have made cleanly. */
 const MAX_BODY_BYTES = 4 * 1024 * 1024
 
-const CAP_PREFIX = '/cap/'
+const CLI_PATH = '/cli'
 
 const TEXT = 'text/plain; charset=utf-8'
 
@@ -86,38 +93,40 @@ export function createBridgeServer(deps: BridgeServerDeps = {}): BridgeServer {
   let boundPort: number | null = null
 
   /**
-   * One capability through the CLI door. Its output is the answer itself, so
-   * it answers text: 200 with it, or 422 with the refusal's one line. Fields
-   * ride in the body so curl encodes them; `json=true` asks for the value.
+   * `holi <namespace> <verb> ...`: argv arrives as repeated `argv` fields, in
+   * order. The output is the answer itself, so it answers text: 200 with it,
+   * 422 with a refusal's one line, 400 with usage, or 428, having run
+   * nothing, when the command reads a param from stdin that was not given.
    */
-  async function capability(
-    name: string,
-    remote: string,
-    query: URLSearchParams,
-    body: string,
-  ): Promise<Reply> {
-    const fields: Record<string, string> = {}
-    for (const [key, value] of query) fields[key] = value
-    for (const [key, value] of new URLSearchParams(body)) fields[key] = value
-    const { t: _t, json, ...params } = fields
+  async function runCli(remote: string, body: string): Promise<Reply> {
+    const cli = deps.cli!
+    const form = new URLSearchParams(body)
+    const request = resolveArgv(form.getAll('argv'), cli.commands(), form.get('stdin'))
+    if (request.kind === 'usage') return { status: 400, body: request.text }
+    if (request.kind === 'stdin') return { status: 428 }
     try {
-      const result = await deps.dispatch!({ door: 'cli', remote, bundle: null, name, params })
+      const result = await cli.dispatch({
+        door: 'cli',
+        remote,
+        bundle: null,
+        name: request.name,
+        params: request.params,
+      })
       return {
         status: 200,
-        body: json === 'true' ? JSON.stringify(result.value, null, 2) : result.text,
+        body: request.json ? JSON.stringify(result.value, null, 2) : result.text,
       }
     } catch (error) {
-      return { status: 422, body: message(error) }
+      return { status: 422, body: `${request.label}: ${message(error)}` }
     }
   }
 
-  /** The route for a path: a registered one, or the built-in capability door. */
+  /** The route for a path: a registered one, or the built-in CLI door. */
   const routeFor = (pathname: string): Route | undefined => {
     const exact = routes.get(pathname)
     if (exact !== undefined) return exact
-    if (deps.dispatch === undefined || !pathname.startsWith(CAP_PREFIX)) return undefined
-    const name = pathname.slice(CAP_PREFIX.length)
-    return { body: 'text', handle: (remote, query, body) => capability(name, remote, query, body) }
+    if (deps.cli === undefined || pathname !== CLI_PATH) return undefined
+    return { body: 'text', handle: (remote, _query, body) => runCli(remote, body) }
   }
 
   const handle: RequestListener = (req, res) => {
@@ -185,7 +194,7 @@ export function createBridgeServer(deps: BridgeServerDeps = {}): BridgeServer {
       return token
     },
     route(path, route) {
-      if (routes.has(path) || path.startsWith(CAP_PREFIX)) {
+      if (routes.has(path) || path === CLI_PATH) {
         throw new Error(`bridge route ${path} is already taken`)
       }
       routes.set(path, route)

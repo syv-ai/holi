@@ -1,7 +1,7 @@
 /**
  * A vault's collaborators, reused for a few minutes.
  *
- * One cache for every reader: an app's `holi.members()`, `holi members`, and
+ * One cache for every reader: an app's `holi.members()`, `holi vault members`, and
  * Settings' member list. An app polling it must not spend the GitHub rate
  * limit, and Settings opening twice should not ask twice. What the person may
  * *do* (visibility, `canAdmin`, whether the vault is gone) is never read from

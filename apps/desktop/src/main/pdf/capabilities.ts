@@ -22,6 +22,10 @@ export const PDF_CAPABILITIES = {
   // the text revives its dates.
   'pdf.comments': cap({
     doors: ['cli'],
+    cli: {
+      args: ['path'],
+      summary: "a vault PDF's comments: page, mark, marked text, author, dates and replies",
+    },
     params: pathParams,
     run: async (ctx, { path }) => {
       const result = await pdfCommentsInVault(ctx.root, path)
