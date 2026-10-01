@@ -267,3 +267,11 @@ and activation.
 - **Legacy migrations are deleted** (`migrate-layout`, `migrate-settings-format`, the shared
   agent-config migration). The remaining ones (`migrate-apps`, the old Google cache delete, the
   old seed-state record format) go with the phase that owns their code.
+- **A plugin's activation runs after seeding and before the vault opens; its gate follows the
+  settings on disk.** The enablement cache is invalidated on every snapshot, so a hand edit opens
+  or closes the capability gate at once, while activation and seeding wait for the next open
+  (the settings tab does both immediately).
+- **The plugin host undoes a plugin's registrations itself** at dispose, even if the plugin's own
+  disposer forgets them. A failed start is not memoised, so the next open retries.
+- **The settings tab toggles the committed value only.** Turning a plugin off for this machine is
+  an `app.local.yaml` edit; the row says so when it applies.
