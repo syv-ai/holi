@@ -1372,10 +1372,10 @@ describe('vaults.add', () => {
     // the way in rather than at some later activation. No skills: this joins a
     // vault that already exists, and its skills are its own.
     expect(snap.docs.map((d) => d.path).sort()).toEqual([
-      'AGENTS.md',
-      'README.md',
       // A new vault is seeded with the memory directory, not a MEMORY.md.
       '.holi/memory/index.md',
+      'AGENTS.md',
+      'README.md',
     ])
     const entry = (await caller.vaults.list()).find((v) => v.remote === 'syv-ai/notes')
     expect(entry?.path).toBe(join(base, 'Holi', 'syv-ai', 'notes'))
