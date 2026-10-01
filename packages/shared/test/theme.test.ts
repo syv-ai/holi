@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
   THEME_TOKENS,
-  themeFromLegacy,
   parseVaultTheme,
   resolveTheme,
   themeBlockToVars,

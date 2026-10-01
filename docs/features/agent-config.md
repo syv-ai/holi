@@ -154,7 +154,7 @@ the vault's pre-commit transforms like anyone's ([vaults-sync.md](vaults-sync.md
 
 ## Code
 
-- `apps/desktop/src/main/agent/agent-config-dir.ts`: per-vault config dir, first-spawn marker, migration
+- `apps/desktop/src/main/agent/agent-config-dir.ts`: per-vault config dir, first-spawn marker
 - `apps/desktop/src/main/vault/seed/`: the seeder (`seed.ts`), `holi skills update` (`update.ts`),
   seed folders (`folder.ts`), core's contribution (`core.ts`, `vault/once/AGENTS.md`), and
   `state.ts`: what Holi seeded, the base an update merges from

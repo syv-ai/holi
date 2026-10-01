@@ -18,8 +18,6 @@
  * rest.
  */
 
-import { parse as parseYaml } from 'yaml'
-
 /**
  * The two files a theme lives in, beside the settings they belong with.
  *
@@ -477,46 +475,6 @@ export function parseThemePatch(json: string | null): { patch: ThemePatch; warni
     if (Object.keys(out).length > 0) patch[mode] = out
   }
   return { patch, warnings }
-}
-
-/**
- * Read a theme written in the legacy shape (`{light: {...}, dark: {...}}` as
- * JSON or YAML) and return it as `theme.css`.
- *
- * **Only the migration calls this.** `parseVaultTheme` speaks CSS, so pointing
- * the migration at it would read every legacy theme as empty and silently lose
- * the vault's colours.
- *
- * Whitelisting happens on the way through, so a token that was never valid is
- * dropped here rather than surviving the move.
- */
-export function themeFromLegacy(text: string): string {
-  let parsed: unknown
-  try {
-    parsed = parseYaml(text)
-  } catch {
-    parsed = null
-  }
-  const values: Record<string, unknown> = { $schema: undefined }
-  for (const mode of ['light', 'dark'] as const) {
-    const block =
-      parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)
-        ? (parsed as Record<string, unknown>)[mode]
-        : null
-    const out: ThemeBlock = {}
-    if (block !== null && typeof block === 'object' && !Array.isArray(block)) {
-      for (const [slug, value] of Object.entries(block as Record<string, unknown>)) {
-        if (
-          typeof value === 'string' &&
-          THEME_TOKENS.includes(slug) &&
-          isValidTokenValue(slug, value)
-        )
-          out[slug] = value.trim()
-      }
-    }
-    values[mode] = out
-  }
-  return writeThemeText(values)
 }
 
 /**

@@ -109,8 +109,6 @@ import {
 } from './vault/vault-files'
 import { renameNote } from './vault/rename'
 import { scanVault, type VaultSnapshot } from './vault/vault-store'
-import { migrateVaultLayout } from './vault/migrate-layout'
-import { migrateSettingsFormat } from './vault/migrate-settings-format'
 import { readVaultTheme, resetVaultTheme, writeVaultTheme } from './vault/theme'
 import { readVaultSettings, writeVaultSettings } from './vault/settings'
 import { parseSettingsPatch } from '@holi/shared'
@@ -604,8 +602,6 @@ export function createRouter(deps: RouterDeps) {
     }
     await deps.seed(repo.root)
     await migrateApps(repo.root)
-    await migrateVaultLayout(repo.root)
-    await migrateSettingsFormat(repo.root)
     await deps.registry.add({
       remote,
       path: repo.root,
@@ -896,8 +892,6 @@ export function createRouter(deps: RouterDeps) {
          */
         await deps.seed(root)
         await migrateApps(root)
-        await migrateVaultLayout(root)
-        await migrateSettingsFormat(root)
         await deps.registry.touch(input.remote, now())
         const active = await deps.host.open(input.remote)
         return active.snapshot()

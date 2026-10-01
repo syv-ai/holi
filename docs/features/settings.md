@@ -48,7 +48,6 @@ A vault's settings are two YAML files it carries itself: `.holi/settings/app.yam
 - `packages/shared/src/vault-settings.ts`: `VAULT_SETTINGS`, resolver, patch validator, ritual subset
 - `packages/shared/src/settings-yaml.ts`: parse and generate the self-describing file
 - `apps/desktop/src/main/vault/settings.ts`: read and atomic write on disk
-- `apps/desktop/src/main/vault/migrate-settings-format.ts`: converts older `.json` settings files to YAML on open
 - `apps/desktop/src/main/router.ts` (`settings.read`, `settings.write`)
 - `apps/desktop/src/renderer/src/features/settings/`: the tab, its sections and rows
 - `apps/desktop/src/renderer/src/lib/home-target.ts`, `state/home.ts`: resolving and opening Home

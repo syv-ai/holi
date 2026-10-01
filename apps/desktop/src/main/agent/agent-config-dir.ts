@@ -17,7 +17,7 @@
  * the first time the agent is opened there.
  */
 import { createHash } from 'node:crypto'
-import { mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { resolveColorMode } from '@holi/shared'
 import { readVaultSettings } from '../vault/settings'
@@ -26,8 +26,6 @@ import { readVaultSettings } from '../vault/settings'
 export const AGENT_CONFIG_DIR_NAME = 'agent-config'
 
 const SETTINGS = 'settings.json'
-/** Claude Code's own state file. Holi reads it and never writes it. */
-const CLAUDE_JSON = '.claude.json'
 /** Holi's, and named as Holi's: this directory has had an agent in it. */
 const SPAWNED_MARKER = '.holi-spawned'
 
@@ -55,19 +53,6 @@ export function agentConfigSlug(remote: string): string {
 /** What Holi resolved the app's colour mode to (the renderer's `activeModeAtom`). */
 export type AgentTheme = 'dark' | 'light'
 
-/**
- * A path as one word for `sh`. Only used to recognise the status line Holi
- * used to install, whose command was the quoted script path.
- */
-function shellQuote(path: string): string {
-  return `'${path.replace(/'/g, `'\\''`)}'`
-}
-
-/** Where Holi's old `holi-statusline` script lived (retired when sessions became background sessions). */
-function retiredStatusLine(userDataDir: string): string {
-  return join(userDataDir, 'bin', 'holi-statusline')
-}
-
 /** What a spawn stamps into the config directory's `settings.json`. */
 export interface ConfigDirStamp {
   theme?: AgentTheme
@@ -79,16 +64,13 @@ export interface ConfigDirStamp {
    * per app run lives in the vault's `bridge.local.env` (`bridge/env-file.ts`).
    */
   env?: Record<string, string>
-  /** Holi's retired status-line script path. A `statusLine` running exactly
-   *  that is removed; anyone else's is left alone. */
-  retiredStatusLine?: string
 }
 
 /**
  * The settings text this directory should have, or **null** if it already
  * carries what Holi requires (or cannot be parsed).
  *
- * Key-wise, like the vault's `settingsWithRequired`: this file accumulates the
+ * Key-wise, like the vault's `.claude/settings.json` merge: this file accumulates the
  * user's own choices, and rewriting it wholesale would discard them. A different
  * required set, because the vault's hook commands mean nothing at user scope.
  *
@@ -106,7 +88,7 @@ export interface ConfigDirStamp {
  * syncs: a path on this machine means nothing on a teammate's.
  */
 function settingsWithRequired(existing: string | null, stamp: ConfigDirStamp = {}): string | null {
-  const { theme, env, retiredStatusLine: retired } = stamp
+  const { theme, env } = stamp
   if (existing === null || existing.trim() === '') {
     const seed: Record<string, unknown> = { disableClaudeAiConnectors: true }
     if (theme) seed.theme = theme
@@ -143,23 +125,6 @@ function settingsWithRequired(existing: string | null, stamp: ConfigDirStamp = {
       changed = true
     }
   }
-  /**
-   * The status line Holi used to install. Session names now come from
-   * Claude Code's own listing, and the script it ran reached Holi through an
-   * environment a background session never has. Only Holi's own command goes.
-   */
-  if (retired !== undefined) {
-    const current = settings.statusLine
-    if (
-      current !== null &&
-      typeof current === 'object' &&
-      (current as Record<string, unknown>).command === shellQuote(retired)
-    ) {
-      delete settings.statusLine
-      changed = true
-    }
-  }
-
   return changed ? JSON.stringify(settings, null, 2) + '\n' : null
 }
 
@@ -250,119 +215,6 @@ export async function resolveVaultAgentConfig(args: {
   const dir = await ensureAgentConfigDir(args.userDataDir, args.remote, {
     theme,
     ...(args.env === undefined ? {} : { env: args.env }),
-    retiredStatusLine: retiredStatusLine(args.userDataDir),
   })
   return { dir }
-}
-
-/** Staging for the migration below. A directory cannot be renamed into itself. */
-const MIGRATING_DIR_NAME = `${AGENT_CONFIG_DIR_NAME}.migrating`
-
-/**
- * Which registered vault does the shared directory actually belong to?
- *
- * **Not the most recently opened one**: looking at a vault does not open an
- * agent in it. The directory says so itself. Claude Code keys `.claude.json`'s `projects{}` by
- * **absolute working directory**, so a key matching a registered clone path is
- * that vault having run the agent. Registry order is `lastOpenedAt` descending,
- * so scanning it in order breaks a tie towards the more recent vault.
- *
- * Null only when no vault matches — a directory no agent ever ran in, which has
- * no history to strand, so the caller may fall back to anything at all.
- */
-function usedByVault(
-  claudeJson: string | null,
-  vaults: readonly { remote: string; path: string }[],
-): string | null {
-  if (claudeJson === null) return null
-  let projects: Record<string, unknown>
-  try {
-    const parsed: unknown = JSON.parse(claudeJson)
-    if (typeof parsed !== 'object' || parsed === null) return null
-    const raw = (parsed as Record<string, unknown>).projects
-    if (typeof raw !== 'object' || raw === null) return null
-    projects = raw as Record<string, unknown>
-  } catch {
-    return null
-  }
-
-  const worked = new Set(Object.keys(projects))
-  return vaults.find((v) => worked.has(v.path))?.remote ?? null
-}
-
-/**
- * One-shot: the shared directory earlier versions left behind becomes a vault's own.
- *
- * `userData/agent-config/` may hold one vault's transcripts and plugin set, so it
- * is **renamed** into that vault's slot rather than stranded.
- *
- * **What it carries is files.** The **credential is not in the directory**: it is
- * a macOS keychain entry that Claude Code owns, so treat a re-login after the
- * move as possible rather than as a bug.
- *
- * Renames, never copies: two same-volume renames of a whole directory never
- * open a file inside another program's state store.
- *
- * Idempotent by construction: after a move there is no top-level `settings.json`
- * left to find. Interruptible too — a crash between the renames leaves the
- * staging directory, which the next run picks up and finishes.
- *
- * `vaults` is the registry as `list()` hands it over, `lastOpenedAt` descending.
- * Returns the remote it was given to, or null when nothing moved.
- */
-export async function migrateSharedAgentConfig(
-  userDataDir: string,
-  vaults: readonly { remote: string; path: string }[],
-): Promise<string | null> {
-  const parent = join(userDataDir, AGENT_CONFIG_DIR_NAME)
-  const staging = join(userDataDir, MIGRATING_DIR_NAME)
-
-  // Read the evidence BEFORE anything moves — afterwards the paths are stale.
-  const source = (await stat(staging).then(
-    (s) => s.isDirectory(),
-    () => false,
-  ))
-    ? staging
-    : parent
-  const owner =
-    usedByVault(await readFile(join(source, CLAUDE_JSON), 'utf8').catch(() => null), vaults) ??
-    vaults[0]?.remote ??
-    null
-  if (owner === null) return null // nowhere to put it
-  const slot = join(parent, agentConfigSlug(owner))
-
-  const exists = (path: string) =>
-    stat(path).then(
-      () => true,
-      () => false,
-    )
-  /** Someone has already been here (a downgrade, then an upgrade). Their
-   *  directory is the live one; never bury it under an older copy. */
-  const taken = () => exists(slot)
-
-  const interrupted = await stat(staging).then(
-    (s) => s.isDirectory(),
-    () => false,
-  )
-  if (!interrupted) {
-    // Every install that ever ran `ensureAgentConfigDir` has this file, and the
-    // per-vault layout has only subdirectories — so its presence IS the old shape.
-    const isFlat = await stat(join(parent, SETTINGS)).then(
-      (s) => s.isFile(),
-      () => false,
-    )
-    if (!isFlat) return null
-    // Checked BEFORE the rename, not after: the rename carries the slot into the
-    // staging directory, and a check on the far side would find nothing and bury
-    // the live directory inside itself.
-    if (await taken()) return null
-    await rename(parent, staging)
-  }
-
-  await mkdir(parent, { recursive: true })
-  // The interrupted path skipped the check above; a slot here means someone
-  // rebuilt the parent while the staging directory sat orphaned. Leave both.
-  if (await taken()) return null
-  await rename(staging, slot)
-  return owner
 }

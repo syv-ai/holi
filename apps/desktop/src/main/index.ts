@@ -89,11 +89,7 @@ import { createNotifier } from './reminders/notify'
 import type { VaultTasks } from './reminders/sweep'
 import { createTray } from './tray'
 import { installAppMenu } from './menu'
-import {
-  migrateSharedAgentConfig,
-  resolveVaultAgentConfig,
-  takeFirstSpawn,
-} from './agent/agent-config-dir'
+import { resolveVaultAgentConfig, takeFirstSpawn } from './agent/agent-config-dir'
 import { createAgentSessions, type AgentSessions } from './agent/agent-sessions'
 import { createAgentTerminals } from './agent/agent-terminals'
 import { createClaudeCli } from './agent/claude-cli'
@@ -642,22 +638,6 @@ async function main(): Promise<void> {
   })
   registerGitRoutes(bridge, { rootFor })
   await bridge.start()
-  // The vault agent runs on THIS VAULT's config directory, not the machine's
-  // `~/.claude` or one shared across vaults: `plugins/` and user-scope
-  // `settings.json` are keyed by nothing, so sharing a directory shares
-  // capability.
-  //
-  // A leftover shared directory goes to the vault that actually ran the
-  // agent in it, which the directory itself records. Awaited before the manager
-  // exists, or a fast first spawn provisions an empty directory beside the one
-  // being moved.
-  const movedTo = await migrateSharedAgentConfig(userDataDir, await registry.list()).catch(
-    (err) => {
-      console.warn('[agent] config migration skipped:', err)
-      return null
-    },
-  )
-  if (movedTo) console.log(`[agent] shared config directory is now ${movedTo}'s`)
   const binDir = dirname(googleCliPath)
   const terminals = createAgentTerminals({ getWindow: () => mainWindow })
   agent = createAgentSessions({
