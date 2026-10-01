@@ -338,7 +338,8 @@ test('stays invisible through its own loading states and arrives with the first 
 test('arrives anyway when no page ever paints, so an error is never invisible', async () => {
   mount({ revealAfterMs: 10 })
   const viewer = await screen.findByTestId('pdf')
-  expect(viewer).toHaveClass('opacity-0')
+  // Not asserted hidden first: the fallback may fire before `findBy` returns,
+  // and the test above already holds it hidden until a page paints.
   await waitFor(() => expect(viewer).toHaveClass('motion-in-fade'))
 })
 
