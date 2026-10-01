@@ -275,3 +275,9 @@ and activation.
   disposer forgets them. A failed start is not memoised, so the next open retries.
 - **The settings tab toggles the committed value only.** Turning a plugin off for this machine is
   an `app.local.yaml` edit; the row says so when it applies.
+- **The renderer's door is the mutation `cap.run`** (tRPC reserves `call`). Results cross by
+  structured clone and params as JSON.
+- **A plugin's capability table is declared with `satisfies CapabilityTable`, one namespace per
+  typed client.** An annotation would widen the doors, and the client would offer every verb.
+- **Plugins open only the generic plugin dialog,** never a core one. A claim's menu item gets an
+  opener narrowed to that variant.
