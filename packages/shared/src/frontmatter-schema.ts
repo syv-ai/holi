@@ -63,9 +63,9 @@ const TASK_FIELDS: readonly FieldSpec[] = [
   { key: 'order', kind: { kind: 'text' }, hidden: true },
 ]
 
-/** What `scaffoldNoteText` writes, and nothing more. No `title` (see
- *  `scaffold-md.ts`) and no `created`: that is the file's first commit, shown as
- *  read-only metadata, never a date someone could edit into disagreeing with git. */
+/** A note's one field. No `title`, since the path is its name, and no
+ *  `created`: that is the file's first commit, shown as read-only metadata,
+ *  never a date someone could edit into disagreeing with git. */
 const NOTE_FIELDS: readonly FieldSpec[] = [{ key: 'tags', kind: { kind: 'list' } }]
 
 /**
@@ -108,7 +108,7 @@ export function frontmatterRows(
  * the control can show rather than as an error.
  */
 
-/** Whether a key holds anything to remove: the scaffold's `tags: []` does not. */
+/** Whether a key holds anything to remove: an empty `tags: []` does not. */
 export function isFieldSet(value: unknown): boolean {
   if (value === undefined || value === null || value === '') return false
   return !Array.isArray(value) || value.length > 0

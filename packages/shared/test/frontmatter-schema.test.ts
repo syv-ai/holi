@@ -27,7 +27,7 @@ describe('frontmatterSchema', () => {
     })
   })
 
-  test('a note gets what the scaffold writes, and no title or created date', () => {
+  test('a note has tags, and no title or created date', () => {
     // `created` is the file's first commit, shown read-only, never a field.
     const schema = frontmatterSchema('notes/meeting.md')!
     expect(schema.map((f) => f.key)).toEqual(['tags'])

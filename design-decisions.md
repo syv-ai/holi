@@ -392,6 +392,17 @@ and activation.
   time-boxed. In a long note, lines past the first parse used to stay undecorated until the caret
   moved.
 
+### Cleanup before the tasks extraction
+
+- **Home's picker is sectioned,** Built in, Views and one section per surface of instances under
+  the nav menu's word for it (Apps). A vault app called Home read as Home naming itself.
+- **The memory lives in `.holi/memory/`,** with Holi's other vault files, so the agent's notes to
+  itself stay out of the user's notes. It is hidden in the tree, and still committed, synced,
+  indexed and fenced from vault apps.
+- **`scaffold-md` is gone.** It prepended `tags: []` to every new note on commit, a visible rewrite
+  outside the editor's reload rule, to hold an empty list. A note with no frontmatter now opens
+  its bar to empty rows, and the first value written makes the block.
+
 ## Remaining work: tasks becomes a plugin
 
 Tasks runs as a core part on the plugin contract (`TASKS_PART`) with its claim and transform.

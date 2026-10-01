@@ -143,7 +143,6 @@ describe('settings', () => {
       relink: true,
       'archive-done': false,
       'normalize-md': true,
-      'scaffold-md': true,
       'memory-index': true,
     })
     expect(settings.warnings).toEqual([])
@@ -181,7 +180,6 @@ describe('settings', () => {
       relink: true,
       'archive-done': false,
       'normalize-md': true,
-      'scaffold-md': true,
       'memory-index': true,
     })
   })

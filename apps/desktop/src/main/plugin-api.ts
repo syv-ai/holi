@@ -138,13 +138,12 @@ export interface MainPlugin {
   /**
    * The markdown files the plugin owns. In a vault that runs it the scanner
    * parses them into `snapshot.claimed[id]` instead of listing them as notes,
-   * `normalize-md` puts them in their canonical form and `scaffold-md` leaves
-   * them alone. With the plugin off they are plain notes.
+   * `normalize-md` puts them in their canonical form. With the plugin off they are plain notes.
    */
   claims?: readonly SnapshotClaim[]
   /**
    * Commit transforms it runs in a vault that runs it, after `relink` and
-   * before core's `scaffold-md`, `normalize-md` and `memory-index`. Each is
+   * before core's `normalize-md` and `memory-index`. Each is
    * switched by `hooks[name]` in the vault's settings; its label and default
    * are the matching toggle in `info.transforms`, which the settings tab
    * reads too.

@@ -37,10 +37,6 @@ describe('VAULT_SETTING_DEFAULTS', () => {
       relink: true,
       'archive-done': false,
       'normalize-md': true,
-      // On despite being the one transform whose change is VISIBLE: it fires
-      // only on a file's first commit, and the alternative is a note without a
-      // created date and without its "N chars · Last updated" bar (#17).
-      'scaffold-md': true,
       // On for relink's reason: it only ever rewrites a file it generated
       // and that says so on its first line.
       'memory-index': true,
@@ -60,7 +56,6 @@ describe('VAULT_SETTING_DEFAULTS', () => {
       'memory-index',
       'normalize-md',
       'relink',
-      'scaffold-md',
     ])
   })
 })
@@ -141,7 +136,6 @@ describe('resolveVaultSettings — the local override', () => {
           relink: true,
           'archive-done': true,
           'normalize-md': true,
-          'scaffold-md': true,
           'memory-index': true,
         },
       }),
@@ -151,7 +145,6 @@ describe('resolveVaultSettings — the local override', () => {
       relink: true,
       'archive-done': false,
       'normalize-md': true,
-      'scaffold-md': true,
       'memory-index': true,
     })
   })
@@ -357,7 +350,6 @@ describe('seedSettings', () => {
       relink: true,
       'archive-done': false,
       'normalize-md': true,
-      'scaffold-md': true,
       'memory-index': true,
     })
   })

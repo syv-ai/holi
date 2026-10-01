@@ -155,11 +155,6 @@ export const MEMORY_DIR = '.holi/memory'
  *  assistant does not become readable to untrusted app code by spreading it
  *  over more files. Root-anchored, so `notes/memory/x.md` stays an ordinary note.
  *
- *  **This is load-bearing for `scaffold-md` as well as for vault apps.**
- *  `wantsScaffold` refuses the agent surface, which stops the scaffolder
- *  prepending a `tags:` block to a memory file and to the generated
- *  `.holi/memory/index.md`.
- *
  *  **Git hooks are deliberately absent:** Holi's `pre-commit` lives in
  *  `.git/hooks/`, which the vault store never lists (`IGNORED_DIRS`), so it is
  *  unreachable through the app bridge by construction. A hook seeded into the

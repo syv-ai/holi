@@ -10,19 +10,16 @@ import { VAULT_SETTING_DEFAULTS, type SnapshotClaim } from '@holi/shared'
 import { readVaultSettings } from '../settings'
 import { memoryIndex } from './memory-index'
 import { normalizeMd } from './normalize-md'
-import { scaffoldMd } from './scaffold-md'
 import { relink } from './relink'
 import type { HookSettings, Transform } from './runner'
 
 /** The transforms for a vault whose plugins claim `claims` and add
- *  `plugins` (`MainPlugin.transforms`, core parts' first): `scaffold-md`
- *  leaves claimed files alone and `normalize-md` puts them in their claim's
- *  canonical form.
+ *  `plugins` (`MainPlugin.transforms`, core parts' first): `normalize-md`
+ *  puts claimed files in their claim's canonical form.
  *
  *  Order matters: `relink` runs before the plugins' (`archive-done`) because
  *  both move links, and each should see a tree the other has finished with.
- *  `scaffold-md` goes before `normalize-md` so its block is tidied by the same
- *  pass. `memory-index` is **last** because it indexes the whole tree the
+ *  `memory-index` is **last** because it indexes the whole tree the
  *  others left behind. */
 export function vaultTransforms(
   claims: readonly SnapshotClaim[],
@@ -31,7 +28,6 @@ export function vaultTransforms(
   return [
     { name: 'relink', run: relink },
     ...plugins,
-    { name: 'scaffold-md', run: (root, staged) => scaffoldMd(root, staged, claims) },
     { name: 'normalize-md', run: (root, staged) => normalizeMd(root, staged, claims) },
     { name: 'memory-index', run: memoryIndex },
   ]
@@ -42,8 +38,7 @@ export function vaultTransforms(
  *
  * Taken from `VAULT_SETTING_DEFAULTS` so the seed, onboarding and this const
  * cannot disagree. `archive-done` is **off**: a transform that rearranges
- * someone's work is opt-in. `scaffold-md` is visible but on, because it only
- * fires on a file's first commit.
+ * someone's work is opt-in.
  */
 export const DEFAULT_HOOKS: HookSettings = { ...VAULT_SETTING_DEFAULTS.hooks }
 

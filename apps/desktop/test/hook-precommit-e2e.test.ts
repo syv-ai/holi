@@ -46,13 +46,9 @@ async function vault(settings: Record<string, boolean> = {}): Promise<string> {
   await mkdir(join(dir, '.holi/state'), { recursive: true })
   await mkdir(join(dir, '.holi/settings'), { recursive: true })
   await writeFile(join(dir, '.gitignore'), '*.local.*\n', 'utf8')
-  // `scaffold-md` is off HERE, not in the product: every fixture below is a new
-  // `.md` and would otherwise be committed with a frontmatter block on top,
-  // which obscures what each test is actually asserting about relink and
-  // normalize. One test turns it back on and checks it through a real commit.
   await writeFile(
     join(dir, '.holi/settings/app.yaml'),
-    JSON.stringify({ hooks: { 'scaffold-md': false, ...settings } }, null, 2),
+    JSON.stringify({ hooks: settings }, null, 2),
     'utf8',
   )
 
@@ -121,37 +117,6 @@ describe('normalize-md, through a real commit', () => {
     await git(dir, ['commit', '-q', '-m', 'write'])
 
     expect(await committed(dir, 'a.md')).toBe('# Title\n\nbody\n')
-  })
-})
-
-describe('scaffold-md, through a real commit', () => {
-  it('commits a new note with the frontmatter it arrived without', async () => {
-    // The route the issue was reported against: a `.md` written by anything
-    // other than the file-tree `+` — an agent, an import, another editor.
-    const dir = await vault({ 'scaffold-md': true })
-    await writeFile(join(dir, 'a.md'), '# Title\n\nbody\n', 'utf8')
-    await git(dir, ['add', '-A'])
-    await git(dir, ['commit', '-q', '-m', 'write'])
-
-    const text = await committed(dir, 'a.md')
-    expect(text).toMatch(/^---\ntags: \[\]\n---\n\n/)
-    expect(text.endsWith('# Title\n\nbody\n')).toBe(true)
-  })
-
-  it('leaves a file it did not create alone on a later commit', async () => {
-    // `added` only. A note already in the vault stays as its author left it,
-    // however bare — which is the whole answer to rewriting somebody else's file.
-    const dir = await vault({ 'scaffold-md': false })
-    await writeFile(join(dir, 'theirs.md'), 'body\n', 'utf8')
-    await git(dir, ['add', '-A'])
-    await git(dir, ['commit', '-q', '-m', 'seed'])
-
-    await writeFile(join(dir, '.holi/settings/app.yaml'), JSON.stringify({ hooks: {} }), 'utf8')
-    await writeFile(join(dir, 'theirs.md'), 'body, edited\n', 'utf8')
-    await git(dir, ['add', '-A'])
-    await git(dir, ['commit', '-q', '-m', 'edit'])
-
-    expect(await committed(dir, 'theirs.md')).toBe('body, edited\n')
   })
 })
 

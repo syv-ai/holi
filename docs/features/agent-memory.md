@@ -49,8 +49,7 @@ them. New vaults are seeded with an empty `.holi/memory/index.md` instead of `ME
 names either legacy file when present and suggests splitting it into `.holi/memory/`, which the agent does
 only when the user asks.
 
-**`.holi/memory/` is on the agent surface** (`isAgentSurfacePath`). Vault apps may not read or list it,
-and the `scaffold-md` transform does not prepend frontmatter to a memory or to the index.
+**`.holi/memory/` is on the agent surface** (`isAgentSurfacePath`). Vault apps may not read or list it.
 
 ## Rules
 

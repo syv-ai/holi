@@ -49,19 +49,15 @@ export const CORE_TRANSFORMS: readonly TransformToggle[] = [
   {
     name: 'relink',
     label: 'Fix links when a file moves',
-    explanation: 'Rewrites the links pointing at it, so nothing breaks.',
+    explanation:
+      'When git or the agent moves a file, rewrites the links pointing at it. Moves made in Holi fix their links already.',
     default: true,
   },
   {
     name: 'normalize-md',
     label: 'Tidy markdown',
-    explanation: 'Trailing spaces and stray blank lines, quietly cleaned.',
-    default: true,
-  },
-  {
-    name: 'scaffold-md',
-    label: 'Give a new note its frontmatter',
-    explanation: 'A created date and empty tags, however the note arrived.',
+    explanation:
+      'Trailing spaces and blank lines at the end of a file, and a task’s fields in their usual order.',
     default: true,
   },
   {
@@ -75,7 +71,8 @@ export const CORE_TRANSFORMS: readonly TransformToggle[] = [
     // Off: a transform that rearranges someone's work is opt-in.
     name: 'archive-done',
     label: 'File finished tasks away',
-    explanation: 'Off by default. It moves files, which changes what your board shows.',
+    explanation:
+      'Moves tasks finished more than two weeks ago into archive/, links and all. Off by default, because it changes what your board shows.',
     default: false,
   },
 ]

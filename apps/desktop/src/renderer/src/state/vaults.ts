@@ -3,7 +3,6 @@ import { atomWithStorage } from 'jotai/utils'
 import {
   type DocMeta,
   GITKEEP,
-  scaffoldNoteText,
   type VaultEntry,
   type VaultSnapshot,
   emptyVaultSnapshot,
@@ -224,10 +223,9 @@ export function subscribeToVault(
 export const createNoteAtom = atom(null, async (get, set, path: string) => {
   const remote = get(activeRemoteAtom)
   if (!remote) return
-  // A markdown note opens with starter frontmatter; any other file type is
-  // created empty.
-  const text = path.endsWith('.md') ? scaffoldNoteText() : ''
-  await trpc.notes.create.mutate({ remote, path, text })
+  // Created empty, a note included: its frontmatter bar opens to empty rows,
+  // and the block is written with the first value.
+  await trpc.notes.create.mutate({ remote, path, text: '' })
   await set(loadSnapshotAtom)
   set(activeDocAtom, get(snapshotAtom).docs.find((d) => d.path === path) ?? null)
 })

@@ -16,7 +16,7 @@ Todo / Doing / Done, with one swim lane per folder.
   parses each into `snapshot.claimed.tasks`, as `items` and the `broken` ones that did not parse,
   and keeps them out of the notes. The `normalize-md` commit transform writes a task's frontmatter
   in canonical key order through the claim's `normalize`, which the editor also recognises as
-  Holi's own tidy, and `scaffold-md` leaves claimed files alone. Tasks is still a core part, so
+  Holi's own tidy. Tasks is still a core part, so
   the claim runs in every vault; with a claim absent its files are plain notes.
 - **Dates are stamps**: `YYYY-MM-DD` or `YYYY-MM-DDTHH:MM`, local, no timezone. The time is
   optional on `due` and `reminder`, and its absence means "that day", not midnight.

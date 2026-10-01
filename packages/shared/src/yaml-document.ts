@@ -70,10 +70,12 @@ function annotate(map: YAMLMap, commentFor: CommentFor, path: readonly string[])
  *
  * The frontmatter editor's read half. `null` is the signal to fall back to
  * editing the text: a document that will not parse, or one whose root is a list
- * or a scalar, has no rows to draw.
+ * or a scalar, has no rows to draw. An empty document (nothing, or only
+ * comments) is an empty mapping: a note with no fields yet still has rows.
  */
 export function readYamlMapping(text: string): Record<string, unknown> | null {
   const doc = parseDocument(text)
+  if (doc.errors.length === 0 && doc.contents === null) return {}
   if (doc.errors.length > 0 || !isMap(doc.contents)) return null
   const value: unknown = doc.toJS()
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return null
@@ -94,6 +96,9 @@ export function readYamlMapping(text: string): Record<string, unknown> | null {
  */
 export function editYamlMapping(existing: string, changes: Record<string, unknown>): string {
   const doc: Document<Node, false> = parseDocument(existing)
+  // An empty document is an empty mapping (`readYamlMapping`), so the first
+  // field written into a note with no frontmatter has somewhere to go.
+  if (doc.errors.length === 0 && doc.contents === null) doc.contents = doc.createNode({})
   // Same two failure shapes `mergeYamlDocument` guards: a document that failed
   // to parse can still hand back a map whose `toString` throws. There is
   // nothing here to edit into, so the caller keeps what it had.

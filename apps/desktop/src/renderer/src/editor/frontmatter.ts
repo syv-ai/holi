@@ -325,8 +325,9 @@ const liveBlocks = new WeakMap<HTMLElement, LiveBlock>()
 class FrontmatterWidget extends WidgetType {
   constructor(
     readonly expanded: boolean,
-    /** The YAML between the fences, or null when the file has no frontmatter:
-     *  then the widget is a bar that only reports. */
+    /** The YAML between the fences, or null when the file has no frontmatter.
+     *  A file with a schema (a note) then opens to empty rows, and the first
+     *  value written makes the block; any other file gets a bar that reports. */
     readonly body: string | null,
     readonly chars: number,
     /** Undefined until fetched, null for a file with no history. */
@@ -370,11 +371,12 @@ class FrontmatterWidget extends WidgetType {
 
   /**
    * The summary line, the same open or closed. A block with a collapsed state
-   * leads it with the toggling chevron; a file with no frontmatter, and a
-   * task, get the line bare.
+   * leads it with the toggling chevron; a task, and a file with neither
+   * frontmatter nor a schema to fill one, get the line bare.
    */
   private header(view: EditorView, wrap: HTMLElement, live: LiveBlock): HTMLElement {
-    if (this.body === null || frontmatterAlwaysOpen(this.path)) {
+    const nothingToOpen = this.body === null && frontmatterSchema(this.path) === null
+    if (nothingToOpen || frontmatterAlwaysOpen(this.path)) {
       live.mark = null
       const bare = document.createElement('span')
       bare.className = 'cm-fm-bare'
@@ -393,7 +395,7 @@ class FrontmatterWidget extends WidgetType {
         'aria-hidden': 'true',
       }),
     )
-    paintChevron(mark, live.body ?? this.body)
+    paintChevron(mark, live.body ?? this.body ?? '')
     live.mark = mark
     pill.append(mark)
     const open = !this.expanded
@@ -419,10 +421,9 @@ class FrontmatterWidget extends WidgetType {
     live.header = this.header(view, wrap, live)
     wrap.appendChild(live.header)
 
-    if (this.body === null) {
-      // No frontmatter: the bar still shows, since its header is about the file.
-      // No chevron and nothing here writes a block: `normalize-md` adds
-      // frontmatter on the next commit anyway.
+    if (this.body === null && frontmatterSchema(this.path) === null) {
+      // No frontmatter and no schema to fill one: the bar still shows, since
+      // its header is about the file, but there is nothing to open.
       wrap.setAttribute('data-frontmatter', 'none')
       return wrap
     }
@@ -434,7 +435,9 @@ class FrontmatterWidget extends WidgetType {
     }
 
     wrap.setAttribute('data-frontmatter', 'expanded')
-    const body = this.body
+    // No block yet opens as empty rows; `writeBack` makes the block when the
+    // first value is written, so opening alone never changes the file.
+    const body = this.body ?? ''
     const row = document.createElement('div')
     row.className = 'cm-fm-reveal'
     const host = document.createElement('div')
@@ -512,7 +515,14 @@ class FrontmatterWidget extends WidgetType {
  *  rebuilt, marked as our own edit so the plugin does not remount the block. */
 function writeBack(view: EditorView, live: LiveBlock, body: string): void {
   const region = frontmatterRegion(view.state.doc.toString())
-  if (region === null) return
+  if (region === null) {
+    // The first value in a file with no block: write the block above line one.
+    // Not marked as our own edit, so the decoration is rebuilt: the bar was a
+    // point widget, and only a rebuild turns it into the block over the region.
+    if (body.trim() === '') return
+    view.dispatch({ changes: { from: 0, insert: regionTextFrom(body) } })
+    return
+  }
   live.body = body
   if (live.portal !== null) updateFrontmatterPortal(live.portal, body)
   view.dispatch({
@@ -539,9 +549,11 @@ export function frontmatterDecorations(state: EditorState): DecorationSet {
   const path = state.facet(notePathFacet)
   if (block === null) {
     // No frontmatter: insert the bar above the first line. `side: -1` so the
-    // caret at position 0 lands in the body, not against the widget.
+    // caret at position 0 lands in the body, not against the widget. A file
+    // with a schema can open it, to empty rows.
+    const opens = expanded && frontmatterSchema(path) !== null
     const bare = Decoration.widget({
-      widget: new FrontmatterWidget(false, null, chars, commit, path),
+      widget: new FrontmatterWidget(opens, null, chars, commit, path),
       block: true,
       side: -1,
     })
