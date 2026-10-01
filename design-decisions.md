@@ -383,3 +383,26 @@ and activation.
   survives, but the settings tab can never write an arbitrary one.
 - **The tree keeps its existing task-files toggle** rather than a per-claim `hideable`, which
   would need new header UI. Broken task files now show under it so they can be fixed.
+
+## Remaining work: tasks becomes a plugin
+
+Tasks runs as a core part on the plugin contract (`TASKS_PART`) with its claim and transform.
+What is left, in order, each one commit:
+
+1. **Editor and frontmatter claims.** A claim's `editor` (link chips, mention groups, extensions,
+   one `useEditorDeps`) and `frontmatter` (fields, controls keyed by field, `alwaysOpen`,
+   `suggest`). `RendererPlugin.pathMarks` (glyph, strike, badge) is read by one atom in the tree
+   and tab strip. `RailItem.badge`. A plugin dialog that brings its own chrome, for quick add.
+2. **Background plugins.** `MainPlugin.runsInBackground`, with the tray, the login prompt and the
+   keep-alive owned by the host. Boot activation for plugins enabled in any registered vault.
+   `ctx.vaults/scan/reveal`.
+3. **The tasks tRPC router becomes `tasks.*` capabilities.**
+4. **Tasks main and shared move into `src/plugins/tasks`:** the shared task modules, reminders
+   via `activateApp`, `archive-done` with its toggle on `PluginInfo`, and the seed (the
+   `using-tasks` skill, the deny fragment, and the removal of the Tasks section from `AGENTS.md`).
+5. **Tasks renderer moves into the plugin:** the board surface (homeable), the rail item with its
+   badge, the `task.new` commands and the claim's create, editor, frontmatter and marks. Then the
+   core leftovers are deleted.
+
+Each step's file-level detail was written against the code as of the claimed-snapshot commit.
+Re-derive it from the code rather than trusting line numbers.
