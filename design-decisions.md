@@ -175,3 +175,75 @@ and activation.
   exhaustiveness check is a compile-time `satisfies` at the composition point.
 - **Each door maps `CapabilityError` itself** (tRPC error for the renderer, 422 text for the
   CLI). It is three lines per door, so a shared mapper would be indirection.
+
+### Phase 3
+
+- **What a synced vault holds stays core, whatever this machine runs.** The record merge driver,
+  the `.local.app` never-commit rule and the app `data/` fences stay in core, with a small bundle
+  grammar in shared. A teammate's record edit must merge correctly even on a machine with apps
+  off, for the same reason the agent-surface fence stays core.
+- **The app door is core; the apps plugin is its only opener.** Core dispatch knows door `app`,
+  `ctx.bundle` and `appGrant`. The plugin opens the door once and supplies the consent check.
+  With apps off the door has no opener, so other plugins' app-door capabilities are unreachable
+  with no special case.
+- **Events carry the vault's remote.** The agent's `holi apps open` used to open a path in
+  whichever vault was active. Now a handler drops events for other vaults.
+- **An app is one surface `app` with the bundle path as its id,** listing its instances for the
+  palette, rail and Home picker. A path claim gains `folder` (a directory that is one document),
+  `decorate`, `create` and conditional row items, which tasks reuses.
+- **Pane-header actions are a surface member,** not a separate list.
+- **"Create Home app" and the seeded Home app files are deleted.** Home defaults to the native
+  recents list, and an app is created with `holi apps init` or by asking the agent. Keeping the
+  button would make core's Home know about apps. (Removes a visible button: flagged for the
+  owner.)
+- **`activateVault` is still not needed.** Nothing in apps is per vault beyond what a call's
+  remote resolves.
+
+### Phase 4
+
+- **Claimed files are parsed once, in main, and ride the existing snapshot push.**
+  `snapshot.claimed[pluginId]` replaces the typed `tasks`/`broken` fields. The board stays
+  instant, and with tasks off the files fall into `docs` as notes with no special case. A
+  capability plus change event would add a round trip and a second consistency path, and a
+  renderer-side parse would read every file twice. `scanVault` requires its claims argument, so
+  no caller can silently forget it.
+- **Frontmatter controls are keyed by field, not by kind.** The tasks plugin's `status` control
+  completes the task itself, so core needs no write interceptor.
+- **Staying alive in the background belongs to core, switched on by a plugin flag**
+  (`runsInBackground`). The tray, the launch-at-login prompt and the keep-alive are active only
+  while such a plugin is enabled in some vault. Without tasks, closing the last window quits.
+- **Plugins that work across vaults activate at boot** for any vault that enables them, so the
+  reminder catch-up sweep still runs at launch. The renderer listens to every installed plugin's
+  events, and main gates when it emits.
+- **The seeded `AGENTS.md` loses its Tasks section; the `using-tasks` skill carries it.** A
+  once-only file cannot follow a plugin being toggled. A skill's description is always in
+  Claude's context while the plugin has seeded it.
+- **What the theme and shared UI speak stays core:** the `task-*` theme tokens (vault apps use
+  them), dates, the calendar grid, `DateTimePicker` and the GFM checkbox code, which is not about
+  task files.
+- **The claim has grown members** (`parse`, `normalize`, `editor`, `frontmatter`, `hideable`,
+  `folder`, `decorate`, `create`, `rowMenu`). Each is used by a real plugin, and all are one
+  concept: what a plugin does with the paths it owns.
+
+### Phase 5
+
+- **The provider line is the agent's existing dependency interface** (`AgentSessionsDeps`):
+  Claude's CLI verbs, its session listing, its config silo, its terminal command and its seed.
+  The types keep Claude's shapes until a second provider exists.
+- **Events go both ways.** Terminal keystrokes are ordered fire-and-forget messages
+  (`holi.plugin.send`), not `cap.call`s, because async invokes do not preserve the order a TUI
+  needs. This is concept 6 with a real consumer, not a second transport.
+- **"Ask" is a renderer service, not a capability.** Picking the default target, landing the tab
+  and focusing the terminal are renderer state. Core exposes `useAgentService()`, which is null
+  when no agent plugin is enabled. Every "Ask" button, the reconcile hand-off and the stuck-push
+  investigation gate on it. Other plugins never import the agent plugin.
+- **`activateVault` arrives with the agent, its first real consumer.** `VaultCtx` gives sync
+  pause, commit, head, UI reports and events bound to the remote. It runs after the vault is
+  open, and its disposer runs inside leave while the vault is still active.
+- **A quit guard is its own registration, not a disposer that can ask,** because disposers run
+  after the decision to quit and cannot cancel it.
+- **A sticky sync conflict clears with "Try again", not only when a turn ends.** Without the
+  agent nothing would ever clear it. Reconcile is offered only when an agent service exists.
+- **A seed contribution can own a prefix (`.claude/`).** Other plugins' files and fragments under
+  it are skipped while the owner is off, and seeded once when it turns on. Google's gate, the
+  apps check, the tasks deny rules and PDF's skills all follow from this one rule.
