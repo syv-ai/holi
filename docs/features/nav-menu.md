@@ -1,7 +1,7 @@
 # Nav menu
 
 The foot of the sidebar is one menu: a dock of icon shortcuts that morphs into the full,
-labelled list. It is the way to the surfaces that are not files: Home, Search, the vault's
+labelled list. Its first icons sit centred on the file tree's chevrons above it. It is the way to the surfaces that are not files: Home, Search, the vault's
 apps, the board, settings, and, once Google is connected, email and the agenda. With the nav
 hidden, the same menu runs down the rail.
 

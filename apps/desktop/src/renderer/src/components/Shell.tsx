@@ -338,8 +338,11 @@ export function Shell() {
             </div>
 
             {/* The nav menu on the sidebar's floor. It opens upward
-              over the sessions and the tree. */}
-            <div className="flex shrink-0 p-2">
+              over the sessions and the tree. The left padding centres its
+              first icons on the tree's chevrons: a root row's `pl-6` puts a
+              14px chevron's centre at 31px, and 11px here plus the bar's 4px
+              and a 32px button's 8px inset puts a 16px icon's centre there. */}
+            <div className="flex shrink-0 py-2 pr-2 pl-2.75">
               <NavMenu />
             </div>
           </div>
