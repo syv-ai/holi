@@ -6,18 +6,18 @@
  * is needed: Shell's open effect picks it up and runs the same sequence as a
  * cold start.
  *
- * It also ends every session in the vault, so it asks first, HERE,
- * before `activeRemoteAtom` moves: once the atom changes the open effect closes
- * the old vault and there is nothing left to confirm.
+ * Leaving may cost something running in the vault (the agent's busy
+ * sessions, say: `leaveReasonsAtom`), so it asks first, HERE, before
+ * `activeRemoteAtom` moves: once the atom changes the open effect closes the
+ * old vault and there is nothing left to confirm.
  *
  * State rather than Shell's own: "switch to <vault>" is a command. Shell
  * renders the confirm from `leavingVaultAtom`; the `'add'` intent is set by
  * Shell's add-vault gesture.
  */
 import { atom } from 'jotai'
-import { sessionsWorthAsking } from '../lib/agent-notices'
-import { agentSessionsAtom } from './agent'
 import { emptyWorkspace, workspaceAtom } from './panes'
+import { leaveReasonsAtom } from './plugins'
 import { activeRemoteAtom } from './vaults'
 
 export type LeavingVault = { kind: 'switch'; remote: string } | { kind: 'add' } | null
@@ -32,10 +32,10 @@ export const applyVaultSwitchAtom = atom(null, (_get, set, remote: string): void
   set(activeRemoteAtom, remote)
 })
 
-/** Switch to `remote`, asking first when a session would be lost. */
+/** Switch to `remote`, asking first when leaving would cost something. */
 export const switchVaultAtom = atom(null, (get, set, remote: string): void => {
   if (remote === get(activeRemoteAtom)) return
-  if (sessionsWorthAsking(get(agentSessionsAtom)).length > 0) {
+  if (get(leaveReasonsAtom).length > 0) {
     set(leavingVaultAtom, { kind: 'switch', remote })
     return
   }

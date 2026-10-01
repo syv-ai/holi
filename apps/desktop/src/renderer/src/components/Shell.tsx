@@ -1,7 +1,8 @@
 /**
  * The app, once someone is signed in: a vault, its tree, and whatever tabs are
  * open over it. The snapshot push is subscribed once at the root, so this reads
- * atoms. An agent session is an ordinary tab.
+ * atoms. An agent session is an ordinary tab. What plugins add to the frame
+ * (rail and sidebar sections, drawers) comes from the running plugins.
  */
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { History, PanelLeftClose, PanelLeftOpen, PanelRight } from 'lucide-react'
@@ -17,8 +18,6 @@ import {
   Tooltip,
 } from '@/primitives'
 import { OnboardingRitual } from '@/features/onboarding/OnboardingRitual'
-import { SessionOrbs } from '@/features/agent/SessionOrbs'
-import { TurnReview } from '@/features/agent/TurnReview'
 import { HistoryPanel } from '@/features/history/HistoryPanel'
 import { DialogHost } from './DialogHost'
 import { FrontmatterFieldsHost } from '@/features/frontmatter/FrontmatterFieldsHost'
@@ -49,9 +48,7 @@ import type { PaneDropZone } from '@/lib/tab-drop'
 import type { Surface } from '@/plugin-api/types'
 import type { ConflictResolvers } from '@/lib/editor-reload'
 import { ConflictBanner } from '@/composites/ConflictBanner'
-import { SessionRows } from '@/features/agent/SessionRows'
-import { SessionActions } from '@/features/agent/SessionActions'
-import { VaultSwitchConfirm } from '@/features/agent/VaultSwitchConfirm'
+import { LeaveConfirm } from './LeaveConfirm'
 import { CommandPalette } from '@/features/palette/CommandPalette'
 import { QuickAddHost } from '@/features/tasks/QuickAddHost'
 import { runCommandAtom, useCommandHotkeys } from '../state/commands'
@@ -59,11 +56,14 @@ import { recentOfTab, touchRecentAtom } from '../state/recents'
 import { closePaneWithExitAtom, closeTabWithExitAtom, leavingPaneAtom } from '../state/pane-exit'
 import { applyVaultSwitchAtom, leavingVaultAtom, switchVaultAtom } from '../state/vault-switch'
 import { pendingVaultPromptAtom, startPendingVaultPromptAtom } from '../state/vault-removal'
-import { agentSessionsAtom, useAgentSessions, useAgentTabs } from '@/state/agent'
 import { openPathAtom, useSurfaceTabs } from '@/state/surfaces'
-import { folderClaimsAtom, surfacesAtom } from '@/state/plugins'
+import {
+  folderClaimsAtom,
+  leaveReasonsAtom,
+  runningPluginsAtom,
+  surfacesAtom,
+} from '@/state/plugins'
 import { reconcileAtom } from '@/state/agent-send'
-import { sessionsWorthAsking } from '@/lib/agent-notices'
 
 /** One shared empty array, so a pane not being dragged over keeps the same
  *  `allowed` reference between renders. */
@@ -106,6 +106,7 @@ export function Shell() {
   const openPath = useSetAtom(openPathAtom)
   const folderClaims = useAtomValue(folderClaimsAtom)
   const surfaces = useAtomValue(surfacesAtom)
+  const running = useAtomValue(runningPluginsAtom)
   const [navOpen, setNavOpen] = useAtom(navOpenAtom)
   const historyTarget = useAtomValue(historyTargetPathAtom)
   const reconcile = useSetAtom(reconcileAtom)
@@ -123,16 +124,12 @@ export function Shell() {
   // so Close Tab arrives here rather than as a keydown.
   useEffect(() => window.holi.menu.onCommand((id) => void runCommand(id)), [runCommand])
 
-  // For the vault-switch confirm.
-  const agentSessions = useAtomValue(agentSessionsAtom)
+  // For the add-vault confirm.
+  const leaveReasons = useAtomValue(leaveReasonsAtom)
   // Paint the active vault's colour/chrome theme onto the document root.
   useVaultTheme()
   // Settings edited on disk (the agent's `home:`, a pull) reach the app.
   useSettingsFollowDisk()
-  // The session and terminal lists and their whole-set effects. Mounted here
-  // because the shell outlives every tab.
-  useAgentSessions()
-  useAgentTabs(activeRemote)
   useSurfaceTabs()
 
   // Keep `nowAtom` on the current minute so `overdue` turns over on the clock.
@@ -155,7 +152,7 @@ export function Shell() {
   const [overStrip, setOverStrip] = useState(false)
   const [showAdd, setShowAdd] = useState(false)
   /** Leaving this vault (switching, or adding one, which opens it) waits on an
-   *  answer because sessions are running in it. */
+   *  answer because something running in it would be lost. */
   const [leaving, setLeaving] = useAtom(leavingVaultAtom)
   /** An unmergeable external write, with the two ways out the editor handed up.
    *  Held as one object so the message can never outlive its resolvers. */
@@ -229,11 +226,11 @@ export function Shell() {
   useEffect(() => setBanner(null), [activeRemote])
 
   /**
-   * Adding a vault activates it, stopping sessions as a switch does. Asked at the
-   * trigger, before someone names a repo and waits for a clone.
+   * Adding a vault activates it, leaving this one as a switch does. Asked at
+   * the trigger, before someone names a repo and waits for a clone.
    */
   const addVault = () => {
-    if (sessionsWorthAsking(agentSessions).length > 0) {
+    if (leaveReasons.length > 0) {
       setLeaving({ kind: 'add' })
       return
     }
@@ -265,8 +262,8 @@ export function Shell() {
           side="left"
           open={navOpen}
           label="Sidebar"
-          // Hidden, the nav closes to a rail: session orbs, then the nav menu
-          // on its side at the foot. The toggle rides the drawer's moving edge
+          // Hidden, the nav closes to a rail: the plugins' rail sections (the
+          // session orbs), then the nav menu on its side at the foot. The toggle rides the drawer's moving edge
           // and lands in the rail's top slot.
           edgeControl={
             <IconButton
@@ -283,7 +280,9 @@ export function Shell() {
           }
           rail={
             <>
-              <SessionOrbs />
+              {running.map(({ info, railSection: Section }) =>
+                Section === undefined ? null : <Section key={info.id} />,
+              )}
               <NavMenu orientation="vertical" />
             </>
           }
@@ -299,7 +298,7 @@ export function Shell() {
           <div className="relative flex min-h-0 flex-1 flex-col">
             {showAdd && <OnboardingRitual mode="add-vault" onDismiss={() => setShowAdd(false)} />}
             {leaving !== null && (
-              <VaultSwitchConfirm
+              <LeaveConfirm
                 intent={leaving.kind}
                 onConfirm={() => {
                   if (leaving.kind === 'switch') applySwitch(leaving.remote)
@@ -315,8 +314,9 @@ export function Shell() {
               />
             )}
 
-            {/* The tree, then the vault's live sessions on the row directly
-              above the nav menu: no header, nothing to resize. */}
+            {/* The tree, then the plugins' sidebar sections (the vault's live
+              sessions) directly above the nav menu: no header, nothing to
+              resize. */}
             <div className="flex min-h-0 flex-1 flex-col">
               {/* A flex column, so the tree's own `flex-1` has a height to
                   fill and its list scrolls inside it rather than running on
@@ -330,10 +330,9 @@ export function Shell() {
                   onOpenInNewPane={(path) => openPath(path, 'pane')}
                 />
               </div>
-              {/* Many sessions scroll rather than squeeze the tree away. */}
-              <div className="max-h-[40%] shrink-0 overflow-y-auto">
-                <SessionRows />
-              </div>
+              {running.map(({ info, sidebarSection: Section }) =>
+                Section === undefined ? null : <Section key={info.id} />,
+              )}
             </div>
 
             {/* The nav menu on the sidebar's floor. It opens upward
@@ -393,10 +392,8 @@ export function Shell() {
                     }
                     trailing={
                       <>
-                        {/* An assistant tab's actions (`SessionActions`). */}
-                        {p.tabs[p.active]?.kind === 'agent' && <SessionActions />}
                         {/* The active surface's own controls (an app's reload
-                            and log). */}
+                            and log, an agent tab's new session). */}
                         <SurfaceActions tab={p.tabs[p.active]} surfaces={surfaces} />
                         {/* Version history for the focused note. Only on the
                               active pane: `historyTargetPathAtom` reads its tab,
@@ -428,10 +425,11 @@ export function Shell() {
           </ResizablePanelGroup>
         </div>
 
-        {/* The right-hand drawers; each decides whether it is open. The last
-              turn is a diff over a commit range. */}
+        {/* The right-hand drawers; each decides whether it is open. */}
         <HistoryPanel />
-        <TurnReview />
+        {running.flatMap(({ info, drawers = [] }) =>
+          drawers.map((Drawer, i) => <Drawer key={`${info.id}:${i}`} />),
+        )}
 
         <DialogHost />
         <CommandPalette />

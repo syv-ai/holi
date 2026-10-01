@@ -3,7 +3,7 @@
  * surfaces it adds. Declared here, beside the surface plugins import, so
  * core's state and the plugins read one definition.
  */
-import type { Atom, createStore } from 'jotai'
+import type { Atom, createStore, WritableAtom } from 'jotai'
 import type { ComponentType } from 'react'
 import type { PluginInfo, VaultSnapshot } from '@holi/shared'
 import type { IconGlyph } from '@/primitives'
@@ -80,13 +80,21 @@ export interface PathClaim {
  *
  * `kind` is its name: lowercase letters, digits and dashes (`isSurfaceName`).
  * `render` gets the tab's `id` for a surface that is one tab per thing, and
- * `label` may depend on it.
+ * `label` may depend on it. `visible` is false only for a `keepMounted` tab
+ * that is not its pane's active one.
  */
 export interface Surface {
   kind: string
   label: string | ((id?: string) => string)
   icon: IconGlyph
-  render: ComponentType<{ id?: string }>
+  render: ComponentType<{ id?: string; visible: boolean }>
+  /** Every tab of it stays mounted in its pane, hidden while another tab is
+   *  active, so it keeps state a remount would lose (a terminal's
+   *  scrollback). */
+  keepMounted?: true
+  /** Its tabs open only from its plugin's own controls: the palette, the
+   *  Open commands and Home do not offer it. */
+  unlisted?: true
   /** Offered as the `home` setting, and opened by it. */
   homeable?: true
   /** The ids there are to open, most recently used first: the palette lists
@@ -110,6 +118,10 @@ export interface RailItem {
    *  surface with instances is listed as a group of them, such as "Apps". */
   label?: string
   visible?: Atom<boolean>
+  /** Run this command (`state/commands.ts`) instead of opening the surface. */
+  command?: string
+  /** While true, the item shows that something of the surface's is running. */
+  live?: Atom<boolean>
 }
 
 export interface SettingsSectionHeading {
@@ -135,7 +147,7 @@ export interface SettingsSection {
 }
 
 /** The renderer's one store, as an event handler gets it. */
-export type PluginStore = Pick<ReturnType<typeof createStore>, 'get' | 'set'>
+export type PluginStore = Pick<ReturnType<typeof createStore>, 'get' | 'set' | 'sub'>
 
 /**
  * What a plugin does when its main side emits `name`. Main sends an event
@@ -147,6 +159,50 @@ export type PluginEventHandler = (
   store: PluginStore,
 ) => void
 
+/** What an ask or a start answers: done, or why not, in words to show. */
+export type AskResult = { ok: true } | { ok: false; message: string }
+
+/** One of the vault's live agent sessions, as an ask offers it. */
+export interface AgentSessionRow {
+  id: string
+  name: string
+  state: 'needs-you' | 'working' | 'idle'
+}
+
+/** Where an ask may go, and where it goes when nobody picks. */
+export interface AskTargets {
+  /** Sessions that can take an ask now. */
+  sessions: readonly { id: string; name: string }[]
+  /** A session id, or `'new'` for a new session. */
+  default: string
+}
+
+/**
+ * The vault's agent, as everything outside its plugin uses it: every "Ask"
+ * button, the reconcile hand-off and the stuck-push investigation. Core's
+ * `useAgentService()` is null while no plugin provides one.
+ */
+export interface AgentService {
+  /** What it is called in copy, such as "Ask Claude to reconcile". */
+  name: string
+  sessions: Atom<readonly AgentSessionRow[]>
+  targets: Atom<AskTargets>
+  /** Put `text` in a session's input, unsent, and bring it forward. */
+  ask(args: { text: string; target: string }): Promise<AskResult>
+  /** A new session whose first turn is `prompt`, brought forward. */
+  start(args: { name?: string; prompt: string }): Promise<AskResult>
+}
+
+/** What a plugin provides for `AgentService`: the same, as atoms, which
+ *  core binds to the store. */
+export interface AgentServiceSource {
+  name: string
+  sessions: Atom<readonly AgentSessionRow[]>
+  targets: Atom<AskTargets>
+  ask: WritableAtom<null, [{ text: string; target: string }], Promise<AskResult>>
+  start: WritableAtom<null, [{ name?: string; prompt: string }], Promise<AskResult>>
+}
+
 export interface RendererPlugin {
   info: PluginInfo
   /** Handlers for the plugin's events, by name. Subscribed at boot for every
@@ -156,4 +212,20 @@ export interface RendererPlugin {
   surfaces?: readonly Surface[]
   rail?: readonly RailItem[]
   settingsSections?: readonly SettingsSection[]
+  /** Shown in the hidden sidebar's rail, above the nav menu. */
+  railSection?: ComponentType
+  /** Shown in the sidebar, under the file tree. */
+  sidebarSection?: ComponentType
+  /** Right-hand drawers; each decides whether it is open. */
+  drawers?: readonly ComponentType[]
+  /**
+   * Why leaving the open vault (switching, or adding one) costs something
+   * now, as a sentence, or null when it costs nothing. Core asks before
+   * leaving while any plugin's says something.
+   */
+  leaveGuard?: Atom<string | null>
+  /** Runs while `remote` is the open vault and the plugin runs in it; the
+   *  returned undo runs when either stops. */
+  vault?(remote: string, store: PluginStore): () => void
+  agent?: AgentServiceSource
 }

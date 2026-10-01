@@ -15,7 +15,7 @@ import { render, screen, waitFor } from '@/test/render'
 import { useCommandHotkeys } from '@/state/commands'
 import { agentSessionsAtom, agentTerminalsAtom, type AgentSession } from '@/state/agent'
 import { paletteAtom } from '@/state/palette'
-import { emptyWorkspace, openAgentTab, workspaceAtom } from '@/state/panes'
+import { emptyWorkspace, openSurface, workspaceAtom } from '@/state/panes'
 import { recentsByVaultAtom } from '@/state/recents'
 import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
 import { CommandPalette } from '../CommandPalette'
@@ -214,7 +214,7 @@ test('the Ask row is last once something is typed, and sends to the current sess
   store.set(agentSessionsAtom, [live])
   // The session's own window is the one showing, which is what makes it current.
   store.set(agentTerminalsAtom, [{ id: 't1', launchedFor: 's1', title: '' }])
-  store.set(workspaceAtom, (w) => openAgentTab(w, 't1'))
+  store.set(workspaceAtom, (w) => openSurface(w, 'agent', 't1'))
   mount()
 
   await userEvent.keyboard('{Meta>}p{/Meta}')

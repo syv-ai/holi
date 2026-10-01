@@ -9,6 +9,7 @@
  */
 import type { createStore } from 'jotai'
 import { trpc } from '../lib/trpc'
+import { agentTabId } from './agent'
 import { activeTab, workspaceAtom } from './panes'
 import { recentsAtom } from './recents'
 import { activeRemoteAtom } from './vaults'
@@ -30,7 +31,7 @@ export function reportUiToMain(store: ReturnType<typeof createStore>): () => voi
       p.tabs.flatMap((t) => (t.kind === 'note' ? [t.path] : [])),
     )
     if (tab?.kind === 'note') focusedNote = tab.path
-    else if (tab?.kind !== 'agent') focusedNote = null
+    else if (agentTabId(tab) === null) focusedNote = null
     if (focusedNote !== null && !openPaths.includes(focusedNote)) focusedNote = null
     trpc.ui.report
       .mutate({ remote, focusedPath: focusedNote, openPaths, recents: store.get(recentsAtom) })

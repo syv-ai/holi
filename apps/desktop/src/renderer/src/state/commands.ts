@@ -185,7 +185,7 @@ export const STATIC_COMMANDS: readonly Command[] = [
 /** The table: the static rows, then one "switch to" per other vault. */
 export const commandsAtom = atom<Command[]>((get) => {
   const opens = [...get(surfacesAtom).values()]
-    .filter((s) => s.kind !== 'home')
+    .filter((s) => s.kind !== 'home' && s.unlisted !== true)
     .map((s): Command => ({
       id: `${s.kind}.open`,
       label: `Open ${s.label}`,

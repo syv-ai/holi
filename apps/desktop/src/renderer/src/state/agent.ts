@@ -1,7 +1,25 @@
-import { atom, useAtomValue, useSetAtom } from 'jotai'
-import { useEffect, useRef } from 'react'
-import { activeTab, closeAgentTabs, workspaceAtom } from './panes'
+import { atom } from 'jotai'
+import { sessionsWorthAsking } from '@/lib/agent-notices'
+import type { PluginStore } from '@/plugin-api/types'
+import { activeTab, workspaceAtom, type Tab } from './panes'
+import { closeSurfaceTabsAtom, surfaceTabIdsAtom } from './surfaces'
 import { resetTurnReviewAtom, turnReviewOpenAtom } from './turns'
+
+/**
+ * The surface an agent tab is: a terminal onto Claude Code, by the id main
+ * minted for it, the agents list or one background session.
+ *
+ * **Closing the tab does not end a session**: it detaches, the session keeps
+ * running, and the sidebar's rows are how you get back to it. What the tab
+ * shows can change under it (`←` goes back to the list), so it is named by its
+ * terminal, never by a session.
+ */
+export const AGENT_SURFACE = 'agent'
+
+/** The terminal id an agent tab shows, or null for any other tab. */
+export function agentTabId(tab: Tab | null | undefined): string | null {
+  return tab?.kind === 'surface' && tab.surface === AGENT_SURFACE ? (tab.id ?? null) : null
+}
 
 /** What a session is doing. Claude Code's own answer, read by main. */
 export type SessionState = 'needs-you' | 'working' | 'idle'
@@ -62,9 +80,9 @@ export const activeSessionAtom = atom<AgentSession | null>((get) => {
   const terminals = get(agentTerminalsAtom)
   const byId = (id: string | null) =>
     id === null ? null : (sessions.find((s) => s.id === id) ?? null)
-  const tab = activeTab(get(workspaceAtom))
-  if (tab?.kind === 'agent') {
-    const shown = byId(terminals.find((t) => t.id === tab.id)?.launchedFor ?? null)
+  const tabId = agentTabId(activeTab(get(workspaceAtom)))
+  if (tabId !== null) {
+    const shown = byId(terminals.find((t) => t.id === tabId)?.launchedFor ?? null)
     if (shown !== null) return shown
   }
   for (const t of [...terminals].reverse()) {
@@ -157,78 +175,86 @@ const FALLBACK_GEOMETRY = { cols: 80, rows: 24 }
 export const agentGeometryAtom = atom(FALLBACK_GEOMETRY)
 
 /**
- * Keep the session and terminal lists in step with main, for as long as the
- * app is open.
- *
- * **Mounted by the app shell**, not by whichever view happens to read them: the
- * sidebar's rows and the nav's agent item have to be right before any agent
- * tab exists.
+ * Why leaving the vault costs something now: the sessions mid-turn or waiting
+ * on you, the same line the sidebar's Stop draws. An idle conversation stops
+ * quietly and picks up again from the agents list. A count rather than a list
+ * for several: three names in a sentence is a list to read, and the sidebar
+ * is already showing them.
  */
-export function useAgentSessions(): void {
-  const setSessions = useSetAtom(agentSessionsAtom)
-  const setTerminals = useSetAtom(agentTerminalsAtom)
-
-  useEffect(() => {
-    // A push that lands while the mount-time question is in flight is NEWER
-    // than its answer, and letting the answer win would drop what was just
-    // announced.
-    let pushedSessions = false
-    let pushedTerminals = false
-    const offSessions = window.holi.agent.onSessions((list) => {
-      pushedSessions = true
-      setSessions(list)
-    })
-    const offTerminals = window.holi.agent.onTerminals((list) => {
-      pushedTerminals = true
-      setTerminals(list)
-    })
-    void window.holi.agent.sessions().then((list) => {
-      if (!pushedSessions) setSessions(list)
-    })
-    void window.holi.agent.terminals().then((list) => {
-      if (!pushedTerminals) setTerminals(list)
-    })
-    return () => {
-      offSessions()
-      offTerminals()
-    }
-  }, [setSessions, setTerminals])
-}
+export const agentLeaveGuardAtom = atom((get): string | null => {
+  const busy = sessionsWorthAsking(get(agentSessionsAtom))
+  const one = busy[0]
+  if (one === undefined) return null
+  const why =
+    busy.length > 1
+      ? `${busy.length} sessions are still running.`
+      : one.state === 'needs-you'
+        ? `${one.name} is waiting for you to answer something.`
+        : `${one.name} is part way through a turn.`
+  return (
+    `${why} Leaving this vault stops every session in it. What they have already ` +
+    'written stays in it, and each conversation stays in the agents list, where it ' +
+    'picks up where it left off.'
+  )
+})
 
 /**
- * Close the tabs of terminals that have gone, and clear the turn review on a
- * vault switch.
+ * The agent while `remote` is the open vault: keep the session and terminal
+ * lists in step with main, close the tabs of terminals that have gone, detach
+ * a terminal whose last tab closed, and clear the turn review on the way out.
  *
- * Both are about the SET rather than any one terminal, so they live in the shell
- * rather than in a tab that may not be open when they need to happen.
+ * Asked fresh for every vault, so a renderer reload pulls the lists again.
  */
-export function useAgentTabs(activeRemote: string | null): void {
-  const terminals = useAtomValue(agentTerminalsAtom)
-  const setWorkspace = useSetAtom(workspaceAtom)
-  const resetTurnReview = useSetAtom(resetTurnReviewAtom)
-  const setTurnReviewOpen = useSetAtom(turnReviewOpenAtom)
+export function agentVault(_remote: string, store: PluginStore): () => void {
+  // A push that lands while the opening question is in flight is NEWER than
+  // its answer, and letting the answer win would drop what was just announced.
+  let pushedSessions = false
+  let pushedTerminals = false
+  const offSessions = window.holi.agent.onSessions((list) => {
+    pushedSessions = true
+    store.set(agentSessionsAtom, list)
+  })
+  const offTerminals = window.holi.agent.onTerminals((list) => {
+    pushedTerminals = true
+    store.set(agentTerminalsAtom, list)
+  })
+  void window.holi.agent.sessions().then((list) => {
+    if (!pushedSessions) store.set(agentSessionsAtom, list)
+  })
+  void window.holi.agent.terminals().then((list) => {
+    if (!pushedTerminals) store.set(agentTerminalsAtom, list)
+  })
 
-  const ids = terminals.map((t) => t.id).join('\u0000')
-  useEffect(() => {
-    const live = ids === '' ? [] : ids.split('\u0000')
-    setWorkspace((w) => closeAgentTabs(w, live))
-  }, [ids, setWorkspace])
+  // A terminal leaves main's list when its client exits: a detach, `/exit`,
+  // or its session stopped. Its tabs go with it.
+  const offGone = store.sub(agentTerminalsAtom, () =>
+    store.set(
+      closeSurfaceTabsAtom,
+      AGENT_SURFACE,
+      store.get(agentTerminalsAtom).map((t) => t.id),
+    ),
+  )
 
-  /**
-   * A vault switch clears the turn review.
-   *
-   * The record is per vault, so without this the review stays open on the
-   * previous vault's turn, and every query it makes asks the NEW vault's git
-   * for a range it has never heard of.
-   *
-   * The edge and not the level: on mount there is nothing to clear, and clearing
-   * anyway would throw away a record that has just been loaded.
-   */
-  const lastRemote = useRef(activeRemote)
-  useEffect(() => {
-    if (lastRemote.current === activeRemote) return
-    lastRemote.current = activeRemote
-    resetTurnReview()
-    setTurnReviewOpen(false)
-  }, [activeRemote, resetTurnReview, setTurnReviewOpen])
+  // Closing an agent tab only ends its window (the session keeps running);
+  // without a detach the PTY would linger in main's list, which the palette
+  // and the reuse paths read. Diffed across each change of the open tabs, so
+  // a tab moved between panes is not a close.
+  const tabs = surfaceTabIdsAtom(AGENT_SURFACE)
+  let open = new Set(store.get(tabs))
+  const offTabs = store.sub(tabs, () => {
+    const now = new Set(store.get(tabs))
+    for (const id of open) if (!now.has(id)) void window.holi.agent.close(id)
+    open = now
+  })
+
+  return () => {
+    offSessions()
+    offTerminals()
+    offGone()
+    offTabs()
+    // The turn record is per vault: left open, the review would ask the next
+    // vault's git for a range it has never heard of.
+    store.set(resetTurnReviewAtom)
+    store.set(turnReviewOpenAtom, false)
+  }
 }

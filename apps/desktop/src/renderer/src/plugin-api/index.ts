@@ -7,6 +7,11 @@
  * importing a plugin (only `main.tsx` installs the list).
  */
 export type {
+  AgentService,
+  AgentServiceSource,
+  AgentSessionRow,
+  AskResult,
+  AskTargets,
   ClaimCreate,
   ClaimDecoration,
   ClaimMenuItem,
@@ -33,10 +38,13 @@ export { activeModeAtom } from '@/state/color-scheme'
 export { openNoteTabAtom } from '@/state/panes'
 export {
   closeSurfaceTabAtom,
+  closeSurfaceTabsAtom,
   openPathAtom,
   openSurfaceAtom,
+  surfaceTabIdsAtom,
   tabForPathAtom,
 } from '@/state/surfaces'
+export { useAgentService } from '@/state/agent-service'
 export { surfacesAtom } from '@/state/plugins'
 export { byRecency, recentsAtom } from '@/state/recents'
 export { openCommitInHistoryAtom } from '@/state/history'

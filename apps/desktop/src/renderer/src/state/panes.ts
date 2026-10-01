@@ -43,26 +43,14 @@ export interface SurfaceTab {
 }
 
 /**
- * A tab is either *of* something (a note by path, a session by id) or a
- * surface.
+ * A tab is either a note, by path, or a surface (one per thing when it has an
+ * id, such as an app or an agent terminal).
  *
  * The `preview` flag is VS Code's two-state model: a preview tab (italic) is the
  * single one that a single-click *replaces* rather than adding to, so browsing a
  * vault costs one tab. Absent or false means pinned.
  */
-export type Tab =
-  | { kind: 'note'; path: string; preview?: boolean }
-  /**
-   * A terminal onto Claude Code, by the id main minted for it: the
-   * agents list, or one background session.
-   *
-   * **Closing the tab does not end a session**: it detaches, the session keeps
-   * running, and the sidebar's rows are how you get back to it. What the tab
-   * shows can change under it (`←` goes back to the list), so it is named by
-   * its terminal, never by a session.
-   */
-  | { kind: 'agent'; id: string }
-  | SurfaceTab
+export type Tab = { kind: 'note'; path: string; preview?: boolean } | SurfaceTab
 
 export interface Pane {
   tabs: Tab[]
@@ -88,7 +76,6 @@ export const workspaceAtom = atom<Workspace>(emptyWorkspace())
 function sameTab(a: Tab, b: Tab): boolean {
   if (a.kind !== b.kind) return false
   if (a.kind === 'note' && b.kind === 'note') return a.path === b.path
-  if (a.kind === 'agent' && b.kind === 'agent') return a.id === b.id
   if (a.kind === 'surface' && b.kind === 'surface') {
     return a.surface === b.surface && a.id === b.id
   }
@@ -145,12 +132,6 @@ export function openSurface(workspace: Workspace, surface: string, id?: string):
   const existing = findTab(workspace, tab)
   if (existing !== null) return focusExisting(workspace, existing)
   return updatePane(workspace, (pane) => ({ tabs: [tab, ...pane.tabs], active: 0 }))
-}
-
-/** Show one agent terminal, or focus its tab if already open. Deduped by id:
- *  two views over one PTY would both be attached to it. */
-export function openAgentTab(workspace: Workspace, id: string): Workspace {
-  return openTab(workspace, { kind: 'agent', id })
 }
 
 /**
@@ -358,12 +339,26 @@ export function closeTabsForPaths(
   )
 }
 
-/**
- * Close the tabs of terminals that are no longer in main's list. A terminal
- * leaves it when its client exits: a detach, `/exit`, or its session stopped.
- */
-export function closeAgentTabs(workspace: Workspace, liveIds: string[]): Workspace {
-  return closeTabsWhere(workspace, (t) => t.kind === 'agent' && !liveIds.includes(t.id))
+/** Close the tabs of `surface` whose id is not in `keep`: what its plugin
+ *  says no longer exists, such as a terminal that has exited. */
+export function closeSurfaceTabsExcept(
+  workspace: Workspace,
+  surface: string,
+  keep: readonly string[],
+): Workspace {
+  const gone = (t: Tab) =>
+    t.kind === 'surface' && t.surface === surface && t.id !== undefined && !keep.includes(t.id)
+  if (!workspace.panes.some((p) => p.tabs.some(gone))) return workspace
+  return closeTabsWhere(workspace, gone)
+}
+
+/** The ids of every `surface` tab, across every pane, in pane order. */
+export function surfaceTabIds(workspace: Workspace, surface: string): string[] {
+  return workspace.panes.flatMap((p) =>
+    p.tabs.flatMap((t) =>
+      t.kind === 'surface' && t.surface === surface && t.id !== undefined ? [t.id] : [],
+    ),
+  )
 }
 
 /**

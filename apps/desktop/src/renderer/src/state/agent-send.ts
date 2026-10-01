@@ -14,6 +14,7 @@ import { buildReconcilePrompt } from '../lib/reconcile-prompt'
 import { focusSessionTerminal } from '../lib/session-terminals'
 import { trpc } from '../lib/trpc'
 import {
+  AGENT_SURFACE,
   agentGeometryAtom,
   agentSessionsAtom,
   agentTerminalsAtom,
@@ -22,7 +23,7 @@ import {
   type AgentTarget,
   type AgentTerminal,
 } from './agent'
-import { openAgentTab, workspaceAtom } from './panes'
+import { openSurface, workspaceAtom } from './panes'
 
 /** What an action answers: done, or why not, in words the caller can print. */
 export type AgentResult = { ok: true } | { ok: false; message: string }
@@ -30,7 +31,8 @@ export type AgentResult = { ok: true } | { ok: false; message: string }
 /** Show a terminal's tab and give it the keyboard. A miss on the focus is
  *  fine: a terminal not built yet focuses itself when it is. */
 function land(set: Setter, terminalId: string): void {
-  set(workspaceAtom, (w) => openAgentTab(w, terminalId))
+  // Deduped by id: two views over one PTY would both be attached to it.
+  set(workspaceAtom, (w) => openSurface(w, AGENT_SURFACE, terminalId))
   focusSessionTerminal(terminalId)
 }
 

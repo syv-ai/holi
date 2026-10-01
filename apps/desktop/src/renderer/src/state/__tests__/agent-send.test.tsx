@@ -21,7 +21,7 @@ import {
   startSessionAtom,
   stopSessionAtom,
 } from '../agent-send'
-import { activeTab, openAgentTab, workspaceAtom } from '../panes'
+import { activeTab, openSurface, workspaceAtom } from '../panes'
 import { registerSessionTerminal } from '../../lib/session-terminals'
 
 const session = (over: Partial<AgentSession> & { id: string }): AgentSession => ({
@@ -71,7 +71,7 @@ function storeWith(sessions: AgentSession[] = [], terminals: AgentTerminal[] = [
 /** The agent tab showing, if the showing tab is one at all. */
 const shown = (store: ReturnType<typeof createStore>): string | null => {
   const tab = activeTab(store.get(workspaceAtom))
-  return tab?.kind === 'agent' ? tab.id : null
+  return tab?.kind === 'surface' && tab.surface === 'agent' ? (tab.id ?? null) : null
 }
 
 test('going to the agents opens the list when Holi has none open', async () => {
@@ -198,19 +198,19 @@ test('the default target is the session the showing tab was opened for', () => {
     [session({ id: 'a' }), session({ id: 'b' })],
     [terminal('t-a', 'a'), terminal('t-b', 'b')],
   )
-  store.set(workspaceAtom, (w) => openAgentTab(w, 't-a'))
+  store.set(workspaceAtom, (w) => openSurface(w, 'agent', 't-a'))
   expect(store.get(defaultAgentTargetAtom)).toBe('a')
 })
 
 test('the default target is a new session when there is none, or it needs you', () => {
   expect(storeWith().get(defaultAgentTargetAtom)).toBe('new')
   const waiting = storeWith([session({ id: 'a', state: 'needs-you' })], [terminal('t-a', 'a')])
-  waiting.set(workspaceAtom, (w) => openAgentTab(w, 't-a'))
+  waiting.set(workspaceAtom, (w) => openSurface(w, 'agent', 't-a'))
   expect(waiting.get(defaultAgentTargetAtom)).toBe('new')
 })
 
 test('a list tab has no session of its own, so the default falls back to the last one opened', () => {
   const store = storeWith([session({ id: 'a' })], [terminal('t-a', 'a'), terminal('t-list', null)])
-  store.set(workspaceAtom, (w) => openAgentTab(w, 't-list'))
+  store.set(workspaceAtom, (w) => openSurface(w, 'agent', 't-list'))
   expect(store.get(defaultAgentTargetAtom)).toBe('a')
 })

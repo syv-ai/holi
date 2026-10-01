@@ -63,6 +63,7 @@ import {
   Kbd,
 } from '@/primitives'
 import {
+  AGENT_SURFACE,
   agentSessionsAtom,
   agentTerminalsAtom,
   defaultAgentTargetAtom,
@@ -81,7 +82,6 @@ import {
   activeTab,
   openBeside,
   openInNewPane,
-  openAgentTab,
   openPinned,
   openSurface,
   workspaceAtom,
@@ -98,7 +98,7 @@ function tabOf(row: PaletteRow): Tab | null {
     case 'path':
       return { kind: 'note', path: row.key }
     case 'terminal':
-      return { kind: 'agent', id: row.key }
+      return { kind: 'surface', surface: AGENT_SURFACE, id: row.key }
     case 'session':
       return null
     case 'surface':
@@ -180,7 +180,7 @@ export function CommandPalette(): React.JSX.Element {
         // Home has no row: "Go home" is the command, and Home is where it says.
         // A surface of instances (apps) is listed by them, not as itself.
         surfaces: [...surfaces.values()]
-          .filter((s) => s.kind !== 'home' && s.instances === undefined)
+          .filter((s) => s.kind !== 'home' && s.instances === undefined && s.unlisted !== true)
           .map((s) => ({ kind: s.kind, label: surfaceLabel(s) })),
         instances,
       }),
@@ -295,7 +295,7 @@ export function CommandPalette(): React.JSX.Element {
         case 'path':
           return openPinned(w, row.key)
         case 'terminal':
-          return openAgentTab(w, row.key)
+          return openSurface(w, AGENT_SURFACE, row.key)
         case 'session':
           return w // opened above, through main
         case 'surface':

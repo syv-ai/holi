@@ -12,38 +12,55 @@ import type { Pane, Tab } from '@/state/panes'
 import { installedPluginsAtom } from '@/state/plugins'
 import { PaneView } from '../PaneView'
 
-// The terminal is stubbed: xterm needs geometry jsdom does not have.
-vi.mock('@/features/agent/SessionTerminal', () => ({
-  SessionTerminal: ({ terminalId, visible }: { terminalId: string; visible: boolean }) => (
-    <div data-terminal={terminalId} data-visible={visible} />
-  ),
-}))
-vi.mock('@/features/agent/TurnChip', () => ({ TurnChip: () => <div data-turn-chip /> }))
-
 /** Empty, so the body renders the placeholder rather than CodeMirror. */
 const empty: Pane = { tabs: [], active: -1 }
 
 const ALL: PaneDropZone[] = ['before', 'into', 'after']
 
+/** A test-only plugin with a kept-mounted surface, standing in for a
+ *  terminal whose scrollback a remount would lose. */
+function keptStore() {
+  const store = createStore()
+  store.set(installedPluginsAtom, [
+    {
+      info: { id: 'kept', label: 'Kept', default: true },
+      surfaces: [
+        {
+          kind: 'kept',
+          label: 'Kept',
+          icon: () => null,
+          keepMounted: true,
+          render: ({ id, visible }) => <div data-terminal={id} data-visible={visible} />,
+        },
+      ],
+    },
+  ])
+  return store
+}
+
+const kept = (id: string): Tab => ({ kind: 'surface', surface: 'kept', id })
+
 function pane(props: Partial<Parameters<typeof PaneView>[0]> = {}) {
   const onDropTab = vi.fn()
   const onDropEdge = vi.fn()
   render(
-    <PaneView
-      pane={empty}
-      allowed={ALL}
-      focused
-      onFocus={() => {}}
-      onSelect={() => {}}
-      onPin={() => {}}
-      onCloseTab={() => {}}
-      onEdit={() => {}}
-      onOpenNote={() => {}}
-      onConflict={() => {}}
-      onDropTab={onDropTab}
-      onDropEdge={onDropEdge}
-      {...props}
-    />,
+    <Provider store={keptStore()}>
+      <PaneView
+        pane={empty}
+        allowed={ALL}
+        focused
+        onFocus={() => {}}
+        onSelect={() => {}}
+        onPin={() => {}}
+        onCloseTab={() => {}}
+        onEdit={() => {}}
+        onOpenNote={() => {}}
+        onConflict={() => {}}
+        onDropTab={onDropTab}
+        onDropEdge={onDropEdge}
+        {...props}
+      />
+    </Provider>,
   )
   return { onDropTab, onDropEdge }
 }
@@ -169,33 +186,25 @@ test('a pane that is staying is untouched', () => {
   expect(main).not.toHaveClass('pointer-events-none')
 })
 
-test('keeps every agent tab’s terminal mounted, showing only the active one', () => {
+test('keeps every tab of a kept-mounted surface mounted, showing only the active one', () => {
   // An unmounted terminal loses its scrollback and must visibly replay main's
   // mirror.
-  pane({
-    pane: {
-      tabs: [
-        { kind: 'agent', id: 'a' },
-        { kind: 'agent', id: 'b' },
-      ],
-      active: 1,
-    },
-  })
+  pane({ pane: { tabs: [kept('a'), kept('b')], active: 1 } })
 
   expect(document.querySelector('[data-terminal="a"]')?.getAttribute('data-visible')).toBe('false')
   expect(document.querySelector('[data-terminal="b"]')?.getAttribute('data-visible')).toBe('true')
 })
 
-test('an agent tab shows its terminal instead of the editor', () => {
-  pane({ pane: { tabs: [{ kind: 'agent', id: 'a' }], active: 0 } })
+test('a kept-mounted tab shows instead of the editor', () => {
+  pane({ pane: { tabs: [kept('a')], active: 0 } })
 
   expect(document.querySelector('[data-terminal="a"]')).not.toBeNull()
   expect(screen.queryByText('select or create a note')).not.toBeInTheDocument()
 })
 
-test('a note tab beside an agent tab keeps its terminal alive', () => {
+test('a note tab beside a kept-mounted tab keeps it alive', () => {
   // The PTY keeps running, so its terminal must survive switching to a note.
-  pane({ pane: { tabs: [{ kind: 'agent', id: 'a' }, note('plan')], active: 1 } })
+  pane({ pane: { tabs: [kept('a'), note('plan')], active: 1 } })
 
   expect(document.querySelector('[data-terminal="a"]')?.getAttribute('data-visible')).toBe('false')
 })

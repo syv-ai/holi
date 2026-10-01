@@ -3,7 +3,7 @@
  * drive them. What moved out of Shell was a timer and a confirm; what these
  * pin is that the timing and the asking survived the move.
  */
-import { createStore } from 'jotai'
+import { atom, createStore } from 'jotai'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const motion = vi.hoisted(() => ({ reduced: false }))
@@ -12,7 +12,7 @@ vi.mock('../src/renderer/src/lib/motion', () => ({
   motionDurationMs: () => 190,
 }))
 
-import { agentSessionsAtom, type AgentSession } from '../src/renderer/src/state/agent'
+import { installedPluginsAtom } from '../src/renderer/src/state/plugins'
 import {
   closeActiveTabWithExitAtom,
   closePaneWithExitAtom,
@@ -142,14 +142,20 @@ describe('⌘W', () => {
   })
 })
 
-const live = (id: string): AgentSession =>
-  ({ id, name: id, state: 'working' }) satisfies AgentSession
+/** A test-only plugin for which leaving costs something. */
+const busy = (store: ReturnType<typeof createStore>): void =>
+  store.set(installedPluginsAtom, [
+    {
+      info: { id: 'busy', label: 'Busy', default: true },
+      leaveGuard: atom<string | null>('A turn is running.'),
+    },
+  ])
 
 describe('switching vault', () => {
-  it('asks first when a session would be lost, and does not move the remote', () => {
+  it('asks first when leaving would cost something, and does not move the remote', () => {
     const store = createStore()
     store.set(activeRemoteAtom, 'o/a')
-    store.set(agentSessionsAtom, [live('s1')])
+    busy(store)
 
     store.set(switchVaultAtom, 'o/b')
 
@@ -183,7 +189,7 @@ describe('switching vault', () => {
   it('is a no-op on the active vault', () => {
     const store = createStore()
     store.set(activeRemoteAtom, 'o/a')
-    store.set(agentSessionsAtom, [live('s1')])
+    busy(store)
 
     store.set(switchVaultAtom, 'o/a')
 

@@ -43,6 +43,7 @@ import type { Tab } from '@/state/panes'
 import { surfacesAtom } from '@/state/plugins'
 import {
   agentSessionsAtom,
+  agentTabId,
   agentTerminalsAtom,
   terminalLabel,
   type AgentSession,
@@ -87,11 +88,7 @@ function settleMotion(): { duration: number; easing: string } {
 
 /** A tab's stable identity, for React keys and for the pill-element map. */
 export function tabKey(tab: Tab): string {
-  return tab.kind === 'note'
-    ? `note:${tab.path}`
-    : tab.kind === 'agent'
-      ? `agent:${tab.id}`
-      : `surface:${tab.surface}:${tab.id ?? ''}`
+  return tab.kind === 'note' ? `note:${tab.path}` : `surface:${tab.surface}:${tab.id ?? ''}`
 }
 
 /** What a vault file is marked with here and in the tree alike. `icons`
@@ -110,9 +107,9 @@ interface TabSources {
   surfaces: ReadonlyMap<string, Surface>
 }
 
-/** The live session an agent tab was opened for, if it has one. */
-function sessionOf(tab: Tab & { kind: 'agent' }, agents: TabSources): AgentSession | null {
-  const launchedFor = agents.terminals.find((t) => t.id === tab.id)?.launchedFor ?? null
+/** The live session the agent terminal `id` was opened for, if it has one. */
+function sessionOf(id: string, agents: TabSources): AgentSession | null {
+  const launchedFor = agents.terminals.find((t) => t.id === id)?.launchedFor ?? null
   return agents.sessions.find((s) => s.id === launchedFor) ?? null
 }
 
@@ -122,39 +119,42 @@ function tabIcon(tab: Tab, marks: PathMarks, agents: TabSources): ReactNode {
   if (tab.kind === 'note') {
     return pathGlyph(tab.path, { emoji: marks.icons[tab.path], task: marks.tasks.get(tab.path) })
   }
-  if (tab.kind === 'surface') {
-    const surface = agents.surfaces.get(tab.surface)
-    if (surface === undefined) return null
-    // A folder document (an app) wears the vault icon map's emoji, as its
-    // tree row does.
-    const emoji = tab.id === undefined ? undefined : marks.icons[tab.id]
-    return emoji ? pathGlyph(tab.id!, { emoji }) : <Icon icon={surface.icon} size="sm" />
+  const agentId = agentTabId(tab)
+  if (agentId !== null) {
+    // A tab opened for a session that is still live carries its state: the
+    // same dot, from the same derivation, as its sidebar row. Anything else
+    // (the list, or a session that has gone) is Claude Code's glyph.
+    const session = sessionOf(agentId, agents)
+    if (session === null) return <Icon icon={Bot} size="sm" />
+    const dot = agentIndicator(session).dot
+    return <span aria-hidden="true" className={cn('h-2 w-2 shrink-0 rounded-full', dot)} />
   }
-  // A tab opened for a session that is still live carries its state: the same
-  // dot, from the same derivation, as its sidebar row. Anything else (the list,
-  // or a session that has gone) is Claude Code's glyph.
-  const session = sessionOf(tab, agents)
-  if (session === null) return <Icon icon={Bot} size="sm" />
-  const dot = agentIndicator(session).dot
-  return <span aria-hidden="true" className={cn('h-2 w-2 shrink-0 rounded-full', dot)} />
+  const surface = agents.surfaces.get(tab.surface)
+  if (surface === undefined) return null
+  // A folder document (an app) wears the vault icon map's emoji, as its
+  // tree row does.
+  const emoji = tab.id === undefined ? undefined : marks.icons[tab.id]
+  return emoji ? pathGlyph(tab.id!, { emoji }) : <Icon icon={surface.icon} size="sm" />
 }
 
 function tabName(tab: Tab, agents: TabSources): string {
   if (tab.kind === 'note') return pathLabel(tab.path)
   // The terminal's own title, which Claude Code sets to what it is showing.
-  if (tab.kind === 'agent') {
-    return terminalLabel(agents.terminals.find((t) => t.id === tab.id) ?? null, agents.sessions)
+  const agentId = agentTabId(tab)
+  if (agentId !== null) {
+    return terminalLabel(agents.terminals.find((t) => t.id === agentId) ?? null, agents.sessions)
   }
   const surface = agents.surfaces.get(tab.surface)
   return surface === undefined ? tab.surface : surfaceLabel(surface, tab.id)
 }
 
 function tabTooltip(tab: Tab, agents: TabSources): string {
-  if (tab.kind === 'agent') {
-    const session = sessionOf(tab, agents)
+  if (tab.kind === 'note') return tab.path
+  const agentId = agentTabId(tab)
+  if (agentId !== null) {
+    const session = sessionOf(agentId, agents)
     return session === null ? 'Claude Code' : agentIndicator(session).title
   }
-  if (tab.kind === 'note') return tab.path
   const surface = agents.surfaces.get(tab.surface)
   if (surface === undefined) return tab.surface
   // One of many (an app): its label and its path.

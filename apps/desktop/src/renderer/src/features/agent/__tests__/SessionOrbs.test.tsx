@@ -52,6 +52,10 @@ test('a press opens the session', async () => {
   await userEvent.setup().click(screen.getByRole('button', { name: /Refactor/ }))
   expect(open).toHaveBeenCalledWith({ attach: 'a', cols: 80, rows: 24 })
   await vi.waitFor(() =>
-    expect(activeTab(store.get(workspaceAtom))).toEqual({ kind: 'agent', id: 't-a' }),
+    expect(activeTab(store.get(workspaceAtom))).toEqual({
+      kind: 'surface',
+      surface: 'agent',
+      id: 't-a',
+    }),
   )
 })

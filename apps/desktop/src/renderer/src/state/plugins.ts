@@ -10,10 +10,11 @@
  * beside the plugins' (`components/core-surfaces.tsx`): they render features,
  * which state does not import.
  */
-import { atom } from 'jotai'
+import { atom, type createStore } from 'jotai'
 import { enabledPlugins, VAULT_SETTING_DEFAULTS } from '@holi/shared'
 import { folderClaims, surfaceLabel, type FolderDocumentClaim } from '@/lib/folder-documents'
 import type {
+  AgentServiceSource,
   PathClaim,
   RailItem,
   RendererPlugin,
@@ -31,6 +32,10 @@ export const installedPluginsAtom = atom<readonly RendererPlugin[]>([])
 export type CoreContribution = Pick<Required<RendererPlugin>, 'surfaces' | 'rail' | 'claims'>
 
 export const coreContributionAtom = atom<CoreContribution>({ surfaces: [], rail: [], claims: [] })
+
+/** Core parts written to the plugin contract ahead of their move into a
+ *  plugin (the agent). They run whatever the vault's settings say. */
+export const corePluginsAtom = atom<readonly RendererPlugin[]>([])
 
 /** The ids the open vault runs. Each plugin's default until its settings
  *  are read. */
@@ -77,14 +82,73 @@ export const pluginSettingsSectionsAtom = atom((get): readonly SettingsSection[]
   )
 })
 
-/** Core's contribution, then every enabled plugin's, in list order. */
-const contributionsAtom = atom((get): readonly Pick<RendererPlugin, 'surfaces' | 'rail'>[] => {
+/** Core's parts, then every enabled plugin, in list order. */
+export const runningPluginsAtom = atom((get): readonly RendererPlugin[] => {
   const enabled = get(enabledPluginsAtom)
   return [
-    get(coreContributionAtom),
+    ...get(corePluginsAtom),
     ...get(installedPluginsAtom).filter((p) => enabled.has(p.info.id)),
   ]
 })
+
+/** Core's contribution, then every running plugin's, in list order. */
+const contributionsAtom = atom((get): readonly Pick<RendererPlugin, 'surfaces' | 'rail'>[] => [
+  get(coreContributionAtom),
+  ...get(runningPluginsAtom),
+])
+
+/** Why leaving the open vault costs something now: every running plugin's
+ *  `leaveGuard` sentence. Empty when leaving costs nothing. */
+export const leaveReasonsAtom = atom((get): readonly string[] =>
+  get(runningPluginsAtom).flatMap((p) => {
+    const reason = p.leaveGuard === undefined ? null : get(p.leaveGuard)
+    return reason === null ? [] : [reason]
+  }),
+)
+
+/** The first running plugin's agent, or null with none. */
+export const agentSourceAtom = atom(
+  (get): AgentServiceSource | null =>
+    get(runningPluginsAtom).find((p) => p.agent !== undefined)?.agent ?? null,
+)
+
+/**
+ * Run each running plugin's `vault` hook while its vault is open: started
+ * when a vault opens or the plugin starts running, undone when either stops.
+ * Set up once, beside the event subscriptions, for the app's lifetime.
+ */
+export function hostPluginVaults(store: ReturnType<typeof createStore>): () => void {
+  const live = new Map<string, { remote: string; plugin: RendererPlugin; undo: () => void }>()
+  const sync = (): void => {
+    const remote = store.get(activeRemoteAtom)
+    const want = new Map(
+      remote === null
+        ? []
+        : store
+            .get(runningPluginsAtom)
+            .filter((p) => p.vault !== undefined)
+            .map((p) => [p.info.id, p] as const),
+    )
+    for (const [id, run] of [...live]) {
+      if (want.get(id) === run.plugin && run.remote === remote) continue
+      live.delete(id)
+      run.undo()
+    }
+    for (const [id, plugin] of want) {
+      if (live.has(id) || remote === null) continue
+      live.set(id, { remote, plugin, undo: plugin.vault!(remote, store) })
+    }
+  }
+  sync()
+  const offRemote = store.sub(activeRemoteAtom, sync)
+  const offRunning = store.sub(runningPluginsAtom, sync)
+  return () => {
+    offRemote()
+    offRunning()
+    for (const run of live.values()) run.undo()
+    live.clear()
+  }
+}
 
 /** Every surface there is right now, by kind. The first to name a kind wins,
  *  so a plugin cannot take over one of core's. */
@@ -115,16 +179,19 @@ export const instancesAtom = atom(
  * item.
  */
 export const railAtom = atom(
-  (get): readonly (RailItem & { of: Surface; instances?: readonly string[] })[] => {
+  (
+    get,
+  ): readonly (RailItem & { of: Surface; instances?: readonly string[]; running: boolean })[] => {
     const surfaces = get(surfacesAtom)
     return get(contributionsAtom)
       .flatMap((c) => c.rail ?? [])
       .flatMap((item) => {
         const of = surfaces.get(item.surface)
         if (of === undefined || (item.visible !== undefined && !get(item.visible))) return []
-        if (of.instances === undefined) return [{ ...item, of }]
+        const running = item.live !== undefined && get(item.live)
+        if (of.instances === undefined) return [{ ...item, of, running }]
         const instances = get(of.instances)
-        return instances.length === 0 ? [] : [{ ...item, of, instances }]
+        return instances.length === 0 ? [] : [{ ...item, of, instances, running }]
       })
       .sort((a, b) => a.order - b.order)
   },

@@ -23,7 +23,11 @@ function HomeSurface(): React.JSX.Element {
   const home = useAtomValue(homeTargetAtom)
   const doc = useAtomValue(homeDocumentAtom)
   const View = useAtomValue(surfacesAtom).get(doc?.surface ?? '')?.render
-  return doc !== null && View !== undefined ? <View id={doc.id} /> : <HomeView target={home} />
+  return doc !== null && View !== undefined ? (
+    <View id={doc.id} visible />
+  ) : (
+    <HomeView target={home} />
+  )
 }
 
 const SURFACES: readonly Surface[] = [

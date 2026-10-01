@@ -114,7 +114,10 @@ describe('recentOfTab', () => {
       key: 'app',
       id: 'plan.app',
     })
-    expect(recentOfTab({ kind: 'agent', id: 't1' })).toEqual({ kind: 'terminal', key: 't1' })
+    expect(recentOfTab({ kind: 'surface', surface: 'agent', id: 't1' })).toEqual({
+      kind: 'terminal',
+      key: 't1',
+    })
     expect(recentOfTab({ kind: 'surface', surface: 'board' })).toEqual({
       kind: 'surface',
       key: 'board',

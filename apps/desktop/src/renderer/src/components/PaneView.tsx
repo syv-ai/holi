@@ -5,18 +5,15 @@
  * the pane index, so it never asks `workspaceAtom` "which pane am I".
  */
 import { fileKind } from '@holi/shared'
-import { useAtomValue, useSetAtom } from 'jotai'
+import { useAtomValue } from 'jotai'
 import { cn } from '@/lib/cn'
 import { isLockedForReconcile } from '@/lib/reconcile-lock'
 import type { ConflictResolvers } from '@/lib/editor-reload'
-import { agentGeometryAtom, agentTerminalsAtom } from '@/state/agent'
 import { claimsAtom, surfacesAtom } from '@/state/plugins'
 import { syncStateAtom } from '@/state/vaults'
 import { useEffect, useState, type ReactNode } from 'react'
 import { TAB_MIME, paneDropZone, parseTabPayload, type PaneDropZone } from '@/lib/tab-drop'
 import { EditorPane } from '@/features/editor/EditorPane'
-import { SessionTerminal } from '@/features/agent/SessionTerminal'
-import { TurnChip } from '@/features/agent/TurnChip'
 import { FilePlaceholder } from '@/features/files/FilePlaceholder'
 import { ImageViewer } from '@/features/files/ImageViewer'
 import type { Pane, Tab } from '@/state/panes'
@@ -34,23 +31,6 @@ const DROP_BAND = 'pointer-events-none absolute'
  * or nobody would discover splitting by drag. Dim while waiting, lit when the
  * pointer is inside.
  */
-/**
- * The turn chip for the session an agent tab was opened for. The agents list,
- * and a tab whose terminal Holi did not open for a session, have none: nothing
- * published says which session they show.
- */
-function AgentTurnChip({ terminalId }: { terminalId: string }): React.JSX.Element | null {
-  const terminals = useAtomValue(agentTerminalsAtom)
-  const sessionId = terminals.find((t) => t.id === terminalId)?.launchedFor ?? null
-  if (sessionId === null) return null
-  return (
-    <div className="shrink-0 border-t border-divider px-2 py-1">
-      {/* Keyed, so the chip's "just landed" refs belong to one session. */}
-      <TurnChip key={sessionId} sessionId={sessionId} />
-    </div>
-  )
-}
-
 function EdgeBand({ side, active }: { side: 'before' | 'after'; active: boolean }) {
   return (
     <div
@@ -118,7 +98,9 @@ export function PaneView({
   // A surface tab renders from the registry. One whose surface is gone (its
   // plugin turned off) renders nothing until the shell closes it.
   const surfaces = useAtomValue(surfacesAtom)
-  const SurfaceView = tab?.kind === 'surface' ? (surfaces.get(tab.surface)?.render ?? null) : null
+  const activeSurface = tab?.kind === 'surface' ? (surfaces.get(tab.surface) ?? null) : null
+  // A kept-mounted surface renders below with its siblings, not here.
+  const SurfaceView = activeSurface?.keepMounted === true ? null : (activeSurface?.render ?? null)
   // A note tab whose path an enabled plugin claims with a view opens in that
   // view; the first such claim wins (docs/architecture.md, Plugins).
   const claims = useAtomValue(claimsAtom)
@@ -126,10 +108,6 @@ export function PaneView({
     tab?.kind === 'note'
       ? (claims.find((c) => c.view !== undefined && c.match(tab.path))?.view ?? null)
       : null
-  /** The last geometry a visible terminal measured, for sessions spawned
-   *  without a tab of their own to measure. */
-  const setGeometry = useSetAtom(agentGeometryAtom)
-
   /** Which zone the pointer is in, or null where this pane offers nothing. */
   const [zone, setZone] = useState<PaneDropZone | null>(null)
 
@@ -176,14 +154,14 @@ export function PaneView({
         {/* Fade on a swap. Opacity only: this wraps CodeMirror, and a layout
             change would drag its measure loop into every frame.
 
-            Sessions render below, outside the fade: they stay mounted, and
-            fading them read as blinking. Nothing rather than an empty flex-1
-            box, which would take the terminals' height. */}
-        {tab?.kind === 'agent' ? null : (
+            Kept-mounted surfaces render below, outside the fade: fading a
+            terminal that stays mounted read as blinking. Nothing rather than
+            an empty flex-1 box, which would take their height. */}
+        {activeSurface?.keepMounted === true ? null : (
           <div ref={bodyRef} className="flex min-h-0 flex-1 flex-col">
             {tab?.kind === 'surface' ? (
               SurfaceView === null ? null : (
-                <SurfaceView {...(tab.id === undefined ? {} : { id: tab.id })} />
+                <SurfaceView {...(tab.id === undefined ? {} : { id: tab.id })} visible />
               )
             ) : tab?.kind === 'note' && ClaimedView !== null ? (
               <ClaimedView path={tab.path} />
@@ -211,27 +189,26 @@ export function PaneView({
         )}
 
         {/**
-         * Every agent tab in this pane, mounted, with only the active one
-         * shown.
+         * Every tab of a kept-mounted surface in this pane, mounted, with only
+         * the active one shown.
          *
-         * Outside the switch and keyed by terminal id: an unmounted terminal
-         * loses its scrollback and must visibly replay main's mirror.
+         * Outside the switch and keyed by the tab: an unmounted terminal loses
+         * its scrollback and must visibly replay main's mirror.
          */}
-        {pane.tabs.map((t, i) =>
-          t.kind !== 'agent' ? null : (
+        {pane.tabs.map((t, i) => {
+          if (t.kind !== 'surface') return null
+          const surface = surfaces.get(t.surface)
+          if (surface?.keepMounted !== true) return null
+          const Kept = surface.render
+          return (
             <div
-              key={`agent:${t.id}`}
+              key={tabKey(t)}
               className={cn('min-h-0 flex-1 flex-col', i === pane.active ? 'flex' : 'hidden')}
             >
-              <SessionTerminal
-                terminalId={t.id}
-                visible={i === pane.active}
-                onGeometry={(cols, rows) => setGeometry({ cols, rows })}
-              />
-              <AgentTurnChip terminalId={t.id} />
+              <Kept {...(t.id === undefined ? {} : { id: t.id })} visible={i === pane.active} />
             </div>
-          ),
-        )}
+          )
+        })}
 
         {/* One event target: the bands inside are `pointer-events-none`, so
             crossing them fires no flickering `dragleave`. */}

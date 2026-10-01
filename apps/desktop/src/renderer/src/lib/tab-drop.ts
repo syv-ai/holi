@@ -90,13 +90,7 @@ export function tabPayload(tab: Tab): string {
   return JSON.stringify(
     tab.kind === 'note'
       ? { kind: 'note', path: tab.path }
-      : tab.kind === 'surface'
-        ? {
-            kind: 'surface',
-            surface: tab.surface,
-            ...(tab.id === undefined ? {} : { id: tab.id }),
-          }
-        : { kind: tab.kind },
+      : { kind: 'surface', surface: tab.surface, ...(tab.id === undefined ? {} : { id: tab.id }) },
   )
 }
 

@@ -25,7 +25,11 @@ agree: the live session its terminal title names (Claude Code titles an attached
 name), "Agents" for the list, and "New session" for an unnamed session, whose title is generic. What a
 terminal shows can change under it (`←` in an attached session goes back to the list, and Enter
 there attaches any session), so a terminal is never taken to be a session. When its client exits
-(a detach, `/exit`, its session stopped) the tab closes.
+(a detach, `/exit`, its session stopped) the tab closes. An agent tab is the surface `agent`, kept mounted,
+with the terminal id as its id. The agent is still core, but it is registered the way a plugin is
+(`components/core-agent.tsx`): its tab, its nav item (which runs `agent.show`), its rows, orbs and
+turn review, the leave question, and the agent service every "Ask" will go through
+(`useAgentService`). Its main side attaches in `activateVault` and leaves in its disposer.
 
 **Where you meet it.** ⌘J and the nav menu's agent item focus a terminal showing the list, or
 open one. Which terminal shows it is read from its title, since `←` and Enter move a terminal
@@ -92,7 +96,8 @@ session whose first turn names the conflicted paths. The agent resolves and comm
 view. The sync side is in [vaults-sync.md](vaults-sync.md).
 
 **Leaving a vault stops its sessions.** A vault switch, adding a vault, and quitting Holi each
-`claude stop` the vault's live sessions, asking first if one is working or needs you, then close
+`claude stop` the vault's live sessions, asking first if one is working or needs you (the agent's
+`leaveGuard` and quit guard), then close
 every terminal; closing the vault deletes its `bridge.local.env`. The conversations stay in the agent list, except a session
 Holi started with no prompt that never had a turn: it is `claude rm`'d, since it would sit there
 as a nameless row that resumes blank. That is Holi's own record (a turn hook, or the listing

@@ -181,7 +181,7 @@ describe('openTabRows', () => {
     { kind: 'note', path: 'notes/alpha.md' },
     { kind: 'surface', surface: 'app', id: 'Work/plan.app' },
     { kind: 'surface', surface: 'board' },
-    { kind: 'agent', id: 't1' },
+    { kind: 'surface', surface: 'agent', id: 't1' },
   ] as const
 
   it('lists the open tabs most recently used first, without the current one', () => {
