@@ -354,3 +354,9 @@ and activation.
   tab needs a terminal id, so opening it bare makes no sense.
 - **A pane move is not a close.** Agent tabs compare ids before and after each workspace change,
   so dragging one between panes keeps its session attached.
+- **The agent's capabilities and events already carry the plugin id `agent`,** registered from
+  the part's activation, so the gate turns on simply by moving it into a plugin.
+- **Every `agent.*` verb refuses a vault that is not open.** Sessions act only in the open vault.
+- **`skills.update` reports a conflict hand-off as data,** and the renderer starts the session
+  through the agent service. With no agent, the staged `.shipped.local` files are left for the
+  person.
