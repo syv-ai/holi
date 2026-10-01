@@ -14,7 +14,9 @@
  * id instead. Nothing else should take that route: a menu accelerator on ⌘K
  * would take the key from CodeMirror's link command, on ⌘C from xterm.
  *
- * `matchHotkey` is exact on modifiers, so `⌘T` and `⌘⇧T` are two rows.
+ * `matchHotkey` is exact on modifiers, so `⌘T` and `⌘⇧T` are two rows. A key
+ * the focused widget already handled (`defaultPrevented`) is not a command:
+ * that is how the editor's ⌘B bold beats the sidebar's ⌘B.
  */
 import { atom, useSetAtom, useStore, type Getter, type Setter } from 'jotai'
 import { useEffect } from 'react'
@@ -94,12 +96,13 @@ export const STATIC_COMMANDS: readonly Command[] = [
     hotkey: '⌘\\',
     run: (_get, set) => set(workspaceAtom, (w) => splitPane(w)),
   },
-  // The nav is a drawer (DrawerShell) and hides like one. ⌥⌘S is the macOS
-  // "show/hide sidebar" key (Finder, Mail, Notes); ⌘B stays bold, ⌘S save.
+  // The nav is a drawer (DrawerShell) and hides like one. ⌘B, as in VS Code;
+  // in a focused markdown editor ⌘B is bold, because CodeMirror handles the
+  // key first and the dispatcher leaves a handled key alone.
   {
     id: 'nav.toggle',
     label: 'Toggle sidebar',
-    hotkey: '⌥⌘S',
+    hotkey: '⌘B',
     run: (_get, set) => set(navOpenAtom, (open) => !open),
   },
   // The skills and hooks a vault was seeded with are its own; a newer
@@ -211,7 +214,9 @@ export function useCommandHotkeys(): void {
   const run = useSetAtom(runCommandAtom)
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
-      if (e.isComposing) return
+      // A focused widget that took the key wins: CodeMirror's keymap marks a
+      // key it ran as handled, so ⌘B in the editor is bold, not the sidebar.
+      if (e.isComposing || e.defaultPrevented) return
       const match = store
         .get(commandsAtom)
         .find((c) => c.boundBy === undefined && c.hotkey !== undefined && matchHotkey(e, c.hotkey))

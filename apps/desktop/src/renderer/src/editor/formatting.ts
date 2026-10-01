@@ -58,11 +58,13 @@ export function toggleLink(state: EditorState): TransactionSpec | null {
   }
 }
 
+/** Handled even with nothing to wrap: in the editor these keys are always the
+ *  editor's, so ⌘B with the caret between words does not fall through to the
+ *  sidebar's ⌘B (`state/commands.ts`). */
 function run(marker: string) {
   return (view: { state: EditorState; dispatch(spec: TransactionSpec): void }): boolean => {
     const spec = toggleInline(view.state, marker)
-    if (!spec) return false
-    view.dispatch(spec)
+    if (spec) view.dispatch(spec)
     return true
   }
 }

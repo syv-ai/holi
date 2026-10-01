@@ -274,7 +274,7 @@ export function Shell() {
               tooltip={
                 <span className="inline-flex items-center gap-1.5">
                   {navOpen ? 'Hide sidebar' : 'Show sidebar'}
-                  <Kbd>⌥⌘S</Kbd>
+                  <Kbd>⌘B</Kbd>
                 </span>
               }
               onClick={() => setNavOpen((open) => !open)}

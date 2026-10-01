@@ -27,7 +27,7 @@ export const globalPanelLayoutsAtom = atomWithStorage<Record<string, PanelLayout
   {},
 )
 
-/** Whether the nav drawer is showing (⌥⌘S, `nav.toggle`). Remembered across
+/** Whether the nav drawer is showing (⌘B, `nav.toggle`). Remembered across
  *  launches and vaults: it is about the screen, not the notes. */
 export const navOpenAtom = atomWithStorage('holi:navOpen', true)
 

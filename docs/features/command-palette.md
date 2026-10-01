@@ -45,9 +45,10 @@ app-level action is one row of one command table that keys, palette and menu all
 - **The command table** (`state/commands.ts`): each row is an id, a label, an optional hotkey
   glyph, an optional `when`, and a Jotai write; a running plugin adds its own
   (`RendererPlugin.commands`: the agent's two). One `keydown` listener installed by Shell matches
-  the table with `lib/hotkey.ts`. The application menu sends a command id over `menu:command`.
+  the table with `lib/hotkey.ts`, and skips a key the focused widget already handled
+  (`defaultPrevented`), so the editor's own binding wins where it has one. The application menu sends a command id over `menu:command`.
   Rows today: open today's daily (⌘⇧D), save and sync (⌘S), split pane (⌘\), toggle sidebar
-  (⌥⌘S), go to the agents (⌘J), new session, new task (⌘T), new task with details (⌘⇧T), close
+  (⌘B, bold in a focused markdown editor), go to the agents (⌘J), new session, new task (⌘T), new task with details (⌘⇧T), close
   tab (⌘W), go home, open each of the five surfaces, new note (untitled, at the root), quick open (⌘P),
   command palette (⌘⇧P), and one "switch to" per other vault.
 - Pane exit animation and the vault-switch confirm live in atoms, so close tab, split and switch
