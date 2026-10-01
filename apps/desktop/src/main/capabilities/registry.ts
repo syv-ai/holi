@@ -1,0 +1,131 @@
+/**
+ * What a vault app, and the agent, can ask Holi for: one registry, every door.
+ *
+ * **The app door** is the `window.holi` bridge: `postMessage` from the
+ * sandboxed frame to `AppFrame`, which forwards into `apps.bridge`. **The CLI
+ * door** is `holi <group> <verb>` over the hook server's loopback port. Each
+ * capability is written once, with its refusals, and says which doors may
+ * reach it, so what an app sees and what the agent can inspect cannot drift.
+ *
+ * **The allowlist is what was registered.** A door dispatches only into an
+ * entry that names it; nothing else in main is reachable by method name.
+ * Core and each feature register their own table from the composition root
+ * (`main/index.ts`), under the namespaces they own: a name is
+ * `<namespace>.<verb>`, and a namespace has exactly one owner.
+ *
+ * **Refusals live in main**, because the process rendering untrusted app code
+ * must not be the one deciding what it may read. An app never names itself: at
+ * the app door `ctx.bundle` is the bundle `AppFrame` mounted, and a `bundle`
+ * param is ignored. At the CLI door the agent names the bundle.
+ *
+ * No `electron` import: this loads under plain Node in the tests.
+ */
+import type { VaultSnapshot } from '@holi/shared'
+import { CapabilityError } from './error'
+import type { CapabilityServices } from './services'
+
+export type Door = 'app' | 'cli'
+
+export interface CapabilityContext {
+  remote: string
+  /** The vault clone's root on this machine. */
+  root: string
+  /** The calling app's bundle at the app door; null at the CLI door. */
+  bundle: string | null
+  snapshot(): Promise<VaultSnapshot>
+  /** What the running app knows beyond the files: one factory builds these
+   *  for both doors (`services.ts`). */
+  services: CapabilityServices
+}
+
+export interface Capability<P = unknown, R = unknown> {
+  doors: readonly Door[]
+  /** Changes the vault, so the open vault's cache is refreshed after it. */
+  writes?: true
+  /** Reads untrusted params, or throws a `CapabilityError('BAD_REQUEST')`. */
+  params(raw: unknown): P
+  run(ctx: CapabilityContext, params: P): Promise<R>
+  /** The CLI's readable form of a result. Absent: pretty JSON. */
+  text?(result: R): string
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type AnyCapability = Capability<any, any>
+
+/** One owner's entries, by full name. */
+export type CapabilityTable = Readonly<Record<string, AnyCapability>>
+
+/** An entry, with its params' and result's types inferred. */
+export function cap<P, R>(c: Capability<P, R>): Capability<P, R> {
+  return c
+}
+
+export interface CapabilityResult {
+  value: unknown
+  text: string
+  writes: boolean
+}
+
+export interface CapabilityRegistry {
+  /** Adds `table`, whose every name must sit under one of `namespaces`, which
+   *  no other caller may already own. Throws otherwise. Returns the undo. */
+  register(namespaces: readonly string[], table: CapabilityTable): () => void
+  has(name: string): boolean
+  /**
+   * Run one capability through one door. An unknown name, or one that does
+   * not open to this door, is refused as "no such method", which is what it is
+   * from where the caller stands.
+   */
+  run(
+    name: string,
+    door: Door,
+    ctx: CapabilityContext,
+    rawParams: unknown,
+  ): Promise<CapabilityResult>
+}
+
+const namespaceOf = (name: string): string => {
+  const dot = name.indexOf('.')
+  return dot === -1 ? name : name.slice(0, dot)
+}
+
+export function createCapabilityRegistry(): CapabilityRegistry {
+  const owners = new Map<string, CapabilityTable>()
+  const entries = new Map<string, AnyCapability>()
+
+  return {
+    register(namespaces, table) {
+      for (const ns of namespaces) {
+        if (owners.has(ns)) throw new Error(`capability namespace ${ns} is already registered`)
+      }
+      for (const name of Object.keys(table)) {
+        if (!namespaces.includes(namespaceOf(name))) {
+          throw new Error(`capability ${name} is outside its owner's namespaces`)
+        }
+      }
+      for (const ns of namespaces) owners.set(ns, table)
+      for (const [name, entry] of Object.entries(table)) entries.set(name, entry)
+      return () => {
+        for (const ns of namespaces) if (owners.get(ns) === table) owners.delete(ns)
+        for (const [name, entry] of Object.entries(table)) {
+          if (entries.get(name) === entry) entries.delete(name)
+        }
+      }
+    },
+
+    has: (name) => entries.has(name),
+
+    async run(name, door, ctx, rawParams) {
+      const entry = entries.get(name)
+      if (entry === undefined || !entry.doors.includes(door)) {
+        throw new CapabilityError('BAD_REQUEST', `no such method: ${name}`)
+      }
+      const value = await entry.run(ctx, entry.params(rawParams))
+      return {
+        value,
+        text: entry.text !== undefined ? entry.text(value) : JSON.stringify(value, null, 2),
+        writes: entry.writes === true,
+      }
+    },
+  }
+}

@@ -27,7 +27,7 @@ import {
 } from '@holi/shared'
 import { exactPath } from '@holi/shared/path-safety-node'
 import { writeAtomic } from '../vault/vault-files'
-import { CapabilityError } from './capability-error'
+import { CapabilityError } from '../capabilities/error'
 
 export interface StoredRecord {
   id: string

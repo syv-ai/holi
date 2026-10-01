@@ -3,7 +3,18 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { emptyVaultSnapshot, formatRecord } from '@holi/shared'
-import { runCapability, type CapabilityContext, type Door } from '../src/main/apps/capabilities'
+import { APP_CAPABILITIES, APP_NAMESPACES } from '../src/main/apps/capabilities'
+import { VAULT_CAPABILITIES, VAULT_NAMESPACES } from '../src/main/capabilities/vault-caps'
+import {
+  createCapabilityRegistry,
+  type CapabilityContext,
+  type Door,
+} from '../src/main/capabilities/registry'
+
+const registry = createCapabilityRegistry()
+registry.register(APP_NAMESPACES, APP_CAPABILITIES)
+// `docs.read`, for the refusal of records read as files.
+registry.register(VAULT_NAMESPACES, VAULT_CAPABILITIES)
 
 let root: string
 const dirs: string[] = []
@@ -40,7 +51,7 @@ function call(method: string, params: Record<string, unknown>, door: Door = 'app
     bundle: door === 'app' ? 'Work/Tracker.app' : null,
     snapshot: async () => emptyVaultSnapshot(),
   }
-  return runCapability(method, door, ctx, params).then((r) => r.value)
+  return registry.run(method, door, ctx, params).then((r) => r.value)
 }
 
 const dataDir = () => join(root, 'Work/Tracker.app/data/items')

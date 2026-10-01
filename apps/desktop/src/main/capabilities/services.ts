@@ -16,8 +16,8 @@ import type { AgendaWindow, CalendarEvent, CalendarOverrides } from '../google/c
 import type { GoogleData } from '../google/data'
 import type { ListThreadsOptions, MailPage } from '../google/gmail'
 import type { SyncState } from '../vault/active-vault'
-import type { AppGrants } from './app-grants'
-import { CapabilityError } from './capability-error'
+import type { AppGrants } from '../apps/app-grants'
+import { CapabilityError } from './error'
 
 export interface CapabilityServices {
   /** Today, local, as `YYYY-MM-DD`: the frame a recurrence rolls against. */

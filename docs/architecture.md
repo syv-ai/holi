@@ -54,6 +54,11 @@ bytes; `holi-vault://` serves `<img>` only. Vault-scoped stores (the tree, the t
 app shell for the life of the active vault: a store loaded by whichever view reads it first cannot
 tell "not loaded" from "empty", and the failure looks like data loss.
 
+What a vault app or the agent's `holi` CLI may ask main for is one capability registry
+(`src/main/capabilities/`). Each entry is named `<namespace>.<verb>`, says which doors reach it (an
+app's bridge, the CLI) and holds its own refusals. Core registers its namespaces and each feature
+registers its own from the composition root (`src/main/index.ts`); a namespace has one owner.
+
 ## 4. The vault
 
 A vault is a GitHub repository cloned under a Holi-managed root, `~/Holi/<owner>/<repo>`. Its

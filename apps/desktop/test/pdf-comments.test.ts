@@ -9,8 +9,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { commentThreadsJson, emptyVaultSnapshot, formatCommentThreads } from '@holi/shared'
-import { runCapability } from '../src/main/apps/capabilities'
-import { noServices } from '../src/main/apps/capability-services'
+import { createCapabilityRegistry } from '../src/main/capabilities/registry'
+import { noServices } from '../src/main/capabilities/services'
+import { PDF_CAPABILITIES, PDF_NAMESPACES } from '../src/main/pdf/capabilities'
 import { pdfCommentsInVault, readPdfComments } from '../src/main/pdf/comments'
 
 const FIXTURES = join(__dirname, 'fixtures', 'pdf-comments')
@@ -131,6 +132,9 @@ describe('pdfCommentsInVault', () => {
       snapshot: async () => emptyVaultSnapshot(),
       services: noServices(() => '2026-09-30'),
     }
+    const registry = createCapabilityRegistry()
+    registry.register(PDF_NAMESPACES, PDF_CAPABILITIES)
+    const runCapability = registry.run
     const path = 'client docs/msa.pdf'
     const expected = await threads('embedpdf.pdf')
     const out = await runCapability('pdf.comments', 'cli', ctx, { path })

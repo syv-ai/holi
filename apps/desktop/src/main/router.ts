@@ -38,8 +38,13 @@ import { searchBodies, type SearchHit } from './vault/search'
 import { writeHomeApp } from './apps/home-app'
 import { writeAppLog } from './apps/app-log'
 import { bundleAuthorship, commitLogin, manifestOf, type BundleCommit } from './apps/app-grants'
-import { CapabilityError, runCapability, type CapabilityContext } from './apps/capabilities'
-import { noServices, type CapabilityServices, type UiReport } from './apps/capability-services'
+import { CapabilityError } from './capabilities/error'
+import {
+  createCapabilityRegistry,
+  type CapabilityContext,
+  type CapabilityRegistry,
+} from './capabilities/registry'
+import { noServices, type CapabilityServices, type UiReport } from './capabilities/services'
 import { migrateApps as moveLegacyApps } from './apps/migrate-apps'
 import { scanBackrefs, scanBackrefsMany } from './vault/backrefs'
 import { fileHistory, type FileHistory } from './vault/file-facts'
@@ -226,10 +231,14 @@ export interface RouterDeps {
   /**
    * What a capability may ask of the running app beyond the vault's files:
    * sync, sessions, members, Google, approvals. The same factory builds them
-   * for the CLI door (`capability-services.ts`). Optional so a test router
+   * for the CLI door (`capabilities/services.ts`). Optional so a test router
    * builds without it; absent, those reads answer "not available here".
    */
   capabilityServices?: (remote: string, root: string) => CapabilityServices
+  /** The capabilities the composition root registered, which `apps.bridge`
+   *  dispatches into. Optional so a test router builds without it; absent,
+   *  every method is "no such method". */
+  capabilities?: CapabilityRegistry
   /** The collaborator lists the capability services read too, so Settings
    *  and an app share one. Optional: absent, the router keeps its own. */
   members?: MembersCache
@@ -497,6 +506,7 @@ export function createRouter(deps: RouterDeps) {
   const today = deps.today ?? localToday
   const cloneUrlFor = deps.cloneUrlFor ?? remoteUrl
   const servicesFor = deps.capabilityServices ?? (() => noServices(today))
+  const capabilities = deps.capabilities ?? createCapabilityRegistry()
   const members =
     deps.members ?? createMembersCache((remote) => deps.session.api.collaborators(remote))
 
@@ -1269,7 +1279,7 @@ export function createRouter(deps: RouterDeps) {
    *
    * Two audiences, and the split matters. `bridge` is what a **vault app**
    * reaches, and it dispatches only into the capability registry's app door
-   * (`apps/capabilities.ts`), which holds every refusal: the agent surface
+   * (`capabilities/registry.ts`), which holds every refusal: the agent surface
    * (`AGENTS.md`, `CLAUDE.md`, `USER.local.md`, `.claude/`, `memory/`) is
    * refused outright, because `.claude/hooks/google-send-gate.mjs` IS the mail
    * send gate and `memory/` is what the user told the assistant. `register` is
@@ -1301,7 +1311,7 @@ export function createRouter(deps: RouterDeps) {
         }
         let result
         try {
-          result = await runCapability(input.method, 'app', ctx, input.params)
+          result = await capabilities.run(input.method, 'app', ctx, input.params)
         } catch (err) {
           if (err instanceof CapabilityError) {
             throw new TRPCError({

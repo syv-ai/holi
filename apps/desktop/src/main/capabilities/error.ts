@@ -10,3 +10,13 @@ export class CapabilityError extends Error {
     super(message)
   }
 }
+
+/** A GitHub or Google failure, as a refusal the caller can render. */
+export async function unavailable<T>(work: () => Promise<T>): Promise<T> {
+  try {
+    return await work()
+  } catch (err) {
+    if (err instanceof CapabilityError) throw err
+    throw new CapabilityError('UNAVAILABLE', (err as Error).message)
+  }
+}

@@ -1,30 +1,46 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { APP_METHODS, RENDERER_METHODS } from '@holi/shared'
-import { CAPABILITIES } from '../src/main/apps/capabilities'
 import { mkdir, mkdtemp, readFile as readText, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { emptyVaultSnapshot } from '@holi/shared'
+import type { CapabilityError } from '../src/main/capabilities/error'
 import {
-  runCapability,
+  cap,
+  createCapabilityRegistry,
   type CapabilityContext,
-  type CapabilityError,
-} from '../src/main/apps/capabilities'
-import { noServices, type CapabilityServices } from '../src/main/apps/capability-services'
+} from '../src/main/capabilities/registry'
+import { noServices, type CapabilityServices } from '../src/main/capabilities/services'
+import { VAULT_CAPABILITIES, VAULT_NAMESPACES } from '../src/main/capabilities/vault-caps'
+import { GOOGLE_CAPABILITIES, GOOGLE_NAMESPACES } from '../src/main/google/capabilities'
+import { TASK_CAPABILITIES, TASK_NAMESPACES } from '../src/main/vault/task-capabilities'
 import { MEMBERS_TTL_MS, createMembersCache } from '../src/main/github/members-cache'
 
+const registry = createCapabilityRegistry()
+registry.register(VAULT_NAMESPACES, VAULT_CAPABILITIES)
+registry.register(TASK_NAMESPACES, TASK_CAPABILITIES)
+registry.register(GOOGLE_NAMESPACES, GOOGLE_CAPABILITIES)
+const runCapability = registry.run
+
 describe('the capability registry', () => {
-  it('answers every bridge method the renderer does not answer itself, at the app door', () => {
-    // The runtime twin of the type check in capabilities.ts: a method the
-    // bridge offers with no entry here is a promise an app waits on forever.
-    const renderer: readonly string[] = RENDERER_METHODS
-    for (const method of APP_METHODS.filter((m) => !renderer.includes(m))) {
-      expect(CAPABILITIES[method]?.doors, method).toContain('app')
-    }
+  const ping = cap({ doors: ['cli'], params: () => ({}), run: async () => 'pong' })
+
+  it('gives a namespace one owner, and keeps a name inside its owner', () => {
+    const caps = createCapabilityRegistry()
+    const undo = caps.register(['x'], { 'x.ping': ping })
+    expect(caps.has('x.ping')).toBe(true)
+    expect(() => caps.register(['x'], { 'x.pong': ping })).toThrow(/already registered/)
+    expect(() => caps.register(['y'], { 'z.ping': ping })).toThrow(/outside/)
+    undo()
+    expect(caps.has('x.ping')).toBe(false)
+    caps.register(['x'], { 'x.pong': ping })
   })
 
-  it('does not hold what the renderer answers', () => {
-    for (const method of RENDERER_METHODS) expect(CAPABILITIES[method]).toBeUndefined()
+  it('opens an entry only at the doors it names', async () => {
+    const caps = createCapabilityRegistry()
+    caps.register(['x'], { 'x.ping': ping })
+    const ctx = {} as CapabilityContext
+    expect((await caps.run('x.ping', 'cli', ctx, {})).value).toBe('pong')
+    await expect(caps.run('x.ping', 'app', ctx, {})).rejects.toThrow(/no such method/)
   })
 })
 

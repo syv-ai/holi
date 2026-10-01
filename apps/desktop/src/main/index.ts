@@ -46,7 +46,14 @@ import { installGoogleCli } from './google/cli'
 import { installHoliCli } from './agent/cli'
 import { createAgentOps } from './agent/ops'
 import { initAppOp, openAppOp } from './apps/app-ops'
-import { runCapability } from './apps/capabilities'
+import type { MainAppMethod } from '@holi/shared'
+import { APP_CAPABILITIES, APP_NAMESPACES } from './apps/capabilities'
+import { AGENT_CAPABILITIES, AGENT_NAMESPACES } from './agent/capabilities'
+import { createCapabilityRegistry } from './capabilities/registry'
+import { VAULT_CAPABILITIES, VAULT_NAMESPACES } from './capabilities/vault-caps'
+import { GOOGLE_CAPABILITIES, GOOGLE_NAMESPACES } from './google/capabilities'
+import { PDF_CAPABILITIES, PDF_NAMESPACES } from './pdf/capabilities'
+import { TASK_CAPABILITIES, TASK_NAMESPACES } from './vault/task-capabilities'
 import {
   describeUpdate,
   updateConflictPrompt,
@@ -70,7 +77,7 @@ import {
 import { registerIpc } from './ipc'
 import { createRouter, localToday } from './router'
 import { createAppGrants } from './apps/app-grants'
-import { createCapabilityServices, createUiReports } from './apps/capability-services'
+import { createCapabilityServices, createUiReports } from './capabilities/services'
 import { createVaultHost } from './vault/active-vault'
 import { VaultRegistry, vaultRoot } from './vault/registry'
 import { scanVault } from './vault/vault-store'
@@ -378,7 +385,29 @@ async function main(): Promise<void> {
     uiReports,
   )
 
+  // What a vault app and the agent can ask for: core's capabilities, then
+  // each feature's, under the namespaces each owns.
+  const capabilities = createCapabilityRegistry()
+  capabilities.register(VAULT_NAMESPACES, VAULT_CAPABILITIES)
+  capabilities.register(APP_NAMESPACES, APP_CAPABILITIES)
+  capabilities.register(TASK_NAMESPACES, TASK_CAPABILITIES)
+  capabilities.register(PDF_NAMESPACES, PDF_CAPABILITIES)
+  capabilities.register(AGENT_NAMESPACES, AGENT_CAPABILITIES)
+  capabilities.register(GOOGLE_NAMESPACES, GOOGLE_CAPABILITIES)
+  // Every method the frame's bridge may call and main answers is registered
+  // above: leaving one out is a type error here rather than a hung promise in
+  // an app.
+  void ({} as Record<
+    keyof (typeof VAULT_CAPABILITIES &
+      typeof APP_CAPABILITIES &
+      typeof TASK_CAPABILITIES &
+      typeof AGENT_CAPABILITIES &
+      typeof GOOGLE_CAPABILITIES),
+    true
+  > satisfies Record<MainAppMethod, true>)
+
   const router = createRouter({
+    capabilities,
     capabilityServices,
     members,
     reportUi: (remote, report) => {
@@ -582,7 +611,7 @@ async function main(): Promise<void> {
           const root = await rootFor(remote)
           if (root === null) throw new Error('no vault is open')
           const active = host.active()
-          const result = await runCapability(
+          const result = await capabilities.run(
             name,
             'cli',
             {

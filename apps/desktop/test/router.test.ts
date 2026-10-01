@@ -9,6 +9,9 @@ import { afterAll, describe, expect, it, vi } from 'vitest'
 import { createVaultHost, type VaultHost } from '../src/main/vault/active-vault'
 import { ensureSeeded } from '../src/main/agent/seed-content'
 import { makeClone, makeNonVaultRemote, makeRemote, plainGit } from './helpers/git-fixtures'
+import { createCapabilityRegistry } from '../src/main/capabilities/registry'
+import { VAULT_CAPABILITIES, VAULT_NAMESPACES } from '../src/main/capabilities/vault-caps'
+import { TASK_CAPABILITIES, TASK_NAMESPACES } from '../src/main/vault/task-capabilities'
 import { createRouter } from '../src/main/router'
 import { resolveTypstBin } from '../src/main/pdf/typst-bin'
 import { createSignatureStore } from '../src/main/pdf/signatures'
@@ -102,7 +105,12 @@ async function rig(files: Record<string, string> = {}, auth?: StoredAuth) {
   })
   hosts.push(host)
   const trashItem = vi.fn(async () => {})
+  // The capabilities `apps.bridge` reaches here: core's and the tasks'.
+  const capabilities = createCapabilityRegistry()
+  capabilities.register(VAULT_NAMESPACES, VAULT_CAPABILITIES)
+  capabilities.register(TASK_NAMESPACES, TASK_CAPABILITIES)
   const caller = createRouter({
+    capabilities,
     registry,
     session,
     host,

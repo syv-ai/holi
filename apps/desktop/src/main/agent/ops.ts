@@ -38,7 +38,7 @@ export interface AgentOpsDeps {
   runPreCommitHooks(): Promise<{ changed: string[]; failed: unknown[] }>
   /** `holi skills update`: this release's skills and hooks, merged in. */
   updateSkills(): Promise<SkillsUpdate>
-  /** The CLI door into the capability registry (`apps/capabilities.ts`): run
+  /** The CLI door into the capability registry (`capabilities/registry.ts`): run
    *  `name` for this vault with the command's fields as params. Throws the
    *  refusal, whose message is the one line the command prints. */
   capability(

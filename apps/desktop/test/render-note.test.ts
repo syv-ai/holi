@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { renderNote } from '../src/main/apps/render-note'
+import { renderNote } from '../src/main/capabilities/render-note'
 
 describe('renderNote', () => {
   it('renders markdown', () => {
