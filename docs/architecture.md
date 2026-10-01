@@ -59,6 +59,11 @@ What a vault app or the agent's `holi` CLI may ask main for is one capability re
 app's bridge, the CLI) and holds its own refusals. Core registers its namespaces and each feature
 registers its own from the composition root (`src/main/index.ts`); a namespace has one owner.
 
+Whatever runs inside a vault (the `holi` CLI, the agent's hooks, git's pre-commit hook and merge
+driver) reaches main through one loopback bridge (`src/main/bridge/`) with a token per vault. The
+CLI's verbs are capabilities; the few callers that are not (the agent's turn and status-line hooks,
+which must answer empty, and git's two) are routes their owner registers.
+
 ## 4. The vault
 
 A vault is a GitHub repository cloned under a Holi-managed root, `~/Holi/<owner>/<repo>`. Its

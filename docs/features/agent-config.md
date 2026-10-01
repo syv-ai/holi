@@ -19,7 +19,7 @@ removes the `statusLine` older versions installed. A theme change reaches a runn
 **Restart** (`claude respawn`).
 
 **Where a session finds Holi.** `holi.env` in the same directory (mode 0600), written whole each
-time Holi opens the vault and deleted when it leaves: the hook server's port and the vault's token,
+time Holi opens the vault and deleted when it leaves: the bridge's port and the vault's token,
 and the Google port and the vault's Google token. A background session's environment is its
 supervisor's, which may predate this Holi, so nothing per-run rides in it.
 
@@ -90,7 +90,7 @@ additions are commands in a directory prepended to `PATH`, plus skills that docu
   `pdf comments <path> [--json]`, `task done <path>`, `store list|get|put|delete|check` over an
   app's records, `docs render <path>`, `sync status`, `sessions`, `members` and `recents` (each
   with `--json`). The registry's reads the agent already has as Grep, Read and git (search,
-  history, settings) stay app-only rather than grow a second way in. It posts to the hook server
+  history, settings) stay app-only rather than grow a second way in. It posts to the bridge server
   with the token in `holi.env`. All reversible or read-only (a record write is a file change in git
   history), so none is gated.
 - `holi-google`: mail and calendar through main, which holds the tokens ([google.md](google.md)).
@@ -143,7 +143,8 @@ the vault's pre-commit transforms like anyone's ([vaults-sync.md](vaults-sync.md
 - `apps/desktop/src/main/agent/agent-config-dir.ts`: per-vault config dir, first-spawn marker, migration
 - `apps/desktop/src/main/agent/seed-content.ts`: seed classes, `AGENTS.md` text, `settingsWithRequired`
 - `apps/desktop/src/main/agent/seed-state.ts`: what Holi seeded, the base an update merges from
-- `apps/desktop/src/main/agent/cli.ts`, `ops.ts`: the `holi` script and its routes
+- `apps/desktop/src/main/agent/cli.ts`: the `holi` script; `bridge/server.ts`: what it posts to;
+  `agent/bridge-routes.ts`: the turn and status-line routes
 - `apps/desktop/src/main/agent/endpoint-file.ts`: `holi.env`
 - `apps/desktop/src/main/agent/hooks/`, `skills/`: shipped hook scripts and skills
 - `packages/shared/src/path-safety.ts`: `isAgentSurfacePath`

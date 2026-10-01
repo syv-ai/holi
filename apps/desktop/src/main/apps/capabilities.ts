@@ -1,6 +1,7 @@
 /**
  * Vault apps' capabilities: an app's own records (`store.*`), reached by the
- * app through its bridge and by the agent through `holi store`.
+ * app through its bridge and by the agent through `holi store`, and the
+ * agent's `apps.open` and `apps.init`.
  *
  * No `electron` import: this loads under plain Node in the tests.
  */
@@ -8,6 +9,7 @@ import { appBundleOf, isAppBundlePath } from '@holi/shared'
 import { CapabilityError } from '../capabilities/error'
 import { paramsObject, pathParams, stringParam } from '../capabilities/params'
 import { cap, type CapabilityContext } from '../capabilities/registry'
+import { initAppOp, openAppOp } from './app-ops'
 import { storeCheck, storeDelete, storeGet, storeList, storePut } from './app-store'
 
 /**
@@ -42,7 +44,42 @@ const compact = (value: unknown) => JSON.stringify(value)
 /** The namespaces vault apps own. */
 export const APP_NAMESPACES = ['apps', 'store'] as const
 
-export const APP_CAPABILITIES = {
+export interface AppCapabilitiesDeps {
+  /** Open (or reload) this bundle's tab in the active pane. */
+  showApp(bundle: string): void
+}
+
+export const appCapabilities = (deps: AppCapabilitiesDeps) => ({
+  /** Open a finished app's tab, or reload it. Reversible: the tab closes. */
+  'apps.open': cap({
+    doors: ['cli'],
+    params: pathParams,
+    run: async (ctx, { path }) => {
+      const result = await openAppOp(ctx.root, path)
+      // The tab opens only once the app is known to be openable: a refusal
+      // that still opened a tab would show the agent a blank frame and tell it
+      // the reason at the same time.
+      if (!result.ok) throw new CapabilityError('BAD_REQUEST', result.error)
+      deps.showApp(result.bundle)
+      return { bundle: result.bundle }
+    },
+    text: ({ bundle }) => `opened ${bundle}`,
+  }),
+
+  /** Scaffold a bundle. Never overwrites, so it is safe to run twice. */
+  'apps.init': cap({
+    doors: ['cli'],
+    writes: true,
+    params: pathParams,
+    run: async (ctx, { path }) => {
+      const result = await initAppOp(ctx.root, path)
+      if (!result.ok) throw new CapabilityError('BAD_REQUEST', result.error)
+      return { created: result.created }
+    },
+    text: ({ created }) =>
+      created.length === 0 ? 'nothing to create' : created.map((p) => `created ${p}`).join('\n'),
+  }),
+
   'store.list': cap({
     doors: ['app', 'cli'],
     params: storeParams,
@@ -105,4 +142,4 @@ export const APP_CAPABILITIES = {
     },
     text: (problems) => problems.join('\n'),
   }),
-}
+})

@@ -11,8 +11,7 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { HOLI_CLI_SCRIPT, installHoliCli } from '../src/main/agent/cli'
-import { createHookServer, type HookServer } from '../src/main/agent/hook-server'
-import { createAgentOps, type AgentOpsDeps } from '../src/main/agent/ops'
+import { createBridgeServer, type BridgeServer } from '../src/main/bridge/server'
 
 const execFileAsync = promisify(execFile)
 
@@ -37,34 +36,29 @@ async function run(
 
 let dir: string
 let bin: string
-let server: HookServer
+let server: BridgeServer
 let env: NodeJS.ProcessEnv
-let deps: AgentOpsDeps
+/** The capability door, faked: what each command reached, by name. */
+let capability: ReturnType<
+  typeof vi.fn<
+    (name: string, params: Record<string, string>) => Promise<{ value: unknown; text: string }>
+  >
+>
 
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), 'holi-cli-'))
   bin = await installHoliCli(dir)
-  deps = {
-    openApp: vi.fn((id: string) => Promise.resolve({ ok: true as const, id } as { ok: true })),
-    initApp: vi.fn((id: string) => Promise.resolve({ ok: true as const, created: [id] })),
-    capability: vi.fn((name: string, params: Record<string, string>) =>
-      params.id === 'gone'
-        ? Promise.reject(new Error('no such record'))
-        : Promise.resolve({ value: { name, params }, text: `${name} ok` }),
-    ),
-    updateSkills: vi.fn(() =>
-      Promise.resolve({
-        ok: true as const,
-        report: {} as never,
-        summary: 'Skills: 1 updated.',
-      }),
-    ),
-  }
-  server = createHookServer({
-    onJobTurn: () => {},
+  capability = vi.fn((name: string, params: Record<string, string>) =>
+    params.id === 'gone'
+      ? Promise.reject(new Error('no such record'))
+      : Promise.resolve({ value: { name, params }, text: `${name} ok` }),
+  )
+  server = createBridgeServer({
     log: () => {},
-    // One vault in these; the server routes by the caller's token.
-    opsFor: () => createAgentOps(deps),
+    dispatch: async ({ name, params }) => ({
+      ...(await capability(name, params as Record<string, string>)),
+      writes: false,
+    }),
   })
   await server.start()
   env = {
@@ -114,23 +108,23 @@ describe('usage', () => {
   it('refuses an unknown subcommand rather than doing something adjacent', async () => {
     const res = await run(bin, ['app', 'delete', 'retro'], env)
     expect(res.code).not.toBe(0)
-    expect(await (deps.openApp as ReturnType<typeof vi.fn>).mock.calls.length).toBe(0)
+    expect(capability).not.toHaveBeenCalled()
   })
 })
 
 describe('app open', () => {
-  it('reaches the ops route and prints the answer', async () => {
+  it('reaches apps.open and prints the answer', async () => {
     const res = await run(bin, ['app', 'open', 'Finance/Budget.app'], env)
     expect(res.code).toBe(0)
-    expect(JSON.parse(res.stdout)).toMatchObject({ ok: true })
-    expect(deps.openApp).toHaveBeenCalledWith('Finance/Budget.app')
+    expect(res.stdout).toBe('apps.open ok\n')
+    expect(capability).toHaveBeenCalledWith('apps.open', { path: 'Finance/Budget.app' })
   })
 
   it('passes a path through verbatim, spaces and all', async () => {
     // The CLI must not be the thing that mangles it, or the refusal names an
     // argument the user never typed.
     await run(bin, ['app', 'open', 'My Apps/my app'], env)
-    expect(deps.openApp).toHaveBeenCalledWith('My Apps/my app')
+    expect(capability).toHaveBeenCalledWith('apps.open', { path: 'My Apps/my app' })
   })
 
   it('needs a path', async () => {
@@ -140,7 +134,7 @@ describe('app open', () => {
 })
 
 describe('pdf comments', () => {
-  const cap = () => deps.capability as ReturnType<typeof vi.fn>
+  const cap = () => capability
 
   it('reaches the registry and prints its text as is', async () => {
     cap().mockResolvedValueOnce({ value: {}, text: '[From docs/msa.pdf, 1 comment]\n\nPage 1' })
@@ -186,26 +180,24 @@ describe('pdf comments', () => {
 })
 
 describe('app init', () => {
-  it('reaches the ops route', async () => {
+  it('reaches apps.init', async () => {
     const res = await run(bin, ['app', 'init', 'retro-board'], env)
     expect(res.code).toBe(0)
-    expect(deps.initApp).toHaveBeenCalledWith('retro-board')
+    expect(capability).toHaveBeenCalledWith('apps.init', { path: 'retro-board' })
   })
 })
 
 describe('skills update', () => {
   it('prints the summary Holi answers', async () => {
+    capability.mockResolvedValueOnce({ value: 'Skills: 1 updated.', text: 'Skills: 1 updated.' })
     const res = await run(bin, ['skills', 'update'], env)
     expect(res.code).toBe(0)
     expect(res.stdout.trim()).toBe('Skills: 1 updated.')
-    expect(deps.updateSkills).toHaveBeenCalled()
+    expect(capability).toHaveBeenCalledWith('skills.update', {})
   })
 
   it('fails with the reason when Holi refuses', async () => {
-    ;(deps.updateSkills as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
-      ok: false,
-      message: 'No vault is open.',
-    })
+    capability.mockRejectedValueOnce(new Error('No vault is open.'))
     const res = await run(bin, ['skills', 'update'], env)
     expect(res.code).not.toBe(0)
     expect(res.stderr).toContain('No vault is open.')
@@ -213,7 +205,7 @@ describe('skills update', () => {
 })
 
 describe('store', () => {
-  const cap = () => deps.capability as ReturnType<typeof vi.fn>
+  const cap = () => capability
 
   it('lists a collection through the capability door', async () => {
     const res = await run(bin, ['store', 'list', 'Work/Tracker.app', 'items'], env)
@@ -275,7 +267,7 @@ describe('store', () => {
 })
 
 describe('reads through the capability door', () => {
-  const cap = () => deps.capability as ReturnType<typeof vi.fn>
+  const cap = () => capability
 
   it('maps each command to its capability', async () => {
     for (const [args, name] of [

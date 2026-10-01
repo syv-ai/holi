@@ -44,14 +44,13 @@ import { createGoogleData, type GoogleData } from './google/data'
 import { createGoogleOpsServer } from './google/ops-server'
 import { installGoogleCli } from './google/cli'
 import { installHoliCli } from './agent/cli'
-import { createAgentOps } from './agent/ops'
-import { initAppOp, openAppOp } from './apps/app-ops'
 import type { MainAppMethod } from '@holi/shared'
-import { APP_CAPABILITIES, APP_NAMESPACES } from './apps/capabilities'
+import { appCapabilities, APP_NAMESPACES } from './apps/capabilities'
 import { agentCapabilities, AGENT_NAMESPACES } from './agent/capabilities'
 import { createDispatch } from './capabilities/dispatch'
+import { CapabilityError } from './capabilities/error'
 import { createCapabilityRegistry } from './capabilities/registry'
-import { VAULT_CAPABILITIES, VAULT_NAMESPACES } from './capabilities/vault-caps'
+import { vaultCapabilities, VAULT_NAMESPACES } from './capabilities/vault-caps'
 import { googleCapabilities, GOOGLE_NAMESPACES } from './google/capabilities'
 import { PDF_CAPABILITIES, PDF_NAMESPACES } from './pdf/capabilities'
 import { taskCapabilities, TASK_NAMESPACES } from './vault/task-capabilities'
@@ -61,9 +60,7 @@ import {
   updateShipped,
   type SkillsUpdate,
 } from './agent/seed-content'
-import { runPreCommit } from './vault/hooks/runner'
-import { stagedChanges } from './vault/hooks/staged'
-import { readHookSettings, VAULT_TRANSFORMS } from './vault/hooks/transforms'
+import { registerGitRoutes } from './vault/git-routes'
 import { GoogleApi } from './google/api'
 import { createEvent, deleteEvent, listAgenda, updateEvent } from './google/calendar'
 import {
@@ -98,7 +95,8 @@ import { createAgentTerminals } from './agent/agent-terminals'
 import { createClaudeCli } from './agent/claude-cli'
 import { removeEndpointFile, writeEndpointFile } from './agent/endpoint-file'
 import { openTurnLog } from './agent/turn-log'
-import { createHookServer } from './agent/hook-server'
+import { createBridgeServer } from './bridge/server'
+import { registerAgentRoutes } from './agent/bridge-routes'
 import { ensureTypst, resolveTypstBin } from './pdf/typst-bin'
 import { registerAgentIpc } from './agent-ipc'
 
@@ -275,10 +273,10 @@ async function main(): Promise<void> {
     // How the seeded pre-commit hook reaches us. A getter, read at open, so a
     // vault opened before the server bound still gets the live port.
     hookEndpoint: (remote) => {
-      const port = hookServer.port()
+      const port = bridge.port()
       // This vault's standing token: it is written into that clone's
       // `.git/hooks`, so it must outlast any agent session and any switch.
-      return port === null ? null : { port, token: hookServer.tokenForVault(remote) }
+      return port === null ? null : { port, token: bridge.tokenForVault(remote) }
     },
     // The large-file gate's held-back set (empty clears the callout). Pushed
     // every commit tick and once at open, so a vault switch resets it.
@@ -392,8 +390,15 @@ async function main(): Promise<void> {
   // What a vault app and the agent can ask for: core's capabilities, then
   // each feature's, under the namespaces each owns. A feature's table closes
   // over what it needs from the running app.
-  const vaultCaps = VAULT_CAPABILITIES
-  const appCaps = APP_CAPABILITIES
+  const vaultCaps = vaultCapabilities({
+    updateSkills: async (remote) => {
+      const result = await updateSkills(remote)
+      if (!result.ok) throw new CapabilityError('UNAVAILABLE', result.message)
+      return result.summary
+    },
+  })
+  // The agent's `holi apps open`: the renderer opens the tab.
+  const appCaps = appCapabilities({ showApp: (bundle) => send('apps:open', bundle) })
   const taskCaps = taskCapabilities({ today: localToday })
   const pdfCaps = PDF_CAPABILITIES
   const agentCaps = agentCapabilities({
@@ -424,7 +429,7 @@ async function main(): Promise<void> {
     true
   > satisfies Record<MainAppMethod, true>)
   // The one way every door runs a capability: the app's bridge (the router)
-  // and the agent's `holi` CLI (the hook server, below).
+  // and the agent's `holi` CLI (the bridge server, below).
   const dispatch = createDispatch({
     registry: capabilities,
     rootFor,
@@ -573,53 +578,17 @@ async function main(): Promise<void> {
     }
   }
 
-  const hookServer = createHookServer({
+  // The bridge: what runs inside a vault (the `holi` command, the agent's
+  // hooks, git's hook and merge driver) reaching this Holi on loopback.
+  const bridge = createBridgeServer({ dispatch })
+  registerAgentRoutes(bridge, {
     // A turn edge in one of a vault's background sessions, by job id.
     onJobTurn: (remote, jobId, active) => agent.noteTurn(remote, jobId, active),
     // A session's status line: how much of its context is used.
     onStatus: (remote, jobId, status) => agent.noteStatus(remote, jobId, status),
-    opsFor: (remote) =>
-      createAgentOps({
-        openApp: async (path) => {
-          const root = await rootFor(remote)
-          if (root === null) return { ok: false, error: 'no vault is open' }
-          const result = await openAppOp(root, path)
-          // The tab opens only once the app is known to be openable: a refusal
-          // that still opened a tab would show the agent a blank frame and tell
-          // it the reason at the same time.
-          if (!result.ok) return result
-          send('apps:open', result.bundle)
-          return { ok: true }
-        },
-        initApp: async (path) => {
-          const root = await rootFor(remote)
-          if (root === null) return { ok: false, error: 'no vault is open' }
-          return initAppOp(root, path)
-        },
-        /**
-         * Holi's own pre-commit hook, calling back in. The transforms run here
-         * rather than in the shell script so they are TypeScript and tested; the
-         * script is a curl and an `exit 0`.
-         */
-        runPreCommitHooks: async () => {
-          const root = await rootFor(remote)
-          if (root === null) return { changed: [], failed: [] }
-          // No `notify`: Holi has no push seam into a live Claude Code session,
-          // and typing into the agent's PTY is not one. The run log
-          // (`.holi/state/hooks.local.log`) is the agent-readable surface.
-          const result = await runPreCommit(root, await stagedChanges(root), {
-            settings: await readHookSettings(root),
-            transforms: VAULT_TRANSFORMS,
-          })
-          return { changed: result.changed, failed: result.failed }
-        },
-        updateSkills: () => updateSkills(remote),
-        // `holi store …` and the rest of the CLI door into the capability
-        // registry, for the vault the command was typed in.
-        capability: (name, params) => dispatch({ door: 'cli', remote, bundle: null, name, params }),
-      }),
   })
-  await hookServer.start()
+  registerGitRoutes(bridge, { rootFor })
+  await bridge.start()
   // The vault agent runs on THIS VAULT's config directory, not the machine's
   // `~/.claude` or one shared across vaults: `plugins/` and user-scope
   // `settings.json` are keyed by nothing, so sharing a directory shares
@@ -670,7 +639,7 @@ async function main(): Promise<void> {
     takeFirstSpawn,
     binDir: () => binDir,
     claimEndpoint: async ({ remote, configDir }) => {
-      const hookPort = hookServer.port()
+      const hookPort = bridge.port()
       if (hookPort === null) return
       let googleToken = googleTokens.get(remote)
       if (googleToken === undefined) {
@@ -680,7 +649,7 @@ async function main(): Promise<void> {
       await writeEndpointFile(configDir, {
         hookPort,
         // The vault's standing token: the same one its `.git/hooks` carry.
-        hookToken: hookServer.tokenForVault(remote),
+        hookToken: bridge.tokenForVault(remote),
         googlePort: googleOps.port(),
         googleToken,
       })
@@ -888,9 +857,7 @@ async function main(): Promise<void> {
         // and commit: nothing a session was mid-writing should race the
         // teardown.
         await agent.leave().catch((err) => console.error('[quit] agent leave failed:', err))
-        await hookServer
-          .stop()
-          .catch((err) => console.error('[quit] hook server stop failed:', err))
+        await bridge.stop().catch((err) => console.error('[quit] bridge stop failed:', err))
         await googleOps.stop().catch((err) => console.error('[quit] google ops stop failed:', err))
         // A flush point is a flush THEN a commit, and only the renderer can do
         // the first half: the editor's newest words are not on disk until it

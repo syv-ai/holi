@@ -1,9 +1,9 @@
 /**
  * What `holi app open` and `holi app init` actually do.
  *
- * Kept out of `agent/ops.ts` because that module is routing and error shaping:
- * these are filesystem questions about a specific vault, and they are the part
- * worth testing against real files.
+ * Kept out of `capabilities.ts`, which is params and refusals: these are
+ * filesystem questions about a specific vault, and they are the part worth
+ * testing against real files.
  *
  * **Every refusal names the fix.** The agent is the caller, and the worst
  * failure is an app that does not appear with nothing saying why. "no app.yaml,

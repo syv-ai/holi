@@ -387,7 +387,7 @@ const THEME_SKELETON = applyThemePatch(null, {})
  * agent session.
  *
  * **Holi's side of a hook must stay backward-compatible.** A vault can run a
- * hook script from any earlier release indefinitely, so the hook server and
+ * hook script from any earlier release indefinitely, so the bridge and
  * the endpoint file answer every older script, not only the one shipped now.
  */
 export const SHIPPED_FILES: Record<string, string> = {

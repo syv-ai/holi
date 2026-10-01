@@ -1,6 +1,7 @@
 /**
  * Core's capabilities: the vault's notes, search, recents, settings, members,
- * history and sync. They run whatever features are on.
+ * history and sync, and bringing this release's skills to it. They run
+ * whatever features are on.
  *
  * No `electron` import: this loads under plain Node in the tests.
  */
@@ -34,7 +35,15 @@ function syncText(state: SyncState | null): string {
 /** The namespaces core owns. */
 export const VAULT_NAMESPACES = ['docs', 'vault', 'sync', 'skills'] as const
 
-export const VAULT_CAPABILITIES = {
+export interface VaultCapabilitiesDeps {
+  /**
+   * Bring this release's skills and hooks into the vault, merged with its own
+   * changes. Answers the summary to print; throws the refusal.
+   */
+  updateSkills(remote: string): Promise<string>
+}
+
+export const vaultCapabilities = (deps: VaultCapabilitiesDeps) => ({
   'docs.list': cap({
     doors: ['app', 'cli'],
     params: noParams,
@@ -164,4 +173,13 @@ export const VAULT_CAPABILITIES = {
     },
     text: syncText,
   }),
-}
+
+  /** `holi skills update`. A conflict gets a session of its own. */
+  'skills.update': cap({
+    doors: ['cli'],
+    writes: true,
+    params: noParams,
+    run: (ctx): Promise<string> => deps.updateSkills(ctx.remote),
+    text: (summary) => summary,
+  }),
+})

@@ -2,7 +2,7 @@
  * The whole chain, with nothing faked but Electron.
  *
  * A real `git commit` in a real repo fires the real generated hook, which curls
- * the real hook server, which routes to the real ops handler, which runs the
+ * the real bridge server, which routes to the real git route, which runs the
  * real transforms against the real staged set — and the assertion is on the
  * commit git actually made.
  *
@@ -17,16 +17,14 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, describe, expect, it } from 'vitest'
-import { createAgentOps } from '../src/main/agent/ops'
-import { createHookServer, type HookServer } from '../src/main/agent/hook-server'
+import { createBridgeServer, type BridgeServer } from '../src/main/bridge/server'
+import { registerGitRoutes } from '../src/main/vault/git-routes'
 import { installGitHook, writeHookEndpoint } from '../src/main/vault/large-files'
-import { resetBreaker, runPreCommit } from '../src/main/vault/hooks/runner'
-import { stagedChanges } from '../src/main/vault/hooks/staged'
-import { VAULT_TRANSFORMS, readHookSettings } from '../src/main/vault/hooks/transforms'
+import { resetBreaker } from '../src/main/vault/hooks/runner'
 
 const exec = promisify(execFile)
 const dirs: string[] = []
-const servers: HookServer[] = []
+const servers: BridgeServer[] = []
 
 afterEach(async () => {
   for (const s of servers.splice(0)) await s.stop()
@@ -57,29 +55,9 @@ async function vault(settings: Record<string, boolean> = {}): Promise<string> {
   )
 
   resetBreaker()
-  const server = createHookServer({
-    onJobTurn: () => {},
-    log: () => {},
-    // One vault in these; the server routes by the caller's token.
-    opsFor: () =>
-      createAgentOps({
-        openApp: () => Promise.resolve({ ok: true }),
-        initApp: () => Promise.resolve({ ok: true, created: [] }),
-        updateSkills: () =>
-          Promise.resolve({
-            ok: true as const,
-            report: {} as never,
-            summary: 'Skills are up to date.',
-          }),
-        runPreCommitHooks: async () => {
-          const result = await runPreCommit(dir, await stagedChanges(dir), {
-            settings: await readHookSettings(dir),
-            transforms: VAULT_TRANSFORMS,
-          })
-          return { changed: result.changed, failed: result.failed }
-        },
-      }),
-  })
+  const server = createBridgeServer({ log: () => {} })
+  // One vault in these; the server routes by the caller's token.
+  registerGitRoutes(server, { rootFor: async () => dir })
   servers.push(server)
   await server.start()
 
@@ -190,29 +168,18 @@ describe('the log', () => {
 })
 
 describe('nothing here can stop a commit', () => {
-  it('commits fine when the ops route itself throws', async () => {
+  it('commits fine when the pre-commit route itself throws', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'holi-e2e-'))
     dirs.push(dir)
     await exec('git', ['init', '-q', '-b', 'main', dir])
     await git(dir, ['config', 'user.email', 'test@holi.invalid'])
     await git(dir, ['config', 'user.name', 'Holi Test'])
 
-    const server = createHookServer({
-      onJobTurn: () => {},
-      log: () => {},
-      // One vault in these; the server routes by the caller's token.
-      opsFor: () =>
-        createAgentOps({
-          openApp: () => Promise.resolve({ ok: true }),
-          initApp: () => Promise.resolve({ ok: true, created: [] }),
-          updateSkills: () =>
-            Promise.resolve({
-              ok: true as const,
-              report: {} as never,
-              summary: 'Skills are up to date.',
-            }),
-          runPreCommitHooks: () => Promise.reject(new Error('everything is broken')),
-        }),
+    // A route that throws outside its own handling: the server answers 500.
+    const server = createBridgeServer({ log: () => {} })
+    server.route('/hooks/pre-commit', {
+      body: 'discard',
+      handle: () => Promise.reject(new Error('everything is broken')),
     })
     servers.push(server)
     await server.start()

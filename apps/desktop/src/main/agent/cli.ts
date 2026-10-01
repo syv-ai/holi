@@ -83,15 +83,6 @@ USAGE
   exit 2
 }
 
-# POST one operation. The token rides in the query string (one auth mechanism,
-# the same one the turn-signal hooks use); every argument rides in the body so
-# curl encodes it. Hand-rolling percent-encoding in POSIX sh is how a path with
-# a space silently becomes a different path.
-post() {
-  op="\$1"; shift
-  curl -sS --fail-with-body -X POST "\$base/\$op?t=\$HOLI_HOOK_TOKEN" "\$@"
-}
-
 # One capability through the CLI door. The answer is the output itself, so
 # the status decides where it goes rather than curl's exit code: 200 to stdout,
 # anything else to stderr and a failing exit. The body goes through a file so
@@ -121,11 +112,13 @@ case "\$cmd" in
     case "\$sub" in
       open)
         [ $# -ge 1 ] || { echo "holi app open <path>" >&2; exit 2; }
-        post app/open --data-urlencode "path=\$1"
+        json=false
+        cap "app open" apps.open --data-urlencode "path=\$1"
         ;;
       init)
         [ $# -ge 1 ] || { echo "holi app init <path>" >&2; exit 2; }
-        post app/init --data-urlencode "path=\$1"
+        json=false
+        cap "app init" apps.init --data-urlencode "path=\$1"
         ;;
       *) usage ;;
     esac
@@ -135,18 +128,8 @@ case "\$cmd" in
     [ $# -gt 0 ] && shift
     case "\$sub" in
       update)
-        # The answer is one line of text; the status decides where it goes, as
-        # for \`cap\` above.
-        body=\$(mktemp)
-        trap 'rm -f "\$body"' EXIT
-        code=\$(curl -sS -X POST -o "\$body" -w '%{http_code}' \\
-          "\$base/skills/update?t=\$HOLI_HOOK_TOKEN") || exit 1
-        if [ "\$code" = 200 ]; then
-          cat "\$body"; echo
-        else
-          echo "holi skills update: \$(cat "\$body")" >&2
-          exit 1
-        fi
+        json=false
+        cap "skills update" skills.update
         ;;
       *) usage ;;
     esac

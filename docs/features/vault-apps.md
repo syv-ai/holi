@@ -106,8 +106,8 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   it over.
 - **One registry, two doors.** What main answers is the capability registry
   (`main/capabilities/`, see [architecture](../architecture.md)); the apps feature registers
-  `store.*` (`main/apps/capabilities.ts`). Each entry has its params, its refusals, and the doors
-  it opens to, the app's bridge and the agent's `holi` CLI (`/cap/<method>` on the hook server). An app sees
+  `store.*`, `apps.open` and `apps.init` (`main/apps/capabilities.ts`). Each entry has its params, its refusals, and the doors
+  it opens to, the app's bridge and the agent's `holi` CLI (`/cap/<method>` on the bridge server). An app sees
   exactly what the agent can inspect from the terminal, written once. At the app door the bundle
   is the frame's, and a `bundle` param is ignored; at the CLI door the agent names it. One
   dispatch (`capabilities/dispatch.ts`) runs a call for both doors: the clone, the open vault's
@@ -240,7 +240,8 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
 - `apps/desktop/src/main/vault/search.ts`: the vault search behind `holi.search`, shared with
   Holi's own search.
 - `apps/desktop/src/main/vault/record-merge.ts`: the record merge driver's install;
-  `apps/desktop/src/main/agent/ops.ts`: `/cap/<method>` and `/merge/record`.
+  `apps/desktop/src/main/vault/git-routes.ts`: `/merge/record`;
+  `apps/desktop/src/main/bridge/server.ts`: `/cap/<method>`.
 - `apps/desktop/src/main/index.ts`: scheme registration and the `holi-app` handler.
 - `apps/desktop/src/main/router.ts`: the `apps` namespace.
 - `apps/desktop/src/main/agent/hooks/vault-app-check.mjs`, `apps/desktop/src/main/agent/cli.ts`.

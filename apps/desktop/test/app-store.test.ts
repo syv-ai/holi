@@ -3,9 +3,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { emptyVaultSnapshot, formatRecord } from '@holi/shared'
-import { APP_CAPABILITIES, APP_NAMESPACES } from '../src/main/apps/capabilities'
+import { appCapabilities, APP_NAMESPACES } from '../src/main/apps/capabilities'
 import { noCoreServices } from '../src/main/capabilities/services'
-import { VAULT_CAPABILITIES, VAULT_NAMESPACES } from '../src/main/capabilities/vault-caps'
+import { vaultCapabilities, VAULT_NAMESPACES } from '../src/main/capabilities/vault-caps'
 import {
   createCapabilityRegistry,
   type CapabilityContext,
@@ -13,9 +13,9 @@ import {
 } from '../src/main/capabilities/registry'
 
 const registry = createCapabilityRegistry()
-registry.register(APP_NAMESPACES, APP_CAPABILITIES)
+registry.register(APP_NAMESPACES, appCapabilities({ showApp: () => {} }))
 // `docs.read`, for the refusal of records read as files.
-registry.register(VAULT_NAMESPACES, VAULT_CAPABILITIES)
+registry.register(VAULT_NAMESPACES, vaultCapabilities({ updateSkills: async () => '' }))
 
 let root: string
 const dirs: string[] = []

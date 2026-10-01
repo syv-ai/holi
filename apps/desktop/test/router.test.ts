@@ -12,7 +12,7 @@ import { makeClone, makeNonVaultRemote, makeRemote, plainGit } from './helpers/g
 import { createDispatch } from '../src/main/capabilities/dispatch'
 import { createCapabilityRegistry } from '../src/main/capabilities/registry'
 import { noCoreServices } from '../src/main/capabilities/services'
-import { VAULT_CAPABILITIES, VAULT_NAMESPACES } from '../src/main/capabilities/vault-caps'
+import { vaultCapabilities, VAULT_NAMESPACES } from '../src/main/capabilities/vault-caps'
 import { taskCapabilities, TASK_NAMESPACES } from '../src/main/vault/task-capabilities'
 import { createRouter } from '../src/main/router'
 import { resolveTypstBin } from '../src/main/pdf/typst-bin'
@@ -109,7 +109,7 @@ async function rig(files: Record<string, string> = {}, auth?: StoredAuth) {
   const trashItem = vi.fn(async () => {})
   // The capabilities `apps.bridge` reaches here: core's and the tasks'.
   const capabilities = createCapabilityRegistry()
-  capabilities.register(VAULT_NAMESPACES, VAULT_CAPABILITIES)
+  capabilities.register(VAULT_NAMESPACES, vaultCapabilities({ updateSkills: async () => '' }))
   capabilities.register(TASK_NAMESPACES, taskCapabilities({ today: () => TODAY }))
   const caller = createRouter({
     dispatch: createDispatch({

@@ -16,8 +16,8 @@ import {
   removeEndpointFile,
   writeEndpointFile,
 } from '../src/main/agent/endpoint-file'
-import { createHookServer, type HookServer } from '../src/main/agent/hook-server'
-import { createAgentOps } from '../src/main/agent/ops'
+import { registerAgentRoutes } from '../src/main/agent/bridge-routes'
+import { createBridgeServer, type BridgeServer } from '../src/main/bridge/server'
 import { SEED_FILES } from '../src/main/agent/seed-content'
 
 const execFileAsync = promisify(execFile)
@@ -41,7 +41,7 @@ async function run(
 }
 
 let dir: string
-let server: HookServer
+let server: BridgeServer
 let turns: Array<[string, string, boolean]>
 let statuses: Array<[string, string, unknown]>
 const capability = vi.fn((_name: string, params: Record<string, string>) =>
@@ -52,17 +52,17 @@ beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), 'holi-endpoint-'))
   turns = []
   statuses = []
-  server = createHookServer({
+  server = createBridgeServer({
+    log: () => {},
+    dispatch: async ({ name, params }) => ({
+      ...(await capability(name, params as Record<string, string>)),
+      writes: false,
+    }),
+  })
+  registerAgentRoutes(server, {
     onJobTurn: (remote, job, active) => turns.push([remote, job, active]),
     onStatus: (remote, job, status) => statuses.push([remote, job, status]),
     log: () => {},
-    opsFor: () =>
-      createAgentOps({
-        openApp: vi.fn(),
-        initApp: vi.fn(),
-        refreshSeed: vi.fn(),
-        capability,
-      } as never),
   })
   await server.start()
 })

@@ -61,7 +61,7 @@ is interactive, so the reading comes from the documented `statusLine` command: o
 command in the vault's settings, with no script. Claude Code runs it on its own events, a
 background session with no client attached included, and hands it JSON on stdin. `jq` (which ships
 with macOS) prints the footer, `Opus 5.5 · 42% context`, so it reads the same in any Claude Code.
-Inside a Holi background session the command also posts the JSON, detached, to the hook server's
+Inside a Holi background session the command also posts the JSON, detached, to the bridge's
 `/statusline` with the vault's token from `holi.env` and the job id from `$CLAUDE_JOB_DIR`,
 answered empty. Main keeps `context_window.used_percentage` per job id on the pushed session list
 and drops it when the session stops. A `null` reading (before the first message, after `/clear`)

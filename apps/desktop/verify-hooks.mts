@@ -1,7 +1,7 @@
 /**
  * Hand-verification rig for the vault pre-commit transforms.
  *
- * Stands up the real hook server against a scratch vault, then leaves it
+ * Stands up the real bridge server against a scratch vault, then leaves it
  * running so you can `git mv` and `git commit` in a terminal and watch what
  * happens to the files. A scratch vault, never a real one: these transforms
  * rewrite files, and the point of the exercise is to see them do it.
@@ -16,12 +16,9 @@ import { execFile } from 'node:child_process'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
-import { createAgentOps } from './src/main/agent/ops'
-import { createHookServer } from './src/main/agent/hook-server'
+import { createBridgeServer } from './src/main/bridge/server'
+import { registerGitRoutes } from './src/main/vault/git-routes'
 import { installGitHook, writeHookEndpoint } from './src/main/vault/large-files'
-import { runPreCommit } from './src/main/vault/hooks/runner'
-import { stagedChanges } from './src/main/vault/hooks/staged'
-import { VAULT_TRANSFORMS, readHookSettings } from './src/main/vault/hooks/transforms'
 
 const exec = promisify(execFile)
 const dir = process.argv[2]
@@ -44,31 +41,17 @@ await writeFile(
 await git(['add', '-A'])
 await git(['commit', '-q', '-m', 'seed'])
 
-const server = createHookServer({
-  onJobTurn: () => {},
-  ops: createAgentOps({
-    openApp: () => Promise.resolve({ ok: true }),
-    initApp: () => Promise.resolve({ ok: true, created: [] }),
-    refreshSeed: () => Promise.resolve({ refreshed: [], skipped: [] }),
-    runPreCommitHooks: async () => {
-      const result = await runPreCommit(dir, await stagedChanges(dir), {
-        settings: await readHookSettings(dir),
-        transforms: VAULT_TRANSFORMS,
-      })
-      console.log('[hooks] ran:', JSON.stringify(result))
-      return { changed: result.changed, failed: result.failed }
-    },
-  }),
-})
+const server = createBridgeServer()
+registerGitRoutes(server, { rootFor: async () => dir })
 await server.start()
 await installGitHook(dir, 10 * 1024 * 1024)
-await writeHookEndpoint(dir, { port: server.port()!, token: server.token() })
+await writeHookEndpoint(dir, { port: server.port()!, token: server.tokenForVault('scratch/vault') })
 
 console.log(`\nScratch vault ready at ${dir}`)
-console.log(`Hook server on 127.0.0.1:${server.port()}\n`)
+console.log(`Bridge server on 127.0.0.1:${server.port()}\n`)
 console.log('Try:')
 console.log(`  git -C ${dir} mv projects/roadmap.md projects/plan.md`)
 console.log(`  git -C ${dir} commit -m rename`)
 console.log(`  git -C ${dir} show --stat HEAD`)
-console.log(`  cat ${dir}/.holi/hooks.local.log\n`)
+console.log(`  cat ${dir}/.holi/state/hooks.local.log\n`)
 console.log('Ctrl-C when done.')

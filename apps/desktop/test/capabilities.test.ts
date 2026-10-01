@@ -11,13 +11,13 @@ import {
 } from '../src/main/capabilities/registry'
 import type { AppGrants } from '../src/main/apps/app-grants'
 import { noCoreServices, type CoreServices } from '../src/main/capabilities/services'
-import { VAULT_CAPABILITIES, VAULT_NAMESPACES } from '../src/main/capabilities/vault-caps'
+import { vaultCapabilities, VAULT_NAMESPACES } from '../src/main/capabilities/vault-caps'
 import { googleCapabilities, GOOGLE_NAMESPACES } from '../src/main/google/capabilities'
 import { taskCapabilities, TASK_NAMESPACES } from '../src/main/vault/task-capabilities'
 import { MEMBERS_TTL_MS, createMembersCache } from '../src/main/github/members-cache'
 
 const registry = createCapabilityRegistry()
-registry.register(VAULT_NAMESPACES, VAULT_CAPABILITIES)
+registry.register(VAULT_NAMESPACES, vaultCapabilities({ updateSkills: async () => '' }))
 registry.register(TASK_NAMESPACES, taskCapabilities({ today: () => '2026-09-30' }))
 /** What the Google entries see of this person's approvals; each test sets it. */
 let grantStatus: AppGrants['status'] = async () => ({ codeHash: '', affordances: [] })

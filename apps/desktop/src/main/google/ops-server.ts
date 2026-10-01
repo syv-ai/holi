@@ -8,7 +8,7 @@
  * token authority**: there is exactly one refresher, so nothing races the
  * rotating refresh token, and a disconnect takes effect everywhere at once.
  *
- * The same shape as `agent/hook-server.ts`: ephemeral port, bearer token,
+ * The same shape as `bridge/server.ts`: ephemeral port, bearer token,
  * `127.0.0.1` only. It is why Google needs no MCP server: the agent reaches it
  * with `Bash` and a documented command (`holi-google`).
  *

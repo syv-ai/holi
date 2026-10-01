@@ -3,7 +3,7 @@
  *
  * **The app door** is the `window.holi` bridge: `postMessage` from the
  * sandboxed frame to `AppFrame`, which forwards into `apps.bridge`. **The CLI
- * door** is `holi <group> <verb>` over the hook server's loopback port. Each
+ * door** is `holi <group> <verb>` over the bridge's loopback port (`bridge/`). Each
  * capability is written once, with its refusals, and says which doors may
  * reach it, so what an app sees and what the agent can inspect cannot drift.
  *
