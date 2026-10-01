@@ -1257,6 +1257,13 @@ export function createRouter(deps: RouterDeps) {
      *  paths for its seed prompt. `{paths:[]}` when the merge now applies cleanly. */
     reconcile: t.procedure.mutation(() => activeOrThrow().reconcile()),
 
+    /** "Try again" on a sticky conflict: clear it, commit and pull. A
+     *  conflict that is still real comes straight back. */
+    retry: t.procedure.mutation(async () => {
+      await activeOrThrow().retry()
+      return { ok: true as const }
+    }),
+
     /** Take the merge back out of the tree. The conflict is still a
      *  conflict afterwards, so the banner comes back with it. */
     abandon: t.procedure.mutation(async () => {

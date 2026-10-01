@@ -4,9 +4,10 @@
  * nothing is wrong, the brand and turning while a pull runs, amber when it
  * wants you, turning amber while a reconcile holds the files.
  *
- * It opens a panel rather than acting: the state in words, the one thing to do
- * about it when there is one, and the vault's history. A config conflict's
- * action stays with its banner, which outranks this.
+ * It opens a panel rather than acting: the state in words, what to do about
+ * it when there is something, and the vault's history. A conflict can always
+ * be tried again; a config conflict's reconcile stays with its banner, which
+ * outranks this.
  */
 import { useAtomValue, useSetAtom } from 'jotai'
 import {
@@ -17,6 +18,7 @@ import {
   GitMerge,
   History,
   RefreshCw,
+  RotateCw,
   Undo2,
 } from 'lucide-react'
 import { useMemo } from 'react'
@@ -34,7 +36,7 @@ import { cn } from '@/lib/cn'
 import { syncLabel } from '@/lib/sync-label'
 import { reconcileAtom } from '@/state/agent-send'
 import { openSurface, workspaceAtom } from '@/state/panes'
-import { abandonReconcileAtom, syncStateAtom } from '@/state/vaults'
+import { abandonReconcileAtom, retrySyncAtom, syncStateAtom } from '@/state/vaults'
 
 type Glyph = { icon: IconGlyph; tone?: IconTone; motion?: IconMotion }
 
@@ -67,6 +69,7 @@ function SyncPanel({ close }: { close: () => void }): React.JSX.Element {
   const setWorkspace = useSetAtom(workspaceAtom)
   const reconcile = useSetAtom(reconcileAtom)
   const abandon = useSetAtom(abandonReconcileAtom)
+  const retry = useSetAtom(retrySyncAtom)
   const label = syncLabel(state)
   // Content conflicts only: a config conflict's banner owns the action.
   const contentConflict =
@@ -85,6 +88,22 @@ function SyncPanel({ close }: { close: () => void }): React.JSX.Element {
             </li>
           ))}
         </ul>
+      )}
+      {/* Without anyone to reconcile it, a conflict that has since been
+          resolved would otherwise hold sync forever. */}
+      {state.kind === 'conflict' && (
+        <Button
+          variant="ghost"
+          data-morph-row=""
+          className={ROW}
+          onClick={() => {
+            close()
+            void retry()
+          }}
+        >
+          <Icon icon={RotateCw} />
+          Try again
+        </Button>
       )}
       {contentConflict && (
         <Button

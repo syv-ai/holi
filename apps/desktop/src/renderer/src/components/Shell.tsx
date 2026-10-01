@@ -74,6 +74,7 @@ import {
   activeRemoteAtom,
   heldBackAtom,
   openVaultAtom,
+  retrySyncAtom,
   syncStateAtom,
   vaultsAtom,
 } from '../state/vaults'
@@ -108,6 +109,7 @@ export function Shell() {
   const [navOpen, setNavOpen] = useAtom(navOpenAtom)
   const historyTarget = useAtomValue(historyTargetPathAtom)
   const reconcile = useSetAtom(reconcileAtom)
+  const retrySync = useSetAtom(retrySyncAtom)
   const [heldBack, setHeldBack] = useAtom(heldBackAtom)
   /** The pane playing its exit, if any; the timer is the atom's
    *  (`state/pane-exit.ts`), so every close path shares it. */
@@ -456,6 +458,9 @@ export function Shell() {
             {configConflicts.length === 1 ? 'is' : 'are'} unresolved — your vault may be
             misconfigured until you reconcile.
           </p>
+          <Button variant="ghost" size="xs" className="shrink-0" onClick={() => void retrySync()}>
+            Try again
+          </Button>
           <Tooltip content="Re-run the merge and hand the conflict to the vault assistant to resolve">
             <Button
               variant="destructive"

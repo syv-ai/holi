@@ -92,7 +92,14 @@ export interface ActiveVault {
   onFocus(): void
   /** Stops both loops while an agent turn holds the vault. */
   pause(reason: string): void
+  /** Lift the pause, then `retry`. */
   resume(): void
+  /**
+   * Clear a sticky conflict, then commit and pull. A conflict that is still
+   * real latches again on that pull. A reconcile in progress keeps its paths:
+   * it ends on its own signal.
+   */
+  retry(): Promise<void>
   /**
    * Re-run the merge so the conflict is back in the working tree (markers +
    * MERGE_HEAD) for the agent to resolve, and return the conflicted paths.
@@ -606,7 +613,7 @@ export async function openActiveVault(args: {
   // remote must not delay the vault being usable.
   void pushNow()
 
-  return {
+  const api: ActiveVault = {
     remote: args.remote,
     root,
     repo: args.repo,
@@ -644,9 +651,14 @@ export async function openActiveVault(args: {
     },
     resume() {
       manualPause = null
-      // The conflict pause has to go too, and this is the ONLY thing that
-      // clears it. It is sticky on purpose, but sticky with no way out strands
-      // the vault: no pull is ever attempted again, even once resolved.
+      void api.retry().catch((err) => console.error('[vault] retry failed:', err))
+    },
+    async retry() {
+      // The conflict pause has to go, and this (a turn ending, or "Try
+      // again") is the only thing that clears it. It is sticky on purpose, but
+      // sticky with no way out strands the vault: no pull is ever attempted
+      // again, even once resolved. The pull below latches it again if the
+      // conflict is still real.
       //
       // **Except during a reconcile**, which runs *through* the agent: the turn
       // ending is not the merge being finished, and dropping the paths here
@@ -655,10 +667,9 @@ export async function openActiveVault(args: {
       if (!reconciling) conflictPaths = null
       // Sequenced, not fired together: run concurrently, one simply loses to the
       // other's guard and silently does nothing.
-      void (async () => {
-        await maybeCommit()
-        await maybePull()
-      })()
+      await maybeCommit()
+      await maybePull()
+      await refreshState()
     },
     async reconcile() {
       if (closed) return { paths: [] }
@@ -707,6 +718,7 @@ export async function openActiveVault(args: {
       await args.bridgeEnv?.detach(args.remote).catch(() => {})
     },
   }
+  return api
 }
 
 /**

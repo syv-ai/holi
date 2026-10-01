@@ -938,13 +938,13 @@ describe('ActiveVault — sync', () => {
     expect(active.syncState().kind).toBe('conflict')
   })
 
-  it('resume() clears the conflict and lets auto-pull start again', async () => {
+  it('retry() clears the conflict and lets auto-pull start again', async () => {
     // A reconcile "resumes normal operation once the tree is clean".
     // The conflict pause is sticky by design, so if
     // nothing ever clears it the vault is stranded — the banner stays up
     // forever and no pull is ever attempted again, even after the conflict has
-    // actually been resolved. resume() is the only way back, so it has to
-    // clear BOTH pauses, not just the manual one.
+    // actually been resolved. retry() ("Try again", and the end of an agent
+    // turn through resume()) is the way back, with or without an agent.
     // Every git call here goes through `userGit`, because that is what it is:
     // a second process acting on a repo Holi is also using. With the loop at
     // 80 ms these collide on `index.lock` often enough to flake ~1 run in 3.
@@ -955,7 +955,7 @@ describe('ActiveVault — sync', () => {
       healIntervalMs: 60_000,
       commitQuietMs: 60_000,
       // Unthrottled, because the final step drives focus in a loop. A single
-      // onFocus() is not enough: if one lands while resume()'s own pull is
+      // onFocus() is not enough: if one lands while retry()'s own pull is
       // still in flight, the in-flight guard drops it — and the throttle window
       // has already been spent. That is a real (small) wrinkle in the product
       // too, noted in the plan's open questions rather than papered over here.
@@ -971,11 +971,11 @@ describe('ActiveVault — sync', () => {
     await plainGit(dir, ['fetch', 'origin'])
     await plainGit(dir, ['merge', '-X', 'ours', 'origin/main'])
 
-    // Until resume(), the vault is stranded: it will never look again.
+    // Until retry(), the vault is stranded: it will never look again.
     await sleep(300)
     expect(active.syncState().kind).toBe('conflict')
 
-    active.resume()
+    await active.retry()
     await waitFor('sync to recover', () => active.syncState().kind !== 'conflict')
 
     // And it really is syncing again, not just displaying differently. The

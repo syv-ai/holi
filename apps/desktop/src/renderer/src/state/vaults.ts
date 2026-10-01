@@ -255,6 +255,14 @@ export const backrefsFor = atom(
 )
 
 /**
+ * "Try again" on a sticky conflict: main clears it, commits and pulls. A
+ * conflict that is still real latches again, so the banner comes back.
+ */
+export const retrySyncAtom = atom(null, async () => {
+  await trpc.sync.retry.mutate()
+})
+
+/**
  * "Abandon": takes the merge back out of the tree. The conflict is still a
  * conflict, so the banner comes back. The agent's session stays where it is, and
  * whatever it wrote into the working tree goes with the merge.
