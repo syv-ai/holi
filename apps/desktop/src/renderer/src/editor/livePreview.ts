@@ -2,7 +2,7 @@
  * Live preview: a pure decoration builder over the syntax tree + wiki-link
  * grammar. The ELEMENT the selection touches renders raw; everything else
  * renders, including the rest of its line. `revealedSpans` is the rule: touched edges included, innermost only.
- * Rebuilds on docChanged/selectionSet/viewport.
+ * Rebuilds on docChanged/selectionSet/viewport, and when the parse advances.
  */
 import { syntaxTree } from '@codemirror/language'
 import { Check, createElement } from 'lucide'
@@ -714,7 +714,14 @@ export const livePreview = ViewPlugin.fromClass(
     }
 
     update(update: ViewUpdate): void {
-      if (update.docChanged || update.selectionSet || update.viewportChanged) {
+      // The tree as well: the parser stops after a time budget and finishes
+      // in the background, and the decorations must follow it when it does.
+      if (
+        update.docChanged ||
+        update.selectionSet ||
+        update.viewportChanged ||
+        syntaxTree(update.startState) !== syntaxTree(update.state)
+      ) {
         this.decorations = this.build()
       }
     }

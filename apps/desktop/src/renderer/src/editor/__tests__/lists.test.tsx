@@ -8,6 +8,7 @@
  * does no layout, so the geometry the custom properties drive is hand-verified,
  * not asserted here.
  */
+import { forceParsing } from '@codemirror/language'
 import { EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import { afterEach, expect, it } from 'vitest'
@@ -41,6 +42,11 @@ function mount(doc: string, readOnly = false): EditorView {
     }),
     parent,
   })
+  // Creating the state parses for at most 20ms of wall time and leaves the
+  // rest to an idle callback, so under load (or on the file's first, cold
+  // parse) the tree stops short and the lists below it get no decorations.
+  // Finish the parse and hand the whole tree to the view before asserting.
+  forceParsing(view, view.state.doc.length, Infinity)
   return view
 }
 
