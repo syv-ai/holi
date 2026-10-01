@@ -64,7 +64,7 @@ test('appearance is a choice too, and reports a plain string', async () => {
 
 test('the transforms are one row of several switches', async () => {
   const { onChange } = setup()
-  const row = screen.getByRole('group', { name: 'Tidy up on every commit' })
+  const row = screen.getByRole('group', { name: 'Run on every commit' })
   expect(within(row).getAllByRole('checkbox')).toHaveLength(CORE_TRANSFORMS.length)
 
   await userEvent.click(within(row).getByRole('checkbox', { name: /File finished tasks away/ }))
@@ -80,7 +80,7 @@ test('the transforms are one row of several switches', async () => {
 
 test('a transform switch shows the vault’s current answer', () => {
   setup({ hooks: { ...VAULT_SETTING_DEFAULTS.hooks, relink: false, 'archive-done': true } })
-  const row = screen.getByRole('group', { name: 'Tidy up on every commit' })
+  const row = screen.getByRole('group', { name: 'Run on every commit' })
   expect(
     within(row).getByRole('checkbox', { name: /Fix links when a file moves/ }),
   ).not.toBeChecked()

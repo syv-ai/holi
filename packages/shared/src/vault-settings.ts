@@ -43,7 +43,8 @@ export interface TransformToggle {
   default: boolean
 }
 
-/** Core's transforms, in the order the settings tab lists them. `archive-done`
+/** Core's transforms, in the order a commit runs them, `relink` first because
+ *  plugins' transforms run right after it (`knownTransforms`). `archive-done`
  *  is the tasks core part's, listed here until tasks is a plugin. */
 export const CORE_TRANSFORMS: readonly TransformToggle[] = [
   {
@@ -52,6 +53,14 @@ export const CORE_TRANSFORMS: readonly TransformToggle[] = [
     explanation:
       'When git or the agent moves a file, rewrites the links pointing at it. Moves made in Holi fix their links already.',
     default: true,
+  },
+  {
+    // Off: a transform that rearranges someone's work is opt-in.
+    name: 'archive-done',
+    label: 'File finished tasks away',
+    explanation:
+      'Moves tasks finished more than two weeks ago into archive/, links and all. Off by default, because it changes what your board shows.',
+    default: false,
   },
   {
     name: 'normalize-md',
@@ -66,14 +75,6 @@ export const CORE_TRANSFORMS: readonly TransformToggle[] = [
     explanation:
       'Rebuilds .holi/memory/index.md so what the vault knows stays listed in one place.',
     default: true,
-  },
-  {
-    // Off: a transform that rearranges someone's work is opt-in.
-    name: 'archive-done',
-    label: 'File finished tasks away',
-    explanation:
-      'Moves tasks finished more than two weeks ago into archive/, links and all. Off by default, because it changes what your board shows.',
-    default: false,
   },
 ]
 
@@ -93,10 +94,15 @@ export type VaultHooks = Record<TransformName, boolean>
 export const transformDefaults = (toggles: readonly TransformToggle[]): VaultHooks =>
   Object.fromEntries(toggles.map((t) => [t.name, t.default]))
 
-/** The transforms this build knows: core's, then each installed plugin's. */
+/** The transforms this build knows, in the order a commit runs them: `relink`,
+ *  each installed plugin's, then the rest of core's (`vaultTransforms` in main).
+ *  The settings tab lists them in this order, so it shows what runs when. */
 export const knownTransforms = (
   plugins: readonly { transforms?: readonly TransformToggle[] }[],
-): TransformToggle[] => [...CORE_TRANSFORMS, ...plugins.flatMap((p) => p.transforms ?? [])]
+): TransformToggle[] => {
+  const [first, ...rest] = CORE_TRANSFORMS
+  return [first!, ...plugins.flatMap((p) => p.transforms ?? []), ...rest]
+}
 
 /** What the app's appearance follows. `system` tracks `prefers-color-scheme`. */
 export type ColorScheme = 'dark' | 'light' | 'system'
@@ -493,8 +499,9 @@ export const VAULT_SETTINGS: readonly VaultSetting[] = [
   },
   {
     key: 'hooks',
-    label: 'Tidy up on every commit',
-    explanation: 'Small fixes Holi makes for you when your work is saved.',
+    label: 'Run on every commit',
+    explanation:
+      'In this order, each time your work is saved. None of them can stop a save; each fix lands in the same commit.',
     type: {
       kind: 'flags',
       // **Merged per flag across the two files, not wholesale**: a local file

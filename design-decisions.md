@@ -399,6 +399,11 @@ and activation.
 - **The memory lives in `.holi/memory/`,** with Holi's other vault files, so the agent's notes to
   itself stay out of the user's notes. It is hidden in the tree, and still committed, synced,
   indexed and fenced from vault apps.
+- **A vault's own commit hooks are a `.pre-commit-config.yaml`,** run with the standard `pre-commit`
+  tool as the last transform, not a Holi-native hook list: users are developers and already know
+  it. It runs only where its person allowed it, an allowance of the config's and local scripts'
+  hash kept in main, because it is code a teammate committed and a pull can change it. It is
+  advisory like every transform: fixes are restaged, failures logged, the save goes on.
 - **`scaffold-md` is gone.** It prepended `tags: []` to every new note on commit, a visible rewrite
   outside the editor's reload rule, to hold an empty list. A note with no frontmatter now opens
   its bar to empty rows, and the first value written makes the block.

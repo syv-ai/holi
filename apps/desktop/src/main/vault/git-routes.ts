@@ -11,6 +11,7 @@
  */
 import { mergeRecordText, type SnapshotClaim } from '@holi/shared'
 import type { BridgeServer } from '../bridge/server'
+import { PRE_COMMIT_TRANSFORM, type VaultPreCommit } from './hooks/pre-commit'
 import { runPreCommit, type Transform } from './hooks/runner'
 import { stagedChanges } from './hooks/staged'
 import { readHookSettings, vaultTransforms } from './hooks/transforms'
@@ -22,6 +23,8 @@ export interface GitRoutesDeps {
   claims(root: string): Promise<readonly SnapshotClaim[]>
   /** The core parts' and enabled plugins' transforms, with their defaults. */
   transforms(root: string): Promise<readonly (Transform & { default: boolean })[]>
+  /** The vault's own `.pre-commit-config.yaml`, run last when allowed here. */
+  preCommit?: Pick<VaultPreCommit, 'transform'>
 }
 
 const message = (error: unknown): string => (error instanceof Error ? error.message : String(error))
@@ -52,13 +55,20 @@ export function registerGitRoutes(
           // and typing into the agent's PTY is not one. The run log
           // (`.holi/state/hooks.local.log`) is the agent-readable surface.
           const plugins = await deps.transforms(root)
+          const own = deps.preCommit?.transform(remote)
           const result = await runPreCommit(root, await stagedChanges(root), {
             // A plugin transform the settings do not name runs as its toggle says.
+            // The vault's own hooks always reach their transform, which runs
+            // them only where this person has allowed them.
             settings: {
               ...Object.fromEntries(plugins.map((t) => [t.name, t.default])),
               ...(await readHookSettings(root)),
+              [PRE_COMMIT_TRANSFORM]: true,
             },
-            transforms: vaultTransforms(await deps.claims(root), plugins),
+            transforms: [
+              ...vaultTransforms(await deps.claims(root), plugins),
+              ...(own === undefined ? [] : [own]),
+            ],
           })
           return json({ changed: result.changed, failed: result.failed })
         } catch (error) {

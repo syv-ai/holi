@@ -40,6 +40,7 @@ import { createPluginHost } from './plugin-host/host'
 import type { PluginEventsDeps } from './plugin-host/events'
 import { frameSchemes, schemeEntries, serveScheme } from './plugin-host/schemes'
 import { describeUpdate, updateConflictPrompt, updateShipped } from './vault/seed/update'
+import { createVaultPreCommit } from './vault/hooks/pre-commit'
 import { registerGitRoutes } from './vault/git-routes'
 import { registerIpc } from './ipc'
 import { createRouter, localToday } from './router'
@@ -323,8 +324,12 @@ async function main(): Promise<void> {
   })
   const dispatch = capabilityHost.dispatch
 
+  // The vault's own `.pre-commit-config.yaml`: who allowed it, and its runs.
+  const preCommit = createVaultPreCommit({ file: join(userDataDir, 'pre-commit-allowed.json') })
+
   const router = createRouter({
     capabilities: capabilityHost,
+    preCommit,
     seed: (root) => plugins.seed(root),
     plugins,
     members,
@@ -359,6 +364,7 @@ async function main(): Promise<void> {
     rootFor,
     claims: (root) => plugins.scanClaimsFor(root),
     transforms: (root) => plugins.transformsFor(root),
+    preCommit,
   })
   await bridge.start()
   const binDir = dirname(holiCliPath)

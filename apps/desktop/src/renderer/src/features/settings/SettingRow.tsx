@@ -21,6 +21,7 @@ import type { Surface } from '@/plugin-api/types'
 import { homeDocumentsAtom } from '@/state/home'
 import { installedPluginsAtom, surfacesAtom } from '@/state/plugins'
 import { SettingsRow } from '@/composites'
+import { VaultHooks } from './VaultHooks'
 
 export function Layer({ target }: { target: VaultSettingDescriptor['target'] }): React.JSX.Element {
   const committed = target === 'committed'
@@ -153,6 +154,8 @@ export function SettingRow({
               </label>
             )
           })}
+          {/* The commit hooks' row goes on to the vault's own, which run last. */}
+          {key === 'hooks' && <VaultHooks />}
         </div>
       )}
 

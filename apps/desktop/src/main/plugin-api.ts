@@ -193,6 +193,7 @@ export {
 } from './capabilities/params'
 export { seedFolder } from './vault/seed/folder'
 export { jsonFileStore, type JsonFileStore } from './json-file-store'
+export { resolveBin, toolPath } from './bin'
 export { runGit, type RangeFile } from './git'
 export { writeAtomic } from './vault/vault-files'
 export { readVaultTheme } from './vault/theme'

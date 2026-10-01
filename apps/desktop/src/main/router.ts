@@ -54,7 +54,8 @@ import { readVaultTheme, resetVaultTheme, writeVaultTheme } from './vault/theme'
 import { readVaultSettings, writeVaultSettings } from './vault/settings'
 import { knownTransforms, parseSettingsPatch } from '@holi/shared'
 import { installedInfos } from './plugin-host/installed'
-import type { ResolvedTheme, ResolvedVaultSettings } from '@holi/shared'
+import type { PreCommitStatus, ResolvedTheme, ResolvedVaultSettings } from '@holi/shared'
+import type { VaultPreCommit } from './vault/hooks/pre-commit'
 import { isRemote, repoName, type VaultRegistry } from './vault/registry'
 
 const t = initTRPC.create()
@@ -137,6 +138,10 @@ export interface RouterDeps {
    * destructive account action should be undoable.
    */
   trashItem: (path: string) => Promise<void>
+  /** The vault's own `.pre-commit-config.yaml`: its status here, and this
+   *  person's allowance (`vault/hooks/pre-commit.ts`). Absent in tests that do
+   *  not reach it. */
+  preCommit?: Pick<VaultPreCommit, 'status' | 'allow' | 'disallow'>
   /** Wall-clock, injected so `lastOpenedAt` is testable. */
   now?: () => string
   /**
@@ -1420,6 +1425,32 @@ export function createRouter(deps: RouterDeps) {
           }
         }
         return { ok: true as const, warnings: [...committed.warnings, ...local.warnings] }
+      }),
+
+    /** The vault's `.pre-commit-config.yaml` on this machine: its hooks, the
+     *  tool, whether this person allows it, and its last run. */
+    preCommit: t.procedure
+      .input(fields({ remote: 'string' }))
+      .query(async ({ input }): Promise<PreCommitStatus | null> => {
+        if (deps.preCommit === undefined) return null
+        return deps.preCommit.status(input.remote, await rootFor(input.remote))
+      }),
+
+    /** Allow the config `hash` names on this machine. False when it changed
+     *  since the person was shown it; they are then shown it again. */
+    allowPreCommit: t.procedure
+      .input(fields({ remote: 'string', hash: 'string' }))
+      .mutation(async ({ input }) => {
+        if (deps.preCommit === undefined) return { ok: false as const }
+        const ok = await deps.preCommit.allow(input.remote, await rootFor(input.remote), input.hash)
+        return { ok }
+      }),
+
+    disallowPreCommit: t.procedure
+      .input(fields({ remote: 'string' }))
+      .mutation(async ({ input }) => {
+        await deps.preCommit?.disallow(input.remote)
+        return { ok: true as const }
       }),
   })
 

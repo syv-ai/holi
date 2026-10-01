@@ -17,8 +17,7 @@
  */
 import { execFile } from 'node:child_process'
 import { accessSync, constants } from 'node:fs'
-import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { resolveBin } from '../../../../main/plugin-api'
 import type { TerminalCommand } from '../provider'
 
 /**
@@ -103,16 +102,13 @@ export function buildAgentEnv(
   return env
 }
 
-/** GUI apps don't inherit a login shell's PATH — check the usual install dirs. */
-const FALLBACK_BIN_DIRS = [
-  '/opt/homebrew/bin',
-  '/usr/local/bin',
-  '.local/bin',
-  '.bun/bin',
-  '.volta/bin',
-  '.npm-global/bin',
-  'n/bin',
-]
+/** `HOLI_CLAUDE_BIN` when it is set and runs, else `claude` as `resolveBin`
+ *  finds it. */
+export function resolveClaudeBin(env: NodeJS.ProcessEnv = process.env): string | null {
+  const override = env.HOLI_CLAUDE_BIN
+  if (override && isExecutable(override)) return override
+  return resolveBin('claude', env)
+}
 
 function isExecutable(path: string): boolean {
   try {
@@ -121,24 +117,6 @@ function isExecutable(path: string): boolean {
   } catch {
     return false
   }
-}
-
-export function resolveClaudeBin(env: NodeJS.ProcessEnv = process.env): string | null {
-  const override = env.HOLI_CLAUDE_BIN
-  if (override && isExecutable(override)) return override
-
-  for (const dir of (env.PATH ?? '').split(':')) {
-    if (!dir) continue
-    const candidate = join(dir, 'claude')
-    if (isExecutable(candidate)) return candidate
-  }
-
-  const home = env.HOME ?? homedir()
-  for (const dir of FALLBACK_BIN_DIRS) {
-    const candidate = dir.startsWith('/') ? join(dir, 'claude') : join(home, dir, 'claude')
-    if (isExecutable(candidate)) return candidate
-  }
-  return null
 }
 
 /** A listing is read on a filesystem edge, so a hung CLI would queue reads. */
