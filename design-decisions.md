@@ -326,3 +326,19 @@ and activation.
   dimmed and expands on click.
 - **A surface opened with an id appends like a file,** and one without an id opens leftmost, as
   before.
+- **Vault apps is a plugin.** With it off, records still merge and `.local.app` is still never
+  committed (core); only the `holi-app:` scheme, the app door and the `apps`/`store`
+  capabilities go away. `holi apps` and `holi store` run without a prompt: opening an app is
+  reversible, and a store write is a schema-checked vault file.
+- **Cross-plugin checks live beside the plugin list** (`src/plugins/app-methods.test.ts`),
+  because one plugin may not import another. The APP_METHODS exhaustiveness test builds a
+  registry from every plugin's table.
+- **Core tests use stand-in claims and surfaces, never a real plugin's,** because what they test
+  is core's behaviour. Each plugin tests its own rules.
+
+### Order change
+
+- **The agent (phase 5) goes before tasks (phase 4).** With about three hours of the session
+  left, only one of them fits. The agent was the first item on the owner's list, and it is what
+  makes another coding agent (OpenCode) possible. Tasks is the larger extraction and has no
+  dependency on the agent move. Its design (DESIGN-4) stays ready.
