@@ -10,7 +10,7 @@
  * another pane, which has no slot here and a width this strip cannot know.
  * Every other position change glides rather than snaps.
  */
-import { useAtomValue, useSetAtom } from 'jotai'
+import { useAtomValue } from 'jotai'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   Button,

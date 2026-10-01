@@ -6,13 +6,7 @@
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { History, Logs, PanelLeftClose, PanelLeftOpen, PanelRight, RotateCw } from 'lucide-react'
 import { Fragment, useEffect, useRef, useState } from 'react'
-import {
-  APP_LOG_FILE,
-  fileKind,
-  isAppBundlePath,
-  isTaskFilePath,
-  isVaultConfigPath,
-} from '@holi/shared'
+import { APP_LOG_FILE, isAppBundlePath, isVaultConfigPath } from '@holi/shared'
 import {
   Button,
   IconButton,
@@ -26,18 +20,12 @@ import { OnboardingRitual } from '@/features/onboarding/OnboardingRitual'
 import { SessionOrbs } from '@/features/agent/SessionOrbs'
 import { TurnReview } from '@/features/agent/TurnReview'
 import { HistoryPanel } from '@/features/history/HistoryPanel'
-import { BoardView } from '@/features/tasks/BoardView'
-import { AgendaView } from '@/features/google/AgendaView'
-import { MailView } from '@/features/google/MailView'
 import { DialogHost } from './DialogHost'
 import { FrontmatterFieldsHost } from '@/features/frontmatter/FrontmatterFieldsHost'
 import { PaneView } from './PaneView'
 import { DrawerShell } from '@/composites'
-import { FilePlaceholder } from '@/features/files/FilePlaceholder'
-import { AppFrame } from '@/features/apps/AppFrame'
 import { FileTree } from '@/features/explorer/FileTree'
 import { NavMenu } from '@/features/nav/NavMenu'
-import { ImageViewer } from '@/features/files/ImageViewer'
 import { VaultPicker } from '@/features/vault/VaultPicker'
 import { trpc } from '../lib/trpc'
 import { sweepDailyAtom } from '../state/daily'
@@ -226,8 +214,6 @@ export function Shell() {
       window.removeEventListener('drop', clear)
     }
   }, [dragTab])
-
-  const pane = workspace.panes[workspace.active]!
 
   // Single-click / link-nav opens a preview tab (browsing costs one tab);
   // double-click pins. Editing a preview promotes it (see EditorPane onEdit).

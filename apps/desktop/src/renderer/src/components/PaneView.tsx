@@ -4,7 +4,7 @@
  * Deliberately dumb: Shell hands it its pane and callbacks already bound to
  * the pane index, so it never asks `workspaceAtom` "which pane am I".
  */
-import { fileKind, isTaskFilePath } from '@holi/shared'
+import { fileKind } from '@holi/shared'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { cn } from '@/lib/cn'
 import { isLockedForReconcile } from '@/lib/reconcile-lock'

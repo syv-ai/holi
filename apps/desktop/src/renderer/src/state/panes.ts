@@ -6,7 +6,7 @@
  * and the state is `panes[] → tabs[]`.
  */
 
-import { fileKind, isAppBundlePath, type SingletonSurface } from '@holi/shared'
+import { isAppBundlePath, type SingletonSurface } from '@holi/shared'
 import { atom } from 'jotai'
 import type { PaneDropZone } from '@/lib/tab-drop'
 
