@@ -1,51 +1,35 @@
 /**
- * What a capability may ask of the running app, beyond the vault's files.
+ * What a core capability may ask of the running app, beyond the vault's files.
  *
- * Both doors build a capability's context through `createCapabilityServices`,
+ * Every door builds a capability's context through one `createCoreServices`,
  * so the app's bridge and the agent's `holi` CLI see the same sync state, the
- * same sessions and the same members, and there is one place that decides
- * what "the active vault" means for them.
+ * same recents and the same members, and there is one place that decides what
+ * "the active vault" means for them. A feature's own needs are not here: each
+ * feature's table closes over its dependencies when it is registered.
  *
  * No `electron` import: the registry's tests hand in a fake instead.
  */
 import type { Collaborator, RecentEntry } from '@holi/shared'
-import type { SessionSummary } from '../agent/claude-sessions'
 import { openRepo, type GitRepo } from '../git'
 import type { MembersCache } from '../github/members-cache'
-import type { AgendaWindow, CalendarEvent, CalendarOverrides } from '../google/calendar'
-import type { GoogleData } from '../google/data'
-import type { ListThreadsOptions, MailPage } from '../google/gmail'
 import type { SyncState } from '../vault/active-vault'
-import type { AppGrants } from '../apps/app-grants'
 import { CapabilityError } from './error'
 
-export interface CapabilityServices {
-  /** Today, local, as `YYYY-MM-DD`: the frame a recurrence rolls against. */
-  today(): string
+export interface CoreServices {
   /** Null when this vault is not the one open: main tracks sync for that one only. */
   syncState(): SyncState | null
-  /** Empty when this vault is not the one open. */
-  sessions(): SessionSummary[]
   /** The renderer's last report for this vault, unfiltered; empty before one. */
   recents(): RecentEntry[]
   /** The repo's collaborators, cached for a few minutes. Rejects on a GitHub error. */
   members(): Promise<Collaborator[]>
   repo(): GitRepo
-  /** Null: no Google account is connected to this vault. */
-  agenda(window: AgendaWindow): Promise<CalendarEvent[] | null>
-  threads(options: ListThreadsOptions): Promise<MailPage | null>
-  grants: AppGrants
 }
 
-export interface CapabilityServicesDeps {
-  today(): string
+export interface CoreServicesDeps {
   /** The open vault's remote and sync state, or null with none open. */
   active(): { remote: string; syncState(): SyncState } | null
-  sessions(): SessionSummary[]
   members: MembersCache
-  googleDataFor(remote: string): Promise<GoogleData | null>
-  calendarOverrides(): Promise<CalendarOverrides>
-  grants: AppGrants
+  reports: UiReports
 }
 
 /**
@@ -74,49 +58,32 @@ export function createUiReports(): UiReports {
 }
 
 /** One services object per call, for `remote` cloned at `root`. */
-export function createCapabilityServices(
-  deps: CapabilityServicesDeps,
-  reports: UiReports,
-): (remote: string, root: string) => CapabilityServices {
-  return (remote, root) => {
-    const isActive = () => deps.active()?.remote === remote
-    return {
-      today: deps.today,
-      syncState: () => (isActive() ? (deps.active()?.syncState() ?? null) : null),
-      sessions: () => (isActive() ? deps.sessions() : []),
-      recents: () => reports.get(remote).recents,
-      members: () => deps.members.get(remote),
-      repo: () => openRepo(root),
-      agenda: async (window) => {
-        const data = await deps.googleDataFor(remote)
-        return data === null ? null : data.agenda(window, await deps.calendarOverrides())
-      },
-      threads: async (options) => {
-        const data = await deps.googleDataFor(remote)
-        return data === null ? null : data.threads(options)
-      },
-      grants: deps.grants,
-    }
-  }
+export function createCoreServices(
+  deps: CoreServicesDeps,
+): (remote: string, root: string) => CoreServices {
+  return (remote, root) => ({
+    syncState: () => {
+      const active = deps.active()
+      return active?.remote === remote ? active.syncState() : null
+    },
+    recents: () => deps.reports.get(remote).recents,
+    members: () => deps.members.get(remote),
+    repo: () => openRepo(root),
+  })
 }
 
 /**
  * Services for a door with none wired (the router's tests): everything past
  * the vault's files is "not here", never a wrong answer.
  */
-export function noServices(today: () => string): CapabilityServices {
+export function noCoreServices(): CoreServices {
   const none = (): never => {
     throw new CapabilityError('UNAVAILABLE', 'not available here')
   }
   return {
-    today,
     syncState: () => null,
-    sessions: () => [],
     recents: () => [],
     members: async () => none(),
     repo: none,
-    agenda: async () => null,
-    threads: async () => null,
-    grants: { status: async () => ({ codeHash: '', affordances: [] }), grant: async () => none() },
   }
 }

@@ -37,14 +37,17 @@ import { initAppOp, type AppInitResult } from './apps/app-ops'
 import { searchBodies, type SearchHit } from './vault/search'
 import { writeHomeApp } from './apps/home-app'
 import { writeAppLog } from './apps/app-log'
-import { bundleAuthorship, commitLogin, manifestOf, type BundleCommit } from './apps/app-grants'
-import { CapabilityError } from './capabilities/error'
 import {
-  createCapabilityRegistry,
-  type CapabilityContext,
-  type CapabilityRegistry,
-} from './capabilities/registry'
-import { noServices, type CapabilityServices, type UiReport } from './capabilities/services'
+  bundleAuthorship,
+  commitLogin,
+  manifestOf,
+  type AppGrants,
+  type BundleCommit,
+} from './apps/app-grants'
+import { CapabilityError } from './capabilities/error'
+import { createDispatch, type Dispatch } from './capabilities/dispatch'
+import { createCapabilityRegistry } from './capabilities/registry'
+import { noCoreServices, type UiReport } from './capabilities/services'
 import { migrateApps as moveLegacyApps } from './apps/migrate-apps'
 import { scanBackrefs, scanBackrefsMany } from './vault/backrefs'
 import { fileHistory, type FileHistory } from './vault/file-facts'
@@ -229,16 +232,16 @@ export interface RouterDeps {
    */
   today?: () => string
   /**
-   * What a capability may ask of the running app beyond the vault's files:
-   * sync, sessions, members, Google, approvals. The same factory builds them
-   * for the CLI door (`capabilities/services.ts`). Optional so a test router
-   * builds without it; absent, those reads answer "not available here".
+   * The capability dispatch the composition root built over its registry,
+   * shared with the CLI door (`capabilities/dispatch.ts`); `apps.bridge` goes
+   * through it. Optional so a test router builds without it; absent, every
+   * method is "no such method".
    */
-  capabilityServices?: (remote: string, root: string) => CapabilityServices
-  /** The capabilities the composition root registered, which `apps.bridge`
-   *  dispatches into. Optional so a test router builds without it; absent,
-   *  every method is "no such method". */
-  capabilities?: CapabilityRegistry
+  dispatch?: Dispatch
+  /** The approvals of apps' `dangerously-allow` reads, which `apps.grants`
+   *  and `apps.grant` ask and record. Optional: absent, nothing is declared
+   *  and nothing can be approved. */
+  grants?: AppGrants
   /** The collaborator lists the capability services read too, so Settings
    *  and an app share one. Optional: absent, the router keeps its own. */
   members?: MembersCache
@@ -505,8 +508,19 @@ export function createRouter(deps: RouterDeps) {
   const now = deps.now ?? (() => new Date().toISOString())
   const today = deps.today ?? localToday
   const cloneUrlFor = deps.cloneUrlFor ?? remoteUrl
-  const servicesFor = deps.capabilityServices ?? (() => noServices(today))
-  const capabilities = deps.capabilities ?? createCapabilityRegistry()
+  const dispatch =
+    deps.dispatch ??
+    createDispatch({
+      registry: createCapabilityRegistry(),
+      rootFor: async (remote) =>
+        (await deps.registry.list()).find((e) => e.remote === remote)?.path ?? null,
+      active: () => deps.host.active(),
+      core: noCoreServices,
+    })
+  const grants: AppGrants = deps.grants ?? {
+    status: async () => ({ codeHash: '', affordances: [] }),
+    grant: async () => false,
+  }
   const members =
     deps.members ?? createMembersCache((remote) => deps.session.api.collaborators(remote))
 
@@ -1301,17 +1315,15 @@ export function createRouter(deps: RouterDeps) {
         if (!isAppBundlePath(input.bundle)) {
           throw new TRPCError({ code: 'BAD_REQUEST', message: `not an app: ${input.bundle}` })
         }
-        const root = await rootFor(input.remote)
-        const ctx: CapabilityContext = {
-          remote: input.remote,
-          root,
-          bundle: input.bundle,
-          snapshot: () => snapshotFor(input.remote),
-          services: servicesFor(input.remote, root),
-        }
-        let result
         try {
-          result = await capabilities.run(input.method, 'app', ctx, input.params)
+          const result = await dispatch({
+            door: 'app',
+            remote: input.remote,
+            bundle: input.bundle,
+            name: input.method,
+            params: input.params,
+          })
+          return result.value
         } catch (err) {
           if (err instanceof CapabilityError) {
             throw new TRPCError({
@@ -1321,13 +1333,6 @@ export function createRouter(deps: RouterDeps) {
           }
           throw err
         }
-        if (result.writes) {
-          const active = deps.host.active()
-          if (active?.remote === input.remote) {
-            await active.refresh().catch((e) => console.error('[apps] post-write rescan:', e))
-          }
-        }
-        return result.value
       }),
 
     // ---- Holi's own UI from here down. Not reachable from an app. ----
@@ -1341,11 +1346,7 @@ export function createRouter(deps: RouterDeps) {
           throw new TRPCError({ code: 'BAD_REQUEST', message: `not an app: ${input.bundle}` })
         }
         const root = await rootFor(input.remote)
-        const status = await servicesFor(input.remote, root).grants.status(
-          input.remote,
-          root,
-          input.bundle,
-        )
+        const status = await grants.status(input.remote, root, input.bundle)
         // Only asked when there is something to approve: it names the code.
         if (!status.affordances.some((a) => !a.granted)) {
           return { ...status, reasons: {}, added: null, lastChange: null }
@@ -1376,13 +1377,7 @@ export function createRouter(deps: RouterDeps) {
         }
         const root = await rootFor(input.remote)
         // False: the app changed since the dialog was shown, so ask again.
-        return servicesFor(input.remote, root).grants.grant(
-          input.remote,
-          root,
-          input.bundle,
-          input.affordances,
-          input.codeHash,
-        )
+        return grants.grant(input.remote, root, input.bundle, input.affordances, input.codeHash)
       }),
 
     /** Write the manifest that finishes a bundle — the launchers' "Finish this

@@ -10,7 +10,7 @@ import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { commentThreadsJson, emptyVaultSnapshot, formatCommentThreads } from '@holi/shared'
 import { createCapabilityRegistry } from '../src/main/capabilities/registry'
-import { noServices } from '../src/main/capabilities/services'
+import { noCoreServices } from '../src/main/capabilities/services'
 import { PDF_CAPABILITIES, PDF_NAMESPACES } from '../src/main/pdf/capabilities'
 import { pdfCommentsInVault, readPdfComments } from '../src/main/pdf/comments'
 
@@ -130,7 +130,7 @@ describe('pdfCommentsInVault', () => {
       root,
       bundle: null,
       snapshot: async () => emptyVaultSnapshot(),
-      services: noServices(() => '2026-09-30'),
+      core: noCoreServices(),
     }
     const registry = createCapabilityRegistry()
     registry.register(PDF_NAMESPACES, PDF_CAPABILITIES)

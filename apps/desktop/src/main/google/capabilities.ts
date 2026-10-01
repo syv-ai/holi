@@ -5,9 +5,12 @@
  * No `electron` import: this loads under plain Node in the tests.
  */
 import type { AppAffordance } from '@holi/shared'
+import type { AppGrants } from '../apps/app-grants'
 import { CapabilityError, unavailable } from '../capabilities/error'
 import { paramsObject, stringParam } from '../capabilities/params'
 import { cap, type CapabilityContext } from '../capabilities/registry'
+import type { CalendarOverrides } from './calendar'
+import type { GoogleData } from './data'
 
 /** Longest calendar window an app may ask for in one call. */
 const MAX_AGENDA_DAYS = 92
@@ -17,10 +20,14 @@ const MAX_AGENDA_DAYS = 92
  * affordance in `dangerously-allow`, and the person must have approved it on
  * this machine (`apps/app-grants.ts`). Only the app door reaches these entries.
  */
-async function requireGrant(ctx: CapabilityContext, affordance: AppAffordance): Promise<void> {
+async function requireGrant(
+  grants: AppGrants,
+  ctx: CapabilityContext,
+  affordance: AppAffordance,
+): Promise<void> {
   const bundle = ctx.bundle
   if (bundle === null) throw new CapabilityError('BAD_REQUEST', 'only an app may ask')
-  const status = (await ctx.services.grants.status(ctx.remote, ctx.root, bundle)).affordances.find(
+  const status = (await grants.status(ctx.remote, ctx.root, bundle)).affordances.find(
     (s) => s.affordance === affordance,
   )
   if (status === undefined) {
@@ -36,7 +43,22 @@ async function requireGrant(ctx: CapabilityContext, affordance: AppAffordance): 
 
 export const GOOGLE_NAMESPACES = ['calendar', 'mail'] as const
 
-export const GOOGLE_CAPABILITIES = {
+export interface GoogleCapabilitiesDeps {
+  /** The vault's Google data layer; null when no account is connected to it. */
+  dataFor(remote: string): Promise<GoogleData | null>
+  /** The calendars the person switched off, which an app does not see either. */
+  overrides(): Promise<CalendarOverrides>
+  grants: AppGrants
+}
+
+/** The connected account's data, or the refusal that says there is none. */
+async function connected(deps: GoogleCapabilitiesDeps, remote: string): Promise<GoogleData> {
+  const data = await deps.dataFor(remote)
+  if (data === null) throw new CapabilityError('UNAVAILABLE', 'no Google account connected')
+  return data
+}
+
+export const googleCapabilities = (deps: GoogleCapabilitiesDeps) => ({
   'calendar.events': cap({
     doors: ['app'],
     params: (raw) => {
@@ -54,10 +76,9 @@ export const GOOGLE_CAPABILITIES = {
       return { timeMin: new Date(start).toISOString(), timeMax: new Date(end).toISOString() }
     },
     run: async (ctx, window) => {
-      await requireGrant(ctx, 'calendar')
-      const events = await unavailable(() => ctx.services.agenda(window))
-      if (events === null) throw new CapabilityError('UNAVAILABLE', 'no Google account connected')
-      return events
+      await requireGrant(deps.grants, ctx, 'calendar')
+      const data = await connected(deps, ctx.remote)
+      return unavailable(async () => data.agenda(window, await deps.overrides()))
     },
   }),
 
@@ -71,12 +92,9 @@ export const GOOGLE_CAPABILITIES = {
       return { query: p.query === undefined || p.query === '' ? undefined : p.query }
     },
     run: async (ctx, { query }) => {
-      await requireGrant(ctx, 'mail')
-      const page = await unavailable(() =>
-        ctx.services.threads(query === undefined ? {} : { query }),
-      )
-      if (page === null) throw new CapabilityError('UNAVAILABLE', 'no Google account connected')
-      return page.threads
+      await requireGrant(deps.grants, ctx, 'mail')
+      const data = await connected(deps, ctx.remote)
+      return (await unavailable(() => data.threads(query === undefined ? {} : { query }))).threads
     },
   }),
-}
+})

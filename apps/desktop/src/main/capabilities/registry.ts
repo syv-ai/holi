@@ -22,7 +22,7 @@
  */
 import type { VaultSnapshot } from '@holi/shared'
 import { CapabilityError } from './error'
-import type { CapabilityServices } from './services'
+import type { CoreServices } from './services'
 
 export type Door = 'app' | 'cli'
 
@@ -33,9 +33,10 @@ export interface CapabilityContext {
   /** The calling app's bundle at the app door; null at the CLI door. */
   bundle: string | null
   snapshot(): Promise<VaultSnapshot>
-  /** What the running app knows beyond the files: one factory builds these
-   *  for both doors (`services.ts`). */
-  services: CapabilityServices
+  /** What the running app knows beyond the files, for core's entries: one
+   *  factory builds these for every door (`services.ts`). A feature's entries
+   *  close over their own dependencies instead. */
+  core: CoreServices
 }
 
 export interface Capability<P = unknown, R = unknown> {

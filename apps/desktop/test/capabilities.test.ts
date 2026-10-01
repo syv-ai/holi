@@ -9,16 +9,26 @@ import {
   createCapabilityRegistry,
   type CapabilityContext,
 } from '../src/main/capabilities/registry'
-import { noServices, type CapabilityServices } from '../src/main/capabilities/services'
+import type { AppGrants } from '../src/main/apps/app-grants'
+import { noCoreServices, type CoreServices } from '../src/main/capabilities/services'
 import { VAULT_CAPABILITIES, VAULT_NAMESPACES } from '../src/main/capabilities/vault-caps'
-import { GOOGLE_CAPABILITIES, GOOGLE_NAMESPACES } from '../src/main/google/capabilities'
-import { TASK_CAPABILITIES, TASK_NAMESPACES } from '../src/main/vault/task-capabilities'
+import { googleCapabilities, GOOGLE_NAMESPACES } from '../src/main/google/capabilities'
+import { taskCapabilities, TASK_NAMESPACES } from '../src/main/vault/task-capabilities'
 import { MEMBERS_TTL_MS, createMembersCache } from '../src/main/github/members-cache'
 
 const registry = createCapabilityRegistry()
 registry.register(VAULT_NAMESPACES, VAULT_CAPABILITIES)
-registry.register(TASK_NAMESPACES, TASK_CAPABILITIES)
-registry.register(GOOGLE_NAMESPACES, GOOGLE_CAPABILITIES)
+registry.register(TASK_NAMESPACES, taskCapabilities({ today: () => '2026-09-30' }))
+/** What the Google entries see of this person's approvals; each test sets it. */
+let grantStatus: AppGrants['status'] = async () => ({ codeHash: '', affordances: [] })
+registry.register(
+  GOOGLE_NAMESPACES,
+  googleCapabilities({
+    dataFor: async () => null,
+    overrides: async () => ({}),
+    grants: { status: (...args) => grantStatus(...args), grant: async () => true },
+  }),
+)
 const runCapability = registry.run
 
 describe('the capability registry', () => {
@@ -61,10 +71,7 @@ async function put(rel: string, text: string): Promise<void> {
   written.push(rel)
 }
 
-function ctx(
-  services: Partial<CapabilityServices>,
-  bundle: string | null = 'A.app',
-): CapabilityContext {
+function ctx(core: Partial<CoreServices>, bundle: string | null = 'A.app'): CapabilityContext {
   return {
     remote: 'o/r',
     root,
@@ -73,7 +80,7 @@ function ctx(
       ...emptyVaultSnapshot(),
       files: written.map((path) => ({ path, updatedAt: '' })),
     }),
-    services: { ...noServices(() => '2026-09-30'), ...services },
+    core: { ...noCoreServices(), ...core },
   }
 }
 
@@ -124,7 +131,7 @@ describe('vault.members', () => {
     const { value } = await runCapability(
       'vault.members',
       'app',
-      ctx({ members } as Partial<CapabilityServices>),
+      ctx({ members } as Partial<CoreServices>),
       {},
     )
     expect(value).toEqual([{ login: 'ada', avatarUrl: 'https://x/a.png' }])
@@ -177,7 +184,7 @@ describe('vault.history', () => {
         { sha: '2', files: ['memory/x.md', 'memory/index.md'] },
         { sha: '1', files: ['b.md'] },
       ],
-    }) as unknown as ReturnType<CapabilityServices['repo']>
+    }) as unknown as ReturnType<CoreServices['repo']>
 
   it('hides commits that touched only the agent surface, and its paths in the rest', async () => {
     const { value } = await runCapability('vault.history', 'app', ctx({ repo }), {})
@@ -278,51 +285,32 @@ describe('Google reads', () => {
 
   it('need the manifest flag first', async () => {
     await put('A.app/app.yaml', '')
-    const status = async () => ({ codeHash: 'h', affordances: [] })
-    expect(
-      await refusal(
-        runCapability(
-          'mail.threads',
-          'app',
-          ctx({ grants: { status, grant: async () => true } }),
-          {},
-        ),
-      ),
-    ).toMatchObject({ code: 'FORBIDDEN', message: expect.stringContaining('dangerously-allow') })
+    grantStatus = async () => ({ codeHash: 'h', affordances: [] })
+    expect(await refusal(runCapability('mail.threads', 'app', ctx({}), {}))).toMatchObject({
+      code: 'FORBIDDEN',
+      message: expect.stringContaining('dangerously-allow'),
+    })
   })
 
   it('then the approval', async () => {
-    const status = async () => ({
+    grantStatus = async () => ({
       codeHash: 'h',
       affordances: [{ affordance: 'calendar' as const, granted: false }],
     })
-    expect(
-      await refusal(
-        runCapability(
-          'calendar.events',
-          'app',
-          ctx({ grants: { status, grant: async () => true } }),
-          range,
-        ),
-      ),
-    ).toMatchObject({ code: 'FORBIDDEN', message: expect.stringContaining('not approved') })
+    expect(await refusal(runCapability('calendar.events', 'app', ctx({}), range))).toMatchObject({
+      code: 'FORBIDDEN',
+      message: expect.stringContaining('not approved'),
+    })
   })
 
   it('then a connected account', async () => {
-    const status = async () => ({
+    grantStatus = async () => ({
       codeHash: 'h',
       affordances: [{ affordance: 'mail' as const, granted: true }],
     })
-    expect(
-      await refusal(
-        runCapability(
-          'mail.threads',
-          'app',
-          ctx({ grants: { status, grant: async () => true } }),
-          {},
-        ),
-      ),
-    ).toMatchObject({ code: 'UNAVAILABLE' })
+    expect(await refusal(runCapability('mail.threads', 'app', ctx({}), {}))).toMatchObject({
+      code: 'UNAVAILABLE',
+    })
   })
 
   it('are not CLI commands', async () => {

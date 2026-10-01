@@ -81,7 +81,7 @@ export const VAULT_CAPABILITIES = {
     doors: ['app', 'cli'],
     params: noParams,
     run: async (ctx): Promise<RecentEntry[]> =>
-      ctx.services
+      ctx.core
         .recents()
         .filter((e) => APP_RECENT_KINDS.has(e.kind))
         .filter((e) => (e.kind === 'path' || e.kind === 'app' ? readableOrNull(e.key) : true)),
@@ -103,7 +103,7 @@ export const VAULT_CAPABILITIES = {
     // Login and avatar only: an app has no use for who may push.
     run: (ctx) =>
       unavailable(async () =>
-        (await ctx.services.members()).map((m) => ({
+        (await ctx.core.members()).map((m) => ({
           login: m.login,
           ...(m.avatarUrl !== undefined ? { avatarUrl: m.avatarUrl } : {}),
         })),
@@ -119,7 +119,7 @@ export const VAULT_CAPABILITIES = {
       return { path, limit: limitParam(p, 'limit', 50, 200) }
     },
     run: async (ctx, { path, limit }) => {
-      const repo = ctx.services.repo()
+      const repo = ctx.core.repo()
       if (path !== undefined) {
         // A deleted file's history is still history, so the snapshot is not
         // asked here; `--literal-pathspecs` and git's own case-sensitive match
@@ -155,7 +155,7 @@ export const VAULT_CAPABILITIES = {
     doors: ['app', 'cli'],
     params: noParams,
     run: async (ctx): Promise<SyncState | null> => {
-      const state = ctx.services.syncState()
+      const state = ctx.core.syncState()
       // An app is not told the names of conflicting agent-surface files; the
       // agent, at the CLI door, is.
       if (ctx.bundle === null || state === null) return state

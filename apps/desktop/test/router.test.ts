@@ -9,9 +9,11 @@ import { afterAll, describe, expect, it, vi } from 'vitest'
 import { createVaultHost, type VaultHost } from '../src/main/vault/active-vault'
 import { ensureSeeded } from '../src/main/agent/seed-content'
 import { makeClone, makeNonVaultRemote, makeRemote, plainGit } from './helpers/git-fixtures'
+import { createDispatch } from '../src/main/capabilities/dispatch'
 import { createCapabilityRegistry } from '../src/main/capabilities/registry'
+import { noCoreServices } from '../src/main/capabilities/services'
 import { VAULT_CAPABILITIES, VAULT_NAMESPACES } from '../src/main/capabilities/vault-caps'
-import { TASK_CAPABILITIES, TASK_NAMESPACES } from '../src/main/vault/task-capabilities'
+import { taskCapabilities, TASK_NAMESPACES } from '../src/main/vault/task-capabilities'
 import { createRouter } from '../src/main/router'
 import { resolveTypstBin } from '../src/main/pdf/typst-bin'
 import { createSignatureStore } from '../src/main/pdf/signatures'
@@ -108,9 +110,15 @@ async function rig(files: Record<string, string> = {}, auth?: StoredAuth) {
   // The capabilities `apps.bridge` reaches here: core's and the tasks'.
   const capabilities = createCapabilityRegistry()
   capabilities.register(VAULT_NAMESPACES, VAULT_CAPABILITIES)
-  capabilities.register(TASK_NAMESPACES, TASK_CAPABILITIES)
+  capabilities.register(TASK_NAMESPACES, taskCapabilities({ today: () => TODAY }))
   const caller = createRouter({
-    capabilities,
+    dispatch: createDispatch({
+      registry: capabilities,
+      rootFor: async (remote) =>
+        (await registry.list()).find((e) => e.remote === remote)?.path ?? null,
+      active: () => host.active(),
+      core: noCoreServices,
+    }),
     registry,
     session,
     host,

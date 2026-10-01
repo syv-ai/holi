@@ -48,12 +48,13 @@ import { createAgentOps } from './agent/ops'
 import { initAppOp, openAppOp } from './apps/app-ops'
 import type { MainAppMethod } from '@holi/shared'
 import { APP_CAPABILITIES, APP_NAMESPACES } from './apps/capabilities'
-import { AGENT_CAPABILITIES, AGENT_NAMESPACES } from './agent/capabilities'
+import { agentCapabilities, AGENT_NAMESPACES } from './agent/capabilities'
+import { createDispatch } from './capabilities/dispatch'
 import { createCapabilityRegistry } from './capabilities/registry'
 import { VAULT_CAPABILITIES, VAULT_NAMESPACES } from './capabilities/vault-caps'
-import { GOOGLE_CAPABILITIES, GOOGLE_NAMESPACES } from './google/capabilities'
+import { googleCapabilities, GOOGLE_NAMESPACES } from './google/capabilities'
 import { PDF_CAPABILITIES, PDF_NAMESPACES } from './pdf/capabilities'
-import { TASK_CAPABILITIES, TASK_NAMESPACES } from './vault/task-capabilities'
+import { taskCapabilities, TASK_NAMESPACES } from './vault/task-capabilities'
 import {
   describeUpdate,
   updateConflictPrompt,
@@ -77,7 +78,7 @@ import {
 import { registerIpc } from './ipc'
 import { createRouter, localToday } from './router'
 import { createAppGrants } from './apps/app-grants'
-import { createCapabilityServices, createUiReports } from './capabilities/services'
+import { createCoreServices, createUiReports } from './capabilities/services'
 import { createVaultHost } from './vault/active-vault'
 import { VaultRegistry, vaultRoot } from './vault/registry'
 import { scanVault } from './vault/vault-store'
@@ -354,8 +355,8 @@ async function main(): Promise<void> {
   // Shared by the UI's Convert-to-PDF router and the agent's $TYPST_BIN.
   const typstCacheDir = join(app.getPath('userData'), 'typst')
 
-  // Both doors into the capability registry read the running app through
-  // these: the app's bridge (the router) and the agent's `holi` CLI (below).
+  // What the renderer reports the person is looking at, and their approvals
+  // of apps' Google reads: capabilities and the router both read these.
   const uiReports = createUiReports()
   const appGrants = createAppGrants(join(app.getPath('userData'), 'app-grants.json'))
 
@@ -371,44 +372,69 @@ async function main(): Promise<void> {
   })
   // Settings' member list reads the same cache as an app and the agent.
   const members = createMembersCache((remote) => session.api.collaborators(remote))
-  const capabilityServices = createCapabilityServices(
-    {
-      today: localToday,
-      active: () => host.active(),
-      // `agent` is assigned below, before any vault can be open.
-      sessions: () => agent?.sessions() ?? [],
-      members,
-      googleDataFor,
-      calendarOverrides: async () => (await calendarPrefs.read()) ?? {},
-      grants: appGrants,
-    },
-    uiReports,
-  )
+  /**
+   * The clone the caller's vault lives in.
+   *
+   * Resolved from the **caller's remote**, not from `host.active()`: an
+   * agent session outlives a vault switch, and a `git commit` in one clone fires
+   * that clone's hook whatever Holi is showing. Resolving by what is on screen
+   * would run the pre-commit transforms against the wrong repository.
+   *
+   * The registry is the source, so a vault that is not currently open still
+   * resolves: its clone is on disk either way, and its git hook can fire.
+   */
+  const rootFor = async (remote: string): Promise<string | null> => {
+    const active = host.active()
+    if (active?.remote === remote) return active.root
+    return (await registry.list()).find((e) => e.remote === remote)?.path ?? null
+  }
 
   // What a vault app and the agent can ask for: core's capabilities, then
-  // each feature's, under the namespaces each owns.
+  // each feature's, under the namespaces each owns. A feature's table closes
+  // over what it needs from the running app.
+  const vaultCaps = VAULT_CAPABILITIES
+  const appCaps = APP_CAPABILITIES
+  const taskCaps = taskCapabilities({ today: localToday })
+  const pdfCaps = PDF_CAPABILITIES
+  const agentCaps = agentCapabilities({
+    // `agent` is assigned below, before any vault can be open.
+    sessionsFor: (remote) => (host.active()?.remote === remote ? (agent?.sessions() ?? []) : []),
+  })
+  const googleCaps = googleCapabilities({
+    dataFor: googleDataFor,
+    overrides: async () => (await calendarPrefs.read()) ?? {},
+    grants: appGrants,
+  })
   const capabilities = createCapabilityRegistry()
-  capabilities.register(VAULT_NAMESPACES, VAULT_CAPABILITIES)
-  capabilities.register(APP_NAMESPACES, APP_CAPABILITIES)
-  capabilities.register(TASK_NAMESPACES, TASK_CAPABILITIES)
-  capabilities.register(PDF_NAMESPACES, PDF_CAPABILITIES)
-  capabilities.register(AGENT_NAMESPACES, AGENT_CAPABILITIES)
-  capabilities.register(GOOGLE_NAMESPACES, GOOGLE_CAPABILITIES)
+  capabilities.register(VAULT_NAMESPACES, vaultCaps)
+  capabilities.register(APP_NAMESPACES, appCaps)
+  capabilities.register(TASK_NAMESPACES, taskCaps)
+  capabilities.register(PDF_NAMESPACES, pdfCaps)
+  capabilities.register(AGENT_NAMESPACES, agentCaps)
+  capabilities.register(GOOGLE_NAMESPACES, googleCaps)
   // Every method the frame's bridge may call and main answers is registered
   // above: leaving one out is a type error here rather than a hung promise in
   // an app.
   void ({} as Record<
-    keyof (typeof VAULT_CAPABILITIES &
-      typeof APP_CAPABILITIES &
-      typeof TASK_CAPABILITIES &
-      typeof AGENT_CAPABILITIES &
-      typeof GOOGLE_CAPABILITIES),
+    keyof (typeof vaultCaps &
+      typeof appCaps &
+      typeof taskCaps &
+      typeof agentCaps &
+      typeof googleCaps),
     true
   > satisfies Record<MainAppMethod, true>)
+  // The one way every door runs a capability: the app's bridge (the router)
+  // and the agent's `holi` CLI (the hook server, below).
+  const dispatch = createDispatch({
+    registry: capabilities,
+    rootFor,
+    active: () => host.active(),
+    core: createCoreServices({ active: () => host.active(), members, reports: uiReports }),
+  })
 
   const router = createRouter({
-    capabilities,
-    capabilityServices,
+    dispatch,
+    grants: appGrants,
     members,
     reportUi: (remote, report) => {
       uiReports.set(remote, report)
@@ -522,23 +548,6 @@ async function main(): Promise<void> {
   const holiCliPath = await installHoliCli(app.getPath('userData'))
 
   /**
-   * The clone the caller's vault lives in.
-   *
-   * Resolved from the **caller's remote**, not from `host.active()`: an
-   * agent session outlives a vault switch, and a `git commit` in one clone fires
-   * that clone's hook whatever Holi is showing. Resolving by what is on screen
-   * would run the pre-commit transforms against the wrong repository.
-   *
-   * The registry is the source, so a vault that is not currently open still
-   * resolves: its clone is on disk either way, and its git hook can fire.
-   */
-  const rootFor = async (remote: string): Promise<string | null> => {
-    const active = host.active()
-    if (active?.remote === remote) return active.root
-    return (await registry.list()).find((e) => e.remote === remote)?.path ?? null
-  }
-
-  /**
    * `holi skills update` and the palette's Update skills: bring this
    * release's skills and hooks to a vault. Conflicts get a session of their
    * own, but only in the vault Holi is showing, the one sessions start in.
@@ -607,28 +616,7 @@ async function main(): Promise<void> {
         updateSkills: () => updateSkills(remote),
         // `holi store …` and the rest of the CLI door into the capability
         // registry, for the vault the command was typed in.
-        capability: async (name, params) => {
-          const root = await rootFor(remote)
-          if (root === null) throw new Error('no vault is open')
-          const active = host.active()
-          const result = await capabilities.run(
-            name,
-            'cli',
-            {
-              remote,
-              root,
-              bundle: null,
-              snapshot: async () =>
-                active?.remote === remote ? active.snapshot() : scanVault(root),
-              services: capabilityServices(remote, root),
-            },
-            params,
-          )
-          if (result.writes && active?.remote === remote) {
-            await active.refresh().catch((e) => console.error('[apps] post-write rescan:', e))
-          }
-          return result
-        },
+        capability: (name, params) => dispatch({ door: 'cli', remote, bundle: null, name, params }),
       }),
   })
   await hookServer.start()

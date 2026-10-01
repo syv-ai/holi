@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { emptyVaultSnapshot, formatRecord } from '@holi/shared'
 import { APP_CAPABILITIES, APP_NAMESPACES } from '../src/main/apps/capabilities'
+import { noCoreServices } from '../src/main/capabilities/services'
 import { VAULT_CAPABILITIES, VAULT_NAMESPACES } from '../src/main/capabilities/vault-caps'
 import {
   createCapabilityRegistry,
@@ -50,6 +51,7 @@ function call(method: string, params: Record<string, unknown>, door: Door = 'app
     root,
     bundle: door === 'app' ? 'Work/Tracker.app' : null,
     snapshot: async () => emptyVaultSnapshot(),
+    core: noCoreServices(),
   }
   return registry.run(method, door, ctx, params).then((r) => r.value)
 }

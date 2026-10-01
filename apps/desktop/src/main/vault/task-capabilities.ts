@@ -14,7 +14,12 @@ import { taskDoneOp } from './task-done'
 
 export const TASK_NAMESPACES = ['tasks'] as const
 
-export const TASK_CAPABILITIES = {
+export interface TaskCapabilitiesDeps {
+  /** Today, local, as `YYYY-MM-DD`: the frame a recurrence rolls against. */
+  today(): string
+}
+
+export const taskCapabilities = (deps: TaskCapabilitiesDeps) => ({
   'tasks.list': cap({
     doors: ['app', 'cli'],
     params: noParams,
@@ -32,10 +37,10 @@ export const TASK_CAPABILITIES = {
         ctx,
         isAbsolute(path) ? relative(ctx.root, path) : path.replace(/^\.\//, ''),
       )
-      const result = await taskDoneOp(ctx.root, rel, ctx.services.today())
+      const result = await taskDoneOp(ctx.root, rel, deps.today())
       if (!result.ok) throw new CapabilityError('BAD_REQUEST', result.error)
       return result
     },
     text: (r) => (r.status === 'done' ? `done: ${r.path}` : `next: ${r.path} due ${r.due}`),
   }),
-}
+})

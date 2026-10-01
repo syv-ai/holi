@@ -106,12 +106,15 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   it over.
 - **One registry, two doors.** What main answers is the capability registry
   (`main/capabilities/`, see [architecture](../architecture.md)); the apps feature registers
-  `store.*` (`main/apps/capabilities.ts`). Each entry has its params, its refusals, and the doors it opens
-  to, the app's bridge and the agent's `holi` CLI (`/cap/<method>` on the hook server). An app sees
+  `store.*` (`main/apps/capabilities.ts`). Each entry has its params, its refusals, and the doors
+  it opens to, the app's bridge and the agent's `holi` CLI (`/cap/<method>` on the hook server). An app sees
   exactly what the agent can inspect from the terminal, written once. At the app door the bundle
-  is the frame's, and a `bundle` param is ignored; at the CLI door the agent names it. What an
-  entry needs beyond the files (sync, sessions, members cached ten minutes, Google, approvals,
-  the recents) comes from one services factory both doors call (`capabilities/services.ts`).
+  is the frame's, and a `bundle` param is ignored; at the CLI door the agent names it. One
+  dispatch (`capabilities/dispatch.ts`) runs a call for both doors: the clone, the open vault's
+  cached snapshot or a fresh scan, and a rescan after a write. What core's entries need beyond
+  the files (sync, members cached ten minutes, the recents) comes from one services factory
+  (`capabilities/services.ts`); a feature's entries close over their own (sessions, Google,
+  approvals) when the composition root registers them.
 - **State.** An app declares `collections` in `app.yaml`, each with an optional JSON Schema
   subset (`type`, `properties`, `required`, `additionalProperties`, `enum`, `items`,
   `minimum`/`maximum`, `minLength`/`maxLength`; other keywords are ignored). A record is one JSON
@@ -232,8 +235,8 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
 - `apps/desktop/src/main/apps/`: the protocol helpers, bridge shim, base tokens, open/init ops,
   the move out of `.holi/apps`, the `store.*` capabilities (`capabilities.ts`), the store
   (`app-store.ts`) and the approvals (`app-grants.ts`).
-- `apps/desktop/src/main/capabilities/`: the registry, its services, the read fences and core's
-  entries, with note rendering (`render-note.ts`).
+- `apps/desktop/src/main/capabilities/`: the registry, its dispatch and services, the read
+  fences and core's entries, with note rendering (`render-note.ts`).
 - `apps/desktop/src/main/vault/search.ts`: the vault search behind `holi.search`, shared with
   Holi's own search.
 - `apps/desktop/src/main/vault/record-merge.ts`: the record merge driver's install;

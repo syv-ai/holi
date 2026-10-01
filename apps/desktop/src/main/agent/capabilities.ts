@@ -9,11 +9,16 @@ import type { SessionSummary } from './claude-sessions'
 
 export const AGENT_NAMESPACES = ['agent'] as const
 
-export const AGENT_CAPABILITIES = {
+export interface AgentCapabilitiesDeps {
+  /** The vault's sessions; empty when it is not the one open. */
+  sessionsFor(remote: string): SessionSummary[]
+}
+
+export const agentCapabilities = (deps: AgentCapabilitiesDeps) => ({
   'agent.sessions': cap({
     doors: ['app', 'cli'],
     params: noParams,
-    run: async (ctx): Promise<SessionSummary[]> => ctx.services.sessions(),
+    run: async (ctx): Promise<SessionSummary[]> => deps.sessionsFor(ctx.remote),
     text: (sessions) => sessions.map((s) => `${s.state}\t${s.name}`).join('\n'),
   }),
-}
+})
