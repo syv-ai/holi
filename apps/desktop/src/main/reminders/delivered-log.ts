@@ -1,4 +1,5 @@
 import { SETTINGS_LOCAL_FILE, parseSettingsText, writeSettingsText } from '@holi/shared'
+import { installedInfos } from '../plugin-host/installed'
 /**
  * The delivery watermark, named. Two verbs over the per-task last-fired map:
  * `read` is what `sweep` indexes (one file read per vault per tick), `markDelivered`
@@ -56,7 +57,7 @@ export function createDeliveredLog(rootFor: (remote: string) => string | null): 
       const file = settingsFile(root)
       mkdirSync(dirname(file), { recursive: true })
       const tmp = `${file}.tmp`
-      writeFileSync(tmp, writeSettingsText(next, 'local'), 'utf8')
+      writeFileSync(tmp, writeSettingsText(next, 'local', installedInfos()), 'utf8')
       renameSync(tmp, file)
     },
   }

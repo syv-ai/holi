@@ -20,6 +20,7 @@ import {
   SETTINGS_FILE,
   SETTINGS_LOCAL_FILE,
 } from '@holi/shared'
+import { installedInfos } from '../plugin-host/installed'
 
 /**
  * The committed settings and the personal override beside it. The local file
@@ -52,7 +53,8 @@ export interface VaultSettingsWrite {
 }
 
 /** Merge one patch over one file's existing contents and write it atomically.
- *  `hooks` merges per transform; every other key replaces. */
+ *  `hooks` merges per transform and `plugins` per plugin; every other key
+ *  replaces. */
 async function mergeInto(
   abs: string,
   patch: Record<string, unknown>,
@@ -80,13 +82,22 @@ async function mergeInto(
     }
     next.hooks = merged
   }
+  // Per plugin, for the same reason. Validated by `parseSettingsPatch`; what
+  // the file already held is kept as written, for the read to judge.
+  if (patch.plugins !== undefined) {
+    const before = existing.plugins
+    next.plugins = {
+      ...(typeof before === 'object' && before !== null && !Array.isArray(before) ? before : {}),
+      ...(patch.plugins as Record<string, boolean>),
+    }
+  }
 
   await mkdir(dirname(abs), { recursive: true })
   // Atomic rename: a half-written settings file is a vault that will not open
   // the way it was asked to. `writeSettingsText` emits the whole document from
   // `VAULT_SETTINGS`, so a comment a person wrote in the file does not survive.
   const tmp = `${abs}.tmp`
-  await writeFile(tmp, writeSettingsText(next, target), 'utf8')
+  await writeFile(tmp, writeSettingsText(next, target, installedInfos()), 'utf8')
   await rename(tmp, abs)
 }
 

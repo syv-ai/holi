@@ -14,10 +14,13 @@ A vault's settings are two YAML files it carries itself: `.holi/settings/app.yam
 | `maxCommittedFileBytes`        | committed | no             | 10 MB                        |
 | `colorScheme`                  | local     | yes            | `system`                     |
 | `editorFont`                   | committed | no             | `serif`                      |
+| `plugins` (id to on or off)    | both      | no             | each plugin's own            |
 
 `home` is Home: what the nav's Home and "Go home" go to, and what the vault opens on. One string: `recents` (what was opened recently, the default), `daily` (today's note, offered while `dailyNotes` is on), `board`, `agenda`, `mail`, or any app or file by its vault path. The recents and an app are shown in the Home tab; anything else opens as itself. A target that is not there (a deleted file or app, `daily` with `dailyNotes` off) opens the Home tab saying so, and a missing app can be created there with the default Home app. The row offers the fixed choices and the vault's shared apps, plus the current value when it is none of them; a personal `.local.` app is not offered, since the row writes the committed file. A personal Home is `home:` in `app.local.yaml`.
 
-**Reading.** `resolveVaultSettings` parses both files, applies the local one per key (the `hooks` block per flag), validates every field, and answers the default for anything absent or malformed with a warning. It never throws. It builds a fresh narrow value per key and never returns what it parsed. Unknown top-level keys are ignored without a warning, because the reminder watermark lives in the local file.
+`plugins` says which plugins the vault runs. The committed file declares them, and the local file can only turn one off on this machine: a local `true` is dropped with a warning. A plugin the vault does not mention runs as its own default says. `enabledPlugins` resolves the set, in main and in the renderer alike. The committed file lists every plugin this build has, an unanswered one commented with its default; the local file shows the block only when it answers one. Unknown ids are kept and ignored. The settings tab shows a switch per installed plugin under General, which writes the committed file, and notes when this machine has a plugin off. A write that turns one on seeds its files and starts it at once; a hand edit is in force for the plugin's capabilities at once, and seeds and starts it at the vault's next open ([architecture](../architecture.md#plugins)).
+
+**Reading.** `resolveVaultSettings` parses both files, applies the local one per key (the `hooks` block per flag, `plugins` as above), validates every field, and answers the default for anything absent or malformed with a warning. It never throws. It builds a fresh narrow value per key and never returns what it parsed. Unknown top-level keys are ignored without a warning, because the reminder watermark lives in the local file.
 
 **Writing.** `settings.write` takes JSON strings and runs them through `parseSettingsPatch`, the same validator a teammate's committed file meets, so a write cannot add a key Holi does not own. Each file is merged and replaced with one atomic rename. `writeSettingsText` regenerates the whole document every time: a header saying which file this is, then every setting with its explanation and legal values above it. An unanswered setting is a commented-out line showing its default, so the default can still improve later. Unknown keys are kept under a trailing heading.
 
@@ -47,6 +50,7 @@ A vault's settings are two YAML files it carries itself: `.holi/settings/app.yam
 
 - `packages/shared/src/vault-settings.ts`: `VAULT_SETTINGS`, resolver, patch validator, ritual subset
 - `packages/shared/src/settings-yaml.ts`: parse and generate the self-describing file
+- `packages/shared/src/plugins.ts`: `PluginInfo` and `enabledPlugins`
 - `apps/desktop/src/main/vault/settings.ts`: read and atomic write on disk
 - `apps/desktop/src/main/router.ts` (`settings.read`, `settings.write`)
 - `apps/desktop/src/renderer/src/features/settings/`: the tab, its sections and rows

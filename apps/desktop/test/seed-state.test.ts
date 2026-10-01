@@ -32,36 +32,32 @@ describe('the state file itself', () => {
   })
 
   it('reads as empty when it does not exist', async () => {
-    expect(await readSeedState(await tempDir())).toEqual({})
+    expect(await readSeedState(await tempDir())).toEqual({ files: {} })
   })
 
   it('reads as empty rather than throwing when it is corrupt', async () => {
     const root = await tempDir()
     await mkdir(join(root, '.holi/state'), { recursive: true })
     await writeFile(join(root, SEED_STATE_FILE), '{ not json')
-    expect(await readSeedState(root)).toEqual({})
+    expect(await readSeedState(root)).toEqual({ files: {} })
   })
 
   it('records the text it wrote, the base an update merges against', async () => {
     const root = await tempDir()
     await recordSeeded(root, SKILL, '# hello\n')
-    expect(await readSeedState(root)).toEqual({
+    expect((await readSeedState(root)).files).toEqual({
       [SKILL]: { sha: sha256('# hello\n'), text: '# hello\n' },
     })
-  })
-
-  it('reads a record from before the text was kept as its hash alone', async () => {
-    const root = await tempDir()
-    await mkdir(join(root, '.holi/state'), { recursive: true })
-    await writeFile(join(root, SEED_STATE_FILE), JSON.stringify({ [SKILL]: sha256('# old\n') }))
-    expect(await readSeedState(root)).toEqual({ [SKILL]: { sha: sha256('# old\n') } })
   })
 
   it('keeps earlier records when a later one is written', async () => {
     const root = await tempDir()
     await recordSeeded(root, SKILL, '# a\n')
     await recordSeeded(root, '.claude/hooks/x.mjs', '# b\n')
-    expect(Object.keys(await readSeedState(root)).sort()).toEqual(['.claude/hooks/x.mjs', SKILL])
+    expect(Object.keys((await readSeedState(root)).files).sort()).toEqual([
+      '.claude/hooks/x.mjs',
+      SKILL,
+    ])
   })
 })
 
@@ -69,13 +65,13 @@ describe('untouched', () => {
   it('is true when the file on disk is exactly what Holi last wrote', async () => {
     const root = await tempDir()
     await recordSeeded(root, SKILL, '# hello\n')
-    expect(untouched((await readSeedState(root))[SKILL], '# hello\n')).toBe(true)
+    expect(untouched((await readSeedState(root)).files[SKILL], '# hello\n')).toBe(true)
   })
 
   it('is false when somebody edited the file', async () => {
     const root = await tempDir()
     await recordSeeded(root, SKILL, '# hello\n')
-    expect(untouched((await readSeedState(root))[SKILL], '# hello, and mine\n')).toBe(false)
+    expect(untouched((await readSeedState(root)).files[SKILL], '# hello, and mine\n')).toBe(false)
   })
 
   it('is false with no record at all', () => {

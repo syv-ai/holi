@@ -28,6 +28,7 @@
 import { parse as parseYaml } from 'yaml'
 import { isAppBundlePath } from './app-bundle'
 import { vaultRelPath } from './path-safety'
+import { isPluginId, type PluginSettings } from './plugins'
 
 /** The pre-commit transforms a vault can enable. Kebab, matching the
  *  transform names themselves, so there is no mapping table between them. */
@@ -128,6 +129,9 @@ export interface ResolvedVaultSettings {
   editorFont: EditorFont
   hooks: VaultHooks
   maxCommittedFileBytes: number
+  /** Which plugins the vault declares, and which this machine turned off:
+   *  `enabledPlugins` turns it into the set that runs. */
+  plugins: PluginSettings
   /** Human-readable notes about dropped keys/values, surfaced so a typo is
    *  diagnosable rather than silent. Mirrors `ResolvedTheme.warnings`. */
   warnings: string[]
@@ -182,6 +186,10 @@ export function resolveVaultSettings(
   for (const setting of VAULT_SETTINGS) {
     if (setting.type.kind === 'flags') {
       out[setting.key] = mergeFlags(setting, files, warnings)
+      continue
+    }
+    if (setting.type.kind === 'plugins') {
+      out[setting.key] = mergePlugins(setting.key, files[0]!, files[1]!, warnings)
       continue
     }
     const raw = pick(files, setting.key)
@@ -245,12 +253,20 @@ export type VaultSettingControl =
       kind: 'group'
       toggles: readonly { key: TransformName; label: string; explanation: string }[]
     }
+  /** A switch per installed plugin, which only the renderer knows. */
+  | { kind: 'plugins' }
 
 /** A key a descriptor can describe: every setting the resolver answers, each
  *  with a row in the settings tab. A superset of what the ritual asks
  *  (`askedAtBirth`). */
 export type VaultSettingKey =
-  'dailyNotes' | 'home' | 'hooks' | 'colorScheme' | 'editorFont' | 'maxCommittedFileBytes'
+  | 'dailyNotes'
+  | 'home'
+  | 'hooks'
+  | 'colorScheme'
+  | 'editorFont'
+  | 'maxCommittedFileBytes'
+  | 'plugins'
 
 export interface VaultSettingDescriptor {
   key: VaultSettingKey
@@ -292,7 +308,7 @@ const LOCAL_FILE_HINT = `Change it any time in ${SETTINGS_LOCAL_FILE}, which sta
  * refuses. Here the kind decides the control (`toggle`, `choice`, `group`) and
  * the entry supplies only the labels, so that class of bug cannot be written.
  *
- * Five kinds cover six settings, and the fifth exists for exactly one of them.
+ * `home` and `plugins` each exist for exactly one setting.
  */
 export type SettingType =
   | { kind: 'boolean' }
@@ -318,6 +334,13 @@ export type SettingType =
    * path (`parseHome`). The settings tab adds the vault's apps to the options.
    */
   | { kind: 'home'; options: readonly VaultSettingOption[] }
+  /**
+   * Plugin id to on or off. The only setting both files answer differently:
+   * the committed file declares the vault's plugins, and the local file can
+   * only turn one off on this machine (`mergePlugins`). The ids are whatever
+   * plugins the build has, so shared validates their shape, not their names.
+   */
+  | { kind: 'plugins' }
 
 /**
  * One setting, declared once.
@@ -526,6 +549,20 @@ export const VAULT_SETTINGS: readonly VaultSetting[] = [
     whereToChange: SETTINGS_FILE_HINT,
     section: 'editor',
   },
+  {
+    key: 'plugins',
+    label: 'Plugins',
+    explanation:
+      'What this vault runs beyond the core. Everyone who clones it gets the same plugins, and any of them can be turned off on one machine.',
+    type: { kind: 'plugins' },
+    // Every plugin's own default: see `enabledPlugins`.
+    default: Object.freeze({ vault: Object.freeze({}), localOff: Object.freeze([]) }),
+    // The vault declares them; the local file can only turn one off.
+    target: 'committed',
+    askedAtBirth: false,
+    whereToChange: `${SETTINGS_FILE_HINT}. Turn one off on this machine alone in ${SETTINGS_LOCAL_FILE}`,
+    section: 'general',
+  },
 ]
 
 /**
@@ -580,6 +617,8 @@ function controlFor(type: SettingType): VaultSettingControl {
       return { kind: 'group', toggles: type.flags }
     case 'home':
       return { kind: 'choice', options: type.options, apps: true }
+    case 'plugins':
+      return { kind: 'plugins' }
     // enum and number are both "pick one of these", and differ only in
     // what ELSE is legal, which is the validator's business, not the control's.
     default:
@@ -616,6 +655,7 @@ function readValue(
         ? { ok: true, value }
         : { ok: false, expected: 'a positive number' }
     case 'flags':
+    case 'plugins':
       return typeof value === 'object' && value !== null && !Array.isArray(value)
         ? { ok: true, value }
         : { ok: false, expected: 'an object' }
@@ -663,6 +703,56 @@ function mergeFlags(
     }
   }
   return out
+}
+
+/**
+ * One file's `plugins` block as a map of plugin id to on or off, dropping
+ * what is not one, with a warning per drop. Null when the file says nothing.
+ */
+function pluginBlock(
+  key: string,
+  file: Record<string, unknown>,
+  warnings: string[],
+  verb: 'dropped' | 'refused',
+): Record<string, boolean> | null {
+  if (!(key in file)) return null
+  const block = file[key]
+  if (typeof block !== 'object' || block === null || Array.isArray(block)) {
+    warnings.push(`${verb} "${key}": expected an object, got ${JSON.stringify(block)}`)
+    return null
+  }
+  const out: Record<string, boolean> = {}
+  for (const [id, on] of Object.entries(block as Record<string, unknown>)) {
+    if (!isPluginId(id)) warnings.push(`${verb} "${key}.${id}": not a plugin id`)
+    else if (typeof on !== 'boolean') {
+      warnings.push(`${verb} "${key}.${id}": expected true or false, got ${JSON.stringify(on)}`)
+    } else out[id] = on
+  }
+  return out
+}
+
+/**
+ * The `plugins` setting across the two files, which do different jobs: the
+ * committed file's answers are the vault's, and the local file contributes
+ * only its `false`s. A local `true` would turn on a plugin the vault has
+ * off, which only the vault decides, so it is dropped with a warning.
+ */
+function mergePlugins(
+  key: string,
+  committed: Record<string, unknown>,
+  local: Record<string, unknown>,
+  warnings: string[],
+): PluginSettings {
+  const vault = pluginBlock(key, committed, warnings, 'dropped') ?? {}
+  const localOff: string[] = []
+  for (const [id, on] of Object.entries(pluginBlock(key, local, warnings, 'dropped') ?? {})) {
+    if (on) {
+      warnings.push(
+        `dropped "${key}.${id}" in ${SETTINGS_LOCAL_FILE}: this machine can only turn a plugin off`,
+      )
+    } else localOff.push(id)
+  }
+  return { vault, localOff }
 }
 
 /** The subset the ritual asks and the seed writes: see `askedAtBirth`. */
@@ -731,6 +821,14 @@ export function parseSettingsPatch(json: string | null): {
       }
       // A block that survived nothing is not written: `{}` would say nothing.
       if (Object.keys(block).length > 0) patch[setting.key] = block
+      continue
+    }
+
+    if (setting.type.kind === 'plugins') {
+      // Which file it is going to is the writer's business: a local `true`
+      // is written as asked, and the read ignores it.
+      const block = pluginBlock(setting.key, raw, warnings, 'refused')
+      if (block !== null && Object.keys(block).length > 0) patch[setting.key] = block
       continue
     }
 

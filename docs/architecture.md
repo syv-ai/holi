@@ -59,6 +59,21 @@ What a vault app or the agent's `holi` CLI may ask main for is one capability re
 app's bridge, the CLI) and holds its own refusals. Core registers its namespaces and each feature
 registers its own from the composition root (`src/main/index.ts`); a namespace has one owner.
 
+### Plugins
+
+Optional parts of Holi are plugins: first-party modules in the build, under
+`apps/desktop/src/plugins/<id>/`, listed once per process in `src/plugins/main.ts` and
+`src/plugins/renderer.ts`. Only the composition roots (`src/main/index.ts`, the renderer's
+`main.tsx`) import those lists. A plugin reaches core through one module per process,
+`src/main/plugin-api.ts` and `@/plugin-api`, plus the renderer's primitives and composites; ESLint
+holds the renderer side and plugin code to that, and `test/plugin-boundary.test.ts` holds main.
+
+Enablement has two layers: `.holi/settings/app.yaml` declares the vault's plugins for everyone,
+and `app.local.yaml` can only turn one off on this machine ([settings](features/settings.md)). The
+plugin host (`src/main/plugin-host/`) starts a plugin once per process when a vault that enables it
+opens, seeds only enabled plugins' files, and stops them all at quit. Dispatch refuses a
+capability whose plugin is off in the calling vault, as "no such method".
+
 Whatever runs inside a vault (the `holi` CLI, the agent's hooks, git's pre-commit hook and merge
 driver) reaches main through one loopback bridge (`src/main/bridge/`) with a token per vault,
 found by walking up to the vault's root and parsing `.holi/state/bridge.local.env`. The

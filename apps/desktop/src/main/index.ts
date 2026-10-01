@@ -57,7 +57,9 @@ import { taskCapabilities, TASK_NAMESPACES } from './vault/task-capabilities'
 import { agentSeed } from './agent/seed/seed'
 import { pdfSeed } from './pdf/seed'
 import { coreSeed } from './vault/seed/core'
-import { ensureSeeded } from './vault/seed/seed'
+import { MAIN_PLUGINS } from '../plugins/main'
+import { install } from './plugin-host/installed'
+import { createPluginHost } from './plugin-host/host'
 import {
   describeUpdate,
   updateConflictPrompt,
@@ -100,9 +102,12 @@ import { registerAgentRoutes } from './agent/bridge-routes'
 import { ensureTypst, resolveTypstBin } from './pdf/typst-bin'
 import { registerAgentIpc } from './agent-ipc'
 
-/** Everything that seeds a vault, core first: its `.gitignore` is written
- *  before any file that could be committed. */
-const SEED_CONTRIBUTIONS = [coreSeed, agentSeed, pdfSeed]
+// The plugins this build has: the one place main imports them.
+install(MAIN_PLUGINS)
+
+/** What seeds every vault, core first: its `.gitignore` is written before
+ *  any file that could be committed. Enabled plugins' seeds follow. */
+const CORE_SEEDS = [coreSeed(MAIN_PLUGINS.map((p) => p.info)), agentSeed, pdfSeed]
 
 // Declared before the launch check below, which starts `main()` synchronously:
 // a `let` still in its temporal dead zone would throw during startup.
@@ -296,6 +301,17 @@ async function main(): Promise<void> {
     return () => undo.forEach((u) => u())
   }
 
+  // Every capability, from every door. Created ahead of the vault host so
+  // the plugin host can register into it; `host` is read lazily.
+  const capabilities = createCapabilityRegistry()
+  const plugins = createPluginHost({
+    plugins: MAIN_PLUGINS,
+    registry: capabilities,
+    userData: userDataDir,
+    coreSeeds: CORE_SEEDS,
+    liveRoot: () => host.active()?.root ?? null,
+  })
+
   const host = createVaultHost({
     registry,
     // A GETTER, not a string. Read lazily on every git operation, so a sign-out
@@ -303,6 +319,8 @@ async function main(): Promise<void> {
     gitDeps: { token: () => session.token() },
     onSnapshot: (snapshot) => {
       send('vault:snapshot', snapshot)
+      // A hand edit to the settings files arrives this way too.
+      plugins.invalidate()
       // A snapshot is also how main learns a vault opened: attach the assistant
       // to it (a no-op for the vault it is already on). `agent` is assigned
       // below, long before any snapshot fires.
@@ -333,6 +351,7 @@ async function main(): Promise<void> {
     // they ran in. They stay in Claude Code's agent list and resume when opened.
     onLeave: async () => {
       await agent?.leave().catch((err) => console.error('[vault] agent leave failed:', err))
+      plugins.leave()
     },
   })
 
@@ -456,7 +475,6 @@ async function main(): Promise<void> {
     overrides: async () => (await calendarPrefs.read()) ?? {},
     grants: appGrants,
   })
-  const capabilities = createCapabilityRegistry()
   capabilities.register(VAULT_NAMESPACES, vaultCaps)
   capabilities.register(APP_NAMESPACES, appCaps)
   capabilities.register(TASK_NAMESPACES, taskCaps)
@@ -481,11 +499,13 @@ async function main(): Promise<void> {
     rootFor,
     active: () => host.active(),
     core: createCoreServices({ active: () => host.active(), members, reports: uiReports }),
+    pluginEnabled: async (plugin, root) => (await plugins.enabled(root)).has(plugin),
   })
 
   const router = createRouter({
     dispatch,
-    seed: (root) => ensureSeeded(root, SEED_CONTRIBUTIONS),
+    seed: (root) => plugins.seed(root),
+    plugins,
     grants: appGrants,
     members,
     reportUi: (remote, report) => {
@@ -607,7 +627,7 @@ async function main(): Promise<void> {
   const updateSkills = async (remote: string): Promise<SkillsUpdate> => {
     const root = await rootFor(remote)
     if (root === null) return { ok: false, message: 'No vault is open.' }
-    const report = await updateShipped(root, SEED_CONTRIBUTIONS)
+    const report = await updateShipped(root, await plugins.contributions(root))
     let terminalId: string | undefined
     if (report.conflicts.length > 0 && host.active()?.remote === remote) {
       const started = await agent.start({
@@ -867,6 +887,7 @@ async function main(): Promise<void> {
         await agent.leave().catch((err) => console.error('[quit] agent leave failed:', err))
         await bridge.stop().catch((err) => console.error('[quit] bridge stop failed:', err))
         await googleOps.stop().catch((err) => console.error('[quit] google ops stop failed:', err))
+        await plugins.disposeAll().catch((err) => console.error('[quit] plugins stop failed:', err))
         // A flush point is a flush THEN a commit, and only the renderer can do
         // the first half: the editor's newest words are not on disk until it
         // writes them. Quit is the one flush point main starts, so it asks.

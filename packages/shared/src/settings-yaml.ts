@@ -16,12 +16,14 @@
  * YAML is a superset of JSON, so a `.json` settings file also parses here.
  */
 import { parseDocument, stringify as stringifyYaml } from 'yaml'
+import type { PluginInfo } from './plugins'
 import {
   SETTINGS_FILE,
   SETTINGS_LOCAL_FILE,
   VAULT_SETTINGS,
   type SettingTarget,
   type SettingType,
+  type VaultSetting,
 } from './vault-settings'
 
 /**
@@ -58,6 +60,9 @@ function legalValues(type: SettingType): string[] {
   if (type.kind === 'boolean') return ['One of: true, false']
   if (type.kind === 'flags') {
     return ['Each one is true or false. Naming one says nothing about the others.']
+  }
+  if (type.kind === 'plugins') {
+    return ['Each plugin is true or false. A commented one runs as its default says.']
   }
   const shown = type.options.map((o) => `${inline(o.value)} (${o.label})`).join(', ')
   if (type.kind === 'number') {
@@ -135,7 +140,12 @@ function wrap(text: string, width = 76): string[] {
  * hand-written comments are lost. A key no setting describes is kept as written:
  * the local file's `reminders` watermark is machine state that has to survive.
  */
-export function writeSettingsText(values: Record<string, unknown>, target: SettingTarget): string {
+export function writeSettingsText(
+  values: Record<string, unknown>,
+  target: SettingTarget,
+  /** The plugins this build has, so the committed file lists each one. */
+  known: readonly PluginInfo[],
+): string {
   const committed = target === 'committed'
   const lines: string[] = [
     ...wrap(
@@ -150,6 +160,10 @@ export function writeSettingsText(values: Record<string, unknown>, target: Setti
   ]
 
   for (const setting of VAULT_SETTINGS) {
+    if (setting.type.kind === 'plugins') {
+      lines.push(...pluginLines(setting, values, target, known))
+      continue
+    }
     if (setting.target !== target) continue
     lines.push('', `# ── ${setting.label}`)
     for (const line of wrap(setting.explanation, 72)) lines.push(`#   ${line}`)
@@ -169,8 +183,8 @@ export function writeSettingsText(values: Record<string, unknown>, target: Setti
     }
   }
 
-  const known = new Set(VAULT_SETTINGS.map((setting) => setting.key as string))
-  const extra = Object.keys(values).filter((key) => !known.has(key))
+  const settingKeys = new Set(VAULT_SETTINGS.map((setting) => setting.key as string))
+  const extra = Object.keys(values).filter((key) => !settingKeys.has(key))
   if (extra.length > 0) {
     lines.push('', '# ── Not settings Holi knows. Kept as you wrote them.')
     for (const key of extra) {
@@ -186,11 +200,76 @@ export function writeSettingsText(values: Record<string, unknown>, target: Setti
 }
 
 /**
+ * The `plugins` block. The committed file lists every plugin the build has,
+ * an unanswered one commented with its default, like any other setting. The
+ * local file can only turn a plugin off, so it shows the block only when it
+ * answers one.
+ */
+function pluginLines(
+  setting: VaultSetting,
+  values: Record<string, unknown>,
+  target: SettingTarget,
+  known: readonly PluginInfo[],
+): string[] {
+  const has = Object.prototype.hasOwnProperty.call(values, setting.key)
+  const value = values[setting.key]
+  const answered =
+    has && typeof value === 'object' && value !== null && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : null
+  const out: string[] = ['', `# ── ${setting.label}`]
+
+  if (target === 'local') {
+    if (!has) return []
+    out.push(
+      ...wrap(
+        `false turns a plugin off on this machine alone. Only ${SETTINGS_FILE} turns one on.`,
+        72,
+      ).map((line) => `#   ${line}`),
+    )
+  } else {
+    for (const line of wrap(setting.explanation, 72)) out.push(`#   ${line}`)
+    for (const hint of legalValues(setting.type)) {
+      for (const line of wrap(hint, 72)) out.push(`#   ${line}`)
+    }
+  }
+
+  // Answered but not a map: kept as written, for the read to complain about.
+  if (has && answered === null) {
+    out.push(`${setting.key}: ${inline(value)}`)
+    return out
+  }
+  const live = answered !== null && Object.keys(answered).length > 0
+  // A live block's unanswered ids are commented inside it; a block with
+  // nothing answered is commented whole. Either way uncommenting is the edit.
+  const unset = (id: string, on: boolean) =>
+    live ? `  # ${id}: ${inline(on)}` : `#   ${id}: ${inline(on)}`
+  const entries: string[] = []
+  // The build's plugins in its order, then any id it does not have, kept.
+  for (const plugin of target === 'committed' ? known : []) {
+    if (answered === null || !(plugin.id in answered))
+      entries.push(unset(plugin.id, plugin.default))
+    else entries.push(`  ${plugin.id}: ${inline(answered[plugin.id])}`)
+  }
+  for (const [id, on] of Object.entries(answered ?? {})) {
+    if (target === 'local' || !known.some((p) => p.id === id))
+      entries.push(`  ${id}: ${inline(on)}`)
+  }
+  if (entries.length === 0) out.push(`# ${setting.key}: {}`)
+  else out.push(`${live ? '' : '# '}${setting.key}:`, ...entries)
+  return out
+}
+
+/**
  * A fresh file holding the answers a vault is born with.
  *
  * What the seed writes. Everything else in `VAULT_SETTINGS` still appears,
  * commented.
  */
-export function seedSettingsText(values: Record<string, unknown>, target: SettingTarget): string {
-  return writeSettingsText(values, target)
+export function seedSettingsText(
+  values: Record<string, unknown>,
+  target: SettingTarget,
+  known: readonly PluginInfo[],
+): string {
+  return writeSettingsText(values, target, known)
 }

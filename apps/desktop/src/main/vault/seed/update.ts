@@ -93,7 +93,7 @@ export async function updateShipped(
 
   for (const [rel, shipped] of shippedFiles(contributions)) {
     const onDisk = await readFile(join(root, rel), 'utf8').catch(() => null)
-    const record = state[rel]
+    const record = state.files[rel]
     let write: string | null = null
     // A conflict handed off earlier and not yet resolved: the agent deletes
     // what was staged when it is done.
@@ -118,7 +118,7 @@ export async function updateShipped(
       write = shipped
       report.updated.push(rel)
     } else {
-      const merge = record?.text === undefined ? null : merge3(record.text, onDisk, shipped)
+      const merge = record === undefined ? null : merge3(record.text, onDisk, shipped)
       if (merge?.kind === 'merged') {
         // Only the vault's changes, on top of what it already had: nothing new
         // from Holi, so nothing to write or report.
@@ -129,7 +129,7 @@ export async function updateShipped(
         }
       } else {
         await writeAtomic(root, vaultRelPath(stagedPath(rel, 'shipped')), shipped)
-        if (record?.text !== undefined) {
+        if (record !== undefined) {
           await writeAtomic(root, vaultRelPath(stagedPath(rel, 'base')), record.text)
         }
         // The agent's resolution is made against this release, so it is the

@@ -20,8 +20,8 @@ import {
   writeSettingsText,
 } from '../src/index'
 
-const seeded = seedSettingsText(seedSettings('committed'), 'committed')
-const seededLocal = seedSettingsText(seedSettings('local'), 'local')
+const seeded = seedSettingsText(seedSettings('committed'), 'committed', [])
+const seededLocal = seedSettingsText(seedSettings('local'), 'local', [])
 
 describe('a seeded settings file', () => {
   it('names every setting filed under its layer, answered or not', () => {
@@ -72,22 +72,23 @@ describe('writing to a settings file', () => {
     const written = writeSettingsText(
       { ...seedSettings('committed'), dailyNotes: false },
       'committed',
+      [],
     )
     expect(written).toContain('# editorFont:')
     expect(written).toContain('dailyNotes: false')
   })
 
   it('turns an answer back into a comment when it is unset', () => {
-    const answered = writeSettingsText({ editorFont: 'serif' }, 'committed')
+    const answered = writeSettingsText({ editorFont: 'serif' }, 'committed', [])
     expect(answered).toContain('editorFont: serif')
-    expect(writeSettingsText({}, 'committed')).toContain('# editorFont:')
+    expect(writeSettingsText({}, 'committed', [])).toContain('# editorFont:')
   })
 
   it('keeps a key no setting describes', () => {
     // `reminders` is the delivery watermark, written into the local file by
     // main. It is machine state, it has nothing to explain, and a writer that
     // dropped it would lose a vault's reminder history on the next click.
-    const written = writeSettingsText({ reminders: { seen: 3 }, colorScheme: 'dark' }, 'local')
+    const written = writeSettingsText({ reminders: { seen: 3 }, colorScheme: 'dark' }, 'local', [])
     expect(parseSettingsText(written).reminders).toEqual({ seen: 3 })
   })
 
@@ -100,6 +101,7 @@ describe('writing to a settings file', () => {
     const written = writeSettingsText(
       parseSettingsText('# my own note\ndailyNotes: true\n'),
       'committed',
+      [],
     )
     expect(written).not.toContain('my own note')
   })

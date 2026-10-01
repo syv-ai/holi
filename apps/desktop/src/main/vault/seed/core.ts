@@ -19,6 +19,7 @@ import {
   SETTINGS_LOCAL_FILE,
   THEME_FILE,
   THEME_LOCAL_FILE,
+  type PluginInfo,
 } from '@holi/shared'
 import { seedFolder } from './folder'
 import type { SeedContribution } from './types'
@@ -65,14 +66,16 @@ export function gitignoreWith(existing: string | null, lines: readonly string[])
   return `${base}\n# Machine-local — never committed. Managed by Holi.\n${missing.join('\n')}\n`
 }
 
-export const coreSeed: SeedContribution = {
+/** Core's contribution. `known` is the build's plugins, which the settings
+ *  file lists. */
+export const coreSeed = (known: readonly PluginInfo[]): SeedContribution => ({
   id: 'core',
   once: {
     ...folder.once,
     // Built from `VAULT_SETTING_DESCRIPTORS`, the list that drives the
     // onboarding questions. The local half is gitignored by `*.local.*`.
-    [SETTINGS_FILE]: seedSettingsText(seedSettings('committed'), 'committed'),
-    [SETTINGS_LOCAL_FILE]: seedSettingsText(seedSettings('local'), 'local'),
+    [SETTINGS_FILE]: seedSettingsText(seedSettings('committed'), 'committed', known),
+    [SETTINGS_LOCAL_FILE]: seedSettingsText(seedSettings('local'), 'local', known),
     [THEME_FILE]: THEME_SKELETON,
     [THEME_LOCAL_FILE]: THEME_SKELETON,
     // The memory directory exists and is tracked from a vault's first commit,
@@ -85,4 +88,4 @@ export const coreSeed: SeedContribution = {
     [GITIGNORE]: async (existing, fragments) =>
       gitignoreWith(existing, [...LOCAL_ONLY_IGNORE_LINES, ...(fragments as string[][]).flat()]),
   },
-}
+})

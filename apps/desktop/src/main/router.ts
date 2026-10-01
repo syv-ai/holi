@@ -191,6 +191,11 @@ export interface RouterDeps {
    * live, on add and on every open.
    */
   seed: (root: string) => Promise<SeedResult>
+  /**
+   * Start the plugins the vault at `root` enables (`plugin-host/host.ts`).
+   * Run after the seed on add and open, and after a write to its plugins.
+   */
+  plugins: { enter(root: string): Promise<void> }
   /** The managed root clones live under — `~/Holi` in the app, a tmpdir in
    *  tests. Passed in rather than read from `vaultRoot()` here so the router
    *  has no ambient dependency on the environment. */
@@ -520,6 +525,7 @@ export function createRouter(deps: RouterDeps) {
         (await deps.registry.list()).find((e) => e.remote === remote)?.path ?? null,
       active: () => deps.host.active(),
       core: noCoreServices,
+      pluginEnabled: async () => true,
     })
   const grants: AppGrants = deps.grants ?? {
     status: async () => ({ codeHash: '', affordances: [] }),
@@ -601,6 +607,7 @@ export function createRouter(deps: RouterDeps) {
       )
     }
     await deps.seed(repo.root)
+    await deps.plugins.enter(repo.root)
     await migrateApps(repo.root)
     await deps.registry.add({
       remote,
@@ -891,6 +898,7 @@ export function createRouter(deps: RouterDeps) {
          * ahead of the `.gitignore`.
          */
         await deps.seed(root)
+        await deps.plugins.enter(root)
         await migrateApps(root)
         await deps.registry.touch(input.remote, now())
         const active = await deps.host.open(input.remote)
@@ -1889,10 +1897,14 @@ export function createRouter(deps: RouterDeps) {
       .mutation(async ({ input }) => {
         const committed = parseSettingsPatch(input.committedJson ?? null)
         const local = parseSettingsPatch(input.localJson ?? null)
-        await writeVaultSettings(await rootFor(input.remote), {
-          committed: committed.patch,
-          local: local.patch,
-        })
+        const root = await rootFor(input.remote)
+        await writeVaultSettings(root, { committed: committed.patch, local: local.patch })
+        // A plugin just turned on gets its files and starts now, not at the
+        // vault's next open.
+        if ('plugins' in committed.patch || 'plugins' in local.patch) {
+          await deps.seed(root)
+          await deps.plugins.enter(root)
+        }
         return { ok: true as const, warnings: [...committed.warnings, ...local.warnings] }
       }),
   })

@@ -658,7 +658,12 @@ describe('the schema is the only declaration', () => {
 
   it('accepts every value it offers, on both the read and the write', () => {
     for (const setting of VAULT_SETTINGS) {
-      if (setting.type.kind === 'boolean' || setting.type.kind === 'flags') continue
+      if (
+        setting.type.kind === 'boolean' ||
+        setting.type.kind === 'flags' ||
+        setting.type.kind === 'plugins'
+      )
+        continue
       for (const option of setting.type.options) {
         const file = committed({ [setting.key]: option.value })
 
@@ -692,6 +697,7 @@ describe('the schema is the only declaration', () => {
       const control = VAULT_SETTING_DESCRIPTORS.find((d) => d.key === setting.key)!.control
       if (setting.type.kind === 'boolean') expect(control.kind).toBe('toggle')
       else if (setting.type.kind === 'flags') expect(control.kind).toBe('group')
+      else if (setting.type.kind === 'plugins') expect(control.kind).toBe('plugins')
       else expect(control.kind).toBe('choice')
     }
   })

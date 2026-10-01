@@ -113,12 +113,14 @@ async function rig(files: Record<string, string> = {}, auth?: StoredAuth) {
   capabilities.register(TASK_NAMESPACES, taskCapabilities({ today: () => TODAY }))
   const caller = createRouter({
     seed: seedVault,
+    plugins: { enter: async () => {} },
     dispatch: createDispatch({
       registry: capabilities,
       rootFor: async (remote) =>
         (await registry.list()).find((e) => e.remote === remote)?.path ?? null,
       active: () => host.active(),
       core: noCoreServices,
+      pluginEnabled: async () => true,
     }),
     registry,
     session,
@@ -1105,6 +1107,7 @@ async function authRig(routes: Record<string, Scripted[]>, seed?: StoredAuth) {
   hosts.push(host)
   const caller = createRouter({
     seed: seedVault,
+    plugins: { enter: async () => {} },
     registry,
     session,
     host,
@@ -1817,6 +1820,7 @@ describe('google composer procedures', () => {
 
     const caller = createRouter({
       seed: seedVault,
+      plugins: { enter: async () => {} },
       registry,
       session: await idleSession(base),
       host: withActiveVault(host, root),
@@ -1922,6 +1926,7 @@ describe('google composer procedures', () => {
     hosts.push(host)
     const caller = createRouter({
       seed: seedVault,
+      plugins: { enter: async () => {} },
       registry,
       session: await idleSession(base),
       host,
@@ -1947,6 +1952,7 @@ describe('google forwarding', () => {
     const calls: unknown[] = []
     const caller = createRouter({
       seed: seedVault,
+      plugins: { enter: async () => {} },
       registry,
       session: await idleSession(base),
       host: withActiveVault(host, base),
@@ -1979,6 +1985,7 @@ describe('google forwarding', () => {
     hosts.push(host)
     const caller = createRouter({
       seed: seedVault,
+      plugins: { enter: async () => {} },
       registry,
       session: await idleSession(base),
       host: withActiveVault(host, base),
@@ -2136,6 +2143,7 @@ describe('google accounts per vault', () => {
 
     const caller = createRouter({
       seed: seedVault,
+      plugins: { enter: async () => {} },
       registry,
       session: await idleSession(base),
       host: withActiveVault(host, base, remote),
@@ -2204,6 +2212,7 @@ describe('google status and accounts with no vault open', () => {
     hosts.push(host)
     return createRouter({
       seed: seedVault,
+      plugins: { enter: async () => {} },
       registry,
       session: await idleSession(base),
       host, // nothing opened: `active()` is null

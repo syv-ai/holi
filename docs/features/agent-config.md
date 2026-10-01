@@ -47,8 +47,8 @@ report `holi vault recents` answers from. Tasks, backlinks and sync state the ag
 finds itself with `Glob`, `grep` and `git`.
 
 **Seeding.** `ensureSeeded` runs on create, adopt and every open, over a list of seed
-contributions: core (`main/vault/seed/core.ts`), the agent (`main/agent/seed/`) and PDF
-(`main/pdf/seed.ts`). Each keeps its files as real files under `vault/once/` and `vault/shipped/`
+contributions: core (`main/vault/seed/core.ts`), the agent (`main/agent/seed/`), PDF
+(`main/pdf/seed.ts`) and each plugin the vault enables (`main/plugin-host/`). Each keeps its files as real files under `vault/once/` and `vault/shipped/`
 beside its module, at their vault path, read in through `import.meta.glob` (binaries such as the
 brand fonts as `?inline` bytes). A path belongs to one contribution. Merged files go first, so
 core's `.gitignore` gets its `*.local.*` line, line-wise, before anything else is written. Then:
@@ -58,7 +58,9 @@ core's `.gitignore` gets its `*.local.*` line, line-wise, before anything else i
   (core), `.holi/document-templates/**` (PDF). Created if absent, then the user's.
 - **Shipped files**: `.claude/hooks/**` and `.claude/skills/**` (the agent; PDF's two skills). Written only when the
   vault is created (`.holi/vault` does not exist yet), and the vault's from then on: an open never
-  writes one, so a deleted skill stays deleted. They are plain committed files because a vault
+  writes one, so a deleted skill stays deleted. A plugin's are also written once when it is first
+  enabled on a machine that has seeded the vault before; the seed state records which plugins
+  this machine has seen, and its first open of a clone only records them. They are plain committed files because a vault
   works in any Claude Code, the web and the desktop app included; a Claude Code plugin would not
   reach cloud sessions or a machine it was never installed on.
 - **Merged files** have one owner, which merges what the vault has with what Holi needs; any
@@ -84,8 +86,8 @@ conflict is left as it is with the shipped version (and the base) staged beside 
 `*.shipped.local.*` and `*.base.local.*`. Conflicts get an agent session whose submitted first turn
 merges them and deletes the staged files; until it does, the file stays a conflict. A machine with
 no recorded base hands every changed file to the agent. The palette reports the outcome as a
-native notification. Holi's side of each hook stays backward-compatible, since a vault may run an
-older script indefinitely.
+native notification. Holi's side of a hook is not kept compatible with older scripts: the update
+is how a vault gets the current ones.
 
 Changing a once file's seed text reaches new vaults only. To tell existing vaults something, use a
 shipped skill (through the update), a `settings.json` key or fragment, or a file whose writer

@@ -4,8 +4,9 @@
  *
  * **Seeding runs on vault creation, adoption AND every open**, but what an open
  * may do is narrow. Shipped files (skills, hooks) are written only when the
- * vault is created: after that they are the vault's, and a newer version
- * reaches them only through `holi skills update` (`update.ts`).
+ * vault is created, or when a plugin is turned on: after that they are the
+ * vault's, and a newer version reaches them only through `holi skills update`
+ * (`update.ts`).
  *
  * `USER.local.md` is deliberately NOT seeded: it is machine-local (its name
  * says so), and the agent creates it when it first learns something about the
@@ -15,7 +16,7 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { vaultRelPath, VAULT_MARKER_FILE } from '@holi/shared'
 import { writeAtomic } from '../vault-files'
-import { recordSeeded } from './state'
+import { readSeedState, recordPlugins, recordSeeded } from './state'
 import type { SeedContribution, SeedResult } from './types'
 
 const exists = async (root: string, rel: string): Promise<boolean> =>
@@ -33,7 +34,8 @@ function tables(contributions: readonly SeedContribution[]) {
     owner.set(rel, id)
   }
   const once: [string, string | Uint8Array][] = []
-  const shipped: [string, string][] = []
+  /** Path, text, and the contribution's id. */
+  const shipped: [string, string, string][] = []
   const merged: [string, NonNullable<SeedContribution['merge']>[string]][] = []
   for (const c of contributions) {
     for (const [rel, merge] of Object.entries(c.merge ?? {})) {
@@ -46,7 +48,7 @@ function tables(contributions: readonly SeedContribution[]) {
     }
     for (const [rel, content] of Object.entries(c.shipped)) {
       claim(rel, c.id)
-      shipped.push([rel, content])
+      shipped.push([rel, content, c.id])
     }
   }
   return { once, shipped, merged }
@@ -54,7 +56,7 @@ function tables(contributions: readonly SeedContribution[]) {
 
 /** The shipped files of every contribution, for `holi skills update`. */
 export function shippedFiles(contributions: readonly SeedContribution[]): [string, string][] {
-  return tables(contributions).shipped
+  return tables(contributions).shipped.map(([rel, content]) => [rel, content])
 }
 
 /**
@@ -86,21 +88,32 @@ export async function runMerges(
  *     is in place before anything that could be committed is written: until
  *     it exists nothing stops `git add -A` from taking a machine-local file.
  *   - **once**: created if absent, never touched again.
- *   - **shipped**: written **only when the vault is being created**, told by
+ *   - **shipped**: written **when the vault is being created**, told by
  *     `.holi/vault` not existing yet, and recorded so a later
  *     `holi skills update` has a base to merge against. An open never writes
  *     one, so a skill the vault deleted stays deleted.
+ *
+ * `plugins` names the enabled plugins, whose contributions carry their ids.
+ * A plugin's shipped files are also written on an open where it is enabled
+ * for the first time on this machine, told by the plugin baseline in the
+ * seed state. The first open of a clone on a machine has no baseline yet,
+ * and only records one: the vault already has whatever its plugins seeded.
  */
 export async function ensureSeeded(
   root: string,
   contributions: readonly SeedContribution[],
+  plugins: readonly string[] = [],
 ): Promise<SeedResult> {
   const { once, shipped } = tables(contributions)
   // Read before the once files below write it.
   const creating = !(await exists(root, VAULT_MARKER_FILE))
-  const toShip = new Set(creating ? shipped.map(([rel]) => rel) : [])
+  const baseline = (await readSeedState(root)).plugins
+  const turnedOn = new Set(
+    creating || baseline === undefined ? [] : plugins.filter((id) => !baseline.includes(id)),
+  )
+  const toShip = shipped.filter(([, , id]) => creating || turnedOn.has(id))
 
-  const written = await runMerges(root, contributions, toShip)
+  const written = await runMerges(root, contributions, new Set(toShip.map(([rel]) => rel)))
 
   for (const [rel, content] of once) {
     if (await exists(root, rel)) continue
@@ -108,13 +121,15 @@ export async function ensureSeeded(
     written.push(rel)
   }
 
-  if (creating) {
-    for (const [rel, content] of shipped) {
-      if (await exists(root, rel)) continue
-      await writeAtomic(root, vaultRelPath(rel), content)
-      await recordSeeded(root, rel, content)
-      written.push(rel)
-    }
+  for (const [rel, content] of toShip) {
+    if (await exists(root, rel)) continue
+    await writeAtomic(root, vaultRelPath(rel), content)
+    await recordSeeded(root, rel, content)
+    written.push(rel)
   }
+
+  // Only ever grows: a plugin turned off and on again is not new here.
+  const seen = [...new Set([...(baseline ?? []), ...plugins])]
+  if (baseline === undefined || seen.length > baseline.length) await recordPlugins(root, seen)
   return { written }
 }

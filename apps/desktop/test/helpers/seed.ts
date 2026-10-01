@@ -8,7 +8,7 @@ import { coreSeed } from '../../src/main/vault/seed/core'
 import { ensureSeeded } from '../../src/main/vault/seed/seed'
 import type { SeedResult } from '../../src/main/vault/seed/types'
 
-export const SEED_CONTRIBUTIONS = [coreSeed, agentSeed, pdfSeed]
+export const SEED_CONTRIBUTIONS = [coreSeed([]), agentSeed, pdfSeed]
 
 export const seedVault = (root: string): Promise<SeedResult> =>
   ensureSeeded(root, SEED_CONTRIBUTIONS)

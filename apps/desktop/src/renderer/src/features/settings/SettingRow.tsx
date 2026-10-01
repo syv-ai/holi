@@ -1,7 +1,7 @@
 /**
  * One setting, rendered from its descriptor. The layout is `SettingsRow`; this
  * file decides only what a *setting* adds to a row: the layer badge, the
- * three control kinds, and the resolver's complaint.
+ * control kinds, and the resolver's complaint.
  */
 import { useAtomValue } from 'jotai'
 import { TriangleAlert } from 'lucide-react'
@@ -11,12 +11,14 @@ import {
   appName,
   availableOptions,
   isLocalOnlyPath,
+  type PluginSettings,
   type VaultSettingDescriptor,
   type VaultSettingOption,
 } from '@holi/shared'
 import { Button, Checkbox, Icon, Tooltip } from '@/primitives'
 import { useAck } from '@/lib/use-ack'
 import { appPathsAtom } from '@/state/apps'
+import { installedPluginsAtom } from '@/state/plugins'
 import { SettingsRow } from './settings-ui'
 
 export function Layer({ target }: { target: VaultSettingDescriptor['target'] }): React.JSX.Element {
@@ -48,10 +50,11 @@ export function SettingRow({
   settings: Record<string, unknown>
   onChange: (key: string, value: unknown) => void
   warnings: string[]
-}): React.JSX.Element {
+}): React.JSX.Element | null {
   const { key, label, explanation, control } = descriptor
   const value = settings[key] ?? descriptor.default
   const appPaths = useAtomValue(appPathsAtom)
+  const installed = useAtomValue(installedPluginsAtom)
   const options: readonly VaultSettingOption[] =
     control.kind === 'choice' && control.apps === true
       ? withApps(availableOptions(descriptor, settings), appPaths, value)
@@ -64,6 +67,9 @@ export function SettingRow({
     ack('flash')
     onChange(k, v)
   }
+
+  // A switch per installed plugin, so with none there is nothing to show.
+  if (control.kind === 'plugins' && installed.length === 0) return null
 
   return (
     <SettingsRow
@@ -131,6 +137,37 @@ export function SettingRow({
                   <span className="ml-1.5 text-[11px] text-muted-foreground">
                     {toggle.explanation}
                   </span>
+                </span>
+              </label>
+            )
+          })}
+        </div>
+      )}
+
+      {control.kind === 'plugins' && (
+        <div className="flex flex-col gap-2">
+          {installed.map(({ info }) => {
+            const plugins = value as PluginSettings
+            const off = plugins.localOff.includes(info.id)
+            return (
+              <label key={info.id} className="flex items-start gap-2.5">
+                <Checkbox
+                  className="mt-0.5"
+                  // The vault's answer. This machine's own off is the note.
+                  checked={plugins.vault[info.id] ?? info.default}
+                  // The vault's whole answer, as the flag group sends its block.
+                  onCheckedChange={(next) =>
+                    change(key, { ...plugins.vault, [info.id]: next === true })
+                  }
+                  aria-label={info.label}
+                />
+                <span className="min-w-0">
+                  <span className="text-xs">{info.label}</span>
+                  {off && (
+                    <span className="ml-1.5 text-[11px] text-muted-foreground">
+                      Off on this machine, in {SETTINGS_LOCAL_FILE}.
+                    </span>
+                  )}
                 </span>
               </label>
             )

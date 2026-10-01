@@ -55,8 +55,13 @@ export function useVaultSettings(): VaultSettingsHandle {
       if (remote === null || resolved === null) return
       setError(null)
       // Optimistic, because a control that lags a click reads as a broken
-      // control. The forced re-read below is what makes it true.
-      setCached({ remote, settings: { ...resolved, [descriptor.key]: value } })
+      // control. The forced re-read below is what makes it true. The plugins
+      // row answers for the vault's half of its resolved value.
+      const optimistic =
+        descriptor.control.kind === 'plugins'
+          ? { ...resolved.plugins, vault: value as Record<string, boolean> }
+          : value
+      setCached({ remote, settings: { ...resolved, [descriptor.key]: optimistic } })
       const patch = JSON.stringify({ [descriptor.key]: value })
       try {
         // `fields` validates strings and booleans only, so the patch travels as

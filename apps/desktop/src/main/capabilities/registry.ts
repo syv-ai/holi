@@ -94,9 +94,12 @@ export interface CliCommand {
 
 export interface CapabilityRegistry {
   /** Adds `table`, whose every name must sit under one of `namespaces`, which
-   *  no other caller may already own. Throws otherwise. Returns the undo. */
-  register(namespaces: readonly string[], table: CapabilityTable): () => void
+   *  no other caller may already own. Throws otherwise. Returns the undo.
+   *  `plugin` names the plugin that registered it; core's entries have none. */
+  register(namespaces: readonly string[], table: CapabilityTable, plugin?: string): () => void
   has(name: string): boolean
+  /** The plugin an entry belongs to, or null for core's (and unknown names). */
+  pluginOf(name: string): string | null
   /** Every entry open at the CLI door, as a command, by name. */
   commands(): CliCommand[]
   /**
@@ -121,9 +124,10 @@ const namespaceOf = (name: string): string | null => {
 export function createCapabilityRegistry(): CapabilityRegistry {
   const owners = new Map<string, CapabilityTable>()
   const entries = new Map<string, AnyCapability>()
+  const plugins = new Map<string, string>()
 
   return {
-    register(namespaces, table) {
+    register(namespaces, table, plugin) {
       for (const ns of namespaces) {
         if (owners.has(ns)) throw new Error(`capability namespace ${ns} is already registered`)
       }
@@ -143,16 +147,24 @@ export function createCapabilityRegistry(): CapabilityRegistry {
         }
       }
       for (const ns of namespaces) owners.set(ns, table)
-      for (const [name, entry] of Object.entries(table)) entries.set(name, entry)
+      for (const [name, entry] of Object.entries(table)) {
+        entries.set(name, entry)
+        if (plugin !== undefined) plugins.set(name, plugin)
+      }
       return () => {
         for (const ns of namespaces) if (owners.get(ns) === table) owners.delete(ns)
         for (const [name, entry] of Object.entries(table)) {
-          if (entries.get(name) === entry) entries.delete(name)
+          if (entries.get(name) === entry) {
+            entries.delete(name)
+            plugins.delete(name)
+          }
         }
       }
     },
 
     has: (name) => entries.has(name),
+
+    pluginOf: (name) => plugins.get(name) ?? null,
 
     commands: () =>
       [...entries]

@@ -91,6 +91,7 @@ function bridge(table: Record<string, AnyCapability>, namespaces: string[]): Bri
         rootFor: async () => dir,
         active: () => null,
         core: noCoreServices,
+        pluginEnabled: async () => true,
       }),
       commands: () => registry.commands(),
     },

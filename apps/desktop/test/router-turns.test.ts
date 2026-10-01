@@ -66,6 +66,7 @@ async function rig() {
   hosts.push(host)
   const caller = createRouter({
     seed: seedVault,
+    plugins: { enter: async () => {} },
     registry,
     session,
     host,

@@ -5,6 +5,9 @@
  * so the very next read sees it. The doors differ only in how they hand a
  * refusal back: the app bridge as a tRPC error, the CLI as a line on stderr.
  *
+ * A plugin's capability is refused as "no such method" in a vault that has
+ * the plugin off, whatever this process has loaded.
+ *
  * No `electron` import: this loads under plain Node in the tests.
  */
 import type { VaultSnapshot } from '@holi/shared'
@@ -24,6 +27,8 @@ export interface DispatchDeps {
     refresh(): Promise<unknown>
   } | null
   core(remote: string, root: string): CoreServices
+  /** Whether the vault cloned at `root` runs this plugin. */
+  pluginEnabled(plugin: string, root: string): Promise<boolean>
 }
 
 export interface CapabilityCall {
@@ -41,6 +46,10 @@ export function createDispatch(deps: DispatchDeps): Dispatch {
   return async ({ door, remote, bundle, name, params }) => {
     const root = await deps.rootFor(remote)
     if (root === null) throw new CapabilityError('NOT_FOUND', `no such vault: ${remote}`)
+    const plugin = deps.registry.pluginOf(name)
+    if (plugin !== null && !(await deps.pluginEnabled(plugin, root))) {
+      throw new CapabilityError('BAD_REQUEST', `no such method: ${name}`)
+    }
     const result = await deps.registry.run(
       name,
       door,

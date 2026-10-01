@@ -4,14 +4,18 @@ import { createRoot } from 'react-dom/client'
 import { App } from './App'
 import { TooltipProvider } from './primitives'
 import { flushAllBuffers } from './lib/buffer-registry'
+import { installedPluginsAtom } from './state/plugins'
 import { reportUiToMain } from './state/ui-report'
 import { subscribeToVault } from './state/vaults'
+import { RENDERER_PLUGINS } from '../../plugins/renderer'
 import './index.css'
 
 /** One store, so the push subscriptions outlive every component: one owned by
  *  a component would stop when it unmounts and the vault would go quietly
  *  stale. */
 const store = createStore()
+// The plugins this build has: the one place the renderer imports them.
+store.set(installedPluginsAtom, RENDERER_PLUGINS)
 subscribeToVault(store)
 reportUiToMain(store)
 

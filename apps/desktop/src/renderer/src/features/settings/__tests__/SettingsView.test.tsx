@@ -18,6 +18,7 @@ import { SettingsView } from '../SettingsView'
 import { SETTINGS_SECTIONS } from '../sections'
 import { descriptorsIn } from '../DescriptorSection'
 import { activeRemoteAtom } from '@/state/vaults'
+import { installedPluginsAtom } from '@/state/plugins'
 
 const read = vi.fn()
 const write = vi.fn()
@@ -73,6 +74,8 @@ const resolved = (over: Record<string, unknown> = {}) => ({
 function setup(over: Record<string, unknown> = {}) {
   const store = createStore()
   store.set(activeRemoteAtom, 'syv-ai/vault')
+  // A test-only plugin, so the plugins row has a switch to render.
+  store.set(installedPluginsAtom, [{ info: { id: 'fake', label: 'Fake', default: true } }])
   read.mockResolvedValue(resolved(over))
   write.mockResolvedValue({ ok: true, warnings: [] })
   themeRead.mockResolvedValue({ light: {}, dark: {}, warnings: [] })

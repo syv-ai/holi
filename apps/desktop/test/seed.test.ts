@@ -104,7 +104,7 @@ describe('the seed tables', () => {
   const keys = (t: Record<string, unknown>) => Object.keys(t).sort()
 
   it('core seeds the vault marker, AGENTS.md, settings, theme, icons and memory', () => {
-    expect(keys(coreSeed.once)).toEqual([
+    expect(keys(coreSeed([]).once)).toEqual([
       '.holi/settings/app.local.yaml',
       '.holi/settings/app.yaml',
       '.holi/settings/icons.yaml',
@@ -114,8 +114,8 @@ describe('the seed tables', () => {
       'AGENTS.md',
       'memory/index.md',
     ])
-    expect(keys(coreSeed.shipped)).toEqual([])
-    expect(keys(coreSeed.merge!)).toEqual(['.gitignore'])
+    expect(keys(coreSeed([]).shipped)).toEqual([])
+    expect(keys(coreSeed([]).merge!)).toEqual(['.gitignore'])
   })
 
   it('the agent ships its hooks and skills and merges .claude/settings.json', () => {
@@ -786,7 +786,10 @@ describe('ensureSeeded: skills and hooks only at creation', () => {
     const root = await tempDir()
     await ensureSeeded(root)
     const state = await readSeedState(root)
-    expect(state[SKILL]).toEqual({ sha: sha256(SHIPPED_FILES[SKILL]!), text: SHIPPED_FILES[SKILL] })
+    expect(state.files[SKILL]).toEqual({
+      sha: sha256(SHIPPED_FILES[SKILL]!),
+      text: SHIPPED_FILES[SKILL],
+    })
   })
 
   it('never writes one on a later open: a deleted skill stays deleted', async () => {
@@ -908,25 +911,15 @@ describe('updateShipped: what `holi skills update` does', () => {
     expect(await readFile(join(root, SKILL), 'utf8')).toBe(resolved)
   })
 
-  it('hands a changed file with no base to an agent: a record from before bases were kept', async () => {
+  it('hands a changed file with no base to an agent: a machine that never seeded it', async () => {
     const root = await tempDir()
     await ensureSeeded(root)
     await writeFile(join(root, SKILL), '# changed\n')
-    // The old record format: the hash alone.
-    await writeFile(join(root, SEED_STATE_FILE), JSON.stringify({ [SKILL]: sha256('# old\n') }))
+    await rm(join(root, SEED_STATE_FILE))
 
     const report = await updateShipped(root)
     expect(report.conflicts).toEqual([SKILL])
     await expect(readFile(join(root, stagedPath(SKILL, 'base')), 'utf8')).rejects.toThrow()
-  })
-
-  it('still replaces an untouched file from a record that kept only the hash', async () => {
-    const root = await tempDir()
-    await ensureSeeded(root)
-    await writeFile(join(root, SKILL), '# old\n')
-    await writeFile(join(root, SEED_STATE_FILE), JSON.stringify({ [SKILL]: sha256('# old\n') }))
-
-    expect((await updateShipped(root)).updated).toEqual([SKILL])
   })
 
   it('leaves a skill the vault deleted deleted, and adds one it never had', async () => {
@@ -936,7 +929,7 @@ describe('updateShipped: what `holi skills update` does', () => {
     const THEME = '.claude/skills/theme/SKILL.md'
     await rm(join(root, THEME))
     const state = JSON.parse(await readFile(join(root, SEED_STATE_FILE), 'utf8'))
-    delete state[THEME] // never seeded here: new in this release
+    delete state.files[THEME] // never seeded here: new in this release
     await writeFile(join(root, SEED_STATE_FILE), JSON.stringify(state))
 
     const report = await updateShipped(root)
