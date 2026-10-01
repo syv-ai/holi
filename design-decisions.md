@@ -384,6 +384,14 @@ and activation.
 - **The tree keeps its existing task-files toggle** rather than a per-claim `hideable`, which
   would need new header UI. Broken task files now show under it so they can be fixed.
 
+- **The Claude config dir is watched through one recursive `fs.watch`,** filtered to `sessions/`
+  and `jobs/`. On macOS a process's directory watches share one FSEvents stream, and adding a
+  second watch throws away the first one's buffered events. Watcher tests wait until the watch is
+  live, because Node has no ready signal for `fs.watch`.
+- **Live preview rebuilds when the parse advances,** because CodeMirror's first parse is
+  time-boxed. In a long note, lines past the first parse used to stay undecorated until the caret
+  moved.
+
 ## Remaining work: tasks becomes a plugin
 
 Tasks runs as a core part on the plugin contract (`TASKS_PART`) with its claim and transform.
