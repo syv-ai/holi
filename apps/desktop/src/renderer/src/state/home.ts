@@ -13,7 +13,7 @@ import { folderDocumentAt, surfaceLabel } from '@/lib/folder-documents'
 import { resolveHome } from '../lib/home-target'
 import { ensureTodaysDailyAtom } from './daily'
 import { openPinned, openSurface, workspaceAtom } from './panes'
-import { folderClaimsAtom, surfacesAtom } from './plugins'
+import { folderClaimsAtom, railAtom, surfacesAtom } from './plugins'
 import { loadVaultSettingsAtom, vaultSettingsAtom } from './settings'
 import { activeDocAtom, activeRemoteAtom, snapshotAtom } from './vaults'
 
@@ -50,15 +50,22 @@ export const homeDocumentAtom = atom((get): { surface: string; id: string } | nu
 })
 
 /** The folder documents Home may name, by name: every finished one (each
- *  vault app), from its surface's instances. */
-export const homeDocumentsAtom = atom((get): { path: string; label: string }[] => {
+ *  vault app), from its surface's instances. `group` is the nav menu's word
+ *  for that surface's instances ("Apps"), so the picker can section them. */
+export const homeDocumentsAtom = atom((get): { path: string; label: string; group: string }[] => {
   const surfaces = get(surfacesAtom)
+  const rail = get(railAtom)
   const kinds = new Set(get(folderClaimsAtom).map((c) => c.folder.surface))
   return [...kinds]
     .flatMap((kind) => {
       const surface = surfaces.get(kind)
       if (surface?.instances === undefined) return []
-      return get(surface.instances).map((path) => ({ path, label: surfaceLabel(surface, path) }))
+      const group = rail.find((r) => r.surface === kind)?.label ?? surfaceLabel(surface)
+      return get(surface.instances).map((path) => ({
+        path,
+        label: surfaceLabel(surface, path),
+        group,
+      }))
     })
     .sort((a, b) => a.label.localeCompare(b.label) || a.path.localeCompare(b.path))
 })

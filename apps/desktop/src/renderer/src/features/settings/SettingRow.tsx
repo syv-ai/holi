@@ -57,10 +57,12 @@ export function SettingRow({
   const documents = useAtomValue(homeDocumentsAtom)
   const installed = useAtomValue(installedPluginsAtom)
   const surfaces = useAtomValue(surfacesAtom)
-  const options: readonly VaultSettingOption[] =
+  const groups: readonly OptionGroup[] =
     control.kind === 'choice' && control.openEnded === true
       ? homeOptions(availableOptions(descriptor, settings), surfaces, documents, value)
-      : availableOptions(descriptor, settings)
+      : [{ options: availableOptions(descriptor, settings) }]
+  const isChosen = (option: VaultSettingOption) =>
+    JSON.stringify(option.value) === JSON.stringify(value)
 
   // Changing a setting WRITES A FILE in the vault, so the row flashes once to
   // make the write visible where it happened.
@@ -95,25 +97,33 @@ export function SettingRow({
         ) : control.kind === 'choice' ? (
           // `justify-end` so a group that has wrapped onto its own line stays
           // against the right edge, and so does a second row of options.
-          <div role="radiogroup" aria-label={label} className="flex flex-wrap justify-end gap-1.5">
-            {/* Filtered, not disabled — the same call the ritual makes. A greyed
-                out choice invites "why not?" and the answer is another row. */}
-            {options.map((option) => (
-              <Button
-                key={option.label}
-                type="button"
-                variant={
-                  JSON.stringify(option.value) === JSON.stringify(value) ? 'secondary' : 'ghost'
-                }
-                size="xs"
-                role="radio"
-                // Structural equality: an option's value may be any value the
-                // setting holds, and the answer a different object of that shape.
-                aria-checked={JSON.stringify(option.value) === JSON.stringify(value)}
-                onClick={() => change(key, option.value)}
+          <div role="radiogroup" aria-label={label} className="flex flex-col items-end gap-2">
+            {groups.map((group) => (
+              <div
+                key={group.heading ?? ''}
+                className="flex flex-wrap items-center justify-end gap-1.5"
               >
-                {option.label}
-              </Button>
+                {group.heading !== undefined && (
+                  <span className="mr-1 text-[11px] text-muted-foreground">{group.heading}</span>
+                )}
+                {/* Filtered, not disabled — the same call the ritual makes. A greyed
+                    out choice invites "why not?" and the answer is another row. */}
+                {group.options.map((option) => (
+                  <Button
+                    key={option.label}
+                    type="button"
+                    variant={isChosen(option) ? 'secondary' : 'ghost'}
+                    size="xs"
+                    role="radio"
+                    // Structural equality: an option's value may be any value the
+                    // setting holds, and the answer a different object of that shape.
+                    aria-checked={isChosen(option)}
+                    onClick={() => change(key, option.value)}
+                  >
+                    {option.label}
+                  </Button>
+                ))}
+              </div>
             ))}
           </div>
         ) : undefined
@@ -190,32 +200,47 @@ export function SettingRow({
   )
 }
 
+/** A choice's options, under a heading when the row sections them. */
+interface OptionGroup {
+  heading?: string
+  options: readonly VaultSettingOption[]
+}
+
 /**
- * Home's options: core's fixed ones, the views that can be Home in this vault
- * (`homeable` surfaces, so one whose plugin is off is not offered), the
- * vault's shared folder documents (a vault app, say), and the current answer
- * even when it is none of them (a file, or a document not made yet), so the row
- * always shows what is in force. A personal (`.local.`) document is not
- * offered: this row writes the committed file, and naming one there would point
- * everyone else at nothing.
+ * Home's options, in sections: core's fixed ones, the views that can be Home
+ * in this vault (`homeable` surfaces, so one whose plugin is off is not
+ * offered), the vault's shared folder documents under their nav word (each
+ * vault app under "Apps"), and the current answer even when it is none of
+ * them (a file, or a document not made yet), so the row always shows what is
+ * in force. Sections, because a vault app may share a name with a view: an app
+ * called Home must not read as Home naming itself. A personal (`.local.`)
+ * document is not offered: this row writes the committed file, and naming one
+ * there would point everyone else at nothing.
  */
 function homeOptions(
   fixed: readonly VaultSettingOption[],
   surfaces: ReadonlyMap<string, Surface>,
-  documents: readonly { path: string; label: string }[],
+  documents: readonly { path: string; label: string; group: string }[],
   value: unknown,
-): VaultSettingOption[] {
+): OptionGroup[] {
   const listed = new Set(fixed.map((o) => o.value))
   const views = [...surfaces.values()]
     .filter((s) => s.homeable === true && !listed.has(s.kind))
     .map((s) => ({ value: s.kind, label: surfaceLabel(s) }))
-  const docs = documents
-    .filter((d) => !isLocalOnlyPath(d.path) && !listed.has(d.path))
-    .map((d) => ({ value: d.path, label: d.label }))
-  const all = [...fixed, ...views, ...docs]
-  const current =
-    typeof value === 'string' && !all.some((o) => o.value === value)
-      ? [{ value, label: value }]
-      : []
-  return [...all, ...current]
+  const docs = documents.filter((d) => !isLocalOnlyPath(d.path) && !listed.has(d.path))
+  const groups: OptionGroup[] = [
+    { heading: 'Built in', options: fixed },
+    { heading: 'Views', options: views },
+    ...[...new Set(docs.map((d) => d.group))].map((heading) => ({
+      heading,
+      options: docs
+        .filter((d) => d.group === heading)
+        .map((d) => ({ value: d.path, label: d.label })),
+    })),
+  ]
+  const known = groups.some((g) => g.options.some((o) => o.value === value))
+  if (typeof value === 'string' && !known) {
+    groups.push({ heading: 'File', options: [{ value, label: value }] })
+  }
+  return groups.filter((g) => g.options.length > 0)
 }
