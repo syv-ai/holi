@@ -85,4 +85,39 @@ and activation.
 
 ## Decisions made during execution
 
-(Appended as the work goes.)
+### Phase 0
+
+- **`splitFrontmatter` lives in its own `packages/shared/src/frontmatter.ts`.** Finding the `---`
+  fence is neither YAML editing (`yaml-document.ts`) nor key meaning (`frontmatter-schema.ts`). It
+  throws `FrontmatterError`; `parseTaskFile` rethrows it as `TaskFileError` so a task with an
+  unclosed fence is still listed as broken rather than crashing the scan.
+- **Body search is core (`main/vault/search.ts`).** The palette's `notes.search` uses it, so it
+  cannot live in the apps feature.
+- **`.holi/state/**` is machine state that vault apps can never read.** The git hook's endpoint
+  file there carried the hook server's token, and `holi.docs.read` returned it to any app. Every
+  bridge token moves into that directory, so it is fenced in shared path-safety
+  (`isMachineStatePath`) before any token moves.
+- **Capabilities live in core (`main/capabilities/`), one registry for every door.** Every name
+  is `<namespace>.<verb>`. A caller registers the namespaces it owns, and each namespace has
+  exactly one owner (apps owns `apps` and `store`; core owns `docs`, `vault`, `sync` and
+  `skills`). One `dispatch` handles snapshot choice, refresh after writes and error mapping for
+  every door. Feature services leave `CapabilityServices`: each feature closes over its own
+  dependencies when it registers.
+- **The hook server becomes a core bridge (`main/bridge/`) with a route table.** Only routes
+  whose caller is not an agent verb stay routes: git's pre-commit and merge driver, and the
+  agent's turn and status-line hooks, which must answer empty. Everything else is a capability,
+  and `ops.ts` is gone.
+- **The `holi` CLI is generic.** It posts argv to `/cli`, and main resolves
+  `<namespace> <verb>` against the capabilities that open the `cli` door, with positionals
+  declared on the capability. Plugins add no shell code. Exit codes are 0 for success, 1 for a
+  refusal, and 2 for usage. Spellings change with no aliases (no users).
+- **Endpoint discovery is provider-neutral.** CLIs and hooks walk up from the current directory
+  to `.holi/vault` and parse `.holi/state/bridge.local.env`, a key/value map that plugins
+  contribute to. It replaces `$CLAUDE_CONFIG_DIR/holi.env`, which only Claude sessions could
+  find. The file is parsed, never sourced: a collaborator could force-add a malicious one.
+- **The renderer's `ui` door lands with its first consumer (PDF), not before.** It is one
+  `cap.call` mutation plus a typed per-namespace client.
+- **Home defaults to a native "Recently opened" list (`home: recents`).** Core's default must not
+  name an app, or Home breaks when the apps plugin is off. An app bundle stays a valid `home`
+  value, and new vaults are no longer seeded with `Home.app`. The list leaves out terminals,
+  because `holi.open` cannot open them either.
