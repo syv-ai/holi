@@ -1,6 +1,7 @@
 /**
  * The nav menu's items do what their names say, and the ones that depend on
- * something (apps, Google) appear only when it is there. Driven through the
+ * something (apps, Google) appear only when it is there. Core's surfaces are
+ * installed as `main.tsx` installs them. Driven through the
  * expanded list: jsdom lays nothing out, so the vertical dock has no room and
  * holds only More, whose list is then every item.
  */
@@ -11,7 +12,9 @@ import { expect, test, vi } from 'vitest'
 import { VAULT_SETTING_DEFAULTS } from '@holi/shared'
 import { googleAccountAtom } from '@/state/google'
 import { paletteAtom } from '@/state/palette'
+import { CORE_SURFACES } from '@/components/core-surfaces'
 import { activeTab, workspaceAtom } from '@/state/panes'
+import { coreSurfacesAtom } from '@/state/plugins'
 import { vaultSettingsAtom } from '@/state/settings'
 import { activeRemoteAtom } from '@/state/vaults'
 import { NavMenu } from '../NavMenu'
@@ -39,6 +42,7 @@ function setup({
   tasks.current = openTasks
   overdue.current = overdueTasks
   const store = createStore()
+  store.set(coreSurfacesAtom, CORE_SURFACES)
   store.set(googleAccountAtom, account as never)
   render(
     <Provider store={store}>
@@ -76,7 +80,7 @@ test('Settings comes last, after Google, so it sits beside More', async () => {
     'Search',
     'Apps',
     'Board',
-    'Email',
+    'Mail',
     'Agenda',
     'Agents',
     'Sync: up to date',
@@ -108,7 +112,7 @@ test('Home opens the home surface', async () => {
   })
   await openList(user)
   await user.click(screen.getByRole('button', { name: 'Home' }))
-  await waitFor(() => expect(activeTab(store.get(workspaceAtom))).toEqual({ kind: 'home' }))
+  await waitFor(() => expect(activeTab(store.get(workspaceAtom))).toEqual({ kind: 'surface', surface: 'home' }))
 })
 
 test('Search opens the palette', async () => {
@@ -124,14 +128,14 @@ test('Board opens the board and carries the open-task count', async () => {
   const board = screen.getByRole('button', { name: /Board/ })
   expect(board).toHaveTextContent('12')
   await user.click(board)
-  expect(activeTab(store.get(workspaceAtom))).toEqual({ kind: 'board' })
+  expect(activeTab(store.get(workspaceAtom))).toEqual({ kind: 'surface', surface: 'board' })
 })
 
 test('Settings opens settings', async () => {
   const { store, user } = setup()
   await openList(user)
   await user.click(screen.getByRole('button', { name: 'Settings' }))
-  expect(activeTab(store.get(workspaceAtom))).toEqual({ kind: 'settings' })
+  expect(activeTab(store.get(workspaceAtom))).toEqual({ kind: 'surface', surface: 'settings' })
 })
 
 test('Apps drills into the apps by name, and picking one opens it', async () => {
@@ -151,20 +155,20 @@ test('Apps drills into the apps by name, and picking one opens it', async () => 
   })
 })
 
-test('Email and Agenda appear once Google is connected, and open their panes', async () => {
+test('Mail and Agenda appear once Google is connected, and open their panes', async () => {
   const { store, user } = setup({ account: { email: 'ada@syv.ai' } })
   await openList(user)
-  await user.click(screen.getByRole('button', { name: 'Email' }))
-  expect(activeTab(store.get(workspaceAtom))).toEqual({ kind: 'mail' })
+  await user.click(screen.getByRole('button', { name: 'Mail' }))
+  expect(activeTab(store.get(workspaceAtom))).toEqual({ kind: 'surface', surface: 'mail' })
   await openList(user)
   await user.click(screen.getByRole('button', { name: 'Agenda' }))
-  expect(activeTab(store.get(workspaceAtom))).toEqual({ kind: 'agenda' })
+  expect(activeTab(store.get(workspaceAtom))).toEqual({ kind: 'surface', surface: 'agenda' })
 })
 
-test('before Google has been asked about, Email and Agenda stay hidden', async () => {
+test('before Google has been asked about, Mail and Agenda stay hidden', async () => {
   const { user } = setup({ account: undefined })
   await openList(user)
-  expect(screen.queryByRole('button', { name: 'Email', hidden: true })).toBeNull()
+  expect(screen.queryByRole('button', { name: 'Mail', hidden: true })).toBeNull()
   expect(screen.queryByRole('button', { name: 'Agenda', hidden: true })).toBeNull()
 })
 

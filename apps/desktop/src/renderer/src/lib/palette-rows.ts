@@ -4,7 +4,7 @@
  * what `rankRows` returns.
  *
  * A row is one openable thing: a vault path (a note or any other file), a
- * vault app, a live agent session, or one of the five fixed surfaces. Before
+ * vault app, a live agent session, or a registered surface. Before
  * anything is typed the recents come first, then the rest by modified time;
  * with a query, every row is scored by `command-score` (the scorer cmdk
  * bundles) on its name and then, at a discount, on its key, so a folder name
@@ -18,21 +18,10 @@ import { entryOfTab, type RecentEntry, type RecentKind } from './recents'
 
 export type RowKind = Exclude<RecentKind, 'command'>
 
+/** A surface row's icon is its surface's, read from the registry where the
+ *  row is drawn. */
 export type RowIcon =
-  | { emoji: string }
-  | {
-      glyph:
-        | 'note'
-        | 'daily'
-        | 'file'
-        | 'app'
-        | 'session'
-        | 'board'
-        | 'agenda'
-        | 'mail'
-        | 'settings'
-        | 'history'
-    }
+  { emoji: string } | { glyph: 'note' | 'daily' | 'file' | 'app' | 'session' | 'surface' }
 
 export interface PaletteRow {
   kind: RowKind
@@ -58,16 +47,6 @@ export interface RankedRow extends PaletteRow {
 
 export const ROW_CAP = 50
 
-type SurfaceKey = 'board' | 'agenda' | 'mail' | 'settings' | 'history'
-
-const SURFACES: readonly { key: SurfaceKey; name: string }[] = [
-  { key: 'board', name: 'Board' },
-  { key: 'agenda', name: 'Agenda' },
-  { key: 'mail', name: 'Mail' },
-  { key: 'settings', name: 'Settings' },
-  { key: 'history', name: 'History' },
-]
-
 function splitPath(path: string): { name: string; detail?: string } {
   const slash = path.lastIndexOf('/')
   if (slash < 0) return { name: path }
@@ -81,6 +60,8 @@ export interface RowSources {
   sessions: readonly { id: string; name: string }[]
   /** Holi's open agent terminals, by terminal id, with their tab labels. */
   terminals?: readonly { id: string; label: string }[]
+  /** The surfaces the palette offers, by kind, with their labels. */
+  surfaces?: readonly { kind: string; label: string }[]
 }
 
 export function buildRows({
@@ -88,6 +69,7 @@ export function buildRows({
   appPaths,
   sessions,
   terminals = [],
+  surfaces = [],
 }: RowSources): PaletteRow[] {
   const ignored = new Set(snapshot.ignored)
   const pathRow = (
@@ -131,11 +113,11 @@ export function buildRows({
       name: t.label,
       icon: { glyph: 'session' },
     })),
-    ...SURFACES.map(({ key, name }): PaletteRow => ({
+    ...surfaces.map(({ kind, label }): PaletteRow => ({
       kind: 'surface',
-      key,
-      name,
-      icon: { glyph: key },
+      key: kind,
+      name: label,
+      icon: { glyph: 'surface' },
     })),
   ]
 }

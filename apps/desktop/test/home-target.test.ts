@@ -8,10 +8,12 @@
 import { describe, expect, test } from 'vitest'
 import { resolveHome } from '../src/renderer/src/lib/home-target'
 
-/** A vault holding one note, one other file and one app. */
+/** A vault holding one note, one other file and one app, with the board as
+ *  the one view that can be Home. */
 const vault = {
   filePaths: new Set(['Notes/Standup.md', 'plan.pdf']),
   appPaths: new Set(['retro.app']),
+  homeable: new Set(['board']),
 }
 
 const on = (home: string) => ({ home, dailyNotes: true })
@@ -19,7 +21,11 @@ const off = (home: string) => ({ home, dailyNotes: false })
 
 describe('the recents', () => {
   test('are shown in the Home tab, whatever the vault holds', () => {
-    const empty = { filePaths: new Set<string>(), appPaths: new Set<string>() }
+    const empty = {
+      filePaths: new Set<string>(),
+      appPaths: new Set<string>(),
+      homeable: new Set<string>(),
+    }
     expect(resolveHome(off('recents'), empty)).toEqual({
       reach: 'tab',
       target: { kind: 'recents' },
@@ -69,10 +75,22 @@ describe('the daily', () => {
   })
 })
 
-describe('the singleton views', () => {
-  // Nothing on disk for them to point at, so `dailyNotes` has no bearing.
-  test.each(['board', 'agenda', 'mail'] as const)('%s opens with daily notes off', (kind) => {
-    const empty = { filePaths: new Set<string>(), appPaths: new Set<string>() }
-    expect(resolveHome(off(kind), empty)).toEqual({ reach: 'open', target: { kind } })
+describe('a view', () => {
+  // Nothing on disk for it to point at, so `dailyNotes` has no bearing.
+  test('opens when it is registered and can be Home', () => {
+    expect(resolveHome(off('board'), vault)).toEqual({
+      reach: 'open',
+      target: { kind: 'surface', surface: 'board' },
+    })
   })
+
+  test.each(['mail', 'settings'])(
+    '%s is reported missing when it is off or cannot be Home',
+    (name) => {
+      expect(resolveHome(on(name), vault)).toEqual({
+        reach: 'missing',
+        target: { kind: 'surface', surface: name },
+      })
+    },
+  )
 })

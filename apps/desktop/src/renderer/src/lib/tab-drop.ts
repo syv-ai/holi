@@ -5,6 +5,7 @@
  * numbers; the components only read rectangles and dispatch.
  */
 
+import { isSurfaceName } from '@holi/shared'
 import type { Tab } from '@/state/panes'
 
 /**
@@ -91,7 +92,13 @@ export function tabPayload(tab: Tab): string {
       ? { kind: 'note', path: tab.path }
       : tab.kind === 'app'
         ? { kind: 'app', path: tab.path }
-        : { kind: tab.kind },
+        : tab.kind === 'surface'
+          ? {
+              kind: 'surface',
+              surface: tab.surface,
+              ...(tab.id === undefined ? {} : { id: tab.id }),
+            }
+          : { kind: tab.kind },
   )
 }
 
@@ -100,6 +107,8 @@ export function tabPayload(tab: Tab): string {
  *
  * The trust boundary: any drag source on the machine can write a
  * `DataTransfer`, so every field is checked and a fresh narrow object built.
+ * A surface is checked by spelling only: whether it exists is the registry's
+ * answer, and a drop of one that does not is simply not found.
  */
 export function parseTabPayload(text: string): Tab | null {
   let value: unknown
@@ -110,21 +119,17 @@ export function parseTabPayload(text: string): Tab | null {
   }
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return null
 
-  const { kind, path } = value as Record<string, unknown>
+  const { kind, path, surface, id } = value as Record<string, unknown>
   if (kind === 'note') {
     return typeof path === 'string' && path !== '' ? { kind: 'note', path } : null
   }
   if (kind === 'app') {
     return typeof path === 'string' && path !== '' ? { kind: 'app', path } : null
   }
-  if (
-    kind === 'home' ||
-    kind === 'board' ||
-    kind === 'agenda' ||
-    kind === 'mail' ||
-    kind === 'settings'
-  ) {
-    return { kind }
+  if (kind === 'surface') {
+    if (typeof surface !== 'string' || !isSurfaceName(surface)) return null
+    if (id === undefined) return { kind: 'surface', surface }
+    return typeof id === 'string' && id !== '' ? { kind: 'surface', surface, id } : null
   }
   return null
 }

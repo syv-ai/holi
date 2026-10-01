@@ -17,6 +17,7 @@ import {
 import { installFakeHoli, type FakeHoli } from './helpers/fake-holi'
 import { homeTargetAtom, openHomeAtom, openLandingAtom } from '../src/renderer/src/state/home'
 import { workspaceAtom } from '../src/renderer/src/state/panes'
+import { coreSurfacesAtom } from '../src/renderer/src/state/plugins'
 import { activeDocAtom, activeRemoteAtom, snapshotAtom } from '../src/renderer/src/state/vaults'
 
 let holi: FakeHoli | null = null
@@ -45,6 +46,20 @@ const snapshot: VaultSnapshot = {
   files: [{ path: 'retro.app/index.html' }, { path: 'retro.app/app.yaml' }],
 }
 
+/** The views Home can name, as the registry would hold them. */
+function registerViews(store: ReturnType<typeof createStore>): void {
+  store.set(coreSurfacesAtom, {
+    surfaces: ['home', 'board', 'agenda', 'mail'].map((kind) => ({
+      kind,
+      label: kind,
+      icon: () => null,
+      render: () => null,
+      ...(kind === 'home' ? {} : { homeable: true as const }),
+    })),
+    rail: [],
+  })
+}
+
 /** A store with a vault open and its snapshot in. */
 function rig(over: Partial<ResolvedVaultSettings> = {}) {
   holi = installFakeHoli((op) => {
@@ -54,6 +69,7 @@ function rig(over: Partial<ResolvedVaultSettings> = {}) {
     return undefined
   })
   const store = createStore()
+  registerViews(store)
   store.set(activeRemoteAtom, 'me/notes')
   store.set(snapshotAtom, snapshot)
   return store
@@ -66,7 +82,7 @@ describe('openHomeAtom', () => {
   it('shows an app that exists in the Home tab', async () => {
     const store = rig({ home: 'retro.app' })
     await store.set(openHomeAtom)
-    expect(tabs(store)).toEqual([{ kind: 'home' }])
+    expect(tabs(store)).toEqual([{ kind: 'surface', surface: 'home' }])
   })
 
   it('opens today’s daily, pinned', async () => {
@@ -87,7 +103,7 @@ describe('openHomeAtom', () => {
   it.each(['board', 'agenda', 'mail'] as const)('opens the %s', async (kind) => {
     const store = rig({ home: kind })
     await store.set(openHomeAtom)
-    expect(tabs(store)).toEqual([{ kind }])
+    expect(tabs(store)).toEqual([{ kind: 'surface', surface: kind }])
   })
 
   it.each([
@@ -97,7 +113,7 @@ describe('openHomeAtom', () => {
   ])('opens the Home tab to explain %s', async (_, over) => {
     const store = rig(over)
     await store.set(openHomeAtom)
-    expect(tabs(store)).toEqual([{ kind: 'home' }])
+    expect(tabs(store)).toEqual([{ kind: 'surface', surface: 'home' }])
     expect(mints()).toBe(0)
   })
 
@@ -114,7 +130,7 @@ describe('homeTargetAtom', () => {
   it('reads the cached settings once they are loaded', async () => {
     const store = rig({ home: 'board' })
     await store.set(openHomeAtom)
-    expect(store.get(homeTargetAtom)).toEqual({ kind: 'board' })
+    expect(store.get(homeTargetAtom)).toEqual({ kind: 'surface', surface: 'board' })
   })
 })
 
@@ -126,14 +142,14 @@ describe('openLandingAtom', () => {
     const store = rig({ home: 'board' })
     await store.set(openLandingAtom)
     expect(mints()).toBe(1)
-    expect(tabs(store)).toEqual([{ kind: 'board' }])
+    expect(tabs(store)).toEqual([{ kind: 'surface', surface: 'board' }])
   })
 
   it('mints nothing when the vault keeps no daily notes', async () => {
     const store = rig({ home: 'board', dailyNotes: false })
     await store.set(openLandingAtom)
     expect(mints()).toBe(0)
-    expect(tabs(store)).toEqual([{ kind: 'board' }])
+    expect(tabs(store)).toEqual([{ kind: 'surface', surface: 'board' }])
   })
 
   it('opens a file naming today’s daily by path on the morning it is minted', async () => {
@@ -159,13 +175,24 @@ describe('going Home into a workspace that is not empty', () => {
   it('focuses a singleton already open rather than opening a second', async () => {
     const store = rig({ home: 'board' })
     store.set(workspaceAtom, {
-      panes: [{ tabs: [{ kind: 'note', path: 'Notes/Standup.md' }, { kind: 'board' }], active: 0 }],
+      panes: [
+        {
+          tabs: [
+            { kind: 'note', path: 'Notes/Standup.md' },
+            { kind: 'surface', surface: 'board' },
+          ],
+          active: 0,
+        },
+      ],
       active: 0,
     })
 
     await store.set(openHomeAtom)
 
-    expect(tabs(store)).toEqual([{ kind: 'note', path: 'Notes/Standup.md' }, { kind: 'board' }])
+    expect(tabs(store)).toEqual([
+      { kind: 'note', path: 'Notes/Standup.md' },
+      { kind: 'surface', surface: 'board' },
+    ])
     expect(store.get(workspaceAtom).panes[0]!.active).toBe(1)
   })
 })
@@ -184,16 +211,17 @@ describe('switching vaults', () => {
       return undefined
     })
     const store = createStore()
+    registerViews(store)
     store.set(snapshotAtom, snapshot)
 
     store.set(activeRemoteAtom, 'me/first')
     await store.set(openLandingAtom)
-    expect(tabs(store)).toEqual([{ kind: 'board' }])
+    expect(tabs(store)).toEqual([{ kind: 'surface', surface: 'board' }])
 
     store.set(activeRemoteAtom, 'me/second')
     await store.set(openLandingAtom)
 
-    expect(tabs(store)).toContainEqual({ kind: 'mail' })
+    expect(tabs(store)).toContainEqual({ kind: 'surface', surface: 'mail' })
     expect(holi.calls.filter((c) => c.path === 'settings.read')).toHaveLength(2)
   })
 })

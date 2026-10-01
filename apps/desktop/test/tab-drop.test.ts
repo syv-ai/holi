@@ -112,9 +112,8 @@ describe('the DataTransfer payload', () => {
     const tabs = [
       { kind: 'note', path: 'notes/a.md' },
       { kind: 'app', path: 'Team/burndown.app' },
-      { kind: 'board' },
-      { kind: 'agenda' },
-      { kind: 'mail' },
+      { kind: 'surface', surface: 'board' },
+      { kind: 'surface', surface: 'app', id: 'Team/burndown.app' },
     ] as const
 
     for (const tab of tabs) expect(parseTabPayload(tabPayload(tab))).toEqual(tab)
@@ -146,6 +145,9 @@ describe('the DataTransfer payload', () => {
     expect(parseTabPayload('{"kind":"note","path":""}')).toBeNull()
     expect(parseTabPayload('{"kind":"app"}')).toBeNull()
     expect(parseTabPayload('{"kind":"app","path":""}')).toBeNull()
+    expect(parseTabPayload('{"kind":"surface"}')).toBeNull()
+    expect(parseTabPayload('{"kind":"surface","surface":"../x"}')).toBeNull()
+    expect(parseTabPayload('{"kind":"surface","surface":"board","id":5}')).toBeNull()
   })
 
   it('does not let extra keys ride in from the string', () => {

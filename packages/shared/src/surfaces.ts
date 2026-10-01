@@ -1,21 +1,13 @@
 /**
- * Holi's own views: the tabs that exist once each (a note or an app tab is of
- * something; these are not).
+ * What a surface's name may look like: a tab kind such as `board` or `mail`
+ * (docs/features/tabs-panes.md).
  *
- * The one list. The renderer's `SingletonTab` is this union, a vault app's
- * `holi.open('board')` accepts exactly these, and Home's views are a subset of them.
+ * Only the spelling is checked here. Which surfaces exist is the renderer's
+ * registry, which knows the plugins this vault runs, so a name that passes
+ * this may still name nothing.
  */
-export const SINGLETON_SURFACES = [
-  'home',
-  'board',
-  'agenda',
-  'mail',
-  'settings',
-  'history',
-] as const
+const SURFACE_NAME = /^[a-z][a-z0-9-]*$/
 
-export type SingletonSurface = (typeof SINGLETON_SURFACES)[number]
-
-export function isSingletonSurface(value: unknown): value is SingletonSurface {
-  return typeof value === 'string' && (SINGLETON_SURFACES as readonly string[]).includes(value)
+export function isSurfaceName(value: string): boolean {
+  return SURFACE_NAME.test(value)
 }

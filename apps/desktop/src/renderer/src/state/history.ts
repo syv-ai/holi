@@ -10,7 +10,7 @@ import { atom } from 'jotai'
 import { flushAllBuffers } from '../lib/buffer-registry'
 import { trpc } from '../lib/trpc'
 import { fileHistoryAtom } from './file-history'
-import { openSingleton, workspaceAtom } from './panes'
+import { openSurface, workspaceAtom } from './panes'
 import { activeRemoteAtom } from './vaults'
 
 /** One commit that touched the open file: the git `Commit` shape. */
@@ -177,8 +177,10 @@ const commitNamed = (commits: readonly Version[], sha: string) =>
   commits.find((c) => c.sha === sha || c.sha.startsWith(sha))
 
 export const openCommitInHistoryAtom = atom(null, (get, set, sha: string) => {
-  const open = get(workspaceAtom).panes.some((p) => p.tabs.some((t) => t.kind === 'history'))
-  set(workspaceAtom, (w) => openSingleton(w, 'history'))
+  const open = get(workspaceAtom).panes.some((p) =>
+    p.tabs.some((t) => t.kind === 'surface' && t.surface === 'history'),
+  )
+  set(workspaceAtom, (w) => openSurface(w, 'history'))
   const match = open ? commitNamed(get(vaultCommitsAtom), sha) : undefined
   if (match !== undefined) void set(selectCommitAtom, match.sha)
   else set(historyFocusShaAtom, sha)

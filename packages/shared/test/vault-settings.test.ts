@@ -215,7 +215,7 @@ describe('parseHome and homeTargetOf', () => {
   it.each([
     ['daily', 'daily', { kind: 'daily' }],
     ['recents', 'recents', { kind: 'recents' }],
-    ['board', 'board', { kind: 'board' }],
+    ['board', 'board', { kind: 'surface', surface: 'board' }],
     ['./Finance/Budget.app/', 'Finance/Budget.app', { kind: 'app', path: 'Finance/Budget.app' }],
     [' Notes/Standup.md ', 'Notes/Standup.md', { kind: 'file', path: 'Notes/Standup.md' }],
     ['plan.pdf', 'plan.pdf', { kind: 'file', path: 'plan.pdf' }],
@@ -281,14 +281,14 @@ describe('VAULT_SETTING_DESCRIPTORS', () => {
     expect(new Set(keys).size).toBe(keys.length)
   })
 
-  it('offers Home the views and the vault’s apps', () => {
+  it('offers Home core’s views, and leaves the rest to the settings tab', () => {
     const home = VAULT_SETTING_DESCRIPTORS.find((d) => d.key === 'home')!
     expect(home.control.kind).toBe('choice')
     if (home.control.kind !== 'choice') return
     expect(home.control.apps).toBe(true)
     const values = home.control.options.map((o) => o.value)
     expect(values).toContain(VAULT_SETTING_DEFAULTS.home)
-    expect(values).toEqual(expect.arrayContaining(['daily', 'board', 'agenda', 'mail']))
+    expect(values).toEqual(expect.arrayContaining(['daily']))
   })
 
   it('gives the file-size cap a row without seeding it', () => {

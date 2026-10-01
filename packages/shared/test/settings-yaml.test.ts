@@ -39,7 +39,7 @@ describe('a seeded settings file', () => {
     // read at the moment somebody is typing one.
     expect(seeded).toContain('One of: true, false')
     expect(seededLocal).toContain('One of: system (Match my system)')
-    expect(seeded).toContain('mail (Mail)')
+    expect(seeded).toContain('recents (Recently opened)')
   })
 
   it('comments out a setting the ritual does not ask, so no default is frozen', () => {

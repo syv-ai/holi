@@ -19,7 +19,6 @@
  * it carries no data, so the app reads it again through the bridge and every
  * refusal still applies.
  */
-import { APP_SURFACES } from '@holi/shared'
 
 export const BRIDGE_JS = `(() => {
   const pending = new Map()
@@ -79,7 +78,6 @@ export const BRIDGE_JS = `(() => {
     listeners.get(topic).add(fn)
     return () => listeners.get(topic).delete(fn)
   }
-  const SURFACES = ${JSON.stringify(APP_SURFACES)}
   const caches = new Map()
   window.holi = {
     docs: {
@@ -91,9 +89,9 @@ export const BRIDGE_JS = `(() => {
       list: () => call('tasks.list'),
       complete: (path) => call('tasks.complete', { path }),
     },
-    // A note's path, or one of Holi's views: home, board, agenda, mail, settings.
-    open: (target) =>
-      SURFACES.includes(target) ? call('open', { surface: target }) : call('open', { path: target }),
+    // A note's path, or one of Holi's views by name (home, board, settings).
+    // Holi decides which: a view this vault has wins over a file.
+    open: (target) => call('open', { target }),
     recents: () => call('vault.recents'),
     search: (q) => call('docs.search', { q }),
     settings: () => call('vault.settings'),

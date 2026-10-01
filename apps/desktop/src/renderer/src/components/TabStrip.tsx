@@ -22,16 +22,7 @@ import {
   IconButton,
   Tooltip,
 } from '@/primitives'
-import {
-  Bot,
-  CalendarDays,
-  ChevronLeft,
-  ChevronRight,
-  House,
-  Mail,
-  SquareKanban,
-  X,
-} from 'lucide-react'
+import { Bot, ChevronLeft, ChevronRight, X } from 'lucide-react'
 import { appName, type TaskStatus } from '@holi/shared'
 import { pathGlyph, pathLabel } from '@/composites/file-icons'
 import { offscreenTabs, type Offscreen } from '@/lib/tab-overflow'
@@ -46,7 +37,9 @@ import {
   tabPayload,
   type PillBox,
 } from '@/lib/tab-drop'
+import type { Surface } from '@/plugin-api/types'
 import type { Tab } from '@/state/panes'
+import { surfacesAtom } from '@/state/plugins'
 import {
   agentSessionsAtom,
   agentTerminalsAtom,
@@ -57,25 +50,6 @@ import {
 import { agentIndicator } from '@/lib/agent-notices'
 import { cn } from '@/lib/cn'
 import { snapshotAtom } from '@/state/vaults'
-
-/** The singleton tabs' pill text and tooltip. Notes, apps and sessions are
- *  named from what the tab carries, not its kind. */
-const TAB_NAME = {
-  home: 'home',
-  board: 'board',
-  agenda: 'agenda',
-  mail: 'mail',
-  settings: 'settings',
-  history: 'history',
-} as const
-const TAB_LABEL: Partial<Record<string, string>> = {
-  home: 'home',
-  board: 'task board',
-  agenda: 'your Google agenda',
-  mail: 'your Gmail',
-  settings: 'how this vault behaves',
-  history: 'every commit in this vault',
-}
 
 /** The strip's `gap-1`, in px: the caret is drawn in the gap before a pill. */
 const GAP = 4
@@ -118,7 +92,7 @@ export function tabKey(tab: Tab): string {
       ? `app:${tab.path}`
       : tab.kind === 'agent'
         ? `agent:${tab.id}`
-        : tab.kind
+        : `surface:${tab.surface}:${tab.id ?? ''}`
 }
 
 /** What a vault file or app is marked with here and in the tree alike. `icons`
@@ -129,62 +103,56 @@ interface PathMarks {
   tasks: ReadonlyMap<string, TaskStatus>
 }
 
-/** The vault's sessions and Holi's terminals: what an agent tab is named and
- *  marked from. */
-interface AgentView {
+/** The vault's sessions and Holi's terminals, what an agent tab is named and
+ *  marked from, and the registry a surface tab is. */
+interface TabSources {
   sessions: AgentSession[]
   terminals: AgentTerminal[]
+  surfaces: ReadonlyMap<string, Surface>
 }
 
 /** The live session an agent tab was opened for, if it has one. */
-function sessionOf(tab: Tab & { kind: 'agent' }, agents: AgentView): AgentSession | null {
+function sessionOf(tab: Tab & { kind: 'agent' }, agents: TabSources): AgentSession | null {
   const launchedFor = agents.terminals.find((t) => t.id === tab.id)?.launchedFor ?? null
   return agents.sessions.find((s) => s.id === launchedFor) ?? null
 }
 
 /** A note leads with nothing, as its tree row does; the pill keeps no empty
  *  slot, since nothing here lines up with it. */
-function tabIcon(tab: Tab, marks: PathMarks, agents: AgentView): ReactNode {
+function tabIcon(tab: Tab, marks: PathMarks, agents: TabSources): ReactNode {
   if (tab.kind === 'note' || tab.kind === 'app') {
     return pathGlyph(tab.path, { emoji: marks.icons[tab.path], task: marks.tasks.get(tab.path) })
   }
-  if (tab.kind === 'home') return <Icon icon={House} size="sm" />
-  if (tab.kind === 'agenda') return <Icon icon={CalendarDays} size="sm" />
-  if (tab.kind === 'mail') return <Icon icon={Mail} size="sm" />
+  if (tab.kind === 'surface') {
+    const surface = agents.surfaces.get(tab.surface)
+    return surface === undefined ? null : <Icon icon={surface.icon} size="sm" />
+  }
   // A tab opened for a session that is still live carries its state: the same
   // dot, from the same derivation, as its sidebar row. Anything else (the list,
   // or a session that has gone) is Claude Code's glyph.
-  if (tab.kind === 'agent') {
-    const session = sessionOf(tab, agents)
-    if (session === null) return <Icon icon={Bot} size="sm" />
-    const dot = agentIndicator(session).dot
-    return <span aria-hidden="true" className={cn('h-2 w-2 shrink-0 rounded-full', dot)} />
-  }
-  return <Icon icon={SquareKanban} size="sm" />
+  const session = sessionOf(tab, agents)
+  if (session === null) return <Icon icon={Bot} size="sm" />
+  const dot = agentIndicator(session).dot
+  return <span aria-hidden="true" className={cn('h-2 w-2 shrink-0 rounded-full', dot)} />
 }
 
-function tabName(tab: Tab, agents: AgentView): string {
+function tabName(tab: Tab, agents: TabSources): string {
   if (tab.kind === 'note' || tab.kind === 'app') return pathLabel(tab.path)
   // The terminal's own title, which Claude Code sets to what it is showing.
   if (tab.kind === 'agent') {
     return terminalLabel(agents.terminals.find((t) => t.id === tab.id) ?? null, agents.sessions)
   }
-  return TAB_NAME[tab.kind]
+  return agents.surfaces.get(tab.surface)?.label ?? tab.surface
 }
 
-function tabTooltip(tab: Tab, agents: AgentView): string {
+function tabTooltip(tab: Tab, agents: TabSources): string {
   if (tab.kind === 'agent') {
     const session = sessionOf(tab, agents)
     return session === null ? 'Claude Code' : agentIndicator(session).title
   }
-  return (
-    TAB_LABEL[tab.kind] ??
-    (tab.kind === 'note'
-      ? tab.path
-      : tab.kind === 'app'
-        ? `the ${appName(tab.path)} app`
-        : tab.kind)
-  )
+  if (tab.kind === 'note') return tab.path
+  if (tab.kind === 'app') return `the ${appName(tab.path)} app`
+  return agents.surfaces.get(tab.surface)?.label ?? tab.surface
 }
 
 /**
@@ -209,7 +177,7 @@ function OverflowMenu({
   indices: number[]
   tabs: Tab[]
   marks: PathMarks
-  agents: AgentView
+  agents: TabSources
   onReveal: (index: number) => void
 }) {
   const visible = indices.length > 0
@@ -318,7 +286,11 @@ export function TabStrip({
   )
   const sessions = useAtomValue(agentSessionsAtom)
   const terminals = useAtomValue(agentTerminalsAtom)
-  const agents = useMemo<AgentView>(() => ({ sessions, terminals }), [sessions, terminals])
+  const surfaces = useAtomValue(surfacesAtom)
+  const agents = useMemo<TabSources>(
+    () => ({ sessions, terminals, surfaces }),
+    [sessions, terminals, surfaces],
+  )
   const hostRef = useRef<HTMLDivElement | null>(null)
   const pillRefs = useRef(new Map<string, HTMLElement>())
   /** Where the dragged tab would land. `x` is in the scroller's content

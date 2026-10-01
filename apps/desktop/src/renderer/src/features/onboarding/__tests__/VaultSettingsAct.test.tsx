@@ -44,15 +44,15 @@ test('a toggle reports its key and its new value', async () => {
 test('a choice reports the option’s value, not its label', async () => {
   const { onChange } = setup()
   const row = screen.getByRole('group', { name: 'Home is' })
-  await userEvent.click(within(row).getByRole('radio', { name: 'The board' }))
-  expect(onChange).toHaveBeenCalledWith('home', 'board')
+  await userEvent.click(within(row).getByRole('radio', { name: 'Today’s note' }))
+  expect(onChange).toHaveBeenCalledWith('home', 'daily')
 })
 
 test('a choice shows which option is currently selected', () => {
-  setup({ home: 'agenda' })
+  setup({ home: 'daily' })
   const row = screen.getByRole('group', { name: 'Home is' })
-  expect(within(row).getByRole('radio', { name: 'Your agenda' })).toBeChecked()
-  expect(within(row).getByRole('radio', { name: 'Today’s note' })).not.toBeChecked()
+  expect(within(row).getByRole('radio', { name: 'Today’s note' })).toBeChecked()
+  expect(within(row).getByRole('radio', { name: 'Recently opened' })).not.toBeChecked()
 })
 
 test('appearance is a choice too, and reports a plain string', async () => {

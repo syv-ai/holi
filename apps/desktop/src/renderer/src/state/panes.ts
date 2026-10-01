@@ -2,11 +2,11 @@
  * What is on screen: panes, each holding tabs (`docs/features/tabs-panes.md`).
  *
  * **A tab is not a note** (`architecture.md`). A flat `Map<path, …>` would
- * foreclose app, session and singleton tabs, so a tab is a discriminated union
+ * foreclose app, session and surface tabs, so a tab is a discriminated union
  * and the state is `panes[] → tabs[]`.
  */
 
-import { isAppBundlePath, type SingletonSurface } from '@holi/shared'
+import { isAppBundlePath } from '@holi/shared'
 import { atom } from 'jotai'
 import type { PaneDropZone } from '@/lib/tab-drop'
 
@@ -25,20 +25,18 @@ export const openBesideAtom = atom(null, (_get, set, path: string) => {
   set(workspaceAtom, (w) => openBeside(w, w.active, path))
 })
 
-/** The unique surfaces, one of each ever. Opened from a nav button rather than
- *  from a file, and pinned by construction.
- *
- *  **Named, not derived** from `Exclude<Tab, {kind:'note'}>`: derived, it would
- *  include `app`, and `openSingleton(w,'app')` would typecheck and open a tab
- *  with no `path`.
- *
- *  Settings and history are tabs rather than modals so they can sit split beside
- *  the note they concern. */
-export type SingletonTab = SingletonSurface
+/** A tab onto a surface from the registry (`state/plugins.ts`): Home, the
+ *  board, settings, a plugin's view. `id` names which one, for a surface that
+ *  is one tab per thing; without it there is one of the surface, ever. */
+export interface SurfaceTab {
+  kind: 'surface'
+  surface: string
+  id?: string
+}
 
 /**
  * A tab is either *of* something (a note or app by path, a session by id) or
- * one of the singleton surfaces.
+ * a surface.
  *
  * The `preview` flag is VS Code's two-state model: a preview tab (italic) is the
  * single one that a single-click *replaces* rather than adding to, so browsing a
@@ -59,9 +57,7 @@ export type Tab =
    * its terminal, never by a session.
    */
   | { kind: 'agent'; id: string }
-  /** Home, the board, the Google agenda, mail, settings and history — one
-   *  of each, ever. */
-  | { kind: SingletonTab }
+  | SurfaceTab
 
 export interface Pane {
   tabs: Tab[]
@@ -89,10 +85,10 @@ function sameTab(a: Tab, b: Tab): boolean {
   if (a.kind === 'note' && b.kind === 'note') return a.path === b.path
   if (a.kind === 'app' && b.kind === 'app') return a.path === b.path
   if (a.kind === 'agent' && b.kind === 'agent') return a.id === b.id
-  // Everything left is a singleton, of which there is one, ever. A kind that
-  // carries an identity and is NOT listed above falls in here and reads as
-  // "already open" whatever it names, so two different sessions would share one tab.
-  return true
+  if (a.kind === 'surface' && b.kind === 'surface') {
+    return a.surface === b.surface && a.id === b.id
+  }
+  return false
 }
 
 /**
@@ -130,47 +126,24 @@ export function openTab(workspace: Workspace, tab: Tab): Workspace {
 }
 
 /**
- * Open a singleton surface, always as a leftmost tab.
+ * Open a surface, always as a leftmost tab.
  *
  * If it is already open, focus it **in place** (moving it would shuffle the
  * strip under the user on a second click); otherwise insert it at the front.
+ * Home goes through `openHomeAtom` instead, which decides what Home is.
  */
-export function openSingleton(workspace: Workspace, kind: SingletonTab): Workspace {
-  const existing = findTab(workspace, { kind })
+export function openSurface(workspace: Workspace, surface: string, id?: string): Workspace {
+  const tab: SurfaceTab =
+    id === undefined ? { kind: 'surface', surface } : { kind: 'surface', surface, id }
+  const existing = findTab(workspace, tab)
   if (existing !== null) return focusExisting(workspace, existing)
-  return updatePane(workspace, (pane) => ({ tabs: [{ kind }, ...pane.tabs], active: 0 }))
-}
-
-/** Home: a surface of its own rather than "no tab", so what it shows
- *  can grow without changing what opening it means. */
-export function openHome(workspace: Workspace): Workspace {
-  return openSingleton(workspace, 'home')
-}
-
-export function openBoard(workspace: Workspace): Workspace {
-  return openSingleton(workspace, 'board')
-}
-
-export function openAgenda(workspace: Workspace): Workspace {
-  return openSingleton(workspace, 'agenda')
-}
-
-export function openMail(workspace: Workspace): Workspace {
-  return openSingleton(workspace, 'mail')
-}
-
-export function openSettings(workspace: Workspace): Workspace {
-  return openSingleton(workspace, 'settings')
-}
-
-export function openHistory(workspace: Workspace): Workspace {
-  return openSingleton(workspace, 'history')
+  return updatePane(workspace, (pane) => ({ tabs: [tab, ...pane.tabs], active: 0 }))
 }
 
 /** Open a vault app, or focus it if already open. Deduped by `path`: two frames
  *  over one app are two running copies of it. Appended rather than inserted
  *  leftmost: an app is opened from the sidebar like a file, not from the nav
- *  rail like a singleton. */
+ *  rail like a surface. */
 export function openApp(workspace: Workspace, path: string): Workspace {
   return openTab(workspace, { kind: 'app', path })
 }
@@ -388,6 +361,18 @@ export function closeTabsForPaths(workspace: Workspace, paths: string[]): Worksp
  */
 export function closeAgentTabs(workspace: Workspace, liveIds: string[]): Workspace {
   return closeTabsWhere(workspace, (t) => t.kind === 'agent' && !liveIds.includes(t.id))
+}
+
+/**
+ * Close the tabs of surfaces that are no longer registered: their plugin was
+ * turned off, by the same path as a tab whose file was deleted.
+ */
+export function closeSurfaceTabs(workspace: Workspace, live: ReadonlySet<string>): Workspace {
+  const gone = (t: Tab) => t.kind === 'surface' && !live.has(t.surface)
+  // By reference when nothing goes, so a registry change that closes nothing
+  // re-renders nothing.
+  if (!workspace.panes.some((p) => p.tabs.some(gone))) return workspace
+  return closeTabsWhere(workspace, gone)
 }
 
 /**

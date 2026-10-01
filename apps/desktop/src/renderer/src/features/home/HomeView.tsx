@@ -1,23 +1,23 @@
 /**
  * The Home tab. Home is the setting `home`: by default the recents, shown
- * here. PaneView shows Home's app instead whenever Home names one the vault
+ * here. The home surface shows Home's app instead whenever Home names one the vault
  * has. Anything else Home is opens as itself (`state/home.ts`), so reaching
  * this with one means it was not there, or Home changed while the tab was
  * open: here it says what Home is and why it is not showing, and going there
  * is one click. A missing app can be created with the default Home app;
  * nothing is written unasked.
  */
-import { appName, type HomeTarget, type RecentEntry, type SingletonSurface } from '@holi/shared'
+import { appName, type HomeTarget, type RecentEntry } from '@holi/shared'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { useState } from 'react'
 import { trpc } from '@/lib/trpc'
 import { Button } from '@/primitives'
+import type { Surface } from '@/plugin-api/types'
 import { openHomeAtom } from '@/state/home'
-import { openApp, openPinned, openSingleton, workspaceAtom } from '@/state/panes'
+import { openApp, openPinned, openSurface, workspaceAtom } from '@/state/panes'
+import { surfacesAtom } from '@/state/plugins'
 import { recentsAtom } from '@/state/recents'
 import { activeRemoteAtom } from '@/state/vaults'
-
-const VIEW_NAMES = { board: 'the board', agenda: 'your agenda', mail: 'mail' } as const
 
 export function HomeView({ target }: { target: HomeTarget }): React.JSX.Element {
   return target.kind === 'recents' ? <Recents /> : <NotThere target={target} />
@@ -27,10 +27,11 @@ export function HomeView({ target }: { target: HomeTarget }): React.JSX.Element 
 const SHOWN = 8
 
 /** What a recent is called here, and where it lives. */
-function labelOf(entry: RecentEntry): { name: string; where: string } {
-  if (entry.kind === 'surface') {
-    return { name: entry.key.charAt(0).toUpperCase() + entry.key.slice(1), where: '' }
-  }
+function labelOf(
+  entry: RecentEntry,
+  surfaces: ReadonlyMap<string, Surface>,
+): { name: string; where: string } {
+  if (entry.kind === 'surface') return { name: surfaces.get(entry.key)?.label ?? '', where: '' }
   const slash = entry.key.lastIndexOf('/')
   return {
     name: entry.key.slice(slash + 1).replace(/\.(md|app)$/, ''),
@@ -43,10 +44,14 @@ function labelOf(entry: RecentEntry): { name: string; where: string } {
  *  Home itself, since you are on it. */
 function Recents(): React.JSX.Element {
   const recents = useAtomValue(recentsAtom)
+  const surfaces = useAtomValue(surfacesAtom)
   const setWorkspace = useSetAtom(workspaceAtom)
+  // A surface whose plugin is off is left out, as a deleted file would be.
   const entries = recents
     .filter((e) =>
-      e.kind === 'surface' ? e.key !== 'home' : e.kind === 'path' || e.kind === 'app',
+      e.kind === 'surface'
+        ? e.key !== 'home' && surfaces.has(e.key)
+        : e.kind === 'path' || e.kind === 'app',
     )
     .slice(0, SHOWN)
 
@@ -56,7 +61,7 @@ function Recents(): React.JSX.Element {
         ? openPinned(w, entry.key)
         : entry.kind === 'app'
           ? openApp(w, entry.key)
-          : openSingleton(w, entry.key as SingletonSurface),
+          : openSurface(w, entry.key),
     )
 
   return (
@@ -68,7 +73,7 @@ function Recents(): React.JSX.Element {
         ) : (
           <ul className="-mx-2">
             {entries.map((entry) => {
-              const { name, where } = labelOf(entry)
+              const { name, where } = labelOf(entry, surfaces)
               return (
                 <li key={`${entry.kind}:${entry.key}`}>
                   <Button
@@ -98,6 +103,7 @@ function NotThere({
   target: Exclude<HomeTarget, { kind: 'recents' }>
 }): React.JSX.Element {
   const remote = useAtomValue(activeRemoteAtom)
+  const surfaces = useAtomValue(surfacesAtom)
   const openHome = useSetAtom(openHomeAtom)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -134,13 +140,23 @@ function NotThere({
     case 'daily':
       says = <>Home is today’s note, and this vault keeps no daily note.</>
       break
-    default:
-      says = <>Home is {VIEW_NAMES[target.kind]}.</>
-      action = (
-        <Button variant="secondary" size="sm" onClick={() => void openHome()}>
-          Go there
-        </Button>
-      )
+    case 'surface': {
+      // Reaching the tab with a view means it is not there, or Home changed
+      // while the tab was open.
+      const view = surfaces.get(target.surface)
+      if (view === undefined) {
+        says = <>Home is {name(target.surface)}, which this vault does not have.</>
+      } else if (view.homeable !== true) {
+        says = <>Home is {name(view.label)}, which cannot be Home.</>
+      } else {
+        says = <>Home is {name(view.label)}.</>
+        action = (
+          <Button variant="secondary" size="sm" onClick={() => void openHome()}>
+            Go there
+          </Button>
+        )
+      }
+    }
   }
 
   return (

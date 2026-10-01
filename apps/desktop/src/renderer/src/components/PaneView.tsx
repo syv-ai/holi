@@ -10,24 +10,16 @@ import { cn } from '@/lib/cn'
 import { isLockedForReconcile } from '@/lib/reconcile-lock'
 import type { ConflictResolvers } from '@/lib/editor-reload'
 import { agentGeometryAtom, agentTerminalsAtom } from '@/state/agent'
-import { appPathsAtom } from '@/state/apps'
-import { homeTargetAtom } from '@/state/home'
-import { claimsAtom } from '@/state/plugins'
+import { claimsAtom, surfacesAtom } from '@/state/plugins'
 import { syncStateAtom } from '@/state/vaults'
 import { useEffect, useState, type ReactNode } from 'react'
 import { TAB_MIME, paneDropZone, parseTabPayload, type PaneDropZone } from '@/lib/tab-drop'
 import { EditorPane } from '@/features/editor/EditorPane'
-import { AgendaView } from '@/features/google/AgendaView'
-import { MailView } from '@/features/google/MailView'
 import { AppFrame } from '@/features/apps/AppFrame'
-import { SettingsView } from '@/features/settings/SettingsView'
-import { HistoryView } from '@/features/history/HistoryView'
-import { BoardView } from '@/features/tasks/BoardView'
 import { SessionTerminal } from '@/features/agent/SessionTerminal'
 import { TurnChip } from '@/features/agent/TurnChip'
 import { FilePlaceholder } from '@/features/files/FilePlaceholder'
 import { ImageViewer } from '@/features/files/ImageViewer'
-import { HomeView } from '@/features/home/HomeView'
 import type { Pane, Tab } from '@/state/panes'
 import { useArrivalOnChange } from '@/lib/use-arrivals'
 import { TabStrip, tabKey } from './TabStrip'
@@ -124,8 +116,10 @@ export function PaneView({
 }: PaneViewProps) {
   const tab = pane.active < 0 ? null : (pane.tabs[pane.active] ?? null)
   const syncState = useAtomValue(syncStateAtom)
-  const appPaths = useAtomValue(appPathsAtom)
-  const home = useAtomValue(homeTargetAtom)
+  // A surface tab renders from the registry. One whose surface is gone (its
+  // plugin turned off) renders nothing until the shell closes it.
+  const surfaces = useAtomValue(surfacesAtom)
+  const SurfaceView = tab?.kind === 'surface' ? (surfaces.get(tab.surface)?.render ?? null) : null
   // A note tab whose path an enabled plugin claims with a view opens in that
   // view; the first such claim wins (docs/architecture.md, Plugins).
   const claims = useAtomValue(claimsAtom)
@@ -190,25 +184,10 @@ export function PaneView({
           <div ref={bodyRef} className="flex min-h-0 flex-1 flex-col">
             {tab?.kind === 'app' ? (
               <AppFrame path={tab.path} />
-            ) : tab?.kind === 'home' ? (
-              // The Home tab shows Home's app when it names one the vault has;
-              // otherwise HomeView shows the recents, or says why Home is not
-              // there (`state/home.ts`).
-              home.kind === 'app' && appPaths.includes(home.path) ? (
-                <AppFrame path={home.path} />
-              ) : (
-                <HomeView target={home} />
+            ) : tab?.kind === 'surface' ? (
+              SurfaceView === null ? null : (
+                <SurfaceView {...(tab.id === undefined ? {} : { id: tab.id })} />
               )
-            ) : tab?.kind === 'board' ? (
-              <BoardView />
-            ) : tab?.kind === 'agenda' ? (
-              <AgendaView />
-            ) : tab?.kind === 'mail' ? (
-              <MailView />
-            ) : tab?.kind === 'settings' ? (
-              <SettingsView />
-            ) : tab?.kind === 'history' ? (
-              <HistoryView />
             ) : tab?.kind === 'note' && ClaimedView !== null ? (
               <ClaimedView path={tab.path} />
             ) : tab?.kind === 'note' && fileKind(tab.path) === 'image' ? (

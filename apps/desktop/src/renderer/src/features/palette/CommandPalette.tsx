@@ -33,7 +33,7 @@
  * starting a session when there is none.
  */
 import { useAtomValue, useSetAtom, useStore } from 'jotai'
-import { AppWindow, Bot, Calendar, History, Kanban, Mail, Settings, Sparkles } from 'lucide-react'
+import { AppWindow, Bot, Sparkles } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { fileIconFor } from '@/composites/file-icons'
 import { agentIndicator } from '@/lib/agent-notices'
@@ -83,21 +83,13 @@ import {
   openInNewPane,
   openAgentTab,
   openPinned,
-  openSingleton,
+  openSurface,
   workspaceAtom,
-  type SingletonTab,
   type Tab,
 } from '@/state/panes'
+import { surfacesAtom } from '@/state/plugins'
 import { recentsAtom } from '@/state/recents'
 import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
-
-const SURFACE_GLYPHS = {
-  board: Kanban,
-  agenda: Calendar,
-  mail: Mail,
-  settings: Settings,
-  history: History,
-} as const
 
 /** The tab a row opens as, for the "beside" gesture. Null for a session: it
  *  opens through a terminal main has to start (`openSessionAtom`). */
@@ -112,7 +104,7 @@ function tabOf(row: PaletteRow): Tab | null {
     case 'session':
       return null
     case 'surface':
-      return { kind: row.key as SingletonTab }
+      return { kind: 'surface', surface: row.key }
   }
 }
 
@@ -167,6 +159,7 @@ export function CommandPalette(): React.JSX.Element {
   const snapshot = useAtomValue(snapshotAtom)
   const remote = useAtomValue(activeRemoteAtom)
   const appPaths = useAtomValue(appPathsAtom)
+  const surfaces = useAtomValue(surfacesAtom)
   const sessions = useAtomValue(agentSessionsAtom)
   const terminals = useAtomValue(agentTerminalsAtom)
   const recents = useAtomValue(recentsAtom)
@@ -185,8 +178,10 @@ export function CommandPalette(): React.JSX.Element {
         appPaths,
         sessions,
         terminals: terminals.map((t) => ({ id: t.id, label: terminalLabel(t, sessions) })),
+        // Home has no row: "Go home" is the command, and Home is where it says.
+        surfaces: [...surfaces.values()].filter((s) => s.kind !== 'home'),
       }),
-    [snapshot, appPaths, sessions, terminals],
+    [snapshot, appPaths, sessions, terminals, surfaces],
   )
   const tabsMode = state.mode === 'tabs'
   const query = state.query
@@ -303,7 +298,7 @@ export function CommandPalette(): React.JSX.Element {
         case 'session':
           return w // opened above, through main
         case 'surface':
-          return openSingleton(w, row.key as SingletonTab)
+          return openSurface(w, row.key)
       }
     })
   }
@@ -419,7 +414,8 @@ const untypedCommand = (cmdQuery: string): boolean => cmdQuery.trim() === ''
  * a surface its own. The tree's tint is the muted foreground, which the item
  * already gives an untinted svg.
  */
-function RowIconView({ row, orb }: { row: PaletteRow; orb?: string }): React.JSX.Element {
+function RowIconView({ row, orb }: { row: PaletteRow; orb?: string }): React.JSX.Element | null {
+  const surfaces = useAtomValue(surfacesAtom)
   switch (row.kind) {
     case 'path':
       return (
@@ -437,8 +433,10 @@ function RowIconView({ row, orb }: { row: PaletteRow; orb?: string }): React.JSX
       return <Icon icon={Bot} />
     case 'app':
       return <Icon icon={AppWindow} />
-    case 'surface':
-      return <Icon icon={SURFACE_GLYPHS[row.key as keyof typeof SURFACE_GLYPHS]} />
+    case 'surface': {
+      const surface = surfaces.get(row.key)
+      return surface === undefined ? null : <Icon icon={surface.icon} />
+    }
   }
 }
 

@@ -28,6 +28,7 @@
 import { parse as parseYaml } from 'yaml'
 import { isAppBundlePath } from './app-bundle'
 import { vaultRelPath } from './path-safety'
+import { isSurfaceName } from './surfaces'
 import { isPluginId, type PluginSettings } from './plugins'
 
 /** The pre-commit transforms a vault can enable. Kebab, matching the
@@ -80,40 +81,48 @@ export const EDITOR_FONT_STACKS: Readonly<Record<EditorFont, string>> = Object.f
 })
 
 /**
- * What Home can be besides an app or a file: one of Holi's own views.
- * `recents` is what you opened recently, shown in the Home tab itself.
+ * What Home can be besides a surface, an app or a file: one of core's own
+ * views. `recents` is what you opened recently, shown in the Home tab itself.
  */
-export type HomeView = 'recents' | 'daily' | 'board' | 'agenda' | 'mail'
+export type HomeView = 'recents' | 'daily'
 
-export const HOME_VIEWS: readonly HomeView[] = ['recents', 'daily', 'board', 'agenda', 'mail']
+export const HOME_VIEWS: readonly HomeView[] = ['recents', 'daily']
 
 /**
  * What Home is, classified. The file holds one string (`homeTargetOf` reads
- * it): a view's name, or a vault path to an app or a file.
+ * it): a core view's name, a surface's name (`board`, `mail`), or a vault
+ * path to an app or a file.
  *
  * **`daily` is a view, not a path.** `22-08-2026.md` would rot overnight;
  * naming the daily by kind keeps Home on it as the days turn.
+ *
+ * A surface is named by its spelling alone. Whether it exists, and may be
+ * Home, is the renderer's registry's answer, since it depends on the plugins
+ * the vault runs.
  */
 export type HomeTarget =
-  // One member per view, so a caller can `Exclude` a view by its kind.
-  | { [V in HomeView]: { kind: V } }[HomeView]
+  | { kind: 'recents' }
+  | { kind: 'daily' }
+  | { kind: 'surface'; surface: string }
   | { kind: 'app'; path: string }
   | { kind: 'file'; path: string }
 
 /** What Home is, from its setting. Never throws: a validated value. */
 export function homeTargetOf(home: string): HomeTarget {
   if ((HOME_VIEWS as readonly string[]).includes(home)) return { kind: home as HomeView }
+  if (isSurfaceName(home)) return { kind: 'surface', surface: home }
   return isAppBundlePath(home) ? { kind: 'app', path: home } : { kind: 'file', path: home }
 }
 
 /**
  * An untrusted value as a `home`, or `null`: a view's name, or a path inside
- * the vault (an app bundle, or any file), normalised.
+ * the vault (an app bundle, or any file), normalised. A bare name with no
+ * slash or dot is a view's name, never a file at the vault's root.
  */
 export function parseHome(value: unknown): string | null {
   if (typeof value !== 'string') return null
   const trimmed = value.trim()
-  if ((HOME_VIEWS as readonly string[]).includes(trimmed)) return trimmed
+  if (isSurfaceName(trimmed)) return trimmed
   try {
     return vaultRelPath(trimmed.replace(/\/+$/, ''))
   } catch {
@@ -330,8 +339,9 @@ export type SettingType =
       flags: readonly { key: TransformName; label: string; explanation: string }[]
     }
   /**
-   * What Home is: one of `options`, or any app or file in the vault by its
-   * path (`parseHome`). The settings tab adds the vault's apps to the options.
+   * What Home is: one of `options`, a view's name, or any app or file in the
+   * vault by its path (`parseHome`). The settings tab adds the views that can
+   * be Home and the vault's apps to the options.
    */
   | { kind: 'home'; options: readonly VaultSettingOption[] }
   /**
@@ -421,16 +431,13 @@ export const VAULT_SETTINGS: readonly VaultSetting[] = [
           label: 'Today’s note',
           requires: { key: 'dailyNotes', equals: true },
         },
-        { value: 'board', label: 'The board' },
-        { value: 'agenda', label: 'Your agenda' },
-        { value: 'mail', label: 'Mail' },
       ],
     },
     // One of Holi's own views, so Home works in a vault with no apps.
     default: 'recents',
     target: 'committed',
     askedAtBirth: true,
-    whereToChange: `${SETTINGS_FILE_HINT}, where it can also name any app or file by its path. A home of your own goes in ${SETTINGS_LOCAL_FILE}`,
+    whereToChange: `${SETTINGS_FILE_HINT}, where it can also name any view, app or file. A home of your own goes in ${SETTINGS_LOCAL_FILE}`,
     section: 'general',
   },
   {
@@ -662,7 +669,7 @@ function readValue(
     case 'home': {
       const home = parseHome(value)
       return home === null
-        ? { ok: false, expected: `one of ${HOME_VIEWS.join(', ')}, or a path in the vault` }
+        ? { ok: false, expected: "recents, daily, a view's name, or a path in the vault" }
         : { ok: true, value: home }
     }
   }

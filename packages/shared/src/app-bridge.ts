@@ -12,8 +12,6 @@
  * process rendering untrusted app code must not also decide what it may read.
  */
 
-import { isSingletonSurface, SINGLETON_SURFACES, type SingletonSurface } from './surfaces'
-
 /**
  * Everything an app can ask for: reads of what Holi knows (notes, tasks,
  * recents, sync, search, settings, members, history, agent sessions, and, when
@@ -65,13 +63,6 @@ export interface AppRequest {
  *  the app must be able to render "this is not available" rather than break. */
 export type AppResponse =
   { id: string; ok: true; value: unknown } | { id: string; ok: false; error: string }
-
-/** What `holi.open` accepts besides a path: Holi's own views, all of them. */
-export const APP_SURFACES = SINGLETON_SURFACES
-
-export type AppSurface = SingletonSurface
-
-export const isAppSurface = isSingletonSurface
 
 /**
  * What `holi.on(topic, fn)` can hear, besides `store:<collection>`. A push

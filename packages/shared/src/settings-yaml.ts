@@ -71,8 +71,11 @@ function legalValues(type: SettingType): string[] {
     return [`Any positive number of bytes. What the pane offers: ${shown}`]
   }
   if (type.kind === 'enum') return [`One of: ${shown}`]
-  // `home`: the options, and any app or file the vault holds.
-  return [`One of: ${shown}`, 'Or any app or file in the vault, by its path.']
+  // `home`: the options, a view's name, and any app or file the vault holds.
+  return [
+    `One of: ${shown}`,
+    'Or a view by its name (board, mail), or any app or file in the vault by its path.',
+  ]
 }
 
 /**

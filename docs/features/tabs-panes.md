@@ -4,9 +4,11 @@ The workspace is one or more side-by-side panes, each with its own tab strip. Ta
 
 ## How it works
 
-**A tab is a union**, not a path: `note` (any file, by path), `app` (a vault app, by its bundle path), `agent` (a terminal onto Claude Code: the agent list or one session), or one of the singletons `home`, `board`, `agenda`, `mail`, `settings`, `history`. `state/panes.ts` owns it as pure functions over a `Workspace { panes, active }`.
+**A tab is a union**, not a path: `note` (any file, by path), `app` (a vault app, by its bundle path), `agent` (a terminal onto Claude Code: the agent list or one session), or `surface` (`{kind: 'surface', surface, id?}`). `state/panes.ts` owns it as pure functions over a `Workspace { panes, active }`.
 
-**Preview and pinned.** A single click in the tree opens a file in the pane's preview tab (italic), replacing whatever was previewed. A double click in the tree, a double click on the tab, editing the document, or dragging the tab pins it. Singletons open leftmost and are pinned by construction; if already open they are focused where they sit. Apps and agent tabs are appended. Closing an agent tab only detaches: the session keeps running.
+**Surfaces are a registry.** A surface is `{kind, label, icon, render, homeable?}` (`plugin-api/types.ts`): core's own (`home`, `settings`, `history`, and for now `board`, `agenda`, `mail`, in `components/core-surfaces.tsx`) plus every enabled plugin's. The pane renders a surface tab with its `render`, the strip names it with its `label` and `icon`, the palette lists it, a command "Open <label>" opens it, Home can be one that is `homeable`, and an app's `holi.open(name)` reaches it. Without `id` a surface is one tab, ever; `id` names which one for a surface that is one tab per thing. A surface whose plugin turns off leaves the registry, and its tabs close (`closeSurfaceTabs`) by the same path as a tab whose file was deleted.
+
+**Preview and pinned.** A single click in the tree opens a file in the pane's preview tab (italic), replacing whatever was previewed. A double click in the tree, a double click on the tab, editing the document, or dragging the tab pins it. Surfaces open leftmost and are pinned by construction; if already open they are focused where they sit. Apps and agent tabs are appended. Closing an agent tab only detaches: the session keeps running.
 
 **A tab names a file as the tree does**, by the same `pathLabel`/`pathGlyph`: a note without `.md` and with no glyph, an app without `.app` and with the app glyph, a task with its status, any other file with its extension and type glyph, and an icon-map emoji over all of them. See [file tree](file-tree.md).
 
@@ -14,7 +16,7 @@ The workspace is one or more side-by-side panes, each with its own tab strip. Ta
 
 **Panes.** ⌘\ opens an empty pane beside the focused one; Open in a New Pane (tree row, app row) fills one. The focused pane is the one "open" means, and it follows both pointer and keyboard focus. The unfocused pane's active pill loses its weight. Closing a split's last tab removes the pane; the last pane never goes. ⌘W is the menu's Close Tab and runs the `tab.close` command; ⌘⇧W closes the window. A board card opens its task file beside the board (`openBeside`), reusing the pane to the right.
 
-**Moving a tab.** Native HTML5 drag. Drop in a strip to reorder, on another pane to move there, or on a pane's left/right quarter (capped at 120px) to split. The payload is the tab's identity under the `application/x-holi-tab` MIME type; `findTab` finds it anywhere, so one `moveTab` serves reorder and move. Landing strips appear dim once the pointer leaves the strip, and light under it. While dragging, the pills between the slot and the pointer slide aside and the held pill dims to 40%; a tab arriving from another pane gets a caret line instead. Holding within 28px of a strip end auto-scrolls it.
+**Moving a tab.** Native HTML5 drag. Drop in a strip to reorder, on another pane to move there, or on a pane's left/right quarter (capped at 120px) to split. The payload is the tab's identity under the `application/x-holi-tab` MIME type (a surface's name is checked by spelling only, and a drop of one that is not registered finds nothing); `findTab` finds it anywhere, so one `moveTab` serves reorder and move. Landing strips appear dim once the pointer leaves the strip, and light under it. While dragging, the pills between the slot and the pointer slide aside and the held pill dims to 40%; a tab arriving from another pane gets a caret line instead. Holding within 28px of a strip end auto-scrolls it.
 
 **The strip scrolls.** Pills sit in an `overflow-x-auto` viewport with a hidden scrollbar; a vertical wheel scrolls it sideways. Each side floats a chevron and a count of tabs off that edge, and opens a menu of them; picking one selects and scrolls it into view. The active tab is scrolled into view when it changes. Other position changes glide (FLIP).
 
@@ -46,7 +48,7 @@ The workspace is one or more side-by-side panes, each with its own tab strip. Ta
 - A drag-state atom beside the native events: two sources of truth, stale on a missed `dragend`.
 - A clipping window with one `+N`: cannot say which way a tab went, and nothing scrolled.
 - Showing landing strips on pickup: a reorder never leaves the strip, so every nudge flashed them.
-- Undraggable singletons: an undraggable tab among draggable ones reads as a bug.
+- Undraggable surfaces: an undraggable tab among draggable ones reads as a bug.
 
 ## Code
 

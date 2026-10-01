@@ -13,7 +13,7 @@ import { allLabels, dailyNoteFilename, parseWikiLinks, taskArea, virtualLabels }
 import { atom } from 'jotai'
 import { trpc } from '../lib/trpc'
 import { nowAtom, todayAtom } from './clock'
-import { activeTab, closeTabsForPaths, workspaceAtom } from './panes'
+import { activeTab, closeTabsForPaths, workspaceAtom, type Tab } from './panes'
 import { activeRemoteAtom, loadSnapshotAtom, snapshotAtom } from './vaults'
 
 /** The vault root's lane. The lane IS the containing folder, and the root
@@ -71,9 +71,11 @@ export const todayLinkCountAtom = atom((get) =>
  */
 export const quickAddAtom = atom<{ where: 'board' | 'centre' } | null>(null)
 
+const isBoardTab = (tab: Tab | null): boolean => tab?.kind === 'surface' && tab.surface === 'board'
+
 export const openQuickAddAtom = atom(null, (get, set) =>
   set(quickAddAtom, {
-    where: activeTab(get(workspaceAtom))?.kind === 'board' ? 'board' : 'centre',
+    where: isBoardTab(activeTab(get(workspaceAtom))) ? 'board' : 'centre',
   }),
 )
 

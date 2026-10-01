@@ -71,7 +71,9 @@ A plugin's renderer reaches its main side only through capabilities that open th
 `cap.run` mutation, called through `capClient<typeof table>(namespace)`, which offers just those
 verbs with their types read from the table (params cross as JSON, results by structured clone).
 A plugin claims vault paths: the first enabled claim with a `view` opens a note tab of that path,
-and its `rowMenu` items join the file tree's menu. Its dialogs open as `{id: 'plugin', render}`.
+and its `rowMenu` items join the file tree's menu. A plugin adds `surfaces` (tab kinds) and `rail`
+items to the nav menu ([tabs and panes](features/tabs-panes.md)), registered beside core's own.
+Its dialogs open as `{id: 'plugin', render}`.
 A plugin's own code sits in `main/`, `renderer/`, `shared/` and `test/` under its folder; its
 renderer imports its main side as types only, for `capClient`. PDF is the first plugin
 ([pdf](features/pdf.md)).

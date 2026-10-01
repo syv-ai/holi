@@ -32,7 +32,7 @@ describe('historyTargetPathAtom', () => {
       store.set(workspaceAtom, ws([tab], 0))
       return store.get(historyTargetPathAtom)
     }
-    expect(target({ kind: 'board' })).toBeNull()
+    expect(target({ kind: 'surface', surface: 'board' })).toBeNull()
     expect(target({ kind: 'note', path: 'task.foo.md' })).toBe('task.foo.md')
     expect(target({ kind: 'note', path: 'diagram.png' })).toBeNull()
     expect(target({ kind: 'note', path: 'notes/plan.md' })).toBe('notes/plan.md')

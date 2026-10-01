@@ -64,6 +64,7 @@ import { closePaneWithExitAtom, closeTabWithExitAtom, leavingPaneAtom } from '..
 import { applyVaultSwitchAtom, leavingVaultAtom, switchVaultAtom } from '../state/vault-switch'
 import { pendingVaultPromptAtom, startPendingVaultPromptAtom } from '../state/vault-removal'
 import { agentSessionsAtom, useAgentSessions, useAgentTabs } from '@/state/agent'
+import { useSurfaceTabs } from '@/state/surfaces'
 import { reconcileAtom } from '@/state/agent-send'
 import { sessionsWorthAsking } from '@/lib/agent-notices'
 
@@ -135,6 +136,7 @@ export function Shell() {
   // because the shell outlives every tab.
   useAgentSessions()
   useAgentTabs(activeRemote)
+  useSurfaceTabs()
 
   // Keep `nowAtom` on the current minute so `overdue` turns over on the clock.
   // Every 30s: the atom only changes when the minute string does, so the extra

@@ -8,10 +8,12 @@
  */
 import { atom } from 'jotai'
 import { homeTargetOf, VAULT_SETTING_DEFAULTS, type HomeTarget } from '@holi/shared'
+import type { Surface } from '@/plugin-api/types'
 import { resolveHome } from '../lib/home-target'
 import { appPathsAtom } from './apps'
 import { ensureTodaysDailyAtom } from './daily'
-import { openPinned, openSingleton, workspaceAtom } from './panes'
+import { openPinned, openSurface, workspaceAtom } from './panes'
+import { surfacesAtom } from './plugins'
 import { loadVaultSettingsAtom, vaultSettingsAtom } from './settings'
 import { activeDocAtom, activeRemoteAtom, snapshotAtom } from './vaults'
 
@@ -26,6 +28,11 @@ export const homeTargetAtom = atom((get): HomeTarget => {
   return homeTargetOf(home)
 })
 
+/** The surfaces that may be Home, by kind. */
+function homeableKinds(surfaces: ReadonlyMap<string, Surface>): ReadonlySet<string> {
+  return new Set([...surfaces.values()].filter((s) => s.homeable === true).map((s) => s.kind))
+}
+
 export const openHomeAtom = atom(null, async (get, set): Promise<void> => {
   const settings = await set(loadVaultSettingsAtom)
   if (settings === null) return
@@ -33,6 +40,7 @@ export const openHomeAtom = atom(null, async (get, set): Promise<void> => {
   const home = resolveHome(settings, {
     filePaths: new Set([...snapshot.docs, ...snapshot.files].map((f) => f.path)),
     appPaths: new Set(get(appPathsAtom)),
+    homeable: homeableKinds(get(surfacesAtom)),
   })
 
   /** A note, pinned, with the active doc following, as opening one anywhere does. */
@@ -42,7 +50,7 @@ export const openHomeAtom = atom(null, async (get, set): Promise<void> => {
   }
 
   if (home.reach !== 'open') {
-    set(workspaceAtom, openSingleton(get(workspaceAtom), 'home'))
+    set(workspaceAtom, openSurface(get(workspaceAtom), 'home'))
     return
   }
   const { target } = home
@@ -55,8 +63,8 @@ export const openHomeAtom = atom(null, async (get, set): Promise<void> => {
     case 'file':
       openNote(target.path)
       return
-    default:
-      set(workspaceAtom, openSingleton(get(workspaceAtom), target.kind))
+    case 'surface':
+      set(workspaceAtom, openSurface(get(workspaceAtom), target.surface))
   }
 })
 

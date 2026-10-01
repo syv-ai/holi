@@ -7,8 +7,8 @@ app-level action is one row of one command table that keys, palette and menu all
 ## How it works
 
 - **Quick open (⌘P)** lists every openable thing: markdown docs and other vault files (hidden
-  paths left out, git-ignored ones dimmed), vault apps, live agent sessions, open agent tabs, and the five surfaces
-  (board, agenda, mail, settings, history). A path row shows its filename with the folder beside
+  paths left out, git-ignored ones dimmed), vault apps, live agent sessions, open agent tabs, and every registered surface but Home
+  (board, agenda, mail, settings, history, and any plugin's), each with its own label and icon. A path row shows its filename with the folder beside
   it, and the tree's type glyph or the vault's emoji for that path. A session row shows the
   sidebar's status orb. Enter opens pinned, ⌘↵ opens beside. ⌘P while open steps the selection.
 - **Ordering.** Empty query: recents first, across every kind, then the vault's paths by modified

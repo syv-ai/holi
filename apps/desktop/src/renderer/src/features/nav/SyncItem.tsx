@@ -33,7 +33,7 @@ import {
 import { cn } from '@/lib/cn'
 import { syncLabel } from '@/lib/sync-label'
 import { reconcileAtom } from '@/state/agent-send'
-import { openHistory, workspaceAtom } from '@/state/panes'
+import { openSurface, workspaceAtom } from '@/state/panes'
 import { abandonReconcileAtom, syncStateAtom } from '@/state/vaults'
 
 type Glyph = { icon: IconGlyph; tone?: IconTone; motion?: IconMotion }
@@ -122,7 +122,7 @@ function SyncPanel({ close }: { close: () => void }): React.JSX.Element {
         className={ROW}
         onClick={() => {
           close()
-          setWorkspace(openHistory)
+          setWorkspace((w) => openSurface(w, 'history'))
         }}
       >
         <Icon icon={History} />

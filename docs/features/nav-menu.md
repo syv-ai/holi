@@ -7,10 +7,13 @@ hidden, the same menu runs down the rail.
 
 ## How it works
 
-- **Items, in order:** Home, Search, Apps, Board, Email, Agenda, Agents, Sync, Settings, so
-  Settings always ends the dock. Home goes Home (below); Search opens quick open
+- **Items, in order:** Home, Search, Apps, Board, Mail, Agenda, Agents, Sync, Settings, so
+  Settings always ends the dock. The surface items are rail items from the surface registry
+  (`{surface, order, visible?}`, label and icon from the surface; see [tabs and panes](tabs-panes.md)),
+  sorted by `order` among core's own Search (10), Apps (20), Agents (60) and Sync (70); `visible`
+  is an atom, read by one derived atom. Home goes Home (below); Search opens quick open
   ([command palette](command-palette.md)); Board opens the board and carries the open-task count,
-  red while any task is overdue (the board's own `overdue` label); Email, Agenda and Settings open
+  red while any task is overdue (the board's own `overdue` label); Mail, Agenda and Settings open
   their tabs. Agents goes to Claude Code's agent list, the tab ⌘J goes to, and is green while any
   of the vault's sessions is running ([agent sessions](agent-sessions.md)). Sync is the vault's sync state as a glyph whose colour and turning carry it, and opens
   a panel with the state in words, its action and the history ([vaults and sync](vaults-sync.md)).
@@ -21,7 +24,7 @@ hidden, the same menu runs down the rail.
   ([vault apps](vault-apps.md)); from the dock it opens straight into them, from the list it
   drills in. Back goes to where it was opened from: from the dock it closes the menu, from the list
   it returns to the list. It is absent when the vault has no finished apps.
-- **Email and Agenda** appear only while a Google account is connected. `undefined` (not asked
+- **Mail and Agenda** appear only while a Google account is connected. `undefined` (not asked
   main yet) hides them too, so they never flash in.
 - **The dock wraps.** Every item has a 32px shortcut, in rows as wide as the
   sidebar allows: one row at the default width, three columns at the 150px minimum. When a resize
@@ -46,11 +49,11 @@ hidden, the same menu runs down the rail.
 - **Sessions** are one row each directly above the menu, under the file tree, only while running:
   no header, nothing to resize or collapse ([agent sessions](agent-sessions.md)).
 - **Home** goes where the vault's `home` setting says ([settings](settings.md)). By default it
-  is the recents: the Home tab (`home`, a singleton opened leftmost like the board) lists the
+  is the recents: the Home tab (the `home` surface, opened leftmost like the board) lists the
   last eight notes, files, apps and views opened, under "Recently opened", each opening as the
   palette would open it. An app named there shows in the Home tab instead
-  ([vault apps](vault-apps.md)); today's note, the board, agenda, mail or a file open as
-  themselves. When the target is not there, the Home tab says so, and for a missing app offers
+  ([vault apps](vault-apps.md)); today's note, a view that can be Home (the board, agenda, mail)
+  or a file open as themselves. When the target is not there, the Home tab says so, and for a missing app offers
   **Create Home app**, which writes the default app at that path. Nothing is written unasked.
 
 ## Rules

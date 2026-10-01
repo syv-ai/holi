@@ -27,14 +27,14 @@
  * before mounting an app that opts into reading Google data it asks the person
  * to approve that (`dangerously-allow`; the approval is kept in main).
  */
-import { useAtomValue, useSetAtom } from 'jotai'
+import { useAtomValue, useSetAtom, useStore } from 'jotai'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   APP_METHODS,
   appHost,
   appName,
   isAppBundlePath,
-  isAppSurface,
+  isSurfaceName,
   type AppAffordance,
   type AppMethod,
   type AppPush,
@@ -46,15 +46,10 @@ import { trpc } from '../../lib/trpc'
 import { appPushSignaturesAtom, storeSignatures } from '../../state/app-push'
 import { appPathsAtom, closeAppAtom } from '../../state/apps'
 import { activeModeAtom } from '../../state/color-scheme'
-import {
-  appOpensAtom,
-  openApp,
-  openNoteTabAtom,
-  openSingleton,
-  workspaceAtom,
-} from '../../state/panes'
+import { appOpensAtom, openApp, openNoteTabAtom, workspaceAtom } from '../../state/panes'
 import { openCommitInHistoryAtom } from '../../state/history'
-import { openHomeAtom } from '../../state/home'
+import { surfacesAtom } from '../../state/plugins'
+import { openSurfaceAtom } from '../../state/surfaces'
 import { activeRemoteAtom, snapshotAtom } from '../../state/vaults'
 
 function isAppMethod(value: unknown): value is AppMethod {
@@ -62,7 +57,7 @@ function isAppMethod(value: unknown): value is AppMethod {
 }
 
 /** A string field out of a call's params, or null when there isn't one. */
-function fieldOf(params: unknown, key: 'path' | 'surface'): string | null {
+function fieldOf(params: unknown, key: 'target'): string | null {
   if (params === null || typeof params !== 'object') return null
   const value = (params as Record<string, unknown>)[key]
   return typeof value === 'string' ? value : null
@@ -91,7 +86,10 @@ export function AppFrame({ path }: { path: string }): React.JSX.Element {
   const openNote = useSetAtom(openNoteTabAtom)
   const setWorkspace = useSetAtom(workspaceAtom)
   const closeApp = useSetAtom(closeAppAtom)
-  const openHome = useSetAtom(openHomeAtom)
+  const openSurface = useSetAtom(openSurfaceAtom)
+  // Read when an app calls, not on every render: the registry and the
+  // snapshot change far more often than an app opens anything.
+  const store = useStore()
   const reloads = useAtomValue(appOpensAtom)[path] ?? 0
   const frameRef = useRef<HTMLIFrameElement>(null)
   const exists = appPaths.includes(path)
@@ -104,23 +102,26 @@ export function AppFrame({ path }: { path: string }): React.JSX.Element {
       // to main with the bundle this frame was mounted with, where the registry
       // decides what an app may reach.
       if (method === 'open') {
-        const surface = fieldOf(params, 'surface')
-        if (surface !== null) {
-          if (!isAppSurface(surface)) throw new Error(`no such view: ${surface}`)
-          if (surface === 'home') void openHome()
-          else setWorkspace((w) => openSingleton(w, surface))
+        const target = fieldOf(params, 'target')
+        if (target === null) throw new Error('open needs a path or a view')
+        // A registered view wins over a file of the same name.
+        if (store.get(surfacesAtom).has(target)) {
+          openSurface(target)
           return { ok: true }
         }
-        const path = fieldOf(params, 'path')
-        if (path === null) throw new Error('open needs a path or a view')
+        // A bare name that is no view and no file at the vault's root is a
+        // view this vault does not have, such as one whose plugin is off.
+        const snapshot = store.get(snapshotAtom)
+        const isFile = [...snapshot.docs, ...snapshot.files].some((f) => f.path === target)
+        if (isSurfaceName(target) && !isFile) throw new Error(`no such view: ${target}`)
         // An app's bundle is a folder: it opens as the app, not as a file.
-        if (isAppBundlePath(path)) setWorkspace((w) => openApp(w, path))
-        else openNote(path)
+        if (isAppBundlePath(target)) setWorkspace((w) => openApp(w, target))
+        else openNote(target)
         return { ok: true }
       }
       return await trpc.apps.bridge.mutate({ remote, bundle: path, method, params })
     },
-    [remote, path, openNote, setWorkspace, openHome],
+    [remote, path, openNote, setWorkspace, openSurface, store],
   )
 
   useEffect(() => {

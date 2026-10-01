@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { APP_METHODS, APP_SURFACES, isAppTopic, storeTopic } from '../src/app-bridge'
+import { APP_METHODS, isAppTopic, storeTopic } from '../src/app-bridge'
 
 describe('APP_METHODS', () => {
   it('is exactly the shipped set and no more', () => {
@@ -43,11 +43,7 @@ describe('APP_METHODS', () => {
   })
 })
 
-describe('surfaces and topics', () => {
-  it('opens only the named surfaces', () => {
-    expect([...APP_SURFACES]).toEqual(['home', 'board', 'agenda', 'mail', 'settings', 'history'])
-  })
-
+describe('topics', () => {
   it('accepts the fixed topics and a store topic per collection', () => {
     expect(isAppTopic('docs')).toBe(true)
     expect(isAppTopic(storeTopic('items'))).toBe(true)

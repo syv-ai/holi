@@ -7,7 +7,7 @@ export type RecentKind = 'path' | 'app' | 'session' | 'terminal' | 'surface' | '
 export interface RecentEntry {
   kind: RecentKind
   /** A vault-relative path, an app bundle, a session's job id, an agent
-   *  terminal's id, a `SingletonTab`, or a command id, by `kind`. */
+   *  terminal's id, a surface's name, or a command id, by `kind`. */
   key: string
 }
 

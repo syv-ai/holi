@@ -48,8 +48,9 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   (Holi's base palette, `APP_BASE_TOKENS`, with the vault's resolved theme laid over it) and the
   `window.holi` bridge script. Every other file is served byte for byte.
 - **The bridge** is `postMessage` from the frame to `AppFrame`, which answers `holi.open` itself
-  (a vault file, an app's bundle as that app, or one of Holi's views: home, board, agenda, mail,
-  settings, history) and
+  (the shim sends `{target}`: a view registered in this vault by name wins, such as home, board,
+  agenda, mail, settings or history; else a vault file, or an app's bundle as that app; a bare
+  name that is neither answers "no such view") and
   forwards every other method to `apps.bridge` in main with the bundle it mounted. Reads:
   `docs.list`, `docs.read`, `docs.render` (a note as HTML, inline HTML escaped and only web links
   kept, so a note cannot run script as the app), `tasks.list`, `vault.recents`, `docs.search` (names, then

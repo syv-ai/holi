@@ -73,7 +73,7 @@ test('walks naming → settings → threshold without creating anything', async 
   expect(within(settings).getByRole('group', { name: 'Keep a daily note' })).toBeInTheDocument()
 
   // Answer something, so the write would fire if it were going to.
-  await userEvent.click(within(settings).getByRole('radio', { name: 'The board' }))
+  await userEvent.click(within(settings).getByRole('radio', { name: 'Today’s note' }))
   // The settings CTA lives in the FOOTER, beside the naming act's, so a list
   // that scrolls cannot push it off the bottom edge.
   await userEvent.click(screen.getByRole('button', { name: /continue/i }))

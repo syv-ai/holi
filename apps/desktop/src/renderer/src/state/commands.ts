@@ -30,7 +30,8 @@ import { openPaletteAtom } from './palette'
 import { navOpenAtom } from './preferences'
 import { touchRecentAtom } from './recents'
 import { openQuickAddAtom } from './tasks'
-import { openPinned, openSingleton, splitPane, workspaceAtom, type SingletonTab } from './panes'
+import { openPinned, openSurface, splitPane, workspaceAtom } from './panes'
+import { surfacesAtom } from './plugins'
 import { activeRemoteAtom, createNoteAtom, snapshotAtom, vaultsAtom } from './vaults'
 import { switchVaultAtom } from './vault-switch'
 
@@ -50,15 +51,6 @@ export interface Command {
   hidden?: true
   run: (get: Getter, set: Setter) => void | Promise<void>
 }
-
-const SURFACES: readonly { kind: SingletonTab; label: string }[] = [
-  { kind: 'home', label: 'Go home' },
-  { kind: 'board', label: 'Open board' },
-  { kind: 'agenda', label: 'Open agenda' },
-  { kind: 'mail', label: 'Open mail' },
-  { kind: 'settings', label: 'Open settings' },
-  { kind: 'history', label: 'Open history' },
-]
 
 /** `Untitled.md`, then `Untitled 2.md` and so on, at the vault root. */
 export function untitledPath(taken: ReadonlySet<string>): string {
@@ -155,13 +147,13 @@ export const STATIC_COMMANDS: readonly Command[] = [
     boundBy: 'menu',
     run: (_get, set) => set(closeActiveTabWithExitAtom),
   },
-  ...SURFACES.map(({ kind, label }): Command => ({
-    id: `${kind}.open`,
-    label,
-    // Home is wherever the vault's `home` setting says, not always its tab.
-    run: (_get, set) =>
-      kind === 'home' ? set(openHomeAtom) : set(workspaceAtom, (w) => openSingleton(w, kind)),
-  })),
+  // Home is wherever the vault's `home` setting says, not always its tab. The
+  // other surfaces' rows come from the registry (`commandsAtom`).
+  {
+    id: 'home.open',
+    label: 'Go home',
+    run: (_get, set) => set(openHomeAtom),
+  },
   // The tree names a new note inline; a command has no row to type into, so
   // the note starts untitled, as VS Code's New File does, and opens pinned.
   {
@@ -192,6 +184,13 @@ export const STATIC_COMMANDS: readonly Command[] = [
 
 /** The table: the static rows, then one "switch to" per other vault. */
 export const commandsAtom = atom<Command[]>((get) => {
+  const opens = [...get(surfacesAtom).values()]
+    .filter((s) => s.kind !== 'home')
+    .map((s): Command => ({
+      id: `${s.kind}.open`,
+      label: `Open ${s.label}`,
+      run: (_get, set) => set(workspaceAtom, (w) => openSurface(w, s.kind)),
+    }))
   const active = get(activeRemoteAtom)
   const switches = get(vaultsAtom)
     .filter((v) => v.remote !== active)
@@ -200,7 +199,7 @@ export const commandsAtom = atom<Command[]>((get) => {
       label: `Switch to ${v.name}`,
       run: (_get, set) => set(switchVaultAtom, v.remote),
     }))
-  return [...STATIC_COMMANDS, ...switches]
+  return [...STATIC_COMMANDS, ...opens, ...switches]
 })
 
 /**

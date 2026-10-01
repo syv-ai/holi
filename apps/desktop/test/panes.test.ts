@@ -14,18 +14,18 @@ import {
   closeTabsForPaths,
   emptyWorkspace,
   openApp,
-  openBoard,
   openBeside,
   openInNewPane,
   openPinned,
   openPreview,
-  openSingleton,
+  openSurface,
   openTab,
   pinActive,
   pinTab,
   retargetTab,
   retargetTabs,
   splitPane,
+  closeSurfaceTabs,
   focusPane,
   dropZones,
   moveTab,
@@ -33,7 +33,10 @@ import {
   type Workspace,
 } from '../src/renderer/src/state/panes'
 
-const paths = (w: Workspace) => w.panes[0]!.tabs.map((t) => (t.kind === 'note' ? t.path : t.kind))
+const paths = (w: Workspace) =>
+  w.panes[0]!.tabs.map((t) =>
+    t.kind === 'note' ? t.path : t.kind === 'surface' ? t.surface : t.kind,
+  )
 
 describe('openTab', () => {
   it('focuses a note that is already open instead of opening it twice', () => {
@@ -52,10 +55,18 @@ describe('openTab', () => {
 
   it('keeps the board tab distinct from every note', () => {
     let w = openTab(emptyWorkspace(), { kind: 'note', path: 'a.md' })
-    w = openTab(w, { kind: 'board' })
-    w = openTab(w, { kind: 'board' })
+    w = openTab(w, { kind: 'surface', surface: 'board' })
+    w = openTab(w, { kind: 'surface', surface: 'board' })
 
     expect(paths(w)).toEqual(['a.md', 'board'])
+  })
+
+  it('tells two tabs of one surface apart by id', () => {
+    let w = openSurface(emptyWorkspace(), 'app', 'a.app')
+    w = openSurface(w, 'app', 'b.app')
+    w = openSurface(w, 'app', 'a.app')
+
+    expect(w.panes[0]!.tabs).toHaveLength(2)
   })
 })
 
@@ -232,15 +243,6 @@ describe('openApp', () => {
     w = openTab(w, { kind: 'note', path: 'a.md' })
     w = closeTab(w, 0)
     expect(w.panes[0]!.tabs).toEqual([{ kind: 'note', path: 'a.md' }])
-  })
-
-  it('is not a singleton — the type says so', () => {
-    // The regression this reshape exists to prevent. SingletonTab used to be
-    // DERIVED (`Exclude<Tab, {kind:'note'}>['kind']`), which quietly meant
-    // "every non-note tab is unique" — so this call would have typechecked and
-    // opened a tab with no path at all.
-    // @ts-expect-error 'app' is not a singleton surface
-    openSingleton(emptyWorkspace(), 'app')
   })
 })
 
@@ -439,17 +441,42 @@ describe('one buffer per file, across panes', () => {
     expect(w.active).toBe(1)
   })
 
-  it('a singleton surface is one for the whole workspace', () => {
-    const w = openBoard({
+  it('a surface is one for the whole workspace', () => {
+    const board = { kind: 'surface', surface: 'board' } as const
+    const w = openSurface(
+      {
+        panes: [
+          { tabs: [], active: -1 },
+          { tabs: [board], active: 0 },
+        ],
+        active: 0,
+      },
+      'board',
+    )
+
+    expect(w.panes.flatMap((p) => p.tabs)).toEqual([board])
+    expect(w.active).toBe(1)
+  })
+
+  it('closes the tabs of surfaces that left the registry, and only those', () => {
+    const w: Workspace = {
       panes: [
-        { tabs: [], active: -1 },
-        { tabs: [{ kind: 'board' }], active: 0 },
+        {
+          tabs: [
+            { kind: 'surface', surface: 'mail' },
+            { kind: 'note', path: 'a.md' },
+          ],
+          active: 1,
+        },
       ],
       active: 0,
-    })
+    }
 
-    expect(w.panes.flatMap((p) => p.tabs)).toEqual([{ kind: 'board' }])
-    expect(w.active).toBe(1)
+    expect(closeSurfaceTabs(w, new Set(['mail']))).toBe(w)
+    expect(closeSurfaceTabs(w, new Set(['board'])).panes[0]).toEqual({
+      tabs: [{ kind: 'note', path: 'a.md' }],
+      active: 0,
+    })
   })
 })
 

@@ -20,8 +20,8 @@ export function entryOfTab(tab: Tab): RecentEntry {
     // An agent tab is a terminal, whatever session it shows now.
     case 'agent':
       return { kind: 'terminal', key: tab.id }
-    default:
-      return { kind: 'surface', key: tab.kind }
+    case 'surface':
+      return { kind: 'surface', key: tab.surface }
   }
 }
 
