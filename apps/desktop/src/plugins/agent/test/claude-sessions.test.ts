@@ -181,6 +181,25 @@ describe('claude-cli', () => {
 
 describe('watchConfigDir', () => {
   const dirs: string[] = []
+
+  /**
+   * Wait until the watch is live, by changing `probe` until a change is seen.
+   * `fs.watch` returns before macOS's FSEvents stream is running, and Node
+   * offers no ready signal, so a change made at once can go unseen: under load
+   * it often did. Checked before each write, so no probe is written after
+   * the one that was seen.
+   */
+  async function untilLive(probe: string, onChange: ReturnType<typeof vi.fn>): Promise<void> {
+    await vi.waitFor(
+      async () => {
+        if (onChange.mock.calls.length > 0) return
+        await writeFile(probe, String(Date.now()))
+        throw new Error('watch not live yet')
+      },
+      { timeout: 5_000, interval: 250 },
+    )
+    onChange.mockClear()
+  }
   afterEach(async () => {
     vi.useRealTimers()
     await Promise.all(dirs.splice(0).map((d) => rm(d, { recursive: true, force: true })))
@@ -193,6 +212,7 @@ describe('watchConfigDir', () => {
     await mkdir(join(dir, 'jobs', 'abcd1234'), { recursive: true })
     const onChange = vi.fn()
     const stop = watchConfigDir(dir, onChange, () => {})
+    await untilLive(join(dir, 'sessions', 'probe.json'), onChange)
 
     await writeFile(join(dir, 'jobs', 'abcd1234', 'state.json'), '{}')
     await writeFile(join(dir, 'sessions', '42.json'), '{}')
@@ -203,8 +223,10 @@ describe('watchConfigDir', () => {
   it('takes a directory that appears later, and reports its arrival', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'holi-claude-sessions-'))
     dirs.push(dir)
+    await mkdir(join(dir, 'jobs'))
     const onChange = vi.fn()
     const stop = watchConfigDir(dir, onChange, () => {})
+    await untilLive(join(dir, 'jobs', 'probe.json'), onChange)
 
     await mkdir(join(dir, 'sessions'))
     await vi.waitFor(() => expect(onChange).toHaveBeenCalled(), { timeout: 3_000 })

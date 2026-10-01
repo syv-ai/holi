@@ -158,12 +158,28 @@ export const WATCHED_DIRS = ['sessions', 'jobs'] as const
 
 /** Bursts are normal: rows carry heartbeat fields that move on their own. */
 const WATCH_DEBOUNCE_MS = 150
-/** Holi does not create these; Claude Code does, on first use. */
+/** Holi creates the config dir before a session runs; this covers the gap. */
 const WATCH_RETRY_MS = 500
+
+/** True for a path under one of `WATCHED_DIRS`, or one of them itself. A
+ *  watcher that cannot name the file is taken at its word that something moved. */
+function isWatched(filename: string | null): boolean {
+  if (filename === null) return true
+  const top = filename.split(/[/\\]/, 1)[0]
+  return (WATCHED_DIRS as readonly string[]).includes(top ?? '')
+}
 
 /**
  * Call `onChange` when the config directory's session state moves. Debounced,
- * retried per directory until it exists. The returned function stops it all.
+ * retried until the directory exists. The returned function stops it all.
+ *
+ * One recursive watch on the config dir, filtered to `WATCHED_DIRS`, rather
+ * than one per directory. On macOS every directory `fs.watch` in a process
+ * shares a single FSEvents stream, and adding a second path rebuilds that
+ * stream, dropping whatever the first had buffered: changes made just after a
+ * two-handle watch began were lost about one time in three. One handle also
+ * reports `sessions/` and `jobs/` appearing, which Claude Code creates on
+ * first use.
  */
 export function watchConfigDir(
   configDir: string,
@@ -172,8 +188,8 @@ export function watchConfigDir(
 ): () => void {
   let debounce: ReturnType<typeof setTimeout> | null = null
   let stopped = false
-  const watchers: FSWatcher[] = []
-  const retries: ReturnType<typeof setTimeout>[] = []
+  let watcher: FSWatcher | null = null
+  let retry: ReturnType<typeof setTimeout> | null = null
 
   const fire = (): void => {
     if (debounce !== null) clearTimeout(debounce)
@@ -183,25 +199,27 @@ export function watchConfigDir(
     }, WATCH_DEBOUNCE_MS)
   }
 
-  const attach = (dir: (typeof WATCHED_DIRS)[number], retried: boolean): void => {
+  const attach = (retried: boolean): void => {
+    retry = null
     if (stopped) return
     try {
-      // `jobs/` holds a directory per session; `sessions/` is flat.
-      const w = watch(join(configDir, dir), { recursive: dir === 'jobs' }, fire)
-      w.on('error', (err) => log(`watch ${dir} failed: ${String(err)}`))
-      watchers.push(w)
+      watcher = watch(configDir, { recursive: true }, (_event, filename) => {
+        if (isWatched(filename)) fire()
+      })
+      watcher.on('error', (err) => log(`watch failed: ${String(err)}`))
       // The directory appearing is itself news nothing else will report.
       if (retried) fire()
     } catch {
-      retries.push(setTimeout(() => attach(dir, true), WATCH_RETRY_MS))
+      retry = setTimeout(() => attach(true), WATCH_RETRY_MS)
     }
   }
-  for (const dir of WATCHED_DIRS) attach(dir, false)
+  attach(false)
 
   return () => {
     stopped = true
     if (debounce !== null) clearTimeout(debounce)
-    for (const r of retries.splice(0)) clearTimeout(r)
-    for (const w of watchers.splice(0)) w.close()
+    if (retry !== null) clearTimeout(retry)
+    watcher?.close()
+    watcher = null
   }
 }
