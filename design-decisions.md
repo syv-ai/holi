@@ -314,3 +314,15 @@ and activation.
 - **Test flakes are fixed at the cause.** The PDF viewer test acted before the fake viewer's
   mount effect had run. The fake now shows its test id only once it is live, matching the real
   viewer's `onReady`.
+- **Plugin events keep their order both ways** through a per-plugin queue, so the async
+  enablement gate cannot reorder terminal bytes. `plugin.send` carries the same
+  `{remote, name, payload}` envelope as `on`, because main can only drop messages for a vault
+  that is not live if the renderer says which vault it means.
+- **A scheme handler gets only `{active()}`,** because a scheme is served whether or not its
+  plugin ever started.
+- **Only a surface's label can depend on the id.** A per-id icon would be indistinguishable at
+  runtime from an icon component, and nothing needs it.
+- **A folder document's draft state lives in the claim** (`folder.ready`). A draft is listed
+  dimmed and expands on click.
+- **A surface opened with an id appends like a file,** and one without an id opens leftmost, as
+  before.
