@@ -291,3 +291,11 @@ and activation.
   may not.
 - **UI-door calls always carry a remote,** even for per-machine stores such as signatures, so
   every door resolves the same way.
+- **Core surfaces are installed into the registry like plugins,** from the renderer's entry point,
+  because their renders import features and state cannot import those without a cycle. The first
+  surface to claim a kind wins, so a plugin cannot take over a core surface.
+- **`holi.open(target)` resolves a registered surface first,** then a path. A bare name that is
+  neither a view nor a root file is "no such view".
+- **The capability host has two faces.** `dispatch` serves the ui and cli doors, and
+  `openAppDoor` is the app door, opened once by the apps code with its consent check. An
+  `appGrant` capability fails closed when the door was opened without one.
