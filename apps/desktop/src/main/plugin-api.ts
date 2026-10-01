@@ -18,6 +18,7 @@ import type { CapabilityTable } from './capabilities/registry'
 import type { SeedContribution } from './vault/seed/types'
 import type { Route } from './bridge/server'
 import type { UiReport } from './capabilities/services'
+import type { Transform } from './vault/hooks/runner'
 
 /** Undoes what an activation started: at leave for a vault's, at quit for
  *  the process's. */
@@ -141,6 +142,14 @@ export interface MainPlugin {
    * them alone. With the plugin off they are plain notes.
    */
   claims?: readonly SnapshotClaim[]
+  /**
+   * Commit transforms it runs in a vault that runs it, after `relink` and
+   * before core's `scaffold-md`, `normalize-md` and `memory-index`. Each is
+   * switched by `hooks[name]` in the vault's settings; its label and default
+   * are the matching toggle in `info.transforms`, which the settings tab
+   * reads too.
+   */
+  transforms?: readonly Transform[]
   /** Runs once per process, the first time a vault that enables the plugin
    *  is opened. */
   activateApp?(ctx: AppContext): Disposer | Promise<Disposer>
@@ -154,6 +163,9 @@ export interface MainPlugin {
 }
 
 export type BridgeRoute = Route
+export type { Transform } from './vault/hooks/runner'
+export type { StagedChanges } from './vault/hooks/staged'
+export type { TransformResult } from './vault/hooks/relink'
 export type { UiReport } from './capabilities/services'
 
 export type { ClaimedItem, PluginInfo, SnapshotClaim } from '@holi/shared'

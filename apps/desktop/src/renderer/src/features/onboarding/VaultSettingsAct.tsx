@@ -2,7 +2,8 @@
  * The ritual's settings act: how this vault behaves, asked once, at birth.
  *
  * **Renders the list; does not know the list.** Every row comes from
- * `RITUAL_SETTING_DESCRIPTORS`, so adding a setting is adding a descriptor.
+ * the descriptors asked at birth (`settingDescriptorsAtom`, with the installed
+ * plugins' commit transforms), so adding a setting is adding a descriptor.
  *
  * **The ritual's list is a subset.** A preference with a good default and no
  * consequence at a vault's first moment lives in the settings tab instead;
@@ -11,11 +12,9 @@
  * Nothing here is required. The seed has already written every default, so
  * clicking straight through is a no-op.
  */
-import {
-  RITUAL_SETTING_DESCRIPTORS,
-  availableOptions,
-  type VaultSettingDescriptor,
-} from '@holi/shared'
+import { availableOptions, type VaultSettingDescriptor } from '@holi/shared'
+import { useAtomValue } from 'jotai'
+import { settingDescriptorsAtom } from '@/state/plugins'
 import { Button, Checkbox } from '@/primitives'
 
 interface Props {
@@ -127,9 +126,10 @@ function Row({
 }
 
 export function VaultSettingsAct({ settings, onChange }: Props) {
+  const asked = useAtomValue(settingDescriptorsAtom).filter((d) => d.askedAtBirth)
   return (
     <div className="obrit-settings">
-      {RITUAL_SETTING_DESCRIPTORS.map((descriptor) => (
+      {asked.map((descriptor) => (
         <Row key={descriptor.key} descriptor={descriptor} settings={settings} onChange={onChange} />
       ))}
     </div>

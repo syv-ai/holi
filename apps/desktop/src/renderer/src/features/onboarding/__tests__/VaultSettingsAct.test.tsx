@@ -1,7 +1,7 @@
 import { render, screen, within } from '@/test/render'
 import userEvent from '@testing-library/user-event'
 import { expect, test, vi } from 'vitest'
-import { RITUAL_SETTING_DESCRIPTORS, TRANSFORM_NAMES, VAULT_SETTING_DEFAULTS } from '@holi/shared'
+import { CORE_TRANSFORMS, RITUAL_SETTING_DESCRIPTORS, VAULT_SETTING_DEFAULTS } from '@holi/shared'
 import { VaultSettingsAct } from '../VaultSettingsAct'
 
 function setup(over: Record<string, unknown> = {}) {
@@ -65,7 +65,7 @@ test('appearance is a choice too, and reports a plain string', async () => {
 test('the transforms are one row of several switches', async () => {
   const { onChange } = setup()
   const row = screen.getByRole('group', { name: 'Tidy up on every commit' })
-  expect(within(row).getAllByRole('checkbox')).toHaveLength(TRANSFORM_NAMES.length)
+  expect(within(row).getAllByRole('checkbox')).toHaveLength(CORE_TRANSFORMS.length)
 
   await userEvent.click(within(row).getByRole('checkbox', { name: /File finished tasks away/ }))
   // The whole block comes back, not just the switch that moved: a patch naming

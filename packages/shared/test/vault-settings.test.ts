@@ -3,7 +3,8 @@ import {
   EDITOR_FONTS,
   EDITOR_FONT_STACKS,
   RITUAL_SETTING_DESCRIPTORS,
-  TRANSFORM_NAMES,
+  CORE_TRANSFORMS,
+  vaultSettingDescriptors,
   VAULT_SETTINGS,
   VAULT_SETTING_DEFAULTS,
   VAULT_SETTING_DESCRIPTORS,
@@ -54,7 +55,7 @@ describe('VAULT_SETTING_DEFAULTS', () => {
   })
 
   it('names every transform the hooks block can carry', () => {
-    expect([...TRANSFORM_NAMES].sort()).toEqual([
+    expect(CORE_TRANSFORMS.map((t) => t.name).sort()).toEqual([
       'archive-done',
       'memory-index',
       'normalize-md',
@@ -204,8 +205,14 @@ describe('resolveVaultSettings — malformed input never throws', () => {
     expect(s.hooks.relink).toBe(true)
   })
 
-  it('drops an unknown transform name without disturbing the real ones', () => {
+  it('keeps a transform name this build does not have, for the plugin that does', () => {
     const s = resolveVaultSettings(committed({ hooks: { 'rm-rf': true } }), null)
+    expect(s.hooks).toEqual({ ...VAULT_SETTING_DEFAULTS.hooks, 'rm-rf': true })
+    expect(s.warnings).toEqual([])
+  })
+
+  it('drops a hooks key that cannot name a transform', () => {
+    const s = resolveVaultSettings(committed({ hooks: { 'Not A Name': true } }), null)
     expect(s.hooks).toEqual(VAULT_SETTING_DEFAULTS.hooks)
     expect(s.warnings.length).toBeGreaterThan(0)
   })
@@ -322,7 +329,17 @@ describe('VAULT_SETTING_DESCRIPTORS', () => {
     const hooks = VAULT_SETTING_DESCRIPTORS.find((d) => d.key === 'hooks')!
     expect(hooks.control.kind).toBe('group')
     const named = hooks.control.kind === 'group' ? hooks.control.toggles.map((t) => t.key) : []
-    expect([...named].sort()).toEqual([...TRANSFORM_NAMES].sort())
+    expect(named).toEqual(CORE_TRANSFORMS.map((t) => t.name))
+  })
+
+  it("adds the known plugins' transforms to the group", () => {
+    const extra = { name: 'stamp', label: 'Stamp', explanation: "A plugin's.", default: true }
+    const hooks = vaultSettingDescriptors([...CORE_TRANSFORMS, extra]).find(
+      (d) => d.key === 'hooks',
+    )!
+    const named = hooks.control.kind === 'group' ? hooks.control.toggles.map((t) => t.key) : []
+    expect(named.at(-1)).toBe('stamp')
+    expect((hooks.default as Record<string, boolean>).stamp).toBe(true)
   })
 })
 
@@ -377,12 +394,12 @@ describe('parseSettingsPatch — the write-side trust boundary', () => {
   // never touched. So a patch carries only what was actually answered.
 
   it('keeps the keys it was given and invents none', () => {
-    const { patch } = parseSettingsPatch(JSON.stringify({ dailyNotes: false }))
+    const { patch } = parseSettingsPatch(JSON.stringify({ dailyNotes: false }), CORE_TRANSFORMS)
     expect(patch).toEqual({ dailyNotes: false })
   })
 
   it('normalises a home exactly as a read does', () => {
-    const { patch } = parseSettingsPatch(JSON.stringify({ home: './Notes/a.md' }))
+    const { patch } = parseSettingsPatch(JSON.stringify({ home: './Notes/a.md' }), CORE_TRANSFORMS)
     expect(patch.home).toBe('Notes/a.md')
   })
 
@@ -393,7 +410,7 @@ describe('parseSettingsPatch — the write-side trust boundary', () => {
     ['a non-object hooks block', { hooks: 'all' }],
     ['a file cap of zero', { maxCommittedFileBytes: 0 }],
   ])('drops %s rather than writing it, and says so', (_label, value) => {
-    const { patch, warnings } = parseSettingsPatch(JSON.stringify(value))
+    const { patch, warnings } = parseSettingsPatch(JSON.stringify(value), CORE_TRANSFORMS)
     expect(patch).toEqual({})
     expect(warnings.length).toBeGreaterThan(0)
   })
@@ -405,6 +422,7 @@ describe('parseSettingsPatch — the write-side trust boundary', () => {
     // the renderer to put arbitrary JSON into a committed, synced file.
     const { patch } = parseSettingsPatch(
       JSON.stringify({ dailyNotes: true, reminders: { 'a.md': 'x' }, nonsense: 1 }),
+      CORE_TRANSFORMS,
     )
     expect(patch).toEqual({ dailyNotes: true })
   })
@@ -412,31 +430,35 @@ describe('parseSettingsPatch — the write-side trust boundary', () => {
   it('keeps only the transforms it knows, and only boolean answers', () => {
     const { patch } = parseSettingsPatch(
       JSON.stringify({ hooks: { relink: false, 'rm-rf': true, 'normalize-md': 'yes' } }),
+      CORE_TRANSFORMS,
     )
     expect(patch.hooks).toEqual({ relink: false })
   })
 
   it('drops a hooks block that survives nothing', () => {
-    const { patch } = parseSettingsPatch(JSON.stringify({ hooks: { 'rm-rf': true } }))
+    const { patch } = parseSettingsPatch(
+      JSON.stringify({ hooks: { 'rm-rf': true } }),
+      CORE_TRANSFORMS,
+    )
     expect(patch).toEqual({})
   })
 
   it.each([[null], ['{ not json'], ['[]'], ['"a string"'], ['42']])(
     'treats unusable input (%s) as an empty patch',
     (json) => {
-      expect(parseSettingsPatch(json).patch).toEqual({})
+      expect(parseSettingsPatch(json, CORE_TRANSFORMS).patch).toEqual({})
     },
   )
 
   it('accepts everything the seed writes', () => {
     // The step sends back what the descriptors offered, so a patch of the
     // defaults must survive the boundary intact or the step cannot save.
-    expect(parseSettingsPatch(JSON.stringify(seedSettings('committed'))).patch).toEqual(
-      seedSettings('committed'),
-    )
-    expect(parseSettingsPatch(JSON.stringify(seedSettings('local'))).patch).toEqual(
-      seedSettings('local'),
-    )
+    expect(
+      parseSettingsPatch(JSON.stringify(seedSettings('committed')), CORE_TRANSFORMS).patch,
+    ).toEqual(seedSettings('committed'))
+    expect(
+      parseSettingsPatch(JSON.stringify(seedSettings('local')), CORE_TRANSFORMS).patch,
+    ).toEqual(seedSettings('local'))
   })
 })
 
@@ -646,7 +668,9 @@ describe('home', () => {
       expect(s.home).toBe(VAULT_SETTING_DEFAULTS.home)
       expect(s.warnings.join(' ')).toContain('home')
     }
-    expect(parseSettingsPatch(committed({ home: '../x.app' })).patch).not.toHaveProperty('home')
+    expect(
+      parseSettingsPatch(committed({ home: '../x.app' }), CORE_TRANSFORMS).patch,
+    ).not.toHaveProperty('home')
   })
 })
 
@@ -667,7 +691,7 @@ describe('the schema is the only declaration', () => {
       for (const option of setting.type.options) {
         const file = committed({ [setting.key]: option.value })
 
-        const write = parseSettingsPatch(file)
+        const write = parseSettingsPatch(file, CORE_TRANSFORMS)
         expect(write.warnings, `${setting.key} = ${JSON.stringify(option.value)}`).toEqual([])
         expect(write.patch[setting.key]).toEqual(option.value)
 
@@ -685,7 +709,7 @@ describe('the schema is the only declaration', () => {
       for (const setting of VAULT_SETTINGS) {
         const file = committed({ [setting.key]: bad })
         const dropped = resolveVaultSettings(file, null).warnings.length > 0
-        const refused = parseSettingsPatch(file).warnings.length > 0
+        const refused = parseSettingsPatch(file, CORE_TRANSFORMS).warnings.length > 0
         expect(refused, `${setting.key} = ${JSON.stringify(bad)}`).toBe(dropped)
       }
     }

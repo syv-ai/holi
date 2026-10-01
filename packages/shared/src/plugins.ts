@@ -9,6 +9,8 @@
  * Pure and browser-safe.
  */
 
+import type { TransformToggle } from './vault-settings'
+
 export interface PluginInfo {
   /** Kebab-case, and the namespace of everything the plugin contributes:
    *  capabilities, settings keys, surfaces. */
@@ -17,6 +19,9 @@ export interface PluginInfo {
   label: string
   /** Whether a vault that does not mention the plugin runs it. */
   default: boolean
+  /** The commit transforms its main side runs (`MainPlugin.transforms`), as
+   *  the settings tab switches them. */
+  transforms?: readonly TransformToggle[]
 }
 
 const PLUGIN_ID = /^[a-z][a-z0-9-]*$/

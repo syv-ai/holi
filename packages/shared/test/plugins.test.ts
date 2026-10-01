@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  CORE_TRANSFORMS,
   enabledPlugins,
   parseSettingsPatch,
   parseSettingsText,
@@ -43,8 +44,8 @@ describe('enabledPlugins', () => {
   it('refuses what is not a plugin id or a boolean, in a read and a write', () => {
     const text = 'plugins:\n  Bad_Id: true\n  reader: yes please\n'
     expect(resolveVaultSettings(text, null).plugins.vault).toEqual({})
-    expect(parseSettingsPatch(text).patch).toEqual({})
-    expect(parseSettingsPatch('plugins:\n  reader: false\n').patch).toEqual({
+    expect(parseSettingsPatch(text, CORE_TRANSFORMS).patch).toEqual({})
+    expect(parseSettingsPatch('plugins:\n  reader: false\n', CORE_TRANSFORMS).patch).toEqual({
       plugins: { reader: false },
     })
   })

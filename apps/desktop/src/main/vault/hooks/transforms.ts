@@ -2,29 +2,35 @@
  * The commit transforms, and the vault's say over which of them run.
  *
  * **This is not a hook framework** (the same argument that keeps vault apps free of a `manifest.json` layer).
- * A new transform gets added to this array; it does not get a plugin system.
+ * Core's transforms are this list; a plugin's are code in the build
+ * (`MainPlugin.transforms`), slotted in after `relink`, never a script a vault
+ * carries.
  */
 import { VAULT_SETTING_DEFAULTS, type SnapshotClaim } from '@holi/shared'
 import { readVaultSettings } from '../settings'
-import { archiveDone } from './archive-done'
 import { memoryIndex } from './memory-index'
 import { normalizeMd } from './normalize-md'
 import { scaffoldMd } from './scaffold-md'
 import { relink } from './relink'
 import type { HookSettings, Transform } from './runner'
 
-/** The transforms for a vault whose plugins claim `claims`: `scaffold-md`
+/** The transforms for a vault whose plugins claim `claims` and add
+ *  `plugins` (`MainPlugin.transforms`, core parts' first): `scaffold-md`
  *  leaves claimed files alone and `normalize-md` puts them in their claim's
  *  canonical form.
  *
- *  Order matters: `relink` runs before `archive-done` because both move links,
- *  and each should see a tree the other has finished with. `scaffold-md` goes
- *  before `normalize-md` so its block is tidied by the same pass. `memory-index`
- *  is **last** because it indexes the whole tree the others left behind. */
-export function vaultTransforms(claims: readonly SnapshotClaim[]): Transform[] {
+ *  Order matters: `relink` runs before the plugins' (`archive-done`) because
+ *  both move links, and each should see a tree the other has finished with.
+ *  `scaffold-md` goes before `normalize-md` so its block is tidied by the same
+ *  pass. `memory-index` is **last** because it indexes the whole tree the
+ *  others left behind. */
+export function vaultTransforms(
+  claims: readonly SnapshotClaim[],
+  plugins: readonly Transform[],
+): Transform[] {
   return [
     { name: 'relink', run: relink },
-    { name: 'archive-done', run: (root, staged) => archiveDone(root, staged) },
+    ...plugins,
     { name: 'scaffold-md', run: (root, staged) => scaffoldMd(root, staged, claims) },
     { name: 'normalize-md', run: (root, staged) => normalizeMd(root, staged, claims) },
     { name: 'memory-index', run: memoryIndex },

@@ -30,22 +30,75 @@ import { vaultRelPath } from './path-safety'
 import { isSurfaceName } from './surfaces'
 import { isPluginId, type PluginSettings } from './plugins'
 
-/** The pre-commit transforms a vault can enable. Kebab, matching the
- *  transform names themselves, so there is no mapping table between them. */
-export type TransformName =
-  'relink' | 'archive-done' | 'normalize-md' | 'scaffold-md' | 'memory-index'
+/** A pre-commit transform's name: kebab-case, and the key it is switched by
+ *  in `hooks`, so there is no mapping table between them. Core's are
+ *  `CORE_TRANSFORMS`; a plugin adds its own (`PluginInfo.transforms`). */
+export type TransformName = string
 
-export const TRANSFORM_NAMES: readonly TransformName[] = [
-  'relink',
-  'archive-done',
-  'normalize-md',
-  'scaffold-md',
-  'memory-index',
+/** How a transform is switched in the settings tab, and its default. */
+export interface TransformToggle {
+  name: TransformName
+  label: string
+  explanation: string
+  default: boolean
+}
+
+/** Core's transforms, in the order the settings tab lists them. `archive-done`
+ *  is the tasks core part's, listed here until tasks is a plugin. */
+export const CORE_TRANSFORMS: readonly TransformToggle[] = [
+  {
+    name: 'relink',
+    label: 'Fix links when a file moves',
+    explanation: 'Rewrites the links pointing at it, so nothing breaks.',
+    default: true,
+  },
+  {
+    name: 'normalize-md',
+    label: 'Tidy markdown',
+    explanation: 'Trailing spaces and stray blank lines, quietly cleaned.',
+    default: true,
+  },
+  {
+    name: 'scaffold-md',
+    label: 'Give a new note its frontmatter',
+    explanation: 'A created date and empty tags, however the note arrived.',
+    default: true,
+  },
+  {
+    name: 'memory-index',
+    label: 'Keep the memory index current',
+    explanation: 'Rebuilds memory/index.md so what the vault knows stays listed in one place.',
+    default: true,
+  },
+  {
+    // Off: a transform that rearranges someone's work is opt-in.
+    name: 'archive-done',
+    label: 'File finished tasks away',
+    explanation: 'Off by default. It moves files, which changes what your board shows.',
+    default: false,
+  },
 ]
 
-/** Fully populated: the resolver answers for every transform, so nothing
- *  downstream re-applies a default. */
+const TRANSFORM_NAME = /^[a-z][a-z0-9-]*$/
+
+/** Could `value` name a transform? A name no transform in this build has is
+ *  kept in the file and ignored, so a vault can carry a plugin's switch on a
+ *  machine without that plugin. */
+export const isTransformName = (value: string): boolean => TRANSFORM_NAME.test(value)
+
+/** Answers for every core transform, and whatever other names the files
+ *  switch. A plugin transform the files do not name runs as its own default
+ *  says (`transformDefaults`). */
 export type VaultHooks = Record<TransformName, boolean>
+
+/** Each toggle's default, by name. */
+export const transformDefaults = (toggles: readonly TransformToggle[]): VaultHooks =>
+  Object.fromEntries(toggles.map((t) => [t.name, t.default]))
+
+/** The transforms this build knows: core's, then each installed plugin's. */
+export const knownTransforms = (
+  plugins: readonly { transforms?: readonly TransformToggle[] }[],
+): TransformToggle[] => [...CORE_TRANSFORMS, ...plugins.flatMap((p) => p.transforms ?? [])]
 
 /** What the app's appearance follows. `system` tracks `prefers-color-scheme`. */
 export type ColorScheme = 'dark' | 'light' | 'system'
@@ -448,42 +501,14 @@ export const VAULT_SETTINGS: readonly VaultSetting[] = [
       kind: 'flags',
       // **Merged per flag across the two files, not wholesale**: a local file
       // naming one transform must not silently disable the others.
-      flags: [
-        {
-          key: 'relink',
-          label: 'Fix links when a file moves',
-          explanation: 'Rewrites the links pointing at it, so nothing breaks.',
-        },
-        {
-          key: 'normalize-md',
-          label: 'Tidy markdown',
-          explanation: 'Trailing spaces and stray blank lines, quietly cleaned.',
-        },
-        {
-          key: 'scaffold-md',
-          label: 'Give a new note its frontmatter',
-          explanation: 'A created date and empty tags, however the note arrived.',
-        },
-        {
-          key: 'memory-index',
-          label: 'Keep the memory index current',
-          explanation:
-            'Rebuilds memory/index.md so what the vault knows stays listed in one place.',
-        },
-        {
-          key: 'archive-done',
-          label: 'File finished tasks away',
-          explanation: 'Off by default. It moves files, which changes what your board shows.',
-        },
-      ],
+      // Core's; `vaultSettingDescriptors` adds the installed plugins'.
+      flags: CORE_TRANSFORMS.map(({ name, label, explanation }) => ({
+        key: name,
+        label,
+        explanation,
+      })),
     },
-    default: {
-      relink: true,
-      'archive-done': false,
-      'normalize-md': true,
-      'scaffold-md': true,
-      'memory-index': true,
-    } as VaultHooks,
+    default: transformDefaults(CORE_TRANSFORMS),
     target: 'committed',
     askedAtBirth: true,
     whereToChange: SETTINGS_FILE_HINT,
@@ -689,7 +714,6 @@ function mergeFlags(
   const type = setting.type
   if (type.kind !== 'flags') return {}
   const out: Record<string, boolean> = { ...(setting.default as Record<string, boolean>) }
-  const names = type.flags.map((f) => f.key as string)
   for (const file of files) {
     if (!(setting.key in file)) continue
     const block = file[setting.key]
@@ -697,9 +721,11 @@ function mergeFlags(
       warnings.push(`dropped "${setting.key}": expected an object, got ${JSON.stringify(block)}`)
       continue
     }
+    // A name no transform here has is kept: it may be a plugin's this build
+    // does not have, and the runner ignores it.
     for (const [name, value] of Object.entries(block as Record<string, unknown>)) {
-      if (!names.includes(name)) {
-        warnings.push(`dropped unknown transform "${name}"`)
+      if (!isTransformName(name)) {
+        warnings.push(`dropped "${setting.key}.${name}": not a transform name`)
       } else if (typeof value !== 'boolean') {
         warnings.push(
           `dropped "${setting.key}.${name}": expected true or false, got ${JSON.stringify(value)}`,
@@ -767,6 +793,32 @@ export const RITUAL_SETTING_DESCRIPTORS: readonly VaultSettingDescriptor[] =
   VAULT_SETTING_DESCRIPTORS.filter((d) => d.askedAtBirth)
 
 /**
+ * The descriptors with `known` as the transforms the `hooks` row switches:
+ * what the settings tab and the onboarding act render, given the plugins
+ * this build has (`knownTransforms`).
+ */
+export function vaultSettingDescriptors(
+  known: readonly TransformToggle[],
+): VaultSettingDescriptor[] {
+  return VAULT_SETTING_DESCRIPTORS.map((d) =>
+    d.control.kind !== 'group'
+      ? d
+      : {
+          ...d,
+          control: {
+            kind: 'group',
+            toggles: known.map(({ name, label, explanation }) => ({
+              key: name,
+              label,
+              explanation,
+            })),
+          },
+          default: transformDefaults(known),
+        },
+  )
+}
+
+/**
  * The settings a freshly created vault is born with, for one of the two files.
  *
  * Built from the descriptors rather than hand-written, so the file a vault is
@@ -798,7 +850,12 @@ export function seedSettings(target: SettingTarget): Record<string, unknown> {
  * arbitrary data into a committed, synced file. Existing siblings survive
  * because the caller merges the patch into the file it read.
  */
-export function parseSettingsPatch(json: string | null): {
+export function parseSettingsPatch(
+  json: string | null,
+  /** The transforms this build has (`knownTransforms`): a write may switch
+   *  only those, though a read keeps any name it finds. */
+  known: readonly TransformToggle[],
+): {
   patch: Record<string, unknown>
   warnings: string[]
 } {
@@ -814,14 +871,14 @@ export function parseSettingsPatch(json: string | null): {
       // Validated flag by flag, like the read, but NOT merged with anything: a
       // patch says only what it was told, and the caller merges it into the
       // file it read.
-      const names = setting.type.flags.map((f) => f.key as string)
       if (typeof value !== 'object' || value === null || Array.isArray(value)) {
         warnings.push(`refused "${setting.key}": ${JSON.stringify(value)}`)
         continue
       }
       const block: Record<string, boolean> = {}
       for (const [name, flag] of Object.entries(value as Record<string, unknown>)) {
-        if (!names.includes(name)) warnings.push(`refused unknown transform "${name}"`)
+        if (!known.some((t) => t.name === name))
+          warnings.push(`refused unknown transform "${name}"`)
         else if (typeof flag !== 'boolean')
           warnings.push(`refused "${setting.key}.${name}": ${JSON.stringify(flag)}`)
         else block[name] = flag

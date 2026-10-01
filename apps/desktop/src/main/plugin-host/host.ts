@@ -11,7 +11,7 @@
  *
  * No `electron` import: this loads under plain Node in the tests.
  */
-import { enabledPlugins, type ResolvedVaultSettings } from '@holi/shared'
+import { CORE_TRANSFORMS, enabledPlugins, type ResolvedVaultSettings } from '@holi/shared'
 import type { AppDoor, AppDoorOpener } from '../capabilities/dispatch'
 import type { CapabilityRegistry } from '../capabilities/registry'
 import type {
@@ -26,6 +26,7 @@ import type {
 } from '../plugin-api'
 import type { ActiveVault } from '../vault/active-vault'
 import type { ScanClaim } from '../vault/vault-store'
+import type { Transform } from '../vault/hooks/runner'
 import { pluginEvents, type PluginEventsDeps } from './events'
 import { ensureSeeded, withoutOwned } from '../vault/seed/seed'
 import type { SeedContribution, SeedResult } from '../vault/seed/types'
@@ -70,6 +71,9 @@ export interface PluginHost {
   /** What the scanner claims in the vault at `root`: core parts' claims,
    *  then its enabled plugins'. Cached for the open vault, like `enabled`. */
   scanClaimsFor(root: string): Promise<ScanClaim[]>
+  /** The commit transforms of the core parts and the plugins the vault at
+   *  `root` runs, each with its default from its toggle. */
+  transformsFor(root: string): Promise<(Transform & { default: boolean })[]>
   /** Seed the vault at `root`: core's contributions and its enabled plugins'. */
   seed(root: string): Promise<SeedResult>
   /** Every contribution that seeds the vault at `root`, for `holi skills update`. */
@@ -296,6 +300,17 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
 
   return {
     enabled,
+
+    transformsFor: async (root) =>
+      running(await enabled(root)).flatMap((p) =>
+        (p.transforms ?? []).map((t) => ({
+          ...t,
+          // A core part's toggle is in core's list until it is a plugin.
+          default:
+            [...(p.info.transforms ?? []), ...CORE_TRANSFORMS].find((x) => x.name === t.name)
+              ?.default ?? false,
+        })),
+      ),
 
     scanClaimsFor: async (root) =>
       running(await enabled(root)).flatMap((p) =>

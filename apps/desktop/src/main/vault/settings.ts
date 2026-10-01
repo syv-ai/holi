@@ -10,13 +10,12 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import {
-  TRANSFORM_NAMES,
+  isTransformName,
   parseSettingsText,
   resolveVaultSettings,
   writeSettingsText,
   type SettingTarget,
   type ResolvedVaultSettings,
-  type TransformName,
   SETTINGS_FILE,
   SETTINGS_LOCAL_FILE,
 } from '@holi/shared'
@@ -71,12 +70,12 @@ async function mergeInto(
   // Per transform, so a patch answering one does not silently disable the rest.
   if (patch.hooks !== undefined) {
     const before = existing.hooks
-    const merged: Partial<Record<TransformName, boolean>> = {}
+    const merged: Record<string, boolean> = {}
     for (const source of [before, patch.hooks]) {
       if (typeof source !== 'object' || source === null || Array.isArray(source)) continue
       for (const [name, value] of Object.entries(source as Record<string, unknown>)) {
-        if (TRANSFORM_NAMES.includes(name as TransformName) && typeof value === 'boolean') {
-          merged[name as TransformName] = value
+        if (isTransformName(name) && typeof value === 'boolean') {
+          merged[name] = value
         }
       }
     }

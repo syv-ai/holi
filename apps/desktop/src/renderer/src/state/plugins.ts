@@ -11,7 +11,12 @@
  * which state does not import.
  */
 import { atom, type createStore } from 'jotai'
-import { enabledPlugins, VAULT_SETTING_DEFAULTS } from '@holi/shared'
+import {
+  enabledPlugins,
+  knownTransforms,
+  vaultSettingDescriptors,
+  VAULT_SETTING_DEFAULTS,
+} from '@holi/shared'
 import { folderClaims, surfaceLabel, type FolderDocumentClaim } from '@/lib/folder-documents'
 import type {
   AgentServiceSource,
@@ -29,6 +34,13 @@ import { vaultSettingsAtom } from './settings'
 import { activeRemoteAtom } from './vaults'
 
 export const installedPluginsAtom = atom<readonly RendererPlugin[]>([])
+
+/** The settings rows, with the commit transforms of core and of every
+ *  installed plugin in the `hooks` row: what the settings tab and the
+ *  onboarding act render. */
+export const settingDescriptorsAtom = atom((get) =>
+  vaultSettingDescriptors(knownTransforms(get(installedPluginsAtom).map((p) => p.info))),
+)
 
 /** What core contributes the way a plugin does: its own surfaces, rail items
  *  and claims. Always on. */

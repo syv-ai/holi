@@ -59,7 +59,11 @@ async function vault(settings: Record<string, boolean> = {}): Promise<string> {
   resetBreaker()
   const server = createBridgeServer({ log: () => {} })
   // One vault in these; the server routes by the caller's token.
-  registerGitRoutes(server, { rootFor: async () => dir, claims: async () => [taskClaim] })
+  registerGitRoutes(server, {
+    rootFor: async () => dir,
+    claims: async () => [taskClaim],
+    transforms: async () => [],
+  })
   servers.push(server)
   await server.start()
 

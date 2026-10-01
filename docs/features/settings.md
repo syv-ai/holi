@@ -6,21 +6,21 @@ A vault's settings are two YAML files it carries itself: `.holi/settings/app.yam
 
 **One declaration.** `VAULT_SETTINGS` in `@holi/shared` declares every setting once: key, label, explanation, type, default, target file, whether the ritual asks it, and which tab section shows it. The defaults, the reader, the write validator, the settings rows and the generated file are all derived from it. A setting's type carries both validation and the control's options, so a control cannot offer a value the validator refuses.
 
-| Key                            | File      | Asked at birth | Default                      |
-| ------------------------------ | --------- | -------------- | ---------------------------- |
-| `dailyNotes`                   | committed | yes            | `true`                       |
-| `home`                         | committed | yes            | `recents`                    |
-| `hooks` (five transform flags) | committed | yes            | all on except `archive-done` |
-| `maxCommittedFileBytes`        | committed | no             | 10 MB                        |
-| `colorScheme`                  | local     | yes            | `system`                     |
-| `editorFont`                   | committed | no             | `serif`                      |
-| `plugins` (id to on or off)    | both      | no             | each plugin's own            |
+| Key                                   | File      | Asked at birth | Default                      |
+| ------------------------------------- | --------- | -------------- | ---------------------------- |
+| `dailyNotes`                          | committed | yes            | `true`                       |
+| `home`                                | committed | yes            | `recents`                    |
+| `hooks` (a flag per commit transform) | committed | yes            | all on except `archive-done` |
+| `maxCommittedFileBytes`               | committed | no             | 10 MB                        |
+| `colorScheme`                         | local     | yes            | `system`                     |
+| `editorFont`                          | committed | no             | `serif`                      |
+| `plugins` (id to on or off)           | both      | no             | each plugin's own            |
 
 `home` is Home: what the nav's Home and "Go home" go to, and what the vault opens on. One string: `recents` (what was opened recently, the default), `daily` (today's note, offered while `dailyNotes` is on), a view's name (a bare name with no slash or dot: `board`, `agenda`, `mail`, or any `homeable` surface a plugin adds), or any app or file by its vault path. The recents and a finished folder document (an app) are shown in the Home tab; anything else opens as itself. A target that is not there (a deleted file or app, `daily` with `dailyNotes` off, a view whose plugin is off or that cannot be Home) opens the Home tab saying so. The row offers the fixed choices, the views that can be Home in this vault, and the vault's shared apps (the folder documents' surfaces' instances), plus the current value when it is none of them; a personal `.local.` app is not offered, since the row writes the committed file. A personal Home is `home:` in `app.local.yaml`.
 
 `plugins` says which plugins the vault runs. The committed file declares them, and the local file can only turn one off on this machine: a local `true` is dropped with a warning. A plugin the vault does not mention runs as its own default says. `enabledPlugins` resolves the set, in main and in the renderer alike. The committed file lists every plugin this build has, an unanswered one commented with its default; the local file shows the block only when it answers one. Unknown ids are kept and ignored. The settings tab shows a switch per installed plugin under General, which writes the committed file, and notes when this machine has a plugin off. A write that turns one on seeds its files and starts it at once; a hand edit is in force for the plugin's capabilities at once, and seeds and starts it at the vault's next open ([architecture](../architecture.md#plugins)).
 
-**Reading.** `resolveVaultSettings` parses both files, applies the local one per key (the `hooks` block per flag, `plugins` as above), validates every field, and answers the default for anything absent or malformed with a warning. It never throws. It builds a fresh narrow value per key and never returns what it parsed. Unknown top-level keys are ignored without a warning, because the reminder watermark lives in the local file.
+**Reading.** `resolveVaultSettings` parses both files, applies the local one per key (the `hooks` block per flag, `plugins` as above), validates every field, and answers the default for anything absent or malformed with a warning. In `hooks` a name no transform in this build has is kept and ignored, so a vault can switch a plugin's transform on a machine without that plugin; a write may switch only the known ones (core's `CORE_TRANSFORMS` and each installed plugin's `PluginInfo.transforms`), which is also the list the Commits row and the onboarding act show. It never throws. It builds a fresh narrow value per key and never returns what it parsed. Unknown top-level keys are ignored without a warning, because the reminder watermark lives in the local file.
 
 **Writing.** `settings.write` takes JSON strings and runs them through `parseSettingsPatch`, the same validator a teammate's committed file meets, so a write cannot add a key Holi does not own. Each file is merged and replaced with one atomic rename. `writeSettingsText` regenerates the whole document every time: a header saying which file this is, then every setting with its explanation and legal values above it. An unanswered setting is a commented-out line showing its default, so the default can still improve later. Unknown keys are kept under a trailing heading.
 

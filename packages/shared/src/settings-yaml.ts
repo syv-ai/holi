@@ -20,6 +20,8 @@ import type { PluginInfo } from './plugins'
 import {
   SETTINGS_FILE,
   SETTINGS_LOCAL_FILE,
+  knownTransforms,
+  transformDefaults,
   VAULT_SETTINGS,
   type SettingTarget,
   type SettingType,
@@ -174,7 +176,10 @@ export function writeSettingsText(
       for (const line of wrap(hint, 72)) lines.push(`#   ${line}`)
     }
     const has = Object.prototype.hasOwnProperty.call(values, setting.key)
-    const value = has ? values[setting.key] : setting.default
+    // The transforms' defaults include the installed plugins'.
+    const fallback =
+      setting.type.kind === 'flags' ? transformDefaults(knownTransforms(known)) : setting.default
+    const value = has ? values[setting.key] : fallback
     const nested = block(value)
     // A commented line and a live one differ by the `# ` and nothing else, so
     // uncommenting is the whole edit, including for a nested block like `hooks`.

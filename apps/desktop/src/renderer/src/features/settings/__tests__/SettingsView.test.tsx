@@ -117,9 +117,9 @@ test('every setting renders, across the sections', async () => {
     const rail = screen.getByRole('navigation', { name: 'Settings sections' })
     const rows = screen.queryAllByRole('group').filter((r) => !rail.contains(r))
     expect(rows.map((r) => r.getAttribute('data-setting'))).toEqual(
-      descriptorsIn(section.id).map((d) => d.key),
+      descriptorsIn(VAULT_SETTING_DESCRIPTORS, section.id).map((d) => d.key),
     )
-    seen.push(...descriptorsIn(section.id).map((d) => d.key))
+    seen.push(...descriptorsIn(VAULT_SETTING_DESCRIPTORS, section.id).map((d) => d.key))
   }
   expect(new Set(seen)).toEqual(new Set(VAULT_SETTING_DESCRIPTORS.map((d) => d.key)))
 })

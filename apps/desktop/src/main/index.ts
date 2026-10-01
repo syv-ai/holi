@@ -355,7 +355,11 @@ async function main(): Promise<void> {
   const bridge = createBridgeServer({
     cli: { dispatch, commands: () => capabilities.commands() },
   })
-  registerGitRoutes(bridge, { rootFor, claims: (root) => plugins.scanClaimsFor(root) })
+  registerGitRoutes(bridge, {
+    rootFor,
+    claims: (root) => plugins.scanClaimsFor(root),
+    transforms: (root) => plugins.transformsFor(root),
+  })
   await bridge.start()
   const binDir = dirname(holiCliPath)
 

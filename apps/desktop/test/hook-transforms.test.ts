@@ -9,6 +9,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { TASKS_PART } from '../src/main/vault/task-capabilities'
 import {
   DEFAULT_HOOKS,
   vaultTransforms,
@@ -36,7 +37,7 @@ describe('the transform set', () => {
   it('is a short list in a fixed order, and this is not a hook framework', () => {
     // `scaffold-md` sits before `normalize-md` so the block it writes is tidied
     // by the same pass as everything else.
-    expect(vaultTransforms([]).map((t) => t.name)).toEqual([
+    expect(vaultTransforms([], TASKS_PART.transforms!).map((t) => t.name)).toEqual([
       'relink',
       'archive-done',
       'scaffold-md',
@@ -66,7 +67,7 @@ describe('the transform set', () => {
   it('keys the settings by the transform name, kebab and all', () => {
     // A camelCase settings key beside a kebab transform name is a mapping table
     // that exists only to be got wrong once.
-    for (const transform of vaultTransforms([])) {
+    for (const transform of vaultTransforms([], TASKS_PART.transforms!)) {
       expect(Object.keys(DEFAULT_HOOKS)).toContain(transform.name)
     }
   })
@@ -103,11 +104,12 @@ describe('readHookSettings', () => {
     expect(await readHookSettings(root)).toEqual(DEFAULT_HOOKS)
   })
 
-  it('ignores a key that is not a transform', async () => {
+  it('keeps a transform name this build does not have, which only switches a transform that exists', async () => {
+    // It may be a plugin's this machine does not run; the runner only runs
+    // transforms it was handed, so the name is inert here.
     await settings(JSON.stringify({ hooks: { 'rm-rf': true, relink: false } }))
     const result = await readHookSettings(root)
-    expect(result).toEqual({ ...DEFAULT_HOOKS, relink: false })
-    expect(Object.keys(result)).not.toContain('rm-rf')
+    expect(result).toEqual({ ...DEFAULT_HOOKS, relink: false, 'rm-rf': true })
   })
 
   it('ignores a hooks value that is not an object', async () => {

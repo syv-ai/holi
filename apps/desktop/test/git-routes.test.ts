@@ -28,7 +28,11 @@ afterEach(async () => {
 
 async function rig(rootFor: (remote: string) => Promise<string | null> = async () => null) {
   const server = createBridgeServer({ log: () => {} })
-  registerGitRoutes(server, { rootFor, claims: async () => [taskClaim] })
+  registerGitRoutes(server, {
+    rootFor,
+    claims: async () => [taskClaim],
+    transforms: async () => [],
+  })
   servers.push(server)
   await server.start()
   return {

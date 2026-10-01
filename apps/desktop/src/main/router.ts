@@ -52,7 +52,8 @@ import { renameNote } from './vault/rename'
 import { scanVault, type ScanClaim, type VaultSnapshot } from './vault/vault-store'
 import { readVaultTheme, resetVaultTheme, writeVaultTheme } from './vault/theme'
 import { readVaultSettings, writeVaultSettings } from './vault/settings'
-import { parseSettingsPatch } from '@holi/shared'
+import { knownTransforms, parseSettingsPatch } from '@holi/shared'
+import { installedInfos } from './plugin-host/installed'
 import type { ResolvedTheme, ResolvedVaultSettings } from '@holi/shared'
 import { isRemote, repoName, type VaultRegistry } from './vault/registry'
 
@@ -1400,8 +1401,9 @@ export function createRouter(deps: RouterDeps) {
     write: t.procedure
       .input(fields({ remote: 'string', committedJson: 'string?', localJson: 'string?' }))
       .mutation(async ({ input }) => {
-        const committed = parseSettingsPatch(input.committedJson ?? null)
-        const local = parseSettingsPatch(input.localJson ?? null)
+        const transforms = knownTransforms(installedInfos())
+        const committed = parseSettingsPatch(input.committedJson ?? null, transforms)
+        const local = parseSettingsPatch(input.localJson ?? null, transforms)
         const root = await rootFor(input.remote)
         await writeVaultSettings(root, { committed: committed.patch, local: local.patch })
         // A plugin just turned on gets its files and starts now, not at the
