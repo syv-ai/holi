@@ -26,16 +26,18 @@ name), "Agents" for the list, and "New session" for an unnamed session, whose ti
 terminal shows can change under it (`←` in an attached session goes back to the list, and Enter
 there attaches any session), so a terminal is never taken to be a session. When its client exits
 (a detach, `/exit`, its session stopped) the tab closes. An agent tab is the surface `agent`, kept mounted,
-with the terminal id as its id. The agent is still core, but it is registered the way a plugin is
-(`components/core-agent.tsx`): its tab, its nav item (which runs `agent.show`), its rows, orbs and
-turn review, the leave question, and the agent service every "Ask" will go through
-(`useAgentService`). Its main side attaches in `activateVault` and leaves in its disposer. The
+with the terminal id as its id. The agent is the plugin `agent` (`src/plugins/agent/`, on by
+default), and its renderer side (`renderer/index.tsx`) registers its tab (with `tabs`, so the strip,
+the palette and the recents read each terminal's label and status dot), its nav item (which runs
+`agent.show`), its commands (`agent.show` on ⌘J, `agent.new`), its rows, orbs and turn review, the
+palette's session rows, the leave question, and the agent service every "Ask" goes through
+(`useAgentService`). With the agent off there is no service, so no "Ask" is offered. Its main side attaches in `activateVault` and leaves in its disposer. The
 renderer reaches it through the `agent.*` capabilities (sessions, terminals, open, start, send,
 stop, respawn, duplicate, attach, detach, and the turn review's turns, turnFiles, turnDiff and
 revert). Main tells it the session and terminal lists and each terminal's bytes as the events
 `sessions`, `terminals`, `pty-data` and `pty-exit`; keystrokes and resizes go back as the events
 `pty-write` and `pty-resize`, which keep their order. A terminal's bytes go straight to its xterm
-(`lib/session-terminals.ts`), never through an atom. Its main side is the plugin `agent`
+(`renderer/lib/session-terminals.ts`), never through an atom. Its main side is the plugin `agent`
 (`src/plugins/agent/main/`), so in a vault with the agent off its capabilities are refused, its
 events are not sent and nothing under `.claude/` is seeded.
 
@@ -158,5 +160,6 @@ showing it busy, crosses it off), so a session resumed from the list is never re
 - `apps/desktop/src/main/bridge/env-file.ts`, `apps/desktop/src/plugins/agent/main/claude/vault/shipped/.claude/hooks/turn-signal.mjs`,
   `apps/desktop/src/plugins/agent/main/claude/seed.ts` (`STATUS_LINE`): how sessions find Holi
 - `apps/desktop/src/plugins/agent/main/host/turn-coordinator.ts`, `turn-log.ts`: working set and turn records
-- `apps/desktop/src/renderer/src/features/agent/`: rows, orbs, terminal, turn chip and review
-- `apps/desktop/src/renderer/src/state/agent.ts`, `agent-send.ts`: the lists, and what you do
+- `apps/desktop/src/plugins/agent/renderer/`: rows, orbs, terminal (`terminal.css`), turn chip and review; `index.tsx`: the
+  plugin's renderer side; `service.ts`: the agent service
+- `apps/desktop/src/plugins/agent/renderer/state/sessions.ts`, `send.ts`, `turns.ts`: the lists, what you do, and turn review

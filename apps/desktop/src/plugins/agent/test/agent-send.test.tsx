@@ -12,7 +12,7 @@ import {
   defaultAgentTargetAtom,
   type AgentSession,
   type AgentTerminal,
-} from '../agent'
+} from '../renderer/state/sessions'
 import {
   duplicateSessionAtom,
   openSessionAtom,
@@ -20,10 +20,14 @@ import {
   showAgentsAtom,
   startSessionAtom,
   stopSessionAtom,
-} from '../agent-send'
-import { activeTab, openSurface, workspaceAtom } from '../panes'
-import { registerSessionTerminal } from '../../lib/session-terminals'
-import { activeRemoteAtom } from '../vaults'
+} from '../renderer/state/send'
+import { registerSessionTerminal } from '../renderer/lib/session-terminals'
+import {
+  activeRemoteAtom,
+  activeSurfaceIdAtom,
+  openSurfaceAtom,
+  surfaceTabIdsAtom,
+} from '@/plugin-api'
 
 const session = (over: Partial<AgentSession> & { id: string }): AgentSession => ({
   name: 'New session',
@@ -43,7 +47,7 @@ const send = vi.fn()
 const stop = vi.fn()
 const duplicate = vi.fn()
 
-vi.mock('@/lib/agent-cap', () => ({
+vi.mock('../renderer/agent-cap', () => ({
   agentCap: {
     open: (_remote: string, args: unknown) => open(args),
     start: (_remote: string, args: unknown) => start(args),
@@ -72,10 +76,8 @@ function storeWith(sessions: AgentSession[] = [], terminals: AgentTerminal[] = [
 }
 
 /** The agent tab showing, if the showing tab is one at all. */
-const shown = (store: ReturnType<typeof createStore>): string | null => {
-  const tab = activeTab(store.get(workspaceAtom))
-  return tab?.kind === 'surface' && tab.surface === 'agent' ? (tab.id ?? null) : null
-}
+const shown = (store: ReturnType<typeof createStore>): string | null =>
+  store.get(activeSurfaceIdAtom('agent'))
 
 test('going to the agents opens the list when Holi has none open', async () => {
   const store = storeWith()
@@ -116,7 +118,7 @@ test('going to the agents twice leaves you where it put you', async () => {
   await store.set(showAgentsAtom)
 
   expect(shown(store)).toBe('t-list')
-  expect(store.get(workspaceAtom).panes[0]!.tabs).toHaveLength(1)
+  expect(store.get(surfaceTabIdsAtom('agent'))).toHaveLength(1)
 })
 
 test('opening a session reuses the window Holi opened for it', async () => {
@@ -201,19 +203,19 @@ test('the default target is the session the showing tab was opened for', () => {
     [session({ id: 'a' }), session({ id: 'b' })],
     [terminal('t-a', 'a'), terminal('t-b', 'b')],
   )
-  store.set(workspaceAtom, (w) => openSurface(w, 'agent', 't-a'))
+  store.set(openSurfaceAtom, 'agent', 't-a')
   expect(store.get(defaultAgentTargetAtom)).toBe('a')
 })
 
 test('the default target is a new session when there is none, or it needs you', () => {
   expect(storeWith().get(defaultAgentTargetAtom)).toBe('new')
   const waiting = storeWith([session({ id: 'a', state: 'needs-you' })], [terminal('t-a', 'a')])
-  waiting.set(workspaceAtom, (w) => openSurface(w, 'agent', 't-a'))
+  waiting.set(openSurfaceAtom, 'agent', 't-a')
   expect(waiting.get(defaultAgentTargetAtom)).toBe('new')
 })
 
 test('a list tab has no session of its own, so the default falls back to the last one opened', () => {
   const store = storeWith([session({ id: 'a' })], [terminal('t-a', 'a'), terminal('t-list', null)])
-  store.set(workspaceAtom, (w) => openSurface(w, 'agent', 't-list'))
+  store.set(openSurfaceAtom, 'agent', 't-list')
   expect(store.get(defaultAgentTargetAtom)).toBe('a')
 })

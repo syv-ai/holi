@@ -6,10 +6,9 @@ import { render, screen } from '@/test/render'
 import userEvent from '@testing-library/user-event'
 import { Provider, createStore } from 'jotai'
 import { beforeEach, expect, test, vi } from 'vitest'
-import { agentSessionsAtom, type AgentSession } from '@/state/agent'
-import { activeTab, workspaceAtom } from '@/state/panes'
-import { activeRemoteAtom } from '@/state/vaults'
-import { SessionOrbs } from '../SessionOrbs'
+import { agentSessionsAtom, type AgentSession } from '../renderer/state/sessions'
+import { activeRemoteAtom, activeSurfaceIdAtom } from '@/plugin-api'
+import { SessionOrbs } from '../renderer/SessionOrbs'
 
 const session = (over: Partial<AgentSession> & { id: string; name: string }): AgentSession => ({
   state: 'idle',
@@ -17,7 +16,7 @@ const session = (over: Partial<AgentSession> & { id: string; name: string }): Ag
 })
 
 const open = vi.fn()
-vi.mock('@/lib/agent-cap', () => ({
+vi.mock('../renderer/agent-cap', () => ({
   agentCap: { open: (_remote: string, args: unknown) => open(args) },
 }))
 
@@ -56,11 +55,5 @@ test('a press opens the session', async () => {
   const store = setup([session({ id: 'a', name: 'Refactor' })])
   await userEvent.setup().click(screen.getByRole('button', { name: /Refactor/ }))
   expect(open).toHaveBeenCalledWith({ attach: 'a', cols: 80, rows: 24 })
-  await vi.waitFor(() =>
-    expect(activeTab(store.get(workspaceAtom))).toEqual({
-      kind: 'surface',
-      surface: 'agent',
-      id: 't-a',
-    }),
-  )
+  await vi.waitFor(() => expect(store.get(activeSurfaceIdAtom('agent'))).toBe('t-a'))
 })

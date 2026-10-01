@@ -14,8 +14,9 @@ import { limitParam, noParams, paramsObject, pathParams, stringParam } from './p
 import { cap } from './registry'
 import { renderNote } from './render-note'
 
-/** Recents an app may see: things it can name or open, never the agent surface. */
-const APP_RECENT_KINDS: ReadonlySet<RecentEntry['kind']> = new Set(['path', 'surface', 'session'])
+/** Recents an app may see: things it can name or open. The renderer leaves
+ *  out the tabs `holi.open` cannot open (a terminal). */
+const APP_RECENT_KINDS: ReadonlySet<RecentEntry['kind']> = new Set(['path', 'surface'])
 
 /** The nav's words for the state, and the conflicting paths, which the nav's
  *  banner carries. */

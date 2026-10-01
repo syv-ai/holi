@@ -16,9 +16,6 @@ export function entryOfTab(tab: Tab): RecentEntry {
     case 'note':
       return { kind: 'path', key: tab.path }
     case 'surface':
-      // An agent tab is a terminal, whatever session it shows now
-      // (`AGENT_SURFACE`, spelled here: lib does not reach into state).
-      if (tab.surface === 'agent' && tab.id !== undefined) return { kind: 'terminal', key: tab.id }
       return tab.id === undefined
         ? { kind: 'surface', key: tab.surface }
         : { kind: 'surface', key: tab.surface, id: tab.id }

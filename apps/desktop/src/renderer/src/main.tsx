@@ -4,14 +4,8 @@ import { createRoot } from 'react-dom/client'
 import { App } from './App'
 import { TooltipProvider } from './primitives'
 import { flushAllBuffers } from './lib/buffer-registry'
-import { CORE_AGENT } from './components/core-agent'
 import { CORE_CONTRIBUTION } from './components/core-surfaces'
-import {
-  coreContributionAtom,
-  corePluginsAtom,
-  hostPluginVaults,
-  installedPluginsAtom,
-} from './state/plugins'
+import { coreContributionAtom, hostPluginVaults, installedPluginsAtom } from './state/plugins'
 import { reportUiToMain } from './state/ui-report'
 import { subscribeToVault } from './state/vaults'
 import { RENDERER_PLUGINS } from '../../plugins/renderer'
@@ -22,11 +16,10 @@ import './index.css'
  *  stale. */
 const store = createStore()
 // The plugins this build has: the one place the renderer imports them. Core's
-// own surfaces, and the agent while it is still core, go in beside them.
+// own surfaces go in beside them.
 store.set(installedPluginsAtom, RENDERER_PLUGINS)
 store.set(coreContributionAtom, CORE_CONTRIBUTION)
-store.set(corePluginsAtom, [CORE_AGENT])
-subscribeToVault(store, [...RENDERER_PLUGINS, CORE_AGENT])
+subscribeToVault(store, RENDERER_PLUGINS)
 hostPluginVaults(store)
 reportUiToMain(store)
 

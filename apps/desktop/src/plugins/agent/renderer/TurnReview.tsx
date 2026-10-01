@@ -14,8 +14,7 @@ import { useAtomValue, useSetAtom } from 'jotai'
 import { useEffect, useState } from 'react'
 import { DiffView, DrawerShell, DrawerTitle } from '@/composites'
 import { Button } from '@/primitives'
-import { cn } from '@/lib/cn'
-import { useAck } from '@/lib/use-ack'
+import { cn, useAck } from '@/plugin-api'
 import {
   reviewTurnAtom,
   loadTurnDiffAtom,
@@ -26,7 +25,7 @@ import {
   turnFilesAtom,
   turnReviewOpenAtom,
   type TurnFile,
-} from '@/state/turns'
+} from './state/turns'
 
 /** `at` is an ISO string, not a Date: no superjson transformer on the ipcLink. */
 const when = (iso: string) =>

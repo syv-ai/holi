@@ -1,7 +1,7 @@
 /**
  * Recents: the pure rules, and the per-vault atoms over them.
  */
-import { createStore } from 'jotai'
+import { atom, createStore } from 'jotai'
 import { describe, expect, it } from 'vitest'
 import { prune, touch, type RecentEntry } from '../src/renderer/src/lib/recents'
 import {
@@ -10,6 +10,7 @@ import {
   recentsByVaultAtom,
   touchRecentAtom,
 } from '../src/renderer/src/state/recents'
+import { coreContributionAtom } from '../src/renderer/src/state/plugins'
 import { activeRemoteAtom, snapshotAtom } from '../src/renderer/src/state/vaults'
 import { emptyVaultSnapshot } from '@holi/shared'
 
@@ -79,11 +80,25 @@ describe('the per-vault atoms', () => {
 })
 
 describe('pruning on write', () => {
-  it('drops a dead session and a vanished path once the vault is scanned', () => {
+  it('drops a closed listed tab and a vanished path once the vault is scanned', () => {
     const store = createStore()
     store.set(activeRemoteAtom, 'o/a')
+    // A surface that lists its tabs, with none open now.
+    store.set(coreContributionAtom, {
+      surfaces: [
+        {
+          kind: 'term',
+          label: 'Term',
+          icon: (() => null) as never,
+          render: () => null,
+          tabs: atom([]),
+        },
+      ],
+      rail: [],
+      claims: [],
+    })
     store.set(recentsByVaultAtom, {
-      'o/a': [{ kind: 'session', key: 'gone' }, path('renamed.md'), path('kept.md')],
+      'o/a': [{ kind: 'surface', key: 'term', id: 'gone' }, path('renamed.md'), path('kept.md')],
     })
     store.set(snapshotAtom, {
       ...emptyVaultSnapshot(),
@@ -113,10 +128,6 @@ describe('recentOfTab', () => {
       kind: 'surface',
       key: 'app',
       id: 'plan.app',
-    })
-    expect(recentOfTab({ kind: 'surface', surface: 'agent', id: 't1' })).toEqual({
-      kind: 'terminal',
-      key: 't1',
     })
     expect(recentOfTab({ kind: 'surface', surface: 'board' })).toEqual({
       kind: 'surface',

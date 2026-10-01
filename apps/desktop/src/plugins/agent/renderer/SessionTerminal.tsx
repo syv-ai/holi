@@ -12,13 +12,13 @@ import { FitAddon } from '@xterm/addon-fit'
 import { WebglAddon } from '@xterm/addon-webgl'
 import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
+import './terminal.css'
 import { useAtomValue } from 'jotai'
 import { useCallback, useEffect, useRef } from 'react'
-import { agentCap } from '@/lib/agent-cap'
-import { cn } from '@/lib/cn'
-import { terminalKeyAction } from '@/lib/agent-terminal-keys'
-import { registerSessionTerminal, resizeTerminal, typeIntoTerminal } from '@/lib/session-terminals'
-import { activeRemoteAtom } from '@/state/vaults'
+import { agentCap } from './agent-cap'
+import { terminalKeyAction } from './lib/terminal-keys'
+import { registerSessionTerminal, resizeTerminal, typeIntoTerminal } from './lib/session-terminals'
+import { activeRemoteAtom, cn } from '@/plugin-api'
 
 /** Claude Code is an Ink TUI: it draws its own cursor, so xterm's would blink a
  * second one at the buffer end. Ink's init re-enables it (`\x1b[?25h`), hence

@@ -10,22 +10,22 @@ import { render, screen, waitFor, within } from '@/test/render'
 import userEvent from '@testing-library/user-event'
 import { Provider, createStore } from 'jotai'
 import { beforeEach, expect, test, vi } from 'vitest'
-import { TurnReview } from '../TurnReview'
+import { TurnReview } from '../renderer/TurnReview'
 import {
   reviewTurnAtom,
   turnFilesAtom,
   turnReviewOpenAtom,
   type Turn,
   type TurnFile,
-} from '@/state/turns'
-import { activeRemoteAtom } from '@/state/vaults'
+} from '../renderer/state/turns'
+import { activeRemoteAtom } from '@/plugin-api'
 
 const files = vi.fn()
 const fileDiff = vi.fn()
 const revert = vi.fn()
 const list = vi.fn()
 
-vi.mock('@/lib/agent-cap', () => ({
+vi.mock('../renderer/agent-cap', () => ({
   agentCap: {
     turns: () => list(),
     turnFiles: (_remote: string, i: unknown) => files(i),

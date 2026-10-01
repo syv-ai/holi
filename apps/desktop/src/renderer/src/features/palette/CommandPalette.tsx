@@ -33,10 +33,9 @@
  * starting a session when there is none.
  */
 import { useAtomValue, useSetAtom, useStore } from 'jotai'
-import { Bot, Sparkles } from 'lucide-react'
+import { Sparkles } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { fileIconFor } from '@/composites/file-icons'
-import { agentIndicator } from '@/lib/agent-notices'
 import { cn } from '@/lib/cn'
 import {
   bodyRows,
@@ -62,8 +61,6 @@ import {
   Icon,
   Kbd,
 } from '@/primitives'
-import { AGENT_SURFACE, agentSessionsAtom, agentTerminalsAtom, terminalLabel } from '@/state/agent'
-import { openSessionAtom } from '@/state/agent-send'
 import { useAgentService } from '@/state/agent-service'
 import { commandsAtom, runCommandAtom, type Command } from '@/state/commands'
 import {
@@ -82,19 +79,23 @@ import {
   workspaceAtom,
   type Tab,
 } from '@/state/panes'
-import { instancesAtom, surfacesAtom } from '@/state/plugins'
+import {
+  instancesAtom,
+  openPaletteItemAtom,
+  paletteItemsAtom,
+  surfaceTabLooksAtom,
+  surfacesAtom,
+} from '@/state/plugins'
 import { recentsAtom } from '@/state/recents'
 import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
 
-/** The tab a row opens as, for the "beside" gesture. Null for a session: it
- *  opens through a terminal main has to start (`openSessionAtom`). */
+/** The tab a row opens as, for the "beside" gesture. Null for a plugin's
+ *  item: its plugin opens it (`openPaletteItemAtom`). */
 function tabOf(row: PaletteRow): Tab | null {
   switch (row.kind) {
     case 'path':
       return { kind: 'note', path: row.key }
-    case 'terminal':
-      return { kind: 'surface', surface: AGENT_SURFACE, id: row.key }
-    case 'session':
+    case 'item':
       return null
     case 'surface':
       return row.id === undefined
@@ -155,14 +156,14 @@ export function CommandPalette(): React.JSX.Element {
   const remote = useAtomValue(activeRemoteAtom)
   const surfaces = useAtomValue(surfacesAtom)
   const instances = useAtomValue(instancesAtom)
-  const sessions = useAtomValue(agentSessionsAtom)
-  const terminals = useAtomValue(agentTerminalsAtom)
+  const items = useAtomValue(paletteItemsAtom)
+  const looks = useAtomValue(surfaceTabLooksAtom)
   const recents = useAtomValue(recentsAtom)
   const commands = useAtomValue(commandsAtom)
   const workspace = useAtomValue(workspaceAtom)
   const run = useSetAtom(runCommandAtom)
   const setWorkspace = useSetAtom(workspaceAtom)
-  const openSession = useSetAtom(openSessionAtom)
+  const openItem = useSetAtom(openPaletteItemAtom)
   /** The Ask row is offered only while a plugin provides an agent. */
   const agent = useAgentService()
 
@@ -170,8 +171,10 @@ export function CommandPalette(): React.JSX.Element {
     () =>
       buildRows({
         snapshot,
-        sessions,
-        terminals: terminals.map((t) => ({ id: t.id, label: terminalLabel(t, sessions) })),
+        items,
+        tabs: [...looks].flatMap(([surface, byId]) =>
+          [...byId.values()].map((look) => ({ surface, id: look.id, label: look.label })),
+        ),
         // Home has no row: "Go home" is the command, and Home is where it says.
         // A surface of instances (apps) is listed by them, not as itself.
         surfaces: [...surfaces.values()]
@@ -179,7 +182,7 @@ export function CommandPalette(): React.JSX.Element {
           .map((s) => ({ kind: s.kind, label: surfaceLabel(s) })),
         instances,
       }),
-    [snapshot, sessions, terminals, surfaces, instances],
+    [snapshot, items, looks, surfaces, instances],
   )
   const tabsMode = state.mode === 'tabs'
   const query = state.query
@@ -274,10 +277,10 @@ export function CommandPalette(): React.JSX.Element {
   const chooseRow = (row: PaletteRow): void => {
     const openBesideIt = beside.current
     beside.current = false
-    keepFocus.current = row.kind === 'session' || row.kind === 'terminal'
+    keepFocus.current = row.focuses === true
     close()
-    if (row.kind === 'session') {
-      void openSession(row.key)
+    if (row.kind === 'item') {
+      openItem({ plugin: row.id!, key: row.key })
       return
     }
     setWorkspace((w) => {
@@ -289,10 +292,8 @@ export function CommandPalette(): React.JSX.Element {
       switch (row.kind) {
         case 'path':
           return openPinned(w, row.key)
-        case 'terminal':
-          return openSurface(w, AGENT_SURFACE, row.key)
-        case 'session':
-          return w // opened above, through main
+        case 'item':
+          return w // opened above, by its plugin
         case 'surface':
           return openSurface(w, row.key, row.id)
       }
@@ -312,12 +313,6 @@ export function CommandPalette(): React.JSX.Element {
     keepFocus.current = true
     close()
     void agent.ask({ text, target: store.get(agent.targets).default })
-  }
-
-  /** The sidebar's orb for a session row, from the same rule the rows use. */
-  const orbFor = (id: string): string => {
-    const session = sessions.find((s) => s.id === id)
-    return session === undefined ? 'bg-muted-foreground' : agentIndicator(session).dot
   }
 
   const showAsk = agent !== null && cmdQuery === null && !tabsMode && query.trim() !== ''
@@ -361,15 +356,13 @@ export function CommandPalette(): React.JSX.Element {
                 heading={grouped ? 'Recently opened' : undefined}
                 rows={ranked.filter((r) => grouped && r.recent)}
                 onChoose={chooseRow}
-                orbFor={orbFor}
               />
               <RowGroup
                 heading={grouped ? 'Recently modified' : undefined}
                 rows={ranked.filter((r) => !(grouped && r.recent))}
                 onChoose={chooseRow}
-                orbFor={orbFor}
               />
-              <RowGroup heading="In text" rows={textRows} onChoose={chooseRow} orbFor={orbFor} />
+              <RowGroup heading="In text" rows={textRows} onChoose={chooseRow} />
               {showAsk && (
                 <CommandGroup>
                   <CommandItem value={`ask:${query}`} onSelect={ask}>
@@ -407,11 +400,11 @@ const untypedCommand = (cmdQuery: string): boolean => cmdQuery.trim() === ''
 
 /**
  * A row's icon, in the colours the tree uses: a path gets its type glyph (or
- * the vault's emoji for it), a session its status orb, an app the app glyph,
- * a surface its own. The tree's tint is the muted foreground, which the item
+ * the vault's emoji for it), a plugin's item its dot (a session's state), a
+ * surface its own. The tree's tint is the muted foreground, which the item
  * already gives an untinted svg.
  */
-function RowIconView({ row, orb }: { row: PaletteRow; orb?: string }): React.JSX.Element | null {
+function RowIconView({ row }: { row: PaletteRow }): React.JSX.Element | null {
   const surfaces = useAtomValue(surfacesAtom)
   switch (row.kind) {
     case 'path':
@@ -420,14 +413,15 @@ function RowIconView({ row, orb }: { row: PaletteRow; orb?: string }): React.JSX
           {fileIconFor(row.key, 'emoji' in row.icon ? row.icon.emoji : undefined)}
         </span>
       )
-    case 'session':
+    case 'item':
       return (
         <span className="flex w-4 shrink-0 justify-center">
-          <span aria-hidden="true" className={cn('h-2 w-2 rounded-full', orb)} />
+          <span
+            aria-hidden="true"
+            className={cn('h-2 w-2 rounded-full', 'dot' in row.icon ? row.icon.dot : undefined)}
+          />
         </span>
       )
-    case 'terminal':
-      return <Icon icon={Bot} />
     case 'surface': {
       const surface = surfaces.get(row.key)
       return surface === undefined ? null : <Icon icon={surface.icon} />
@@ -439,12 +433,10 @@ function RowGroup({
   heading,
   rows,
   onChoose,
-  orbFor,
 }: {
   heading: string | undefined
   rows: RankedRow[]
   onChoose: (row: PaletteRow) => void
-  orbFor: (sessionId: string) => string
 }): React.JSX.Element | null {
   if (rows.length === 0) return null
   return (
@@ -456,7 +448,7 @@ function RowGroup({
           onSelect={() => onChoose(row)}
           className={cn(row.dim && 'opacity-60')}
         >
-          <RowIconView row={row} orb={row.kind === 'session' ? orbFor(row.key) : undefined} />
+          <RowIconView row={row} />
           <span className="truncate">{row.name}</span>
           {row.snippet !== undefined ? (
             <span className="ml-auto min-w-0 truncate text-xs text-muted-foreground">

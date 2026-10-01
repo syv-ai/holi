@@ -5,7 +5,7 @@
  * mirror.
  */
 import { useAtomValue, useSetAtom } from 'jotai'
-import { agentGeometryAtom, agentTerminalsAtom } from '@/state/agent'
+import { agentGeometryAtom, agentTerminalsAtom } from './state/sessions'
 import { SessionTerminal } from './SessionTerminal'
 import { TurnChip } from './TurnChip'
 

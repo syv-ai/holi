@@ -7,7 +7,7 @@
 import { useSetAtom } from 'jotai'
 import { LayoutList, Plus } from 'lucide-react'
 import { IconButton } from '@/primitives'
-import { openOverviewAtom, startSessionAtom } from '@/state/agent-send'
+import { openOverviewAtom, startSessionAtom } from './state/send'
 
 export function SessionActions(): React.JSX.Element {
   const startSession = useSetAtom(startSessionAtom)

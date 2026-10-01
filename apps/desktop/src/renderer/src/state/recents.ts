@@ -12,7 +12,6 @@
 import { atom, type Getter } from 'jotai'
 import { atomWithStorage } from 'jotai/utils'
 import { entryOfTab, prune, touch, type RecentEntry } from '../lib/recents'
-import { agentSessionsAtom, agentTerminalsAtom } from './agent'
 import type { Tab } from './panes'
 import { surfacesAtom } from './plugins'
 import { activeRemoteAtom, snapshotAtom } from './vaults'
@@ -22,8 +21,9 @@ export const recentsByVaultAtom = atomWithStorage<Record<string, RecentEntry[]>>
 const NONE: RecentEntry[] = []
 
 /**
- * Whether an entry still names something. Sessions do not survive a restart,
- * so a session recent is live only while main lists it. Paths, and the
+ * Whether an entry still names something. A tab of a surface that lists its
+ * tabs (`Surface.tabs`, an agent's terminals) is live only while it is
+ * listed: terminals do not survive a restart. Paths, and the
  * instances of a surface that lists them (a vault app), are judged only once
  * the vault has been scanned: an empty snapshot is a vault that has not
  * loaded yet, not a vault with nothing in it, and pruning against it would
@@ -38,18 +38,20 @@ function isLive(get: Getter): (entry: RecentEntry) => boolean {
     const of = surfaces.get(surface)?.instances
     return of === undefined ? null : new Set(get(of))
   }
-  const sessions = new Set(get(agentSessionsAtom).map((s) => s.id))
-  const terminals = new Set(get(agentTerminalsAtom).map((t) => t.id))
+  const tabs = (surface: string): ReadonlySet<string> | null => {
+    const of = surfaces.get(surface)?.tabs
+    return of === undefined ? null : new Set(get(of).map((t) => t.id))
+  }
   return (entry) => {
     switch (entry.kind) {
       case 'path':
         return !scanned || paths.has(entry.key)
-      case 'surface':
-        return !scanned || entry.id === undefined || (instances(entry.key)?.has(entry.id) ?? true)
-      case 'session':
-        return sessions.has(entry.key)
-      case 'terminal':
-        return terminals.has(entry.key)
+      case 'surface': {
+        if (entry.id === undefined) return true
+        const listed = tabs(entry.key)
+        if (listed !== null) return listed.has(entry.id)
+        return !scanned || (instances(entry.key)?.has(entry.id) ?? true)
+      }
       default:
         return true
     }

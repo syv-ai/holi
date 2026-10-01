@@ -6,14 +6,14 @@ import { render, screen, waitFor } from '@/test/render'
 import userEvent from '@testing-library/user-event'
 import { Provider, createStore } from 'jotai'
 import { beforeEach, expect, test, vi } from 'vitest'
-import { agentTerminalsAtom } from '@/state/agent'
-import { activeRemoteAtom } from '@/state/vaults'
-import { SessionActions } from '../SessionActions'
+import { agentTerminalsAtom } from '../renderer/state/sessions'
+import { activeRemoteAtom } from '@/plugin-api'
+import { SessionActions } from '../renderer/SessionActions'
 
 const open = vi.fn()
 const start = vi.fn()
 
-vi.mock('@/lib/agent-cap', () => ({
+vi.mock('../renderer/agent-cap', () => ({
   agentCap: {
     open: (_remote: string, args: unknown) => open(args),
     start: (_remote: string, args: unknown) => start(args),

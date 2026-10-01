@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { terminalKeyAction, type KeyChord } from '../src/renderer/src/lib/agent-terminal-keys'
+import { terminalKeyAction, type KeyChord } from '../renderer/lib/terminal-keys'
 
 /** A keydown with nothing held; each test adds only the modifiers it is about. */
 function chord(over: Partial<KeyChord>): KeyChord {
@@ -77,7 +77,9 @@ describe('the scrollback', () => {
 
 describe('the clipboard, and the interrupt it must not swallow', () => {
   test('⌘C with a selection copies', () => {
-    expect(terminalKeyAction(chord({ code: 'KeyC', metaKey: true }), true)).toEqual({ kind: 'copy' })
+    expect(terminalKeyAction(chord({ code: 'KeyC', metaKey: true }), true)).toEqual({
+      kind: 'copy',
+    })
   })
 
   test('⌘C with NO selection falls through, so the PTY still gets SIGINT', () => {
@@ -89,10 +91,14 @@ describe('the clipboard, and the interrupt it must not swallow', () => {
   })
 
   test('⌘V pastes', () => {
-    expect(terminalKeyAction(chord({ code: 'KeyV', metaKey: true }), false)).toEqual({ kind: 'paste' })
+    expect(terminalKeyAction(chord({ code: 'KeyV', metaKey: true }), false)).toEqual({
+      kind: 'paste',
+    })
   })
 })
 
 test('keyup is never acted on — one chord must not fire twice', () => {
-  expect(terminalKeyAction(chord({ type: 'keyup', key: 'Enter', shiftKey: true }), false)).toBeNull()
+  expect(
+    terminalKeyAction(chord({ type: 'keyup', key: 'Enter', shiftKey: true }), false),
+  ).toBeNull()
 })

@@ -5,7 +5,7 @@ import {
   contextColour,
   needsYouIcon,
   sessionsWorthAsking,
-} from '../src/renderer/src/lib/agent-notices'
+} from '../renderer/lib/notices'
 
 describe('agentIndicator', () => {
   const idle = { state: 'idle' as const }

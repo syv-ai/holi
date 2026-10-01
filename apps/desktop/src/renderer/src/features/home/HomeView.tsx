@@ -44,8 +44,8 @@ function labelOf(
   }
 }
 
-/** What you opened recently: notes, files, apps and Holi's views. Sessions
- *  and terminals are left out (the sidebar lists the running ones), and so is
+/** What you opened recently: notes, files, apps and Holi's views. Tabs of an
+ *  unlisted surface (an agent's terminals) are left out, and so is
  *  Home itself, since you are on it. */
 function Recents(): React.JSX.Element {
   const recents = useAtomValue(recentsAtom)
@@ -54,7 +54,9 @@ function Recents(): React.JSX.Element {
   // A surface whose plugin is off is left out, as a deleted file would be.
   const entries = recents
     .filter((e) =>
-      e.kind === 'surface' ? e.key !== 'home' && surfaces.has(e.key) : e.kind === 'path',
+      e.kind === 'surface'
+        ? e.key !== 'home' && surfaces.has(e.key) && surfaces.get(e.key)!.unlisted !== true
+        : e.kind === 'path',
     )
     .slice(0, SHOWN)
 

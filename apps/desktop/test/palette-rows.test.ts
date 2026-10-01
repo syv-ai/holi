@@ -35,9 +35,9 @@ function snapshot(over: Partial<VaultSnapshot> = {}): VaultSnapshot {
 const rows = (over: Partial<VaultSnapshot> = {}): PaletteRow[] =>
   buildRows({
     snapshot: snapshot(over),
-    // Only live sessions are listed at all: `s2` has stopped.
-    sessions: [{ id: 's1', name: 'refactor' }],
-    terminals: [{ id: 't1', label: 'Agents' }],
+    // A plugin's item (a live session) and a listed tab (a terminal).
+    items: [{ plugin: 'agent', key: 's1', name: 'refactor', dot: 'bg-x' }],
+    tabs: [{ surface: 'agent', id: 't1', label: 'Agents' }],
     surfaces: [
       { kind: 'board', label: 'Board' },
       { kind: 'settings', label: 'Settings' },
@@ -48,15 +48,15 @@ const rows = (over: Partial<VaultSnapshot> = {}): PaletteRow[] =>
 const keys = (list: readonly PaletteRow[]) => list.map(rowId)
 
 describe('buildRows', () => {
-  it('lists docs, files, instances, live sessions, agent tabs and the surfaces; hides hidden paths', () => {
+  it('lists docs, files, instances, plugin items, listed tabs and the surfaces; hides hidden paths', () => {
     expect(keys(rows())).toEqual([
       'path:notes/alpha.md',
       'path:notes/beta.md',
       'path:2026-09-21.md',
       'path:notes/deck.pdf',
       'surface:app:Work/plan.app',
-      'session:s1',
-      'terminal:t1',
+      'item:s1:agent',
+      'surface:agent:t1',
       'surface:board',
       'surface:settings',
     ])
@@ -98,13 +98,13 @@ describe('rankRows with nothing typed', () => {
     expect(ranked.map((r) => r.recent)).toEqual([true, true, false, false, false])
   })
 
-  it('prunes a recent that no longer exists: a dead session, a deleted note', () => {
+  it('prunes a recent that no longer exists: a closed terminal, a deleted note', () => {
     const recents: RecentEntry[] = [
-      { kind: 'session', key: 's2' },
+      { kind: 'surface', key: 'agent', id: 't2' },
       { kind: 'path', key: 'gone.md' },
-      { kind: 'session', key: 's1' },
+      { kind: 'surface', key: 'agent', id: 't1' },
     ]
-    expect(keys(rankRows(rows(), '', recents)).slice(0, 1)).toEqual(['session:s1'])
+    expect(keys(rankRows(rows(), '', recents)).slice(0, 1)).toEqual(['surface:agent:t1'])
   })
 
   it('caps the list', () => {
@@ -137,21 +137,20 @@ describe('rankRows with a query', () => {
         icons: {},
         ignored: [],
       }),
-      sessions: [],
     })
     const ranked = rankRows(two, 'plan', [{ kind: 'path', key: 'b/plan.md' }])
     expect(keys(ranked)[0]).toBe('path:b/plan.md')
     expect(ranked[0]!.recent).toBe(true)
   })
 
-  it('finds a surface and a session by name', () => {
+  it('finds a surface and a plugin item by name', () => {
     expect(keys(rankRows(rows(), 'boa', []))[0]).toBe('surface:board')
-    expect(keys(rankRows(rows(), 'refac', []))[0]).toBe('session:s1')
+    expect(keys(rankRows(rows(), 'refac', []))[0]).toBe('item:s1:agent')
   })
 })
 
 describe('bodyRows', () => {
-  const rows = buildRows({ snapshot: snapshot(), sessions: [] })
+  const rows = buildRows({ snapshot: snapshot() })
 
   it('lists text matches after the name rows, leaving out what those already show', () => {
     const ranked = rankRows(rows, 'alpha', [])
@@ -187,12 +186,12 @@ describe('openTabRows', () => {
   it('lists the open tabs most recently used first, without the current one', () => {
     const recents: RecentEntry[] = [
       { kind: 'surface', key: 'board' },
-      { kind: 'terminal', key: 't1' },
+      { kind: 'surface', key: 'agent', id: 't1' },
       { kind: 'path', key: 'notes/alpha.md' },
     ]
     const ranked = openTabRows(rows(), [...tabs], { kind: 'surface', surface: 'board' }, recents)
     expect(keys(ranked)).toEqual([
-      'terminal:t1',
+      'surface:agent:t1',
       'path:notes/alpha.md',
       'surface:app:Work/plan.app',
     ])

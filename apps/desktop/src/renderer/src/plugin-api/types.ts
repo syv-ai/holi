@@ -7,6 +7,7 @@ import type { Atom, createStore, WritableAtom } from 'jotai'
 import type { ComponentType } from 'react'
 import type { PluginInfo, VaultSnapshot } from '@holi/shared'
 import type { IconGlyph } from '@/primitives'
+import type { Command } from '@/state/commands'
 import type { PluginDialog } from '@/state/dialogs'
 
 /** One item a claim adds to a file's row menu. */
@@ -103,6 +104,36 @@ export interface Surface {
   instances?: Atom<readonly string[]>
   /** Controls at the end of the pane's tab strip while its tab is active. */
   headerActions?: ComponentType<{ id?: string }>
+  /**
+   * The tabs of it that exist now, and how each looks, for a surface whose
+   * ids come and go outside the vault (an agent's terminals). The tab strip
+   * names and marks a tab from it, the palette lists every one, and a recent
+   * of one lives only while it is listed. Its tabs take the keyboard
+   * themselves when they open.
+   */
+  tabs?: Atom<readonly SurfaceTabLook[]>
+  /** While one of its tabs is active, the note focused before it stays the
+   *  focused one, as main is told: typing to the agent happens in its tab. */
+  keepsFocusedNote?: true
+}
+
+/** How one tab of a surface looks right now (`Surface.tabs`). */
+export interface SurfaceTabLook {
+  id: string
+  label: string
+  /** The tab's tooltip, when it says more than the label. */
+  tooltip?: string
+  /** A background class for a dot drawn in place of the surface's icon. */
+  dot?: string
+}
+
+/** Something the palette lists that is not a tab yet, such as a live agent
+ *  session (`RendererPlugin.palette`). */
+export interface PaletteItem {
+  key: string
+  name: string
+  /** A background class for the dot it is shown with. */
+  dot: string
 }
 
 /**
@@ -228,4 +259,14 @@ export interface RendererPlugin {
    *  returned undo runs when either stops. */
   vault?(remote: string, store: PluginStore): () => void
   agent?: AgentServiceSource
+  /** Commands, run by id like core's (`state/commands.ts`), while it runs. */
+  commands?: readonly Command[]
+  /**
+   * What the palette lists beside the vault's files that is not a tab, and
+   * how one is opened: `open` gets its key, and focuses what it opens.
+   */
+  palette?: {
+    items: Atom<readonly PaletteItem[]>
+    open: WritableAtom<null, [key: string], unknown>
+  }
 }

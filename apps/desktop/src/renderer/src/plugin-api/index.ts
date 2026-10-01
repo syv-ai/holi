@@ -23,20 +23,25 @@ export type {
   RendererPlugin,
   SettingsSection,
   SettingsSectionHeading,
+  PaletteItem,
   Surface,
+  SurfaceTabLook,
 } from './types'
+export type { Command } from '@/state/commands'
 export type { PluginInfo } from '@holi/shared'
 
 export { trpc } from '@/lib/trpc'
 export { capClient, type CapClient, type UiCapability } from '@/lib/cap-client'
 export { useHasCapability } from '@/state/capabilities'
 export { cn } from '@/lib/cn'
+export { useAck } from '@/lib/use-ack'
 export { DRAWER_WIDTH } from '@/lib/drawer'
 export { activeRemoteAtom, historyEpochsAtom, snapshotAtom, syncStateAtom } from '@/state/vaults'
 export { sessionAtom } from '@/state/session'
 export { activeModeAtom } from '@/state/color-scheme'
 export { openNoteTabAtom } from '@/state/panes'
 export {
+  activeSurfaceIdAtom,
   closeSurfaceTabAtom,
   closeSurfaceTabsAtom,
   openPathAtom,

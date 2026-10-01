@@ -9,10 +9,10 @@
  */
 import { useAtomValue, useSetAtom } from 'jotai'
 import { Button, Tooltip } from '@/primitives'
-import { cn } from '@/lib/cn'
-import { agentIndicator } from '@/lib/agent-notices'
-import { activeSessionAtom, agentSessionsAtom } from '@/state/agent'
-import { openSessionAtom } from '@/state/agent-send'
+import { cn } from '@/plugin-api'
+import { agentIndicator } from './lib/notices'
+import { activeSessionAtom, agentSessionsAtom } from './state/sessions'
+import { openSessionAtom } from './state/send'
 
 export function SessionOrbs(): React.JSX.Element {
   const sessions = useAtomValue(agentSessionsAtom)

@@ -11,21 +11,21 @@ import { act, render, screen, waitFor } from '@/test/render'
 import userEvent from '@testing-library/user-event'
 import { Provider, createStore } from 'jotai'
 import { beforeEach, expect, test, vi } from 'vitest'
-import { TurnChip } from '../TurnChip'
-import { agentSessionsAtom, type AgentSession } from '@/state/agent'
-import { activeRemoteAtom } from '@/state/vaults'
+import { TurnChip } from '../renderer/TurnChip'
+import { agentSessionsAtom, type AgentSession } from '../renderer/state/sessions'
+import { activeRemoteAtom } from '@/plugin-api'
 import {
   latestTurnsAtom,
   reviewTurnAtom,
   turnCountsAtom,
   turnReviewOpenAtom,
   type Turn,
-} from '@/state/turns'
+} from '../renderer/state/turns'
 
 const list = vi.fn()
 const files = vi.fn()
 
-vi.mock('@/lib/agent-cap', () => ({
+vi.mock('../renderer/agent-cap', () => ({
   agentCap: {
     turns: () => list(),
     turnFiles: (_remote: string, i: unknown) => files(i),

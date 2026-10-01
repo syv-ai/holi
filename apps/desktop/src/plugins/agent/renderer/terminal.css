@@ -1,0 +1,8 @@
+/*
+ * The agent's terminals. xterm's viewport is a vertical scroller, so it
+ * reserves the scrollbar gutter as the app's other scrollers do (index.css,
+ * Scrollbars).
+ */
+.xterm-viewport {
+  scrollbar-gutter: stable;
+}

@@ -32,20 +32,15 @@ import {
   IconButton,
   Tooltip,
 } from '@/primitives'
-import {
-  agentIndicator,
-  contextColour,
-  needsYouIcon,
-  sessionsWorthAsking,
-} from '@/lib/agent-notices'
-import { cn } from '@/lib/cn'
-import { activeSessionAtom, agentSessionsAtom, type AgentSession } from '@/state/agent'
+import { agentIndicator, contextColour, needsYouIcon, sessionsWorthAsking } from './lib/notices'
+import { cn } from '@/plugin-api'
+import { activeSessionAtom, agentSessionsAtom, type AgentSession } from './state/sessions'
 import {
   duplicateSessionAtom,
   openSessionAtom,
   respawnSessionAtom,
   stopSessionAtom,
-} from '@/state/agent-send'
+} from './state/send'
 
 export function SessionRows(): React.JSX.Element | null {
   const sessions = useAtomValue(agentSessionsAtom)

@@ -22,7 +22,7 @@ import {
   IconButton,
   Tooltip,
 } from '@/primitives'
-import { Bot, ChevronLeft, ChevronRight, X } from 'lucide-react'
+import { ChevronLeft, ChevronRight, X } from 'lucide-react'
 import type { TaskStatus } from '@holi/shared'
 import { pathGlyph, pathLabel } from '@/composites/file-icons'
 import { surfaceLabel } from '@/lib/folder-documents'
@@ -38,18 +38,9 @@ import {
   tabPayload,
   type PillBox,
 } from '@/lib/tab-drop'
-import type { Surface } from '@/plugin-api/types'
+import type { Surface, SurfaceTabLook } from '@/plugin-api/types'
 import type { Tab } from '@/state/panes'
-import { surfacesAtom } from '@/state/plugins'
-import {
-  agentSessionsAtom,
-  agentTabId,
-  agentTerminalsAtom,
-  terminalLabel,
-  type AgentSession,
-  type AgentTerminal,
-} from '@/state/agent'
-import { agentIndicator } from '@/lib/agent-notices'
+import { surfaceTabLooksAtom, surfacesAtom } from '@/state/plugins'
 import { cn } from '@/lib/cn'
 import { snapshotAtom } from '@/state/vaults'
 
@@ -99,37 +90,32 @@ interface PathMarks {
   tasks: ReadonlyMap<string, TaskStatus>
 }
 
-/** The vault's sessions and Holi's terminals, what an agent tab is named and
- *  marked from, and the registry a surface tab is. */
+/** The registry a surface tab is, and how the tabs of a surface that says
+ *  (`Surface.tabs`) look now. */
 interface TabSources {
-  sessions: AgentSession[]
-  terminals: AgentTerminal[]
   surfaces: ReadonlyMap<string, Surface>
+  looks: ReadonlyMap<string, ReadonlyMap<string, SurfaceTabLook>>
 }
 
-/** The live session the agent terminal `id` was opened for, if it has one. */
-function sessionOf(id: string, agents: TabSources): AgentSession | null {
-  const launchedFor = agents.terminals.find((t) => t.id === id)?.launchedFor ?? null
-  return agents.sessions.find((s) => s.id === launchedFor) ?? null
+/** How a surface tab looks now, when its surface says. */
+function lookOf(tab: Tab, sources: TabSources): SurfaceTabLook | null {
+  if (tab.kind !== 'surface' || tab.id === undefined) return null
+  return sources.looks.get(tab.surface)?.get(tab.id) ?? null
 }
 
 /** A note leads with nothing, as its tree row does; the pill keeps no empty
  *  slot, since nothing here lines up with it. */
-function tabIcon(tab: Tab, marks: PathMarks, agents: TabSources): ReactNode {
+function tabIcon(tab: Tab, marks: PathMarks, sources: TabSources): ReactNode {
   if (tab.kind === 'note') {
     return pathGlyph(tab.path, { emoji: marks.icons[tab.path], task: marks.tasks.get(tab.path) })
   }
-  const agentId = agentTabId(tab)
-  if (agentId !== null) {
-    // A tab opened for a session that is still live carries its state: the
-    // same dot, from the same derivation, as its sidebar row. Anything else
-    // (the list, or a session that has gone) is Claude Code's glyph.
-    const session = sessionOf(agentId, agents)
-    if (session === null) return <Icon icon={Bot} size="sm" />
-    const dot = agentIndicator(session).dot
+  // A dot its surface gives it (an agent session's state) stands in for
+  // the surface's icon.
+  const dot = lookOf(tab, sources)?.dot
+  if (dot !== undefined) {
     return <span aria-hidden="true" className={cn('h-2 w-2 shrink-0 rounded-full', dot)} />
   }
-  const surface = agents.surfaces.get(tab.surface)
+  const surface = sources.surfaces.get(tab.surface)
   if (surface === undefined) return null
   // A folder document (an app) wears the vault icon map's emoji, as its
   // tree row does.
@@ -137,25 +123,19 @@ function tabIcon(tab: Tab, marks: PathMarks, agents: TabSources): ReactNode {
   return emoji ? pathGlyph(tab.id!, { emoji }) : <Icon icon={surface.icon} size="sm" />
 }
 
-function tabName(tab: Tab, agents: TabSources): string {
+function tabName(tab: Tab, sources: TabSources): string {
   if (tab.kind === 'note') return pathLabel(tab.path)
-  // The terminal's own title, which Claude Code sets to what it is showing.
-  const agentId = agentTabId(tab)
-  if (agentId !== null) {
-    return terminalLabel(agents.terminals.find((t) => t.id === agentId) ?? null, agents.sessions)
-  }
-  const surface = agents.surfaces.get(tab.surface)
+  const look = lookOf(tab, sources)
+  if (look !== null) return look.label
+  const surface = sources.surfaces.get(tab.surface)
   return surface === undefined ? tab.surface : surfaceLabel(surface, tab.id)
 }
 
-function tabTooltip(tab: Tab, agents: TabSources): string {
+function tabTooltip(tab: Tab, sources: TabSources): string {
   if (tab.kind === 'note') return tab.path
-  const surface = agents.surfaces.get(tab.surface)
-  const agentId = agentTabId(tab)
-  if (agentId !== null) {
-    const session = sessionOf(agentId, agents)
-    if (session !== null) return agentIndicator(session).title
-  }
+  const look = lookOf(tab, sources)
+  if (look !== null) return look.tooltip ?? look.label
+  const surface = sources.surfaces.get(tab.surface)
   if (surface === undefined) return tab.surface
   // One of many (an app): its label and its path.
   return tab.id === undefined
@@ -178,14 +158,14 @@ function OverflowMenu({
   indices,
   tabs,
   marks,
-  agents,
+  sources,
   onReveal,
 }: {
   side: 'left' | 'right'
   indices: number[]
   tabs: Tab[]
   marks: PathMarks
-  agents: TabSources
+  sources: TabSources
   onReveal: (index: number) => void
 }) {
   const visible = indices.length > 0
@@ -236,9 +216,9 @@ function OverflowMenu({
                 className="gap-2 text-xs"
                 onSelect={() => onReveal(index)}
               >
-                {tabIcon(tab, marks, agents)}
+                {tabIcon(tab, marks, sources)}
                 <span className={tab.kind === 'note' && tab.preview ? 'italic' : ''}>
-                  {tabName(tab, agents)}
+                  {tabName(tab, sources)}
                 </span>
               </DropdownMenuItem>
             )
@@ -292,13 +272,9 @@ export function TabStrip({
     }),
     [snapshot],
   )
-  const sessions = useAtomValue(agentSessionsAtom)
-  const terminals = useAtomValue(agentTerminalsAtom)
   const surfaces = useAtomValue(surfacesAtom)
-  const agents = useMemo<TabSources>(
-    () => ({ sessions, terminals, surfaces }),
-    [sessions, terminals, surfaces],
-  )
+  const looks = useAtomValue(surfaceTabLooksAtom)
+  const sources = useMemo<TabSources>(() => ({ surfaces, looks }), [surfaces, looks])
   const hostRef = useRef<HTMLDivElement | null>(null)
   const pillRefs = useRef(new Map<string, HTMLElement>())
   /** Where the dragged tab would land. `x` is in the scroller's content
@@ -628,7 +604,7 @@ export function TabStrip({
                     : 'text-muted-foreground hover:text-foreground'
                 }`}
               >
-                <Tooltip content={tabTooltip(t, agents)}>
+                <Tooltip content={tabTooltip(t, sources)}>
                   <Button
                     variant="ghost"
                     // Ghost bg/padding neutralised so the pill owns the surface.
@@ -645,8 +621,8 @@ export function TabStrip({
                     // Double-click pins a preview note.
                     onDoubleClick={() => onPin(i)}
                   >
-                    {tabIcon(t, marks, agents)}
-                    <span>{tabName(t, agents)}</span>
+                    {tabIcon(t, marks, sources)}
+                    <span>{tabName(t, sources)}</span>
                   </Button>
                 </Tooltip>
                 {/* Shown on hover or focus. Hidden with `opacity`, never
@@ -669,7 +645,7 @@ export function TabStrip({
           indices={offscreen.left}
           tabs={tabs}
           marks={marks}
-          agents={agents}
+          sources={sources}
           onReveal={reveal}
         />
         <OverflowMenu
@@ -677,7 +653,7 @@ export function TabStrip({
           indices={offscreen.right}
           tabs={tabs}
           marks={marks}
-          agents={agents}
+          sources={sources}
           onReveal={reveal}
         />
       </div>

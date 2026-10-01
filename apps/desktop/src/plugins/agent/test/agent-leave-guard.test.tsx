@@ -4,7 +4,11 @@
  */
 import { createStore } from 'jotai'
 import { expect, test } from 'vitest'
-import { agentLeaveGuardAtom, agentSessionsAtom, type AgentSession } from '../agent'
+import {
+  agentLeaveGuardAtom,
+  agentSessionsAtom,
+  type AgentSession,
+} from '../renderer/state/sessions'
 
 const session = (over: Partial<AgentSession> & { id: string }): AgentSession => ({
   name: 'New session',

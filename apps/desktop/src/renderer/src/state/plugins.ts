@@ -15,12 +15,15 @@ import { enabledPlugins, VAULT_SETTING_DEFAULTS } from '@holi/shared'
 import { folderClaims, surfaceLabel, type FolderDocumentClaim } from '@/lib/folder-documents'
 import type {
   AgentServiceSource,
+  PaletteItem,
   PathClaim,
   RailItem,
   RendererPlugin,
   SettingsSection,
   Surface,
+  SurfaceTabLook,
 } from '@/plugin-api/types'
+import type { Command } from './commands'
 import type { FolderSurface } from './panes'
 import { vaultSettingsAtom } from './settings'
 import { activeRemoteAtom } from './vaults'
@@ -32,10 +35,6 @@ export const installedPluginsAtom = atom<readonly RendererPlugin[]>([])
 export type CoreContribution = Pick<Required<RendererPlugin>, 'surfaces' | 'rail' | 'claims'>
 
 export const coreContributionAtom = atom<CoreContribution>({ surfaces: [], rail: [], claims: [] })
-
-/** Core parts written to the plugin contract ahead of their move into a
- *  plugin (the agent). They run whatever the vault's settings say. */
-export const corePluginsAtom = atom<readonly RendererPlugin[]>([])
 
 /** The ids the open vault runs. Each plugin's default until its settings
  *  are read. */
@@ -82,14 +81,34 @@ export const pluginSettingsSectionsAtom = atom((get): readonly SettingsSection[]
   )
 })
 
-/** Core's parts, then every enabled plugin, in list order. */
+/** Every enabled plugin, in list order. */
 export const runningPluginsAtom = atom((get): readonly RendererPlugin[] => {
   const enabled = get(enabledPluginsAtom)
-  return [
-    ...get(corePluginsAtom),
-    ...get(installedPluginsAtom).filter((p) => enabled.has(p.info.id)),
-  ]
+  return get(installedPluginsAtom).filter((p) => enabled.has(p.info.id))
 })
+
+/** Every running plugin's commands, in list order. */
+export const pluginCommandsAtom = atom((get): readonly Command[] =>
+  get(runningPluginsAtom).flatMap((p) => p.commands ?? []),
+)
+
+/** What running plugins list in the palette, each with its plugin's id. */
+export const paletteItemsAtom = atom((get): readonly (PaletteItem & { plugin: string })[] =>
+  get(runningPluginsAtom).flatMap((p) =>
+    p.palette === undefined
+      ? []
+      : get(p.palette.items).map((item) => ({ ...item, plugin: p.info.id })),
+  ),
+)
+
+/** Open a palette item through the plugin that listed it. */
+export const openPaletteItemAtom = atom(
+  null,
+  (get, set, { plugin, key }: { plugin: string; key: string }): void => {
+    const open = get(runningPluginsAtom).find((p) => p.info.id === plugin)?.palette?.open
+    if (open !== undefined) set(open, key)
+  },
+)
 
 /** Core's contribution, then every running plugin's, in list order. */
 const contributionsAtom = atom((get): readonly Pick<RendererPlugin, 'surfaces' | 'rail'>[] => [
@@ -159,6 +178,18 @@ export const surfacesAtom = atom((get): ReadonlyMap<string, Surface> => {
   }
   return byKind
 })
+
+/** How each tab of a surface with `tabs` looks now, by surface and id. */
+export const surfaceTabLooksAtom = atom(
+  (get): ReadonlyMap<string, ReadonlyMap<string, SurfaceTabLook>> =>
+    new Map(
+      [...get(surfacesAtom).values()].flatMap((s) =>
+        s.tabs === undefined
+          ? []
+          : [[s.kind, new Map(get(s.tabs).map((look) => [look.id, look]))] as const],
+      ),
+    ),
+)
 
 /** Every registered surface's instances, with their labels, in registry
  *  order: what the palette lists for a surface of instances (each app). */

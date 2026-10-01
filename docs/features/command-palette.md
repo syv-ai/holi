@@ -7,10 +7,12 @@ app-level action is one row of one command table that keys, palette and menu all
 ## How it works
 
 - **Quick open (⌘P)** lists every openable thing: markdown docs and other vault files (hidden
-  paths left out, git-ignored ones dimmed), vault apps, live agent sessions, open agent tabs, and every registered surface but Home
+  paths left out, git-ignored ones dimmed), vault apps, what a plugin lists (`RendererPlugin.palette`:
+  the agent's live sessions), the tabs of a surface that lists its own (`Surface.tabs`: agent
+  terminals), and every registered surface but Home
   (board, agenda, mail, settings, history, and any plugin's), each with its own label and icon. A path row shows its filename with the folder beside
-  it, and the tree's type glyph or the vault's emoji for that path. A session row shows the
-  sidebar's status orb. Enter opens pinned, ⌘↵ opens beside. ⌘P while open steps the selection.
+  it, and the tree's type glyph or the vault's emoji for that path. A plugin's row shows
+  its dot (a session's status orb). Enter opens pinned, ⌘↵ opens beside. ⌘P while open steps the selection.
 - **Ordering.** Empty query: recents first, across every kind, then the vault's paths by modified
   time. With a query: each row scored with `command-score` on its name, then on its path at half
   weight so a folder name still finds the file; recents break ties; the list is capped at 50.
@@ -41,7 +43,8 @@ app-level action is one row of one command table that keys, palette and menu all
   `text-xs`, like the app's other search fields. There are no scroll-edge shades; the
   always-painted scrollbar says there is more, and its thumb shows once the palette has its size.
 - **The command table** (`state/commands.ts`): each row is an id, a label, an optional hotkey
-  glyph, an optional `when`, and a Jotai write. One `keydown` listener installed by Shell matches
+  glyph, an optional `when`, and a Jotai write; a running plugin adds its own
+  (`RendererPlugin.commands`: the agent's two). One `keydown` listener installed by Shell matches
   the table with `lib/hotkey.ts`. The application menu sends a command id over `menu:command`.
   Rows today: open today's daily (⌘⇧D), save and sync (⌘S), split pane (⌘\), toggle sidebar
   (⌥⌘S), go to the agents (⌘J), new session, new task (⌘T), new task with details (⌘⇧T), close

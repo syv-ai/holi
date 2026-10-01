@@ -1,12 +1,16 @@
 import { atom } from 'jotai'
-import { agentCap } from '@/lib/agent-cap'
-import { sessionsWorthAsking } from '@/lib/agent-notices'
-import { receivePtyData } from '@/lib/session-terminals'
-import type { PluginEventHandler, PluginStore } from '@/plugin-api/types'
-import { activeTab, workspaceAtom, type Tab } from './panes'
-import { closeSurfaceTabsAtom, surfaceTabIdsAtom } from './surfaces'
+import { agentCap } from '../agent-cap'
+import { sessionsWorthAsking } from '../lib/notices'
+import { receivePtyData } from '../lib/session-terminals'
+import {
+  activeRemoteAtom,
+  activeSurfaceIdAtom,
+  closeSurfaceTabsAtom,
+  surfaceTabIdsAtom,
+  type PluginEventHandler,
+  type PluginStore,
+} from '@/plugin-api'
 import { resetTurnReviewAtom, turnReviewOpenAtom } from './turns'
-import { activeRemoteAtom } from './vaults'
 
 /**
  * The surface an agent tab is: a terminal onto Claude Code, by the id main
@@ -19,17 +23,12 @@ import { activeRemoteAtom } from './vaults'
  */
 export const AGENT_SURFACE = 'agent'
 
-/** The terminal id an agent tab shows, or null for any other tab. */
-export function agentTabId(tab: Tab | null | undefined): string | null {
-  return tab?.kind === 'surface' && tab.surface === AGENT_SURFACE ? (tab.id ?? null) : null
-}
-
 /** What a session is doing. Claude Code's own answer, read by main. */
 export type SessionState = 'needs-you' | 'working' | 'idle'
 
 /**
  * One of the vault's live Claude Code background sessions, by its job id.
- * Mirrors `SessionSummary` in main/agent/claude-sessions.ts, pushed as a list
+ * Mirrors `SessionSummary` in main/claude/listing.ts, pushed as a list
  * in the agent's `sessions` event. Only live ones: a stopped or finished session lives in
  * Claude Code's own agent list.
  */
@@ -48,7 +47,7 @@ export interface AgentSession {
 
 /**
  * One of Holi's terminals onto Claude Code. Mirrors `TerminalSummary` in
- * main/agent/agent-terminals.ts, pushed in the agent's `terminals` event.
+ * main/host/terminals.ts, pushed in the agent's `terminals` event.
  */
 export interface AgentTerminal {
   id: string
@@ -83,7 +82,7 @@ export const activeSessionAtom = atom<AgentSession | null>((get) => {
   const terminals = get(agentTerminalsAtom)
   const byId = (id: string | null) =>
     id === null ? null : (sessions.find((s) => s.id === id) ?? null)
-  const tabId = agentTabId(activeTab(get(workspaceAtom)))
+  const tabId = get(activeSurfaceIdAtom(AGENT_SURFACE))
   if (tabId !== null) {
     const shown = byId(terminals.find((t) => t.id === tabId)?.launchedFor ?? null)
     if (shown !== null) return shown

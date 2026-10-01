@@ -9,8 +9,8 @@
  * shapes and the renderer does not import from main.
  */
 import { atom } from 'jotai'
-import { agentCap } from '../lib/agent-cap'
-import { activeRemoteAtom } from './vaults'
+import { agentCap } from '../agent-cap'
+import { activeRemoteAtom } from '@/plugin-api'
 
 /** One recorded turn: two shas and when it ended. */
 export interface Turn {

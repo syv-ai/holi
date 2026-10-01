@@ -14,35 +14,26 @@ import { beforeEach, expect, test, vi } from 'vitest'
 import { render, screen, waitFor } from '@/test/render'
 import { useCommandHotkeys } from '@/state/commands'
 import type { RendererPlugin } from '@/plugin-api/types'
-import {
-  agentSessionsAtom,
-  agentTerminalsAtom,
-  askTargetsAtom,
-  defaultAgentTargetAtom,
-  type AgentSession,
-} from '@/state/agent'
-import { sendToAgentAtom, startSessionAtom } from '@/state/agent-send'
 import { paletteAtom } from '@/state/palette'
-import { corePluginsAtom } from '@/state/plugins'
-import { emptyWorkspace, openSurface, workspaceAtom } from '@/state/panes'
+import { installedPluginsAtom } from '@/state/plugins'
+import { emptyWorkspace, workspaceAtom } from '@/state/panes'
 import { recentsByVaultAtom } from '@/state/recents'
 import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
 import { CommandPalette } from '../CommandPalette'
 
 const store = getDefaultStore()
 
-/** A stand-in for the agent part: its service over the real agent state. */
+const send = vi.fn(async (_args: unknown) => ({ ok: true as const }))
+
+/** A stand-in agent plugin: one live session, which is where an ask goes. */
 const AGENT: RendererPlugin = {
-  info: { id: 'agent', label: 'Agent', default: true },
+  info: { id: 'stand-in', label: 'Stand-in', default: true },
   agent: {
-    name: 'Claude',
-    sessions: agentSessionsAtom,
-    targets: atom((get) => ({
-      sessions: get(askTargetsAtom),
-      default: get(defaultAgentTargetAtom),
-    })),
-    ask: sendToAgentAtom,
-    start: startSessionAtom,
+    name: 'Helper',
+    sessions: atom([{ id: 's1', name: 'refactor', state: 'idle' as const }]),
+    targets: atom({ sessions: [{ id: 's1', name: 'refactor' }], default: 's1' }),
+    ask: atom(null, (_get, _set, args: { text: string; target: string }) => send(args)),
+    start: atom(null, async () => ({ ok: true as const })),
   },
 }
 
@@ -51,11 +42,6 @@ function Hotkeys(): null {
   useCommandHotkeys()
   return null
 }
-
-const send = vi.fn(async (_args: unknown) => ({ ok: true, terminalId: 't1' }))
-vi.mock('@/lib/agent-cap', () => ({
-  agentCap: { send: (_remote: string, args: unknown) => send(args) },
-}))
 
 beforeEach(() => {
   // cmdk scrolls the selected item into view; jsdom has no layout to scroll.
@@ -73,10 +59,8 @@ beforeEach(() => {
   store.set(recentsByVaultAtom, { 'o/vault': [{ kind: 'path', key: 'gamma.md' }] })
   store.set(workspaceAtom, emptyWorkspace())
   store.set(paletteAtom, { open: false, mode: 'open', query: '', step: 0, stepDirection: 1 })
-  store.set(agentSessionsAtom, [])
-  store.set(agentTerminalsAtom, [])
   // The Ask row goes through the agent service.
-  store.set(corePluginsAtom, [AGENT])
+  store.set(installedPluginsAtom, [AGENT])
 })
 
 function mount() {
@@ -231,12 +215,7 @@ test('Escape closes', async () => {
   await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
 })
 
-test('the Ask row is last once something is typed, and sends to the current session', async () => {
-  const live: AgentSession = { id: 's1', name: 'refactor', state: 'idle' }
-  store.set(agentSessionsAtom, [live])
-  // The session's own window is the one showing, which is what makes it current.
-  store.set(agentTerminalsAtom, [{ id: 't1', launchedFor: 's1', title: '' }])
-  store.set(workspaceAtom, (w) => openSurface(w, 'agent', 't1'))
+test('the Ask row is last once something is typed, and sends to the default target', async () => {
   mount()
 
   await userEvent.keyboard('{Meta>}p{/Meta}')

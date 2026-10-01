@@ -837,8 +837,7 @@
   .overflow-y-auto,
   .overflow-scroll,
   .overflow-y-scroll,
-  .cm-scroller:not(.tbl-cell-editor *),
-  .xterm-viewport
+  .cm-scroller:not(.tbl-cell-editor *)
 ) {
   scrollbar-gutter: stable;
 }

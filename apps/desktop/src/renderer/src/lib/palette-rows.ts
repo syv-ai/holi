@@ -4,8 +4,9 @@
  * what `rankRows` returns.
  *
  * A row is one openable thing: a vault path (a note or any other file), a
- * live agent session, a registered surface, or one of a surface's instances
- * (a vault app). Before
+ * registered surface, one of a surface's instances (a vault app) or open
+ * tabs (an agent terminal), or an item a plugin lists (a live agent
+ * session). Before
  * anything is typed the recents come first, then the rest by modified time;
  * with a query, every row is scored by `command-score` (the scorer cmdk
  * bundles) on its name and then, at a discount, on its key, so a folder name
@@ -15,21 +16,22 @@
 import commandScore from 'command-score'
 import { isHiddenPath, type VaultSnapshot } from '@holi/shared'
 import type { Tab } from '../state/panes'
-import { entryOfTab, type RecentEntry, type RecentKind } from './recents'
+import { entryOfTab, type RecentEntry } from './recents'
 
-export type RowKind = Exclude<RecentKind, 'command'>
+export type RowKind = 'path' | 'surface' | 'item'
 
 /** A surface row's icon is its surface's, read from the registry where the
- *  row is drawn. */
+ *  row is drawn. A plugin's item is a dot. */
 export type RowIcon =
-  { emoji: string } | { glyph: 'note' | 'daily' | 'file' | 'session' | 'surface' }
+  { emoji: string } | { glyph: 'note' | 'daily' | 'file' | 'surface' } | { dot: string }
 
 export interface PaletteRow {
   kind: RowKind
-  /** The path, session id or surface kind: what opens it, and what a recent
+  /** The path, surface kind or item key: what opens it, and what a recent
    *  of the same kind is keyed by. */
   key: string
-  /** Which instance of a surface: a vault app's bundle path. */
+  /** Which instance or tab of a surface (a vault app's bundle path), or the
+   *  plugin an item is from. */
   id?: string
   name: string
   /** The folder for a path or an instance; nothing for the rest. */
@@ -39,6 +41,9 @@ export interface PaletteRow {
   dim?: boolean
   /** ISO mtime, paths only: the order of the untyped list after the recents. */
   updatedAt?: string
+  /** What it opens takes the keyboard itself (a terminal), so the palette
+   *  must not put focus back where it was. */
+  focuses?: true
 }
 
 export interface RankedRow extends PaletteRow {
@@ -58,10 +63,10 @@ function splitPath(path: string): { name: string; detail?: string } {
 
 export interface RowSources {
   snapshot: VaultSnapshot
-  /** The vault's live sessions, by job id. */
-  sessions: readonly { id: string; name: string }[]
-  /** Holi's open agent terminals, by terminal id, with their tab labels. */
-  terminals?: readonly { id: string; label: string }[]
+  /** What plugins list that is not a tab (a live agent session). */
+  items?: readonly { plugin: string; key: string; name: string; dot: string }[]
+  /** The tabs of surfaces that list theirs (an agent's terminals). */
+  tabs?: readonly { surface: string; id: string; label: string }[]
   /** The surfaces the palette offers, by kind, with their labels. */
   surfaces?: readonly { kind: string; label: string }[]
   /** Surfaces' instances (each vault app), with their labels. */
@@ -70,8 +75,8 @@ export interface RowSources {
 
 export function buildRows({
   snapshot,
-  sessions,
-  terminals = [],
+  items = [],
+  tabs = [],
   surfaces = [],
   instances = [],
 }: RowSources): PaletteRow[] {
@@ -106,17 +111,21 @@ export function buildRows({
       name: label,
       icon: { glyph: 'surface' },
     })),
-    ...sessions.map((s): PaletteRow => ({
-      kind: 'session',
-      key: s.id,
-      name: s.name,
-      icon: { glyph: 'session' },
+    ...items.map((item): PaletteRow => ({
+      kind: 'item',
+      key: item.key,
+      id: item.plugin,
+      name: item.name,
+      icon: { dot: item.dot },
+      focuses: true,
     })),
-    ...terminals.map((t): PaletteRow => ({
-      kind: 'terminal',
-      key: t.id,
+    ...tabs.map((t): PaletteRow => ({
+      kind: 'surface',
+      key: t.surface,
+      id: t.id,
       name: t.label,
-      icon: { glyph: 'session' },
+      icon: { glyph: 'surface' },
+      focuses: true,
     })),
     ...surfaces.map(({ kind, label }): PaletteRow => ({
       kind: 'surface',

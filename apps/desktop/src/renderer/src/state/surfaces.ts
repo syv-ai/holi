@@ -7,6 +7,7 @@ import { useEffect } from 'react'
 import { tabForPath } from '@/lib/folder-documents'
 import { openHomeAtom } from './home'
 import {
+  activeTab,
   closeSurfaceTabs,
   closeSurfaceTabsExcept,
   closeTab,
@@ -69,6 +70,22 @@ export function surfaceTabIdsAtom(surface: string): Atom<readonly string[]> {
       return last
     })
     tabIdAtoms.set(surface, made)
+  }
+  return made
+}
+
+const activeIdAtoms = new Map<string, Atom<string | null>>()
+
+/** The id of the active tab when it is one of `surface`'s, else null. The
+ *  same atom for the same surface. */
+export function activeSurfaceIdAtom(surface: string): Atom<string | null> {
+  let made = activeIdAtoms.get(surface)
+  if (made === undefined) {
+    made = atom((get) => {
+      const tab = activeTab(get(workspaceAtom))
+      return tab?.kind === 'surface' && tab.surface === surface ? (tab.id ?? null) : null
+    })
+    activeIdAtoms.set(surface, made)
   }
   return made
 }

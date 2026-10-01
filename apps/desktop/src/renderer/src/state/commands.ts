@@ -22,7 +22,6 @@ import { saveAllBuffers } from '../lib/buffer-registry'
 import { matchHotkey } from '../lib/hotkey'
 import { trpc } from '../lib/trpc'
 import { openHomeAtom } from './home'
-import { showAgentsAtom, startSessionAtom } from './agent-send'
 import { openTodaysDailyAtom } from './daily'
 import { openDialogAtom } from './dialogs'
 import { closeActiveTabWithExitAtom } from './pane-exit'
@@ -32,7 +31,7 @@ import { touchRecentAtom } from './recents'
 import { updateSkillsAtom } from './skills'
 import { openQuickAddAtom } from './tasks'
 import { openPinned, openSurface, splitPane, workspaceAtom } from './panes'
-import { surfacesAtom } from './plugins'
+import { pluginCommandsAtom, surfacesAtom } from './plugins'
 import { activeRemoteAtom, createNoteAtom, snapshotAtom, vaultsAtom } from './vaults'
 import { switchVaultAtom } from './vault-switch'
 
@@ -102,20 +101,6 @@ export const STATIC_COMMANDS: readonly Command[] = [
     label: 'Toggle sidebar',
     hotkey: '⌥⌘S',
     run: (_get, set) => set(navOpenAtom, (open) => !open),
-  },
-  // Bound here because an agent tab is mounted only while it is open, so the
-  // shortcut that OPENS one cannot live inside it. The agent list: where
-  // sessions are started and picked up.
-  {
-    id: 'agent.show',
-    label: 'Go to the agents',
-    hotkey: '⌘J',
-    run: (_get, set) => void set(showAgentsAtom),
-  },
-  {
-    id: 'agent.new',
-    label: 'New session',
-    run: (_get, set) => void set(startSessionAtom),
   },
   // The skills and hooks a vault was seeded with are its own; a newer
   // release's reach it only when asked for, here or with `holi skills update`.
@@ -200,7 +185,7 @@ export const commandsAtom = atom<Command[]>((get) => {
       label: `Switch to ${v.name}`,
       run: (_get, set) => set(switchVaultAtom, v.remote),
     }))
-  return [...STATIC_COMMANDS, ...opens, ...switches]
+  return [...STATIC_COMMANDS, ...get(pluginCommandsAtom), ...opens, ...switches]
 })
 
 /**

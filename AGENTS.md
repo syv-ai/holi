@@ -15,13 +15,13 @@ assistant. There is no Holi server or database.
 - `docs/`: architecture, one short page per feature, and the glossary.
 
 Within the desktop app, `src/main` owns filesystem/git/GitHub/Google work, the
-vault store, sync, and the Claude PTY. `src/preload` is the narrow
+vault store and sync. `src/preload` is the narrow
 `contextBridge`/IPC adapter. `src/renderer/src` is the React UI and never gets
 Node access or GitHub credentials. `router.ts` is main's typed API seam; keep
 Electron dependencies out of code that should remain testable under plain Node.
 
-Optional parts of Holi are plugins under `src/plugins/<id>/` (PDF, Google and
-vault apps so far), each with its own `main/`, `renderer/`, `shared/` and
+Optional parts of Holi are plugins under `src/plugins/<id>/` (the agent, PDF,
+Google and vault apps so far), each with its own `main/`, `renderer/`, `shared/` and
 `test/`, reaching core only through `src/main/plugin-api.ts` and
 `@/plugin-api`. Vault apps live in `src/plugins/apps/`; what a synced vault
 holds of an app (the bundle grammar, the record merge, the `.local.app` rule)
@@ -104,7 +104,9 @@ legacy alias with the same behavior as `pnpm lint`.
   first reads them. The active-vault snapshot and watcher are shared state, not
   per-component caches.
 - The agent is a real `claude` process in a main-process `node-pty` PTY, with
-  the managed vault clone as cwd. Keep Claude's native permission prompts; do
+  the managed vault clone as cwd. It is the plugin `src/plugins/agent/`: a
+  host (`main/host/`, the PTY in `pty.ts`) and Claude Code as its provider
+  (`main/claude/`). Keep Claude's native permission prompts; do
   not add `--dangerously-skip-permissions` or a parallel prompt system.
 - Use system `git` and parse plumbing/porcelain output, not human-readable git
   output. Holi-managed clones autosave, pull, merge, and push; do not assume a
@@ -155,7 +157,8 @@ legacy alias with the same behavior as `pnpm lint`.
   list it, and `wantsScaffold` refuses it so `scaffold-md` cannot prepend
   frontmatter to a generated index.
 - `node-pty` is built for Electron's ABI, not just the installed Node ABI. If
-  the live agent drawer reports a native-module load error, run:
+  an agent tab reports a native-module load error (the lazy `require` in
+  `src/plugins/agent/main/host/pty.ts`), run:
 
   ```sh
   pnpm --filter @holi/desktop run rebuild:natives

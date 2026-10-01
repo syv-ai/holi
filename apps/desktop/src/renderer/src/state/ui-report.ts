@@ -9,15 +9,16 @@
  */
 import type { createStore } from 'jotai'
 import { trpc } from '../lib/trpc'
-import { agentTabId } from './agent'
 import { activeTab, workspaceAtom } from './panes'
+import { surfacesAtom } from './plugins'
 import { recentsAtom } from './recents'
 import { activeRemoteAtom } from './vaults'
 
 export function reportUiToMain(store: ReturnType<typeof createStore>): () => void {
-  // Typing to the agent focuses the agent's own tab, so that tab keeps the
-  // note that was focused before it: otherwise every prompt typed in Holi
-  // would report no note at all. Open notes are counted across every pane.
+  // Typing to the agent focuses the agent's own tab, so a tab whose surface
+  // says so (`keepsFocusedNote`) keeps the note that was focused before it:
+  // otherwise every prompt typed in Holi would report no note at all. Open
+  // notes are counted across every pane.
   let focusedNote: string | null = null
   let queued = false
 
@@ -30,11 +31,22 @@ export function reportUiToMain(store: ReturnType<typeof createStore>): () => voi
     const openPaths = workspace.panes.flatMap((p) =>
       p.tabs.flatMap((t) => (t.kind === 'note' ? [t.path] : [])),
     )
+    const surfaces = store.get(surfacesAtom)
     if (tab?.kind === 'note') focusedNote = tab.path
-    else if (agentTabId(tab) === null) focusedNote = null
+    else if (tab === null || surfaces.get(tab.surface)?.keepsFocusedNote !== true)
+      focusedNote = null
     if (focusedNote !== null && !openPaths.includes(focusedNote)) focusedNote = null
     trpc.ui.report
-      .mutate({ remote, focusedPath: focusedNote, openPaths, recents: store.get(recentsAtom) })
+      .mutate({
+        remote,
+        focusedPath: focusedNote,
+        openPaths,
+        // Only what `holi.open` can open: an unlisted surface's tabs (a
+        // terminal) are opened by their plugin's own controls.
+        recents: store
+          .get(recentsAtom)
+          .filter((e) => e.kind !== 'surface' || surfaces.get(e.key)?.unlisted !== true),
+      })
       .catch((e: unknown) => console.warn('[ui] report failed:', e))
   }
   // A tab switch changes the workspace and then the recents: one report for both.
