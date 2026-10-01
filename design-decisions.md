@@ -281,3 +281,13 @@ and activation.
   typed client.** An annotation would widen the doors, and the client would offer every verb.
 - **Plugins open only the generic plugin dialog,** never a core one. A claim's menu item gets an
   opener narrowed to that variant.
+- **PDF is the first plugin** (`src/plugins/pdf/`). The agent gets Typst from `holi pdf typst`,
+  allowed without a prompt, rather than from an environment variable. One shared download serves
+  the warm-up, renders and the CLI. Typst warms when the plugin starts.
+- **A plugin's info lives in one file both halves read** (`src/plugins/<id>/info.ts`).
+- **A plugin's renderer may import its own `main/` for types only,** enforced by
+  `no-restricted-imports` with `allowTypeImports`, because a value import would bundle main code
+  into the renderer. Plugin tests may import core main to drive the registry. Shipped plugin code
+  may not.
+- **UI-door calls always carry a remote,** even for per-machine stores such as signatures, so
+  every door resolves the same way.
