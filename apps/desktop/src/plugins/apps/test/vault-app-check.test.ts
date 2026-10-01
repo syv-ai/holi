@@ -15,7 +15,7 @@ import { fileURLToPath } from 'node:url'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 const HOOK = fileURLToPath(
-  new URL('../src/main/agent/seed/vault/shipped/.claude/hooks/vault-app-check.mjs', import.meta.url),
+  new URL('../main/vault/shipped/.claude/hooks/vault-app-check.mjs', import.meta.url),
 )
 
 interface Run {
@@ -142,9 +142,11 @@ describe('code that cannot run', () => {
     expect(text).toMatch(/line \d+/)
   })
 
-  it('reports a syntax error inside an inline script, at the file\'s own line', async () => {
+  it("reports a syntax error inside an inline script, at the file's own line", async () => {
     await finished()
-    const html = ['<!doctype html>', '<h1>hi</h1>', '<script>', 'const a = )', '</script>'].join('\n')
+    const html = ['<!doctype html>', '<h1>hi</h1>', '<script>', 'const a = )', '</script>'].join(
+      '\n',
+    )
     const run = await wrote('retro.app/index.html', html)
     expect(said(run)).toMatch(/line 4/)
   })

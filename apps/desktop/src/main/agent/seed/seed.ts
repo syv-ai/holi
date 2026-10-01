@@ -3,8 +3,8 @@
  * beside this module) and the `.claude/settings.json` it owns and merges
  * (`claude-settings.ts`).
  *
- * The vault-apps and tasks hooks, skills and settings ride here too for now,
- * each as its own fragment, until each becomes its own plugin.
+ * The tasks settings ride here too for now, as their own fragment, until
+ * tasks becomes its own plugin.
  */
 import { shellReadBridgeEnv } from '../../bridge/env-file'
 import { seedFolder } from '../../vault/seed/folder'
@@ -160,16 +160,6 @@ const AGENT_SETTINGS: SettingsFragment = {
   },
 }
 
-/**
- * Vault apps: the validator, advisory only (it reports and exits 0), so the
- * agent gets feedback instead of a syntax error surfacing as a blank tab.
- * Matched on the writing tools rather than on the path, because the matcher
- * grammar cannot see a path; the hook returns at once outside a `<name>.app/`.
- */
-const APPS_SETTINGS: SettingsFragment = {
-  hooks: [{ event: 'PostToolUse', matcher: 'Write|Edit|MultiEdit', script: 'vault-app-check' }],
-}
-
 /** Tasks: Claude Code's todo tools, whose "tasks" are not the vault's
  *  `task.*.md`. TaskStop stays: it stops background shells. */
 const TASKS_SETTINGS: SettingsFragment = {
@@ -188,7 +178,7 @@ export const agentSeed: SeedContribution = {
   id: 'agent',
   once: folder.once,
   shipped: folder.shipped,
-  fragments: { [SETTINGS]: [AGENT_SETTINGS, APPS_SETTINGS, TASKS_SETTINGS] },
+  fragments: { [SETTINGS]: [AGENT_SETTINGS, TASKS_SETTINGS] },
   merge: {
     [SETTINGS]: async (existing, fragments, has) => {
       const all = fragments as SettingsFragment[]

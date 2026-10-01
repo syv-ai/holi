@@ -9,7 +9,7 @@ import {
   createCapabilityRegistry,
   type CapabilityContext,
 } from '../src/main/capabilities/registry'
-import { admitApps, type AppGrants } from '../src/main/apps/app-grants'
+import { admitApps, type AppGrants } from '../src/plugins/apps/main/grants'
 import { createCapabilityHost } from '../src/main/capabilities/dispatch'
 import { noCoreServices, type CoreServices } from '../src/main/capabilities/services'
 import { vaultCapabilities, VAULT_NAMESPACES } from '../src/main/capabilities/vault-caps'

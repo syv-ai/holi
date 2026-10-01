@@ -8,8 +8,7 @@
  * files, and no app can read a note off disk — the bridge is the only route to
  * vault content, and the bridge is where the refusals live.
  *
- * `appScheme` is the handler, in the shape a plugin's scheme takes; the
- * composition root registers it.
+ * `appScheme` is the apps plugin's scheme (`MainPlugin.schemes`).
  */
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -22,12 +21,9 @@ import {
   vaultRelPath,
   type ThemeBlock,
 } from '@holi/shared'
-import type { PluginScheme } from '../plugin-api'
-import { readVaultTheme } from '../vault/theme'
-import { absPathFor } from '../vault/vault-files'
-import { mimeFor } from '../vault/asset-protocol'
+import { mimeFor, readVaultTheme, type PluginScheme } from '../../../main/plugin-api'
 import { BRIDGE_JS } from './bridge-script'
-import { APP_BASE_TOKENS } from './app-tokens'
+import { APP_BASE_TOKENS } from './tokens'
 
 /**
  * `holi-app://<host>/<rel>` → its parts, or null when the scheme is wrong, the
@@ -81,7 +77,7 @@ export function appFileAbsPath(vaultRoot: string, bundle: string, rel: string): 
   // way to records, so a `fetch('data/…')` cannot read past its checks, and
   // the log is Holi's record of the app, not the app's.
   if (isAppPrivatePath(safe)) return null
-  return absPathFor(join(vaultRoot, bundle), safe)
+  return join(vaultRoot, bundle, safe)
 }
 
 /**

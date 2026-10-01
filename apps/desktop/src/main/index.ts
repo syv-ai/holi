@@ -26,14 +26,11 @@ import {
 import { requestFlush, type FlushChannel } from './flush'
 import { guardNavigation } from './window-guard'
 import { vaultScheme } from './vault/asset-protocol'
-import { appScheme } from './apps/app-protocol'
 import { createSession } from './github/electron'
 import { createMembersCache } from './github/members-cache'
 import { installHoliCli } from './bridge/cli'
-import type { MainAppMethod } from '@holi/shared'
-import { appsCapabilities, storeCapabilities } from './apps/capabilities'
 import { agentCapabilities, AGENT_NAMESPACES } from './agent/capabilities'
-import { createCapabilityHost, type AppDoor } from './capabilities/dispatch'
+import { createCapabilityHost } from './capabilities/dispatch'
 import { CapabilityError } from './capabilities/error'
 import { createCapabilityRegistry } from './capabilities/registry'
 import { vaultCapabilities, VAULT_NAMESPACES } from './capabilities/vault-caps'
@@ -41,10 +38,9 @@ import { taskCapabilities, TASK_NAMESPACES } from './vault/task-capabilities'
 import { agentSeed } from './agent/seed/seed'
 import { coreSeed } from './vault/seed/core'
 import { MAIN_PLUGINS } from '../plugins/main'
-import type { GoogleCapabilities } from '../plugins/google/main/capabilities'
 import { install } from './plugin-host/installed'
 import { createPluginHost } from './plugin-host/host'
-import { pluginEvents, type PluginEventsDeps } from './plugin-host/events'
+import type { PluginEventsDeps } from './plugin-host/events'
 import { frameSchemes, schemeEntries, serveScheme } from './plugin-host/schemes'
 import {
   describeUpdate,
@@ -55,7 +51,6 @@ import {
 import { registerGitRoutes } from './vault/git-routes'
 import { registerIpc } from './ipc'
 import { createRouter, localToday } from './router'
-import { admitApps, createAppGrants } from './apps/app-grants'
 import { createCoreServices, createUiReports } from './capabilities/services'
 import { createVaultHost } from './vault/active-vault'
 import { VaultRegistry, vaultRoot } from './vault/registry'
@@ -91,9 +86,9 @@ let mainWindow: BrowserWindow | null = null
 let tray: Tray | null = null
 
 // Every scheme this build serves, core's then each plugin's: vault assets,
-// vault apps, and whatever plugins add. Electron takes them only before
+// and whatever plugins add (vault apps' `holi-app:`). Electron takes them only before
 // app-ready, so they are declared at module top level, not in main().
-const SCHEMES = schemeEntries([vaultScheme, appScheme], MAIN_PLUGINS)
+const SCHEMES = schemeEntries([vaultScheme], MAIN_PLUGINS)
 protocol.registerSchemesAsPrivileged(
   SCHEMES.map(({ scheme }) => ({ scheme: scheme.scheme, privileges: scheme.privileges })),
 )
@@ -205,6 +200,8 @@ async function main(): Promise<void> {
     active: () => host.active(),
     rootFor: (remote) => rootFor(remote),
     events: eventsDeps,
+    // `capabilityHost` is built below, long before any vault opens.
+    openAppDoor: (opener) => capabilityHost.openAppDoor(opener),
   })
 
   const host = createVaultHost({
@@ -261,10 +258,9 @@ async function main(): Promise<void> {
     )
   }
 
-  // What the renderer reports the person is looking at, and their approvals
-  // of apps' Google reads: capabilities and the router both read these.
+  // What the renderer reports the person is looking at: capabilities and the
+  // router both read it.
   const uiReports = createUiReports()
-  const appGrants = createAppGrants(join(app.getPath('userData'), 'app-grants.json'))
 
   /**
    * Geolocation is refused outright. Electron answers it through Google's
@@ -305,36 +301,14 @@ async function main(): Promise<void> {
       return result.summary
     },
   })
-  // Vault apps are still core, so their events are not gated on a plugin.
-  // The app door is opened below, once the host exists.
-  let appDoor: AppDoor | null = null
-  const appsCaps = appsCapabilities({
-    events: pluginEvents(eventsDeps, 'apps'),
-    appDoor: () => appDoor!,
-    grants: appGrants,
-  })
-  const storeCaps = storeCapabilities()
   const taskCaps = taskCapabilities({ today: localToday })
   const agentCaps = agentCapabilities({
     // `agent` is assigned below, before any vault can be open.
     sessionsFor: (remote) => (host.active()?.remote === remote ? (agent?.sessions() ?? []) : []),
   })
   capabilities.register(VAULT_NAMESPACES, vaultCaps)
-  capabilities.register(['apps'], appsCaps)
-  capabilities.register(['store'], storeCaps)
   capabilities.register(TASK_NAMESPACES, taskCaps)
   capabilities.register(AGENT_NAMESPACES, agentCaps)
-  // Every method the frame's bridge may call and main answers is registered
-  // above or by a plugin: leaving one out is a type error here rather than a
-  // hung promise in an app.
-  void ({} as Record<
-    keyof (typeof vaultCaps &
-      typeof storeCaps &
-      typeof taskCaps &
-      typeof agentCaps &
-      GoogleCapabilities),
-    true
-  > satisfies Record<MainAppMethod, true>)
   // The one way every door runs a capability: the renderer's UI door (the
   // router) and the agent's `holi` CLI (the bridge server, below).
   const capabilityHost = createCapabilityHost({
@@ -345,9 +319,6 @@ async function main(): Promise<void> {
     pluginEnabled: async (plugin, root) => (await plugins.enabled(root)).has(plugin),
   })
   const dispatch = capabilityHost.dispatch
-  // The app door's one opener is the vault apps code, which keeps the
-  // approvals an entry's `appGrant` asks for.
-  appDoor = capabilityHost.openAppDoor({ admit: admitApps(appGrants) })
 
   const router = createRouter({
     capabilities: capabilityHost,

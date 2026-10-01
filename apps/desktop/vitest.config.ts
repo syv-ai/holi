@@ -13,7 +13,11 @@ export default defineConfig({
         resolve: { alias },
         test: {
           name: 'node',
-          include: ['test/**/*.test.ts', 'src/plugins/*/test/**/*.test.ts'],
+          include: [
+            'test/**/*.test.ts',
+            'src/plugins/*.test.ts',
+            'src/plugins/*/test/**/*.test.ts',
+          ],
           environment: 'node',
           passWithNoTests: true,
           // One file at a time — do NOT let test files run in parallel.

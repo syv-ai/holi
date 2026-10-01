@@ -26,8 +26,7 @@ import {
   type CollectionSchema,
 } from '@holi/shared'
 import { exactPath } from '@holi/shared/path-safety-node'
-import { writeAtomic } from '../vault/vault-files'
-import { CapabilityError } from '../capabilities/error'
+import { CapabilityError, writeAtomic } from '../../../main/plugin-api'
 
 export interface StoredRecord {
   id: string

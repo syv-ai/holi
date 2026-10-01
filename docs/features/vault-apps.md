@@ -103,7 +103,7 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
 - **The log.** `log.local.txt` at the bundle's root is what went wrong while the app ran here: the
   bridge shim reports `console.error`/`warn`, uncaught errors, unhandled rejections and refused
   bridge calls, plus `holi.log(...)`, capped at 50 a second, and main appends them
-  (`apps/app-log.ts`, one write at a time, never through a link, never into a deleted bundle).
+  (`log.ts`, one write at a time, never through a link, never into a deleted bundle).
   Each line is timed; a stack continues indented. It keeps the last day and at most 500 entries,
   trimmed as it is written (`appendAppLog`). It is for the agent: `.local.`, so it never syncs;
   not served to the app, not readable through the bridge, not in the approval hash, and not
@@ -114,7 +114,7 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   it over.
 - **One registry, two doors.** What main answers is the capability registry
   (`main/capabilities/`, see [architecture](../architecture.md)); the apps feature registers
-  `store.*` and `apps.*` (`main/apps/capabilities.ts`). Each entry has its params, its refusals, and the doors
+  `store.*` and `apps.*` (`src/plugins/apps/main/capabilities.ts`). Each entry has its params, its refusals, and the doors
   it opens to: the app's bridge, the agent's `holi` CLI (`/cli` on the bridge server), and Holi's
   own UI, which reaches `apps.call`, `apps.grants`, `apps.grant`, `apps.log` and `apps.init`. An app sees
   exactly what the agent can inspect from the terminal, written once. At the app door the bundle
@@ -238,9 +238,12 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
 
 ## Code
 
-- `apps/desktop/src/main/apps/`: the protocol helpers, bridge shim, base tokens, open/init ops,
-  the `apps.*` and `store.*` capabilities (`capabilities.ts`), the store
-  (`app-store.ts`) and the approvals (`app-grants.ts`).
+- `apps/desktop/src/plugins/apps/`: the vault apps plugin, on by default. Its `main/` holds the
+  `holi-app:` scheme (`protocol.ts`), the bridge shim, base tokens, open/init ops, the `apps.*`
+  and `store.*` capabilities (`capabilities.ts`), the store (`store.ts`), the approvals
+  (`grants.ts`), and its seed: the vault-apps skill and the `vault-app-check.mjs` hook under
+  `main/vault/shipped/.claude/`. It opens the app door once it starts, and with it off a vault
+  serves no app, while what the vault holds (records, `.local.app`) is still core's.
 - `apps/desktop/src/main/capabilities/`: the registry, its dispatch and services, the read
   fences and core's entries, with note rendering (`render-note.ts`).
 - `apps/desktop/src/main/vault/search.ts`: the vault search behind `holi.search`, shared with
@@ -248,8 +251,10 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
 - `apps/desktop/src/main/vault/record-merge.ts`: the record merge driver's install;
   `apps/desktop/src/main/vault/git-routes.ts`: `/merge/record`;
   `apps/desktop/src/main/bridge/server.ts`: `/cli`.
-- `apps/desktop/src/main/index.ts`: scheme registration and the `holi-app` handler.
-- `apps/desktop/src/main/agent/seed/vault/shipped/.claude/hooks/vault-app-check.mjs`, `apps/desktop/src/main/bridge/cli.ts`.
+- `apps/desktop/src/main/index.ts`: scheme registration, every plugin's included.
+- `apps/desktop/src/main/bridge/cli.ts`: the `holi` CLI.
+- `apps/desktop/src/plugins/app-methods.test.ts`: every bridge method is answered by an app-door
+  capability in this build.
 - `apps/desktop/src/renderer/src/features/apps/`: `AppFrame`, with the approval dialog.
 - `apps/desktop/src/renderer/src/state/app-push.ts`: the push signatures;
   `state/ui-report.ts`: the one report of focus and recents to main.

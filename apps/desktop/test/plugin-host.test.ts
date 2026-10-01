@@ -65,9 +65,10 @@ function rig(opts: { default?: boolean; roots?: Record<string, string>; live?: s
       },
       liveRemote: () => opts.live ?? null,
     },
+    openAppDoor: (opener) => capabilities.openAppDoor(opener),
   })
   let root = ''
-  const { dispatch } = createCapabilityHost({
+  const capabilities = createCapabilityHost({
     registry,
     rootFor: async () => root,
     active: () => null,
@@ -76,7 +77,7 @@ function rig(opts: { default?: boolean; roots?: Record<string, string>; live?: s
   })
   const ping = (at: string) => {
     root = at
-    return dispatch({ door: 'ui', remote: 'o/r', name: 'fake.ping', params: {} })
+    return capabilities.dispatch({ door: 'ui', remote: 'o/r', name: 'fake.ping', params: {} })
   }
   /** What the renderer sends the plugin's main side. */
   const fromRenderer = (message: unknown) => listeners.get('plugin:fake')?.(message)

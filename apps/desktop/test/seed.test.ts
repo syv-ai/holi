@@ -10,6 +10,7 @@ import { LOCAL_ONLY_IGNORE_LINES, MEMORY_INDEX_EMPTY, VAULT_MARKER_FILE } from '
 import { afterEach, describe, expect, it } from 'vitest'
 import type { SettingsFragment } from '../src/main/agent/seed/claude-settings'
 import { agentSeed, agentSettings } from '../src/main/agent/seed/seed'
+import { appsSeed } from '../src/plugins/apps/main/seed'
 import { googleSeed } from '../src/plugins/google/main/seed'
 import { pdfSeed } from '../src/plugins/pdf/main/seed'
 import { coreSeed, GITIGNORE } from '../src/main/vault/seed/core'
@@ -126,14 +127,20 @@ describe('the seed tables', () => {
       '.claude/hooks/memory-overview.mjs',
       '.claude/hooks/turn-signal.mjs',
       '.claude/hooks/user-prompt-submit.mjs',
-      '.claude/hooks/vault-app-check.mjs',
       '.claude/skills/holi-feedback/SKILL.md',
       '.claude/skills/memory/SKILL.md',
       '.claude/skills/theme/SKILL.md',
       '.claude/skills/using-tasks/SKILL.md',
-      '.claude/skills/vault-apps/SKILL.md',
     ])
     expect(keys(agentSeed.merge!)).toEqual(['.claude/settings.json'])
+  })
+
+  it('vault apps ship their check hook and their skill, and nothing once', () => {
+    expect(keys(appsSeed.once)).toEqual([])
+    expect(keys(appsSeed.shipped)).toEqual([
+      '.claude/hooks/vault-app-check.mjs',
+      '.claude/skills/vault-apps/SKILL.md',
+    ])
   })
 
   it('Google ships its send gate and its skill, and nothing once', () => {
@@ -578,6 +585,8 @@ describe('mergedSettings', () => {
       'Bash(ls:*)',
       'Bash(holi pdf comments:*)',
       'Bash(holi pdf typst:*)',
+      'Bash(holi apps:*)',
+      'Bash(holi store:*)',
     ])
     expect(after.permissions.deny[0]).toBe('Bash(sudo:*)')
     expect(after.skillOverrides.init).toBe('on')
@@ -587,11 +596,16 @@ describe('mergedSettings', () => {
     expect(after.permissions.ask).toContain('Bash(holi google send:*)')
   })
 
-  it('allows the read-only holi pdf commands without a prompt, in a vault that predates them', () => {
+  it('allows the commands that need no prompt, in a vault that predates them', () => {
     const before = JSON.parse(SETTINGS_SEED) as Record<string, any>
     delete before.permissions.allow
     const after = parse(mergedSettings(JSON.stringify(before)))
-    expect(after.permissions.allow).toEqual(['Bash(holi pdf comments:*)', 'Bash(holi pdf typst:*)'])
+    expect(after.permissions.allow).toEqual([
+      'Bash(holi pdf comments:*)',
+      'Bash(holi pdf typst:*)',
+      'Bash(holi apps:*)',
+      'Bash(holi store:*)',
+    ])
     expect(after.permissions.ask).toEqual(before.permissions.ask)
   })
 

@@ -3,15 +3,15 @@ import { tmpdir } from 'node:os'
 import { join, sep } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { APP_METHODS, THEME_TOKENS, appHost } from '@holi/shared'
-import { APP_BASE_TOKENS, missingBaseTokens } from '../src/main/apps/app-tokens'
-import { BRIDGE_JS } from '../src/main/apps/bridge-script'
+import { APP_BASE_TOKENS, missingBaseTokens } from '../main/tokens'
+import { BRIDGE_JS } from '../main/bridge-script'
 import {
   appFileAbsPath,
   appHeadHtml,
   servableAppFile,
   injectAppHead,
   parseAppUrl,
-} from '../src/main/apps/app-protocol'
+} from '../main/protocol'
 
 const ROOT = '/vault/root'
 const BUNDLE = 'Finance/Budget.app'

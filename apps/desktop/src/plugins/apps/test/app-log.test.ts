@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, expect, test } from 'vitest'
 import { APP_LOG_FILE } from '@holi/shared'
-import { writeAppLog } from '../src/main/apps/app-log'
+import { writeAppLog } from '../main/log'
 
 let root: string
 beforeEach(async () => {

@@ -15,21 +15,26 @@
  * No `electron` import: this loads under plain Node in the tests.
  */
 import { appBundleOf, isAppBundlePath, type AppLogLevel } from '@holi/shared'
-import type { AppDoor } from '../capabilities/dispatch'
-import { CapabilityError } from '../capabilities/error'
-import { paramsObject, pathParams, stringParam } from '../capabilities/params'
-import { cap, type CapabilityContext } from '../capabilities/registry'
-import type { PluginEvents } from '../plugin-host/events'
+import {
+  cap,
+  CapabilityError,
+  paramsObject,
+  pathParams,
+  stringParam,
+  type AppContext,
+  type AppDoor,
+  type CapabilityContext,
+} from '../../../main/plugin-api'
 import {
   bundleAuthorship,
   commitLogin,
   manifestOf,
   type AppGrants,
   type BundleCommit,
-} from './app-grants'
-import { writeAppLog } from './app-log'
-import { initAppOp, openAppOp } from './app-ops'
-import { storeCheck, storeDelete, storeGet, storeList, storePut } from './app-store'
+} from './grants'
+import { writeAppLog } from './log'
+import { initAppOp, openAppOp } from './ops'
+import { storeCheck, storeDelete, storeGet, storeList, storePut } from './store'
 
 /**
  * The bundle a store call is about: the calling frame's at the app door, where
@@ -72,7 +77,7 @@ const LOG_LEVELS: readonly AppLogLevel[] = ['error', 'warn', 'info']
 export interface AppCapabilitiesDeps {
   /** The apps' events: `open` asks the renderer to open (or reload) a
    *  bundle's tab in the active pane, if that vault is the one on screen. */
-  events: Pick<PluginEvents, 'emit'>
+  events: Pick<AppContext, 'emit'>
   /** The app door, which the apps code opened. Read when a call arrives. */
   appDoor(): AppDoor
   /** This machine's approvals of apps' `dangerously-allow` reads. */

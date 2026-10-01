@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { parseAppManifest } from '@holi/shared'
-import { initAppOp, openAppOp } from '../src/main/apps/app-ops'
+import { initAppOp, openAppOp } from '../main/ops'
 
 let root: string
 const dirs: string[] = []

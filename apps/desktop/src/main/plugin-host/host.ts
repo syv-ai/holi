@@ -11,6 +11,7 @@
  * No `electron` import: this loads under plain Node in the tests.
  */
 import { enabledPlugins, type ResolvedVaultSettings } from '@holi/shared'
+import type { AppDoor, AppDoorOpener } from '../capabilities/dispatch'
 import type { CapabilityRegistry } from '../capabilities/registry'
 import type { AppContext, Disposer, LiveVault, MainPlugin } from '../plugin-api'
 import { pluginEvents, type PluginEventsDeps } from './events'
@@ -30,6 +31,8 @@ export interface PluginHostDeps {
   rootFor(remote: string): Promise<string | null>
   /** The window and `ipcMain`, for plugin events. */
   events: PluginEventsDeps
+  /** The capability host's app door, which one plugin opens. */
+  openAppDoor(opener: AppDoorOpener): AppDoor
   readSettings?: (root: string) => Promise<ResolvedVaultSettings>
 }
 
@@ -108,6 +111,7 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
         undos.push(undo)
         return undo
       },
+      openAppDoor: deps.openAppDoor,
     }
     try {
       return { dispose: await plugin.activateApp!(ctx), undos }

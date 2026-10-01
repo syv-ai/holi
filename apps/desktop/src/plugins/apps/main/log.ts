@@ -18,7 +18,7 @@ import {
   type AppLogLevel,
 } from '@holi/shared'
 import { exactPath } from '@holi/shared/path-safety-node'
-import { writeAtomic } from '../vault/vault-files'
+import { writeAtomic } from '../../../main/plugin-api'
 
 const queues = new Map<string, Promise<unknown>>()
 

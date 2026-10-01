@@ -32,11 +32,15 @@ type Omittable<P> = undefined extends P
       ? true
       : false
 
+/** What an entry's `run` resolves to. Not `ReturnType`, which reads a
+ *  `run(...args: never[])` (a hand-typed `UiCapability`'s) as `any`. */
+type Result<E extends UiEntry> = E['run'] extends (...args: never[]) => infer R ? Awaited<R> : never
+
 /** One verb: the vault it runs in, then its params. */
 type Verb<E extends UiEntry> =
   Omittable<ReturnType<E['params']>> extends true
-    ? (remote: string, params?: ReturnType<E['params']>) => Promise<Awaited<ReturnType<E['run']>>>
-    : (remote: string, params: ReturnType<E['params']>) => Promise<Awaited<ReturnType<E['run']>>>
+    ? (remote: string, params?: ReturnType<E['params']>) => Promise<Result<E>>
+    : (remote: string, params: ReturnType<E['params']>) => Promise<Result<E>>
 
 /**
  * The verbs of `T` that open the UI door, keyed by the part after the

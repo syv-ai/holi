@@ -18,7 +18,7 @@ import {
   isAppBundlePath,
   vaultRelPath,
 } from '@holi/shared'
-import { writeAtomic } from '../vault/vault-files'
+import { writeAtomic } from '../../../main/plugin-api'
 
 const ENTRY_FILE = 'index.html'
 

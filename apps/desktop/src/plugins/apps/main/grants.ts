@@ -32,11 +32,7 @@ import {
   type AppAffordance,
   type AppManifest,
 } from '@holi/shared'
-import { CapabilityError } from '../capabilities/error'
-import type { Admit } from '../capabilities/registry'
-import { runGit } from '../git'
-import { jsonFileStore } from '../json-file-store'
-import { absPathFor } from '../vault/vault-files'
+import { CapabilityError, jsonFileStore, runGit, type Admit } from '../../../main/plugin-api'
 
 export const GRANT_TTL_MS = 30 * 24 * 60 * 60 * 1000
 
@@ -177,7 +173,7 @@ export function commitLogin(commit: BundleCommit, members: readonly string[]): s
 /** The bundle's manifest, or null when it has none. */
 export async function manifestOf(root: string, bundle: string): Promise<AppManifest | null> {
   const text = await readFile(
-    absPathFor(root, vaultRelPath(`${bundle}/${APP_MANIFEST_FILE}`)),
+    join(root, vaultRelPath(`${bundle}/${APP_MANIFEST_FILE}`)),
     'utf8',
   ).catch(() => null)
   return text === null ? null : parseAppManifest(text)

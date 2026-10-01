@@ -3,14 +3,14 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { emptyVaultSnapshot, formatRecord } from '@holi/shared'
-import { storeCapabilities } from '../src/main/apps/capabilities'
-import { noCoreServices } from '../src/main/capabilities/services'
-import { vaultCapabilities, VAULT_NAMESPACES } from '../src/main/capabilities/vault-caps'
+import { storeCapabilities } from '../main/capabilities'
+import { noCoreServices } from '../../../main/capabilities/services'
+import { vaultCapabilities, VAULT_NAMESPACES } from '../../../main/capabilities/vault-caps'
 import {
   createCapabilityRegistry,
   type CapabilityContext,
   type Door,
-} from '../src/main/capabilities/registry'
+} from '../../../main/capabilities/registry'
 
 const registry = createCapabilityRegistry()
 registry.register(['store'], storeCapabilities())

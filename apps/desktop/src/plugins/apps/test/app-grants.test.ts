@@ -10,7 +10,7 @@ import {
   commitLogin,
   createAppGrants,
   GRANT_TTL_MS,
-} from '../src/main/apps/app-grants'
+} from '../main/grants'
 
 const git = promisify(execFile)
 

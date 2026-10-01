@@ -13,6 +13,7 @@
  */
 import type { Privileges } from 'electron'
 import type { PluginInfo } from '@holi/shared'
+import type { AppDoor, AppDoorOpener } from './capabilities/dispatch'
 import type { CapabilityTable } from './capabilities/registry'
 import type { SeedContribution } from './vault/seed/types'
 
@@ -71,6 +72,13 @@ export interface AppContext extends SchemeContext {
    * is dropped. Returns the undo, which the host also runs at quit.
    */
   on(name: string, handler: (remote: string, payload: unknown) => void): () => void
+  /**
+   * Open the app door (docs/features/vault-apps.md): the way a vault app's
+   * frame reaches capabilities, with the consent check for entries that ask
+   * one (`appGrant`). Once per process, by the apps plugin, its one opener: a
+   * second call throws.
+   */
+  openAppDoor(opener: AppDoorOpener): AppDoor
 }
 
 export interface MainPlugin {
@@ -92,9 +100,11 @@ export {
   type Capability,
   type CapabilityContext,
   type CapabilityTable,
+  type Admit,
   type CliSpec,
   type Door,
 } from './capabilities/registry'
+export type { AppDoor, AppDoorOpener } from './capabilities/dispatch'
 export { CapabilityError } from './capabilities/error'
 export { knownPath } from './capabilities/fences'
 export {
@@ -108,3 +118,7 @@ export {
 } from './capabilities/params'
 export { seedFolder } from './vault/seed/folder'
 export { jsonFileStore, type JsonFileStore } from './json-file-store'
+export { runGit } from './git'
+export { writeAtomic } from './vault/vault-files'
+export { readVaultTheme } from './vault/theme'
+export { mimeFor } from './vault/asset-protocol'
