@@ -26,7 +26,7 @@ import { installGitHook, partitionBySize, type HeldBackFile } from './large-file
 import { installRecordMergeDriver } from './record-merge'
 import { readMaxCommittedFileBytes } from './vault-settings'
 import type { VaultRegistry } from './registry'
-import { scanVault } from './vault-store'
+import { scanVault, type ScanClaim } from './vault-store'
 import { watchVault, type VaultWatcher } from './watcher'
 
 // The sync indicator's vocabulary lives in shared, beside the words for it
@@ -144,6 +144,9 @@ function commitMessage(paths: string[]): string {
 export async function openActiveVault(args: {
   remote: string
   repo: GitRepo
+  /** What the scanner claims in this vault, asked on every scan: the plugins
+   *  it runs can change while it is open. */
+  claims: () => Promise<readonly ScanClaim[]>
   onSnapshot: (snapshot: VaultSnapshot) => void
   onSyncState: (state: SyncState) => void
   /** The large-file gate's held-back set, pushed every commit tick (including
@@ -199,7 +202,7 @@ export async function openActiveVault(args: {
   }
 
   let closed = false
-  let cached: VaultSnapshot = await scanVault(root)
+  let cached: VaultSnapshot = await scanVault(root, await args.claims())
   let state: SyncState = { kind: 'up-to-date' }
   let scanning = false
   let committing = false
@@ -253,7 +256,10 @@ export async function openActiveVault(args: {
       // A vault directory can vanish under us (a user deleting the clone in
       // Finder), and a throw here must not take the heal loop down with it. An
       // empty vault is the honest reading of an absent one.
-      cached = await scanVault(root).catch(() => emptyVaultSnapshot())
+      cached = await args
+        .claims()
+        .then((claims) => scanVault(root, claims))
+        .catch(() => emptyVaultSnapshot())
       if (!closed) args.onSnapshot(cached)
     } finally {
       scanning = false
@@ -735,6 +741,8 @@ export interface VaultHost {
 export function createVaultHost(args: {
   registry: VaultRegistry
   gitDeps?: GitDeps
+  /** What the scanner claims in the vault at `root` (`openActiveVault`). */
+  claims: (root: string) => Promise<readonly ScanClaim[]>
   onSnapshot: (snapshot: VaultSnapshot) => void
   onSyncState: (state: SyncState) => void
   onHeldBack?: (files: HeldBackFile[]) => void
@@ -817,6 +825,7 @@ export function createVaultHost(args: {
         current = await openActiveVault({
           remote,
           repo: openRepo(entry.path, args.gitDeps),
+          claims: () => args.claims(entry.path),
           onSnapshot: args.onSnapshot,
           onSyncState: args.onSyncState,
           onHeldBack: args.onHeldBack,

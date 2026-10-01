@@ -9,15 +9,17 @@
  *
  * NOTE: no runtime `electron` import: this loads under vitest.
  */
-import { mergeRecordText } from '@holi/shared'
+import { mergeRecordText, type SnapshotClaim } from '@holi/shared'
 import type { BridgeServer } from '../bridge/server'
 import { runPreCommit } from './hooks/runner'
 import { stagedChanges } from './hooks/staged'
-import { readHookSettings, VAULT_TRANSFORMS } from './hooks/transforms'
+import { readHookSettings, vaultTransforms } from './hooks/transforms'
 
 export interface GitRoutesDeps {
   /** The vault's clone on this machine, or null for a vault Holi does not have. */
   rootFor(remote: string): Promise<string | null>
+  /** What the plugins the vault at `root` runs claim, for the transforms. */
+  claims(root: string): Promise<readonly SnapshotClaim[]>
 }
 
 const message = (error: unknown): string => (error instanceof Error ? error.message : String(error))
@@ -49,7 +51,7 @@ export function registerGitRoutes(
           // (`.holi/state/hooks.local.log`) is the agent-readable surface.
           const result = await runPreCommit(root, await stagedChanges(root), {
             settings: await readHookSettings(root),
-            transforms: VAULT_TRANSFORMS,
+            transforms: vaultTransforms(await deps.claims(root)),
           })
           return json({ changed: result.changed, failed: result.failed })
         } catch (error) {

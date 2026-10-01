@@ -21,6 +21,7 @@ import {
   shell,
   type Tray,
 } from 'electron'
+import { snapshotTasks } from '@holi/shared'
 import { requestFlush, type FlushChannel } from './flush'
 import { guardNavigation } from './window-guard'
 import { vaultScheme } from './vault/asset-protocol'
@@ -31,7 +32,7 @@ import { createCapabilityHost } from './capabilities/dispatch'
 import { CapabilityError } from './capabilities/error'
 import { createCapabilityRegistry } from './capabilities/registry'
 import { vaultCapabilities, VAULT_NAMESPACES } from './capabilities/vault-caps'
-import { taskCapabilities, TASK_NAMESPACES } from './vault/task-capabilities'
+import { taskCapabilities, TASK_NAMESPACES, TASKS_PART } from './vault/task-capabilities'
 import { coreSeed } from './vault/seed/core'
 import { MAIN_PLUGINS } from '../plugins/main'
 import { install } from './plugin-host/installed'
@@ -178,6 +179,7 @@ async function main(): Promise<void> {
   const capabilities = createCapabilityRegistry()
   const plugins = createPluginHost({
     plugins: MAIN_PLUGINS,
+    core: [TASKS_PART],
     registry: capabilities,
     userData: userDataDir,
     coreSeeds: CORE_SEEDS,
@@ -196,10 +198,22 @@ async function main(): Promise<void> {
     // A GETTER, not a string. Read lazily on every git operation, so a sign-out
     // takes effect on the next pull rather than the next restart.
     gitDeps: { token: () => session.token() },
+    claims: (root) => plugins.scanClaimsFor(root),
     onSnapshot: (snapshot) => {
       send('vault:snapshot', snapshot)
-      // A hand edit to the settings files arrives this way too.
+      // A hand edit to the settings files arrives this way too. When it
+      // changed which plugins claim files, that scan used the old claims:
+      // scan again with the new ones.
       plugins.invalidate()
+      const active = host.active()
+      if (active === null) return
+      void plugins.scanClaimsFor(active.root).then((claims) => {
+        const now = new Set(claims.map((c) => c.plugin))
+        const was = Object.keys(snapshot.claimed)
+        if (was.length !== now.size || was.some((id) => !now.has(id))) {
+          void active.refresh().catch((err) => console.error('[vault] rescan:', err))
+        }
+      })
     },
     onSyncState: (state) => send('vault:sync', state),
     // How everything inside the vault reaches us: its `bridge.local.env`,
@@ -305,6 +319,7 @@ async function main(): Promise<void> {
     active: () => host.active(),
     core: createCoreServices({ active: () => host.active(), members, reports: uiReports }),
     pluginEnabled: async (plugin, root) => (await plugins.enabled(root)).has(plugin),
+    claims: (root) => plugins.scanClaimsFor(root),
   })
   const dispatch = capabilityHost.dispatch
 
@@ -340,7 +355,7 @@ async function main(): Promise<void> {
   const bridge = createBridgeServer({
     cli: { dispatch, commands: () => capabilities.commands() },
   })
-  registerGitRoutes(bridge, { rootFor })
+  registerGitRoutes(bridge, { rootFor, claims: (root) => plugins.scanClaimsFor(root) })
   await bridge.start()
   const binDir = dirname(holiCliPath)
 
@@ -362,8 +377,11 @@ async function main(): Promise<void> {
       for (const e of entries) clonePaths.set(e.remote, e.path)
       const scans = await Promise.all(
         entries.map(async (e) => {
-          const snap = await scanVault(e.path).catch(() => null)
-          return snap ? { remote: e.remote, tasks: snap.tasks } : null
+          const snap = await plugins
+            .scanClaimsFor(e.path)
+            .then((claims) => scanVault(e.path, claims))
+            .catch(() => null)
+          return snap ? { remote: e.remote, tasks: snapshotTasks(snap).items } : null
         }),
       )
       return scans.filter((v): v is VaultTasks => v !== null)

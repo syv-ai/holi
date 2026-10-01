@@ -4,7 +4,7 @@
  * **This is not a hook framework** (the same argument that keeps vault apps free of a `manifest.json` layer).
  * A new transform gets added to this array; it does not get a plugin system.
  */
-import { VAULT_SETTING_DEFAULTS } from '@holi/shared'
+import { VAULT_SETTING_DEFAULTS, type SnapshotClaim } from '@holi/shared'
 import { readVaultSettings } from '../settings'
 import { archiveDone } from './archive-done'
 import { memoryIndex } from './memory-index'
@@ -13,17 +13,23 @@ import { scaffoldMd } from './scaffold-md'
 import { relink } from './relink'
 import type { HookSettings, Transform } from './runner'
 
-/** Order matters: `relink` runs before `archive-done` because both move links,
+/** The transforms for a vault whose plugins claim `claims`: `scaffold-md`
+ *  leaves claimed files alone and `normalize-md` puts them in their claim's
+ *  canonical form.
+ *
+ *  Order matters: `relink` runs before `archive-done` because both move links,
  *  and each should see a tree the other has finished with. `scaffold-md` goes
  *  before `normalize-md` so its block is tidied by the same pass. `memory-index`
  *  is **last** because it indexes the whole tree the others left behind. */
-export const VAULT_TRANSFORMS: Transform[] = [
-  { name: 'relink', run: relink },
-  { name: 'archive-done', run: (root, staged) => archiveDone(root, staged) },
-  { name: 'scaffold-md', run: (root, staged) => scaffoldMd(root, staged) },
-  { name: 'normalize-md', run: normalizeMd },
-  { name: 'memory-index', run: memoryIndex },
-]
+export function vaultTransforms(claims: readonly SnapshotClaim[]): Transform[] {
+  return [
+    { name: 'relink', run: relink },
+    { name: 'archive-done', run: (root, staged) => archiveDone(root, staged) },
+    { name: 'scaffold-md', run: (root, staged) => scaffoldMd(root, staged, claims) },
+    { name: 'normalize-md', run: (root, staged) => normalizeMd(root, staged, claims) },
+    { name: 'memory-index', run: memoryIndex },
+  ]
+}
 
 /**
  * Holi's defaults, merged under whatever the vault's settings files say.

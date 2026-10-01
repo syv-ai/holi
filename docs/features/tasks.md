@@ -12,6 +12,12 @@ Todo / Doing / Done, with one swim lane per folder.
   `recurrence` and `order`, all optional. Unknown keys are written back verbatim. The body is the
   description, and its first heading is the title, falling back to the filename
   (`task.fix-login.md` reads "Fix login"). There is no `title:` key.
+- **Claimed in the snapshot.** Tasks claim `task.*.md` (`taskClaim` in shared): main's scanner
+  parses each into `snapshot.claimed.tasks`, as `items` and the `broken` ones that did not parse,
+  and keeps them out of the notes. The `normalize-md` commit transform writes a task's frontmatter
+  in canonical key order through the claim's `normalize`, which the editor also recognises as
+  Holi's own tidy, and `scaffold-md` leaves claimed files alone. Tasks is still a core part, so
+  the claim runs in every vault; with a claim absent its files are plain notes.
 - **Dates are stamps**: `YYYY-MM-DD` or `YYYY-MM-DDTHH:MM`, local, no timezone. The time is
   optional on `due` and `reminder`, and its absence means "that day", not midnight.
 - **Editing a task is editing its file.** A card click opens it beside the board as a preview,

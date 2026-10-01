@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
-import { parseTaskFile, SETTINGS_FILE, VAULT_SETTING_DEFAULTS } from '@holi/shared'
+import { parseTaskFile, SETTINGS_FILE, taskClaim, VAULT_SETTING_DEFAULTS } from '@holi/shared'
 import { afterAll, describe, expect, it, vi } from 'vitest'
 import { createVaultHost, type VaultHost } from '../src/main/vault/active-vault'
 import { seedVault } from './helpers/seed'
@@ -23,6 +23,8 @@ import { VaultRegistry } from '../src/main/vault/registry'
 
 const REMOTE = 'syv-ai/1brain'
 const TODAY = '2026-07-21'
+/** Tasks, still a core claim: what the scanner claims in these vaults. */
+const TASKS = async () => [{ ...taskClaim, plugin: 'tasks' }]
 
 const dirs: string[] = []
 afterAll(async () => {
@@ -86,6 +88,7 @@ async function rig(files: Record<string, string> = {}, auth?: StoredAuth) {
   // behaviour is tested in active-vault.test.ts.
   const host = createVaultHost({
     registry,
+    claims: TASKS,
     onSnapshot: () => {},
     onSyncState: () => {},
     timings: { pullIntervalMs: 3_600_000, healIntervalMs: 3_600_000, commitQuietMs: 3_600_000 },
@@ -106,10 +109,11 @@ async function rig(files: Record<string, string> = {}, auth?: StoredAuth) {
     active: () => host.active(),
     core: noCoreServices,
     pluginEnabled: async () => true,
+    claims: TASKS,
   })
   const caller = createRouter({
     seed: seedVault,
-    plugins: { enter: async () => {}, opened: async () => {} },
+    plugins: { enter: async () => {}, opened: async () => {}, scanClaimsFor: TASKS },
     capabilities: capabilityHost,
     registry,
     session,
@@ -1102,11 +1106,16 @@ async function authRig(routes: Record<string, Scripted[]>, seed?: StoredAuth) {
 
   const registry = new VaultRegistry(join(base, 'vaults.json'))
   const openExternal = vi.fn(async () => {})
-  const host = createVaultHost({ registry, onSnapshot: () => {}, onSyncState: () => {} })
+  const host = createVaultHost({
+    registry,
+    claims: TASKS,
+    onSnapshot: () => {},
+    onSyncState: () => {},
+  })
   hosts.push(host)
   const caller = createRouter({
     seed: seedVault,
-    plugins: { enter: async () => {}, opened: async () => {} },
+    plugins: { enter: async () => {}, opened: async () => {}, scanClaimsFor: TASKS },
     registry,
     session,
     host,

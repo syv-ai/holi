@@ -22,17 +22,22 @@ import {
   syncStateAtom,
 } from '@/plugin-api'
 
-/** The vault-wide topics: docs, tasks, sync, agent, recents, history. */
+/** The vault-wide topics: docs, one per plugin that claims files (`tasks`),
+ *  sync, agent, recents, history. */
 export const appPushSignaturesAtom = atom((get): Record<string, string> => {
   const snapshot = get(snapshotAtom)
   const epochs = get(historyEpochsAtom)
   const visible = Object.entries(epochs.byPath).filter(([p]) => !isAgentSurfacePath(p))
+  const claimed = Object.entries(snapshot.claimed).map(([id, set]) => [
+    id,
+    JSON.stringify(set.items),
+  ])
   return {
+    ...Object.fromEntries(claimed),
     docs: snapshot.docs
       .filter((d) => !isAgentSurfacePath(d.path))
       .map((d) => `${d.path}@${d.updatedAt}`)
       .join('\n'),
-    tasks: JSON.stringify(snapshot.tasks),
     sync: JSON.stringify(get(syncStateAtom)),
     agent: JSON.stringify(get(agentSessionRowsAtom)),
     recents: JSON.stringify(get(recentsAtom)),

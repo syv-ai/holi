@@ -29,6 +29,7 @@ import { parse as parseYaml, stringify as stringifyYaml } from 'yaml'
 import { parseStamp } from './dates'
 import { firstHeading } from './headings'
 import { FrontmatterError, splitFrontmatter } from './frontmatter'
+import { claimedFiles, type ClaimedFiles, type SnapshotClaim, type VaultSnapshot } from './types'
 import type {
   Priority,
   Recurrence,
@@ -327,4 +328,30 @@ function compactRecurrence(rec: Recurrence): Record<string, unknown> {
   if (rec.weekdays?.length) out.weekdays = rec.weekdays
   if (rec.endDate !== undefined) out.endDate = rec.endDate
   return out
+}
+
+/** The plugin id task files are claimed under in the snapshot. */
+export const TASKS_CLAIM = 'tasks'
+
+/**
+ * Task files as a snapshot claim: the name decides, `parseTaskFile` reads one,
+ * and its canonical form is its frontmatter in the order `serializeTaskFile`
+ * writes it. Unparseable means not ours to touch: a value that is present and
+ * wrong is a thing to surface, not to rewrite.
+ */
+export const taskClaim: SnapshotClaim = {
+  match: isTaskFilePath,
+  parse: (text, path) => parseTaskFile(text, path),
+  normalize(text) {
+    try {
+      return serializeTaskFile(parseTaskFile(text, 'task.x.md'))
+    } catch {
+      return text
+    }
+  },
+}
+
+/** The tasks and broken task files in `snapshot`. */
+export function snapshotTasks(snapshot: VaultSnapshot): ClaimedFiles<Task> {
+  return claimedFiles(snapshot, TASKS_CLAIM) as ClaimedFiles<Task>
 }

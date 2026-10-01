@@ -17,7 +17,7 @@
  * No `electron` import: this loads under plain Node in the tests.
  */
 import type { VaultSnapshot } from '@holi/shared'
-import { scanVault } from '../vault/vault-store'
+import { scanVault, type ScanClaim } from '../vault/vault-store'
 import { CapabilityError } from './error'
 import type { Admit, CapabilityRegistry, CapabilityResult, Door } from './registry'
 import type { CoreServices } from './services'
@@ -35,6 +35,9 @@ export interface CapabilityHostDeps {
   core(remote: string, root: string): CoreServices
   /** Whether the vault cloned at `root` runs this plugin. */
   pluginEnabled(plugin: string, root: string): Promise<boolean>
+  /** What the scanner claims in the vault cloned at `root`, for a vault that
+   *  is not open. */
+  claims(root: string): Promise<readonly ScanClaim[]>
 }
 
 /** A call through the UI or the CLI door. */
@@ -99,7 +102,9 @@ export function createCapabilityHost(deps: CapabilityHostDeps): CapabilityHost {
         bundle,
         snapshot: async () => {
           const active = deps.active()
-          return active?.remote === remote ? active.snapshot() : scanVault(root)
+          return active?.remote === remote
+            ? active.snapshot()
+            : scanVault(root, await deps.claims(root))
         },
         core: deps.core(remote, root),
       },

@@ -5,7 +5,7 @@
  * that render as chips, live preview) over text that has nowhere to live yet.
  * Every other surface edits a document that exists, which is `EditorPane`'s job.
  */
-import type { Task } from '@holi/shared'
+import { snapshotTasks, type Task } from '@holi/shared'
 import { EditorState, type Extension } from '@codemirror/state'
 import { EditorView, placeholder } from '@codemirror/view'
 import { useAtomValue, useSetAtom } from 'jotai'
@@ -56,14 +56,14 @@ export function TaskDescriptionEditor({
   const docPaths = useRef(new Set<string>())
   docPaths.current = new Set(snapshot.docs.map((d) => d.path))
   const tasksByPath = useRef(new Map<string, Task>())
-  tasksByPath.current = new Map(snapshot.tasks.map((t) => [t.path, t]))
+  tasksByPath.current = new Map(snapshotTasks(snapshot).items.map((t) => [t.path, t]))
   const mentionRef = useRef<MentionData>({ notes: [], tasks: [] })
   mentionRef.current = {
     notes: snapshot.docs.map((d) => ({
       path: d.path,
       ...(snapshot.icons[d.path] === undefined ? {} : { icon: snapshot.icons[d.path] }),
     })),
-    tasks: snapshot.tasks.map((t) => ({
+    tasks: snapshotTasks(snapshot).items.map((t) => ({
       path: t.path,
       title: t.title,
       status: t.status,

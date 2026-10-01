@@ -12,15 +12,18 @@
  * because it is the only one of the three that cannot race.
  */
 import { describe, expect, it } from 'vitest'
-import { normalizeText } from '@holi/shared'
+import { normalizeText, taskClaim } from '@holi/shared'
 import { decideReload, hasNewText, minimalChange } from '../src/renderer/src/lib/editor-reload'
+
+/** Tasks, still a core claim: the canonical forms the editor recognises. */
+const N = [taskClaim]
 
 describe('decideReload', () => {
   it('does nothing when disk matches base, whoever did the writing', () => {
     // The editor's own autosave lands here, and so does an agent write that
     // happened to produce identical bytes, and so does a pull that changed a
     // different file. All three are the same non-event.
-    expect(decideReload('hello\n', 'hello\n', 'hello\n', 'note.md')).toEqual({ kind: 'none' })
+    expect(decideReload('hello\n', 'hello\n', 'hello\n', 'note.md', N)).toEqual({ kind: 'none' })
   })
 
   it('still does nothing when the buffer has moved on but disk has not', () => {
@@ -28,13 +31,13 @@ describe('decideReload', () => {
     // if this reloaded, it would throw away every keystroke since the last save
     // on any unrelated snapshot push, and the snapshot push carries no path so
     // there are a great many unrelated ones.
-    expect(decideReload('hello\n', 'hello world\n', 'hello\n', 'note.md')).toEqual({ kind: 'none' })
+    expect(decideReload('hello\n', 'hello world\n', 'hello\n', 'note.md', N)).toEqual({ kind: 'none' })
   })
 
   it('reloads silently when the buffer is clean', () => {
     // A clean merge is silent. This is the overwhelmingly common
     // external-write case, because autosave fires on idle.
-    expect(decideReload('hello\n', 'hello\n', 'from a teammate\n', 'note.md')).toEqual({
+    expect(decideReload('hello\n', 'hello\n', 'from a teammate\n', 'note.md', N)).toEqual({
       kind: 'reload',
       text: 'from a teammate\n',
     })
@@ -45,13 +48,13 @@ describe('decideReload', () => {
     const mine = 'ONE\ntwo\nthree\n'
     const theirs = 'one\ntwo\nTHREE\n'
 
-    expect(decideReload(base, mine, theirs, 'note.md')).toEqual({ kind: 'merged', text: 'ONE\ntwo\nTHREE\n' })
+    expect(decideReload(base, mine, theirs, 'note.md', N)).toEqual({ kind: 'merged', text: 'ONE\ntwo\nTHREE\n' })
   })
 
   it('reports a conflict rather than picking a side', () => {
     // A merger that silently chose would remove the feature: the report is what
     // routes this to the vault's ordinary reconcile affordance.
-    const result = decideReload('one\n', 'mine\n', 'theirs\n', 'note.md')
+    const result = decideReload('one\n', 'mine\n', 'theirs\n', 'note.md', N)
 
     expect(result.kind).toBe('conflict')
     if (result.kind !== 'conflict') throw new Error('expected a conflict')
@@ -74,7 +77,7 @@ describe('decideReload', () => {
     it('rebases onto the tidied file and keeps what is being typed', () => {
       // The buffer is NOT touched: the emoji survives, and the next save writes
       // it. `base` becomes the tidied text so the invariant holds again.
-      expect(decideReload(withSpace, withEmoji, tidied, '22-08-2026.md')).toEqual({
+      expect(decideReload(withSpace, withEmoji, tidied, '22-08-2026.md', N)).toEqual({
         kind: 'rebase',
         text: tidied,
       })
@@ -83,9 +86,9 @@ describe('decideReload', () => {
     it('recognises the tidy on a task file, where the rule also reorders keys', () => {
       // Messy under the current rule, which puts `status` before `priority`.
       const messy = '---\npriority: high\nstatus: doing\n---\n'
-      expect(decideReload(messy, `${messy}\nmine\n`, normalizeText(messy, 'task.a.md'), 'task.a.md')).toEqual({
+      expect(decideReload(messy, `${messy}\nmine\n`, normalizeText(messy, 'task.a.md', N), 'task.a.md', N)).toEqual({
         kind: 'rebase',
-        text: normalizeText(messy, 'task.a.md'),
+        text: normalizeText(messy, 'task.a.md', N),
       })
     })
 
@@ -93,7 +96,7 @@ describe('decideReload', () => {
     // tidy would change: taking the tidied bytes pulls the space they just
     // typed out from under the caret.
     it('rebases for a clean buffer too, leaving the line being looked at alone', () => {
-      expect(decideReload(withSpace, withSpace, tidied, '22-08-2026.md')).toEqual({
+      expect(decideReload(withSpace, withSpace, tidied, '22-08-2026.md', N)).toEqual({
         kind: 'rebase',
         text: tidied,
       })
@@ -107,7 +110,7 @@ describe('decideReload', () => {
       const relinked = 'see [[new.md]]\n'
       const mine = 'see [[old.md]] and more\n'
 
-      expect(decideReload(base, mine, relinked, 'note.md').kind).not.toBe('rebase')
+      expect(decideReload(base, mine, relinked, 'note.md', N).kind).not.toBe('rebase')
     })
   })
 })
@@ -115,15 +118,15 @@ describe('decideReload', () => {
 describe('hasNewText', () => {
   it('sees nothing new in a buffer that differs only by the tidy', () => {
     // The normal state after a rebase: the buffer keeps its space, disk does not.
-    expect(hasNewText('- a\nword\n', '- a\nword \n', 'n.md')).toBe(false)
+    expect(hasNewText('- a\nword\n', '- a\nword \n', 'n.md', N)).toBe(false)
   })
 
   it('sees what was typed', () => {
-    expect(hasNewText('word\n', 'word more\n', 'n.md')).toBe(true)
+    expect(hasNewText('word\n', 'word more\n', 'n.md', N)).toBe(true)
   })
 
   it('counts every change in a file the tidy does not touch', () => {
-    expect(hasNewText('KEY=a\n', 'KEY=a \n', '.env')).toBe(true)
+    expect(hasNewText('KEY=a\n', 'KEY=a \n', '.env', N)).toBe(true)
   })
 })
 

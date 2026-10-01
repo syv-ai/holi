@@ -12,15 +12,25 @@
  * applies it again. A transform that carries real content (`relink`) is
  * deliberately NOT recognised this way — it still goes through the merge.
  */
-import { isTaskFilePath, parseTaskFile, serializeTaskFile } from './task-file'
+import type { SnapshotClaim } from './types'
 
-export function normalizeText(text: string, path: string): string {
+/** The claims whose files have a canonical form of their own. */
+export type Normalizer = Pick<SnapshotClaim, 'match' | 'normalize'>
+
+/** `text` tidied, then put in the canonical form of the first claim in
+ *  `normalizers` that matches `path` and has one. */
+export function normalizeText(
+  text: string,
+  path: string,
+  normalizers: readonly Normalizer[],
+): string {
   // **CRLF is left entirely alone.** Rewriting a Windows collaborator's line
   // endings would change every line in the diff.
   if (text.includes('\r')) return text
 
   const tidied = tidyWhitespace(text)
-  return isTaskFilePath(path) ? canonicalizeTask(tidied) : tidied
+  const claim = normalizers.find((c) => c.normalize !== undefined && c.match(path))
+  return claim?.normalize !== undefined ? claim.normalize(tidied) : tidied
 }
 
 /** A line that is only block markup waiting for its text: a bullet, number or
@@ -68,15 +78,4 @@ function tidyWhitespace(text: string): string {
   // from formatting. Leave the ending alone rather than guess.
   if (inFence) return joined
   return joined.endsWith('\n') ? joined.replace(/\n+$/, '\n') : `${joined}\n`
-}
-
-/** A task file's frontmatter, in the order `serializeTaskFile` writes it.
- *  Unparseable means not ours to touch: a value that is present and wrong is a
- *  thing to surface, not to rewrite. */
-function canonicalizeTask(text: string): string {
-  try {
-    return serializeTaskFile(parseTaskFile(text, 'task.x.md'))
-  } catch {
-    return text
-  }
 }

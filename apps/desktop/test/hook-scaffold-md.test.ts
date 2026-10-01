@@ -11,12 +11,16 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { scaffoldMd } from '../src/main/vault/hooks/scaffold-md'
+import { scaffoldMd as run } from '../src/main/vault/hooks/scaffold-md'
 import type { StagedChanges } from '../src/main/vault/hooks/staged'
 
 let root: string
 const dirs: string[] = []
 const BLOCK = '---\ntags: []\n---\n\n'
+
+/** A stand-in for a plugin's claim: its files are its own. */
+const CLAIMS = [{ match: (path: string) => path.endsWith('.claimed.md') }]
+const scaffoldMd = (at: string, staged: StagedChanges) => run(at, staged, CLAIMS)
 
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), 'holi-scaffold-'))
@@ -97,8 +101,8 @@ describe('what it will not touch', () => {
     await untouched('.claude/skills/x/SKILL.md')
   })
 
-  it('leaves a task file to its own serializer', async () => {
-    await untouched('projects/task.fix-login.md')
+  it('leaves a claimed file to the plugin that owns it', async () => {
+    await untouched('projects/fix-login.claimed.md')
   })
 
   it('leaves hidden paths alone', async () => {

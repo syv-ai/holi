@@ -13,7 +13,6 @@
  * title field would drift from it.
  */
 import { isAgentSurfacePath, isHiddenPath } from './path-safety'
-import { isTaskFilePath } from './task-file'
 
 /** The full file body a new note is created with. */
 export function scaffoldNoteText(): string {
@@ -29,11 +28,11 @@ export function scaffoldNoteText(): string {
  *   the agent's instructions, so a `tags:` block is prompt text, not metadata
  *   (the same reason icons live in a vault-level map). A skill's frontmatter has its own schema, and
  *   `tags` is not in it.
- * - **Task files.** `serializeTaskFile` owns their frontmatter and
- *   `normalize-md` rewrites it into canonical order; a second writer would
- *   fight it every commit.
  * - **Anything hidden**: `.holi/` and any dot-segment, which is not prose.
  * - **Non-markdown.**
+ *
+ * A file a plugin claims (a task) is not asked about here: its plugin owns
+ * its frontmatter, so the `scaffold-md` transform skips claimed paths itself.
  *
  * A daily note needs no exclusion: it is born with `type: daily-note` and
  * `date:`, so it already has a block and the scaffold is a no-op on it.
@@ -41,7 +40,6 @@ export function scaffoldNoteText(): string {
 export function wantsScaffold(path: string): boolean {
   if (!path.endsWith('.md')) return false
   if (isAgentSurfacePath(path)) return false
-  if (isTaskFilePath(path)) return false
   if (isHiddenPath(path)) return false
   return true
 }

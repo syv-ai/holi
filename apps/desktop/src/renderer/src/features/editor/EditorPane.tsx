@@ -12,7 +12,7 @@
  */
 import { EditorSelection, EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
-import type { Task } from '@holi/shared'
+import { snapshotTasks, type Task } from '@holi/shared'
 import { useAtomValue, useSetAtom, useStore } from 'jotai'
 import { useEffect, useRef } from 'react'
 import { baseEditorExtensions, plainTextExtensions } from '@/editor/extensions'
@@ -26,6 +26,7 @@ import { registerBuffer } from '@/lib/buffer-registry'
 import { decideReload, hasNewText, type ConflictResolvers } from '@/lib/editor-reload'
 import { NO_AGENT, useAskAgentSeam } from '@/state/agent-service'
 import { historyOpenAtom } from '@/state/history'
+import { normalizersAtom } from '@/state/plugins'
 import { trpc } from '@/lib/trpc'
 import { fileHistoryAtom } from '@/state/file-history'
 import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
@@ -84,6 +85,11 @@ export function EditorPane({
 }) {
   const remote = useAtomValue(activeRemoteAtom)
   const snapshot = useAtomValue(snapshotAtom)
+  /** Read by the reload and save paths when they run, so the editor follows
+   *  the claims the vault runs now without rebuilding. */
+  const normalizerList = useAtomValue(normalizersAtom)
+  const normalizers = useRef(normalizerList)
+  normalizers.current = normalizerList
   const store = useStore()
   const hostRef = useRef<HTMLDivElement>(null)
 
@@ -100,14 +106,14 @@ export function EditorPane({
   const docPaths = useRef(new Set<string>())
   docPaths.current = new Set(snapshot.docs.map((d) => d.path))
   const tasksByPath = useRef(new Map<string, Task>())
-  tasksByPath.current = new Map(snapshot.tasks.map((t) => [t.path, t]))
+  tasksByPath.current = new Map(snapshotTasks(snapshot).items.map((t) => [t.path, t]))
   const mentionRef = useRef<MentionData>({ notes: [], tasks: [] })
   mentionRef.current = {
     notes: snapshot.docs.map((d) => ({
       path: d.path,
       ...(snapshot.icons[d.path] === undefined ? {} : { icon: snapshot.icons[d.path] }),
     })),
-    tasks: snapshot.tasks.map((t) => ({
+    tasks: snapshotTasks(snapshot).items.map((t) => ({
       path: t.path,
       title: t.title,
       status: t.status,
@@ -151,7 +157,7 @@ export function EditorPane({
       const view = viewRef.current
       if (view === null || disposed) return
       const text = view.state.doc.toString()
-      if (!hasNewText(baseRef.current, text, path)) return
+      if (!hasNewText(baseRef.current, text, path, normalizers.current)) return
       baseRef.current = text
       await trpc.notes.write.mutate({ remote, path, text })
     }
@@ -167,7 +173,7 @@ export function EditorPane({
       // `tags: [` is never the committed state. Markdown gates on its
       // frontmatter YAML; a plain file on its own language (`syntaxValid`).
       if (plain ? !syntaxValid(path, text) : !frontmatterValid(view.state)) return false
-      if (hasNewText(baseRef.current, text, path)) {
+      if (hasNewText(baseRef.current, text, path, normalizers.current)) {
         baseRef.current = text
         await trpc.notes.write.mutate({ remote, path, text })
       }
@@ -258,7 +264,7 @@ export function EditorPane({
       const view = viewRef.current
       if (view !== null) {
         const text = view.state.doc.toString()
-        if (hasNewText(baseRef.current, text, path)) {
+        if (hasNewText(baseRef.current, text, path, normalizers.current)) {
           void trpc.notes.write.mutate({ remote, path, text })
         }
         view.destroy()
@@ -281,7 +287,13 @@ export function EditorPane({
     void trpc.notes.read.query({ remote, path }).then((disk) => {
       const view = viewRef.current
       if (cancelled || view === null) return
-      const decision = decideReload(baseRef.current, view.state.doc.toString(), disk, path)
+      const decision = decideReload(
+        baseRef.current,
+        view.state.doc.toString(),
+        disk,
+        path,
+        normalizers.current,
+      )
       if (decision.kind === 'none') return
       if (decision.kind === 'conflict') {
         // Both ways out close over the two texts that disagreed, so neither

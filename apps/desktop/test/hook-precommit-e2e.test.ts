@@ -16,6 +16,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
+import { taskClaim } from '@holi/shared'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createBridgeServer, type BridgeServer } from '../src/main/bridge/server'
 import { registerGitRoutes } from '../src/main/vault/git-routes'
@@ -58,7 +59,7 @@ async function vault(settings: Record<string, boolean> = {}): Promise<string> {
   resetBreaker()
   const server = createBridgeServer({ log: () => {} })
   // One vault in these; the server routes by the caller's token.
-  registerGitRoutes(server, { rootFor: async () => dir })
+  registerGitRoutes(server, { rootFor: async () => dir, claims: async () => [taskClaim] })
   servers.push(server)
   await server.start()
 

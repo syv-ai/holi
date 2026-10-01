@@ -9,10 +9,14 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { normalizeMd } from '../src/main/vault/hooks/normalize-md'
+import { taskClaim } from '@holi/shared'
+import { normalizeMd as run } from '../src/main/vault/hooks/normalize-md'
 import type { StagedChanges } from '../src/main/vault/hooks/staged'
 
 let root: string
+
+/** Tasks, still a core claim: the canonical form the vault's claims give. */
+const normalizeMd = (at: string, staged: StagedChanges) => run(at, staged, [taskClaim])
 const dirs: string[] = []
 
 beforeEach(async () => {

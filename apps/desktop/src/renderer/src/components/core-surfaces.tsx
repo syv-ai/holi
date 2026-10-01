@@ -2,8 +2,10 @@
  * Core's own surfaces, nav items and claims (docs/features/tabs-panes.md),
  * installed into the registry by `main.tsx` beside the plugins' list.
  *
- * The board is still core's until the tasks plugin takes it.
+ * The board, and the task-file claim, are still core's until the tasks
+ * plugin takes them.
  */
+import { taskClaim } from '@holi/shared'
 import { useAtomValue } from 'jotai'
 import { History, House, Settings, SquareKanban } from 'lucide-react'
 import type { RailItem, Surface } from '@/plugin-api/types'
@@ -47,5 +49,5 @@ const RAIL: readonly RailItem[] = [
 export const CORE_CONTRIBUTION: CoreContribution = {
   surfaces: SURFACES,
   rail: RAIL,
-  claims: [],
+  claims: [{ match: taskClaim.match, normalize: taskClaim.normalize }],
 }

@@ -61,6 +61,7 @@ it('seeds nothing under .claude/ and refuses agent.* until the agent is on', asy
     active: () => null,
     core: noCoreServices,
     pluginEnabled: async (plugin, at) => (await host.enabled(at)).has(plugin),
+    claims: (at) => host.scanClaimsFor(at),
   })
   const terminals = () =>
     capabilities.dispatch({ door: 'ui', remote: 'o/r', name: 'agent.terminals', params: {} })

@@ -75,7 +75,11 @@ call, a plugin asks `useHasCapability(name)`, backed by the `cap.names` query (t
 whose owner the vault runs), so a button for another plugin's verb hides while that plugin is off.
 Core's `tasks.create` is one: the board and the Google views create tasks through it.
 A plugin claims vault paths: the first enabled claim with a `view` opens a note tab of that path,
-and its `rowMenu` items join the file tree's menu. A plugin adds `surfaces` (tab kinds) and `rail`
+and its `rowMenu` items join the file tree's menu. On the main side a claim
+(`MainPlugin.claims`, `{match, parse, normalize?}`) owns markdown files in the snapshot: the scanner
+(`scanVault(root, claims)`, the claims from `PluginHost.scanClaimsFor`) parses them into
+`snapshot.claimed[id]` instead of `docs`, and a settings write that changes `plugins` rescans.
+A plugin adds `surfaces` (tab kinds) and `rail`
 items to the nav menu ([tabs and panes](features/tabs-panes.md)), registered beside core's own, and
 `settingsSections` to the settings tab ([settings](features/settings.md)).
 Its dialogs open as `{id: 'plugin', render}`.

@@ -64,11 +64,6 @@ describe('wantsScaffold', () => {
     expect(wantsScaffold('notes/AGENTS.md')).toBe(true)
   })
 
-  it('refuses a task file, whose serializer owns its frontmatter', () => {
-    expect(wantsScaffold('task.fix-login.md')).toBe(false)
-    expect(wantsScaffold('projects/task.fix-login.md')).toBe(false)
-  })
-
   it('refuses anything hidden', () => {
     expect(wantsScaffold('.holi/apps/thing/README.md')).toBe(false)
     expect(wantsScaffold('sub/.private/x.md')).toBe(false)

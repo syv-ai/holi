@@ -70,6 +70,12 @@ export interface PathClaim {
   decorate?: ClaimDecoration
   rowMenu?: readonly ClaimMenuItem[]
   create?: ClaimCreate
+  /**
+   * The file's canonical form: the same function as the main side's claim,
+   * which the `normalize-md` commit transform applies. The editor treats a
+   * file rewritten into it as Holi's own tidy, not a foreign edit.
+   */
+  normalize?(text: string): string
 }
 
 /**

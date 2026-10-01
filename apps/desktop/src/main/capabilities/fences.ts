@@ -64,7 +64,9 @@ export async function knownPath(ctx: CapabilityContext, path: string): Promise<V
   const known =
     snapshot.docs.some((d) => d.path === rel) ||
     snapshot.files.some((f) => f.path === rel) ||
-    snapshot.tasks.some((t) => t.path === rel)
+    Object.values(snapshot.claimed).some(
+      (set) => set.items.some((i) => i.path === rel) || set.broken.some((b) => b.path === rel),
+    )
   if (!known) throw new CapabilityError('NOT_FOUND', path)
   return rel
 }

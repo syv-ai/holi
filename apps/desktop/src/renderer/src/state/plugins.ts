@@ -59,6 +59,11 @@ export const claimsAtom = atom((get): readonly PathClaim[] => {
   ]
 })
 
+/** The claims whose files have a canonical form, for the editor's reload. */
+export const normalizersAtom = atom((get): readonly PathClaim[] =>
+  get(claimsAtom).filter((c) => c.normalize !== undefined),
+)
+
 /** The claims that make directories documents (`PathClaim.folder`). */
 export const folderClaimsAtom = atom((get): readonly FolderDocumentClaim[] =>
   folderClaims(get(claimsAtom)),

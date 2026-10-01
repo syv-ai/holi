@@ -1,4 +1,5 @@
 import type { Priority, Recurrence, Task, TaskStatus } from '@holi/shared'
+import { snapshotTasks } from '@holi/shared'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { useMemo, useRef, useState } from 'react'
 import { DateTimePicker, FormField, RecurrenceField } from '@/composites'
@@ -70,9 +71,9 @@ export function CreateTask({ onClose }: { onClose: () => void }): React.JSX.Elem
     () =>
       taskCreateFolders([
         ...snapshot.docs.map((d) => d.path),
-        ...snapshot.tasks.map((t) => t.path),
+        ...snapshotTasks(snapshot).items.map((t) => t.path),
         ...snapshot.files.map((f) => f.path),
-        ...snapshot.broken.map((b) => b.path),
+        ...snapshotTasks(snapshot).broken.map((b) => b.path),
       ]),
     [snapshot],
   )

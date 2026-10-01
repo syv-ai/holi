@@ -10,7 +10,7 @@
  * foreign). Content comparison holds no timing assumption.
  * See docs/features/editor.md.
  */
-import { merge3, normalizeText, type ConflictRegion } from '@holi/shared'
+import { merge3, normalizeText, type ConflictRegion, type Normalizer } from '@holi/shared'
 
 export type Reload =
   /** Nothing happened that concerns this editor. */
@@ -41,6 +41,7 @@ export function decideReload(
   buffer: string,
   disk: string,
   path: string,
+  normalizers: readonly Normalizer[],
 ): Reload {
   // Our own save echoing back, or a push about some other file.
   if (disk === base) return { kind: 'none' }
@@ -54,7 +55,7 @@ export function decideReload(
   // looking at the line, and taking the tidied bytes would pull the space
   // they just typed out from under the caret. `hasNewText` then keeps the
   // untidied buffer from being written back.
-  if (disk === normalizeText(base, path)) return { kind: 'rebase', text: disk }
+  if (disk === normalizeText(base, path, normalizers)) return { kind: 'rebase', text: disk }
 
   // Clean buffer: nothing to lose. The common case, since autosave fires on
   // idle.
@@ -72,11 +73,16 @@ export function decideReload(
  * save: writing it would just be tidied again, and after a `rebase` it is the
  * normal state of an editor whose file was tidied under it.
  */
-export function hasNewText(base: string, buffer: string, path: string): boolean {
+export function hasNewText(
+  base: string,
+  buffer: string,
+  path: string,
+  normalizers: readonly Normalizer[],
+): boolean {
   if (buffer === base) return false
   // The hook tidies markdown only; in a `.env` a trailing space is content.
   if (!path.endsWith('.md')) return true
-  return normalizeText(buffer, path) !== normalizeText(base, path)
+  return normalizeText(buffer, path, normalizers) !== normalizeText(base, path, normalizers)
 }
 
 /**

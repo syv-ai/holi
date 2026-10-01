@@ -122,10 +122,40 @@ export interface Task {
   extra?: Record<string, unknown>
 }
 
-/** A `task.*.md` that would not parse. */
-export interface BrokenTask {
+/** A claimed file that would not parse. */
+export interface BrokenFile {
   path: string
   error: string
+}
+
+/** What a claim's `parse` makes of one file: whatever it likes, with its path. */
+export interface ClaimedItem {
+  path: string
+}
+
+/**
+ * What one plugin's claim made of the files it owns (`SnapshotClaim`). A file
+ * that would not parse is reported in `broken` rather than dropped: one
+ * omitted from its view is indistinguishable from data loss.
+ */
+export interface ClaimedFiles<T extends ClaimedItem = ClaimedItem> {
+  items: T[]
+  broken: BrokenFile[]
+}
+
+/**
+ * A plugin owning a kind of markdown file in the snapshot
+ * (docs/architecture.md, Plugins). Main's scanner parses every file `match`
+ * accepts with `parse`, which returns the item or throws to report the file
+ * broken, and keeps those files out of `docs`. `normalize` is the file's
+ * canonical form, applied by the `normalize-md` commit transform and
+ * recognised by the editor as Holi's own tidy, so both must use the same
+ * claims.
+ */
+export interface SnapshotClaim {
+  match(path: string): boolean
+  parse(text: string, path: string): ClaimedItem
+  normalize?(text: string): string
 }
 
 /**
@@ -133,13 +163,12 @@ export interface BrokenTask {
  *
  * There is no index and nothing derived: the board, the tree and the editor all
  * read this one shape, so there is no second source to disagree with it.
- * `broken` is part of the snapshot rather than swallowed by the scan: a task
- * file omitted from the board is indistinguishable from data loss.
  */
 export interface VaultSnapshot {
   docs: DocMeta[]
-  tasks: Task[]
-  broken: BrokenTask[]
+  /** The files each enabled plugin claims, parsed, by plugin id. Every
+   *  claiming plugin has an entry, empty or not. */
+  claimed: Record<string, ClaimedFiles>
   /** Non-markdown files, kept separate from notes so link-aware ops stay md-only. */
   files: FileMeta[]
   /** Real directories on disk. The tree renders these directly, so a folder shows
@@ -175,13 +204,17 @@ export interface VaultSnapshot {
  */
 export const emptyVaultSnapshot = (): VaultSnapshot => ({
   docs: [],
-  tasks: [],
-  broken: [],
+  claimed: {},
   files: [],
   dirs: [],
   icons: {},
   ignored: [],
 })
+
+/** What the plugin `id` claimed in `snapshot`; empty when it claims nothing. */
+export function claimedFiles(snapshot: VaultSnapshot, id: string): ClaimedFiles {
+  return snapshot.claimed[id] ?? { items: [], broken: [] }
+}
 
 /** The lane a task sits in: its containing folder, '' for the vault root. */
 export function taskArea(task: Pick<Task, 'path'>): string {

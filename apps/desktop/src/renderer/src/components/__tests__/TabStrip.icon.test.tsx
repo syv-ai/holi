@@ -32,7 +32,11 @@ function strip(
   name: string,
   over: { icons?: Record<string, string>; tasks?: Task[] } = {},
 ) {
-  store.set(snapshotAtom, { ...EMPTY, icons: over.icons ?? {}, tasks: over.tasks ?? [] })
+  store.set(snapshotAtom, {
+    ...EMPTY,
+    icons: over.icons ?? {},
+    claimed: { tasks: { items: over.tasks ?? [], broken: [] } },
+  })
   render(
     <TabStrip tabs={[tab]} active={0} onSelect={() => {}} onPin={() => {}} onClose={() => {}} />,
   )

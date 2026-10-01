@@ -1,4 +1,4 @@
-import { SETTINGS_FILE } from '@holi/shared'
+import { SETTINGS_FILE, taskClaim } from '@holi/shared'
 /**
  * The open vault: what it sees, when it commits, and when it syncs.
  *
@@ -106,7 +106,13 @@ function snapshots() {
     },
   }
 }
-type VaultSnapshotLike = { docs: { path: string }[]; tasks: { path: string }[]; broken: unknown[] }
+type VaultSnapshotLike = {
+  docs: { path: string }[]
+  claimed: Record<string, { items: { path: string }[] }>
+}
+
+/** Tasks, still a core claim: what the scanner claims in every vault here. */
+const CLAIMS = async () => [{ ...taskClaim, plugin: 'tasks' }]
 
 const paths = (s: VaultSnapshotLike) => s.docs.map((d) => d.path).sort()
 
@@ -116,6 +122,7 @@ async function vault(timings?: Parameters<typeof openActiveVault>[0]['timings'])
   await sleep(QUIESCE)
   const snaps = snapshots()
   const active = await openActiveVault({
+    claims: CLAIMS,
     remote: 'syv-ai/notes',
     repo: openRepo(dir),
     onSnapshot: snaps.push,
@@ -153,7 +160,7 @@ describe('ActiveVault — snapshot', () => {
     )
     await snaps.next()
 
-    expect(snaps.last.tasks.map((t) => t.path)).toEqual(['task.ship-it.md'])
+    expect(snaps.last.claimed.tasks!.items.map((t) => t.path)).toEqual(['task.ship-it.md'])
   })
 
   it('pushes a snapshot when a file is deleted', async () => {
@@ -242,6 +249,7 @@ describe('ActiveVault — commit', () => {
     const before = await count(dir)
 
     const active = await openActiveVault({
+      claims: CLAIMS,
       remote: 'syv-ai/notes',
       repo: openRepo(dir),
       onSnapshot: () => {},
@@ -268,6 +276,7 @@ describe('ActiveVault — commit', () => {
 
     const held: HeldBackFile[][] = []
     const active = await openActiveVault({
+      claims: CLAIMS,
       remote: 'syv-ai/notes',
       repo: openRepo(dir),
       onSnapshot: () => {},
@@ -294,6 +303,7 @@ describe('ActiveVault — commit', () => {
     const origin = await makeRemote()
     const dir = await makeClone(origin)
     const active = await openActiveVault({
+      claims: CLAIMS,
       remote: 'syv-ai/notes',
       repo: openRepo(dir),
       onSnapshot: () => {},
@@ -322,6 +332,7 @@ describe('ActiveVault — commit', () => {
     await sleep(QUIESCE)
 
     const active = await openActiveVault({
+      claims: CLAIMS,
       remote: 'syv-ai/notes',
       repo: openRepo(dir),
       onSnapshot: () => {},
@@ -406,6 +417,7 @@ describe('ActiveVault — commit', () => {
     const dir = await makeClone(origin)
     const committed: (string[] | null)[] = []
     const active = await openActiveVault({
+      claims: CLAIMS,
       remote: 'syv-ai/notes',
       repo: openRepo(dir),
       onSnapshot: () => {},
@@ -488,6 +500,7 @@ describe('ActiveVault — commit', () => {
     await sleep(QUIESCE)
 
     const active = await openActiveVault({
+      claims: CLAIMS,
       remote: 'syv-ai/notes',
       repo: openRepo(ours),
       onSnapshot: () => {},
@@ -514,6 +527,7 @@ describe('ActiveVault — commit', () => {
     await sleep(QUIESCE)
 
     const active = await openActiveVault({
+      claims: CLAIMS,
       remote: 'syv-ai/fresh',
       repo: openRepo(dir),
       onSnapshot: () => {},
@@ -547,6 +561,7 @@ describe('ActiveVault — sync', () => {
     await sleep(QUIESCE)
     const snaps = snapshots()
     const active = await openActiveVault({
+      claims: CLAIMS,
       remote: 'syv-ai/notes',
       repo: openRepo(dir),
       onSnapshot: snaps.push,
@@ -650,6 +665,7 @@ describe('ActiveVault — sync', () => {
     await sleep(QUIESCE)
     const real = openRepo(dir)
     const active = await openActiveVault({
+      claims: CLAIMS,
       remote: 'syv-ai/notes',
       repo: {
         ...real,
@@ -679,6 +695,7 @@ describe('ActiveVault — sync', () => {
     await sleep(QUIESCE)
     const real = openRepo(dir)
     const active = await openActiveVault({
+      claims: CLAIMS,
       remote: 'syv-ai/notes',
       repo: {
         ...real,
@@ -1019,6 +1036,7 @@ describe('ActiveVault — sync', () => {
     const real = openRepo(dir)
     let pulls = 0
     const active = await openActiveVault({
+      claims: CLAIMS,
       remote: 'syv-ai/notes',
       repo: {
         ...real,
@@ -1059,6 +1077,7 @@ describe('ActiveVault — sync', () => {
     let release = () => {}
     const firstPullHangs = new Promise<void>((r) => (release = r))
     const active = await openActiveVault({
+      claims: CLAIMS,
       remote: 'syv-ai/notes',
       repo: {
         ...real,
@@ -1105,6 +1124,7 @@ describe('ActiveVault — sync', () => {
     // paths (the transient race), later pulls are real so the vault can recover.
     let pulls = 0
     const active = await openActiveVault({
+      claims: CLAIMS,
       remote: 'syv-ai/notes',
       repo: {
         ...real,
@@ -1198,6 +1218,7 @@ describe('ActiveVault — sync', () => {
     await sleep(QUIESCE)
 
     const active = await openActiveVault({
+      claims: CLAIMS,
       remote: 'syv-ai/notes',
       repo: openRepo(dir),
       onSnapshot: () => {},
@@ -1262,6 +1283,7 @@ describe('VaultHost', () => {
   function host(registry: VaultRegistry, timings: Partial<SyncTimings> = {}) {
     const snaps = snapshots()
     const h = createVaultHost({
+      claims: CLAIMS,
       registry,
       onSnapshot: snaps.push,
       onSyncState: () => {},
@@ -1287,6 +1309,7 @@ describe('VaultHost', () => {
     const { registry } = await twoVaults()
     const seen: string[] = []
     const h = createVaultHost({
+      claims: CLAIMS,
       registry,
       onSnapshot: () => {},
       onSyncState: (s) => seen.push(s.kind),
@@ -1307,6 +1330,7 @@ describe('VaultHost', () => {
 
     const held: HeldBackFile[][] = []
     const h = createVaultHost({
+      claims: CLAIMS,
       registry,
       onSnapshot: () => {},
       onSyncState: () => {},
@@ -1354,6 +1378,7 @@ describe('VaultHost', () => {
     const { registry } = await twoVaults()
     const leftFrom: Array<string | null> = []
     const h = createVaultHost({
+      claims: CLAIMS,
       registry,
       onSnapshot: () => {},
       onSyncState: () => {},
@@ -1381,6 +1406,7 @@ describe('VaultHost', () => {
   it('switches vaults even when the leave hook throws', async () => {
     const { registry } = await twoVaults()
     const h = createVaultHost({
+      claims: CLAIMS,
       registry,
       onSnapshot: () => {},
       onSyncState: () => {},

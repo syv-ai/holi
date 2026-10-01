@@ -83,6 +83,7 @@ describe('the capability host', () => {
       active: () => null,
       core: noCoreServices,
       pluginEnabled: async (plugin) => pluginEnabled(plugin),
+      claims: async () => [],
     })
   }
 
@@ -113,6 +114,7 @@ describe('the capability host', () => {
       active: () => null,
       core: noCoreServices,
       pluginEnabled: async () => true,
+      claims: async () => [],
     })
     const asked: string[] = []
     const door = h.openAppDoor({

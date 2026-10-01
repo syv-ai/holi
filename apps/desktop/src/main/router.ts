@@ -49,7 +49,7 @@ import type { ActiveVault, SyncState, VaultHost } from './vault/active-vault'
 import { ensureClone } from './vault/clone'
 import { pruneEmptiedFolder, removeDocFile, writeAtomic, absPathFor } from './vault/vault-files'
 import { renameNote } from './vault/rename'
-import { scanVault, type VaultSnapshot } from './vault/vault-store'
+import { scanVault, type ScanClaim, type VaultSnapshot } from './vault/vault-store'
 import { readVaultTheme, resetVaultTheme, writeVaultTheme } from './vault/theme'
 import { readVaultSettings, writeVaultSettings } from './vault/settings'
 import { parseSettingsPatch } from '@holi/shared'
@@ -97,9 +97,14 @@ export interface RouterDeps {
   /**
    * Start the plugins the vault at `root` enables (`plugin-host/host.ts`).
    * Run after the seed on add and open, and after a write to its plugins.
-   * `opened` activates them in the vault once it is open.
+   * `opened` activates them in the vault once it is open. `scanClaimsFor`
+   * is what the scanner claims in the vault at `root`.
    */
-  plugins: { enter(root: string): Promise<void>; opened(): Promise<void> }
+  plugins: {
+    enter(root: string): Promise<void>
+    opened(): Promise<void>
+    scanClaimsFor(root: string): Promise<readonly ScanClaim[]>
+  }
   /** The managed root clones live under — `~/Holi` in the app, a tmpdir in
    *  tests. Passed in rather than read from `vaultRoot()` here so the router
    *  has no ambient dependency on the environment. */
@@ -287,6 +292,7 @@ export function createRouter(deps: RouterDeps) {
       active: () => deps.host.active(),
       core: noCoreServices,
       pluginEnabled: async () => true,
+      claims: (root) => deps.plugins.scanClaimsFor(root),
     })
   const members =
     deps.members ?? createMembersCache((remote) => deps.session.api.collaborators(remote))
@@ -390,7 +396,8 @@ export function createRouter(deps: RouterDeps) {
   async function snapshotFor(remote: string): Promise<VaultSnapshot> {
     const active = deps.host.active()
     if (active?.remote === remote) return active.snapshot()
-    return scanVault(await rootFor(remote))
+    const root = await rootFor(remote)
+    return scanVault(root, await deps.plugins.scanClaimsFor(root))
   }
 
   /** Every path from the renderer or the agent re-validates here. This is the
@@ -1403,6 +1410,12 @@ export function createRouter(deps: RouterDeps) {
           await deps.seed(root)
           await deps.plugins.enter(root)
           await deps.plugins.opened()
+          // Which files are claimed follows the plugins, so the open vault's
+          // snapshot is scanned again now rather than at its next change.
+          const active = deps.host.active()
+          if (active?.remote === input.remote) {
+            await active.refresh().catch((err) => console.error('[router] rescan:', err))
+          }
         }
         return { ok: true as const, warnings: [...committed.warnings, ...local.warnings] }
       }),

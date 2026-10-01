@@ -19,7 +19,11 @@ const task = (path: string, over: Partial<Task> = {}): Task => ({
 })
 
 function storeWith(tasks: Task[], now: string) {
-  const snapshot: VaultSnapshot = { docs: [], tasks, broken: [], files: [] }
+  const snapshot: VaultSnapshot = {
+    docs: [],
+    claimed: { tasks: { items: tasks, broken: [] } },
+    files: [],
+  }
   const store = createStore()
   store.set(snapshotAtom, snapshot)
   store.set(nowAtom, now)

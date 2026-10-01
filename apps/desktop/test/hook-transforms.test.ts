@@ -11,7 +11,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   DEFAULT_HOOKS,
-  VAULT_TRANSFORMS,
+  vaultTransforms,
   readHookSettings,
 } from '../src/main/vault/hooks/transforms'
 
@@ -36,7 +36,7 @@ describe('the transform set', () => {
   it('is a short list in a fixed order, and this is not a hook framework', () => {
     // `scaffold-md` sits before `normalize-md` so the block it writes is tidied
     // by the same pass as everything else.
-    expect(VAULT_TRANSFORMS.map((t) => t.name)).toEqual([
+    expect(vaultTransforms([]).map((t) => t.name)).toEqual([
       'relink',
       'archive-done',
       'scaffold-md',
@@ -66,7 +66,7 @@ describe('the transform set', () => {
   it('keys the settings by the transform name, kebab and all', () => {
     // A camelCase settings key beside a kebab transform name is a mapping table
     // that exists only to be got wrong once.
-    for (const transform of VAULT_TRANSFORMS) {
+    for (const transform of vaultTransforms([])) {
       expect(Object.keys(DEFAULT_HOOKS)).toContain(transform.name)
     }
   })

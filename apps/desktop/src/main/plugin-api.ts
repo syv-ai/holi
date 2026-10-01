@@ -12,7 +12,7 @@
  * the tests.
  */
 import type { Privileges } from 'electron'
-import type { PluginInfo } from '@holi/shared'
+import type { PluginInfo, SnapshotClaim } from '@holi/shared'
 import type { AppDoor, AppDoorOpener } from './capabilities/dispatch'
 import type { CapabilityTable } from './capabilities/registry'
 import type { SeedContribution } from './vault/seed/types'
@@ -134,6 +134,13 @@ export interface MainPlugin {
    *  plugin's id. */
   seed?: SeedContribution
   schemes?: readonly PluginScheme[]
+  /**
+   * The markdown files the plugin owns. In a vault that runs it the scanner
+   * parses them into `snapshot.claimed[id]` instead of listing them as notes,
+   * `normalize-md` puts them in their canonical form and `scaffold-md` leaves
+   * them alone. With the plugin off they are plain notes.
+   */
+  claims?: readonly SnapshotClaim[]
   /** Runs once per process, the first time a vault that enables the plugin
    *  is opened. */
   activateApp?(ctx: AppContext): Disposer | Promise<Disposer>
@@ -149,7 +156,7 @@ export interface MainPlugin {
 export type BridgeRoute = Route
 export type { UiReport } from './capabilities/services'
 
-export type { PluginInfo } from '@holi/shared'
+export type { ClaimedItem, PluginInfo, SnapshotClaim } from '@holi/shared'
 export type { SeedContribution } from './vault/seed/types'
 export type { SettingsFragment } from './vault/seed/types'
 export {

@@ -91,6 +91,7 @@ function rig(
     active: () => null,
     core: noCoreServices,
     pluginEnabled: async (plugin, at) => (await host.enabled(at)).has(plugin),
+    claims: (at) => host.scanClaimsFor(at),
   })
   const ping = (at: string) => {
     root = at

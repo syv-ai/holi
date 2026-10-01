@@ -10,6 +10,9 @@ import {
   parseTaskPatch,
   serializeTaskFile,
   setFirstHeading,
+  snapshotTasks,
+  taskClaim,
+  TASKS_CLAIM,
   taskFilePath,
   taskSlug,
   vaultRelPath,
@@ -21,10 +24,20 @@ import { CapabilityError } from '../capabilities/error'
 import { knownPath } from '../capabilities/fences'
 import { noParams, paramsObject, pathParams, stringParam } from '../capabilities/params'
 import { cap } from '../capabilities/registry'
+import type { MainPlugin } from '../plugin-api'
 import { taskDoneOp } from './task-done'
 import { absPathFor, writeAtomic } from './vault-files'
 
 export const TASK_NAMESPACES = ['tasks'] as const
+
+/**
+ * Tasks as a core part on the plugin contract: it claims task files, so the
+ * scanner parses them into `snapshot.claimed.tasks`, in every vault.
+ */
+export const TASKS_PART: MainPlugin = {
+  info: { id: TASKS_CLAIM, label: 'Tasks', default: true },
+  claims: [taskClaim],
+}
 
 export interface TaskCapabilitiesDeps {
   /** Today, local, as `YYYY-MM-DD`: the frame a recurrence rolls against. */
@@ -148,7 +161,7 @@ export const taskCapabilities = (deps: TaskCapabilitiesDeps) => ({
     doors: ['app', 'cli'],
     cli: { args: [], summary: 'every task: status, title and path' },
     params: noParams,
-    run: async (ctx): Promise<Task[]> => (await ctx.snapshot()).tasks,
+    run: async (ctx): Promise<Task[]> => snapshotTasks(await ctx.snapshot()).items,
     text: (tasks) => tasks.map((t) => `${t.status}\t${t.title}\t${t.path}`).join('\n'),
   }),
 

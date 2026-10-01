@@ -22,7 +22,7 @@
  *   cell (a shared `layoutId`, the path it will have).
  */
 import type { Priority } from '@holi/shared'
-import { taskFilePath, taskSlug } from '@holi/shared'
+import { snapshotTasks, taskFilePath, taskSlug } from '@holi/shared'
 import { completionStatus } from '@codemirror/autocomplete'
 import { insertNewlineAndIndent } from '@codemirror/commands'
 import { insertNewlineContinueMarkup } from '@codemirror/lang-markdown'
@@ -206,9 +206,9 @@ export function QuickAdd({
       ROOT_LANE,
       ...taskCreateFolders([
         ...snapshot.docs.map((d) => d.path),
-        ...snapshot.tasks.map((t) => t.path),
+        ...snapshotTasks(snapshot).items.map((t) => t.path),
         ...snapshot.files.map((f) => f.path),
-        ...snapshot.broken.map((b) => b.path),
+        ...snapshotTasks(snapshot).broken.map((b) => b.path),
       ]),
     ],
     [snapshot],
@@ -244,7 +244,7 @@ export function QuickAdd({
     const folder = cleanFolder(draft.folder)
     // The path the new file will have (main's `freeTaskPath`), so the card can
     // take over the preview's layoutId. A guess that misses costs the flight.
-    const taken = new Set([...tasks.keys(), ...snapshot.broken.map((b) => b.path)])
+    const taken = new Set([...tasks.keys(), ...snapshotTasks(snapshot).broken.map((b) => b.path)])
     let predicted = taskFilePath(folder, taskSlug(title))
     for (let n = 2; taken.has(predicted); n++)
       predicted = taskFilePath(folder, `${taskSlug(title)}-${n}`)

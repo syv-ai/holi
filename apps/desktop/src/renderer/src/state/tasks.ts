@@ -9,7 +9,14 @@
  * body; backrefs are a grep).
  */
 import type { Task, TaskStatus } from '@holi/shared'
-import { allLabels, dailyNoteFilename, parseWikiLinks, taskArea, virtualLabels } from '@holi/shared'
+import {
+  allLabels,
+  dailyNoteFilename,
+  parseWikiLinks,
+  snapshotTasks,
+  taskArea,
+  virtualLabels,
+} from '@holi/shared'
 import { atom } from 'jotai'
 import type { taskCapabilities } from '../../../main/vault/task-capabilities'
 import { capClient } from '../lib/cap-client'
@@ -22,30 +29,37 @@ import { activeRemoteAtom, loadSnapshotAtom, snapshotAtom } from './vaults'
  * folder's path is the empty string. */
 export const ROOT_LANE = ''
 
+/** The snapshot's claimed task files: the tasks, and those that would not
+ *  parse. */
+export const snapshotTasksAtom = atom((get) => snapshotTasks(get(snapshotAtom)))
+
 /** Tasks by path. The path is the identity, so this needs no id and no join. */
 export const tasksAtom = atom<Map<string, Task>>(
-  (get) => new Map(get(snapshotAtom).tasks.map((t) => [t.path, t])),
+  (get) => new Map(get(snapshotTasksAtom).items.map((t) => [t.path, t])),
 )
 
 /** Task files that would not parse, rendered as error cards. Never hidden:
  * omitting one from the board is indistinguishable from data loss. */
 /** Every tag used by a task, sorted: what a tags field suggests. */
 export const taskTagsAtom = atom((get) =>
-  [...new Set(get(snapshotAtom).tasks.flatMap((t) => t.tags))].sort((a, b) => a.localeCompare(b)),
+  [...new Set(get(snapshotTasksAtom).items.flatMap((t) => t.tags))].sort((a, b) =>
+    a.localeCompare(b),
+  ),
 )
 
-export const brokenTasksAtom = atom((get) => get(snapshotAtom).broken)
+export const brokenTasksAtom = atom((get) => get(snapshotTasksAtom).broken)
 
 /** How many tasks are still open (not done): the badge on the board button. */
 export const openTaskCountAtom = atom(
-  (get) => get(snapshotAtom).tasks.filter((t) => t.status !== 'done').length,
+  (get) => get(snapshotTasksAtom).items.filter((t) => t.status !== 'done').length,
 )
 
 /** How many open tasks are overdue, by the board's own `overdue` label: what
  *  turns the board badge red. Follows `nowAtom`, so it turns over on the minute. */
 export const overdueTaskCountAtom = atom((get) => {
   const now = get(nowAtom)
-  return get(snapshotAtom).tasks.filter((t) => virtualLabels(t, now).includes('overdue')).length
+  return get(snapshotTasksAtom).items.filter((t) => virtualLabels(t, now).includes('overdue'))
+    .length
 })
 
 /** Open (not-done) tasks whose body links to `notePath`. A task counts once no
@@ -62,7 +76,7 @@ export function countOpenTasksLinking(tasks: Iterable<Task>, notePath: string): 
 /** The badge on the sidebar "Today" entry: how many open tasks link to today's note
  * (`docs/features/daily-notes.md`). Zero → the Shell renders no badge. */
 export const todayLinkCountAtom = atom((get) =>
-  countOpenTasksLinking(get(snapshotAtom).tasks, dailyNoteFilename(get(todayAtom))),
+  countOpenTasksLinking(get(snapshotTasksAtom).items, dailyNoteFilename(get(todayAtom))),
 )
 
 /**

@@ -42,8 +42,7 @@ const snapshot: VaultSnapshot = {
     { path: 'Notes/Standup.md', kind: 'note', updatedAt: '2026-08-22T00:00:00Z' },
     { path: '22-08-2026.md', kind: 'note', updatedAt: '2026-08-22T00:00:00Z' },
   ],
-  tasks: [],
-  broken: [],
+  claimed: {},
   files: [{ path: 'retro.app/index.html' }, { path: 'retro.app/app.yaml' }],
 }
 

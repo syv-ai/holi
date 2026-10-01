@@ -41,7 +41,7 @@ export const showHiddenByVaultAtom = atomWithStorage<Record<string, boolean>>('h
 
 /** Per-vault "show task files in the tree" flag, off by default: the board owns
  * tasks. Purely a view filter; task files are always scanned into
- * `snapshot.tasks`. */
+ * `snapshot.claimed.tasks`. */
 export const showTasksByVaultAtom = atomWithStorage<Record<string, boolean>>('holi:showTasks', {})
 
 const EMPTY_SNAPSHOT: VaultSnapshot = emptyVaultSnapshot()

@@ -4,24 +4,27 @@
  *
  * Two rules the tests pin, both of which cost data if broken:
  *
- *   - A task is a task because of its **filename** (`task.*.md`), and a daily
- *     note is a daily because of its **frontmatter** (`type: daily-note`).
- *     Never the other way round: a filename that merely looks like a date is
- *     often a note a human wrote, and the archive sweep deletes empty dailies.
- *   - A task file that does not parse is **reported, not dropped**. Silently
- *     omitting it from the board is indistinguishable from data loss, and the
- *     model will occasionally write bad frontmatter.
+ *   - A claimed file (a task) is claimed because of its **path**, by the
+ *     plugin's `match`, and a daily note is a daily because of its
+ *     **frontmatter** (`type: daily-note`). Never the other way round: a
+ *     filename that merely looks like a date is often a note a human wrote,
+ *     and the archive sweep deletes empty dailies.
+ *   - A claimed file that does not parse is **reported, not dropped**.
+ *     Silently omitting it from its view is indistinguishable from data loss,
+ *     and the model will occasionally write bad frontmatter.
+ *
+ * Which files are claimed depends on the plugins the vault runs, so every
+ * caller passes the claims (`PluginHost.scanClaimsFor`). With a plugin off its
+ * files are plain notes.
  */
 import { readFile, stat } from 'node:fs/promises'
 import {
   isKeepFile,
   isLocalOnlyPath,
-  isTaskFilePath,
   ICONS_FILE,
   ICONS_LOCAL_FILE,
   resolveIconMap,
-  parseTaskFile,
-  TaskFileError,
+  type SnapshotClaim,
   type VaultSnapshot,
 } from '@holi/shared'
 import { ignoredPaths } from './git-ignored'
@@ -30,7 +33,12 @@ import { isNonContentPath, listFiles } from './vault-files'
 // The shape is `@holi/shared`'s: the renderer reads it too, and a type that
 // crossed the IPC seam by being imported out of `main/` would make the seam a
 // lie. Re-exported so the scan and its result still read as one module.
-export type { BrokenTask, VaultSnapshot } from '@holi/shared'
+export type { VaultSnapshot } from '@holi/shared'
+
+/** A claim, and the plugin whose `snapshot.claimed` entry it fills. */
+export interface ScanClaim extends SnapshotClaim {
+  plugin: string
+}
 
 /**
  * `type: daily-note` in the file's **leading** frontmatter block, and nowhere
@@ -48,11 +56,13 @@ function isDaily(text: string): boolean {
 }
 
 /** Everything the vault holds, read fresh off disk. */
-export async function scanVault(root: string): Promise<VaultSnapshot> {
+export async function scanVault(
+  root: string,
+  claims: readonly ScanClaim[],
+): Promise<VaultSnapshot> {
   const snapshot: VaultSnapshot = {
     docs: [],
-    tasks: [],
-    broken: [],
+    claimed: Object.fromEntries(claims.map((c) => [c.plugin, { items: [], broken: [] }])),
     files: [],
     dirs: [],
     icons: {},
@@ -77,7 +87,7 @@ export async function scanVault(root: string): Promise<VaultSnapshot> {
 
   // Every ancestor directory of every file on disk. The tree shows a folder from
   // this set even when its own contents are all filtered out downstream (a
-  // folder of only tasks, or only hidden files) or it is empty but for a
+  // folder of only claimed files, or only hidden files) or it is empty but for a
   // `.gitkeep`. Derived from the raw walk, before the doc/task/file bucketing a
   // filtered tree would otherwise hide the folder behind.
   const dirs = new Set<string>()
@@ -126,12 +136,13 @@ export async function scanVault(root: string): Promise<VaultSnapshot> {
     // watcher is about to tell us about it anyway.
     if (text === null) continue
 
-    if (isTaskFilePath(path)) {
+    const claim = claims.find((c) => c.match(path))
+    if (claim !== undefined) {
+      const into = snapshot.claimed[claim.plugin]!
       try {
-        snapshot.tasks.push(parseTaskFile(text, path))
+        into.items.push(claim.parse(text, path))
       } catch (err) {
-        if (!(err instanceof TaskFileError)) throw err
-        snapshot.broken.push({ path, error: err.message })
+        into.broken.push({ path, error: err instanceof Error ? err.message : String(err) })
       }
       continue
     }

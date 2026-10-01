@@ -119,7 +119,7 @@ describe('scanVault carries the answer to the tree', () => {
     await write('notes/secret.local.md', 'private\n')
     await write('build/out.md', 'generated\n')
 
-    const snap = await scanVault(repo)
+    const snap = await scanVault(repo, [])
 
     expect(snap.ignored).toContain('notes/secret.local.md')
     expect(snap.ignored).toContain('build/out.md')

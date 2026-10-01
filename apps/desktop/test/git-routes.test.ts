@@ -1,4 +1,5 @@
 import { request } from 'node:http'
+import { taskClaim } from '@holi/shared'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createBridgeServer, type BridgeServer } from '../src/main/bridge/server'
 import { registerGitRoutes } from '../src/main/vault/git-routes'
@@ -27,7 +28,7 @@ afterEach(async () => {
 
 async function rig(rootFor: (remote: string) => Promise<string | null> = async () => null) {
   const server = createBridgeServer({ log: () => {} })
-  registerGitRoutes(server, { rootFor })
+  registerGitRoutes(server, { rootFor, claims: async () => [taskClaim] })
   servers.push(server)
   await server.start()
   return {

@@ -23,7 +23,7 @@ import {
   Tooltip,
 } from '@/primitives'
 import { ChevronLeft, ChevronRight, X } from 'lucide-react'
-import type { TaskStatus } from '@holi/shared'
+import { snapshotTasks, type TaskStatus } from '@holi/shared'
 import { pathGlyph, pathLabel } from '@/composites/file-icons'
 import { surfaceLabel } from '@/lib/folder-documents'
 import { offscreenTabs, type Offscreen } from '@/lib/tab-overflow'
@@ -268,7 +268,7 @@ export function TabStrip({
   const marks = useMemo<PathMarks>(
     () => ({
       icons: snapshot.icons,
-      tasks: new Map(snapshot.tasks.map((t) => [t.path, t.status])),
+      tasks: new Map(snapshotTasks(snapshot).items.map((t) => [t.path, t.status])),
     }),
     [snapshot],
   )
