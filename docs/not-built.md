@@ -90,7 +90,7 @@ reminders prove noisy, not a private reminder channel.
 **A renumber pass** for exhausted ranks. `needsRenumber` exists in `packages/shared/src/rank.ts`;
 nothing calls it.
 
-**Mail and calendar chips on a board card.** `GoogleLinkChips` exists and is never rendered.
+**Mail and calendar chips on a board card**, for the Gmail and Calendar links in a task's body.
 
 **A launch-at-login toggle** after the first-launch prompt.
 

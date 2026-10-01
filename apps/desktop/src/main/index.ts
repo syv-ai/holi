@@ -195,20 +195,6 @@ async function main(): Promise<void> {
   const imagePrefs = createImagePrefs(join(app.getPath('userData'), 'google-image-senders.json'))
   /** The PDF viewer's saved signatures: `userData` too, never a vault. */
   const signatures = createSignatureStore(join(app.getPath('userData'), 'pdf-signatures.json'))
-  /** The active vault's Google client, bound to a token *getter* so every
-   *  call goes through the one refreshing authority. Resolved inside the getter so the
-   *  object cannot outlive a vault switch, and so a vault with no account fails
-   *  at the point of use with a message naming the fix. */
-  const googleApiFor = () =>
-    new GoogleApi({
-      accessToken: async () => {
-        const remote = host.active()?.remote
-        const session = remote === undefined ? null : await googleAccounts.sessionFor(remote)
-        if (session === null) throw new Error('this vault has no Google account connected')
-        return session.getAccessToken()
-      },
-    })
-
   /**
    * The UI's Google cache. In `userData` rather than in a vault: mail
    * is **account** data, and a vault is a shared git repo.
