@@ -9,6 +9,7 @@ import {
 import { parentOf } from '@/lib/tree-paths'
 import { registerAppAtom } from '@/state/apps'
 import { openDialogAtom } from '@/state/dialogs'
+import { claimsAtom } from '@/state/plugins'
 import { activeRemoteAtom, snapshotAtom, vaultsAtom } from '@/state/vaults'
 import type { ExplorerActions } from './useExplorerActions'
 
@@ -49,6 +50,10 @@ export function RowMenu({
   const vaults = useAtomValue(vaultsAtom)
   const icons = useAtomValue(snapshotAtom).icons
   const openDialog = useSetAtom(openDialogAtom)
+  // What enabled plugins add for this path, in plugin order.
+  const claimItems = useAtomValue(claimsAtom).flatMap((c) =>
+    c.match(path) ? (c.rowMenu ?? []) : [],
+  )
   const registerApp = useSetAtom(registerAppAtom)
   const entry = vaults.find((v) => v.remote === activeRemote)
   const absPathFor = (rel: string) => (entry ? `${entry.path}/${rel}` : rel)
@@ -160,6 +165,19 @@ export function RowMenu({
       </ContextMenuItem>
       {!multi && (
         <>
+          {claimItems.length > 0 && activeRemote !== null && (
+            <>
+              <ContextMenuSeparator />
+              {claimItems.map((item) => (
+                <ContextMenuItem
+                  key={item.label}
+                  onSelect={() => item.run({ remote: activeRemote, path, openDialog })}
+                >
+                  {item.label}
+                </ContextMenuItem>
+              ))}
+            </>
+          )}
           {fileKind(path) === 'markdown' && (
             <>
               <ContextMenuSeparator />

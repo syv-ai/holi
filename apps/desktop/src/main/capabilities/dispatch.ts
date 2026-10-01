@@ -3,7 +3,8 @@
  * vault's clone, its snapshot (the open vault's live cache, a fresh scan for
  * any other), the core services, and a rescan of the open vault after a write
  * so the very next read sees it. The doors differ only in how they hand a
- * refusal back: the app bridge as a tRPC error, the CLI as a line on stderr.
+ * refusal back: the app bridge and the UI door as a tRPC error, the CLI as a
+ * line on stderr.
  *
  * A plugin's capability is refused as "no such method" in a vault that has
  * the plugin off, whatever this process has loaded.
@@ -34,7 +35,7 @@ export interface DispatchDeps {
 export interface CapabilityCall {
   door: Door
   remote: string
-  /** The calling app's bundle at the app door; null at the CLI door. */
+  /** The calling app's bundle at the app door; null at every other door. */
   bundle: string | null
   name: string
   params: unknown

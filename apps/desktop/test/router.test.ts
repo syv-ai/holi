@@ -10,7 +10,7 @@ import { createVaultHost, type VaultHost } from '../src/main/vault/active-vault'
 import { seedVault } from './helpers/seed'
 import { makeClone, makeNonVaultRemote, makeRemote, plainGit } from './helpers/git-fixtures'
 import { createDispatch } from '../src/main/capabilities/dispatch'
-import { createCapabilityRegistry } from '../src/main/capabilities/registry'
+import { cap, createCapabilityRegistry } from '../src/main/capabilities/registry'
 import { noCoreServices } from '../src/main/capabilities/services'
 import { vaultCapabilities, VAULT_NAMESPACES } from '../src/main/capabilities/vault-caps'
 import { taskCapabilities, TASK_NAMESPACES } from '../src/main/vault/task-capabilities'
@@ -133,7 +133,7 @@ async function rig(files: Record<string, string> = {}, auth?: StoredAuth) {
     now: () => '2026-07-21T12:00:00Z',
     today: () => TODAY,
   }).createCaller({})
-  return { caller, root, registry, host, session, base, trashItem }
+  return { caller, root, registry, host, session, base, trashItem, capabilities }
 }
 
 describe('settings', () => {
@@ -2098,6 +2098,38 @@ describe('apps', () => {
     expect(((await call('tasks.list')) as { title: string }[]).map((t) => t.title)).toContain(
       'Review',
     )
+  })
+})
+
+describe('cap.run', () => {
+  const capRig = async () => {
+    const r = await rig({})
+    r.capabilities.register(['echo'], {
+      'echo.ui': cap({
+        doors: ['ui'],
+        params: (raw) => raw,
+        run: async (ctx, params) => ({ remote: ctx.remote, params }),
+      }),
+      'echo.app': cap({ doors: ['app'], params: () => null, run: async () => 'app' }),
+    })
+    return r
+  }
+
+  it('runs a capability that opens the UI door, with its JSON params', async () => {
+    const { caller } = await capRig()
+    expect(
+      await caller.cap.run({ remote: REMOTE, name: 'echo.ui', paramsJson: '{"a":1}' }),
+    ).toEqual({ remote: REMOTE, params: { a: 1 } })
+  })
+
+  it('refuses one that does not open the UI door, and params that are not JSON', async () => {
+    const { caller } = await capRig()
+    await expect(caller.cap.run({ remote: REMOTE, name: 'echo.app' })).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+    })
+    await expect(
+      caller.cap.run({ remote: REMOTE, name: 'echo.ui', paramsJson: '{' }),
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' })
   })
 })
 

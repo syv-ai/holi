@@ -112,7 +112,12 @@ export function ConvertToPdf({
     setBusy(true)
     setError(null)
     try {
-      const outPath = await window.holi.showSaveDialog({ remote, path })
+      const outPath = await window.holi.showSaveDialog({
+        remote,
+        path,
+        extension: 'pdf',
+        filterName: 'PDF',
+      })
       if (outPath === null) {
         setBusy(false)
         return // user cancelled the save dialog

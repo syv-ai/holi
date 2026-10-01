@@ -12,6 +12,7 @@ import type { ConflictResolvers } from '@/lib/editor-reload'
 import { agentGeometryAtom, agentTerminalsAtom } from '@/state/agent'
 import { appPathsAtom } from '@/state/apps'
 import { homeTargetAtom } from '@/state/home'
+import { claimsAtom } from '@/state/plugins'
 import { syncStateAtom } from '@/state/vaults'
 import { useEffect, useState, type ReactNode } from 'react'
 import { TAB_MIME, paneDropZone, parseTabPayload, type PaneDropZone } from '@/lib/tab-drop'
@@ -126,6 +127,13 @@ export function PaneView({
   const syncState = useAtomValue(syncStateAtom)
   const appPaths = useAtomValue(appPathsAtom)
   const home = useAtomValue(homeTargetAtom)
+  // A note tab whose path an enabled plugin claims with a view opens in that
+  // view; the first such claim wins (docs/architecture.md, Plugins).
+  const claims = useAtomValue(claimsAtom)
+  const ClaimedView =
+    tab?.kind === 'note'
+      ? (claims.find((c) => c.view !== undefined && c.match(tab.path))?.view ?? null)
+      : null
   /** The last geometry a visible terminal measured, for sessions spawned
    *  without a tab of their own to measure. */
   const setGeometry = useSetAtom(agentGeometryAtom)
@@ -202,6 +210,8 @@ export function PaneView({
               <SettingsView />
             ) : tab?.kind === 'history' ? (
               <HistoryView />
+            ) : tab?.kind === 'note' && ClaimedView !== null ? (
+              <ClaimedView path={tab.path} />
             ) : tab?.kind === 'note' && fileKind(tab.path) === 'image' ? (
               <ImageViewer path={tab.path} />
             ) : tab?.kind === 'note' && fileKind(tab.path) === 'pdf' ? (

@@ -68,10 +68,16 @@ declare global {
       pathForFile(file: File): string
       /** Hand these absolute paths to the OS as a native file drag. */
       startDrag(paths: string[]): void
-      /** Native "save as" for the Convert-to-PDF output. Presents a save sheet
-       *  defaulting to `defaultName` under Downloads; resolves to the chosen
+      /** Native "save as" for something made from the vault file `path`.
+       *  Presents a save sheet beside it, named after it with `extension`
+       *  (Downloads when `path` is not in the vault); resolves to the chosen
        *  absolute path, or null if the user cancelled. */
-      showSaveDialog(input: { remote: string; path: string }): Promise<string | null>
+      showSaveDialog(input: {
+        remote: string
+        path: string
+        extension: string
+        filterName: string
+      }): Promise<string | null>
       /** Pick a folder on disk: the destination for Copy/Move to Folder…. */
       chooseFolder(): Promise<string | null>
       /**

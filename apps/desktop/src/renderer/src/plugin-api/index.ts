@@ -10,6 +10,7 @@ export type { ClaimMenuItem, PathClaim, RendererPlugin } from './types'
 export type { PluginInfo } from '@holi/shared'
 
 export { trpc } from '@/lib/trpc'
+export { capClient, type CapClient } from '@/lib/cap-client'
 export { cn } from '@/lib/cn'
 export { DRAWER_WIDTH } from '@/lib/drawer'
 export { activeRemoteAtom, snapshotAtom } from '@/state/vaults'

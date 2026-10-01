@@ -1,4 +1,6 @@
 import { atom } from 'jotai'
+import type { ReactNode } from 'react'
+import type { DialogSize } from '@/primitives'
 
 /**
  * The dialog registry, as a discriminated union (`docs/ui-system.md`). A dialog
@@ -12,6 +14,11 @@ import { atom } from 'jotai'
 export type ActiveDialog = { closable?: boolean } & (
   | { id: 'create-task'; size: 'md' } // Full create (⌘⇧T); quick add (⌘T) is `QuickAdd`.
   | { id: 'convert-to-pdf'; size: 'md'; remote: string; path: string }
+  /**
+   * A plugin's dialog. Core knows nothing of its content: the plugin renders
+   * it, and calls `close` when it is done.
+   */
+  | { id: 'plugin'; size: DialogSize; render: (close: () => void) => ReactNode }
   /**
    * A brand-new mail. Carries no payload, and `draftId` is deliberately
    * absent: continuing a draft happens in the Drafts view, which has the thread

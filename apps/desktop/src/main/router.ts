@@ -2545,6 +2545,43 @@ export function createRouter(deps: RouterDeps) {
       }),
   })
 
+  /**
+   * The UI door: Holi's own renderer calling a capability, which is how a
+   * plugin's renderer reaches its main side (plugins add no routers). Params
+   * arrive as JSON text because `fields` has no object kind; dispatch parses
+   * them against the capability's own `params`, as at every door.
+   */
+  const cap = t.router({
+    run: t.procedure
+      .input(fields({ remote: 'string', name: 'string', paramsJson: 'string?' }))
+      .mutation(async ({ input }): Promise<unknown> => {
+        let params: unknown
+        try {
+          params = input.paramsJson === undefined ? undefined : JSON.parse(input.paramsJson)
+        } catch {
+          throw new TRPCError({ code: 'BAD_REQUEST', message: 'params are not JSON' })
+        }
+        try {
+          const result = await dispatch({
+            door: 'ui',
+            remote: input.remote,
+            bundle: null,
+            name: input.name,
+            params,
+          })
+          return result.value
+        } catch (err) {
+          if (err instanceof CapabilityError) {
+            throw new TRPCError({
+              code: err.code === 'UNAVAILABLE' ? 'PRECONDITION_FAILED' : err.code,
+              message: err.message,
+            })
+          }
+          throw err
+        }
+      }),
+  })
+
   return t.router({
     auth,
     github,
@@ -2561,6 +2598,7 @@ export function createRouter(deps: RouterDeps) {
     google,
     apps,
     ui,
+    cap,
   })
 }
 

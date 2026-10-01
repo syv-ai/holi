@@ -67,6 +67,11 @@ Optional parts of Holi are plugins: first-party modules in the build, under
 `main.tsx`) import those lists. A plugin reaches core through one module per process,
 `src/main/plugin-api.ts` and `@/plugin-api`, plus the renderer's primitives and composites; ESLint
 holds the renderer side and plugin code to that, and `test/plugin-boundary.test.ts` holds main.
+A plugin's renderer reaches its main side only through capabilities that open the `ui` door: the
+`cap.run` mutation, called through `capClient<typeof table>(namespace)`, which offers just those
+verbs with their types read from the table (params cross as JSON, results by structured clone).
+A plugin claims vault paths: the first enabled claim with a `view` opens a note tab of that path,
+and its `rowMenu` items join the file tree's menu. Its dialogs open as `{id: 'plugin', render}`.
 
 Enablement has two layers: `.holi/settings/app.yaml` declares the vault's plugins for everyone,
 and `app.local.yaml` can only turn one off on this machine ([settings](features/settings.md)). The

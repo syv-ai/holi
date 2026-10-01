@@ -61,27 +61,34 @@ export function registerIpc(deps: {
     event.sender.startDrag({ files: paths, file: paths[0]!, icon: DRAG_ICON })
   })
 
-  // The native SAVE sheet for Convert-to-PDF. The renderer gets back an
-  // absolute path (or null on cancel) and hands it to `pdf.render`. Tied to the
-  // calling window so it is a sheet, not a floating dialog.
+  // The native SAVE sheet: the renderer names a vault file and the extension
+  // to save as, and gets back an absolute path (or null on cancel) to hand to
+  // whatever writes it. Tied to the calling window so it is a sheet, not a
+  // floating dialog.
   //
-  // It opens beside the note, so the PDF lands in the vault unless the user
-  // picks somewhere else: a PDF there can be read and commented on in Holi.
+  // It opens beside the vault file, named after it, so the output lands in the
+  // vault unless the user picks somewhere else.
   ipcMain.handle(
     'holi:showSaveDialog',
-    async (event, input: { remote: string; path: string }): Promise<string | null> => {
+    async (
+      event,
+      input: { remote: string; path: string; extension: string; filterName: string },
+    ): Promise<string | null> => {
+      if (!/^[a-z0-9]+$/i.test(input.extension)) {
+        throw new Error(`not a file extension: ${input.extension}`)
+      }
       const win = BrowserWindow.fromWebContents(event.sender)
-      const name = basename(input.path).replace(/\.(md|markdown)$/i, '') + '.pdf'
+      const name = basename(input.path).replace(/\.[^.]+$/, '') + '.' + input.extension
       const root = await deps.rootFor(input.remote).catch(() => null)
       let dir = app.getPath('downloads')
       try {
         if (root !== null) dir = join(root, dirname(vaultRelPath(input.path)))
       } catch {
-        // Not a vault path: Downloads, as before.
+        // Not a vault path: Downloads.
       }
       const opts = {
         defaultPath: join(dir, name),
-        filters: [{ name: 'PDF', extensions: ['pdf'] }],
+        filters: [{ name: input.filterName, extensions: [input.extension] }],
       }
       const result = win
         ? await dialog.showSaveDialog(win, opts)

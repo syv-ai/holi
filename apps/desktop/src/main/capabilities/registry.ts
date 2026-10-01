@@ -3,7 +3,9 @@
  *
  * **The app door** is the `window.holi` bridge: `postMessage` from the
  * sandboxed frame to `AppFrame`, which forwards into `apps.bridge`. **The CLI
- * door** is `holi <group> <verb>` over the bridge's loopback port (`bridge/`). Each
+ * door** is `holi <group> <verb>` over the bridge's loopback port (`bridge/`). **The
+ * UI door** is Holi's own renderer, through `cap.run` (`router.ts`), which is
+ * how a plugin's renderer reaches its main side. Each
  * capability is written once, with its refusals, and says which doors may
  * reach it, so what an app sees and what the agent can inspect cannot drift.
  *
@@ -24,13 +26,13 @@ import type { VaultSnapshot } from '@holi/shared'
 import { CapabilityError } from './error'
 import type { CoreServices } from './services'
 
-export type Door = 'app' | 'cli'
+export type Door = 'app' | 'cli' | 'ui'
 
 export interface CapabilityContext {
   remote: string
   /** The vault clone's root on this machine. */
   root: string
-  /** The calling app's bundle at the app door; null at the CLI door. */
+  /** The calling app's bundle at the app door; null at every other door. */
   bundle: string | null
   snapshot(): Promise<VaultSnapshot>
   /** What the running app knows beyond the files, for core's entries: one
@@ -76,8 +78,14 @@ export type AnyCapability = Capability<any, any>
 /** One owner's entries, by full name. */
 export type CapabilityTable = Readonly<Record<string, AnyCapability>>
 
-/** An entry, with its params' and result's types inferred. */
-export function cap<P, R>(c: Capability<P, R>): Capability<P, R> {
+/**
+ * An entry, with its params' and result's types inferred, and its doors kept
+ * as written: the renderer's `capClient` reads them from the table's type to
+ * offer only the verbs that open the UI door.
+ */
+export function cap<P, R, const D extends readonly Door[]>(
+  c: Capability<P, R> & { doors: D },
+): Capability<P, R> & { doors: D } {
   return c
 }
 

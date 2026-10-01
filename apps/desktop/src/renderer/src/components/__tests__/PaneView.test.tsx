@@ -6,8 +6,10 @@
  */
 import { fireEvent, render, screen } from '@/test/render'
 import { expect, test, vi } from 'vitest'
+import { createStore, Provider } from 'jotai'
 import { TAB_MIME, type PaneDropZone } from '@/lib/tab-drop'
 import type { Pane, Tab } from '@/state/panes'
+import { installedPluginsAtom } from '@/state/plugins'
 import { PaneView } from '../PaneView'
 
 // The terminal is stubbed: xterm needs geometry jsdom does not have.
@@ -200,4 +202,39 @@ test('a note tab beside an agent tab keeps its terminal alive', () => {
   pane({ pane: { tabs: [{ kind: 'agent', id: 'a' }, note('plan')], active: 1 } })
 
   expect(document.querySelector('[data-terminal="a"]')?.getAttribute('data-visible')).toBe('false')
+})
+
+test('a note tab opens in the view of the first enabled plugin claiming its path', () => {
+  // A test-only plugin, on by its own default, claiming what core would
+  // otherwise show itself.
+  const store = createStore()
+  store.set(installedPluginsAtom, [
+    {
+      info: { id: 'viewer', label: 'Viewer', default: true },
+      claims: [
+        { match: (p) => p.endsWith('.txt') },
+        { match: (p) => p.endsWith('.pdf'), view: ({ path }) => <div data-claimed={path} /> },
+        { match: () => true, view: () => <div data-second-claim /> },
+      ],
+    },
+  ])
+  render(
+    <Provider store={store}>
+      <PaneView
+        pane={{ tabs: [note('plan')], active: 0 }}
+        focused
+        onFocus={() => {}}
+        onSelect={() => {}}
+        onPin={() => {}}
+        onCloseTab={() => {}}
+        onEdit={() => {}}
+        onOpenNote={() => {}}
+        onConflict={() => {}}
+      />
+    </Provider>,
+  )
+
+  expect(document.querySelector('[data-claimed="notes/plan.pdf"]')).not.toBeNull()
+  expect(document.querySelector('[data-second-claim]')).toBeNull()
+  expect(document.querySelector('[data-pdf-viewer]')).toBeNull()
 })

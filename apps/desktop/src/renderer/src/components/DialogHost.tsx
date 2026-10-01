@@ -32,6 +32,7 @@ export function DialogHost(): React.JSX.Element | null {
           onClose={() => close()}
         />
       )}
+      {active.id === 'plugin' && active.render(() => close())}
       {active.id === 'remove-vault' && (
         <RemoveVault remote={active.remote} intent={active.intent} onClose={() => close()} />
       )}
