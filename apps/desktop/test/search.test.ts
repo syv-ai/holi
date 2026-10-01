@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { beforeEach, describe, expect, it } from 'vitest'
 import type { DocMeta } from '@holi/shared'
-import { isSearchable, SEARCH_LIMIT, searchVault } from '../src/main/apps/app-search'
+import { isSearchable, SEARCH_LIMIT, searchVault } from '../src/main/vault/search'
 
 let root: string
 let docs: DocMeta[]

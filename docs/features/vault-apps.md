@@ -227,8 +227,10 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
 
 - `apps/desktop/src/main/apps/`: the protocol helpers, bridge shim, base tokens, open/init ops,
   the move out of `.holi/apps`, the capability registry (`capabilities.ts`) and its services
-  (`capability-services.ts`), the store (`app-store.ts`), the approvals (`app-grants.ts`), note
-  rendering (`render-note.ts`) and search (`app-search.ts`).
+  (`capability-services.ts`), the store (`app-store.ts`), the approvals (`app-grants.ts`) and note
+  rendering (`render-note.ts`).
+- `apps/desktop/src/main/vault/search.ts`: the vault search behind `holi.search`, shared with
+  Holi's own search.
 - `apps/desktop/src/main/vault/record-merge.ts`: the record merge driver's install;
   `apps/desktop/src/main/agent/ops.ts`: `/cap/<method>` and `/merge/record`.
 - `apps/desktop/src/main/index.ts`: scheme registration and the `holi-app` handler.

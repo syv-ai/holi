@@ -34,7 +34,7 @@ import {
 } from '@holi/shared'
 import { ensureSeeded } from './agent/seed-content'
 import { initAppOp, type AppInitResult } from './apps/app-ops'
-import { searchBodies, type SearchHit } from './apps/app-search'
+import { searchBodies, type SearchHit } from './vault/search'
 import { writeHomeApp } from './apps/home-app'
 import { writeAppLog } from './apps/app-log'
 import { bundleAuthorship, commitLogin, manifestOf, type BundleCommit } from './apps/app-grants'

@@ -1,6 +1,6 @@
 /**
- * Search across a vault's notes, for a vault app's `holi.search` and
- * `holi search`: names first, then bodies.
+ * Search across a vault's notes: names first, then bodies. Holi's own search
+ * (`notes.search`) uses the body pass; a vault app's `holi.search` uses both.
  *
  * A grep, not an index, like `vault/backrefs.ts`: an index is a second copy of
  * the vault that can drift, and a vault is small enough to read on demand.
