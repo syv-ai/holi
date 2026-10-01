@@ -81,8 +81,7 @@ function setup(initial: Row[] = []) {
     },
   }
   const sessions = createAgentSessions({
-    getWindow: () =>
-      ({ webContents: { send: (c: string, p: unknown) => sent.push([c, p]) } }) as never,
+    emit: (_remote: string, name: string, payload: unknown) => sent.push([name, payload]),
     cli,
     terminals,
     resolveConfig: async () => ({ dir: '/cfg/vault' }),
@@ -117,7 +116,7 @@ describe('agent sessions', () => {
 
     expect(t.sessions.sessions().map((s) => s.id)).toEqual(['aaaaaaaa'])
     expect(t.sent.at(-1)).toEqual([
-      'agent:sessions',
+      'sessions',
       [{ id: 'aaaaaaaa', name: 'Session aaaaaaaa', state: 'idle' }],
     ])
   })

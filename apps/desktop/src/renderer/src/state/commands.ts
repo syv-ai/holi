@@ -22,13 +22,14 @@ import { saveAllBuffers } from '../lib/buffer-registry'
 import { matchHotkey } from '../lib/hotkey'
 import { trpc } from '../lib/trpc'
 import { openHomeAtom } from './home'
-import { showAgentsAtom, startSessionAtom, updateSkillsAtom } from './agent-send'
+import { showAgentsAtom, startSessionAtom } from './agent-send'
 import { openTodaysDailyAtom } from './daily'
 import { openDialogAtom } from './dialogs'
 import { closeActiveTabWithExitAtom } from './pane-exit'
 import { openPaletteAtom } from './palette'
 import { navOpenAtom } from './preferences'
 import { touchRecentAtom } from './recents'
+import { updateSkillsAtom } from './skills'
 import { openQuickAddAtom } from './tasks'
 import { openPinned, openSurface, splitPane, workspaceAtom } from './panes'
 import { surfacesAtom } from './plugins'
@@ -119,7 +120,7 @@ export const STATIC_COMMANDS: readonly Command[] = [
   // The skills and hooks a vault was seeded with are its own; a newer
   // release's reach it only when asked for, here or with `holi skills update`.
   {
-    id: 'agent.updateSkills',
+    id: 'skills.update',
     label: 'Update skills',
     run: (_get, set) => void set(updateSkillsAtom),
   },

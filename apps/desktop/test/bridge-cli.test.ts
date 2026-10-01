@@ -55,7 +55,7 @@ type Called = (name: string, params: Record<string, string>) => Promise<{ text: 
 /** Every real command, its run swapped for `called`. */
 function recording(called: Called): Record<string, AnyCapability> {
   const real: Record<string, AnyCapability> = {
-    ...vaultCapabilities({ updateSkills: async () => '' }),
+    ...vaultCapabilities({ updateSkills: async () => ({ summary: '', conflicts: null }) }),
     ...appsCapabilities({
       events: { emit: () => {} },
       appDoor: () => {
@@ -69,7 +69,12 @@ function recording(called: Called): Record<string, AnyCapability> {
       signatures: { read: async () => '[]', write: async () => {} },
       typst: async () => null,
     }),
-    ...agentCapabilities({ sessionsFor: () => [] }),
+    ...agentCapabilities({
+      sessions: {} as never,
+      terminals: {} as never,
+      liveRemote: () => null,
+      commitNow: async () => null,
+    }),
   }
   return Object.fromEntries(
     Object.entries(real).map(([name, entry]) => [

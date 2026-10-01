@@ -40,8 +40,7 @@ import { importFiles } from './vault/import-files'
 import { exportFiles } from './vault/export-files'
 import { moveNotes } from './vault/move'
 import { getOrCreateDaily, sweepDaily } from './vault/daily'
-import { openRepo, remoteUrl, type Commit, type RangeFile } from './git'
-import { openTurnLog, type TurnRecord } from './agent/turn-log'
+import { openRepo, remoteUrl, type Commit } from './git'
 import { GitHubApiError, type Repo } from './github/api'
 import type { DeviceFlow } from './github/device-flow'
 import { createMembersCache, type MembersCache } from './github/members-cache'
@@ -1323,55 +1322,6 @@ export function createRouter(deps: RouterDeps) {
       }),
   })
 
-  /**
-   * What the agent's last turns changed.
-   *
-   * A turn is a COMMIT RANGE, so nothing here stores a file list: `files` asks
-   * git each time. Storing the paths as well would be a second copy of an answer
-   * git already holds, and one that goes stale the moment anything else touches
-   * the tree.
-   *
-   * `revert` is a write and a new commit, never a rewrite, the same rule
-   * `history.restore` follows (docs/features/history.md).
-   */
-  const turns = t.router({
-    /** This machine's turn records for the open vault, newest first. */
-    list: t.procedure.query((): Promise<TurnRecord[]> => openTurnLog(activeOrThrow().root).list()),
-
-    /** The files one turn changed, with line counts. Empty rather than an error
-     *  when the range's shas are gone: a turn record outlives the commits it
-     *  names, and that is a turn whose history is gone. */
-    files: t.procedure
-      .input(fields({ base: 'string', end: 'string' }))
-      .query(({ input }): Promise<RangeFile[]> =>
-        activeOrThrow().repo.rangeFiles(input.base, input.end),
-      ),
-
-    /** One file's before/after across the turn, fed to the merge view. Either
-     *  side is `''` when the turn added or deleted the file, so the diff reads
-     *  as a pure add or delete instead of failing. */
-    fileDiff: t.procedure
-      .input(fields({ base: 'string', end: 'string', path: 'string' }))
-      .query(async ({ input }): Promise<{ before: string; after: string }> => {
-        const repo = activeOrThrow().repo
-        const rel = safe(input.path)
-        const before = await repo.show(input.base, rel).catch(() => '')
-        const after = await repo.show(input.end, rel).catch(() => '')
-        return { before, after }
-      }),
-
-    /** Write the text the reviewer resolved to, and commit it. */
-    revert: vaultMutation
-      .input(fields({ remote: 'string', path: 'string', text: 'string' }))
-      .mutation(async ({ input }) => {
-        const root = await rootFor(input.remote)
-        const rel = safe(input.path)
-        await writeAtomic(root, rel, input.text)
-        await activeOrThrow().commitNow()
-        return { ok: true as const }
-      }),
-  })
-
   // Per-vault theming: the resolved (merged + validated) colour/chrome tokens
   // the renderer writes onto the document root. Most themes are written by hand
   // or by the agent; the settings pane's `write` merges per key per mode so
@@ -1557,7 +1507,6 @@ export function createRouter(deps: RouterDeps) {
     tasks,
     sync,
     history,
-    turns,
     theme,
     settings,
     ui,

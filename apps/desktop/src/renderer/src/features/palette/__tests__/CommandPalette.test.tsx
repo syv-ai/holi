@@ -10,7 +10,7 @@
 import { emptyVaultSnapshot } from '@holi/shared'
 import { getDefaultStore } from 'jotai'
 import userEvent from '@testing-library/user-event'
-import { afterEach, beforeEach, expect, test, vi } from 'vitest'
+import { beforeEach, expect, test, vi } from 'vitest'
 import { render, screen, waitFor } from '@/test/render'
 import { useCommandHotkeys } from '@/state/commands'
 import { agentSessionsAtom, agentTerminalsAtom, type AgentSession } from '@/state/agent'
@@ -28,13 +28,14 @@ function Hotkeys(): null {
   return null
 }
 
-const send = vi.fn(async () => ({ ok: true, terminalId: 't1' }))
+const send = vi.fn(async (_args: unknown) => ({ ok: true, terminalId: 't1' }))
+vi.mock('@/lib/agent-cap', () => ({
+  agentCap: { send: (_remote: string, args: unknown) => send(args) },
+}))
 
 beforeEach(() => {
   // cmdk scrolls the selected item into view; jsdom has no layout to scroll.
   Element.prototype.scrollIntoView = () => {}
-  // @ts-expect-error — the preload bridge is not typed onto window in tests.
-  window.holi = { agent: { send } }
   send.mockClear()
   store.set(activeRemoteAtom, 'o/vault')
   store.set(snapshotAtom, {
@@ -50,11 +51,6 @@ beforeEach(() => {
   store.set(paletteAtom, { open: false, mode: 'open', query: '', step: 0, stepDirection: 1 })
   store.set(agentSessionsAtom, [])
   store.set(agentTerminalsAtom, [])
-})
-
-afterEach(() => {
-  // @ts-expect-error — as above.
-  delete window.holi
 })
 
 function mount() {

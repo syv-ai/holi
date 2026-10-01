@@ -42,7 +42,10 @@ async function rig() {
     await writeFile(join(root, rel), text)
   }
   const registry = createCapabilityRegistry()
-  registry.register(VAULT_NAMESPACES, vaultCapabilities({ updateSkills: async () => '' }))
+  registry.register(
+    VAULT_NAMESPACES,
+    vaultCapabilities({ updateSkills: async () => ({ summary: '', conflicts: null }) }),
+  )
   registry.register(TASK_NAMESPACES, taskCapabilities({ today: () => '2026-09-30' }))
   let door: AppDoor | null = null
   registry.register(

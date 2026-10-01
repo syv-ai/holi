@@ -12,10 +12,13 @@ import { FitAddon } from '@xterm/addon-fit'
 import { WebglAddon } from '@xterm/addon-webgl'
 import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
+import { useAtomValue } from 'jotai'
 import { useCallback, useEffect, useRef } from 'react'
+import { agentCap } from '@/lib/agent-cap'
 import { cn } from '@/lib/cn'
 import { terminalKeyAction } from '@/lib/agent-terminal-keys'
-import { registerSessionTerminal } from '@/lib/session-terminals'
+import { registerSessionTerminal, resizeTerminal, typeIntoTerminal } from '@/lib/session-terminals'
+import { activeRemoteAtom } from '@/state/vaults'
 
 /** Claude Code is an Ink TUI: it draws its own cursor, so xterm's would blink a
  * second one at the buffer end. Ink's init re-enables it (`\x1b[?25h`), hence
@@ -57,6 +60,17 @@ export function SessionTerminal({
   const lastSizeRef = useRef({ cols: 0, rows: 0 })
   const geometryRef = useRef(onGeometry)
   geometryRef.current = onGeometry
+  // The vault this terminal is in: every byte and resize says which, so main
+  // can drop one that outlived a vault switch.
+  const remote = useAtomValue(activeRemoteAtom)
+  const remoteRef = useRef(remote)
+  remoteRef.current = remote
+  const type = useCallback(
+    (data: string) => {
+      if (remoteRef.current !== null) typeIntoTerminal(remoteRef.current, terminalId, data)
+    },
+    [terminalId],
+  )
 
   /** Refit and tell the PTY the new geometry — xterm's cols/rows are the truth. */
   const syncSize = useCallback(() => {
@@ -74,7 +88,7 @@ export function SessionTerminal({
     if (cols === lastSizeRef.current.cols && rows === lastSizeRef.current.rows) return // a redundant resize is a SIGWINCH → full TUI redraw
     lastSizeRef.current = { cols, rows }
     geometryRef.current?.(cols, rows)
-    window.holi.agent.resize(terminalId, cols, rows)
+    if (remoteRef.current !== null) resizeTerminal(remoteRef.current, terminalId, cols, rows)
   }, [terminalId])
 
   /**
@@ -116,9 +130,13 @@ export function SessionTerminal({
     }
     termRef.current = term
     fitRef.current = fit
-    // So a paste into this session can be followed by the keyboard: see
-    // `session-terminals.ts` for the case the visible effect below misses.
-    const unregister = registerSessionTerminal(terminalId, () => term.focus())
+    // Its output, and, so a paste into this session can be followed by the
+    // keyboard, its focus: see `session-terminals.ts` for the case the
+    // visible effect below misses.
+    const unregister = registerSessionTerminal(terminalId, {
+      focus: () => term.focus(),
+      write: (data) => term.write(data),
+    })
 
     const selection = term.onSelectionChange(() => {
       const selected = term.getSelection()
@@ -141,7 +159,7 @@ export function SessionTerminal({
       e.preventDefault()
       switch (action.kind) {
         case 'write':
-          window.holi.agent.write(terminalId, action.seq)
+          type(action.seq)
           break
         case 'scroll':
           if (action.to === 'top') term.scrollToTop()
@@ -152,23 +170,22 @@ export function SessionTerminal({
           break
         case 'paste':
           void navigator.clipboard.readText().then((text) => {
-            if (text) window.holi.agent.write(terminalId, text)
+            if (text) type(text)
           })
           break
       }
       return false
     })
 
-    // Filtered by terminal: every terminal's bytes arrive on one channel.
-    const offData = window.holi.agent.onData((e) => {
-      if (e.id === terminalId) term.write(e.data)
-    })
-    const typed = term.onData((data) => window.holi.agent.write(terminalId, data))
+    const typed = term.onData(type)
 
     // Replay what main's mirror recorded (output from before this terminal
     // existed), THEN start taking live data.
     void (async () => {
-      const state = await window.holi.agent.attach(terminalId)
+      const state =
+        remoteRef.current === null
+          ? ''
+          : await agentCap.attach(remoteRef.current, { id: terminalId })
       if (state) term.write(state)
       term.write(HIDE_CURSOR)
     })()
@@ -185,7 +202,6 @@ export function SessionTerminal({
     disposeRef.current = () => {
       clearTimeout(reHide)
       unregister()
-      offData()
       typed.dispose()
       selection.dispose()
       observer.disconnect()
@@ -194,7 +210,7 @@ export function SessionTerminal({
       fitRef.current = null
       disposeRef.current = null
     }
-  }, [terminalId, syncSize])
+  }, [terminalId, syncSize, type])
 
   useEffect(() => () => disposeRef.current?.(), [])
 

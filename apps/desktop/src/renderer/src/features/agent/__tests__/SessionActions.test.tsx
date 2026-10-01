@@ -7,22 +7,28 @@ import userEvent from '@testing-library/user-event'
 import { Provider, createStore } from 'jotai'
 import { beforeEach, expect, test, vi } from 'vitest'
 import { agentTerminalsAtom } from '@/state/agent'
+import { activeRemoteAtom } from '@/state/vaults'
 import { SessionActions } from '../SessionActions'
 
 const open = vi.fn()
 const start = vi.fn()
+
+vi.mock('@/lib/agent-cap', () => ({
+  agentCap: {
+    open: (_remote: string, args: unknown) => open(args),
+    start: (_remote: string, args: unknown) => start(args),
+  },
+}))
 
 beforeEach(() => {
   open.mockReset()
   start.mockReset()
   open.mockResolvedValue({ ok: true, terminalId: 't-list' })
   start.mockResolvedValue({ ok: true, sessionId: 'newnew00', terminalId: 't-new' })
-  window.holi = {
-    agent: { open: (args: unknown) => open(args), start: (args: unknown) => start(args) },
-  } as never
 })
 
 function setup(store = createStore()) {
+  store.set(activeRemoteAtom, 'o/vault')
   render(
     <Provider store={store}>
       <SessionActions />

@@ -17,7 +17,6 @@ import {
   dialog,
   ipcMain,
   nativeTheme,
-  Notification,
   protocol,
   session as electronSession,
   shell,
@@ -42,12 +41,7 @@ import { install } from './plugin-host/installed'
 import { createPluginHost } from './plugin-host/host'
 import type { PluginEventsDeps } from './plugin-host/events'
 import { frameSchemes, schemeEntries, serveScheme } from './plugin-host/schemes'
-import {
-  describeUpdate,
-  updateConflictPrompt,
-  updateShipped,
-  type SkillsUpdate,
-} from './vault/seed/update'
+import { describeUpdate, updateConflictPrompt, updateShipped } from './vault/seed/update'
 import { registerGitRoutes } from './vault/git-routes'
 import { registerIpc } from './ipc'
 import { createRouter, localToday } from './router'
@@ -68,7 +62,6 @@ import { openTurnLog } from './agent/turn-log'
 import { createBridgeEnv } from './bridge/env-file'
 import { createBridgeServer } from './bridge/server'
 import { registerAgentRoutes } from './agent/bridge-routes'
-import { registerAgentIpc } from './agent-ipc'
 import type { MainPlugin } from './plugin-api'
 
 // The plugins this build has: the one place main imports them.
@@ -191,25 +184,77 @@ async function main(): Promise<void> {
 
   /**
    * The vault agent, written to the plugin contract while it is still core:
-   * it attaches to each vault once it is open and lets go when Holi leaves
-   * it, its hooks' routes are on the bridge, and quitting asks first while a
-   * session is busy. `agent` is assigned below, before any vault can open.
+   * any number of live `claude` sessions, all in the open vault's clone. It
+   * starts once per process with its capabilities, events and hook routes,
+   * attaches to each vault once it is open and lets go when Holi leaves it,
+   * and quitting asks first while a session is busy. Its capabilities and
+   * events are under the plugin id `agent` already, so moving it into a
+   * plugin renames nothing.
    */
+  let agent: AgentSessions | null = null
   const agentPart: MainPlugin = {
     info: { id: 'agent', label: 'Agent', default: true },
     activateApp(ctx) {
+      const terminals = createAgentTerminals({ emit: ctx.emit })
+      const sessions = createAgentSessions({
+        emit: ctx.emit,
+        cli: createClaudeCli(),
+        terminals,
+        // Per vault open, not per launch: the open vault moves, and the theme
+        // stamped into its directory tracks a setting the user can flip while
+        // the app runs. Static paths every session needs ride in the settings
+        // `env` block, the one channel that reaches a background session.
+        resolveConfig: async ({ remote, root }) =>
+          resolveVaultAgentConfig({
+            userDataDir,
+            remote,
+            root,
+            systemPrefersDark: nativeTheme.shouldUseDarkColors,
+            env: { HOLI_BIN: holiCliPath },
+          }),
+        takeFirstSpawn,
+        binDir: ctx.binDir,
+        // What each turn changed, as a commit range, in the vault it ran in.
+        turnLogFor: openTurnLog,
+      })
+      agent = sessions
+      ctx.register(
+        AGENT_NAMESPACES,
+        agentCapabilities({
+          sessions,
+          terminals,
+          liveRemote: () => host.active()?.remote ?? null,
+          commitNow: async () => {
+            const active = host.active()
+            if (active === null) throw new CapabilityError('UNAVAILABLE', 'No vault is open.')
+            return active.commitNow()
+          },
+        }),
+      )
+      // Keystrokes and resizes, in the order they were typed. The host drops
+      // any about a vault that is not the open one.
+      ctx.on('pty-write', (_remote, payload) => {
+        const p = payload as { id?: unknown; data?: unknown }
+        if (typeof p?.id === 'string' && typeof p.data === 'string') terminals.write(p.id, p.data)
+      })
+      ctx.on('pty-resize', (_remote, payload) => {
+        const p = payload as { id?: unknown; cols?: unknown; rows?: unknown }
+        if (typeof p?.id === 'string' && typeof p.cols === 'number' && typeof p.rows === 'number') {
+          terminals.resize(p.id, p.cols, p.rows)
+        }
+      })
       const unroute = registerAgentRoutes(ctx, {
         // A turn edge in one of a vault's background sessions, by job id.
-        onJobTurn: (remote, jobId, active) => agent.noteTurn(remote, jobId, active),
+        onJobTurn: (remote, jobId, active) => sessions.noteTurn(remote, jobId, active),
         // A session's status line: how much of its context is used.
-        onStatus: (remote, jobId, status) => agent.noteStatus(remote, jobId, status),
+        onStatus: (remote, jobId, status) => sessions.noteStatus(remote, jobId, status),
       })
       // Quitting stops the vault's sessions, so it asks first when one of
       // them is working or waiting on you: that turn is cut short. Idle
       // sessions stop without a question; their conversations stay in Claude
       // Code's agent list.
       ctx.guardQuit(() => {
-        const busy = agent.sessions().filter((s) => s.state !== 'idle')
+        const busy = sessions.sessions().filter((s) => s.state !== 'idle')
         if (busy.length === 0) return null
         const one = busy.length === 1
         return {
@@ -222,17 +267,19 @@ async function main(): Promise<void> {
       return unroute
     },
     activateVault(ctx) {
-      void agent.ensure(ctx)
+      const sessions = agent
+      if (sessions === null) return () => {}
+      void sessions.ensure(ctx)
       // The per-turn hook reads the focused note from a file in this clone.
       const unreport = ctx.onReport((report) =>
-        agent.setFocus({ focusedPath: report.focusedPath, openPaths: report.openPaths }),
+        sessions.setFocus({ focusedPath: report.focusedPath, openPaths: report.openPaths }),
       )
       // A switch stops the vault's sessions (the renderer asked first if one
       // was busy). They stay in Claude Code's agent list and resume when
       // opened.
       return async () => {
         unreport()
-        await agent.leave().catch((err) => console.error('[vault] agent leave failed:', err))
+        await sessions.leave().catch((err) => console.error('[vault] agent leave failed:', err))
       }
     },
   }
@@ -340,20 +387,29 @@ async function main(): Promise<void> {
   // each feature's, under the namespaces each owns. A feature's table closes
   // over what it needs from the running app.
   const vaultCaps = vaultCapabilities({
+    // `holi skills update` and the palette's Update skills: bring this
+    // release's skills and hooks to a vault. A conflict is answered with the
+    // first turn of a session that would resolve it, which the renderer
+    // starts through the agent service.
     updateSkills: async (remote) => {
-      const result = await updateSkills(remote)
-      if (!result.ok) throw new CapabilityError('UNAVAILABLE', result.message)
-      return result.summary
+      const root = await rootFor(remote)
+      if (root === null) throw new CapabilityError('UNAVAILABLE', 'No vault is open.')
+      const report = await updateShipped(root, await plugins.contributions(root))
+      return {
+        summary: describeUpdate(report, false),
+        conflicts:
+          report.conflicts.length === 0
+            ? null
+            : {
+                prompt: await updateConflictPrompt(root, report.conflicts),
+                summary: describeUpdate(report, true),
+              },
+      }
     },
   })
   const taskCaps = taskCapabilities({ today: localToday })
-  const agentCaps = agentCapabilities({
-    // `agent` is assigned below, before any vault can be open.
-    sessionsFor: (remote) => (host.active()?.remote === remote ? (agent?.sessions() ?? []) : []),
-  })
   capabilities.register(VAULT_NAMESPACES, vaultCaps)
   capabilities.register(TASK_NAMESPACES, taskCaps)
-  capabilities.register(AGENT_NAMESPACES, agentCaps)
   // The one way every door runs a capability: the renderer's UI door (the
   // router) and the agent's `holi` CLI (the bridge server, below).
   const capabilityHost = createCapabilityHost({
@@ -390,41 +446,7 @@ async function main(): Promise<void> {
 
   registerIpc({ router, rootFor: (remote) => rootFor(remote) })
 
-  // The vault agent: any number of live `claude` sessions, all in the
-  // active vault's clone, all ended when that vault closes. `getWindow` is lazy,
-  // so registering the seam before the window exists is safe.
-  //
-  // The hook server learns turn start/end from the agent's own Claude Code hooks
-  // and drives the manager's pause/resume. The forward ref is safe: its
-  // callbacks fire only at runtime, long after `agent` is assigned.
-  let agent: AgentSessions
   const holiCliPath = await installHoliCli(app.getPath('userData'))
-
-  /**
-   * `holi skills update` and the palette's Update skills: bring this
-   * release's skills and hooks to a vault. Conflicts get a session of their
-   * own, but only in the vault Holi is showing, the one sessions start in.
-   */
-  const updateSkills = async (remote: string): Promise<SkillsUpdate> => {
-    const root = await rootFor(remote)
-    if (root === null) return { ok: false, message: 'No vault is open.' }
-    const report = await updateShipped(root, await plugins.contributions(root))
-    let terminalId: string | undefined
-    if (report.conflicts.length > 0 && host.active()?.remote === remote) {
-      const started = await agent.start({
-        name: 'Update skills',
-        prompt: await updateConflictPrompt(root, report.conflicts),
-      })
-      if (started.ok) terminalId = started.terminalId
-      else console.warn('[skills] no session for the conflicts:', started.message)
-    }
-    return {
-      ok: true,
-      report,
-      summary: describeUpdate(report, terminalId !== undefined),
-      ...(terminalId === undefined ? {} : { terminalId }),
-    }
-  }
 
   // The bridge: what runs inside a vault (the `holi` command, the agent's
   // hooks, git's hook and merge driver) reaching this Holi on loopback.
@@ -434,42 +456,6 @@ async function main(): Promise<void> {
   registerGitRoutes(bridge, { rootFor })
   await bridge.start()
   const binDir = dirname(holiCliPath)
-  const terminals = createAgentTerminals({ getWindow: () => mainWindow })
-  agent = createAgentSessions({
-    getWindow: () => mainWindow,
-    cli: createClaudeCli(),
-    terminals,
-    // Per vault open, not per launch: the active vault moves, and the theme
-    // stamped into its directory tracks a setting the user can flip while the
-    // app runs. Static paths every session needs ride in the settings `env`
-    // block, the one channel that reaches a background session.
-    resolveConfig: async ({ remote, root }) =>
-      resolveVaultAgentConfig({
-        userDataDir,
-        remote,
-        root,
-        systemPrefersDark: nativeTheme.shouldUseDarkColors,
-        env: { HOLI_BIN: holiCliPath },
-      }),
-    takeFirstSpawn,
-    binDir: () => binDir,
-    // What each turn changed, as a commit range, in the vault it ran in.
-    turnLogFor: openTurnLog,
-  })
-  registerAgentIpc({
-    agent,
-    terminals,
-    // The palette's Update skills: the report as a native notification, since
-    // Holi has no notice surface of its own; a conflict's session opens too.
-    updateSkills: async () => {
-      const remote = host.active()?.remote
-      if (remote === undefined) return { ok: false, message: 'No vault is open.' }
-      const result = await updateSkills(remote)
-      const body = result.ok ? result.summary : result.message
-      new Notification({ title: 'Update skills', body }).show()
-      return result
-    },
-  })
 
   /**
    * Reminders: a tray-resident evaluator sweeps every registered vault each

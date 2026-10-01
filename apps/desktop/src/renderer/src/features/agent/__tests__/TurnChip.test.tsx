@@ -3,7 +3,7 @@
  *
  * The chip lives under its own tab, so the two states worth pinning are the
  * ones a per-session chip could get wrong: whose turn it shows, and what it
- * reloads on. A turn ENDING is the event, and `agent:sessions` pushes on every
+ * reloads on. A turn ENDING is the event, and the agent's `sessions` event pushes on every
  * bracket, so the chip watches its own session leave `working` rather than
  * polling for a record.
  */
@@ -13,6 +13,7 @@ import { Provider, createStore } from 'jotai'
 import { beforeEach, expect, test, vi } from 'vitest'
 import { TurnChip } from '../TurnChip'
 import { agentSessionsAtom, type AgentSession } from '@/state/agent'
+import { activeRemoteAtom } from '@/state/vaults'
 import {
   latestTurnsAtom,
   reviewTurnAtom,
@@ -24,14 +25,12 @@ import {
 const list = vi.fn()
 const files = vi.fn()
 
-vi.mock('@/lib/trpc', () => ({
-  trpc: {
-    turns: {
-      list: { query: () => list() },
-      files: { query: (i: unknown) => files(i) },
-      fileDiff: { query: () => Promise.resolve({ before: '', after: '' }) },
-      revert: { mutate: () => Promise.resolve({ ok: true }) },
-    },
+vi.mock('@/lib/agent-cap', () => ({
+  agentCap: {
+    turns: () => list(),
+    turnFiles: (_remote: string, i: unknown) => files(i),
+    turnDiff: () => Promise.resolve({ before: '', after: '' }),
+    revert: () => Promise.resolve({ ok: true }),
   },
 }))
 
@@ -61,6 +60,7 @@ function setup(
   } = {},
 ) {
   const store = createStore()
+  store.set(activeRemoteAtom, 'o/vault')
   store.set(agentSessionsAtom, seed.sessions ?? [session('sess-a')])
   store.set(latestTurnsAtom, seed.turns ?? { 'sess-a': TURN })
   store.set(turnCountsAtom, seed.counts ?? { 'aaa..bbb': 2 })

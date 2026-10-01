@@ -1,9 +1,12 @@
 import { atom } from 'jotai'
+import { agentCap } from '@/lib/agent-cap'
 import { sessionsWorthAsking } from '@/lib/agent-notices'
-import type { PluginStore } from '@/plugin-api/types'
+import { receivePtyData } from '@/lib/session-terminals'
+import type { PluginEventHandler, PluginStore } from '@/plugin-api/types'
 import { activeTab, workspaceAtom, type Tab } from './panes'
 import { closeSurfaceTabsAtom, surfaceTabIdsAtom } from './surfaces'
 import { resetTurnReviewAtom, turnReviewOpenAtom } from './turns'
+import { activeRemoteAtom } from './vaults'
 
 /**
  * The surface an agent tab is: a terminal onto Claude Code, by the id main
@@ -27,7 +30,7 @@ export type SessionState = 'needs-you' | 'working' | 'idle'
 /**
  * One of the vault's live Claude Code background sessions, by its job id.
  * Mirrors `SessionSummary` in main/agent/claude-sessions.ts, pushed as a list
- * on `agent:sessions`. Only live ones: a stopped or finished session lives in
+ * in the agent's `sessions` event. Only live ones: a stopped or finished session lives in
  * Claude Code's own agent list.
  */
 export interface AgentSession {
@@ -45,7 +48,7 @@ export interface AgentSession {
 
 /**
  * One of Holi's terminals onto Claude Code. Mirrors `TerminalSummary` in
- * main/agent/agent-terminals.ts, pushed on `agent:terminals`.
+ * main/agent/agent-terminals.ts, pushed in the agent's `terminals` event.
  */
 export interface AgentTerminal {
   id: string
@@ -199,30 +202,42 @@ export const agentLeaveGuardAtom = atom((get): string | null => {
 })
 
 /**
- * The agent while `remote` is the open vault: keep the session and terminal
- * lists in step with main, close the tabs of terminals that have gone, detach
- * a terminal whose last tab closed, and clear the turn review on the way out.
+ * What main tells the agent's renderer side. A terminal's output goes
+ * straight to its xterm, never through an atom. A list is about one vault,
+ * and one about a vault Holi has since left is stale.
+ */
+export const agentEvents: Readonly<Record<string, PluginEventHandler>> = {
+  'pty-data': ({ payload }) => receivePtyData(payload),
+  sessions: ({ remote, payload }, store) => {
+    if (remote === store.get(activeRemoteAtom))
+      store.set(agentSessionsAtom, payload as AgentSession[])
+  },
+  terminals: ({ remote, payload }, store) => {
+    if (remote === store.get(activeRemoteAtom)) {
+      store.set(agentTerminalsAtom, payload as AgentTerminal[])
+    }
+  },
+}
+
+/**
+ * The agent while `remote` is the open vault: fill the session and terminal
+ * lists (the events keep them in step after that), close the tabs of
+ * terminals that have gone, detach a terminal whose last tab closed, and clear
+ * the lists and the turn review on the way out.
  *
  * Asked fresh for every vault, so a renderer reload pulls the lists again.
  */
-export function agentVault(_remote: string, store: PluginStore): () => void {
-  // A push that lands while the opening question is in flight is NEWER than
-  // its answer, and letting the answer win would drop what was just announced.
-  let pushedSessions = false
-  let pushedTerminals = false
-  const offSessions = window.holi.agent.onSessions((list) => {
-    pushedSessions = true
-    store.set(agentSessionsAtom, list)
+export function agentVault(remote: string, store: PluginStore): () => void {
+  // An event that lands while the opening question is in flight is NEWER
+  // than its answer, and letting the answer win would drop what was just
+  // announced. Every event is a new list, so an unchanged one means none came.
+  const sessionsAsked = store.get(agentSessionsAtom)
+  const terminalsAsked = store.get(agentTerminalsAtom)
+  void agentCap.sessions(remote).then((list) => {
+    if (store.get(agentSessionsAtom) === sessionsAsked) store.set(agentSessionsAtom, list)
   })
-  const offTerminals = window.holi.agent.onTerminals((list) => {
-    pushedTerminals = true
-    store.set(agentTerminalsAtom, list)
-  })
-  void window.holi.agent.sessions().then((list) => {
-    if (!pushedSessions) store.set(agentSessionsAtom, list)
-  })
-  void window.holi.agent.terminals().then((list) => {
-    if (!pushedTerminals) store.set(agentTerminalsAtom, list)
+  void agentCap.terminals(remote).then((list) => {
+    if (store.get(agentTerminalsAtom) === terminalsAsked) store.set(agentTerminalsAtom, list)
   })
 
   // A terminal leaves main's list when its client exits: a detach, `/exit`,
@@ -243,17 +258,18 @@ export function agentVault(_remote: string, store: PluginStore): () => void {
   let open = new Set(store.get(tabs))
   const offTabs = store.sub(tabs, () => {
     const now = new Set(store.get(tabs))
-    for (const id of open) if (!now.has(id)) void window.holi.agent.close(id)
+    for (const id of open) if (!now.has(id)) void agentCap.detach(remote, { id })
     open = now
   })
 
   return () => {
-    offSessions()
-    offTerminals()
     offGone()
     offTabs()
-    // The turn record is per vault: left open, the review would ask the next
-    // vault's git for a range it has never heard of.
+    // Both lists and the turn record are per vault: left as they are, the
+    // next vault would show this one's sessions until its own answer came,
+    // and the review would ask its git for a range it has never heard of.
+    store.set(agentSessionsAtom, [])
+    store.set(agentTerminalsAtom, [])
     store.set(resetTurnReviewAtom)
     store.set(turnReviewOpenAtom, false)
   }

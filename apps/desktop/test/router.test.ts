@@ -94,7 +94,10 @@ async function rig(files: Record<string, string> = {}, auth?: StoredAuth) {
   const trashItem = vi.fn(async () => {})
   // Core's capabilities and the tasks', for `cap.run`.
   const capabilities = createCapabilityRegistry()
-  capabilities.register(VAULT_NAMESPACES, vaultCapabilities({ updateSkills: async () => '' }))
+  capabilities.register(
+    VAULT_NAMESPACES,
+    vaultCapabilities({ updateSkills: async () => ({ summary: '', conflicts: null }) }),
+  )
   capabilities.register(TASK_NAMESPACES, taskCapabilities({ today: () => TODAY }))
   const capabilityHost = createCapabilityHost({
     registry: capabilities,

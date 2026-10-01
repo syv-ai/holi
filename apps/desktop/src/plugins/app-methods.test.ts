@@ -16,9 +16,20 @@ import { appsCapabilities, storeCapabilities } from './apps/main/capabilities'
 
 it('answers every bridge method that is not the renderer’s at the app door', () => {
   const registry = createCapabilityRegistry()
-  registry.register(VAULT_NAMESPACES, vaultCapabilities({ updateSkills: async () => '' }))
+  registry.register(
+    VAULT_NAMESPACES,
+    vaultCapabilities({ updateSkills: async () => ({ summary: '', conflicts: null }) }),
+  )
   registry.register(TASK_NAMESPACES, taskCapabilities({ today: () => '2026-10-01' }))
-  registry.register(AGENT_NAMESPACES, agentCapabilities({ sessionsFor: () => [] }))
+  registry.register(
+    AGENT_NAMESPACES,
+    agentCapabilities({
+      sessions: {} as never,
+      terminals: {} as never,
+      liveRemote: () => null,
+      commitNow: async () => null,
+    }),
+  )
   registry.register(
     GOOGLE_NAMESPACES,
     googleCapabilities({

@@ -23,6 +23,7 @@ import {
 } from '../agent-send'
 import { activeTab, openSurface, workspaceAtom } from '../panes'
 import { registerSessionTerminal } from '../../lib/session-terminals'
+import { activeRemoteAtom } from '../vaults'
 
 const session = (over: Partial<AgentSession> & { id: string }): AgentSession => ({
   name: 'New session',
@@ -42,6 +43,16 @@ const send = vi.fn()
 const stop = vi.fn()
 const duplicate = vi.fn()
 
+vi.mock('@/lib/agent-cap', () => ({
+  agentCap: {
+    open: (_remote: string, args: unknown) => open(args),
+    start: (_remote: string, args: unknown) => start(args),
+    send: (_remote: string, args: unknown) => send(args),
+    stop: (_remote: string, { id }: { id: string }) => stop(id),
+    duplicate: (_remote: string, args: unknown) => duplicate(args),
+  },
+}))
+
 beforeEach(() => {
   for (const fn of [open, start, send, stop, duplicate]) fn.mockReset()
   open.mockResolvedValue({ ok: true, terminalId: 'opened' })
@@ -49,20 +60,12 @@ beforeEach(() => {
   send.mockResolvedValue({ ok: true, terminalId: 'sent' })
   stop.mockResolvedValue({ ok: true })
   duplicate.mockResolvedValue({ ok: true, sessionId: 'copy0000', terminalId: 'copied' })
-  window.holi = {
-    agent: {
-      open: (args: unknown) => open(args),
-      start: (args: unknown) => start(args),
-      send: (args: unknown) => send(args),
-      stop: (id: string) => stop(id),
-      duplicate: (id: string, geometry: unknown) => duplicate(id, geometry),
-    },
-  } as never
 })
 
 /** A store with whatever sessions and terminals main has pushed. */
 function storeWith(sessions: AgentSession[] = [], terminals: AgentTerminal[] = []) {
   const store = createStore()
+  store.set(activeRemoteAtom, 'o/vault')
   store.set(agentSessionsAtom, sessions)
   store.set(agentTerminalsAtom, terminals)
   return store
@@ -135,7 +138,7 @@ test('opening a session with no window attaches a new one', async () => {
 test('an ask goes to main unsent, and its window comes forward with the keyboard', async () => {
   const store = storeWith([session({ id: 'aaaaaaaa' })])
   const focus = vi.fn()
-  const unregister = registerSessionTerminal('sent', focus)
+  const unregister = registerSessionTerminal('sent', { focus, write: () => {} })
 
   const res = await store.set(sendToAgentAtom, { text: 'look at this', target: 'aaaaaaaa' })
 

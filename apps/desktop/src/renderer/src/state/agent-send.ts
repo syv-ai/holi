@@ -10,6 +10,7 @@
  * terminal takes the keyboard.
  */
 import { atom, type Getter, type Setter } from 'jotai'
+import { agentCap } from '../lib/agent-cap'
 import { buildReconcilePrompt } from '../lib/reconcile-prompt'
 import { focusSessionTerminal } from '../lib/session-terminals'
 import { trpc } from '../lib/trpc'
@@ -24,6 +25,7 @@ import {
   type AgentTerminal,
 } from './agent'
 import { openSurface, workspaceAtom } from './panes'
+import { activeRemoteAtom } from './vaults'
 
 /** What an action answers: done, or why not, in words the caller can print. */
 export type AgentResult = { ok: true } | { ok: false; message: string }
@@ -37,6 +39,17 @@ function land(set: Setter, terminalId: string): void {
 }
 
 const geometry = (get: Getter) => get(agentGeometryAtom)
+
+const NO_VAULT = { ok: false as const, message: 'No vault is open.' }
+
+/** Run `call` against the open vault, or answer that there is none. */
+function inVault<R>(
+  get: Getter,
+  call: (remote: string) => Promise<R>,
+): Promise<R | typeof NO_VAULT> {
+  const remote = get(activeRemoteAtom)
+  return remote === null ? Promise.resolve(NO_VAULT) : call(remote)
+}
 
 /**
  * Whether a terminal shows the agents list **now**. How it was launched does
@@ -61,7 +74,7 @@ export const showAgentsAtom = atom(null, async (get, set): Promise<AgentResult> 
     land(set, existing.id)
     return { ok: true }
   }
-  const res = await window.holi.agent.open(geometry(get))
+  const res = await inVault(get, (remote) => agentCap.open(remote, geometry(get)))
   if (!res.ok) return res
   land(set, res.terminalId)
   return { ok: true }
@@ -74,7 +87,7 @@ export const showAgentsAtom = atom(null, async (get, set): Promise<AgentResult> 
  * bring you back to where you are.
  */
 export const openOverviewAtom = atom(null, async (get, set): Promise<AgentResult> => {
-  const res = await window.holi.agent.open(geometry(get))
+  const res = await inVault(get, (remote) => agentCap.open(remote, geometry(get)))
   if (!res.ok) return res
   land(set, res.terminalId)
   return { ok: true }
@@ -97,7 +110,9 @@ export const openSessionAtom = atom(null, async (get, set, id: string): Promise<
     land(set, existing.id)
     return { ok: true }
   }
-  const res = await window.holi.agent.open({ attach: id, ...geometry(get) })
+  const res = await inVault(get, (remote) =>
+    agentCap.open(remote, { attach: id, ...geometry(get) }),
+  )
   if (!res.ok) return res
   land(set, res.terminalId)
   return { ok: true }
@@ -110,7 +125,9 @@ export const openSessionAtom = atom(null, async (get, set, id: string): Promise<
 export const startSessionAtom = atom(
   null,
   async (get, set, opts: { name?: string; prompt?: string } = {}): Promise<AgentResult> => {
-    const res = await window.holi.agent.start({ ...opts, ...geometry(get) })
+    const res = await inVault(get, (remote) =>
+      agentCap.start(remote, { ...opts, ...geometry(get) }),
+    )
     if (!res.ok) return res
     land(set, res.terminalId)
     return { ok: true }
@@ -131,7 +148,7 @@ export const startSessionAtom = atom(
 export const sendToAgentAtom = atom(
   null,
   async (get, set, args: { text: string; target: AgentTarget }): Promise<AgentResult> => {
-    const res = await window.holi.agent.send({ ...args, ...geometry(get) })
+    const res = await inVault(get, (remote) => agentCap.send(remote, { ...args, ...geometry(get) }))
     if (!res.ok) return res
     land(set, res.terminalId)
     return { ok: true }
@@ -140,12 +157,14 @@ export const sendToAgentAtom = atom(
 
 /** Stop a session: `claude stop`. Its conversation stays in the agents list,
  *  and any window on it closes. */
-export const stopSessionAtom = atom(null, (_get, _set, id: string) => window.holi.agent.stop(id))
+export const stopSessionAtom = atom(null, (get, _set, id: string) =>
+  inVault(get, (remote) => agentCap.stop(remote, { id })),
+)
 
 /** A fresh process for the same conversation: `claude respawn`. It picks up
  *  changed settings and `AGENTS.md`. */
-export const respawnSessionAtom = atom(null, (_get, _set, id: string) =>
-  window.holi.agent.respawn(id),
+export const respawnSessionAtom = atom(null, (get, _set, id: string) =>
+  inVault(get, (remote) => agentCap.respawn(remote, { id })),
 )
 
 /** Copy a session's conversation into a background session of its own, and
@@ -153,24 +172,12 @@ export const respawnSessionAtom = atom(null, (_get, _set, id: string) =>
 export const duplicateSessionAtom = atom(
   null,
   async (get, set, id: string): Promise<AgentResult> => {
-    const res = await window.holi.agent.duplicate(id, geometry(get))
+    const res = await inVault(get, (remote) => agentCap.duplicate(remote, { id, ...geometry(get) }))
     if (!res.ok) return res
     land(set, res.terminalId)
     return { ok: true }
   },
 )
-
-/**
- * Update skills, from the palette: this release's skills and hooks,
- * merged into the vault. Main tells the outcome as a notification; when some
- * could not be merged, the session it started to resolve them comes forward.
- */
-export const updateSkillsAtom = atom(null, async (_get, set): Promise<AgentResult> => {
-  const res = await window.holi.agent.updateSkills()
-  if (!res.ok) return res
-  if (res.terminalId !== undefined) land(set, res.terminalId)
-  return { ok: true }
-})
 
 /**
  * "Ask Claude to reconcile". Re-materialise the conflict in the working

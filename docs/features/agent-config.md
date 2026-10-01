@@ -82,8 +82,10 @@ only when its user asks, with `holi skills update` or the palette's **Update ski
 base Holi recorded when it wrote each file (`.holi/state/seed-state.local.json`, machine-local): an
 untouched file is replaced, one the vault changed elsewhere is 3-way merged, and a same-line
 conflict is left as it is with the shipped version (and the base) staged beside it as
-`*.shipped.local.*` and `*.base.local.*`. Conflicts get an agent session whose submitted first turn
-merges them and deletes the staged files; until it does, the file stays a conflict. A machine with
+`*.shipped.local.*` and `*.base.local.*`. From the palette, conflicts get an agent session whose
+submitted first turn merges them and deletes the staged files (`skills.update` answers that turn,
+and the renderer starts it through the agent service); until it does, the file stays a conflict.
+`holi skills update` and a vault without the agent leave the staged files for a person. A machine with
 no recorded base hands every changed file to the agent. The palette reports the outcome as a
 native notification. Holi's side of a hook is not kept compatible with older scripts: the update
 is how a vault gets the current ones.

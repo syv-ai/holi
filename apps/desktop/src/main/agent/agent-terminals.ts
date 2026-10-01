@@ -12,10 +12,13 @@
  * used to reuse a window it opened; the label is the terminal's own title.
  * Nothing here parses the TUI.
  *
- * NOTE: no runtime `electron` import (types only), so this loads under vitest.
+ * What changes is told to the renderer as the agent's events, about the
+ * vault the terminal was opened in: `pty-data` and `pty-exit` for one
+ * terminal, `terminals` for the list.
+ *
+ * NOTE: no `electron` import, so this loads under vitest.
  */
 import { randomUUID } from 'node:crypto'
-import type { BrowserWindow } from 'electron'
 import { AgentRuntime, resolveClaudeBin, type PidState, type SpawnPty } from './agent-runtime'
 import { cliEnv, type VaultCliTarget } from './claude-cli'
 import { TerminalMirror } from './terminal-mirror'
@@ -40,6 +43,8 @@ export interface TerminalSummary {
 }
 
 export interface OpenArgs {
+  /** The vault it is opened in, which its events are about. */
+  remote: string
   target: VaultCliTarget
   /** A session to attach to; omitted opens the list. */
   attach?: string
@@ -51,7 +56,8 @@ export interface OpenArgs {
 }
 
 export interface AgentTerminalsDeps {
-  getWindow(): BrowserWindow | null
+  /** Tell the renderer `name` about the vault `remote`. */
+  emit(remote: string, name: string, payload: unknown): void
   spawnPty?: SpawnPty
   /** Liveness probe before every signal. Tests must inject one: a fake PTY's
    *  pid may belong to a real process on the machine running them. */
@@ -84,6 +90,7 @@ export interface AgentTerminals {
 
 interface Terminal {
   id: string
+  remote: string
   launchedFor: string | null
   title: string
   runtime: AgentRuntime
@@ -107,20 +114,17 @@ export function createAgentTerminals(deps: AgentTerminalsDeps): AgentTerminals {
   const terminals = new Map<string, Terminal>()
   let lastPushed = ''
 
-  const send = (channel: string, payload: unknown): void => {
-    deps.getWindow()?.webContents.send(channel, payload)
-  }
-
   const list = (): TerminalSummary[] =>
     [...terminals.values()].map(({ id, launchedFor, title }) => ({ id, launchedFor, title }))
 
-  /** Push only when the list actually changed. */
-  const pushList = (): void => {
+  /** Push only when the list actually changed. Every terminal is in the
+   *  open vault, the one `remote` names. */
+  const pushList = (remote: string): void => {
     const next = list()
     const encoded = JSON.stringify(next)
     if (encoded === lastPushed) return
     lastPushed = encoded
-    send('agent:terminals', next)
+    deps.emit(remote, 'terminals', next)
   }
 
   function markReady(t: Terminal): void {
@@ -136,7 +140,7 @@ export function createAgentTerminals(deps: AgentTerminalsDeps): AgentTerminals {
   }
 
   const api: AgentTerminals = {
-    open({ target, attach, cols, rows, notice }) {
+    open({ remote, target, attach, cols, rows, notice }) {
       const bin = resolveBin()
       if (bin === null) {
         return {
@@ -156,6 +160,7 @@ export function createAgentTerminals(deps: AgentTerminalsDeps): AgentTerminals {
       })
       const t: Terminal = {
         id,
+        remote,
         launchedFor: attach ?? null,
         title: '',
         runtime,
@@ -168,11 +173,11 @@ export function createAgentTerminals(deps: AgentTerminalsDeps): AgentTerminals {
       }
       mirror.onTitle((title) => {
         t.title = title
-        pushList()
+        pushList(remote)
       })
       runtime.onData((data) => {
         mirror.write(data)
-        if (t.attached) send('agent-pty:data', { id, data })
+        if (t.attached) deps.emit(remote, 'pty-data', { id, data })
         // The first output means the TUI is up; a moment later it is reading
         // raw input. Only the fact of output is used, never what it says.
         if (!t.ready && !t.settling) {
@@ -184,8 +189,8 @@ export function createAgentTerminals(deps: AgentTerminalsDeps): AgentTerminals {
         log(`terminal ${id} exited (code ${e.exitCode})`)
         drop(t)
         mirror.dispose()
-        send('agent-pty:exit', { id, code: e.exitCode })
-        pushList()
+        deps.emit(remote, 'pty-exit', { id, code: e.exitCode })
+        pushList(remote)
       })
       try {
         runtime.start({
@@ -202,7 +207,7 @@ export function createAgentTerminals(deps: AgentTerminalsDeps): AgentTerminals {
       }
       t.timers.push(setTimeout(() => markReady(t), backstopMs))
       terminals.set(id, t)
-      pushList()
+      pushList(remote)
       return { ok: true, id }
     },
 
@@ -244,8 +249,8 @@ export function createAgentTerminals(deps: AgentTerminalsDeps): AgentTerminals {
       if (terminals.get(id) === t) {
         drop(t)
         t.mirror.dispose()
-        send('agent-pty:exit', { id, code: -1 })
-        pushList()
+        deps.emit(t.remote, 'pty-exit', { id, code: -1 })
+        pushList(t.remote)
       }
     },
 

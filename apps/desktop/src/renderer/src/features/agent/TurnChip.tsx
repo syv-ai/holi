@@ -3,7 +3,7 @@
  * terminal, because a turn belongs to a session and a vault runs several.
  * It is a count and a door, nothing more: what changed is `TurnReview`'s job.
  *
- * **A turn ENDING is the event.** `agent:sessions` pushes on every bracket, so
+ * **A turn ENDING is the event.** the agent's `sessions` event pushes on every bracket, so
  * this watches its own session's state leave `working` rather than polling for a
  * record. Reloading while it is still working would read the previous turn,
  * because the record for this one is written as the bracket closes.

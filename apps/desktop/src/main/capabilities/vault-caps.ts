@@ -30,12 +30,24 @@ function syncText(state: SyncState | null): string {
 /** The namespaces core owns. */
 export const VAULT_NAMESPACES = ['docs', 'vault', 'sync', 'skills'] as const
 
+/**
+ * What an update of the vault's skills did. Holi cannot merge a file the vault
+ * changed too; `conflicts` then carries the first turn of a session that
+ * would, and the summary to show once one is on it. Starting that session is
+ * the renderer's, through the agent service, so with no agent the new
+ * versions just wait beside the files.
+ */
+export interface SkillsUpdated {
+  summary: string
+  conflicts: { prompt: string; summary: string } | null
+}
+
 export interface VaultCapabilitiesDeps {
   /**
    * Bring this release's skills and hooks into the vault, merged with its own
-   * changes. Answers the summary to print; throws the refusal.
+   * changes. Throws the refusal.
    */
-  updateSkills(remote: string): Promise<string>
+  updateSkills(remote: string): Promise<SkillsUpdated>
 }
 
 export const vaultCapabilities = (deps: VaultCapabilitiesDeps) => ({
@@ -181,16 +193,16 @@ export const vaultCapabilities = (deps: VaultCapabilitiesDeps) => ({
     text: syncText,
   }),
 
-  /** `holi skills update`. A conflict gets a session of its own. */
+  /** `holi skills update`, and the palette's Update skills. */
   'skills.update': cap({
-    doors: ['cli'],
+    doors: ['ui', 'cli'],
     cli: {
       args: [],
       summary: "bring this release's skills and hooks into the vault, merged with its own changes",
     },
     writes: true,
     params: noParams,
-    run: (ctx): Promise<string> => deps.updateSkills(ctx.remote),
-    text: (summary) => summary,
+    run: (ctx): Promise<SkillsUpdated> => deps.updateSkills(ctx.remote),
+    text: (result) => result.summary,
   }),
 })

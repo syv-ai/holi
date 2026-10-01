@@ -9,7 +9,7 @@
  * shapes and the renderer does not import from main.
  */
 import { atom } from 'jotai'
-import { trpc } from '../lib/trpc'
+import { agentCap } from '../lib/agent-cap'
 import { activeRemoteAtom } from './vaults'
 
 /** One recorded turn: two shas and when it ended. */
@@ -73,8 +73,10 @@ export const turnDiffAtom = atom<TurnDiff | null>(null)
 /** The newest record for each session. The log is already newest-first and is
  *  never re-sorted here, so the first record naming a session is that session's
  *  latest. */
-export const loadLatestTurnsAtom = atom(null, async (_get, set) => {
-  const turns = await trpc.turns.list.query()
+export const loadLatestTurnsAtom = atom(null, async (get, set) => {
+  const remote = get(activeRemoteAtom)
+  if (remote === null) return
+  const turns = await agentCap.turns(remote)
   const latest: Record<string, Turn> = {}
   for (const turn of turns) {
     if (turn.sessionId === undefined) continue
@@ -91,8 +93,9 @@ export const loadLatestTurnsAtom = atom(null, async (_get, set) => {
  */
 export const loadTurnCountAtom = atom(null, async (get, set, turn: Turn) => {
   const key = rangeKey(turn)
-  if (get(turnCountsAtom)[key] !== undefined) return
-  const files = await trpc.turns.files.query({ base: turn.base, end: turn.end })
+  const remote = get(activeRemoteAtom)
+  if (remote === null || get(turnCountsAtom)[key] !== undefined) return
+  const files = await agentCap.turnFiles(remote, { base: turn.base, end: turn.end })
   set(turnCountsAtom, (counts) => ({ ...counts, [key]: files.length }))
 })
 
@@ -102,8 +105,9 @@ export const loadTurnCountAtom = atom(null, async (get, set, turn: Turn) => {
  */
 export const loadTurnFilesAtom = atom(null, async (get, set) => {
   const turn = get(reviewTurnAtom)
-  if (turn === null) return
-  const files = await trpc.turns.files.query({ base: turn.base, end: turn.end })
+  const remote = get(activeRemoteAtom)
+  if (turn === null || remote === null) return
+  const files = await agentCap.turnFiles(remote, { base: turn.base, end: turn.end })
   // The turn may have been replaced by a newer one while this was in flight.
   if (get(reviewTurnAtom) === turn) set(turnFilesAtom, files)
 })
@@ -111,10 +115,11 @@ export const loadTurnFilesAtom = atom(null, async (get, set) => {
 /** One file's diff across the turn. */
 export const loadTurnDiffAtom = atom(null, async (get, set, path: string) => {
   const turn = get(reviewTurnAtom)
-  if (turn === null) return
+  const remote = get(activeRemoteAtom)
+  if (turn === null || remote === null) return
   set(selectedTurnPathAtom, path)
   set(turnDiffAtom, null)
-  const diff = await trpc.turns.fileDiff.query({ base: turn.base, end: turn.end, path })
+  const diff = await agentCap.turnDiff(remote, { base: turn.base, end: turn.end, path })
   // Two rows clicked in quick succession: the slower answer must not land on the
   // faster one's row. Same guard `history.ts` puts on its own diff load.
   if (get(selectedTurnPathAtom) === path && get(reviewTurnAtom) === turn) set(turnDiffAtom, diff)
@@ -139,7 +144,7 @@ export const revertFileAtom = atom(
   async (get, set, { path, text }: { path: string; text: string }) => {
     const remote = get(activeRemoteAtom)
     if (remote === null) return
-    await trpc.turns.revert.mutate({ remote, path, text })
+    await agentCap.revert(remote, { path, text })
     await set(loadTurnFilesAtom)
   },
 )

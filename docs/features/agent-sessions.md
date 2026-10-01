@@ -10,7 +10,7 @@ Configuration is in [agent-config.md](agent-config.md).
 
 **Sessions are Claude Code's.** Holi never spawns a conversation in a PTY of its own. It asks Claude
 Code for one (`claude --bg [--name] [prompt]`, `--resume <id> --fork-session` for a copy), or the
-person starts one in the agent list. A session is keyed by its **job id** everywhere: IPC, the turn
+person starts one in the agent list. A session is keyed by its **job id** everywhere: capabilities, the turn
 bracket, turn records. The id survives `/clear`, which changes the conversation's `sessionId`.
 
 **One way to run `claude`.** `claude-cli.ts` runs every command Holi issues for a vault in the vault
@@ -29,7 +29,14 @@ there attaches any session), so a terminal is never taken to be a session. When 
 with the terminal id as its id. The agent is still core, but it is registered the way a plugin is
 (`components/core-agent.tsx`): its tab, its nav item (which runs `agent.show`), its rows, orbs and
 turn review, the leave question, and the agent service every "Ask" will go through
-(`useAgentService`). Its main side attaches in `activateVault` and leaves in its disposer.
+(`useAgentService`). Its main side attaches in `activateVault` and leaves in its disposer. The
+renderer reaches it through the `agent.*` capabilities (sessions, terminals, open, start, send,
+stop, respawn, duplicate, attach, detach, and the turn review's turns, turnFiles, turnDiff and
+revert). Main tells it the session and terminal lists and each terminal's bytes as the events
+`sessions`, `terminals`, `pty-data` and `pty-exit`; keystrokes and resizes go back as the events
+`pty-write` and `pty-resize`, which keep their order. A terminal's bytes go straight to its xterm
+(`lib/session-terminals.ts`), never through an atom. Its capabilities and events are under the
+plugin id `agent` already; while it is core they are not gated by the vault's settings.
 
 **Where you meet it.** ⌘J and the nav menu's agent item focus a terminal showing the list, or
 open one. Which terminal shows it is read from its title, since `←` and Enter move a terminal
@@ -143,6 +150,7 @@ showing it busy, crosses it off), so a session resumed from the list is never re
 - `apps/desktop/src/main/agent/agent-terminals.ts`, `agent-runtime.ts`, `terminal-mirror.ts`:
   terminals, the PTY and kill path
 - `apps/desktop/src/main/agent/agent-sessions.ts`: the vault controller
+- `apps/desktop/src/main/agent/capabilities.ts`: the `agent.*` capabilities
 - `apps/desktop/src/main/bridge/env-file.ts`, `agent/seed/vault/shipped/.claude/hooks/turn-signal.mjs`, `agent/seed/seed.ts`
   (`STATUS_LINE`): how sessions find Holi
 - `apps/desktop/src/main/agent/turn-coordinator.ts`, `turn-log.ts`: working set and turn records

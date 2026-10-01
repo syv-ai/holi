@@ -17,9 +17,11 @@
  * CLI must still report a live turn, and the sync pause has a deadline a
  * watcher cannot meet.
  *
- * NOTE: no runtime `electron` import (types only), so this loads under vitest.
+ * The session list is told to the renderer as the agent's `sessions` event,
+ * whenever it changes.
+ *
+ * NOTE: no `electron` import, so this loads under vitest.
  */
-import type { BrowserWindow } from 'electron'
 import type { VaultCtx } from '../plugin-api'
 import type { AgentTerminals } from './agent-terminals'
 import { sessionName, type ClaudeCli, type VaultCliTarget } from './claude-cli'
@@ -72,7 +74,8 @@ export interface VaultRef {
 export type AgentVault = Pick<VaultCtx, 'remote' | 'root'> & TurnVault
 
 export interface AgentSessionsDeps {
-  getWindow(): BrowserWindow | null
+  /** Tell the renderer `name` about the vault `remote`. */
+  emit(remote: string, name: string, payload: unknown): void
   cli: ClaudeCli
   terminals: AgentTerminals
   /** Provision the vault's config directory. Null leaves the vault
@@ -172,10 +175,6 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
    */
   const contextPercent = new Map<string, number>()
 
-  const send = (channel: string, payload: unknown): void => {
-    deps.getWindow()?.webContents.send(channel, payload)
-  }
-
   const coordinator: TurnCoordinator = createTurnCoordinator({
     vault: () => current?.vault ?? null,
     ...(deps.turnLogFor === undefined ? {} : { turnLogFor: deps.turnLogFor }),
@@ -189,12 +188,15 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
   const summaries = (): SessionSummary[] =>
     live().map((row) => summarise(row, coordinator.working, contextPercent.get(row.id)))
 
-  function push(): void {
+  /** Tell the renderer the list, when it changed: the vault's, or `remote`'s
+   *  as Holi lets go of it. */
+  function push(remote = current?.remote): void {
+    if (remote === undefined) return
     const next = summaries()
     const encoded = JSON.stringify(next)
     if (encoded === lastPushed) return
     lastPushed = encoded
-    send('agent:sessions', next)
+    deps.emit(remote, 'sessions', next)
   }
 
   const targetOf = (c: Current): VaultCliTarget => ({
@@ -330,6 +332,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     }
     const notice = firstSpawn ? SIGN_IN_NOTICE : undefined
     const res = deps.terminals.open({
+      remote: c.remote,
       target: targetOf(c),
       ...(args.attach === undefined ? {} : { attach: args.attach }),
       ...(args.cols === undefined ? {} : { cols: args.cols }),
@@ -497,7 +500,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     current = null
     rows = []
     await release(c)
-    push()
+    push(c.remote)
   }
   return api
 }

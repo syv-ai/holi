@@ -26,7 +26,7 @@ const store = createStore()
 store.set(installedPluginsAtom, RENDERER_PLUGINS)
 store.set(coreContributionAtom, CORE_CONTRIBUTION)
 store.set(corePluginsAtom, [CORE_AGENT])
-subscribeToVault(store, RENDERER_PLUGINS)
+subscribeToVault(store, [...RENDERER_PLUGINS, CORE_AGENT])
 hostPluginVaults(store)
 reportUiToMain(store)
 

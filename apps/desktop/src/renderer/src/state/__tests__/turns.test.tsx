@@ -29,14 +29,12 @@ const files = vi.fn()
 const fileDiff = vi.fn()
 const revert = vi.fn()
 
-vi.mock('@/lib/trpc', () => ({
-  trpc: {
-    turns: {
-      list: { query: () => list() },
-      files: { query: (i: unknown) => files(i) },
-      fileDiff: { query: (i: unknown) => fileDiff(i) },
-      revert: { mutate: (i: unknown) => revert(i) },
-    },
+vi.mock('@/lib/agent-cap', () => ({
+  agentCap: {
+    turns: () => list(),
+    turnFiles: (_remote: string, i: unknown) => files(i),
+    turnDiff: (_remote: string, i: unknown) => fileDiff(i),
+    revert: (remote: string, i: object) => revert({ remote, ...i }),
   },
 }))
 

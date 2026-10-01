@@ -8,6 +8,7 @@ import { Provider, createStore } from 'jotai'
 import { beforeEach, expect, test, vi } from 'vitest'
 import { agentSessionsAtom, type AgentSession } from '@/state/agent'
 import { activeTab, workspaceAtom } from '@/state/panes'
+import { activeRemoteAtom } from '@/state/vaults'
 import { SessionOrbs } from '../SessionOrbs'
 
 const session = (over: Partial<AgentSession> & { id: string; name: string }): AgentSession => ({
@@ -16,14 +17,18 @@ const session = (over: Partial<AgentSession> & { id: string; name: string }): Ag
 })
 
 const open = vi.fn()
+vi.mock('@/lib/agent-cap', () => ({
+  agentCap: { open: (_remote: string, args: unknown) => open(args) },
+}))
+
 beforeEach(() => {
   open.mockReset()
   open.mockResolvedValue({ ok: true, terminalId: 't-a' })
-  window.holi = { agent: { open: (args: unknown) => open(args) } } as never
 })
 
 function setup(sessions: AgentSession[]) {
   const store = createStore()
+  store.set(activeRemoteAtom, 'o/vault')
   store.set(agentSessionsAtom, sessions)
   render(
     <Provider store={store}>

@@ -3,7 +3,8 @@
  * still core (docs/features/agent-sessions.md): its tab is the surface
  * `agent`, kept mounted; its nav item runs `agent.show`; its orbs, rows and
  * turn review are a rail section, a sidebar section and a drawer; leaving a
- * vault asks while a session is busy; and it provides the agent service.
+ * vault asks while a session is busy; it provides the agent service; and
+ * its events are the plugin `agent`'s.
  * Installed by `main.tsx` as a core part, so it runs in every vault.
  */
 import { atom } from 'jotai'
@@ -16,6 +17,7 @@ import { SessionRows } from '@/features/agent/SessionRows'
 import { TurnReview } from '@/features/agent/TurnReview'
 import {
   AGENT_SURFACE,
+  agentEvents,
   agentLeaveGuardAtom,
   agentSessionsAtom,
   agentVault,
@@ -47,6 +49,7 @@ const SERVICE: AgentServiceSource = {
 
 export const CORE_AGENT: RendererPlugin = {
   info: { id: 'agent', label: 'Agent', default: true },
+  events: agentEvents,
   surfaces: [
     {
       kind: AGENT_SURFACE,
