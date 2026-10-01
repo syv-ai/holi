@@ -20,6 +20,11 @@
  * the app door `ctx.bundle` is the bundle `AppFrame` mounted, and a `bundle`
  * param is ignored. At the CLI door the agent names the bundle.
  *
+ * **An app's consent is a field, `appGrant`.** An entry that reads one
+ * person's data names the affordance an app must declare and the person
+ * approve; the app door's opener supplies the check (`dispatch.ts`), so the
+ * entry's owner never imports the apps code that keeps the approvals.
+ *
  * No `electron` import: this loads under plain Node in the tests.
  */
 import type { VaultSnapshot } from '@holi/shared'
@@ -65,6 +70,10 @@ export interface Capability<P = unknown, R = unknown> {
   cli?: CliSpec
   /** Changes the vault, so the open vault's cache is refreshed after it. */
   writes?: true
+  /** At the app door, the affordance (`mail`, `calendar`) the calling app
+   *  must have declared and the person approved, checked after the params
+   *  and before `run`. Other doors do not ask. */
+  appGrant?: string
   /** Reads untrusted params, or throws a `CapabilityError('BAD_REQUEST')`. */
   params(raw: unknown): P
   run(ctx: CapabilityContext, params: P): Promise<R>
@@ -106,6 +115,8 @@ export interface CapabilityRegistry {
    *  `plugin` names the plugin that registered it; core's entries have none. */
   register(namespaces: readonly string[], table: CapabilityTable, plugin?: string): () => void
   has(name: string): boolean
+  /** Every entry that opens `door`, by name. */
+  names(door: Door): string[]
   /** The plugin an entry belongs to, or null for core's (and unknown names). */
   pluginOf(name: string): string | null
   /** Every entry open at the CLI door, as a command, by name. */
@@ -113,15 +124,20 @@ export interface CapabilityRegistry {
   /**
    * Run one capability through one door. An unknown name, or one that does
    * not open to this door, is refused as "no such method", which is what it is
-   * from where the caller stands.
+   * from where the caller stands. An entry with an `appGrant` runs at the app
+   * door only past `admit`, and is refused when there is none.
    */
   run(
     name: string,
     door: Door,
     ctx: CapabilityContext,
     rawParams: unknown,
+    admit?: Admit,
   ): Promise<CapabilityResult>
 }
+
+/** The app door's consent check: throws a `CapabilityError` to refuse. */
+export type Admit = (ctx: CapabilityContext, grant: string) => Promise<void>
 
 /** A name's namespace, or null for a name that is not `<namespace>.<verb>`. */
 const namespaceOf = (name: string): string | null => {
@@ -172,6 +188,9 @@ export function createCapabilityRegistry(): CapabilityRegistry {
 
     has: (name) => entries.has(name),
 
+    names: (door) =>
+      [...entries].flatMap(([name, entry]) => (entry.doors.includes(door) ? [name] : [])),
+
     pluginOf: (name) => plugins.get(name) ?? null,
 
     commands: () =>
@@ -179,12 +198,19 @@ export function createCapabilityRegistry(): CapabilityRegistry {
         .flatMap(([name, entry]) => (entry.cli === undefined ? [] : [{ name, cli: entry.cli }]))
         .sort((a, b) => a.name.localeCompare(b.name)),
 
-    async run(name, door, ctx, rawParams) {
+    async run(name, door, ctx, rawParams, admit) {
       const entry = entries.get(name)
       if (entry === undefined || !entry.doors.includes(door)) {
         throw new CapabilityError('BAD_REQUEST', `no such method: ${name}`)
       }
-      const value = await entry.run(ctx, entry.params(rawParams))
+      const params = entry.params(rawParams)
+      if (door === 'app' && entry.appGrant !== undefined) {
+        // Fails closed: an app door with no consent check reaches no entry
+        // that needs one.
+        if (admit === undefined) throw new CapabilityError('BAD_REQUEST', `no such method: ${name}`)
+        await admit(ctx, entry.appGrant)
+      }
+      const value = await entry.run(ctx, params)
       return {
         value,
         text: entry.text !== undefined ? entry.text(value) : JSON.stringify(value, null, 2),

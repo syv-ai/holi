@@ -87,6 +87,7 @@ import type { MailAddress, MailAttachment as Attachment, ThreadMessage } from '.
 import { trpc } from '../../lib/trpc'
 import { activeRemoteAtom } from '../../state/vaults'
 import { openNoteTabAtom } from '../../state/panes'
+import { tasksCap } from '../../state/tasks'
 import { openDialogAtom } from '../../state/dialogs'
 import { useGlobalPanelLayout } from '../../state/preferences'
 
@@ -575,8 +576,7 @@ export function MailView() {
    */
   const linkToTask = async (thread: { subject: string; webUrl: string }) => {
     if (remote === null) return
-    const { path } = await trpc.tasks.create.mutate({
-      remote,
+    const { path } = await tasksCap.create(remote, {
       title: thread.subject,
       folder: '',
       description: `[${thread.subject}](${thread.webUrl})\n`,

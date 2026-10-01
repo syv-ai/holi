@@ -77,7 +77,10 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   code with a personal name, and is asked about like any other. An approval names the code the
   dialog showed (a hash of every file, link and folder the protocol can serve, `data/` and the log
   aside), so
-  a pull that lands while the dialog is up is asked about again rather than approved unseen. The agent has `holi-google` and its own gate, so these open to the app
+  a pull that lands while the dialog is up is asked about again rather than approved unseen.
+  The check is a field on the capability (`appGrant: 'mail'`), so Google's entries never import
+  the approvals: the app door's one opener, the apps code, supplies it (`admitApps`), and an
+  entry with an `appGrant` is refused at an app door with no check. The agent has `holi-google` and its own gate, so these open to the app
   door only.
 - **No location.** Main refuses the browser's geolocation to every page. Electron answers it
   through Google's network location service, which needs an API key and does not answer on macOS
@@ -111,8 +114,10 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   it opens to, the app's bridge and the agent's `holi` CLI (`/cli` on the bridge server). An app sees
   exactly what the agent can inspect from the terminal, written once. At the app door the bundle
   is the frame's, and a `bundle` param is ignored; at the CLI door the agent names it. One
-  dispatch (`capabilities/dispatch.ts`) runs a call for both doors: the clone, the open vault's
-  cached snapshot or a fresh scan, and a rescan after a write. What core's entries need beyond
+  capability host (`capabilities/dispatch.ts`) runs a call for every door: the clone, the open
+  vault's cached snapshot or a fresh scan, and a rescan after a write. The UI and CLI doors call
+  its `dispatch`; the app door exists only once the apps code opens it (`openAppDoor`, once per
+  process), and `apps.bridge` calls through what that returns. What core's entries need beyond
   the files (sync, members cached ten minutes, the recents) comes from one services factory
   (`capabilities/services.ts`); a feature's entries close over their own (sessions, Google,
   approvals) when the composition root registers them.

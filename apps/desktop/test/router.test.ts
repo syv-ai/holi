@@ -9,7 +9,7 @@ import { afterAll, describe, expect, it, vi } from 'vitest'
 import { createVaultHost, type VaultHost } from '../src/main/vault/active-vault'
 import { seedVault } from './helpers/seed'
 import { makeClone, makeNonVaultRemote, makeRemote, plainGit } from './helpers/git-fixtures'
-import { createDispatch } from '../src/main/capabilities/dispatch'
+import { createCapabilityHost } from '../src/main/capabilities/dispatch'
 import { cap, createCapabilityRegistry } from '../src/main/capabilities/registry'
 import { noCoreServices } from '../src/main/capabilities/services'
 import { vaultCapabilities, VAULT_NAMESPACES } from '../src/main/capabilities/vault-caps'
@@ -108,17 +108,20 @@ async function rig(files: Record<string, string> = {}, auth?: StoredAuth) {
   const capabilities = createCapabilityRegistry()
   capabilities.register(VAULT_NAMESPACES, vaultCapabilities({ updateSkills: async () => '' }))
   capabilities.register(TASK_NAMESPACES, taskCapabilities({ today: () => TODAY }))
+  const capabilityHost = createCapabilityHost({
+    registry: capabilities,
+    rootFor: async (remote) =>
+      (await registry.list()).find((e) => e.remote === remote)?.path ?? null,
+    active: () => host.active(),
+    core: noCoreServices,
+    pluginEnabled: async () => true,
+  })
   const caller = createRouter({
     seed: seedVault,
     plugins: { enter: async () => {} },
-    dispatch: createDispatch({
-      registry: capabilities,
-      rootFor: async (remote) =>
-        (await registry.list()).find((e) => e.remote === remote)?.path ?? null,
-      active: () => host.active(),
-      core: noCoreServices,
-      pluginEnabled: async () => true,
-    }),
+    capabilities: capabilityHost,
+    // No entry here asks for an app's consent.
+    appDoor: capabilityHost.openAppDoor({ admit: async () => {} }),
     registry,
     session,
     host,
@@ -598,10 +601,22 @@ describe('notes', () => {
   })
 })
 
+/** `tasks.create`, the capability the board calls at the UI door. */
+async function createTask(
+  caller: Awaited<ReturnType<typeof rig>>['caller'],
+  { remote, ...params }: { remote: string } & Record<string, unknown>,
+): Promise<{ path: string }> {
+  return (await caller.cap.run({
+    remote,
+    name: 'tasks.create',
+    paramsJson: JSON.stringify(params),
+  })) as { path: string }
+}
+
 describe('tasks', () => {
   it('creates `task.<slug>.md` in the lane it was added to, with that column’s status', async () => {
     const { caller, root } = await rig()
-    const { path } = await caller.tasks.create({
+    const { path } = await createTask(caller, {
       remote: REMOTE,
       folder: 'projects/q2',
       title: 'Review the Q2 doc',
@@ -616,7 +631,7 @@ describe('tasks', () => {
 
   it('defaults to todo at the vault root', async () => {
     const { caller } = await rig()
-    const { path } = await caller.tasks.create({ remote: REMOTE, title: 'Call the vendor' })
+    const { path } = await createTask(caller, { remote: REMOTE, title: 'Call the vendor' })
     expect(path).toBe('task.call-the-vendor.md')
   })
 
@@ -626,10 +641,10 @@ describe('tasks', () => {
     const { caller } = await rig({
       'task.call-the-vendor.md': '---\ntitle: Call the vendor\n---\n',
     })
-    expect((await caller.tasks.create({ remote: REMOTE, title: 'Call the vendor' })).path).toBe(
+    expect((await createTask(caller, { remote: REMOTE, title: 'Call the vendor' })).path).toBe(
       'task.call-the-vendor-2.md',
     )
-    expect((await caller.tasks.create({ remote: REMOTE, title: 'Call the vendor' })).path).toBe(
+    expect((await createTask(caller, { remote: REMOTE, title: 'Call the vendor' })).path).toBe(
       'task.call-the-vendor-3.md',
     )
   })
@@ -840,7 +855,7 @@ describe('tasks.update: done is completion', () => {
 describe('tasks.create with fields', () => {
   it('writes due, priority and tags into the new file', async () => {
     const { caller } = await rig({})
-    const { path } = await caller.tasks.create({
+    const { path } = await createTask(caller, {
       remote: REMOTE,
       title: 'Book the venue',
       extra: { due: '2026-10-01', priority: 'high', tags: ['team'] },
@@ -852,7 +867,7 @@ describe('tasks.create with fields', () => {
   it('refuses a field the board could not read back', async () => {
     const { caller } = await rig({})
     await expect(
-      caller.tasks.create({ remote: REMOTE, title: 'Bad', extra: { priority: 'urgent' } }),
+      createTask(caller, { remote: REMOTE, title: 'Bad', extra: { priority: 'urgent' } }),
     ).rejects.toThrow()
   })
 })
@@ -994,7 +1009,7 @@ describe('path safety', () => {
   it('a folder cannot carry a task out of the vault either', async () => {
     const { caller } = await rig()
     await expect(
-      caller.tasks.create({ remote: REMOTE, folder: '../outside', title: 'Sneaky' }),
+      createTask(caller, { remote: REMOTE, folder: '../outside', title: 'Sneaky' }),
     ).rejects.toThrow()
   })
 })

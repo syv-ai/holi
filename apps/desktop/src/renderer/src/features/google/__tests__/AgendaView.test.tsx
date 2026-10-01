@@ -32,7 +32,24 @@ vi.mock('../../../lib/trpc', () => ({
       allowImagesFrom: { mutate: () => Promise.resolve({ ok: true }) },
       forgetImageSenders: { mutate: () => Promise.resolve({ ok: true }) },
     },
-    tasks: { create: { mutate: (input: unknown) => createTaskMock(input) } },
+    // `tasks.create` is a capability at the UI door; the double sees its
+    // params with the vault they run in, as the old procedure took them.
+    cap: {
+      run: {
+        mutate: ({
+          remote,
+          name,
+          paramsJson,
+        }: {
+          remote: string
+          name: string
+          paramsJson?: string
+        }) =>
+          name === 'tasks.create'
+            ? createTaskMock({ remote, ...(JSON.parse(paramsJson ?? '{}') as object) })
+            : Promise.reject(new Error(`no such method: ${name}`)),
+      },
+    },
   },
 }))
 

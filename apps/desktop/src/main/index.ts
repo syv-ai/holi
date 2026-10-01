@@ -46,7 +46,7 @@ import { installHoliCli } from './bridge/cli'
 import type { MainAppMethod } from '@holi/shared'
 import { appCapabilities, APP_NAMESPACES } from './apps/capabilities'
 import { agentCapabilities, AGENT_NAMESPACES } from './agent/capabilities'
-import { createDispatch } from './capabilities/dispatch'
+import { createCapabilityHost } from './capabilities/dispatch'
 import { CapabilityError } from './capabilities/error'
 import { createCapabilityRegistry } from './capabilities/registry'
 import { vaultCapabilities, VAULT_NAMESPACES } from './capabilities/vault-caps'
@@ -77,7 +77,7 @@ import {
 } from './google/gmail'
 import { registerIpc } from './ipc'
 import { createRouter, localToday } from './router'
-import { createAppGrants } from './apps/app-grants'
+import { admitApps, createAppGrants } from './apps/app-grants'
 import { createCoreServices, createUiReports } from './capabilities/services'
 import { createVaultHost } from './vault/active-vault'
 import { VaultRegistry, vaultRoot } from './vault/registry'
@@ -463,7 +463,6 @@ async function main(): Promise<void> {
   const googleCaps = googleCapabilities({
     dataFor: googleDataFor,
     overrides: async () => (await calendarPrefs.read()) ?? {},
-    grants: appGrants,
   })
   capabilities.register(VAULT_NAMESPACES, vaultCaps)
   capabilities.register(APP_NAMESPACES, appCaps)
@@ -481,18 +480,23 @@ async function main(): Promise<void> {
       typeof googleCaps),
     true
   > satisfies Record<MainAppMethod, true>)
-  // The one way every door runs a capability: the app's bridge (the router)
-  // and the agent's `holi` CLI (the bridge server, below).
-  const dispatch = createDispatch({
+  // The one way every door runs a capability: the renderer's UI door (the
+  // router) and the agent's `holi` CLI (the bridge server, below).
+  const capabilityHost = createCapabilityHost({
     registry: capabilities,
     rootFor,
     active: () => host.active(),
     core: createCoreServices({ active: () => host.active(), members, reports: uiReports }),
     pluginEnabled: async (plugin, root) => (await plugins.enabled(root)).has(plugin),
   })
+  const dispatch = capabilityHost.dispatch
+  // The app door's one opener is the vault apps code, which keeps the
+  // approvals an entry's `appGrant` asks for.
+  const appDoor = capabilityHost.openAppDoor({ admit: admitApps(appGrants) })
 
   const router = createRouter({
-    dispatch,
+    capabilities: capabilityHost,
+    appDoor,
     seed: (root) => plugins.seed(root),
     plugins,
     grants: appGrants,

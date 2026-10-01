@@ -32,6 +32,8 @@ import {
   type AppAffordance,
   type AppManifest,
 } from '@holi/shared'
+import { CapabilityError } from '../capabilities/error'
+import type { Admit } from '../capabilities/registry'
 import { runGit } from '../git'
 import { jsonFileStore } from '../json-file-store'
 import { absPathFor } from '../vault/vault-files'
@@ -250,5 +252,32 @@ export function createAppGrants(path: string, now: () => number = Date.now): App
       })
       return true
     },
+  }
+}
+
+/**
+ * The app door's consent check, for an entry with an `appGrant`: the app must
+ * declare the affordance in `dangerously-allow`, and the person must have
+ * approved it on this machine.
+ */
+export function admitApps(grants: AppGrants): Admit {
+  return async (ctx, affordance) => {
+    const bundle = ctx.bundle
+    if (bundle === null) throw new CapabilityError('BAD_REQUEST', 'only an app may ask')
+    const status = (await grants.status(ctx.remote, ctx.root, bundle)).affordances.find(
+      (s) => s.affordance === affordance,
+    )
+    if (status === undefined) {
+      throw new CapabilityError(
+        'FORBIDDEN',
+        `add "dangerously-allow: [${affordance}]" to ${bundle}/app.yaml to read ${affordance}`,
+      )
+    }
+    if (!status.granted) {
+      throw new CapabilityError(
+        'FORBIDDEN',
+        `reading ${affordance} is not approved on this machine`,
+      )
+    }
   }
 }

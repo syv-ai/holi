@@ -70,6 +70,10 @@ holds the renderer side and plugin code to that, and `test/plugin-boundary.test.
 A plugin's renderer reaches its main side only through capabilities that open the `ui` door: the
 `cap.run` mutation, called through `capClient<typeof table>(namespace)`, which offers just those
 verbs with their types read from the table (params cross as JSON, results by structured clone).
+Plugins call each other the same way, each typing only the slice it calls; before offering such a
+call, a plugin asks `useHasCapability(name)`, backed by the `cap.names` query (the UI door's names
+whose owner the vault runs), so a button for another plugin's verb hides while that plugin is off.
+Core's `tasks.create` is one: the board and the Google views create tasks through it.
 A plugin claims vault paths: the first enabled claim with a `view` opens a note tab of that path,
 and its `rowMenu` items join the file tree's menu. A plugin adds `surfaces` (tab kinds) and `rail`
 items to the nav menu ([tabs and panes](features/tabs-panes.md)), registered beside core's own.

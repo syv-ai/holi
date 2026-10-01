@@ -108,7 +108,6 @@ export function createBridgeServer(deps: BridgeServerDeps = {}): BridgeServer {
       const result = await cli.dispatch({
         door: 'cli',
         remote,
-        bundle: null,
         name: request.name,
         params: request.params,
       })

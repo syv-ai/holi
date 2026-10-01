@@ -122,6 +122,8 @@ Todo / Doing / Done, with one swim lane per folder.
 - `packages/shared/src/task-file.ts`, `completion.ts`, `dates.ts`, `calendar.ts`, `labels.ts`,
   `recurrence.ts`, `reminder.ts`, `rank.ts`: the format and all the pure rules.
 - `apps/desktop/src/main/router.ts`: `tasks.*` and `patched`, which applies completion.
+- `apps/desktop/src/main/vault/task-capabilities.ts`: `tasks.list`, `tasks.complete`, and
+  `tasks.create` (the UI door), which the board and the Google views create tasks through.
 - `apps/desktop/src/main/reminders/`, `main/tray.ts`: the sweep, tick, watermark, notifications.
 - `apps/desktop/src/renderer/src/state/tasks.ts`: task set, filter, drops, writes.
 - `apps/desktop/src/renderer/src/state/clock.ts`: `nowAtom` and `todayAtom`, the minute the overdue labels and the daily note read.

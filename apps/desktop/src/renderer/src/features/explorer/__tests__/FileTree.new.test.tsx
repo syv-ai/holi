@@ -20,7 +20,24 @@ const register = vi.fn(async (_input: unknown) => ({ ok: true, created: [] }))
 vi.mock('../../../lib/trpc', () => ({
   trpc: {
     vaults: { snapshot: { query: () => Promise.resolve(EMPTY) } },
-    tasks: { create: { mutate: (input: unknown) => createTask(input) } },
+    // `tasks.create` is a capability at the UI door; the double sees its
+    // params with the vault they run in, as the old procedure took them.
+    cap: {
+      run: {
+        mutate: ({
+          remote,
+          name,
+          paramsJson,
+        }: {
+          remote: string
+          name: string
+          paramsJson?: string
+        }) =>
+          name === 'tasks.create'
+            ? createTask({ remote, ...(JSON.parse(paramsJson ?? '{}') as object) })
+            : Promise.reject(new Error(`no such method: ${name}`)),
+      },
+    },
     apps: { register: { mutate: (input: unknown) => register(input) } },
   },
 }))

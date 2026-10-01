@@ -246,7 +246,6 @@ describe('routes and the capability door', () => {
     expect(dispatch).toHaveBeenCalledWith({
       door: 'cli',
       remote: VAULT,
-      bundle: null,
       name: 'store.list',
       params: { bundle: 'A.app', collection: 'items' },
     })

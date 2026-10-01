@@ -6,7 +6,7 @@ import { mkdtemp, readFile, rm, unlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { createDispatch } from '../src/main/capabilities/dispatch'
+import { createCapabilityHost } from '../src/main/capabilities/dispatch'
 import { createCapabilityRegistry } from '../src/main/capabilities/registry'
 import { noCoreServices } from '../src/main/capabilities/services'
 import { cap, noParams, type MainPlugin } from '../src/main/plugin-api'
@@ -36,7 +36,7 @@ function rig(opts: { default?: boolean } = {}) {
     activateApp(ctx) {
       calls.started += 1
       ctx.register(['fake'], {
-        'fake.ping': cap({ doors: ['app'], params: noParams, run: async () => 'pong' }),
+        'fake.ping': cap({ doors: ['ui'], params: noParams, run: async () => 'pong' }),
       })
       return () => {
         calls.stopped += 1
@@ -52,7 +52,7 @@ function rig(opts: { default?: boolean } = {}) {
     liveRoot: () => null,
   })
   let root = ''
-  const dispatch = createDispatch({
+  const { dispatch } = createCapabilityHost({
     registry,
     rootFor: async () => root,
     active: () => null,
@@ -61,7 +61,7 @@ function rig(opts: { default?: boolean } = {}) {
   })
   const ping = (at: string) => {
     root = at
-    return dispatch({ door: 'app', remote: 'o/r', bundle: null, name: 'fake.ping', params: {} })
+    return dispatch({ door: 'ui', remote: 'o/r', name: 'fake.ping', params: {} })
   }
   return { host, registry, calls, ping }
 }

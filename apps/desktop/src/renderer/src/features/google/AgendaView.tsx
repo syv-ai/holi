@@ -43,6 +43,7 @@ import { SandboxedHtml } from './SandboxedHtml'
 import { trpc } from '../../lib/trpc'
 import { activeRemoteAtom } from '../../state/vaults'
 import { openNoteTabAtom } from '../../state/panes'
+import { tasksCap } from '../../state/tasks'
 import { useGlobalPanelLayout } from '../../state/preferences'
 
 /** Mirrors `main/google/calendar.ts`. */
@@ -273,8 +274,7 @@ export function AgendaView() {
     if (remote === null) return
     setCreating(eventKey(event))
     try {
-      const { path } = await trpc.tasks.create.mutate({
-        remote,
+      const { path } = await tasksCap.create(remote, {
         title: event.title,
         folder: '',
         // The link first, then whatever the invitation said.

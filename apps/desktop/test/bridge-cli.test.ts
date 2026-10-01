@@ -15,7 +15,7 @@ import { agentCapabilities } from '../src/main/agent/capabilities'
 import { appCapabilities } from '../src/main/apps/capabilities'
 import { installHoliCli } from '../src/main/bridge/cli'
 import { createBridgeServer, type BridgeServer } from '../src/main/bridge/server'
-import { createDispatch } from '../src/main/capabilities/dispatch'
+import { createCapabilityHost } from '../src/main/capabilities/dispatch'
 import {
   cap,
   createCapabilityRegistry,
@@ -89,13 +89,13 @@ function bridge(table: Record<string, AnyCapability>, namespaces: string[]): Bri
   return createBridgeServer({
     log: () => {},
     cli: {
-      dispatch: createDispatch({
+      dispatch: createCapabilityHost({
         registry,
         rootFor: async () => dir,
         active: () => null,
         core: noCoreServices,
         pluginEnabled: async () => true,
-      }),
+      }).dispatch,
       commands: () => registry.commands(),
     },
   })

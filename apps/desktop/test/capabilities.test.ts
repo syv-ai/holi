@@ -9,7 +9,8 @@ import {
   createCapabilityRegistry,
   type CapabilityContext,
 } from '../src/main/capabilities/registry'
-import type { AppGrants } from '../src/main/apps/app-grants'
+import { admitApps, type AppGrants } from '../src/main/apps/app-grants'
+import { createCapabilityHost } from '../src/main/capabilities/dispatch'
 import { noCoreServices, type CoreServices } from '../src/main/capabilities/services'
 import { vaultCapabilities, VAULT_NAMESPACES } from '../src/main/capabilities/vault-caps'
 import { googleCapabilities, GOOGLE_NAMESPACES } from '../src/main/google/capabilities'
@@ -23,12 +24,10 @@ registry.register(TASK_NAMESPACES, taskCapabilities({ today: () => '2026-09-30' 
 let grantStatus: AppGrants['status'] = async () => ({ codeHash: '', affordances: [] })
 registry.register(
   GOOGLE_NAMESPACES,
-  googleCapabilities({
-    dataFor: async () => null,
-    overrides: async () => ({}),
-    grants: { status: (...args) => grantStatus(...args), grant: async () => true },
-  }),
+  googleCapabilities({ dataFor: async () => null, overrides: async () => ({}) }),
 )
+/** The app door's consent check, as the vault apps code opens it. */
+const admit = admitApps({ status: (...args) => grantStatus(...args), grant: async () => true })
 const runCapability = registry.run
 
 describe('the capability registry', () => {
@@ -56,6 +55,72 @@ describe('the capability registry', () => {
     const ctx = {} as CapabilityContext
     expect((await caps.run('x.ping', 'cli', ctx, {})).value).toBe('pong')
     await expect(caps.run('x.ping', 'app', ctx, {})).rejects.toThrow(/no such method/)
+  })
+})
+
+describe('the capability host', () => {
+  const host = (pluginEnabled: (plugin: string) => boolean) => {
+    const caps = createCapabilityRegistry()
+    const ui = cap({ doors: ['ui'], params: () => null, run: async () => 'ok' })
+    caps.register(['core'], { 'core.ping': ui })
+    caps.register(
+      ['fake'],
+      { 'fake.ping': ui, 'fake.cli': { ...ui, doors: ['cli'], cli: { args: [], summary: '' } } },
+      'fake',
+    )
+    return createCapabilityHost({
+      registry: caps,
+      rootFor: async () => '/vault',
+      active: () => null,
+      core: noCoreServices,
+      pluginEnabled: async (plugin) => pluginEnabled(plugin),
+    })
+  }
+
+  it("names a door's entries, leaving out those of plugins the vault has off", async () => {
+    expect(await host(() => true).names('o/r', 'ui')).toEqual(['core.ping', 'fake.ping'])
+    expect(await host(() => false).names('o/r', 'ui')).toEqual(['core.ping'])
+  })
+
+  it('opens the app door once', () => {
+    const h = host(() => true)
+    h.openAppDoor({ admit: async () => {} })
+    expect(() => h.openAppDoor({ admit: async () => {} })).toThrow(/already open/)
+  })
+
+  it("asks the opener's consent for an entry with an appGrant, at the app door only", async () => {
+    const caps = createCapabilityRegistry()
+    caps.register(['x'], {
+      'x.read': cap({
+        doors: ['app', 'ui'],
+        appGrant: 'mail',
+        params: () => null,
+        run: async () => 'mail',
+      }),
+    })
+    const h = createCapabilityHost({
+      registry: caps,
+      rootFor: async () => '/vault',
+      active: () => null,
+      core: noCoreServices,
+      pluginEnabled: async () => true,
+    })
+    const asked: string[] = []
+    const door = h.openAppDoor({
+      admit: async (_ctx, grant) => {
+        asked.push(grant)
+        throw new Error('not approved')
+      },
+    })
+    await expect(door.call('o/r', 'A.app', 'x.read', {})).rejects.toThrow(/not approved/)
+    expect(asked).toEqual(['mail'])
+    expect(
+      (await h.dispatch({ door: 'ui', remote: 'o/r', name: 'x.read', params: {} })).value,
+    ).toBe('mail')
+    // Without a consent check, the registry refuses rather than skipping it.
+    await expect(caps.run('x.read', 'app', {} as CapabilityContext, {})).rejects.toThrow(
+      /no such method/,
+    )
   })
 })
 
@@ -291,7 +356,7 @@ describe('Google reads', () => {
   it('need the manifest flag first', async () => {
     await put('A.app/app.yaml', '')
     grantStatus = async () => ({ codeHash: 'h', affordances: [] })
-    expect(await refusal(runCapability('mail.threads', 'app', ctx({}), {}))).toMatchObject({
+    expect(await refusal(runCapability('mail.threads', 'app', ctx({}), {}, admit))).toMatchObject({
       code: 'FORBIDDEN',
       message: expect.stringContaining('dangerously-allow'),
     })
@@ -302,7 +367,9 @@ describe('Google reads', () => {
       codeHash: 'h',
       affordances: [{ affordance: 'calendar' as const, granted: false }],
     })
-    expect(await refusal(runCapability('calendar.events', 'app', ctx({}), range))).toMatchObject({
+    expect(
+      await refusal(runCapability('calendar.events', 'app', ctx({}), range, admit)),
+    ).toMatchObject({
       code: 'FORBIDDEN',
       message: expect.stringContaining('not approved'),
     })
@@ -313,7 +380,7 @@ describe('Google reads', () => {
       codeHash: 'h',
       affordances: [{ affordance: 'mail' as const, granted: true }],
     })
-    expect(await refusal(runCapability('mail.threads', 'app', ctx({}), {}))).toMatchObject({
+    expect(await refusal(runCapability('mail.threads', 'app', ctx({}), {}, admit))).toMatchObject({
       code: 'UNAVAILABLE',
     })
   })
@@ -327,10 +394,13 @@ describe('Google reads', () => {
   it('bound the calendar window', async () => {
     expect(
       await refusal(
-        runCapability('calendar.events', 'app', ctx({}), {
-          from: '2026-01-01T00:00:00Z',
-          to: '2026-12-01T00:00:00Z',
-        }),
+        runCapability(
+          'calendar.events',
+          'app',
+          ctx({}),
+          { from: '2026-01-01T00:00:00Z', to: '2026-12-01T00:00:00Z' },
+          admit,
+        ),
       ),
     ).toMatchObject({ code: 'BAD_REQUEST' })
   })

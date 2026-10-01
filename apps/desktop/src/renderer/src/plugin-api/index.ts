@@ -11,6 +11,7 @@ export type { PluginInfo } from '@holi/shared'
 
 export { trpc } from '@/lib/trpc'
 export { capClient, type CapClient } from '@/lib/cap-client'
+export { useHasCapability } from '@/state/capabilities'
 export { cn } from '@/lib/cn'
 export { DRAWER_WIDTH } from '@/lib/drawer'
 export { activeRemoteAtom, snapshotAtom } from '@/state/vaults'

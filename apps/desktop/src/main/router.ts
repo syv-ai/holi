@@ -17,9 +17,6 @@ import {
   parseTaskFile,
   parseTaskPatch,
   serializeTaskFile,
-  setFirstHeading,
-  taskFilePath,
-  taskSlug,
   vaultRelPath,
   withIcon,
   ICONS_FILE,
@@ -45,7 +42,7 @@ import {
   type BundleCommit,
 } from './apps/app-grants'
 import { CapabilityError } from './capabilities/error'
-import { createDispatch, type Dispatch } from './capabilities/dispatch'
+import { createCapabilityHost, type AppDoor, type CapabilityHost } from './capabilities/dispatch'
 import { createCapabilityRegistry } from './capabilities/registry'
 import { noCoreServices, type UiReport } from './capabilities/services'
 import { migrateApps as moveLegacyApps } from './apps/migrate-apps'
@@ -221,12 +218,15 @@ export interface RouterDeps {
    */
   today?: () => string
   /**
-   * The capability dispatch the composition root built over its registry,
-   * shared with the CLI door (`capabilities/dispatch.ts`); `apps.bridge` goes
-   * through it. Optional so a test router builds without it; absent, every
+   * The capability host the composition root built over its registry, shared
+   * with the CLI door (`capabilities/dispatch.ts`); `cap.run` and `cap.names`
+   * go through it. Optional so a test router builds without it; absent, every
    * method is "no such method".
    */
-  dispatch?: Dispatch
+  capabilities?: CapabilityHost
+  /** The app door, which the vault apps code opened; `apps.bridge` goes
+   *  through it. Absent, an app reaches nothing. */
+  appDoor?: AppDoor
   /** The approvals of apps' `dangerously-allow` reads, which `apps.grants`
    *  and `apps.grant` ask and record. Optional: absent, nothing is declared
    *  and nothing can be approved. */
@@ -466,9 +466,9 @@ export function createRouter(deps: RouterDeps) {
   const now = deps.now ?? (() => new Date().toISOString())
   const today = deps.today ?? localToday
   const cloneUrlFor = deps.cloneUrlFor ?? remoteUrl
-  const dispatch =
-    deps.dispatch ??
-    createDispatch({
+  const capabilities =
+    deps.capabilities ??
+    createCapabilityHost({
       registry: createCapabilityRegistry(),
       rootFor: async (remote) =>
         (await deps.registry.list()).find((e) => e.remote === remote)?.path ?? null,
@@ -1068,23 +1068,6 @@ export function createRouter(deps: RouterDeps) {
     return (await readFile(absPathFor(root, rel), 'utf8').catch(() => null)) !== null
   }
 
-  /**
-   * The first free `task.<slug>.md` in `folder`.
-   *
-   * Two tasks may honestly share a title — "Call the vendor" twice is a normal
-   * week — so a colliding slug takes a numeric suffix. Refusing would make a
-   * board quick-add fail on a repeated title, which reads as a bug; overwriting
-   * would silently destroy the earlier task.
-   */
-  async function freeTaskPath(root: string, folder: string, title: string): Promise<VaultRelPath> {
-    const slug = taskSlug(title)
-    for (let n = 1; n <= 1000; n++) {
-      const rel = safe(taskFilePath(folder, n === 1 ? slug : `${slug}-${n}`))
-      if (!(await exists(root, rel))) return rel
-    }
-    throw new TRPCError({ code: 'CONFLICT', message: `too many tasks named like: ${title}` })
-  }
-
   /** The task at `rel`, or a 404. An unparseable task file throws too: a field
    * edit has nothing to merge into, and the honest place to fix bad frontmatter
    * is the editor, on the text itself. */
@@ -1098,56 +1081,7 @@ export function createRouter(deps: RouterDeps) {
     }
   }
 
-  /** What a create may set besides title, status, folder and body. */
-  const CREATE_FIELDS = ['due', 'priority', 'tags', 'reminder', 'recurrence']
-
   const tasks = t.router({
-    create: vaultMutation
-      .input((raw: unknown) => {
-        const base = fields({
-          remote: 'string',
-          folder: 'string?',
-          title: 'string',
-          status: 'string?',
-          description: 'string?',
-        })(raw)
-        // Quick add and full create set fields before the task exists, so they
-        // go in with the create: one file, one write. Validated by
-        // `patchOrThrow` below; typed here for the client.
-        const extra = (raw as { extra?: Record<string, unknown> }).extra
-        return extra === undefined ? base : { ...base, extra }
-      })
-      .mutation(async ({ input }): Promise<{ path: string }> => {
-        const root = await rootFor(input.remote)
-        // Everything rides through the same validator a field edit does, so the
-        // board cannot create a file it would then refuse to parse.
-        const extra: Record<string, unknown> = ('extra' in input && input.extra) || {}
-        const patch = patchOrThrow({
-          ...Object.fromEntries(
-            Object.entries(extra).filter(([key]) => CREATE_FIELDS.includes(key)),
-          ),
-          status: input.status ?? 'todo',
-        })
-        const rel = await freeTaskPath(root, input.folder ?? '', input.title)
-        await writeAtomic(
-          root,
-          rel,
-          serializeTaskFile({
-            ...patch,
-            status: patch.status ?? 'todo',
-            tags: patch.tags ?? [],
-            // The title goes in as the body's first heading, because that is
-            // where the format keeps it.
-            //
-            // The agenda's create-from-event uses `description` to seed the body
-            // with the event's markdown link, which *is* the whole
-            // representation of the link. The heading lands above it.
-            description: setFirstHeading(input.description ?? '', input.title),
-          }),
-        )
-        return { path: rel }
-      }),
-
     update: vaultMutation
       .input((raw: unknown) => ({
         ...fields({ remote: 'string', path: 'string' })(raw),
@@ -1273,13 +1207,15 @@ export function createRouter(deps: RouterDeps) {
           throw new TRPCError({ code: 'BAD_REQUEST', message: `not an app: ${input.bundle}` })
         }
         try {
-          const result = await dispatch({
-            door: 'app',
-            remote: input.remote,
-            bundle: input.bundle,
-            name: input.method,
-            params: input.params,
-          })
+          if (deps.appDoor === undefined) {
+            throw new CapabilityError('BAD_REQUEST', `no such method: ${input.method}`)
+          }
+          const result = await deps.appDoor.call(
+            input.remote,
+            input.bundle,
+            input.method,
+            input.params,
+          )
           return result.value
         } catch (err) {
           if (err instanceof CapabilityError) {
@@ -1491,7 +1427,7 @@ export function createRouter(deps: RouterDeps) {
         const rel = safe(input.path)
         // Refuse rather than overwrite: "create" that clobbers an existing note
         // is indistinguishable from losing it. A task takes a numeric suffix
-        // instead (freeTaskPath), because its path is derived from its title
+        // instead (`tasks.create`), because its path is derived from its title
         // rather than chosen by the user.
         if (await exists(root, rel)) {
           throw new TRPCError({ code: 'CONFLICT', message: `already exists: ${rel}` })
@@ -2413,8 +2349,25 @@ export function createRouter(deps: RouterDeps) {
    * plugin's renderer reaches its main side (plugins add no routers). Params
    * arrive as JSON text because `fields` has no object kind; dispatch parses
    * them against the capability's own `params`, as at every door.
+   *
+   * `names` is what a plugin asks before offering a call into another plugin
+   * (`has('tasks.create')`): the UI door's names in that vault, core's and
+   * those of the plugins it runs.
    */
   const cap = t.router({
+    names: t.procedure
+      .input(fields({ remote: 'string' }))
+      .query(async ({ input }): Promise<string[]> => {
+        try {
+          return await capabilities.names(input.remote, 'ui')
+        } catch (err) {
+          if (err instanceof CapabilityError) {
+            throw new TRPCError({ code: 'NOT_FOUND', message: err.message })
+          }
+          throw err
+        }
+      }),
+
     run: t.procedure
       .input(fields({ remote: 'string', name: 'string', paramsJson: 'string?' }))
       .mutation(async ({ input }): Promise<unknown> => {
@@ -2425,10 +2378,9 @@ export function createRouter(deps: RouterDeps) {
           throw new TRPCError({ code: 'BAD_REQUEST', message: 'params are not JSON' })
         }
         try {
-          const result = await dispatch({
+          const result = await capabilities.dispatch({
             door: 'ui',
             remote: input.remote,
-            bundle: null,
             name: input.name,
             params,
           })

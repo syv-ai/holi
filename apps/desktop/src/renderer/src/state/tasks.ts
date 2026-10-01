@@ -11,6 +11,8 @@
 import type { Task, TaskStatus } from '@holi/shared'
 import { allLabels, dailyNoteFilename, parseWikiLinks, taskArea, virtualLabels } from '@holi/shared'
 import { atom } from 'jotai'
+import type { taskCapabilities } from '../../../main/vault/task-capabilities'
+import { capClient } from '../lib/cap-client'
 import { trpc } from '../lib/trpc'
 import { nowAtom, todayAtom } from './clock'
 import { activeTab, closeTabsForPaths, workspaceAtom, type Tab } from './panes'
@@ -202,6 +204,9 @@ export function dropIntent(task: Task, targetLane: string, targetStatus: TaskSta
 // Every write re-reads the vault. No optimistic patching and no
 // mutation-result-as-truth: the file on disk is the only truth.
 
+/** The tasks capabilities the renderer calls (`tasks.create`). */
+export const tasksCap = capClient<ReturnType<typeof taskCapabilities>>('tasks')
+
 export const createTaskAtom = atom(
   null,
   async (
@@ -219,7 +224,7 @@ export const createTaskAtom = atom(
   ) => {
     const remote = get(activeRemoteAtom)
     if (!remote) return null
-    const { path } = await trpc.tasks.create.mutate({ remote, ...input })
+    const { path } = await tasksCap.create(remote, input)
     await set(loadSnapshotAtom)
     return path
   },
