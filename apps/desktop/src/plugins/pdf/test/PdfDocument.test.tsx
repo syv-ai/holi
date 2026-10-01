@@ -198,6 +198,12 @@ vi.mock('@embedpdf/react-pdf-viewer', () => {
     useImperativeHandle(ref, () => ({ container, registry: null }))
     // Appended into its own div, as the real wrapper does.
     const divRef = useRef<HTMLDivElement>(null)
+    // The test id appears only once the mount effect below has run. A test
+    // finds the viewer by it and then drives `onInit`'s listeners and
+    // `onReady`'s callbacks, and the DOM commit that shows the div comes
+    // before React runs passive effects in a later task: under load the
+    // test could otherwise act on a viewer with nothing wired yet.
+    const [mounted, setMounted] = useState(false)
     useEffect(() => {
       const listener = (e: KeyboardEvent) => {
         const s = shortcutOf(e)
@@ -208,11 +214,19 @@ vi.mock('@embedpdf/react-pdf-viewer', () => {
       divRef.current?.append(container)
       onInit?.(container)
       onReady?.(registry)
+      setMounted(true)
       return () => document.removeEventListener('keydown', listener)
       // Mounted once per src, like the real wrapper.
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [])
-    return <div ref={divRef} data-testid="pdf" data-pdf-src={config.src} className={className} />
+    return (
+      <div
+        ref={divRef}
+        data-testid={mounted ? 'pdf' : undefined}
+        data-pdf-src={config.src}
+        className={className}
+      />
+    )
   })
   return {
     PDFViewer,
