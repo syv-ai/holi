@@ -17,7 +17,7 @@ import {
 import { Button, Checkbox, Icon, Tooltip } from '@/primitives'
 import { useAck } from '@/lib/use-ack'
 import { surfaceLabel } from '@/lib/folder-documents'
-import type { Surface } from '@/plugin-api/types'
+import type { RendererPlugin, Surface } from '@/plugin-api/types'
 import { homeDocumentsAtom } from '@/state/home'
 import { installedPluginsAtom, surfacesAtom } from '@/state/plugins'
 import { SettingsRow } from '@/composites'
@@ -160,10 +160,12 @@ export function SettingRow({
       )}
 
       {control.kind === 'plugins' && (
-        <div className="flex flex-col gap-2">
-          {installed.map(({ info }) => {
+        <div className="flex flex-col gap-3">
+          {installed.map((plugin) => {
+            const { info } = plugin
             const plugins = value as PluginSettings
             const off = plugins.localOff.includes(info.id)
+            const adds = pluginAdds(plugin)
             return (
               <label key={info.id} className="flex items-start gap-2.5">
                 <Checkbox
@@ -176,10 +178,25 @@ export function SettingRow({
                   }
                   aria-label={info.label}
                 />
-                <span className="min-w-0">
-                  <span className="text-xs">{info.label}</span>
+                <span className="flex min-w-0 flex-col gap-0.5">
+                  <span>
+                    <span className="text-xs">{info.label}</span>
+                    {info.description !== undefined && (
+                      <span className="ml-1.5 text-[11px] text-muted-foreground">
+                        {info.description}
+                      </span>
+                    )}
+                  </span>
+                  {adds.length > 0 && (
+                    <span className="text-[11px] text-muted-foreground">
+                      Adds {adds.join(' · ')}
+                    </span>
+                  )}
+                  {info.whenOff !== undefined && (
+                    <span className="text-[11px] text-muted-foreground">Off: {info.whenOff}</span>
+                  )}
                   {off && (
-                    <span className="ml-1.5 text-[11px] text-muted-foreground">
+                    <span className="text-[11px] text-muted-foreground">
                       Off on this machine, in {SETTINGS_LOCAL_FILE}.
                     </span>
                   )}
@@ -246,4 +263,24 @@ function homeOptions(
     groups.push({ heading: 'File', options: [{ value, label: value }] })
   }
   return groups.filter((g) => g.options.length > 0)
+}
+
+/**
+ * What a plugin adds to Holi, read off what it contributes rather than written
+ * twice: its nav items (the "Apps" group, the Mail tab), its keys, its
+ * settings sections. Listed for a plugin that is off too, so the row says what
+ * turning it on brings.
+ */
+function pluginAdds(plugin: RendererPlugin): string[] {
+  const surfaces = new Map((plugin.surfaces ?? []).map((s) => [s.kind, s]))
+  const tabs = (plugin.rail ?? []).flatMap((item) => {
+    const surface = surfaces.get(item.surface)
+    const label = item.label ?? (surface === undefined ? undefined : surfaceLabel(surface))
+    return label === undefined ? [] : [label]
+  })
+  const keys = (plugin.commands ?? []).flatMap((c) =>
+    c.hotkey === undefined ? [] : [`${c.hotkey} ${c.label.toLowerCase()}`],
+  )
+  const sections = (plugin.settingsSections ?? []).map((s) => `${s.label} in settings`)
+  return [...(tabs.length > 0 ? [`${tabs.join(', ')} in the nav`] : []), ...keys, ...sections]
 }

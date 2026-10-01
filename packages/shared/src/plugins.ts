@@ -19,6 +19,12 @@ export interface PluginInfo {
   label: string
   /** Whether a vault that does not mention the plugin runs it. */
   default: boolean
+  /** What it is, in a sentence, for the settings tab. What it adds to Holi
+   *  (tabs, keys, settings) is listed from its contributions, not restated. */
+  description?: string
+  /** What turning it off does, including what stays: the settings tab says it
+   *  beside the switch, before anyone flips it. */
+  whenOff?: string
   /** The commit transforms its main side runs (`MainPlugin.transforms`), as
    *  the settings tab switches them. */
   transforms?: readonly TransformToggle[]
