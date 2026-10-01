@@ -3,6 +3,7 @@
  * `src/renderer/src/main.tsx`; `src/plugins/main.ts` must name the same ids.
  */
 import type { RendererPlugin } from '@/plugin-api'
+import { googleRenderer } from './google/renderer'
 import { pdfRenderer } from './pdf/renderer'
 
-export const RENDERER_PLUGINS: readonly RendererPlugin[] = [pdfRenderer]
+export const RENDERER_PLUGINS: readonly RendererPlugin[] = [pdfRenderer, googleRenderer]

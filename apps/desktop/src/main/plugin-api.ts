@@ -42,6 +42,7 @@ export interface MainPlugin {
 
 export type { PluginInfo } from '@holi/shared'
 export type { SeedContribution } from './vault/seed/types'
+export type { SettingsFragment } from './agent/seed/claude-settings'
 export {
   cap,
   type Capability,
@@ -62,3 +63,4 @@ export {
   stringParam,
 } from './capabilities/params'
 export { seedFolder } from './vault/seed/folder'
+export { jsonFileStore, type JsonFileStore } from './json-file-store'

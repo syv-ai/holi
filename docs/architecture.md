@@ -79,8 +79,8 @@ and its `rowMenu` items join the file tree's menu. A plugin adds `surfaces` (tab
 items to the nav menu ([tabs and panes](features/tabs-panes.md)), registered beside core's own.
 Its dialogs open as `{id: 'plugin', render}`.
 A plugin's own code sits in `main/`, `renderer/`, `shared/` and `test/` under its folder; its
-renderer imports its main side as types only, for `capClient`. PDF is the first plugin
-([pdf](features/pdf.md)).
+renderer imports its main side as types only, for `capClient`. The plugins are PDF
+([pdf](features/pdf.md)) and Google ([google](features/google.md)).
 
 Enablement has two layers: `.holi/settings/app.yaml` declares the vault's plugins for everyone,
 and `app.local.yaml` can only turn one off on this machine ([settings](features/settings.md)). The

@@ -8,7 +8,7 @@
  * `electron-vite` resolves imports without typechecking, so an unresolvable
  * import anywhere on this path stops the window opening at all.
  */
-import { readFile, rm, writeFile } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import {
@@ -35,11 +35,6 @@ import {
 } from './apps/app-protocol'
 import { createSession } from './github/electron'
 import { createMembersCache } from './github/members-cache'
-import { createGoogleAccountsManager } from './google/electron'
-import { createCalendarPrefs } from './google/calendar-prefs'
-import { createImagePrefs } from './google/image-prefs'
-import { openGoogleCache } from './google/cache'
-import { createGoogleData, type GoogleData } from './google/data'
 import { installHoliCli } from './bridge/cli'
 import type { MainAppMethod } from '@holi/shared'
 import { appCapabilities, APP_NAMESPACES } from './apps/capabilities'
@@ -48,11 +43,11 @@ import { createCapabilityHost } from './capabilities/dispatch'
 import { CapabilityError } from './capabilities/error'
 import { createCapabilityRegistry } from './capabilities/registry'
 import { vaultCapabilities, VAULT_NAMESPACES } from './capabilities/vault-caps'
-import { googleCapabilities, GOOGLE_NAMESPACES } from './google/capabilities'
 import { taskCapabilities, TASK_NAMESPACES } from './vault/task-capabilities'
 import { agentSeed } from './agent/seed/seed'
 import { coreSeed } from './vault/seed/core'
 import { MAIN_PLUGINS } from '../plugins/main'
+import type { GoogleCapabilities } from '../plugins/google/main/capabilities'
 import { install } from './plugin-host/installed'
 import { createPluginHost } from './plugin-host/host'
 import {
@@ -62,7 +57,6 @@ import {
   type SkillsUpdate,
 } from './vault/seed/update'
 import { registerGitRoutes } from './vault/git-routes'
-import { GoogleApi } from './google/api'
 import { registerIpc } from './ipc'
 import { createRouter, localToday } from './router'
 import { admitApps, createAppGrants } from './apps/app-grants'
@@ -174,76 +168,7 @@ async function main(): Promise<void> {
 
   // After whenReady: the keychain is not available before it.
   const session = await createSession()
-  // The Google connector is independent of the GitHub session on purpose:
-  // it is a data connector, not identity, and neither sign-out affects the other.
   const userDataDir = app.getPath('userData')
-  // A machine-wide cache left from before per-account caches. Deleted
-  // rather than renamed: it holds one account's mail.
-  await rm(join(userDataDir, 'google-cache.db'), { force: true })
-  const googleAccounts = await createGoogleAccountsManager()
-  // One file, every reader: the agenda view, an app and the agent all read
-  // their agenda through it. Plain JSON: it holds calendar ids, not a credential.
-  const calendarPrefs = createCalendarPrefs(join(app.getPath('userData'), 'google-calendars.json'))
-  /**
-   * Senders whose remote images always load.
-   *
-   * In `userData`, not in a vault: this is a decision about the connected
-   * *account*, and a vault is a shared git repo. Pushing it to teammates would
-   * be a disclosure, not a preference.
-   */
-  const imagePrefs = createImagePrefs(join(app.getPath('userData'), 'google-image-senders.json'))
-  /**
-   * The UI's Google cache. In `userData` rather than in a vault: mail
-   * is **account** data, and a vault is a shared git repo.
-   *
-   * **One file per account**, memoized, so switching between two vaults does
-   * not re-fetch mail and calendar.
-   */
-  const googleDataBySub = new Map<string, GoogleData>()
-  const googleDataForSub = (sub: string): GoogleData => {
-    let data = googleDataBySub.get(sub)
-    if (data === undefined) {
-      // `sub` becomes a filename. It is a numeric string from Google today, but
-      // build a path out of it only after saying so.
-      if (!/^[A-Za-z0-9_-]+$/.test(sub)) throw new Error(`unusable Google account id: ${sub}`)
-      const cache = openGoogleCache(join(userDataDir, `google-cache-${sub}.db`))
-      cache.ensureShape()
-      data = createGoogleData({
-        // Bound to THIS account's session, not to whatever vault is active:
-        // the cache and the client it fills from have to be the same account.
-        api: () =>
-          new GoogleApi({
-            accessToken: () => {
-              const session = googleAccounts.sessionForSub(sub)
-              if (session === null) throw new Error('that Google account is no longer connected')
-              return session.getAccessToken()
-            },
-          }),
-        cache,
-      })
-      googleDataBySub.set(sub, data)
-    }
-    return data
-  }
-  /** The active vault's data layer, or null when it has no account. */
-  const googleDataFor = async (remote: string): Promise<GoogleData | null> => {
-    const sub = (await googleAccounts.sessionFor(remote))?.accountSub ?? null
-    return sub === null ? null : googleDataForSub(sub)
-  }
-
-  /**
-   * Keep a removed account's cache off the disk.
-   *
-   * Hung off `onChange` rather than off the disconnect procedure, because
-   * `onChange` also fires for a **dead grant**: a revoked or expired connection
-   * is just as much "this mail is no longer yours to hold" as a button press.
-   */
-  googleAccounts.onChange((sub) => {
-    if (sub === null) return // a vault unlinked; the account and its cache live on
-    if (googleAccounts.sessionForSub(sub) !== null) return // still connected
-    googleDataBySub.get(sub)?.forget()
-    googleDataBySub.delete(sub)
-  })
   const registry = new VaultRegistry(join(app.getPath('userData'), 'vaults.json'))
 
   const send = (channel: string, payload: unknown) => mainWindow?.webContents.send(channel, payload)
@@ -435,26 +360,19 @@ async function main(): Promise<void> {
     // `agent` is assigned below, before any vault can be open.
     sessionsFor: (remote) => (host.active()?.remote === remote ? (agent?.sessions() ?? []) : []),
   })
-  const googleCaps = googleCapabilities({
-    accounts: googleAccounts,
-    dataFor: googleDataFor,
-    calendarPrefs,
-    imagePrefs,
-  })
   capabilities.register(VAULT_NAMESPACES, vaultCaps)
   capabilities.register(APP_NAMESPACES, appCaps)
   capabilities.register(TASK_NAMESPACES, taskCaps)
   capabilities.register(AGENT_NAMESPACES, agentCaps)
-  capabilities.register(GOOGLE_NAMESPACES, googleCaps)
   // Every method the frame's bridge may call and main answers is registered
-  // above: leaving one out is a type error here rather than a hung promise in
-  // an app.
+  // above or by a plugin: leaving one out is a type error here rather than a
+  // hung promise in an app.
   void ({} as Record<
     keyof (typeof vaultCaps &
       typeof appCaps &
       typeof taskCaps &
       typeof agentCaps &
-      typeof googleCaps),
+      GoogleCapabilities),
     true
   > satisfies Record<MainAppMethod, true>)
   // The one way every door runs a capability: the renderer's UI door (the

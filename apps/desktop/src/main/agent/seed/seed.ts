@@ -3,8 +3,8 @@
  * beside this module) and the `.claude/settings.json` it owns and merges
  * (`claude-settings.ts`).
  *
- * The Google, vault-apps and tasks hooks, skills and settings ride here too
- * for now, each as its own fragment, until each becomes its own plugin.
+ * The vault-apps and tasks hooks, skills and settings ride here too for now,
+ * each as its own fragment, until each becomes its own plugin.
  */
 import { shellReadBridgeEnv } from '../../bridge/env-file'
 import { seedFolder } from '../../vault/seed/folder'
@@ -161,37 +161,6 @@ const AGENT_SETTINGS: SettingsFragment = {
 }
 
 /**
- * Google: the send gate, and the undoable writes asked about.
- *
- * The gate matches Bash broadly and decides for itself, rather than relying on
- * an `if` condition: the agent can spell the command three ways, and a
- * condition that misses one fails OPEN while still reading like protection.
- * The hook defers on everything it does not recognise, so the cost is one
- * child process per Bash call. The same gate covers Gmail's MCP tools, for a
- * vault whose user re-enables a claude.ai connector.
- *
- * The `ask` rules are the *undoable* tier and are NOT the wall: allow-always
- * past them is fine, each has a one-click undo. The wall for send and reply is
- * the hook, which overrides both this list and a prior "don't ask again". The
- * send and reply rules here cover a vault whose hook file was removed.
- */
-const GOOGLE_SETTINGS: SettingsFragment = {
-  hooks: [
-    { event: 'PreToolUse', matcher: 'Bash', script: 'google-send-gate' },
-    { event: 'PreToolUse', matcher: 'mcp__.*[Gg]mail.*', script: 'google-send-gate' },
-  ],
-  permissions: {
-    ask: [
-      'Bash(holi google archive:*)',
-      'Bash(holi google trash:*)',
-      'Bash(holi google unschedule:*)',
-      'Bash(holi google send:*)',
-      'Bash(holi google reply:*)',
-    ],
-  },
-}
-
-/**
  * Vault apps: the validator, advisory only (it reports and exits 0), so the
  * agent gets feedback instead of a syntax error surfacing as a blank tab.
  * Matched on the writing tools rather than on the path, because the matcher
@@ -219,7 +188,7 @@ export const agentSeed: SeedContribution = {
   id: 'agent',
   once: folder.once,
   shipped: folder.shipped,
-  fragments: { [SETTINGS]: [AGENT_SETTINGS, GOOGLE_SETTINGS, APPS_SETTINGS, TASKS_SETTINGS] },
+  fragments: { [SETTINGS]: [AGENT_SETTINGS, APPS_SETTINGS, TASKS_SETTINGS] },
   merge: {
     [SETTINGS]: async (existing, fragments, has) => {
       const all = fragments as SettingsFragment[]

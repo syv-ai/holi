@@ -10,6 +10,7 @@ import { LOCAL_ONLY_IGNORE_LINES, MEMORY_INDEX_EMPTY, VAULT_MARKER_FILE } from '
 import { afterEach, describe, expect, it } from 'vitest'
 import type { SettingsFragment } from '../src/main/agent/seed/claude-settings'
 import { agentSeed, agentSettings } from '../src/main/agent/seed/seed'
+import { googleSeed } from '../src/plugins/google/main/seed'
 import { pdfSeed } from '../src/plugins/pdf/main/seed'
 import { coreSeed, GITIGNORE } from '../src/main/vault/seed/core'
 import { ensureSeeded as ensureSeededWith } from '../src/main/vault/seed/seed'
@@ -121,13 +122,11 @@ describe('the seed tables', () => {
   it('the agent ships its hooks and skills and merges .claude/settings.json', () => {
     expect(keys(agentSeed.once)).toEqual([])
     expect(keys(agentSeed.shipped)).toEqual([
-      '.claude/hooks/google-send-gate.mjs',
       '.claude/hooks/memory-index-guard.mjs',
       '.claude/hooks/memory-overview.mjs',
       '.claude/hooks/turn-signal.mjs',
       '.claude/hooks/user-prompt-submit.mjs',
       '.claude/hooks/vault-app-check.mjs',
-      '.claude/skills/gmail-calendar/SKILL.md',
       '.claude/skills/holi-feedback/SKILL.md',
       '.claude/skills/memory/SKILL.md',
       '.claude/skills/theme/SKILL.md',
@@ -135,6 +134,14 @@ describe('the seed tables', () => {
       '.claude/skills/vault-apps/SKILL.md',
     ])
     expect(keys(agentSeed.merge!)).toEqual(['.claude/settings.json'])
+  })
+
+  it('Google ships its send gate and its skill, and nothing once', () => {
+    expect(keys(googleSeed.once)).toEqual([])
+    expect(keys(googleSeed.shipped)).toEqual([
+      '.claude/hooks/google-send-gate.mjs',
+      '.claude/skills/gmail-calendar/SKILL.md',
+    ])
   })
 
   it('PDF seeds its templates once, with the brand binaries as bytes, and ships two skills', () => {

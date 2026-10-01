@@ -26,7 +26,7 @@ const render = () => {
 
 const status = vi.fn()
 const accounts = vi.fn()
-const useAccount = vi.fn()
+const linkAccount = vi.fn()
 const removeAccount = vi.fn()
 const disconnectVault = vi.fn()
 
@@ -34,7 +34,7 @@ const disconnectVault = vi.fn()
 const google: Record<string, (params: unknown) => unknown> = {
   'google.status': () => status(),
   'google.accounts': () => accounts(),
-  'google.useAccount': (p) => useAccount(p),
+  'google.useAccount': (p) => linkAccount(p),
   'google.removeAccount': (p) => removeAccount(p),
   'google.disconnectVault': () => disconnectVault(),
   'google.imageSenders': async () => [],
@@ -64,7 +64,7 @@ beforeEach(() => {
   // Resolved, not bare: the component chains `.catch` on every mutation, and an
   // undefined return there is an unhandled rejection that still lets the
   // assertion pass.
-  useAccount.mockResolvedValue({ ok: true })
+  linkAccount.mockResolvedValue({ ok: true })
   removeAccount.mockResolvedValue({ ok: true })
   disconnectVault.mockResolvedValue({ ok: true })
 })
@@ -103,7 +103,7 @@ describe('ConnectionsSection', () => {
 
     await userEvent.click(screen.getAllByRole('button', { name: 'Use in this vault' })[0]!)
 
-    await waitFor(() => expect(useAccount).toHaveBeenCalledWith({ sub: 'sub-1' }))
+    await waitFor(() => expect(linkAccount).toHaveBeenCalledWith({ sub: 'sub-1' }))
   })
 
   it('does not offer the account this vault is already using', async () => {

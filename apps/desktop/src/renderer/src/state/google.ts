@@ -10,8 +10,10 @@
  */
 import { atom, useAtom, useAtomValue } from 'jotai'
 import { useCallback, useEffect } from 'react'
-import type { GoogleCapabilities } from '../../../main/google/capabilities'
-import type { GoogleAccount } from '../../../main/google/session'
+// eslint-disable-next-line no-restricted-imports -- until the views move into the Google plugin
+import type { GoogleCapabilities } from '../../../plugins/google/main/capabilities'
+// eslint-disable-next-line no-restricted-imports -- until the views move into the Google plugin
+import type { GoogleAccount } from '../../../plugins/google/main/session'
 import { capClient } from '../lib/cap-client'
 import { activeRemoteAtom } from './vaults'
 
