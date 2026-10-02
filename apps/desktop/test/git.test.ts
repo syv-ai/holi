@@ -229,6 +229,18 @@ describe('commitAll', () => {
     expect((await openRepo(dir).status()).dirty).toBe(false)
   })
 
+  it('commits a deletion someone already staged with git rm', async () => {
+    // The path is in neither the tree nor the index, so naming it to `git add`
+    // fails the whole add, and every autosave after it.
+    const dir = await makeClone(await makeRemote())
+    await plainGit(dir, ['rm', '-q', 'README.md'])
+    await writeFile(join(dir, 'a.md'), 'a\n', 'utf8')
+    const repo = openRepo(dir)
+    const paths = (await repo.status()).dirtyPaths
+    expect(await repo.commitAll('Update 2 files', paths)).not.toBeNull()
+    expect((await repo.status()).dirty).toBe(false)
+  })
+
   it('commits on a machine that has never configured a git identity', async () => {
     // A fresh laptop has no user.email, and git refuses to commit without one.
     // Holi must not require the user to have run `git config --global` first.
