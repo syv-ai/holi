@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest'
 import { THEME_TOKENS } from '@holi/shared'
 import { APP_METHODS } from '../shared/bridge'
 import { appHost } from '../shared/bundle'
-import { APP_BASE_TOKENS, missingBaseTokens } from '../main/tokens'
+import { appBaseTokens, missingBaseTokens } from '../main/tokens'
 import { BRIDGE_JS } from '../main/bridge-script'
 import {
   appFileAbsPath,
@@ -147,34 +147,49 @@ describe('appHeadHtml', () => {
     // `:root{}`. Every var() then resolves to nothing and the app renders black
     // text on a transparent page — while every unit test passes. Found in the
     // running app, not here, which is why the assertion is now here.
-    expect(missingBaseTokens()).toEqual([])
-    const out = appHeadHtml({})
-    for (const token of THEME_TOKENS) {
-      expect(out).toContain(`--${token}:`)
+    for (const mode of ['light', 'dark'] as const) {
+      expect(missingBaseTokens(mode), mode).toEqual([])
+      const out = appHeadHtml({}, mode)
+      for (const token of THEME_TOKENS) {
+        expect(out, `${mode} ${token}`).toContain(`--${token}:`)
+      }
+    }
+  })
+
+  it('declares every colour the palette refers to', () => {
+    // Holi's theme is written on Tailwind's palette, and an app frame has no
+    // Tailwind build: an undeclared `var(--color-neutral-950)` resolves to
+    // nothing, and the app falls back to a white page.
+    for (const mode of ['light', 'dark'] as const) {
+      const out = appHeadHtml({ primary: 'var(--color-violet-500)' }, mode)
+      const declared = new Set([...out.matchAll(/[{;](--[a-z0-9-]+):/g)].map((m) => m[1]))
+      for (const [, name] of out.matchAll(/var\((--[a-z0-9-]+)\)/g)) {
+        expect(declared, `${mode} ${name}`).toContain(name)
+      }
     }
   })
 
   it('lets the vault override a base token', () => {
-    const out = appHeadHtml({ primary: 'oklch(0.7 0.1 250)' })
+    const out = appHeadHtml({ primary: 'oklch(0.7 0.1 250)' }, 'dark')
     // Both are present; the vault's comes second, so it is the one that applies.
     expect(out.indexOf('--primary:oklch(0.7 0.1 250)')).toBeGreaterThan(
-      out.indexOf(`--primary:${APP_BASE_TOKENS['primary']}`),
+      out.indexOf(`--primary:${appBaseTokens('dark')['primary']}`),
     )
   })
 
   it('writes the resolved theme onto :root as custom properties', () => {
-    const out = appHeadHtml({ primary: 'oklch(0.7 0.1 250)' })
+    const out = appHeadHtml({ primary: 'oklch(0.7 0.1 250)' }, 'dark')
     expect(out).toMatch(/<style>:root\{[^<]*--primary:oklch\(0\.7 0\.1 250\)[^<]*\}<\/style>/)
   })
 
   it('carries the bridge shim in a script tag', () => {
-    expect(appHeadHtml({})).toContain(`<script>${BRIDGE_JS}</script>`)
+    expect(appHeadHtml({}, 'dark')).toContain(`<script>${BRIDGE_JS}</script>`)
   })
 
   it('cannot be escaped by a hostile token value', () => {
     // resolveTheme already refuses `<`/`>` — this is the second guard, because
     // the head is built from a block and a caller could hand one over unresolved.
-    const out = appHeadHtml({ primary: '</style><script>alert(1)</script>' })
+    const out = appHeadHtml({ primary: '</style><script>alert(1)</script>' }, 'dark')
     expect(out).not.toContain('alert(1)</script>')
     expect(out.match(/<style>/g)).toHaveLength(1)
     expect(out.match(/<\/style>/g)).toHaveLength(1)

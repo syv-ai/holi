@@ -19,11 +19,12 @@ import {
   themeBlockToVars,
   vaultRelPath,
   type ThemeBlock,
+  type ThemeMode,
 } from '@holi/shared'
 import { bundleFromAppHost } from '../shared/bundle'
 import { mimeFor, readVaultTheme, type PluginScheme } from '../../../main/plugin-api'
 import { BRIDGE_JS } from './bridge-script'
-import { APP_BASE_TOKENS } from './tokens'
+import { appBaseTokens, paletteFor } from './tokens'
 
 /**
  * `holi-app://<host>/<rel>` → its parts, or null when the scheme is wrong, the
@@ -135,18 +136,20 @@ function cssSafe(value: string): string {
  * The `<style>` + `<script>` an app cannot produce for itself: the vault's
  * resolved theme as CSS custom properties on `:root`, then the bridge shim.
  *
- * The block is Holi's own dark palette with the vault's theme laid over it —
- * see `APP_BASE_TOKENS` for why the base cannot be left out.
+ * The block is Holi's own theme for the mode with the vault's laid over it,
+ * plus the Tailwind palette colours either refers to; see `tokens.ts` for why
+ * neither can be left out.
  *
  * The theme arrives this way rather than through a `holi.theme()` call because
  * it is **ambient**: an app styles with `var(--primary)` and inherits a vault's
  * palette without knowing there is such a thing as a theme.
  */
-export function appHeadHtml(block: ThemeBlock): string {
+export function appHeadHtml(block: ThemeBlock, mode: ThemeMode): string {
   // Base first, the vault's overrides second, so the later declaration wins. A
-  // vault with no theme still gets a full palette, which is what makes the
-  // authoring skill's `var(--primary)` advice true.
-  const vars = Object.entries(themeBlockToVars({ ...APP_BASE_TOKENS, ...block }))
+  // vault whose file leaves a token out still gets a full palette, which is
+  // what makes the authoring skill's `var(--primary)` advice true.
+  const tokens = { ...appBaseTokens(mode), ...block }
+  const vars = Object.entries(themeBlockToVars({ ...paletteFor(tokens), ...tokens }))
     .map(([name, value]) => `${cssSafe(name)}:${cssSafe(value)}`)
     .join(';')
   return `<style>:root{${vars}}</style><script>${BRIDGE_JS}</script>`
@@ -206,7 +209,7 @@ export const appScheme: PluginScheme = {
       const theme = await readVaultTheme(vault.root)
       // The renderer's mode rides in on the URL (`?mode=`).
       const block = theme[parsed.mode]
-      return new Response(injectAppHead(html, appHeadHtml(block)), {
+      return new Response(injectAppHead(html, appHeadHtml(block, parsed.mode)), {
         headers: { 'content-type': appMimeFor(abs) },
       })
     }

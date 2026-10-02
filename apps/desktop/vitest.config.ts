@@ -21,9 +21,9 @@ export default defineConfig({
           environment: 'node',
           passWithNoTests: true,
           // Vitest swaps every CSS import for an empty string unless it is
-          // included here, `?raw` too, and the vault seed's theme is a real
-          // CSS file read as text.
-          css: { include: [/\.holi\/settings\/theme\.css/] },
+          // included here, `?raw` too. Main reads two as text: the vault
+          // seed's theme, and Tailwind's palette for vault apps.
+          css: { include: [/\.holi\/settings\/theme\.css/, /tailwindcss\/theme\.css/] },
           // One file at a time — do NOT let test files run in parallel.
           //
           // Kept through the server's deletion even though the suites that forced it (the mirror
