@@ -27,8 +27,8 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   expanded.
   Rename, move, drag, copy, duplicate and delete are the tree's folder operations: a rename edits
   the name without `.app`, and Duplicate makes `Budget copy.app`. A drop on the row lands beside
-  it, not among its files. A personal app's row shows only under show-hidden, like any local
-  file; the launchers always list it. See [file tree](file-tree.md).
+  it, not among its files. A personal app's row shows like any other, dimmed as a
+  local file. See [file tree](file-tree.md).
 - **Launchers.** The tree's app row, the [nav menu](nav-menu.md)'s Apps drill-down (every
   finished app, most recently opened first, in the sidebar and on the rail; absent when there are none), and the
   [command palette](command-palette.md), which lists them with their folder. There is no separate
