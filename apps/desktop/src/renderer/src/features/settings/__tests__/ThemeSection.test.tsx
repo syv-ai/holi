@@ -22,6 +22,7 @@ vi.mock('@/lib/trpc', () => ({
   trpc: {
     theme: {
       read: { query: () => themeRead() },
+      holi: { query: () => Promise.resolve(HOLI) },
       write: { mutate: (input: unknown) => themeWrite(input) },
     },
     // Appearance carries the `colorScheme` descriptor row as well, so this mock
@@ -35,6 +36,9 @@ vi.mock('@/lib/trpc', () => ({
 }))
 
 const REMOTE = 'syv-ai/holi'
+
+/** Holi's own theme, as main answers it: one token is enough to test against. */
+const HOLI = { light: {}, dark: { primary: '#0069a8' } }
 
 /** The store the section needs: a remote, because the settings row reads the
  *  active vault's file. */
@@ -76,12 +80,12 @@ test('renders a control for every whitelisted token', async () => {
   }
 })
 
-test('offers a reset only where the vault set a value', async () => {
+test('offers a reset only where the vault differs from Holi', async () => {
   setup({ dark: { primary: '#ff0000' } })
   await waitFor(() => expect(screen.getByText('--primary')).toBeInTheDocument())
 
-  // One cell is set, so one reset is live; every other cell, in both
-  // palettes, is the default.
+  // One cell differs from Holi's, so one reset is live; every other cell, in
+  // both palettes, is Holi's.
   const live = screen
     .getAllByRole('button', { name: /^reset / })
     .filter((b) => b.getAttribute('aria-disabled') !== 'true')
@@ -89,20 +93,18 @@ test('offers a reset only where the vault set a value', async () => {
   expect(screen.getAllByRole('button', { name: /^reset / })).toHaveLength(THEME_TOKENS.length * 2)
 })
 
-test('a reset writes null, which is what deletes the key', async () => {
-  // Not an empty string: that is dropped as invalid and would leave the old
-  // colour in place, so the button would appear to do nothing.
+test('a reset writes Holi’s value back', async () => {
   setup({ dark: { primary: '#ff0000' } })
   await waitFor(() => expect(screen.getByText('--primary')).toBeInTheDocument())
 
   await userEvent.click(screen.getByRole('button', { name: 'reset Brand, as a fill in dark' }))
 
   await waitFor(() => expect(themeWrite).toHaveBeenCalled())
-  expect(patchOf()).toEqual({ dark: { primary: null } })
+  expect(patchOf()).toEqual({ dark: { primary: '#0069a8' } })
 })
 
-test('cannot reset a token that is already the default', async () => {
-  setup()
+test('cannot reset a token that is already Holi’s', async () => {
+  setup({ dark: { primary: '#0069a8' } })
   await waitFor(() => expect(screen.getByText('--primary')).toBeInTheDocument())
 
   expect(screen.getByRole('button', { name: 'reset Brand, as a fill in dark' })).toHaveAttribute(

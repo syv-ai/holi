@@ -147,9 +147,47 @@ const COLOR_FUNCS = /^(rgb|rgba|hsl|hsla|hwb|lab|lch|oklab|oklch|color)\s*\([^)]
 const HEX = /^#([0-9a-fA-F]{3,8})$/
 const KEYWORD = /^[a-zA-Z]+$/ // transparent, currentColor, named colours
 
+/** A palette colour from Tailwind's theme: `--color-sky-700`, `--color-white`. */
+const PALETTE = /^color-(?:[a-z]+-\d{2,3}|white|black)$/
+const VAR_REF = /^var\(\s*--([A-Za-z][A-Za-z0-9-]*)\s*\)$/
+const COLOR_MIX =
+  /^color-mix\(\s*in\s+(?:srgb|srgb-linear|oklab|oklch|lab|lch|hsl|hwb)\s*,([\s\S]*)\)$/i
+/** A mix argument's optional share: `var(--border) 55%`. */
+const SHARE = /\s+\d+(?:\.\d+)?%$/
+
+/** `s` split on the commas outside any parentheses. */
+function topLevelArgs(s: string): string[] {
+  const out: string[] = []
+  let depth = 0
+  let start = 0
+  for (let i = 0; i < s.length; i++) {
+    if (s[i] === '(') depth++
+    else if (s[i] === ')') depth--
+    else if (s[i] === ',' && depth === 0) {
+      out.push(s.slice(start, i))
+      start = i + 1
+    }
+  }
+  out.push(s.slice(start))
+  return out
+}
+
+/**
+ * A colour: a literal, a reference to another colour token or to a palette
+ * colour, or a `color-mix()` of two of those. References are how Holi's own
+ * theme is written (`--primary: var(--color-sky-700)`), so a derived token
+ * like `--divider` keeps following the tokens it is mixed from. A reference
+ * can name only a colour, so it cannot reach anything that sizes or places.
+ */
 function isColorLike(v: string): boolean {
   const t = v.trim()
-  return HEX.test(t) || COLOR_FUNCS.test(t) || KEYWORD.test(t)
+  if (HEX.test(t) || COLOR_FUNCS.test(t) || KEYWORD.test(t)) return true
+  const ref = VAR_REF.exec(t)
+  if (ref !== null) return COLOR_SET.has(ref[1]!) || PALETTE.test(ref[1]!)
+  const mix = COLOR_MIX.exec(t)
+  if (mix === null) return false
+  const args = topLevelArgs(mix[1]!)
+  return args.length === 2 && args.every((arg) => isColorLike(arg.trim().replace(SHARE, '')))
 }
 
 const LENGTH = /^(0|-?(\d+\.?\d*|\.\d+)(px|rem|em|%|vh|vw|vmin|vmax))$/
@@ -579,8 +617,13 @@ const PREAMBLE = [
   'This vault\u2019s theme.',
   '',
   'Every colour and chrome token it can set, grouped the way the Appearance',
-  'pane groups them. A COMMENTED-OUT declaration is not set: Holi\u2019s own value',
-  'is in force. Uncomment one to take it over.',
+  'pane groups them. Holi seeds the shared theme with its own once; after that it',
+  'is this vault\u2019s, and Settings, Appearance can reset a mode to Holi\u2019s.',
+  'A COMMENTED-OUT declaration is not set here: in the local file the shared',
+  'theme shows through, in the shared file Holi\u2019s built-in look.',
+  '',
+  'A colour is a literal, var() of another colour token or of a Tailwind palette',
+  'colour (var(--color-sky-700)), or a color-mix() of two of those.',
   '',
   'Real CSS, and the app reads it as DATA: every declaration is checked against',
   'a fixed whitelist before anything reaches the screen. That is why there is no',
@@ -624,4 +667,20 @@ export function applyThemePatch(json: string | null, patch: ThemePatch): string 
   // Regenerated whole, so the explanatory notes are re-emitted; comments a
   // person added are not kept.
   return writeThemeText(next)
+}
+
+/**
+ * One mode of a theme file set to `block` whole, the other mode untouched.
+ *
+ * A reset, not a patch: whatever the mode held, including tokens Holi does
+ * not know, is replaced. A reset gives the shared file Holi's block and the
+ * local file `{}`, so the shared theme shows through again.
+ */
+export function replaceThemeMode(json: string | null, mode: ThemeMode, block: ThemeBlock): string {
+  const current = json === null ? null : parseVaultTheme(json)
+  return writeThemeText({
+    light: current?.light ?? {},
+    dark: current?.dark ?? {},
+    [mode]: { ...block },
+  })
 }

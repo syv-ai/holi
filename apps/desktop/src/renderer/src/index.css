@@ -1,4 +1,31 @@
 @import 'tailwindcss';
+/* The themeable tokens (shadcn's semantic vocabulary plus chrome) are Holi's
+   theme file, imported from the vault seed so a fresh vault and the look
+   outside a vault are one text. They are written on Tailwind's palette, and the
+   reasons behind them live here, since the file's comments are regenerated:
+
+   - `--primary` is the brand as a FILL, under `--primary-foreground`; `--brand`
+     is the brand as TEXT. A fill dark enough to carry near-white text is too
+     dark to be text on near-black (about 3:1). Use `text-brand`, never
+     `text-primary`. Light inverts it: the text arm goes down a step.
+   - `--accent` is shadcn's subtle neutral hover surface, not a brand colour.
+   - Light surfaces are not a mirror of the dark ramp: perceptual distance is
+     smaller at the light end, so they sit a step deeper to stay visible.
+   - `--divider` is the hairline between pieces of CHROME (pane splits, panel
+     rules), `--border` the edge of an OBJECT. Mixed from the two, so it follows
+     a re-theme. `--drawer-edge` is transparent: a drawer lies flat on the page.
+   - `--selection` follows the brand, so recolouring `--primary` alone
+     recolours it.
+   - `--shadow-popover` is heavier than Tailwind's md because overlays have no
+     border; a dialog sits over a scrim, so `--shadow-dialog` stays light.
+     Light's popover shadow is softer, where the dark weight reads as smudge.
+   - The editor's link and task-orb colours have no light arm; a chip's tint is
+     mixed from its colour. Inline code is told apart by colour alone. A
+     comment banner is mixed toward the text, since `--popover` sat too close to
+     the page.
+   - Every derived token is stated in both blocks: a `var()` resolves where it
+     is declared, so a light block that left it out would inherit dark's. */
+@import '../../main/vault/seed/vault/once/.holi/settings/theme.css';
 
 /* Plugins' renderer code lives outside this tree (src/plugins/), so Tailwind
    is told to scan it for class names too. */
@@ -8,50 +35,17 @@
    shadcn's `.dark`. */
 @custom-variant dark (&:where([data-theme='dark'] *));
 
-/* shadcn's semantic token vocabulary, mapped onto Tailwind's built-in neutral/sky
-   palette. Plain selectors (NOT @theme) so the values re-cascade per theme scope.
-   Holi is dark-first: :root shares the dark values; [data-theme='light'] overrides.
-   `--primary` is the brand as a FILL, under `--primary-foreground`. `--brand`
-   is the brand as TEXT: a fill dark enough to carry near-white text is too dark
-   to be text on near-black (about 3:1). Use `text-brand`, never
-   `text-primary`. `--accent` is shadcn's subtle neutral hover surface, not a
-   brand colour. */
+/* Holi is dark-first: :root shares the dark values; [data-theme='light']
+   overrides. */
 :root,
 [data-theme='dark'] {
   /* So everything we do not paint ourselves (native controls, the canvas)
      comes up dark instead of the light default. */
   color-scheme: dark;
 
-  --background: var(--color-neutral-950);
-  --foreground: var(--color-neutral-100);
   /* A note's and a task's running text: a touch under the foreground, which is
      glaring at length on near-black. Mixed, so a vault theme's colours carry it. */
   --prose: color-mix(in srgb, var(--foreground) 88%, var(--background));
-  --card: var(--color-neutral-900);
-  --card-foreground: var(--color-neutral-100);
-  --popover: var(--color-neutral-900);
-  --popover-foreground: var(--color-neutral-100);
-  --primary: var(--color-sky-700);
-  --primary-foreground: var(--color-neutral-50);
-  --brand: var(--color-sky-400);
-  --secondary: var(--color-neutral-800);
-  --secondary-foreground: var(--color-neutral-100);
-  --muted: var(--color-neutral-800);
-  --muted-foreground: var(--color-neutral-400);
-  --accent: var(--color-neutral-800);
-  --accent-foreground: var(--color-neutral-100);
-  --destructive: var(--color-red-900);
-  --destructive-foreground: var(--color-red-100);
-  --border: var(--color-neutral-800);
-  --input: var(--color-neutral-800);
-  --ring: var(--color-sky-700);
-
-  /* ── Chrome tokens (per-vault themeable) ─────────────────────────────
-   * Paint-only knobs a vault theme may override alongside the colours above.
-   * The light block below only re-states what differs. `--radius` lives in
-   * the `@theme` block further down. */
-  --scrollbar-thumb: var(--color-neutral-700);
-  --scrollbar-thumb-hover: var(--color-neutral-600);
 
   /* Code-editor syntax colours. Tokens, so they follow the theme: 300 tints
      that glow on near-black wash out on white, hence the light arm below. */
@@ -67,47 +61,6 @@
   --syntax-comment: var(--color-neutral-500);
   --syntax-punctuation: var(--color-neutral-400);
   --syntax-invalid: var(--color-red-400);
-  /* The hairline between pieces of CHROME (pane splits, panel rules), distinct
-     from `--border`, the edge of an OBJECT (card, chip). An object's edge must
-     be seen; a chrome rule only noticed, or the window reads as drawn boxes.
-
-     Derived, so it survives re-theming and covers both modes; a vault wanting
-     an outright colour sets `--divider` itself (flat: the theme validator does
-     not accept `color-mix`). */
-  --divider: color-mix(in srgb, var(--border) 55%, var(--background));
-  /* A drawer's inner edge and header rule (DrawerShell). None by default: a
-     drawer lies flat on the page, colour not borders. A vault theme draws it. */
-  --drawer-edge: transparent;
-  /* Selection follows the brand by default, so recolouring --primary alone
-     recolours the selection; a theme can still set --selection outright. */
-  --selection: color-mix(in srgb, var(--primary) 30%, transparent);
-  /* Elevation. Themable because consumed through var(); Tailwind bakes its
-     own shadow-* in.
-
-     `--shadow-popover` is heavier than Tailwind's md because overlays have no
-     border: the shadow alone separates them from the page. A dialog sits over
-     a scrim, so `--shadow-dialog` stays light. */
-  --shadow-popover: 0 10px 24px -6px rgb(0 0 0 / 0.28), 0 4px 8px -4px rgb(0 0 0 / 0.2);
-  --shadow-dialog: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
-
-  /* ── Editor chip tokens (per-vault themeable) ────────────────────────
-   * Wiki-link chips and task-status orbs in the CodeMirror editor. No light
-   * arm: the editor is a mode-independent `baseTheme`. A chip's tint is
-   * color-mixed from its colour, so recolouring the token recolours the fill.
-   * Markdown links and wiki-links share `--link`. */
-  --link: #7dd3fc;
-  --link-missing: #f0abfc;
-  --task: #fbbf24;
-  --task-todo: #6e7681;
-  --task-doing: #388bfd;
-  --task-done: #3fb950;
-  /* Inline code is told apart by colour alone, with no fill behind it. */
-  --code: var(--color-orange-300);
-  /* An HTML comment floats over the note, its text in the prose colour like
-     a heading's. Its surface is mixed toward the text rather than `--popover`,
-     which sat too close to the page to tell apart. */
-  --comment: var(--prose);
-  --comment-background: color-mix(in srgb, var(--foreground) 20%, var(--background));
 
   /* ── File-type tokens ───────────────────────────────────────────────
    * The type colour of a file glyph in the tree, tabs and palette
@@ -187,34 +140,7 @@
 [data-theme='light'] {
   color-scheme: light;
 
-  --background: var(--color-neutral-50);
-  --foreground: var(--color-neutral-900);
   --prose: var(--foreground);
-  --card: #ffffff;
-  --card-foreground: var(--color-neutral-900);
-  --popover: #ffffff;
-  --popover-foreground: var(--color-neutral-900);
-  --primary: var(--color-sky-600);
-  --primary-foreground: #ffffff;
-  /* Light inverts the problem: text must be DARKER than the surface, so the
-     text arm goes down a step where the dark arm went up. */
-  --brand: var(--color-sky-700);
-  /* Not a mirror of the dark ramp: perceptual distance is smaller at the light
-     end, so surfaces sit a step deeper to stay visible. */
-  --secondary: var(--color-neutral-200);
-  --secondary-foreground: var(--color-neutral-900);
-  --muted: var(--color-neutral-200);
-  --muted-foreground: var(--color-neutral-600);
-  --accent: var(--color-neutral-200);
-  --accent-foreground: var(--color-neutral-900);
-  --destructive: var(--color-red-600);
-  --destructive-foreground: #ffffff;
-  --border: var(--color-neutral-300);
-  --input: var(--color-neutral-300);
-  --ring: var(--color-sky-600);
-
-  --scrollbar-thumb: var(--color-neutral-400);
-  --scrollbar-thumb-hover: var(--color-neutral-500);
 
   /* Same hues at the 600/700 end: on white the job is contrast, not glow. */
   --syntax-keyword: var(--color-fuchsia-700);
@@ -227,25 +153,12 @@
   --syntax-comment: var(--color-neutral-500);
   --syntax-punctuation: var(--color-neutral-600);
   --syntax-invalid: var(--color-red-600);
-  --code: var(--color-orange-700);
-  /* Every token derived by `var()` is re-declared here with the dark arm's
-     expression. A `var()` resolves where it is declared, so without these,
-     reading light's defaults inside a `[data-theme='light']` probe
-     (`theme-defaults.ts`) inherits dark's results, and a vault's theme file is
-     filled with dark values in its light block. */
-  --divider: color-mix(in srgb, var(--border) 55%, var(--background));
-  --selection: color-mix(in srgb, var(--primary) 30%, transparent);
-  --comment: var(--prose);
-  --comment-background: color-mix(in srgb, var(--foreground) 20%, var(--background));
 
   /* Text, so a light arm; the diff tints deliberately have none. */
   --diff-added-foreground: var(--color-green-700);
   --diff-removed-foreground: var(--color-red-700);
   --context-warm: var(--color-amber-600);
   --context-full: var(--color-red-600);
-
-  /* Softer on white, where the dark-first weight reads as smudge. */
-  --shadow-popover: 0 10px 24px -6px rgb(0 0 0 / 0.14), 0 4px 8px -4px rgb(0 0 0 / 0.1);
 }
 
 /* Expose the semantics as utilities. @theme inline so the generated utility holds
@@ -305,8 +218,6 @@
 }
 
 @theme {
-  --radius: 0.5rem;
-
   /* ── Motion tier ─────────────────────────────────────────────────────
    * The app's ONE motion vocabulary, named for what each is FOR. Every
    * animation names which of four behaviours it is:

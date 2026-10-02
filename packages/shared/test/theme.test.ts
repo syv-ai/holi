@@ -154,6 +154,24 @@ describe('resolveTheme — validation', () => {
     expect(dark.primary).toBeUndefined()
   })
 
+  it('keeps a reference to a colour, and refuses one to anything else', () => {
+    // Holi's own theme is written this way, so a derived token follows the
+    // tokens it is mixed from. A reference that is not a colour (spacing, a
+    // size) would let a colour token carry a layout value.
+    const ok = {
+      primary: 'var(--color-sky-700)',
+      divider: 'color-mix(in srgb, var(--border) 55%, var(--background))',
+      selection: 'color-mix(in srgb, var(--primary) 30%, transparent)',
+    }
+    const { dark } = resolveTheme(
+      css({
+        dark: { ...ok, border: 'var(--spacing)', ring: 'color-mix(in srgb, var(--radius), red)' },
+      }),
+      null,
+    )
+    expect(dark).toEqual(ok)
+  })
+
   it('validates radius as a length, rejecting a bare color', () => {
     expect(resolveTheme(css({ dark: { radius: '0.75rem' } }), null).dark.radius).toBe('0.75rem')
     expect(resolveTheme(css({ dark: { radius: '#fff' } }), null).dark.radius).toBeUndefined()

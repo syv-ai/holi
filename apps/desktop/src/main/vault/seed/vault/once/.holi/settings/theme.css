@@ -1,0 +1,144 @@
+/*
+ * This vault’s theme.
+ *
+ * Every colour and chrome token it can set, grouped the way the Appearance
+ * pane groups them. Holi seeds the shared theme with its own once; after that it
+ * is this vault’s, and Settings, Appearance can reset a mode to Holi’s.
+ * A COMMENTED-OUT declaration is not set here: in the local file the shared
+ * theme shows through, in the shared file Holi’s built-in look.
+ *
+ * A colour is a literal, var() of another colour token or of a Tailwind palette
+ * colour (var(--color-sky-700)), or a color-mix() of two of those.
+ *
+ * Real CSS, and the app reads it as DATA: every declaration is checked against
+ * a fixed whitelist before anything reaches the screen. That is why there is no
+ * token for spacing, size or position, and why a rule you add here for anything
+ * else has no effect — a theme cannot move or resize anything, by construction.
+ *
+ * Two blocks, one per colour scheme. Holi rewrites this file when a setting
+ * changes and regenerates these notes, so a comment of your own will not last.
+ */
+
+[data-theme='dark'] {
+
+  /* Surfaces — The page and the things that sit on it. */
+  --background: var(--color-neutral-950);
+  --foreground: var(--color-neutral-100);
+  --card: var(--color-neutral-900);
+  --card-foreground: var(--color-neutral-100);
+  --popover: var(--color-neutral-900);
+  --popover-foreground: var(--color-neutral-100);
+
+  /* Brand and action — The colour this vault is, and the things you can press. */
+  /* The brand as a FILL, with primary-foreground on top of it. */
+  --primary: var(--color-sky-700);
+  --primary-foreground: var(--color-neutral-50);
+  /* The same brand as TEXT. A fill dark enough to carry pale text is too dark to be text. */
+  --brand: var(--color-sky-400);
+  --ring: var(--color-sky-700);
+  /* Highlighted text. Follows the brand unless you set it. */
+  --selection: color-mix(in srgb, var(--primary) 30%, transparent);
+
+  /* Supporting — Quieter fills: a hover, a secondary button, text that is not the point. */
+  --secondary: var(--color-neutral-800);
+  --secondary-foreground: var(--color-neutral-100);
+  --muted: var(--color-neutral-800);
+  --muted-foreground: var(--color-neutral-400);
+  /* The subtle hover surface, not the brand. */
+  --accent: var(--color-neutral-800);
+  --accent-foreground: var(--color-neutral-100);
+
+  /* Warnings — Destructive actions, and anything that has gone wrong. */
+  --destructive: var(--color-red-900);
+  --destructive-foreground: var(--color-red-100);
+
+  /* Edges — What separates one thing from another. */
+  --border: var(--color-neutral-800);
+  /* The seam between two panes. `border` is the edge of an object. */
+  --divider: color-mix(in srgb, var(--border) 55%, var(--background));
+  /* The line beside a sidebar and under its header. Transparent unless set. */
+  --drawer-edge: transparent;
+  --input: var(--color-neutral-800);
+
+  /* Scrollbars — The thumb, at rest and under the pointer. */
+  --scrollbar-thumb: var(--color-neutral-700);
+  --scrollbar-thumb-hover: var(--color-neutral-600);
+
+  /* In a note — Links, task orbs, inline code and comments, inside the editor. */
+  --link: #7dd3fc;
+  --link-missing: #f0abfc;
+  --task: #fbbf24;
+  --task-todo: #6e7681;
+  --task-doing: #388bfd;
+  --task-done: #3fb950;
+  --code: var(--color-orange-300);
+  --comment: color-mix(in srgb, var(--foreground) 88%, var(--background));
+  --comment-background: color-mix(in srgb, var(--foreground) 20%, var(--background));
+
+  /* Chrome — Shape and depth rather than colour. */
+  --radius: 0.5rem;
+  --shadow-popover: 0 10px 24px -6px rgb(0 0 0 / 0.28), 0 4px 8px -4px rgb(0 0 0 / 0.2);
+  --shadow-dialog: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+}
+
+[data-theme='light'] {
+
+  /* Surfaces — The page and the things that sit on it. */
+  --background: var(--color-neutral-50);
+  --foreground: var(--color-neutral-900);
+  --card: #ffffff;
+  --card-foreground: var(--color-neutral-900);
+  --popover: #ffffff;
+  --popover-foreground: var(--color-neutral-900);
+
+  /* Brand and action — The colour this vault is, and the things you can press. */
+  /* The brand as a FILL, with primary-foreground on top of it. */
+  --primary: var(--color-sky-600);
+  --primary-foreground: #ffffff;
+  /* The same brand as TEXT. A fill dark enough to carry pale text is too dark to be text. */
+  --brand: var(--color-sky-700);
+  --ring: var(--color-sky-600);
+  /* Highlighted text. Follows the brand unless you set it. */
+  --selection: color-mix(in srgb, var(--primary) 30%, transparent);
+
+  /* Supporting — Quieter fills: a hover, a secondary button, text that is not the point. */
+  --secondary: var(--color-neutral-200);
+  --secondary-foreground: var(--color-neutral-900);
+  --muted: var(--color-neutral-200);
+  --muted-foreground: var(--color-neutral-600);
+  /* The subtle hover surface, not the brand. */
+  --accent: var(--color-neutral-200);
+  --accent-foreground: var(--color-neutral-900);
+
+  /* Warnings — Destructive actions, and anything that has gone wrong. */
+  --destructive: var(--color-red-600);
+  --destructive-foreground: #ffffff;
+
+  /* Edges — What separates one thing from another. */
+  --border: var(--color-neutral-300);
+  /* The seam between two panes. `border` is the edge of an object. */
+  --divider: color-mix(in srgb, var(--border) 55%, var(--background));
+  /* The line beside a sidebar and under its header. Transparent unless set. */
+  --drawer-edge: transparent;
+  --input: var(--color-neutral-300);
+
+  /* Scrollbars — The thumb, at rest and under the pointer. */
+  --scrollbar-thumb: var(--color-neutral-400);
+  --scrollbar-thumb-hover: var(--color-neutral-500);
+
+  /* In a note — Links, task orbs, inline code and comments, inside the editor. */
+  --link: #7dd3fc;
+  --link-missing: #f0abfc;
+  --task: #fbbf24;
+  --task-todo: #6e7681;
+  --task-doing: #388bfd;
+  --task-done: #3fb950;
+  --code: var(--color-orange-700);
+  --comment: var(--foreground);
+  --comment-background: color-mix(in srgb, var(--foreground) 20%, var(--background));
+
+  /* Chrome — Shape and depth rather than colour. */
+  --radius: 0.5rem;
+  --shadow-popover: 0 10px 24px -6px rgb(0 0 0 / 0.14), 0 4px 8px -4px rgb(0 0 0 / 0.1);
+  --shadow-dialog: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+}

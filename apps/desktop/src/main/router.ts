@@ -50,7 +50,7 @@ import { ensureClone } from './vault/clone'
 import { pruneEmptiedFolder, removeDocFile, writeAtomic, absPathFor } from './vault/vault-files'
 import { renameNote } from './vault/rename'
 import { scanVault, type ScanClaim, type VaultSnapshot } from './vault/vault-store'
-import { readVaultTheme, resetVaultTheme, writeVaultTheme } from './vault/theme'
+import { holiTheme, readVaultTheme, resetVaultTheme, writeVaultTheme } from './vault/theme'
 import { readVaultSettings, writeVaultSettings } from './vault/settings'
 import { knownTransforms, parseSettingsPatch } from '@holi/shared'
 import { installedInfos } from './plugin-host/installed'
@@ -1349,6 +1349,10 @@ export function createRouter(deps: RouterDeps) {
       .input(fields({ remote: 'string' }))
       .query(({ input }): Promise<ResolvedTheme> => rootFor(input.remote).then(readVaultTheme)),
 
+    /** Holi's own theme, what a token's reset writes back. The same for every
+     *  vault, so it takes none. */
+    holi: t.procedure.query(() => holiTheme()),
+
     /**
      * One pane edit, into one of the two files.
      *
@@ -1372,13 +1376,17 @@ export function createRouter(deps: RouterDeps) {
         return { ok: true as const, warnings }
       }),
 
-    // Back to standard: delete both theme files. A write (deletion), so it lives
-    // as a mutation. The running app reverts on its own via the watcher — no
-    // channel needed.
-    reset: t.procedure.input(fields({ remote: 'string' })).mutation(async ({ input }) => {
-      await resetVaultTheme(await rootFor(input.remote))
-      return { ok: true as const }
-    }),
+    // One mode back to Holi's theme, in both files. The running app follows
+    // through the watcher, as for any write.
+    reset: t.procedure
+      .input(fields({ remote: 'string', mode: 'string' }))
+      .mutation(async ({ input }) => {
+        if (input.mode !== 'light' && input.mode !== 'dark') {
+          throw new TRPCError({ code: 'BAD_REQUEST', message: `no such mode: ${input.mode}` })
+        }
+        await resetVaultTheme(await rootFor(input.remote), input.mode)
+        return { ok: true as const }
+      }),
   })
 
   // The vault's own settings: what it opens on, whether it keeps a daily note,
