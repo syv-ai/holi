@@ -1,9 +1,10 @@
 /**
  * The ritual's settings act: how this vault behaves, asked once, at birth.
  *
- * **Renders the list; does not know the list.** Every row comes from
- * the descriptors asked at birth (`settingDescriptorsAtom`, with the installed
- * plugins' commit transforms), so adding a setting is adding a descriptor.
+ * **Renders the list; does not know the list.** Every row comes from the
+ * descriptors asked at birth, with the commit transforms of core and of the
+ * plugins the act before kept on: a transform of a plugin turned off would be
+ * a question about something this vault will not run.
  *
  * **The ritual's list is a subset.** A preference with a good default and no
  * consequence at a vault's first moment lives in the settings tab instead;
@@ -12,10 +13,19 @@
  * Nothing here is required. The seed has already written every default, so
  * clicking straight through is a no-op.
  */
-import { availableOptions, type VaultSettingDescriptor } from '@holi/shared'
+import {
+  SETTINGS_FILE,
+  VAULT_SETTING_DEFAULTS,
+  availableOptions,
+  enabledPlugins,
+  knownTransforms,
+  vaultSettingDescriptors,
+  type PluginSettings,
+  type VaultSettingDescriptor,
+} from '@holi/shared'
 import { useAtomValue } from 'jotai'
-import { settingDescriptorsAtom } from '@/state/plugins'
-import { Button, Checkbox } from '@/primitives'
+import { installedPluginsAtom } from '@/state/plugins'
+import { Button, Switch } from '@/primitives'
 
 interface Props {
   /** The answers so far, keyed by descriptor. A missing key falls back to the
@@ -54,16 +64,25 @@ function Row({
   descriptor,
   settings,
   onChange,
+  owners,
 }: {
   descriptor: VaultSettingDescriptor
   settings: Record<string, unknown>
   onChange: Props['onChange']
+  /** A transform's plugin, by transform name, for the ones a plugin runs. */
+  owners: ReadonlyMap<string, string>
 }) {
-  const { key, label, explanation, control, whereToChange } = descriptor
+  const { key, label, explanation, control } = descriptor
   const value = settings[key] ?? descriptor.default
 
   return (
-    <div className="obrit-setting" role="group" aria-label={label} data-setting={key}>
+    <div
+      className="obrit-setting"
+      role="group"
+      aria-label={label}
+      data-setting={key}
+      data-kind={control.kind}
+    >
       <div className="obrit-setting-head">
         <div className="obrit-setting-label">{label}</div>
         <p className="obrit-setting-explain">{explanation}</p>
@@ -71,7 +90,7 @@ function Row({
 
       <div className="obrit-setting-control">
         {control.kind === 'toggle' && (
-          <Checkbox
+          <Switch
             checked={value === true}
             onCheckedChange={(next) => onChange(key, next === true)}
             aria-label={label}
@@ -99,9 +118,10 @@ function Row({
           <div className="obrit-setting-group">
             {control.toggles.map((toggle) => {
               const block = (value ?? {}) as Record<string, boolean>
+              const owner = owners.get(toggle.key)
               return (
                 <label key={toggle.key} className="obrit-setting-sub">
-                  <Checkbox
+                  <Switch
                     checked={block[toggle.key] === true}
                     // The whole block, not just the switch that moved: a patch
                     // naming one transform must not read as an answer about the
@@ -111,7 +131,10 @@ function Row({
                     }
                     aria-label={`${toggle.label}. ${toggle.explanation}`}
                   />
-                  <span className="obrit-setting-sub-label">{toggle.label}</span>
+                  <span className="obrit-setting-sub-label">
+                    {toggle.label}
+                    {owner !== undefined && <span className="obrit-setting-owner">{owner}</span>}
+                  </span>
                   <span className="obrit-setting-sub-explain">{toggle.explanation}</span>
                 </label>
               )
@@ -119,19 +142,39 @@ function Row({
           </div>
         )}
       </div>
-
-      <div className="obrit-setting-where">{whereToChange}</div>
     </div>
   )
 }
 
 export function VaultSettingsAct({ settings, onChange }: Props) {
-  const asked = useAtomValue(settingDescriptorsAtom).filter((d) => d.askedAtBirth)
+  const infos = useAtomValue(installedPluginsAtom).map((p) => p.info)
+  const on = enabledPlugins(
+    (settings.plugins as PluginSettings | undefined) ?? VAULT_SETTING_DEFAULTS.plugins,
+    infos,
+  )
+  const kept = infos.filter((info) => on.has(info.id))
+  const asked = vaultSettingDescriptors(knownTransforms(kept)).filter((d) => d.askedAtBirth)
+  const owners = new Map(
+    kept.flatMap((info) => (info.transforms ?? []).map((t) => [t.name, info.label])),
+  )
   return (
-    <div className="obrit-settings">
-      {asked.map((descriptor) => (
-        <Row key={descriptor.key} descriptor={descriptor} settings={settings} onChange={onChange} />
-      ))}
-    </div>
+    <>
+      <div className="obrit-settings">
+        {asked.map((descriptor) => (
+          <Row
+            key={descriptor.key}
+            descriptor={descriptor}
+            settings={settings}
+            onChange={onChange}
+            owners={owners}
+          />
+        ))}
+      </div>
+      {/* Once for the act rather than under every row: the same answer to the
+          same question, eight times over, was the loudest thing on screen. */}
+      <p className="obrit-settings-where">
+        Change any of these later in Settings, or in <code>{SETTINGS_FILE}</code>.
+      </p>
+    </>
   )
 }

@@ -1,13 +1,13 @@
 /**
  * Pure flow reducer for the first-run / add-vault onboarding ritual.
  *
- * The 4-act ritual (greeting → naming → settings → threshold) is driven entirely
+ * The 5-act ritual (greeting → naming → plugins → settings → threshold) is driven entirely
  * by this reducer; `OnboardingRitual.tsx` is a thin view over it. Keeping the
  * flow pure lets it be unit-tested without a DOM.
  */
-import { VAULT_SETTING_DESCRIPTORS, normaliseAnswers } from '@holi/shared'
+import { VAULT_SETTING_DESCRIPTORS, normaliseAnswers, type PluginSettings } from '@holi/shared'
 
-export type Act = 1 | 2 | 3 | 4
+export type Act = 1 | 2 | 3 | 4 | 5
 export type View = 'form' | 'join'
 export type Mode = 'first-run' | 'add-vault'
 
@@ -52,9 +52,9 @@ export const initialState = (mode: Mode, owner: string): OnboardingState => ({
 export const canAdvance = (s: OnboardingState): boolean => {
   if (s.act === 1) return true
   if (s.act === 2) return slugify(s.name).length > 0
-  // The settings act always advances: every row carries a default, so there is
-  // nothing to fill in and nothing to block on. Act 4 is the last.
-  if (s.act === 3) return true
+  // The plugins and settings acts always advance: every row carries a default,
+  // so there is nothing to fill in and nothing to block on. Act 5 is the last.
+  if (s.act === 3 || s.act === 4) return true
   return false
 }
 
@@ -70,6 +70,7 @@ export type Action =
   | { type: 'setName'; name: string }
   | { type: 'setOwner'; owner: string }
   | { type: 'setSetting'; key: string; value: unknown }
+  | { type: 'setPlugin'; id: string; on: boolean; byDefault: boolean }
   | { type: 'submitStart' }
   | { type: 'created' }
   | { type: 'failInPlace'; error: string }
@@ -101,12 +102,22 @@ export const reduce = (s: OnboardingState, a: Action): OnboardingState => {
       // daily notes off takes "today's note" off the Home row, and the value
       // sitting there becomes one the user can neither see nor change.
       return { ...s, settings: normaliseAnswers({ ...s.settings, [a.key]: a.value }) }
+    case 'setPlugin': {
+      // Only a plugin turned away from its own default is written down, so a
+      // vault that keeps the default follows it if Holi ever changes it.
+      const current = s.settings.plugins as PluginSettings
+      const vault = { ...current.vault }
+      if (a.on === a.byDefault) delete vault[a.id]
+      else vault[a.id] = a.on
+      return { ...s, settings: { ...s.settings, plugins: { ...current, vault } } }
+    }
     case 'submitStart':
       return { ...s, submitting: true, error: null }
     case 'created':
-      // The repo now exists and is pushed: advance to the SETTINGS act, where
-      // its settings files get the user's answers merged over the seed's
-      // defaults. Only reached from act 2 (naming), after create.
+      // The repo now exists and is pushed: advance to the PLUGINS act. Its
+      // answer and the settings act's are merged over the seed's defaults
+      // together, when the settings act continues. Only reached from act 2
+      // (naming), after create.
       return { ...s, act: 3, submitting: false, error: null }
     case 'failInPlace':
       // A submit failure (create, or a join adopt) stays exactly where it

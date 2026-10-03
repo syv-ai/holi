@@ -31,7 +31,14 @@ import {
   type Act,
   type Mode,
 } from '@/state/onboarding-flow'
-import { splitAnswersByTarget } from '@holi/shared'
+import {
+  VAULT_SETTING_DEFAULTS,
+  enabledPlugins,
+  splitAnswersByTarget,
+  type PluginSettings,
+} from '@holi/shared'
+import { installedPluginsAtom } from '@/state/plugins'
+import { PluginsAct } from './PluginsAct'
 import { VaultSettingsAct } from './VaultSettingsAct'
 import './onboarding-ritual.css'
 
@@ -64,6 +71,7 @@ interface Props {
 
 export function OnboardingRitual({ mode, onDismiss, dryRun = false }: Props) {
   const session = useAtomValue(sessionAtom)
+  const installed = useAtomValue(installedPluginsAtom)
   const known = useAtomValue(vaultsAtom)
   const createVault = useSetAtom(createVaultAtom)
   const addVault = useSetAtom(addVaultAtom)
@@ -151,7 +159,7 @@ export function OnboardingRitual({ mode, onDismiss, dryRun = false }: Props) {
   const back = () => {
     // The threshold is terminal: the vault already exists, so only "Open vault"
     // forward. The settings act before it is NOT terminal.
-    if (s.act === 4) return
+    if (s.act === 5) return
     if (s.view === 'join') {
       dispatch({ type: 'toForm' })
       return
@@ -186,7 +194,12 @@ export function OnboardingRitual({ mode, onDismiss, dryRun = false }: Props) {
       advance()
       return
     }
-    const { committed, local } = splitAnswersByTarget(s.settings)
+    // The plugins answer is written as a patch is: a plugin id to on or off,
+    // for the ones turned away from their default. The resolved shape the act
+    // keeps (`vault` and `localOff`) is what a read returns, not what a write
+    // takes.
+    const answers = { ...s.settings, plugins: plugins.vault }
+    const { committed, local } = splitAnswersByTarget(answers)
     try {
       const { warnings } = await trpc.settings.write.mutate({
         remote,
@@ -284,8 +297,8 @@ export function OnboardingRitual({ mode, onDismiss, dryRun = false }: Props) {
         advance()
       } else if (e.key === 'Enter') {
         e.preventDefault()
-        if (s.act === 4) void enter()
-        else if (s.act === 3) void saveSettings()
+        if (s.act === 5) void enter()
+        else if (s.act === 4) void saveSettings()
         else if (s.act === 2 && s.view === 'form') void submit()
         else advance()
       } else if (e.key === 'Escape') {
@@ -297,6 +310,13 @@ export function OnboardingRitual({ mode, onDismiss, dryRun = false }: Props) {
     return () => window.removeEventListener('keydown', handler)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [s, mode, slug])
+
+  const plugins =
+    (s.settings.plugins as PluginSettings | undefined) ?? VAULT_SETTING_DEFAULTS.plugins
+  const running = enabledPlugins(
+    plugins,
+    installed.map((p) => p.info),
+  )
 
   const dotState = (n: Act): DotState => {
     if (n < s.act) return 'done'
@@ -340,6 +360,8 @@ export function OnboardingRitual({ mode, onDismiss, dryRun = false }: Props) {
               <span className="obrit-dot" data-state={dotState(3)} />
               <span className="obrit-rule" />
               <span className="obrit-dot" data-state={dotState(4)} />
+              <span className="obrit-rule" />
+              <span className="obrit-dot" data-state={dotState(5)} />
             </div>
             {dismissible && (
               <IconButton
@@ -504,9 +526,34 @@ export function OnboardingRitual({ mode, onDismiss, dryRun = false }: Props) {
             </div>
           </section>
 
-          {/* ── Act 3: How this vault behaves ── */}
+          {/* ── Act 3: What this vault runs ── */}
+          {/* Chosen once, at birth: see `PluginsAct`. */}
+          <section
+            className="obrit-act obrit-settings-act obrit-plugins-act"
+            data-state={actState(3)}
+          >
+            <div className="obrit-act-inner">
+              <div className="obrit-eyebrow">WHAT THIS VAULT RUNS</div>
+              <p className="obrit-lede">
+                Notes, tasks and sync are always there. These come on top.
+              </p>
+
+              <PluginsAct
+                plugins={plugins}
+                onChange={(info, on) =>
+                  dispatch({ type: 'setPlugin', id: info.id, on, byDefault: info.default })
+                }
+              />
+              <p className="obrit-settings-where">
+                Everyone who clones this vault gets the same plugins. Any of them can be turned off
+                on one machine, in Settings.
+              </p>
+            </div>
+          </section>
+
+          {/* ── Act 4: How this vault behaves ── */}
           {/* Asked once, at birth: see `VaultSettingsAct`. */}
-          <section className="obrit-act obrit-settings-act" data-state={actState(3)}>
+          <section className="obrit-act obrit-settings-act" data-state={actState(4)}>
             <div className="obrit-act-inner">
               <div className="obrit-eyebrow">A FEW CHOICES</div>
               <p className="obrit-lede">All of them have sensible answers already.</p>
@@ -518,8 +565,8 @@ export function OnboardingRitual({ mode, onDismiss, dryRun = false }: Props) {
             </div>
           </section>
 
-          {/* ── Act 4: Threshold ── */}
-          <section className="obrit-act obrit-threshold" data-state={actState(4)}>
+          {/* ── Act 5: Threshold ── */}
+          <section className="obrit-act obrit-threshold" data-state={actState(5)}>
             <div className="obrit-act-inner">
               <div className="obrit-thresh-rule" />
               <div className="obrit-eyebrow">YOUR VAULT IS READY</div>
@@ -557,10 +604,13 @@ export function OnboardingRitual({ mode, onDismiss, dryRun = false }: Props) {
                   <kbd className="obrit-kbd">⌘T</kbd>
                   <span className="obrit-hotkey-label">tasks</span>
                 </div>
-                <div className="obrit-hotkey">
-                  <kbd className="obrit-kbd">⌘M</kbd>
-                  <span className="obrit-hotkey-label">mail</span>
-                </div>
+                {/* Mail is Google's: no hint for a key that opens nothing. */}
+                {running.has('google') && (
+                  <div className="obrit-hotkey">
+                    <kbd className="obrit-kbd">⌘M</kbd>
+                    <span className="obrit-hotkey-label">mail</span>
+                  </div>
+                )}
               </div>
 
               {s.error && <div className="obrit-error">{s.error}</div>}
@@ -570,7 +620,7 @@ export function OnboardingRitual({ mode, onDismiss, dryRun = false }: Props) {
 
         <footer className="obrit-foot">
           <div className="obrit-foot-side">
-            {s.view === 'form' && s.act !== 4 && (s.act > startingAct(mode) || dismissible) && (
+            {s.view === 'form' && s.act !== 5 && (s.act > startingAct(mode) || dismissible) && (
               <Button variant="ghost" className={CEREMONY_GHOST} onClick={back}>
                 <span aria-hidden>←</span>
                 {s.act > startingAct(mode) ? 'back' : 'dismiss'}
@@ -579,6 +629,12 @@ export function OnboardingRitual({ mode, onDismiss, dryRun = false }: Props) {
           </div>
           <div className="obrit-foot-side is-right">
             {s.act === 3 && (
+              <Button variant="ceremony" onClick={advance}>
+                Continue
+                <span aria-hidden>→</span>
+              </Button>
+            )}
+            {s.act === 4 && (
               <Button variant="ceremony" onClick={() => void saveSettings()}>
                 Continue
                 <span aria-hidden>→</span>

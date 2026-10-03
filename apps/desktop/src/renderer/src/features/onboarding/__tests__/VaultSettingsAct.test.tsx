@@ -1,7 +1,12 @@
 import { render, screen, within } from '@/test/render'
 import userEvent from '@testing-library/user-event'
 import { expect, test, vi } from 'vitest'
-import { CORE_TRANSFORMS, RITUAL_SETTING_DESCRIPTORS, VAULT_SETTING_DEFAULTS } from '@holi/shared'
+import {
+  CORE_TRANSFORMS,
+  RITUAL_SETTING_DESCRIPTORS,
+  SETTINGS_FILE,
+  VAULT_SETTING_DEFAULTS,
+} from '@holi/shared'
 import { VaultSettingsAct } from '../VaultSettingsAct'
 
 function setup(over: Record<string, unknown> = {}) {
@@ -23,21 +28,21 @@ test('renders one row per descriptor, in the list’s own order', () => {
   )
 })
 
-test('every row says what it is and where to change it later', () => {
+test('every row says what it is, and the act says where to change them later', () => {
   setup()
   for (const d of RITUAL_SETTING_DESCRIPTORS) {
     const row = screen.getByRole('group', { name: d.label })
     expect(within(row).getByText(d.explanation)).toBeInTheDocument()
-    // A step that changes something and does not say where to change it later
-    // is a dead end for anyone who wants to change their mind.
-    expect(within(row).getByText(d.whereToChange)).toBeInTheDocument()
   }
+  // A step that changes something and does not say where to change it later
+  // is a dead end for anyone who wants to change their mind. Said once.
+  expect(screen.getByText(SETTINGS_FILE)).toBeInTheDocument()
 })
 
 test('a toggle reports its key and its new value', async () => {
   const { onChange } = setup()
   const row = screen.getByRole('group', { name: 'Keep a daily note' })
-  await userEvent.click(within(row).getByRole('checkbox'))
+  await userEvent.click(within(row).getByRole('switch'))
   expect(onChange).toHaveBeenCalledWith('dailyNotes', false)
 })
 
@@ -65,9 +70,9 @@ test('appearance is a choice too, and reports a plain string', async () => {
 test('the transforms are one row of several switches', async () => {
   const { onChange } = setup()
   const row = screen.getByRole('group', { name: 'Run on every commit' })
-  expect(within(row).getAllByRole('checkbox')).toHaveLength(CORE_TRANSFORMS.length)
+  expect(within(row).getAllByRole('switch')).toHaveLength(CORE_TRANSFORMS.length)
 
-  await userEvent.click(within(row).getByRole('checkbox', { name: /File finished tasks away/ }))
+  await userEvent.click(within(row).getByRole('switch', { name: /File finished tasks away/ }))
   // The whole block comes back, not just the switch that moved: a patch naming
   // one transform must not read as an answer about the others.
   expect(onChange).toHaveBeenCalledWith('hooks', {
@@ -81,10 +86,8 @@ test('the transforms are one row of several switches', async () => {
 test('a transform switch shows the vault’s current answer', () => {
   setup({ hooks: { ...VAULT_SETTING_DEFAULTS.hooks, relink: false, 'archive-done': true } })
   const row = screen.getByRole('group', { name: 'Run on every commit' })
-  expect(
-    within(row).getByRole('checkbox', { name: /Fix links when a file moves/ }),
-  ).not.toBeChecked()
-  expect(within(row).getByRole('checkbox', { name: /File finished tasks away/ })).toBeChecked()
+  expect(within(row).getByRole('switch', { name: /Fix links when a file moves/ })).not.toBeChecked()
+  expect(within(row).getByRole('switch', { name: /File finished tasks away/ })).toBeChecked()
 })
 
 test('warns about the shared-vault collision on the daily-note row', () => {

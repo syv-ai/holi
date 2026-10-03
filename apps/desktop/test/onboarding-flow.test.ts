@@ -27,28 +27,32 @@ describe('startingAct', () => {
 describe('reduce', () => {
   const s0 = initialState('first-run', 'nthomsencph')
 
-  it('advance walks 1→2→3→4 and stops', () => {
+  it('advance walks 1→2→3→4→5 and stops', () => {
     const s1 = reduce(s0, { type: 'advance' })
     expect(s1.act).toBe(2)
     // act2 cannot advance without a slug
     expect(reduce(s1, { type: 'advance' }).act).toBe(2)
     const named = reduce(s1, { type: 'setName', name: 'notes' })
-    const settings = reduce(named, { type: 'advance' })
-    expect(settings.act).toBe(3)
-    // The settings act always advances — every row has a default, so there is
-    // nothing to fill in and nothing to block on.
+    const plugins = reduce(named, { type: 'advance' })
+    expect(plugins.act).toBe(3)
+    // The plugins and settings acts always advance: every row has a default,
+    // so there is nothing to fill in and nothing to block on.
+    const settings = reduce(plugins, { type: 'advance' })
+    expect(settings.act).toBe(4)
     const threshold = reduce(settings, { type: 'advance' })
-    expect(threshold.act).toBe(4)
+    expect(threshold.act).toBe(5)
     // The threshold is the floor of "there is nowhere further".
-    expect(reduce(threshold, { type: 'advance' }).act).toBe(4)
+    expect(reduce(threshold, { type: 'advance' }).act).toBe(5)
   })
 
-  it('canAdvance is true on the settings act and false on the threshold', () => {
+  it('canAdvance is true on the plugins and settings acts and false on the threshold', () => {
     expect(canAdvance({ ...s0, act: 3 })).toBe(true)
-    expect(canAdvance({ ...s0, act: 4 })).toBe(false)
+    expect(canAdvance({ ...s0, act: 4 })).toBe(true)
+    expect(canAdvance({ ...s0, act: 5 })).toBe(false)
   })
 
-  it('back from the settings act returns to naming', () => {
+  it('back walks from the settings act to the plugins act, and on to naming', () => {
+    expect(reduce({ ...s0, act: 4 }, { type: 'back', mode: 'first-run' }).act).toBe(3)
     expect(reduce({ ...s0, act: 3 }, { type: 'back', mode: 'first-run' }).act).toBe(2)
   })
 
@@ -59,16 +63,12 @@ describe('reduce', () => {
     expect(reduce({ ...s0, act: 2 }, { type: 'back', mode: 'add-vault' }).act).toBe(2) // add-vault floor
   })
 
-  it('created advances to the SETTINGS act and clears the pending state', () => {
-    // Act 3 used to be the threshold. It is now the settings step, and the
-    // threshold moved to 4 — so this assertion reads the same and means
-    // something different. The vault exists by here either way.
+  it('created advances to the PLUGINS act and clears the pending state', () => {
+    // The vault exists by here: the plugins and settings acts write into it.
     const naming = reduce(reduce(s0, { type: 'advance' }), { type: 'setName', name: 'notes' })
     const submitting = reduce(naming, { type: 'submitStart' })
     const done = reduce(submitting, { type: 'created' })
     expect(done).toMatchObject({ act: 3, submitting: false, error: null })
-    // ...and the threshold is one more step on, where it can truthfully say the
-    // repo exists.
     expect(reduce(done, { type: 'advance' }).act).toBe(4)
   })
 
@@ -138,5 +138,22 @@ describe('the settings the ritual collects', () => {
     expect(Object.keys(added.settings).sort()).toEqual(
       VAULT_SETTING_DESCRIPTORS.map((d) => d.key).sort(),
     )
+  })
+})
+
+describe('plugins', () => {
+  const s0 = initialState('first-run', 'ada')
+  const pluginsOf = (s: ReturnType<typeof initialState>) =>
+    s.settings.plugins as { vault: Record<string, boolean>; localOff: string[] }
+
+  it('records a plugin turned away from its default', () => {
+    const off = reduce(s0, { type: 'setPlugin', id: 'pdf', on: false, byDefault: true })
+    expect(pluginsOf(off).vault).toEqual({ pdf: false })
+  })
+
+  it('records nothing for a plugin back on its default, so a later default still reaches it', () => {
+    const off = reduce(s0, { type: 'setPlugin', id: 'pdf', on: false, byDefault: true })
+    const back = reduce(off, { type: 'setPlugin', id: 'pdf', on: true, byDefault: true })
+    expect(pluginsOf(back).vault).toEqual({})
   })
 })
