@@ -1,19 +1,21 @@
 /**
  * Pure flow reducer for the first-run / add-vault onboarding ritual.
  *
- * The 5-act ritual (greeting → naming → plugins → settings → threshold) is driven entirely
- * by this reducer; `OnboardingRitual.tsx` is a thin view over it. Keeping the
- * flow pure lets it be unit-tested without a DOM.
+ * The acts, in order, are `ACTS`; everything that walks them (advance, back,
+ * the floor, the step dots) reads that list, so adding an act is adding it
+ * there. `OnboardingRitual.tsx` is a thin view over this reducer, and keeping
+ * the flow pure lets it be unit-tested without a DOM.
  */
 import { VAULT_SETTING_DESCRIPTORS, normaliseAnswers, type PluginSettings } from '@holi/shared'
 
-export type Act = 1 | 2 | 3 | 4 | 5
+export const ACTS = ['greeting', 'naming', 'plugins', 'settings', 'threshold'] as const
+export type Act = (typeof ACTS)[number]
 export type View = 'form' | 'join'
 export type Mode = 'first-run' | 'add-vault'
 
 export interface OnboardingState {
   act: Act
-  /** 'join' overlays act 2 with the repo picker. */
+  /** 'join' overlays the naming act with the repo picker. */
   view: View
   /** As typed; the slug is derived via `slugify`. */
   name: string
@@ -37,7 +39,13 @@ export const slugify = (s: string): string =>
     .replace(/^-|-$/g, '')
 
 /** 'first-run' opens on the greeting; 'add-vault' skips straight to naming. */
-export const startingAct = (mode: Mode): Act => (mode === 'first-run' ? 1 : 2)
+export const startingAct = (mode: Mode): Act => (mode === 'first-run' ? 'greeting' : 'naming')
+
+/** Where `act` stands in the ritual, for walking it and for the step dots. */
+export const actIndex = (act: Act): number => ACTS.indexOf(act)
+
+/** The acts a mode shows, in order: add-vault has no greeting. */
+export const actsFor = (mode: Mode): readonly Act[] => ACTS.slice(actIndex(startingAct(mode)))
 
 export const initialState = (mode: Mode, owner: string): OnboardingState => ({
   act: startingAct(mode),
@@ -50,12 +58,11 @@ export const initialState = (mode: Mode, owner: string): OnboardingState => ({
 })
 
 export const canAdvance = (s: OnboardingState): boolean => {
-  if (s.act === 1) return true
-  if (s.act === 2) return slugify(s.name).length > 0
+  if (s.act === 'naming') return slugify(s.name).length > 0
   // The plugins and settings acts always advance: every row carries a default,
-  // so there is nothing to fill in and nothing to block on. Act 5 is the last.
-  if (s.act === 3 || s.act === 4) return true
-  return false
+  // so there is nothing to fill in and nothing to block on. The threshold is
+  // the last.
+  return s.act !== 'threshold'
 }
 
 /** True on the form at the starting act: the point where `back` dismisses. */
@@ -79,14 +86,12 @@ export const reduce = (s: OnboardingState, a: Action): OnboardingState => {
   switch (a.type) {
     case 'advance': {
       if (!canAdvance(s)) return s
-      const act = (s.act + 1) as Act
-      return { ...s, act, error: null }
+      return { ...s, act: ACTS[actIndex(s.act) + 1]!, error: null }
     }
     case 'back': {
       if (s.view === 'join') return { ...s, view: 'form', error: null }
-      const floor = startingAct(a.mode)
-      const act = Math.max(floor, s.act - 1) as Act
-      return { ...s, act, error: null }
+      const floor = actIndex(startingAct(a.mode))
+      return { ...s, act: ACTS[Math.max(floor, actIndex(s.act) - 1)]!, error: null }
     }
     case 'toJoin':
       return { ...s, view: 'join', error: null }
@@ -116,9 +121,9 @@ export const reduce = (s: OnboardingState, a: Action): OnboardingState => {
     case 'created':
       // The repo now exists and is pushed: advance to the PLUGINS act. Its
       // answer and the settings act's are merged over the seed's defaults
-      // together, when the settings act continues. Only reached from act 2
+      // together, when the settings act continues. Only reached from naming
       // (naming), after create.
-      return { ...s, act: 3, submitting: false, error: null }
+      return { ...s, act: 'plugins', submitting: false, error: null }
     case 'failInPlace':
       // A submit failure (create, or a join adopt) stays exactly where it
       // happened, with the message shown, rather than navigating away, which
