@@ -37,7 +37,7 @@
   --brand: var(--color-sky-400);
   --ring: var(--color-sky-700);
   /* Highlighted text. Follows the brand unless you set it. */
-  --selection: color-mix(in srgb, var(--primary) 30%, transparent);
+  --selection: color-mix(in srgb, var(--brand) 35%, transparent);
 
   /* Supporting — Quieter fills: a hover, a secondary button, text that is not the point. */
   --secondary: var(--color-neutral-800);
@@ -49,8 +49,8 @@
   --accent-foreground: var(--color-neutral-100);
 
   /* Warnings — Destructive actions, and anything that has gone wrong. */
-  --destructive: var(--color-red-900);
-  --destructive-foreground: var(--color-red-100);
+  --destructive: var(--color-red-400);
+  --destructive-foreground: var(--color-red-950);
 
   /* Edges — What separates one thing from another. */
   --border: var(--color-neutral-800);

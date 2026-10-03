@@ -89,9 +89,9 @@ choice needs explaining, put it in a note in the vault.
 
 ## Tips
 
-- Change just `--primary` for the biggest shift with the least effort: buttons,
-  focus rings, active states and text selection all follow it, as long as
-  `--ring` and `--selection` still refer to it.
+- Change just `--primary` and `--brand` for the biggest shift with the least
+  effort: buttons, focus rings, active states and text selection all follow
+  them, as long as `--ring` and `--selection` still refer to them.
 - Set `--brand` whenever you set `--primary`. They are the same colour in two
   roles, and a fill dark enough to carry pale text is too dark to BE text.
 - Keep enough contrast between `--background` and `--foreground` to stay readable.

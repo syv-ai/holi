@@ -14,8 +14,10 @@
    - `--divider` is the hairline between pieces of CHROME (pane splits, panel
      rules), `--border` the edge of an OBJECT. Mixed from the two, so it follows
      a re-theme. `--drawer-edge` is transparent: a drawer lies flat on the page.
-   - `--selection` follows the brand, so recolouring `--primary` alone
-     recolours it.
+   - `--selection` follows the brand: `--primary` in light, `--brand` in dark,
+     where the fill-dark primary at 30% vanished on near-black.
+   - Dark `--destructive` is red-400 under red-950 text: it is text as often as
+     it is a fill (menu items, errors), and red-900 could not be read as text.
    - `--shadow-popover` is heavier than Tailwind's md because overlays have no
      border; a dialog sits over a scrim, so `--shadow-dialog` stays light.
      Light's popover shadow is softer, where the dark weight reads as smudge.
