@@ -850,6 +850,7 @@ export function FileTree({
           verb={actions.confirmVerb}
           label={actions.confirming.label}
           refs={actions.confirming.refs}
+          linkable={actions.confirming.paths.some((p) => p.endsWith('.md'))}
           onCancel={actions.cancelDelete}
           onConfirm={actions.confirmDelete}
         />

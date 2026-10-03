@@ -14,9 +14,13 @@ export function DeleteConfirm({
   onCancel,
   onConfirm,
   verb = 'Delete',
+  linkable = true,
 }: {
   label: string
   refs: { path: string; count: number }[]
+  /** Whether any of it is a note, the only thing a link can point at. With
+   *  none (an app, a folder of images), "nothing links to it" says nothing. */
+  linkable?: boolean
   onCancel: () => void
   onConfirm: () => void
   /**
@@ -36,7 +40,7 @@ export function DeleteConfirm({
         </Dialog.Header>
         <Dialog.Body>
           {refs.length === 0 ? (
-            <p className="text-xs text-muted-foreground">Nothing links to it.</p>
+            linkable && <p className="text-xs text-muted-foreground">Nothing links to it.</p>
           ) : (
             <div>
               <p className="mb-1 text-xs text-muted-foreground">
