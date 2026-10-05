@@ -8,6 +8,7 @@ import { appsRenderer } from './apps/renderer'
 import { communityRenderer } from './community/renderer'
 import { googleRenderer } from './google/renderer'
 import { pdfRenderer } from './pdf/renderer'
+import { transcribeRenderer } from './transcribe/renderer'
 
 export const RENDERER_PLUGINS: readonly RendererPlugin[] = [
   agentRenderer,
@@ -15,4 +16,5 @@ export const RENDERER_PLUGINS: readonly RendererPlugin[] = [
   googleRenderer,
   appsRenderer,
   communityRenderer,
+  transcribeRenderer,
 ]
