@@ -124,7 +124,7 @@ afterEach(() => {
 /** Open the picker and hand back its menu. */
 async function openPicker() {
   const user = userEvent.setup()
-  render(<AgendaView />)
+  render(<AgendaView initialView="list" />)
   await user.click(await screen.findByRole('button', { name: /choose calendars/i }))
   return { user, menu: await screen.findByRole('menu') }
 }
@@ -177,7 +177,7 @@ test('marks an event from someone else’s calendar as theirs', async () => {
     }),
   ])
 
-  render(<AgendaView />)
+  render(<AgendaView initialView="list" />)
 
   // Attribution on the row, so someone else's event never reads as the user's.
   expect(await screen.findByText('Jane Doe')).toBeInTheDocument()
@@ -195,7 +195,7 @@ test('flags an invitation that still needs an answer', async () => {
   ])
   const user = userEvent.setup()
 
-  render(<AgendaView />)
+  render(<AgendaView initialView="list" />)
   const rsvp = await screen.findByRole('button', { name: /answer Q2 review/i })
 
   // Only the unanswered one. An accepted meeting is a fact, not a task.
@@ -214,7 +214,7 @@ test('marks out-of-office distinctly from a meeting', async () => {
     event({ id: 'meet', title: 'Sync', kind: 'default' }),
   ])
 
-  render(<AgendaView />)
+  render(<AgendaView initialView="list" />)
   await screen.findByText('Away')
 
   expect(screen.getByText(/out of office/i)).toBeInTheDocument()
@@ -227,7 +227,7 @@ test('dims an event that does not block time', async () => {
     event({ id: 'busy', title: 'Interview', busy: true }),
   ])
 
-  render(<AgendaView />)
+  render(<AgendaView initialView="list" />)
   await screen.findByText('FYI release')
 
   const free = screen.getByText('FYI release').closest('li')!
@@ -240,7 +240,7 @@ test('offers the video link for a Zoom conference, not just Meet', async () => {
   agendaMock.mockResolvedValue([event({ conferenceUrl: 'https://syv.zoom.us/j/123' })])
   const user = userEvent.setup()
 
-  render(<AgendaView />)
+  render(<AgendaView initialView="list" />)
   await user.click(await screen.findByRole('button', { name: /join Q2 review/i }))
 
   // Not only Meet: `hangoutLink` alone would miss Zoom and Teams.
@@ -251,7 +251,7 @@ test('puts the event description into the task it creates', async () => {
   agendaMock.mockResolvedValue([event({ description: 'Dial-in 555-0100, agenda in the deck' })])
   const user = userEvent.setup()
 
-  render(<AgendaView />)
+  render(<AgendaView initialView="list" />)
   // Making a task lives in the detail pane; the row keeps only RSVP and Join.
   await user.click(await screen.findByRole('button', { name: /show Q2 review/i }))
   await user.click(await screen.findByRole('button', { name: /^task$/i }))
@@ -268,7 +268,7 @@ test('paints the cached agenda while Google is still answering', async () => {
   const live = deferred<unknown[]>()
   agendaMock.mockReturnValue(live.promise)
 
-  render(<AgendaView />)
+  render(<AgendaView initialView="list" />)
 
   // The point of the cache: a day on screen before Google answers.
   expect(await screen.findByText('Yesterday’s copy')).toBeInTheDocument()
@@ -283,7 +283,7 @@ test('paints the cached agenda while Google is still answering', async () => {
 test('says nothing about calendars when Google gives none', async () => {
   calendarsMock.mockRejectedValue(new Error('not connected'))
 
-  render(<AgendaView />)
+  render(<AgendaView initialView="list" />)
   await screen.findByRole('button', { name: /refresh agenda/i })
 
   // The agenda's own error surface covers the outage; a second broken control
@@ -299,7 +299,7 @@ test('says nothing about calendars when Google gives none', async () => {
 test('the list and the detail pane are separated by a draggable handle', async () => {
   agendaMock.mockResolvedValue([event()])
 
-  render(<AgendaView />)
+  render(<AgendaView initialView="list" />)
   await screen.findByText('Q2 review')
 
   expect(screen.getByRole('separator')).toBeInTheDocument()
@@ -308,7 +308,7 @@ test('the list and the detail pane are separated by a draggable handle', async (
 test('says nothing until an event is picked', async () => {
   agendaMock.mockResolvedValue([event()])
 
-  render(<AgendaView />)
+  render(<AgendaView initialView="list" />)
   await screen.findByText('Q2 review')
 
   // Nothing is selected on open.
@@ -318,7 +318,7 @@ test('says nothing until an event is picked', async () => {
 /** Open the one event and hand back its description's document. */
 async function descriptionFrame(): Promise<Document> {
   const user = userEvent.setup()
-  render(<AgendaView />)
+  render(<AgendaView initialView="list" />)
   await user.click(await screen.findByRole('button', { name: /show Q2 review/i }))
   const frame = (await screen.findByLabelText(/description of Q2 review/i)) as HTMLIFrameElement
   await waitFor(() => expect(frame.contentDocument?.body.firstChild).toBeTruthy())
@@ -363,7 +363,7 @@ test('renders an HTML description as markup, in a frame of its own', async () =>
   ])
   const user = userEvent.setup()
 
-  render(<AgendaView />)
+  render(<AgendaView initialView="list" />)
   await user.click(await screen.findByRole('button', { name: /show Q2 review/i }))
 
   const frame = (await screen.findByLabelText(/description of Q2 review/i)) as HTMLIFrameElement
@@ -386,7 +386,7 @@ test('names the things the row had to drop to fit', async () => {
   ])
   const user = userEvent.setup()
 
-  render(<AgendaView />)
+  render(<AgendaView initialView="list" />)
   await user.click(await screen.findByRole('button', { name: /show Q2 review/i }))
 
   expect(await screen.findByText('Room 3, second floor')).toBeInTheDocument()
@@ -400,7 +400,7 @@ test('lets go of an event that a refresh drops from the agenda', async () => {
   agendaMock.mockResolvedValue([event({ description: 'Dial-in 555-0100' })])
   const user = userEvent.setup()
 
-  render(<AgendaView />)
+  render(<AgendaView initialView="list" />)
   await user.click(await screen.findByRole('button', { name: /show Q2 review/i }))
   await screen.findByLabelText(/description of Q2 review/i)
 
@@ -417,7 +417,7 @@ test('remembers its width per account, not per vault', async () => {
   agendaMock.mockResolvedValue([event()])
   const reads = vi.spyOn(Storage.prototype, 'getItem')
 
-  render(<AgendaView />)
+  render(<AgendaView initialView="list" />)
   await screen.findByText('Q2 review')
 
   const keys = reads.mock.calls.map(([key]) => key)
