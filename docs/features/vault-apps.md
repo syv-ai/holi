@@ -268,3 +268,5 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   `packages/shared/src/app-store.ts` (where records and the log live, the record format and the
   field merge): the bundle grammar core keeps, because a synced vault holds bundles whatever
   this machine runs; `packages/shared/src/path-safety.ts` (`isAgentSurfacePath`).
+
+**Transcribe** is a first-party plugin (`plugins/transcribe/`), off by default, that seeds one app: `Transcribe.local.app`, which records an online meeting (microphone and meeting sound) and sends it to syv.ai for a transcript. It asks for `recording` and `network` through its manifest like any app. The `.local.` keeps the bundle, the recorded meetings and the API key the app stores on this machine, out of git; the bundle is seeded once. Turning Transcribe off leaves the folder where it is.
