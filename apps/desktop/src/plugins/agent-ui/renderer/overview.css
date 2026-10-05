@@ -1,0 +1,256 @@
+/*
+ * The overview's faces (AgentFace). The eyes blink: slowly at rest, quickly
+ * and glancing from side to side while the session works, and not at all while
+ * it waits on you, when they are held wide.
+ */
+.agent-face-eye {
+  transform-origin: center;
+  animation: agent-blink 4.6s ease-in-out infinite;
+}
+.agent-face[data-state='working'] .agent-face-eye {
+  animation-duration: 1.6s;
+}
+.agent-face[data-state='working'] .agent-face-eyes {
+  animation: agent-look 3.2s ease-in-out infinite;
+}
+.agent-face[data-state='needs-you'] .agent-face-eye {
+  animation: none;
+  border-radius: 9999px;
+  aspect-ratio: 1;
+}
+.agent-face[data-state='off'] .agent-face-eye {
+  animation: none;
+  transform: scaleY(0.15);
+}
+
+@keyframes agent-blink {
+  0%,
+  90%,
+  100% {
+    transform: scaleY(1);
+  }
+  95% {
+    transform: scaleY(0.1);
+  }
+}
+@keyframes agent-look {
+  0%,
+  100% {
+    transform: translateX(-14%);
+  }
+  50% {
+    transform: translateX(14%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-face-eye,
+  .agent-face-eyes {
+    animation: none !important;
+  }
+}
+
+/*
+ * The stack of bubbles (BubbleStack). Resting, the top few overlap, each a
+ * little lower and smaller than the one before; open, the same bubbles move
+ * to a column and their names show. Everything is placed from `--i`, the
+ * bubble's place from the top, so one rule says where each goes and the
+ * change between the two is a transition.
+ *
+ * The margins are the point: the stack keeps `--gap` from the window's edges,
+ * the fan keeps `--pad` of room round its bubbles (a ring and a status dot
+ * reach past a face), and nothing resting is clipped.
+ */
+.agent-stack {
+  position: absolute;
+  top: 1rem;
+  right: 1.25rem;
+  z-index: 20;
+  /* Its host floats over the panes and lets everything else through. */
+  pointer-events: auto;
+}
+.agent-fan {
+  --size: 2.5rem;
+  --row: 3rem;
+  --pitch: 3.25rem;
+  --peek: 0.875rem;
+  --pad: 0.625rem;
+  --footer: 2.5rem;
+  position: relative;
+  width: calc(var(--size) + 2 * var(--pad));
+  height: calc(var(--size) + 2 * var(--pad) + 2 * var(--peek));
+  transition:
+    width 300ms var(--ease-settle),
+    height 300ms var(--ease-settle),
+    background-color 200ms,
+    box-shadow 200ms;
+}
+.agent-stack[data-open] .agent-fan {
+  width: 20rem;
+  height: min(calc(var(--rows) * var(--pitch) + var(--footer) + 2 * var(--pad)), 70vh);
+  overflow: hidden;
+}
+/* The rows scroll when there are more than fit; the way to the history stays
+   at the foot of the fan. */
+.agent-stack[data-open] .agent-fan-scroll {
+  height: calc(100% - var(--footer));
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+.agent-fan-inner {
+  position: relative;
+  height: calc(var(--rows) * var(--pitch) + 2 * var(--pad));
+  /* Resting, it is taller than the stack: only the bubbles take the pointer,
+     never the empty room under them. */
+  pointer-events: none;
+}
+
+.agent-bubble {
+  box-sizing: border-box;
+  pointer-events: auto;
+  position: absolute;
+  top: var(--pad);
+  right: var(--pad);
+  z-index: calc(100 - var(--i));
+  display: flex;
+  align-items: center;
+  width: var(--size);
+  height: var(--size);
+  border-radius: 9999px;
+  transform-origin: center;
+  /* Resting: the top three show, each a step lower and smaller, and the rest
+     wait under the third. */
+  transform: translateY(calc(min(var(--i), 2) * var(--peek)))
+    scale(calc(1 - min(var(--i), 2) * 0.1));
+  opacity: clamp(0, calc(3 - var(--i)), 1);
+  transition:
+    transform 300ms var(--ease-settle),
+    width 300ms var(--ease-settle),
+    height 300ms var(--ease-settle),
+    opacity 200ms,
+    background-color 150ms;
+}
+.agent-stack[data-open] .agent-bubble {
+  /* A row: the archive button at the left edge, the name and its line, and
+     the face at the right edge, where the resting bubble is, each with room
+     round it. */
+  width: calc(100% - 2 * var(--pad));
+  height: var(--row);
+  padding: 0 0 0 0.5rem;
+  transform: translateY(calc(var(--i) * var(--pitch) - (var(--row) - var(--size)) / 2));
+  opacity: 1;
+}
+.agent-stack[data-open] .agent-bubble:hover,
+.agent-stack[data-open] .agent-bubble:focus-within {
+  background: var(--color-accent);
+}
+/* The face: its own button, the circle of the resting stack. */
+.agent-bubble-face-button {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: var(--size);
+  height: var(--size);
+  border-radius: 9999px;
+  cursor: pointer;
+}
+/* The words, open: their own button, which takes the room between the archive
+   button and the face, and reads towards the face. Resting, it has none. */
+.agent-bubble-main {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  flex: 1;
+  height: 100%;
+  justify-content: flex-end;
+  border-radius: 9999px;
+  cursor: pointer;
+}
+.agent-stack[data-open] .agent-bubble-main {
+  margin: 0 0.75rem 0 0.25rem;
+}
+.agent-bubble-face-button:hover,
+.agent-bubble-main:hover {
+  background: transparent;
+}
+/* "New session" is a row of the open fan, never one of the resting stack. */
+.agent-bubble-new {
+  opacity: 0;
+  pointer-events: none;
+}
+.agent-stack[data-open] .agent-bubble-new {
+  pointer-events: auto;
+}
+.agent-stack[data-empty] .agent-bubble-new {
+  opacity: 1;
+  pointer-events: auto;
+}
+.agent-bubble-face {
+  display: inline-flex;
+  flex-shrink: 0;
+}
+.agent-bubble-label {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 0.125rem;
+  text-align: right;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms;
+}
+.agent-stack[data-open] .agent-bubble-label {
+  opacity: 1;
+  transition-delay: 100ms;
+}
+/* Archive: at the left of an open row, quiet until the row is touched. */
+.agent-bubble-archive {
+  flex-shrink: 0;
+  display: none;
+  opacity: 0.55;
+  transition: opacity 120ms;
+}
+.agent-stack[data-open] .agent-bubble-archive {
+  display: inline-flex;
+}
+.agent-bubble:hover .agent-bubble-archive,
+.agent-bubble-archive:focus-visible {
+  opacity: 1;
+}
+/* The way to the history: the last line of the open fan, hidden at rest. */
+.agent-fan-footer {
+  position: absolute;
+  left: 1.25rem;
+  bottom: 0.875rem;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 150ms;
+}
+.agent-stack[data-open] .agent-fan-footer {
+  opacity: 1;
+  pointer-events: auto;
+  transition-delay: 100ms;
+}
+.agent-stack-more {
+  position: absolute;
+  right: 0;
+  bottom: -0.5rem;
+  z-index: 1;
+  transition: opacity 150ms;
+}
+.agent-stack[data-open] .agent-stack-more {
+  opacity: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .agent-fan,
+  .agent-bubble,
+  .agent-bubble-label,
+  .agent-bubble-archive,
+  .agent-fan-footer,
+  .agent-stack-more {
+    transition: none;
+  }
+}

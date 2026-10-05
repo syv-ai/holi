@@ -13,7 +13,15 @@ describe('agentIndicator', () => {
   it('is green while a session is live and nothing is happening', () => {
     const live = agentIndicator(idle)
     expect(live.dot).toContain('bg-green-500')
-    expect(live.state).toBe('running')
+    expect(live.state).toBe('idle')
+  })
+
+  it('says what an idle session has behind it, never that it is running', () => {
+    expect(agentIndicator({ state: 'idle', phase: 'done' }).state).toBe('done')
+    expect(agentIndicator({ state: 'idle', phase: 'new' }).state).toBe('ready')
+    const failed = agentIndicator({ state: 'idle', phase: 'failed' })
+    expect(failed.state).toBe('failed')
+    expect(failed.dot).toContain('bg-red-500')
   })
 
   it('pulses amber while a turn is open', () => {

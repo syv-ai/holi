@@ -13,8 +13,9 @@
  */
 import type { BridgeRoute, SeedContribution } from '../../../main/plugin-api'
 import type { ClaudeCli, VaultCliTarget } from './claude/cli'
-import type { ClaudeRow, SessionSummary } from './claude/listing'
+import type { ClaudeRow, PastSession, SessionSummary } from './claude/listing'
 import type { AgentRoutesDeps } from './claude/routes'
+import type { TranscriptChunk } from './claude/transcript'
 
 /** A vault the provider is asked about. */
 export interface VaultRef {
@@ -41,10 +42,18 @@ export interface AgentProvider {
   parseListing(stdout: string | null, vaultRoot: string): ClaudeRow[]
   /** Is the session's process alive? */
   isLive(row: ClaudeRow): boolean
+  /** A session whose process has gone, as a line of the agent's history. */
+  summarisePast(row: ClaudeRow): PastSession
   /** What a live session is doing, for the renderer. */
   summarise(row: ClaudeRow, working: ReadonlySet<string>, contextPercent?: number): SessionSummary
   /** How full a session's context is, from its status report. */
   readContextPercent(status: unknown): number | null
+  /** A conversation from `offset` on, for the chat. Null when it has no
+   *  transcript to read. */
+  transcript(configDir: string, sessionId: string, offset?: number): Promise<TranscriptChunk | null>
+  /** The question a session is blocked on, as the JSON of its
+   *  `AskUserQuestion` input, when the transcript does not hold it yet. */
+  blockedQuestion(configDir: string, jobId: string): Promise<string | null>
   /** Call `onChange` when the config directory's session state moves.
    *  Returns the stop. */
   watch(configDir: string, onChange: () => void, log: (msg: string) => void): () => void

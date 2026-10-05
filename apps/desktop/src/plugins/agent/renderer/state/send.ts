@@ -1,38 +1,41 @@
 /**
- * What you *do* to the vault's assistant: open the agents list, open a
- * session, start one, send one an ask, stop, restart or copy it.
+ * What you *do* to the vault's assistant: open the agents, open a session,
+ * start one, send one an ask, stop, restart or copy it.
  *
  * Separate from `state/agent.ts` (what the assistant *is*) because these need
  * the terminal geometry and the workspace, and a third module keeps
  * `agent.ts` free of both.
  *
- * **Every window lands through `land`**: its tab comes forward and its
- * terminal takes the keyboard.
+ * **Every session lands through `land`**: the page comes forward showing its
+ * chat.
  */
 import { atom, type Getter, type Setter } from 'jotai'
 import { agentCap } from '../agent-cap'
-import { focusSessionTerminal } from '../lib/session-terminals'
+import { typeIntoTerminal } from '../lib/session-terminals'
 import {
   AGENT_SURFACE,
   agentGeometryAtom,
   agentSessionsAtom,
   agentTerminalsAtom,
-  sessionTitled,
-  titleIsList,
+  chatDraftsAtom,
+  agentViewAtom,
+  overviewSelectionAtom,
   type AgentTarget,
-  type AgentTerminal,
 } from './sessions'
 import { activeRemoteAtom, openSurfaceAtom } from '@/plugin-api'
+import { agentNoticesAtom, quickChatAtom } from './notices'
 
 /** What an action answers: done, or why not, in words the caller can print. */
 export type AgentResult = { ok: true } | { ok: false; message: string }
 
-/** Show a terminal's tab and give it the keyboard. A miss on the focus is
- *  fine: a terminal not built yet focuses itself when it is. */
-function land(set: Setter, terminalId: string): void {
-  // Deduped by id: two views over one PTY would both be attached to it.
-  set(openSurfaceAtom, AGENT_SURFACE, terminalId)
-  focusSessionTerminal(terminalId)
+/** Bring the page forward, showing one session's chat. */
+function land(set: Setter, sessionId: string): void {
+  set(overviewSelectionAtom, sessionId)
+  set(agentViewAtom, 'chat')
+  // Read in full now: nothing left to announce, and no smaller chat to keep.
+  set(agentNoticesAtom, (all) => all.filter((n) => n.sessionId !== sessionId))
+  set(quickChatAtom, null)
+  set(openSurfaceAtom, AGENT_SURFACE)
 }
 
 const geometry = (get: Getter) => get(agentGeometryAtom)
@@ -49,91 +52,74 @@ function inVault<R>(
 }
 
 /**
- * Whether a terminal shows the agents list **now**. How it was launched does
- * not say: `←` and Enter move one terminal between the list and a session. Its
- * title does, because Claude Code titles the list `… claude agents` and a
- * session by its name. A list that has not titled itself yet is one Holi just
- * opened as the list.
+ * ⌘J and the agent icon: the agents page, as it was left.
  */
-const showsList = (t: AgentTerminal): boolean =>
-  t.title === '' ? t.launchedFor === null : titleIsList(t)
-
-/**
- * ⌘J and the agent icon: the agents list.
- *
- * Focuses a terminal showing the list, the most recently opened if there are
- * several, else opens one. **It does not toggle**: pressed twice, it leaves
- * you where it put you.
- */
-export const showAgentsAtom = atom(null, async (get, set): Promise<AgentResult> => {
-  const existing = get(agentTerminalsAtom).filter(showsList).at(-1)
-  if (existing !== undefined) {
-    land(set, existing.id)
-    return { ok: true }
-  }
-  const res = await inVault(get, (remote) => agentCap.open(remote, geometry(get)))
-  if (!res.ok) return res
-  land(set, res.terminalId)
-  return { ok: true }
+export const showAgentsAtom = atom(null, (_get, set): Promise<AgentResult> => {
+  set(openSurfaceAtom, AGENT_SURFACE)
+  return Promise.resolve({ ok: true })
 })
 
-/**
- * Open overview, in an agent tab's bar: a **new** agents list every time. The
- * tab it sits in may itself be the list Holi opened, since `←` and Enter move
- * a terminal between the list and a session, so reusing one would only ever
- * bring you back to where you are.
- */
-export const openOverviewAtom = atom(null, async (get, set): Promise<AgentResult> => {
-  const res = await inVault(get, (remote) => agentCap.open(remote, geometry(get)))
-  if (!res.ok) return res
-  land(set, res.terminalId)
-  return { ok: true }
+/** The history of archived chats, on the agents page. */
+export const showHistoryAtom = atom(null, (_get, set): void => {
+  set(agentViewAtom, 'history')
+  set(openSurfaceAtom, AGENT_SURFACE)
 })
 
+/** Put a chat in the archive, or take it out. A live session is stopped by
+ *  the caller first: archiving never leaves one running out of sight. */
+export const archiveSessionAtom = atom(
+  null,
+  (get, _set, args: { id: string; archived: boolean }): Promise<AgentResult> =>
+    inVault(get, (remote) => agentCap.archive(remote, args)).then(
+      (res) => res,
+      (err: unknown) => ({ ok: false as const, message: failure(err) }),
+    ),
+)
+
+/** Delete a finished chat for good. */
+export const removeSessionAtom = atom(null, (get, _set, id: string): Promise<AgentResult> =>
+  inVault(get, (remote) => agentCap.remove(remote, { id })).then(
+    (res) => res,
+    (err: unknown) => ({ ok: false as const, message: failure(err) }),
+  ),
+)
+
 /**
- * One session, from a sidebar row, an orb or the palette: a window whose title
- * names it (any tab, the list's included, may have attached it since), else the
- * window Holi opened for it, else a new `claude attach` window. An unnamed
- * session has only a generic title, so it can land in a second window; two
- * windows on one session only mirror each other, never wrong, just more.
+ * One session, from a bubble, the palette or the history: its chat
+ * on the agents page. A chat is read from the transcript and needs no
+ * terminal, so neither a live session nor a finished one opens anything here.
  */
-export const openSessionAtom = atom(null, async (get, set, id: string): Promise<AgentResult> => {
-  const terminals = get(agentTerminalsAtom)
-  const sessions = get(agentSessionsAtom)
-  const existing =
-    terminals.find((t) => sessionTitled(t, sessions)?.id === id) ??
-    terminals.find((t) => t.launchedFor === id)
-  if (existing !== undefined) {
-    land(set, existing.id)
-    return { ok: true }
-  }
-  const res = await inVault(get, (remote) =>
-    agentCap.open(remote, { attach: id, ...geometry(get) }),
-  )
-  if (!res.ok) return res
-  land(set, res.terminalId)
-  return { ok: true }
+export const openSessionAtom = atom(null, (_get, set, id: string): Promise<AgentResult> => {
+  land(set, id)
+  return Promise.resolve({ ok: true })
 })
 
 /**
  * A new background session and its window. With a `prompt` that prompt is its
- * first turn (reconcile, a stuck push); without one it waits for yours.
+ * first turn (reconcile, a stuck push); without one it waits for yours. With
+ * `quick` it opens as the smaller chat over the current page instead of
+ * bringing the agents page forward.
  */
 export const startSessionAtom = atom(
   null,
-  async (get, set, opts: { name?: string; prompt?: string } = {}): Promise<AgentResult> => {
+  async (
+    get,
+    set,
+    { quick = false, ...opts }: { name?: string; prompt?: string; quick?: boolean } = {},
+  ): Promise<AgentResult> => {
     const res = await inVault(get, (remote) =>
       agentCap.start(remote, { ...opts, ...geometry(get) }),
     )
     if (!res.ok) return res
-    land(set, res.terminalId)
+    if (quick) set(quickChatAtom, res.sessionId)
+    else land(set, res.sessionId)
     return { ok: true }
   },
 )
 
 /**
- * Send text to a session, live or new. It lands in the input box **unsent** and
- * that session's window comes forward.
+ * Send text to a session, live or new. It lands in that session's chat as an
+ * unsent **draft**, and its chat comes forward.
  *
  * One rule for every sender: nothing Holi writes can append a submit to a
  * half-typed draft. A `'new'` target starts a session named from the ask's
@@ -145,15 +131,29 @@ export const startSessionAtom = atom(
 export const sendToAgentAtom = atom(
   null,
   async (get, set, args: { text: string; target: AgentTarget }): Promise<AgentResult> => {
-    const res = await inVault(get, (remote) => agentCap.send(remote, { ...args, ...geometry(get) }))
-    if (!res.ok) return res
-    land(set, res.terminalId)
+    let id = args.target
+    if (id === 'new') {
+      // The CLI makes a name of the text's first line.
+      const started = await inVault(get, (remote) =>
+        agentCap.start(remote, { name: args.text, ...geometry(get) }),
+      )
+      if (!started.ok) return started
+      id = started.sessionId
+    } else if (!get(agentSessionsAtom).some((s) => s.id === id)) {
+      return { ok: false, message: 'That session has ended. Pick another one.' }
+    }
+    const drafts = get(chatDraftsAtom)
+    const before = drafts[id] ?? ''
+    set(chatDraftsAtom, {
+      ...drafts,
+      [id]: before === '' ? args.text : `${before}\n\n${args.text}`,
+    })
+    land(set, id)
     return { ok: true }
   },
 )
 
-/** Stop a session: `claude stop`. Its conversation stays in the agents list,
- *  and any window on it closes. */
+/** Stop a session: `claude stop`. Its conversation stays in the history. */
 export const stopSessionAtom = atom(null, (get, _set, id: string) =>
   inVault(get, (remote) => agentCap.stop(remote, { id })),
 )
@@ -171,7 +171,78 @@ export const duplicateSessionAtom = atom(
   async (get, set, id: string): Promise<AgentResult> => {
     const res = await inVault(get, (remote) => agentCap.duplicate(remote, { id, ...geometry(get) }))
     if (!res.ok) return res
-    land(set, res.terminalId)
+    land(set, res.sessionId)
+    return { ok: true }
+  },
+)
+
+/** A message from a session's chat: sent as a turn. */
+export const sayAtom = atom(
+  null,
+  (get, _set, args: { id: string; text: string }): Promise<AgentResult> =>
+    inVault(get, (remote) => agentCap.say(remote, { ...args, ...geometry(get) })).then(
+      (res) => (res.ok ? { ok: true } : res),
+      // A refusal that throws (main has no such capability, the vault closed
+      // under it) is still an answer: the chat puts the text back and says why.
+      (err: unknown) => ({ ok: false, message: failure(err) }),
+    ),
+)
+
+/** Write an image the person attached into the vault, where the session can
+ *  read it: answers its path. */
+export const uploadAtom = atom(
+  null,
+  (get, _set, args: { name: string; data: string }): Promise<UploadAnswer> =>
+    inVault(get, (remote) => agentCap.upload(remote, args)).then(
+      (res) => res,
+      (err: unknown) => ({ ok: false as const, message: failure(err) }),
+    ),
+)
+type UploadAnswer = { ok: true; path: string } | { ok: false; message: string }
+
+/** Why a call to main failed, in words for the chat. */
+export function failure(err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err)
+  // Main is older than this window: a running Holi keeps its main process
+  // until it is restarted.
+  return /no such method/i.test(message)
+    ? 'Holi needs a restart before the chat can reach its sessions.'
+    : message
+}
+
+/** How long a terminal just opened gets to draw its dialog before a key
+ *  meant for that dialog goes in. */
+const KEY_SETTLE_MS = 700
+
+/** The terminal on a session, opening one when there is none: what a key for
+ *  its dialog is typed into, and what "show the terminal" shows. */
+export const ensureTerminalAtom = atom(
+  null,
+  async (get, _set, id: string): Promise<{ terminalId: string; fresh: boolean } | null> => {
+    const existing = get(agentTerminalsAtom).find((t) => t.launchedFor === id)
+    if (existing !== undefined) return { terminalId: existing.id, fresh: false }
+    const res = await inVault(get, (remote) =>
+      agentCap.open(remote, { attach: id, ...geometry(get) }),
+    )
+    return res.ok ? { terminalId: res.terminalId, fresh: true } : null
+  },
+)
+
+/**
+ * Press keys in a session's terminal: Enter to allow what it asks, Escape to
+ * refuse it or to interrupt a turn. The chat cannot draw Claude Code's
+ * dialogs, so it answers the ones it can name with the key that answers them.
+ */
+export const pressAtom = atom(
+  null,
+  async (get, set, args: { id: string; keys: string }): Promise<AgentResult> => {
+    const remote = get(activeRemoteAtom)
+    const terminal = await set(ensureTerminalAtom, args.id).catch(() => null)
+    if (remote === null || terminal === null) {
+      return { ok: false, message: 'No terminal could be opened on that session.' }
+    }
+    if (terminal.fresh) await new Promise((done) => setTimeout(done, KEY_SETTLE_MS))
+    typeIntoTerminal(remote, terminal.terminalId, args.keys)
     return { ok: true }
   },
 )

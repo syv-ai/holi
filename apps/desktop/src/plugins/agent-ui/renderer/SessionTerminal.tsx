@@ -15,9 +15,13 @@ import '@xterm/xterm/css/xterm.css'
 import './terminal.css'
 import { useAtomValue } from 'jotai'
 import { useCallback, useEffect, useRef } from 'react'
-import { agentCap } from './agent-cap'
-import { terminalKeyAction } from './lib/terminal-keys'
-import { registerSessionTerminal, resizeTerminal, typeIntoTerminal } from './lib/session-terminals'
+import { agentCap } from '../../agent/renderer/agent-cap'
+import { terminalKeyAction } from '../../agent/renderer/lib/terminal-keys'
+import {
+  registerSessionTerminal,
+  resizeTerminal,
+  typeIntoTerminal,
+} from '../../agent/renderer/lib/session-terminals'
 import { activeRemoteAtom, cn } from '@/plugin-api'
 
 /** Claude Code is an Ink TUI: it draws its own cursor, so xterm's would blink a

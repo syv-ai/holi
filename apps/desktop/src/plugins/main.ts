@@ -4,6 +4,7 @@
  */
 import type { MainPlugin } from '../main/plugin-api'
 import { agentMain } from './agent/main'
+import { agentUiMain } from './agent-ui/main'
 import { appsMain } from './apps/main'
 import { communityMain } from './community/main'
 import { googleMain } from './google/main'
@@ -11,6 +12,7 @@ import { pdfMain } from './pdf/main'
 
 export const MAIN_PLUGINS: readonly MainPlugin[] = [
   agentMain,
+  agentUiMain,
   pdfMain,
   googleMain,
   appsMain,

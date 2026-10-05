@@ -1,15 +1,18 @@
 /**
- * What you do to the vault's assistant: the agents list, a session's
- * window, starting one, sending an ask. Store-level: nothing here renders,
+ * What you do to the vault's assistant: the agents page, a session's chat,
+ * starting one, sending an ask. Store-level: nothing here renders,
  * because none of it belongs to a component.
  */
 import { createStore } from 'jotai'
 import { beforeEach, expect, test, vi } from 'vitest'
 import {
+  agentHistoryAtom,
   agentSessionsAtom,
   agentTerminalsAtom,
   askTargetsAtom,
+  chatDraftsAtom,
   defaultAgentTargetAtom,
+  overviewSelectionAtom,
   type AgentSession,
   type AgentTerminal,
 } from '../renderer/state/sessions'
@@ -21,13 +24,7 @@ import {
   startSessionAtom,
   stopSessionAtom,
 } from '../renderer/state/send'
-import { registerSessionTerminal } from '../renderer/lib/session-terminals'
-import {
-  activeRemoteAtom,
-  activeSurfaceIdAtom,
-  openSurfaceAtom,
-  surfaceTabIdsAtom,
-} from '@/plugin-api'
+import { activeRemoteAtom, surfaceTabIdsAtom } from '@/plugin-api'
 
 const session = (over: Partial<AgentSession> & { id: string }): AgentSession => ({
   name: 'New session',
@@ -75,89 +72,49 @@ function storeWith(sessions: AgentSession[] = [], terminals: AgentTerminal[] = [
   return store
 }
 
-/** The agent tab showing, if the showing tab is one at all. */
+/** The session whose chat the page is on, if one was opened. */
 const shown = (store: ReturnType<typeof createStore>): string | null =>
-  store.get(activeSurfaceIdAtom('agent'))
+  store.get(overviewSelectionAtom)
 
-test('going to the agents opens the list when Holi has none open', async () => {
+test('going to the agents opens the page and nothing else', async () => {
   const store = storeWith()
   await store.set(showAgentsAtom)
 
-  expect(open).toHaveBeenCalledWith({ cols: 80, rows: 24 })
-  expect(shown(store)).toBe('opened')
-})
-
-test('going to the agents focuses the list that is already open', async () => {
-  const store = storeWith([], [terminal('t-attach', 'aaaaaaaa'), terminal('t-list', null)])
-  await store.set(showAgentsAtom)
-
   expect(open).not.toHaveBeenCalled()
-  expect(shown(store)).toBe('t-list')
+  expect(store.get(surfaceTabIdsAtom('agent'))).toEqual([])
+  expect(shown(store)).toBeNull()
 })
 
-test('going to the agents skips a list terminal that has since attached a session', async () => {
-  // `←` and Enter move a terminal between the list and a session: its title,
-  // not its launch, says which it shows.
-  const store = storeWith(
-    [],
-    [
-      terminal('t-was-list', null, 'check123 (copy)'),
-      terminal('t-now-list', 'aaaaaaaa', '1 awaiting input · claude agents'),
-    ],
-  )
-  await store.set(showAgentsAtom)
-
-  expect(open).not.toHaveBeenCalled()
-  expect(shown(store)).toBe('t-now-list')
-})
-
-test('going to the agents twice leaves you where it put you', async () => {
-  // A tab is a place to go: the second press must not undo the first.
-  const store = storeWith([], [terminal('t-list', null)])
-  await store.set(showAgentsAtom)
-  await store.set(showAgentsAtom)
-
-  expect(shown(store)).toBe('t-list')
-  expect(store.get(surfaceTabIdsAtom('agent'))).toHaveLength(1)
-})
-
-test('opening a session reuses the window Holi opened for it', async () => {
+test('opening a session shows its chat, and opens no terminal', async () => {
   const store = storeWith([session({ id: 'aaaaaaaa' })], [terminal('t-a', 'aaaaaaaa')])
   await store.set(openSessionAtom, 'aaaaaaaa')
 
   expect(open).not.toHaveBeenCalled()
-  expect(shown(store)).toBe('t-a')
+  expect(shown(store)).toBe('aaaaaaaa')
 })
 
-test('opening a session with no window attaches a new one', async () => {
+test('an ask becomes a draft in the chat, and the chat comes forward', async () => {
   const store = storeWith([session({ id: 'aaaaaaaa' })])
-  await store.set(openSessionAtom, 'aaaaaaaa')
-
-  expect(open).toHaveBeenCalledWith({ attach: 'aaaaaaaa', cols: 80, rows: 24 })
-  expect(shown(store)).toBe('opened')
-})
-
-test('an ask goes to main unsent, and its window comes forward with the keyboard', async () => {
-  const store = storeWith([session({ id: 'aaaaaaaa' })])
-  const focus = vi.fn()
-  const unregister = registerSessionTerminal('sent', { focus, write: () => {} })
 
   const res = await store.set(sendToAgentAtom, { text: 'look at this', target: 'aaaaaaaa' })
 
   expect(res).toEqual({ ok: true })
-  expect(send).toHaveBeenCalledWith({
-    text: 'look at this',
-    target: 'aaaaaaaa',
-    cols: 80,
-    rows: 24,
-  })
-  expect(shown(store)).toBe('sent')
-  expect(focus).toHaveBeenCalled()
-  unregister()
+  expect(store.get(chatDraftsAtom)).toEqual({ aaaaaaaa: 'look at this' })
+  expect(shown(store)).toBe('aaaaaaaa')
+  // Unsent: nothing goes to main, and no terminal gets a paste.
+  expect(send).not.toHaveBeenCalled()
 })
 
-test('a refused ask says why and opens nothing, so the sender keeps the text', async () => {
-  send.mockResolvedValue({ ok: false, message: 'That session has ended. Pick another one.' })
+test('an ask for a new session starts one and drafts it there', async () => {
+  const store = storeWith()
+  await store.set(sendToAgentAtom, { text: 'Tidy up', target: 'new' })
+
+  expect(start).toHaveBeenCalledWith({ name: 'Tidy up', cols: 80, rows: 24 })
+  expect(store.get(chatDraftsAtom)).toEqual({ newnew00: 'Tidy up' })
+  expect(shown(store)).toBe('newnew00')
+})
+
+test('an ask for a session that has ended is refused, so the sender keeps the text', async () => {
   const store = storeWith()
 
   const res = await store.set(sendToAgentAtom, { text: 'x', target: 'aaaaaaaa' })
@@ -166,12 +123,12 @@ test('a refused ask says why and opens nothing, so the sender keeps the text', a
   expect(shown(store)).toBeNull()
 })
 
-test('starting a session opens its window', async () => {
+test('starting a session shows its chat', async () => {
   const store = storeWith()
   await store.set(startSessionAtom, { name: 'Tidy' })
 
   expect(start).toHaveBeenCalledWith({ name: 'Tidy', cols: 80, rows: 24 })
-  expect(shown(store)).toBe('started')
+  expect(shown(store)).toBe('newnew00')
 })
 
 test('stop goes to main and answers what it said', async () => {
@@ -180,10 +137,10 @@ test('stop goes to main and answers what it said', async () => {
   expect(stop).toHaveBeenCalledWith('aaaaaaaa')
 })
 
-test('duplicate opens the copy', async () => {
+test('duplicate shows the copy', async () => {
   const store = storeWith([session({ id: 'aaaaaaaa' })])
   await store.set(duplicateSessionAtom, 'aaaaaaaa')
-  expect(shown(store)).toBe('copied')
+  expect(shown(store)).toBe('copy0000')
 })
 
 test('an ask may go to any live session not waiting on a question of its own', () => {
@@ -198,24 +155,22 @@ test('an ask may go to any live session not waiting on a question of its own', (
   ])
 })
 
-test('the default target is the session the showing tab was opened for', () => {
-  const store = storeWith(
-    [session({ id: 'a' }), session({ id: 'b' })],
-    [terminal('t-a', 'a'), terminal('t-b', 'b')],
-  )
-  store.set(openSurfaceAtom, 'agent', 't-a')
-  expect(store.get(defaultAgentTargetAtom)).toBe('a')
+test('the default target is the session whose chat is showing', () => {
+  const store = storeWith([session({ id: 'a' }), session({ id: 'b' })])
+  store.set(overviewSelectionAtom, 'b')
+  expect(store.get(defaultAgentTargetAtom)).toBe('b')
 })
 
-test('the default target is a new session when there is none, or it needs you', () => {
+test('with none picked, the default target is the most recent session', () => {
+  const store = storeWith([session({ id: 'a', startedAt: 1 }), session({ id: 'b', startedAt: 2 })])
+  expect(store.get(defaultAgentTargetAtom)).toBe('b')
+})
+
+test('the default target is a new session when there is none, it needs you, or it has finished', () => {
   expect(storeWith().get(defaultAgentTargetAtom)).toBe('new')
-  const waiting = storeWith([session({ id: 'a', state: 'needs-you' })], [terminal('t-a', 'a')])
-  waiting.set(openSurfaceAtom, 'agent', 't-a')
+  const waiting = storeWith([session({ id: 'a', state: 'needs-you' })])
   expect(waiting.get(defaultAgentTargetAtom)).toBe('new')
-})
-
-test('a list tab has no session of its own, so the default falls back to the last one opened', () => {
-  const store = storeWith([session({ id: 'a' })], [terminal('t-a', 'a'), terminal('t-list', null)])
-  store.set(openSurfaceAtom, 'agent', 't-list')
-  expect(store.get(defaultAgentTargetAtom)).toBe('a')
+  const finished = storeWith()
+  finished.set(agentHistoryAtom, [{ id: 'p', name: 'Old', phase: 'done' }])
+  expect(finished.get(defaultAgentTargetAtom)).toBe('new')
 })

@@ -76,7 +76,10 @@ whose owner the vault runs), so a button for another plugin's verb hides while t
 Core's `tasks.create` is one: the board and the Google views create tasks through it.
 A plugin that builds on another says so in `PluginInfo.requires`: it runs only where every plugin
 it requires runs, down a chain, so turning one off turns off what stands on it, its seeds included.
-The dependency runs one way: the plugin underneath knows nothing of what requires it. One resolver,
+The dependency runs one way: the plugin underneath knows nothing of what requires it. Calls between
+plugins go through capabilities, with one exception: `agent-ui`, which requires the agent, imports
+the agent's renderer state (its session atoms), because a page drawn from live lists has no other
+way to read them; ESLint allows that one pair. One resolver,
 `resolvePlugins`, answers which plugins run and why each other one does not (off in the vault, off
 on this machine, or needing one that is off), and every reader in both processes asks it. Both
 processes check their list with `checkPluginCatalogue` at boot, which refuses a missing or circular
@@ -92,7 +95,8 @@ and its `rowMenu` items join the file tree's menu. On the main side a claim
 `snapshot.claimed[id]` instead of `docs`, and a settings write that changes `plugins` rescans.
 A plugin adds `surfaces` (tab kinds) and `rail`
 items to the nav menu ([tabs and panes](features/tabs-panes.md)), registered beside core's own, and
-`settingsSections` to the settings tab ([settings](features/settings.md)).
+`settingsSections` to the settings tab ([settings](features/settings.md)). Its `overlay` floats over
+the panes' top right on every tab, taking pointer events only where it draws.
 Its dialogs open as `{id: 'plugin', render}`.
 Main tells a plugin's renderer something through events: `ctx.emit(remote, name, payload)` sends
 `{remote, name, payload}` on the plugin's one channel, `plugin:<id>`, read by one preload member,
@@ -107,8 +111,8 @@ marked `frame` serves framed pages: the window guard lets such a frame move with
 sends a link out of it to the browser.
 A plugin's own code sits in `main/`, `renderer/`, `shared/` and `test/` under its folder; its
 renderer imports its main side as types only, for `capClient`. The plugins are the agent
-([agent-sessions](features/agent-sessions.md)), PDF ([pdf](features/pdf.md)), Google
-([google](features/google.md)), vault apps ([vault apps](features/vault-apps.md)) and community
+([agent-sessions](features/agent-sessions.md)) and its interface (`agent-ui`, which `requires` the
+agent), PDF ([pdf](features/pdf.md)), Google ([google](features/google.md)), vault apps ([vault apps](features/vault-apps.md)) and community
 plugins ([community plugins](features/community-plugins.md)), which hosts plugins from other
 repositories as processes it runs, never as code it loads. A renderer plugin may give its claims as
 an atom, for claims that follow what main tells it, and a plugin may register a frame origin with

@@ -21,7 +21,7 @@ import {
   turnCountsAtom,
   turnDiffAtom,
   turnFilesAtom,
-} from '../renderer/state/turns'
+} from '../../agent/renderer/state/turns'
 import { activeRemoteAtom } from '@/plugin-api'
 
 const list = vi.fn()
@@ -29,7 +29,7 @@ const files = vi.fn()
 const fileDiff = vi.fn()
 const revert = vi.fn()
 
-vi.mock('../renderer/agent-cap', () => ({
+vi.mock('../../agent/renderer/agent-cap', () => ({
   agentCap: {
     turns: () => list(),
     turnFiles: (_remote: string, i: unknown) => files(i),

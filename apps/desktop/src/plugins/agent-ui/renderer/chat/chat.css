@@ -1,0 +1,86 @@
+/*
+ * The chat's rendered markdown (ChatMarkdown): an assistant message reads as
+ * prose, in the app's own tokens.
+ */
+.agent-chat-md {
+  font-size: 0.875rem;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.agent-chat-md > :first-child {
+  margin-top: 0;
+}
+.agent-chat-md > :last-child {
+  margin-bottom: 0;
+}
+.agent-chat-md p,
+.agent-chat-md ul,
+.agent-chat-md ol,
+.agent-chat-md pre,
+.agent-chat-md table,
+.agent-chat-md blockquote {
+  margin: 0.6em 0;
+}
+.agent-chat-md h1,
+.agent-chat-md h2,
+.agent-chat-md h3,
+.agent-chat-md h4 {
+  margin: 1em 0 0.4em;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+.agent-chat-md ul,
+.agent-chat-md ol {
+  padding-left: 1.4em;
+}
+.agent-chat-md ul {
+  list-style: disc;
+}
+.agent-chat-md ol {
+  list-style: decimal;
+}
+.agent-chat-md li {
+  margin: 0.15em 0;
+}
+.agent-chat-md a {
+  color: var(--link);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.agent-chat-md code {
+  border-radius: 0.3rem;
+  background: var(--muted);
+  padding: 0.1em 0.35em;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.8rem;
+}
+.agent-chat-md pre {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  background: color-mix(in srgb, var(--muted) 45%, transparent);
+  padding: 0.6rem 0.75rem;
+}
+.agent-chat-md pre code {
+  background: none;
+  padding: 0;
+}
+.agent-chat-md blockquote {
+  border-left: 2px solid var(--border);
+  padding-left: 0.75rem;
+  color: var(--muted-foreground);
+}
+.agent-chat-md table {
+  border-collapse: collapse;
+  font-size: 0.8rem;
+}
+.agent-chat-md th,
+.agent-chat-md td {
+  border: 1px solid var(--border);
+  padding: 0.25rem 0.5rem;
+  text-align: left;
+}
+.agent-chat-md hr {
+  margin: 0.9em 0;
+  border-color: var(--border);
+}

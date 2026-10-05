@@ -41,12 +41,14 @@ export { sessionAtom } from '@/state/session'
 export { usePluginSetting } from '@/state/settings'
 export { activeModeAtom } from '@/state/color-scheme'
 export { openNoteTabAtom } from '@/state/panes'
+export { vaultAssetUrl } from '@/lib/vault-asset'
 export {
   activeSurfaceIdAtom,
   closeSurfaceTabAtom,
   closeSurfaceTabsAtom,
   openPathAtom,
   openSurfaceAtom,
+  surfaceActiveAtom,
   surfaceTabIdsAtom,
   tabForPathAtom,
 } from '@/state/surfaces'
