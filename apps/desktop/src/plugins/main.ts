@@ -6,6 +6,13 @@ import type { MainPlugin } from '../main/plugin-api'
 import { agentMain } from './agent/main'
 import { appsMain } from './apps/main'
 import { googleMain } from './google/main'
+import { notesMain } from './notes/main'
 import { pdfMain } from './pdf/main'
 
-export const MAIN_PLUGINS: readonly MainPlugin[] = [agentMain, pdfMain, googleMain, appsMain]
+export const MAIN_PLUGINS: readonly MainPlugin[] = [
+  agentMain,
+  pdfMain,
+  googleMain,
+  appsMain,
+  notesMain,
+]
