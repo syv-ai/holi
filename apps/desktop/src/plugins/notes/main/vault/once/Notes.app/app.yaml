@@ -1,0 +1,10 @@
+description: Apple Notes-style notebook — create, edit, search and delete notes
+collections:
+  notes:
+    schema:
+      type: object
+      required: [body, createdAt, updatedAt]
+      properties:
+        body: { type: string }
+        createdAt: { type: integer }
+        updatedAt: { type: integer }

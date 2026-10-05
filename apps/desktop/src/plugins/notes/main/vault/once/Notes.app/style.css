@@ -1,0 +1,175 @@
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+html,
+body {
+  height: 100%;
+}
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font: 14px/1.5 system-ui, sans-serif;
+  margin: 0;
+}
+#app {
+  display: flex;
+  height: 100%;
+}
+#side {
+  width: min(20rem, 40%);
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  border-right: 1px solid var(--border);
+}
+#main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 0.75rem 1rem;
+  position: relative;
+}
+.side-head,
+.main-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.h-title {
+  font-weight: 600;
+  font-size: 1.1rem;
+}
+.h-sub,
+#stamp {
+  color: var(--muted-foreground);
+  font-size: 0.85rem;
+}
+#stamp {
+  flex: 1;
+  text-align: center;
+}
+.round {
+  all: unset;
+  cursor: pointer;
+  width: 2rem;
+  height: 2rem;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--muted);
+  color: var(--foreground);
+}
+.round:hover {
+  background: var(--accent);
+}
+#back {
+  display: none;
+}
+#q {
+  width: 100%;
+  padding: 0.4rem 0.7rem;
+  border: 1px solid var(--input);
+  border-radius: var(--radius);
+  background: var(--background);
+  color: var(--foreground);
+  font: inherit;
+}
+.grows {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+.group {
+  font-weight: 600;
+  font-size: 1rem;
+  padding: 0.75rem 0.25rem 0.25rem;
+  border-bottom: 1px solid var(--border);
+}
+.item {
+  all: unset;
+  display: block;
+  width: 100%;
+  cursor: pointer;
+  padding: 0.5rem 0.6rem;
+  border-radius: var(--radius);
+  margin-top: 0.15rem;
+}
+.item:hover {
+  background: var(--muted);
+}
+.item.sel {
+  background: var(--accent);
+}
+.item .t {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.item .s {
+  color: var(--muted-foreground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.item .s b {
+  font-weight: 400;
+  color: var(--foreground);
+  margin-right: 0.5rem;
+}
+#body {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  resize: none;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--foreground);
+  font: inherit;
+  font-size: 1rem;
+  line-height: 1.6;
+  padding: 0.75rem 0;
+}
+#empty {
+  position: absolute;
+  inset: 3rem 0 0;
+  display: grid;
+  place-items: center;
+  color: var(--muted-foreground);
+}
+#app.none #body,
+#app.none #del {
+  display: none;
+}
+#app:not(.none) #empty {
+  display: none;
+}
+.err {
+  color: var(--destructive);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  margin: 0;
+  padding: 0 1rem;
+}
+
+@media (max-width: 560px) {
+  #side {
+    width: 100%;
+    border-right: 0;
+  }
+  #app.show-list #main,
+  #app.show-editor #side {
+    display: none;
+  }
+  #back {
+    display: grid;
+  }
+}
