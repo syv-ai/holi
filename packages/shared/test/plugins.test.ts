@@ -23,6 +23,19 @@ describe('enabledPlugins', () => {
     expect(enabled(null, null)).toEqual(KNOWN.filter((p) => p.default).map((p) => p.id))
   })
 
+  it('leaves a plugin off wherever one it requires is, down a chain', () => {
+    const chain: PluginInfo[] = [
+      { id: 'base', label: 'Base', default: true },
+      { id: 'face', label: 'Face', default: true, requires: ['base'] },
+      { id: 'skin', label: 'Skin', default: true, requires: ['face'] },
+    ]
+    const run = (committed: string | null) =>
+      [...enabledPlugins(resolveVaultSettings(committed, null).plugins, chain)].sort()
+    expect(run(null)).toEqual(['base', 'face', 'skin'])
+    expect(run('plugins:\n  base: false\n')).toEqual([])
+    expect(run('plugins:\n  face: false\n')).toEqual(['base'])
+  })
+
   it("takes the vault's answer over the default", () => {
     expect(enabled('plugins:\n  reader: false\n  extra: true\n', null)).toEqual(['extra'])
   })

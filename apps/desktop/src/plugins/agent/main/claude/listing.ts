@@ -39,6 +39,8 @@ export interface ClaudeRow {
   /** `working | blocked | done | failed | stopped`. Kept as text: Holi reads
    *  `status` for what a live session is doing. */
   state?: string
+  /** When it was started, in epoch milliseconds: how the history is ordered. */
+  startedAt?: number
 }
 
 /** What the renderer is told a session is doing. */
@@ -51,9 +53,38 @@ export interface SessionSummary {
   state: SessionState
   /** Present only for 'needs-you', when Claude Code says why. */
   waitingFor?: string
+  /** Only for 'idle': where the session stands. `done` has finished a turn,
+   *  `failed` ended one badly, `new` has not been given one yet. Absent when
+   *  Claude Code does not say. */
+  phase?: SessionPhase
   /** How much of its context window is used, 0 to 100, from its status line.
    *  Absent until Claude Code has said, and again after a `/clear`. */
   contextPercent?: number
+  /** Epoch milliseconds, when it was started: what orders the stack. */
+  startedAt?: number
+}
+
+/** A session whose process has gone: one line of the agent's history. */
+export interface PastSession {
+  id: string
+  name: string
+  /** `failed` when it ended badly, else `done`. */
+  phase: 'done' | 'failed'
+  /** Epoch milliseconds, when it was started. Absent when Claude Code does
+   *  not say. */
+  startedAt?: number
+}
+
+/** What an idle session has behind it. */
+export type SessionPhase = 'new' | 'done' | 'failed'
+
+/** Claude Code's `state` for a session that is doing nothing now, in Holi's
+ *  words. `blocked` on an idle session is one waiting for its first prompt. */
+function phaseOf(state: string | undefined): SessionPhase | undefined {
+  if (state === 'done') return 'done'
+  if (state === 'failed') return 'failed'
+  if (state === 'blocked') return 'new'
+  return undefined
 }
 
 const NEW_SESSION = 'New session'
@@ -85,6 +116,7 @@ function toRow(value: unknown, vaultRoot: string): ClaudeRow | null {
     ...(isStatus(r['status']) ? { status: r['status'] } : {}),
     ...(typeof r['waitingFor'] === 'string' ? { waitingFor: r['waitingFor'] } : {}),
     ...(typeof r['state'] === 'string' ? { state: r['state'] } : {}),
+    ...(typeof r['startedAt'] === 'number' ? { startedAt: r['startedAt'] } : {}),
   }
 }
 
@@ -102,10 +134,20 @@ export function parseListing(stdout: string | null, vaultRoot: string): ClaudeRo
   return parsed.map((entry) => toRow(entry, vaultRoot)).filter((r): r is ClaudeRow => r !== null)
 }
 
-/** Is its process alive? Only these are in the sidebar; the rest live in the
- *  agent view's history. */
+/** Is its process alive? Only these are in the sidebar; the rest are the
+ *  agent view's history (`summarisePast`). */
 export function isLive(row: ClaudeRow): boolean {
   return row.pid !== undefined
+}
+
+/** A row whose process has gone, as a line of history. */
+export function summarisePast(row: ClaudeRow): PastSession {
+  return {
+    id: row.id,
+    name: row.name === '' || row.name === row.id ? NEW_SESSION : row.name,
+    phase: row.state === 'failed' ? 'failed' : 'done',
+    ...(row.startedAt === undefined ? {} : { startedAt: row.startedAt }),
+  }
 }
 
 /**
@@ -113,6 +155,7 @@ export function isLive(row: ClaudeRow): boolean {
  *
  * From `status`, never from `state`: a session started with no prompt reads
  * `state: blocked` while it simply waits for one, and that is not needs-you.
+ * `state` only words an idle session (`phase`): finished, failed, or new.
  * The hook bracket (`working`) is the floor under a listing that is slow or
  * too old to answer.
  */
@@ -125,10 +168,13 @@ export function summarise(
   if (row.status === 'waiting') state = 'needs-you'
   else if (row.status === 'busy' || row.status === 'shell' || working.has(row.id)) state = 'working'
   const name = row.name === '' || row.name === row.id ? NEW_SESSION : row.name
+  const phase = state === 'idle' ? phaseOf(row.state) : undefined
   return {
     id: row.id,
     name,
     state,
+    ...(phase === undefined ? {} : { phase }),
+    ...(row.startedAt === undefined ? {} : { startedAt: row.startedAt }),
     ...(state === 'needs-you' && row.waitingFor !== undefined
       ? { waitingFor: row.waitingFor }
       : {}),

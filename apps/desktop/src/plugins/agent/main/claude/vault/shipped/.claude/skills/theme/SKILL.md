@@ -30,7 +30,6 @@ commented-out declaration:
 
 ```css
 [data-theme='dark'] {
-
   /* Brand and action — The colour this vault is, and the things you can press. */
   /* The brand as a FILL, with primary-foreground on top of it. */
   --primary: #8b5cf6;

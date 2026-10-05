@@ -348,7 +348,7 @@ export function Shell() {
           </div>
         </DrawerShell>
 
-        <div className="flex min-w-60 flex-1 flex-col">
+        <div className="relative flex min-w-60 flex-1 flex-col">
           {/* The panes. Layout deliberately not persisted: a stored layout
                 is weights keyed to a panel count, and panes come and go. */}
           <ResizablePanelGroup orientation="horizontal" className="min-h-0">
@@ -428,6 +428,13 @@ export function Shell() {
               </Fragment>
             ))}
           </ResizablePanelGroup>
+          {/* What plugins float over the panes: clear of a pane's own tab
+              strip, and out of the way of everything but itself. */}
+          <div className="pointer-events-none absolute inset-x-0 top-11 bottom-0 z-30">
+            {running.map(({ info, overlay: Overlay }) =>
+              Overlay === undefined ? null : <Overlay key={info.id} />,
+            )}
+          </div>
         </div>
 
         {/* The right-hand drawers; each decides whether it is open. */}

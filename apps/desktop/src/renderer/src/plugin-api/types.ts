@@ -253,6 +253,10 @@ export interface RendererPlugin {
   railSection?: ComponentType
   /** Shown in the sidebar, under the file tree. */
   sidebarSection?: ComponentType
+  /** Floats over the panes' top right corner, on every tab: it takes pointer
+   *  events itself (`pointer-events: auto`) and leaves the rest of the panes
+   *  to what is under it. */
+  overlay?: ComponentType
   /** Right-hand drawers; each decides whether it is open. */
   drawers?: readonly ComponentType[]
   /**
