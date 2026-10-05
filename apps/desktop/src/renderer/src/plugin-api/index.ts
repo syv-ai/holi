@@ -23,6 +23,7 @@ export type {
   RendererPlugin,
   SettingsSection,
   SettingsSectionHeading,
+  ShellLayout,
   PaletteItem,
   Surface,
   SurfaceTabLook,
@@ -52,7 +53,7 @@ export {
   tabForPathAtom,
 } from '@/state/surfaces'
 export { agentSessionRowsAtom, useAgentService } from '@/state/agent-service'
-export { surfacesAtom } from '@/state/plugins'
+export { surfacesAtom, tabsPlacementAtom } from '@/state/plugins'
 export { byRecency, recentsAtom } from '@/state/recents'
 export { openCommitInHistoryAtom } from '@/state/history'
 export { openDialogAtom, type ActiveDialog, type PluginDialog } from '@/state/dialogs'

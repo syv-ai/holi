@@ -56,6 +56,7 @@ import {
 } from 'react'
 import { cn } from '@/lib/cn'
 import { compress, PILL, rowAt, rowArrive, rowFrom, rowGone, rowLeave, spring } from './springs'
+import { HoverCard } from './HoverCard'
 import { Icon, type IconGlyph } from './Icon'
 import { ICON_MOTION, ICON_TONE, IconButton, type IconMotion, type IconTone } from './IconButton'
 
@@ -86,6 +87,10 @@ export type MorphingMenuAction = {
   panel?: (close: () => void, open: boolean) => ReactNode
   /** Centred anchor only: the open panel rises toward the middle of its view. */
   rise?: boolean
+  /** What the item has open, shown in a card while the pointer rests on its
+   *  dock shortcut, in place of the tooltip; the shortcut wears a dot while it
+   *  has one. The list's row does not show it. */
+  hoverCard?: ReactNode
 }
 
 /** One level of children keeps the menu small and the way back predictable. */
@@ -520,45 +525,62 @@ export function MorphingMenu({
   function shortcut(item: MorphingMenuItem) {
     const hasChildren = Boolean(item.children?.length)
     const active = isActive(item)
+    const button = (
+      <IconButton
+        icon={active && item.activeIcon ? item.activeIcon : item.icon}
+        label={item.label}
+        size="md"
+        shape="round"
+        // The card names the item itself, so the tooltip would say it twice.
+        {...(item.hoverCard === undefined ? {} : { tooltip: false as const })}
+        tooltipSide={tooltipSide}
+        data-menu-item={item.id}
+        aria-current={active ? (hasChildren ? 'true' : 'page') : undefined}
+        pressed={item.pressed}
+        active={active}
+        tone={item.tone}
+        motion={item.motion}
+        aria-expanded={hasChildren ? false : undefined}
+        aria-controls={hasChildren ? `${id}-group-${item.id}` : undefined}
+        onClick={(event) =>
+          hasChildren
+            ? open({ kind: 'group', id: item.id }, item.id, event.detail === 0)
+            : item.panel
+              ? open({ kind: 'panel', id: item.id }, item.id, event.detail === 0)
+              : select(item)
+        }
+      >
+        {item.badge !== undefined && item.badge > 0 && (
+          <span
+            aria-hidden="true"
+            data-tone={item.badgeTone}
+            className={cn(
+              'absolute -top-0.5 -right-0.5 min-w-3.5 rounded-full px-1 text-[10px] leading-3.5',
+              item.badgeTone === 'alert'
+                ? 'bg-destructive text-destructive-foreground'
+                : 'bg-foreground/15 text-foreground',
+            )}
+          >
+            {item.badge}
+          </span>
+        )}
+        {item.hoverCard !== undefined && (
+          <span
+            aria-hidden="true"
+            className="absolute bottom-0 left-1/2 size-1 -translate-x-1/2 rounded-full bg-foreground/40"
+          />
+        )}
+      </IconButton>
+    )
     return (
       <Cell key={item.id} still={reducedMotion}>
-        <IconButton
-          icon={active && item.activeIcon ? item.activeIcon : item.icon}
-          label={item.label}
-          size="md"
-          shape="round"
-          tooltipSide={tooltipSide}
-          data-menu-item={item.id}
-          aria-current={active ? (hasChildren ? 'true' : 'page') : undefined}
-          pressed={item.pressed}
-          active={active}
-          tone={item.tone}
-          motion={item.motion}
-          aria-expanded={hasChildren ? false : undefined}
-          aria-controls={hasChildren ? `${id}-group-${item.id}` : undefined}
-          onClick={(event) =>
-            hasChildren
-              ? open({ kind: 'group', id: item.id }, item.id, event.detail === 0)
-              : item.panel
-                ? open({ kind: 'panel', id: item.id }, item.id, event.detail === 0)
-                : select(item)
-          }
-        >
-          {item.badge !== undefined && item.badge > 0 && (
-            <span
-              aria-hidden="true"
-              data-tone={item.badgeTone}
-              className={cn(
-                'absolute -top-0.5 -right-0.5 min-w-3.5 rounded-full px-1 text-[10px] leading-3.5',
-                item.badgeTone === 'alert'
-                  ? 'bg-destructive text-destructive-foreground'
-                  : 'bg-foreground/15 text-foreground',
-              )}
-            >
-              {item.badge}
-            </span>
-          )}
-        </IconButton>
+        {item.hoverCard === undefined ? (
+          button
+        ) : (
+          <HoverCard content={item.hoverCard} side={tooltipSide}>
+            {button}
+          </HoverCard>
+        )}
       </Cell>
     )
   }

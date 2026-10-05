@@ -111,6 +111,11 @@ const elementTypes = {
       from: [['plugins', { plugin: 'agent-ui' }]],
       allow: ['primitives', 'composites', ['plugins', { plugin: 'agent*' }]],
     },
+    {
+      // Workspace draws over the apps and Google plugins' pages.
+      from: [['plugins', { plugin: 'workspace-ui' }]],
+      allow: ['primitives', 'composites', ['plugins', { plugin: '*' }]],
+    },
   ],
 }
 const external = {

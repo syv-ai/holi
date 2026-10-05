@@ -155,6 +155,13 @@ export interface RailItem {
    *  surface with instances is listed as a group of them, such as "Apps". */
   label?: string
   visible?: Atom<boolean>
+  /** The surface whose tabs this item holds, when that is not `surface` itself:
+   *  Apps is the page of apps, and each open app is a tab of the `app` surface,
+   *  which Apps' card of open tabs lists. */
+  tabs?: string
+  /** A surface whose item this one stands in for while its plugin runs: the
+   *  nav menu lists this item and leaves that one out. */
+  replaces?: string
   /** Run this command (`state/commands.ts`) instead of opening the surface. */
   command?: string
   /** While true, the item shows that something of the surface's is running. */
@@ -240,6 +247,20 @@ export interface AgentServiceSource {
   start: WritableAtom<null, [{ name?: string; prompt: string }], Promise<AskResult>>
 }
 
+/**
+ * Where the frame puts core's own parts, as a plugin may move them. Each field
+ * a plugin leaves out stays where core has it.
+ */
+export interface ShellLayout {
+  /** The nav menu: at the sidebar's foot and down the rail (`sidebar`, core's
+   *  own), or centred at the foot of the window (`dock`). */
+  hub?: 'sidebar' | 'dock'
+  /** The open tabs: a strip at the head of each pane (`strip`, core's own), or
+   *  in the nav menu, each item holding its surface's tabs and one more
+   *  holding the files (`hub`). */
+  tabs?: 'strip' | 'hub'
+}
+
 export interface RendererPlugin {
   info: PluginInfo
   /** Handlers for the plugin's events, by name. Subscribed at boot for every
@@ -259,6 +280,8 @@ export interface RendererPlugin {
   overlay?: ComponentType
   /** Right-hand drawers; each decides whether it is open. */
   drawers?: readonly ComponentType[]
+  /** Where core's own parts of the frame sit while the plugin runs. */
+  layout?: ShellLayout
   /**
    * Why leaving the open vault (switching, or adding one) costs something
    * now, as a sentence, or null when it costs nothing. Core asks before

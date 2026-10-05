@@ -728,6 +728,30 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
       run: async (ctx, event) => google(() => createEvent(apiOf(ctx.remote), event)),
     }),
 
+    /**
+     * A solo event the person made by selecting a day in the agenda. The same
+     * `createEvent` the agent's `schedule` calls, so it has no `attendees` and
+     * mails nobody, on the primary calendar. `end` is exclusive for an all-day
+     * event, as Google's is: a single day ends on the day after.
+     */
+    'google.createEvent': cap({
+      doors: ['ui'],
+      params: (raw) => {
+        const p = paramsObject(raw)
+        const location = optionalStringParam(p, 'location')
+        const description = optionalStringParam(p, 'description')
+        return {
+          title: stringParam(p, 'title'),
+          start: stringParam(p, 'start'),
+          end: stringParam(p, 'end'),
+          ...(flagParam(p, 'allDay') ? { allDay: true } : {}),
+          ...(location === undefined || location === '' ? {} : { location }),
+          ...(description === undefined || description === '' ? {} : { description }),
+        }
+      },
+      run: async (ctx, event) => google(() => createEvent(apiOf(ctx.remote), event)),
+    }),
+
     /** Move or retitle an event; refused when anyone is invited. */
     'google.reschedule': cap({
       doors: ['cli'],

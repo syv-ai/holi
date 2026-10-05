@@ -109,4 +109,33 @@ export function registerIpc(deps: {
     // `filePaths[0]` is `string | undefined` under noUncheckedIndexedAccess.
     return result.canceled ? null : (result.filePaths[0] ?? null)
   })
+
+  /**
+   * A small picture of part of the calling window, for the previews of open
+   * tabs (docs/features/nav-menu.md): the renderer names the rectangle of a
+   * pane's body, and gets back a JPEG as a data URL, or null when the window
+   * has nothing to show there. Taken from what is on screen, because a vault
+   * app is a page in a frame whose pixels no other process can read.
+   */
+  ipcMain.handle(
+    'holi:capturePage',
+    async (
+      event,
+      rect: { x: number; y: number; width: number; height: number },
+      width: number,
+    ): Promise<string | null> => {
+      const box = [rect.x, rect.y, rect.width, rect.height].map((n) => Math.round(Number(n)))
+      if (box.some((n) => !Number.isFinite(n)) || box[2]! < 8 || box[3]! < 8) return null
+      const out = Math.min(640, Math.max(32, Math.round(Number(width)) || 320))
+      const image = await event.sender.capturePage({
+        x: box[0]!,
+        y: box[1]!,
+        width: box[2]!,
+        height: box[3]!,
+      })
+      if (image.isEmpty()) return null
+      const small = image.resize({ width: out, quality: 'good' })
+      return `data:image/jpeg;base64,${small.toJPEG(70).toString('base64')}`
+    },
+  )
 }

@@ -10,6 +10,21 @@ A vault can connect a Google account to read and triage Gmail, read its calendar
 - **Scope drift:** an old grant keeps working and 403s only the newly added calls. `missingScopes()` compares stored scopes in Google's vocabulary (`email` returns as `.../userinfo.email`) and settings offers **Reconnect**.
 - **Mail cache:** one `node:sqlite` file per account, `userData/google-cache-<sub>.db`, last 500 threads, reconciled by `history.list` deltas. The key carries every filter that narrows a list; the history cursor is per key; archive and trash arrive as label changes and land in a _left_ bucket. Bump `SHAPE_VERSION` when a cached type changes. A removed or dead account deletes the file and its sidecars.
 - **Writes:** the renderer paints first and reverts on refusal; main calls Google first and updates the cache only on success. Every thread action takes that one path.
+- **The agenda is a month** to look at and create in (`renderer/MonthView`, `month-days.ts`), laid out
+  like the system calendars. The workspace plugin opens it so (its `agenda` surface renders
+  `AgendaView` with `initialView="month"`); without it the agenda opens as the list, and the switch
+  below still reaches the month:
+  six weeks, Monday first, ISO week numbers down the side, today in a red disc, weekends shaded and
+  the neighbouring months' days faded. An event is drawn on each day it covers: a timed one as its
+  calendar's colour bar and title, an all-day one as a tinted pill; a day with more than three shows
+  two and "+N more", which lists the day. ‹ Today › pages by month and the month asks for its own
+  six weeks (`monthWindow`, always under the 92 days one call may ask). A **Month | List** switch
+  keeps the old list, the next week with each invitation beside it. Pressing an event opens it (the
+  same detail the list's pane shows, with Join, Task and Open in Google); **pressing a day's empty
+  space starts an event on it** (`NewEventDialog`: title, start and end day and time or all day,
+  place), made by `google.createEvent` at the UI door, which is the agent's `schedule` call, so it is
+  on the primary calendar and has no attendees and mails nobody. An all-day event's `end` is the day
+  after, as Google's is. The grid is read again after.
 - **Calendar** shows calendars the user owns by default; per-calendar overrides live in main so the agent honours them. Events carry `mine`. Joining uses `conferenceData`, then the body, then the location, matching a join-link shape. A thread with an `.ics` is joined to its event by the invite's `UID`.
 - **Composer:** markdown with a preview through the reader's sanitiser and frame; main sends exactly the previewed HTML as `multipart/alternative`, the markdown as the plain part, marked `X-Holi-Source: markdown`. Drafts live in Gmail and all of them open (unmarked ones via `turndown`). Autosave from the first edit, 2 s idle, single-flight. Reply is sender-only unless reply-all.
 - **Linking** a thread or event makes a task with the permalink as a plain markdown link in its body ([tasks](tasks.md)).

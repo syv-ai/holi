@@ -29,8 +29,9 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   the name without `.app`, and Duplicate makes `Budget copy.app`. A drop on the row lands beside
   it, not among its files. A personal app's row shows only under show-hidden, like any local
   file; the launchers always list it. See [file tree](file-tree.md).
-- **Launchers.** The tree's app row, the [nav menu](nav-menu.md)'s Apps drill-down (every
-  finished app, most recently opened first, in the sidebar and on the rail; absent when there are none), and the
+- **Launchers.** The tree's app row, the [nav menu](nav-menu.md)'s Apps item, which opens, with the workspace plugin on, the Apps page (`apps` surface,
+  `workspace-ui/renderer/AppsPage.tsx`: a card per finished app, most recently opened first, with where it lives;
+  an empty state when there are none), and the
   [command palette](command-palette.md), which lists them with their folder. There is no separate
   Apps section. Its Finish this app is on the tree's app row, and its Edit Source gave way to the
   row's Show App Files, which expands the bundle so `index.html` opens like any file.

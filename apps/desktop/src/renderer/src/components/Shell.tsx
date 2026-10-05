@@ -23,6 +23,7 @@ import { DialogHost } from './DialogHost'
 import { FrontmatterFieldsHost } from '@/features/frontmatter/FrontmatterFieldsHost'
 import { PaneView } from './PaneView'
 import { DrawerShell } from '@/composites'
+import { cn } from '@/lib/cn'
 import { FileTree } from '@/features/explorer/FileTree'
 import { NavMenu } from '@/features/nav/NavMenu'
 import { VaultPicker } from '@/features/vault/VaultPicker'
@@ -59,9 +60,11 @@ import { pendingVaultPromptAtom, startPendingVaultPromptAtom } from '../state/va
 import { openPathAtom, useSurfaceTabs } from '@/state/surfaces'
 import {
   folderClaimsAtom,
+  hubPlacementAtom,
   leaveReasonsAtom,
   runningPluginsAtom,
   surfacesAtom,
+  tabsPlacementAtom,
 } from '@/state/plugins'
 import { useAgentService } from '@/state/agent-service'
 import { reconcileAtom } from '@/state/reconcile'
@@ -108,6 +111,12 @@ export function Shell() {
   const folderClaims = useAtomValue(folderClaimsAtom)
   const surfaces = useAtomValue(surfacesAtom)
   const running = useAtomValue(runningPluginsAtom)
+  /** Whether a plugin has moved the nav menu out of the sidebar, to the foot
+   *  of the window. */
+  const hubDocked = useAtomValue(hubPlacementAtom) === 'dock'
+  /** Whether the open tabs are listed in the nav menu, so a pane has no
+   *  strip of its own. */
+  const tabsInMenu = useAtomValue(tabsPlacementAtom) === 'hub'
   const [navOpen, setNavOpen] = useAtom(navOpenAtom)
   const historyTarget = useAtomValue(historyTargetPathAtom)
   const reconcile = useSetAtom(reconcileAtom)
@@ -265,7 +274,8 @@ export function Shell() {
           open={navOpen}
           label="Sidebar"
           // Hidden, the nav closes to a rail: the plugins' rail sections (the
-          // session orbs), then the nav menu on its side at the foot. The toggle rides the drawer's moving edge
+          // session orbs), then the nav menu on its side at the foot, unless
+          // it is the window's dock. The toggle rides the drawer's moving edge
           // and lands in the rail's top slot.
           edgeControl={
             <IconButton
@@ -285,7 +295,7 @@ export function Shell() {
               {running.map(({ info, railSection: Section }) =>
                 Section === undefined ? null : <Section key={info.id} />,
               )}
-              <NavMenu orientation="vertical" />
+              {!hubDocked && <NavMenu orientation="vertical" />}
             </>
           }
           header={
@@ -342,9 +352,11 @@ export function Shell() {
               first icons on the tree's chevrons: a root row's `pl-6` puts a
               14px chevron's centre at 31px, and 11px here plus the bar's 4px
               and a 32px button's 8px inset puts a 16px icon's centre there. */}
-            <div className="flex shrink-0 py-2 pr-2 pl-2.75">
-              <NavMenu />
-            </div>
+            {!hubDocked && (
+              <div className="flex shrink-0 py-2 pr-2 pl-2.75">
+                <NavMenu />
+              </div>
+            )}
           </div>
         </DrawerShell>
 
@@ -359,6 +371,7 @@ export function Shell() {
                   <PaneView
                     pane={p}
                     focused={i === workspace.active}
+                    strip={!tabsInMenu}
                     leaving={leavingPane === i}
                     onFocus={() => setWorkspace((w) => focusPane(w, i))}
                     // Every action focuses this pane first, then acts on the
@@ -430,7 +443,12 @@ export function Shell() {
           </ResizablePanelGroup>
           {/* What plugins float over the panes: clear of a pane's own tab
               strip, and out of the way of everything but itself. */}
-          <div className="pointer-events-none absolute inset-x-0 top-11 bottom-0 z-30">
+          <div
+            className={cn(
+              'pointer-events-none absolute inset-x-0 bottom-0 z-30',
+              tabsInMenu ? 'top-0' : 'top-11',
+            )}
+          >
             {running.map(({ info, overlay: Overlay }) =>
               Overlay === undefined ? null : <Overlay key={info.id} />,
             )}
@@ -452,6 +470,15 @@ export function Shell() {
             and one host is one subscription. */}
         <FrontmatterFieldsHost />
       </div>
+
+      {/* The nav menu as the window's dock: a row of its own under the sidebar
+          and the panes, so it is centred on the window and covers nothing. It
+          opens upward over them. */}
+      {hubDocked && (
+        <div className="flex shrink-0 px-2 pb-2">
+          <NavMenu dock />
+        </div>
+      )}
 
       {/* A config conflict outranks the quiet footer button, so a
           misconfigured vault cannot hide (docs/features/vaults-sync.md). */}
