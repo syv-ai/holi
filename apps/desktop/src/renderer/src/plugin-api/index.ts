@@ -40,12 +40,14 @@ export { activeRemoteAtom, historyEpochsAtom, snapshotAtom, syncStateAtom } from
 export { sessionAtom } from '@/state/session'
 export { activeModeAtom } from '@/state/color-scheme'
 export { openNoteTabAtom } from '@/state/panes'
+export { vaultAssetUrl } from '@/lib/vault-asset'
 export {
   activeSurfaceIdAtom,
   closeSurfaceTabAtom,
   closeSurfaceTabsAtom,
   openPathAtom,
   openSurfaceAtom,
+  surfaceActiveAtom,
   surfaceTabIdsAtom,
   tabForPathAtom,
 } from '@/state/surfaces'

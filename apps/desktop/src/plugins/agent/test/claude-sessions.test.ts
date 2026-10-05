@@ -43,6 +43,7 @@ describe('parseListing', () => {
         pid: 4242,
         status: 'busy',
         state: 'working',
+        startedAt: 1790627831838,
       },
     ])
   })
@@ -139,7 +140,7 @@ describe('claude-cli', () => {
     await cli.forkBg(target, 'uuid-1', 'Copy')
 
     expect(calls.map((c) => c.args)).toEqual([
-      ['agents', '--json'],
+      ['agents', '--json', '--all'],
       ['stop', '1234abcd'],
       ['--bg', '--name', 'Tidy', 'go'],
       ['--bg', '--resume', 'uuid-1', '--fork-session', '--name', 'Copy'],
@@ -149,6 +150,24 @@ describe('claude-cli', () => {
       expect(opts.env.CLAUDE_CONFIG_DIR).toBe('/cfg/vault')
       expect(opts.env.PATH?.split(':')[0]).toBe('/holi/bin')
     }
+  })
+
+  it('asks again without --all of a Claude Code that does not know it', async () => {
+    const asked: string[][] = []
+    const cli = createClaudeCli({
+      resolveBin: () => '/c',
+      run: async (_bin, args) => {
+        asked.push(args)
+        if (args.includes('--all')) throw new Error("unknown option '--all'")
+        return '[]'
+      },
+      log: () => {},
+    })
+    expect(await cli.list(target)).toBe('[]')
+    expect(asked).toEqual([
+      ['agents', '--json', '--all'],
+      ['agents', '--json'],
+    ])
   })
 
   it('answers the new id, or why there is none', async () => {

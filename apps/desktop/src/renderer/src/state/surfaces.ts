@@ -90,6 +90,23 @@ export function activeSurfaceIdAtom(surface: string): Atom<string | null> {
   return made
 }
 
+const activeKindAtoms = new Map<string, Atom<boolean>>()
+
+/** Whether the active tab is one of `surface`'s, with or without an id: a
+ *  surface that is one page has no id to tell it by. The same atom for the
+ *  same surface. */
+export function surfaceActiveAtom(surface: string): Atom<boolean> {
+  let made = activeKindAtoms.get(surface)
+  if (made === undefined) {
+    made = atom((get) => {
+      const tab = activeTab(get(workspaceAtom))
+      return tab?.kind === 'surface' && tab.surface === surface
+    })
+    activeKindAtoms.set(surface, made)
+  }
+  return made
+}
+
 /** A surface's tabs close when it leaves the registry, as when its plugin is
  *  turned off. Mounted once, in the shell. */
 export function useSurfaceTabs(): void {

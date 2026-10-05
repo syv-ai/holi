@@ -22,11 +22,14 @@
  *
  * NOTE: no `electron` import, so this loads under vitest.
  */
+import type { TranscriptChunk } from '../claude/transcript'
 import type { VaultCtx } from '../../../../main/plugin-api'
 import type { VaultCliTarget } from '../claude/cli'
-import type { ClaudeRow, SessionSummary } from '../claude/listing'
+import type { ClaudeRow, PastSession, SessionSummary } from '../claude/listing'
 import type { AgentProvider, VaultRef } from '../provider'
 import type { AgentTerminals } from './terminals'
+import { readArchive, writeArchive } from './archive'
+import { saveUpload, type UploadResult } from './uploads'
 import { ContextSnapshot, type FocusInput } from './context-snapshot'
 import { createTurnCoordinator, type TurnCoordinator, type TurnVault } from './turn-coordinator'
 import type { TurnLog } from './turn-log'
@@ -62,9 +65,12 @@ export interface AgentSessionsDeps {
     | 'parseListing'
     | 'isLive'
     | 'summarise'
+    | 'summarisePast'
     | 'readContextPercent'
     | 'watch'
     | 'configure'
+    | 'transcript'
+    | 'blockedQuestion'
     | 'takeFirstSpawn'
     | 'signInNotice'
   >
@@ -87,6 +93,8 @@ export interface AgentSessions {
   ensure(vault?: AgentVault): Promise<void>
   /** The vault's live sessions, in listing order. */
   sessions(): SessionSummary[]
+  /** The vault's finished sessions: its history, in listing order. */
+  history(): PastSession[]
   /** Re-read the listing now. Never rejects. */
   refresh(): Promise<void>
   /** A terminal on the list (no `attach`) or on one session. */
@@ -97,6 +105,22 @@ export interface AgentSessions {
   /** Put text in a session's input, unsent: a live one by id, or a new one
    *  named from the text. Opens a terminal on it when Holi has none. */
   send(args: Geometry & { text: string; target: string | 'new' }): Promise<OpenResult>
+  /** Send `text` to a live session as a turn, through a terminal on it. */
+  say(args: Geometry & { id: string; text: string }): Promise<OpenResult>
+  /** The archived chats' job ids. */
+  archived(): string[]
+  /** Archive a chat, or bring it back. Never stops a session: the caller
+   *  stops a live one first. */
+  archive(id: string, archived: boolean): Promise<ActionResult>
+  /** Delete a finished chat for good, conversation and all (`claude rm`). */
+  remove(id: string): Promise<ActionResult>
+  /** Write an image the person attached into the vault; answers its path. */
+  upload(args: { name: string; data: string }): Promise<UploadResult>
+  /** A live session's conversation from `offset` on. */
+  transcript(id: string, offset?: number): Promise<TranscriptChunk | null>
+  /** The question a session waits on, as JSON, when only Claude Code's job
+   *  record has it. */
+  question(id: string): Promise<string | null>
   stop(id: string): Promise<ActionResult>
   respawn(id: string): Promise<ActionResult>
   duplicate(id: string, geometry?: Geometry): Promise<StartResult>
@@ -123,6 +147,8 @@ interface Current {
   unwatch: () => void
   /** False until the first listing read, which seeds the working set. */
   seeded: boolean
+  /** The archived chats, by job id (`archive.ts`). */
+  archived: Set<string>
 }
 
 export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
@@ -138,6 +164,8 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
   /** The latest listing for the current vault, live or not. */
   let rows: ClaudeRow[] = []
   let lastPushed = ''
+  let lastHistory = ''
+  let lastArchive = ''
   let idleRecheck: ReturnType<typeof setTimeout> | null = null
   let focusWriter: { root: string; snapshot: ContextSnapshot } | null = null
   /**
@@ -170,6 +198,8 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
   const live = (): ClaudeRow[] => rows.filter((row) => provider.isLive(row))
   const summaries = (): SessionSummary[] =>
     live().map((row) => provider.summarise(row, coordinator.working, contextPercent.get(row.id)))
+  const past = (): PastSession[] =>
+    rows.filter((row) => !provider.isLive(row)).map((row) => provider.summarisePast(row))
 
   /** Tell the renderer the list, when it changed: the vault's, or `remote`'s
    *  as Holi lets go of it. */
@@ -177,9 +207,24 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     if (remote === undefined) return
     const next = summaries()
     const encoded = JSON.stringify(next)
-    if (encoded === lastPushed) return
-    lastPushed = encoded
-    deps.emit(remote, 'sessions', next)
+    if (encoded !== lastPushed) {
+      lastPushed = encoded
+      deps.emit(remote, 'sessions', next)
+    }
+    // The history moves far less often than the sessions do and rides the
+    // same read, so it is told only when it differs.
+    const history = past()
+    const encodedHistory = JSON.stringify(history)
+    if (encodedHistory !== lastHistory) {
+      lastHistory = encodedHistory
+      deps.emit(remote, 'history', history)
+    }
+    const archived = [...(current?.archived ?? [])]
+    const encodedArchive = JSON.stringify(archived)
+    if (encodedArchive !== lastArchive) {
+      lastArchive = encodedArchive
+      deps.emit(remote, 'archive', archived)
+    }
   }
 
   const targetOf = (c: Current): VaultCliTarget => ({
@@ -204,6 +249,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
       spawnChecked: false,
       unwatch: () => {},
       seeded: false,
+      archived: new Set(await readArchive(vault.root)),
     }
     next.unwatch = provider.watch(config.dir, () => void refresh(), log)
     return next
@@ -334,6 +380,33 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     },
 
     sessions: summaries,
+    history: past,
+    archived: () => [...(current?.archived ?? [])],
+    async archive(id, archived) {
+      const c = await ensureCurrent()
+      if (c === null) return noVault
+      if (archived) c.archived.add(id)
+      else c.archived.delete(id)
+      await writeArchive(c.root, c.archived).catch((err: unknown) =>
+        log(`archive not saved: ${String(err)}`),
+      )
+      push()
+      return { ok: true }
+    },
+    async remove(id) {
+      const c = await ensureCurrent()
+      if (c === null) return noVault
+      if (live().some((row) => row.id === id)) {
+        return { ok: false, message: 'That session is still running. Stop it first.' }
+      }
+      const res = await provider.cli.rm(targetOf(c), id)
+      if (res.ok) {
+        c.archived.delete(id)
+        await writeArchive(c.root, c.archived).catch(() => {})
+      }
+      await refresh()
+      return res
+    },
     refresh,
 
     async open(args) {
@@ -379,6 +452,41 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
       }
       deps.terminals.paste(terminalId, text)
       return { ok: true, terminalId }
+    },
+
+    async say({ id, text, cols, rows: r }) {
+      const c = await ensureCurrent()
+      if (c === null) return noVault
+      if (!live().some((row) => row.id === id)) {
+        return { ok: false, message: 'That session has ended.' }
+      }
+      let terminalId = deps.terminals.launchedFor(id)
+      if (terminalId === null) {
+        const opened = await openOn(c, { attach: id, cols, rows: r })
+        if (!opened.ok) return opened
+        terminalId = opened.terminalId
+      }
+      deps.terminals.paste(terminalId, text, true)
+      unprompted.delete(id)
+      return { ok: true, terminalId }
+    },
+
+    async upload(args) {
+      const c = await ensureCurrent()
+      return c === null ? noVault : saveUpload(c.root, args)
+    },
+
+    async transcript(id, offset) {
+      const c = await ensureCurrent()
+      const sessionId = rows.find((row) => row.id === id)?.sessionId
+      if (c === null || sessionId === undefined) return null
+      return provider.transcript(c.configDir, sessionId, offset)
+    },
+
+    async question(id) {
+      const c = await ensureCurrent()
+      if (c === null || !rows.some((row) => row.id === id)) return null
+      return provider.blockedQuestion(c.configDir, id)
     },
 
     async stop(id) {

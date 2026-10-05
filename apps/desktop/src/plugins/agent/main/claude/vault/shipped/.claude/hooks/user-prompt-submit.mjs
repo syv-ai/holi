@@ -22,6 +22,8 @@ try {
 }
 
 if (context?.focusedPath) {
-  process.stdout.write(`Focused note: \`${context.focusedPath}\` (use \`Read\` to view its contents)`)
+  process.stdout.write(
+    `Focused note: \`${context.focusedPath}\` (use \`Read\` to view its contents)`,
+  )
 }
 process.exit(0)

@@ -25,6 +25,9 @@ export interface PluginInfo {
   /** What turning it off does, including what stays: the settings tab says it
    *  beside the switch, before anyone flips it. */
   whenOff?: string
+  /** Plugins that must run for this one to: it draws or extends what they own,
+   *  and is left off wherever one of them is. */
+  requires?: readonly string[]
   /** The commit transforms its main side runs (`MainPlugin.transforms`), as
    *  the settings tab switches them. */
   transforms?: readonly TransformToggle[]
@@ -60,7 +63,18 @@ export function enabledPlugins(
   known: readonly PluginInfo[],
 ): Set<string> {
   const off = new Set(settings.localOff)
-  return new Set(
+  const on = new Set(
     known.filter((p) => (settings.vault[p.id] ?? p.default) && !off.has(p.id)).map((p) => p.id),
   )
+  // A plugin whose requirement is off goes too, and so does whatever required it.
+  for (let dropped = true; dropped;) {
+    dropped = false
+    for (const p of known) {
+      if (on.has(p.id) && !(p.requires ?? []).every((id) => on.has(id))) {
+        on.delete(p.id)
+        dropped = true
+      }
+    }
+  }
+  return on
 }

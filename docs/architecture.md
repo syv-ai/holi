@@ -96,7 +96,8 @@ marked `frame` serves framed pages: the window guard lets such a frame move with
 sends a link out of it to the browser.
 A plugin's own code sits in `main/`, `renderer/`, `shared/` and `test/` under its folder; its
 renderer imports its main side as types only, for `capClient`. The plugins are the agent
-([agent-sessions](features/agent-sessions.md)), PDF ([pdf](features/pdf.md)), Google
+([agent-sessions](features/agent-sessions.md)) and its interface (`agent-ui`, which `requires` the
+agent: `PluginInfo.requires` leaves a plugin off wherever a plugin it names is), PDF ([pdf](features/pdf.md)), Google
 ([google](features/google.md)) and vault apps ([vault apps](features/vault-apps.md)).
 A seed contribution can own a path prefix (`owns`): the agent owns `.claude/`, so every other
 plugin's skills, hooks and settings fragments there are left out while the agent is off and

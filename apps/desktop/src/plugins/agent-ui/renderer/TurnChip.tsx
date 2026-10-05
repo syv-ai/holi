@@ -12,7 +12,7 @@ import { useAtomValue, useSetAtom } from 'jotai'
 import { useEffect, useRef } from 'react'
 import { useAck } from '@/plugin-api'
 import { Button, Tooltip } from '@/primitives'
-import { agentSessionsAtom } from './state/sessions'
+import { agentSessionsAtom } from '../../agent/renderer/state/sessions'
 import {
   latestTurnsAtom,
   loadLatestTurnsAtom,
@@ -21,7 +21,7 @@ import {
   reviewTurnAtom,
   turnCountsAtom,
   turnReviewOpenAtom,
-} from './state/turns'
+} from '../../agent/renderer/state/turns'
 
 export function TurnChip({ sessionId }: { sessionId: string }): React.JSX.Element | null {
   const working =
