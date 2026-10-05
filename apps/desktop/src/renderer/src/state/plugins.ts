@@ -25,6 +25,7 @@ import type {
   RailItem,
   RendererPlugin,
   SettingsSection,
+  ShellLayout,
   Surface,
   SurfaceTabLook,
 } from '@/plugin-api/types'
@@ -142,6 +143,20 @@ export const leaveReasonsAtom = atom((get): readonly string[] =>
   }),
 )
 
+/** Where the nav menu sits: the first running plugin's answer, else the
+ *  sidebar. */
+export const hubPlacementAtom = atom(
+  (get): NonNullable<ShellLayout['hub']> =>
+    get(runningPluginsAtom).find((p) => p.layout?.hub !== undefined)?.layout?.hub ?? 'sidebar',
+)
+
+/** Where the open tabs are listed: the first running plugin's answer, else
+ *  each pane's strip. */
+export const tabsPlacementAtom = atom(
+  (get): NonNullable<ShellLayout['tabs']> =>
+    get(runningPluginsAtom).find((p) => p.layout?.tabs !== undefined)?.layout?.tabs ?? 'strip',
+)
+
 /** The first running plugin's agent, or null with none. */
 export const agentSourceAtom = atom(
   (get): AgentServiceSource | null =>
@@ -231,8 +246,12 @@ export const railAtom = atom(
     get,
   ): readonly (RailItem & { of: Surface; instances?: readonly string[]; running: boolean })[] => {
     const surfaces = get(surfacesAtom)
-    return get(contributionsAtom)
-      .flatMap((c) => c.rail ?? [])
+    const items = get(contributionsAtom).flatMap((c) => c.rail ?? [])
+    const replaced = new Set(
+      items.flatMap((item) => (item.replaces === undefined ? [] : [item.replaces])),
+    )
+    return items
+      .filter((item) => !replaced.has(item.surface))
       .flatMap((item) => {
         const of = surfaces.get(item.surface)
         if (of === undefined || (item.visible !== undefined && !get(item.visible))) return []

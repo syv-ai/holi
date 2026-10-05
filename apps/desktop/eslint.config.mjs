@@ -105,6 +105,17 @@ const elementTypes = {
       from: ['plugins'],
       allow: ['primitives', 'composites', ['plugins', { plugin: '${from.plugin}' }]],
     },
+    {
+      // The agent interface draws the agent's sessions and reads its state
+      // (`requires: ['agent']`): the one plugin that may import another.
+      from: [['plugins', { plugin: 'agent-ui' }]],
+      allow: ['primitives', 'composites', ['plugins', { plugin: 'agent*' }]],
+    },
+    {
+      // Workspace draws over the apps and Google plugins' pages.
+      from: [['plugins', { plugin: 'workspace-ui' }]],
+      allow: ['primitives', 'composites', ['plugins', { plugin: '*' }]],
+    },
   ],
 }
 const external = {

@@ -121,4 +121,9 @@ contextBridge.exposeInMainWorld('holi', {
   }): Promise<string | null> => ipcRenderer.invoke('holi:showSaveDialog', input),
   /** Pick a folder on disk: the destination for Copy/Move to Folder…. */
   chooseFolder: (): Promise<string | null> => ipcRenderer.invoke('holi:chooseFolder'),
+  /** A small JPEG of a rectangle of this window, for a tab's preview. */
+  capturePage: (
+    rect: { x: number; y: number; width: number; height: number },
+    width: number,
+  ): Promise<string | null> => ipcRenderer.invoke('holi:capturePage', rect, width),
 })

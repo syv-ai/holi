@@ -22,6 +22,8 @@ The workspace is one or more side-by-side panes, each with its own tab strip. Ta
 
 **The strip scrolls.** Pills sit in an `overflow-x-auto` viewport with a hidden scrollbar; a vertical wheel scrolls it sideways. Each side floats a chevron and a count of tabs off that edge, and opens a menu of them; picking one selects and scrolls it into view. The active tab is scrolled into view when it changes. Other position changes glide (FLIP).
 
+**Without the strip.** A plugin's layout may list the tabs in the [nav menu](nav-menu.md) instead (`ShellLayout.tabs`, `'hub'`; the workspace plugin does). A pane then has no strip (`PaneView`'s `strip`): it shows its active tab, and its trailing controls float over the body's top right corner. The workspace is the same one: preview and pinned, panes, ⌘W and the one-buffer rule hold. What goes with the strip is dragging a tab, so a split is made with ⌘\ or Open in a New Pane.
+
 **Vault dropdown.** `VaultPicker` is a Radix dropdown naming the current vault, listing the others, with "Add vault…" at the bottom. Sync state lives in the nav menu's sync item, not here.
 
 ## Rules

@@ -30,7 +30,9 @@ import {
 } from '../../../../main/plugin-api'
 import type { ActionResult, AgentSessions, Geometry, OpenResult, StartResult } from './sessions'
 import type { AgentTerminals, TerminalSummary } from './terminals'
-import type { SessionSummary } from '../claude/listing'
+import type { PastSession, SessionSummary } from '../claude/listing'
+import type { UploadResult } from './uploads'
+import type { TranscriptChunk } from '../claude/transcript'
 import { openTurnLog, type TurnRecord } from './turn-log'
 
 export const AGENT_NAMESPACES = ['agent'] as const
@@ -39,7 +41,22 @@ export interface AgentCapabilitiesDeps {
   /** The sessions of the open vault. */
   sessions: Pick<
     AgentSessions,
-    'ensure' | 'sessions' | 'open' | 'start' | 'send' | 'stop' | 'respawn' | 'duplicate'
+    | 'ensure'
+    | 'sessions'
+    | 'history'
+    | 'archived'
+    | 'archive'
+    | 'remove'
+    | 'open'
+    | 'start'
+    | 'send'
+    | 'say'
+    | 'transcript'
+    | 'question'
+    | 'upload'
+    | 'stop'
+    | 'respawn'
+    | 'duplicate'
   >
   terminals: Pick<AgentTerminals, 'list' | 'attach' | 'close'>
   /** The open vault's remote, or null with none open. */
@@ -105,6 +122,48 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
       text: (sessions) => sessions.map((s) => `${s.state}\t${s.name}`).join('\n'),
     }),
 
+    /** The vault's finished sessions, which the chat can still open and pick
+     *  up again. */
+    'agent.history': cap({
+      doors: ['ui'],
+      params: noParams,
+      run: async (ctx): Promise<PastSession[]> => {
+        if (!live(ctx)) return []
+        await deps.sessions.ensure()
+        return deps.sessions.history()
+      },
+    }),
+
+    /** The chats put in the archive, by job id. */
+    'agent.archived': cap({
+      doors: ['ui'],
+      params: noParams,
+      run: async (ctx): Promise<string[]> => {
+        if (!live(ctx)) return []
+        await deps.sessions.ensure()
+        return deps.sessions.archived()
+      },
+    }),
+
+    /** Put a chat in the archive, or take it out. */
+    'agent.archive': cap({
+      doors: ['ui'],
+      params: (raw) => {
+        const p = paramsObject(raw)
+        return { id: stringParam(p, 'id'), archived: p['archived'] !== false }
+      },
+      run: async (ctx, { id, archived }): Promise<ActionResult> =>
+        live(ctx) ? deps.sessions.archive(id, archived) : notOpen,
+    }),
+
+    /** Delete a finished chat for good. */
+    'agent.remove': cap({
+      doors: ['ui'],
+      params: idParams,
+      run: async (ctx, { id }): Promise<ActionResult> =>
+        live(ctx) ? deps.sessions.remove(id) : notOpen,
+    }),
+
     'agent.terminals': cap({
       doors: ['ui'],
       params: noParams,
@@ -152,6 +211,54 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
       },
       run: async (ctx, args): Promise<OpenResult> =>
         live(ctx) ? deps.sessions.send(args) : notOpen,
+    }),
+
+    /** A message from the chat: sent to a live session as a turn. */
+    'agent.say': cap({
+      doors: ['ui'],
+      params: (raw) => {
+        const p = paramsObject(raw)
+        return { ...geometry(p), id: stringParam(p, 'id'), text: stringParam(p, 'text') }
+      },
+      run: async (ctx, args): Promise<OpenResult> =>
+        live(ctx) ? deps.sessions.say(args) : notOpen,
+    }),
+
+    /** An image attached in the chat, written into the vault so the session
+     *  can read it. `data` is its bytes, base64. */
+    'agent.upload': cap({
+      doors: ['ui'],
+      params: (raw) => {
+        const p = paramsObject(raw)
+        return { name: stringParam(p, 'name'), data: stringParam(p, 'data') }
+      },
+      run: async (ctx, args): Promise<UploadResult> =>
+        live(ctx) ? deps.sessions.upload(args) : notOpen,
+    }),
+
+    /** A session's conversation for the chat, from `offset` on (the whole
+     *  tail without one). Null when there is nothing to read. */
+    'agent.transcript': cap({
+      doors: ['ui'],
+      params: (raw) => {
+        const p = paramsObject(raw)
+        const offset = p['offset']
+        if (offset !== undefined && (typeof offset !== 'number' || offset < 0)) {
+          throw new CapabilityError('BAD_REQUEST', 'offset must be a positive number')
+        }
+        return { id: stringParam(p, 'id'), ...(offset === undefined ? {} : { offset }) }
+      },
+      run: async (ctx, { id, offset }): Promise<TranscriptChunk | null> =>
+        live(ctx) ? deps.sessions.transcript(id, offset) : null,
+    }),
+
+    /** The question a session waits on, as JSON, for when its call is not in
+     *  the transcript. Null when there is none. */
+    'agent.question': cap({
+      doors: ['ui'],
+      params: idParams,
+      run: async (ctx, { id }): Promise<string | null> =>
+        live(ctx) ? deps.sessions.question(id) : null,
     }),
 
     'agent.stop': cap({

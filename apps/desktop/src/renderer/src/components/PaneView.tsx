@@ -73,6 +73,9 @@ export interface PaneViewProps {
   onDragOverStrip?: (over: boolean) => void
   /** Controls at the right-hand end of this pane's strip. */
   trailing?: ReactNode
+  /** Whether the pane has its tab strip. Without it (the tabs are in the nav
+   *  menu) `trailing` floats over the body's top right corner. */
+  strip?: boolean
 }
 
 export function PaneView({
@@ -92,6 +95,7 @@ export function PaneView({
   onDragBegin,
   onDragOverStrip,
   trailing,
+  strip = true,
 }: PaneViewProps) {
   const tab = pane.active < 0 ? null : (pane.tabs[pane.active] ?? null)
   const syncState = useAtomValue(syncStateAtom)
@@ -135,22 +139,32 @@ export function PaneView({
       onPointerDownCapture={onFocus}
       onFocusCapture={onFocus}
     >
-      <TabStrip
-        tabs={pane.tabs}
-        active={pane.active}
-        focused={focused}
-        onSelect={onSelect}
-        onPin={onPin}
-        onClose={onCloseTab}
-        onDropTab={onDropTab}
-        onDragBegin={onDragBegin}
-        onDragOverStrip={onDragOverStrip}
-        trailing={trailing}
-      />
+      {strip && (
+        <TabStrip
+          tabs={pane.tabs}
+          active={pane.active}
+          focused={focused}
+          onSelect={onSelect}
+          onPin={onPin}
+          onClose={onCloseTab}
+          onDropTab={onDropTab}
+          onDragBegin={onDragBegin}
+          onDragOverStrip={onDragOverStrip}
+          trailing={trailing}
+        />
+      )}
 
       {/* The body is a drop surface too. Wrapped so the overlay covers the
           content but not the strip, which handles its own drops. */}
-      <div className="relative flex min-h-0 flex-1 flex-col">
+      <div
+        className="relative flex min-h-0 flex-1 flex-col"
+        // What a preview of this tab is taken of (`state/tab-thumbs`).
+        data-pane-body=""
+        data-tab-key={tab == null ? undefined : tabKey(tab)}
+      >
+        {!strip && (
+          <div className="absolute top-1.5 right-2 z-10 flex items-center">{trailing}</div>
+        )}
         {/* Fade on a swap. Opacity only: this wraps CodeMirror, and a layout
             change would drag its measure loop into every frame.
 

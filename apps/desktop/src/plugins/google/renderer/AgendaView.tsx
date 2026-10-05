@@ -15,6 +15,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import {
   CalendarDays,
+  ChevronLeft,
+  ChevronRight,
   ExternalLink,
   MapPin,
   RefreshCw,
@@ -26,6 +28,7 @@ import {
 import { useAtomValue, useSetAtom } from 'jotai'
 import {
   Button,
+  Dialog,
   DropdownMenu,
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
@@ -48,6 +51,13 @@ import {
 } from '@/plugin-api'
 import { googleCap } from './account'
 import { TASKS_CREATE, tasksCap } from './tasks'
+import { MonthView } from './MonthView'
+import { NewEventDialog, type NewEventValues } from './NewEventDialog'
+import { eventDays, monthWindow, shiftMonth } from './month-days'
+
+/** The agenda is a month to look at and create in, or the next week as a list
+ *  with each invitation beside it. */
+type View = 'month' | 'list'
 
 /** Mirrors `main/google/calendar.ts`. */
 type RsvpStatus = 'needsAction' | 'tentative' | 'accepted' | 'declined'
@@ -205,8 +215,25 @@ function longDayLabel(event: CalendarEvent): string {
   })
 }
 
-export function AgendaView() {
+export function AgendaView({
+  initialView = 'list',
+}: {
+  initialView?: View
+  /** What a surface is handed; the agenda needs neither. */
+  id?: string
+  visible?: boolean
+} = {}) {
   const [state, setState] = useState<State>({ kind: 'loading' })
+  const [view, setView] = useState<View>(initialView)
+  const [cursor, setCursor] = useState<[number, number]>(() => {
+    const now = new Date()
+    return [now.getFullYear(), now.getMonth() + 1]
+  })
+  /** The day a new event is being started on. */
+  const [newDay, setNewDay] = useState<string | null>(null)
+  /** The day whose events are listed in full ("+N more"). */
+  const [moreDay, setMoreDay] = useState<string | null>(null)
+  const [year, month] = cursor
   const [calendars, setCalendars] = useState<CalendarChoice[]>([])
   const remote = useAtomValue(activeRemoteAtom)
   const openNote = useSetAtom(openNoteTabAtom)
@@ -234,8 +261,9 @@ export function AgendaView() {
       setState({ kind: 'disconnected' })
       return
     }
-    const window = agendaWindow()
-    setState({ kind: 'loading' })
+    const window = view === 'month' ? monthWindow(year, month) : agendaWindow()
+    // Paging keeps the grid it has drawn until the new month answers.
+    setState((current) => (current.kind === 'ready' ? current : { kind: 'loading' }))
 
     // Paint the last agenda for this exact day and calendar set, if there is
     // one, then let the live fetch below replace it. It only fills the gap
@@ -265,7 +293,7 @@ export function AgendaView() {
             : { kind: 'error', message },
         )
       })
-  }, [remote])
+  }, [remote, view, year, month])
 
   useEffect(load, [load])
   useEffect(loadCalendars, [loadCalendars])
@@ -308,6 +336,19 @@ export function AgendaView() {
     }
   }
 
+  /** Make the event, then read the month again so it is on the grid. */
+  const createEvent = async (values: NewEventValues): Promise<void> => {
+    if (remote === null) throw new Error('No vault is open.')
+    await googleCap.createEvent(remote, {
+      title: values.title,
+      start: values.start,
+      end: values.end,
+      ...(values.allDay ? { allDay: true } : {}),
+      ...(values.location === '' ? {} : { location: values.location }),
+    })
+    load()
+  }
+
   if (state.kind === 'loading') {
     return <Placeholder>Loading your agenda…</Placeholder>
   }
@@ -341,6 +382,122 @@ export function AgendaView() {
   // old object could pin the pane to an event no longer on the agenda.
   const openEvent = state.events.find((event) => eventKey(event) === selected) ?? null
 
+  const switcher = <ViewSwitch view={view} onChange={setView} />
+
+  if (view === 'month') {
+    const dayEvents =
+      moreDay === null ? [] : state.events.filter((e) => eventDays(e).includes(moreDay))
+    return (
+      <div className="flex h-full min-h-0 flex-col">
+        <div className="flex shrink-0 items-center gap-3 px-4 pt-3 pb-2">
+          <h2 className="mr-auto text-2xl tracking-tight" aria-live="polite">
+            <span className="font-semibold">
+              {new Date(year, month - 1, 1).toLocaleDateString(undefined, { month: 'long' })}
+            </span>{' '}
+            <span className="font-light">{year}</span>
+          </h2>
+          {switcher}
+          <div className="flex items-center gap-1">
+            <IconButton
+              icon={ChevronLeft}
+              label="previous month"
+              tooltip="previous month"
+              onClick={() => setCursor(shiftMonth(year, month, -1))}
+            />
+            <Button
+              variant="secondary"
+              size="xs"
+              onClick={() => {
+                const now = new Date()
+                setCursor([now.getFullYear(), now.getMonth() + 1])
+              }}
+            >
+              Today
+            </Button>
+            <IconButton
+              icon={ChevronRight}
+              label="next month"
+              tooltip="next month"
+              onClick={() => setCursor(shiftMonth(year, month, 1))}
+            />
+          </div>
+          <CalendarPicker calendars={calendars} onToggle={toggleCalendar} />
+          <IconButton icon={RefreshCw} label="refresh agenda" tooltip="refresh" onClick={load} />
+        </div>
+        <div className="min-h-0 flex-1">
+          <MonthView
+            year={year}
+            month={month}
+            events={state.events}
+            onPickDay={setNewDay}
+            onPickEvent={(event) => setSelected(eventKey(event as CalendarEvent))}
+            onMore={setMoreDay}
+          />
+        </div>
+
+        <NewEventDialog day={newDay} onClose={() => setNewDay(null)} onCreate={createEvent} />
+
+        <Dialog open={openEvent !== null} onClose={() => setSelected(null)} size="md">
+          {openEvent !== null && (
+            <>
+              <Dialog.Header>{openEvent.title}</Dialog.Header>
+              <Dialog.Body>
+                <div className="max-h-[55vh] min-h-0 overflow-y-auto">
+                  <EventDetail
+                    event={openEvent}
+                    canCreateTask={canCreateTask}
+                    creating={creating === eventKey(openEvent)}
+                    onCreateTask={() => void createTask(openEvent)}
+                  />
+                </div>
+              </Dialog.Body>
+            </>
+          )}
+        </Dialog>
+
+        <Dialog open={moreDay !== null} onClose={() => setMoreDay(null)} size="sm">
+          {moreDay !== null && (
+            <>
+              <Dialog.Header>{dayLabel(moreDay)}</Dialog.Header>
+              <Dialog.Body>
+                <ul className="space-y-1">
+                  {dayEvents.map((event) => (
+                    <li key={eventKey(event)}>
+                      <Button
+                        variant="ghost"
+                        className="h-auto w-full justify-start gap-3 px-2 py-1.5 text-left font-normal"
+                        onClick={() => {
+                          setMoreDay(null)
+                          setSelected(eventKey(event))
+                        }}
+                      >
+                        <Swatch color={event.color} />
+                        <span className="w-24 shrink-0 font-mono text-xs text-muted-foreground">
+                          {timeLabel(event)}
+                        </span>
+                        <span className="min-w-0 flex-1 truncate text-sm">{event.title}</span>
+                      </Button>
+                    </li>
+                  ))}
+                </ul>
+              </Dialog.Body>
+              <Dialog.Footer>
+                <Button
+                  onClick={() => {
+                    setNewDay(moreDay)
+                    setMoreDay(null)
+                  }}
+                >
+                  New event
+                </Button>
+              </Dialog.Footer>
+            </>
+          )}
+        </Dialog>
+      </div>
+    )
+  }
+
   return (
     <ResizablePanelGroup
       orientation="horizontal"
@@ -351,7 +508,8 @@ export function AgendaView() {
       <ResizablePanel id="agenda-list" defaultSize={480} minSize={320}>
         <div className="flex h-full min-h-0 flex-col">
           {/* No "Agenda" heading: the tab already says so. */}
-          <div className="flex h-11 shrink-0 items-center justify-end gap-2 px-4">
+          <div className="flex h-11 shrink-0 items-center justify-between gap-2 px-4">
+            {switcher}
             <div className="flex items-center gap-1">
               <CalendarPicker calendars={calendars} onToggle={toggleCalendar} />
               <IconButton
@@ -658,6 +816,30 @@ function Swatch({ color }: { color: string | null }) {
       className={`size-2.5 shrink-0 rounded-[2px] ${color === null ? 'bg-muted-foreground' : ''}`}
       style={color === null ? undefined : { background: color }}
     />
+  )
+}
+
+/** Month or list: two pills, the one showing pressed. */
+function ViewSwitch({ view, onChange }: { view: View; onChange: (view: View) => void }) {
+  return (
+    <div
+      role="group"
+      aria-label="agenda view"
+      className="flex items-center rounded-full bg-muted p-0.5"
+    >
+      {(['month', 'list'] as const).map((choice) => (
+        <Button
+          key={choice}
+          variant={view === choice ? 'secondary' : 'ghost'}
+          size="xs"
+          aria-pressed={view === choice}
+          className="rounded-full px-3 capitalize"
+          onClick={() => onChange(choice)}
+        >
+          {choice}
+        </Button>
+      ))}
+    </div>
   )
 }
 

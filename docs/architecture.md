@@ -82,6 +82,13 @@ and its `rowMenu` items join the file tree's menu. On the main side a claim
 A plugin adds `surfaces` (tab kinds) and `rail`
 items to the nav menu ([tabs and panes](features/tabs-panes.md)), registered beside core's own, and
 `settingsSections` to the settings tab ([settings](features/settings.md)).
+A plugin may also say where core's own parts of the frame sit (`layout`, a `ShellLayout`): core
+still draws them, and the first running plugin that answers a field decides it. The workspace plugin
+(`src/plugins/workspace-ui/`, off unless a vault turns it on) moves the
+[nav menu](features/nav-menu.md) to the foot of the window that way, and the open tabs into it.
+It also names a surface kind ahead of the plugin that owns it (`apps`, and the `agenda` opened on
+its month) and a rail item that stands in for another's (`RailItem.replaces`), so it is first in
+the plugin list and the second plugin pair, beside the agent's, that imports across plugins.
 Its dialogs open as `{id: 'plugin', render}`.
 Main tells a plugin's renderer something through events: `ctx.emit(remote, name, payload)` sends
 `{remote, name, payload}` on the plugin's one channel, `plugin:<id>`, read by one preload member,
@@ -96,7 +103,8 @@ marked `frame` serves framed pages: the window guard lets such a frame move with
 sends a link out of it to the browser.
 A plugin's own code sits in `main/`, `renderer/`, `shared/` and `test/` under its folder; its
 renderer imports its main side as types only, for `capClient`. The plugins are the agent
-([agent-sessions](features/agent-sessions.md)), PDF ([pdf](features/pdf.md)), Google
+([agent-sessions](features/agent-sessions.md)) and its interface (`agent-ui`, which `requires` the
+agent: `PluginInfo.requires` leaves a plugin off wherever a plugin it names is), PDF ([pdf](features/pdf.md)), Google
 ([google](features/google.md)) and vault apps ([vault apps](features/vault-apps.md)).
 A seed contribution can own a path prefix (`owns`): the agent owns `.claude/`, so every other
 plugin's skills, hooks and settings fragments there are left out while the agent is off and

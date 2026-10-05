@@ -18,20 +18,21 @@ clone, on its config directory, with one environment. The supervisor takes its e
 whichever `claude` process started it and hands it to every session, so every call carrying Holi's
 bin directory first on `PATH` is what keeps `holi` resolvable in all of them.
 
-**Terminals are windows.** A Holi terminal is a PTY running `claude agents` (the list) or
-`claude attach <id>` (one session), with a headless-xterm `TerminalMirror` as its record. Closing
-one detaches: the session keeps running. Its tab is labelled in Holi's names, so tab and row
-agree: the live session its terminal title names (Claude Code titles an attached session by its
-name), "Agents" for the list, and "New session" for an unnamed session, whose title is generic. What a
-terminal shows can change under it (`←` in an attached session goes back to the list, and Enter
-there attaches any session), so a terminal is never taken to be a session. When its client exits
-(a detach, `/exit`, its session stopped) the tab closes. An agent tab is the surface `agent`, kept mounted,
-with the terminal id as its id. The agent is the plugin `agent` (`src/plugins/agent/`, on by
-default), and its renderer side (`renderer/index.tsx`) registers its tab (with `tabs`, so the strip,
-the palette and the recents read each terminal's label and status dot), its nav item (which runs
-`agent.show`), its commands (`agent.show` on ⌘J, `agent.new`), its rows, orbs and turn review, the
-palette's session rows, the leave question, and the agent service every "Ask" goes through
-(`useAgentService`). With the agent off there is no service, so no "Ask" is offered. Its main side attaches in `activateVault` and leaves in its disposer. The
+**Terminals are windows, never shown.** A Holi terminal is a PTY running `claude attach <id>`, with
+a headless-xterm `TerminalMirror` as its record. The chat types into it and presses keys in it
+(below), and shows it only for a dialog the chat cannot draw. Closing one detaches: the session
+keeps running. What a terminal shows can change under it, so a terminal is never taken to be a
+session, and when its client exits (a detach, `/exit`, its session stopped) it goes. The agent is
+the plugin `agent` (`src/plugins/agent/`, on by default), and its renderer side
+(`renderer/index.tsx`) holds the session lists and notices, the leave question, and the agent
+service every "Ask" goes through (`useAgentService`). With the agent off there is no service, so no
+"Ask" is offered. What is drawn of the sessions is a second plugin, `agent-ui`
+(`src/plugins/agent-ui/`, on by default, `requires: ['agent']`, so it never runs without the agent):
+its renderer registers the page (the surface `agent`, kept mounted, one page, no `tabs`), the nav
+item (which runs `agent.show`), the commands (`agent.show` on ⌘J, `agent.new`), the overlay and
+turn review, and the palette's session rows. It reads the agent's state by import, the one place a
+plugin imports another; turned off, the agent still runs and its sessions are reachable from
+`claude` itself. Its main side attaches in `activateVault` and leaves in its disposer. The
 renderer reaches it through the `agent.*` capabilities (sessions, terminals, open, start, send,
 stop, respawn, duplicate, attach, detach, and the turn review's turns, turnFiles, turnDiff and
 revert). Main tells it the session and terminal lists and each terminal's bytes as the events
@@ -41,19 +42,125 @@ revert). Main tells it the session and terminal lists and each terminal's bytes 
 (`src/plugins/agent/main/`), so in a vault with the agent off its capabilities are refused, its
 events are not sent and nothing under `.claude/` is seeded.
 
-**Where you meet it.** ⌘J and the nav menu's agent item focus a terminal showing the list, or
-open one. Which terminal shows it is read from its title, since `←` and Enter move a terminal
-between the list and a session. An agent tab's **Open overview** always opens a new one. The agent item is green while any session
-is live. Under the file tree, one row per **live** session (its process alive): the state orb,
-aligned with the nav menu's first icon, the name, and what it waits for when it needs you. At the
-right end, where **Stop** shows on hover and keyboard focus, the rest of the time sits how much of
-the session's context window is used: muted text below 60%, then text ramping from amber to
-full red at 99%, nothing before the first message. A row opens its session in a terminal whose title names it, else the one Holi
-opened for it, else a new `claude attach` window. An unnamed session, or a name two sessions
-share, matches no title, so it can land in a second window; two windows on one session mirror
-each other. With the nav hidden, the rail
-shows one orb per live session. A stopped or finished session is not in the sidebar: it is in the
-agent list, where opening it picks it up again.
+**Where you meet it.** ⌘J and the nav menu's agent item open the agents page, and the stack of
+bubbles floats over the top right of every tab (the plugin's `overlay`, `AgentBubbles`), so any
+session is one hover away from a note or a board. The agent item is green while any session is live.
+Statuses live only in the bubbles: there are no rows under the file tree, no orbs on the rail and
+no header on the page. A live bubble's context menu is **Restart** (`claude respawn`, a fresh
+process for the same conversation, which re-reads settings and `AGENTS.md`), **Duplicate** and
+**Stop** (`claude stop`; an idle session stops at once, one mid-turn or waiting on you asks first).
+
+**One page, chats only.** The agent surface is one page with no tab per terminal (`AgentOverview`):
+one session's chat, and beside it every session the vault has had as a **stack of bubbles**
+(`BubbleStack`), the most recent on top. A bubble is the session's face (`AgentFace`, a round head
+in a colour its job id picks, with the state dot of its row; the eyes blink slowly at rest, quickly
+and glancing while it works, and are held wide while it waits on you). Resting, the stack is its top
+three overlapped, with a `+N` for the rest (ringed when a hidden one needs you). With the pointer on
+it, or the keyboard in it, it fans into a column of every session, a name and a line (its state, or
+how it ended, and when it began) beside each bubble, then "New session"; Escape or leaving folds it.
+Pressing a bubble opens that chat, one at a time; the page opens on the most recent. The stack keeps
+its margin from the window's edges and never clips a bubble, its ring or its dot; each row of the fan
+has its own room: an **archive button** at the left, the name and line, and the face at the right,
+where the resting bubble is, so the pointer that opened the fan is already on a face (the bubble and the button are siblings, never a button in a button), and "History" is pinned
+at its foot while the rows scroll. A bubble,
+the palette and a new session all land there (`land` sets `overviewSelectionAtom` and opens
+the surface), and ⌘J and the agent item open the page as it was left. Order is `startedAt`, newest
+first (one without a start time is oldest), and the open chat's bubble is ringed.
+
+**History.** The stack's finished sessions are Claude Code's own: `claude agents --json --all`
+(`--all` adds the completed ones; an older Claude Code that rejects it is asked again without, and
+has no history). Main keeps the rows whose process has gone as `PastSession` and tells the renderer as
+the `history` event (and `agent.history`) when it differs. A finished session's chat is read from its
+transcript like any other, with a **Pick up** button where the composer would be: it opens a terminal
+on it (`claude attach`), which Claude Code resumes it for, and the same chat carries on as a live one.
+Nothing in the page is a terminal. The one place one still shows is the chat's corner button and the
+needs-you card, for the dialogs the chat cannot draw.
+
+**Archive.** A bubble's context menu has **Archive** (any chat) beside Restart, Duplicate and Stop
+(a running one). It takes the chat out of the stack and into the history, and archiving a running
+session **stops it first** (asking first when that cuts a turn short), so nothing runs out of sight.
+The archive is Holi's own record, the job ids in `.holi/state/archive.local.json` (a `.local.` file:
+Claude Code has no archived session), told to the renderer as the `archive` event
+(`agent.archived`, `agent.archive`). The fan ends in a small **History · N** link, which opens the
+history on the agents page: the archived chats, searchable by name, each of which can be read (a
+chat like any other, with Pick up, which un-archives it), **brought back** into the stack, or
+**deleted for good** (`agent.remove`, `claude rm`: the conversation goes, what it wrote in the vault
+stays), one by one or all shown at once, after asking. A running session cannot be deleted. With
+every chat archived the stack remains as the "New session" bubble.
+
+**The chat.** A session is shown as a chat, not as its terminal (`chat/ChatView`). What
+was said and done is read from Claude Code's transcript,
+`<configDir>/projects/<cwd>/<sessionId>.jsonl`, by `agent.transcript` (`main/claude/transcript.ts`):
+from a byte offset, whole lines only, at most the last 768 KB when first opened, about once a
+second while a turn runs and every 2.5 s otherwise. A person's message is a bubble, Claude's text
+is rendered markdown (`marked`, sanitised with DOMPurify, links opened in the browser), and each
+tool call is one row with its result folded in, opening to its input and output. Subagent
+conversations, injected reminders and slash commands are left out. A `/clear` is a new
+conversation id, and the chat starts over. **Writing goes through the session's terminal**, which
+Holi opens when it is first needed and does not show: `agent.say` pastes the message and then
+presses Enter (`terminals.paste(id, text, true)`), and an ask lands in the composer as a draft
+(`chatDraftsAtom`) rather than in the terminal's box. While a turn runs the composer's button
+stops it (Escape). **While the session waits on you** the composer is off and a card says what for
+(`chat/QuickAsk`, shared with the smaller chat): a permission prompt is answered there, Allow
+pressing Enter on the dialog's highlighted Yes and Deny pressing Escape; a question (the
+`AskUserQuestion` call, read whole from the transcript, `lib/ask.ts`) shows its options, single or
+multiple choice, one question at a time, with "Write another answer" for the person's own words.
+The answers go in as the keys that answer the dialog: arrows down from the first option and Enter,
+Space to toggle each choice of a multiple-choice, the last row ("Other") for typed words, and one
+more Enter to confirm when there were several questions. A question not yet in the transcript is
+waited for, and where the transcript does not have it (Claude Code can hold a question in the
+job's `state.json`, `block.questions`, alone) main reads it from there (`agent.question`,
+`claude/blocked.ts`). A question that stays unreadable for a few seconds offers the terminal, and
+every question and waiting card has Cancel, which sends Escape. Only a dialog the chat cannot read at all (a plan, another dialog) offers the
+terminal, and the chat's corner button shows it in the chat's place. The composer,
+the tool rows and the card follow Fisher UI's agent components (jakobfisker.dk/en/ui), built on
+Holi's primitives.
+
+**Attachments are chips in the text.** The composer takes any file: paste (a screenshot is a file
+named `image.png`; so is a file copied in Finder), drop, or the paperclip. Attaching inserts a
+marker at the cursor, `[Image 1]` for a picture (numbered past every one attached or typed) and
+`[name]` for any other file, so the words around it are its comment, several can be pasted, and
+**deleting the marker removes the file**. In the box the marker is drawn as an inline icon chip (a picture or a file icon and its name; `chat/RichInput.tsx`, a `contenteditable` that speaks the same plain string with the markers in it), which the caret steps over and one Backspace deletes. Nothing is drawn above the text. On send, only the files
+whose marker is still in the text are written into the vault by `agent.upload`
+(`main/host/uploads.ts`, up to 50 MB each, under `.holi/state/chat.local.uploads/`, a `.local.`
+folder so it is never committed), and each marker is replaced by `@<path>` where it stood (quoted
+when the path has a space), which is how Claude Code is given a file, so the agent reads each in
+the place its comment is. Up to 8 a message. Rich text that carries a picture of itself (a
+spreadsheet's cells) is a text paste, left alone, and a picture the browser gives no bytes for says
+so. In the conversation a picture is drawn as itself (`AttachedImage`, read back from the vault through
+`holi-vault://`, its name when it cannot be read), and any other file reads as a chip with its name, in
+its place among the words. The smaller chat takes a pasted or dropped file the same way: it waits above
+the box as a small picture (✕ takes it back), and a picture alone is a message.
+
+**From any other page.** The bubbles float over every tab, so the agents are one press away from a
+note. Where the agents page is **not** the page showing, pressing the **face** of a live session's bubble opens
+a **smaller chat** (`QuickChat`) beside the stack, in the top right: a short summary of the agent's
+last answer (a few plain lines, never its tool rows) and a box. While a turn runs it says only
+"Working…". Writing and sending sends the message and **closes it**; ✕ and Escape close it sending
+nothing; the **face** is the way to the full page. **A session that needs you takes no message
+there; the same card as the full chat is drawn instead** (a permission prompt with Allow and Deny,
+a question with its options, single or multiple choice, or the person's own words), so nothing
+sends you to the terminal or the full page unless you press the face. A dialog it cannot read at
+all offers "Open the full chat". A finished one has only its
+full page (where it is picked up). On the agents page a bubble
+picks the chat shown, as before. **The words of a row** (name and state, in the open fan) always open the full chat and go to the agents page, from any tab.
+
+**Notifications.** In the same corner, **notifications** (`AgentNotices`) say when an agent has
+an answer (**Answer ready**, with its first words, which goes by itself after 15 s unless the
+pointer is on it) or needs you (**Approval required** / **Needs you**, which stays until answered
+or dismissed). They are read off the session list's own edges (`state/notices.ts`): working to idle
+is a turn that ended, anything to needs-you is a question; the transcript's tail supplies the
+words and the call it asks to run (`lib/preview.ts`). What was running when the vault opened is not
+news, and nothing is said of the chat you are reading in full or have the smaller chat open on.
+Pressing a notification opens the full chat; ✕ dismisses it. **A permission prompt is answered on
+its card**: Allow presses Enter and Deny Escape in the session's terminal, as the chat's own card
+does, with no trip to the page. A question or dialog of any other kind says **Answer**, which
+opens the chat, where the terminal can be shown for it.
+
+**Idle is said as what it is.** A live session that is doing nothing reads `done` when Claude
+Code's listing says its last turn finished (`state: done`), `failed` when it ended badly, and
+`ready` before its first message (`SessionSummary.phase`), on its bubble. It is
+never called running: its process being alive says nothing about a turn.
 
 **Stop, restart, duplicate.** A row's **Stop** runs `claude stop <id>`. An idle session stops at
 once; one mid-turn or waiting on you asks first. Its context menu adds **Restart** (`claude
@@ -83,8 +190,7 @@ clears it.
 
 **Asks are pasted, never submitted.** Text from a selection, task, mail thread or PDF comment goes
 to a live session the user picks (needs-you sessions are not offered), or to a new one named from
-its first line, as a bracketed paste with no Enter into that session's window. A window just opened
-holds the paste until its TUI has printed and settled, with a 5 s backstop. **Reconcile and a stuck
+its first line, as a draft in that session's chat, never sent for you. **Reconcile and a stuck
 push are the exception**: their first turn is the command's prompt.
 
 **Git coexistence.** The seeded `UserPromptSubmit` and `Stop` hooks run `turn-signal.mjs`, which
@@ -135,15 +241,18 @@ showing it busy, crosses it off), so a session resumed from the list is never re
   process Holi never spawned.
 - A bearer or port in a session's environment: a background session's environment is the
   supervisor's, and the supervisor outlives a Holi restart.
-- A headless chat panel or a server-side agent: re-implements the TUI.
-- A Holi list of past sessions: the agent list is that list.
+- A headless chat panel or a server-side agent: re-implements the TUI. The chat is not
+  one: Claude Code still runs the session and its terminal still takes the input; the chat only
+  reads the transcript and types.
+- A Holi list of past sessions: Claude Code's listing (`--all`) is that list; the stack only shows it.
 - A gate before the agent's writes: Claude Code already asks.
 - Recording touched paths from `PostToolUse`: misses edits made through `Bash`.
 - A worktree per session: edits invisible until merged, `.local.` files absent. Hence the seeded
   `worktree.bgIsolation: "none"`.
 - A `Notification` or `PermissionRequest` hook for needs-you: late or partial.
 - Reading context use from transcripts or the PTY: Claude Code's files and screen are not an
-  interface; its status-line JSON is.
+  interface; its status-line JSON is. The chat does read the transcript, for the messages nothing
+  else carries, and takes a format change as an empty chat with the terminal one button away.
 - A three-pane merge editor: resolves positionally, wrong for prose.
 
 ## Code
@@ -160,6 +269,11 @@ showing it busy, crosses it off), so a session resumed from the list is never re
 - `apps/desktop/src/main/bridge/env-file.ts`, `apps/desktop/src/plugins/agent/main/claude/vault/shipped/.claude/hooks/turn-signal.mjs`,
   `apps/desktop/src/plugins/agent/main/claude/seed.ts` (`STATUS_LINE`): how sessions find Holi
 - `apps/desktop/src/plugins/agent/main/host/turn-coordinator.ts`, `turn-log.ts`: working set and turn records
-- `apps/desktop/src/plugins/agent/renderer/`: rows, orbs, terminal (`terminal.css`), turn chip and review; `index.tsx`: the
-  plugin's renderer side; `service.ts`: the agent service
+- `apps/desktop/src/plugins/agent-ui/renderer/AgentOverview.tsx`, `BubbleStack.tsx`, `AgentFace.tsx`, `overview.css`: the agents page and its stack of bubbles
+- `apps/desktop/src/plugins/agent-ui/renderer/chat/`: the chat (`ChatView`, `Composer`, `ChatMarkdown`);
+  `apps/desktop/src/plugins/agent/renderer/chat/use-transcript.ts`: reading it;
+  `apps/desktop/src/plugins/agent/main/claude/transcript.ts`: the transcript reader
+- `apps/desktop/src/plugins/agent-ui/renderer/`: `BubbleStack.tsx`/`AgentBubbles.tsx`, `QuickChat.tsx`, terminal (`terminal.css`), turn chip and review; `index.tsx`: the
+  interface's renderer side
+- `apps/desktop/src/plugins/agent/renderer/`: `index.tsx`: the agent's renderer side; `service.ts`: the agent service
 - `apps/desktop/src/plugins/agent/renderer/state/sessions.ts`, `send.ts`, `turns.ts`: the lists, what you do, and turn review

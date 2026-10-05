@@ -75,6 +75,12 @@ declare global {
       }): Promise<string | null>
       /** Pick a folder on disk: the destination for Copy/Move to Folder…. */
       chooseFolder(): Promise<string | null>
+      /** A small JPEG (a data URL) of a rectangle of this window, or null when
+       *  there is nothing to show. For the open tabs' previews. */
+      capturePage(
+        rect: { x: number; y: number; width: number; height: number },
+        width: number,
+      ): Promise<string | null>
     }
   }
 }

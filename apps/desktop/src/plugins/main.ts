@@ -4,8 +4,18 @@
  */
 import type { MainPlugin } from '../main/plugin-api'
 import { agentMain } from './agent/main'
+import { agentUiMain } from './agent-ui/main'
 import { appsMain } from './apps/main'
 import { googleMain } from './google/main'
 import { pdfMain } from './pdf/main'
+import { workspaceMain } from './workspace-ui/main'
 
-export const MAIN_PLUGINS: readonly MainPlugin[] = [agentMain, pdfMain, googleMain, appsMain]
+export const MAIN_PLUGINS: readonly MainPlugin[] = [
+  // First among the renderer's too: Workspace's surfaces take their kinds from the plugins after it.
+  workspaceMain,
+  agentMain,
+  agentUiMain,
+  pdfMain,
+  googleMain,
+  appsMain,
+]

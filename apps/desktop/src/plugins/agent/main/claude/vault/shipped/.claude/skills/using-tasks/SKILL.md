@@ -37,14 +37,14 @@ There is no `title:` key; without a heading the title falls back to the filename
 Every field is optional, and `status` defaults to `todo`. A field you leave out is simply
 absent — do not write `due:` with nothing after it and do not write `null`.
 
-| field | what it holds |
-|-------|---------------|
-| `status` | `todo`, `doing` or `done` — nothing else |
-| `due` | when it is due, as a **stamp** (below) |
-| `priority` | `high`, `medium` or `low` |
-| `tags` | a list of strings, your own vocabulary |
-| `reminder` | when to notify, as a **stamp** — a moment, not an offset |
-| `recurrence` | a map, see below |
+| field        | what it holds                                            |
+| ------------ | -------------------------------------------------------- |
+| `status`     | `todo`, `doing` or `done` — nothing else                 |
+| `due`        | when it is due, as a **stamp** (below)                   |
+| `priority`   | `high`, `medium` or `low`                                |
+| `tags`       | a list of strings, your own vocabulary                   |
+| `reminder`   | when to notify, as a **stamp** — a moment, not an offset |
+| `recurrence` | a map, see below                                         |
 
 Anything else you put in the frontmatter is **carried through untouched**. Holi does
 not understand it and does not delete it.
@@ -61,7 +61,7 @@ Both hold the same shape — a local date, and optionally a time:
 No timezone, ever. It is wall-clock time on the machine.
 
 **The time is optional and its absence means something.** A task due `2026-08-25` is
-due *that day* — it does not go overdue until the day has passed. A task due
+due _that day_ — it does not go overdue until the day has passed. A task due
 `2026-08-25T14:00` goes overdue at 14:01.
 
 **A reminder is an absolute moment.** It is not "two days before the due date". If
@@ -89,9 +89,9 @@ A map, not a string — there is no text grammar for it:
 ```yaml
 recurrence:
   frequency: daily | weekly | monthly | yearly
-  interval: 1          # every N of those
+  interval: 1 # every N of those
   weekdays: [mon, wed] # weekly only; omit for "same weekday as due"
-  endDate: 2026-12-31  # optional, a date — never a datetime
+  endDate: 2026-12-31 # optional, a date — never a datetime
 ```
 
 **Roll-forward happens when the task is completed**, not on a schedule. Completing a
