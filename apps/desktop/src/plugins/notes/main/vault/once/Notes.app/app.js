@@ -4,6 +4,9 @@ const appEl = $('app')
 let all = [] // [{ id, value: { body, createdAt, updatedAt } }]
 let selected = null
 let timer = null
+let editing = false
+const TRASH =
+  '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>'
 
 const DAY = 86400000
 const fmtDay = (d) => d.toLocaleDateString(undefined, { weekday: 'long' })
@@ -58,6 +61,17 @@ function renderList() {
     b.querySelector('b').textContent = stampShort(r.value.updatedAt)
     b.querySelector('span').textContent = preview(r.value.body)
     b.onclick = () => select(r.id)
+    if (editing) {
+      const x = document.createElement('span')
+      x.className = 'x'
+      x.innerHTML = TRASH
+      x.title = 'Delete note'
+      x.onclick = (e) => {
+        e.stopPropagation()
+        remove(r.id).catch(showErr)
+      }
+      b.prepend(x)
+    }
     list.append(b)
   }
 }
@@ -119,16 +133,24 @@ $('body').oninput = () => {
     save().catch(showErr)
   }, 400)
 }
-$('del').onclick = async () => {
-  if (!selected || !confirm('Delete this note?')) return
-  clearTimeout(timer)
-  timer = null
-  const id = selected
+async function remove(id) {
+  if (!confirm('Delete this note?')) return
+  if (id === selected) {
+    clearTimeout(timer)
+    timer = null
+  }
   all = all.filter((x) => x.id !== id)
-  selected = null
   await notes.delete(id)
+  if (id !== selected) return renderList()
+  selected = null
   const next = [...all].sort((a, b) => b.value.updatedAt - a.value.updatedAt)[0]
   next ? select(next.id) : (appEl.classList.add('none'), renderList())
+}
+$('edit').onclick = () => {
+  editing = !editing
+  $('edit').textContent = editing ? 'Done' : 'Edit notes'
+  appEl.classList.toggle('editing', editing)
+  renderList()
 }
 
 function showErr(err) {

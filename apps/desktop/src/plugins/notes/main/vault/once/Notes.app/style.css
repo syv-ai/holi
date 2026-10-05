@@ -69,6 +69,29 @@ body {
 .round:hover {
   background: var(--accent);
 }
+.pill {
+  all: unset;
+  cursor: pointer;
+  margin-left: auto;
+  padding: 0.25rem 0.7rem;
+  border-radius: 999px;
+  background: var(--muted);
+  font-size: 0.85rem;
+}
+.pill:hover {
+  background: var(--accent);
+}
+.item .x {
+  float: right;
+  margin-left: 0.5rem;
+  color: var(--muted-foreground);
+}
+.item .x:hover {
+  color: var(--destructive);
+}
+.item .x svg {
+  display: block;
+}
 #back {
   display: none;
 }
@@ -94,6 +117,7 @@ body {
 }
 .item {
   all: unset;
+  box-sizing: border-box;
   display: block;
   width: 100%;
   cursor: pointer;
@@ -145,8 +169,7 @@ body {
   place-items: center;
   color: var(--muted-foreground);
 }
-#app.none #body,
-#app.none #del {
+#app.none #body {
   display: none;
 }
 #app:not(.none) #empty {
