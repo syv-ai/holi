@@ -1,6 +1,6 @@
 {
   "name": "@holi/desktop",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Local-first markdown vaults on GitHub, with Claude Code as the assistant",
   "author": "syv.ai",
   "private": true,
