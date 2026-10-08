@@ -4,7 +4,9 @@
  * CompletionSource fed live data.
  *
  * A task mention is an ordinary path wiki-link to the task file: no opaque id
- * and no `related[]` edge.
+ * and no `related[]` edge. A person is `@login`, their GitHub username, as
+ * text: on a task it names who it is for (`assignees` holds the assignment;
+ * quick add reads its title's `@login`s into it).
  */
 import type {
   CompletionContext,
@@ -18,11 +20,14 @@ import type { HoliCompletion } from './completion'
 export interface MentionData {
   notes: { path: string; icon?: string }[]
   tasks: { path: string; title: string; status: TaskStatus; due?: string }[]
+  /** The vault's members by GitHub login. */
+  people?: string[]
 }
 
 /** Shared objects, as CodeMirror recommends: a section is matched by identity
- *  of name, and `rank` is what keeps Notes above Tasks rather than the
- *  alphabet. */
+ *  of name, and `rank` is what keeps People above Notes above Tasks rather
+ *  than the alphabet. People are few, so they lead. */
+const PEOPLE = { name: 'People', rank: 0 }
 const NOTES = { name: 'Notes', rank: 1 }
 const TASKS = { name: 'Tasks', rank: 2 }
 
@@ -76,7 +81,19 @@ export function mentionCompletions(
       ...(t.due === undefined ? {} : { meta: `due ${shortStamp(t.due)}` }),
       apply: formatWikiLink(t.path),
     }))
-  return { from: match.from, options: [...noteOptions, ...taskOptions], filter: false }
+  const personOptions: HoliCompletion[] = (data.people ?? [])
+    .filter((login) => login.toLowerCase().includes(query))
+    .map((login) => ({
+      label: `@${login}`,
+      type: 'holi-person',
+      section: PEOPLE,
+      apply: `@${login} `,
+    }))
+  return {
+    from: match.from,
+    options: [...personOptions, ...noteOptions, ...taskOptions],
+    filter: false,
+  }
 }
 
 /** The CodeMirror source: pulls live data on each `@`. */

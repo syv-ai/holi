@@ -469,7 +469,13 @@ async function main(): Promise<void> {
     win.webContents.send('reminders:open', payload)
   }
   const notifier = createNotifier((remote, path) => focusTask(remote, path))
-  const reminders = createReminderRuntime({ corpus, notifier, delivered })
+  const reminders = createReminderRuntime({
+    corpus,
+    notifier,
+    delivered,
+    // An assigned task reminds only its assignees (docs/features/tasks.md).
+    viewerLogin: () => session.viewer?.login ?? null,
+  })
   reminders.start()
 
   // Opened at login, Holi starts in the menu bar: the window loads (so the

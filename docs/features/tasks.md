@@ -8,8 +8,8 @@ Todo / Doing / Done, with one swim lane per folder.
 
 - **The file.** The filename prefix makes a file a task, so `**/task.*.md` finds them all. The
   path is the identity and the folder is the lane. Frontmatter holds `status`
-  (`todo | doing | done`, default `todo`), `due`, `priority` (`low | medium | high`), `tags`, `reminder`,
-  `recurrence` and `order`, all optional. Unknown keys are written back verbatim. The body is the
+  (`todo | doing | done`, default `todo`), `due`, `priority` (`low | medium | high`), `tags`,
+  `assignees`, `reminder`, `recurrence` and `order`, all optional. Unknown keys are written back verbatim. The body is the
   description, and its first heading is the title, falling back to the filename
   (`task.fix-login.md` reads "Fix login"). There is no `title:` key.
 - **Claimed in the snapshot.** Tasks claim `task.*.md` (`taskClaim` in shared): main's scanner
@@ -90,6 +90,23 @@ Todo / Doing / Done, with one swim lane per folder.
   become one summary. A timeless reminder fires at 09:00. Clicking a notification opens the task,
   switching vault if needed. The per-path watermark lives under `reminders` in the vault's
   machine-local `.holi/settings/app.local.yaml`.
+- **Assignees** are GitHub logins (`assignees: [mhenrichsen]`), the identity a vault already has:
+  its members are its repo's collaborators. A hand-written `@login` or a single login without a
+  list reads the same, duplicates whatever their case go, and an empty list is no key at all.
+  People to pick come from the collaborators (`github.collaborators`, the ten-minute cache), plus
+  the signed-in login and every login a task already names, so the list works offline; it is
+  loaded once in the shell (`state/members.ts`). They are offered as a task's `assignees` row,
+  quick add's People step (and `@login` in its title, which assigns a member and leaves the
+  title without it, while an `@` that names no member stays as written), the full create's
+  Assignees field, and the `@` popup in any editor, where People lead and insert `@login` as
+  text. A card shows `@login` after its labels, and clicking it filters by them; the Filter
+  panel lists everyone some task is assigned to, the signed-in person first, and a task matches
+  any chosen person. A login is a name and not an identity: a renamed account stops matching,
+  the trade GitHub's own `@mentions` make.
+- **An assigned task reminds its assignees only.** The sweep skips a task with assignees unless
+  this machine is signed in as one of them (`remindsViewer`, case-insensitive), and does not mark
+  it delivered, so handing the task to this person later still fires its reminder. A task with
+  no assignees reminds every member running Holi, as before.
 - **Between machines** tasks sync like any file ([vaults and sync](vaults-sync.md)).
 
 ## Rules
@@ -105,7 +122,8 @@ Todo / Doing / Done, with one swim lane per folder.
 - The delivery watermark never enters a committed file, or every fire is a commit and a push.
 - A heading edit never renames the file; that would rewrite inbound links on a typo fix.
 - A lane move refuses an existing destination rather than suffixing it.
-- A reminder on a shared task notifies every member running Holi. There are no assignees.
+- A reminder on a task with no assignees notifies every member running Holi; with assignees, only
+  them.
 
 ## Rejected
 
@@ -116,7 +134,9 @@ Todo / Doing / Done, with one swim lane per folder.
 - A day-granular `overdue`: it makes the hour on `due` decorative.
 - A date library: the grid is small arithmetic in `calendar.ts`.
 - A detail panel beside the board: a second buffer over one path races autosave.
-- Time-bucket views, per-user columns, assignees, presence, task ids, `related[]`.
+- Time-bucket views, per-user columns, presence, task ids, `related[]`.
+- Assignees by account id: stable across a rename, but unreadable in the file and unknown to the
+  agent and to GitHub's own `@mentions`.
 - Collapsing lanes by depth: a collapsed lane has no single folder to drop into.
 - Syncing note checkboxes with tasks: it couples notes to tasks again.
 - A cross-cell drop that keeps the card's old rank: the gap would show one place and the card land

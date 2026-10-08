@@ -22,7 +22,13 @@
  *   cell (a shared `layoutId`, the path it will have).
  */
 import type { Priority } from '@holi/shared'
-import { snapshotTasks, taskFilePath, taskSlug } from '@holi/shared'
+import {
+  assigneesInTitle,
+  normalizeLogin,
+  snapshotTasks,
+  taskFilePath,
+  taskSlug,
+} from '@holi/shared'
 import { completionStatus } from '@codemirror/autocomplete'
 import { insertNewlineAndIndent } from '@codemirror/commands'
 import { insertNewlineContinueMarkup } from '@codemirror/lang-markdown'
@@ -30,7 +36,7 @@ import { Prec } from '@codemirror/state'
 import { Decoration, EditorView, keymap, tooltips } from '@codemirror/view'
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
-import { CalendarDays, Check, Flag, Folder, Hash, PenLine } from 'lucide-react'
+import { AtSign, CalendarDays, Check, Flag, Folder, Hash, PenLine } from 'lucide-react'
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { duePresets, shortStamp } from '@/lib/date-presets'
 import {
@@ -44,6 +50,7 @@ import {
   type IconGlyph,
 } from '@/primitives'
 import { nowAtom } from '@/state/clock'
+import { memberLoginsAtom } from '@/state/members'
 import {
   ROOT_LANE,
   createTaskAtom,
@@ -71,13 +78,14 @@ const FULL = 240
 const STEP_HEADING = 38
 const ROW = 34
 
-type Step = 'text' | 'lane' | 'due' | 'priority' | 'tags'
-const STEPS: readonly Step[] = ['text', 'lane', 'due', 'priority', 'tags']
+type Step = 'text' | 'lane' | 'due' | 'priority' | 'people' | 'tags'
+const STEPS: readonly Step[] = ['text', 'lane', 'due', 'priority', 'people', 'tags']
 const STEP_NAMES: Record<Step, string> = {
   text: 'Task',
   lane: 'Lane',
   due: 'Due',
   priority: 'Priority',
+  people: 'Assignees',
   tags: 'Tags',
 }
 
@@ -86,6 +94,8 @@ type Draft = {
   folder: string
   due?: string
   priority?: Priority
+  /** GitHub logins, from the People step. `@login` in the title adds more. */
+  assignees: string[]
   tags: string[]
 }
 
@@ -170,6 +180,7 @@ export function QuickAdd({
   const activeDoc = useAtomValue(activeDocAtom)
   const tasks = useAtomValue(tasksAtom)
   const allTags = useAtomValue(taskTagsAtom)
+  const members = useAtomValue(memberLoginsAtom)
   const now = useAtomValue(nowAtom)
   const create = useSetAtom(createTaskAtom)
   const reduced = useReducedMotion() ?? false
@@ -177,6 +188,7 @@ export function QuickAdd({
   const [draft, setDraft] = useState<Draft>(() => ({
     text: '',
     folder: activeDoc ? folderOf(activeDoc.path) : ROOT_LANE,
+    assignees: [],
     tags: [],
   }))
   const set = (patch: Partial<Draft>) => setDraft((d) => ({ ...d, ...patch }))
@@ -223,7 +235,17 @@ export function QuickAdd({
     return query && !folders.includes(query) ? [...matching, query] : matching
   }, [folders, query])
   const dues = duePresets(now)
-  const { title, description } = split(draft.text)
+  const written = split(draft.text)
+  const mentioned = assigneesInTitle(written.title, members)
+  const { description } = written
+  // An `@login` alone is no title: keep the text as typed then.
+  const title = mentioned.title || written.title
+  const assignees = [
+    ...draft.assignees,
+    ...mentioned.assignees.filter(
+      (a) => !draft.assignees.some((d) => d.toLowerCase() === a.toLowerCase()),
+    ),
+  ]
 
   /** The editor owns the text; setting it from here goes through the view,
    *  so the undo history keeps it. */
@@ -251,7 +273,7 @@ export function QuickAdd({
     if (flight) setFlightId(predicted)
     const sent = draft
     setText('')
-    set({ due: undefined, priority: undefined, tags: [] })
+    set({ due: undefined, priority: undefined, assignees: [], tags: [] })
     go('text')
     onAdded?.()
     try {
@@ -263,6 +285,7 @@ export function QuickAdd({
         extra: {
           ...(sent.due ? { due: sent.due } : {}),
           ...(sent.priority ? { priority: sent.priority } : {}),
+          ...(assignees.length ? { assignees } : {}),
           ...(sent.tags.length ? { tags: sent.tags } : {}),
         },
       })
@@ -298,6 +321,42 @@ export function QuickAdd({
     set({
       tags: draft.tags.includes(tag) ? draft.tags.filter((t) => t !== tag) : [...draft.tags, tag],
     })
+
+  const togglePerson = (login: string) =>
+    set({
+      assignees: draft.assignees.includes(login)
+        ? draft.assignees.filter((a) => a !== login)
+        : [...draft.assignees, login],
+    })
+
+  /** People's rows: the vault's members matching what was typed, then the
+   *  typed login as a new one, for someone GitHub has not listed yet. */
+  const personChoices = (): Choice[] => {
+    const known = [...members, ...draft.assignees.filter((a) => !members.includes(a))]
+    const name = normalizeLogin(typed)
+    const needle = name.toLowerCase()
+    const rows: Choice[] = known
+      .filter((login) => login.toLowerCase().includes(needle))
+      .map((login) => ({
+        key: login,
+        icon: AtSign,
+        label: login,
+        on: draft.assignees.includes(login),
+        pick: () => togglePerson(login),
+      }))
+    if (name && !known.some((k) => k.toLowerCase() === needle))
+      rows.push({
+        key: `new:${name}`,
+        icon: AtSign,
+        label: `New: @${name}`,
+        on: false,
+        pick: () => {
+          set({ assignees: [...draft.assignees, name] })
+          setTyped('')
+        },
+      })
+    return rows
+  }
 
   /** Tags' rows: the vault's tags and the draft's new ones that match what
    *  was typed, then the typed tag as a new one when it is not there yet.
@@ -365,9 +424,11 @@ export function QuickAdd({
               on: p.value === draft.priority,
               pick: () => single({ priority: p.value }),
             }))
-          : step === 'tags'
-            ? tagChoices()
-            : []
+          : step === 'people'
+            ? personChoices()
+            : step === 'tags'
+              ? tagChoices()
+              : []
   const at = Math.min(cursor, Math.max(0, choices.length - 1))
   /** One line until Shift+Enter starts a description; a step as tall as its
    *  rows, to a point. */
@@ -466,18 +527,18 @@ export function QuickAdd({
       event.preventDefault()
       if (step === 'due') set({ due: undefined })
       if (step === 'priority') set({ priority: undefined })
-      if (step === 'lane' || step === 'tags') {
+      if (step === 'lane' || step === 'people' || step === 'tags') {
         setTyped(typed.slice(0, -1))
         setCursor(0)
       }
     } else if (
-      (step === 'lane' || step === 'tags') &&
+      (step === 'lane' || step === 'people' || step === 'tags') &&
       key.length === 1 &&
       !event.metaKey &&
       !event.ctrlKey &&
       !event.altKey
     ) {
-      // Typing on Lane or Tags narrows the list, or names a new one.
+      // Typing on Lane, Assignees or Tags narrows the list, or names a new one.
       event.preventDefault()
       setTyped(typed + key)
       setCursor(0)
@@ -577,10 +638,15 @@ export function QuickAdd({
                 ref={listRef}
                 role="listbox"
                 aria-label={STEP_NAMES[step]}
-                aria-multiselectable={step === 'tags' || undefined}
+                aria-multiselectable={step === 'tags' || step === 'people' || undefined}
                 tabIndex={-1}
                 className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto overscroll-contain outline-none"
               >
+                {step === 'people' && choices.length === 0 && (
+                  <p className="px-2.5 py-1.5 text-sm text-muted-foreground">
+                    Type a GitHub username
+                  </p>
+                )}
                 {step === 'tags' && choices.length === 0 && (
                   <p className="px-2.5 py-1.5 text-sm text-muted-foreground">
                     No tags in this vault yet
@@ -627,6 +693,11 @@ export function QuickAdd({
         {stepToken('lane', Folder, draft.folder === ROOT_LANE ? undefined : draft.folder)}
         {stepToken('due', CalendarDays, draft.due ? shortStamp(draft.due) : undefined)}
         {stepToken('priority', Flag, PRIORITIES.find((p) => p.value === draft.priority)?.label)}
+        {stepToken(
+          'people',
+          AtSign,
+          assignees.length ? assignees.map((a) => `@${a}`).join(' ') : undefined,
+        )}
         {stepToken(
           'tags',
           Hash,

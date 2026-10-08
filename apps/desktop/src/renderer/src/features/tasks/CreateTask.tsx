@@ -1,5 +1,5 @@
 import type { Priority, Recurrence, Task, TaskStatus } from '@holi/shared'
-import { snapshotTasks } from '@holi/shared'
+import { normalizeLogin, snapshotTasks } from '@holi/shared'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { useMemo, useRef, useState } from 'react'
 import { DateTimePicker, FormField, RecurrenceField } from '@/composites'
@@ -39,6 +39,8 @@ const STATUSES: TaskStatus[] = ['todo', 'doing', 'done']
 type Draft = {
   due?: string
   priority?: Priority
+  /** GitHub logins. */
+  assignees?: string[]
   tags: string[]
   reminder?: string
   recurrence?: Recurrence
@@ -117,6 +119,7 @@ export function CreateTask({ onClose }: { onClose: () => void }): React.JSX.Elem
       extra: {
         ...(draft.due ? { due: draft.due } : {}),
         ...(draft.priority ? { priority: draft.priority } : {}),
+        ...(draft.assignees?.length ? { assignees: draft.assignees } : {}),
         ...(draft.tags.length ? { tags: draft.tags } : {}),
         ...(draft.reminder ? { reminder: draft.reminder } : {}),
         ...(draft.recurrence ? { recurrence: draft.recurrence } : {}),
@@ -206,6 +209,23 @@ export function CreateTask({ onClose }: { onClose: () => void }): React.JSX.Elem
                 <SelectItem value="low">low</SelectItem>
               </SelectContent>
             </Select>
+          </FormField>
+
+          <FormField label="Assignees">
+            <Input
+              data-create-task-assignees
+              placeholder="GitHub usernames, comma separated"
+              defaultValue={(draft.assignees ?? []).map((a) => `@${a}`).join(', ')}
+              onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+              onBlur={(e) =>
+                draftSave({
+                  assignees: e.target.value
+                    .split(/[,\s]+/)
+                    .map(normalizeLogin)
+                    .filter(Boolean),
+                })
+              }
+            />
           </FormField>
 
           <FormField label="Tags">

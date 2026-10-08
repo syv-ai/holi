@@ -19,6 +19,7 @@ describe('frontmatterSchema', () => {
       'reminder',
       'recurrence',
       'tags',
+      'assignees',
       'order',
     ])
     expect(schema.find((f) => f.key === 'status')!.kind).toEqual({
@@ -60,6 +61,7 @@ describe('frontmatterRows', () => {
       'reminder',
       'recurrence',
       'tags',
+      'assignees',
     ])
   })
 

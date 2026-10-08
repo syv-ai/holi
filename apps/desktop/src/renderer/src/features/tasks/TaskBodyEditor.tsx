@@ -16,6 +16,7 @@ import type { LinkNav } from '@/editor/links'
 import type { MentionData } from '@/editor/mentions'
 import { NO_AGENT, useAskAgentSeam } from '@/state/agent-service'
 import { openNoteTabAtom } from '@/state/panes'
+import { memberLoginsAtom } from '@/state/members'
 import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
 
 /**
@@ -57,6 +58,7 @@ export function TaskDescriptionEditor({
   docPaths.current = new Set(snapshot.docs.map((d) => d.path))
   const tasksByPath = useRef(new Map<string, Task>())
   tasksByPath.current = new Map(snapshotTasks(snapshot).items.map((t) => [t.path, t]))
+  const people = useAtomValue(memberLoginsAtom)
   const mentionRef = useRef<MentionData>({ notes: [], tasks: [] })
   mentionRef.current = {
     notes: snapshot.docs.map((d) => ({
@@ -69,6 +71,7 @@ export function TaskDescriptionEditor({
       status: t.status,
       ...(t.due === undefined ? {} : { due: t.due }),
     })),
+    people,
   }
   /** Same Ask agent seam the notes editor has: a passage of a task's
    *  description is as askable as a passage of a note. The view is built once,

@@ -142,3 +142,19 @@ test('a hidden path is not offered, the way the tree hides it', () => {
     'work/claude-notes.md',
   ])
 })
+
+describe('people', () => {
+  const WITH_PEOPLE = { ...DATA, people: ['mhenrichsen', 'nthomsencph'] }
+
+  it("offers the vault's members first, inserting @login", () => {
+    const result = mentionCompletions(ctx('ask @nth'), WITH_PEOPLE)
+    const first = result!.options[0]!
+    expect(first.label).toBe('@nthomsencph')
+    expect(first.apply).toBe('@nthomsencph ')
+  })
+
+  it('offers no one when there are no people', () => {
+    const result = mentionCompletions(ctx('ask @'), DATA)
+    expect(result!.options.some((o) => o.label.startsWith('@'))).toBe(false)
+  })
+})

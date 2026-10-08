@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
   TaskFileError,
+  assigneesInTitle,
+  isAssignedTo,
   isTaskFilePath,
+  remindsViewer,
   parseTaskFile,
   parseTaskPatch,
   serializeTaskFile,
@@ -362,5 +365,83 @@ describe('order', () => {
     // sort key. An absent rank sorts last; that is a fine answer for junk.
     const task = parseTaskFile('---\ntitle: T\nstatus: todo\norder: first\n---\n', 'task.t.md')
     expect(task.order).toBeUndefined()
+  })
+})
+
+describe('assignees', () => {
+  it('reads GitHub logins, with or without the @, once each', () => {
+    const t = parse('---\nassignees: [mhenrichsen, "@nthomsencph", MHenrichsen, " "]\n---\n# A\n')
+    expect(t.assignees).toEqual(['mhenrichsen', 'nthomsencph'])
+  })
+
+  it('reads one login written without a list', () => {
+    expect(parse('---\nassignees: "@mads"\n---\n# A\n').assignees).toEqual(['mads'])
+  })
+
+  it('is absent when no one is named, and refuses what is not text', () => {
+    expect(parse('---\nassignees: []\n---\n# A\n').assignees).toBeUndefined()
+    expect(parse('---\nstatus: todo\n---\n# A\n').assignees).toBeUndefined()
+    expect(() => parse('---\nassignees: [1]\n---\n# A\n')).toThrow(TaskFileError)
+  })
+
+  it('writes them after the tags, and nothing for none', () => {
+    const text = serializeTaskFile({
+      status: 'todo',
+      tags: ['x'],
+      assignees: ['mads'],
+      reminder: '2026-10-12',
+      description: '# A',
+    })
+    expect(text).toBe(
+      '---\nstatus: todo\ntags:\n  - x\nassignees:\n  - mads\nreminder: 2026-10-12\n---\n\n# A\n',
+    )
+    expect(serializeTaskFile({ status: 'todo', tags: [], assignees: [], description: '' })).toBe(
+      '---\nstatus: todo\n---\n',
+    )
+  })
+
+  it('round-trips through the canonical form', () => {
+    const text = '---\nstatus: todo\nassignees:\n  - mads\n---\n\n# A\n'
+    expect(serializeTaskFile(parse(text))).toBe(text)
+  })
+
+  it('can be set and cleared by a patch', () => {
+    expect(parseTaskPatch({ assignees: ['@a', 'b'] })).toEqual({ assignees: ['a', 'b'] })
+    expect(parseTaskPatch({ assignees: null })).toEqual({ assignees: undefined })
+  })
+
+  it('matches a login whatever its case', () => {
+    expect(isAssignedTo({ assignees: ['MHenrichsen'] }, 'mhenrichsen')).toBe(true)
+    expect(isAssignedTo({ assignees: ['a'] }, 'b')).toBe(false)
+    expect(isAssignedTo({}, 'a')).toBe(false)
+    expect(isAssignedTo({ assignees: ['a'] }, null)).toBe(false)
+  })
+
+  it("reminds everyone of a task that is no one's, and only its assignees otherwise", () => {
+    expect(remindsViewer({}, 'anyone')).toBe(true)
+    expect(remindsViewer({}, null)).toBe(true)
+    expect(remindsViewer({ assignees: ['a'] }, 'a')).toBe(true)
+    expect(remindsViewer({ assignees: ['a'] }, 'b')).toBe(false)
+    expect(remindsViewer({ assignees: ['a'] }, null)).toBe(false)
+  })
+})
+
+describe('assigneesInTitle', () => {
+  const members = ['mhenrichsen', 'nthomsencph']
+
+  it('takes members out of the title and assigns them', () => {
+    expect(assigneesInTitle('Send the tilbud @NThomsencph', members)).toEqual({
+      title: 'Send the tilbud',
+      assignees: ['nthomsencph'],
+    })
+    expect(assigneesInTitle('@mhenrichsen review @nthomsencph, then ship', members)).toEqual({
+      title: 'review, then ship',
+      assignees: ['mhenrichsen', 'nthomsencph'],
+    })
+  })
+
+  it('leaves an @ that is no member, and an address, as written', () => {
+    expect(assigneesInTitle('Work @home', members)).toEqual({ title: 'Work @home', assignees: [] })
+    expect(assigneesInTitle('Mail a@mhenrichsen.dk', members).assignees).toEqual([])
   })
 })

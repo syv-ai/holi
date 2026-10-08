@@ -17,6 +17,7 @@ status: todo
 due: 2026-08-25
 priority: high
 tags: [music, admin]
+assignees: [mhenrichsen]
 reminder: 2026-08-24T18:00
 recurrence:
   frequency: weekly
@@ -43,8 +44,16 @@ absent — do not write `due:` with nothing after it and do not write `null`.
 | `due` | when it is due, as a **stamp** (below) |
 | `priority` | `high`, `medium` or `low` |
 | `tags` | a list of strings, your own vocabulary |
+| `assignees` | who it is for: a list of the vault's members by **GitHub username**, without the `@` |
 | `reminder` | when to notify, as a **stamp** — a moment, not an offset |
 | `recurrence` | a map, see below |
+
+**Assignees are GitHub usernames.** `holi vault members` lists the vault's members;
+use their logins exactly. When the user says "give this to Nik" or "@nthomsencph",
+that is `assignees: [nthomsencph]`. A task with assignees reminds only them; one
+without reminds everyone who has the vault open in Holi. "My tasks" are the ones
+whose `assignees` include the user's own login: ask which member they are rather
+than guessing it. Leave `assignees` out rather than writing an empty list.
 
 Anything else you put in the frontmatter is **carried through untouched**. Holi does
 not understand it and does not delete it.

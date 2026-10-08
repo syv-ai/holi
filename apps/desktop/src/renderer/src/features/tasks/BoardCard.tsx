@@ -85,19 +85,25 @@ function FilterWord({
   )
 }
 
-/** A card's meta line: due, labels, tags. Quick add draws its preview with it;
+/** A card's meta line: due, labels, assignees, tags. Quick add draws its preview with it;
  *  on the board, `onFilter` makes each label and tag filter by itself. */
 export function TaskMeta({
   task,
   onFilter,
+  onFilterPerson,
 }: {
   task: Task
   onFilter?: (word: string) => void
+  /** Filters by an assignee, as `onFilter` does by a label or tag. */
+  onFilterPerson?: (login: string) => void
 }): React.JSX.Element | null {
   const now = useAtomValue(nowAtom)
   const reduced = useReducedMotion() ?? false
   const labels = virtualLabels(task, now)
-  if (!task.due && labels.length === 0 && task.tags.length === 0) return null
+  const assignees = task.assignees ?? []
+  if (!task.due && labels.length === 0 && task.tags.length === 0 && assignees.length === 0) {
+    return null
+  }
   return (
     <div className="mt-1 flex h-4 items-center gap-x-2 overflow-hidden text-[11px] whitespace-nowrap text-muted-foreground">
       {task.due && (
@@ -116,6 +122,11 @@ export function TaskMeta({
       {labels.map((label) => (
         <FilterWord key={label} word={label} onFilter={onFilter} className={LABEL_TONE[label]}>
           {label}
+        </FilterWord>
+      ))}
+      {assignees.map((login) => (
+        <FilterWord key={`@${login}`} word={login} onFilter={onFilterPerson}>
+          @{login}
         </FilterWord>
       ))}
       {task.tags.map((tag) => (
@@ -156,6 +167,11 @@ export function BoardCard({
     setFilter((f) => ({
       ...f,
       tags: f.tags.includes(word) ? f.tags.filter((t) => t !== word) : [...f.tags, word],
+    }))
+  const filterByPerson = (login: string) =>
+    setFilter((f) => ({
+      ...f,
+      people: f.people.includes(login) ? f.people.filter((p) => p !== login) : [...f.people, login],
     }))
   const reduced = useReducedMotion() ?? false
   const flight = useRef<HTMLDivElement>(null)
@@ -198,7 +214,7 @@ export function BoardCard({
           <div className="relative top-px origin-left truncate leading-4 motion-respond group-hover/card:scale-[1.03]">
             <StrikeText text={task.title} struck={sequence.struck} onStruck={sequence.onStruck} />
           </div>
-          <TaskMeta task={task} onFilter={filterBy} />
+          <TaskMeta task={task} onFilter={filterBy} onFilterPerson={filterByPerson} />
         </div>
         {/* The card's actions, on hover: one menu that more will join. The
             menu is portalled, but React bubbles its clicks through here, so

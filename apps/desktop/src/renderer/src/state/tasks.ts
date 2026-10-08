@@ -12,6 +12,7 @@ import type { Task, TaskStatus } from '@holi/shared'
 import {
   allLabels,
   dailyNoteFilename,
+  isAssignedTo,
   parseWikiLinks,
   snapshotTasks,
   taskArea,
@@ -131,10 +132,18 @@ export type Filter = {
   tags: string[]
   /** Lanes (a task's folder, `ROOT_LANE` for the vault root): any of them. */
   folders: string[]
+  /** GitHub logins: a task assigned to any of them. */
+  people: string[]
   hideDone: boolean
 }
 
-export const EMPTY_FILTER: Filter = { search: '', tags: [], folders: [], hideDone: false }
+export const EMPTY_FILTER: Filter = {
+  search: '',
+  tags: [],
+  folders: [],
+  people: [],
+  hideDone: false,
+}
 export const filterAtom = atom<Filter>(EMPTY_FILTER)
 
 /** Lane groups folded shut on the board, by cell key (`status:lane`): one
@@ -143,8 +152,8 @@ export const collapsedLanesAtom = atom<ReadonlySet<string>>(new Set<string>())
 
 /** The board's only narrowing. Three controls, deliberately: the bar is a
  * search-and-narrow aid, not a second configuration surface. The filter
- * narrows by folder and by tag: a task in any chosen folder, carrying every
- * chosen tag.
+ * narrows by folder, by person and by tag: a task in any chosen folder,
+ * assigned to any chosen person, carrying every chosen tag.
  *
  * The tag filter matches `overdue`/`p1`… exactly as it matches a real tag: computing
  * the labels is what makes "show me the overdue p1s" a tag query rather than two
@@ -160,6 +169,10 @@ export function matchesFilter(task: Task, filter: Filter, now: string): boolean 
   }
 
   if (filter.folders.length > 0 && !filter.folders.includes(laneOf(task))) return false
+
+  if (filter.people.length > 0 && !filter.people.some((login) => isAssignedTo(task, login))) {
+    return false
+  }
 
   if (filter.tags.length > 0) {
     const labels = new Set(allLabels(task, now))
@@ -233,7 +246,9 @@ export const createTaskAtom = atom(
       description?: string
       /** Set before the task exists (quick add, full create): written with
        *  the create, one file, one write. */
-      extra?: Partial<Pick<Task, 'due' | 'priority' | 'tags' | 'reminder' | 'recurrence'>>
+      extra?: Partial<
+        Pick<Task, 'due' | 'priority' | 'tags' | 'assignees' | 'reminder' | 'recurrence'>
+      >
     },
   ) => {
     const remote = get(activeRemoteAtom)

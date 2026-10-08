@@ -100,3 +100,24 @@ describe('sweep', () => {
     expect(event!.fires.map((f) => f.remote).sort()).toEqual(['o/a', 'o/b'])
   })
 })
+
+describe('sweep with assignees', () => {
+  const assigned = task({ reminder: REMINDER, assignees: ['mads'] })
+  const vaults = [{ remote: 'o/r', tasks: [assigned] }]
+
+  it('reminds an assignee', () => {
+    expect(sweep(vaults, '2026-07-28T10:00', NONE, 'Mads').event).not.toBeNull()
+  })
+
+  it('reminds no one else, and leaves the reminder unmarked for them', () => {
+    const { event, marks } = sweep(vaults, '2026-07-28T10:00', NONE, 'someone')
+    expect(event).toBeNull()
+    expect(marks).toEqual([])
+    expect(sweep(vaults, '2026-07-28T10:00', NONE, null).event).toBeNull()
+  })
+
+  it('still reminds everyone of a task with no assignees', () => {
+    const open = [{ remote: 'o/r', tasks: [task({ reminder: REMINDER })] }]
+    expect(sweep(open, '2026-07-28T10:00', NONE, 'someone').event).not.toBeNull()
+  })
+})

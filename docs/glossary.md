@@ -32,7 +32,8 @@ A `.md` file in the vault, named by its vault-relative path. The file is the doc
 ### Task
 
 A file named `task.<name>.md` in the folder it is about. Frontmatter carries `status`, `due`,
-`priority`, `tags`, `reminder`, `recurrence`; the body is the description. The path is its identity
+`priority`, `tags`, `assignees` (GitHub logins), `reminder`, `recurrence`; the body is the
+description. The path is its identity
 and the filename prefix is what makes it a task. See [tasks](features/tasks.md).
 
 ### Lane

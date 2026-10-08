@@ -29,6 +29,7 @@ import { historyOpenAtom } from '@/state/history'
 import { normalizersAtom } from '@/state/plugins'
 import { trpc } from '@/lib/trpc'
 import { fileHistoryAtom } from '@/state/file-history'
+import { memberLoginsAtom } from '@/state/members'
 import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
 
 /** Quiet before the buffer reaches disk. Shorter than main's commit debounce on
@@ -107,6 +108,7 @@ export function EditorPane({
   docPaths.current = new Set(snapshot.docs.map((d) => d.path))
   const tasksByPath = useRef(new Map<string, Task>())
   tasksByPath.current = new Map(snapshotTasks(snapshot).items.map((t) => [t.path, t]))
+  const people = useAtomValue(memberLoginsAtom)
   const mentionRef = useRef<MentionData>({ notes: [], tasks: [] })
   mentionRef.current = {
     notes: snapshot.docs.map((d) => ({
@@ -119,6 +121,7 @@ export function EditorPane({
       status: t.status,
       ...(t.due === undefined ? {} : { due: t.due }),
     })),
+    people,
   }
   const setHistoryOpen = useSetAtom(historyOpenAtom)
   /** In a ref, like `nav`: the extensions must not rebuild on every render.

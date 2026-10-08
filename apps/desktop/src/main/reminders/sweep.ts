@@ -3,12 +3,15 @@
  * wall-clock moment, and a per-vault delivery watermark reader, decide which
  * reminders fire this sweep and what to write back so they never fire twice.
  *
- * No IO, no timers, no Electron — deterministic in `(vaults, now, delivered)`.
+ * No IO, no timers, no Electron — deterministic in `(vaults, now, delivered,
+ * viewer)`. A task with assignees reminds only them: `viewer` is the login
+ * this machine is signed in as, and someone else's reminder is neither fired
+ * nor marked here, so it still fires if the task is handed to this person.
  * `pendingFireTime` (@holi/shared) owns the per-task predicate *including* the
  * fire-once watermark comparison; `sweep` composes it across all vaults and
  * decides coalescing.
  */
-import { pendingFireTime } from '@holi/shared'
+import { pendingFireTime, remindsViewer } from '@holi/shared'
 import type { Task } from '@holi/shared'
 import type { ReminderFire, RemindersEvent } from './types'
 
@@ -42,6 +45,7 @@ export function sweep(
   vaults: VaultTasks[],
   now: string,
   delivered: (remote: string) => Delivered,
+  viewer: string | null = null,
 ): { event: RemindersEvent | null; marks: SweepMark[] } {
   const fires: ReminderFire[] = []
   const marks: SweepMark[] = []
@@ -49,6 +53,7 @@ export function sweep(
   for (const { remote, tasks } of vaults) {
     const read = delivered(remote)
     for (const t of tasks) {
+      if (!remindsViewer(t, viewer)) continue
       const fire = pendingFireTime(t.status, t.reminder, read[t.path])
       // Both `fire` and `now` are local `YYYY-MM-DDTHH:MM`, so lexicographic
       // compare is chronological — a fire whose time has arrived (or passed,

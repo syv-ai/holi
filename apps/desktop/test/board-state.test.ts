@@ -70,7 +70,13 @@ describe('lanes', () => {
 })
 
 describe('filter (three controls, and one vocabulary)', () => {
-  const F = { search: '', tags: [] as string[], folders: [] as string[], hideDone: false }
+  const F = {
+    search: '',
+    tags: [] as string[],
+    folders: [] as string[],
+    people: [] as string[],
+    hideDone: false,
+  }
 
   it('search matches the title', () => {
     expect(matchesFilter(task({ title: 'Review the Q2 doc' }), { ...F, search: 'q2' }, TODAY)).toBe(
@@ -119,6 +125,16 @@ describe('filter (three controls, and one vocabulary)', () => {
   it('the done toggle hides done tasks and nothing else', () => {
     expect(matchesFilter(task({ status: 'done' }), { ...F, hideDone: true }, TODAY)).toBe(false)
     expect(matchesFilter(task({ status: 'doing' }), { ...F, hideDone: true }, TODAY)).toBe(true)
+  })
+
+  it('narrows to tasks assigned to any chosen person, whatever the case', () => {
+    const mine = task({ assignees: ['Mads'] })
+    const theirs = task({ assignees: ['nik'] })
+    const nobody = task({})
+    const filter = { ...F, people: ['mads', 'someone'] }
+    expect(matchesFilter(mine, filter, TODAY)).toBe(true)
+    expect(matchesFilter(theirs, filter, TODAY)).toBe(false)
+    expect(matchesFilter(nobody, filter, TODAY)).toBe(false)
     expect(matchesFilter(task({ status: 'done' }), F, TODAY)).toBe(true)
   })
 
