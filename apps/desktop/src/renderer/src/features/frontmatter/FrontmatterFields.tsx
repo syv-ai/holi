@@ -21,6 +21,7 @@ import {
   frontmatterSchema,
   isFieldSet,
   isTaskFilePath,
+  normalizeLogin,
   readYamlMapping,
 } from '@holi/shared'
 import { useAtomValue } from 'jotai'
@@ -31,6 +32,7 @@ import { TagsField } from './TagsField'
 import { TextField } from './TextField'
 import { duePresets, reminderPresets } from '@/lib/date-presets'
 import { nowAtom, todayAtom } from '@/state/clock'
+import { memberLoginsAtom } from '@/state/members'
 import { taskTagsAtom } from '@/state/tasks'
 
 export function FrontmatterFields({
@@ -48,6 +50,7 @@ export function FrontmatterFields({
   const now = useAtomValue(nowAtom)
   const today = useAtomValue(todayAtom)
   const tags = useAtomValue(taskTagsAtom)
+  const members = useAtomValue(memberLoginsAtom)
 
   const schema = frontmatterSchema(path)
   const values = readYamlMapping(yaml)
@@ -115,6 +118,20 @@ export function FrontmatterFields({
             value={fieldList(value)}
             suggestions={tags}
             onChange={(next) => set(field.key, next.length > 0 ? next : undefined)}
+          />
+        )
+      case 'people':
+        // GitHub logins, offered from the vault's members; one typed by hand
+        // with its `@` is kept without it, as the file reader keeps it.
+        return (
+          <TagsField
+            name={field.key}
+            value={fieldList(value)}
+            suggestions={members}
+            onChange={(next) => {
+              const logins = [...new Set(next.map(normalizeLogin).filter((l) => l !== ''))]
+              set(field.key, logins.length > 0 ? logins : undefined)
+            }}
           />
         )
       case 'recurrence':

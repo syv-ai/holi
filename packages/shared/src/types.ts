@@ -94,6 +94,14 @@ export interface Task {
   due?: string
   priority?: Priority
   tags: string[]
+  /**
+   * Who the task is for: GitHub logins of the vault's members, without the
+   * `@`. Absent when it is no one's in particular, which is every member's:
+   * its reminder then reaches everyone running Holi. A login is a name, not
+   * an identity (an account can be renamed), the same trade GitHub's own
+   * `@mentions` make.
+   */
+  assignees?: string[]
   /** When to be notified, as a stamp: an absolute moment, never an offset
    *  from `due`. A stamp with no time fires at `ANCHOR_HOUR`. Anything
    *  that is not a stamp is inert: it is carried through the file untouched and

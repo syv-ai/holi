@@ -24,6 +24,8 @@ export type FieldKind =
   | { readonly kind: 'date' }
   /** A list of short strings. */
   | { readonly kind: 'list' }
+  /** A list of the vault's members, by GitHub login. */
+  | { readonly kind: 'people' }
   /** The recurrence rule's nested map. */
   | { readonly kind: 'recurrence' }
   /** Anything else, including every key the schema does not name. */
@@ -60,6 +62,7 @@ const TASK_FIELDS: readonly FieldSpec[] = [
   { key: 'reminder', kind: { kind: 'stamp' } },
   { key: 'recurrence', kind: { kind: 'recurrence' } },
   { key: 'tags', kind: { kind: 'list' } },
+  { key: 'assignees', kind: { kind: 'people' } },
   { key: 'order', kind: { kind: 'text' }, hidden: true },
 ]
 
