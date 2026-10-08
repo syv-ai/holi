@@ -213,5 +213,8 @@ See [agent-sessions](features/agent-sessions.md), [agent-config](features/agent-
 
 ## 9. Build
 
-`pnpm dev` runs the app and `pnpm --filter @holi/desktop build` builds it with electron-vite. There
-is no packaging configuration yet, and no Docker, database or compose file.
+`pnpm dev` runs the app and `pnpm --filter @holi/desktop build` builds it with electron-vite.
+`pnpm --filter @holi/desktop package:mac` packages it with electron-builder
+(`apps/desktop/electron-builder.yml`); CI publishes a signed, notarized build as a GitHub release
+whenever the version changes, and the installed app updates itself from there
+([updates](features/updates.md)). There is no Docker, database or compose file.

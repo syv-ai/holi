@@ -27,6 +27,7 @@ import { AccountSection } from './AccountSection'
 import { DescriptorSection } from './DescriptorSection'
 import { IconsSection } from './IconsSection'
 import { ThemeSection } from './ThemeSection'
+import { UpdatesSection } from './UpdatesSection'
 import { VaultSection } from './VaultSection'
 import { headingId } from '@/composites'
 import { LIGHT_AND_DARK } from './appearance-headings'
@@ -77,7 +78,7 @@ const VAULT_CONTENT: readonly SettingsSection[] = [
   },
 ]
 
-/** The vault itself and who you are: always last. */
+/** The vault itself, who you are, and the app you run: always last. */
 const VAULT_AND_ACCOUNT: readonly SettingsSection[] = [
   {
     id: 'vault',
@@ -94,6 +95,13 @@ const VAULT_AND_ACCOUNT: readonly SettingsSection[] = [
     headings: [],
     files: [],
     Component: () => <AccountSection />,
+  },
+  {
+    id: 'updates',
+    label: 'Updates',
+    headings: [],
+    files: [],
+    Component: () => <UpdatesSection />,
   },
 ]
 

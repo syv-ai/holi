@@ -15,7 +15,11 @@ import { googleSeed } from '../src/plugins/google/main/seed'
 import { pdfSeed } from '../src/plugins/pdf/main/seed'
 import { coreSeed, GITIGNORE } from '../src/main/vault/seed/core'
 import { ensureSeeded as ensureSeededWith } from '../src/main/vault/seed/seed'
-import { stagedPath, updateShipped as updateWith } from '../src/main/vault/seed/update'
+import {
+  pendingShipped as pendingWith,
+  stagedPath,
+  updateShipped as updateWith,
+} from '../src/main/vault/seed/update'
 import { readSeedState, recordSeeded, sha256, SEED_STATE_FILE } from '../src/main/vault/seed/state'
 import { SEED_CONTRIBUTIONS, seedVault as ensureSeeded } from './helpers/seed'
 
@@ -27,6 +31,7 @@ const HOOKS_DIR = fileURLToPath(
 )
 
 const updateShipped = (root: string) => updateWith(root, SEED_CONTRIBUTIONS)
+const pendingShipped = (root: string) => pendingWith(root, SEED_CONTRIBUTIONS)
 
 /** Every contribution's text tables, by vault path. */
 const SHIPPED_FILES: Record<string, string> = Object.assign(
@@ -968,6 +973,67 @@ describe('updateShipped: what `holi skills update` does', () => {
     await ensureSeeded(root)
     const report = await updateShipped(root)
     expect(report.current.sort()).toEqual(Object.keys(SHIPPED_FILES).sort())
+  })
+})
+
+describe('pendingShipped: whether an update exists', () => {
+  const SKILL = '.claude/skills/vault-apps/SKILL.md'
+  const THEME = '.claude/skills/theme/SKILL.md'
+
+  it('is empty for a settled vault', async () => {
+    const root = await tempDir()
+    await ensureSeeded(root)
+    expect(await pendingShipped(root)).toEqual([])
+  })
+
+  it('names a file Holi has a newer version of, edited by the vault or not', async () => {
+    const root = await tempDir()
+    await ensureSeeded(root)
+    await writeFile(join(root, SKILL), '# an older version\n')
+    await recordSeeded(root, SKILL, '# an older version\n')
+    expect(await pendingShipped(root)).toEqual([SKILL])
+    await writeFile(join(root, SKILL), '# an older version\n## Ours\n')
+    expect(await pendingShipped(root)).toEqual([SKILL])
+  })
+
+  it("does not count the vault's own edits on top of this release", async () => {
+    const root = await tempDir()
+    await ensureSeeded(root)
+    await writeFile(join(root, SKILL), `${SHIPPED_FILES[SKILL]!}\n## Ours\n`)
+    expect(await pendingShipped(root)).toEqual([])
+  })
+
+  it('names a file new to the vault, but not one it deleted', async () => {
+    const root = await tempDir()
+    await ensureSeeded(root)
+    await rm(join(root, SKILL))
+    await rm(join(root, THEME))
+    const state = JSON.parse(await readFile(join(root, SEED_STATE_FILE), 'utf8'))
+    delete state.files[THEME]
+    await writeFile(join(root, SEED_STATE_FILE), JSON.stringify(state))
+    expect(await pendingShipped(root)).toEqual([THEME])
+  })
+
+  it('stays quiet with no base to tell whose change it is, and once handed off', async () => {
+    const root = await tempDir()
+    await ensureSeeded(root)
+    await writeFile(join(root, SKILL), '# changed\n')
+    await rm(join(root, SEED_STATE_FILE))
+    expect(await pendingShipped(root)).toEqual([])
+
+    await recordSeeded(root, SKILL, '# older\n')
+    await writeFile(join(root, stagedPath(SKILL, 'shipped')), SHIPPED_FILES[SKILL]!)
+    expect(await pendingShipped(root)).toEqual([])
+  })
+
+  it('writes nothing', async () => {
+    const root = await tempDir()
+    await ensureSeeded(root)
+    await rm(join(root, SKILL))
+    const before = await readFile(join(root, SEED_STATE_FILE), 'utf8')
+    await pendingShipped(root)
+    await expect(readFile(join(root, SKILL), 'utf8')).rejects.toThrow()
+    expect(await readFile(join(root, SEED_STATE_FILE), 'utf8')).toBe(before)
   })
 })
 

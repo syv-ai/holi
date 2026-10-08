@@ -1,6 +1,8 @@
 {
   "name": "@holi/desktop",
-  "version": "0.0.1",
+  "version": "0.1.0",
+  "description": "Local-first markdown vaults on GitHub, with Claude Code as the assistant",
+  "author": "syv.ai",
   "private": true,
   "main": "./out/main/index.js",
   "scripts": {
@@ -9,7 +11,8 @@
     "build": "electron-vite build",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "rebuild:natives": "electron-rebuild -f -w node-pty"
+    "rebuild:natives": "electron-rebuild -f -w node-pty",
+    "package:mac": "electron-vite build && electron-builder --mac --publish never"
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",
@@ -58,6 +61,7 @@
     "codemirror-markdown-tables": "^1.0.0",
     "command-score": "0.1.2",
     "dompurify": "^3.4.13",
+    "electron-updater": "^6.8.9",
     "jotai": "^2.20.1",
     "linkify-it": "^6.1.0",
     "lucide": "1.27.0",
@@ -87,6 +91,7 @@
     "@types/turndown": "^5.0.6",
     "@vitejs/plugin-react": "^5.2.0",
     "electron": "^43.1.0",
+    "electron-builder": "^26.17.0",
     "electron-vite": "^5.0.0",
     "eslint": "^9.39.5",
     "eslint-import-resolver-typescript": "^3.10.1",

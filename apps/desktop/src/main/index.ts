@@ -39,7 +39,12 @@ import { install } from './plugin-host/installed'
 import { createPluginHost } from './plugin-host/host'
 import type { PluginEventsDeps } from './plugin-host/events'
 import { frameSchemes, schemeEntries, serveScheme } from './plugin-host/schemes'
-import { describeUpdate, updateConflictPrompt, updateShipped } from './vault/seed/update'
+import {
+  describeUpdate,
+  pendingShipped,
+  updateConflictPrompt,
+  updateShipped,
+} from './vault/seed/update'
 import { createVaultPreCommit } from './vault/hooks/pre-commit'
 import { registerGitRoutes } from './vault/git-routes'
 import { registerIpc } from './ipc'
@@ -52,6 +57,7 @@ import { createDeliveredLog, createReminderRuntime } from './reminders/runtime'
 import { createNotifier } from './reminders/notify'
 import type { VaultTasks } from './reminders/sweep'
 import { createTray } from './tray'
+import { createUpdater, type Updater } from './updates/updater'
 import { installAppMenu } from './menu'
 import { createBridgeEnv } from './bridge/env-file'
 import { createBridgeServer } from './bridge/server'
@@ -293,6 +299,11 @@ async function main(): Promise<void> {
     // release's skills and hooks to a vault. A conflict is answered with the
     // first turn of a session that would resolve it, which the renderer
     // starts through the agent service.
+    pendingSkills: async (remote) => {
+      const root = await rootFor(remote)
+      if (root === null) throw new CapabilityError('UNAVAILABLE', 'No vault is open.')
+      return pendingShipped(root, await plugins.contributions(root))
+    },
     updateSkills: async (remote) => {
       const root = await rootFor(remote)
       if (root === null) throw new CapabilityError('UNAVAILABLE', 'No vault is open.')
@@ -327,7 +338,24 @@ async function main(): Promise<void> {
   // The vault's own `.pre-commit-config.yaml`: who allowed it, and its runs.
   const preCommit = createVaultPreCommit({ file: join(userDataDir, 'pre-commit-allowed.json') })
 
+  // Updating Holi itself. Installing is a quit, so it runs the quit's confirm
+  // and teardown first and then lets the updater's own quit through.
+  const updater: Updater = createUpdater({
+    send: (status) => send('updates:status', status),
+    beforeInstall: async () => {
+      if (quitting || confirmingQuit) return false
+      confirmingQuit = true
+      const go = await confirmQuit().catch(() => true)
+      confirmingQuit = false
+      if (!go) return false
+      quitting = true
+      await teardown()
+      return true
+    },
+  })
+
   const router = createRouter({
+    updates: updater,
     capabilities: capabilityHost,
     preCommit,
     seed: (root) => plugins.seed(root),
@@ -539,6 +567,16 @@ async function main(): Promise<void> {
   })
 
   async function teardownAndQuit(): Promise<void> {
+    await teardown()
+    // Always quit, even if the flush threw: a failed teardown must not trap
+    // someone in an app they are trying to leave.
+    app.quit()
+  }
+
+  /** Everything a quit does before the process goes: by ⌘Q, the tray, or an
+   *  update's restart. Never throws. */
+  async function teardown(): Promise<void> {
+    updater.dispose()
     reminders.close() // stop the sweep timer at once: no tick into a teardown
     tray?.destroy() // let go of the menu-bar item as we leave
     tray = null
@@ -568,10 +606,6 @@ async function main(): Promise<void> {
         await host.close()
       } catch (err) {
         console.error('[quit] teardown failed:', err)
-      } finally {
-        // Always quit, even if the flush threw: a failed teardown must not
-        // trap someone in an app they are trying to leave.
-        app.quit()
       }
     })()
   }

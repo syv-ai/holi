@@ -17,7 +17,10 @@ registry.register(['store'], storeCapabilities())
 // `docs.read`, for the refusal of records read as files.
 registry.register(
   VAULT_NAMESPACES,
-  vaultCapabilities({ updateSkills: async () => ({ summary: '', conflicts: null }) }),
+  vaultCapabilities({
+    updateSkills: async () => ({ summary: '', conflicts: null }),
+    pendingSkills: async () => [],
+  }),
 )
 
 let root: string

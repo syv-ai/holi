@@ -2,6 +2,7 @@ import type { VaultSnapshot } from '@holi/shared'
 import type { SyncState } from '../../main/vault/active-vault'
 import type { HeldBackFile } from '../../main/vault/large-files'
 import type { PluginEvent } from '../../main/plugin-host/events'
+import type { UpdateStatus } from '../../main/updates/state'
 import type { TrpcEnvelope, TrpcOpWire } from './lib/ipc-link'
 
 declare global {
@@ -54,6 +55,11 @@ declare global {
        *  than as a key. Returns its unsubscribe. */
       menu: {
         onCommand(cb: (id: string) => void): () => void
+      }
+      /** Updating Holi itself: the updater's status, whole, on every change.
+       *  Returns its unsubscribe. */
+      updates: {
+        onStatus(cb: (status: UpdateStatus) => void): () => void
       }
       openExternal(url: string): Promise<void>
       /** Reveal a local path — a vault's clone folder — in the system file

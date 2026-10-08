@@ -21,7 +21,10 @@ import { MEMBERS_TTL_MS, createMembersCache } from '../src/main/github/members-c
 const registry = createCapabilityRegistry()
 registry.register(
   VAULT_NAMESPACES,
-  vaultCapabilities({ updateSkills: async () => ({ summary: '', conflicts: null }) }),
+  vaultCapabilities({
+    updateSkills: async () => ({ summary: '', conflicts: null }),
+    pendingSkills: async () => [],
+  }),
 )
 registry.register(TASK_NAMESPACES, taskCapabilities({ today: () => '2026-09-30' }))
 /** What the Google entries see of this person's approvals; each test sets it. */
