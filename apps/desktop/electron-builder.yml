@@ -1,0 +1,39 @@
+# Packaging Holi for macOS (docs/features/updates.md). CI runs this on main and
+# publishes the result as a GitHub release, which is where the installed app's
+# updater looks.
+appId: ai.syv.holi
+productName: Holi
+# The installed app is named Holi: its menu, and its own userData folder. Not
+# in package.json, so `pnpm dev` keeps the dev build's separate userData.
+extraMetadata:
+  productName: Holi
+directories:
+  output: release
+files:
+  - out/**/*
+  - package.json
+asarUnpack:
+  # A native module and its spawn helper are executed, so they cannot live
+  # inside the asar archive.
+  - '**/node_modules/node-pty/**'
+  # The PDF plugin hands pdfium's wasm to the engine by path.
+  - '**/node_modules/@embedpdf/pdfium/**'
+publish:
+  provider: github
+  owner: syv-ai
+  repo: holi
+  releaseType: release
+mac:
+  target:
+    # The dmg is what a person downloads; the zip and latest-mac.yml are what
+    # the updater downloads.
+    - target: dmg
+      arch: [arm64]
+    - target: zip
+      arch: [arm64]
+  category: public.app-category.productivity
+  artifactName: ${productName}-${version}-${os}-${arch}.${ext}
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist

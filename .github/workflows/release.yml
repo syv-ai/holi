@@ -1,0 +1,114 @@
+# Release Holi (docs/features/updates.md): on main, when apps/desktop's version
+# has no release yet, build a signed and notarized macOS app and publish it as
+# the GitHub release v<version>. The installed app's updater reads that
+# release's latest-mac.yml, so bumping the version is what ships an update.
+name: Release
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+  workflow_dispatch:
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  version:
+    runs-on: ubuntu-24.04
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      exists: ${{ steps.version.outputs.exists }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Has this version been released?
+        id: version
+        run: |
+          TAG="v$(node -p 'require("./apps/desktop/package.json").version')"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" > /dev/null; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "$TAG is already released; bump apps/desktop/package.json to ship an update."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  build-mac:
+    needs: version
+    # workflow_dispatch can run on any branch; only main publishes.
+    if: needs.version.outputs.exists == 'false' && github.ref == 'refs/heads/main'
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm --filter @holi/desktop build
+
+      # electron-builder rebuilds node-pty for Electron, signs with the
+      # Developer ID certificate in CSC_LINK, and notarizes and staples the app
+      # before it makes the dmg and zip.
+      - name: Package, sign and notarize
+        working-directory: apps/desktop
+        run: pnpm exec electron-builder --mac --arm64 --publish never
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+      - name: Verify signature and notarization
+        working-directory: apps/desktop
+        run: |
+          codesign --verify --deep --strict --verbose=2 release/mac-arm64/Holi.app
+          spctl --assess --type execute --verbose=2 release/mac-arm64/Holi.app
+          xcrun stapler validate release/mac-arm64/Holi.app
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: Holi-mac-arm64
+          path: |
+            apps/desktop/release/*.dmg
+            apps/desktop/release/*.zip
+            apps/desktop/release/*.blockmap
+            apps/desktop/release/latest-mac.yml
+          if-no-files-found: error
+
+  release:
+    needs: [version, build-mac]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ needs.version.outputs.tag }}" \
+            --target "$GITHUB_SHA" \
+            --title "Holi ${{ needs.version.outputs.tag }}" \
+            --generate-notes \
+            artifacts/*

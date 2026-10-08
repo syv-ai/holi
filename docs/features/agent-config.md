@@ -90,7 +90,11 @@ submitted first turn merges them and deletes the staged files (`skills.update` a
 and the renderer starts it through the agent service); until it does, the file stays a conflict.
 `holi skills update` and a vault without the agent leave the staged files for a person. A machine with
 no recorded base hands every changed file to the agent. The palette reports the outcome as a
-native notification. Holi's side of a hook is not kept compatible with older scripts: the update
+native notification. Whether an update would bring anything is asked, writing nothing, whenever a
+vault opens (`skills.status`, also `holi skills status`): a file Holi has a newer version of than the
+one it last brought here, or one new to the vault. A diverged file with no recorded base is not
+counted, since nothing says whose change it is. While there are some, the nav menu's update item
+offers Update skills ([updates](updates.md)). Holi's side of a hook is not kept compatible with older scripts: the update
 is how a vault gets the current ones.
 
 Changing a once file's seed text reaches new vaults only. To tell existing vaults something, use a

@@ -18,7 +18,10 @@ it('answers every bridge method that is not the renderer’s at the app door', (
   const registry = createCapabilityRegistry()
   registry.register(
     VAULT_NAMESPACES,
-    vaultCapabilities({ updateSkills: async () => ({ summary: '', conflicts: null }) }),
+    vaultCapabilities({
+      updateSkills: async () => ({ summary: '', conflicts: null }),
+      pendingSkills: async () => [],
+    }),
   )
   registry.register(TASK_NAMESPACES, taskCapabilities({ today: () => '2026-10-01' }))
   registry.register(

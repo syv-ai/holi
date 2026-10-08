@@ -37,6 +37,7 @@ other rather than repeating each other.
 | [command-palette](features/command-palette.md) | Quick open and the one table of commands                                 |
 | [nav-menu](features/nav-menu.md)               | The morphing menu at the sidebar's foot, and Home                        |
 | [onboarding](features/onboarding.md)           | First run, creating or joining a vault                                   |
+| [updates](features/updates.md)                 | Releases from CI, and the app updating itself                            |
 
 ## Rules for these docs
 

@@ -2,7 +2,8 @@
  * The morphing menu at the foot of the nav, and down the rail while the nav is
  * hidden: the registry's rail items (Home, Apps, the board, the agents, mail
  * and the agenda once Google is connected, Settings), around core's own Search
- * and the vault's sync state (`SyncItem`), all sorted
+ * and the vault's sync state (`SyncItem`), with an update to Holi once one is
+ * ready (`UpdateItem`), all sorted
  * by `order` (docs/features/nav-menu.md). A surface with instances (vault
  * apps) is a group that drills down to them.
  *
@@ -21,12 +22,13 @@ import { openSurfaceAtom } from '@/state/surfaces'
 import { runCommandAtom } from '@/state/commands'
 import { openTaskCountAtom, overdueTaskCountAtom } from '@/state/tasks'
 import { useSyncItem } from './SyncItem'
+import { useUpdateItem } from './UpdateItem'
 
 /** An instance's child id: its surface and id, kept apart from the fixed ids. */
 const instanceItemId = (surface: string, id: string): string => `${surface}:${id}`
 
 /** Where core's own items sit among the rail's (`RailItem.order`). */
-const ORDER = { search: 10, sync: 70 } as const
+const ORDER = { search: 10, sync: 70, update: 75 } as const
 
 /** The item the active tab is, if it is one of the menu's destinations. `rail`
  *  says, per surface on the menu, whether it is a group of instances. */
@@ -50,6 +52,7 @@ export function NavMenu({
   const openTaskCount = useAtomValue(openTaskCountAtom)
   const overdueCount = useAtomValue(overdueTaskCountAtom)
   const sync = useSyncItem()
+  const update = useUpdateItem()
 
   // Stable across renders that change nothing here: the menu re-measures and
   // restarts its morph when its items change.
@@ -86,10 +89,11 @@ export function NavMenu({
         item: { id: 'search', label: 'Search', icon: Search, onSelect: () => openPalette('open') },
       },
       { order: ORDER.sync, item: sync },
+      ...(update === null ? [] : [{ order: ORDER.update, item: update }]),
     ]
     // Stable, so items of one order keep the order they were listed in.
     return placed.sort((a, b) => a.order - b.order).map((p) => p.item)
-  }, [rail, openTaskCount, overdueCount, sync, openPalette, openSurface, runCommand])
+  }, [rail, openTaskCount, overdueCount, sync, update, openPalette, openSurface, runCommand])
 
   const railKinds = useMemo(
     () => new Map(rail.map((r) => [r.surface, r.instances !== undefined])),

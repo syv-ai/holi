@@ -57,6 +57,8 @@ import { installedInfos } from './plugin-host/installed'
 import type { PreCommitStatus, ResolvedTheme, ResolvedVaultSettings } from '@holi/shared'
 import type { VaultPreCommit } from './vault/hooks/pre-commit'
 import { isRemote, repoName, type VaultRegistry } from './vault/registry'
+import type { UpdateStatus } from './updates/state'
+import type { Updater } from './updates/updater'
 
 const t = initTRPC.create()
 
@@ -166,6 +168,9 @@ export interface RouterDeps {
    *  agent's focus file, the bridge's recents). Optional like the rest:
    *  absent, a report is dropped. */
   reportUi?: (remote: string, report: UiReport) => void
+  /** Updating Holi itself (`updates/updater.ts`). Optional: absent, as in
+   *  tests, the app reads as a build that cannot update. */
+  updates?: Omit<Updater, 'dispose'>
 }
 
 /** `YYYY-MM-DD` in the machine's own timezone. `toISOString().slice(0, 10)`
@@ -1544,6 +1549,38 @@ export function createRouter(deps: RouterDeps) {
       }),
   })
 
+  /** Updating Holi itself; the status also arrives pushed, on change. */
+  const unsupported = (): UpdateStatus => ({
+    supported: false,
+    enabled: false,
+    version: '',
+    state: 'idle',
+    availableVersion: null,
+    percent: null,
+    lastCheckAt: null,
+    checkStartedAt: null,
+    lastError: null,
+  })
+  const updates = t.router({
+    status: t.procedure.query((): UpdateStatus => deps.updates?.status() ?? unsupported()),
+    check: t.procedure.mutation(
+      async (): Promise<UpdateStatus> => (await deps.updates?.check()) ?? unsupported(),
+    ),
+    download: t.procedure.mutation(
+      async (): Promise<UpdateStatus> => (await deps.updates?.download()) ?? unsupported(),
+    ),
+    install: t.procedure.mutation(() => {
+      deps.updates?.install()
+      return { ok: true as const }
+    }),
+    setEnabled: t.procedure
+      .input(fields({ enabled: 'boolean' }))
+      .mutation(
+        async ({ input }): Promise<UpdateStatus> =>
+          (await deps.updates?.setEnabled(input.enabled)) ?? unsupported(),
+      ),
+  })
+
   return t.router({
     auth,
     github,
@@ -1557,6 +1594,7 @@ export function createRouter(deps: RouterDeps) {
     settings,
     ui,
     cap,
+    updates,
   })
 }
 

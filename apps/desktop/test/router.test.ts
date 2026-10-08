@@ -99,7 +99,10 @@ async function rig(files: Record<string, string> = {}, auth?: StoredAuth) {
   const capabilities = createCapabilityRegistry()
   capabilities.register(
     VAULT_NAMESPACES,
-    vaultCapabilities({ updateSkills: async () => ({ summary: '', conflicts: null }) }),
+    vaultCapabilities({
+      updateSkills: async () => ({ summary: '', conflicts: null }),
+      pendingSkills: async () => [],
+    }),
   )
   capabilities.register(TASK_NAMESPACES, taskCapabilities({ today: () => TODAY }))
   const capabilityHost = createCapabilityHost({

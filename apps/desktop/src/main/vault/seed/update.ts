@@ -151,6 +151,39 @@ export async function updateShipped(
   return report
 }
 
+/**
+ * What this release would bring the vault, without writing anything: the
+ * shipped files Holi has a newer version of than the one it last brought here,
+ * and those new to this vault. Asked on every open, so Holi can say an update
+ * exists rather than wait to be asked (docs/features/updates.md).
+ *
+ * Deliberately quieter than `updateShipped`: a file that differs with no base
+ * on this machine (a teammate's clone that never seeded it) is not counted,
+ * because nothing says Holi changed it rather than the vault; nor is one the
+ * vault deleted, or one already handed to an agent.
+ */
+export async function pendingShipped(
+  root: string,
+  contributions: readonly SeedContribution[],
+): Promise<string[]> {
+  const state = await readSeedState(root)
+  const pending: string[] = []
+  for (const [rel, shipped] of shippedFiles(contributions)) {
+    const onDisk = await readFile(join(root, rel), 'utf8').catch(() => null)
+    if (onDisk === shipped) continue
+    const record = state.files[rel]
+    if (onDisk === null) {
+      if (record === undefined) pending.push(rel)
+      continue
+    }
+    if (record === undefined || record.text === shipped) continue
+    const handedOff =
+      (await readFile(join(root, stagedPath(rel, 'shipped'))).catch(() => null)) !== null
+    if (!handedOff) pending.push(rel)
+  }
+  return pending
+}
+
 /** The report in one line, for the notification and the CLI. */
 export function describeUpdate(report: UpdateReport, sessionStarted: boolean): string {
   const parts = [

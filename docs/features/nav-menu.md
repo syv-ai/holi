@@ -7,7 +7,7 @@ hidden, the same menu runs down the rail.
 
 ## How it works
 
-- **Items, in order:** Home, Search, Apps, Board, Mail, Agenda, Agents, Sync, Settings, so
+- **Items, in order:** Home, Search, Apps, Board, Mail, Agenda, Agents, Sync, Update, Settings, so
   Settings always ends the dock. The surface items are rail items from the surface registry
   (`{surface, order, visible?}`, label and icon from the surface; see [tabs and panes](tabs-panes.md)),
   sorted by `order` among core's own Search (10), Agents (60) and Sync (70), with Apps (20) the apps plugin's rail item; `visible`
@@ -17,6 +17,9 @@ hidden, the same menu runs down the rail.
   their tabs. Agents goes to Claude Code's agent list, the tab ⌘J goes to, and is green while any
   of the vault's sessions is running ([agent sessions](agent-sessions.md)). Sync is the vault's sync state as a glyph whose colour and turning carry it, and opens
   a panel with the state in words, its action and the history ([vaults and sync](vaults-sync.md)).
+  Update (75) is there only while an update to Holi is ready or failed to download, or this release
+  has newer skills for the open vault, and opens a panel with Restart to update, Try again, or
+  Update skills and Not now ([updates](updates.md)).
 - **An item may carry a state on its glyph:** `tone` colours it (busy, warn, alert, live) and
   `motion` loops it (`orbit`, `pulse`), only while that state is in flight.
 - **Apps is a drill-down.** A rail item whose surface has `instances` is one: Apps is the `app`

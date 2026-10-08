@@ -73,6 +73,9 @@ const onTestOnboarding = pushChannel<void>('dev:test-onboarding')
  *  this is how it arrives instead. */
 const onMenuCommand = pushChannel<string>('menu:command')
 
+/** Updating Holi itself: the updater's whole status, on every change. */
+const onUpdateStatus = pushChannel<unknown>('updates:status')
+
 /** The ONE seam between renderer and main (architecture §3). */
 contextBridge.exposeInMainWorld('holi', {
   trpc: (op: unknown) => ipcRenderer.invoke('holi:trpc', op),
@@ -99,6 +102,9 @@ contextBridge.exposeInMainWorld('holi', {
   },
   menu: {
     onCommand: onMenuCommand,
+  },
+  updates: {
+    onStatus: onUpdateStatus,
   },
   openExternal: (url: string) => ipcRenderer.invoke('holi:openExternal', url),
   openPath: (path: string) => ipcRenderer.invoke('holi:openPath', path),

@@ -49,6 +49,9 @@ export interface VaultCapabilitiesDeps {
    * changes. Throws the refusal.
    */
   updateSkills(remote: string): Promise<SkillsUpdated>
+  /** The shipped files an update would bring the vault, by vault path;
+   *  writes nothing. */
+  pendingSkills(remote: string): Promise<string[]>
 }
 
 export const vaultCapabilities = (deps: VaultCapabilitiesDeps) => ({
@@ -192,6 +195,20 @@ export const vaultCapabilities = (deps: VaultCapabilitiesDeps) => ({
       return { ...state, paths: state.paths.filter((p) => readableOrNull(p) !== null) }
     },
     text: syncText,
+  }),
+
+  /** `holi skills status`, and the nav's notice that an update exists. */
+  'skills.status': cap({
+    doors: ['ui', 'cli'],
+    cli: {
+      args: [],
+      summary: 'the skills and hooks this release would bring the vault, one path per line',
+    },
+    params: noParams,
+    run: async (ctx): Promise<{ pending: string[] }> => ({
+      pending: await deps.pendingSkills(ctx.remote),
+    }),
+    text: ({ pending }) => (pending.length === 0 ? 'Skills are up to date.' : pending.join('\n')),
   }),
 
   /** `holi skills update`, and the palette's Update skills. */
