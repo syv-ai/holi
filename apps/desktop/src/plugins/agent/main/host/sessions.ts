@@ -94,6 +94,16 @@ export interface AgentSessions {
   /** A new background session, and a terminal on it. With a prompt, that
    *  prompt is its first turn (reconcile); without, it waits for one. */
   start(args: Geometry & { name?: string; prompt?: string }): Promise<StartResult>
+  /** A new background session whose first turn is `prompt`, and no
+   *  terminal: nobody is watching it start. A scheduled run. */
+  launch(args: {
+    name: string
+    prompt: string
+    model?: string
+    allow?: readonly string[]
+  }): Promise<{ ok: true; sessionId: string } | { ok: false; message: string }>
+  /** Whether Holi has a terminal open on the session. */
+  watched(id: string): boolean
   /** Put text in a session's input, unsent: a live one by id, or a new one
    *  named from the text. Opens a terminal on it when Holi has none. */
   send(args: Geometry & { text: string; target: string | 'new' }): Promise<OpenResult>
@@ -355,6 +365,22 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
       const opened = await openOn(c, { attach: res.id, cols, rows: r })
       return opened.ok ? { ok: true, sessionId: res.id, terminalId: opened.terminalId } : opened
     },
+
+    async launch({ name, prompt, model, allow }) {
+      const c = await ensureCurrent()
+      if (c === null) return noVault
+      const res = await provider.cli.startBg(targetOf(c), {
+        name,
+        prompt,
+        ...(model === undefined ? {} : { model }),
+        ...(allow === undefined ? {} : { allow }),
+      })
+      if (!res.ok) return res
+      await refresh()
+      return { ok: true, sessionId: res.id }
+    },
+
+    watched: (id) => deps.terminals.launchedFor(id) !== null,
 
     async send({ text, target, cols, rows: r }) {
       const c = await ensureCurrent()

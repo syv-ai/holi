@@ -102,6 +102,14 @@ sessions: the agent list, or one session attached. Its name and its state (`need
 `idle`) come from Claude Code itself. Closing a tab detaches; Stop, a vault switch or quitting stops
 it, and it stays in the agent list. See [agent-sessions](features/agent-sessions.md).
 
+### Schedule
+
+A file in `.holi/schedules/` whose frontmatter says when (`cron` or `at`, local time) and what the
+run may do without asking, and whose body is a prompt. Holi starts it as a session at those times
+while the vault is open, on a machine that turned it on: **on** approves its current prompt, model
+and `allow` list, and any change to those reads **changed** until approved again. See
+[scheduled-agents](features/scheduled-agents.md).
+
 ### Ask
 
 Text sent from Holi to a session (a selection, a task, a mail thread). It lands in the input as a
@@ -111,7 +119,7 @@ stuck push is the exception: it submits its instruction as the first turn of its
 ### Agent surface
 
 The files that configure the agent rather than hold content: `AGENTS.md`, `CLAUDE.md`, `.holi/memory/`,
-`USER.local.md`, and all of `.claude/`. Writing them changes what the agent does next, so anything
+`.holi/schedules/`, `USER.local.md`, and all of `.claude/`. Writing them changes what the agent does next, so anything
 less trusted than the user (a vault app, a hook) is kept off them.
 
 ### Local file

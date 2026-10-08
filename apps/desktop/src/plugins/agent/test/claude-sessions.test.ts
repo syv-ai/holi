@@ -151,6 +151,40 @@ describe('claude-cli', () => {
     }
   })
 
+  it('starts a scheduled run with its model and rules, a plain option ending the rules', async () => {
+    const calls: string[][] = []
+    const cli = createClaudeCli({
+      resolveBin: () => '/c',
+      run: async (_bin, args) => {
+        calls.push(args)
+        return 'backgrounded · 1234abcd · x\n'
+      },
+      log: () => {},
+    })
+    await cli.startBg(target, {
+      name: 'Inbox · 10:30',
+      prompt: 'Check mail.',
+      model: 'sonnet',
+      allow: ['Bash(holi google search:*)', 'Edit'],
+    })
+    // `--allowedTools` is variadic: each rule its own `=` argument, and the
+    // name after them, so the prompt is never read as one more rule.
+    await cli.startBg(target, { prompt: 'Check mail.', allow: ['Edit'] })
+    expect(calls).toEqual([
+      [
+        '--bg',
+        '--model',
+        'sonnet',
+        '--allowedTools=Bash(holi google search:*)',
+        '--allowedTools=Edit',
+        '--name',
+        'Inbox · 10:30',
+        'Check mail.',
+      ],
+      ['--bg', '--allowedTools=Edit', '--name', 'Scheduled run', 'Check mail.'],
+    ])
+  })
+
   it('answers the new id, or why there is none', async () => {
     const ok = createClaudeCli({
       resolveBin: () => '/c',

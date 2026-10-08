@@ -221,6 +221,12 @@ describe('isAgentSurfacePath (what a vault app may never touch)', () => {
     expect(isAgentSurfacePath('.holi/memory/salary.local.md')).toBe(true)
   })
 
+  it('covers scheduled agents\' prompts, which the agent runs unattended', () => {
+    expect(isAgentSurfacePath('.holi/schedules/inbox-triage.md')).toBe(true)
+    expect(isAgentSurfacePath('.holi/schedules/mine.local.md')).toBe(true)
+    expect(isAgentSurfacePath('notes/.holi/schedules/x.md')).toBe(false)
+  })
+
   it('is an exact match at the root, so a same-named note elsewhere is ordinary content', () => {
     // The same rule isVaultConfigPath follows: `notes/AGENTS.md` is a note a
     // human wrote about agents, not the file the agent loads.

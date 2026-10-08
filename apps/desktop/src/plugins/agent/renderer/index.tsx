@@ -7,10 +7,16 @@
  */
 import { atom } from 'jotai'
 import { Bot } from 'lucide-react'
-import type { Command, RendererPlugin, SurfaceTabLook } from '@/plugin-api'
+import {
+  activeRemoteAtom,
+  type Command,
+  type RendererPlugin,
+  type SurfaceTabLook,
+} from '@/plugin-api'
 import { AGENT_INFO } from '../info'
 import { AgentSurface } from './AgentSurface'
 import { agentIndicator } from './lib/notices'
+import { SchedulesSection, schedulesEpochAtom } from './SchedulesSection'
 import { AGENT_SERVICE } from './service'
 import { SessionActions } from './SessionActions'
 import { SessionOrbs } from './SessionOrbs'
@@ -73,7 +79,13 @@ const COMMANDS: readonly Command[] = [
 
 export const agentRenderer: RendererPlugin = {
   info: AGENT_INFO,
-  events: agentEvents,
+  events: {
+    ...agentEvents,
+    // A schedule ran, or was turned on or off: the section asks again.
+    schedules: ({ remote }, store) => {
+      if (remote === store.get(activeRemoteAtom)) store.set(schedulesEpochAtom, (n) => n + 1)
+    },
+  },
   surfaces: [
     {
       kind: AGENT_SURFACE,
@@ -98,6 +110,17 @@ export const agentRenderer: RendererPlugin = {
   railSection: SessionOrbs,
   sidebarSection: SessionRowsSection,
   drawers: [TurnReview],
+  settingsSections: [
+    {
+      id: 'schedules',
+      label: 'Schedules',
+      headings: [{ id: 'scheduled-agents', title: 'Scheduled agents' }],
+      // The schedules themselves are files the section links to one by one;
+      // whether each runs here is the machine's, outside the vault.
+      files: [],
+      Component: ({ remote }) => <SchedulesSection remote={remote} />,
+    },
+  ],
   leaveGuard: agentLeaveGuardAtom,
   vault: agentVault,
   agent: AGENT_SERVICE,

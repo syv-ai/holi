@@ -134,6 +134,7 @@ describe('the seed tables', () => {
       '.claude/hooks/user-prompt-submit.mjs',
       '.claude/skills/holi-feedback/SKILL.md',
       '.claude/skills/memory/SKILL.md',
+      '.claude/skills/scheduled-agents/SKILL.md',
       '.claude/skills/theme/SKILL.md',
       '.claude/skills/using-tasks/SKILL.md',
     ])
@@ -291,6 +292,8 @@ describe('the seed tables', () => {
     expect(settings.permissions.ask).toEqual([
       'Bash(curl:*)',
       'Bash(wget:*)',
+      'Bash(holi schedules enable:*)',
+      'Bash(holi schedules run:*)',
       'Bash(holi google archive:*)',
       'Bash(holi google trash:*)',
       'Bash(holi google unschedule:*)',
@@ -588,6 +591,7 @@ describe('mergedSettings', () => {
     expect(after.hooks.UserPromptSubmit[0].hooks[0].command).toBe('mine')
     expect(after.permissions.allow).toEqual([
       'Bash(ls:*)',
+      'Bash(holi schedules list:*)',
       'Bash(holi pdf comments:*)',
       'Bash(holi pdf typst:*)',
       'Bash(holi apps:*)',
@@ -606,6 +610,7 @@ describe('mergedSettings', () => {
     delete before.permissions.allow
     const after = parse(mergedSettings(JSON.stringify(before)))
     expect(after.permissions.allow).toEqual([
+      'Bash(holi schedules list:*)',
       'Bash(holi pdf comments:*)',
       'Bash(holi pdf typst:*)',
       'Bash(holi apps:*)',

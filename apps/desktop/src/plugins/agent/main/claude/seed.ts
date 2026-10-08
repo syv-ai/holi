@@ -59,6 +59,10 @@ const OFF_SKILLS = [
   'fewer-permission-prompts',
   'keybindings-help',
   'import-memory',
+  // Claude Code's cloud routines: they run in Anthropic's cloud, away from
+  // this machine's vault, Holi and its Google account. A vault's scheduled
+  // agents are Holi's (the `scheduled-agents` skill).
+  'schedule',
 ]
 
 /**
@@ -145,7 +149,15 @@ const AGENT_SETTINGS: SettingsFragment = {
   permissions: {
     // Network egress: the user still approves each one, it just does not
     // slip through unasked.
-    ask: ['Bash(curl:*)', 'Bash(wget:*)'],
+    // Turning a schedule on approves a prompt that then runs unattended, and
+    // a run starts one: the person says yes to each, in the prompt.
+    ask: [
+      'Bash(curl:*)',
+      'Bash(wget:*)',
+      'Bash(holi schedules enable:*)',
+      'Bash(holi schedules run:*)',
+    ],
+    allow: ['Bash(holi schedules list:*)'],
     // Claude Code tools with no job in a vault: notebooks, plan mode,
     // worktrees (one working tree is what sync assumes), code-review
     // reporting, and SendFeedback, which reaches Anthropic rather than Holi

@@ -12,7 +12,12 @@
  * plain Node in the tests.
  */
 import { join } from 'node:path'
-import { CapabilityError, type MainPlugin, type VaultCtx } from '../../../main/plugin-api'
+import {
+  CapabilityError,
+  jsonFileStore,
+  type MainPlugin,
+  type VaultCtx,
+} from '../../../main/plugin-api'
 import { AGENT_INFO } from '../info'
 import { claudeProvider } from './claude'
 import { claudeSeed } from './claude/seed'
@@ -20,8 +25,12 @@ import { agentCapabilities, AGENT_NAMESPACES } from './host/capabilities'
 import { createAgentSessions, type AgentSessions } from './host/sessions'
 import { createAgentTerminals } from './host/terminals'
 import { openTurnLog } from './host/turn-log'
+import { scheduleCapabilities, SCHEDULE_NAMESPACES } from './schedules/capabilities'
+import { createScheduler, parseSchedulesFile, type Scheduler } from './schedules/scheduler'
 
 let sessions: AgentSessions | null = null
+/** Scheduled agents: they start sessions, so they run where the agent does. */
+let scheduler: Scheduler | null = null
 /** The vault the agent is active in, for the capabilities that commit. */
 let vault: VaultCtx | null = null
 
@@ -57,6 +66,15 @@ export const agentMain: MainPlugin = {
         },
       }),
     )
+    // Which schedules this machine runs, and what they did: outside the
+    // vault, where the agent cannot approve its own (`schedules/scheduler.ts`).
+    const schedules = createScheduler({
+      store: jsonFileStore(join(ctx.userData, 'schedules.json'), parseSchedulesFile),
+      sessions: started,
+      emit: ctx.emit,
+    })
+    scheduler = schedules
+    ctx.register(SCHEDULE_NAMESPACES, scheduleCapabilities({ scheduler: schedules }))
     // Keystrokes and resizes, in the order they were typed. The host drops
     // any about a vault that is not the open one.
     ctx.on('pty-write', (_remote, payload) => {
@@ -88,6 +106,8 @@ export const agentMain: MainPlugin = {
       }
     })
     return () => {
+      schedules.detach()
+      scheduler = null
       sessions = null
     }
   },
@@ -96,6 +116,9 @@ export const agentMain: MainPlugin = {
     if (running === null) return () => {}
     vault = ctx
     void running.ensure(ctx)
+    // The open vault's schedules run while it is open.
+    const schedules = scheduler
+    schedules?.attach({ remote: ctx.remote, root: ctx.root })
     // The per-turn hook reads the focused note from a file in this clone.
     const unreport = ctx.onReport((report) =>
       running.setFocus({ focusedPath: report.focusedPath, openPaths: report.openPaths }),
@@ -103,6 +126,7 @@ export const agentMain: MainPlugin = {
     // A switch stops the vault's sessions (the renderer asked first if one
     // was busy). They stay in the agents list and resume when opened.
     return async () => {
+      schedules?.detach()
       unreport()
       await running.leave().catch((err) => console.error('[agent] leave failed:', err))
       if (vault === ctx) vault = null

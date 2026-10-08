@@ -159,10 +159,19 @@ export interface ClaudeCli {
   /** Remove a stopped session from Claude Code's list, conversation and all. */
   rm(target: VaultCliTarget, id: string): Promise<ActionResult>
   /** A new background session in the vault. With no prompt it waits for its
-   *  first one; with a prompt, that prompt is its first turn. */
-  startBg(target: VaultCliTarget, opts: { name?: string; prompt?: string }): Promise<StartResult>
+   *  first one; with a prompt, that prompt is its first turn. `model` and
+   *  `allow` (Claude Code permission rules it may use without asking) are a
+   *  scheduled run's. */
+  startBg(target: VaultCliTarget, opts: StartBgOptions): Promise<StartResult>
   /** A background copy of a conversation, by Claude Code's full session id. */
   forkBg(target: VaultCliTarget, sessionId: string, name?: string): Promise<StartResult>
+}
+
+export interface StartBgOptions {
+  name?: string
+  prompt?: string
+  model?: string
+  allow?: readonly string[]
 }
 
 /** The longest a session name is worth being: a row is narrow, and the source
@@ -285,11 +294,20 @@ export function createClaudeCli(deps: ClaudeCliDeps = {}): ClaudeCli {
     stop: (target, id) => action(target, ['stop', id]),
     respawn: (target, id) => action(target, ['respawn', id]),
     rm: (target, id) => action(target, ['rm', id]),
-    startBg(target, { name, prompt }) {
+    startBg(target, { name, prompt, model, allow = [] }) {
       const label = sessionName(name)
       return start(target, [
         '--bg',
-        ...(label === null ? [] : ['--name', label]),
+        ...(model === undefined ? [] : ['--model', model]),
+        // `--allowedTools` takes any number of values, so each rule is one
+        // `=` argument and a plain option always follows to end the list:
+        // the name, which an allow list therefore always gets.
+        ...allow.map((rule) => `--allowedTools=${rule}`),
+        ...(label === null
+          ? allow.length > 0
+            ? ['--name', 'Scheduled run']
+            : []
+          : ['--name', label]),
         ...(prompt ? [prompt] : []),
       ])
     },
