@@ -90,7 +90,9 @@ run opens no window at all ([scheduled-agents](scheduled-agents.md)).
 
 **Git coexistence.** The seeded `UserPromptSubmit` and `Stop` hooks run `turn-signal.mjs`, which
 reads the vault's `bridge.local.env` ([agent-config](agent-config.md)) for the port and the vault's token, and posts
-the job id from `$CLAUDE_JOB_DIR`. The vault has one working set: the first turn to start pauses
+the job id from `$CLAUDE_JOB_DIR`; at a Stop, also `pending`, how many background tasks and
+session crons its input lists, which is what tells a done session from a paused one
+([scheduled-agents](scheduled-agents.md)). The vault has one working set: the first turn to start pauses
 sync, the last to end resumes it and takes one settle commit. A session also leaves the set when
 its process goes, on two consecutive `idle` readings (escaping a permission prompt fires no `Stop`),
 or on a 10 minute cap. Sessions keep running while Holi is closed, so the first read after a vault

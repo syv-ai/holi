@@ -104,6 +104,10 @@ export interface AgentSessions {
   }): Promise<{ ok: true; sessionId: string } | { ok: false; message: string }>
   /** Whether Holi has a terminal open on the session. */
   watched(id: string): boolean
+  /** Hear each session's turn end, by job id, with how much its Stop said
+   *  was still pending (null when no Stop said: a confirmed idle, the safety
+   *  cap, an older hook script). Returns the undo. */
+  onTurnEnd(listener: (id: string, pending: number | null) => void): () => void
   /** Put text in a session's input, unsent: a live one by id, or a new one
    *  named from the text. Opens a terminal on it when Holi has none. */
   send(args: Geometry & { text: string; target: string | 'new' }): Promise<OpenResult>
@@ -111,7 +115,7 @@ export interface AgentSessions {
   respawn(id: string): Promise<ActionResult>
   duplicate(id: string, geometry?: Geometry): Promise<StartResult>
   /** A turn edge from the seeded hook, by vault and job id. */
-  noteTurn(remote: string, jobId: string, active: boolean): void
+  noteTurn(remote: string, jobId: string, active: boolean, pending?: number | null): void
   /** A session's status line fired: Claude Code's status JSON, by vault and
    *  job id. */
   noteStatus(remote: string, jobId: string, status: unknown): void
@@ -168,12 +172,22 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
    */
   const contextPercent = new Map<string, number>()
 
+  const turnEnds = new Set<(id: string, pending: number | null) => void>()
+  /** What the Stop that is ending a turn said was pending, until the end is
+   *  told. */
+  const stopPending = new Map<string, number>()
+
   const coordinator: TurnCoordinator = createTurnCoordinator({
     vault: () => current?.vault ?? null,
     ...(deps.turnLogFor === undefined ? {} : { turnLogFor: deps.turnLogFor }),
     ...(deps.turnSafetyMs === undefined ? {} : { turnSafetyMs: deps.turnSafetyMs }),
     ...(deps.idleConfirmMs === undefined ? {} : { idleConfirmMs: deps.idleConfirmMs }),
     onChange: () => push(),
+    onTurnEnd: (id) => {
+      const pending = stopPending.get(id) ?? null
+      stopPending.delete(id)
+      for (const listener of turnEnds) listener(id, pending)
+    },
     log,
   })
 
@@ -382,6 +396,11 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
 
     watched: (id) => deps.terminals.launchedFor(id) !== null,
 
+    onTurnEnd(listener) {
+      turnEnds.add(listener)
+      return () => turnEnds.delete(listener)
+    },
+
     async send({ text, target, cols, rows: r }) {
       const c = await ensureCurrent()
       if (c === null) return noVault
@@ -439,12 +458,16 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
       return opened.ok ? { ok: true, sessionId: res.id, terminalId: opened.terminalId } : opened
     },
 
-    noteTurn(remote, jobId, active) {
+    noteTurn(remote, jobId, active, pending = null) {
       // A turn in a vault Holi is not showing is not this vault's pause.
       if (current?.remote !== remote) return
       if (active) unprompted.delete(jobId)
       if (active) coordinator.begin(jobId)
-      else coordinator.end(jobId)
+      else {
+        if (pending !== null) stopPending.set(jobId, pending)
+        coordinator.end(jobId)
+        stopPending.delete(jobId)
+      }
       void refresh()
     },
 

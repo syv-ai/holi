@@ -63,10 +63,32 @@ it could not reach `holi`.
 `<name> · HH:MM`. Its first turn is one line Holi adds (the schedule, the time, the previous run's
 time, so a prompt can say "since the previous run") and then the file's body. It is in the sidebar
 like any session, pauses sync through the turn hooks like any session, and asks the person in the
-usual way when it needs a tool its schedule does not allow. A run does not start while the previous
-one is working or waiting on the person (recorded as skipped). An idle previous run that nobody has
-a window on is stopped first and stays in the agents list, so a schedule holds at most one live
-session. Each schedule keeps its last 20 runs: started (with the job id), skipped or failed.
+usual way when it needs a tool its schedule does not allow.
+
+**A run closes when it is done.** Its turn ending is Claude Code's `Stop` hook, which already
+drives the turn bracket (`turn-signal.mjs`, the turn coordinator's `onTurnEnd`; a confirmed idle and
+the safety cap count too, a session that died does not). "Done" is what Claude Code's hooks
+reference says tells it from "paused": the Stop input's `background_tasks` (shells, subagents,
+monitors still in flight) and `session_crons` (`/loop` and the like still scheduled), both empty.
+The hook sends their count as `pending`; a run whose Stop names any is paused, and the work that
+wakes it ends in another Stop, which asks again. Then Holi waits for the listing to read the
+session idle, looking every 2 s for 30 s, since the hook fires a moment before Claude Code's state
+settles, and stops it (`claude stop`): it leaves the sidebar and its conversation stays in the
+agents list. A run waiting on the person (a permission prompt) is not done either. A run someone
+has a window on was taken over: it is left open, recorded as such, and not asked about again. The
+run's record gets `finishedAt` (and `kept` when left open), which the settings section shows. A
+vault whose `turn-signal.mjs` predates `pending` (it reaches a vault through Update skills) sends
+none, and the listing's idle is the whole test, as it is for a confirmed idle.
+
+Not the signal: `SessionEnd` fires when a session ends, which is what Holi is doing here; the
+`idle_prompt` notification waits about a minute and does not cover background shells;
+`agent_completed` fires only while an agent view is open in a terminal; `TaskCompleted` is about
+Claude Code's task list.
+
+A run does not start while the previous one is working or waiting on the person (recorded as
+skipped). An idle previous run left open with nobody's window on it is stopped first, so a schedule
+holds at most one live session. Each schedule keeps its last 20 runs: started (with the job id and,
+once done, when), skipped or failed.
 
 **Claude Code's own `schedule` skill is off** in a vault (`skillOverrides`): its routines run in
 Anthropic's cloud, away from the vault clone, Holi and the vault's Google account. `loop` stays; it
@@ -77,6 +99,7 @@ repeats inside one session.
 - Never run a schedule this machine has not approved in its current content.
 - Keep approvals out of the vault clone.
 - A run never starts on top of a previous run that is working or needs the person.
+- A run closes itself when done, never while it waits on the person or someone has it open.
 - Missed moments are one run, never a backlog.
 - Holi adds one line to a run's prompt and nothing else.
 

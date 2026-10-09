@@ -34,6 +34,8 @@ let live: SessionSummary[]
 let stopped: string[]
 let watched: Set<string>
 let launchFails: string | null
+/** What the scheduler hears a turn end through. */
+let turnEnd: ((id: string, pending: number | null) => void) | null
 let scheduler: Scheduler
 let emitted: string[]
 
@@ -57,12 +59,19 @@ function make(): Scheduler {
         return { ok: true }
       },
       watched: (id) => watched.has(id),
+      onTurnEnd(listener) {
+        turnEnd = listener
+        return () => {
+          turnEnd = null
+        }
+      },
     },
     emit: (_remote, name) => emitted.push(name),
     now: () => clock,
     // The tests tick by hand.
     tickMs: 1_000_000_000,
     firstTickMs: 1_000_000_000,
+    closePollMs: 0,
     log: () => {},
   }
   return createScheduler(deps)
@@ -83,13 +92,14 @@ beforeEach(async () => {
   stopped = []
   watched = new Set()
   launchFails = null
+  turnEnd = null
   emitted = []
   scheduler = make()
   scheduler.attach(vault())
 })
 
 afterEach(async () => {
-  scheduler.detach()
+  scheduler.dispose()
   await Promise.all(dirs.splice(0).map((d) => rm(d, { recursive: true, force: true })))
 })
 
@@ -230,6 +240,116 @@ describe('running on schedule', () => {
     clock = at(12, 0)
     await scheduler.tick()
     expect(launched).toEqual([])
+  })
+})
+
+describe('closing a run when it is done', () => {
+  async function started(): Promise<string> {
+    await writeSchedule('inbox.md', 'cron: "*/30 * * * *"')
+    await scheduler.enable(vault(), 'inbox')
+    const record = await scheduler.run(vault(), 'inbox')
+    return record.jobId!
+  }
+  const latest = async () => (await scheduler.list(vault()))[0]!.runs[0]!
+
+  it('stops it once its turn ends and it reads idle, and says so', async () => {
+    const id = await started()
+    live[0]!.state = 'idle'
+    await scheduler.turnEnded(id)
+    expect(stopped).toEqual([id])
+    expect(await latest()).toMatchObject({ jobId: id, finishedAt: expect.any(String) })
+    expect((await latest()).kept).toBeUndefined()
+  })
+
+  it('hears the turn end from the sessions', async () => {
+    const id = await started()
+    live[0]!.state = 'idle'
+    expect(turnEnd).not.toBeNull()
+    turnEnd!(id, 0)
+    await scheduler.turnEnded(id) // the same close, already settling or done
+    await new Promise((r) => setTimeout(r, 10))
+    expect(stopped).toEqual([id])
+  })
+
+  it('leaves a run its Stop says is paused on background work, until a Stop with none', async () => {
+    const id = await started()
+    live[0]!.state = 'idle'
+    await scheduler.turnEnded(id, 2)
+    expect(stopped).toEqual([])
+    expect((await latest()).finishedAt).toBeUndefined()
+    await scheduler.turnEnded(id, 0)
+    expect(stopped).toEqual([id])
+  })
+
+  it('leaves a run that is waiting on you, and closes it after its next turn', async () => {
+    const id = await started()
+    live[0]!.state = 'needs-you'
+    await scheduler.turnEnded(id)
+    expect(stopped).toEqual([])
+    expect((await latest()).finishedAt).toBeUndefined()
+    live[0]!.state = 'idle'
+    await scheduler.turnEnded(id)
+    expect(stopped).toEqual([id])
+  })
+
+  it('leaves a run someone has a window on, as theirs, and never asks again', async () => {
+    const id = await started()
+    live[0]!.state = 'idle'
+    watched.add(id)
+    await scheduler.turnEnded(id)
+    expect(stopped).toEqual([])
+    expect(await latest()).toMatchObject({ kept: true, finishedAt: expect.any(String) })
+    watched.delete(id)
+    await scheduler.turnEnded(id)
+    expect(stopped).toEqual([])
+  })
+
+  it('waits while it is still busy, then closes', async () => {
+    const id = await started()
+    let looks = 0
+    const sessions = () => {
+      looks += 1
+      if (looks === 3) live[0]!.state = 'idle'
+      return live
+    }
+    // The listing catches up a few looks after the hook.
+    scheduler.dispose()
+    scheduler = createScheduler({
+      store: jsonFileStore(join(data, 'schedules.json'), parseSchedulesFile),
+      sessions: {
+        launch: async () => ({ ok: true, sessionId: id }),
+        sessions,
+        stop: async (sid) => {
+          stopped.push(sid)
+          return { ok: true }
+        },
+        watched: () => false,
+        onTurnEnd: () => () => {},
+      },
+      emit: () => {},
+      now: () => clock,
+      tickMs: 1_000_000_000,
+      firstTickMs: 1_000_000_000,
+      closePollMs: 0,
+      log: () => {},
+    })
+    scheduler.attach(vault())
+    await scheduler.turnEnded(id)
+    expect(stopped).toEqual([id])
+  })
+
+  it('marks a run whose process had already gone as done', async () => {
+    const id = await started()
+    live = []
+    await scheduler.turnEnded(id)
+    expect(stopped).toEqual([])
+    expect((await latest()).finishedAt).toBeDefined()
+  })
+
+  it('ignores a turn end that is no run of a schedule', async () => {
+    await started()
+    await scheduler.turnEnded('someone-elses')
+    expect(stopped).toEqual([])
   })
 })
 

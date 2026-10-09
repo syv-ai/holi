@@ -89,7 +89,8 @@ export const agentMain: MainPlugin = {
     })
     provider.routes(ctx, {
       // A turn edge in one of a vault's background sessions, by job id.
-      onJobTurn: (remote, jobId, active) => started.noteTurn(remote, jobId, active),
+      onJobTurn: (remote, jobId, active, pending) =>
+        started.noteTurn(remote, jobId, active, pending),
       // A session's status line: how much of its context is used.
       onStatus: (remote, jobId, status) => started.noteStatus(remote, jobId, status),
     })
@@ -106,7 +107,7 @@ export const agentMain: MainPlugin = {
       }
     })
     return () => {
-      schedules.detach()
+      schedules.dispose()
       scheduler = null
       sessions = null
     }

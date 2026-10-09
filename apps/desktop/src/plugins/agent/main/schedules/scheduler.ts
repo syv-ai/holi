@@ -20,10 +20,17 @@
  * moment and runs once (`dueRun`), however many it missed.
  *
  * **A run is a session like any other**, named for its schedule, which the
- * sidebar lists and the turn bracket pauses sync for. A run does not start
- * while the previous one is still working or waiting on you; when the previous
- * one is idle and nobody has a window on it, it is stopped first, and stays in
- * the agents list. So each schedule holds at most one live session.
+ * sidebar lists and the turn bracket pauses sync for. **It closes when it is
+ * done**: when its turn ends (Claude Code's `Stop` hook, through the turn
+ * coordinator) with nothing pending (the Stop input's `background_tasks` and
+ * `session_crons`, which Claude Code documents as telling done from paused)
+ * and the listing reads it idle, Holi stops it, and its conversation stays in
+ * the agents list. Paused on background work, it is not done: that work wakes
+ * it, and its next Stop asks again. A run waiting on you is not done; a
+ * run someone has a window on was taken over, and is theirs to close. A run
+ * does not start while the previous one is still working or waiting on you,
+ * and an idle one left open is stopped first, unless someone has a window on
+ * it. So each schedule holds at most one live session.
  *
  * NOTE: no `electron` import, so this loads under vitest.
  */
@@ -50,6 +57,11 @@ const TICK_MS = 30_000
 const FIRST_TICK_MS = 5_000
 /** Runs remembered per schedule. */
 const RUNS_KEPT = 20
+/** After a run's turn ends, how often to look for the listing to read it idle,
+ *  and how many times: the `Stop` hook fires a moment before Claude Code's
+ *  own state settles, and a background shell it left running keeps it busy. */
+const CLOSE_POLL_MS = 2_000
+const CLOSE_POLLS = 15
 
 export type RunTrigger = 'schedule' | 'manual'
 
@@ -62,6 +74,11 @@ export interface RunRecord {
   jobId?: string
   /** Why it was skipped or failed. */
   message?: string
+  /** ISO time the run was done: its turn ended and it was stopped, or its
+   *  process had already gone. */
+  finishedAt?: string
+  /** Done, but left open: someone had a window on it. */
+  kept?: true
 }
 
 export interface ScheduleState {
@@ -153,12 +170,16 @@ export interface SchedulerDeps {
     sessions(): SessionSummary[]
     stop(id: string): Promise<{ ok: true } | { ok: false; message: string }>
     watched(id: string): boolean
+    /** Hear each session's turn end, by job id, with what its Stop said was
+     *  pending (null when unsaid). Returns the undo. */
+    onTurnEnd(listener: (id: string, pending: number | null) => void): () => void
   }
   /** Tell the renderer the vault's schedules moved. */
   emit(remote: string, name: string, payload: unknown): void
   now?: () => Date
   tickMs?: number
   firstTickMs?: number
+  closePollMs?: number
   log?: (msg: string) => void
 }
 
@@ -175,6 +196,12 @@ export interface Scheduler {
   run(vault: SchedulerVault, ref: string): Promise<RunRecord>
   /** One check, as the timer runs it. */
   tick(): Promise<void>
+  /** A session's turn ended, with what its Stop said was still pending: if
+   *  it is a run of a schedule, close it once it is done. Resolves when it has
+   *  settled one way or the other. */
+  turnEnded(jobId: string, pending?: number | null): Promise<void>
+  /** Stop hearing turn ends: at quit. */
+  dispose(): void
 }
 
 interface FileEntry {
@@ -254,6 +281,9 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
   let first: ReturnType<typeof setTimeout> | null = null
   /** Schedules starting a run now, by path: a slow start must not start two. */
   const firing = new Set<string>()
+  /** Runs being closed now, by job id: one wait per run. */
+  const closing = new Set<string>()
+  const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
   let ticking: Promise<void> | null = null
 
   const stateOf = async (remote: string): Promise<Record<string, ScheduleState>> =>
@@ -374,6 +404,67 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
     return record
   }
 
+  /** The schedule a still-open run belongs to, by its job id. */
+  async function runOf(remote: string, jobId: string): Promise<string | null> {
+    for (const [path, s] of Object.entries(await stateOf(remote))) {
+      const run = s.runs.find((r) => r.jobId === jobId)
+      if (run !== undefined) return run.finishedAt === undefined ? path : null
+    }
+    return null
+  }
+
+  /** Mark a run done, and how. */
+  async function finish(remote: string, path: string, jobId: string, kept: boolean) {
+    const at = now().toISOString()
+    await changeState(remote, path, (s) => ({
+      ...s,
+      runs: s.runs.map((r) =>
+        r.jobId === jobId ? { ...r, finishedAt: at, ...(kept ? { kept: true as const } : {}) } : r,
+      ),
+    }))
+    log(`${path}: run ${jobId} finished${kept ? ', left open' : ', closed'}`)
+    changed(remote)
+  }
+
+  /**
+   * Close a run whose turn just ended, once the listing agrees it is idle.
+   * Its Stop naming background work or crons still pending, it is paused, not
+   * done; waiting on you, likewise; still busy after the last look, the same.
+   * The next turn end asks again in each case.
+   */
+  async function closeWhenDone(jobId: string, pending: number | null = null): Promise<void> {
+    const vault = attached
+    if (vault === null || closing.has(jobId)) return
+    if (pending !== null && pending > 0) return
+    const path = await runOf(vault.remote, jobId)
+    if (path === null) return
+    closing.add(jobId)
+    try {
+      for (let i = 0; i < CLOSE_POLLS; i++) {
+        if (attached !== vault) return
+        const session = deps.sessions.sessions().find((s) => s.id === jobId)
+        if (session === undefined) return await finish(vault.remote, path, jobId, false)
+        if (session.state === 'needs-you') return
+        if (session.state === 'idle') {
+          if (deps.sessions.watched(jobId)) return await finish(vault.remote, path, jobId, true)
+          const stopped = await deps.sessions.stop(jobId)
+          if (stopped.ok) return await finish(vault.remote, path, jobId, false)
+          log(`${path}: could not close run ${jobId}: ${stopped.message}`)
+          return
+        }
+        await sleep(deps.closePollMs ?? CLOSE_POLL_MS)
+      }
+    } finally {
+      closing.delete(jobId)
+    }
+  }
+
+  const unhear = deps.sessions.onTurnEnd((id, pending) => {
+    void closeWhenDone(id, pending).catch((err: unknown) =>
+      log(`closing ${id} failed: ${String(err)}`),
+    )
+  })
+
   async function tickNow(): Promise<void> {
     const vault = attached
     if (vault === null) return
@@ -423,6 +514,13 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
     },
 
     list,
+
+    turnEnded: closeWhenDone,
+
+    dispose() {
+      unhear()
+      this.detach()
+    },
 
     async enable(vault, ref) {
       const entry = find(await readSchedules(vault.root), ref)

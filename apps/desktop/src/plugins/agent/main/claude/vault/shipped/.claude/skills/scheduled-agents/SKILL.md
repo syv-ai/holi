@@ -11,6 +11,12 @@ whose first message is the file's body. The run is an ordinary session: it shows
 in the sidebar under the schedule's name, it can be opened, and Claude Code asks
 the user about anything the schedule does not allow up front.
 
+**A run closes itself when its turn ends.** Holi stops the session and its
+conversation stays in the agents list. So a run has one turn: end it with the
+summary, not with a question it waits for an answer to. (A run waiting on a
+permission prompt, still running background work, or one the user has opened,
+stays open.)
+
 Schedules run **on this machine, while Holi has the vault open**. A run missed
 while Holi was closed or the laptop slept happens once when it is back, not
 once per missed time.

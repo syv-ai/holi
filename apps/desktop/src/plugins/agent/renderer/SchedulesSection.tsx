@@ -58,7 +58,14 @@ function when(iso: string | undefined): string | null {
 
 function runWords(run: RunRecord): string {
   const at = when(run.at) ?? ''
-  if (run.outcome === 'started') return `${at} started${run.trigger === 'manual' ? ' by hand' : ''}`
+  if (run.outcome === 'started') {
+    const how = run.trigger === 'manual' ? ' by hand' : ''
+    if (run.finishedAt === undefined) return `${at} started${how}, running`
+    const done = when(run.finishedAt) ?? ''
+    return run.kept === true
+      ? `${at} ran${how}, done ${done}, left open in your window`
+      : `${at} ran${how}, done ${done}`
+  }
   if (run.outcome === 'skipped') return `${at} skipped: ${run.message ?? ''}`
   return `${at} failed: ${run.message ?? ''}`
 }
