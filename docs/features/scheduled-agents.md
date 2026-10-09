@@ -80,6 +80,11 @@ run's record gets `finishedAt` (and `kept` when left open), which the settings s
 vault whose `turn-signal.mjs` predates `pending` (it reaches a vault through Update skills) sends
 none, and the listing's idle is the whole test, as it is for a confirmed idle.
 
+A Stop Holi never heard (the run finished while Holi was closed or restarting, so the hook found
+no bridge) is caught by the half-minute check: an open run at least a minute old (a session just
+started can read idle before its first turn) that reads idle, and whose last heard Stop did not
+say it was paused, is closed the same way; one whose process has gone is only marked done.
+
 Not the signal: `SessionEnd` fires when a session ends, which is what Holi is doing here; the
 `idle_prompt` notification waits about a minute and does not cover background shells;
 `agent_completed` fires only while an agent view is open in a terminal; `TaskCompleted` is about

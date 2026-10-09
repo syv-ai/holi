@@ -346,6 +346,36 @@ describe('closing a run when it is done', () => {
     expect((await latest()).finishedAt).toBeDefined()
   })
 
+  it('closes a run whose Stop it never heard, once it is a minute old and idle', async () => {
+    const id = await started()
+    live[0]!.state = 'idle'
+    // Too young: it may not have begun its first turn.
+    await scheduler.tick()
+    expect(stopped).toEqual([])
+    clock = new Date(clock.getTime() + 61_000)
+    await scheduler.tick()
+    expect(stopped).toEqual([id])
+    expect((await latest()).finishedAt).toBeDefined()
+  })
+
+  it('leaves a run its heard Stop said was paused to the Stop that ends the work', async () => {
+    const id = await started()
+    live[0]!.state = 'idle'
+    await scheduler.turnEnded(id, 1)
+    clock = new Date(clock.getTime() + 61_000)
+    await scheduler.tick()
+    expect(stopped).toEqual([])
+    await scheduler.turnEnded(id, 0)
+    expect(stopped).toEqual([id])
+  })
+
+  it('leaves a run that is still working when the check comes', async () => {
+    await started()
+    clock = new Date(clock.getTime() + 61_000)
+    await scheduler.tick()
+    expect(stopped).toEqual([])
+  })
+
   it('ignores a turn end that is no run of a schedule', async () => {
     await started()
     await scheduler.turnEnded('someone-elses')

@@ -26,7 +26,10 @@
  * `session_crons`, which Claude Code documents as telling done from paused)
  * and the listing reads it idle, Holi stops it, and its conversation stays in
  * the agents list. Paused on background work, it is not done: that work wakes
- * it, and its next Stop asks again. A run waiting on you is not done; a
+ * it, and its next Stop asks again. A Stop Holi never heard (it finished while
+ * Holi was closed or restarting) is caught by the half-minute check: a run a
+ * minute old that reads idle, with no Stop heard saying it is paused, is
+ * closed the same way. A run waiting on you is not done; a
  * run someone has a window on was taken over, and is theirs to close. A run
  * does not start while the previous one is still working or waiting on you,
  * and an idle one left open is stopped first, unless someone has a window on
@@ -62,6 +65,9 @@ const RUNS_KEPT = 20
  *  own state settles, and a background shell it left running keeps it busy. */
 const CLOSE_POLL_MS = 2_000
 const CLOSE_POLLS = 15
+/** How old a run must be before the check closes it without having heard its
+ *  Stop: a session just started can read idle before its first turn begins. */
+const MISSED_STOP_MS = 60_000
 
 export type RunTrigger = 'schedule' | 'manual'
 
@@ -283,6 +289,9 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
   const firing = new Set<string>()
   /** Runs being closed now, by job id: one wait per run. */
   const closing = new Set<string>()
+  /** Runs whose last Stop said background work or crons were still pending:
+   *  paused, so the check leaves them to the Stop that ends that work. */
+  const paused = new Set<string>()
   const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
   let ticking: Promise<void> | null = null
 
@@ -435,7 +444,11 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
   async function closeWhenDone(jobId: string, pending: number | null = null): Promise<void> {
     const vault = attached
     if (vault === null || closing.has(jobId)) return
-    if (pending !== null && pending > 0) return
+    if (pending !== null && pending > 0) {
+      paused.add(jobId)
+      return
+    }
+    if (pending !== null) paused.delete(jobId)
     const path = await runOf(vault.remote, jobId)
     if (path === null) return
     closing.add(jobId)
@@ -465,11 +478,39 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
     )
   })
 
+  /** Close the runs whose Stop Holi missed: open, a minute old, idle, and
+   *  not paused by a Stop it did hear. */
+  async function closeMissed(
+    vault: SchedulerVault,
+    state: Record<string, ScheduleState>,
+    at: Date,
+  ): Promise<void> {
+    const live = deps.sessions.sessions()
+    for (const s of Object.values(state)) {
+      for (const run of s.runs) {
+        if (run.jobId === undefined || run.outcome !== 'started' || run.finishedAt !== undefined) {
+          continue
+        }
+        if (paused.has(run.jobId) || closing.has(run.jobId)) continue
+        if (at.getTime() - new Date(run.at).getTime() < MISSED_STOP_MS) continue
+        const session = live.find((l) => l.id === run.jobId)
+        // Gone, or idle: done either way, as far as anything says. Working or
+        // waiting on you: not yet.
+        if (session !== undefined && session.state !== 'idle') continue
+        if (attached !== vault) return
+        await closeWhenDone(run.jobId)
+      }
+    }
+  }
+
   async function tickNow(): Promise<void> {
     const vault = attached
     if (vault === null) return
     const [entries, state] = await Promise.all([readSchedules(vault.root), stateOf(vault.remote)])
     const at = now()
+    await closeMissed(vault, state, at).catch((err: unknown) =>
+      log(`closing missed runs failed: ${String(err)}`),
+    )
     for (const entry of entries) {
       if (!entry.parsed.ok || firing.has(entry.path)) continue
       const s = state[entry.path]
