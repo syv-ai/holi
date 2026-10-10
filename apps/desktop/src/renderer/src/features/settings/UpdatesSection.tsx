@@ -1,15 +1,11 @@
 /**
  * Updating Holi itself (docs/features/updates.md): the version you run, where
  * the updater has got to, a "Check now", and whether Holi checks on its own.
- * Beside it, whether Holi opens at login, the other property of this machine's
- * app.
  *
  * A property of this machine's app, not of the open vault, so it sits with
  * Account at the end of the rail and writes nothing into the vault.
  */
 import { useAtomValue, useSetAtom } from 'jotai'
-import { useEffect, useState } from 'react'
-import { trpc } from '@/lib/trpc'
 import { Button, Checkbox } from '@/primitives'
 import { SettingsList, SettingsNote, SettingsRow } from '@/composites'
 import {
@@ -94,36 +90,6 @@ export function UpdatesSection(): React.JSX.Element {
           />
         }
       />
-      <OpenAtLoginRow />
     </SettingsList>
-  )
-}
-
-/**
- * Whether Holi opens at login, in the menu bar with its window out of sight:
- * reminders fire and the quick agent's hotkey works only while Holi runs.
- */
-function OpenAtLoginRow(): React.JSX.Element {
-  const [open, setOpen] = useState<boolean | null>(null)
-  useEffect(() => {
-    void trpc.app.loginItem.query().then((r) => setOpen(r.openAtLogin))
-  }, [])
-  return (
-    <SettingsRow
-      label="Open at login"
-      description="Start Holi in the menu bar when you log in, its window out of sight, so reminders and the quick agent's hotkey work from the start."
-      control={
-        <Checkbox
-          aria-label="Open at login"
-          disabled={open === null}
-          checked={open === true}
-          onCheckedChange={(v) =>
-            void trpc.app.setLoginItem
-              .mutate({ openAtLogin: v === true })
-              .then((r) => setOpen(r.openAtLogin))
-          }
-        />
-      }
-    />
   )
 }

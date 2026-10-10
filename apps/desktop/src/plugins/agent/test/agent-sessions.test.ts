@@ -34,17 +34,20 @@ function setup(initial: Row[] = [], held: ReadonlySet<string> = new Set()) {
       listing = listing.filter((r) => r.id !== id)
       return { ok: true as const }
     }),
-    startBg: vi.fn(async () => {
-      listing = [...listing, row('newnew00', { status: 'idle', state: 'blocked' })]
-      return { ok: true as const, id: 'newnew00' }
+    startBg: vi.fn(async (_t, opts: { prompt?: string }) => {
+      // With a first turn it is working at once; without, it waits for one.
+      const id = opts.prompt === undefined ? 'newnew00' : 'launch00'
+      listing = [
+        ...listing,
+        opts.prompt === undefined
+          ? row(id, { status: 'idle', state: 'blocked' })
+          : row(id, { status: 'busy', state: 'working' }),
+      ]
+      return { ok: true as const, id }
     }),
     forkBg: vi.fn(async () => {
       listing = [...listing, row('copy0000')]
       return { ok: true as const, id: 'copy0000' }
-    }),
-    startQuick: vi.fn(async () => {
-      listing = [...listing, row('quick000', { status: 'busy', state: 'working' })]
-      return { ok: true as const, id: 'quick000' }
     }),
   } satisfies ClaudeCli
   const opened: OpenArgs[] = []
@@ -288,21 +291,15 @@ describe('agent sessions', () => {
   })
 })
 
-describe('quick agents', () => {
-  it('starts one with no terminal, and knows it for a quick agent', async () => {
+describe('launched sessions', () => {
+  it('start with their options and no terminal', async () => {
     const { sessions, cli, opened, attach } = setup()
     await attach()
-    expect(await sessions.startQuick({ name: 'Tidy', prompt: 'tidy the inbox' })).toEqual({
-      ok: true,
-      sessionId: 'quick000',
-    })
-    expect(cli.startQuick).toHaveBeenCalledWith(expect.anything(), {
-      name: 'Tidy',
-      prompt: 'tidy the inbox',
-    })
+    const args = { name: 'Tidy', prompt: 'tidy the inbox', settings: '{}' }
+    expect(await sessions.launch(args)).toEqual({ ok: true, sessionId: 'launch00' })
+    expect(cli.startBg).toHaveBeenCalledWith(expect.anything(), args)
     expect(opened).toEqual([])
-    expect(sessions.isQuick('quick000')).toBe(true)
-    expect(sessions.sessions()).toEqual([expect.objectContaining({ id: 'quick000' })])
+    expect(sessions.sessions()).toEqual([expect.objectContaining({ id: 'launch00' })])
   })
 
   it('needs you while Holi holds its question, though the listing says busy', async () => {
@@ -316,15 +313,13 @@ describe('quick agents', () => {
     ])
   })
 
-  it('tells its listeners about every read, and forgets quick ones on leaving', async () => {
+  it('tells its listeners about every read', async () => {
     const { sessions, attach } = setup()
     await attach()
     const heard = vi.fn()
     sessions.onRows(heard)
-    await sessions.startQuick({ prompt: 'go' })
+    await sessions.launch({ prompt: 'go' })
     expect(heard).toHaveBeenCalled()
-    expect(sessions.row('quick000')?.status).toBe('busy')
-    await sessions.leave()
-    expect(sessions.isQuick('quick000')).toBe(false)
+    expect(sessions.row('launch00')?.status).toBe('busy')
   })
 })

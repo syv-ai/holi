@@ -4,13 +4,15 @@
  * second, the dock's key, that opens the dock of quick agents with the
  * keyboard.
  *
+ * **Off until a person turns it on**, and on only in a vault with the agent:
+ * off, nothing is loaded and no key is taken from the other apps.
+ *
  * **The keys are held only while Holi is not the app in front.** Inside Holi
  * each page answers them itself: in the main window the hotkey keeps its
  * in-app meaning (⌘J opens the agents) and the dock's key opens the dock
- * (`dock()`, through a capability), and in a quick panel the page answers
+ * (`dock()`, through a capability), and in the quick panel the page answers
  * both (another agent, the dock). So they are registered as Holi loses the
- * keyboard and released as Holi takes it, and only while the quick agent is
- * switched on.
+ * keyboard and released as Holi takes it.
  *
  * Electron is loaded here, inside `activateApp`'s call, so the plugin stays
  * importable under plain Node.
@@ -19,6 +21,7 @@ import type { AppContext } from '../../../../main/plugin-api'
 import { toAccelerator } from '../../shared/hotkey'
 import type { QuickSettingsPatch, QuickSettingsState } from '../../shared/quick'
 import { isLive } from '../claude/listing'
+import { quickLaunch } from '../claude/quick'
 import type { QuestionDesk } from '../host/questions'
 import type { AgentSessions } from '../host/sessions'
 import type { AgentTerminals } from '../host/terminals'
@@ -33,6 +36,11 @@ export interface QuickAgent {
   update(): void
   /** A quick agent's turn ended with this message, for its panel. */
   result(job: string, message: string): void
+  /** Whether `job` is one of the quick agents: only their questions and
+   *  answers are the panel's. */
+  owns(job: string): boolean
+  /** A vault was opened or left: the keys follow whether it has the agent. */
+  vaultChanged(): void
   settings(): Promise<QuickSettingsState>
   setSettings(patch: QuickSettingsPatch): Promise<QuickSettingsState>
   /** The dock's key, pressed inside the main window, which answers it itself
@@ -49,6 +57,8 @@ export async function startQuickAgent(deps: {
   sessions: AgentSessions
   terminals: Pick<AgentTerminals, 'close'>
   desk: QuestionDesk
+  /** The open vault has the agent turned on: a quick agent can start there. */
+  agentOn(): boolean
 }): Promise<QuickAgent> {
   const { ctx, sessions, desk } = deps
   const { app, BrowserWindow, globalShortcut, screen, systemPreferences } = await import('electron')
@@ -65,7 +75,8 @@ export async function startQuickAgent(deps: {
     workArea: (point) => screen.getDisplayNearestPoint(point).workArea,
     remote: () => ctx.active()?.remote ?? null,
     sessions: {
-      startQuick: (args) => sessions.startQuick(args),
+      // With the options the person chose, read as each agent starts.
+      launch: async (args) => sessions.launch({ ...args, ...quickLaunch(await store.read()) }),
       row: (id) => sessions.row(id),
       stop: (id) => sessions.stop(id),
       isLive,
@@ -84,7 +95,6 @@ export async function startQuickAgent(deps: {
     },
     hotkey: () => hotkey,
     dockHotkey: () => dockHotkey,
-    spare: true,
     openSession: async (job) => {
       const remote = ctx.active()?.remote
       if (remote === undefined) return
@@ -120,15 +130,20 @@ export async function startQuickAgent(deps: {
     }
   }
 
+  /** Switched on, in a vault with the agent. */
+  const on = (settings: QuickSettings): boolean => settings.enabled && deps.agentOn()
+
   /** The accelerators the settings ask for, while the quick agent is on.
    *  They are two keys, never one (`parseQuickSettings`). */
-  const wanted = (settings: QuickSettings): Wanted => ({
-    prompt: settings.enabled ? toAccelerator(settings.hotkey) : null,
-    dock: settings.enabled ? toAccelerator(settings.dockHotkey) : null,
-  })
+  const wanted = (settings: QuickSettings): Wanted =>
+    on(settings)
+      ? { prompt: toAccelerator(settings.hotkey), dock: toAccelerator(settings.dockHotkey) }
+      : { prompt: null, dock: null }
 
-  /** Hold the keys exactly while they are on and no window of Holi's has the
-   *  keyboard. Serialised: focus moves faster than the settings file reads. */
+  /** Hold the keys exactly while the quick agent is on and no window of
+   *  Holi's has the keyboard, and have the panel and the dock loaded exactly
+   *  while it is on. Serialised: focus moves faster than the settings file
+   *  reads. */
   let syncing: Promise<void> = Promise.resolve()
   const sync = (): Promise<void> =>
     (syncing = syncing.then(async () => {
@@ -138,7 +153,8 @@ export async function startQuickAgent(deps: {
         dockHotkey = settings.dockHotkey
         panels.keysChanged()
       }
-      if (settings.enabled) panels.prewarm()
+      if (on(settings)) panels.prewarm()
+      else panels.closeAll()
       // Outside Holi only: inside, each page answers both keys itself.
       hold(
         BrowserWindow.getFocusedWindow() === null ? wanted(settings) : { prompt: null, dock: null },
@@ -168,9 +184,11 @@ export async function startQuickAgent(deps: {
     return {
       enabled: s.enabled,
       hotkey: s.hotkey,
-      conflict: s.enabled && keys.prompt.conflict,
+      conflict: on(s) && keys.prompt.conflict,
       dockHotkey: s.dockHotkey,
-      dockConflict: s.enabled && keys.dock.conflict,
+      dockConflict: on(s) && keys.dock.conflict,
+      autoApprove: s.autoApprove,
+      instructions: s.instructions,
       accessibility: systemPreferences.isTrustedAccessibilityClient(false),
     }
   }
@@ -178,6 +196,8 @@ export async function startQuickAgent(deps: {
   return {
     update: () => panels.update(),
     result: (job, message) => panels.result(job, message),
+    owns: (job) => panels.owns(job),
+    vaultChanged: () => void sync(),
     settings: state,
     async setSettings(patch) {
       for (const key of [patch.hotkey, patch.dockHotkey]) {
@@ -186,12 +206,13 @@ export async function startQuickAgent(deps: {
         }
       }
       const current = await store.read()
-      const next = {
-        ...current,
-        ...(patch.enabled === undefined ? {} : { enabled: patch.enabled }),
-        ...(patch.hotkey === undefined ? {} : { hotkey: patch.hotkey }),
-        ...(patch.dockHotkey === undefined ? {} : { dockHotkey: patch.dockHotkey }),
+      const next: QuickSettings = { ...current }
+      for (const key of ['enabled', 'autoApprove', 'instructions'] as const) {
+        const value = patch[key]
+        if (value !== undefined) next[key] = value
       }
+      if (patch.hotkey !== undefined) next.hotkey = patch.hotkey
+      if (patch.dockHotkey !== undefined) next.dockHotkey = patch.dockHotkey
       if (next.hotkey === next.dockHotkey) {
         throw new Error(
           patch.dockHotkey !== undefined
@@ -199,12 +220,7 @@ export async function startQuickAgent(deps: {
             : `${next.hotkey} is already the dock's key`,
         )
       }
-      await store.update((s) => ({
-        ...s,
-        enabled: next.enabled,
-        hotkey: next.hotkey,
-        dockHotkey: next.dockHotkey,
-      }))
+      await store.update((s) => ({ ...next, accessibilityAsked: s.accessibilityAsked }))
       // Settings is a Holi window with the keyboard, so nothing is held now;
       // try the new keys at once, so a key another app holds is reported here.
       const settings = await store.read()
@@ -218,12 +234,11 @@ export async function startQuickAgent(deps: {
         if (free) globalShortcut.unregister(accelerator)
         key.conflict = !free
       }
-      if (!settings.enabled) panels.closeAll()
       await sync()
       return state()
     },
     async dock() {
-      if (!(await store.read()).enabled) return false
+      if (!on(await store.read())) return false
       await panels.dock()
       return true
     },

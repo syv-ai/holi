@@ -6,8 +6,8 @@
  *   one, which the card over a session's tab in the main window does. The
  *   quick panel answers its own through its page.
  * - **Settings**: this machine's, not the vault's (`settings.ts`): whether the
- *   keys are on, the hotkey and the dock's key, and macOS's Accessibility
- *   permission.
+ *   keys are on, the hotkey and the dock's key, the two choices about how a
+ *   quick agent runs, and macOS's Accessibility permission.
  * - **The dock**: its key, which the main window answers itself.
  *
  * No `electron` import: this loads under plain Node in the tests.
@@ -79,17 +79,20 @@ export const quickCapabilities = (deps: QuickCapabilitiesDeps) => {
       doors: ['ui'],
       params: (raw): QuickSettingsPatch => {
         const p = paramsObject(raw)
-        const enabled = p['enabled']
-        if (enabled !== undefined && typeof enabled !== 'boolean') {
-          throw new CapabilityError('BAD_REQUEST', 'enabled must be true or false')
+        const patch: QuickSettingsPatch = {}
+        for (const key of ['enabled', 'autoApprove', 'instructions'] as const) {
+          const value = p[key]
+          if (value === undefined) continue
+          if (typeof value !== 'boolean') {
+            throw new CapabilityError('BAD_REQUEST', `${key} must be true or false`)
+          }
+          patch[key] = value
         }
         const hotkey = optionalStringParam(p, 'hotkey')
         const dockHotkey = optionalStringParam(p, 'dockHotkey')
-        return {
-          ...(enabled === undefined ? {} : { enabled }),
-          ...(hotkey === undefined ? {} : { hotkey }),
-          ...(dockHotkey === undefined ? {} : { dockHotkey }),
-        }
+        if (hotkey !== undefined) patch.hotkey = hotkey
+        if (dockHotkey !== undefined) patch.dockHotkey = dockHotkey
+        return patch
       },
       run: async (_ctx, patch): Promise<QuickSettingsState> => {
         try {

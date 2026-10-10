@@ -129,14 +129,6 @@ describe('the card', () => {
 describe('QuestionCard', () => {
   const question: PendingQuestion = { id: 'q1', job: 'quick001', questions: [NAMES], askedAt: 0 }
 
-  it('answers from the window on a number key', () => {
-    const onAnswer = vi.fn()
-    render(<QuestionCard question={question} onAnswer={onAnswer} keys="window" />)
-    expect(screen.getByText('recommended')).toBeInTheDocument()
-    fireEvent.keyDown(window, { key: '2' })
-    expect(onAnswer).toHaveBeenCalledWith({ 'Which naming scheme?': 'Date first (Recommended)' })
-  })
-
   it('in the main window, takes keys only while it has focus', () => {
     const onAnswer = vi.fn()
     render(<QuestionCard question={question} onAnswer={onAnswer} keys="focus" />)
@@ -145,33 +137,6 @@ describe('QuestionCard', () => {
     const card = document.querySelector('[data-quick-card]')!
     fireEvent.keyDown(card, { key: '1' })
     expect(onAnswer).toHaveBeenCalledWith({ 'Which naming scheme?': 'Title only' })
-  })
-
-  it('in the quick panel, leaves ↑ ↓ to the dock, and says so in its foot', () => {
-    const onAnswer = vi.fn()
-    render(<QuestionCard question={question} onAnswer={onAnswer} keys="window" arrows={false} />)
-    expect(screen.getByText('agents')).toBeInTheDocument()
-    expect(screen.getByText('close')).toBeInTheDocument()
-    expect(screen.queryByText('move')).toBeNull()
-    // The highlight stays on Claude's recommendation.
-    fireEvent.keyDown(window, { key: 'ArrowDown' })
-    fireEvent.keyDown(window, { key: 'Enter' })
-    expect(onAnswer).toHaveBeenCalledWith({ 'Which naming scheme?': 'Date first (Recommended)' })
-  })
-
-  it('in the quick panel, goes back to the recommendation from your own answer', () => {
-    const onAnswer = vi.fn()
-    render(<QuestionCard question={question} onAnswer={onAnswer} keys="window" arrows={false} />)
-    fireEvent.keyDown(window, { key: 'o' })
-    fireEvent.keyDown(screen.getByLabelText('Your own answer'), { key: 'Escape' })
-    fireEvent.keyDown(window, { key: 'Enter' })
-    expect(onAnswer).toHaveBeenCalledWith({ 'Which naming scheme?': 'Date first (Recommended)' })
-  })
-
-  it('names the dock key while it waits for the keyboard', () => {
-    render(<QuestionCard question={question} onAnswer={vi.fn()} keys="window" waiting="⌃⌘J" />)
-    expect(screen.getByText('⌃⌘J')).toBeInTheDocument()
-    expect(screen.getByText(/to answer/)).toBeInTheDocument()
   })
 
   it('answers on a click, and once only', () => {

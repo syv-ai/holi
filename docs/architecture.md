@@ -35,8 +35,7 @@ Electron. `@holi/shared/path-safety-node` is the one Node-only entrypoint.
 
 ## 2. Build only what Claude Code does not do
 
-The agent is Claude Code, unmodified. Holi adds no adapter layer and no prompt-building beyond the
-few lines a quick agent is started with ([quick-agent](features/quick-agent.md)), and fixes
+The agent is Claude Code, unmodified. Holi adds no adapter layer and no prompt-building, and fixes
 forward when a Claude Code release changes something. Users are developers: the raw terminal is the
 interface, git is a tool they already know, and Claude Code is already installed and signed in. With
 the vault being plain files in a git repo, the agent needs no Holi-specific operations at all.
@@ -87,9 +86,10 @@ Its dialogs open as `{id: 'plugin', render}`.
 A plugin may have windows of its own: `ctx.openPage` makes one showing a page of its renderer side
 (`RendererPlugin.pages`), loaded as `?page=<plugin>/<page>`, which boots only that page, with no
 vault subscription and no flush answer. Core makes the window (preload, isolation, navigation
-guard), from the same helper as the main window (`main/renderer-window.ts`); the plugin places, shows and closes it, and talks to its page over the window's own channel
-(`page:event`, `page:message`), so the plugin's events stay the main window's. `ctx.showMainWindow`
-brings the main window forward. The agent's quick panel and its dock are two.
+guard), from the same helper as the main window (`main/renderer-window.ts`); the plugin places,
+shows and closes it, and talks to its page over the window's own channel (`page:event`,
+`page:message`), so the plugin's events stay the main window's. `ctx.showMainWindow` brings the main
+window forward. The agent's quick panel and its dock are two such windows.
 Main tells a plugin's renderer something through events: `ctx.emit(remote, name, payload)` sends
 `{remote, name, payload}` on the plugin's one channel, `plugin:<id>`, read by one preload member,
 `window.holi.plugin.on(id, cb)`. Main sends only about a vault that runs the plugin, so the renderer

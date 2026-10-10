@@ -52,11 +52,6 @@ vi.mock('@/lib/trpc', () => ({
       unpushed: { query: async () => [] },
       membership: { query: async () => ({ kind: 'gone' }) },
     },
-    // Updates' Open at login row.
-    app: {
-      loginItem: { query: async () => ({ openAtLogin: false }) },
-      setLoginItem: { mutate: async () => ({ openAtLogin: false }) },
-    },
   },
 }))
 

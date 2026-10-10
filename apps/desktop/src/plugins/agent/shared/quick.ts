@@ -25,18 +25,21 @@ export const ASKING_STATES: readonly QuickState[] = ['question', 'prompt']
  *  clears it. */
 export const FINISHED_STATES: readonly QuickState[] = ['done', 'failed']
 
-/** What a panel shows, as main tells it (`quick-view`). */
+/** What the panel shows, as main tells it (`quick-view`). */
 export type QuickView =
   /** Typing the task. `selection` is what was selected in the app the person
-   *  came from, attached until they remove it. */
-  | { kind: 'prompt'; remote: string | null; selection: QuickSelection | null }
+   *  came from, attached until they remove it. A new `id` is a new prompt,
+   *  whose page starts empty; the same one keeps its draft. */
+  | { kind: 'prompt'; id: number; remote: string | null; selection: QuickSelection | null }
   /** The first press without the Accessibility permission: one line on why,
    *  and a key to open System Settings. */
   | { kind: 'access'; remote: string | null; selection: null }
-  /** A running quick agent. `question` is set while its state is `question`;
-   *  `terminalId` while its state is `prompt` and its terminal is open. */
+  /** A quick agent. `id` is its dot, which the requests about it name.
+   *  `question` is set while its state is `question`; `terminalId` while its
+   *  state is `prompt` and its terminal is open. */
   | {
       kind: 'agent'
+      id: string
       remote: string
       job: string
       name: string
@@ -60,13 +63,17 @@ export interface QuickSettingsState {
   dockHotkey: string
   /** Another app held the dock's key the last time Holi asked for it. */
   dockConflict: boolean
+  /** Quick agents run in Claude Code's auto mode, not the vault's own. */
+  autoApprove: boolean
+  /** Quick agents are told how the panel works (`claude/quick.ts`). */
+  instructions: boolean
   /** Holi may read other apps' selections (macOS's Accessibility permission). */
   accessibility: boolean
 }
 
-/** A change to the settings: the switch, or either key. */
+/** A change to the settings: a switch, or either key. */
 export type QuickSettingsPatch = Partial<
-  Pick<QuickSettingsState, 'enabled' | 'hotkey' | 'dockHotkey'>
+  Pick<QuickSettingsState, 'enabled' | 'hotkey' | 'dockHotkey' | 'autoApprove' | 'instructions'>
 >
 
 /** Text selected in another app when the hotkey was pressed. */
@@ -76,8 +83,9 @@ export interface QuickSelection {
   text: string
 }
 
-/** What a panel asks of main, as its page's `quick` message. Main hears each
- *  only from the window that sent it, so none names its panel. */
+/** What the panel asks of main, as its page's `quick` message. One about an
+ *  agent names it (`agent`, its view's `id`), so a request sent as the panel
+ *  moved on to another agent never lands on that one. */
 export type QuickRequest =
   /** The page is listening: send the view. */
   | { kind: 'ready' }
@@ -87,14 +95,14 @@ export type QuickRequest =
    *  an agent's panel, or a prompt with a draft left when the person clicked
    *  away. */
   | { kind: 'hide' }
-  /** Gone: a prompt never sent, or a finished agent's panel, whose session
-   *  stops with it. */
-  | { kind: 'clear' }
-  | { kind: 'open-session' }
-  /** The hotkey pressed inside a panel: another agent. */
+  /** Gone: a prompt never sent (no `agent`), or a finished agent, whose
+   *  session stops with it. */
+  | { kind: 'clear'; agent?: string }
+  | { kind: 'open-session'; agent: string }
+  /** The hotkey pressed inside the panel: another agent. */
   | { kind: 'new' }
-  /** ↑ ↓ in an agent's panel: the agent above or below it in the dock. */
-  | { kind: 'step'; dir: 1 | -1 }
+  /** ↑ ↓ on an agent: the agent above or below it in the dock. */
+  | { kind: 'step'; dir: 1 | -1; agent: string }
   /** The dock's key pressed inside a prompt: the dock, with the keyboard. */
   | { kind: 'dock' }
   /** The pointer came onto a panel or left it: a panel shown by hovering a
@@ -114,15 +122,21 @@ export function parseQuickRequest(raw: unknown): QuickRequest | null {
   switch (raw['kind']) {
     case 'ready':
     case 'hide':
-    case 'clear':
-    case 'open-session':
     case 'new':
     case 'dock':
     case 'grant-access':
     case 'skip-access':
       return { kind: raw['kind'] }
+    case 'clear':
+      return typeof raw['agent'] === 'string'
+        ? { kind: 'clear', agent: raw['agent'] }
+        : { kind: 'clear' }
+    case 'open-session':
+      return typeof raw['agent'] === 'string' ? { kind: 'open-session', agent: raw['agent'] } : null
     case 'step':
-      return raw['dir'] === 1 || raw['dir'] === -1 ? { kind: 'step', dir: raw['dir'] } : null
+      return (raw['dir'] === 1 || raw['dir'] === -1) && typeof raw['agent'] === 'string'
+        ? { kind: 'step', dir: raw['dir'], agent: raw['agent'] }
+        : null
     case 'pointer':
       return typeof raw['inside'] === 'boolean' ? { kind: 'pointer', inside: raw['inside'] } : null
     case 'submit':
@@ -146,8 +160,8 @@ export function parseQuickRequest(raw: unknown): QuickRequest | null {
 }
 
 /**
- * One quick agent in the dock: a dot in its light's colour. `id` is its panel,
- * which a start that failed has without a job.
+ * One quick agent in the dock: a dot in its light's colour. `id` is the
+ * agent's own, which a start that failed has without a job.
  */
 export interface DockDot {
   id: string

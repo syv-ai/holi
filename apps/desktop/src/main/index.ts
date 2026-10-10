@@ -98,11 +98,8 @@ if (!app.requestSingleInstanceLock()) {
   void main()
 }
 
-/** The main window. `show: false` for a launch at login: its page still loads
- *  and opens the vault (the agent, the quick agent's hotkey), out of sight
- *  until the tray's Open Holi or the dock. */
-function createWindow({ show = true }: { show?: boolean } = {}): BrowserWindow {
-  const win = rendererWindow({ width: 1200, height: 800, show }, FRAME_SCHEMES)
+function createWindow(): BrowserWindow {
+  const win = rendererWindow({ width: 1200, height: 800 }, FRAME_SCHEMES)
   mainWindow = win
   win.on('closed', () => {
     if (mainWindow === win) mainWindow = null
@@ -345,10 +342,6 @@ async function main(): Promise<void> {
 
   const router = createRouter({
     updates: updater,
-    loginItem: {
-      get: () => app.getLoginItemSettings().openAtLogin,
-      set: (open) => app.setLoginItemSettings({ openAtLogin: open }),
-    },
     capabilities: capabilityHost,
     preCommit,
     seed: (root) => plugins.seed(root),
@@ -446,10 +439,7 @@ async function main(): Promise<void> {
   const reminders = createReminderRuntime({ corpus, notifier, delivered })
   reminders.start()
 
-  // Opened at login, Holi starts in the menu bar: the window loads (so the
-  // vault opens and its quick agent's hotkey is live) without showing.
-  const atLogin = process.platform === 'darwin' && app.getLoginItemSettings().wasOpenedAtLogin
-  const win = createWindow({ show: !atLogin })
+  const win = createWindow()
   // Pull on focus. The interval exists for the case where the window never
   // loses focus at all.
   win.on('focus', () => host.active()?.onFocus())

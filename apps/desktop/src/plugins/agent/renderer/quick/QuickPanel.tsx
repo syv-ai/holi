@@ -1,11 +1,11 @@
 /**
  * The quick panel (docs/features/quick-agent.md): the page of the agent's own
- * window (`RendererPlugin.pages.quick`), which main opens at the pointer when
- * the global hotkey is pressed. Sent, it is that agent's panel, which comes
- * out beside the agent's dot in the dock: without the keyboard while the
- * pointer is on the dot, with it from the dock's key or a click. With the
- * keyboard, ↑ ↓ step to the agent above or below, and esc puts it away, or
- * clears it once it has finished.
+ * window (`RendererPlugin.pages.quick`), one for every quick agent. Main
+ * opens it at the pointer as a prompt when the global hotkey is pressed, and
+ * beside a dot in the dock showing that dot's agent: without the keyboard
+ * while the pointer is on the dot, with it from the dock's key or a click.
+ * With the keyboard, ↑ ↓ step to the agent above or below, and esc puts it
+ * away, or clears the agent once it has finished.
  *
  * It shows what main says (`quick-view`), and answers with requests
  * (`quick`). What it shows:
@@ -49,6 +49,13 @@ const lightOf = (view: QuickView | null): Light | 'idle' =>
 /** What an agent's panel shows. */
 type AgentPanelView = Extract<QuickView, { kind: 'agent' }>
 
+/** The prompt being written: its text, and whether the selection goes along. */
+interface Draft {
+  id: number
+  text: string
+  attach: boolean
+}
+
 /** A finished agent has nothing left to wait for: esc and ⌫ clear it. */
 const finished = (view: AgentPanelView): boolean => FINISHED_STATES.includes(view.state)
 
@@ -68,8 +75,12 @@ export function QuickPanel(): React.JSX.Element {
   const rootRef = useRef<HTMLDivElement | null>(null)
   const viewRef = useRef(view)
   viewRef.current = view
-  /** The prompt's text, kept here so a blur knows whether there is a draft. */
+  /** The prompt's draft, kept here rather than in the prompt, so it outlasts
+   *  the panel showing an agent; a new prompt (another id) starts empty. */
+  const [draft, setDraft] = useState<Draft>({ id: 0, text: '', attach: true })
+  /** Its text, for a blur to know whether there is a draft to keep. */
   const draftRef = useRef('')
+  draftRef.current = draft.text
   /** The global hotkey, as main holds it: pressed inside a panel, it starts
    *  another agent. Never drawn, so a ref. */
   const hotkeyRef = useRef<string | null>(null)
@@ -92,8 +103,13 @@ export function QuickPanel(): React.JSX.Element {
   // What main says, and then that the page is listening.
   useEffect(() => {
     const off = window.holi.page.on(({ name, payload }) => {
-      if (name === 'quick-view') setView(payload as QuickView)
-      else if (name === 'quick-hotkey' && typeof payload === 'string') hotkeyRef.current = payload
+      if (name === 'quick-view') {
+        const next = payload as QuickView
+        setView(next)
+        if (next.kind === 'prompt') {
+          setDraft((d) => (d.id === next.id ? d : { id: next.id, text: '', attach: true }))
+        }
+      } else if (name === 'quick-hotkey' && typeof payload === 'string') hotkeyRef.current = payload
       else if (name === 'quick-dock-hotkey' && typeof payload === 'string') setDockHotkey(payload)
       else if (name === 'pty-data') receivePtyData(payload)
     })
@@ -203,17 +219,17 @@ export function QuickPanel(): React.JSX.Element {
           // ⇧↑ ⇧↓ read through a long answer (`AnswerView`).
           if (e.shiftKey) return
           e.preventDefault()
-          send({ kind: 'step', dir: e.key === 'ArrowUp' ? -1 : 1 })
+          send({ kind: 'step', dir: e.key === 'ArrowUp' ? -1 : 1, agent: v.id })
           return
         case 'Escape':
           e.preventDefault()
-          send({ kind: finished(v) ? 'clear' : 'hide' })
+          send(finished(v) ? { kind: 'clear', agent: v.id } : { kind: 'hide' })
           return
         case 'Enter':
           if (e.shiftKey) return
           if (opens(v)) {
             e.preventDefault()
-            send({ kind: 'open-session' })
+            send({ kind: 'open-session', agent: v.id })
           } else if (v.state === 'prompt' && v.terminalId !== null) {
             e.preventDefault()
             setInsideOf(v.terminalId)
@@ -222,7 +238,7 @@ export function QuickPanel(): React.JSX.Element {
         case 'Backspace':
           if (!finished(v)) return
           e.preventDefault()
-          send({ kind: 'clear' })
+          send({ kind: 'clear', agent: v.id })
           return
       }
     }
@@ -243,21 +259,21 @@ export function QuickPanel(): React.JSX.Element {
       ref={rootRef}
       data-light={light}
       data-focused={focused}
-      data-size={view?.kind === 'prompt' ? 'line' : width === WIDTH.light ? 'light' : 'full'}
+      data-size={width === WIDTH.light ? 'light' : undefined}
       className="quick-hud inline-flex flex-col"
       style={{ width }}
       // A panel the pointer brought out stays while the pointer is on it.
       onMouseEnter={() => send({ kind: 'pointer', inside: true })}
       onMouseLeave={() => send({ kind: 'pointer', inside: false })}
     >
-      <span className="quick-corners" aria-hidden />
       {light === 'working' && <span className="quick-scan" aria-hidden />}
       {view === null ? null : view.kind === 'prompt' ? (
-        <PromptView view={view} draftRef={draftRef} focused={focused} />
+        <PromptView view={view} draft={draft} onDraft={setDraft} focused={focused} />
       ) : view.kind === 'access' ? (
         <AccessView view={view} />
       ) : (
         <AgentView
+          key={view.id}
           view={view}
           focused={focused}
           dockHotkey={dockHotkey}
@@ -319,21 +335,20 @@ function DockKeys({ clears = false }: { clears?: boolean }) {
 
 function PromptView({
   view,
-  draftRef,
+  draft,
+  onDraft,
   focused,
 }: {
   view: Extract<QuickView, { kind: 'prompt' }>
-  draftRef: React.RefObject<string>
+  draft: Draft
+  onDraft: React.Dispatch<React.SetStateAction<Draft>>
   focused: boolean
 }) {
-  const [text, setText] = useState('')
-  const [attach, setAttach] = useState(true)
+  // A draft from the prompt before this one is not this one's.
+  const { text, attach } = draft.id === view.id ? draft : { text: '', attach: true }
+  const setText = (next: string) => onDraft({ id: view.id, text: next, attach })
   const inputRef = useRef<HTMLTextAreaElement | null>(null)
   const selection = view.selection
-
-  useEffect(() => {
-    draftRef.current = text
-  }, [text, draftRef])
 
   // The keyboard lands in the field whenever the panel gets it.
   useEffect(() => {
@@ -367,7 +382,7 @@ function PromptView({
             submit()
           } else if (e.key === 'Backspace' && text === '' && attach && selection !== null) {
             e.preventDefault()
-            setAttach(false)
+            onDraft({ id: view.id, text, attach: false })
           }
         }}
         className="quick-input max-h-52 min-h-[26px] flex-1 overflow-y-auto text-[18px] leading-[26px] placeholder:text-muted-foreground/55"

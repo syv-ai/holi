@@ -37,9 +37,7 @@ brand colour when an update is ready, with its panel's **Restart to update**, an
 download failed, with **Try again**. It stays until acted on; a toast would be missed. Settings →
 **Updates** shows the running version, where the updater has got to, **Check now**, and **Update
 automatically**, which turns the background checks off (stored in `userData/updates.json`). A
-person's own check ignores the cooldown and the preference. Beside them, **Open at login**, this
-machine's login item: Holi starts in the menu bar with its window loaded but out of sight, so the
-vault opens and the [quick agent](quick-agent.md)'s keys work from the start.
+person's own check ignores the cooldown and the preference.
 
 **A release's skills reach a vault by asking.** Skills and hooks are the vault's once written, so an
 app update leaves every vault's copies where they were ([agent config](agent-config.md)). Whenever a

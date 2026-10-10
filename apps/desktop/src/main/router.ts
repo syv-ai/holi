@@ -171,9 +171,6 @@ export interface RouterDeps {
   /** Updating Holi itself (`updates/updater.ts`). Optional: absent, as in
    *  tests, the app reads as a build that cannot update. */
   updates?: Omit<Updater, 'dispose'>
-  /** Whether Holi opens at login, this machine's login item. Optional: absent,
-   *  as in tests, it reads as off and cannot be set. */
-  loginItem?: { get(): boolean; set(open: boolean): void }
 }
 
 /** `YYYY-MM-DD` in the machine's own timezone. `toISOString().slice(0, 10)`
@@ -1592,20 +1589,6 @@ export function createRouter(deps: RouterDeps) {
       ),
   })
 
-  /** This machine's app: whether it opens at login, so the quick agent's
-   *  hotkey and the reminders are there from the start. */
-  const app = t.router({
-    loginItem: t.procedure.query((): { openAtLogin: boolean } => ({
-      openAtLogin: deps.loginItem?.get() ?? false,
-    })),
-    setLoginItem: t.procedure
-      .input(fields({ openAtLogin: 'boolean' }))
-      .mutation(({ input }): { openAtLogin: boolean } => {
-        deps.loginItem?.set(input.openAtLogin)
-        return { openAtLogin: deps.loginItem?.get() ?? false }
-      }),
-  })
-
   return t.router({
     auth,
     github,
@@ -1620,7 +1603,6 @@ export function createRouter(deps: RouterDeps) {
     ui,
     cap,
     updates,
-    app,
   })
 }
 

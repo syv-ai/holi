@@ -2,11 +2,13 @@
  * The quick agent's settings section (docs/features/quick-agent.md): this
  * machine's, not the vault's, so nothing here writes into the vault.
  *
- * - Whether the global hotkeys are on.
+ * - Whether the global hotkeys are on: off until the person turns them on.
  * - Which keys: the one that opens a new agent at the pointer and the one
  *   that opens the dock with the keyboard. The only keys in Holi a person
  *   picks, because they are taken from every other app while Holi is not in
  *   front. Recorded by pressing them.
+ * - How a quick agent runs, each the person's own choice and off until
+ *   chosen: Claude Code's auto mode, and the panel's instructions.
  * - Whether Holi may read the selection in other apps (macOS's
  *   Accessibility permission), with the way to grant it.
  */
@@ -134,7 +136,7 @@ export function QuickSettings(): React.JSX.Element {
       <SettingsList>
         <SettingsRow
           label="Hotkey"
-          description="Pressed in any other app, it opens the quick panel. Inside Holi the key keeps its own meaning."
+          description="Off until you turn it on. Pressed in any other app, the key opens the quick panel; inside Holi it keeps its own meaning."
           control={
             <Checkbox
               aria-label="Quick agent hotkey"
@@ -154,6 +156,30 @@ export function QuickSettings(): React.JSX.Element {
           'Dock key',
           'The dock with the keyboard, on the agent that most needs you; ↑ ↓ step through the others. Taken from other apps the same way.',
         )}
+        <SettingsRow
+          label="Approve safe actions"
+          description="Quick agents run in Claude Code's auto mode: what it judges safe goes ahead, and the rest still asks. Off, they follow the vault's own permission mode, and a permission prompt shows in the panel."
+          control={
+            <Checkbox
+              aria-label="Approve safe actions"
+              disabled={state === null}
+              checked={state?.autoApprove === true}
+              onCheckedChange={(v) => void change({ autoApprove: v === true })}
+            />
+          }
+        />
+        <SettingsRow
+          label="Panel instructions"
+          description="A few lines after Claude Code's own system prompt: work on its own, ask only with question cards, and keep the answer to a sentence or two. Off, a quick agent is told nothing extra."
+          control={
+            <Checkbox
+              aria-label="Panel instructions"
+              disabled={state === null}
+              checked={state?.instructions === true}
+              onCheckedChange={(v) => void change({ instructions: v === true })}
+            />
+          }
+        />
         <SettingsRow
           label="Selection from other apps"
           description={

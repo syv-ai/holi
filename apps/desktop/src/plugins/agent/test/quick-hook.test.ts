@@ -13,10 +13,10 @@ import { createBridgeServer, type BridgeServer } from '../../../main/bridge/serv
 import { createClaudeCli } from '../main/claude/cli'
 import {
   ASK_HOOK,
-  QUICK_FLAGS,
   QUICK_SETTINGS,
   QUICK_SYSTEM_PROMPT,
   RESULT_HOOK,
+  quickLaunch,
 } from '../main/claude/quick'
 import { registerAgentRoutes } from '../main/claude/routes'
 import { createQuestionDesk, type QuestionDesk } from '../main/host/questions'
@@ -160,7 +160,7 @@ describe('the quick hook', () => {
 })
 
 describe('the quick launch', () => {
-  it('starts a background session with the quick flags, the prompt last after --', async () => {
+  it('is one background session with its hooks, and auto mode and the instructions only when chosen', async () => {
     const calls: string[][] = []
     const cli = createClaudeCli({
       resolveBin: () => '/c',
@@ -171,11 +171,35 @@ describe('the quick launch', () => {
       log: () => {},
     })
     const target = { root: '/v', configDir: '/cfg', binDir: null }
-    expect(await cli.startQuick(target, { name: 'Tidy', prompt: '- tidy the list' })).toEqual({
-      ok: true,
-      id: '1234abcd',
+    const task = { name: 'Tidy', prompt: '- tidy the list' }
+    const off = quickLaunch({ autoApprove: false, instructions: false })
+    expect(await cli.startBg(target, { ...task, ...off })).toEqual({ ok: true, id: '1234abcd' })
+    expect(calls[0]).toEqual([
+      '--bg',
+      '--name',
+      'Tidy',
+      '--settings',
+      QUICK_SETTINGS,
+      '--',
+      '- tidy the list',
+    ])
+    await cli.startBg(target, {
+      ...task,
+      ...quickLaunch({ autoApprove: true, instructions: true }),
     })
-    expect(calls[0]).toEqual(['--bg', '--name', 'Tidy', ...QUICK_FLAGS, '--', '- tidy the list'])
+    expect(calls[1]).toEqual([
+      '--bg',
+      '--name',
+      'Tidy',
+      '--permission-mode',
+      'auto',
+      '--append-system-prompt',
+      QUICK_SYSTEM_PROMPT,
+      '--settings',
+      QUICK_SETTINGS,
+      '--',
+      '- tidy the list',
+    ])
   })
 
   it('hands Holi the last message as the turn ends, printing nothing', async () => {
@@ -198,9 +222,7 @@ describe('the quick launch', () => {
     expect(gone).toMatchObject({ code: 0, stdout: '', stderr: '' })
   })
 
-  it('asks for auto mode, the steering, the question hook and the result hook', () => {
-    expect(QUICK_FLAGS.slice(0, 2)).toEqual(['--permission-mode', 'auto'])
-    expect(QUICK_SYSTEM_PROMPT).toMatch(/AskUserQuestion/)
+  it('carries the question hook and the result hook, and nothing else', () => {
     const settings = JSON.parse(QUICK_SETTINGS)
     expect(Object.keys(settings)).toEqual(['hooks'])
     expect(Object.keys(settings.hooks)).toEqual(['PreToolUse', 'Stop'])

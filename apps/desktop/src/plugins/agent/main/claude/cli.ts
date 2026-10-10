@@ -19,7 +19,6 @@ import { execFile } from 'node:child_process'
 import { accessSync, constants } from 'node:fs'
 import { resolveBin } from '../../../../main/plugin-api'
 import type { TerminalCommand } from '../provider'
-import { QUICK_FLAGS } from './quick'
 
 /**
  * The child's env. Strips the nested-session guards (`claude` refuses to run
@@ -160,13 +159,22 @@ export interface ClaudeCli {
   /** Remove a stopped session from Claude Code's list, conversation and all. */
   rm(target: VaultCliTarget, id: string): Promise<ActionResult>
   /** A new background session in the vault. With no prompt it waits for its
-   *  first one; with a prompt, that prompt is its first turn. */
-  startBg(target: VaultCliTarget, opts: { name?: string; prompt?: string }): Promise<StartResult>
-  /** A quick agent: a background session whose first turn is `prompt`, with
-   *  the quick panel's flags (`quick.ts`). */
-  startQuick(target: VaultCliTarget, opts: { name?: string; prompt: string }): Promise<StartResult>
+   *  first one; with a prompt, that prompt is its first turn. The rest are a
+   *  quick agent's (`quick.ts`). */
+  startBg(target: VaultCliTarget, opts: StartBgOptions): Promise<StartResult>
   /** A background copy of a conversation, by Claude Code's full session id. */
   forkBg(target: VaultCliTarget, sessionId: string, name?: string): Promise<StartResult>
+}
+
+export interface StartBgOptions {
+  name?: string
+  prompt?: string
+  /** Claude Code's permission mode, instead of the vault's. */
+  permissionMode?: 'auto'
+  /** Lines after Claude Code's own system prompt. */
+  appendSystemPrompt?: string
+  /** A settings JSON layered over the vault's for this session alone. */
+  settings?: string
 }
 
 /** The longest a session name is worth being: a row is narrow, and the source
@@ -285,21 +293,6 @@ export function createClaudeCli(deps: ClaudeCliDeps = {}): ClaudeCli {
     return { ok: true, id }
   }
 
-  /** A new background session: named, with `flags`, its first turn `prompt`. */
-  const startNew = (
-    target: VaultCliTarget,
-    { name, prompt }: { name?: string; prompt?: string },
-    flags: readonly string[] = [],
-  ): Promise<StartResult> => {
-    const label = sessionName(name)
-    return start(target, [
-      '--bg',
-      ...(label === null ? [] : ['--name', label]),
-      ...flags,
-      ...promptArgs(prompt),
-    ])
-  }
-
   return {
     async list(target) {
       try {
@@ -312,8 +305,17 @@ export function createClaudeCli(deps: ClaudeCliDeps = {}): ClaudeCli {
     stop: (target, id) => action(target, ['stop', id]),
     respawn: (target, id) => action(target, ['respawn', id]),
     rm: (target, id) => action(target, ['rm', id]),
-    startBg: (target, opts) => startNew(target, opts),
-    startQuick: (target, opts) => startNew(target, opts, QUICK_FLAGS),
+    startBg(target, { name, prompt, permissionMode, appendSystemPrompt, settings }) {
+      const label = sessionName(name)
+      return start(target, [
+        '--bg',
+        ...(label === null ? [] : ['--name', label]),
+        ...(permissionMode === undefined ? [] : ['--permission-mode', permissionMode]),
+        ...(appendSystemPrompt === undefined ? [] : ['--append-system-prompt', appendSystemPrompt]),
+        ...(settings === undefined ? [] : ['--settings', settings]),
+        ...promptArgs(prompt),
+      ])
+    },
     forkBg(target, sessionId, name) {
       const label = sessionName(name)
       return start(target, [

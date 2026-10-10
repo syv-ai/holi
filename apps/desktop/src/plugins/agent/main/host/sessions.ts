@@ -23,7 +23,7 @@
  * NOTE: no `electron` import, so this loads under vitest.
  */
 import type { VaultCtx } from '../../../../main/plugin-api'
-import type { VaultCliTarget } from '../claude/cli'
+import type { StartBgOptions, VaultCliTarget } from '../claude/cli'
 import type { ClaudeRow, SessionSummary } from '../claude/listing'
 import type { AgentProvider, VaultRef } from '../provider'
 import type { AgentTerminals, TerminalSink } from './terminals'
@@ -42,7 +42,7 @@ export type ActionResult = { ok: true } | { ok: false; message: string }
 export type OpenResult = { ok: true; terminalId: string } | { ok: false; message: string }
 export type StartResult =
   { ok: true; sessionId: string; terminalId: string } | { ok: false; message: string }
-export type QuickStartResult = { ok: true; sessionId: string } | { ok: false; message: string }
+export type LaunchResult = { ok: true; sessionId: string } | { ok: false; message: string }
 
 export interface Geometry {
   cols?: number
@@ -99,11 +99,9 @@ export interface AgentSessions {
   /** A new background session, and a terminal on it. With a prompt, that
    *  prompt is its first turn (reconcile); without, it waits for one. */
   start(args: Geometry & { name?: string; prompt?: string }): Promise<StartResult>
-  /** A quick agent: a background session whose first turn is `prompt`, with
-   *  no terminal. The quick panel is its window. */
-  startQuick(args: { name?: string; prompt: string }): Promise<QuickStartResult>
-  /** Whether this session was started from the quick panel this run. */
-  isQuick(id: string): boolean
+  /** A new background session whose first turn is `prompt`, and no
+   *  terminal: nobody is watching it start. A quick agent, with its options. */
+  launch(args: Omit<StartBgOptions, 'prompt'> & { prompt: string }): Promise<LaunchResult>
   /** Its row in the latest listing, live or not. */
   row(id: string): ClaudeRow | undefined
   /** Hear every listing read, and the vault being left. Returns the undo. */
@@ -174,9 +172,6 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
    * session between turns is not using any more.
    */
   const contextPercent = new Map<string, number>()
-  /** The sessions started from the quick panel since the vault opened. Holi's
-   *  own record: after a restart its panels are gone, and so are its cards. */
-  const quick = new Set<string>()
   const rowListeners = new Set<() => void>()
   const rowsChanged = (): void => {
     for (const cb of [...rowListeners]) cb()
@@ -394,21 +389,15 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
       return opened.ok ? { ok: true, sessionId: res.id, terminalId: opened.terminalId } : opened
     },
 
-    async startQuick({ name, prompt }) {
+    async launch(args) {
       const c = await ensureCurrent()
       if (c === null) return noVault
-      const res = await provider.cli.startQuick(targetOf(c), {
-        ...(name === undefined ? {} : { name }),
-        prompt,
-      })
+      const res = await provider.cli.startBg(targetOf(c), args)
       if (!res.ok) return res
-      if (current !== c) return { ok: false, message: 'The vault closed as the agent started.' }
-      quick.add(res.id)
+      if (current !== c) return { ok: false, message: 'The vault closed as the session started.' }
       await refresh()
       return { ok: true, sessionId: res.id }
     },
-
-    isQuick: (id) => quick.has(id),
 
     row: (id) => rows.find((r) => r.id === id),
 
@@ -538,7 +527,6 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     for (const id of [...coordinator.working]) coordinator.forget(id)
     unprompted.clear()
     contextPercent.clear()
-    quick.clear()
     if (idleRecheck !== null) {
       clearTimeout(idleRecheck)
       idleRecheck = null

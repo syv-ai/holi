@@ -1,21 +1,21 @@
 /**
  * What makes a background session a quick agent (docs/features/quick-agent.md):
- * three flags on `claude --bg`, and nothing written into the vault.
+ * options on the one `claude --bg` every background session is, and nothing
+ * written into the vault.
  *
- * - **`--permission-mode auto`.** The person typed a task into a panel and went
- *   back to what they were doing; Claude Code's classifier approves what is
- *   safe and still stops for what is not. A flag, because a vault's committed
- *   `.claude/settings.json` cannot set `auto`.
- * - **`--append-system-prompt`.** Work alone, ask only when blocked on a
- *   decision that is the person's, and always through AskUserQuestion, so
- *   every question reaches the panel as a card.
- * - **`--settings`** with two hooks. `PreToolUse` on `AskUserQuestion` hands
- *   the question to Holi's bridge (`/ask`) and prints the answer Holi holds
- *   until the person picks one. Claude Code then takes the answers and never
- *   draws its own question box. With Holi gone, or a route that answers empty,
- *   the hook prints nothing and Claude Code asks the ordinary way. `Stop` hands
- *   Holi the turn's last message (`/quick-result`), which the panel shows, so
- *   the answer is read where the task was typed.
+ * - **`--settings`** with two hooks, always. `PreToolUse` on `AskUserQuestion`
+ *   hands the question to Holi's bridge (`/ask`) and prints the answer Holi
+ *   holds until the person picks one. Claude Code then takes the answers and
+ *   never draws its own question box. With Holi gone, or a route that answers
+ *   empty, the hook prints nothing and Claude Code asks the ordinary way.
+ *   `Stop` hands Holi the turn's last message (`/quick-result`), which the
+ *   panel shows, so the answer is read where the task was typed.
+ * - **`--permission-mode auto`**, only when the person chose it in Settings
+ *   (`autoApprove`). Otherwise the session follows the vault's own mode, and a
+ *   permission prompt is Claude Code's, shown in the panel's terminal.
+ * - **`--append-system-prompt`**, only when the person chose it
+ *   (`instructions`): work alone, ask through AskUserQuestion so every
+ *   question reaches the panel as a card, and be brief.
  *
  * Per launch rather than seeded: a shipped hook reaches an existing vault only
  * through `holi skills update`, and a merged settings key would put the hook in
@@ -26,7 +26,8 @@
  */
 import { shellReadBridgeEnv } from '../../../../main/plugin-api'
 
-/** What a quick agent is told, after Claude Code's own system prompt. */
+/** What a quick agent is told, after Claude Code's own system prompt, when
+ *  the person chose `instructions`. */
 export const QUICK_SYSTEM_PROMPT = [
   "You were started from Holi's quick panel. The person typed this task into a small floating",
   'panel and went back to what they were doing. While you work, the panel shows them only a',
@@ -111,12 +112,17 @@ export const QUICK_SETTINGS = JSON.stringify({
   },
 })
 
-/** The flags that make a `claude --bg` a quick agent, before its prompt. */
-export const QUICK_FLAGS: readonly string[] = [
-  '--permission-mode',
-  'auto',
-  '--append-system-prompt',
-  QUICK_SYSTEM_PROMPT,
-  '--settings',
-  QUICK_SETTINGS,
-]
+/** A quick agent's options for `startBg`, from the person's choices. */
+export function quickLaunch(choices: { autoApprove: boolean; instructions: boolean }): QuickLaunch {
+  return {
+    settings: QUICK_SETTINGS,
+    ...(choices.autoApprove ? { permissionMode: 'auto' as const } : {}),
+    ...(choices.instructions ? { appendSystemPrompt: QUICK_SYSTEM_PROMPT } : {}),
+  }
+}
+
+export interface QuickLaunch {
+  settings: string
+  permissionMode?: 'auto'
+  appendSystemPrompt?: string
+}

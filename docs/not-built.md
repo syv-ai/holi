@@ -92,6 +92,8 @@ nothing calls it.
 
 **Mail and calendar chips on a board card**, for the Gmail and Calendar links in a task's body.
 
+**A launch-at-login toggle** after the first-launch prompt.
+
 **A task that lights up for a recurring event series**, tying reminders to the agenda.
 
 ## PDF

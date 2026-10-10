@@ -1,6 +1,7 @@
 /**
- * A quick panel's window: a page of the agent's (`renderer/quick/`) in a
+ * The quick panel's window: a page of the agent's (`renderer/quick/`) in a
  * window core makes (`AppContext.openPage`), set up the way a launcher's is.
+ * One for every quick agent (`panels.ts`).
  *
  * - **A panel, not a window** (`type: 'panel'`): macOS gives it the keyboard
  *   without making Holi the active app, so the main window stays where it is
@@ -17,7 +18,7 @@ import type { AppContext, PageWindow, PageWindowOptions } from '../../../../main
 import { parseQuickRequest, type QuickRequest } from '../../shared/quick'
 import { PROMPT_SIZE, type PanelSurface } from './panels'
 
-/** What a panel's window and the dock's share: a frameless macOS panel, clear
+/** What the panel's window and the dock's share: a frameless macOS panel, clear
  *  for its page to paint on, kept out of the Dock and the window switcher. */
 export const FLOATING: PageWindowOptions['window'] = {
   show: false,
@@ -55,8 +56,7 @@ export function electronSurface(ctx: AppContext): PanelSurface {
     },
   })
   const win = page.window
-  /** The page's one listener; a panel taken from the spare replaces the
-   *  spare's. */
+  /** The page's one listener. */
   let onRequest: (request: QuickRequest) => void = () => {}
   page.on('quick', (raw) => {
     const request = parseQuickRequest(raw)

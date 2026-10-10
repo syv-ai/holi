@@ -1,7 +1,6 @@
 /**
- * The quick panel's page: the prompt's one line, and beside the dock which
- * keys it answers as a request to main, what its foot names, and the size it
- * reports, header and all.
+ * The quick panel's page: the prompt's one line and its draft, and beside the
+ * dock which keys it answers as a request to main, each naming its agent.
  */
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -40,6 +39,7 @@ const tell = (name: string, payload: unknown) =>
 
 const agent = (over: Partial<Extract<QuickView, { kind: 'agent' }>> = {}): QuickView => ({
   kind: 'agent',
+  id: '1',
   remote: 'syv/vault',
   job: 'quick001',
   name: 'Tidy the inbox',
@@ -71,13 +71,12 @@ describe('the quick panel beside the dock', () => {
     // ⇧↑ ⇧↓ scroll an answer: not a step.
     key({ key: 'ArrowDown', shiftKey: true })
     key({ key: 'Escape' })
-    expect(sent).toEqual([{ kind: 'step', dir: -1 }, { kind: 'step', dir: 1 }, { kind: 'hide' }])
+    expect(sent).toEqual([
+      { kind: 'step', dir: -1, agent: '1' },
+      { kind: 'step', dir: 1, agent: '1' },
+      { kind: 'hide' },
+    ])
     expect(foot()).toBe('↑↓agentsescclose')
-  })
-
-  it('shows no foot on a light without the keyboard', () => {
-    open(agent(), false)
-    expect(foot()).toBeNull()
   })
 
   it('opens a finished agent in Holi on ⏎, and clears it on esc or ⌫', () => {
@@ -86,7 +85,11 @@ describe('the quick panel beside the dock', () => {
     key({ key: 'Enter' })
     key({ key: 'Escape' })
     key({ key: 'Backspace' })
-    expect(sent).toEqual([{ kind: 'open-session' }, { kind: 'clear' }, { kind: 'clear' }])
+    expect(sent).toEqual([
+      { kind: 'open-session', agent: '1' },
+      { kind: 'clear', agent: '1' },
+      { kind: 'clear', agent: '1' },
+    ])
   })
 
   it('offers nothing to open for a start that never got a session', () => {
@@ -111,11 +114,6 @@ describe('the quick panel beside the dock', () => {
     expect(sent).toEqual([])
   })
 
-  it("says to press the dock's key on Claude Code's prompt without the keyboard", () => {
-    open(agent({ state: 'prompt', terminalId: 'term-1' }), false)
-    expect(foot()).toBe('Press⌃⌘Jto answer')
-  })
-
   it("answers both global keys itself: ⌘J a new agent, the dock's key the dock", () => {
     open(agent())
     key({ key: 'j', code: 'KeyJ', metaKey: true })
@@ -123,40 +121,16 @@ describe('the quick panel beside the dock', () => {
     expect(sent).toEqual([{ kind: 'new' }, { kind: 'dock' }])
 
     sent = []
-    tell('quick-view', { kind: 'prompt', remote: 'syv/vault', selection: null })
+    tell('quick-view', { kind: 'prompt', id: 1, remote: 'syv/vault', selection: null })
     dockKey()
     expect(sent).toEqual([{ kind: 'dock' }])
-  })
-
-  it('reports its size with the middle of its header, as each view lands', () => {
-    // jsdom lays nothing out: the panel at y 100, its header 19 px tall, 12 px
-    // down it.
-    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
-      this: HTMLElement,
-    ) {
-      const header = this.dataset['quickHeader'] !== undefined
-      const top = header ? 112 : 100
-      const height = header ? 19 : 44
-      return { top, height, width: 400, left: 0, right: 400, bottom: top + height, x: 0, y: top }
-    } as () => DOMRect)
-    try {
-      open(agent({ state: 'done' }), false)
-      tell('quick-view', agent({ state: 'failed', error: 'It stopped.' }))
-      expect(sent.filter((r) => r.kind === 'size').at(-1)).toEqual({
-        kind: 'size',
-        width: 400,
-        height: 44,
-        header: 21.5,
-      })
-    } finally {
-      vi.restoreAllMocks()
-    }
   })
 })
 
 describe('the prompt', () => {
-  const prompt = (selection: { app: string; text: string } | null): QuickView => ({
+  const prompt = (selection: { app: string; text: string } | null, id = 1): QuickView => ({
     kind: 'prompt',
+    id,
     remote: 'syv/vault',
     selection,
   })
@@ -182,6 +156,16 @@ describe('the prompt', () => {
     fireEvent.keyDown(field(), { key: 'Enter' })
     expect(submits()).toEqual([{ kind: 'submit', prompt: 'Tidy the inbox', selection: false }])
   })
+
+  it('keeps its draft while the panel shows an agent, and a new prompt starts empty', () => {
+    open(prompt(null))
+    fireEvent.change(field(), { target: { value: 'Half a thought' } })
+    tell('quick-view', agent())
+    tell('quick-view', prompt(null))
+    expect(field()).toHaveValue('Half a thought')
+    tell('quick-view', prompt(null, 2))
+    expect(field()).toHaveValue('')
+  })
 })
 
 describe('the card in the quick panel', () => {
@@ -202,7 +186,7 @@ describe('the card in the quick panel', () => {
     expect(foot()).toBe('Press⌃⌘Jto answer')
     tell('quick-focus', { focused: true, user: false })
     key({ key: 'ArrowDown' })
-    expect(sent).toEqual([{ kind: 'step', dir: 1 }])
+    expect(sent).toEqual([{ kind: 'step', dir: 1, agent: '1' }])
     // ⏎ takes the recommendation, where the highlight started and stayed.
     key({ key: 'Enter' })
     expect(sent.at(-1)).toEqual({

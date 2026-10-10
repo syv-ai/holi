@@ -14,6 +14,8 @@ const SETTINGS: QuickSettingsState = {
   conflict: false,
   dockHotkey: '⌃⌘J',
   dockConflict: false,
+  autoApprove: false,
+  instructions: false,
   accessibility: true,
 }
 

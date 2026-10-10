@@ -1,9 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import type { ClaudeRow } from '../main/claude/listing'
 import { quickState, START_GRACE_MS } from '../main/host/quick-state'
-import { DEFAULT_QUICK_HOTKEY, hotkeyFromEvent, toAccelerator } from '../shared/hotkey'
+import {
+  DEFAULT_DOCK_HOTKEY,
+  DEFAULT_QUICK_HOTKEY,
+  hotkeyFromEvent,
+  toAccelerator,
+} from '../shared/hotkey'
 import { parseQuickRequest, quickPrompt } from '../shared/quick'
-import { clampInto, placeAtCursor } from '../main/quick/placement'
 import { fitSelection, MAX_SELECTION, readSelection } from '../main/quick/selection'
 import { parseQuickSettings } from '../main/quick/settings'
 
@@ -84,42 +88,32 @@ describe('the global hotkey', () => {
     expect(press({})).toBeNull()
     expect(press({ metaKey: true, code: 'MetaLeft', key: 'Meta' })).toBeNull()
   })
+})
 
-  it('reads a settings file key by key', () => {
+describe('the settings', () => {
+  it('are off until chosen, each read key by key', () => {
     expect(parseQuickSettings(null)).toEqual({
-      enabled: true,
-      hotkey: '⌘J',
-      dockHotkey: '⌃⌘J',
-      accessibilityAsked: false,
-    })
-    expect(parseQuickSettings({ enabled: false, hotkey: 'J', accessibilityAsked: true })).toEqual({
       enabled: false,
       hotkey: '⌘J',
       dockHotkey: '⌃⌘J',
-      accessibilityAsked: true,
+      autoApprove: false,
+      instructions: false,
+      accessibilityAsked: false,
     })
-  })
-})
-
-describe('placement', () => {
-  const area = { x: 0, y: 25, width: 1440, height: 875 }
-  const size = { width: 520, height: 132 }
-
-  it('opens just past the pointer', () => {
-    expect(placeAtCursor({ x: 300, y: 300 }, size, area)).toEqual({ x: 312, y: 312, ...size })
+    expect(
+      parseQuickSettings({ enabled: true, hotkey: 'J', autoApprove: 'yes', instructions: true }),
+    ).toMatchObject({ enabled: true, hotkey: '⌘J', autoApprove: false, instructions: true })
   })
 
-  it('stays wholly on the display near its edges', () => {
-    const r = placeAtCursor({ x: 1430, y: 890 }, size, area)
-    expect(r.x + r.width).toBeLessThanOrEqual(area.x + area.width)
-    expect(r.y + r.height).toBeLessThanOrEqual(area.y + area.height)
-    expect(clampInto({ x: -50, y: -50, ...size }, area)).toMatchObject({ x: 12, y: 37 })
-  })
-
-  it('steps past a panel already there', () => {
-    const first = placeAtCursor({ x: 300, y: 300 }, size, area)
-    const second = placeAtCursor({ x: 300, y: 300 }, size, area, [first])
-    expect(second.y).toBeGreaterThanOrEqual(first.y + first.height)
+  it('never make the two keys one: the dock key gives way, to its default or the other', () => {
+    expect(parseQuickSettings({ hotkey: '⌥Space', dockHotkey: '⌥Space' })).toMatchObject({
+      hotkey: '⌥Space',
+      dockHotkey: DEFAULT_DOCK_HOTKEY,
+    })
+    expect(parseQuickSettings({ hotkey: DEFAULT_DOCK_HOTKEY })).toMatchObject({
+      hotkey: DEFAULT_DOCK_HOTKEY,
+      dockHotkey: DEFAULT_QUICK_HOTKEY,
+    })
   })
 })
 
@@ -130,24 +124,16 @@ describe('the selection', () => {
     expect(fitSelection('Notes', 'x'.repeat(MAX_SELECTION + 5))?.text).toContain('cut at')
   })
 
-  it('believes an app that answers, and asks one that does not by ⌘C', async () => {
+  it('is what the app says is selected, and nothing from an app that does not say', async () => {
     const answered = fakeRun(['{"app":"Notes","pid":7,"text":"hi"}'])
     expect(await readSelection({ run: answered.run, selfPid: 1 })).toEqual({
       app: 'Notes',
       text: 'hi',
     })
-    expect(answered.calls).toBe(1)
-
-    const empty = fakeRun(['{"app":"Notes","pid":7,"text":""}'])
-    expect(await readSelection({ run: empty.run, selfPid: 1 })).toBeNull()
-    expect(empty.calls).toBe(1)
-
+    // Read once, and never by ⌘C: a clipboard manager would keep it.
     const silent = fakeRun(['{"app":"Brave","pid":7}', '{"text":"copied"}'])
-    expect(await readSelection({ run: silent.run, selfPid: 1 })).toEqual({
-      app: 'Brave',
-      text: 'copied',
-    })
-    expect(silent.calls).toBe(2)
+    expect(await readSelection({ run: silent.run, selfPid: 1 })).toBeNull()
+    expect(silent.calls).toBe(1)
   })
 
   it('never reads Holi itself, and never throws', async () => {

@@ -29,6 +29,8 @@ let sessions: AgentSessions | null = null
 let vault: VaultCtx | null = null
 /** Lets go of the questions quick agents wait on, as Holi leaves a vault. */
 let releaseQuestions: () => void = () => {}
+/** The quick agent's keys follow whether the open vault has the agent. */
+let vaultChanged: () => void = () => {}
 
 export const agentMain: MainPlugin = {
   info: AGENT_INFO,
@@ -97,12 +99,12 @@ export const agentMain: MainPlugin = {
       // A quick agent's question, held until the person answers. Any other
       // session's (one from before a restart, say) is Claude Code's to ask.
       onAsk: (remote, jobId, input, signal) =>
-        remote === liveRemote() && started.isQuick(jobId)
+        remote === liveRemote() && quick?.owns(jobId) === true
           ? desk.ask(jobId, input, signal)
           : Promise.resolve(null),
       // A quick agent's answer, for its panel.
       onQuickResult: (remote, jobId, message) => {
-        if (remote === liveRemote() && started.isQuick(jobId)) quick?.result(jobId, message)
+        if (remote === liveRemote()) quick?.result(jobId, message)
       },
     })
     // Every listing read moves the quick panels' lights. A question whose
@@ -115,14 +117,19 @@ export const agentMain: MainPlugin = {
       }
       quick?.update()
     })
-    // The quick agent: the global hotkey and its panels. A failure costs that
-    // feature, never the agent.
-    quick = await startQuickAgent({ ctx, sessions: started, terminals, desk }).catch(
-      (err: unknown) => {
-        console.error('[agent] quick agent did not start:', err)
-        return null
-      },
-    )
+    // The quick agent: the global hotkey and its panel. A failure costs that
+    // feature, never the agent. On only in a vault with the agent.
+    quick = await startQuickAgent({
+      ctx,
+      sessions: started,
+      terminals,
+      desk,
+      agentOn: () => vault !== null,
+    }).catch((err: unknown) => {
+      console.error('[agent] quick agent did not start:', err)
+      return null
+    })
+    vaultChanged = () => quick?.vaultChanged()
     // Quitting stops the vault's sessions, so it asks first when one of them
     // is working or waiting on you: that turn is cut short. Idle sessions
     // stop without a question; their conversations stay in the agents list.
@@ -137,6 +144,7 @@ export const agentMain: MainPlugin = {
     })
     return () => {
       unrows()
+      vaultChanged = () => {}
       quick?.dispose()
       quick = null
       desk.releaseAll()
@@ -147,6 +155,7 @@ export const agentMain: MainPlugin = {
     const running = sessions
     if (running === null) return () => {}
     vault = ctx
+    vaultChanged()
     void running.ensure(ctx)
     // The per-turn hook reads the focused note from a file in this clone.
     const unreport = ctx.onReport((report) =>
@@ -161,6 +170,7 @@ export const agentMain: MainPlugin = {
       releaseQuestions()
       await running.leave().catch((err) => console.error('[agent] leave failed:', err))
       if (vault === ctx) vault = null
+      vaultChanged()
     }
   },
 }

@@ -132,9 +132,7 @@ DOM: they copy width, motion, header and edge through the injected stylesheet an
 - A vault re-skins colours and chrome, never layout, through a whitelisted token map in
   `.holi/settings/theme.css` (committed) and `.holi/settings/theme.local.css` (machine-local,
   overrides per token). The whitelist (`THEME_TOKENS`) is the colour tokens plus `radius`,
-  `shadow-popover` and `shadow-dialog`. The colour tokens include the agent's lights
-  (`--agent-working`, `-needs-you`, `-done`, `-failed`): a session's orb, the quick panel's glow
-  and the quick agents' dots.
+  `shadow-popover` and `shadow-dialog`.
 - The file is CSS but is read as data: only `--<token>` declarations under
   `[data-theme='dark'|'light']` are parsed, each value validated. It is CSS because a theme is a
   set of custom properties, and because the editor's colour picker only finds colours through the
@@ -162,16 +160,7 @@ DOM: they copy width, motion, header and edge through the injected stylesheet an
 - State shows by background colour, never by borders, rings or outlines. A text field is a grey
   fill, not an edge; focus is the one exception, defined above.
 - Sidebars are flat `--background` with no separator from the pane.
-- Only floating things (dialogs, menus, popovers, tooltips) get `--popover` and a shadow. The
-  [quick panel](features/quick-agent.md) is a window of its own on macOS's HUD glass, always in the
-  dark scheme with the vault's dark colours; its edge glows in the agent's light, and the glow
-  breathes only while the agent works. The quick agents' dock is a slim pill the same dark, which
-  the page paints in a clear window because macOS's glass is clipped to a corner radius that never
-  makes a window that narrow a pill; its edge is in the foreground because its dots are the lights: a working dot breathes (F), one
-  that needs you beats once and then holds a halo, done and failed are steady, and a new dot
-  arrives out of its own place (A). The dot whose panel is out wears a thin foreground ring, never
-  a light's colour, since a dot is all light, with no background to change. The dock has no
-  tooltips: the panel a dot brings out is its tooltip.
+- Only floating things (dialogs, menus, popovers, tooltips) get `--popover` and a shadow.
 - A dialog is the menu's surface, not a modal page: no dimmed backdrop, the menu's radius, a
   little see-through, and pill buttons (the primary act in the theme colour, a destructive one in
   red). A question about one thing is asked where that thing is (`Dialog`'s `within`), leaving

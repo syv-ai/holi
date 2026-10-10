@@ -76,10 +76,10 @@
   --comment-background: color-mix(in srgb, var(--foreground) 20%, var(--background));
 
   /* The agent — A session's state: its orb in the sidebar, and the quick panel's glow. */
-  --agent-working: #fbbf24;
-  --agent-needs-you: #f97316;
-  --agent-done: #22c55e;
-  --agent-failed: #ef4444;
+  --agent-working: var(--color-amber-400);
+  --agent-needs-you: var(--color-orange-500);
+  --agent-done: var(--color-green-500);
+  --agent-failed: var(--color-red-500);
 
   /* Chrome — Shape and depth rather than colour. */
   --radius: 0.5rem;
@@ -144,10 +144,10 @@
   --comment-background: color-mix(in srgb, var(--foreground) 20%, var(--background));
 
   /* The agent — A session's state: its orb in the sidebar, and the quick panel's glow. */
-  --agent-working: #fbbf24;
-  --agent-needs-you: #f97316;
-  --agent-done: #22c55e;
-  --agent-failed: #ef4444;
+  --agent-working: var(--color-amber-400);
+  --agent-needs-you: var(--color-orange-500);
+  --agent-done: var(--color-green-500);
+  --agent-failed: var(--color-red-500);
 
   /* Chrome — Shape and depth rather than colour. */
   --radius: 0.5rem;
