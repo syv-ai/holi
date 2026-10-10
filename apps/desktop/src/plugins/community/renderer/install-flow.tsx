@@ -26,10 +26,13 @@ export function ConsentDialog({
   row,
   store,
   onClose,
+  onReady,
 }: {
   row: PluginRow
   store: PluginStore
   onClose: () => void
+  /** Run once setup succeeded, such as pinning the version just allowed. */
+  onReady?: () => Promise<unknown>
 }): React.JSX.Element {
   const remote = useAtomValue(activeRemoteAtom)
   const log = useAtomValue(setupLogsAtom)[row.id] ?? []
@@ -50,6 +53,7 @@ export function ConsentDialog({
         await communityCap.consent(remote, { id: row.id, commit: install.commit })
       setStep({ kind: 'setup' })
       const ok = await communityCap.setup(remote, { id: row.id })
+      if (ok) await onReady?.()
       setStep(ok ? { kind: 'done' } : { kind: 'failed', message: 'Setup did not finish.' })
     } catch (err) {
       setStep({ kind: 'failed', message: err instanceof Error ? err.message : String(err) })
@@ -171,6 +175,17 @@ export async function installAndAsk(
 }
 
 /** Open the consent dialog for an installed row. */
-export function askToRun(flow: InstallFlow, row: PluginRow): void {
-  flow.openDialog((close) => <ConsentDialog row={row} store={flow.store} onClose={close} />)
+export function askToRun(
+  flow: InstallFlow,
+  row: PluginRow,
+  onReady?: () => Promise<unknown>,
+): void {
+  flow.openDialog((close) => (
+    <ConsentDialog
+      row={row}
+      store={flow.store}
+      onClose={close}
+      {...(onReady === undefined ? {} : { onReady })}
+    />
+  ))
 }
