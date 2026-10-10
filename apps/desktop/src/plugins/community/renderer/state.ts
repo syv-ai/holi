@@ -8,7 +8,7 @@
  * write), so the claim follows what the vault says.
  */
 import { atom } from 'jotai'
-import { opensPath, PLUGIN_PINS_DIR, SETTINGS_FILE, SETTINGS_LOCAL_FILE } from '@holi/shared'
+import { PLUGIN_PINS_DIR, servedFile, SETTINGS_FILE, SETTINGS_LOCAL_FILE } from '@holi/shared'
 import { capClient, snapshotAtom, type PluginStore } from '@/plugin-api'
 import type { communityCapabilities, PluginRow } from '../main/capabilities'
 import type { ServerState } from '../main/supervisor'
@@ -26,9 +26,10 @@ export const serversAtom = atom<Readonly<Record<string, ServerState>>>({})
 /** Each plugin's setup output, by id, since its setup last began. */
 export const setupLogsAtom = atom<Readonly<Record<string, readonly string[]>>>({})
 
-/** The plugin that opens `path` in the open vault now, if any. */
+/** The plugin that opens `path` (a file, or a folder document) in the open
+ *  vault now, if any. */
 export function servingRow(rows: readonly PluginRow[], path: string): PluginRow | null {
-  return rows.find((r) => r.running && opensPath(r, path)) ?? null
+  return rows.find((r) => r.running && servedFile(r, path) !== null) ?? null
 }
 
 /** Read the rows for `remote` again. */

@@ -90,7 +90,14 @@ export function ConsentDialog({
               </div>
             )}
             <div>
-              <p>Each time you open {row.opens.join(' or ')}:</p>
+              <p>
+                Each time you open{' '}
+                {[
+                  ...row.opens,
+                  ...(row.folder === undefined ? [] : [`a ${row.folder.suffix} folder`]),
+                ].join(' or ')}
+                :
+              </p>
               <pre className="mt-1 whitespace-pre-wrap rounded-md bg-muted p-2 font-mono text-[11px] text-foreground">
                 {shown(row.serve)}
               </pre>

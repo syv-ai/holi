@@ -15,7 +15,7 @@ with it off, no community plugin runs, as Obsidian's restricted mode.
   "id": "prezzi",
   "name": "Prezzi",
   "version": "0.1.0",
-  "opens": ["slides.md"],
+  "folder": { "suffix": ".deck", "entry": "slides.md" },
   "setup": ["sh", "scripts/holi-setup.sh"],
   "serve": ["node", "bin/holi-serve.mjs", "{file}", "--port", "{port}"],
   "ignore": ["slides-export.pdf", "node_modules/"]
@@ -23,7 +23,11 @@ with it off, no community plugin runs, as Obsidian's restricted mode.
 ```
 
 `opens` names files by exact name or `*.extension`, never a glob, since the file tree asks it of
-every row. `setup` and `serve` are argv arrays, never shell strings, filled in with `{file}` (the
+every row. `folder` (`{ "suffix": ".deck", "entry": "slides.md" }`) opens folders instead, as a vault
+app's `.app` is opened: a folder whose name ends in the suffix and holds the entry is one document
+in the tree, named without its suffix, and opens in a tab, with its entry given to the server as
+`{file}`. Its row menu opens the entry as text, and Show Files shows what is inside, where the entry
+opens in the editor. A manifest gives `opens`, `folder` or both. `setup` and `serve` are argv arrays, never shell strings, filled in with `{file}` (the
 file's absolute path), `{vault}` and `{port}`. `serve` must pass `{port}` and listen on the
 loopback there. `ignore` lines join the vault's `.gitignore` when the plugin is pinned: what the
 server writes beside a file and must not sync. The grammar is `packages/shared/src/community-plugin.ts`.

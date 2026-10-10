@@ -343,6 +343,49 @@ describe('serving', () => {
     expect(spawnSync('pgrep', ['-f', repoDir]).status).toBe(1)
   })
 
+  test("a folder document's server is given its entry file", async () => {
+    await makeRepo()
+    const manifest = JSON.parse(await readFile(join(repoDir, 'holi-plugin.json'), 'utf8'))
+    await writeFile(
+      join(repoDir, 'holi-plugin.json'),
+      JSON.stringify({
+        ...manifest,
+        version: '0.2.0',
+        opens: [],
+        folder: { suffix: '.deck', entry: 'slides.md' },
+      }),
+    )
+    git(
+      repoDir,
+      '-c',
+      'user.name=Ada Holm',
+      '-c',
+      'user.email=ada@syv.ai',
+      'commit',
+      '-qam',
+      'deck',
+    )
+    git(repoDir, 'tag', 'v0.2.0')
+    await mkdir(join(vault, 'prezzis/q4.deck'), { recursive: true })
+    await writeFile(join(vault, 'prezzis/q4.deck/slides.md'), '# Q4\n')
+    const s = setup(4060)
+    await turnOn()
+    const row = await s.call('community.install', { repo: 'syv-ai/prezzi', version: '0.2.0' })
+    await s.call('community.consent', {
+      id: 'prezzi',
+      commit: (row.install as { commit: string }).commit,
+    })
+    await s.call('community.setup', { id: 'prezzi' })
+    const { port, lease } = await s.call('community.acquire', { path: 'prezzis/q4.deck' })
+    expect(await (await fetch(`http://127.0.0.1:${port}/`)).text()).toContain(
+      join('q4.deck', 'slides.md'),
+    )
+    await s.call('community.release', { lease })
+    await expect(s.call('community.acquire', { path: 'decks/q4/slides.md' })).rejects.toThrow(
+      /no plugin opens/,
+    )
+  })
+
   test('a plugin the vault has off serves nothing', async () => {
     const { call } = await ready()
     await writeFile(join(vault, '.holi/settings/app.yaml'), 'plugins:\n  community: true\n')
