@@ -30,13 +30,14 @@ import { FINISHED_STATES, type QuickRequest, type QuickView } from '../../shared
 import { focusSessionTerminal, receivePtyData } from '../lib/session-terminals'
 import { SessionTerminal } from '../SessionTerminal'
 import { renderAnswer } from './answer'
-import { useHudPage } from './hud'
+import { useHudPage, usePaintAnswer } from './hud'
 import { LIGHT, STATE_WORDS, type Light } from './lights'
 import { Foot, Hint, QuestionCard, WaitingHint } from './QuestionCard'
 import './quick.css'
 import { Textarea } from '@/primitives'
 
 const send = (request: QuickRequest): void => window.holi.page.send('quick', request)
+const painted = (): void => send({ kind: 'painted' })
 
 /** The widths a panel comes in; its height is whatever its content is. A
  *  light is as wide as a finished one's foot of keys needs. */
@@ -99,6 +100,7 @@ export function QuickPanel(): React.JSX.Element {
   insideRef.current = inside
 
   useHudPage('quick', view?.remote ?? null)
+  usePaintAnswer(painted)
 
   // What main says, and then that the page is listening.
   useEffect(() => {

@@ -15,13 +15,14 @@
  */
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { DockRequest, DockView } from '../../shared/quick'
-import { useHudPage } from './hud'
+import { useHudPage, usePaintAnswer } from './hud'
 import { LIGHT, STATE_WORDS } from './lights'
 import './quick.css'
 import { useArrivals } from '@/plugin-api'
 import { Button } from '@/primitives'
 
 const send = (request: DockRequest): void => window.holi.page.send('dock', request)
+const painted = (): void => send({ kind: 'painted' })
 
 export function QuickDock(): React.JSX.Element {
   const [view, setView] = useState<DockView | null>(null)
@@ -29,6 +30,7 @@ export function QuickDock(): React.JSX.Element {
   const layout = (view?.dots ?? []).map((d) => d.id).join('\n')
 
   useHudPage('dock', view?.remote ?? null)
+  usePaintAnswer(painted)
 
   // What main says, and then that the page is listening.
   useEffect(() => {

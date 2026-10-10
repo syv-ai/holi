@@ -113,6 +113,9 @@ export type QuickRequest =
   /** What the page needs to show itself, in CSS pixels, and how far down it
    *  the middle of its header is: that is what lines up with its dot. */
   | { kind: 'size'; width: number; height: number; header?: number }
+  /** It has painted what it shows now, answering main's `paint`: the window
+   *  can stop being clear. Heard by the window itself (`surface.ts`). */
+  | { kind: 'painted' }
 
 const finite = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v)
 
@@ -121,6 +124,7 @@ export function parseQuickRequest(raw: unknown): QuickRequest | null {
   if (!isRecord(raw)) return null
   switch (raw['kind']) {
     case 'ready':
+    case 'painted':
     case 'hide':
     case 'new':
     case 'dock':
@@ -189,13 +193,16 @@ export type DockRequest =
   /** What the page needs, in CSS pixels, and each dot's centre measured down
    *  from the dock's top, so a panel comes out level with its dot. */
   | { kind: 'size'; width: number; height: number; dots: number[] }
+  /** It has painted what it shows now, answering main's `paint`. */
+  | { kind: 'painted' }
 
 /** The dock's message as main reads it: one of the requests above, or null. */
 export function parseDockRequest(raw: unknown): DockRequest | null {
   if (!isRecord(raw)) return null
   switch (raw['kind']) {
     case 'ready':
-      return { kind: 'ready' }
+    case 'painted':
+      return { kind: raw['kind'] }
     case 'hover':
       return raw['id'] === null || typeof raw['id'] === 'string'
         ? { kind: 'hover', id: raw['id'] }

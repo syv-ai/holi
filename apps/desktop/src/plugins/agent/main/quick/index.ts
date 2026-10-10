@@ -78,6 +78,7 @@ export async function startQuickAgent(deps: {
       // With the options the person chose, read as each agent starts.
       launch: async (args) => sessions.launch({ ...args, ...quickLaunch(await store.read()) }),
       row: (id) => sessions.row(id),
+      inTurn: (id) => sessions.inTurn(id),
       stop: (id) => sessions.stop(id),
       isLive,
       open: (args) => sessions.open(args),

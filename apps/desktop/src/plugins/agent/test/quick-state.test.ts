@@ -16,6 +16,7 @@ const live = (over: Partial<ClaudeRow>) => ({
   row: row({ pid: 1, ...over }),
   live: true,
   question: false,
+  inTurn: false,
   age: 60_000,
 })
 
@@ -27,7 +28,16 @@ describe('quickState', () => {
   it('is working while busy, on a shell, or idle between readings of a turn', () => {
     expect(quickState(live({ status: 'busy', state: 'working' }))).toBe('working')
     expect(quickState(live({ status: 'shell', state: 'working' }))).toBe('working')
-    expect(quickState(live({ status: 'idle', state: 'working' }))).toBe('working')
+    expect(quickState({ ...live({ status: 'idle', state: 'working' }), inTurn: true })).toBe(
+      'working',
+    )
+  })
+
+  it('is done when a turn was cut short, though the listing still says working', () => {
+    // A permission prompt declined with esc: idle, waiting for the next message.
+    expect(quickState(live({ status: 'idle', state: 'working' }))).toBe('done')
+    // Unless it is only starting, before its first prompt reached the coordinator.
+    expect(quickState({ ...live({ status: 'idle', state: 'working' }), age: 100 })).toBe('working')
   })
 
   it("is the session's own prompt while Claude Code waits on one", () => {
@@ -40,17 +50,16 @@ describe('quickState', () => {
   })
 
   it('counts a process that died mid-turn as failed, once past starting', () => {
-    const dead = { row: row({ state: 'working' }), live: false, question: false }
+    const dead = { row: row({ state: 'working' }), live: false, question: false, inTurn: false }
     expect(quickState({ ...dead, age: 100 })).toBe('working')
     expect(quickState({ ...dead, age: START_GRACE_MS + 1 })).toBe('failed')
   })
 
   it('is gone when stopped, or unlisted after the grace', () => {
     expect(quickState(live({ state: 'stopped' }))).toBe('gone')
-    expect(quickState({ row: undefined, live: false, question: false, age: 10 })).toBe('working')
-    expect(quickState({ row: undefined, live: false, question: false, age: START_GRACE_MS })).toBe(
-      'gone',
-    )
+    const unlisted = { row: undefined, live: false, question: false, inTurn: false }
+    expect(quickState({ ...unlisted, age: 10 })).toBe('working')
+    expect(quickState({ ...unlisted, age: START_GRACE_MS })).toBe('gone')
   })
 })
 

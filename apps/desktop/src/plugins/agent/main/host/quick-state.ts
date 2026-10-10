@@ -18,10 +18,13 @@ export function quickState(args: {
   live: boolean
   /** Holi holds an AskUserQuestion call of its. */
   question: boolean
+  /** The turn coordinator holds it in a turn: begun by its prompt, not yet
+   *  ended by its `Stop` or a confirmed idle (`turn-coordinator.ts`). */
+  inTurn: boolean
   /** How long ago Holi started it. */
   age: number
 }): QuickState {
-  const { row, live, question, age } = args
+  const { row, live, question, inTurn, age } = args
   // A held question outranks everything: the listing says `busy` while the
   // hook waits.
   if (question) return 'question'
@@ -35,6 +38,14 @@ export function quickState(args: {
     return 'gone'
   }
   if (row.status === 'waiting') return 'prompt'
-  if (row.status === 'idle') return row.state === 'working' ? 'working' : 'done'
+  if (row.status === 'idle') {
+    // The listing goes on saying `working` after a turn that was cut short
+    // (a permission prompt declined with esc, which leaves the session
+    // waiting for your next message), so an idle session is working only
+    // while the coordinator holds its turn, as the session list reads it, or
+    // as it starts, before its first prompt has reached the coordinator.
+    if (inTurn) return 'working'
+    return row.state === 'working' && age < START_GRACE_MS ? 'working' : 'done'
+  }
   return 'working'
 }

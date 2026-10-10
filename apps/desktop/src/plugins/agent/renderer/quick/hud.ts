@@ -1,6 +1,7 @@
 /**
  * What the quick agent's two pages, the panel and the dock, set up alike
- * (docs/features/quick-agent.md): the dark HUD, in the open vault's colours.
+ * (docs/features/quick-agent.md): the dark HUD, in the open vault's colours,
+ * and the answer to main's `paint`.
  */
 import { useSetAtom } from 'jotai'
 import { useEffect, useLayoutEffect } from 'react'
@@ -20,4 +21,20 @@ export function useHudPage(page: 'quick' | 'dock', remote: string | null): void 
   useVaultTheme()
   const setRemote = useSetAtom(activeRemoteAtom)
   useEffect(() => setRemote(remote), [remote, setRemote])
+}
+
+/**
+ * Main's `paint`, sent as it brings the window out, answered once the page has
+ * painted what it shows now: two frames on, which for a page out of sight is
+ * after it is in sight again. Until then main keeps the window clear, since a
+ * window shown again would first show its last frame (`surface.ts`).
+ */
+export function usePaintAnswer(painted: () => void): void {
+  useEffect(
+    () =>
+      window.holi.page.on(({ name }) => {
+        if (name === 'paint') requestAnimationFrame(() => requestAnimationFrame(painted))
+      }),
+    [painted],
+  )
 }

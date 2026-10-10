@@ -84,6 +84,8 @@ export interface QuickPanelsDeps {
     /** A quick agent's session, with the options the person chose. */
     launch(args: { name: string; prompt: string }): Promise<LaunchResult>
     row(id: string): ClaudeRow | undefined
+    /** Held in a turn by the turn coordinator. */
+    inTurn(id: string): boolean
     isLive(row: ClaudeRow): boolean
     stop(id: string): Promise<unknown>
     open(args: {
@@ -546,6 +548,7 @@ export function createQuickPanels(deps: QuickPanelsDeps): QuickPanels {
       row,
       live: row !== undefined && deps.sessions.isLive(row),
       question: question !== null,
+      inTurn: deps.sessions.inTurn(a.job),
       age: now() - a.startedAt,
     })
     const newQuestion = (question?.id ?? null) !== a.questionId

@@ -28,8 +28,11 @@ Holi the active app, floating above everything on every Space, on the HUD materi
 records in main and the panel shows whichever one is picked; its page holds a prompt's draft by the
 prompt's id, so the draft outlasts the panel showing an agent. Its page reports its size and main
 fits the window: a prompt just past the pointer, wholly on that display; an agent to the left of the
-dock, its header level with its dot. Main tells the page whether it has the keyboard, since a panel
-never makes Holi active and Chromium does not always hear it give the keyboard back.
+dock, its header level with its dot. Out of sight its page paints nothing, so a window shown again
+would first show its last frame, the view before: it comes out clear and turns opaque once its page
+answers main's `paint` with `painted`, two frames on (150 ms at most), and the dock does the same.
+Main tells the page whether it has the keyboard, since a panel never makes Holi active and Chromium
+does not always hear it give the keyboard back.
 
 **The prompt.** Before the panel takes the keyboard Holi reads the frontmost app's selection, its
 focused element's `AXSelectedText`, through `osascript` JavaScript. An app that does not expose it
@@ -78,7 +81,10 @@ keyboard: ↑ ↓ step to the agent above or below, esc puts the panel away (and
 agent, stopping its session), and ⏎ opens a finished one in the main window. On a finished answer
 c copies it and ⇧↑ ⇧↓ scroll it. On Claude Code's own prompt the terminal is inert until ⏎ steps
 into it, and the dock key steps back out. Clicking into another app puts the panel away; the dots
-stay. An agent wanting you changes its dot and nothing else: no panel comes to the pointer.
+stay. An agent wanting you changes its dot and nothing else: no panel comes to the pointer. A
+light follows the session list: an idle session is working only while the turn coordinator holds
+its turn, since the listing goes on saying `working` after a turn cut short (a permission prompt
+declined with esc), which then reads as done.
 
 **The look.** The panel is macOS's HUD glass under a dark tint, always in the dark scheme with the
 vault's dark colours. An agent's light is its `--agent-*` token (a vault's theme can set them, as a

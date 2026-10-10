@@ -104,6 +104,9 @@ export interface AgentSessions {
   launch(args: Omit<StartBgOptions, 'prompt'> & { prompt: string }): Promise<LaunchResult>
   /** Its row in the latest listing, live or not. */
   row(id: string): ClaudeRow | undefined
+  /** The turn coordinator holds it in a turn (what makes a row working in
+   *  the session list). */
+  inTurn(id: string): boolean
   /** Hear every listing read, and the vault being left. Returns the undo. */
   onRows(cb: () => void): () => void
   /** Push the list again: something Holi holds about a session changed (a
@@ -400,6 +403,8 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     },
 
     row: (id) => rows.find((r) => r.id === id),
+
+    inTurn: (id) => coordinator.working.has(id),
 
     onRows(cb) {
       rowListeners.add(cb)

@@ -131,6 +131,7 @@ function rig(over: Partial<QuickPanelsDeps> = {}) {
         return { ok: true as const, sessionId: id }
       }),
       row: (id) => rows.get(id),
+      inTurn: () => false,
       isLive: (row) => row.pid !== undefined,
       stop: vi.fn(async () => ({ ok: true as const })),
       open: vi.fn(async () => ({ ok: true as const, terminalId: 'term-1' })),

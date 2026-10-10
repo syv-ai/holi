@@ -10,6 +10,8 @@
  * - **The HUD material** (`vibrancy: 'hud'`), live even while it does not have
  *   the keyboard: the blur the page draws on. macOS draws it light in light
  *   mode, so the page tints it dark itself (`quick.css`).
+ * - **Clear until painted** (`revealWhenPainted`): one window shows every
+ *   prompt and agent, and shown again it would first show its last frame.
  *
  * Only Electron's window, which core hands over, is touched here: nothing
  * imports `electron`, so the plugin stays importable under plain Node.
@@ -44,6 +46,41 @@ export function floatAbove(win: PageWindow['window']): void {
   win.setHiddenInMissionControl(true)
 }
 
+/** The longest a window waits clear for its page to say it has painted. */
+const REVEAL_WAIT_MS = 150
+
+/**
+ * Out of sight a page paints nothing, so a window shown again would first show
+ * its last frame: the prompt or the agent it showed before, for a moment.
+ * Shown, it starts clear and asks its page to say when it has painted
+ * (`paint`, answered with `painted`), and turns opaque then, or after
+ * `REVEAL_WAIT_MS` whatever happens. Main keeps the keyboard where it gave it:
+ * typing into a clear prompt lands.
+ */
+export function revealWhenPainted(page: PageWindow): {
+  /** Call just before the window is shown. */
+  showing(): void
+  painted(): void
+} {
+  const win = page.window
+  let wait: ReturnType<typeof setTimeout> | null = null
+  const opaque = (): void => {
+    if (wait !== null) clearTimeout(wait)
+    wait = null
+    if (!win.isDestroyed()) win.setOpacity(1)
+  }
+  return {
+    showing() {
+      if (win.isVisible()) return
+      win.setOpacity(0)
+      if (wait !== null) clearTimeout(wait)
+      wait = setTimeout(opaque, REVEAL_WAIT_MS)
+      page.send('paint', null)
+    },
+    painted: opaque,
+  }
+}
+
 export function electronSurface(ctx: AppContext): PanelSurface {
   const page = ctx.openPage({
     page: 'quick',
@@ -58,9 +95,11 @@ export function electronSurface(ctx: AppContext): PanelSurface {
   const win = page.window
   /** The page's one listener. */
   let onRequest: (request: QuickRequest) => void = () => {}
+  const reveal = revealWhenPainted(page)
   page.on('quick', (raw) => {
     const request = parseQuickRequest(raw)
-    if (request !== null) onRequest(request)
+    if (request?.kind === 'painted') reveal.painted()
+    else if (request !== null) onRequest(request)
   })
   /**
    * Whether the page has the keyboard, told by main rather than read from the
@@ -103,6 +142,7 @@ export function electronSurface(ctx: AppContext): PanelSurface {
     bounds: () => win.getBounds(),
     place: (bounds) => win.setBounds(bounds),
     show(focus) {
+      reveal.showing()
       if (!focus) {
         win.showInactive()
         return

@@ -19,7 +19,7 @@ import type { AppContext } from '../../../../main/plugin-api'
 import { parseDockRequest, type DockRequest, type DockView } from '../../shared/quick'
 import { DOCK_WIDTH } from './panels'
 import type { Rect } from './placement'
-import { FLOATING, floatAbove } from './surface'
+import { FLOATING, floatAbove, revealWhenPainted } from './surface'
 
 /** The dock's window, as the panels drive it (`panels.ts`). */
 export interface DockSurface {
@@ -51,9 +51,12 @@ export function electronDock(ctx: AppContext): DockSurface {
   })
   const win = page.window
   let onRequest: (request: DockRequest) => void = () => {}
+  // Shown again, clear until its page has painted the dots it has now.
+  const reveal = revealWhenPainted(page)
   page.on('dock', (raw) => {
     const request = parseDockRequest(raw)
-    if (request !== null) onRequest(request)
+    if (request?.kind === 'painted') reveal.painted()
+    else if (request !== null) onRequest(request)
   })
   floatAbove(win)
 
@@ -65,7 +68,10 @@ export function electronDock(ctx: AppContext): DockSurface {
     onClosed: (cb) => void win.on('closed', cb),
     bounds: () => win.getBounds(),
     place: (bounds) => win.setBounds(bounds),
-    show: () => win.showInactive(),
+    show() {
+      reveal.showing()
+      win.showInactive()
+    },
     hide: () => win.hide(),
     isVisible: () => !win.isDestroyed() && win.isVisible(),
     close() {
