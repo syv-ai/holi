@@ -269,3 +269,5 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   `packages/shared/src/app-store.ts` (where records and the log live, the record format and the
   field merge): the bundle grammar core keeps, because a synced vault holds bundles whatever
   this machine runs; `packages/shared/src/path-safety.ts` (`isAgentSurfacePath`).
+
+**Notes** is a first-party plugin (`plugins/notes/`), off by default, that seeds one app: `Notes.app`, an Apple Notes-style notebook with a day-grouped list, search and a plain editor, its notes records in `Notes.app/data/notes/`. The bundle is seeded once, so a vault keeps its edits; it runs on this plugin, and turning Notes off leaves the folder and its notes where they are.

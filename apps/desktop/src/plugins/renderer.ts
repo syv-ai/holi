@@ -6,6 +6,7 @@ import type { RendererPlugin } from '@/plugin-api'
 import { agentRenderer } from './agent/renderer'
 import { appsRenderer } from './apps/renderer'
 import { googleRenderer } from './google/renderer'
+import { notesRenderer } from './notes/renderer'
 import { pdfRenderer } from './pdf/renderer'
 
 export const RENDERER_PLUGINS: readonly RendererPlugin[] = [
@@ -13,4 +14,5 @@ export const RENDERER_PLUGINS: readonly RendererPlugin[] = [
   pdfRenderer,
   googleRenderer,
   appsRenderer,
+  notesRenderer,
 ]
