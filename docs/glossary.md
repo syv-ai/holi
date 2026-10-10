@@ -124,6 +124,17 @@ Machine-local: shown under _show hidden files_, never synced. The marker is the 
 A web app the agent writes as a `<name>.app` folder anywhere in the vault, opened as a tab in its
 own origin and reaching the vault only through the `holi.*` bridge. See [vault-apps](features/vault-apps.md).
 
+### Community plugin
+
+A plugin from another repository, with a `holi-plugin.json`: installed on this machine, run as its
+own process, and opening the files it names in a tab framing its local server. See
+[community-plugins](features/community-plugins.md).
+
+### Pin
+
+A vault's record of the community plugin it uses, `.holi/plugins/<id>/manifest.json`: the manifest
+plus the repository and commit every member is offered.
+
 ### Per-turn context
 
 What the `UserPromptSubmit` hook adds to every prompt: the note focused in the editor, and nothing
