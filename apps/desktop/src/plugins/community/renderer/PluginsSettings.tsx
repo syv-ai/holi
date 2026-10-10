@@ -71,18 +71,38 @@ export function PluginsSettings({ remote }: { remote: string }): React.JSX.Eleme
     switch (row.status) {
       case 'not-installed':
       case 'pin-differs':
-        return row.pin === null ? null : (
-          <Button
-            size="xs"
-            disabled={busy}
-            onClick={() =>
-              void act(() =>
-                installAndAsk(flow, { repo: row.pin!.repo, version: row.pin!.version, id: row.id }),
-              )
-            }
-          >
-            Install {row.pin.version}
-          </Button>
+        // Either side can be the one wanted: this machine's release (an
+        // update, once allowed, pinned for everyone) or the vault's.
+        return (
+          <span className="flex items-center gap-2">
+            {row.install?.kind === 'release' && (
+              <Button
+                size="xs"
+                disabled={busy}
+                onClick={() => askToRun(flow, row, () => communityCap.pin(remote, { id: row.id }))}
+              >
+                Use {row.install.version} in this vault…
+              </Button>
+            )}
+            {row.pin !== null && (
+              <Button
+                size="xs"
+                variant="ghost"
+                disabled={busy}
+                onClick={() =>
+                  void act(() =>
+                    installAndAsk(flow, {
+                      repo: row.pin!.repo,
+                      version: row.pin!.version,
+                      id: row.id,
+                    }),
+                  )
+                }
+              >
+                Install {row.pin.version}
+              </Button>
+            )}
+          </span>
         )
       case 'needs-consent':
       case 'needs-setup':
