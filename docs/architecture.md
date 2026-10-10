@@ -97,7 +97,11 @@ sends a link out of it to the browser.
 A plugin's own code sits in `main/`, `renderer/`, `shared/` and `test/` under its folder; its
 renderer imports its main side as types only, for `capClient`. The plugins are the agent
 ([agent-sessions](features/agent-sessions.md)), PDF ([pdf](features/pdf.md)), Google
-([google](features/google.md)) and vault apps ([vault apps](features/vault-apps.md)).
+([google](features/google.md)), vault apps ([vault apps](features/vault-apps.md)) and community
+plugins ([community plugins](features/community-plugins.md)), which hosts plugins from other
+repositories as processes it runs, never as code it loads. A renderer plugin may give its claims as
+an atom, for claims that follow what main tells it, and a plugin may register a frame origin with
+the window guard (`ctx.frameOrigin`).
 A seed contribution can own a path prefix (`owns`): the agent owns `.claude/`, so every other
 plugin's skills, hooks and settings fragments there are left out while the agent is off and
 seeded once when it turns on.
