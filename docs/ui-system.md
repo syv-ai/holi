@@ -139,6 +139,17 @@ DOM: they copy width, motion, header and edge through the injected stylesheet an
   `[data-theme='dark'|'light']` are parsed, each value validated. It is CSS because a theme is a
   set of custom properties, and because the editor's colour picker only finds colours through the
   CSS grammar.
+- Holi's own theme is one file, `main/vault/seed/vault/once/.holi/settings/theme.css`, written on
+  Tailwind's palette (`--primary: var(--color-sky-700)`, `--divider` a `color-mix()` of border and
+  background). It is a vault's seed and what a reset writes back, and `index.css` imports it, so the
+  look outside a vault and a fresh vault's theme are one text that cannot drift.
+- Seeded once, then the vault's: Holi never fills the file in again, so what a vault changes or
+  removes stays. A token the file leaves out shows the built-in value. Appearance resets one token
+  to Holi's value, or a whole mode (Holi's block into `theme.css`, that mode's local overrides
+  cleared), each confirmed first for a mode.
+- A colour value is a literal, `var()` of another colour token or a palette colour
+  (`--color-<hue>-<shade>`, `white`, `black`), or a `color-mix()` of two of those. A reference
+  names only a colour, so it cannot reach spacing or size.
 - `useVaultTheme` (mounted in `Shell`) writes the resolved values onto
   `document.documentElement`, so Radix portals inherit them. A malformed file degrades to no theme.
   The agent authors themes through the seeded `theme` skill.
@@ -178,6 +189,10 @@ DOM: they copy width, motion, header and edge through the injected stylesheet an
 - Raw scoped CSS plus a sanitizer, or a token map with a raw-CSS escape hatch: an injection
   surface, and "no layout" becomes best effort.
 - A theme in `localStorage`: the agent cannot write it and it does not travel with the vault.
+- Filling a vault's file with Holi's resolved values on every read: a token could never be left to
+  Holi, and a vault's own removals came back.
+- A second copy of Holi's theme as resolved hex values beside `index.css`: two sources that drift,
+  and derived tokens frozen instead of following the tokens they mix.
 - Motion by convention without a lint rule: that is how the unchosen `transition-all` pile arose.
 - Springs beyond the two families above, or stated at a call site instead of `springs.ts`.
 - Theming the titlebar: needs a custom titlebar, which is a layout change.

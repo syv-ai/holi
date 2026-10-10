@@ -187,18 +187,17 @@ describe('the seed tables', () => {
     ])
   })
 
-  it('seeds a theme.css pair that parses, sets nothing, and names every token', () => {
-    for (const key of ['.holi/settings/theme.css', '.holi/settings/theme.local.css'] as const) {
-      const text = SEED_FILES[key]!
-      // Parsed by the reader that reads it for real, not by a second opinion.
-      expect(resolveTheme(text, null)).toEqual({ dark: {}, light: {}, warnings: [] })
-      expect(text).toContain("[data-theme='dark'] {")
-      // The vocabulary is the point of the file: a token Holi knows and this
-      // vault has not set is a commented-out declaration, not an absence.
-      for (const slug of THEME_TOKENS) {
-        expect(text, slug).toContain(`/* --${slug}: ; */`)
-      }
+  it('seeds Holi’s whole theme in theme.css and an empty theme.local.css', () => {
+    // Parsed by the reader that reads it for real, not by a second opinion.
+    const shared = resolveTheme(SEED_FILES['.holi/settings/theme.css']!, null)
+    expect(shared.warnings).toEqual([])
+    for (const mode of ['light', 'dark'] as const) {
+      expect(Object.keys(shared[mode]).sort(), mode).toEqual([...THEME_TOKENS].sort())
     }
+    // The local file overrides nothing, but names every token it could.
+    const local = SEED_FILES['.holi/settings/theme.local.css']!
+    expect(resolveTheme(local, null)).toEqual({ dark: {}, light: {}, warnings: [] })
+    for (const slug of THEME_TOKENS) expect(local, slug).toContain(`/* --${slug}: ; */`)
   })
 
   it('seeds the md-to-pdf skill with the Typst render recipe', () => {

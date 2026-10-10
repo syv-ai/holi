@@ -1,5 +1,6 @@
 export { Button, buttonVariants } from './Button'
 export { Checkbox } from './Checkbox'
+export { Switch } from './Switch'
 export { MorphRow, PillGroup, Token, type PillOption } from './Choice'
 export { MorphDialog } from './MorphDialog'
 export {

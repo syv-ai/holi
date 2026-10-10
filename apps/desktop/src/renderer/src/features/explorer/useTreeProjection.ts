@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import { useAtom, useAtomValue } from 'jotai'
-import { isHiddenPath, isLocalOnlyPath, snapshotTasks, TASKS_CLAIM } from '@holi/shared'
+import { isHiddenPath, snapshotTasks, TASKS_CLAIM } from '@holi/shared'
 import { revealRequestAtom } from '@/state/reveal'
 import {
   activeRemoteAtom,
@@ -39,15 +39,13 @@ export function useTreeProjection() {
     ],
     [snapshot, showTasks],
   )
+  // Machine-local files show like any other: `.local.` means "does not sync",
+  // not "hide from me", and git's dim already marks them.
   const visible = useMemo(() => {
     const paths = showHidden
       ? docPaths
-      : docPaths.filter((p) => p === revealPath || (!isHiddenPath(p) && !isLocalOnlyPath(p)))
-    // A local folder goes with its files: a personal app's `index.html` is
-    // hidden, so its folder would otherwise show as a plain `Home.local.app`.
-    const dirs = showHidden
-      ? snapshot.dirs
-      : snapshot.dirs.filter((d) => !isHiddenPath(d) && !isLocalOnlyPath(d))
+      : docPaths.filter((p) => p === revealPath || !isHiddenPath(p))
+    const dirs = showHidden ? snapshot.dirs : snapshot.dirs.filter((d) => !isHiddenPath(d))
     return { paths, dirs }
   }, [docPaths, snapshot.dirs, showHidden, revealPath])
 

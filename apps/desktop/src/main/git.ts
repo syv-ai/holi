@@ -11,7 +11,7 @@
  * `--porcelain=v2`. Human-readable output is not a stable interface.
  */
 import { execFile } from 'node:child_process'
-import { appendFile, mkdir, mkdtemp, readdir, writeFile } from 'node:fs/promises'
+import { appendFile, lstat, mkdir, mkdtemp, readdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 
@@ -685,7 +685,23 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
     // `-A -- <paths>` so deletions and untracked files among the named paths ride
     // along — a deleted note is a change to publish, a new one is the point — but
     // only those paths, never the whole tree.
-    await runGit(root, ['add', '-A', '--', ...paths], opts)
+    //
+    // A path in neither the tree nor the index is a deletion already staged
+    // (someone ran `git rm`). It is left out: naming it fails the whole add,
+    // and the commit carries it anyway.
+    const indexed = new Set(
+      (await runGit(root, ['ls-files', '-z', '--', ...paths], opts)).split('\0'),
+    )
+    const present = await Promise.all(
+      paths.map((p) =>
+        lstat(join(root, p)).then(
+          () => true,
+          () => false,
+        ),
+      ),
+    )
+    const toAdd = paths.filter((p, i) => present[i] || indexed.has(p))
+    if (toAdd.length > 0) await runGit(root, ['add', '-A', '--', ...toAdd], opts)
     // Nothing actually got staged (e.g. the named paths were already clean): not
     // an error, just the idle path — do not create an empty commit.
     if ((await tryGit(root, ['diff', '--cached', '--quiet'], opts)).ok) return null

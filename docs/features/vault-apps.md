@@ -27,8 +27,8 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   expanded.
   Rename, move, drag, copy, duplicate and delete are the tree's folder operations: a rename edits
   the name without `.app`, and Duplicate makes `Budget copy.app`. A drop on the row lands beside
-  it, not among its files. A personal app's row shows only under show-hidden, like any local
-  file; the launchers always list it. See [file tree](file-tree.md).
+  it, not among its files. A personal app's row shows like any other, dimmed as a
+  local file. See [file tree](file-tree.md).
 - **Launchers.** The tree's app row, the [nav menu](nav-menu.md)'s Apps drill-down (every
   finished app, most recently opened first, in the sidebar and on the rail; absent when there are none), and the
   [command palette](command-palette.md), which lists them with their folder. There is no separate
@@ -48,7 +48,8 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   rather than hashing lets main decode the host with no lookup and no collision. The fixed last
   label stops a URL parser reading hex such as `41` as an IPv4 address. Only the entry document is
   rewritten: Holi injects a `<style>` of theme tokens
-  (Holi's base palette, `APP_BASE_TOKENS`, with the vault's resolved theme laid over it) and the
+  (Holi's own theme for the mode, with the vault's resolved theme laid over it, plus the Tailwind
+  palette colours either refers to, since a frame has no Tailwind build) and the
   `window.holi` bridge script. Every other file is served byte for byte.
 - **The bridge** is `postMessage` from the frame to `AppFrame`, which answers `holi.open` itself
   (the shim sends `{target}`: a view registered in this vault by name wins, such as home, board,

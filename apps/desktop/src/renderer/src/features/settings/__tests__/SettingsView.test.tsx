@@ -37,6 +37,7 @@ vi.mock('@/lib/trpc', () => ({
     // rejection.
     theme: {
       read: { query: () => themeRead() },
+      holi: { query: () => Promise.resolve({ light: {}, dark: {} }) },
       write: { mutate: (input: unknown) => themeWrite(input) },
       reset: { mutate: vi.fn() },
     },

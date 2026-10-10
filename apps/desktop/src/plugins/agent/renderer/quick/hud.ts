@@ -17,7 +17,7 @@ export function useHudPage(page: 'quick' | 'dock', remote: string | null): void 
     document.documentElement.dataset.theme = 'dark'
     document.documentElement.dataset.page = page
   }, [page])
-  useVaultTheme({ fill: false })
+  useVaultTheme()
   const setRemote = useSetAtom(activeRemoteAtom)
   useEffect(() => setRemote(remote), [remote, setRemote])
 }
