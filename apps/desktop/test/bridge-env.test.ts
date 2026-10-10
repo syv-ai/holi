@@ -43,15 +43,20 @@ async function run(
 let dir: string
 let server: BridgeServer
 let turns: Array<[string, string, boolean]>
+let pendings: Array<number | null>
 let statuses: Array<[string, string, unknown]>
 
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), 'holi-endpoint-'))
   turns = []
+  pendings = []
   statuses = []
   server = createBridgeServer({ log: () => {} })
   registerAgentRoutes(server, {
-    onJobTurn: (remote, job, active) => turns.push([remote, job, active]),
+    onJobTurn: (remote, job, active, pending) => {
+      turns.push([remote, job, active])
+      if (!active) pendings.push(pending)
+    },
     onStatus: (remote, job, status) => statuses.push([remote, job, status]),
     log: () => {},
   })
@@ -144,6 +149,25 @@ describe('turn-signal.mjs', () => {
     )
     expect(res).toMatchObject({ code: 0, stdout: '' })
     expect(turns).toEqual([['syv/vault', 'abcd1234', true]])
+  })
+
+  it("at a Stop, says how much Claude Code's input lists as still pending", async () => {
+    await writeFor()
+    const stop = (input: unknown) =>
+      run(process.execPath, [HOOK, 'end'], sessionEnv('abcd1234'), JSON.stringify(input))
+    // Done: nothing in flight, nothing scheduled.
+    expect(await stop({ background_tasks: [], session_crons: [] })).toMatchObject({
+      code: 0,
+      stdout: '',
+    })
+    // Paused: a background shell and a cron still to wake it.
+    await stop({
+      background_tasks: [{ id: 'b1', type: 'shell', status: 'running' }],
+      session_crons: [{ id: 'c1', schedule: '*/5 * * * *', recurring: true }],
+    })
+    // An input that says neither: unsaid, not done.
+    await stop({ stop_hook_active: false })
+    expect(pendings).toEqual([0, 2, null])
   })
 
   it('does nothing, silently, when Holi is not there or this is not a background session', async () => {

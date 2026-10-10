@@ -84,12 +84,15 @@ clears it.
 **Asks are pasted, never submitted.** Text from a selection, task, mail thread or PDF comment goes
 to a live session the user picks (needs-you sessions are not offered), or to a new one named from
 its first line, as a bracketed paste with no Enter into that session's window. A window just opened
-holds the paste until its TUI has printed and settled, with a 5 s backstop. **Reconcile and a stuck
-push are the exception**: their first turn is the command's prompt.
+holds the paste until its TUI has printed and settled, with a 5 s backstop. **Reconcile, a stuck
+push and a scheduled run are the exception**: their first turn is the command's prompt. A scheduled
+run opens no window at all ([scheduled-agents](scheduled-agents.md)).
 
 **Git coexistence.** The seeded `UserPromptSubmit` and `Stop` hooks run `turn-signal.mjs`, which
 reads the vault's `bridge.local.env` ([agent-config](agent-config.md)) for the port and the vault's token, and posts
-the job id from `$CLAUDE_JOB_DIR`. The vault has one working set: the first turn to start pauses
+the job id from `$CLAUDE_JOB_DIR`; at a Stop, also `pending`, how many background tasks and
+session crons its input lists, which is what tells a done session from a paused one
+([scheduled-agents](scheduled-agents.md)). The vault has one working set: the first turn to start pauses
 sync, the last to end resumes it and takes one settle commit. A session also leaves the set when
 its process goes, on two consecutive `idle` readings (escaping a permission prompt fires no `Stop`),
 or on a 10 minute cap. Sessions keep running while Holi is closed, so the first read after a vault
@@ -122,8 +125,8 @@ showing it busy, crosses it off), so a session resumed from the list is never re
   always Holi's.
 - Probe a pid before signalling it: signal the group only if it still leads its group. A reaped pid
   may already be a stranger's. Holi only ever signals its own terminal clients.
-- Only reconcile, a stuck push and a skills update's conflicts submit a turn. Holi cannot see the
-  composer.
+- Only reconcile, a stuck push, a skills update's conflicts and a scheduled run submit a turn, each
+  as the first turn of a session of its own. Holi cannot see the composer.
 - Record a turn after the vault resumes, fire-and-forget: a lost record beats a stuck pause.
 - A turn revert does not flush open buffers first; a dirty buffer 3-way merges.
 - Turn-hook and status-line responses are empty: a turn hook's body would be injected into

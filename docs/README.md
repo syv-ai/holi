@@ -15,29 +15,30 @@ other rather than repeating each other.
 
 ## Features
 
-| Page                                           | What it covers                                                           |
-| ---------------------------------------------- | ------------------------------------------------------------------------ |
-| [vaults-sync](features/vaults-sync.md)         | Managed clones, autosave commits, pull, push, reconcile, vault git hooks |
-| [history](features/history.md)                 | A file's and a vault's history, and restoring from it                    |
-| [settings](features/settings.md)               | `.holi/settings/app.yaml`, its schema, the settings tab                  |
-| [file-tree](features/file-tree.md)             | The tree, folders, hidden and local files, icons                         |
-| [auth](features/auth.md)                       | GitHub sign-in, the token, collaborators, access                         |
-| [editor](features/editor.md)                   | CodeMirror live preview, tables, images, external writes, completion     |
-| [tabs-panes](features/tabs-panes.md)           | Panes, preview and pinned tabs, moving tabs                              |
-| [frontmatter](features/frontmatter.md)         | The frontmatter block, typed rows, schemas                               |
-| [wiki-links](features/wiki-links.md)           | Link grammar, rename, backrefs                                           |
-| [tasks](features/tasks.md)                     | Task files, the board, dates, recurrence, reminders                      |
-| [daily-notes](features/daily-notes.md)         | Idempotent daily notes and their archive                                 |
-| [agent-sessions](features/agent-sessions.md)   | Claude Code background sessions, agent tabs, turn review, reconcile      |
-| [agent-config](features/agent-config.md)       | Config layering, the per-vault silo, seeded files, tools, permissions    |
-| [agent-memory](features/agent-memory.md)       | The vault's `.holi/memory/` directory                                    |
-| [google](features/google.md)                   | Gmail and Calendar per vault                                             |
-| [pdf](features/pdf.md)                         | Typst export, templates, the PDF viewer                                  |
-| [vault-apps](features/vault-apps.md)           | Agent-written apps in their own origin                                   |
-| [command-palette](features/command-palette.md) | Quick open and the one table of commands                                 |
-| [nav-menu](features/nav-menu.md)               | The morphing menu at the sidebar's foot, and Home                        |
-| [onboarding](features/onboarding.md)           | First run, creating or joining a vault                                   |
-| [updates](features/updates.md)                 | Releases from CI, and the app updating itself                            |
+| Page                                             | What it covers                                                           |
+| ------------------------------------------------ | ------------------------------------------------------------------------ |
+| [vaults-sync](features/vaults-sync.md)           | Managed clones, autosave commits, pull, push, reconcile, vault git hooks |
+| [history](features/history.md)                   | A file's and a vault's history, and restoring from it                    |
+| [settings](features/settings.md)                 | `.holi/settings/app.yaml`, its schema, the settings tab                  |
+| [file-tree](features/file-tree.md)               | The tree, folders, hidden and local files, icons                         |
+| [auth](features/auth.md)                         | GitHub sign-in, the token, collaborators, access                         |
+| [editor](features/editor.md)                     | CodeMirror live preview, tables, images, external writes, completion     |
+| [tabs-panes](features/tabs-panes.md)             | Panes, preview and pinned tabs, moving tabs                              |
+| [frontmatter](features/frontmatter.md)           | The frontmatter block, typed rows, schemas                               |
+| [wiki-links](features/wiki-links.md)             | Link grammar, rename, backrefs                                           |
+| [tasks](features/tasks.md)                       | Task files, the board, dates, recurrence, reminders                      |
+| [daily-notes](features/daily-notes.md)           | Idempotent daily notes and their archive                                 |
+| [agent-sessions](features/agent-sessions.md)     | Claude Code background sessions, agent tabs, turn review, reconcile      |
+| [agent-config](features/agent-config.md)         | Config layering, the per-vault silo, seeded files, tools, permissions    |
+| [agent-memory](features/agent-memory.md)         | The vault's `.holi/memory/` directory                                    |
+| [scheduled-agents](features/scheduled-agents.md) | Prompts Holi runs as agent sessions on a cron schedule, on this machine  |
+| [google](features/google.md)                     | Gmail and Calendar per vault                                             |
+| [pdf](features/pdf.md)                           | Typst export, templates, the PDF viewer                                  |
+| [vault-apps](features/vault-apps.md)             | Agent-written apps in their own origin                                   |
+| [command-palette](features/command-palette.md)   | Quick open and the one table of commands                                 |
+| [nav-menu](features/nav-menu.md)                 | The morphing menu at the sidebar's foot, and Home                        |
+| [onboarding](features/onboarding.md)             | First run, creating or joining a vault                                   |
+| [updates](features/updates.md)                   | Releases from CI, and the app updating itself                            |
 
 ## Rules for these docs
 

@@ -161,8 +161,12 @@ stay on. There is no MCP server: the agent uses its native tools plus one small 
 that talks to main. Holi pauses sync while a turn runs and reviews a turn as the commit
 range it produced.
 
-See [agent-sessions](features/agent-sessions.md), [agent-config](features/agent-config.md) and
-[agent-memory](features/agent-memory.md).
+**Scheduled agents** are files in `.holi/schedules/` that the open vault's agent plugin starts as
+background sessions at their times, on machines that approved their content
+([scheduled-agents](features/scheduled-agents.md)).
+
+See [agent-sessions](features/agent-sessions.md), [agent-config](features/agent-config.md),
+[agent-memory](features/agent-memory.md) and [scheduled-agents](features/scheduled-agents.md).
 
 ## 6. The pillars
 
@@ -183,8 +187,8 @@ See [agent-sessions](features/agent-sessions.md), [agent-config](features/agent-
 ## 7. State outside the repo
 
 - `userData` holds the GitHub and Google tokens (encrypted with Electron `safeStorage`), the vault
-  registry (which repos are added and where), each vault's agent config directory, the Google cache
-  and the `holi` CLIs. It is a machine fact: a second laptop starts empty.
+  registry (which repos are added and where), each vault's agent config directory, the Google cache,
+  which schedules this machine runs (and their run log) and the `holi` CLIs. It is a machine fact: a second laptop starts empty.
 - Per vault, `.holi/settings/app.local.yaml` holds machine-local settings and the reminder
   watermark; `.holi/settings/app.yaml` holds the shared ones.
 - Conversations are Claude Code's own transcripts, local to the machine that ran them.

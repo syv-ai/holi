@@ -19,8 +19,10 @@ import type { RouteServer } from '../provider'
 
 export interface AgentRoutesDeps {
   /** A turn began or ended in one of this vault's background sessions, named
-   *  by its short job id. */
-  onJobTurn(remote: string, jobId: string, active: boolean): void
+   *  by its short job id. At an end, `pending` is how many background tasks
+   *  and session crons Claude Code's Stop input listed, 0 meaning the session
+   *  is done rather than paused; null from a script that does not say. */
+  onJobTurn(remote: string, jobId: string, active: boolean, pending: number | null): void
   /** A session's status line fired, with Claude Code's status JSON. Holi's
    *  side of a shipped hook must stay backward-compatible, so this route
    *  answers every older script too. */
@@ -45,7 +47,9 @@ export function registerAgentRoutes(server: RouteServer, deps: AgentRoutesDeps):
       body: 'discard',
       handle(remote, query) {
         const job = query.get('job') ?? ''
-        if (JOB_ID.test(job)) deps.onJobTurn(remote, job, active)
+        const raw = query.get('pending')
+        const pending = raw !== null && /^\d+$/.test(raw) ? Number(raw) : null
+        if (JOB_ID.test(job)) deps.onJobTurn(remote, job, active, active ? null : pending)
         return EMPTY
       },
     })
