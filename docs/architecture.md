@@ -74,6 +74,13 @@ Plugins call each other the same way, each typing only the slice it calls; befor
 call, a plugin asks `useHasCapability(name)`, backed by the `cap.names` query (the UI door's names
 whose owner the vault runs), so a button for another plugin's verb hides while that plugin is off.
 Core's `tasks.create` is one: the board and the Google views create tasks through it.
+A plugin that builds on another says so in `PluginInfo.requires`: it runs only where every plugin
+it requires runs, down a chain, so turning one off turns off what stands on it, its seeds included.
+The dependency runs one way: the plugin underneath knows nothing of what requires it. One resolver,
+`resolvePlugins`, answers which plugins run and why each other one does not (off in the vault, off
+on this machine, or needing one that is off), and every reader in both processes asks it. Both
+processes check their list with `checkPluginCatalogue` at boot, which refuses a missing or circular
+requirement.
 A plugin claims vault paths: the first enabled claim with a `view` opens a note tab of that path,
 and its `rowMenu` items join the file tree's menu. On the main side a claim
 (`MainPlugin.claims`, `{match, parse, normalize?}`) owns markdown files in the snapshot: the scanner
@@ -115,8 +122,9 @@ What a synced vault holds stays core whatever this machine runs: an app's record
 field by field and a `.local.app` still never syncs with the apps plugin off, so that bundle
 grammar is in `packages/shared` and the merge driver and fences in core.
 
-Enablement has two layers: `.holi/settings/app.yaml` declares the vault's plugins for everyone,
-and `app.local.yaml` can only turn one off on this machine ([settings](features/settings.md)). The
+Enablement has two layers: `.holi/settings/plugins.yaml` declares the vault's plugins for everyone,
+and `plugins.local.yaml` can only turn one off on this machine ([settings](features/settings.md)).
+The same pair holds each plugin's own settings under its id (`PluginInfo.settings`). The
 plugin host (`src/main/plugin-host/`) starts a plugin once per process when a vault that enables it
 opens (`activateApp`), seeds only enabled plugins' files, and stops them all at quit. Once the vault
 is open it runs `activateVault` with a context bound to that vault (hold sync, commit, read the
@@ -192,8 +200,8 @@ See [agent-sessions](features/agent-sessions.md), [agent-config](features/agent-
 - `userData` holds the GitHub and Google tokens (encrypted with Electron `safeStorage`), the vault
   registry (which repos are added and where), each vault's agent config directory, the Google cache
   and the `holi` CLIs. It is a machine fact: a second laptop starts empty.
-- Per vault, `.holi/settings/app.local.yaml` holds machine-local settings and the reminder
-  watermark; `.holi/settings/app.yaml` holds the shared ones.
+- Per vault, `.holi/settings/app.local.yaml` and `plugins.local.yaml` hold machine-local settings
+  (the first also the reminder watermark); `app.yaml` and `plugins.yaml` hold the shared ones.
 - Conversations are Claude Code's own transcripts, local to the machine that ran them.
 
 ## 8. Security boundaries

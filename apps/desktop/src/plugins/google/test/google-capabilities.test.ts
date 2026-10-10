@@ -50,8 +50,7 @@ function rig({ data = {}, accounts = {} }: RigOptions = {}) {
     googleCapabilities({
       accounts: accounts as GoogleAccountsManager,
       dataFor: async () => googleData,
-      calendarPrefs: { read: async () => ({}), set: async () => {} },
-      imagePrefs: { read: async () => [], allow: async () => {}, clear: async () => {} },
+      settings: { read: async () => ({ calendars: {}, imageSenders: [] }), write: async () => {} },
     }),
   )
   const call = async (name: string, params?: unknown, remote = 'owner/repo') =>

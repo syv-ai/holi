@@ -14,6 +14,8 @@
  */
 import {
   ICONS_FILE,
+  PLUGINS_FILE,
+  PLUGINS_LOCAL_FILE,
   SETTINGS_FILE,
   SETTINGS_LOCAL_FILE,
   THEME_FILE,
@@ -22,7 +24,8 @@ import {
 } from '@holi/shared'
 import { atom } from 'jotai'
 import type { SettingsSection, SettingsSectionHeading } from '@/plugin-api/types'
-import { pluginSettingsSectionsAtom } from '@/state/plugins'
+import { pluginSettingsSectionsAtom, runningPluginsAtom } from '@/state/plugins'
+import { PluginSettingsSection } from './PluginSettingsSection'
 import { AccountSection } from './AccountSection'
 import { DescriptorSection } from './DescriptorSection'
 import { IconsSection } from './IconsSection'
@@ -43,7 +46,8 @@ const VAULT_CONTENT: readonly SettingsSection[] = [
     id: 'general',
     label: 'General',
     headings: [],
-    files: [SETTINGS_FILE, SETTINGS_LOCAL_FILE],
+    // The plugins row is here, and it writes the plugins files.
+    files: [SETTINGS_FILE, SETTINGS_LOCAL_FILE, PLUGINS_FILE, PLUGINS_LOCAL_FILE],
     Component: () => <DescriptorSection section="general" />,
   },
   {
@@ -111,9 +115,24 @@ export const CORE_SETTINGS_SECTIONS: readonly SettingsSection[] = [
   ...VAULT_AND_ACCOUNT,
 ]
 
+/** A section of a running plugin's own settings, for each one that declares
+ *  any (`PluginInfo.settings`), named after the plugin. */
+const pluginOwnSettingsAtom = atom((get): readonly SettingsSection[] =>
+  get(runningPluginsAtom)
+    .filter(({ info }) => (info.settings ?? []).length > 0)
+    .map(({ info }) => ({
+      id: `${info.id}-settings`,
+      label: info.label,
+      headings: [],
+      files: [PLUGINS_FILE, PLUGINS_LOCAL_FILE],
+      Component: () => <PluginSettingsSection info={info} />,
+    })),
+)
+
 /** Every section there is in the open vault. */
 export const settingsSectionsAtom = atom((get): readonly SettingsSection[] => [
   ...VAULT_CONTENT,
+  ...get(pluginOwnSettingsAtom),
   ...get(pluginSettingsSectionsAtom),
   ...VAULT_AND_ACCOUNT,
 ])

@@ -15,6 +15,9 @@ import {
   MEMORY_INDEX_EMPTY,
   seedSettings,
   seedSettingsText,
+  writePluginSettingsText,
+  PLUGINS_FILE,
+  PLUGINS_LOCAL_FILE,
   SETTINGS_FILE,
   SETTINGS_LOCAL_FILE,
   THEME_FILE,
@@ -81,6 +84,10 @@ export const coreSeed = (known: readonly PluginInfo[]): SeedContribution => ({
     // onboarding questions. The local half is gitignored by `*.local.*`.
     [SETTINGS_FILE]: seedSettingsText(seedSettings('committed'), 'committed', known),
     [SETTINGS_LOCAL_FILE]: seedSettingsText(seedSettings('local'), 'local', known),
+    // Which plugins run and each one's settings, every one commented at its
+    // default until answered. The local half is gitignored by `*.local.*`.
+    [PLUGINS_FILE]: writePluginSettingsText({}, 'committed', known),
+    [PLUGINS_LOCAL_FILE]: writePluginSettingsText({}, 'local', known),
     [THEME_LOCAL_FILE]: THEME_LOCAL_SEED,
     // The memory directory exists and is tracked from a vault's first commit,
     // in its empty-state form; after that the `memory-index` transform owns

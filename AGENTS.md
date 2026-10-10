@@ -117,6 +117,7 @@ legacy alias with the same behavior as `pnpm lint`.
 - Never commit secrets, tokens, or machine state. Root `.gitignore` excludes
   `.env`, `*.local`, logs, build output, and dependencies. Vault-local files such
   as `USER.local.md`, `CLAUDE.local.md`, `.holi/settings/app.local.yaml`,
+  `.holi/settings/plugins.local.yaml`,
   `.holi/memory/*.local.md`, and `*.local.*` must remain machine-local; the GitHub
   token is kept by the app's credential storage, not in source. Local-ness is
   the `.local.` marker and nothing else: a bare `USER.md` is ordinary
@@ -142,8 +143,9 @@ legacy alias with the same behavior as `pnpm lint`.
   A shipped skill or hook (`vault/shipped/`) is written only at vault creation and
   reaches an existing vault only when its user runs `holi skills update`.
 - **A file whose writer regenerates it is the third answer to that question, and
-  the cheapest.** `.holi/settings/app.yaml`, `app.local.yaml` and the two theme
-  files are once files, but `writeSettingsText`/`writeThemeText` emit the whole
+  the cheapest.** `.holi/settings/app.yaml`, `plugins.yaml`, their `.local`
+  twins and the two theme files are once files, but `writeSettingsText`,
+  `writePluginSettingsText` and `writeThemeText` emit the whole
   document on every write rather than merging into it — so the list of settings
   and theme tokens they carry is rebuilt from `VAULT_SETTINGS` and
   `THEME_TOKEN_GROUPS` each time, and a vault seeded years earlier gains a newly

@@ -33,13 +33,13 @@ import {
 } from '../../../main/plugin-api'
 import type { GoogleAccountsManager } from './accounts'
 import { GoogleApi, GoogleApiError, type GoogleErrorCode } from './api'
-import type { CalendarPrefsStore } from './calendar-prefs'
 import {
   createEvent,
   deleteEvent,
   resolveCalendars,
   updateEvent,
   type AgendaWindow,
+  type CalendarOverrides,
   type EventPatch,
 } from './calendar'
 import type { ComposeWrite, GoogleData } from './data'
@@ -56,7 +56,6 @@ import {
   type MailboxName,
   type MailCategory,
 } from './gmail'
-import type { ImagePrefsStore } from './image-prefs'
 import { resolveThreadMeeting } from './invite'
 import type { LoopbackFlow } from './loopback-flow'
 import type { OutgoingMail } from './mime'
@@ -75,11 +74,18 @@ export interface GoogleCapabilityDeps {
   accounts: GoogleAccountsManager
   /** The vault's cached data layer; null when no account is connected to it. */
   dataFor(remote: string): Promise<GoogleData | null>
-  /** Which calendars the person switched on: the agenda view, an app and the
-   *  agent all read their agenda through it. */
-  calendarPrefs: CalendarPrefsStore
-  /** Senders whose remote images always load. */
-  imagePrefs: ImagePrefsStore
+  /** This vault's Google settings on this machine (`GOOGLE_INFO.settings`):
+   *  the agenda view, an app and the agent all read through them. */
+  settings: GoogleSettingsStore
+}
+
+/** The Google plugin's own settings in a vault, read and written by root. */
+export interface GoogleSettingsStore {
+  read(root: string): Promise<{ calendars: CalendarOverrides; imageSenders: string[] }>
+  write(
+    root: string,
+    values: Partial<{ calendars: CalendarOverrides; imageSenders: string[] }>,
+  ): Promise<void>
 }
 
 const NOT_CONNECTED = 'this vault has no Google account connected'
@@ -313,7 +319,7 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
       },
     })
 
-  const overrides = async () => (await deps.calendarPrefs.read()) ?? {}
+  const overrides = async (root: string) => (await deps.settings.read(root)).calendars
 
   return {
     /**
@@ -430,7 +436,7 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
       params: windowParams,
       run: async (ctx, window) => {
         const data = await dataOf(ctx.remote)
-        return google(async () => data.agenda(agendaWindow(window), await overrides()))
+        return google(async () => data.agenda(agendaWindow(window), await overrides(ctx.root)))
       },
     }),
 
@@ -440,8 +446,10 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
       doors: ['ui'],
       params: windowParams,
       run: async (ctx, window) =>
-        (await deps.dataFor(ctx.remote))?.cachedAgenda(agendaWindow(window), await overrides()) ??
-        null,
+        (await deps.dataFor(ctx.remote))?.cachedAgenda(
+          agendaWindow(window),
+          await overrides(ctx.root),
+        ) ?? null,
     }),
 
     /** Every calendar the account draws from, with its colour and whether it
@@ -450,7 +458,7 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
       doors: ['ui'],
       params: noParams,
       run: async (ctx) =>
-        google(async () => resolveCalendars(apiOf(ctx.remote), await overrides())),
+        google(async () => resolveCalendars(apiOf(ctx.remote), await overrides(ctx.root))),
     }),
 
     /** Switch one calendar on or off, for the agenda view, apps and the agent. */
@@ -460,8 +468,9 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
         const p = paramsObject(raw)
         return { id: stringParam(p, 'id'), enabled: booleanParam(p, 'enabled') }
       },
-      run: async (_ctx, { id, enabled }) => {
-        await deps.calendarPrefs.set(id, enabled)
+      run: async (ctx, { id, enabled }) => {
+        const { calendars } = await deps.settings.read(ctx.root)
+        await deps.settings.write(ctx.root, { calendars: { ...calendars, [id]: enabled } })
         return ok
       },
     }),
@@ -494,7 +503,7 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
       params: idParams,
       run: async (ctx, { id }) =>
         google(async () =>
-          resolveThreadMeeting(apiOf(ctx.remote), id, { overrides: await overrides() }),
+          resolveThreadMeeting(apiOf(ctx.remote), id, { overrides: await overrides(ctx.root) }),
         ),
     }),
 
@@ -783,19 +792,25 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
       run: async (ctx) => google(() => fetchCategoryCounts(apiOf(ctx.remote))),
     }),
 
-    /** The senders whose remote images always load. Kept per machine and
-     *  account, never in a vault: a vault is a shared repo. */
+    /** The senders whose remote images always load: this vault's local
+     *  Google settings, never the committed file, since a vault is shared. */
     'google.imageSenders': cap({
       doors: ['ui'],
       params: noParams,
-      run: async () => deps.imagePrefs.read(),
+      run: async (ctx) => (await deps.settings.read(ctx.root)).imageSenders,
     }),
 
+    /** Lowercased on the way in: `Ada@Syv.ai` and `ada@syv.ai` are one person,
+     *  and matching by case would re-block a sender already allowed. */
     'google.allowImagesFrom': cap({
       doors: ['ui'],
       params: (raw) => ({ sender: stringParam(paramsObject(raw), 'sender') }),
-      run: async (_ctx, { sender }) => {
-        await deps.imagePrefs.allow(sender)
+      run: async (ctx, { sender }) => {
+        const address = sender.trim().toLowerCase()
+        const { imageSenders } = await deps.settings.read(ctx.root)
+        if (address !== '' && !imageSenders.includes(address)) {
+          await deps.settings.write(ctx.root, { imageSenders: [...imageSenders, address] })
+        }
         return ok
       },
     }),
@@ -803,8 +818,8 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
     'google.forgetImageSenders': cap({
       doors: ['ui'],
       params: noParams,
-      run: async () => {
-        await deps.imagePrefs.clear()
+      run: async (ctx) => {
+        await deps.settings.write(ctx.root, { imageSenders: [] })
         return ok
       },
     }),

@@ -8,9 +8,14 @@ import { TriangleAlert } from 'lucide-react'
 import {
   SETTINGS_FILE,
   SETTINGS_LOCAL_FILE,
+  PLUGINS_FILE,
+  PLUGINS_LOCAL_FILE,
   availableOptions,
   isLocalOnlyPath,
+  pluginLabels,
+  resolvePlugins,
   type PluginSettings,
+  type PluginStatus,
   type VaultSettingDescriptor,
   type VaultSettingOption,
 } from '@holi/shared'
@@ -23,14 +28,25 @@ import { installedPluginsAtom, surfacesAtom } from '@/state/plugins'
 import { SettingsRow } from '@/composites'
 import { VaultHooks } from './VaultHooks'
 
-export function Layer({ target }: { target: VaultSettingDescriptor['target'] }): React.JSX.Element {
+export function Layer({
+  target,
+  file = 'app',
+}: {
+  target: VaultSettingDescriptor['target']
+  /** Which pair of files the answer is written to. */
+  file?: 'app' | 'plugins'
+}): React.JSX.Element {
   const committed = target === 'committed'
+  const files =
+    file === 'app'
+      ? { committed: SETTINGS_FILE, local: SETTINGS_LOCAL_FILE }
+      : { committed: PLUGINS_FILE, local: PLUGINS_LOCAL_FILE }
   return (
     <Tooltip
       content={
         committed
-          ? `shared with the vault — written to ${SETTINGS_FILE}`
-          : `this machine only — written to ${SETTINGS_LOCAL_FILE}, which is never committed`
+          ? `shared with the vault, written to ${files.committed}`
+          : `this machine only, written to ${files.local}, which is never committed`
       }
     >
       {/* `--border`, not `--divider`: this is a chip, and a chip is an object
@@ -75,6 +91,13 @@ export function SettingRow({
 
   // A switch per installed plugin, so with none there is nothing to show.
   if (control.kind === 'plugins' && installed.length === 0) return null
+  // The tick is the vault's answer; whether the plugin runs also takes what it
+  // requires, which the row then names.
+  const infos = installed.map((p) => p.info)
+  const status =
+    control.kind === 'plugins'
+      ? resolvePlugins(value as PluginSettings, infos).status
+      : new Map<string, PluginStatus>()
 
   return (
     <SettingsRow
@@ -84,7 +107,7 @@ export function SettingRow({
       data-setting={key}
       label={label}
       description={explanation}
-      meta={<Layer target={descriptor.target} />}
+      meta={<Layer target={descriptor.target} file={key === 'plugins' ? 'plugins' : 'app'} />}
       // A switch and a pick-one are both one answer to the row's question, so
       // both sit on the label's line, right-aligned. Only the flag group is
       // below, in `children`.
@@ -164,7 +187,9 @@ export function SettingRow({
           {installed.map((plugin) => {
             const { info } = plugin
             const plugins = value as PluginSettings
-            const off = plugins.localOff.includes(info.id)
+            const st = status.get(info.id)
+            const off = st?.kind === 'off-here'
+            const needs = st?.kind === 'needs' ? st.missing : []
             const adds = pluginAdds(plugin)
             return (
               <label key={info.id} className="flex items-start gap-2.5">
@@ -195,9 +220,14 @@ export function SettingRow({
                   {info.whenOff !== undefined && (
                     <span className="text-[11px] text-muted-foreground">Off: {info.whenOff}</span>
                   )}
+                  {needs.length > 0 && (
+                    <span className="text-[11px] text-muted-foreground">
+                      Needs {pluginLabels(needs, infos)}, so it is not running.
+                    </span>
+                  )}
                   {off && (
                     <span className="text-[11px] text-muted-foreground">
-                      Off on this machine, in {SETTINGS_LOCAL_FILE}.
+                      Off on this machine, in {PLUGINS_LOCAL_FILE}.
                     </span>
                   )}
                 </span>

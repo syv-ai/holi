@@ -16,7 +16,7 @@
  * A personal `.local.app` needs the flag but no approval: its code was written
  * on this machine and its records never sync.
  *
- * Plain JSON in userData, like `google/calendar-prefs.ts`: no credential here.
+ * Plain JSON in userData: no credential here.
  */
 import { createHash } from 'node:crypto'
 import { readdir, readFile, readlink } from 'node:fs/promises'

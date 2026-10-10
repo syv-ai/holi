@@ -14,7 +14,7 @@ import {
   normaliseAnswers,
   parseSettingsPatch,
   resolveColorMode,
-  resolveVaultSettings,
+  resolveAppSettings,
   seedSettings,
   splitAnswersByTarget,
 } from '../src/vault-settings'
@@ -60,9 +60,9 @@ describe('VAULT_SETTING_DEFAULTS', () => {
   })
 })
 
-describe('resolveVaultSettings — absent and empty files', () => {
+describe('resolveAppSettings — absent and empty files', () => {
   it('resolves to the defaults when neither file exists', () => {
-    const s = resolveVaultSettings(null, null)
+    const s = resolveAppSettings(null, null)
     expect(s.home).toBe(VAULT_SETTING_DEFAULTS.home)
     expect(s.dailyNotes).toBe(true)
     expect(s.colorScheme).toBe('system')
@@ -72,22 +72,22 @@ describe('resolveVaultSettings — absent and empty files', () => {
   })
 
   it('treats an empty file as an absent one', () => {
-    expect(resolveVaultSettings('', '   ').warnings).toEqual([])
-    expect(resolveVaultSettings('', '   ').home).toBe(VAULT_SETTING_DEFAULTS.home)
+    expect(resolveAppSettings('', '   ').warnings).toEqual([])
+    expect(resolveAppSettings('', '   ').home).toBe(VAULT_SETTING_DEFAULTS.home)
   })
 
   it('never returns the shared defaults object itself', () => {
     // A caller mutating what it got back must not rewrite every later resolve.
-    const a = resolveVaultSettings(null, null)
-    const b = resolveVaultSettings(null, null)
+    const a = resolveAppSettings(null, null)
+    const b = resolveAppSettings(null, null)
     expect(a.hooks).not.toBe(b.hooks)
     expect(a.hooks).not.toBe(VAULT_SETTING_DEFAULTS.hooks)
   })
 })
 
-describe('resolveVaultSettings — the committed file', () => {
+describe('resolveAppSettings — the committed file', () => {
   it('reads every setting from the committed file', () => {
-    const s = resolveVaultSettings(
+    const s = resolveAppSettings(
       committed({
         home: 'board',
         dailyNotes: false,
@@ -110,15 +110,15 @@ describe('resolveVaultSettings — the committed file', () => {
     // nothing about — `reminders` is written there by the delivery watermark
     // (main/reminders/delivered-log.ts). Warning about them would fire on every
     // launch of every vault that has ever fired a reminder.
-    const s = resolveVaultSettings(null, committed({ reminders: { 'a.md': '2026-08-22T09:00' } }))
+    const s = resolveAppSettings(null, committed({ reminders: { 'a.md': '2026-08-22T09:00' } }))
     expect(s.warnings).toEqual([])
     expect(s).not.toHaveProperty('reminders')
   })
 })
 
-describe('resolveVaultSettings — the local override', () => {
+describe('resolveAppSettings — the local override', () => {
   it('overrides per key, inheriting the rest of the committed file', () => {
-    const s = resolveVaultSettings(
+    const s = resolveAppSettings(
       committed({ home: 'board', dailyNotes: false, colorScheme: 'light' }),
       committed({ colorScheme: 'dark' }),
     )
@@ -130,7 +130,7 @@ describe('resolveVaultSettings — the local override', () => {
 
   it('merges hooks per transform rather than replacing the block', () => {
     // A local file naming one transform must not silently disable the others.
-    const s = resolveVaultSettings(
+    const s = resolveAppSettings(
       committed({
         hooks: {
           relink: true,
@@ -150,28 +150,28 @@ describe('resolveVaultSettings — the local override', () => {
   })
 
   it('lets local win over committed, not the other way round', () => {
-    const s = resolveVaultSettings(committed({ home: 'mail' }), committed({ home: 'agenda' }))
+    const s = resolveAppSettings(committed({ home: 'mail' }), committed({ home: 'agenda' }))
     expect(s.home).toBe('agenda')
   })
 })
 
-describe('resolveVaultSettings — malformed input never throws', () => {
+describe('resolveAppSettings — malformed input never throws', () => {
   it('ignores a corrupt file and still applies the other one', () => {
-    const s = resolveVaultSettings('{ not json', committed({ colorScheme: 'light' }))
+    const s = resolveAppSettings('{ not json', committed({ colorScheme: 'light' }))
     expect(s.colorScheme).toBe('light')
     // The corrupt committed file contributes nothing, not an exception.
     expect(s.home).toBe(VAULT_SETTING_DEFAULTS.home)
   })
 
   it('ignores a corrupt local file and keeps the committed one', () => {
-    const s = resolveVaultSettings(committed({ dailyNotes: false }), '}}}')
+    const s = resolveAppSettings(committed({ dailyNotes: false }), '}}}')
     expect(s.dailyNotes).toBe(false)
   })
 
   it.each([['"a string"'], ['[1,2,3]'], ['null'], ['42'], ['true']])(
     'treats a non-object top level (%s) as no settings',
     (json) => {
-      const s = resolveVaultSettings(json, null)
+      const s = resolveAppSettings(json, null)
       expect(s.home).toBe(VAULT_SETTING_DEFAULTS.home)
       expect(s.dailyNotes).toBe(true)
     },
@@ -189,7 +189,7 @@ describe('resolveVaultSettings — malformed input never throws', () => {
     ['a non-object hooks block', { hooks: 'all' }],
     ['a non-boolean transform value', { hooks: { relink: 'on' } }],
   ])('falls back to the default for %s, and says so', (_label, value) => {
-    const s = resolveVaultSettings(committed(value), null)
+    const s = resolveAppSettings(committed(value), null)
     expect(s.warnings.length).toBeGreaterThan(0)
     expect(s.dailyNotes).toBe(true)
     expect(s.colorScheme).toBe('system')
@@ -199,13 +199,13 @@ describe('resolveVaultSettings — malformed input never throws', () => {
   })
 
   it('keeps a transform name this build does not have, for the plugin that does', () => {
-    const s = resolveVaultSettings(committed({ hooks: { 'rm-rf': true } }), null)
+    const s = resolveAppSettings(committed({ hooks: { 'rm-rf': true } }), null)
     expect(s.hooks).toEqual({ ...VAULT_SETTING_DEFAULTS.hooks, 'rm-rf': true })
     expect(s.warnings).toEqual([])
   })
 
   it('drops a hooks key that cannot name a transform', () => {
-    const s = resolveVaultSettings(committed({ hooks: { 'Not A Name': true } }), null)
+    const s = resolveAppSettings(committed({ hooks: { 'Not A Name': true } }), null)
     expect(s.hooks).toEqual(VAULT_SETTING_DEFAULTS.hooks)
     expect(s.warnings.length).toBeGreaterThan(0)
   })
@@ -368,7 +368,7 @@ describe('seedSettings', () => {
   it('round-trips through the resolver to exactly the defaults', () => {
     // The strongest statement the seed can make: a freshly seeded vault behaves
     // identically to one with no settings files at all.
-    const resolved = resolveVaultSettings(
+    const resolved = resolveAppSettings(
       JSON.stringify(seedSettings('committed')),
       JSON.stringify(seedSettings('local')),
     )
@@ -592,11 +592,11 @@ describe('resolveColorMode', () => {
 
 describe('editorFont', () => {
   it.each(EDITOR_FONTS)('takes %s from the committed file', (font) => {
-    expect(resolveVaultSettings(committed({ editorFont: font }), null).editorFont).toBe(font)
+    expect(resolveAppSettings(committed({ editorFont: font }), null).editorFont).toBe(font)
   })
 
   it('lets the local file disagree with the vault, per key', () => {
-    const s = resolveVaultSettings(
+    const s = resolveAppSettings(
       committed({ editorFont: 'serif', colorScheme: 'light' }),
       committed({ editorFont: 'mono' }),
     )
@@ -611,7 +611,7 @@ describe('editorFont', () => {
    * three known words must not reach the renderer.
    */
   it('refuses a CSS string from a collaborator, and says so', () => {
-    const s = resolveVaultSettings(committed({ editorFont: "'X'; background: url(y)" }), null)
+    const s = resolveAppSettings(committed({ editorFont: "'X'; background: url(y)" }), null)
     expect(s.editorFont).toBe(VAULT_SETTING_DEFAULTS.editorFont)
     expect(s.warnings.join(' ')).toContain('editorFont')
   })
@@ -640,14 +640,14 @@ describe('home', () => {
       ['./Dash/Home.local.app/', 'Dash/Home.local.app'],
       ['Notes/Standup.md', 'Notes/Standup.md'],
     ]) {
-      const s = resolveVaultSettings(committed({ home: raw }), null)
+      const s = resolveAppSettings(committed({ home: raw }), null)
       expect(s.home).toBe(path)
       expect(s.warnings).toEqual([])
     }
   })
 
   it('lets the local file choose a home of your own', () => {
-    const s = resolveVaultSettings(
+    const s = resolveAppSettings(
       committed({ home: 'Team.app' }),
       committed({ home: 'Me.local.app' }),
     )
@@ -656,7 +656,7 @@ describe('home', () => {
 
   it('refuses what is not a view or a path in the vault, and says so', () => {
     for (const raw of ['../x.app', '/abs.app', '', 3]) {
-      const s = resolveVaultSettings(committed({ home: raw }), null)
+      const s = resolveAppSettings(committed({ home: raw }), null)
       expect(s.home).toBe(VAULT_SETTING_DEFAULTS.home)
       expect(s.warnings.join(' ')).toContain('home')
     }
@@ -674,12 +674,7 @@ describe('the schema is the only declaration', () => {
 
   it('accepts every value it offers, on both the read and the write', () => {
     for (const setting of VAULT_SETTINGS) {
-      if (
-        setting.type.kind === 'boolean' ||
-        setting.type.kind === 'flags' ||
-        setting.type.kind === 'plugins'
-      )
-        continue
+      if (setting.type.kind === 'boolean' || setting.type.kind === 'flags') continue
       for (const option of setting.type.options) {
         const file = committed({ [setting.key]: option.value })
 
@@ -687,7 +682,7 @@ describe('the schema is the only declaration', () => {
         expect(write.warnings, `${setting.key} = ${JSON.stringify(option.value)}`).toEqual([])
         expect(write.patch[setting.key]).toEqual(option.value)
 
-        const read = resolveVaultSettings(file, null)
+        const read = resolveAppSettings(file, null)
         expect(read.warnings, `${setting.key} = ${JSON.stringify(option.value)}`).toEqual([])
         expect(read[setting.key as keyof typeof read]).toEqual(option.value)
       }
@@ -700,7 +695,7 @@ describe('the schema is the only declaration', () => {
     for (const bad of [null, [], 'nonsense', 42.5, { kind: 'nowhere' }]) {
       for (const setting of VAULT_SETTINGS) {
         const file = committed({ [setting.key]: bad })
-        const dropped = resolveVaultSettings(file, null).warnings.length > 0
+        const dropped = resolveAppSettings(file, null).warnings.length > 0
         const refused = parseSettingsPatch(file, CORE_TRANSFORMS).warnings.length > 0
         expect(refused, `${setting.key} = ${JSON.stringify(bad)}`).toBe(dropped)
       }
@@ -708,12 +703,14 @@ describe('the schema is the only declaration', () => {
   })
 
   it('gives every setting a row, and every row the control its type implies', () => {
-    expect(VAULT_SETTING_DESCRIPTORS.map((d) => d.key)).toEqual(VAULT_SETTINGS.map((s) => s.key))
+    expect(VAULT_SETTING_DESCRIPTORS.map((d) => d.key)).toEqual([
+      ...VAULT_SETTINGS.map((s) => s.key),
+      'plugins',
+    ])
     for (const setting of VAULT_SETTINGS) {
       const control = VAULT_SETTING_DESCRIPTORS.find((d) => d.key === setting.key)!.control
       if (setting.type.kind === 'boolean') expect(control.kind).toBe('toggle')
       else if (setting.type.kind === 'flags') expect(control.kind).toBe('group')
-      else if (setting.type.kind === 'plugins') expect(control.kind).toBe('plugins')
       else expect(control.kind).toBe('choice')
     }
   })
@@ -730,8 +727,8 @@ describe('the schema is the only declaration', () => {
     // The defaults object is frozen and shared; `hooks` is an
     // object, so a caller that edited what it was handed would change every
     // later read of a vault that says nothing.
-    const first = resolveVaultSettings(null, null)
+    const first = resolveAppSettings(null, null)
     ;(first.hooks as Record<string, boolean>).relink = false
-    expect(resolveVaultSettings(null, null).hooks.relink).toBe(true)
+    expect(resolveAppSettings(null, null).hooks.relink).toBe(true)
   })
 })

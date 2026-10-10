@@ -4,7 +4,7 @@
  *
  * `main.tsx` installs the list once at boot; nothing else in core imports a
  * plugin. Which ones run follows the vault's `plugins` setting, through the
- * same resolver main uses (`enabledPlugins`), so the two cannot disagree.
+ * same resolver main uses (`resolvePlugins`), so the two cannot disagree.
  *
  * Core's own surfaces, rail items and claims are installed the same way,
  * beside the plugins' (`components/core-surfaces.tsx`): they render features,
@@ -12,7 +12,8 @@
  */
 import { atom, type createStore } from 'jotai'
 import {
-  enabledPlugins,
+  resolvePlugins,
+  type PluginResolution,
   knownTransforms,
   vaultSettingDescriptors,
   VAULT_SETTING_DEFAULTS,
@@ -48,19 +49,22 @@ export type CoreContribution = Pick<Required<RendererPlugin>, 'surfaces' | 'rail
 
 export const coreContributionAtom = atom<CoreContribution>({ surfaces: [], rail: [], claims: [] })
 
-/** The ids the open vault runs. Each plugin's default until its settings
- *  are read. */
-export const enabledPluginsAtom = atom((get): ReadonlySet<string> => {
+/** Which plugins the open vault runs and why each other one does not. Each
+ *  plugin's default until its settings are read. */
+export const pluginResolutionAtom = atom((get): PluginResolution => {
   const cached = get(vaultSettingsAtom)
   const settings =
     cached !== null && cached.remote === get(activeRemoteAtom)
       ? cached.settings.plugins
       : VAULT_SETTING_DEFAULTS.plugins
-  return enabledPlugins(
+  return resolvePlugins(
     settings,
     get(installedPluginsAtom).map((p) => p.info),
   )
 })
+
+/** The ids the open vault runs. */
+export const enabledPluginsAtom = atom((get) => get(pluginResolutionAtom).running)
 
 /** Core's path claims, then every enabled plugin's, in list order. */
 export const claimsAtom = atom((get): readonly PathClaim[] => {
