@@ -109,7 +109,7 @@ function setup(firstPort = 3940) {
 async function turnOn() {
   await mkdir(join(vault, '.holi/settings'), { recursive: true })
   await writeFile(
-    join(vault, '.holi/settings/app.yaml'),
+    join(vault, '.holi/settings/plugins.yaml'),
     'plugins:\n  community: true\n  prezzi: true\n',
   )
 }
@@ -413,7 +413,7 @@ describe('serving', () => {
 
   test('a plugin the vault has off serves nothing', async () => {
     const { call } = await ready()
-    await writeFile(join(vault, '.holi/settings/app.yaml'), 'plugins:\n  community: true\n')
+    await writeFile(join(vault, '.holi/settings/plugins.yaml'), 'plugins:\n  community: true\n')
     await expect(call('community.acquire', { path: 'decks/q4/slides.md' })).rejects.toThrow(
       /no plugin opens/,
     )
