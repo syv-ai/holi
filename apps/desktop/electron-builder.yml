@@ -16,6 +16,9 @@ asarUnpack:
   # A native module and its spawn helper are executed, so they cannot live
   # inside the asar archive.
   - '**/node_modules/node-pty/**'
+  # sharp's native libvips binding, for the shrink-images commit transform.
+  - '**/node_modules/sharp/**'
+  - '**/node_modules/@img/**'
   # The PDF plugin hands pdfium's wasm to the engine by path.
   - '**/node_modules/@embedpdf/pdfium/**'
 publish:

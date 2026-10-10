@@ -37,6 +37,7 @@ describe('VAULT_SETTING_DEFAULTS', () => {
       relink: true,
       'archive-done': false,
       'normalize-md': true,
+      'shrink-images': true,
       // On for relink's reason: it only ever rewrites a file it generated
       // and that says so on its first line.
       'memory-index': true,
@@ -56,6 +57,7 @@ describe('VAULT_SETTING_DEFAULTS', () => {
       'memory-index',
       'normalize-md',
       'relink',
+      'shrink-images',
     ])
   })
 })
@@ -145,6 +147,7 @@ describe('resolveVaultSettings — the local override', () => {
       relink: true,
       'archive-done': false,
       'normalize-md': true,
+      'shrink-images': true,
       'memory-index': true,
     })
   })
@@ -350,6 +353,7 @@ describe('seedSettings', () => {
       relink: true,
       'archive-done': false,
       'normalize-md': true,
+      'shrink-images': true,
       'memory-index': true,
     })
   })
