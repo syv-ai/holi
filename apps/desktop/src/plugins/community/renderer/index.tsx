@@ -86,11 +86,8 @@ export const communityRenderer: RendererPlugin = {
     {
       id: 'community-plugins',
       label: 'Community plugins',
-      headings: [
-        { id: 'this-vault', title: 'This vault' },
-        { id: 'on-this-machine', title: 'On this machine' },
-        { id: 'add-a-plugin', title: 'Add a plugin' },
-      ],
+      within: 'plugins',
+      headings: [],
       files: ['.holi/plugins'],
       Component: ({ remote }) => <PluginsSettings remote={remote} />,
     },

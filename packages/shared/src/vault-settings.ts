@@ -658,8 +658,8 @@ void _keysAgree
  */
 /**
  * The plugins row: not an `app.yaml` key, since which plugins run is written to
- * `plugins.yaml`, but a row in General like any other setting, and an answer
- * the ritual carries.
+ * `plugins.yaml`, but a row on the settings tab's Plugins page like any other
+ * setting, and an answer the ritual carries.
  */
 export const PLUGINS_DESCRIPTOR: VaultSettingDescriptor = {
   key: 'plugins',
@@ -672,7 +672,7 @@ export const PLUGINS_DESCRIPTOR: VaultSettingDescriptor = {
   target: 'committed',
   askedAtBirth: false,
   whereToChange: `Change it any time in ${PLUGINS_FILE}. Turn one off on this machine alone in ${PLUGINS_LOCAL_FILE}`,
-  section: 'general',
+  section: 'plugins',
 }
 
 export const VAULT_SETTING_DESCRIPTORS: readonly VaultSettingDescriptor[] = [
