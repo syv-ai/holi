@@ -598,7 +598,7 @@ export const VAULT_SETTINGS: readonly VaultSetting[] = [
     target: 'committed',
     askedAtBirth: false,
     whereToChange: `${SETTINGS_FILE_HINT}. Turn one off on this machine alone in ${SETTINGS_LOCAL_FILE}`,
-    section: 'general',
+    section: 'plugins',
   },
 ]
 

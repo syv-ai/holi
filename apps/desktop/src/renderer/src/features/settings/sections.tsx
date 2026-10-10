@@ -1,6 +1,6 @@
 /**
- * The settings tab's sections, in rail order: core's, with every enabled
- * plugin's after the vault's own content and before Vault and Account.
+ * The settings tab's sections, in rail order: core's, then Plugins, with
+ * every enabled plugin's own after it and before Vault and Account.
  *
  * The rail, the section view and the narrow-pane picker all read
  * `settingsSectionsAtom`, so adding a section is adding an entry here, or a
@@ -29,7 +29,7 @@ import { IconsSection } from './IconsSection'
 import { ThemeSection } from './ThemeSection'
 import { UpdatesSection } from './UpdatesSection'
 import { VaultSection } from './VaultSection'
-import { headingId } from '@/composites'
+import { headingId, SettingsHeading } from '@/composites'
 import { LIGHT_AND_DARK } from './appearance-headings'
 import { COLLABORATORS, LEAVE_OR_DELETE, WHERE_IT_LIVES } from './vault-headings'
 
@@ -78,6 +78,34 @@ const VAULT_CONTENT: readonly SettingsSection[] = [
   },
 ]
 
+const BUILT_IN = 'Built in'
+
+/**
+ * The Plugins page: the vault's switch per plugin built into Holi, then each
+ * running plugin's own settings about plugins (`within: 'plugins'`), such as
+ * the community plugins it installs, each under its label.
+ */
+function pluginsPage(nested: readonly SettingsSection[]): SettingsSection {
+  return {
+    id: 'plugins',
+    label: 'Plugins',
+    headings: [heading(BUILT_IN), ...nested.map((s) => heading(s.label))],
+    files: [...new Set([SETTINGS_FILE, SETTINGS_LOCAL_FILE, ...nested.flatMap((s) => s.files)])],
+    Component: ({ remote }) => (
+      <>
+        <SettingsHeading title={BUILT_IN} />
+        <DescriptorSection section="plugins" />
+        {nested.map(({ id, label, Component }) => (
+          <section key={id}>
+            <SettingsHeading title={label} />
+            <Component remote={remote} />
+          </section>
+        ))}
+      </>
+    ),
+  }
+}
+
 /** The vault itself, who you are, and the app you run: always last. */
 const VAULT_AND_ACCOUNT: readonly SettingsSection[] = [
   {
@@ -108,14 +136,19 @@ const VAULT_AND_ACCOUNT: readonly SettingsSection[] = [
 /** Core's sections alone. */
 export const CORE_SETTINGS_SECTIONS: readonly SettingsSection[] = [
   ...VAULT_CONTENT,
+  pluginsPage([]),
   ...VAULT_AND_ACCOUNT,
 ]
 
 /** Every section there is in the open vault. */
-export const settingsSectionsAtom = atom((get): readonly SettingsSection[] => [
-  ...VAULT_CONTENT,
-  ...get(pluginSettingsSectionsAtom),
-  ...VAULT_AND_ACCOUNT,
-])
+export const settingsSectionsAtom = atom((get): readonly SettingsSection[] => {
+  const plugins = get(pluginSettingsSectionsAtom)
+  return [
+    ...VAULT_CONTENT,
+    pluginsPage(plugins.filter((s) => s.within === 'plugins')),
+    ...plugins.filter((s) => s.within === undefined),
+    ...VAULT_AND_ACCOUNT,
+  ]
+})
 
 export const DEFAULT_SECTION_ID = VAULT_CONTENT[0]!.id
