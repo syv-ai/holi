@@ -39,6 +39,7 @@ describe('the transform set', () => {
       'relink',
       'archive-done',
       'normalize-md',
+      'shrink-images',
       // Last, and for its own reason: it is the only transform that reads the
       // whole TREE rather than the staged set, so it has to see what the ones
       // before it left behind.
@@ -53,6 +54,9 @@ describe('the transform set', () => {
       relink: true,
       'archive-done': false,
       'normalize-md': true,
+      // On, though it rewrites images: a big image costs every clone forever
+      // once committed, and it changes nothing a screen could show.
+      'shrink-images': true,
       // On for relink's reason: it only ever rewrites a file it generated, and
       // that file says it is generated on its first line.
       'memory-index': true,

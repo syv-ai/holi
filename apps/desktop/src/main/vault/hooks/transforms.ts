@@ -11,6 +11,7 @@ import { readVaultSettings } from '../settings'
 import { memoryIndex } from './memory-index'
 import { normalizeMd } from './normalize-md'
 import { relink } from './relink'
+import { shrinkImages } from './shrink-images'
 import type { HookSettings, Transform } from './runner'
 
 /** The transforms for a vault whose plugins claim `claims` and add
@@ -29,6 +30,7 @@ export function vaultTransforms(
     { name: 'relink', run: relink },
     ...plugins,
     { name: 'normalize-md', run: (root, staged) => normalizeMd(root, staged, claims) },
+    { name: 'shrink-images', run: shrinkImages },
     { name: 'memory-index', run: memoryIndex },
   ]
 }
