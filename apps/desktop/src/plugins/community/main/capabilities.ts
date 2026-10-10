@@ -32,7 +32,7 @@ import {
   type CapabilityTable,
 } from '../../../main/plugin-api'
 import type { ConsentStore } from './consent'
-import { fetchRelease, listVersions, readManifest, type GitAccess } from './fetch'
+import { fetchRelease, listVersions, newestFirst, readManifest, type GitAccess } from './fetch'
 import { searchPlugins } from './search'
 import { writeSkills } from './skills'
 import { expandCommand, pluginEnv, runSetup } from './setup'
@@ -190,7 +190,13 @@ const pathParam = (raw: unknown): { path: string } => ({
 /** The server key: one per vault, plugin and file. */
 const serverKey = (root: string, id: string, path: string) => `${root}\0${id}\0${path}`
 
-export function communityCapabilities(deps: CommunityDeps) {
+/** How long a check for newer releases is trusted before GitHub is asked again. */
+const UPDATE_CHECK_MS = 60 * 60 * 1000
+
+export function communityCapabilities(deps: CommunityDeps, now = () => Date.now()) {
+  /** The newest release of each repository, as last asked, and when. */
+  const newest = new Map<string, { at: number; version: string | null }>()
+
   /** Each acquire's server key, by the lease it returned: a release names
    *  its lease, so it drops exactly what its acquire took, whatever has
    *  changed about the plugin since. */
@@ -232,6 +238,32 @@ export function communityCapabilities(deps: CommunityDeps) {
       doors: ['ui'],
       params: (raw: unknown) => ({ query: stringParam(paramsObject(raw), 'query') }),
       run: async (_ctx, { query }) => searchPlugins(query, deps.token()),
+    }),
+
+    // A newer release of each plugin installed here from one, by id: what
+    // settings and the vault notice offer as an update. GitHub is asked at
+    // most hourly per repository, or now with `fresh`.
+    'community.updates': cap({
+      doors: ['ui'],
+      params: (raw: unknown) => ({ fresh: paramsObject(raw).fresh === true }),
+      run: async (_ctx, { fresh }) => {
+        const updates: Record<string, string> = {}
+        for (const install of await deps.store.list()) {
+          if (install.source.kind !== 'release') continue
+          const { repo } = install.source
+          let known = newest.get(repo)
+          if (fresh || known === undefined || now() - known.at > UPDATE_CHECK_MS) {
+            const versions = await listVersions(repo, deps.git).catch(() => null)
+            // An unreachable GitHub is no answer, not "no update": ask again next time.
+            if (versions === null) continue
+            known = { at: now(), version: versions[0] ?? null }
+            newest.set(repo, known)
+          }
+          if (known.version !== null && newestFirst(known.version, install.manifest.version) < 0)
+            updates[install.id] = known.version
+        }
+        return updates
+      },
     }),
 
     'community.versions': cap({

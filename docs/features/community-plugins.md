@@ -80,6 +80,14 @@ and Start again if it fails or stops. Leaving the vault and quitting stop every 
 macOS). While a server is up its origin is registered with the window guard: the frame may move
 within it, and a link out of it opens in the browser.
 
+**Updates.** Holi asks GitHub for each release-installed plugin's newest `v<semver>` tag when a
+vault opens, hourly while it stays open, and freshly when the settings section opens (main caches
+an answer for an hour per repository). A newer one is offered as **Update to <version>…** on the
+plugin's settings row and as a line in the vault notice, and stays offered until it is done, as
+Holi's own update offer does, rather than a toast that could be missed. Updating fetches the
+release, asks in the consent dialog, sets it up and, where the vault pins the plugin, pins the new
+release, so its members are offered it in turn.
+
 **The vault notice.** A vault that turns on a plugin this machine cannot run says so under the file
 tree, with the one next step (install the pinned version, or allow and set up).
 
