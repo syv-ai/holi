@@ -5,7 +5,7 @@
  */
 import { execFileSync, spawnSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import net from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -194,6 +194,53 @@ describe('installing', () => {
     await call('community.remove', { id: 'prezzi' })
     const [row] = await listPlugins(vault, setup().deps)
     expect(row).toMatchObject({ status: 'not-installed', pin: { commit } })
+  })
+})
+
+describe('skills', () => {
+  test('pinning writes the plugin’s skills, following links inside it, refusing links out', async () => {
+    const commit = await makeRepo()
+    await mkdir(join(repoDir, 'docs/blocks'), { recursive: true })
+    await writeFile(join(repoDir, 'docs/blocks/cover.md'), '# cover\n')
+    await mkdir(join(repoDir, 'skills/prezzi'), { recursive: true })
+    await writeFile(join(repoDir, 'skills/prezzi/SKILL.md'), '---\nname: prezzi\n---\n')
+    await symlink('../../docs/blocks', join(repoDir, 'skills/prezzi/references'))
+    const manifest = JSON.parse(await readFile(join(repoDir, 'holi-plugin.json'), 'utf8'))
+    await writeFile(
+      join(repoDir, 'holi-plugin.json'),
+      JSON.stringify({ ...manifest, version: '0.2.0', skills: ['skills/prezzi'] }),
+    )
+    git(repoDir, 'add', '.')
+    git(
+      repoDir,
+      '-c',
+      'user.name=Ada Holm',
+      '-c',
+      'user.email=ada@syv.ai',
+      'commit',
+      '-qm',
+      'skills',
+    )
+    git(repoDir, 'tag', 'v0.2.0')
+    void commit
+    const { call } = setup()
+    await call('community.install', { repo: 'syv-ai/prezzi', version: '0.2.0' })
+    await call('community.pin', { id: 'prezzi' })
+    expect(await readFile(join(vault, '.claude/skills/prezzi/references/cover.md'), 'utf8')).toBe(
+      '# cover\n',
+    )
+
+    await rm(join(repoDir, 'skills/prezzi/references'))
+    await symlink(dir, join(repoDir, 'skills/prezzi/references'))
+    await writeFile(
+      join(repoDir, 'holi-plugin.json'),
+      JSON.stringify({ ...manifest, version: '0.3.0', skills: ['skills/prezzi'] }),
+    )
+    git(repoDir, 'add', '-A')
+    git(repoDir, '-c', 'user.name=Ada Holm', '-c', 'user.email=ada@syv.ai', 'commit', '-qm', 'out')
+    git(repoDir, 'tag', 'v0.3.0')
+    await call('community.install', { repo: 'syv-ai/prezzi', version: '0.3.0' })
+    await expect(call('community.pin', { id: 'prezzi' })).rejects.toThrow(/outside the plugin/)
   })
 })
 

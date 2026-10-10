@@ -31,6 +31,7 @@ const versionOf = (row: PluginRow) => row.install?.version ?? row.pin?.version ?
 async function setOn(remote: string, row: PluginRow, on: boolean): Promise<void> {
   if (on && row.install?.kind === 'release' && row.pin?.commit !== row.install.commit)
     await communityCap.pin(remote, { id: row.id })
+  if (on && row.install?.kind === 'dev') await communityCap.skills(remote, { id: row.id })
   const settings = await trpc.settings.read.query({ remote })
   await trpc.settings.write.mutate({
     remote,

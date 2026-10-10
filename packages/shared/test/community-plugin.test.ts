@@ -47,6 +47,14 @@ describe('parsePluginManifest', () => {
     expect(problems({ ...prezzi, opens: [] })).toHaveLength(1)
   })
 
+  it('takes skills as folders inside the plugin', () => {
+    expect(
+      problems({ ...prezzi, skills: ['holi/skills/prezzi', '.agents/skills/slidev'] }),
+    ).toEqual([])
+    expect(problems({ ...prezzi, skills: ['../elsewhere'] })).toHaveLength(1)
+    expect(problems({ ...prezzi, skills: ['/etc'] })).toHaveLength(1)
+  })
+
   it('needs semver and a kebab-case id', () => {
     expect(problems({ ...prezzi, version: 'v1' })).toHaveLength(1)
     expect(problems({ ...prezzi, id: 'Prezzi' })).toHaveLength(1)

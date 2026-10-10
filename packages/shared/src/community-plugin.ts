@@ -49,6 +49,10 @@ export interface PluginManifest {
   /** Lines for the vault's managed `.gitignore` block: what the server writes
    *  beside a file that must not sync. */
   ignore?: string[]
+  /** Folders in the plugin's repository, each a Claude Code skill (a
+   *  `SKILL.md` and what it references), copied to the vault's
+   *  `.claude/skills/<folder name>/` when the vault turns the plugin on. */
+  skills?: string[]
 }
 
 export interface PluginPin extends PluginManifest {
@@ -104,11 +108,19 @@ function commandProblems(field: string, argv: unknown, required: readonly string
   return problems
 }
 
+/** A path inside the plugin's folder: relative, `/`-separated, no `.` or
+ *  `..` segment, so a manifest cannot name a folder outside its own. */
+function isPluginRelativePath(path: string): boolean {
+  if (path === '' || path.startsWith('/') || path.includes('\\')) return false
+  return path.split('/').every((seg) => seg !== '' && seg !== '.' && seg !== '..')
+}
+
 /** Read a `holi-plugin.json`, already parsed from JSON. */
 export function parsePluginManifest(json: unknown): Parsed<PluginManifest> {
   if (!isRecord(json)) return { ok: false, problems: ['the manifest must be a JSON object'] }
   const problems: string[] = []
-  const { id, name, version, description, minHoliVersion, opens, setup, serve, ignore } = json
+  const { id, name, version, description, minHoliVersion, opens, setup, serve, ignore, skills } =
+    json
 
   if (!isPluginId(id)) problems.push('id must be kebab-case, starting with a letter')
   if (typeof name !== 'string' || name.trim() === '')
@@ -135,6 +147,11 @@ export function parsePluginManifest(json: unknown): Parsed<PluginManifest> {
     (!isStringList(ignore) || ignore.some((l) => l.trim() === '' || l.includes('\n')))
   )
     problems.push('ignore must be a list of single .gitignore lines')
+  if (
+    skills !== undefined &&
+    (!isStringList(skills) || skills.some((p) => !isPluginRelativePath(p)))
+  )
+    problems.push('skills must be a list of folders inside the plugin, like skills/prezzi')
 
   if (problems.length > 0) return { ok: false, problems }
   const manifest: PluginManifest = {
@@ -148,6 +165,7 @@ export function parsePluginManifest(json: unknown): Parsed<PluginManifest> {
   if (minHoliVersion !== undefined) manifest.minHoliVersion = minHoliVersion as string
   if (setup !== undefined) manifest.setup = setup as string[]
   if (ignore !== undefined) manifest.ignore = ignore as string[]
+  if (skills !== undefined) manifest.skills = skills as string[]
   return { ok: true, value: manifest }
 }
 
