@@ -34,6 +34,7 @@ import {
 import type { ConsentStore } from './consent'
 import { fetchRelease, listVersions, readManifest, type GitAccess } from './fetch'
 import { searchPlugins } from './search'
+import { writeSkills } from './skills'
 import { expandCommand, pluginEnv, runSetup } from './setup'
 import type { Install, InstallStore } from './store'
 import type { ServerState, Supervisor } from './supervisor'
@@ -342,7 +343,8 @@ export function communityCapabilities(deps: CommunityDeps) {
     }),
 
     // Pin this machine's release in the vault, so its members are offered
-    // the same commit, and keep what its server writes out of the history.
+    // the same commit, write its skills for the vault's agent, and keep what
+    // its server writes out of the history.
     // The vault's `plugins.<id>` switch is the settings tab's own write.
     'community.pin': cap({
       doors: ['ui'],
@@ -364,6 +366,7 @@ export function communityCapabilities(deps: CommunityDeps) {
           vaultRelPath(pluginPinPath(id)),
           `${JSON.stringify(pin, null, 2)}\n`,
         )
+        await writeSkills(install.manifest, deps.store.codeDir(install), ctx.root)
         const lines = install.manifest.ignore ?? []
         if (lines.length > 0) {
           const existing = await readFile(join(ctx.root, '.gitignore'), 'utf8').catch(() => null)
@@ -371,6 +374,33 @@ export function communityCapabilities(deps: CommunityDeps) {
           if (next !== null) await writeAtomic(ctx.root, vaultRelPath('.gitignore'), next)
         }
       },
+    }),
+
+    // A folder install's skills, which no pin writes: turning one on in a
+    // vault gives its agent the skills as they are in the folder now.
+    'community.skills': cap({
+      doors: ['ui'],
+      params: idParams,
+      run: async (ctx, { id }) => {
+        const install = await installOf(id)
+        return writeSkills(install.manifest, deps.store.codeDir(install), ctx.root)
+      },
+    }),
+
+    // Where a plugin's code is on this machine, for the vault's agent to run
+    // its tools (Prezzi's skill renders slides with it). Only a plugin that
+    // runs here: the commit someone allowed, set up.
+    'community.path': cap({
+      doors: ['cli'],
+      cli: { args: ['id'], summary: "a running community plugin's folder on this machine" },
+      params: idParams,
+      run: async (ctx, { id }) => {
+        const row = (await listPlugins(ctx.root, deps)).find((r) => r.id === id)
+        if (row === undefined || !row.running)
+          throw new CapabilityError('NOT_FOUND', `${id} does not run in this vault here`)
+        return deps.store.codeDir(await installOf(id))
+      },
+      text: (dir) => dir,
     }),
 
     'community.unpin': cap({
