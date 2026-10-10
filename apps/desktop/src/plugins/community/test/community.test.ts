@@ -3,7 +3,7 @@
  * on disk: fetch a release, consent, set up, pin, then serve a file and stop
  * its server. The server is a tiny Node http server, as Prezzi's is a Vite one.
  */
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import net from 'node:net'
@@ -217,9 +217,10 @@ describe('serving', () => {
     expect(body).toContain(join('decks', 'q4', 'slides.md'))
     expect(origins).toEqual(new Set([`http://localhost:${a.port}`]))
 
-    await call('community.release', { path: 'decks/q4/slides.md' })
+    await call('community.release', { lease: a.lease })
+    await call('community.release', { lease: a.lease })
     expect(await canConnect(a.port)).toBe(true)
-    await call('community.release', { path: 'decks/q4/slides.md' })
+    await call('community.release', { lease: b.lease })
     expect(await canConnect(a.port)).toBe(false)
     expect(origins.size).toBe(0)
   })
@@ -229,10 +230,10 @@ describe('serving', () => {
     process.env.GRANDCHILD_PID_FILE = pidFile
     try {
       const { call } = await ready(['--child'], 3960)
-      await call('community.acquire', { path: 'decks/q4/slides.md' })
+      const { lease } = await call('community.acquire', { path: 'decks/q4/slides.md' })
       const grandchild = Number(await readFile(pidFile, 'utf8'))
       expect(alive(grandchild)).toBe(true)
-      await call('community.release', { path: 'decks/q4/slides.md' })
+      await call('community.release', { lease })
       await waitFor(() => !alive(grandchild))
     } finally {
       delete process.env.GRANDCHILD_PID_FILE
@@ -245,6 +246,54 @@ describe('serving', () => {
       /before it was ready/,
     )
     expect(states.at(-1)).toMatchObject({ state: 'failed', log: ['no deck here'] })
+  })
+
+  test('two files starting at once get their own ports', async () => {
+    const { call } = await ready([], 4000)
+    await writeFile(join(vault, 'decks/slides.md'), '# Other\n')
+    const [a, b] = await Promise.all([
+      call('community.acquire', { path: 'decks/q4/slides.md' }),
+      call('community.acquire', { path: 'decks/slides.md' }),
+    ])
+    expect(a.port).not.toBe(b.port)
+    expect(await (await fetch(`http://127.0.0.1:${b.port}/`)).text()).not.toContain('q4')
+    await call('community.release', { lease: a.lease })
+    await call('community.release', { lease: b.lease })
+  })
+
+  test('removing a plugin stops its servers', async () => {
+    const { call } = await ready([], 4020)
+    const { port } = await call('community.acquire', { path: 'decks/q4/slides.md' })
+    await call('community.remove', { id: 'prezzi' })
+    expect(await canConnect(port)).toBe(false)
+  })
+
+  test('a release and a fresh acquire while starting leave one server, and no orphan', async () => {
+    await makeRepo()
+    const { supervisor } = setup(4040)
+    const pids: number[] = []
+    const spec = {
+      cwd: repoDir,
+      argv: (port: number) => [process.execPath, 'serve.cjs', 'x', '--port', String(port)],
+      env: () => ({ ...process.env, HOLI_FILE: 'x' }),
+    }
+    // React's StrictMode mounts, unmounts and mounts again at once.
+    const first = supervisor.acquire('k', spec)
+    await supervisor.release('k')
+    const second = supervisor.acquire('k', spec)
+    await first.catch(() => undefined)
+    const { port } = await second
+    expect(await canConnect(port)).toBe(true)
+    const listening = execFileSync('lsof', ['-t', `-iTCP:${port}`, '-sTCP:LISTEN'], {
+      encoding: 'utf8',
+    })
+    pids.push(...listening.trim().split('\n').map(Number))
+    await supervisor.release('k')
+    expect(await canConnect(port)).toBe(false)
+    await waitFor(() => pids.every((pid) => !alive(pid)))
+    // Nothing of the first start is left either.
+    // pgrep exits 1 when nothing matches, which is the answer wanted.
+    expect(spawnSync('pgrep', ['-f', repoDir]).status).toBe(1)
   })
 
   test('a plugin the vault has off serves nothing', async () => {
