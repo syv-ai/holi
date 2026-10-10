@@ -165,6 +165,31 @@ describe('installing', () => {
     expect((await call('community.list'))[0]!.status).toBe('ready')
   })
 
+  test('offers a newer release of what is installed, and nothing once it is', async () => {
+    await makeRepo()
+    const manifest = JSON.parse(await readFile(join(repoDir, 'holi-plugin.json'), 'utf8'))
+    await writeFile(
+      join(repoDir, 'holi-plugin.json'),
+      JSON.stringify({ ...manifest, version: '0.2.0' }),
+    )
+    git(
+      repoDir,
+      '-c',
+      'user.name=Ada Holm',
+      '-c',
+      'user.email=ada@syv.ai',
+      'commit',
+      '-qam',
+      'next',
+    )
+    git(repoDir, 'tag', 'v0.2.0')
+    const { call } = setup()
+    await call('community.install', { repo: 'syv-ai/prezzi', version: '0.1.0' })
+    expect(await call('community.updates', {})).toEqual({ prezzi: '0.2.0' })
+    await call('community.install', { repo: 'syv-ai/prezzi', version: '0.2.0' })
+    expect(await call('community.updates', {})).toEqual({})
+  })
+
   test('refuses a release that takes a built-in plugin’s name', async () => {
     await makeRepo()
     const manifest = JSON.parse(await readFile(join(repoDir, 'holi-plugin.json'), 'utf8'))

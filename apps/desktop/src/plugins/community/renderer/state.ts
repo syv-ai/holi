@@ -23,6 +23,22 @@ export const rowsAtom = atom<{ remote: string; rows: readonly PluginRow[] } | nu
 /** Each file's server, by vault path, as the last `server` event said. */
 export const serversAtom = atom<Readonly<Record<string, ServerState>>>({})
 
+/** A newer release of each plugin installed here from one, by id. */
+export const updatesAtom = atom<Readonly<Record<string, string>>>({})
+
+/** Ask whether newer releases exist (`fresh` skips main's hourly cache). */
+export async function refreshUpdates(
+  remote: string,
+  store: PluginStore,
+  fresh = false,
+): Promise<void> {
+  try {
+    store.set(updatesAtom, await communityCap.updates(remote, { fresh }))
+  } catch (err) {
+    console.error('[community] updates:', err)
+  }
+}
+
 /** Each plugin's setup output, by id, since its setup last began. */
 export const setupLogsAtom = atom<Readonly<Record<string, readonly string[]>>>({})
 
@@ -58,6 +74,9 @@ const signatureAtom = atom((get) =>
 /** Keep the rows of `remote` current while it is open. */
 export function followRows(remote: string, store: PluginStore): () => void {
   void refreshRows(remote, store)
+  void refreshUpdates(remote, store)
+  // A vault left open all day still hears of a release.
+  const hourly = setInterval(() => void refreshUpdates(remote, store), 60 * 60 * 1000)
   let last = store.get(signatureAtom)
   const undo = store.sub(signatureAtom, () => {
     const next = store.get(signatureAtom)
@@ -66,8 +85,10 @@ export function followRows(remote: string, store: PluginStore): () => void {
     void refreshRows(remote, store)
   })
   return () => {
+    clearInterval(hourly)
     undo()
     store.set(rowsAtom, null)
     store.set(serversAtom, {})
+    store.set(updatesAtom, {})
   }
 }

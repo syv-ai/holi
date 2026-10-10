@@ -6,13 +6,20 @@
  * **installed on this machine**, and agreed to, is this person's alone.
  */
 import { useAtomValue, useSetAtom, useStore } from 'jotai'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { SettingsHeading, SettingsList, SettingsNote, SettingsRow } from '@/composites'
 import { openDialogAtom, trpc } from '@/plugin-api'
 import { Button, Switch } from '@/primitives'
-import { askToRun, installAndAsk, type InstallFlow } from './install-flow'
+import { askToRun, installAndAsk, updatePlugin, type InstallFlow } from './install-flow'
 import { PluginSearch } from './PluginSearch'
-import { communityCap, refreshRows, rowsAtom, type PluginRow } from './state'
+import {
+  communityCap,
+  refreshRows,
+  refreshUpdates,
+  rowsAtom,
+  updatesAtom,
+  type PluginRow,
+} from './state'
 
 /** A row's state, in words. */
 const STATUS: Record<PluginRow['status'], string> = {
@@ -43,6 +50,12 @@ export function PluginsSettings({ remote }: { remote: string }): React.JSX.Eleme
   const store = useStore()
   const openDialog = useSetAtom(openDialogAtom)
   const rows = useAtomValue(rowsAtom)?.rows ?? []
+  const updates = useAtomValue(updatesAtom)
+
+  // Opening the section asks GitHub now rather than trusting the hourly check.
+  useEffect(() => {
+    void refreshUpdates(remote, store, true)
+  }, [remote, store])
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
@@ -144,6 +157,15 @@ export function PluginsSettings({ remote }: { remote: string }): React.JSX.Eleme
               }
               control={
                 <span className="flex items-center gap-2">
+                  {updates[row.id] !== undefined && row.status === 'ready' && (
+                    <Button
+                      size="xs"
+                      disabled={busy}
+                      onClick={() => void act(() => updatePlugin(flow, row, updates[row.id]!))}
+                    >
+                      Update to {updates[row.id]}…
+                    </Button>
+                  )}
                   {nextStep(row)}
                   <Switch
                     aria-label={`Use ${row.name} in this vault`}

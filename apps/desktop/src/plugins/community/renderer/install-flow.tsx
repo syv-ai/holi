@@ -8,7 +8,7 @@ import { useAtomValue } from 'jotai'
 import { useEffect, useRef, useState } from 'react'
 import { activeRemoteAtom, type PluginStore } from '@/plugin-api'
 import { Button, Dialog } from '@/primitives'
-import { communityCap, refreshRows, setupLogsAtom, type PluginRow } from './state'
+import { communityCap, refreshRows, refreshUpdates, setupLogsAtom, type PluginRow } from './state'
 
 /** The command as a person would type it. */
 const shown = (argv: readonly string[]) =>
@@ -156,6 +156,7 @@ export interface InstallFlow {
 export async function installAndAsk(
   flow: InstallFlow,
   args: { repo: string; version?: string; id?: string },
+  onReady?: () => Promise<unknown>,
 ): Promise<string | null> {
   try {
     const version =
@@ -167,11 +168,25 @@ export async function installAndAsk(
       ...(args.id === undefined ? {} : { expectId: args.id }),
     })
     await refreshRows(flow.remote, flow.store)
-    askToRun(flow, row)
+    askToRun(flow, row, onReady)
     return null
   } catch (err) {
     return err instanceof Error ? err.message : String(err)
   }
+}
+
+/**
+ * Update a plugin to `version`: fetch it, ask, set it up, and, where the vault
+ * pins the plugin, pin the new release so its members are offered it too.
+ */
+export function updatePlugin(flow: InstallFlow, row: PluginRow, version: string) {
+  const repo = row.install?.kind === 'release' ? row.install.repo : row.pin?.repo
+  if (repo === undefined) return Promise.resolve('this plugin is not from a release')
+  const pinned = row.pin !== null
+  return installAndAsk(flow, { repo, version, id: row.id }, async () => {
+    if (pinned) await communityCap.pin(flow.remote, { id: row.id })
+    await refreshUpdates(flow.remote, flow.store)
+  })
 }
 
 /** Open the consent dialog for an installed row. */
