@@ -77,6 +77,13 @@ export const CORE_TRANSFORMS: readonly TransformToggle[] = [
     default: true,
   },
   {
+    name: 'shrink-images',
+    label: 'Keep images small',
+    explanation:
+      'Shrinks a large PNG or JPEG as it is committed, in place: at most 4K, and to 256 colours only where that cannot be seen. Every version of an image stays in the history, so it is kept small from the start.',
+    default: true,
+  },
+  {
     name: 'memory-index',
     label: 'Keep the memory index current',
     explanation:
