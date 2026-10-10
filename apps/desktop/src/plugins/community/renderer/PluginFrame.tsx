@@ -9,6 +9,7 @@
  */
 import { useAtomValue } from 'jotai'
 import { useEffect, useState } from 'react'
+import { pluginServerOrigin } from '@holi/shared'
 import { activeRemoteAtom, cn } from '@/plugin-api'
 import { Button } from '@/primitives'
 import { communityCap, rowsAtom, servingRow, serversAtom, type ServerState } from './state'
@@ -52,7 +53,7 @@ export function PluginFrame({ path }: { path: string }): React.JSX.Element {
     return (
       <iframe
         key={`${phase.port}:${attempt}`}
-        src={`http://127.0.0.1:${phase.port}/`}
+        src={`${pluginServerOrigin(phase.port)}/`}
         aria-label={`${name}: ${path}`}
         // `allow-same-origin` is safe here, unlike a vault app's frame: the
         // server's loopback origin is never the renderer's, so the frame

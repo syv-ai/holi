@@ -215,7 +215,7 @@ describe('serving', () => {
     expect(b.port).toBe(a.port)
     const body = await (await fetch(`http://127.0.0.1:${a.port}/`)).text()
     expect(body).toContain(join('decks', 'q4', 'slides.md'))
-    expect(origins).toEqual(new Set([`http://127.0.0.1:${a.port}`]))
+    expect(origins).toEqual(new Set([`http://localhost:${a.port}`]))
 
     await call('community.release', { path: 'decks/q4/slides.md' })
     expect(await canConnect(a.port)).toBe(true)
