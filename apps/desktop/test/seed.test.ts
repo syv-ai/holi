@@ -116,6 +116,8 @@ describe('the seed tables', () => {
       '.holi/settings/app.local.yaml',
       '.holi/settings/app.yaml',
       '.holi/settings/icons.yaml',
+      '.holi/settings/plugins.local.yaml',
+      '.holi/settings/plugins.yaml',
       '.holi/settings/theme.css',
       '.holi/settings/theme.local.css',
       '.holi/vault',

@@ -10,14 +10,14 @@
  * a shared git repo.
  */
 import { join } from 'node:path'
-import type { MainPlugin } from '../../../main/plugin-api'
+import { pluginSettingValue } from '@holi/shared'
+import { readVaultSettings, writePluginSettings, type MainPlugin } from '../../../main/plugin-api'
 import { GOOGLE_INFO } from '../info'
 import { GoogleApi } from './api'
 import { openGoogleCache, type GoogleCache } from './cache'
-import { createCalendarPrefs } from './calendar-prefs'
+import type { CalendarOverrides } from './calendar'
 import { GOOGLE_NAMESPACES, googleCapabilities } from './capabilities'
 import { createGoogleData, type GoogleData } from './data'
-import { createImagePrefs } from './image-prefs'
 import { googleSeed } from './seed'
 
 export const googleMain: MainPlugin = {
@@ -81,12 +81,29 @@ export const googleMain: MainPlugin = {
           const sub = (await accounts.sessionFor(remote))?.accountSub ?? null
           return sub === null ? null : dataForSub(sub)
         },
-        // One file, every reader: the agenda view, an app and the agent all
-        // read their agenda through it. It holds calendar ids, not a credential.
-        calendarPrefs: createCalendarPrefs(join(ctx.userData, 'google-calendars.json')),
-        // A decision about the connected account, so kept per machine: pushed
-        // to teammates it would be a disclosure, not a preference.
-        imagePrefs: createImagePrefs(join(ctx.userData, 'google-image-senders.json')),
+        // The vault's own Google settings, in its local plugins file: the
+        // agenda view, an app and the agent all read through them.
+        settings: {
+          read: async (root) => {
+            const { pluginValues } = await readVaultSettings(root)
+            return {
+              calendars: pluginSettingValue(
+                pluginValues,
+                GOOGLE_INFO,
+                'calendars',
+              ) as CalendarOverrides,
+              imageSenders: pluginSettingValue(
+                pluginValues,
+                GOOGLE_INFO,
+                'imageSenders',
+              ) as string[],
+            }
+          },
+          write: async (root, values) => {
+            const refused = await writePluginSettings(root, GOOGLE_INFO.id, values)
+            if (refused.length > 0) console.warn(`[google] settings: ${refused.join('; ')}`)
+          },
+        },
       }),
     )
 

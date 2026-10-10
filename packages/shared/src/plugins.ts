@@ -9,6 +9,7 @@
  * Pure and browser-safe.
  */
 
+import type { PluginSetting } from './plugin-settings'
 import type { TransformToggle } from './vault-settings'
 
 export interface PluginInfo {
@@ -28,6 +29,9 @@ export interface PluginInfo {
   /** The plugins it builds on: it runs only where every one of them runs, so
    *  turning one off leaves this off too. */
   requires?: readonly string[]
+  /** Its own settings, written under its id in the plugins files
+   *  (`plugin-settings.ts`). */
+  settings?: readonly PluginSetting[]
   /** The commit transforms its main side runs (`MainPlugin.transforms`), as
    *  the settings tab switches them. */
   transforms?: readonly TransformToggle[]
@@ -107,34 +111,6 @@ export function resolvePlugins(
     }
   }
   return { running, status }
-}
-
-/**
- * The plugin list a build hands each process, checked once for what could
- * never work: a bad or repeated id, a requirement this build does not have,
- * or plugins requiring each other in a circle. Main and the renderer both
- * call it at boot, so a broken list fails in either.
- */
-export function checkPluginCatalogue(known: readonly PluginInfo[]): void {
-  const byId = new Map<string, PluginInfo>()
-  for (const p of known) {
-    if (!isPluginId(p.id)) throw new Error(`plugin id ${p.id} is not kebab-case`)
-    if (byId.has(p.id)) throw new Error(`plugin ${p.id} is installed twice`)
-    byId.set(p.id, p)
-  }
-  for (const p of known) {
-    const missing = (p.requires ?? []).filter((id) => !byId.has(id))
-    if (missing.length > 0) throw new Error(`plugin ${p.id} requires ${missing.join(', ')}`)
-  }
-  const done = new Set<string>()
-  const visit = (id: string, path: string[]): void => {
-    if (done.has(id)) return
-    if (path.includes(id))
-      throw new Error(`plugins require each other: ${[...path, id].join(' > ')}`)
-    for (const next of byId.get(id)?.requires ?? []) visit(next, [...path, id])
-    done.add(id)
-  }
-  for (const p of known) visit(p.id, [])
 }
 
 /** Plugin ids as the settings tab names them, joined: "Vault apps and Agent". */

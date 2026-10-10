@@ -52,7 +52,7 @@ import { renameNote } from './vault/rename'
 import { scanVault, type ScanClaim, type VaultSnapshot } from './vault/vault-store'
 import { holiTheme, readVaultTheme, resetVaultTheme, writeVaultTheme } from './vault/theme'
 import { readVaultSettings, writeVaultSettings } from './vault/settings'
-import { knownTransforms, parseSettingsPatch } from '@holi/shared'
+import { knownTransforms, parsePluginSettingsPatch, parseSettingsPatch } from '@holi/shared'
 import { installedInfos } from './plugin-host/installed'
 import type { PreCommitStatus, ResolvedTheme, ResolvedVaultSettings } from '@holi/shared'
 import type { VaultPreCommit } from './vault/hooks/pre-commit'
@@ -1419,9 +1419,21 @@ export function createRouter(deps: RouterDeps) {
     write: t.procedure
       .input(fields({ remote: 'string', committedJson: 'string?', localJson: 'string?' }))
       .mutation(async ({ input }) => {
-        const transforms = knownTransforms(installedInfos())
-        const committed = parseSettingsPatch(input.committedJson ?? null, transforms)
-        const local = parseSettingsPatch(input.localJson ?? null, transforms)
+        // The same patch answers both files: app keys through `parseSettingsPatch`,
+        // `plugins` and each plugin's own settings through
+        // `parsePluginSettingsPatch`, each ignoring what the other owns.
+        const known = installedInfos()
+        const transforms = knownTransforms(known)
+        const parse = (json: string | null) => {
+          const app = parseSettingsPatch(json, transforms)
+          const plugins = parsePluginSettingsPatch(json, known)
+          return {
+            patch: { ...app.patch, ...plugins.patch },
+            warnings: [...app.warnings, ...plugins.warnings],
+          }
+        }
+        const committed = parse(input.committedJson ?? null)
+        const local = parse(input.localJson ?? null)
         const root = await rootFor(input.remote)
         await writeVaultSettings(root, { committed: committed.patch, local: local.patch })
         // A plugin just turned on gets its files and starts now, not at the

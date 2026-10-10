@@ -22,13 +22,20 @@
  * watermark writes `reminders` there, `main/reminders/delivered-log.ts`).
  *
  * This module is pure and browser-safe (no fs). The main process reads the two
- * files off disk and hands their text to `resolveVaultSettings`.
+ * files off disk and hands their text to `resolveVaultSettings`, which reads
+ * the plugins files beside them (`plugin-settings.ts`).
  */
 
 import { parse as parseYaml } from 'yaml'
 import { vaultRelPath } from './path-safety'
 import { isSurfaceName } from './surfaces'
-import { isPluginId, type PluginSettings } from './plugins'
+import type { PluginInfo, PluginSettings } from './plugins'
+import {
+  PLUGINS_FILE,
+  PLUGINS_LOCAL_FILE,
+  resolvePluginSettings,
+  type PluginValues,
+} from './plugin-settings'
 
 /** A pre-commit transform's name: kebab-case, and the key it is switched by
  *  in `hooks`, so there is no mapping table between them. Core's are
@@ -186,7 +193,8 @@ export function parseHome(value: unknown): string | null {
   }
 }
 
-export interface ResolvedVaultSettings {
+/** What `app.yaml` and `app.local.yaml` answer: core's own settings. */
+export interface ResolvedAppSettings {
   /** What Home is, and what the vault opens on: see `homeTargetOf`. */
   home: string
   dailyNotes: boolean
@@ -194,12 +202,43 @@ export interface ResolvedVaultSettings {
   editorFont: EditorFont
   hooks: VaultHooks
   maxCommittedFileBytes: number
-  /** Which plugins the vault declares, and which this machine turned off:
-   *  `resolvePlugins` turns it into the set that runs. */
-  plugins: PluginSettings
   /** Human-readable notes about dropped keys/values, surfaced so a typo is
    *  diagnosable rather than silent. Mirrors `ResolvedTheme.warnings`. */
   warnings: string[]
+}
+
+/** A vault's whole settings: core's from `app.yaml`, and the plugins'
+ *  from `plugins.yaml` (`plugin-settings.ts`), with both files' warnings. */
+export interface ResolvedVaultSettings extends ResolvedAppSettings {
+  /** Which plugins the vault declares, and which this machine turned off:
+   *  `resolvePlugins` turns it into the set that runs. */
+  plugins: PluginSettings
+  /** Each known plugin's own settings, by plugin id then key. */
+  pluginValues: PluginValues
+}
+
+/** The four settings files' text, each `null` when absent. */
+export interface VaultSettingsTexts {
+  app: string | null
+  appLocal: string | null
+  plugins: string | null
+  pluginsLocal: string | null
+}
+
+/** Resolve all four files. `known` is the build's plugins, whose settings
+ *  are read. Never throws. */
+export function resolveVaultSettings(
+  texts: VaultSettingsTexts,
+  known: readonly PluginInfo[],
+): ResolvedVaultSettings {
+  const app = resolveAppSettings(texts.app, texts.appLocal)
+  const plugins = resolvePluginSettings(texts.plugins, texts.pluginsLocal, known)
+  return {
+    ...app,
+    plugins: plugins.plugins,
+    pluginValues: plugins.values,
+    warnings: [...app.warnings, ...plugins.warnings],
+  }
 }
 
 /**
@@ -239,10 +278,10 @@ function pick(files: Record<string, unknown>[], key: string): unknown {
  * without this function being touched, by exactly the check that a write to
  * the same key has to pass.
  */
-export function resolveVaultSettings(
+export function resolveAppSettings(
   committedJson: string | null,
   localJson: string | null,
-): ResolvedVaultSettings {
+): ResolvedAppSettings {
   // Order is the precedence: committed first, local last.
   const files = [parseFile(committedJson), parseFile(localJson)]
   const warnings: string[] = []
@@ -251,10 +290,6 @@ export function resolveVaultSettings(
   for (const setting of VAULT_SETTINGS) {
     if (setting.type.kind === 'flags') {
       out[setting.key] = mergeFlags(setting, files, warnings)
-      continue
-    }
-    if (setting.type.kind === 'plugins') {
-      out[setting.key] = mergePlugins(setting.key, files[0]!, files[1]!, warnings)
       continue
     }
     const raw = pick(files, setting.key)
@@ -275,7 +310,7 @@ export function resolveVaultSettings(
     }
   }
 
-  return { ...(out as Omit<ResolvedVaultSettings, 'warnings'>), warnings }
+  return { ...(out as Omit<ResolvedAppSettings, 'warnings'>), warnings }
 }
 
 /** A default, detached from the frozen shared object. Only the flags block is
@@ -322,20 +357,16 @@ export type VaultSettingControl =
   /** A switch per installed plugin, which only the renderer knows. */
   | { kind: 'plugins' }
 
-/** A key a descriptor can describe: every setting the resolver answers, each
+/** A key a setting in `app.yaml` can have: every setting the resolver answers, each
  *  with a row in the settings tab. A superset of what the ritual asks
  *  (`askedAtBirth`). */
 export type VaultSettingKey =
-  | 'dailyNotes'
-  | 'home'
-  | 'hooks'
-  | 'colorScheme'
-  | 'editorFont'
-  | 'maxCommittedFileBytes'
-  | 'plugins'
+  'dailyNotes' | 'home' | 'hooks' | 'colorScheme' | 'editorFont' | 'maxCommittedFileBytes'
 
 export interface VaultSettingDescriptor {
-  key: VaultSettingKey
+  /** A key of `app.yaml`, or `plugins` for the plugins row, whose answer is
+   *  written to `plugins.yaml` (`PLUGINS_DESCRIPTOR`). */
+  key: VaultSettingKey | 'plugins'
   label: string
   explanation: string
   control: VaultSettingControl
@@ -374,7 +405,7 @@ const LOCAL_FILE_HINT = `Change it any time in ${SETTINGS_LOCAL_FILE}, which sta
  * refuses. Here the kind decides the control (`toggle`, `choice`, `group`) and
  * the entry supplies only the labels, so that class of bug cannot be written.
  *
- * `home` and `plugins` each exist for exactly one setting.
+ * `home` exists for exactly one setting.
  */
 export type SettingType =
   | { kind: 'boolean' }
@@ -401,13 +432,6 @@ export type SettingType =
    * be Home and the vault's apps to the options.
    */
   | { kind: 'home'; options: readonly VaultSettingOption[] }
-  /**
-   * Plugin id to on or off. The only setting both files answer differently:
-   * the committed file declares the vault's plugins, and the local file can
-   * only turn one off on this machine (`mergePlugins`). The ids are whatever
-   * plugins the build has, so shared validates their shape, not their names.
-   */
-  | { kind: 'plugins' }
 
 /**
  * One setting, declared once.
@@ -586,20 +610,6 @@ export const VAULT_SETTINGS: readonly VaultSetting[] = [
     whereToChange: SETTINGS_FILE_HINT,
     section: 'editor',
   },
-  {
-    key: 'plugins',
-    label: 'Plugins',
-    explanation:
-      'What this vault runs beyond the core. Everyone who clones it gets the same plugins, and any of them can be turned off on one machine.',
-    type: { kind: 'plugins' },
-    // Every plugin's own default: see `resolvePlugins`.
-    default: Object.freeze({ vault: Object.freeze({}), localOff: Object.freeze([]) }),
-    // The vault declares them; the local file can only turn one off.
-    target: 'committed',
-    askedAtBirth: false,
-    whereToChange: `${SETTINGS_FILE_HINT}. Turn one off on this machine alone in ${SETTINGS_LOCAL_FILE}`,
-    section: 'general',
-  },
 ]
 
 /**
@@ -615,9 +625,13 @@ export const VAULT_SETTINGS: readonly VaultSetting[] = [
  * generated. The 10 MB cap is read by `main/vault/large-files.ts`; notes-vault
  * assets sit well under it, and GitHub warns at 50.
  */
-export const VAULT_SETTING_DEFAULTS: Omit<ResolvedVaultSettings, 'warnings'> = Object.freeze(
-  Object.fromEntries(VAULT_SETTINGS.map((s) => [s.key, s.default])),
-) as Omit<ResolvedVaultSettings, 'warnings'>
+export const VAULT_SETTING_DEFAULTS: Omit<ResolvedVaultSettings, 'warnings'> = Object.freeze({
+  ...Object.fromEntries(VAULT_SETTINGS.map((s) => [s.key, s.default])),
+  // Every plugin's own default: see `resolvePlugins`.
+  plugins: Object.freeze({ vault: Object.freeze({}), localOff: Object.freeze([]) }),
+  // Each plugin's declared defaults: see `pluginSettingValue`.
+  pluginValues: Object.freeze({}),
+}) as unknown as Omit<ResolvedVaultSettings, 'warnings'>
 
 /**
  * The schema and the resolved shape must name exactly the same keys.
@@ -628,11 +642,11 @@ export const VAULT_SETTING_DEFAULTS: Omit<ResolvedVaultSettings, 'warnings'> = O
  * setting nothing can ever read.
  */
 type _SchemaCoversSettings =
-  Exclude<keyof ResolvedVaultSettings, 'warnings'> extends VaultSettingKey
-    ? VaultSettingKey extends Exclude<keyof ResolvedVaultSettings, 'warnings'>
+  Exclude<keyof ResolvedAppSettings, 'warnings'> extends VaultSettingKey
+    ? VaultSettingKey extends Exclude<keyof ResolvedAppSettings, 'warnings'>
       ? true
-      : ['schema declares a key ResolvedVaultSettings does not have']
-    : ['ResolvedVaultSettings has a key no schema entry declares']
+      : ['schema declares a key ResolvedAppSettings does not have']
+    : ['ResolvedAppSettings has a key no schema entry declares']
 const _keysAgree: _SchemaCoversSettings = true
 void _keysAgree
 
@@ -642,9 +656,29 @@ void _keysAgree
  * A **view** of the schema rather than a second list: `control` is computed
  * from `type`, so a control cannot offer a value its validator refuses.
  */
-export const VAULT_SETTING_DESCRIPTORS: readonly VaultSettingDescriptor[] = VAULT_SETTINGS.map(
-  (s) => ({ ...s, control: controlFor(s.type) }),
-)
+/**
+ * The plugins row: not an `app.yaml` key, since which plugins run is written to
+ * `plugins.yaml`, but a row in General like any other setting, and an answer
+ * the ritual carries.
+ */
+export const PLUGINS_DESCRIPTOR: VaultSettingDescriptor = {
+  key: 'plugins',
+  label: 'Plugins',
+  explanation:
+    'What this vault runs beyond the core. Everyone who clones it gets the same plugins, and any of them can be turned off on one machine.',
+  control: { kind: 'plugins' },
+  default: VAULT_SETTING_DEFAULTS.plugins,
+  // The vault declares them; the local file can only turn one off.
+  target: 'committed',
+  askedAtBirth: false,
+  whereToChange: `Change it any time in ${PLUGINS_FILE}. Turn one off on this machine alone in ${PLUGINS_LOCAL_FILE}`,
+  section: 'general',
+}
+
+export const VAULT_SETTING_DESCRIPTORS: readonly VaultSettingDescriptor[] = [
+  ...VAULT_SETTINGS.map((s) => ({ ...s, control: controlFor(s.type) })),
+  PLUGINS_DESCRIPTOR,
+]
 
 function controlFor(type: SettingType): VaultSettingControl {
   switch (type.kind) {
@@ -654,8 +688,6 @@ function controlFor(type: SettingType): VaultSettingControl {
       return { kind: 'group', toggles: type.flags }
     case 'home':
       return { kind: 'choice', options: type.options, openEnded: true }
-    case 'plugins':
-      return { kind: 'plugins' }
     // enum and number are both "pick one of these", and differ only in
     // what ELSE is legal, which is the validator's business, not the control's.
     default:
@@ -692,7 +724,6 @@ function readValue(
         ? { ok: true, value }
         : { ok: false, expected: 'a positive number' }
     case 'flags':
-    case 'plugins':
       return typeof value === 'object' && value !== null && !Array.isArray(value)
         ? { ok: true, value }
         : { ok: false, expected: 'an object' }
@@ -741,56 +772,6 @@ function mergeFlags(
     }
   }
   return out
-}
-
-/**
- * One file's `plugins` block as a map of plugin id to on or off, dropping
- * what is not one, with a warning per drop. Null when the file says nothing.
- */
-function pluginBlock(
-  key: string,
-  file: Record<string, unknown>,
-  warnings: string[],
-  verb: 'dropped' | 'refused',
-): Record<string, boolean> | null {
-  if (!(key in file)) return null
-  const block = file[key]
-  if (typeof block !== 'object' || block === null || Array.isArray(block)) {
-    warnings.push(`${verb} "${key}": expected an object, got ${JSON.stringify(block)}`)
-    return null
-  }
-  const out: Record<string, boolean> = {}
-  for (const [id, on] of Object.entries(block as Record<string, unknown>)) {
-    if (!isPluginId(id)) warnings.push(`${verb} "${key}.${id}": not a plugin id`)
-    else if (typeof on !== 'boolean') {
-      warnings.push(`${verb} "${key}.${id}": expected true or false, got ${JSON.stringify(on)}`)
-    } else out[id] = on
-  }
-  return out
-}
-
-/**
- * The `plugins` setting across the two files, which do different jobs: the
- * committed file's answers are the vault's, and the local file contributes
- * only its `false`s. A local `true` would turn on a plugin the vault has
- * off, which only the vault decides, so it is dropped with a warning.
- */
-function mergePlugins(
-  key: string,
-  committed: Record<string, unknown>,
-  local: Record<string, unknown>,
-  warnings: string[],
-): PluginSettings {
-  const vault = pluginBlock(key, committed, warnings, 'dropped') ?? {}
-  const localOff: string[] = []
-  for (const [id, on] of Object.entries(pluginBlock(key, local, warnings, 'dropped') ?? {})) {
-    if (on) {
-      warnings.push(
-        `dropped "${key}.${id}" in ${SETTINGS_LOCAL_FILE}: this machine can only turn a plugin off`,
-      )
-    } else localOff.push(id)
-  }
-  return { vault, localOff }
 }
 
 /** The subset the ritual asks and the seed writes: see `askedAtBirth`. */
@@ -890,14 +871,6 @@ export function parseSettingsPatch(
       }
       // A block that survived nothing is not written: `{}` would say nothing.
       if (Object.keys(block).length > 0) patch[setting.key] = block
-      continue
-    }
-
-    if (setting.type.kind === 'plugins') {
-      // Which file it is going to is the writer's business: a local `true`
-      // is written as asked, and the read ignores it.
-      const block = pluginBlock(setting.key, raw, warnings, 'refused')
-      if (block !== null && Object.keys(block).length > 0) patch[setting.key] = block
       continue
     }
 

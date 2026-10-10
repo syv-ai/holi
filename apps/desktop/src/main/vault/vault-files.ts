@@ -8,6 +8,7 @@ import {
   GITKEEP,
   APP_LOG_FILE,
   SETTINGS_LOCAL_FILE,
+  PLUGINS_LOCAL_FILE,
   THEME_LOCAL_FILE,
   appBundleOf,
   isAppBundlePath,
@@ -84,7 +85,8 @@ export function isIgnoredPath(rel: string): boolean {
  */
 export function isWatchIgnoredPath(rel: string): boolean {
   if (isNonContentPath(rel)) return true
-  if (rel === THEME_LOCAL_FILE || rel === SETTINGS_LOCAL_FILE) return false
+  if (rel === THEME_LOCAL_FILE || rel === SETTINGS_LOCAL_FILE || rel === PLUGINS_LOCAL_FILE)
+    return false
   // Only a bundle that is itself local: a `.local.` file inside a shared app
   // stays unwatched like any other.
   const bundle = isAppBundlePath(rel) ? rel : appBundleOf(rel)

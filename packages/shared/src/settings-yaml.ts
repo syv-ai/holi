@@ -17,6 +17,7 @@
  */
 import { parseDocument, stringify as stringifyYaml } from 'yaml'
 import type { PluginInfo } from './plugins'
+import { PLUGINS_FILE, PLUGINS_LOCAL_FILE, type PluginSettingType } from './plugin-settings'
 import {
   SETTINGS_FILE,
   SETTINGS_LOCAL_FILE,
@@ -25,7 +26,6 @@ import {
   VAULT_SETTINGS,
   type SettingTarget,
   type SettingType,
-  type VaultSetting,
 } from './vault-settings'
 
 /**
@@ -62,9 +62,6 @@ function legalValues(type: SettingType): string[] {
   if (type.kind === 'boolean') return ['One of: true, false']
   if (type.kind === 'flags') {
     return ['Each one is true or false. Naming one says nothing about the others.']
-  }
-  if (type.kind === 'plugins') {
-    return ['Each plugin is true or false. A commented one runs as its default says.']
   }
   const shown = type.options.map((o) => `${inline(o.value)} (${o.label})`).join(', ')
   if (type.kind === 'number') {
@@ -165,10 +162,6 @@ export function writeSettingsText(
   ]
 
   for (const setting of VAULT_SETTINGS) {
-    if (setting.type.kind === 'plugins') {
-      lines.push(...pluginLines(setting, values, target, known))
-      continue
-    }
     if (setting.target !== target) continue
     lines.push('', `# ── ${setting.label}`)
     for (const line of wrap(setting.explanation, 72)) lines.push(`#   ${line}`)
@@ -207,44 +200,149 @@ export function writeSettingsText(
   return lines.join('\n') + '\n'
 }
 
+/** A plugin setting's legal values, as its file line shows them. */
+function pluginLegalValues(type: PluginSettingType): string {
+  switch (type.kind) {
+    case 'boolean':
+      return 'true or false'
+    case 'enum':
+      return `one of ${type.options.map((o) => `${inline(o.value)} (${o.label})`).join(', ')}`
+    case 'number':
+      return 'a number'
+    case 'text':
+      return 'text'
+    case 'list':
+      return 'a list of text'
+    case 'switches':
+      return 'a name to true or false, for each name'
+  }
+}
+
+/** `key: value` at `indent`, as one line or a nested block, each line marked
+ *  commented or not: uncommenting is the whole edit. */
+function entryLines(key: string, value: unknown, indent: string, mark: string): string[] {
+  const isEmpty =
+    typeof value === 'object' && value !== null && Object.keys(value).length === 0
+  if (typeof value !== 'object' || value === null || isEmpty) {
+    return [`${mark}${indent}${key}: ${inline(value)}`]
+  }
+  const nested = stringifyYaml(value, { lineWidth: 0 }).trimEnd().split('\n')
+  return [`${mark}${indent}${key}:`, ...nested.map((line) => `${mark}${indent}  ${line}`)]
+}
+
+/**
+ * A plugins file's text, written out in full every time, like
+ * `writeSettingsText`: the `plugins` block, then each installed plugin's own
+ * settings for this file under its id, an unanswered one commented at its
+ * default. A block for a plugin the build does not have, and any other key,
+ * is kept as written.
+ */
+export function writePluginSettingsText(
+  values: Record<string, unknown>,
+  target: SettingTarget,
+  known: readonly PluginInfo[],
+): string {
+  const committed = target === 'committed'
+  const lines: string[] = [
+    ...wrap(
+      `Which plugins this vault runs, and each plugin's own settings. A COMMENTED line is not set: the plugin's default is in force. Uncomment one to pin it.`,
+    ).map((line) => `# ${line}`),
+    '#',
+    ...wrap(
+      committed
+        ? `This file is committed, so everyone who clones the vault gets these answers. Anything meant for this machine alone lives in ${PLUGINS_LOCAL_FILE} beside it.`
+        : `This file is never committed. It is this machine's answer, and it overrides ${PLUGINS_FILE} key by key. It can turn a plugin off, never on.`,
+    ).map((line) => `# ${line}`),
+  ]
+  lines.push(...pluginLines(values, target, known))
+
+  for (const info of known) {
+    const settings = (info.settings ?? []).filter((s) => s.target === target)
+    if (settings.length === 0) continue
+    const raw = values[info.id]
+    // Answered but not a map: kept as written, for the read to complain about.
+    if (raw !== undefined && (typeof raw !== 'object' || raw === null || Array.isArray(raw))) {
+      lines.push('', `# ── ${info.label}`, `${info.id}: ${inline(raw)}`)
+      continue
+    }
+    const answered = (raw ?? {}) as Record<string, unknown>
+    lines.push('', `# ── ${info.label}`)
+    for (const setting of settings) {
+      for (const line of wrap(
+        `${setting.key}: ${setting.explanation} ${capitalise(pluginLegalValues(setting.type))}.`,
+        72,
+      )) {
+        lines.push(`#   ${line}`)
+      }
+    }
+    const live = settings.some((s) => s.key in answered)
+    lines.push(`${live ? '' : '# '}${info.id}:`)
+    for (const setting of settings) {
+      const has = setting.key in answered
+      const value = has ? answered[setting.key] : setting.default
+      // A live block's unanswered keys are commented inside it; a block with
+      // nothing answered is commented whole. Either way uncommenting is the edit.
+      if (!live) lines.push(...entryLines(setting.key, value, '  ', '# '))
+      else if (has) lines.push(...entryLines(setting.key, value, '  ', ''))
+      else lines.push(...entryLines(setting.key, value, '', '  # '))
+    }
+    // Keys this build's plugin does not declare for this file, kept.
+    for (const [key, value] of Object.entries(answered)) {
+      if (!settings.some((s) => s.key === key)) lines.push(...entryLines(key, value, '  ', ''))
+    }
+  }
+
+  const owned = new Set([
+    'plugins',
+    ...known.filter((p) => (p.settings ?? []).some((s) => s.target === target)).map((p) => p.id),
+  ])
+  const extra = Object.keys(values).filter((key) => !owned.has(key))
+  if (extra.length > 0) {
+    lines.push('', '# ── Not settings this build knows. Kept as you wrote them.')
+    for (const key of extra) lines.push(...entryLines(key, values[key], '', ''))
+  }
+  return lines.join('\n') + '\n'
+}
+
+const capitalise = (text: string) => text.charAt(0).toUpperCase() + text.slice(1)
+
 /**
  * The `plugins` block. The committed file lists every plugin the build has,
- * an unanswered one commented with its default, like any other setting. The
- * local file can only turn a plugin off, so it shows the block only when it
- * answers one.
+ * an unanswered one commented with its default. The local file can only turn
+ * a plugin off, so it shows the block only when it answers one.
  */
 function pluginLines(
-  setting: VaultSetting,
   values: Record<string, unknown>,
   target: SettingTarget,
   known: readonly PluginInfo[],
 ): string[] {
-  const has = Object.prototype.hasOwnProperty.call(values, setting.key)
-  const value = values[setting.key]
+  const has = Object.prototype.hasOwnProperty.call(values, 'plugins')
+  const value = values.plugins
   const answered =
     has && typeof value === 'object' && value !== null && !Array.isArray(value)
       ? (value as Record<string, unknown>)
       : null
-  const out: string[] = ['', `# ── ${setting.label}`]
+  const out: string[] = ['', '# ── Plugins']
 
   if (target === 'local') {
     if (!has) return []
     out.push(
       ...wrap(
-        `false turns a plugin off on this machine alone. Only ${SETTINGS_FILE} turns one on.`,
+        `false turns a plugin off on this machine alone. Only ${PLUGINS_FILE} turns one on.`,
         72,
       ).map((line) => `#   ${line}`),
     )
   } else {
-    for (const line of wrap(setting.explanation, 72)) out.push(`#   ${line}`)
-    for (const hint of legalValues(setting.type)) {
-      for (const line of wrap(hint, 72)) out.push(`#   ${line}`)
-    }
+    out.push(
+      ...wrap(
+        'What this vault runs beyond the core. Each plugin is true or false; a commented one runs as its default says.',
+        72,
+      ).map((line) => `#   ${line}`),
+    )
   }
 
-  // Answered but not a map: kept as written, for the read to complain about.
   if (has && answered === null) {
-    out.push(`${setting.key}: ${inline(value)}`)
+    out.push(`plugins: ${inline(value)}`)
     return out
   }
   const live = answered !== null && Object.keys(answered).length > 0
@@ -253,7 +351,6 @@ function pluginLines(
   const unset = (id: string, on: boolean) =>
     live ? `  # ${id}: ${inline(on)}` : `#   ${id}: ${inline(on)}`
   const entries: string[] = []
-  // The build's plugins in its order, then any id it does not have, kept.
   for (const plugin of target === 'committed' ? known : []) {
     if (answered === null || !(plugin.id in answered))
       entries.push(unset(plugin.id, plugin.default))
@@ -263,8 +360,8 @@ function pluginLines(
     if (target === 'local' || !known.some((p) => p.id === id))
       entries.push(`  ${id}: ${inline(on)}`)
   }
-  if (entries.length === 0) out.push(`# ${setting.key}: {}`)
-  else out.push(`${live ? '' : '# '}${setting.key}:`, ...entries)
+  if (entries.length === 0) out.push('# plugins: {}')
+  else out.push(`${live ? '' : '# '}plugins:`, ...entries)
   return out
 }
 

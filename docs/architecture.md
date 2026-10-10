@@ -115,8 +115,9 @@ What a synced vault holds stays core whatever this machine runs: an app's record
 field by field and a `.local.app` still never syncs with the apps plugin off, so that bundle
 grammar is in `packages/shared` and the merge driver and fences in core.
 
-Enablement has two layers: `.holi/settings/app.yaml` declares the vault's plugins for everyone,
-and `app.local.yaml` can only turn one off on this machine ([settings](features/settings.md)). The
+Enablement has two layers: `.holi/settings/plugins.yaml` declares the vault's plugins for everyone,
+and `plugins.local.yaml` can only turn one off on this machine ([settings](features/settings.md)).
+The same pair holds each plugin's own settings under its id (`PluginInfo.settings`). The
 plugin host (`src/main/plugin-host/`) starts a plugin once per process when a vault that enables it
 opens (`activateApp`), seeds only enabled plugins' files, and stops them all at quit. Once the vault
 is open it runs `activateVault` with a context bound to that vault (hold sync, commit, read the
@@ -192,8 +193,8 @@ See [agent-sessions](features/agent-sessions.md), [agent-config](features/agent-
 - `userData` holds the GitHub and Google tokens (encrypted with Electron `safeStorage`), the vault
   registry (which repos are added and where), each vault's agent config directory, the Google cache
   and the `holi` CLIs. It is a machine fact: a second laptop starts empty.
-- Per vault, `.holi/settings/app.local.yaml` holds machine-local settings and the reminder
-  watermark; `.holi/settings/app.yaml` holds the shared ones.
+- Per vault, `.holi/settings/app.local.yaml` and `plugins.local.yaml` hold machine-local settings
+  (the first also the reminder watermark); `app.yaml` and `plugins.yaml` hold the shared ones.
 - Conversations are Claude Code's own transcripts, local to the machine that ran them.
 
 ## 8. Security boundaries

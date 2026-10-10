@@ -8,6 +8,8 @@ import { TriangleAlert } from 'lucide-react'
 import {
   SETTINGS_FILE,
   SETTINGS_LOCAL_FILE,
+  PLUGINS_FILE,
+  PLUGINS_LOCAL_FILE,
   availableOptions,
   isLocalOnlyPath,
   pluginLabels,
@@ -26,14 +28,25 @@ import { installedPluginsAtom, surfacesAtom } from '@/state/plugins'
 import { SettingsRow } from '@/composites'
 import { VaultHooks } from './VaultHooks'
 
-export function Layer({ target }: { target: VaultSettingDescriptor['target'] }): React.JSX.Element {
+export function Layer({
+  target,
+  file = 'app',
+}: {
+  target: VaultSettingDescriptor['target']
+  /** Which pair of files the answer is written to. */
+  file?: 'app' | 'plugins'
+}): React.JSX.Element {
   const committed = target === 'committed'
+  const files =
+    file === 'app'
+      ? { committed: SETTINGS_FILE, local: SETTINGS_LOCAL_FILE }
+      : { committed: PLUGINS_FILE, local: PLUGINS_LOCAL_FILE }
   return (
     <Tooltip
       content={
         committed
-          ? `shared with the vault — written to ${SETTINGS_FILE}`
-          : `this machine only — written to ${SETTINGS_LOCAL_FILE}, which is never committed`
+          ? `shared with the vault, written to ${files.committed}`
+          : `this machine only, written to ${files.local}, which is never committed`
       }
     >
       {/* `--border`, not `--divider`: this is a chip, and a chip is an object
@@ -94,7 +107,7 @@ export function SettingRow({
       data-setting={key}
       label={label}
       description={explanation}
-      meta={<Layer target={descriptor.target} />}
+      meta={<Layer target={descriptor.target} file={key === 'plugins' ? 'plugins' : 'app'} />}
       // A switch and a pick-one are both one answer to the row's question, so
       // both sit on the label's line, right-aligned. Only the flag group is
       // below, in `children`.
@@ -214,7 +227,7 @@ export function SettingRow({
                   )}
                   {off && (
                     <span className="text-[11px] text-muted-foreground">
-                      Off on this machine, in {SETTINGS_LOCAL_FILE}.
+                      Off on this machine, in {PLUGINS_LOCAL_FILE}.
                     </span>
                   )}
                 </span>

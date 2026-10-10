@@ -21,6 +21,7 @@ import { vaultSettingsAtom } from '../settings'
 const settings = (editorFont: ResolvedVaultSettings['editorFont']): ResolvedVaultSettings => ({
   home: VAULT_SETTING_DEFAULTS.home,
   plugins: VAULT_SETTING_DEFAULTS.plugins,
+  pluginValues: {},
   dailyNotes: true,
   colorScheme: 'system',
   editorFont,

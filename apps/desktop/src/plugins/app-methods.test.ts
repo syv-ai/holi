@@ -38,8 +38,7 @@ it('answers every bridge method that is not the renderer’s at the app door', (
     googleCapabilities({
       accounts: {} as GoogleAccountsManager,
       dataFor: async () => null,
-      calendarPrefs: { read: async () => ({}), set: async () => {} },
-      imagePrefs: { read: async () => [], allow: async () => {}, clear: async () => {} },
+      settings: { read: async () => ({ calendars: {}, imageSenders: [] }), write: async () => {} },
     }),
   )
   registry.register(
