@@ -482,8 +482,10 @@ async function main(): Promise<void> {
     fresh.on('focus', () => host.active()?.onFocus())
   }
 
+  // The dock: the main window, opened if it was closed and brought out if a
+  // launch at login left it out of sight.
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) openWindow()
+    if (mainWindow === null || mainWindow.isDestroyed() || !mainWindow.isVisible()) openWindow()
   })
 
   // Tray-resident: the sweep keeps running with the window closed, and the tray
