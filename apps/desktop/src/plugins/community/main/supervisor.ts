@@ -5,14 +5,15 @@
  * A tab acquires its file's server and releases it when it closes; tabs on
  * the same file share one, and the last release stops it. Leaving the vault
  * and quitting stop them all. Each runs the manifest's `serve` on a port Holi
- * chose, as its own process group, and is ready when that port on 127.0.0.1
- * takes a connection. While it is up its origin is registered with the window
+ * chose, as its own process group, and is ready when that port on the loopback
+ * (127.0.0.1 or ::1) takes a connection. While it is up its origin is registered with the window
  * guard, so its frame can move within it and nowhere else.
  *
  * No `electron` import: this loads under plain Node in the tests.
  */
 import { spawn, type ChildProcess } from 'node:child_process'
 import net from 'node:net'
+import { pluginServerOrigin } from '@holi/shared'
 import { defaultProbePid, type PidState } from '../../../main/plugin-api'
 import { splitLines } from './setup'
 
@@ -179,8 +180,8 @@ export function createSupervisor(deps: SupervisorDeps): Supervisor {
     let gone = false
     void server.exited.then(() => (gone = true))
     while (!gone && Date.now() < deadline) {
-      if (await canConnect(port, '127.0.0.1')) {
-        server.unframe = deps.frameOrigin(`http://127.0.0.1:${port}`)
+      if ((await canConnect(port, '127.0.0.1')) || (await canConnect(port, '::1'))) {
+        server.unframe = deps.frameOrigin(pluginServerOrigin(port))
         set(key, server, { state: 'running', port, log: [...server.log] })
         return { port }
       }
