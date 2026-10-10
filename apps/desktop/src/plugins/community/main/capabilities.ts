@@ -5,6 +5,7 @@
  *
  * No `electron` import: this loads under plain Node in the tests.
  */
+import { randomUUID } from 'node:crypto'
 import { readdir, readFile, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
@@ -186,6 +187,11 @@ const pathParam = (raw: unknown): { path: string } => ({
 const serverKey = (root: string, id: string, path: string) => `${root}\0${id}\0${path}`
 
 export function communityCapabilities(deps: CommunityDeps) {
+  /** Each acquire's server key, by the lease it returned: a release names
+   *  its lease, so it drops exactly what its acquire took, whatever has
+   *  changed about the plugin since. */
+  const leases = new Map<string, string>()
+
   const installOf = async (id: string): Promise<Install> => {
     const install = await deps.store.get(id)
     if (install === null) throw new CapabilityError('NOT_FOUND', `${id} is not installed here`)
@@ -383,6 +389,8 @@ export function communityCapabilities(deps: CommunityDeps) {
       doors: ['ui'],
       params: idParams,
       run: async (_ctx, { id }) => {
+        // Its servers first: their code is about to go.
+        await deps.supervisor.stopAll((key) => parseServerKey(key).id === id)
         const install = await deps.store.remove(id)
         await deps.consent.forget(id)
         if (install?.source.kind === 'release')
@@ -394,7 +402,8 @@ export function communityCapabilities(deps: CommunityDeps) {
     }),
 
     // The server for a file a plugin opens, started if none is up. Resolves
-    // with its port once it answers; each call holds it until `release`.
+    // with its port once it answers, and a lease that holds it until
+    // `release` returns it. A failed acquire holds nothing.
     'community.acquire': cap({
       doors: ['ui'],
       params: pathParam,
@@ -415,17 +424,20 @@ export function communityCapabilities(deps: CommunityDeps) {
               ...(bridge === null ? {} : { HOLI_BRIDGE_SCRIPT: bridge }),
             }),
         })
-        return { id: row.id, port }
+        const lease = randomUUID()
+        leases.set(lease, key)
+        return { id: row.id, port, lease }
       },
     }),
 
     'community.release': cap({
       doors: ['ui'],
-      params: pathParam,
-      run: async (ctx, { path }) => {
-        const rows = await listPlugins(ctx.root, deps)
-        for (const row of rows.filter((r) => opensPath(r, path)))
-          await deps.supervisor.release(serverKey(ctx.root, row.id, path))
+      params: (raw: unknown) => ({ lease: stringParam(paramsObject(raw), 'lease') }),
+      run: async (_ctx, { lease }) => {
+        const key = leases.get(lease)
+        if (key === undefined) return
+        leases.delete(lease)
+        await deps.supervisor.release(key)
       },
     }),
 

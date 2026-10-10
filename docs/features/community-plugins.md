@@ -72,6 +72,11 @@ tree, with the one next step (install the pinned version, or allow and set up).
   ask for code to run.
 - A server is stopped by group only while its pid still leads the group Holi started
   (`main/process-group.ts`): a reaped pid may already be someone else's.
+- `serve` must be the server itself, not a launcher that exits and leaves it running. Holi signals
+  the group only while the process it started still leads it, so a server whose leader has gone is
+  not stopped.
+- A tab releases its server by the lease its acquire returned, once that acquire has answered, so a
+  release cannot overtake the acquire it undoes.
 - The frame has `allow-same-origin`, unlike a vault app's. The loopback origin is never the
   renderer's, so it cannot reach Holi's document; a dev server's module scripts fail CORS from an
   opaque origin without it.
