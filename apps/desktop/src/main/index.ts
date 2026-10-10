@@ -95,10 +95,13 @@ if (!app.requestSingleInstanceLock()) {
   void main()
 }
 
-function createWindow(): BrowserWindow {
+/** The main window. `show: false` for a launch at login: its page still loads
+ *  and opens the vault, out of sight until the tray's Open Holi or the dock. */
+function createWindow({ show = true }: { show?: boolean } = {}): BrowserWindow {
   const win = new BrowserWindow({
     width: 1200,
     height: 800,
+    show,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
@@ -356,6 +359,10 @@ async function main(): Promise<void> {
 
   const router = createRouter({
     updates: updater,
+    loginItem: {
+      get: () => app.getLoginItemSettings().openAtLogin,
+      set: (open) => app.setLoginItemSettings({ openAtLogin: open }),
+    },
     capabilities: capabilityHost,
     preCommit,
     seed: (root) => plugins.seed(root),
@@ -453,7 +460,10 @@ async function main(): Promise<void> {
   const reminders = createReminderRuntime({ corpus, notifier, delivered })
   reminders.start()
 
-  const win = createWindow()
+  // Opened at login, Holi starts in the menu bar: the window loads (so the
+  // vault opens) without showing.
+  const atLogin = process.platform === 'darwin' && app.getLoginItemSettings().wasOpenedAtLogin
+  const win = createWindow({ show: !atLogin })
   // Pull on focus. The interval exists for the case where the window never
   // loses focus at all.
   win.on('focus', () => host.active()?.onFocus())
