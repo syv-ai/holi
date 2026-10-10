@@ -146,6 +146,7 @@ describe('settings', () => {
       relink: true,
       'archive-done': false,
       'normalize-md': true,
+      'shrink-images': true,
       'memory-index': true,
     })
     expect(settings.warnings).toEqual([])
@@ -183,6 +184,7 @@ describe('settings', () => {
       relink: true,
       'archive-done': false,
       'normalize-md': true,
+      'shrink-images': true,
       'memory-index': true,
     })
   })
