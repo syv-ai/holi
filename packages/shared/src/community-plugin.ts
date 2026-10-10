@@ -44,7 +44,7 @@ export interface PluginManifest {
    *  never a shell string. */
   setup?: string[]
   /** Run for each opened file; must carry `{port}`, where it must listen on
-   *  127.0.0.1. An argv. */
+   *  the loopback (127.0.0.1 or ::1), never a public address. An argv. */
   serve: string[]
   /** Lines for the vault's managed `.gitignore` block: what the server writes
    *  beside a file that must not sync. */
@@ -164,6 +164,14 @@ export function parsePluginPin(json: unknown): Parsed<PluginPin> {
     ok: true,
     value: { ...manifest.value, repo: record.repo as string, commit: record.commit as string },
   }
+}
+
+/** Where a plugin's server for one file is framed: `localhost`, which is
+ *  the loopback whichever of 127.0.0.1 or ::1 the server took (Vite takes
+ *  ::1 on macOS). Main registers this origin with the window guard and the
+ *  renderer frames it, so the two cannot disagree. */
+export function pluginServerOrigin(port: number): string {
+  return `http://localhost:${port}`
 }
 
 /** Does the plugin open the file at vault path `path`? */
