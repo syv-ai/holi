@@ -47,7 +47,7 @@ place, is for developing a plugin.
 **Code lives on the machine, the pin in the vault.** An install is `userData/plugins/<id>/<commit>/`,
 one per id, listed in `userData/plugins/installed.json`. A vault that uses a plugin commits its pin,
 `.holi/plugins/<id>/manifest.json` (the manifest plus `repo` and `commit`), and turns it on with
-`plugins: { community: true, <id>: true }` in `app.yaml`, beside the first-party plugins. A folder
+`plugins: { community: true, <id>: true }` in `.holi/settings/plugins.yaml`, beside the first-party plugins. A folder
 install is never pinned.
 
 **Skills for the vault's agent.** A manifest's `skills` names folders in the plugin, each a Claude

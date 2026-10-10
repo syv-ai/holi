@@ -4,11 +4,11 @@
  * each setup's output while it runs.
  *
  * The rows are read when the vault opens and again whenever a pin or the
- * settings file changes on disk (a teammate's pull, the settings tab's own
+ * plugins settings change on disk (a teammate's pull, the settings tab's own
  * write), so the claim follows what the vault says.
  */
 import { atom } from 'jotai'
-import { PLUGIN_PINS_DIR, servedFile, SETTINGS_FILE, SETTINGS_LOCAL_FILE } from '@holi/shared'
+import { PLUGIN_PINS_DIR, PLUGINS_FILE, PLUGINS_LOCAL_FILE, servedFile } from '@holi/shared'
 import { capClient, snapshotAtom, type PluginStore } from '@/plugin-api'
 import type { communityCapabilities, PluginRow } from '../main/capabilities'
 import type { ServerState } from '../main/supervisor'
@@ -58,14 +58,14 @@ export async function refreshRows(remote: string, store: PluginStore): Promise<v
   }
 }
 
-/** What on disk decides the rows: the pins and the two settings files. */
+/** What on disk decides the rows: the pins and the two plugins files. */
 const signatureAtom = atom((get) =>
   get(snapshotAtom)
     .files.filter(
       (f) =>
         f.path.startsWith(`${PLUGIN_PINS_DIR}/`) ||
-        f.path === SETTINGS_FILE ||
-        f.path === SETTINGS_LOCAL_FILE,
+        f.path === PLUGINS_FILE ||
+        f.path === PLUGINS_LOCAL_FILE,
     )
     .map((f) => `${f.path}@${f.updatedAt}`)
     .join('|'),
