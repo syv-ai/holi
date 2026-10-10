@@ -1,3 +1,4 @@
+import { checkPluginCatalogue } from '@holi/shared'
 import { Provider, createStore } from 'jotai'
 import React from 'react'
 import { createRoot } from 'react-dom/client'
@@ -19,6 +20,7 @@ import './index.css'
 const store = createStore()
 // The plugins this build has: the one place the renderer imports them. Core's
 // own surfaces go in beside them.
+checkPluginCatalogue(RENDERER_PLUGINS.map((p) => p.info))
 store.set(installedPluginsAtom, RENDERER_PLUGINS)
 store.set(coreContributionAtom, CORE_CONTRIBUTION)
 subscribeToVault(store, RENDERER_PLUGINS)

@@ -17,7 +17,7 @@ import {
   SETTINGS_FILE,
   VAULT_SETTING_DEFAULTS,
   availableOptions,
-  enabledPlugins,
+  resolvePlugins,
   knownTransforms,
   vaultSettingDescriptors,
   type PluginSettings,
@@ -148,7 +148,7 @@ function Row({
 
 export function VaultSettingsAct({ settings, onChange }: Props) {
   const infos = useAtomValue(installedPluginsAtom).map((p) => p.info)
-  const on = enabledPlugins(
+  const { running: on } = resolvePlugins(
     (settings.plugins as PluginSettings | undefined) ?? VAULT_SETTING_DEFAULTS.plugins,
     infos,
   )

@@ -10,7 +10,10 @@ import {
   SETTINGS_LOCAL_FILE,
   availableOptions,
   isLocalOnlyPath,
+  pluginLabels,
+  resolvePlugins,
   type PluginSettings,
+  type PluginStatus,
   type VaultSettingDescriptor,
   type VaultSettingOption,
 } from '@holi/shared'
@@ -75,6 +78,13 @@ export function SettingRow({
 
   // A switch per installed plugin, so with none there is nothing to show.
   if (control.kind === 'plugins' && installed.length === 0) return null
+  // The tick is the vault's answer; whether the plugin runs also takes what it
+  // requires, which the row then names.
+  const infos = installed.map((p) => p.info)
+  const status =
+    control.kind === 'plugins'
+      ? resolvePlugins(value as PluginSettings, infos).status
+      : new Map<string, PluginStatus>()
 
   return (
     <SettingsRow
@@ -164,7 +174,9 @@ export function SettingRow({
           {installed.map((plugin) => {
             const { info } = plugin
             const plugins = value as PluginSettings
-            const off = plugins.localOff.includes(info.id)
+            const st = status.get(info.id)
+            const off = st?.kind === 'off-here'
+            const needs = st?.kind === 'needs' ? st.missing : []
             const adds = pluginAdds(plugin)
             return (
               <label key={info.id} className="flex items-start gap-2.5">
@@ -194,6 +206,11 @@ export function SettingRow({
                   )}
                   {info.whenOff !== undefined && (
                     <span className="text-[11px] text-muted-foreground">Off: {info.whenOff}</span>
+                  )}
+                  {needs.length > 0 && (
+                    <span className="text-[11px] text-muted-foreground">
+                      Needs {pluginLabels(needs, infos)}, so it is not running.
+                    </span>
                   )}
                   {off && (
                     <span className="text-[11px] text-muted-foreground">

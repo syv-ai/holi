@@ -7,7 +7,7 @@
 import { useEffect, useReducer, useState } from 'react'
 import { useAtomValue } from 'jotai'
 import { X } from 'lucide-react'
-import { VAULT_SETTING_DEFAULTS, enabledPlugins, type PluginSettings } from '@holi/shared'
+import { VAULT_SETTING_DEFAULTS, resolvePlugins, type PluginSettings } from '@holi/shared'
 import { Button, IconButton } from '@/primitives'
 import {
   actIndex,
@@ -81,7 +81,7 @@ export function OnboardingRitual({ mode, onDismiss, dryRun = false }: Props) {
   const naming = s.act === 'naming' && s.view === 'form'
   const plugins =
     (s.settings.plugins as PluginSettings | undefined) ?? VAULT_SETTING_DEFAULTS.plugins
-  const running = enabledPlugins(
+  const { running } = resolvePlugins(
     plugins,
     installed.map((p) => p.info),
   )

@@ -2,7 +2,7 @@
  * Runs the installed plugins (docs/architecture.md, Plugins).
  *
  * A plugin runs in a vault when the vault's settings enable it
- * (`enabledPlugins`). The host answers that question for dispatch, which
+ * (`resolvePlugins`). The host answers that question for dispatch, which
  * refuses a disabled plugin's capabilities, and for the seeder, which writes
  * only enabled plugins' files. It starts each plugin (`activateApp`) once per
  * process, the first time a vault that enables it is entered, and stops them
@@ -11,7 +11,7 @@
  *
  * No `electron` import: this loads under plain Node in the tests.
  */
-import { CORE_TRANSFORMS, enabledPlugins, type ResolvedVaultSettings } from '@holi/shared'
+import { CORE_TRANSFORMS, resolvePlugins, type ResolvedVaultSettings } from '@holi/shared'
 import type { AppDoor, AppDoorOpener } from '../capabilities/dispatch'
 import type { CapabilityRegistry } from '../capabilities/registry'
 import type {
@@ -130,7 +130,7 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
   /** Read off disk, and cache it when it is the open vault's. */
   async function read(root: string): Promise<Set<string>> {
     const at = generation
-    const enabled = enabledPlugins((await readSettings(root)).plugins, infos)
+    const enabled = new Set(resolvePlugins((await readSettings(root)).plugins, infos).running)
     if (at === generation && root === deps.active()?.root) cache = { root, enabled }
     return enabled
   }

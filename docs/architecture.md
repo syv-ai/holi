@@ -74,6 +74,13 @@ Plugins call each other the same way, each typing only the slice it calls; befor
 call, a plugin asks `useHasCapability(name)`, backed by the `cap.names` query (the UI door's names
 whose owner the vault runs), so a button for another plugin's verb hides while that plugin is off.
 Core's `tasks.create` is one: the board and the Google views create tasks through it.
+A plugin that builds on another says so in `PluginInfo.requires`: it runs only where every plugin
+it requires runs, down a chain, so turning one off turns off what stands on it, its seeds included.
+The dependency runs one way: the plugin underneath knows nothing of what requires it. One resolver,
+`resolvePlugins`, answers which plugins run and why each other one does not (off in the vault, off
+on this machine, or needing one that is off), and every reader in both processes asks it. Both
+processes check their list with `checkPluginCatalogue` at boot, which refuses a missing or circular
+requirement.
 A plugin claims vault paths: the first enabled claim with a `view` opens a note tab of that path,
 and its `rowMenu` items join the file tree's menu. On the main side a claim
 (`MainPlugin.claims`, `{match, parse, normalize?}`) owns markdown files in the snapshot: the scanner

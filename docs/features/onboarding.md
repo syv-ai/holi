@@ -18,7 +18,8 @@ them push access to. The same ritual, minus the greeting, is how any later vault
      orgs, defaulting to you. A caption shows `github.com/<owner>/<slug>`. Continue creates the
      repo: seeded, committed, pushed and tagged with the `holi-vault` topic before it returns.
   3. Plugins: "What this vault runs", a row per plugin in the build with its description and a
-     switch at its own default. Turning one off says what that means in place. Only choosing
+     switch at its own default. Turning one off says what that means in place; a plugin whose
+     `requires` are off shows off, cannot be switched, and says what it needs. Only choosing
      happens here; setting a plugin up (connecting Google) is per machine and happens where it is
      used.
   4. Settings: the vault settings marked as asked at birth, each with its default already chosen,

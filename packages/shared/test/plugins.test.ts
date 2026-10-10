@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
   CORE_TRANSFORMS,
-  enabledPlugins,
+  checkPluginCatalogue,
+  resolvePlugins,
   parseSettingsPatch,
   parseSettingsText,
   resolveVaultSettings,
@@ -16,11 +17,44 @@ const KNOWN: PluginInfo[] = [
 ]
 
 const enabled = (committed: string | null, local: string | null) =>
-  [...enabledPlugins(resolveVaultSettings(committed, local).plugins, KNOWN)].sort()
+  [...resolvePlugins(resolveVaultSettings(committed, local).plugins, KNOWN).running].sort()
 
-describe('enabledPlugins', () => {
+describe('resolvePlugins', () => {
   it('runs each plugin by its default when the vault says nothing', () => {
     expect(enabled(null, null)).toEqual(KNOWN.filter((p) => p.default).map((p) => p.id))
+  })
+
+  it('leaves a plugin off wherever one it requires is, down a chain, and says why', () => {
+    const chain: PluginInfo[] = [
+      { id: 'base', label: 'Base', default: true },
+      { id: 'face', label: 'Face', default: true, requires: ['base'] },
+      { id: 'skin', label: 'Skin', default: true, requires: ['face'] },
+    ]
+    const run = (committed: string | null, local: string | null = null) => {
+      const r = resolvePlugins(resolveVaultSettings(committed, local).plugins, chain)
+      return { running: [...r.running].sort(), status: Object.fromEntries(r.status) }
+    }
+    expect(run(null).running).toEqual(['base', 'face', 'skin'])
+    expect(run('plugins:\n  face: false\n').running).toEqual(['base'])
+    expect(run(null, 'plugins:\n  base: false\n').status).toEqual({
+      base: { kind: 'off-here' },
+      face: { kind: 'needs', missing: ['base'] },
+      skin: { kind: 'needs', missing: ['face'] },
+    })
+    expect(run('plugins:\n  base: false\n').status.base).toEqual({ kind: 'off-vault' })
+  })
+
+  it('refuses a catalogue that could never work', () => {
+    const p = (id: string, requires?: string[]): PluginInfo => ({
+      id,
+      label: id,
+      default: true,
+      requires,
+    })
+    expect(() => checkPluginCatalogue([p('a'), p('a')])).toThrow('twice')
+    expect(() => checkPluginCatalogue([p('a', ['gone'])])).toThrow('requires gone')
+    expect(() => checkPluginCatalogue([p('a', ['b']), p('b', ['a'])])).toThrow('each other')
+    expect(() => checkPluginCatalogue([p('a'), p('b', ['a'])])).not.toThrow()
   })
 
   it("takes the vault's answer over the default", () => {

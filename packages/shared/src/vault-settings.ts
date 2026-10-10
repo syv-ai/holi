@@ -195,7 +195,7 @@ export interface ResolvedVaultSettings {
   hooks: VaultHooks
   maxCommittedFileBytes: number
   /** Which plugins the vault declares, and which this machine turned off:
-   *  `enabledPlugins` turns it into the set that runs. */
+   *  `resolvePlugins` turns it into the set that runs. */
   plugins: PluginSettings
   /** Human-readable notes about dropped keys/values, surfaced so a typo is
    *  diagnosable rather than silent. Mirrors `ResolvedTheme.warnings`. */
@@ -592,7 +592,7 @@ export const VAULT_SETTINGS: readonly VaultSetting[] = [
     explanation:
       'What this vault runs beyond the core. Everyone who clones it gets the same plugins, and any of them can be turned off on one machine.',
     type: { kind: 'plugins' },
-    // Every plugin's own default: see `enabledPlugins`.
+    // Every plugin's own default: see `resolvePlugins`.
     default: Object.freeze({ vault: Object.freeze({}), localOff: Object.freeze([]) }),
     // The vault declares them; the local file can only turn one off.
     target: 'committed',
