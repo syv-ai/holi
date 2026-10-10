@@ -178,7 +178,9 @@ export async function listPlugins(root: string, deps: Pick<CommunityDeps, 'store
 }
 
 const idParams = (raw: unknown) => ({ id: stringParam(paramsObject(raw), 'id') })
-const pathParam = (raw: unknown) => ({ path: vaultRelPath(stringParam(paramsObject(raw), 'path')) })
+const pathParam = (raw: unknown): { path: string } => ({
+  path: vaultRelPath(stringParam(paramsObject(raw), 'path')),
+})
 
 /** The server key: one per vault, plugin and file. */
 const serverKey = (root: string, id: string, path: string) => `${root}\0${id}\0${path}`
@@ -240,8 +242,12 @@ export function communityCapabilities(deps: CommunityDeps) {
         const p = paramsObject(raw)
         const repo = stringParam(p, 'repo')
         if (!isRepoName(repo)) throw new CapabilityError('BAD_REQUEST', 'repo must be owner/repo')
-        const expectId = p.id === undefined ? undefined : stringParam(p, 'id')
-        return { repo, version: stringParam(p, 'version'), expectId }
+        const params: { repo: string; version: string; expectId?: string } = {
+          repo,
+          version: stringParam(p, 'version'),
+        }
+        if (p.expectId !== undefined) params.expectId = stringParam(p, 'expectId')
+        return params
       },
       run: async (ctx, { repo, version, expectId }) => {
         const fetched = await fetchRelease(
