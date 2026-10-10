@@ -5,6 +5,7 @@ import {
   parsePluginManifest,
   parsePluginPin,
   pluginPinPath,
+  servedFile,
 } from '../src/community-plugin'
 
 const prezzi = {
@@ -45,6 +46,10 @@ describe('parsePluginManifest', () => {
     expect(problems({ ...prezzi, opens: ['slides.md', '*.deck'] })).toEqual([])
     expect(problems({ ...prezzi, opens: ['**/slides.md'] })).toHaveLength(1)
     expect(problems({ ...prezzi, opens: [] })).toHaveLength(1)
+    expect(
+      problems({ ...prezzi, opens: [], folder: { suffix: '.deck', entry: 'slides.md' } }),
+    ).toEqual([])
+    expect(problems({ ...prezzi, folder: { suffix: 'deck', entry: 'a/b.md' } })).toHaveLength(2)
   })
 
   it('takes skills as folders inside the plugin', () => {
@@ -80,6 +85,18 @@ describe('parsePluginPin', () => {
 
   it('lives under .holi/plugins', () => {
     expect(pluginPinPath('prezzi')).toBe('.holi/plugins/prezzi/manifest.json')
+  })
+})
+
+describe('servedFile', () => {
+  const deck = { opens: [], folder: { suffix: '.deck', entry: 'slides.md' } }
+  it("serves a folder's entry, by the folder's name", () => {
+    expect(servedFile(deck, 'prezzis/q4.deck')).toBe('prezzis/q4.deck/slides.md')
+    expect(servedFile(deck, 'prezzis/.deck')).toBeNull()
+    expect(servedFile(deck, 'prezzis/q4.deck/slides.md')).toBeNull()
+  })
+  it('serves a file it opens as itself', () => {
+    expect(servedFile(prezzi, 'decks/slides.md')).toBe('decks/slides.md')
   })
 })
 
