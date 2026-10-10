@@ -103,6 +103,11 @@ export const THEME_COLOR_TOKENS = [
   // An HTML comment's banner in a note: its text, and the surface it floats on.
   'comment',
   'comment-background',
+  // The agent's lights: a session's orb, and the quick panel's glow.
+  'agent-working',
+  'agent-needs-you',
+  'agent-done',
+  'agent-failed',
 ] as const
 
 /** Length-valued chrome tokens (corner rounding). */
@@ -370,6 +375,11 @@ export const THEME_TOKEN_GROUPS: readonly ThemeTokenGroup[] = [
     ],
   },
   {
+    title: 'The agent',
+    blurb: "A session's state: its orb in the sidebar, and the quick panel's glow.",
+    tokens: ['agent-working', 'agent-needs-you', 'agent-done', 'agent-failed'],
+  },
+  {
     title: 'Chrome',
     blurb: 'Shape and depth rather than colour.',
     tokens: ['radius', 'shadow-popover', 'shadow-dialog'],
@@ -427,6 +437,10 @@ export const THEME_TOKEN_ROLES: Readonly<Record<string, string>> = Object.freeze
   code: 'Inline code',
   comment: 'Comment text',
   'comment-background': 'Comment banner',
+  'agent-working': 'Agent working',
+  'agent-needs-you': 'Agent needs you',
+  'agent-done': 'Agent done',
+  'agent-failed': 'Agent failed',
   radius: 'Corner rounding',
   'shadow-popover': 'Menu shadow',
   'shadow-dialog': 'Dialog shadow',

@@ -39,6 +39,7 @@ export { DRAWER_WIDTH } from '@/lib/drawer'
 export { activeRemoteAtom, historyEpochsAtom, snapshotAtom, syncStateAtom } from '@/state/vaults'
 export { sessionAtom } from '@/state/session'
 export { activeModeAtom } from '@/state/color-scheme'
+export { useVaultTheme } from '@/state/theme'
 export { openNoteTabAtom } from '@/state/panes'
 export {
   activeSurfaceIdAtom,

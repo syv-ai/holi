@@ -26,7 +26,7 @@ import type { VaultCtx } from '../../../../main/plugin-api'
 import type { VaultCliTarget } from '../claude/cli'
 import type { ClaudeRow, SessionSummary } from '../claude/listing'
 import type { AgentProvider, VaultRef } from '../provider'
-import type { AgentTerminals } from './terminals'
+import type { AgentTerminals, TerminalSink } from './terminals'
 import { ContextSnapshot, type FocusInput } from './context-snapshot'
 import { createTurnCoordinator, type TurnCoordinator, type TurnVault } from './turn-coordinator'
 import type { TurnLog } from './turn-log'
@@ -42,6 +42,7 @@ export type ActionResult = { ok: true } | { ok: false; message: string }
 export type OpenResult = { ok: true; terminalId: string } | { ok: false; message: string }
 export type StartResult =
   { ok: true; sessionId: string; terminalId: string } | { ok: false; message: string }
+export type QuickStartResult = { ok: true; sessionId: string } | { ok: false; message: string }
 
 export interface Geometry {
   cols?: number
@@ -71,6 +72,9 @@ export interface AgentSessionsDeps {
   terminals: AgentTerminals
   /** Holi's generated commands, first on every session's `PATH`. */
   binDir(): string | null
+  /** Whether Holi holds a question this session is waiting on (the question
+   *  desk). Such a session needs you, whatever the listing says. */
+  pendingQuestion?(jobId: string): boolean
   turnLogFor?: (vaultRoot: string) => TurnLog
   turnSafetyMs?: number
   idleRecheckMs?: number
@@ -89,11 +93,24 @@ export interface AgentSessions {
   sessions(): SessionSummary[]
   /** Re-read the listing now. Never rejects. */
   refresh(): Promise<void>
-  /** A terminal on the list (no `attach`) or on one session. */
-  open(args: Geometry & { attach?: string }): Promise<OpenResult>
+  /** A terminal on the list (no `attach`) or on one session. With `sink`, the
+   *  quick panel's own: not a tab (`terminals.ts`). */
+  open(args: Geometry & { attach?: string; sink?: TerminalSink }): Promise<OpenResult>
   /** A new background session, and a terminal on it. With a prompt, that
    *  prompt is its first turn (reconcile); without, it waits for one. */
   start(args: Geometry & { name?: string; prompt?: string }): Promise<StartResult>
+  /** A quick agent: a background session whose first turn is `prompt`, with
+   *  no terminal. The quick panel is its window. */
+  startQuick(args: { name?: string; prompt: string }): Promise<QuickStartResult>
+  /** Whether this session was started from the quick panel this run. */
+  isQuick(id: string): boolean
+  /** Its row in the latest listing, live or not. */
+  row(id: string): ClaudeRow | undefined
+  /** Hear every listing read, and the vault being left. Returns the undo. */
+  onRows(cb: () => void): () => void
+  /** Push the list again: something Holi holds about a session changed (a
+   *  question arrived or was answered). */
+  touch(): void
   /** Put text in a session's input, unsent: a live one by id, or a new one
    *  named from the text. Opens a terminal on it when Holi has none. */
   send(args: Geometry & { text: string; target: string | 'new' }): Promise<OpenResult>
@@ -157,6 +174,13 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
    * session between turns is not using any more.
    */
   const contextPercent = new Map<string, number>()
+  /** The sessions started from the quick panel since the vault opened. Holi's
+   *  own record: after a restart its panels are gone, and so are its cards. */
+  const quick = new Set<string>()
+  const rowListeners = new Set<() => void>()
+  const rowsChanged = (): void => {
+    for (const cb of [...rowListeners]) cb()
+  }
 
   const coordinator: TurnCoordinator = createTurnCoordinator({
     vault: () => current?.vault ?? null,
@@ -169,7 +193,17 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
 
   const live = (): ClaudeRow[] => rows.filter((row) => provider.isLive(row))
   const summaries = (): SessionSummary[] =>
-    live().map((row) => provider.summarise(row, coordinator.working, contextPercent.get(row.id)))
+    live().map((row) => {
+      const summary = provider.summarise(row, coordinator.working, contextPercent.get(row.id))
+      // A question the quick panel holds: the hook keeps the listing at
+      // `busy`, so the listing alone would call it working.
+      const held = deps.pendingQuestion?.(row.id) === true
+      return {
+        ...summary,
+        ...(held ? { state: 'needs-you' as const, waitingFor: 'input needed' } : {}),
+        ...(quick.has(row.id) ? { quick: true as const } : {}),
+      }
+    })
 
   /** Tell the renderer the list, when it changed: the vault's, or `remote`'s
    *  as Holi lets go of it. */
@@ -281,6 +315,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
       }, deps.idleRecheckMs ?? IDLE_RECHECK_MS)
     }
     push()
+    rowsChanged()
   }
 
   async function refresh(): Promise<void> {
@@ -305,7 +340,10 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     c.unwatch()
   }
 
-  async function openOn(c: Current, args: Geometry & { attach?: string }): Promise<OpenResult> {
+  async function openOn(
+    c: Current,
+    args: Geometry & { attach?: string; sink?: TerminalSink },
+  ): Promise<OpenResult> {
     // Taken here, at a terminal, not at vault open: a run that opens no
     // terminal must leave the notice for the one that does.
     let firstSpawn = false
@@ -321,6 +359,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
       ...(args.cols === undefined ? {} : { cols: args.cols }),
       ...(args.rows === undefined ? {} : { rows: args.rows }),
       ...(notice === undefined ? {} : { notice }),
+      ...(args.sink === undefined ? {} : { sink: args.sink }),
     })
     return res.ok ? { ok: true, terminalId: res.id } : res
   }
@@ -355,6 +394,31 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
       const opened = await openOn(c, { attach: res.id, cols, rows: r })
       return opened.ok ? { ok: true, sessionId: res.id, terminalId: opened.terminalId } : opened
     },
+
+    async startQuick({ name, prompt }) {
+      const c = await ensureCurrent()
+      if (c === null) return noVault
+      const res = await provider.cli.startQuick(targetOf(c), {
+        ...(name === undefined ? {} : { name }),
+        prompt,
+      })
+      if (!res.ok) return res
+      if (current !== c) return { ok: false, message: 'The vault closed as the agent started.' }
+      quick.add(res.id)
+      await refresh()
+      return { ok: true, sessionId: res.id }
+    },
+
+    isQuick: (id) => quick.has(id),
+
+    row: (id) => rows.find((r) => r.id === id),
+
+    onRows(cb) {
+      rowListeners.add(cb)
+      return () => void rowListeners.delete(cb)
+    },
+
+    touch: () => push(),
 
     async send({ text, target, cols, rows: r }) {
       const c = await ensureCurrent()
@@ -475,6 +539,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     for (const id of [...coordinator.working]) coordinator.forget(id)
     unprompted.clear()
     contextPercent.clear()
+    quick.clear()
     if (idleRecheck !== null) {
       clearTimeout(idleRecheck)
       idleRecheck = null
@@ -485,6 +550,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     rows = []
     await release(c)
     push(c.remote)
+    rowsChanged()
   }
   return api
 }

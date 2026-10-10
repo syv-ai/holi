@@ -40,7 +40,7 @@ export function agentIndicator(args: {
   // The loudest state: blocked on a dialog until you answer.
   if (state === 'needs-you') {
     return {
-      dot: 'bg-orange-500',
+      dot: 'bg-agent-needs-you',
       state: 'needs you',
       title:
         waitingFor === undefined
@@ -51,14 +51,14 @@ export function agentIndicator(args: {
 
   if (state === 'working') {
     return {
-      dot: 'motion-pulse bg-amber-400',
+      dot: 'motion-pulse bg-agent-working',
       state: 'working…',
       title: 'Claude is working on your turn',
     }
   }
 
   return {
-    dot: 'bg-green-500',
+    dot: 'bg-agent-done',
     state: 'running',
     title: 'session running, ready for your next message',
   }

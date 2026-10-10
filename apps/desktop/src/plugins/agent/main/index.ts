@@ -17,13 +17,18 @@ import { AGENT_INFO } from '../info'
 import { claudeProvider } from './claude'
 import { claudeSeed } from './claude/seed'
 import { agentCapabilities, AGENT_NAMESPACES } from './host/capabilities'
+import { createQuestionDesk } from './host/questions'
 import { createAgentSessions, type AgentSessions } from './host/sessions'
 import { createAgentTerminals } from './host/terminals'
 import { openTurnLog } from './host/turn-log'
+import { startQuickAgent, type QuickAgent } from './quick'
+import { quickCapabilities } from './quick/capabilities'
 
 let sessions: AgentSessions | null = null
 /** The vault the agent is active in, for the capabilities that commit. */
 let vault: VaultCtx | null = null
+/** Lets go of the questions quick agents wait on, as Holi leaves a vault. */
+let releaseQuestions: () => void = () => {}
 
 export const agentMain: MainPlugin = {
   info: AGENT_INFO,
@@ -36,6 +41,20 @@ export const agentMain: MainPlugin = {
       systemPrefersDark: () => nativeTheme.shouldUseDarkColors,
     })
     const terminals = createAgentTerminals({ emit: ctx.emit, command: provider.terminal })
+    const liveRemote = (): string | null => ctx.active()?.remote ?? null
+    let quick: QuickAgent | null = null
+    // The questions quick agents wait on (docs/features/quick-agent.md). Each
+    // change re-reads the list (a held question is needs-you), the panels,
+    // and the cards over the main window's tabs.
+    const desk = createQuestionDesk({
+      onChange: (pending) => {
+        started.touch()
+        quick?.update()
+        const remote = liveRemote()
+        if (remote !== null) ctx.emit(remote, 'questions', pending)
+      },
+    })
+    releaseQuestions = () => desk.releaseAll()
     const started = createAgentSessions({
       emit: ctx.emit,
       provider,
@@ -43,20 +62,21 @@ export const agentMain: MainPlugin = {
       binDir: ctx.binDir,
       // What each turn changed, as a commit range, in the vault it ran in.
       turnLogFor: openTurnLog,
+      pendingQuestion: (job) => desk.has(job),
     })
     sessions = started
-    ctx.register(
-      AGENT_NAMESPACES,
-      agentCapabilities({
+    ctx.register(AGENT_NAMESPACES, {
+      ...agentCapabilities({
         sessions: started,
         terminals,
-        liveRemote: () => ctx.active()?.remote ?? null,
+        liveRemote,
         commitNow: async () => {
           if (vault === null) throw new CapabilityError('UNAVAILABLE', 'No vault is open.')
           return vault.commitNow()
         },
       }),
-    )
+      ...quickCapabilities({ desk, quick: () => quick, liveRemote }),
+    })
     // Keystrokes and resizes, in the order they were typed. The host drops
     // any about a vault that is not the open one.
     ctx.on('pty-write', (_remote, payload) => {
@@ -74,7 +94,35 @@ export const agentMain: MainPlugin = {
       onJobTurn: (remote, jobId, active) => started.noteTurn(remote, jobId, active),
       // A session's status line: how much of its context is used.
       onStatus: (remote, jobId, status) => started.noteStatus(remote, jobId, status),
+      // A quick agent's question, held until the person answers. Any other
+      // session's (one from before a restart, say) is Claude Code's to ask.
+      onAsk: (remote, jobId, input, signal) =>
+        remote === liveRemote() && started.isQuick(jobId)
+          ? desk.ask(jobId, input, signal)
+          : Promise.resolve(null),
+      // A quick agent's answer, for its panel.
+      onQuickResult: (remote, jobId, message) => {
+        if (remote === liveRemote() && started.isQuick(jobId)) quick?.result(jobId, message)
+      },
     })
+    // Every listing read moves the quick panels' lights. A question whose
+    // session is no longer running has nobody left to answer it: the stop
+    // ended its hook, and this lets go of one that outlived the stop.
+    const unrows = started.onRows(() => {
+      for (const { job } of desk.pending()) {
+        const row = started.row(job)
+        if (row !== undefined && !provider.isLive(row)) desk.release(job)
+      }
+      quick?.update()
+    })
+    // The quick agent: the global hotkey and its panels. A failure costs that
+    // feature, never the agent.
+    quick = await startQuickAgent({ ctx, sessions: started, terminals, desk }).catch(
+      (err: unknown) => {
+        console.error('[agent] quick agent did not start:', err)
+        return null
+      },
+    )
     // Quitting stops the vault's sessions, so it asks first when one of them
     // is working or waiting on you: that turn is cut short. Idle sessions
     // stop without a question; their conversations stay in the agents list.
@@ -88,6 +136,10 @@ export const agentMain: MainPlugin = {
       }
     })
     return () => {
+      unrows()
+      quick?.dispose()
+      quick = null
+      desk.releaseAll()
       sessions = null
     }
   },
@@ -104,6 +156,9 @@ export const agentMain: MainPlugin = {
     // was busy). They stay in the agents list and resume when opened.
     return async () => {
       unreport()
+      // Stopping a session ends its hook too; this is the backstop for one
+      // that outlives the stop.
+      releaseQuestions()
       await running.leave().catch((err) => console.error('[agent] leave failed:', err))
       if (vault === ctx) vault = null
     }

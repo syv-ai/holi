@@ -105,8 +105,17 @@ it, and it stays in the agent list. See [agent-sessions](features/agent-sessions
 ### Ask
 
 Text sent from Holi to a session (a selection, a task, a mail thread). It lands in the input as a
-bracketed paste with no Enter, so Holi never submits a draft the user was typing. A reconcile or a
-stuck push is the exception: it submits its instruction as the first turn of its own session.
+bracketed paste with no Enter, so Holi never submits a draft the user was typing. A reconcile, a
+stuck push and a quick agent are the exceptions: each submits its first turn in its own session.
+
+### Quick agent
+
+A session started from the **quick panel**: the small window a global hotkey opens at the pointer
+in any other app. Its first turn is the task typed there. Sent, the agent is a dot in the **quick
+agents' dock** (in the quick agent's own pages and code, just "the dock"), a slim window at the
+right edge of the screen, lit in its state; pointing at the dot brings its panel out, and a second
+global key, the dock key, opens it with the keyboard. Its questions (AskUserQuestion) come to Holi
+as cards answered with one key. See [quick-agent](features/quick-agent.md).
 
 ### Agent surface
 

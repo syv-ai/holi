@@ -101,6 +101,13 @@
   --task-todo: #6e7681;
   --task-doing: #388bfd;
   --task-done: #3fb950;
+  /* The agent's lights: a session's orb, and the quick panel's glow
+     (docs/features/quick-agent.md). Signals, so no light arm, like the task
+     orbs: amber at work, orange when it needs you, green done, red failed. */
+  --agent-working: #fbbf24;
+  --agent-needs-you: #f97316;
+  --agent-done: #22c55e;
+  --agent-failed: #ef4444;
   /* Inline code is told apart by colour alone, with no fill behind it. */
   --code: var(--color-orange-300);
   /* An HTML comment floats over the note, its text in the prose colour like
@@ -286,6 +293,10 @@
   --color-task-todo: var(--task-todo);
   --color-task-doing: var(--task-doing);
   --color-task-done: var(--task-done);
+  --color-agent-working: var(--agent-working);
+  --color-agent-needs-you: var(--agent-needs-you);
+  --color-agent-done: var(--agent-done);
+  --color-agent-failed: var(--agent-failed);
   --color-file-blue: var(--file-blue);
   --color-file-sky: var(--file-sky);
   --color-file-teal: var(--file-teal);

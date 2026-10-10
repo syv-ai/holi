@@ -55,7 +55,16 @@ export interface OpenArgs {
   /** Written into the record before the program's first byte (the sign-in
    *  notice for a fresh config dir). */
   notice?: string
+  /**
+   * Where its `pty-data` and `pty-exit` go instead of the main window: the
+   * quick panel showing a session's own prompt. Such a terminal is that
+   * panel's alone, so it is not in the list, and not a window an ask reuses.
+   */
+  sink?: TerminalSink
 }
+
+/** Tell one window `name` about a terminal (`OpenArgs.sink`). */
+export type TerminalSink = (name: string, payload: unknown) => void
 
 export interface AgentTerminalsDeps {
   /** Tell the renderer `name` about the vault `remote`. */
@@ -102,6 +111,8 @@ interface Terminal {
   attached: boolean
   /** True once its TUI has printed and settled; pastes wait until then. */
   ready: boolean
+  /** Its own window's channel, for a terminal the quick panel opened. */
+  sink: TerminalSink | null
   /** The settle timer is running. */
   settling: boolean
   pending: string[]
@@ -116,8 +127,17 @@ export function createAgentTerminals(deps: AgentTerminalsDeps): AgentTerminals {
   const terminals = new Map<string, Terminal>()
   let lastPushed = ''
 
+  /** The main window's terminals: a panel's own are not tabs. */
+  const tabs = (): Terminal[] => [...terminals.values()].filter((t) => t.sink === null)
+
   const list = (): TerminalSummary[] =>
-    [...terminals.values()].map(({ id, launchedFor, title }) => ({ id, launchedFor, title }))
+    tabs().map(({ id, launchedFor, title }) => ({ id, launchedFor, title }))
+
+  /** Tell whoever shows `t` about it. */
+  const tell = (t: Terminal, name: string, payload: unknown): void => {
+    if (t.sink !== null) t.sink(name, payload)
+    else deps.emit(t.remote, name, payload)
+  }
 
   /** Push only when the list actually changed. Every terminal is in the
    *  open vault, the one `remote` names. */
@@ -142,7 +162,7 @@ export function createAgentTerminals(deps: AgentTerminalsDeps): AgentTerminals {
   }
 
   const api: AgentTerminals = {
-    open({ remote, target, attach, cols, rows, notice }) {
+    open({ remote, target, attach, cols, rows, notice, sink }) {
       const command = deps.command(target, attach)
       if (command === null) return { ok: false, message: NOT_INSTALLED }
       const id = randomUUID()
@@ -163,6 +183,7 @@ export function createAgentTerminals(deps: AgentTerminalsDeps): AgentTerminals {
         mirror,
         attached: false,
         ready: false,
+        sink: sink ?? null,
         settling: false,
         pending: [],
         timers: [],
@@ -173,7 +194,7 @@ export function createAgentTerminals(deps: AgentTerminalsDeps): AgentTerminals {
       })
       runtime.onData((data) => {
         mirror.write(data)
-        if (t.attached) deps.emit(remote, 'pty-data', { id, data })
+        if (t.attached) tell(t, 'pty-data', { id, data })
         // The first output means the TUI is up; a moment later it is reading
         // raw input. Only the fact of output is used, never what it says.
         if (!t.ready && !t.settling) {
@@ -185,7 +206,7 @@ export function createAgentTerminals(deps: AgentTerminalsDeps): AgentTerminals {
         log(`terminal ${id} exited (code ${e.exitCode})`)
         drop(t)
         mirror.dispose()
-        deps.emit(remote, 'pty-exit', { id, code: e.exitCode })
+        tell(t, 'pty-exit', { id, code: e.exitCode })
         pushList(remote)
       })
       try {
@@ -245,7 +266,7 @@ export function createAgentTerminals(deps: AgentTerminalsDeps): AgentTerminals {
       if (terminals.get(id) === t) {
         drop(t)
         t.mirror.dispose()
-        deps.emit(t.remote, 'pty-exit', { id, code: -1 })
+        tell(t, 'pty-exit', { id, code: -1 })
         pushList(t.remote)
       }
     },
@@ -257,12 +278,12 @@ export function createAgentTerminals(deps: AgentTerminalsDeps): AgentTerminals {
     list,
 
     launchedFor(sessionId) {
-      for (const t of terminals.values()) if (t.launchedFor === sessionId) return t.id
+      for (const t of tabs()) if (t.launchedFor === sessionId) return t.id
       return null
     },
 
     listTerminal() {
-      for (const t of terminals.values()) if (t.launchedFor === null) return t.id
+      for (const t of tabs()) if (t.launchedFor === null) return t.id
       return null
     },
   }

@@ -54,6 +54,9 @@ export interface SessionSummary {
   /** How much of its context window is used, 0 to 100, from its status line.
    *  Absent until Claude Code has said, and again after a `/clear`. */
   contextPercent?: number
+  /** Started from the quick panel this run (docs/features/quick-agent.md):
+   *  its questions come to Holi as cards. */
+  quick?: true
 }
 
 const NEW_SESSION = 'New session'

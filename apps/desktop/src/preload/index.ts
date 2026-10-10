@@ -76,6 +76,9 @@ const onMenuCommand = pushChannel<string>('menu:command')
 /** Updating Holi itself: the updater's whole status, on every change. */
 const onUpdateStatus = pushChannel<unknown>('updates:status')
 
+/** A plugin's own window (`page-windows.ts`): what main tells its page. */
+const onPageEvent = pushChannel<{ name: string; payload: unknown }>('page:event')
+
 /** The ONE seam between renderer and main (architecture §3). */
 contextBridge.exposeInMainWorld('holi', {
   trpc: (op: unknown) => ipcRenderer.invoke('holi:trpc', op),
@@ -105,6 +108,12 @@ contextBridge.exposeInMainWorld('holi', {
   },
   updates: {
     onStatus: onUpdateStatus,
+  },
+  /** A plugin's own window, such as the quick panel: one channel each way,
+   *  heard by main only from the window that sent it. */
+  page: {
+    on: onPageEvent,
+    send: (name: string, payload: unknown) => ipcRenderer.send('page:message', { name, payload }),
   },
   openExternal: (url: string) => ipcRenderer.invoke('holi:openExternal', url),
   openPath: (path: string) => ipcRenderer.invoke('holi:openPath', path),

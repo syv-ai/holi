@@ -21,7 +21,7 @@ const row = (id: string, over: Row = {}): Row => ({
   ...over,
 })
 
-function setup(initial: Row[] = []) {
+function setup(initial: Row[] = [], held: ReadonlySet<string> = new Set()) {
   let listing: Row[] = initial
   const cli = {
     list: vi.fn(async () => JSON.stringify(listing)),
@@ -41,6 +41,10 @@ function setup(initial: Row[] = []) {
     forkBg: vi.fn(async () => {
       listing = [...listing, row('copy0000')]
       return { ok: true as const, id: 'copy0000' }
+    }),
+    startQuick: vi.fn(async () => {
+      listing = [...listing, row('quick000', { status: 'busy', state: 'working' })]
+      return { ok: true as const, id: 'quick000' }
     }),
   } satisfies ClaudeCli
   const opened: OpenArgs[] = []
@@ -93,6 +97,7 @@ function setup(initial: Row[] = []) {
     },
     terminals,
     binDir: () => '/holi/bin',
+    pendingQuestion: (job) => held.has(job),
     idleRecheckMs: 5,
     idleConfirmMs: 10,
     leaveCapMs: 50,
@@ -280,5 +285,46 @@ describe('agent sessions', () => {
   it('does nothing without a vault', async () => {
     const t = setup()
     expect(await t.sessions.open({})).toEqual({ ok: false, message: 'No vault is open.' })
+  })
+})
+
+describe('quick agents', () => {
+  it('starts one with no terminal, and marks it quick in the list', async () => {
+    const { sessions, cli, opened, attach } = setup()
+    await attach()
+    expect(await sessions.startQuick({ name: 'Tidy', prompt: 'tidy the inbox' })).toEqual({
+      ok: true,
+      sessionId: 'quick000',
+    })
+    expect(cli.startQuick).toHaveBeenCalledWith(expect.anything(), {
+      name: 'Tidy',
+      prompt: 'tidy the inbox',
+    })
+    expect(opened).toEqual([])
+    expect(sessions.isQuick('quick000')).toBe(true)
+    expect(sessions.sessions()).toEqual([expect.objectContaining({ id: 'quick000', quick: true })])
+  })
+
+  it('needs you while Holi holds its question, though the listing says busy', async () => {
+    const { sessions, attach } = setup(
+      [row('aaaa0001', { status: 'busy', state: 'working' })],
+      new Set(['aaaa0001']),
+    )
+    await attach()
+    expect(sessions.sessions()).toEqual([
+      expect.objectContaining({ id: 'aaaa0001', state: 'needs-you', waitingFor: 'input needed' }),
+    ])
+  })
+
+  it('tells its listeners about every read, and forgets quick ones on leaving', async () => {
+    const { sessions, attach } = setup()
+    await attach()
+    const heard = vi.fn()
+    sessions.onRows(heard)
+    await sessions.startQuick({ prompt: 'go' })
+    expect(heard).toHaveBeenCalled()
+    expect(sessions.row('quick000')?.status).toBe('busy')
+    await sessions.leave()
+    expect(sessions.isQuick('quick000')).toBe(false)
   })
 })

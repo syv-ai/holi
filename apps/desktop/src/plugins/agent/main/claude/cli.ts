@@ -19,6 +19,7 @@ import { execFile } from 'node:child_process'
 import { accessSync, constants } from 'node:fs'
 import { resolveBin } from '../../../../main/plugin-api'
 import type { TerminalCommand } from '../provider'
+import { QUICK_FLAGS } from './quick'
 
 /**
  * The child's env. Strips the nested-session guards (`claude` refuses to run
@@ -161,6 +162,9 @@ export interface ClaudeCli {
   /** A new background session in the vault. With no prompt it waits for its
    *  first one; with a prompt, that prompt is its first turn. */
   startBg(target: VaultCliTarget, opts: { name?: string; prompt?: string }): Promise<StartResult>
+  /** A quick agent: a background session whose first turn is `prompt`, with
+   *  the quick panel's flags (`quick.ts`). */
+  startQuick(target: VaultCliTarget, opts: { name?: string; prompt: string }): Promise<StartResult>
   /** A background copy of a conversation, by Claude Code's full session id. */
   forkBg(target: VaultCliTarget, sessionId: string, name?: string): Promise<StartResult>
 }
@@ -188,6 +192,14 @@ export function parseBackgrounded(stdout: string): string | null {
   const plain = stdout.replace(ANSI, '')
   const match = /^backgrounded\s+·\s+([0-9a-f]{8})\b/m.exec(plain)
   return match?.[1] ?? null
+}
+
+/**
+ * A prompt as the last arguments: after `--`, so one that starts with a dash
+ * (`- tidy the list`) is the prompt and not an unknown option.
+ */
+export function promptArgs(prompt: string | undefined): string[] {
+  return prompt ? ['--', prompt] : []
 }
 
 /** The environment every `claude` Holi runs for a vault gets. */
@@ -290,7 +302,16 @@ export function createClaudeCli(deps: ClaudeCliDeps = {}): ClaudeCli {
       return start(target, [
         '--bg',
         ...(label === null ? [] : ['--name', label]),
-        ...(prompt ? [prompt] : []),
+        ...promptArgs(prompt),
+      ])
+    },
+    startQuick(target, { name, prompt }) {
+      const label = sessionName(name)
+      return start(target, [
+        '--bg',
+        ...(label === null ? [] : ['--name', label]),
+        ...QUICK_FLAGS,
+        ...promptArgs(prompt),
       ])
     },
     forkBg(target, sessionId, name) {

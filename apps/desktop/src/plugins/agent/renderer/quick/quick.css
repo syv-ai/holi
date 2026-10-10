@@ -1,0 +1,643 @@
+/*
+ * The quick panel's HUD and the dock's (docs/features/quick-agent.md): what
+ * sits on macOS's dark glass. Every colour is a token, the agent's lights included
+ * (`--agent-*`, which a vault's theme can set), and every pace is the motion
+ * vocabulary's (`index.css`). The same card, drawn over a session's tab in the
+ * main window, has no glass behind it, so it brings its own (`data-surface`).
+ *
+ * One rule for colour: the light (`--quick-light`) is the agent's state, so it
+ * lights only the orb, the state word, the edge, the panel's main key and the
+ * row ⏎ would take. Everything else is foreground at some strength.
+ */
+
+/* The window is the glass. macOS draws its HUD material light when the system
+ * is in light mode, so the page lays the dark over it itself: the blur shows
+ * through, and the panel is dark glass in either appearance. Square, filling
+ * the window, which clips it to its own rounding. The dock's window is clear
+ * (`dock.ts`): its pill paints the same dark itself. */
+html[data-page='quick'],
+html[data-page='quick'] #root,
+html[data-page='dock'],
+html[data-page='dock'] #root,
+html[data-page='dock'] body {
+  background: transparent;
+}
+html[data-page='quick'] body,
+html[data-page='dock'] body {
+  margin: 0;
+  overflow: hidden;
+  user-select: none;
+}
+html[data-page='quick'] body {
+  background: color-mix(in srgb, var(--popover) 82%, transparent);
+}
+
+.quick-hud {
+  --quick-light: var(--brand);
+  position: relative;
+  color: var(--foreground);
+  /* Near macOS's own rounding of a panel, which the glass is clipped to. */
+  border-radius: 14px;
+  isolation: isolate;
+}
+.quick-hud[data-light='working'] {
+  --quick-light: var(--agent-working);
+}
+.quick-hud[data-light='asking'] {
+  --quick-light: var(--agent-needs-you);
+}
+.quick-hud[data-light='done'] {
+  --quick-light: var(--agent-done);
+}
+.quick-hud[data-light='failed'] {
+  --quick-light: var(--agent-failed);
+}
+
+/* The edge: glass catching the light, brightest along the top and fading as
+ * it runs down the sides. A pixel inside the glass's own edge, so the
+ * window's rounding never clips it; the mask keeps only its 1px ring. */
+.quick-hud::before {
+  content: '';
+  position: absolute;
+  inset: 1px;
+  z-index: -1;
+  padding: 1px;
+  border-radius: 13px;
+  pointer-events: none;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--quick-light) 72%, transparent),
+    color-mix(in srgb, var(--quick-light) 22%, transparent) 38%,
+    color-mix(in srgb, var(--quick-light) 9%, transparent)
+  );
+  mask:
+    linear-gradient(var(--foreground) 0 0) content-box exclude,
+    linear-gradient(var(--foreground) 0 0);
+}
+/* The light pooling in from the top edge. */
+.quick-hud::after {
+  content: '';
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  right: 1px;
+  height: 64px;
+  z-index: -1;
+  border-radius: 13px 13px 0 0;
+  pointer-events: none;
+  background: radial-gradient(
+    70% 100% at 50% 0,
+    color-mix(in srgb, var(--quick-light) 15%, transparent),
+    transparent 72%
+  );
+}
+
+/* A HUD's corners: short brackets in the light's colour, on the same rounding
+ * as the glass and just inside it, with straight legs past the curve, lit like
+ * the edge (bright above, faint below). On a full panel; not on a light, which
+ * is too small to frame, nor on the card over a tab. */
+.quick-corners {
+  position: absolute;
+  inset: 5px;
+  pointer-events: none;
+}
+.quick-corners::before,
+.quick-corners::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border: 1px solid;
+  border-radius: 9px;
+}
+.quick-corners::before {
+  border-color: color-mix(in srgb, var(--quick-light) 40%, transparent);
+  mask:
+    linear-gradient(var(--foreground) 0 0) top left / 19px 19px no-repeat,
+    linear-gradient(var(--foreground) 0 0) top right / 19px 19px no-repeat;
+}
+.quick-corners::after {
+  border-color: color-mix(in srgb, var(--quick-light) 17%, transparent);
+  mask:
+    linear-gradient(var(--foreground) 0 0) bottom left / 19px 19px no-repeat,
+    linear-gradient(var(--foreground) 0 0) bottom right / 19px 19px no-repeat;
+}
+.quick-hud[data-size='light'] .quick-corners,
+.quick-hud[data-surface='overlay'] .quick-corners {
+  display: none;
+}
+
+/* F, in flight: while the agent works, and only then, the edge breathes and a
+ * scan runs along the foot of the glass. */
+.quick-hud[data-light='working']::before,
+.quick-hud[data-light='working'] .quick-orb {
+  animation: quick-breathe var(--motion-inflight) var(--ease-loop) infinite;
+}
+@keyframes quick-breathe {
+  0%,
+  100% {
+    opacity: 0.5;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+.quick-scan {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: 1px;
+  height: 1px;
+  pointer-events: none;
+  background: linear-gradient(90deg, transparent, var(--quick-light), transparent) no-repeat;
+  background-size: 35% 100%;
+  animation: quick-scan calc(var(--motion-inflight) * 0.75) linear infinite;
+}
+.quick-scan::after {
+  content: '';
+  position: absolute;
+  inset: -2px 0;
+  background: inherit;
+  filter: blur(3px);
+  opacity: 0.7;
+}
+@keyframes quick-scan {
+  from {
+    background-position: -60% 0;
+  }
+  to {
+    background-position: 160% 0;
+  }
+}
+
+/* The light itself: an orb with its own glow. */
+.quick-orb {
+  width: 9px;
+  height: 9px;
+  border-radius: 9999px;
+  background: var(--quick-light);
+  box-shadow:
+    0 0 10px 1px color-mix(in srgb, var(--quick-light) 75%, transparent),
+    0 0 2px 0 var(--quick-light);
+}
+
+/* The panel's small labels: one face, size and spacing, the colour saying
+ * what each is. */
+.quick-label,
+.quick-state,
+.quick-tag,
+.quick-badge {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.2;
+  letter-spacing: 0.12em;
+  word-spacing: -0.3em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+/* Where an agent has got to, lit in its light. */
+.quick-state {
+  font-weight: 600;
+  color: var(--quick-light);
+  text-shadow: 0 0 10px color-mix(in srgb, var(--quick-light) 55%, transparent);
+}
+/* On a light nothing else marks the right edge: the state word steps in to
+ * match the room the orb's slot leaves on the left. */
+.quick-hud[data-size='light'] .quick-state {
+  margin-right: 4px;
+}
+/* A question's header: a category, so plain words, not a control. */
+.quick-tag {
+  color: color-mix(in srgb, var(--foreground) 62%, transparent);
+}
+/* A vault is a name, not a label. */
+.quick-meta {
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  color: var(--muted-foreground);
+}
+
+/* The keys along a panel's foot, under a hairline that fades at its ends. */
+.quick-foot {
+  position: relative;
+  padding-top: 10px;
+}
+.quick-foot::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, var(--foreground) 12%, transparent) 20%,
+    color-mix(in srgb, var(--foreground) 12%, transparent) 80%,
+    transparent
+  );
+}
+
+/* Typing on the glass: the caret in the light's colour. */
+.quick-input {
+  caret-color: var(--quick-light);
+}
+
+/* A keycap. The interface face, not the monospace one, so O never reads as
+ * 0; inset rings only, so a cap keeps its size when it lights. */
+.quick-key {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 19px;
+  height: 19px;
+  padding: 0 5px;
+  border-radius: 5px;
+  font-family:
+    system-ui,
+    -apple-system,
+    sans-serif;
+  font-size: 10.5px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: color-mix(in srgb, var(--foreground) 78%, transparent);
+  background: color-mix(in srgb, var(--foreground) 7%, transparent);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--foreground) 10%, transparent),
+    inset 0 -1px 0 color-mix(in srgb, var(--foreground) 18%, transparent);
+}
+/* A key that is a word (`esc`), set a little smaller and tighter. */
+.quick-key[data-word='true'] {
+  font-size: 9.5px;
+  letter-spacing: 0.02em;
+}
+/* The key that does the panel's main thing, and the key of the row ⏎ takes:
+ * lit. */
+.quick-key[data-primary='true'],
+.quick-row[data-active='true'] .quick-key {
+  color: var(--quick-light);
+  background: color-mix(in srgb, var(--quick-light) 14%, transparent);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--quick-light) 60%, transparent),
+    inset 0 -1px 0 color-mix(in srgb, var(--quick-light) 70%, transparent),
+    0 0 10px -2px color-mix(in srgb, var(--quick-light) 60%, transparent);
+}
+.quick-key[data-primary='true'] {
+  background: color-mix(in srgb, var(--quick-light) 9%, transparent);
+}
+/* Red is the state, never the way out of it: a failed panel's main key is
+ * lit in the foreground. */
+.quick-hud[data-light='failed'] .quick-key[data-primary='true'] {
+  color: var(--foreground);
+  background: color-mix(in srgb, var(--foreground) 10%, transparent);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--foreground) 30%, transparent),
+    inset 0 -1px 0 color-mix(in srgb, var(--foreground) 35%, transparent);
+}
+
+/* An option: lit while it is the one ⏎ would take. Half lit while the panel
+ * waits for the hotkey, and the others step back while you write your own. */
+.quick-row {
+  border-radius: 8px;
+}
+.quick-row[data-active='true'] {
+  background: color-mix(in srgb, var(--quick-light) 13%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--quick-light) 20%, transparent);
+}
+.quick-hud[data-focused='false'] .quick-row[data-active='true'] {
+  background: color-mix(in srgb, var(--quick-light) 6%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--quick-light) 14%, transparent);
+}
+.quick-hud[data-focused='false'] .quick-row[data-active='true'] .quick-key {
+  color: color-mix(in srgb, var(--foreground) 78%, transparent);
+  background: color-mix(in srgb, var(--foreground) 7%, transparent);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--quick-light) 35%, transparent),
+    inset 0 -1px 0 color-mix(in srgb, var(--foreground) 18%, transparent);
+}
+[data-writing='true'] .quick-row[data-own='false'] {
+  opacity: 0.45;
+}
+
+/* A multi-select's option, picked: its key filled with the light, the
+ * number cut out of it. It glows only in the row ⏎ would take: a fill says
+ * picked, the glow says here. */
+.quick-key[data-picked='true'],
+.quick-hud[data-focused='false'] .quick-row[data-active='true'] .quick-key[data-picked='true'] {
+  color: var(--popover);
+  font-weight: 600;
+  background: var(--quick-light);
+  box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--popover) 30%, transparent);
+}
+.quick-row[data-active='true'] .quick-key[data-picked='true'] {
+  color: var(--popover);
+  font-weight: 600;
+  background: var(--quick-light);
+  box-shadow:
+    inset 0 -1px 0 color-mix(in srgb, var(--popover) 30%, transparent),
+    0 0 10px -1px color-mix(in srgb, var(--quick-light) 70%, transparent);
+}
+
+.quick-caret {
+  font-size: 22px;
+  line-height: 26px;
+  font-weight: 300;
+  color: var(--quick-light);
+  text-shadow: 0 0 10px color-mix(in srgb, var(--quick-light) 60%, transparent);
+}
+
+/* What came along from the app the person was in: a quote, not a field, its
+ * rule in the foreground (the light is the agent's state, not the quote's). */
+.quick-chip {
+  position: relative;
+  max-width: 100%;
+  padding: 5px 10px 5px 12px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--foreground) 5%, transparent);
+}
+.quick-chip::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 6px;
+  bottom: 6px;
+  width: 2px;
+  border-radius: 1px;
+  background: color-mix(in srgb, var(--foreground) 28%, transparent);
+}
+
+/* The panel's prose: an explanation, a failure's reason. */
+.quick-prose {
+  font-size: 13px;
+  line-height: 1.5;
+  color: color-mix(in srgb, var(--foreground) 85%, transparent);
+}
+
+/* Claude Code's own terminal, set in the glass rather than dropped on it, its
+ * grid centred in the room a whole number of columns leaves. */
+.quick-terminal .xterm-screen {
+  margin-inline: auto;
+}
+.quick-terminal {
+  padding: 6px 4px 2px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--background) 38%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--foreground) 8%, transparent);
+}
+/* Stepped into: its keys are Claude Code's, and its edge says so. */
+.quick-terminal[data-inside='true'] {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--foreground) 24%, transparent);
+}
+
+/* Over a session's tab in the main window there is no glass: it brings its own. */
+.quick-hud[data-surface='overlay'] {
+  background: color-mix(in srgb, var(--popover) 90%, transparent);
+  backdrop-filter: blur(18px) saturate(1.4);
+  box-shadow: var(--shadow-popover);
+}
+
+/* The dock (`QuickDock.tsx`): a slim pill of dots on the same glass, one
+ * per quick agent, each in its light. Every dot has 10px of glass around it:
+ * a slot is the dot and half the gap either side, so the pointer running
+ * down the dock is always on one, and the pill's ends add the rest. One agent
+ * makes a circle. */
+.quick-dock {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 28px;
+  padding: 5px 0;
+  border-radius: 9999px;
+  isolation: isolate;
+  background: color-mix(in srgb, var(--popover) 90%, transparent);
+}
+/* Its edge catches the light as a panel's does, bright along the top and
+ * fading down, but in the foreground: the dots are the lights. */
+.quick-dock::before {
+  content: '';
+  position: absolute;
+  inset: 1px;
+  z-index: -1;
+  padding: 1px;
+  border-radius: 9999px;
+  pointer-events: none;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--foreground) 34%, transparent),
+    color-mix(in srgb, var(--foreground) 11%, transparent) 30%,
+    color-mix(in srgb, var(--foreground) 5%, transparent)
+  );
+  mask:
+    linear-gradient(var(--foreground) 0 0) content-box exclude,
+    linear-gradient(var(--foreground) 0 0);
+}
+
+.quick-slot {
+  --quick-light: var(--brand);
+}
+.quick-slot[data-light='working'] {
+  --quick-light: var(--agent-working);
+}
+.quick-slot[data-light='asking'] {
+  --quick-light: var(--agent-needs-you);
+}
+.quick-slot[data-light='done'] {
+  --quick-light: var(--agent-done);
+}
+.quick-slot[data-light='failed'] {
+  --quick-light: var(--agent-failed);
+}
+
+.quick-dot {
+  position: relative;
+  width: 8px;
+  height: 8px;
+}
+/* The light: the panel's orb, smaller, with its own glow. Under the pointer
+ * it steps up a little. */
+.quick-dot-light {
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  background: var(--quick-light);
+  box-shadow:
+    0 0 7px 0 color-mix(in srgb, var(--quick-light) 65%, transparent),
+    0 0 1.5px 0 var(--quick-light);
+  transition:
+    transform var(--motion-respond) var(--ease-settle),
+    box-shadow var(--motion-respond) var(--ease-settle);
+}
+.quick-slot:hover .quick-dot-light {
+  transform: scale(1.25);
+}
+/* F, in flight: a working dot breathes, as a working panel's orb does. */
+.quick-slot[data-light='working'] .quick-dot-light {
+  animation: quick-breathe var(--motion-inflight) var(--ease-loop) infinite;
+}
+/* Needs you: a soft halo, held for as long as it waits... */
+.quick-slot[data-light='asking'] .quick-dot-light {
+  box-shadow:
+    0 0 0 2.5px color-mix(in srgb, var(--quick-light) 24%, transparent),
+    0 0 11px 2px color-mix(in srgb, var(--quick-light) 55%, transparent),
+    0 0 1.5px 0 var(--quick-light);
+}
+/* ...after one beat as it starts to: a ring going out from the dot, once,
+ * to the pill's own edge. */
+.quick-slot[data-light='asking'] .quick-dot::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  pointer-events: none;
+  animation: quick-dot-beat var(--motion-ack) var(--ease-settle) both;
+}
+@keyframes quick-dot-beat {
+  from {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--quick-light) 70%, transparent);
+  }
+  to {
+    box-shadow: 0 0 0 10px transparent;
+  }
+}
+/* The agent whose panel is out: a thin ring in the foreground, never in a
+ * light's colour. */
+.quick-dot::before {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border-radius: 9999px;
+  pointer-events: none;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--foreground) 62%, transparent);
+  opacity: 0;
+  transform: scale(0.7);
+  transition:
+    opacity var(--motion-respond) var(--ease-settle),
+    transform var(--motion-respond) var(--ease-settle);
+}
+.quick-slot[data-selected='true'] .quick-dot::before {
+  opacity: 1;
+  transform: none;
+}
+/* A, arrive: a new agent's dot grows out of its own place. */
+.quick-dot[data-arriving='true'] {
+  animation: quick-dot-arrive var(--motion-arrive) var(--ease-settle) both;
+}
+@keyframes quick-dot-arrive {
+  from {
+    opacity: 0;
+    transform: scale(0.3);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Reduced motion reduces (docs/ui-system.md): the loops stop, an arrival is
+ * instant, and the needs-you beat, which only paints, stays. */
+@media (prefers-reduced-motion: reduce) {
+  .quick-hud[data-light='working']::before,
+  .quick-hud[data-light='working'] .quick-orb,
+  .quick-scan,
+  .quick-slot[data-light='working'] .quick-dot-light {
+    animation: none;
+  }
+  .quick-dot[data-arriving='true'] {
+    animation-duration: 1ms;
+  }
+}
+
+/* A finished agent's answer: Claude's markdown, set small in the panel's
+ * column, selectable, every part of it foreground at some strength. */
+.quick-answer {
+  font-size: 13px;
+  line-height: 1.55;
+  color: color-mix(in srgb, var(--foreground) 88%, transparent);
+  overflow-wrap: anywhere;
+  user-select: text;
+  cursor: text;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--foreground) 18%, transparent) transparent;
+}
+.quick-answer[data-more='true'] {
+  mask-image: linear-gradient(to bottom, var(--foreground) calc(100% - 28px), transparent);
+}
+.quick-answer > * + * {
+  margin-top: 8px;
+}
+.quick-answer :is(h1, h2, h3, h4, h5, h6),
+.quick-answer :is(strong, th) {
+  font-weight: 600;
+  color: var(--foreground);
+}
+.quick-answer :is(h1, h2, h3, h4, h5, h6) {
+  font-size: 13px;
+}
+.quick-answer :is(ul, ol) {
+  padding-left: 18px;
+}
+.quick-answer ul {
+  list-style: disc;
+}
+.quick-answer ol {
+  list-style: decimal;
+}
+/* Room for "10." inside the column, only on a list that gets there. */
+.quick-answer ol:has(> li:nth-child(10)) {
+  padding-left: 26px;
+}
+.quick-answer li + li {
+  margin-top: 3px;
+}
+.quick-answer li::marker {
+  color: color-mix(in srgb, var(--foreground) 40%, transparent);
+}
+.quick-answer a {
+  color: var(--foreground);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--foreground) 35%, transparent);
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.quick-answer a:hover {
+  text-decoration-color: var(--foreground);
+}
+.quick-answer code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--foreground) 8%, transparent);
+}
+.quick-answer pre {
+  overflow-x: auto;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--background) 38%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--foreground) 8%, transparent);
+}
+.quick-answer pre code {
+  padding: 0;
+  background: none;
+  line-height: 1.5;
+}
+/* A quote, ruled like the selection the prompt brings along. */
+.quick-answer blockquote {
+  padding-left: 12px;
+  border-left: 2px solid color-mix(in srgb, var(--foreground) 28%, transparent);
+  color: color-mix(in srgb, var(--foreground) 70%, transparent);
+}
+.quick-answer hr {
+  height: 1px;
+  border: 0;
+  background: color-mix(in srgb, var(--foreground) 12%, transparent);
+}
+.quick-answer table {
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.quick-answer :is(th, td) {
+  padding: 3px 12px 3px 0;
+  text-align: left;
+  border-bottom: 1px solid color-mix(in srgb, var(--foreground) 10%, transparent);
+}

@@ -60,8 +60,11 @@ type ThemeModeKey = 'light' | 'dark'
  * from a component that only mounts when a vault is active (Shell); it clears the
  * applied properties on unmount so a vault palette never lingers on the sign-in
  * or onboarding screens.
+ *
+ * `fill: false` only reads: a plugin's own window (the quick panel) wears the
+ * vault's colours and leaves completing the file to the main window.
  */
-export function useVaultTheme(): void {
+export function useVaultTheme({ fill = true }: { fill?: boolean } = {}): void {
   const remote = useAtomValue(activeRemoteAtom)
   // The snapshot's object identity changes on every push; used purely as a
   // "vault changed, re-read the theme" tick. The theme file contents are not in
@@ -102,7 +105,7 @@ export function useVaultTheme(): void {
         applicator.clear()
         const missing = missingTokens(theme)
         applicator.apply(themeBlockToVars(theme[mode]))
-        if (missing !== null) {
+        if (fill && missing !== null) {
           void trpc.theme.write
             .mutate({ remote, layer: 'committed', patchJson: JSON.stringify(missing) })
             // A vault that cannot be written to is not a reason to stop showing
@@ -118,7 +121,7 @@ export function useVaultTheme(): void {
     return () => {
       cancelled = true
     }
-  }, [remote, snapshot, mode])
+  }, [remote, snapshot, mode, fill])
 
   // Clear on unmount only (Shell → sign-in/onboarding), so a vault palette never
   // lingers on a screen that isn't the vault.
