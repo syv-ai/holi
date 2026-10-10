@@ -98,6 +98,15 @@ export interface AppContext extends SchemeContext {
   route(path: string, route: BridgeRoute): () => void
   /** The directory holding the `holi` command, for a process a plugin starts. */
   binDir(): string
+  /** The signed-in GitHub token, or null: for a plugin that fetches from a
+   *  repository the person can read, as vault clones do. */
+  githubToken(): string | null
+  /**
+   * Let a frame showing `origin` (`http://127.0.0.1:3040`) move within it,
+   * and send a link out of it to the browser, as a `frame` scheme's frames
+   * are (`window-guard.ts`). Returns the undo, which the host also runs at quit.
+   */
+  frameOrigin(origin: string): () => void
 }
 
 /** What a quit guard asks. */
@@ -194,9 +203,12 @@ export {
 export { seedFolder } from './vault/seed/folder'
 export { jsonFileStore, type JsonFileStore } from './json-file-store'
 export { resolveBin, toolPath } from './bin'
-export { runGit, type RangeFile } from './git'
+export { defaultProbePid, type PidState } from './process-group'
+export { remoteUrl, runGit, type RangeFile } from './git'
+export { gitignoreWith } from './vault/seed/core'
 export { writeAtomic } from './vault/vault-files'
 export { holiTheme, readVaultTheme } from './vault/theme'
 export { readVaultSettings } from './vault/settings'
+export { installedInfos } from './plugin-host/installed'
 export { shellReadBridgeEnv } from './bridge/env-file'
 export { mimeFor } from './vault/asset-protocol'

@@ -10,7 +10,7 @@
  * beside the plugins' (`components/core-surfaces.tsx`): they render features,
  * which state does not import.
  */
-import { atom, type createStore } from 'jotai'
+import { atom, type Atom, type createStore } from 'jotai'
 import {
   enabledPlugins,
   knownTransforms,
@@ -44,7 +44,9 @@ export const settingDescriptorsAtom = atom((get) =>
 
 /** What core contributes the way a plugin does: its own surfaces, rail items
  *  and claims. Always on. */
-export type CoreContribution = Pick<Required<RendererPlugin>, 'surfaces' | 'rail' | 'claims'>
+export type CoreContribution = Pick<Required<RendererPlugin>, 'surfaces' | 'rail'> & {
+  claims: readonly PathClaim[]
+}
 
 export const coreContributionAtom = atom<CoreContribution>({ surfaces: [], rail: [], claims: [] })
 
@@ -67,7 +69,10 @@ export const claimsAtom = atom((get): readonly PathClaim[] => {
   const enabled = get(enabledPluginsAtom)
   return [
     ...get(coreContributionAtom).claims,
-    ...get(installedPluginsAtom).flatMap((p) => (enabled.has(p.info.id) ? (p.claims ?? []) : [])),
+    ...get(installedPluginsAtom).flatMap((p) => {
+      if (!enabled.has(p.info.id) || p.claims === undefined) return []
+      return Array.isArray(p.claims) ? p.claims : get(p.claims as Atom<readonly PathClaim[]>)
+    }),
   ]
 })
 

@@ -83,6 +83,8 @@ function rig(
     openAppDoor: (opener) => capabilities.openAppDoor(opener),
     route: () => () => {},
     binDir: () => '/holi/bin',
+    githubToken: () => null,
+    frameOrigin: () => () => {},
   })
   let root = ''
   const capabilities = createCapabilityHost({
@@ -308,6 +310,8 @@ describe('an owned prefix', () => {
       },
       route: () => () => {},
       binDir: () => '/holi/bin',
+      githubToken: () => null,
+      frameOrigin: () => () => {},
     })
     const root = await tempDir()
     const set = (on: boolean) => writeVaultSettings(root, { committed: { plugins: { owner: on } } })
