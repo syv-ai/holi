@@ -32,7 +32,8 @@ export function PluginFrame({ path }: { path: string }): React.JSX.Element {
     let live = true
     setPhase({ kind: 'starting' })
     setLoaded(false)
-    communityCap.acquire(remote, { path }).then(
+    const acquired = communityCap.acquire(remote, { path })
+    acquired.then(
       ({ port }) => live && setPhase({ kind: 'running', port }),
       (err: unknown) =>
         live &&
@@ -40,7 +41,11 @@ export function PluginFrame({ path }: { path: string }): React.JSX.Element {
     )
     return () => {
       live = false
-      void communityCap.release(remote, { path }).catch(() => undefined)
+      // Released once its acquire answers, never before: a release that
+      // overtook its acquire would leave the server held.
+      void acquired
+        .then(({ lease }) => communityCap.release(remote, { lease }))
+        .catch(() => undefined)
     }
   }, [remote, path, attempt])
 

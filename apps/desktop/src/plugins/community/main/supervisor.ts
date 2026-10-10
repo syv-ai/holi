@@ -52,8 +52,9 @@ export interface Supervisor {
   acquire(key: string, spec: ServeSpec): Promise<{ port: number }>
   /** Drop one reference; the last stops the server. */
   release(key: string): Promise<void>
-  /** Stop every server, whoever holds it. */
-  stopAll(): Promise<void>
+  /** Stop every server whose key `which` accepts (all, without it),
+   *  whoever holds it. */
+  stopAll(which?: (key: string) => boolean): Promise<void>
   state(key: string): ServerState | null
 }
 
@@ -66,6 +67,8 @@ interface Server {
   ready: Promise<{ port: number }>
   exited: Promise<void>
   unframe: () => void
+  /** Set once it is stopped: a start still in flight gives up. */
+  stopped: boolean
 }
 
 function canConnect(port: number, host: string): Promise<boolean> {
@@ -110,7 +113,9 @@ export function createSupervisor(deps: SupervisorDeps): Supervisor {
 
   /** Signal the server's group, but only while its pid still leads the group
    *  we started: a reaped pid may already be someone else's (see the agent's
-   *  `pty.ts` on why this is never unconditional). */
+   *  `pty.ts` on why this is never unconditional). So a group whose leader
+   *  exited on its own is not signalled, and `serve` must be the server itself,
+   *  not a launcher that exits (docs/features/community-plugins.md). */
   const signal = (child: ChildProcess, sig: 'SIGTERM' | 'SIGKILL') => {
     if (child.pid === undefined || child.exitCode !== null || child.signalCode !== null) return
     if (probe(child.pid) !== 'group-leader') {
@@ -124,9 +129,29 @@ export function createSupervisor(deps: SupervisorDeps): Supervisor {
     }
   }
 
+  /** Ports held by a server from the moment one is picked until it stops,
+   *  so two starting at once cannot both pick the same free port. */
+  const reserved = new Set<number>()
+  let picking: Promise<unknown> = Promise.resolve()
+  const pickPort = (): Promise<number> => {
+    const next = picking.then(async () => {
+      const port = await findFreePort(reserved, deps.firstPort)
+      reserved.add(port)
+      return port
+    })
+    picking = next.catch(() => undefined)
+    return next
+  }
+
+  /** Is `server` still the one `key` names? A release, or a release and a
+   *  fresh acquire, can replace it while it starts. */
+  const current = (key: string, server: Server) => servers.get(key) === server
+
   const stop = async (key: string, server: Server) => {
-    servers.delete(key)
+    if (current(key, server)) servers.delete(key)
+    server.stopped = true
     server.unframe()
+    server.unframe = () => {}
     const child = server.child
     if (child === null) return
     signal(child, 'SIGTERM')
@@ -135,11 +160,13 @@ export function createSupervisor(deps: SupervisorDeps): Supervisor {
     clearTimeout(timer)
   }
 
-  const start = async (key: string, spec: ServeSpec): Promise<{ port: number }> => {
-    const taken = new Set([...servers.values()].map((s) => s.port))
-    const port = await findFreePort(taken, deps.firstPort)
-    const server = servers.get(key)!
+  const start = async (key: string, server: Server, spec: ServeSpec): Promise<{ port: number }> => {
+    const port = await pickPort()
     server.port = port
+    if (server.stopped) {
+      reserved.delete(port)
+      throw new Error('the server was stopped before it started')
+    }
     const remember = splitLines((line) => {
       server.log.push(line)
       if (server.log.length > LOG_LINES) server.log.splice(0, server.log.length - LOG_LINES)
@@ -167,9 +194,10 @@ export function createSupervisor(deps: SupervisorDeps): Supervisor {
       })
     })
     void server.exited.then(() => {
+      reserved.delete(port)
       // A server that dies on its own while still wanted says so; one that
-      // was stopped has already left the map.
-      if (servers.get(key) !== server) return
+      // was stopped is no longer the key's.
+      if (!current(key, server)) return
       servers.delete(key)
       server.unframe()
       if (server.state.state === 'running')
@@ -179,18 +207,23 @@ export function createSupervisor(deps: SupervisorDeps): Supervisor {
     const deadline = Date.now() + readyTimeout
     let gone = false
     void server.exited.then(() => (gone = true))
-    while (!gone && Date.now() < deadline) {
-      if ((await canConnect(port, '127.0.0.1')) || (await canConnect(port, '::1'))) {
+    while (!gone && !server.stopped && Date.now() < deadline) {
+      const up = (await canConnect(port, '127.0.0.1')) || (await canConnect(port, '::1'))
+      // Stopped while that was in flight: no origin, no state, for a server
+      // nobody holds.
+      if (server.stopped) break
+      if (up && !gone) {
         server.unframe = deps.frameOrigin(pluginServerOrigin(port))
         set(key, server, { state: 'running', port, log: [...server.log] })
         return { port }
       }
       await new Promise((r) => setTimeout(r, 150))
     }
+    if (server.stopped) throw new Error('the server was stopped before it was ready')
     const message = gone
       ? `the server ${exitMessage ?? 'exited'} before it was ready`
       : `the server did not answer on port ${port} within ${Math.round(readyTimeout / 1000)} s`
-    if (servers.get(key) === server) await stop(key, server)
+    await stop(key, server)
     set(key, server, { state: 'failed', log: [...server.log], message })
     throw new Error(message)
   }
@@ -211,10 +244,11 @@ export function createSupervisor(deps: SupervisorDeps): Supervisor {
         ready: Promise.resolve({ port: 0 }),
         exited: Promise.resolve(),
         unframe: () => {},
+        stopped: false,
       }
       servers.set(key, server)
       deps.onState(key, server.state)
-      server.ready = start(key, spec)
+      server.ready = start(key, server, spec)
       // A failure is reported through `onState`; whoever awaits sees it too.
       server.ready.catch(() => {})
       return server.ready
@@ -225,8 +259,10 @@ export function createSupervisor(deps: SupervisorDeps): Supervisor {
       server.refs--
       if (server.refs <= 0) await stop(key, server)
     },
-    async stopAll() {
-      await Promise.all([...servers].map(([key, server]) => stop(key, server)))
+    async stopAll(which = () => true) {
+      await Promise.all(
+        [...servers].filter(([key]) => which(key)).map(([key, server]) => stop(key, server)),
+      )
     },
     state: (key) => servers.get(key)?.state ?? null,
   }
