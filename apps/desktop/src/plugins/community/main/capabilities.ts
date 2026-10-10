@@ -33,7 +33,7 @@ import {
 } from '../../../main/plugin-api'
 import type { ConsentStore } from './consent'
 import { fetchRelease, listVersions, readManifest, type GitAccess } from './fetch'
-import { fetchRegistry } from './registry'
+import { searchPlugins } from './search'
 import { expandCommand, pluginEnv, runSetup } from './setup'
 import type { Install, InstallStore } from './store'
 import type { ServerState, Supervisor } from './supervisor'
@@ -223,10 +223,11 @@ export function communityCapabilities(deps: CommunityDeps) {
       run: async (ctx) => listPlugins(ctx.root, deps),
     }),
 
-    'community.registry': cap({
+    // Repositories matching what is typed, each read as a plugin or not.
+    'community.search': cap({
       doors: ['ui'],
-      params: noParams,
-      run: async () => fetchRegistry(deps.token()),
+      params: (raw: unknown) => ({ query: stringParam(paramsObject(raw), 'query') }),
+      run: async (_ctx, { query }) => searchPlugins(query, deps.token()),
     }),
 
     'community.versions': cap({

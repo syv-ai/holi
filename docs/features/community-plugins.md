@@ -30,8 +30,15 @@ server writes beside a file and must not sync. The grammar is `packages/shared/s
 
 **A release is a tag `v<version>`** whose manifest says that version. Installing clones it with system
 git and the person's GitHub token, as a vault is cloned, so a private plugin repository installs for
-whoever can read it. Settings offers a curated list (`plugins.json` in `syv-ai/holi-plugins`), any
-`owner/repo`, and a local folder, used in place, for developing a plugin.
+whoever can read it.
+
+**Finding one.** A plugin's repository carries the GitHub topic `holi-plugin`, which is what makes it
+findable. The settings field searches GitHub's repositories with that topic as you type (by name, or
+within `owner/`), anyone's and the private ones the person can read, and reads each hit's manifest
+and newest release: an installable plugin shows its name and version, anything else why it cannot
+be installed (no release yet, an invalid manifest). An exact `owner/repo` is read even when search
+does not find it, so a plugin without the topic still installs by name. A local folder, used in
+place, is for developing a plugin.
 
 **Code lives on the machine, the pin in the vault.** An install is `userData/plugins/<id>/<commit>/`,
 one per id, listed in `userData/plugins/installed.json`. A vault that uses a plugin commits its pin,
@@ -93,6 +100,10 @@ tree, with the one next step (install the pinned version, or allow and set up).
   that needs a build tool at runtime.
 - **Committing plugin code into the vault, as Obsidian does.** Its `node_modules` and build output
   are far too large to sync.
+- **A curated list, as Obsidian's `community-plugins.json`.** Someone has to accept each plugin
+  before it can be found; the topic lets anyone publish one, and consent is the gate.
+- **Code search for `holi-plugin.json`.** GitHub does not index a private repository promptly, so a
+  team's own plugin would not be found.
 - **Downloading release assets.** Needs a published artifact per release; a tag cloned with git
   needs nothing but the tag, and works for private repositories with the same token.
 
@@ -100,8 +111,8 @@ tree, with the one next step (install the pinned version, or allow and set up).
 
 - `packages/shared/src/community-plugin.ts`: the manifest and pin grammar, `opensPath`,
   `pluginServerOrigin`.
-- `apps/desktop/src/plugins/community/main/`: the install store, fetch, setup, consent, the
-  supervisor and the `community.*` capabilities.
+- `apps/desktop/src/plugins/community/main/`: the install store, fetch, the topic search, setup,
+  consent, the supervisor and the `community.*` capabilities.
 - `apps/desktop/src/plugins/community/renderer/`: the tab (`PluginFrame`), the settings section, the
   consent dialog and the vault notice.
 - `apps/desktop/src/main/window-guard.ts`: `originFrameExit`.

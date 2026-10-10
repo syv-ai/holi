@@ -6,12 +6,12 @@
  * **installed on this machine**, and agreed to, is this person's alone.
  */
 import { useAtomValue, useSetAtom, useStore } from 'jotai'
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { SettingsHeading, SettingsList, SettingsNote, SettingsRow } from '@/composites'
 import { openDialogAtom, trpc } from '@/plugin-api'
-import { Button, Input, Switch } from '@/primitives'
-import type { RegistryEntry } from '../main/registry'
+import { Button, Switch } from '@/primitives'
 import { askToRun, installAndAsk, type InstallFlow } from './install-flow'
+import { PluginSearch } from './PluginSearch'
 import { communityCap, refreshRows, rowsAtom, type PluginRow } from './state'
 
 /** A row's state, in words. */
@@ -186,25 +186,6 @@ function AddPlugin({
   busy: boolean
   act: (fn: () => Promise<string | null | void>) => Promise<void>
 }): React.JSX.Element {
-  const [registry, setRegistry] = useState<readonly RegistryEntry[] | null>(null)
-  const [repo, setRepo] = useState('')
-
-  useEffect(() => {
-    let live = true
-    communityCap.registry(flow.remote).then(
-      (entries) => live && setRegistry(entries),
-      () => live && setRegistry([]),
-    )
-    return () => {
-      live = false
-    }
-  }, [flow.remote])
-
-  const submit = () => {
-    const name = repo.trim()
-    if (name !== '') void act(() => installAndAsk(flow, { repo: name }))
-  }
-
   const addFolder = async () => {
     const folder = await window.holi.chooseFolder()
     if (folder === null) return
@@ -213,47 +194,20 @@ function AddPlugin({
 
   return (
     <>
-      <SettingsHeading title="Add a plugin" />
-      {registry !== null && registry.length > 0 && (
-        <SettingsList>
-          {registry.map((entry) => (
-            <SettingsRow
-              key={entry.id}
-              label={entry.name}
-              description={entry.description || entry.repo}
-              control={
-                <Button
-                  size="xs"
-                  variant="secondary"
-                  disabled={busy}
-                  onClick={() => void act(() => installAndAsk(flow, { repo: entry.repo }))}
-                >
-                  Install
-                </Button>
-              }
-            />
-          ))}
-        </SettingsList>
-      )}
+      <SettingsHeading
+        title="Add a plugin"
+        blurb="A plugin is a GitHub repository with the holi-plugin topic. Search by name, or type owner/repo."
+      />
       <div className="mt-2 flex items-center gap-2">
-        <Input
-          value={repo}
-          onChange={(e) => setRepo(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') submit()
-          }}
-          placeholder="owner/repo"
-          aria-label="A plugin's GitHub repository"
-          className="h-7 text-xs"
-        />
-        <Button
-          size="xs"
-          variant="secondary"
-          disabled={busy || repo.trim() === ''}
-          onClick={submit}
-        >
-          Install
-        </Button>
+        <div className="min-w-0 flex-1">
+          <PluginSearch
+            remote={flow.remote}
+            disabled={busy}
+            onChoose={(c) =>
+              void act(() => installAndAsk(flow, { repo: c.repo, version: c.latest }))
+            }
+          />
+        </div>
         <Button size="xs" variant="ghost" disabled={busy} onClick={() => void act(addFolder)}>
           Use a folder…
         </Button>
