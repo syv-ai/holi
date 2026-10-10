@@ -90,6 +90,13 @@ A plugin adds `surfaces` (tab kinds) and `rail`
 items to the nav menu ([tabs and panes](features/tabs-panes.md)), registered beside core's own, and
 `settingsSections` to the settings tab ([settings](features/settings.md)).
 Its dialogs open as `{id: 'plugin', render}`.
+A plugin may have windows of its own: `ctx.openPage` makes one showing a page of its renderer side
+(`RendererPlugin.pages`), loaded as `?page=<plugin>/<page>`, which boots only that page, with no
+vault subscription and no flush answer. Core makes the window (preload, isolation, navigation
+guard), from the same helper as the main window (`main/renderer-window.ts`); the plugin places,
+shows and closes it, and talks to its page over the window's own channel (`page:event`,
+`page:message`), so the plugin's events stay the main window's. `ctx.showMainWindow` brings the main
+window forward. The agent's quick panel and its dock are two such windows.
 Main tells a plugin's renderer something through events: `ctx.emit(remote, name, payload)` sends
 `{remote, name, payload}` on the plugin's one channel, `plugin:<id>`, read by one preload member,
 `window.holi.plugin.on(id, cb)`. Main sends only about a vault that runs the plugin, so the renderer

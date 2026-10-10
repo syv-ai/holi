@@ -21,7 +21,7 @@ const row = (id: string, over: Row = {}): Row => ({
   ...over,
 })
 
-function setup(initial: Row[] = []) {
+function setup(initial: Row[] = [], held: ReadonlySet<string> = new Set()) {
   let listing: Row[] = initial
   const cli = {
     list: vi.fn(async () => JSON.stringify(listing)),
@@ -34,9 +34,16 @@ function setup(initial: Row[] = []) {
       listing = listing.filter((r) => r.id !== id)
       return { ok: true as const }
     }),
-    startBg: vi.fn(async () => {
-      listing = [...listing, row('newnew00', { status: 'idle', state: 'blocked' })]
-      return { ok: true as const, id: 'newnew00' }
+    startBg: vi.fn(async (_t, opts: { prompt?: string }) => {
+      // With a first turn it is working at once; without, it waits for one.
+      const id = opts.prompt === undefined ? 'newnew00' : 'launch00'
+      listing = [
+        ...listing,
+        opts.prompt === undefined
+          ? row(id, { status: 'idle', state: 'blocked' })
+          : row(id, { status: 'busy', state: 'working' }),
+      ]
+      return { ok: true as const, id }
     }),
     forkBg: vi.fn(async () => {
       listing = [...listing, row('copy0000')]
@@ -93,6 +100,7 @@ function setup(initial: Row[] = []) {
     },
     terminals,
     binDir: () => '/holi/bin',
+    pendingQuestion: (job) => held.has(job),
     idleRecheckMs: 5,
     idleConfirmMs: 10,
     leaveCapMs: 50,
@@ -280,5 +288,38 @@ describe('agent sessions', () => {
   it('does nothing without a vault', async () => {
     const t = setup()
     expect(await t.sessions.open({})).toEqual({ ok: false, message: 'No vault is open.' })
+  })
+})
+
+describe('launched sessions', () => {
+  it('start with their options and no terminal', async () => {
+    const { sessions, cli, opened, attach } = setup()
+    await attach()
+    const args = { name: 'Tidy', prompt: 'tidy the inbox', settings: '{}' }
+    expect(await sessions.launch(args)).toEqual({ ok: true, sessionId: 'launch00' })
+    expect(cli.startBg).toHaveBeenCalledWith(expect.anything(), args)
+    expect(opened).toEqual([])
+    expect(sessions.sessions()).toEqual([expect.objectContaining({ id: 'launch00' })])
+  })
+
+  it('needs you while Holi holds its question, though the listing says busy', async () => {
+    const { sessions, attach } = setup(
+      [row('aaaa0001', { status: 'busy', state: 'working' })],
+      new Set(['aaaa0001']),
+    )
+    await attach()
+    expect(sessions.sessions()).toEqual([
+      expect.objectContaining({ id: 'aaaa0001', state: 'needs-you', waitingFor: 'input needed' }),
+    ])
+  })
+
+  it('tells its listeners about every read', async () => {
+    const { sessions, attach } = setup()
+    await attach()
+    const heard = vi.fn()
+    sessions.onRows(heard)
+    await sessions.launch({ prompt: 'go' })
+    expect(heard).toHaveBeenCalled()
+    expect(sessions.row('launch00')?.status).toBe('busy')
   })
 })

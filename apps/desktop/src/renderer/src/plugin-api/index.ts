@@ -35,10 +35,12 @@ export { capClient, type CapClient, type UiCapability } from '@/lib/cap-client'
 export { useHasCapability } from '@/state/capabilities'
 export { cn } from '@/lib/cn'
 export { useAck } from '@/lib/use-ack'
+export { useArrivals } from '@/lib/use-arrivals'
 export { DRAWER_WIDTH } from '@/lib/drawer'
 export { activeRemoteAtom, historyEpochsAtom, snapshotAtom, syncStateAtom } from '@/state/vaults'
 export { sessionAtom } from '@/state/session'
 export { activeModeAtom } from '@/state/color-scheme'
+export { useVaultTheme } from '@/state/theme'
 export { openNoteTabAtom } from '@/state/panes'
 export {
   activeSurfaceIdAtom,

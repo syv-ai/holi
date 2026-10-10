@@ -275,4 +275,12 @@ export interface RendererPlugin {
     items: Atom<readonly PaletteItem[]>
     open: WritableAtom<null, [key: string], unknown>
   }
+  /**
+   * Pages for the plugin's own windows, by name (`AppContext.openPage` on its
+   * main side), such as the agent's quick panel. A page window boots only its
+   * page: no vault subscription, no Shell, no editor. It hears main on
+   * `window.holi.page`, sets `activeRemoteAtom` itself when it is about a
+   * vault, and reaches capabilities like any renderer code.
+   */
+  pages?: Readonly<Record<string, ComponentType>>
 }

@@ -37,8 +37,16 @@ export interface Route {
   /** `discard` drains the body unread (a turn signal sends nothing worth
    *  reading); `text` hands it over as UTF-8. */
   body: 'discard' | 'text'
-  /** For the vault the token names. `query` is the URL's, token included. */
-  handle(remote: string, query: URLSearchParams, body: string): Reply | Promise<Reply>
+  /** For the vault the token names. `query` is the URL's, token included.
+   *  `signal` aborts when the caller hangs up before the answer: a route that
+   *  holds its answer (the agent's question hook waits for a person) lets go
+   *  of what it was holding. */
+  handle(
+    remote: string,
+    query: URLSearchParams,
+    body: string,
+    signal: AbortSignal,
+  ): Reply | Promise<Reply>
 }
 
 export interface BridgeServerDeps {
@@ -153,6 +161,13 @@ export function createBridgeServer(deps: BridgeServerDeps = {}): BridgeServer {
       return
     }
 
+    // A response that closes before it was finished is a caller that went
+    // away: its process ended, or its `curl` timed out.
+    const hungUp = new AbortController()
+    res.on('close', () => {
+      if (!res.writableFinished) hungUp.abort()
+    })
+
     let body = ''
     let received = 0
     req.on('data', (chunk: Buffer) => {
@@ -166,8 +181,9 @@ export function createBridgeServer(deps: BridgeServerDeps = {}): BridgeServer {
 
     req.on('end', () => {
       void Promise.resolve()
-        .then(() => route.handle(remote, new URLSearchParams(url.search), body))
+        .then(() => route.handle(remote, new URLSearchParams(url.search), body, hungUp.signal))
         .then((reply) => {
+          if (hungUp.signal.aborted) return
           if (reply.body === undefined || reply.body === '') {
             res.writeHead(reply.status).end()
             return

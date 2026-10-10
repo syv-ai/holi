@@ -1,0 +1,190 @@
+import { describe, expect, it } from 'vitest'
+import type { ClaudeRow } from '../main/claude/listing'
+import { quickState, START_GRACE_MS } from '../main/host/quick-state'
+import {
+  DEFAULT_DOCK_HOTKEY,
+  DEFAULT_QUICK_HOTKEY,
+  hotkeyFromEvent,
+  toAccelerator,
+} from '../shared/hotkey'
+import { parseQuickRequest, quickPrompt } from '../shared/quick'
+import { fitSelection, MAX_SELECTION, readSelection } from '../main/quick/selection'
+import { parseQuickSettings } from '../main/quick/settings'
+
+const row = (over: Partial<ClaudeRow>): ClaudeRow => ({ id: 'quick001', name: 'Tidy', ...over })
+const live = (over: Partial<ClaudeRow>) => ({
+  row: row({ pid: 1, ...over }),
+  live: true,
+  question: false,
+  inTurn: false,
+  age: 60_000,
+})
+
+describe('quickState', () => {
+  it('is a question while Holi holds one, whatever the listing says', () => {
+    expect(quickState({ ...live({ status: 'busy' }), question: true })).toBe('question')
+  })
+
+  it('is working while busy, on a shell, or idle between readings of a turn', () => {
+    expect(quickState(live({ status: 'busy', state: 'working' }))).toBe('working')
+    expect(quickState(live({ status: 'shell', state: 'working' }))).toBe('working')
+    expect(quickState({ ...live({ status: 'idle', state: 'working' }), inTurn: true })).toBe(
+      'working',
+    )
+  })
+
+  it('is done when a turn was cut short, though the listing still says working', () => {
+    // A permission prompt declined with esc: idle, waiting for the next message.
+    expect(quickState(live({ status: 'idle', state: 'working' }))).toBe('done')
+    // Unless it is only starting, before its first prompt reached the coordinator.
+    expect(quickState({ ...live({ status: 'idle', state: 'working' }), age: 100 })).toBe('working')
+  })
+
+  it("is the session's own prompt while Claude Code waits on one", () => {
+    expect(quickState(live({ status: 'waiting', waitingFor: 'permission prompt' }))).toBe('prompt')
+  })
+
+  it('is done when the turn ended, and failed when Claude Code says so', () => {
+    expect(quickState(live({ status: 'idle', state: 'done' }))).toBe('done')
+    expect(quickState(live({ status: 'idle', state: 'failed' }))).toBe('failed')
+  })
+
+  it('counts a process that died mid-turn as failed, once past starting', () => {
+    const dead = { row: row({ state: 'working' }), live: false, question: false, inTurn: false }
+    expect(quickState({ ...dead, age: 100 })).toBe('working')
+    expect(quickState({ ...dead, age: START_GRACE_MS + 1 })).toBe('failed')
+  })
+
+  it('is gone when stopped, or unlisted after the grace', () => {
+    expect(quickState(live({ state: 'stopped' }))).toBe('gone')
+    const unlisted = { row: undefined, live: false, question: false, inTurn: false }
+    expect(quickState({ ...unlisted, age: 10 })).toBe('working')
+    expect(quickState({ ...unlisted, age: START_GRACE_MS })).toBe('gone')
+  })
+})
+
+describe('the global hotkey', () => {
+  it('turns glyphs into an accelerator, ⌘ and ⌃ kept apart', () => {
+    expect(toAccelerator(DEFAULT_QUICK_HOTKEY)).toBe('Command+J')
+    expect(toAccelerator('⌃⌘J')).toBe('Control+Command+J')
+    expect(toAccelerator('⌃⌥Space')).toBe('Control+Alt+Space')
+    expect(toAccelerator('⌥⇧F5')).toBe('Alt+Shift+F5')
+  })
+
+  it('refuses a key every app would lose, and anything it cannot read', () => {
+    expect(toAccelerator('J')).toBeNull()
+    expect(toAccelerator('⇧J')).toBeNull()
+    expect(toAccelerator('⌘')).toBeNull()
+    expect(toAccelerator('⌘JJ')).toBeNull()
+    expect(toAccelerator('⌘⌃J')).toBeNull() // not in macOS's order
+  })
+
+  it('records a press by its physical key', () => {
+    const press = (over: Partial<Parameters<typeof hotkeyFromEvent>[0]>) =>
+      hotkeyFromEvent({
+        metaKey: false,
+        ctrlKey: false,
+        altKey: false,
+        shiftKey: false,
+        code: 'KeyJ',
+        key: 'j',
+        ...over,
+      })
+    expect(press({ metaKey: true })).toBe('⌘J')
+    // ⌥ changes the character, not the key.
+    expect(press({ altKey: true, ctrlKey: true, key: '∆' })).toBe('⌃⌥J')
+    expect(press({ metaKey: true, code: 'Space', key: ' ' })).toBe('⌘Space')
+    expect(press({})).toBeNull()
+    expect(press({ metaKey: true, code: 'MetaLeft', key: 'Meta' })).toBeNull()
+  })
+})
+
+describe('the settings', () => {
+  it('are off until chosen, each read key by key', () => {
+    expect(parseQuickSettings(null)).toEqual({
+      enabled: false,
+      hotkey: '⌘J',
+      dockHotkey: '⌃⌘J',
+      autoApprove: false,
+      instructions: false,
+      accessibilityAsked: false,
+    })
+    expect(
+      parseQuickSettings({ enabled: true, hotkey: 'J', autoApprove: 'yes', instructions: true }),
+    ).toMatchObject({ enabled: true, hotkey: '⌘J', autoApprove: false, instructions: true })
+  })
+
+  it('never make the two keys one: the dock key gives way, to its default or the other', () => {
+    expect(parseQuickSettings({ hotkey: '⌥Space', dockHotkey: '⌥Space' })).toMatchObject({
+      hotkey: '⌥Space',
+      dockHotkey: DEFAULT_DOCK_HOTKEY,
+    })
+    expect(parseQuickSettings({ hotkey: DEFAULT_DOCK_HOTKEY })).toMatchObject({
+      hotkey: DEFAULT_DOCK_HOTKEY,
+      dockHotkey: DEFAULT_QUICK_HOTKEY,
+    })
+  })
+})
+
+describe('the selection', () => {
+  it('is trimmed, and capped with a note', () => {
+    expect(fitSelection('Notes', '\n  hello\n\n')).toEqual({ app: 'Notes', text: '  hello' })
+    expect(fitSelection('Notes', '   ')).toBeNull()
+    expect(fitSelection('Notes', 'x'.repeat(MAX_SELECTION + 5))?.text).toContain('cut at')
+  })
+
+  it('is what the app says is selected, and nothing from an app that does not say', async () => {
+    const answered = fakeRun(['{"app":"Notes","pid":7,"text":"hi"}'])
+    expect(await readSelection({ run: answered.run, selfPid: 1 })).toEqual({
+      app: 'Notes',
+      text: 'hi',
+    })
+    // Read once, and never by ⌘C: a clipboard manager would keep it.
+    const silent = fakeRun(['{"app":"Brave","pid":7}', '{"text":"copied"}'])
+    expect(await readSelection({ run: silent.run, selfPid: 1 })).toBeNull()
+    expect(silent.calls).toBe(1)
+  })
+
+  it('never reads Holi itself, and never throws', async () => {
+    const self = fakeRun(['{"app":"Holi","pid":42,"text":"mine"}'])
+    expect(await readSelection({ run: self.run, selfPid: 42 })).toBeNull()
+    const broken = { run: () => Promise.reject(new Error('osascript')) }
+    expect(await readSelection({ run: broken.run, selfPid: 1 })).toBeNull()
+  })
+})
+
+/** A fake `osascript` answering in turn. */
+function fakeRun(outputs: string[]) {
+  const fake = {
+    calls: 0,
+    run: async () => outputs[fake.calls++] ?? '',
+  }
+  return fake
+}
+
+describe('the prompt and the requests', () => {
+  it('puts the selection after the task, fenced, with where it came from', () => {
+    expect(quickPrompt('  tidy this  ', null)).toBe('tidy this')
+    expect(quickPrompt('tidy this', { app: 'Notes', text: 'a\nb' })).toBe(
+      'tidy this\n\nSelected in Notes:\n\n```\na\nb\n```',
+    )
+    expect(quickPrompt('x', { app: 'Notes', text: 'has ```code```' })).toContain('~~~~')
+  })
+
+  it('reads only well-formed requests from a page', () => {
+    expect(parseQuickRequest({ kind: 'submit', prompt: 'go', selection: true })).toEqual({
+      kind: 'submit',
+      prompt: 'go',
+      selection: true,
+    })
+    expect(parseQuickRequest({ kind: 'answer', questionId: 'q', answers: { a: 'b' } })).toEqual({
+      kind: 'answer',
+      questionId: 'q',
+      answers: { a: 'b' },
+    })
+    expect(parseQuickRequest({ kind: 'answer', questionId: 'q', answers: { a: 1 } })).toBeNull()
+    expect(parseQuickRequest({ kind: 'size', width: Number.NaN, height: 3 })).toBeNull()
+    expect(parseQuickRequest({ kind: 'launch-missiles' })).toBeNull()
+    expect(parseQuickRequest('ready')).toBeNull()
+  })
+})

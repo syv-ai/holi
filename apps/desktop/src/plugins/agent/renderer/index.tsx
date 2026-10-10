@@ -4,6 +4,10 @@
  * `agent.show`; its orbs, rows and turn review are a rail section, a sidebar
  * section and a drawer; leaving a vault asks while a session is busy; it
  * provides the agent service; and the palette lists its live sessions.
+ *
+ * The quick agent (docs/features/quick-agent.md) is its page `quick`, the
+ * window main opens at the pointer, its page `dock`, the dots at the edge of
+ * the screen, its settings section, and the dock's key in the main window.
  */
 import { atom } from 'jotai'
 import { Bot } from 'lucide-react'
@@ -24,7 +28,11 @@ import {
   agentVault,
   terminalLabel,
 } from './state/sessions'
-import { openSessionAtom, showAgentsAtom, startSessionAtom } from './state/send'
+import { followPendingOpen, openSessionAtom, showAgentsAtom, startSessionAtom } from './state/send'
+import { answerDockKey } from './quick/keys'
+import { QuickDock } from './quick/QuickDock'
+import { QuickPanel } from './quick/QuickPanel'
+import { QuickSettings } from './quick/QuickSettings'
 import { TurnReview } from './TurnReview'
 
 /** The tree above, the menu below: many sessions scroll rather than squeeze
@@ -99,7 +107,14 @@ export const agentRenderer: RendererPlugin = {
   sidebarSection: SessionRowsSection,
   drawers: [TurnReview],
   leaveGuard: agentLeaveGuardAtom,
-  vault: agentVault,
+  vault: (remote, store) => {
+    const off = [
+      agentVault(remote, store),
+      followPendingOpen(remote, store),
+      answerDockKey(remote, store),
+    ]
+    return () => off.forEach((undo) => undo())
+  },
   agent: AGENT_SERVICE,
   commands: COMMANDS,
   palette: {
@@ -108,4 +123,16 @@ export const agentRenderer: RendererPlugin = {
     ),
     open: atom(null, (_get, set, id: string) => void set(openSessionAtom, id)),
   },
+  pages: { quick: QuickPanel, dock: QuickDock },
+  settingsSections: [
+    {
+      id: 'quick-agent',
+      label: 'Quick agent',
+      headings: [],
+      // This machine's: the settings live in Holi's data directory, not in
+      // the vault.
+      files: [],
+      Component: () => <QuickSettings />,
+    },
+  ],
 }

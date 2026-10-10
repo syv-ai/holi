@@ -1,0 +1,81 @@
+/**
+ * The quick agents' dock (docs/features/quick-agent.md): one slim window at
+ * the right edge of a display, a dot for each quick agent in its light's
+ * colour, drawn by the agent's page `dock` (`renderer/quick/`).
+ *
+ * Set up like a quick panel's window (`surface.ts`): a macOS panel above
+ * everything on every Space. Unlike a panel it never takes the keyboard
+ * (`focusable: false`), so pointing at or clicking a dot leaves the keyboard
+ * where it was: in the app the person is in, or in the agent's panel the dock
+ * key opened. And it is not on the HUD material: macOS clips a window's glass
+ * to its own corner radius, which never makes a window this narrow a pill, so
+ * the window is clear and the page draws the pill, dark like the panels'
+ * glass, its shadow following the pill's shape.
+ *
+ * Only Electron's window, which core hands over, is touched here: nothing
+ * imports `electron`, so the plugin stays importable under plain Node.
+ */
+import type { AppContext } from '../../../../main/plugin-api'
+import { parseDockRequest, type DockRequest, type DockView } from '../../shared/quick'
+import { DOCK_WIDTH } from './panels'
+import type { Rect } from './placement'
+import { FLOATING, floatAbove, revealWhenPainted } from './surface'
+
+/** The dock's window, as the panels drive it (`panels.ts`). */
+export interface DockSurface {
+  /** Tell its page what to show. */
+  view(view: DockView): void
+  /** Hear its page. A second call replaces the first. */
+  onRequest(cb: (request: DockRequest) => void): void
+  onClosed(cb: () => void): void
+  bounds(): Rect
+  place(bounds: Rect): void
+  /** Show it, never taking the keyboard. */
+  show(): void
+  hide(): void
+  isVisible(): boolean
+  close(): void
+}
+
+export function electronDock(ctx: AppContext): DockSurface {
+  const page = ctx.openPage({
+    page: 'dock',
+    window: {
+      ...FLOATING,
+      width: DOCK_WIDTH,
+      height: DOCK_WIDTH,
+      focusable: false,
+      roundedCorners: false,
+      movable: false,
+    },
+  })
+  const win = page.window
+  let onRequest: (request: DockRequest) => void = () => {}
+  // Shown again, clear until its page has painted the dots it has now.
+  const reveal = revealWhenPainted(page)
+  page.on('dock', (raw) => {
+    const request = parseDockRequest(raw)
+    if (request?.kind === 'painted') reveal.painted()
+    else if (request !== null) onRequest(request)
+  })
+  floatAbove(win)
+
+  return {
+    view: (view) => page.send('dock-view', view),
+    onRequest(cb) {
+      onRequest = cb
+    },
+    onClosed: (cb) => void win.on('closed', cb),
+    bounds: () => win.getBounds(),
+    place: (bounds) => win.setBounds(bounds),
+    show() {
+      reveal.showing()
+      win.showInactive()
+    },
+    hide: () => win.hide(),
+    isVisible: () => !win.isDestroyed() && win.isVisible(),
+    close() {
+      if (!win.isDestroyed()) win.destroy()
+    },
+  }
+}
