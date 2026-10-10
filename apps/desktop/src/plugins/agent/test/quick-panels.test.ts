@@ -10,6 +10,7 @@ import type { DockSurface } from '../main/quick/dock'
 import {
   createQuickPanels,
   HOVER_GRACE_MS,
+  PROMPT_SIZE,
   type PanelSurface,
   type QuickPanelsDeps,
 } from '../main/quick/panels'
@@ -222,7 +223,7 @@ function measure(r: Rig, n: number) {
 }
 
 /** A panel of the default size out beside a 28 px dock on the main display. */
-const beside = (dockY: number, centre: number, size = { width: 520, height: 132 }): Rect => ({
+const beside = (dockY: number, centre: number, size = PROMPT_SIZE): Rect => ({
   x: 1440 - 6 - 28 - 8 - size.width,
   y: dockY + centre - 22,
   ...size,
@@ -765,7 +766,7 @@ describe('the dock', () => {
     r.deps.cursor = () => ({ x: 2000, y: 300 })
     await r.panels.dock()
     expect(r.dock().at).toEqual({ x: 3326, y: 526, width: 28, height: 28 })
-    expect(s.at.x).toBe(3326 - 8 - 520)
+    expect(s.at.x).toBe(3326 - 8 - PROMPT_SIZE.width)
   })
 
   it('↑ ↓ step the keyboard from agent to agent, and stop at the ends', async () => {

@@ -95,8 +95,8 @@ html[data-page='quick'] body {
 
 /* A HUD's corners: short brackets in the light's colour, on the same rounding
  * as the glass and just inside it, with straight legs past the curve, lit like
- * the edge (bright above, faint below). On a full panel; not on a light, which
- * is too small to frame, nor on the card over a tab. */
+ * the edge (bright above, faint below). On a full panel; not on a light or
+ * the prompt's one line, too small to frame, nor on the card over a tab. */
 .quick-corners {
   position: absolute;
   inset: 5px;
@@ -123,6 +123,7 @@ html[data-page='quick'] body {
     linear-gradient(var(--foreground) 0 0) bottom right / 19px 19px no-repeat;
 }
 .quick-hud[data-size='light'] .quick-corners,
+.quick-hud[data-size='line'] .quick-corners,
 .quick-hud[data-surface='overlay'] .quick-corners {
   display: none;
 }
@@ -347,24 +348,15 @@ html[data-page='quick'] body {
   text-shadow: 0 0 10px color-mix(in srgb, var(--quick-light) 60%, transparent);
 }
 
-/* What came along from the app the person was in: a quote, not a field, its
- * rule in the foreground (the light is the agent's state, not the quote's). */
+/* What came along from the app the person was in, named by its app: a tag at
+ * the end of the prompt's line, in the foreground (the light is the agent's
+ * state, not the selection's). */
 .quick-chip {
-  position: relative;
-  max-width: 100%;
-  padding: 5px 10px 5px 12px;
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--foreground) 5%, transparent);
-}
-.quick-chip::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 6px;
-  bottom: 6px;
-  width: 2px;
-  border-radius: 1px;
-  background: color-mix(in srgb, var(--foreground) 28%, transparent);
+  padding: 3px 7px;
+  border-radius: 5px;
+  color: color-mix(in srgb, var(--foreground) 72%, transparent);
+  background: color-mix(in srgb, var(--foreground) 7%, transparent);
+  box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--foreground) 14%, transparent);
 }
 
 /* The panel's prose: an explanation, a failure's reason. */

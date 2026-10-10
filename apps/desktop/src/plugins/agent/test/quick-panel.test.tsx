@@ -1,6 +1,7 @@
 /**
- * The quick panel's page beside the dock: which keys it answers as a request
- * to main, what its foot names, and the size it reports, header and all.
+ * The quick panel's page: the prompt's one line, and beside the dock which
+ * keys it answers as a request to main, what its foot names, and the size it
+ * reports, header and all.
  */
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -150,6 +151,36 @@ describe('the quick panel beside the dock', () => {
     } finally {
       vi.restoreAllMocks()
     }
+  })
+})
+
+describe('the prompt', () => {
+  const prompt = (selection: { app: string; text: string } | null): QuickView => ({
+    kind: 'prompt',
+    remote: 'syv/vault',
+    selection,
+  })
+  const field = () => screen.getByRole('textbox', { name: 'What should the agent do?' })
+  const tag = () => document.querySelector('[data-quick-selection]')?.textContent ?? null
+  const submits = () => sent.filter((r) => r.kind === 'submit')
+
+  it("is one line: the task, the selection's app and the vault, its keys unnamed", () => {
+    open(prompt({ app: 'Safari', text: 'A paragraph.' }))
+    expect(foot()).toBeNull()
+    expect(tag()).toBe('Safari')
+    expect(document.querySelector('.quick-meta')?.textContent).toBe('vault')
+    fireEvent.change(field(), { target: { value: 'Summarise it' } })
+    fireEvent.keyDown(field(), { key: 'Enter' })
+    expect(submits()).toEqual([{ kind: 'submit', prompt: 'Summarise it', selection: true }])
+  })
+
+  it('drops the selection on ⌫ in the empty field', () => {
+    open(prompt({ app: 'Safari', text: 'A paragraph.' }))
+    fireEvent.keyDown(field(), { key: 'Backspace' })
+    expect(tag()).toBeNull()
+    fireEvent.change(field(), { target: { value: 'Tidy the inbox' } })
+    fireEvent.keyDown(field(), { key: 'Enter' })
+    expect(submits()).toEqual([{ kind: 'submit', prompt: 'Tidy the inbox', selection: false }])
   })
 })
 

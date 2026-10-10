@@ -136,8 +136,8 @@ export interface QuickPanels {
   prewarm(): void
 }
 
-/** A prompt's width, and a light's. The page asks for its height. */
-export const PROMPT_SIZE = { width: 520, height: 132 }
+/** A prompt's one line: a panel's size until its page measures it. */
+export const PROMPT_SIZE = { width: 540, height: 58 }
 /** The terminal a session's own prompt is shown in, in cells. */
 const TERMINAL_GEOMETRY = { cols: 96, rows: 18 }
 const MIN = { width: 160, height: 36 }

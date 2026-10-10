@@ -243,7 +243,7 @@ export function QuickPanel(): React.JSX.Element {
       ref={rootRef}
       data-light={light}
       data-focused={focused}
-      data-size={width === WIDTH.light ? 'light' : 'full'}
+      data-size={view?.kind === 'prompt' ? 'line' : width === WIDTH.light ? 'light' : 'full'}
       className="quick-hud inline-flex flex-col"
       style={{ width }}
       // A panel the pointer brought out stays while the pointer is on it.
@@ -345,51 +345,46 @@ function PromptView({
     send({ kind: 'submit', prompt: text, selection: attach && selection !== null })
   }, [text, attach, selection])
 
+  // One line and nothing to read but the task: the keys go unnamed (⏎ starts,
+  // ⇧⏎ is a new line, esc closes), and the end of the line says what comes
+  // along, the selection's app, and the vault the agent runs in.
   return (
-    <div className="flex flex-col gap-3.5 p-4 pb-3 motion-in-fade">
-      <Header title="New agent" meta={vaultName(view.remote)} />
-      <div className="flex items-start gap-3">
-        <span className="quick-caret w-[19px] shrink-0 text-center" aria-hidden>
-          ›
-        </span>
-        <Textarea
-          ref={inputRef}
-          variant="bare"
-          rows={1}
-          aria-label="What should the agent do?"
-          placeholder="What should Holi do?"
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-              e.preventDefault()
-              submit()
-            } else if (e.key === 'Backspace' && text === '' && attach && selection !== null) {
-              e.preventDefault()
-              setAttach(false)
-            }
-          }}
-          className="quick-input max-h-52 min-h-[26px] flex-1 overflow-y-auto text-[18px] leading-[26px] placeholder:text-muted-foreground/55"
-        />
+    <div className="flex items-start gap-3 p-4 motion-in-fade">
+      <span className="quick-caret w-[19px] shrink-0 text-center" aria-hidden>
+        ›
+      </span>
+      <Textarea
+        ref={inputRef}
+        variant="bare"
+        rows={1}
+        aria-label="What should the agent do?"
+        placeholder="What should Holi do?"
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault()
+            submit()
+          } else if (e.key === 'Backspace' && text === '' && attach && selection !== null) {
+            e.preventDefault()
+            setAttach(false)
+          }
+        }}
+        className="quick-input max-h-52 min-h-[26px] flex-1 overflow-y-auto text-[18px] leading-[26px] placeholder:text-muted-foreground/55"
+      />
+      {/* On the first line, however many the task runs to. */}
+      <div className="flex h-[26px] shrink-0 items-center gap-2.5">
+        {selection !== null && attach && (
+          <span
+            data-quick-selection
+            aria-label={`What you selected in ${selection.app}, sent along`}
+            className="quick-chip quick-label max-w-[140px] truncate motion-in-fade"
+          >
+            {selection.app}
+          </span>
+        )}
+        <span className="quick-meta">{vaultName(view.remote)}</span>
       </div>
-      {selection !== null && attach && (
-        <div className={COLUMN}>
-          <div className="quick-chip flex min-w-0 items-baseline gap-2.5 motion-in-fade">
-            <span className="quick-label shrink-0">{selection.app}</span>
-            <span className="line-clamp-2 min-w-0 text-[12px] leading-[17px] text-foreground/75">
-              {selection.text.replace(/\s+/g, ' ').slice(0, 280)}
-            </span>
-          </div>
-        </div>
-      )}
-      <Foot>
-        <Hint keys="⏎" primary>
-          start
-        </Hint>
-        <Hint keys="⇧⏎">new line</Hint>
-        {selection !== null && attach && <Hint keys="⌫">drop the selection</Hint>}
-        <Hint keys="esc">close</Hint>
-      </Foot>
     </div>
   )
 }

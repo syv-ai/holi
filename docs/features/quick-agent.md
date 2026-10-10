@@ -51,15 +51,18 @@ makes Holi the active app, and Chromium does not always hear it give the keyboar
 were in: the focused element's `AXSelectedText` through the Accessibility API, and when an app does
 not answer, ⌘C with the clipboard put back afterwards. What a file manager copies is files, so a file
 selected in Finder comes along as its path, which the agent can read. Both run as `osascript`
-JavaScript, so Holi ships no native module. The selection comes along as a chip (⌫ in the empty field drops it), after
-the task, fenced and labelled with its app, capped at 20 000 characters. The first press without
-the Accessibility permission explains it once, with ⏎ for macOS's own prompt; Settings shows
-whether Holi has it. ⏎ starts the agent, ⇧⏎ is a new line, esc closes. The agent runs in the vault
-open when the task is sent, which the prompt's header names, even if another was open when the
-prompt appeared. Sent, the panel goes out of sight, the keyboard goes back to the app you were in,
-and the agent's dot appears in the dock. A prompt left with a draft waits, out of sight, for the
-next press of the prompt key, from any app or panel; one nobody wrote in goes when you click into
-another app.
+JavaScript, so Holi ships no native module. The selection is sent after the task, fenced and
+labelled with its app, capped at 20 000 characters. The first press without the Accessibility
+permission explains it once, with ⏎ for macOS's own prompt; Settings shows whether Holi has it.
+
+The prompt is one line on the glass and as little as a task needs: the field, and at the end of
+its line a tag naming the app a selection came from (⌫ in the empty field drops it) and the vault.
+Its keys go unnamed, being the ones every prompt has: ⏎ starts the agent, ⇧⏎ is a new line, esc
+closes. The agent runs in the vault open when the task is sent, which the prompt names, even if
+another was open when the prompt appeared. Sent, the panel goes out of sight, the keyboard goes
+back to the app you were in, and the agent's dot appears in the dock. A prompt left with a draft
+waits, out of sight, for the next press of the prompt key, from any app or panel; one nobody wrote
+in goes when you click into another app.
 
 **The agent.** `claude --bg` in the open vault, like any session (see
 [agent-sessions](agent-sessions.md)), with three flags and nothing written into the vault:
