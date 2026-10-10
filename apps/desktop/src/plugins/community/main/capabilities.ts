@@ -11,7 +11,7 @@ import { join } from 'node:path'
 import {
   isCommunityPluginId,
   isRepoName,
-  opensPath,
+  servedFile,
   parsePluginPin,
   PLUGIN_PINS_DIR,
   pluginPinPath,
@@ -59,6 +59,8 @@ export interface PluginRow {
   name: string
   description: string
   opens: string[]
+  /** The folders it opens as one document (`.deck` holding `slides.md`). */
+  folder?: { suffix: string; entry: string }
   status: PluginStatus
   /** The vault's `plugins.<id>` says on. */
   on: boolean
@@ -140,6 +142,7 @@ function rowOf(
     name: manifest.name,
     description: manifest.description ?? '',
     opens: manifest.opens,
+    ...(manifest.folder === undefined ? {} : { folder: manifest.folder }),
     status,
     on,
     running: on && status === 'ready',
@@ -207,7 +210,7 @@ export function communityCapabilities(deps: CommunityDeps) {
   /** The running plugin that opens `path` here, or a refusal saying why not. */
   const servingPlugin = async (root: string, path: string): Promise<PluginRow> => {
     const rows = await listPlugins(root, deps)
-    const row = rows.find((r) => r.on && r.opens.length > 0 && opensPath(r, path))
+    const row = rows.find((r) => r.on && servedFile(r, path) !== null)
     if (row === undefined) throw new CapabilityError('NOT_FOUND', `no plugin opens ${path}`)
     if (!row.running)
       throw new CapabilityError(
@@ -441,7 +444,8 @@ export function communityCapabilities(deps: CommunityDeps) {
       run: async (ctx, { path }) => {
         const row = await servingPlugin(ctx.root, path)
         const install = await installOf(row.id)
-        const file = await resolveRelative(ctx.root, path)
+        // A folder document's server is given its entry file.
+        const file = await resolveRelative(ctx.root, servedFile(row, path)!)
         const key = serverKey(ctx.root, row.id, path)
         const bridge = deps.bridgeScript()
         const { port } = await deps.supervisor.acquire(key, {
@@ -478,7 +482,7 @@ export function communityCapabilities(deps: CommunityDeps) {
       params: pathParam,
       run: async (ctx, { path }): Promise<ServerState | null> => {
         const rows = await listPlugins(ctx.root, deps)
-        for (const row of rows.filter((r) => opensPath(r, path))) {
+        for (const row of rows.filter((r) => servedFile(r, path) !== null)) {
           const state = deps.supervisor.state(serverKey(ctx.root, row.id, path))
           if (state !== null) return state
         }

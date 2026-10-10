@@ -37,9 +37,14 @@ export interface PluginManifest {
   description?: string
   /** The oldest Holi it runs on. */
   minHoliVersion?: string
-  /** The files it opens, by name: an exact basename (`slides.md`) or an
-   *  extension (`*.deck`). No globs, because the file tree asks for every row. */
+  /** The files it opens, by name: an exact basename (`notes.board`) or an
+   *  extension (`*.board`). No globs, because the file tree asks for every row.
+   *  Empty when it opens folders only. */
   opens: string[]
+  /** The folders it opens, each one document in the file tree as a vault
+   *  app's `.app` is: a folder whose name ends in `suffix` and holds `entry`.
+   *  The server is given the entry file. */
+  folder?: { suffix: string; entry: string }
   /** Run once after install or update, in the plugin's own folder. An argv,
    *  never a shell string. */
   setup?: string[]
@@ -69,6 +74,7 @@ const BASENAME = /^[^/\\*?[\]{}]+$/
 const EXTENSION = /^\*\.[A-Za-z0-9][A-Za-z0-9.-]*$/
 const REPO = /^[A-Za-z0-9][A-Za-z0-9-]*\/[A-Za-z0-9._-]+$/
 const COMMIT = /^[0-9a-f]{40}$/
+const FOLDER_SUFFIX = /^\.[a-z0-9][a-z0-9-]*$/
 const PLACEHOLDER = /\{[^}]*\}/g
 
 /** Is `value` a GitHub `owner/repo`? */
@@ -119,8 +125,9 @@ function isPluginRelativePath(path: string): boolean {
 export function parsePluginManifest(json: unknown): Parsed<PluginManifest> {
   if (!isRecord(json)) return { ok: false, problems: ['the manifest must be a JSON object'] }
   const problems: string[] = []
-  const { id, name, version, description, minHoliVersion, opens, setup, serve, ignore, skills } =
+  const { id, name, version, description, minHoliVersion, setup, serve, ignore, skills, folder } =
     json
+  const opens = json.opens ?? []
 
   if (!isPluginId(id)) problems.push('id must be kebab-case, starting with a letter')
   if (typeof name !== 'string' || name.trim() === '')
@@ -134,12 +141,20 @@ export function parsePluginManifest(json: unknown): Parsed<PluginManifest> {
     (typeof minHoliVersion !== 'string' || !SEMVER.test(minHoliVersion))
   )
     problems.push('minHoliVersion must be semver')
-  if (!isStringList(opens) || opens.length === 0)
-    problems.push('opens must list at least one file name')
+  if (!isStringList(opens)) problems.push('opens must be a list of file names')
   else
     for (const pattern of opens)
       if (!BASENAME.test(pattern) && !EXTENSION.test(pattern))
         problems.push(`opens: "${pattern}" is neither a file name nor *.extension`)
+  if (folder !== undefined) {
+    const f = isRecord(folder) ? folder : {}
+    if (typeof f.suffix !== 'string' || !FOLDER_SUFFIX.test(f.suffix))
+      problems.push('folder.suffix must be a name ending such as .deck')
+    if (typeof f.entry !== 'string' || !BASENAME.test(f.entry))
+      problems.push('folder.entry must be a file name, such as slides.md')
+  }
+  if (isStringList(opens) && opens.length === 0 && folder === undefined)
+    problems.push('the plugin must open something: list opens, or give a folder')
   if (setup !== undefined) problems.push(...commandProblems('setup', setup, []))
   problems.push(...commandProblems('serve', serve, ['{port}']))
   if (
@@ -166,6 +181,10 @@ export function parsePluginManifest(json: unknown): Parsed<PluginManifest> {
   if (setup !== undefined) manifest.setup = setup as string[]
   if (ignore !== undefined) manifest.ignore = ignore as string[]
   if (skills !== undefined) manifest.skills = skills as string[]
+  if (folder !== undefined) {
+    const f = folder as { suffix: string; entry: string }
+    manifest.folder = { suffix: f.suffix, entry: f.entry }
+  }
   return { ok: true, value: manifest }
 }
 
@@ -190,6 +209,25 @@ export function parsePluginPin(json: unknown): Parsed<PluginPin> {
  *  renderer frames it, so the two cannot disagree. */
 export function pluginServerOrigin(port: number): string {
   return `http://localhost:${port}`
+}
+
+/** Is the folder at vault path `path` one the plugin opens, by its name?
+ *  Whether it holds the entry is the file tree's to check. */
+export function isPluginFolder(manifest: Pick<PluginManifest, 'folder'>, path: string): boolean {
+  if (manifest.folder === undefined) return false
+  const base = path.slice(path.lastIndexOf('/') + 1)
+  const { suffix } = manifest.folder
+  return base.length > suffix.length && base.endsWith(suffix)
+}
+
+/** The file the plugin's server is given for vault path `path`: a folder's
+ *  entry, the file itself, or null when the plugin opens neither. */
+export function servedFile(
+  manifest: Pick<PluginManifest, 'opens' | 'folder'>,
+  path: string,
+): string | null {
+  if (isPluginFolder(manifest, path)) return `${path}/${manifest.folder!.entry}`
+  return opensPath(manifest, path) ? path : null
 }
 
 /** Does the plugin open the file at vault path `path`? */

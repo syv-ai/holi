@@ -6,8 +6,17 @@
  */
 import { atom, useAtomValue, useSetAtom, useStore } from 'jotai'
 import { useState } from 'react'
-import { opensPath } from '@holi/shared'
-import { activeRemoteAtom, openDialogAtom, type PathClaim, type RendererPlugin } from '@/plugin-api'
+import { Puzzle } from 'lucide-react'
+import { isPluginFolder, opensPath } from '@holi/shared'
+import {
+  activeRemoteAtom,
+  openDialogAtom,
+  openPathAtom,
+  type PathClaim,
+  type PluginStore,
+  type RendererPlugin,
+  type Surface,
+} from '@/plugin-api'
 import { Button } from '@/primitives'
 import { COMMUNITY_INFO } from '../info'
 import { askToRun, installAndAsk, type InstallFlow } from './install-flow'
@@ -22,12 +31,59 @@ import {
   type ServerState,
 } from './state'
 
-/** One claim over every running plugin's files. */
+/** The surface a plugin's folder documents open in, one tab per folder. */
+const SURFACE = 'plugin-document'
+
+/** A folder document's name: without its suffix, as an app's is without
+ *  `.app` and a note's without `.md`. */
+const documentName = (path: string, suffix: string) =>
+  path.slice(path.lastIndexOf('/') + 1).slice(0, -suffix.length)
+
+/** The store, held while a vault is open, for row menu items, which are not
+ *  given one. */
+let openStore: PluginStore | null = null
+
+/** One claim over every running plugin's files, and one per plugin that opens
+ *  folders, which makes each such folder one document in the tree. */
 const claimsAtom = atom((get): readonly PathClaim[] => {
   const running = (get(rowsAtom)?.rows ?? []).filter((r) => r.running)
-  if (running.length === 0) return []
-  return [{ match: (path) => running.some((r) => opensPath(r, path)), view: PluginFrame }]
+  const files = running.filter((r) => r.opens.length > 0)
+  const claims: PathClaim[] =
+    files.length === 0
+      ? []
+      : [{ match: (path) => files.some((r) => opensPath(r, path)), view: PluginFrame }]
+  for (const row of running) {
+    const folder = row.folder
+    if (folder === undefined) continue
+    claims.push({
+      match: (path) => isPluginFolder(row, path),
+      folder: { surface: SURFACE, entry: folder.entry },
+      decorate: {
+        icon: Puzzle,
+        name: (path) => documentName(path, folder.suffix),
+        suffix: () => folder.suffix,
+      },
+      rowMenu: [
+        {
+          // The live document is the default; its source is one click away.
+          label: `Open ${folder.entry} as Text`,
+          run: ({ path }) => openStore?.set(openPathAtom, `${path}/${folder.entry}`, 'pinned'),
+        },
+      ],
+    })
+  }
+  return claims
 })
+
+/** A folder document's tab: the plugin's server for it. */
+const DOCUMENT_SURFACE: Surface = {
+  kind: SURFACE,
+  label: (id) =>
+    id === undefined ? 'Document' : id.slice(id.lastIndexOf('/') + 1).replace(/\.[^.]+$/, ''),
+  icon: Puzzle,
+  render: ({ id }) => (id === undefined ? null : <PluginFrame path={id} />),
+  unlisted: true,
+}
 
 /** Plugins the vault turns on that cannot run here yet. */
 const waitingAtom = atom((get): readonly PluginRow[] =>
@@ -81,6 +137,7 @@ function WaitingNotice(): React.JSX.Element | null {
 export const communityRenderer: RendererPlugin = {
   info: COMMUNITY_INFO,
   claims: claimsAtom,
+  surfaces: [DOCUMENT_SURFACE],
   sidebarSection: WaitingNotice,
   settingsSections: [
     {
@@ -92,7 +149,14 @@ export const communityRenderer: RendererPlugin = {
       Component: ({ remote }) => <PluginsSettings remote={remote} />,
     },
   ],
-  vault: (remote, store) => followRows(remote, store),
+  vault: (remote, store) => {
+    openStore = store
+    const stop = followRows(remote, store)
+    return () => {
+      stop()
+      openStore = null
+    }
+  },
   events: {
     server: ({ remote, payload }, store) => {
       if (remote !== store.get(activeRemoteAtom)) return
