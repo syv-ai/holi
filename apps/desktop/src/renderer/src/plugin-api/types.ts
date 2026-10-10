@@ -180,6 +180,9 @@ export interface SettingsSection {
   headings: readonly SettingsSectionHeading[]
   /** The files this section is a view of, offered at the bottom of it. */
   files: readonly string[]
+  /** Shown inside core's Plugins page, under its label, rather than as a
+   *  section of its own: a plugin's settings about plugins. */
+  within?: 'plugins'
   Component: (props: { remote: string }) => React.JSX.Element
 }
 
