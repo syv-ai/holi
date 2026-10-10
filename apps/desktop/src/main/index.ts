@@ -65,6 +65,10 @@ import { createBridgeServer } from './bridge/server'
 // The plugins this build has: the one place main imports them.
 install(MAIN_PLUGINS)
 
+/** The origins plugins frame right now (`AppContext.frameOrigin`), which the
+ *  window guard confines; live, as their servers start and stop. */
+const FRAME_ORIGINS = new Set<string>()
+
 /** What seeds every vault, core first: its `.gitignore` is written before
  *  any file that could be committed. Enabled plugins' seeds follow. */
 const CORE_SEEDS = [coreSeed(MAIN_PLUGINS.map((p) => p.info))]
@@ -126,6 +130,7 @@ function createWindow(): BrowserWindow {
       void shell.openExternal(url)
     },
     FRAME_SCHEMES,
+    FRAME_ORIGINS,
   )
   return win
 }
@@ -198,6 +203,11 @@ async function main(): Promise<void> {
     // The bridge and the `holi` command exist before any vault can open.
     route: (path, route) => bridge.route(path, route),
     binDir: () => binDir,
+    githubToken: () => session.token(),
+    frameOrigin: (origin) => {
+      FRAME_ORIGINS.add(origin)
+      return () => void FRAME_ORIGINS.delete(origin)
+    },
   })
 
   const host = createVaultHost({

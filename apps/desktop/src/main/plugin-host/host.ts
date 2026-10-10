@@ -62,6 +62,10 @@ export interface PluginHostDeps {
   route(path: string, route: BridgeRoute): () => void
   /** Where the `holi` command lives. */
   binDir(): string
+  /** The signed-in GitHub token, or null. */
+  githubToken(): string | null
+  /** Confine frames on `origin` to it (`window-guard.ts`). Returns the undo. */
+  frameOrigin(origin: string): () => void
   readSettings?: (root: string) => Promise<ResolvedVaultSettings>
 }
 
@@ -190,6 +194,8 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
       },
       route: (path, route) => keep(deps.route(path, route)),
       binDir: deps.binDir,
+      githubToken: deps.githubToken,
+      frameOrigin: (origin) => keep(deps.frameOrigin(origin)),
     }
     if (plugin.activateApp === undefined) return { dispose: () => {}, undos }
     try {

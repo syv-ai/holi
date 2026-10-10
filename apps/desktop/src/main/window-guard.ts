@@ -72,12 +72,38 @@ export function appFrameExit(
   return { open: externalUrl(next) }
 }
 
+const originOf = (url: string): string | null => {
+  try {
+    return new URL(url).origin
+  } catch {
+    return null
+  }
+}
+
+/**
+ * The same for a frame showing one of `frameOrigins`, a community plugin's
+ * local server (`http://127.0.0.1:3040`): it may move within that origin, and
+ * a link out of it opens in the browser. Null for a frame on no such origin,
+ * including one still loading its first page.
+ */
+export function originFrameExit(
+  frameUrl: string,
+  next: string,
+  frameOrigins: ReadonlySet<string>,
+): { open: string | null } | null {
+  const origin = originOf(frameUrl)
+  if (origin === null || !frameOrigins.has(origin) || originOf(next) === origin) return null
+  return { open: externalUrl(next) }
+}
+
 /**
  * Refuse every navigation away from `loaded`, and every second window.
  *
  * `will-navigate` does not fire for subframes, so a vault app's frame is
  * watched on its own (`will-frame-navigate`): it may move within its own
- * bundle, and a link out of it opens in the browser instead. A new window is
+ * bundle, and a link out of it opens in the browser instead; so is a frame on
+ * one of `frameOrigins`, which is live: plugins add and remove origins as their
+ * servers start and stop. A new window is
  * never made; an http(s) or mailto one (an app's `target=_blank` link, which
  * its sandbox's `allow-popups` lets reach here) opens in the browser. The
  * renderer itself never calls `window.open`.
@@ -87,6 +113,7 @@ export function guardNavigation(
   loaded: string,
   openExternal: (url: string) => void,
   frameSchemes: ReadonlySet<string>,
+  frameOrigins: ReadonlySet<string> = new Set(),
 ): void {
   win.webContents.setWindowOpenHandler(({ url }) => {
     const external = externalUrl(url)
@@ -99,7 +126,9 @@ export function guardNavigation(
   })
   win.webContents.on('will-frame-navigate', (event) => {
     if (event.isMainFrame) return
-    const exit = appFrameExit(event.frame?.url ?? '', event.url, frameSchemes)
+    const from = event.frame?.url ?? ''
+    const exit =
+      appFrameExit(from, event.url, frameSchemes) ?? originFrameExit(from, event.url, frameOrigins)
     if (exit === null) return
     event.preventDefault()
     if (exit.open !== null) openExternal(exit.open)
