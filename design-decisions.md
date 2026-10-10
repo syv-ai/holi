@@ -14,9 +14,11 @@ landed design, this file can go. Code comments never cite this file.
   when installable plugins arrive, because only then does a package boundary pay for its build
   wiring.
 - **Each process has one static plugin list.** A disabled plugin's code is never activated.
-- **Third-party plugins, when they come, are renderer-only.** They would be sandboxed UI that runs
-  like a vault app and calls existing capabilities, under the code-hash consent model apps already
-  have. No third-party code runs in main. Nothing is built for this now.
+- **Third-party plugins are process plugins.** A community plugin is a repository whose manifest
+  names the files it opens and the commands Holi runs for them; Holi runs them as their own
+  processes and frames the local server each starts. No third-party code loads into Holi's own
+  processes. Renderer-only plugins in a vault-app sandbox could not run a deck's build tool, which
+  is what the first one, Prezzi, needs. See [community plugins](docs/features/community-plugins.md).
 
 ## Enablement
 

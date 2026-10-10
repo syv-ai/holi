@@ -21,11 +21,12 @@ Node access or GitHub credentials. `router.ts` is main's typed API seam; keep
 Electron dependencies out of code that should remain testable under plain Node.
 
 Optional parts of Holi are plugins under `src/plugins/<id>/` (the agent, PDF,
-Google and vault apps so far), each with its own `main/`, `renderer/`, `shared/` and
+Google, vault apps and community plugins so far), each with its own `main/`, `renderer/`, `shared/` and
 `test/`, reaching core only through `src/main/plugin-api.ts` and
 `@/plugin-api`. Vault apps live in `src/plugins/apps/`; what a synced vault
 holds of an app (the bundle grammar, the record merge, the `.local.app` rule)
-stays in `packages/shared` and core main.
+stays in `packages/shared` and core main. Plugins from other repositories are
+community plugins: processes the `community` plugin runs, never code it loads.
 
 ## Authoritative documentation
 
