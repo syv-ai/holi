@@ -7,5 +7,12 @@ import { agentMain } from './agent/main'
 import { appsMain } from './apps/main'
 import { googleMain } from './google/main'
 import { pdfMain } from './pdf/main'
+import { transcribeMain } from './transcribe/main'
 
-export const MAIN_PLUGINS: readonly MainPlugin[] = [agentMain, pdfMain, googleMain, appsMain]
+export const MAIN_PLUGINS: readonly MainPlugin[] = [
+  agentMain,
+  pdfMain,
+  googleMain,
+  appsMain,
+  transcribeMain,
+]

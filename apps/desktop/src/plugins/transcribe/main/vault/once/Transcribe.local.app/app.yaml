@@ -1,0 +1,11 @@
+description: Record online meetings (mic + meeting audio) and transcribe them with syv.ai
+collections:
+  meetings:
+    schema:
+      type: object
+      required: [title, state, segments]
+  settings:
+dangerously-allow:
+  recording: To record your microphone and the meeting's sound
+  network: To send the recording to syv.ai for transcription
+hosts: [platform.syv.ai]

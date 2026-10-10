@@ -1,0 +1,33 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <section class="card" id="rec">
+      <div class="row">
+        <button id="start" class="primary">● Start recording</button>
+        <button id="stop" class="primary stop" hidden>■ Stop &amp; transcribe</button>
+        <span id="timer" class="muted">00:00</span>
+      </div>
+      <label class="check"><input type="checkbox" id="useMic" checked /> My microphone</label>
+      <label class="check"><input type="checkbox" id="useSys" checked /> Meeting audio (the computer’s sound, whatever app plays it)</label>
+      <div class="meter" hidden><div id="level"></div></div>
+      <p class="muted" id="status">Ready.</p>
+    </section>
+
+    <details class="card" id="cfg">
+      <summary>Transcription service</summary>
+      <label>Endpoint <input id="url" value="https://platform.syv.ai/v1" /></label>
+      <label>Model <input id="model" value="syv-transcribe" /></label>
+      <label>Language <input id="lang" value="da" /></label>
+      <label>API key <input id="key" type="password" placeholder="HVISKE_API_KEY" /></label>
+      <button id="saveCfg">Save</button>
+    </details>
+
+    <div class="grows" id="meetings"></div>
+    <p class="err" id="err"></p>
+    <script src="app.js"></script>
+  </body>
+</html>
