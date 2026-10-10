@@ -16,6 +16,15 @@ let supervisor: Supervisor | null = null
 
 export const communityMain: MainPlugin = {
   info: COMMUNITY_INFO,
+  // `holi community path` only reads where a plugin is, so it does not ask.
+  seed: {
+    id: 'community',
+    once: {},
+    shipped: {},
+    fragments: {
+      '.claude/settings.json': [{ permissions: { allow: ['Bash(holi community path:*)'] } }],
+    },
+  },
   activateApp(ctx) {
     const store = createInstallStore(ctx.userData)
     const servers = createSupervisor({

@@ -46,6 +46,14 @@ one per id, listed in `userData/plugins/installed.json`. A vault that uses a plu
 `plugins: { community: true, <id>: true }` in `app.yaml`, beside the first-party plugins. A folder
 install is never pinned.
 
+**Skills for the vault's agent.** A manifest's `skills` names folders in the plugin, each a Claude
+Code skill (`SKILL.md` and what it references). Turning the plugin on in a vault copies each to
+`.claude/skills/<folder name>/` (with the pin for a release, as it is for a folder install), and a
+newer pin writes them again. Links inside a skill folder are followed when they stay inside the
+plugin, so it can share references with its own repository's skills, and refused when they leave
+it. `holi community path <id>` prints a running plugin's folder on this machine, so a skill can
+run the plugin's own tools; it only reads, so it is allowed without asking.
+
 **Nothing runs before consent.** A fetched release waits until the person allows that commit, in a
 dialog naming the repository, version, commit and both commands. Consent is per `(id, commit)` in
 `userData/plugin-consent.json`, with no expiry; a different commit asks again. Then setup runs once,
