@@ -37,7 +37,11 @@ export function ConsentDialog({
   const logEnd = useRef<HTMLDivElement>(null)
   const install = row.install
 
-  useEffect(() => logEnd.current?.scrollIntoView({ block: 'end' }), [log.length])
+  // Braced: Chromium's scrollIntoView now returns a promise, and an effect
+  // that returns anything but a cleanup function breaks the tree.
+  useEffect(() => {
+    void logEnd.current?.scrollIntoView({ block: 'end' })
+  }, [log.length])
 
   const allow = async () => {
     if (remote === null || install === null) return
