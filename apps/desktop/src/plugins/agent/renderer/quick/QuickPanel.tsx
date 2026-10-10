@@ -23,18 +23,17 @@
  * The window is macOS's HUD glass; the page paints only what sits on it, and
  * always in the dark scheme, the vault's dark colours included.
  */
-import { useAtomValue, useSetAtom } from 'jotai'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { AskAnswers } from '../../shared/questions'
 import { DEFAULT_DOCK_HOTKEY, hotkeyFromEvent } from '../../shared/hotkey'
-import type { QuickRequest, QuickView } from '../../shared/quick'
+import { FINISHED_STATES, type QuickRequest, type QuickView } from '../../shared/quick'
 import { focusSessionTerminal, receivePtyData } from '../lib/session-terminals'
 import { SessionTerminal } from '../SessionTerminal'
 import { renderAnswer } from './answer'
+import { useHudPage } from './hud'
 import { LIGHT, STATE_WORDS, type Light } from './lights'
-import { Hint, QuestionCard, WaitingHint } from './QuestionCard'
+import { Foot, Hint, QuestionCard, WaitingHint } from './QuestionCard'
 import './quick.css'
-import { activeRemoteAtom, useVaultTheme } from '@/plugin-api'
 import { Textarea } from '@/primitives'
 
 const send = (request: QuickRequest): void => window.holi.page.send('quick', request)
@@ -47,6 +46,16 @@ const WIDTH = { prompt: 540, light: 400, card: 540, terminal: 760 }
 const lightOf = (view: QuickView | null): Light | 'idle' =>
   view === null || view.kind !== 'agent' ? 'idle' : LIGHT[view.state]
 
+/** What an agent's panel shows. */
+type AgentPanelView = Extract<QuickView, { kind: 'agent' }>
+
+/** A finished agent has nothing left to wait for: esc and ⌫ clear it. */
+const finished = (view: AgentPanelView): boolean => FINISHED_STATES.includes(view.state)
+
+/** ⏎ opens it in Holi: finished, with a session (a start that failed has
+ *  none). */
+const opens = (view: AgentPanelView): boolean => finished(view) && view.job !== ''
+
 /** Keys typed into a field (your own answer) or into Claude Code's terminal
  *  are theirs, not the panel's. */
 const typing = (target: EventTarget | null): boolean =>
@@ -56,18 +65,14 @@ const typing = (target: EventTarget | null): boolean =>
 export function QuickPanel(): React.JSX.Element {
   const [view, setView] = useState<QuickView | null>(null)
   const [focused, setFocused] = useState(false)
-  const setRemote = useSetAtom(activeRemoteAtom)
-  const remote = useAtomValue(activeRemoteAtom)
   const rootRef = useRef<HTMLDivElement | null>(null)
   const viewRef = useRef(view)
   viewRef.current = view
   /** The prompt's text, kept here so a blur knows whether there is a draft. */
   const draftRef = useRef('')
   /** The global hotkey, as main holds it: pressed inside a panel, it starts
-   *  another agent. */
-  const [hotkey, setHotkey] = useState<string | null>(null)
+   *  another agent. Never drawn, so a ref. */
   const hotkeyRef = useRef<string | null>(null)
-  hotkeyRef.current = hotkey
   /** The dock's key, as main holds it: pressed in a prompt it opens the dock,
    *  in Claude Code's terminal it steps back out to the agents, and a panel
    *  out without the keyboard names it. */
@@ -82,30 +87,19 @@ export function QuickPanel(): React.JSX.Element {
   const insideRef = useRef(inside)
   insideRef.current = inside
 
-  // The HUD is dark whatever the vault's scheme, wearing the vault's dark
-  // colours, and the glass shows through everything the page does not paint.
-  useLayoutEffect(() => {
-    document.documentElement.dataset.theme = 'dark'
-    document.documentElement.dataset.page = 'quick'
-  }, [])
-  useVaultTheme({ fill: false })
+  useHudPage('quick', view?.remote ?? null)
 
   // What main says, and then that the page is listening.
   useEffect(() => {
     const off = window.holi.page.on(({ name, payload }) => {
       if (name === 'quick-view') setView(payload as QuickView)
-      else if (name === 'quick-hotkey' && typeof payload === 'string') setHotkey(payload)
+      else if (name === 'quick-hotkey' && typeof payload === 'string') hotkeyRef.current = payload
       else if (name === 'quick-dock-hotkey' && typeof payload === 'string') setDockHotkey(payload)
       else if (name === 'pty-data') receivePtyData(payload)
     })
     send({ kind: 'ready' })
     return off
   }, [])
-
-  useEffect(() => {
-    const next = view?.remote ?? null
-    if (next !== remote) setRemote(next)
-  }, [view, remote, setRemote])
 
   // Its size follows its content: main sizes the window to it, and lines the
   // middle of its header up with its dot. Measured as each view lands too,
@@ -134,9 +128,9 @@ export function QuickPanel(): React.JSX.Element {
   useLayoutEffect(() => report(), [report, view, focused, dockHotkey, inside])
 
   // Whether the panel has the keyboard, as main tells it (`surface.ts`). A
-  // person moving the keyboard elsewhere: a prompt nobody wrote in goes, one
-  // with a draft waits for the hotkey, and an agent's panel goes back to its
-  // dot. Either way a terminal stepped into is stepped out of.
+  // person moving the keyboard elsewhere: a prompt nobody wrote in goes, and
+  // one with a draft waits for the hotkey. (An agent's panel main puts back
+  // to its dot itself.) Either way a terminal stepped into is stepped out of.
   useEffect(
     () =>
       window.holi.page.on(({ name, payload }) => {
@@ -145,12 +139,8 @@ export function QuickPanel(): React.JSX.Element {
         setFocused(has)
         if (!has) setInsideOf(null)
         const v = viewRef.current
-        if (has || !user || v === null) return
-        if (v.kind === 'prompt' || v.kind === 'access') {
-          send({ kind: draftRef.current.trim() === '' ? 'clear' : 'hide' })
-        } else {
-          send({ kind: 'hide' })
-        }
+        if (has || !user || v === null || v.kind === 'agent') return
+        send({ kind: draftRef.current.trim() === '' ? 'clear' : 'hide' })
       }),
     [],
   )
@@ -207,9 +197,6 @@ export function QuickPanel(): React.JSX.Element {
       }
       if (insideRef.current || typing(e.target)) return
       if (e.metaKey || e.ctrlKey || e.altKey) return
-      const finished = v.state === 'done' || v.state === 'failed'
-      // A start that failed has no session to open in Holi.
-      const opens = finished && v.job !== ''
       switch (e.key) {
         case 'ArrowUp':
         case 'ArrowDown':
@@ -220,11 +207,11 @@ export function QuickPanel(): React.JSX.Element {
           return
         case 'Escape':
           e.preventDefault()
-          send({ kind: finished ? 'clear' : 'close-dock' })
+          send({ kind: finished(v) ? 'clear' : 'hide' })
           return
         case 'Enter':
           if (e.shiftKey) return
-          if (opens) {
+          if (opens(v)) {
             e.preventDefault()
             send({ kind: 'open-session' })
           } else if (v.state === 'prompt' && v.terminalId !== null) {
@@ -233,7 +220,7 @@ export function QuickPanel(): React.JSX.Element {
           }
           return
         case 'Backspace':
-          if (!finished) return
+          if (!finished(v)) return
           e.preventDefault()
           send({ kind: 'clear' })
           return
@@ -319,12 +306,6 @@ function Header({ title, meta, state }: { title: string; meta?: string; state?: 
   )
 }
 
-/** The keys a panel answers, along its foot. */
-function Foot({ children }: { children: React.ReactNode }) {
-  return <div className="quick-foot flex flex-wrap items-center gap-x-4 gap-y-1">{children}</div>
-}
-
-/** The dock's keys, last along an agent's foot wherever it has the keyboard. */
 /** The dock's keys, last in every agent's foot. On a finished agent esc
  *  clears it rather than putting it away. */
 function DockKeys({ clears = false }: { clears?: boolean }) {
@@ -401,9 +382,6 @@ function PromptView({
           </div>
         </div>
       )}
-      {view.error !== undefined && (
-        <p className={`${COLUMN} quick-prose text-agent-failed`}>{view.error}</p>
-      )}
       <Foot>
         <Hint keys="⏎" primary>
           start
@@ -441,7 +419,7 @@ function AgentView({
   inside,
   onStepIn,
 }: {
-  view: Extract<QuickView, { kind: 'agent' }>
+  view: AgentPanelView
   focused: boolean
   dockHotkey: string | null
   /** ⏎ has stepped into Claude Code's terminal: its keys are Claude Code's. */
@@ -517,7 +495,6 @@ function AgentView({
     return <AnswerView name={view.name} result={view.result} focused={focused} />
   }
 
-  const finished = view.state === 'done' || view.state === 'failed'
   // A failure is a full panel, padded like the others. A light keeps its
   // header still as the keyboard arrives, the foot growing in beneath it.
   const spacing = view.error !== undefined ? 'gap-2.5 pb-3 pt-4' : focused ? 'gap-3 py-3' : 'py-3'
@@ -527,12 +504,12 @@ function AgentView({
       {view.error !== undefined && <p className={`${COLUMN} quick-prose`}>{view.error}</p>}
       {focused && (
         <Foot>
-          {finished && view.job !== '' && (
+          {opens(view) && (
             <Hint keys="⏎" primary>
               open in Holi
             </Hint>
           )}
-          <DockKeys clears={finished} />
+          <DockKeys clears={finished(view)} />
         </Foot>
       )}
     </div>

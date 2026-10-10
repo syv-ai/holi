@@ -4,24 +4,22 @@
  * panel.
  *
  * Core makes the window, because what goes into one is core's: the preload,
- * the isolation, the document and the navigation guard. The plugin owns the
- * rest (size, place, showing, closing) through Electron's own window.
+ * the isolation, the document and the navigation guard, as the main window's
+ * (`renderer-window.ts`). The plugin owns the rest (size, place, showing,
+ * closing) through Electron's own window.
  *
  * **One channel per window, not the plugin's.** A page is told things on
  * `page:event` and answers on `page:message`, and main hears a message only
  * from the window it opened, by sender. The plugin's events stay the main
  * window's, so a busy terminal's bytes never reach a panel that did not ask.
  */
-import { join } from 'node:path'
-import { pathToFileURL } from 'node:url'
 import {
-  BrowserWindow,
   ipcMain,
-  shell,
+  type BrowserWindow,
   type BrowserWindowConstructorOptions,
   type IpcMainEvent,
 } from 'electron'
-import { guardNavigation } from './window-guard'
+import { rendererWindow } from './renderer-window'
 
 /** What a plugin asks for (`AppContext.openPage`). */
 export interface PageWindowOptions {
@@ -71,14 +69,7 @@ export function createPageWindows(deps: { frameSchemes: ReadonlySet<string> }): 
   return {
     open(plugin, options) {
       if (!PAGE.test(options.page)) throw new Error(`page name ${options.page} is not kebab-case`)
-      const win = new BrowserWindow({
-        ...options.window,
-        webPreferences: {
-          preload: join(__dirname, '../preload/index.js'),
-          contextIsolation: true,
-          nodeIntegration: false,
-        },
-      })
+      const win = rendererWindow(options.window, deps.frameSchemes, `${plugin}/${options.page}`)
       const contentsId = win.webContents.id
       const handlers = new Map<string, Set<(payload: unknown) => void>>()
       listeners.set(contentsId, handlers)
@@ -87,23 +78,6 @@ export function createPageWindows(deps: { frameSchemes: ReadonlySet<string> }): 
         listeners.delete(contentsId)
         open.delete(win)
       })
-
-      const query = { page: `${plugin}/${options.page}` }
-      const devUrl = process.env['ELECTRON_RENDERER_URL']
-      const file = join(__dirname, '../renderer/index.html')
-      if (devUrl) {
-        const url = new URL(devUrl)
-        url.searchParams.set('page', query.page)
-        void win.loadURL(url.href)
-      } else {
-        void win.loadFile(file, { query })
-      }
-      guardNavigation(
-        win,
-        devUrl ?? pathToFileURL(file).href,
-        (url) => void shell.openExternal(url),
-        deps.frameSchemes,
-      )
 
       return {
         window: win,

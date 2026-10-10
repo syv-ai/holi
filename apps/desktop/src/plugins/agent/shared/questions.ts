@@ -45,7 +45,7 @@ const MAX_OPTIONS = 4
  *  paragraph, not a document. */
 export const MAX_ANSWER_LENGTH = 4_000
 
-const isRecord = (v: unknown): v is Record<string, unknown> =>
+export const isRecord = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v)
 
 const text = (v: unknown): string | null => (typeof v === 'string' && v.trim() !== '' ? v : null)
@@ -100,6 +100,18 @@ export function answersComplete(questions: readonly AskQuestion[], answers: unkn
     const value = answers[q.question]
     return typeof value === 'string' && value.trim() !== '' && value.length <= MAX_ANSWER_LENGTH
   })
+}
+
+/** Answers as a panel or a capability sends them: an object of strings, or
+ *  null. Whether they answer the call is `answersComplete`'s to say. */
+export function parseAnswers(raw: unknown): AskAnswers | null {
+  if (!isRecord(raw)) return null
+  const answers: AskAnswers = {}
+  for (const [question, value] of Object.entries(raw)) {
+    if (typeof value !== 'string') return null
+    answers[question] = value
+  }
+  return answers
 }
 
 /** A multi-select's answer: the picked labels in the order offered. */

@@ -289,7 +289,7 @@ describe('agent sessions', () => {
 })
 
 describe('quick agents', () => {
-  it('starts one with no terminal, and marks it quick in the list', async () => {
+  it('starts one with no terminal, and knows it for a quick agent', async () => {
     const { sessions, cli, opened, attach } = setup()
     await attach()
     expect(await sessions.startQuick({ name: 'Tidy', prompt: 'tidy the inbox' })).toEqual({
@@ -302,7 +302,7 @@ describe('quick agents', () => {
     })
     expect(opened).toEqual([])
     expect(sessions.isQuick('quick000')).toBe(true)
-    expect(sessions.sessions()).toEqual([expect.objectContaining({ id: 'quick000', quick: true })])
+    expect(sessions.sessions()).toEqual([expect.objectContaining({ id: 'quick000' })])
   })
 
   it('needs you while Holi holds its question, though the listing says busy', async () => {

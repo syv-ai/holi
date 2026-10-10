@@ -87,7 +87,7 @@ Its dialogs open as `{id: 'plugin', render}`.
 A plugin may have windows of its own: `ctx.openPage` makes one showing a page of its renderer side
 (`RendererPlugin.pages`), loaded as `?page=<plugin>/<page>`, which boots only that page, with no
 vault subscription and no flush answer. Core makes the window (preload, isolation, navigation
-guard); the plugin places, shows and closes it, and talks to its page over the window's own channel
+guard), from the same helper as the main window (`main/renderer-window.ts`); the plugin places, shows and closes it, and talks to its page over the window's own channel
 (`page:event`, `page:message`), so the plugin's events stay the main window's. `ctx.showMainWindow`
 brings the main window forward. The agent's quick panel and its dock are two.
 Main tells a plugin's renderer something through events: `ctx.emit(remote, name, payload)` sends

@@ -19,16 +19,14 @@ const SETTINGS: QuickSettingsState = {
 
 /** The capabilities called, by name. */
 let calls: string[] = []
-let settings: QuickSettingsState = SETTINGS
 let off: () => void = () => {}
 
 beforeEach(() => {
   calls = []
-  settings = SETTINGS
   window.holi = {
     trpc: async (op: { path: string; input: { name: string } }) => {
       calls.push(op.input.name)
-      return { ok: true, data: op.input.name === 'agent.quickSettings' ? settings : true }
+      return { ok: true, data: op.input.name === 'agent.quickSettings' ? SETTINGS : true }
     },
   } as never
 })
@@ -81,13 +79,6 @@ describe('the dock key in the main window', () => {
 
     store.set(quickSettingsAtom, { ...SETTINGS, enabled: false })
     expect(press(DOCK_KEY).defaultPrevented).toBe(false)
-  })
-
-  it('reads the settings again as the window gets the keyboard back', async () => {
-    const store = await mainWindow()
-    settings = { ...SETTINGS, dockHotkey: '⌃⌥K' }
-    window.dispatchEvent(new Event('focus'))
-    await vi.waitFor(() => expect(store.get(quickSettingsAtom)?.dockHotkey).toBe('⌃⌥K'))
   })
 
   it('leaves the key to Settings while it records one', async () => {

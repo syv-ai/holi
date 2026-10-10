@@ -16,13 +16,14 @@ import {
   cap,
   CapabilityError,
   noParams,
+  optionalStringParam,
   paramsObject,
   stringParam,
   type CapabilityContext,
 } from '../../../../main/plugin-api'
-import type { AskAnswers, PendingQuestion } from '../../shared/questions'
+import { parseAnswers, type AskAnswers, type PendingQuestion } from '../../shared/questions'
 import type { QuestionDesk } from '../host/questions'
-import type { QuickSettingsState } from '../../shared/quick'
+import type { QuickSettingsPatch, QuickSettingsState } from '../../shared/quick'
 import type { QuickAgent } from './index'
 
 export interface QuickCapabilitiesDeps {
@@ -34,18 +35,11 @@ export interface QuickCapabilitiesDeps {
 }
 
 function answersParam(raw: Record<string, unknown>): AskAnswers {
-  const answers = raw['answers']
-  if (typeof answers !== 'object' || answers === null || Array.isArray(answers)) {
-    throw new CapabilityError('BAD_REQUEST', 'answers must be an object')
+  const answers = parseAnswers(raw['answers'])
+  if (answers === null) {
+    throw new CapabilityError('BAD_REQUEST', 'answers must be an object of strings')
   }
-  const out: AskAnswers = {}
-  for (const [question, value] of Object.entries(answers)) {
-    if (typeof value !== 'string') {
-      throw new CapabilityError('BAD_REQUEST', 'each answer must be a string')
-    }
-    out[question] = value
-  }
-  return out
+  return answers
 }
 
 export const quickCapabilities = (deps: QuickCapabilitiesDeps) => {
@@ -83,20 +77,14 @@ export const quickCapabilities = (deps: QuickCapabilitiesDeps) => {
 
     'agent.setQuickSettings': cap({
       doors: ['ui'],
-      params: (raw) => {
+      params: (raw): QuickSettingsPatch => {
         const p = paramsObject(raw)
         const enabled = p['enabled']
-        const hotkey = p['hotkey']
-        const dockHotkey = p['dockHotkey']
         if (enabled !== undefined && typeof enabled !== 'boolean') {
           throw new CapabilityError('BAD_REQUEST', 'enabled must be true or false')
         }
-        if (hotkey !== undefined && typeof hotkey !== 'string') {
-          throw new CapabilityError('BAD_REQUEST', 'hotkey must be a string')
-        }
-        if (dockHotkey !== undefined && typeof dockHotkey !== 'string') {
-          throw new CapabilityError('BAD_REQUEST', 'dockHotkey must be a string')
-        }
+        const hotkey = optionalStringParam(p, 'hotkey')
+        const dockHotkey = optionalStringParam(p, 'dockHotkey')
         return {
           ...(enabled === undefined ? {} : { enabled }),
           ...(hotkey === undefined ? {} : { hotkey }),

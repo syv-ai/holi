@@ -8,7 +8,7 @@
 import { atom } from 'jotai'
 import { hotkeyFromEvent } from '../../shared/hotkey'
 import type { QuickSettingsState } from '../../shared/quick'
-import { quickCap } from '../quick-cap'
+import { agentCap } from '../agent-cap'
 import type { PluginStore } from '@/plugin-api'
 
 /** This machine's quick agent settings as last read: the settings section
@@ -25,17 +25,13 @@ export const quickSettingsAtom = atom<QuickSettingsState | null>(null)
  */
 export function answerDockKey(remote: string, store: PluginStore): () => void {
   let live = true
-  const load = (): void =>
-    void quickCap.quickSettings(remote).then(
-      (settings) => {
-        if (live) store.set(quickSettingsAtom, settings)
-      },
-      () => {},
-    )
-  load()
-  // Changed while another window had the keyboard, or by hand: read again as
-  // this one gets it back.
-  window.addEventListener('focus', load)
+  // Read once: Settings, the only place they change, sets the atom itself.
+  void agentCap.quickSettings(remote).then(
+    (settings) => {
+      if (live) store.set(quickSettingsAtom, settings)
+    },
+    () => {},
+  )
 
   const onKey = (e: KeyboardEvent): void => {
     const settings = store.get(quickSettingsAtom)
@@ -43,13 +39,12 @@ export function answerDockKey(remote: string, store: PluginStore): () => void {
     if (hotkeyFromEvent(e) !== settings.dockHotkey) return
     e.preventDefault()
     e.stopPropagation()
-    if (!e.repeat) void quickCap.quickDock(remote).catch(() => {})
+    if (!e.repeat) void agentCap.quickDock(remote).catch(() => {})
   }
   document.addEventListener('keydown', onKey, true)
 
   return () => {
     live = false
-    window.removeEventListener('focus', load)
     document.removeEventListener('keydown', onKey, true)
   }
 }

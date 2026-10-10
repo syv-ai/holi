@@ -16,8 +16,8 @@
  * importable under plain Node.
  */
 import type { AppContext } from '../../../../main/plugin-api'
-import { parseGlobalHotkey, toAccelerator } from '../../shared/hotkey'
-import type { QuickSettingsState } from '../../shared/quick'
+import { toAccelerator } from '../../shared/hotkey'
+import type { QuickSettingsPatch, QuickSettingsState } from '../../shared/quick'
 import { isLive } from '../claude/listing'
 import type { QuestionDesk } from '../host/questions'
 import type { AgentSessions } from '../host/sessions'
@@ -34,11 +34,7 @@ export interface QuickAgent {
   /** A quick agent's turn ended with this message, for its panel. */
   result(job: string, message: string): void
   settings(): Promise<QuickSettingsState>
-  setSettings(patch: {
-    enabled?: boolean
-    hotkey?: string
-    dockHotkey?: string
-  }): Promise<QuickSettingsState>
+  setSettings(patch: QuickSettingsPatch): Promise<QuickSettingsState>
   /** The dock's key, pressed inside the main window, which answers it itself
    *  since Holi does not hold it there: as from any other app. False, doing
    *  nothing, while the keys are off. */
@@ -185,7 +181,7 @@ export async function startQuickAgent(deps: {
     settings: state,
     async setSettings(patch) {
       for (const key of [patch.hotkey, patch.dockHotkey]) {
-        if (key !== undefined && parseGlobalHotkey(key) === null) {
+        if (key !== undefined && toAccelerator(key) === null) {
           throw new Error(`${key} cannot be a global hotkey`)
         }
       }

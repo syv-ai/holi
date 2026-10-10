@@ -103,9 +103,11 @@ export function useVaultTheme({ fill = true }: { fill?: boolean } = {}): void {
         // Holi's own default. Clearing first is what makes the values pristine;
         // nothing paints in between, because this is one task.
         applicator.clear()
-        const missing = missingTokens(theme)
+        // Only a window that fills the file in reads Holi's defaults: each
+        // read is a style recalculation per token.
+        const missing = fill ? missingTokens(theme) : null
         applicator.apply(themeBlockToVars(theme[mode]))
-        if (fill && missing !== null) {
+        if (missing !== null) {
           void trpc.theme.write
             .mutate({ remote, layer: 'committed', patchJson: JSON.stringify(missing) })
             // A vault that cannot be written to is not a reason to stop showing

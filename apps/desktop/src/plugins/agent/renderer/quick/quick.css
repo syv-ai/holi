@@ -40,16 +40,17 @@ html[data-page='quick'] body {
   border-radius: 14px;
   isolation: isolate;
 }
-.quick-hud[data-light='working'] {
+/* A light's colour, on a panel and on a dock's dot alike. */
+:is(.quick-hud, .quick-slot)[data-light='working'] {
   --quick-light: var(--agent-working);
 }
-.quick-hud[data-light='asking'] {
+:is(.quick-hud, .quick-slot)[data-light='asking'] {
   --quick-light: var(--agent-needs-you);
 }
-.quick-hud[data-light='done'] {
+:is(.quick-hud, .quick-slot)[data-light='done'] {
   --quick-light: var(--agent-done);
 }
-.quick-hud[data-light='failed'] {
+:is(.quick-hud, .quick-slot)[data-light='failed'] {
   --quick-light: var(--agent-failed);
 }
 
@@ -434,18 +435,6 @@ html[data-page='quick'] body {
 
 .quick-slot {
   --quick-light: var(--brand);
-}
-.quick-slot[data-light='working'] {
-  --quick-light: var(--agent-working);
-}
-.quick-slot[data-light='asking'] {
-  --quick-light: var(--agent-needs-you);
-}
-.quick-slot[data-light='done'] {
-  --quick-light: var(--agent-done);
-}
-.quick-slot[data-light='failed'] {
-  --quick-light: var(--agent-failed);
 }
 
 .quick-dot {

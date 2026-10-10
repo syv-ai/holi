@@ -805,7 +805,7 @@ describe('the dock', () => {
     const r = rig()
     const s = await sent(r)
     await r.panels.dock()
-    s.request({ kind: 'close-dock' })
+    s.request({ kind: 'hide' })
     expect(s.visible).toBe(false)
     expect(s.focused).toBe(false)
     expect(r.dock().visible).toBe(true)

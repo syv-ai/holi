@@ -1,12 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { ClaudeRow } from '../main/claude/listing'
 import { quickState, START_GRACE_MS } from '../main/host/quick-state'
-import {
-  DEFAULT_QUICK_HOTKEY,
-  hotkeyFromEvent,
-  parseGlobalHotkey,
-  toAccelerator,
-} from '../shared/hotkey'
+import { DEFAULT_QUICK_HOTKEY, hotkeyFromEvent, toAccelerator } from '../shared/hotkey'
 import { parseQuickRequest, quickPrompt } from '../shared/quick'
 import { clampInto, placeAtCursor } from '../main/quick/placement'
 import { fitSelection, MAX_SELECTION, readSelection } from '../main/quick/selection'
@@ -64,11 +59,11 @@ describe('the global hotkey', () => {
   })
 
   it('refuses a key every app would lose, and anything it cannot read', () => {
-    expect(parseGlobalHotkey('J')).toBeNull()
-    expect(parseGlobalHotkey('⇧J')).toBeNull()
-    expect(parseGlobalHotkey('⌘')).toBeNull()
-    expect(parseGlobalHotkey('⌘JJ')).toBeNull()
-    expect(parseGlobalHotkey('⌘⌃J')).toBeNull() // not in macOS's order
+    expect(toAccelerator('J')).toBeNull()
+    expect(toAccelerator('⇧J')).toBeNull()
+    expect(toAccelerator('⌘')).toBeNull()
+    expect(toAccelerator('⌘JJ')).toBeNull()
+    expect(toAccelerator('⌘⌃J')).toBeNull() // not in macOS's order
   })
 
   it('records a press by its physical key', () => {

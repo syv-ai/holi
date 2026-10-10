@@ -13,7 +13,8 @@
 import { useAtom, useAtomValue } from 'jotai'
 import { useCallback, useEffect, useState } from 'react'
 import { DEFAULT_DOCK_HOTKEY, DEFAULT_QUICK_HOTKEY, hotkeyFromEvent } from '../../shared/hotkey'
-import { quickCap } from '../quick-cap'
+import type { QuickSettingsPatch } from '../../shared/quick'
+import { agentCap } from '../agent-cap'
 import { quickSettingsAtom } from './keys'
 import { SettingsHeading, SettingsList, SettingsNote, SettingsRow } from '@/composites'
 import { activeRemoteAtom } from '@/plugin-api'
@@ -21,12 +22,6 @@ import { Button, Checkbox, Kbd } from '@/primitives'
 
 /** The two keys, by their settings' names. */
 type KeyName = 'hotkey' | 'dockHotkey'
-
-interface Patch {
-  enabled?: boolean
-  hotkey?: string
-  dockHotkey?: string
-}
 
 export function QuickSettings(): React.JSX.Element {
   const remote = useAtomValue(activeRemoteAtom)
@@ -41,7 +36,7 @@ export function QuickSettings(): React.JSX.Element {
 
   const load = useCallback(async () => {
     if (remote === null) return
-    setState(await quickCap.quickSettings(remote).catch(() => null))
+    setState(await agentCap.quickSettings(remote).catch(() => null))
   }, [remote, setState])
 
   useEffect(() => {
@@ -54,11 +49,11 @@ export function QuickSettings(): React.JSX.Element {
   }, [load])
 
   const change = useCallback(
-    async (patch: Patch, on: KeyName = 'hotkey') => {
+    async (patch: QuickSettingsPatch, on: KeyName = 'hotkey') => {
       if (remote === null) return
       setError(null)
       try {
-        setState(await quickCap.setQuickSettings(remote, patch))
+        setState(await agentCap.setQuickSettings(remote, patch))
       } catch (err) {
         setError({ on, message: err instanceof Error ? err.message : String(err) })
       }
@@ -173,7 +168,7 @@ export function QuickSettings(): React.JSX.Element {
                 size="xs"
                 disabled={state === null || remote === null}
                 onClick={() => {
-                  if (remote !== null) void quickCap.requestAccessibility(remote).then(() => load())
+                  if (remote !== null) void agentCap.requestAccessibility(remote).then(() => load())
                 }}
               >
                 Allow…

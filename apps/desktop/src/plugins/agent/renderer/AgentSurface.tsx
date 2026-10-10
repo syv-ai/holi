@@ -12,7 +12,7 @@ import { useAtomValue, useSetAtom } from 'jotai'
 import { useCallback, useMemo } from 'react'
 import type { AskAnswers } from '../shared/questions'
 import { QuestionCard } from './quick/QuestionCard'
-import { quickCap } from './quick-cap'
+import { agentCap } from './agent-cap'
 import './quick/quick.css'
 import { questionForAtom } from './state/questions'
 import {
@@ -45,7 +45,7 @@ function AgentQuestion({ terminalId }: { terminalId: string }): React.JSX.Elemen
   const answer = useCallback(
     (answers: AskAnswers) => {
       if (remote !== null && question !== null) {
-        void quickCap.answer(remote, { id: question.id, answers })
+        void agentCap.answer(remote, { id: question.id, answers })
       }
     },
     [remote, question],

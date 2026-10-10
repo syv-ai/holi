@@ -13,32 +13,45 @@
  * Only Electron's window, which core hands over, is touched here: nothing
  * imports `electron`, so the plugin stays importable under plain Node.
  */
-import type { AppContext } from '../../../../main/plugin-api'
+import type { AppContext, PageWindow, PageWindowOptions } from '../../../../main/plugin-api'
 import { parseQuickRequest, type QuickRequest } from '../../shared/quick'
-import type { PanelSurface } from './panels'
+import { PROMPT_SIZE, type PanelSurface } from './panels'
+
+/** What a panel's window and the dock's share: a frameless macOS panel, clear
+ *  for its page to paint on, kept out of the Dock and the window switcher. */
+export const FLOATING: PageWindowOptions['window'] = {
+  show: false,
+  type: 'panel',
+  frame: false,
+  transparent: true,
+  hasShadow: true,
+  resizable: false,
+  minimizable: false,
+  maximizable: false,
+  fullscreenable: false,
+  skipTaskbar: true,
+  alwaysOnTop: true,
+  acceptFirstMouse: true,
+  backgroundColor: '#00000000',
+}
+
+/** Above everything, on every Space and over a full-screen app, and out of
+ *  Mission Control. */
+export function floatAbove(win: PageWindow['window']): void {
+  win.setAlwaysOnTop(true, 'floating')
+  win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true, skipTransformProcessType: true })
+  win.setHiddenInMissionControl(true)
+}
 
 export function electronSurface(ctx: AppContext): PanelSurface {
   const page = ctx.openPage({
     page: 'quick',
     window: {
-      width: 520,
-      height: 132,
-      show: false,
-      type: 'panel',
-      frame: false,
-      transparent: true,
+      ...FLOATING,
+      ...PROMPT_SIZE,
       vibrancy: 'hud',
       visualEffectState: 'active',
       roundedCorners: true,
-      hasShadow: true,
-      resizable: false,
-      minimizable: false,
-      maximizable: false,
-      fullscreenable: false,
-      skipTaskbar: true,
-      alwaysOnTop: true,
-      acceptFirstMouse: true,
-      backgroundColor: '#00000000',
     },
   })
   const win = page.window
@@ -75,9 +88,7 @@ export function electronSurface(ctx: AppContext): PanelSurface {
     tellFocus(false, user)
     if (user) onUserBlur()
   })
-  win.setAlwaysOnTop(true, 'floating')
-  win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true, skipTransformProcessType: true })
-  win.setHiddenInMissionControl(true)
+  floatAbove(win)
 
   return {
     view: (view) => page.send('quick-view', view),

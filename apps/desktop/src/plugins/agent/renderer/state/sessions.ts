@@ -11,7 +11,6 @@ import {
   type PluginStore,
 } from '@/plugin-api'
 import type { PendingQuestion } from '../../shared/questions'
-import { quickCap } from '../quick-cap'
 import { agentQuestionsAtom, pendingOpenAtom } from './questions'
 import { resetTurnReviewAtom, turnReviewOpenAtom } from './turns'
 
@@ -46,8 +45,6 @@ export interface AgentSession {
   /** How much of its context window is used, 0 to 100, from its status line.
    *  Absent before its first message and after a `/clear`. */
   contextPercent?: number
-  /** Started from the quick panel: its questions come as cards. */
-  quick?: true
 }
 
 /**
@@ -255,7 +252,7 @@ export function agentVault(remote: string, store: PluginStore): () => void {
     if (store.get(agentTerminalsAtom) === terminalsAsked) store.set(agentTerminalsAtom, list)
   })
   const questionsAsked = store.get(agentQuestionsAtom)
-  void quickCap.questions(remote).then((list) => {
+  void agentCap.questions(remote).then((list) => {
     if (store.get(agentQuestionsAtom) === questionsAsked) store.set(agentQuestionsAtom, list)
   })
 

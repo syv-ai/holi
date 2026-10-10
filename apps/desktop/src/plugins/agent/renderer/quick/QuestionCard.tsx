@@ -8,16 +8,25 @@
  * main window, where the terminal beside it has keys of its own). In the
  * panel ↑ ↓ are the dock's, stepping to the agent above or below, and esc
  * puts the panel away (`arrows={false}`): the foot names those instead.
+ *
+ * One card per call: a caller keys it by the call's id, so a new call starts
+ * a new card.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { AskAnswers, PendingQuestion } from '../../shared/questions'
-import { cardKey, initialCard, reduceCard, type CardAction, type CardState } from './card'
+import {
+  cardKey,
+  initialCard,
+  isRecommended,
+  reduceCard,
+  type CardAction,
+  type CardState,
+} from './card'
 import { Button, Input } from '@/primitives'
 
 /** An option's label without the "(Recommended)" Claude marks it with: the
  *  card says so with its own badge. */
 const plainLabel = (label: string): string => label.replace(/\s*\(recommended\)\s*/i, ' ').trim()
-const isRecommended = (label: string): boolean => /\(recommended\)/i.test(label)
 
 export function QuestionCard({
   question,
@@ -41,12 +50,6 @@ export function QuestionCard({
   const stateRef = useRef(state)
   stateRef.current = state
   const sent = useRef(false)
-
-  // A new call starts a new card.
-  useEffect(() => {
-    sent.current = false
-    setState(initialCard(questions))
-  }, [question.id, questions])
 
   const act = useCallback(
     (action: CardAction) => {
@@ -201,7 +204,7 @@ export function QuestionCard({
         </div>
       </div>
 
-      <div className="quick-foot flex flex-wrap items-center gap-x-4 gap-y-1">
+      <Foot>
         {waiting !== undefined ? (
           <WaitingHint hotkey={waiting} />
         ) : writing ? (
@@ -222,9 +225,14 @@ export function QuestionCard({
             {!arrows && <Hint keys="esc">close</Hint>}
           </>
         )}
-      </div>
+      </Foot>
     </div>
   )
+}
+
+/** The keys a panel answers, along its foot. */
+export function Foot({ children }: { children: React.ReactNode }) {
+  return <div className="quick-foot flex flex-wrap items-center gap-x-4 gap-y-1">{children}</div>
 }
 
 /**

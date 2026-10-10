@@ -70,11 +70,7 @@ describe('the quick panel beside the dock', () => {
     // ⇧↑ ⇧↓ scroll an answer: not a step.
     key({ key: 'ArrowDown', shiftKey: true })
     key({ key: 'Escape' })
-    expect(sent).toEqual([
-      { kind: 'step', dir: -1 },
-      { kind: 'step', dir: 1 },
-      { kind: 'close-dock' },
-    ])
+    expect(sent).toEqual([{ kind: 'step', dir: -1 }, { kind: 'step', dir: 1 }, { kind: 'hide' }])
     expect(foot()).toBe('↑↓agentsescclose')
   })
 

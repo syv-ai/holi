@@ -17,7 +17,9 @@
  */
 import type { AppContext } from '../../../../main/plugin-api'
 import { parseDockRequest, type DockRequest, type DockView } from '../../shared/quick'
+import { DOCK_WIDTH } from './panels'
 import type { Rect } from './placement'
+import { FLOATING, floatAbove } from './surface'
 
 /** The dock's window, as the panels drive it (`panels.ts`). */
 export interface DockSurface {
@@ -39,24 +41,12 @@ export function electronDock(ctx: AppContext): DockSurface {
   const page = ctx.openPage({
     page: 'dock',
     window: {
-      width: 28,
-      height: 28,
-      show: false,
-      type: 'panel',
+      ...FLOATING,
+      width: DOCK_WIDTH,
+      height: DOCK_WIDTH,
       focusable: false,
-      frame: false,
-      transparent: true,
       roundedCorners: false,
-      hasShadow: true,
-      resizable: false,
       movable: false,
-      minimizable: false,
-      maximizable: false,
-      fullscreenable: false,
-      skipTaskbar: true,
-      alwaysOnTop: true,
-      acceptFirstMouse: true,
-      backgroundColor: '#00000000',
     },
   })
   const win = page.window
@@ -65,9 +55,7 @@ export function electronDock(ctx: AppContext): DockSurface {
     const request = parseDockRequest(raw)
     if (request !== null) onRequest(request)
   })
-  win.setAlwaysOnTop(true, 'floating')
-  win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true, skipTransformProcessType: true })
-  win.setHiddenInMissionControl(true)
+  floatAbove(win)
 
   return {
     view: (view) => page.send('dock-view', view),

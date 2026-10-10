@@ -16,7 +16,7 @@
  */
 import { join } from 'node:path'
 import { jsonFileStore, type JsonFileStore } from '../../../../main/plugin-api'
-import { DEFAULT_DOCK_HOTKEY, DEFAULT_QUICK_HOTKEY, parseGlobalHotkey } from '../../shared/hotkey'
+import { DEFAULT_DOCK_HOTKEY, DEFAULT_QUICK_HOTKEY, toAccelerator } from '../../shared/hotkey'
 
 export interface QuickSettings {
   enabled: boolean
@@ -32,7 +32,7 @@ export const DEFAULT_QUICK_SETTINGS: QuickSettings = {
   accessibilityAsked: false,
 }
 
-const isHotkey = (v: unknown): v is string => typeof v === 'string' && parseGlobalHotkey(v) !== null
+const isHotkey = (v: unknown): v is string => typeof v === 'string' && toAccelerator(v) !== null
 
 /** What is on disk, checked key by key: a hand edit gone wrong costs that key. */
 export function parseQuickSettings(raw: unknown): QuickSettings {

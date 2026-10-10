@@ -2,7 +2,7 @@
  * The quick agent's vocabulary, shared by its main side and its panel
  * (docs/features/quick-agent.md). Pure: no Node, no DOM.
  */
-import type { AskAnswers, PendingQuestion } from './questions'
+import { isRecord, parseAnswers, type AskAnswers, type PendingQuestion } from './questions'
 
 /**
  * Where a quick agent is, which is what its panel shows.
@@ -29,7 +29,7 @@ export const FINISHED_STATES: readonly QuickState[] = ['done', 'failed']
 export type QuickView =
   /** Typing the task. `selection` is what was selected in the app the person
    *  came from, attached until they remove it. */
-  | { kind: 'prompt'; remote: string | null; selection: QuickSelection | null; error?: string }
+  | { kind: 'prompt'; remote: string | null; selection: QuickSelection | null }
   /** The first press without the Accessibility permission: one line on why,
    *  and a key to open System Settings. */
   | { kind: 'access'; remote: string | null; selection: null }
@@ -64,6 +64,11 @@ export interface QuickSettingsState {
   accessibility: boolean
 }
 
+/** A change to the settings: the switch, or either key. */
+export type QuickSettingsPatch = Partial<
+  Pick<QuickSettingsState, 'enabled' | 'hotkey' | 'dockHotkey'>
+>
+
 /** Text selected in another app when the hotkey was pressed. */
 export interface QuickSelection {
   /** The app it came from, as macOS names it. */
@@ -78,7 +83,9 @@ export type QuickRequest =
   | { kind: 'ready' }
   | { kind: 'submit'; prompt: string; selection: boolean }
   | { kind: 'answer'; questionId: string; answers: AskAnswers }
-  /** Out of sight, the agent still running. */
+  /** Out of sight, the agent still running and its dot still there: esc in
+   *  an agent's panel, or a prompt with a draft left when the person clicked
+   *  away. */
   | { kind: 'hide' }
   /** Gone: a prompt never sent, or a finished agent's panel, whose session
    *  stops with it. */
@@ -88,8 +95,6 @@ export type QuickRequest =
   | { kind: 'new' }
   /** ↑ ↓ in an agent's panel: the agent above or below it in the dock. */
   | { kind: 'step'; dir: 1 | -1 }
-  /** esc in an agent's panel: its panel goes and the keyboard goes back. */
-  | { kind: 'close-dock' }
   /** The dock's key pressed inside a prompt: the dock, with the keyboard. */
   | { kind: 'dock' }
   /** The pointer came onto a panel or left it: a panel shown by hovering a
@@ -100,9 +105,6 @@ export type QuickRequest =
   /** What the page needs to show itself, in CSS pixels, and how far down it
    *  the middle of its header is: that is what lines up with its dot. */
   | { kind: 'size'; width: number; height: number; header?: number }
-
-const isRecord = (v: unknown): v is Record<string, unknown> =>
-  typeof v === 'object' && v !== null && !Array.isArray(v)
 
 const finite = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v)
 
@@ -115,7 +117,6 @@ export function parseQuickRequest(raw: unknown): QuickRequest | null {
     case 'clear':
     case 'open-session':
     case 'new':
-    case 'close-dock':
     case 'dock':
     case 'grant-access':
     case 'skip-access':
@@ -129,14 +130,10 @@ export function parseQuickRequest(raw: unknown): QuickRequest | null {
         ? { kind: 'submit', prompt: raw['prompt'], selection: raw['selection'] === true }
         : null
     case 'answer': {
-      const answers = raw['answers']
-      if (typeof raw['questionId'] !== 'string' || !isRecord(answers)) return null
-      const clean: AskAnswers = {}
-      for (const [key, value] of Object.entries(answers)) {
-        if (typeof value !== 'string') return null
-        clean[key] = value
-      }
-      return { kind: 'answer', questionId: raw['questionId'], answers: clean }
+      const answers = parseAnswers(raw['answers'])
+      return typeof raw['questionId'] === 'string' && answers !== null
+        ? { kind: 'answer', questionId: raw['questionId'], answers }
+        : null
     }
     case 'size': {
       const { width, height, header } = raw

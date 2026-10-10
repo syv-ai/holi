@@ -10,7 +10,6 @@
  */
 import { readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
-import { pathToFileURL } from 'node:url'
 import {
   app,
   BrowserWindow,
@@ -23,7 +22,7 @@ import {
 } from 'electron'
 import { snapshotTasks } from '@holi/shared'
 import { requestFlush, type FlushChannel } from './flush'
-import { guardNavigation } from './window-guard'
+import { rendererWindow } from './renderer-window'
 import { vaultScheme } from './vault/asset-protocol'
 import { createSession } from './github/electron'
 import { createMembersCache } from './github/members-cache'
@@ -103,38 +102,11 @@ if (!app.requestSingleInstanceLock()) {
  *  and opens the vault (the agent, the quick agent's hotkey), out of sight
  *  until the tray's Open Holi or the dock. */
 function createWindow({ show = true }: { show?: boolean } = {}): BrowserWindow {
-  const win = new BrowserWindow({
-    width: 1200,
-    height: 800,
-    show,
-    webPreferences: {
-      preload: join(__dirname, '../preload/index.js'),
-      contextIsolation: true,
-      nodeIntegration: false,
-    },
-  })
+  const win = rendererWindow({ width: 1200, height: 800, show }, FRAME_SCHEMES)
   mainWindow = win
   win.on('closed', () => {
     if (mainWindow === win) mainWindow = null
   })
-
-  const devUrl = process.env['ELECTRON_RENDERER_URL']
-  if (devUrl) {
-    void win.loadURL(devUrl)
-  } else {
-    void win.loadFile(join(__dirname, '../renderer/index.html'))
-  }
-  // After the load, so the guard knows what "the app" is. A drop the renderer
-  // does not claim is a navigation, and Electron answers a navigation with a
-  // window — see window-guard.ts.
-  guardNavigation(
-    win,
-    devUrl ?? pathToFileURL(join(__dirname, '../renderer/index.html')).href,
-    (url) => {
-      void shell.openExternal(url)
-    },
-    FRAME_SCHEMES,
-  )
   return win
 }
 
@@ -483,17 +455,19 @@ async function main(): Promise<void> {
   win.on('focus', () => host.active()?.onFocus())
 
   // Create-or-focus the one window: the dock/`activate` path and the tray's
-  // Open Holi both funnel through here.
-  const openWindow = (): void => {
+  // Open Holi both funnel through here. The window it made, or null when it
+  // brought the open one forward.
+  const openWindow = (): BrowserWindow | null => {
     const existing = mainWindow
     if (existing !== null && !existing.isDestroyed()) {
       if (existing.isMinimized()) existing.restore()
       existing.show()
       existing.focus()
-      return
+      return null
     }
     const fresh = createWindow()
     fresh.on('focus', () => host.active()?.onFocus())
+    return fresh
   }
 
   /**
@@ -502,14 +476,9 @@ async function main(): Promise<void> {
    * here resolves once its page has loaded, so what is sent next is heard.
    */
   showMainWindow = async (): Promise<void> => {
-    const existing = mainWindow
     if (process.platform === 'darwin') app.focus({ steal: true })
-    if (existing !== null && !existing.isDestroyed()) {
-      openWindow()
-      return
-    }
-    const fresh = createWindow()
-    fresh.on('focus', () => host.active()?.onFocus())
+    const fresh = openWindow()
+    if (fresh === null) return
     await new Promise<void>((resolve) => fresh.webContents.once('did-finish-load', () => resolve()))
   }
 

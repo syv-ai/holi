@@ -201,7 +201,6 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
       return {
         ...summary,
         ...(held ? { state: 'needs-you' as const, waitingFor: 'input needed' } : {}),
-        ...(quick.has(row.id) ? { quick: true as const } : {}),
       }
     })
 

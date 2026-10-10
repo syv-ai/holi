@@ -52,37 +52,51 @@ export const QUICK_SYSTEM_PROMPT = [
 export const ASK_TIMEOUT_S = 86_400
 
 /**
- * The hook: POSIX sh, run by Claude Code with the tool call's JSON on stdin.
- *
- * Inside a Holi background session it posts that JSON to `/ask` with the
- * vault's token (from its `bridge.local.env`, parsed, never sourced) and the
- * job id, and prints whatever comes back. Holi answers empty (204) for a
- * question it is not taking, so every way of not answering prints nothing and
- * falls through to Claude Code's own question box.
+ * A hook that posts its stdin, the hook's JSON, to the bridge's `route`: POSIX
+ * sh, and only inside a Holi background session, with the vault's token (from
+ * its `bridge.local.env`, parsed, never sourced) and the job id. `curl` is the
+ * command up to its URL and `redirect` what follows it. Elsewhere, or with no
+ * bridge, it does nothing and prints nothing.
+ */
+function bridgeHook(route: string, curl: string, redirect: string): string {
+  const env = shellReadBridgeEnv(['HOLI_BRIDGE_PORT', 'HOLI_BRIDGE_TOKEN']).join('; ')
+  const url = `"http://127.0.0.1:$HOLI_BRIDGE_PORT/${route}?t=$HOLI_BRIDGE_TOKEN&job=\${CLAUDE_JOB_DIR##*/}"`
+  return [
+    'input=$(cat)',
+    `if [ -n "\${CLAUDE_JOB_DIR:-}" ]; then ${env}; if [ -n "$HOLI_BRIDGE_PORT" ] && [ -n "$HOLI_BRIDGE_TOKEN" ]; then ${curl} --data-binary "$input" ${url} ${redirect}; fi; fi`,
+    'true',
+  ].join('; ')
+}
+
+/**
+ * The question hook, run with the tool call's JSON: it posts it to `/ask` and
+ * prints whatever comes back. Holi answers empty (204) for a question it is
+ * not taking, so every way of not answering prints nothing and falls through
+ * to Claude Code's own question box.
  *
  * **`exec`, with the JSON as an argument rather than piped in**: the shell
  * becomes the `curl`, so when Claude Code ends the hook (a stop, a timeout)
  * the request ends with it and Holi lets go of the question. A piped `curl`
  * would outlive its shell, holding the question for a day.
  */
-export const ASK_HOOK = [
-  'input=$(cat)',
-  `if [ -n "\${CLAUDE_JOB_DIR:-}" ]; then ${shellReadBridgeEnv(['HOLI_BRIDGE_PORT', 'HOLI_BRIDGE_TOKEN']).join('; ')}; if [ -n "$HOLI_BRIDGE_PORT" ] && [ -n "$HOLI_BRIDGE_TOKEN" ]; then exec curl -s -m ${ASK_TIMEOUT_S} -H 'content-type: application/json' --data-binary "$input" "http://127.0.0.1:$HOLI_BRIDGE_PORT/ask?t=$HOLI_BRIDGE_TOKEN&job=\${CLAUDE_JOB_DIR##*/}" 2>/dev/null; fi; fi`,
-  'true',
-].join('; ')
+export const ASK_HOOK = bridgeHook(
+  'ask',
+  `exec curl -s -m ${ASK_TIMEOUT_S} -H 'content-type: application/json'`,
+  '2>/dev/null',
+)
 
 /**
- * The result hook: POSIX sh, run by Claude Code as a turn ends, with the turn's
- * JSON on stdin (`last_assistant_message` among it). Inside a Holi background
- * session it posts that JSON to `/quick-result` and prints nothing, whatever
- * happens: a `Stop` hook's output is a decision about whether the turn may end.
- * Holi answers at once, and a Holi that does not is waited on a few seconds.
+ * The result hook, run as a turn ends with the turn's JSON
+ * (`last_assistant_message` among it): it posts it to `/quick-result` and
+ * prints nothing, whatever happens, since a `Stop` hook's output is a decision
+ * about whether the turn may end. Holi answers at once, and a Holi that does
+ * not is waited on a few seconds.
  */
-export const RESULT_HOOK = [
-  'input=$(cat)',
-  `if [ -n "\${CLAUDE_JOB_DIR:-}" ]; then ${shellReadBridgeEnv(['HOLI_BRIDGE_PORT', 'HOLI_BRIDGE_TOKEN']).join('; ')}; if [ -n "$HOLI_BRIDGE_PORT" ] && [ -n "$HOLI_BRIDGE_TOKEN" ]; then curl -s -m 3 -o /dev/null -H 'content-type: application/json' --data-binary "$input" "http://127.0.0.1:$HOLI_BRIDGE_PORT/quick-result?t=$HOLI_BRIDGE_TOKEN&job=\${CLAUDE_JOB_DIR##*/}" >/dev/null 2>&1; fi; fi`,
-  'true',
-].join('; ')
+export const RESULT_HOOK = bridgeHook(
+  'quick-result',
+  "curl -s -m 3 -o /dev/null -H 'content-type: application/json'",
+  '>/dev/null 2>&1',
+)
 
 /** The `--settings` JSON: the two hooks, and nothing else. */
 export const QUICK_SETTINGS = JSON.stringify({

@@ -137,7 +137,7 @@ export interface QuickPanels {
 }
 
 /** A prompt's width, and a light's. The page asks for its height. */
-const PROMPT_SIZE = { width: 520, height: 132 }
+export const PROMPT_SIZE = { width: 520, height: 132 }
 /** The terminal a session's own prompt is shown in, in cells. */
 const TERMINAL_GEOMETRY = { cols: 96, rows: 18 }
 const MIN = { width: 160, height: 36 }
@@ -151,7 +151,7 @@ const HEADER_MIDDLE = 22
 /** The dock until its page says otherwise: dots 8 px, 10 px apart, with 10 px
  *  above and below them, in a pill 28 px wide. */
 const DOT = { size: 8, gap: 10, pad: 10 }
-const DOCK_WIDTH = 28
+export const DOCK_WIDTH = 28
 const DOCK_MAX_WIDTH = 64
 
 interface Panel {
@@ -216,7 +216,9 @@ export function createQuickPanels(deps: QuickPanelsDeps): QuickPanels {
   function prewarm(): void {
     if (deps.spare !== true) return
     openDock()
-    if (spare !== null) return
+    // One readied after a panel was taken waits for its timer: built now, it
+    // would load alongside the panel that is showing.
+    if (spare !== null || spareTimer !== null) return
     const entry = { surface: deps.openSurface(), ready: false }
     entry.surface.onRequest((request) => {
       if (request.kind === 'ready') entry.ready = true
@@ -245,14 +247,7 @@ export function createQuickPanels(deps: QuickPanelsDeps): QuickPanels {
     job === null ? null : (deps.questions.pending().find((q) => q.job === job) ?? null)
 
   function viewOf(p: Panel): QuickView {
-    if (p.mode === 'prompt') {
-      return {
-        kind: 'prompt',
-        remote: p.remote,
-        selection: p.selection,
-        ...(p.error === undefined ? {} : { error: p.error }),
-      }
-    }
+    if (p.mode === 'prompt') return { kind: 'prompt', remote: p.remote, selection: p.selection }
     if (p.mode === 'access') return { kind: 'access', remote: p.remote, selection: null }
     return {
       kind: 'agent',
@@ -352,7 +347,6 @@ export function createQuickPanels(deps: QuickPanelsDeps): QuickPanels {
   /** Tell the dock what it shows, and have it in sight exactly while there is
    *  a quick agent. */
   function refreshDock(): void {
-    if (selected !== null && !panels.has(selected.id)) selected = null
     const list = agents()
     if (list.length === 0) {
       cancelHide()
@@ -401,13 +395,17 @@ export function createQuickPanels(deps: QuickPanelsDeps): QuickPanels {
     refreshDock()
   }
 
+  /** `p`'s panel is no longer the one out beside the dock. */
+  function deselect(p: Panel): void {
+    if (selected !== p) return
+    selected = null
+    pointer.panel = false
+  }
+
   /** `p` out of sight, the keyboard going back to the app the person was in;
    *  an agent's dot stays. */
   function putAway(p: Panel): void {
-    if (selected === p) {
-      selected = null
-      pointer.panel = false
-    }
+    deselect(p)
     p.surface.hide()
     refreshDock()
   }
@@ -472,10 +470,7 @@ export function createQuickPanels(deps: QuickPanelsDeps): QuickPanels {
 
   function close(p: Panel): void {
     if (!panels.delete(p.id)) return
-    if (selected === p) {
-      selected = null
-      pointer.panel = false
-    }
+    deselect(p)
     if (p.terminalId !== null) void deps.terminals.close(p.terminalId)
     p.surface.close()
     refreshDock()
@@ -563,7 +558,7 @@ export function createQuickPanels(deps: QuickPanelsDeps): QuickPanels {
     refreshDock()
   }
 
-  function create(mode: Panel['mode'], selection: QuickSelection | null): Panel {
+  function create(mode: Panel['mode']): Panel {
     const { surface, ready } = takeSurface()
     const p: Panel = {
       id: nextId++,
@@ -572,7 +567,7 @@ export function createQuickPanels(deps: QuickPanelsDeps): QuickPanels {
       mode,
       seq: 0,
       remote: deps.remote(),
-      selection,
+      selection: null,
       job: null,
       name: '',
       state: 'working',
@@ -608,9 +603,7 @@ export function createQuickPanels(deps: QuickPanelsDeps): QuickPanels {
     p.remote = deps.remote()
     p.state = 'working'
     p.since = now()
-    p.startedAt = now()
     p.name = prompt.trim().split('\n')[0] ?? ''
-    delete p.error
     tell(p)
     // The task is in: the panel goes out of sight, the keyboard back to where
     // the person was, and the agent into the dock as a dot.
@@ -678,7 +671,6 @@ export function createQuickPanels(deps: QuickPanelsDeps): QuickPanels {
         deps.questions.answer(request.questionId, request.answers)
         return
       case 'hide':
-      case 'close-dock':
         // Out of sight, the agent still running and its dot still there.
         putAway(p)
         return
@@ -731,18 +723,18 @@ export function createQuickPanels(deps: QuickPanelsDeps): QuickPanels {
   /** A prompt at the pointer, with the frontmost app's selection when asked. */
   async function newPrompt(withSelection: boolean): Promise<void> {
     if (!withSelection) {
-      reveal(create('prompt', null), true)
+      reveal(create('prompt'), true)
       return
     }
     if (!deps.accessibility.trusted()) {
       const first = !(await deps.accessibility.asked())
-      reveal(create(first ? 'access' : 'prompt', null), true)
+      reveal(create(first ? 'access' : 'prompt'), true)
       return
     }
     // In sight at once, but the keyboard stays where it is until the
     // selection is read: a ⌘C posted after the panel had it would go to the
     // panel.
-    const p = create('prompt', null)
+    const p = create('prompt')
     reveal(p, false)
     p.selection = await deps.readSelection().catch(() => null)
     if (!panels.has(p.id)) return

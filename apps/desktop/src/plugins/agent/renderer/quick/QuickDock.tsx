@@ -10,65 +10,25 @@
  * it out with the keyboard. It reports its size and where each dot sits, so
  * main fits the window to it and sets a panel level with its dot.
  *
- * The window is the same HUD glass as the panels, and never has the keyboard;
- * the page paints only what sits on it, always in the dark scheme.
+ * The window is clear and never has the keyboard: the page draws the pill,
+ * dark like the panels' glass (`dock.ts` says why), always in the dark scheme.
  */
-import { useAtomValue, useSetAtom } from 'jotai'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { DockRequest, DockView } from '../../shared/quick'
+import { useHudPage } from './hud'
 import { LIGHT, STATE_WORDS } from './lights'
 import './quick.css'
-import { activeRemoteAtom, useVaultTheme } from '@/plugin-api'
+import { useArrivals } from '@/plugin-api'
 import { Button } from '@/primitives'
 
 const send = (request: DockRequest): void => window.holi.page.send('dock', request)
 
-const NONE: ReadonlySet<string> = new Set()
-
-const sameIds = (a: readonly string[], b: readonly string[]): boolean =>
-  a.length === b.length && a.every((id, i) => id === b[i])
-
-/**
- * The dots new since the last list, which arrive. The first list main sends
- * is the window's own arrival, so nothing in it does (`null` until then).
- * Kept until the list changes again, so a re-render mid-arrival does not cut
- * it short, and committed in an effect, so StrictMode's second render
- * compares against the same list (as core's `useArrivals`).
- */
-function useArriving(ids: readonly string[] | null): ReadonlySet<string> {
-  const previous = useRef<readonly string[] | null>(null)
-  const arriving = useRef<ReadonlySet<string>>(NONE)
-  if (ids !== null && previous.current !== null && !sameIds(previous.current, ids)) {
-    const before = new Set(previous.current)
-    arriving.current = new Set(ids.filter((id) => !before.has(id)))
-  }
-  useEffect(() => {
-    if (ids !== null) previous.current = ids
-  })
-  return arriving.current
-}
-
 export function QuickDock(): React.JSX.Element {
   const [view, setView] = useState<DockView | null>(null)
-  const setRemote = useSetAtom(activeRemoteAtom)
-  const remote = useAtomValue(activeRemoteAtom)
   const rootRef = useRef<HTMLDivElement | null>(null)
-  const dots = view?.dots ?? []
-  const ids = dots.map((d) => d.id)
-  const arriving = useArriving(view === null ? null : ids)
-  const layout = ids.join('\n')
+  const layout = (view?.dots ?? []).map((d) => d.id).join('\n')
 
-  // Dark HUD glass, as the panels are, wearing the open vault's dark colours:
-  // its theme can recolour the lights, and a dot and its panel agree.
-  useLayoutEffect(() => {
-    document.documentElement.dataset.theme = 'dark'
-    document.documentElement.dataset.page = 'dock'
-  }, [])
-  useVaultTheme({ fill: false })
-  useEffect(() => {
-    const next = view?.remote ?? null
-    if (next !== remote) setRemote(next)
-  }, [view, remote, setRemote])
+  useHudPage('dock', view?.remote ?? null)
 
   // What main says, and then that the page is listening.
   useEffect(() => {
@@ -110,8 +70,20 @@ export function QuickDock(): React.JSX.Element {
       // pointer went onto it.
       onMouseLeave={() => send({ kind: 'hover', id: null })}
     >
-      {dots.map((dot) => {
-        const selected = dot.id === view?.selected
+      {/* Mounted with the first view, which is the window's own arrival, so
+          none of the dots it opens with arrive. */}
+      {view !== null && <Dots view={view} />}
+    </div>
+  )
+}
+
+/** One dot per agent; a new one arrives. */
+function Dots({ view }: { view: DockView }) {
+  const { isArriving } = useArrivals(view.dots.map((d) => d.id))
+  return (
+    <>
+      {view.dots.map((dot) => {
+        const selected = dot.id === view.selected
         return (
           <Button
             key={dot.id}
@@ -128,12 +100,12 @@ export function QuickDock(): React.JSX.Element {
             onClick={() => send({ kind: 'pick', id: dot.id })}
             className="quick-slot h-[18px] w-full rounded-none p-0 hover:bg-transparent focus-visible:ring-0 active:scale-100 dark:hover:bg-transparent"
           >
-            <span className="quick-dot" data-arriving={arriving.has(dot.id)} aria-hidden>
+            <span className="quick-dot" data-arriving={isArriving(dot.id)} aria-hidden>
               <span className="quick-dot-light" />
             </span>
           </Button>
         )
       })}
-    </div>
+    </>
   )
 }

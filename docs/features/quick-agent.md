@@ -197,13 +197,14 @@ its window loaded but out of sight, so the vault opens and both keys work from t
 - `apps/desktop/src/plugins/agent/main/quick/`: the keys and settings (`index.ts`, `settings.ts`),
   the panels and the dock's dots (`panels.ts`), their windows (`surface.ts`, and the dock's
   `dock.ts`), placement, the selection, the capabilities
-- `apps/desktop/src/plugins/agent/main/claude/quick.ts`: the flags, the system prompt and the hook
+- `apps/desktop/src/plugins/agent/main/claude/quick.ts`: the flags, the system prompt and the hooks
 - `apps/desktop/src/plugins/agent/main/claude/routes.ts` (`/ask`), `main/host/questions.ts` (the
   desk), `main/host/quick-state.ts` (a light from the listing)
 - `apps/desktop/src/plugins/agent/shared/`: questions, the panel's and the dock's views and
   requests, the keys
 - `apps/desktop/src/plugins/agent/renderer/quick/`: the panel page (`QuickPanel.tsx`), the dock
-  page (`QuickDock.tsx`), the lights both wear (`lights.ts`), the card and its keys, the HUD's CSS,
-  the settings section, and the dock key in the main window (`keys.ts`)
-- `apps/desktop/src/main/page-windows.ts`, `src/renderer/src/components/PageRoot.tsx`: a plugin's own
-  windows
+  page (`QuickDock.tsx`), the dark HUD both set up (`hud.ts`) and the lights both wear
+  (`lights.ts`), the card and its keys, the HUD's CSS, the settings section, and the dock key in the
+  main window (`keys.ts`)
+- `apps/desktop/src/main/page-windows.ts`, `main/renderer-window.ts`,
+  `src/renderer/src/components/PageRoot.tsx`: a plugin's own windows

@@ -23,59 +23,34 @@ const MODIFIERS: ReadonlyArray<readonly [string, string]> = [
   ['⌘', 'Command'],
 ]
 
-/** Keys a global hotkey may end in, by the name Holi writes, with Electron's. */
-const NAMED: Readonly<Record<string, string>> = {
-  Space: 'Space',
-  Return: 'Return',
-  Tab: 'Tab',
-  Up: 'Up',
-  Down: 'Down',
-  Left: 'Left',
-  Right: 'Right',
-}
+/** Named keys a global hotkey may end in: Holi writes them as Electron does. */
+const NAMED = new Set(['Space', 'Return', 'Tab', 'Up', 'Down', 'Left', 'Right'])
 
 const PUNCTUATION = new Set([',', '.', '/', ';', "'", '[', ']', '\\', '-', '=', '`'])
 
-/** The parts of a glyph hotkey, or null when it is not one Holi registers: at
- *  least one of ⌘, ⌃ or ⌥ (a plain letter would be taken from every app), and
- *  one key. */
-export function parseGlobalHotkey(
-  spec: string,
-): { modifiers: string[]; key: string; accelerator: string } | null {
+/** A key Holi registers a global hotkey on: a letter, a digit, F1–F20, a
+ *  named key or punctuation, each spelled as Electron spells it. */
+const isKey = (key: string): boolean =>
+  /^[A-Z0-9]$/.test(key) ||
+  /^F([1-9]|1[0-9]|20)$/.test(key) ||
+  NAMED.has(key) ||
+  PUNCTUATION.has(key)
+
+/** The Electron accelerator for a glyph hotkey, or null when it is not one
+ *  Holi registers: at least one of ⌘, ⌃ or ⌥ (a plain letter would be taken
+ *  from every app), and one key. */
+export function toAccelerator(spec: string): string | null {
   let rest = spec
-  const modifiers: string[] = []
-  for (const [glyph] of MODIFIERS) {
+  const names: string[] = []
+  for (const [glyph, name] of MODIFIERS) {
     // In order, each at most once: the form is canonical.
     if (rest.startsWith(glyph)) {
-      modifiers.push(glyph)
+      names.push(name)
       rest = rest.slice(glyph.length)
     }
   }
-  if (!modifiers.some((m) => m === '⌘' || m === '⌃' || m === '⌥')) return null
-  let key: string | null = null
-  let electronKey: string | null = null
-  if (/^[A-Z0-9]$/.test(rest)) {
-    key = rest
-    electronKey = rest
-  } else if (/^F([1-9]|1[0-9]|20)$/.test(rest)) {
-    key = rest
-    electronKey = rest
-  } else if (NAMED[rest] !== undefined) {
-    key = rest
-    electronKey = NAMED[rest]!
-  } else if (PUNCTUATION.has(rest)) {
-    key = rest
-    electronKey = rest
-  }
-  if (key === null || electronKey === null) return null
-  const names = MODIFIERS.filter(([g]) => modifiers.includes(g)).map(([, name]) => name)
-  return { modifiers, key, accelerator: [...names, electronKey].join('+') }
-}
-
-/** The Electron accelerator for a glyph hotkey, or null for one Holi does not
- *  register. */
-export function toAccelerator(spec: string): string | null {
-  return parseGlobalHotkey(spec)?.accelerator ?? null
+  if (!names.some((n) => n !== 'Shift') || !isKey(rest)) return null
+  return [...names, rest].join('+')
 }
 
 /**
@@ -110,5 +85,5 @@ export function hotkeyFromEvent(e: {
     (e.shiftKey ? '⇧' : '') +
     (e.metaKey ? '⌘' : '')
   const spec = glyphs + key
-  return parseGlobalHotkey(spec) === null ? null : spec
+  return toAccelerator(spec) === null ? null : spec
 }

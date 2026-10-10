@@ -43,14 +43,31 @@ export type CardAction =
   /** A click on an option, 0-based. */
   | { type: 'click'; index: number }
 
+/** Whether Claude marked this option's label as its recommendation. */
+export const isRecommended = (label: string): boolean => /\(recommended\)/i.test(label)
+
 /** The option Claude recommends: the one its label says so of, else the first. */
 export function recommended(q: AskQuestion): number {
-  const at = q.options.findIndex((o) => /\(recommended\)/i.test(o.label))
+  const at = q.options.findIndex((o) => isRecommended(o.label))
   return at === -1 ? 0 : at
 }
 
+/** Question `index` of the call as it first shows: its recommendation
+ *  highlighted, nothing picked, the options rather than your own answer. */
+const questionAt = (
+  questions: readonly AskQuestion[],
+  index: number,
+  answers: AskAnswers,
+): CardState => ({
+  index,
+  highlight: recommended(questions[index]!),
+  picked: [],
+  own: null,
+  answers,
+})
+
 export function initialCard(questions: readonly AskQuestion[]): CardState {
-  return { index: 0, highlight: recommended(questions[0]!), picked: [], own: null, answers: {} }
+  return questionAt(questions, 0, {})
 }
 
 /** The card after `action`, and the answers once the last question is
@@ -68,17 +85,10 @@ export function reduceCard(
   /** Answer this question with `answer` and move on, or finish. */
   const answer = (value: string): { state: CardState; done?: AskAnswers } => {
     const answers = { ...state.answers, [q.question]: value }
-    const next = questions[state.index + 1]
-    if (next === undefined) return { state: { ...state, answers, own: null }, done: answers }
-    return {
-      state: {
-        index: state.index + 1,
-        highlight: recommended(next),
-        picked: [],
-        own: null,
-        answers,
-      },
+    if (state.index + 1 >= questions.length) {
+      return { state: { ...state, answers, own: null }, done: answers }
     }
+    return { state: questionAt(questions, state.index + 1, answers) }
   }
 
   // The highlight follows a pick only where ↑ ↓ can take it on from there.
@@ -90,17 +100,18 @@ export function reduceCard(
       : [...state.picked, i].sort((a, b) => a - b),
   })
 
+  /** Option `i` chosen: toggled on a multi-select, else the answer. */
+  const choose = (i: number): { state: CardState; done?: AskAnswers } => {
+    if (i < 0 || i >= q.options.length) return { state }
+    return q.multiSelect ? { state: toggle(i) } : answer(q.options[i]!.label)
+  }
+
   switch (action.type) {
-    case 'digit': {
-      const i = action.n - 1
-      if (state.own !== null || i < 0 || i >= q.options.length) return { state }
-      return q.multiSelect ? { state: toggle(i) } : answer(q.options[i]!.label)
-    }
-    case 'click': {
-      const i = action.index
-      if (i < 0 || i >= q.options.length) return { state }
-      return q.multiSelect ? { state: toggle(i) } : answer(q.options[i]!.label)
-    }
+    case 'digit':
+      // While you write your own answer, a digit is part of it.
+      return state.own !== null ? { state } : choose(action.n - 1)
+    case 'click':
+      return choose(action.index)
     case 'enter': {
       if (state.own !== null) {
         return state.own.trim() === '' ? { state } : answer(state.own.trim())
@@ -118,19 +129,10 @@ export function reduceCard(
       return { state: { ...state, highlight: (state.highlight + 1) % rows } }
     case 'back': {
       if (state.own !== null || state.index === 0) return { state }
-      const prev = questions[state.index - 1]!
       const answers = { ...state.answers }
-      delete answers[prev.question]
+      delete answers[questions[state.index - 1]!.question]
       delete answers[q.question]
-      return {
-        state: {
-          index: state.index - 1,
-          highlight: recommended(prev),
-          picked: [],
-          own: null,
-          answers,
-        },
-      }
+      return { state: questionAt(questions, state.index - 1, answers) }
     }
     case 'own':
       return { state: { ...state, highlight: q.options.length, own: state.own ?? '' } }

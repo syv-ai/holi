@@ -285,6 +285,21 @@ export function createClaudeCli(deps: ClaudeCliDeps = {}): ClaudeCli {
     return { ok: true, id }
   }
 
+  /** A new background session: named, with `flags`, its first turn `prompt`. */
+  const startNew = (
+    target: VaultCliTarget,
+    { name, prompt }: { name?: string; prompt?: string },
+    flags: readonly string[] = [],
+  ): Promise<StartResult> => {
+    const label = sessionName(name)
+    return start(target, [
+      '--bg',
+      ...(label === null ? [] : ['--name', label]),
+      ...flags,
+      ...promptArgs(prompt),
+    ])
+  }
+
   return {
     async list(target) {
       try {
@@ -297,23 +312,8 @@ export function createClaudeCli(deps: ClaudeCliDeps = {}): ClaudeCli {
     stop: (target, id) => action(target, ['stop', id]),
     respawn: (target, id) => action(target, ['respawn', id]),
     rm: (target, id) => action(target, ['rm', id]),
-    startBg(target, { name, prompt }) {
-      const label = sessionName(name)
-      return start(target, [
-        '--bg',
-        ...(label === null ? [] : ['--name', label]),
-        ...promptArgs(prompt),
-      ])
-    },
-    startQuick(target, { name, prompt }) {
-      const label = sessionName(name)
-      return start(target, [
-        '--bg',
-        ...(label === null ? [] : ['--name', label]),
-        ...QUICK_FLAGS,
-        ...promptArgs(prompt),
-      ])
-    },
+    startBg: (target, opts) => startNew(target, opts),
+    startQuick: (target, opts) => startNew(target, opts, QUICK_FLAGS),
     forkBg(target, sessionId, name) {
       const label = sessionName(name)
       return start(target, [
