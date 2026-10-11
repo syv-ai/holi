@@ -13,7 +13,7 @@
  * plain Node in the tests.
  */
 import { join } from 'node:path'
-import type { MainPlugin } from '../../../main/plugin-api'
+import { jsonFileStore, type MainPlugin } from '../../../main/plugin-api'
 import { AGENT_INFO } from '../info'
 import { claudeProvider } from './claude'
 import { claudeSeed } from './claude/seed'
@@ -21,6 +21,8 @@ import { agentCapabilities, AGENT_NAMESPACES } from './host/capabilities'
 import { createAgentSessions } from './host/sessions'
 import { createAgentTerminals } from './host/terminals'
 import { openTurnLog } from './host/turn-log'
+import { scheduleCapabilities, SCHEDULE_NAMESPACES } from './schedules/capabilities'
+import { createScheduler, parseSchedulesFile } from './schedules/scheduler'
 
 export const agentMain: MainPlugin = {
   info: AGENT_INFO,
@@ -50,6 +52,14 @@ export const agentMain: MainPlugin = {
         commitNow: () => ctx.commitNow(),
       }),
     )
+    // Which schedules this machine runs, and what they did: outside the
+    // vault, where the agent cannot approve its own (`schedules/scheduler.ts`).
+    const schedules = createScheduler({
+      store: jsonFileStore(join(ctx.userData, 'schedules.json'), parseSchedulesFile),
+      sessions: started,
+      emit: ctx.emit,
+    })
+    ctx.register(SCHEDULE_NAMESPACES, scheduleCapabilities({ scheduler: schedules }))
     // Keystrokes and resizes, in the order they were typed. The host drops
     // any about a vault that is not the open one.
     ctx.on('pty-write', (_remote, payload) => {
@@ -64,7 +74,8 @@ export const agentMain: MainPlugin = {
     })
     provider.routes(ctx, {
       // A turn edge in one of a vault's background sessions, by job id.
-      onJobTurn: (remote, jobId, active) => started.noteTurn(remote, jobId, active),
+      onJobTurn: (remote, jobId, active, pending) =>
+        started.noteTurn(remote, jobId, active, pending),
       // A session's status line: how much of its context is used.
       onStatus: (remote, jobId, status) => started.noteStatus(remote, jobId, status),
     })
@@ -81,6 +92,8 @@ export const agentMain: MainPlugin = {
       }
     })
     void started.ensure(ctx)
+    // The open vault's schedules run while it is open.
+    schedules.attach({ remote: ctx.remote, root: ctx.root })
     // The per-turn hook reads the focused note from a file in this clone.
     const unreport = ctx.onReport((report) =>
       started.setFocus({ focusedPath: report.focusedPath, openPaths: report.openPaths }),
@@ -88,6 +101,7 @@ export const agentMain: MainPlugin = {
     // Stopping stops the vault's sessions (the renderer asked first if one
     // was busy). They stay in the agents list and resume when opened.
     return async () => {
+      schedules.dispose()
       unreport()
       await started.leave().catch((err) => console.error('[agent] leave failed:', err))
       await terminals.closeAll().catch((err) => console.error('[agent] terminals:', err))

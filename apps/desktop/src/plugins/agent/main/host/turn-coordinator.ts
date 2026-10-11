@@ -42,6 +42,9 @@ export interface TurnCoordinatorDeps {
   /** The working set changed, so whatever renders session state should re-derive
    *  it. Called once per membership change. */
   onChange?: () => void
+  /** A session's turn ended: `Stop`, a confirmed idle, or the safety cap. Not
+   *  for a session that died, whose turn has no end of its own. */
+  onTurnEnd?: (sessionId: string) => void
   log?: (msg: string) => void
 }
 
@@ -169,6 +172,7 @@ export function createTurnCoordinator(deps: TurnCoordinatorDeps): TurnCoordinato
       }
     }
     deps.onChange?.()
+    if (record) deps.onTurnEnd?.(sessionId)
   }
 
   return {
