@@ -51,6 +51,9 @@ export interface Command {
   /** Not listed in the palette and not recorded as recently used: the
    *  palette's own two rows, which a list inside the palette has no use for. */
   hidden?: true
+  /** One of the few keys a new vault is shown on its threshold, at this
+   *  place in the order (lowest first), while the command's plugin runs. */
+  firstKey?: number
   run: (get: Getter, set: Setter) => void | Promise<void>
 }
 
@@ -119,6 +122,7 @@ export const STATIC_COMMANDS: readonly Command[] = [
     id: 'task.new',
     label: 'New task',
     hotkey: '⌘T',
+    firstKey: 2,
     run: (_get, set) => set(openQuickAddAtom),
   },
   {
@@ -160,6 +164,7 @@ export const STATIC_COMMANDS: readonly Command[] = [
     hidden: true,
     label: 'Quick open',
     hotkey: '⌘P',
+    firstKey: 1,
     run: (_get, set) => set(openPaletteAtom, 'open'),
   },
   {

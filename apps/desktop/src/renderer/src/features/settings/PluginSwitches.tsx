@@ -23,7 +23,7 @@ import { LeaveConfirm } from '@/components/LeaveConfirm'
 import { trpc } from '@/lib/trpc'
 import type { RendererPlugin } from '@/plugin-api/types'
 import { useAgentService } from '@/state/agent-service'
-import { leaveReasonByPluginAtom } from '@/state/plugins'
+import { agentPluginIdAtom, leaveReasonByPluginAtom } from '@/state/plugins'
 import { activeRemoteAtom } from '@/state/vaults'
 
 export function PluginSwitches({
@@ -44,6 +44,7 @@ export function PluginSwitches({
   const reasons = useAtomValue(leaveReasonByPluginAtom)
   const remote = useAtomValue(activeRemoteAtom)
   const agent = useAgentService()
+  const agentPlugin = useAtomValue(agentPluginIdAtom)
   /** A turn-off waiting on its question: the write, and what it would cost. */
   const [asking, setAsking] = useState<{
     vault: Record<string, boolean>
@@ -139,7 +140,7 @@ export function PluginSwitches({
               // must not flip the switch.
               <span className="flex flex-wrap items-center gap-x-2 pl-6.5 text-[11px] text-destructive">
                 Did not start: {failure}
-                {agent !== null && failures['agent'] === undefined && (
+                {agent !== null && agentPlugin !== null && failures[agentPlugin] === undefined && (
                   <Button
                     variant="ghost"
                     size="sm"

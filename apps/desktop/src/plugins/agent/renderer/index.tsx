@@ -62,6 +62,7 @@ const COMMANDS: readonly Command[] = [
     id: 'agent.show',
     label: 'Go to the agents',
     hotkey: '⌘J',
+    firstKey: 3,
     run: (_get, set) => void set(showAgentsAtom),
   },
   {

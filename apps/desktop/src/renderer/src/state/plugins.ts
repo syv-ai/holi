@@ -159,10 +159,20 @@ export const leaveReasonsAtom = atom((get): readonly string[] => [
   ...get(leaveReasonByPluginAtom).values(),
 ])
 
+/** The first running plugin that provides an agent, or null with none. */
+const agentProviderAtom = atom(
+  (get): RendererPlugin | null =>
+    get(runningPluginsAtom).find((p) => p.agent !== undefined) ?? null,
+)
+
 /** The first running plugin's agent, or null with none. */
 export const agentSourceAtom = atom(
-  (get): AgentServiceSource | null =>
-    get(runningPluginsAtom).find((p) => p.agent !== undefined)?.agent ?? null,
+  (get): AgentServiceSource | null => get(agentProviderAtom)?.agent ?? null,
+)
+
+/** Which plugin provides the agent, by id, or null with none. */
+export const agentPluginIdAtom = atom(
+  (get): string | null => get(agentProviderAtom)?.info.id ?? null,
 )
 
 /**
