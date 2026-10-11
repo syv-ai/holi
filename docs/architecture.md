@@ -125,15 +125,20 @@ grammar is in `packages/shared` and the merge driver and fences in core.
 
 Enablement has two layers: `.holi/settings/plugins.yaml` declares the vault's plugins for everyone,
 and `plugins.local.yaml` can only turn one off on this machine ([settings](features/settings.md)).
-The same pair holds each plugin's own settings under its id (`PluginInfo.settings`). The
-plugin host (`src/main/plugin-host/`) starts a plugin once per process when a vault that enables it
-opens (`activateApp`), seeds only enabled plugins' files, and stops them all at quit. Once the vault
-is open it runs `activateVault` with a context bound to that vault (hold sync, commit, read the
-head, hear the renderer's focus report, emit), at most once per open; the disposer runs when Holi
-leaves the vault, while it is still open, and at quit before the bridge stops and the editor
-flushes. A plugin can also ask before Holi quits (`guardQuit`) and serve a bridge route
-(`route`). Dispatch refuses a
-capability whose plugin is off in the calling vault, as "no such method".
+The same pair holds each plugin's own settings under its id (`PluginInfo.settings`).
+Each vault is its own world: a plugin starts in the open vault (`MainPlugin.activate`, with one
+context bound to that vault: register capabilities, emit, hold sync, commit, read the head, hear the
+renderer's focus report, serve a bridge route, ask before quit) and nothing it starts outlives the
+vault, so nothing carries from one vault to the next. The plugin host (`src/main/plugin-host/`)
+keeps what is started in step with the vault's resolution (`reconcile`): at the open, on a settings
+write and on any change to the files, so a hand edit to `plugins.yaml` takes effect at once. It
+starts a plugin's providers before it and stops it before them, seeds a plugin that joins before
+starting it, and stops everything, newest first, when Holi leaves the vault or quits: each
+disposer, then what it registered. A plugin that throws as it starts is reported with its message
+(`settings.pluginFailures`) and tried again on the next write or open, never on a bare change.
+Turning off a plugin whose renderer side says stopping it costs something (`leaveGuard`, the
+agent's busy sessions) asks before the write; a hand edit stops it without asking. Dispatch refuses
+a capability whose plugin is off in the calling vault, as "no such method".
 
 Whatever runs inside a vault (the `holi` CLI, the agent's hooks, git's pre-commit hook and merge
 driver) reaches main through one loopback bridge (`src/main/bridge/`) with a token per vault,

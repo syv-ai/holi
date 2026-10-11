@@ -14,7 +14,7 @@ import { sharedTypst } from './typst-bin'
 export const pdfMain: MainPlugin = {
   info: PDF_INFO,
   seed: pdfSeed,
-  activateApp(ctx) {
+  activate(ctx) {
     const typst = sharedTypst(join(ctx.userData, 'typst'))
     const undo = ctx.register(
       PDF_NAMESPACES,

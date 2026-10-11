@@ -15,14 +15,7 @@ import {
 } from './capabilities'
 import { createConsentStore } from './consent'
 import { createInstallStore, pluginsDir } from './store'
-import { createSupervisor, type Supervisor } from './supervisor'
-
-let supervisor: Supervisor | null = null
-/** This machine's installs and consents, for the vault's open. */
-let stores: {
-  store: ReturnType<typeof createInstallStore>
-  consent: ReturnType<typeof createConsentStore>
-} | null = null
+import { createSupervisor } from './supervisor'
 
 export const communityMain: MainPlugin = {
   info: COMMUNITY_INFO,
@@ -35,10 +28,9 @@ export const communityMain: MainPlugin = {
       '.claude/settings.json': [{ permissions: { allow: ['Bash(holi community path:*)'] } }],
     },
   },
-  activateApp(ctx) {
+  activate(ctx) {
     const store = createInstallStore(ctx.userData)
     const consent = createConsentStore(join(ctx.userData, 'plugin-consent.json'))
-    stores = { store, consent }
     const servers = createSupervisor({
       frameOrigin: ctx.frameOrigin,
       // Servers run only for the open vault; one stopping as it is left has
@@ -50,7 +42,6 @@ export const communityMain: MainPlugin = {
           ctx.emit(active.remote, 'server', { id, path, state })
       },
     })
-    supervisor = servers
     ctx.register(
       COMMUNITY_NAMESPACES,
       communityCapabilities({
@@ -65,21 +56,12 @@ export const communityMain: MainPlugin = {
         scratch: join(pluginsDir(ctx.userData), '.staging'),
       }),
     )
-    return async () => {
-      await servers.stopAll()
-      supervisor = null
-    }
-  },
-  activateVault(vault) {
     // A running plugin's apps that this vault (or, for a `.local.app`, this
     // machine) does not have yet.
-    if (stores !== null)
-      void seedRunningApps(vault.root, stores).catch((err) =>
-        console.error('[community] apps:', err),
-      )
-    // Leaving the vault stops its servers: the tabs on them are gone too.
-    return async () => {
-      await supervisor?.stopAll()
-    }
+    void seedRunningApps(ctx.root, { store, consent }).catch((err) =>
+      console.error('[community] apps:', err),
+    )
+    // Stopping stops its servers: the tabs on them are gone too.
+    return () => servers.stopAll()
   },
 }

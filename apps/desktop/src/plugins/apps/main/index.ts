@@ -20,7 +20,7 @@ export const appsMain: MainPlugin = {
   info: APPS_INFO,
   seed: appsSeed,
   schemes: [appScheme],
-  activateApp(ctx) {
+  activate(ctx) {
     // Kept in main, never the renderer, which is the process running the
     // apps' code.
     const grants = createAppGrants(join(ctx.userData, 'app-grants.json'))

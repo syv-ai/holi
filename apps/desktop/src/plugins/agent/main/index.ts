@@ -4,31 +4,28 @@
  * the turn coordinator and turn review; Claude Code is the provider
  * (`claude/`).
  *
- * It starts once per process with its capabilities, events and hook routes,
- * attaches to each vault once it is open and lets go when Holi leaves it, and
- * quitting asks first while a session is busy.
+ * It starts in a vault with its capabilities, events and hook routes and
+ * attaches to the vault; stopping (turned off, the vault left, Holi quitting)
+ * stops its sessions and terminals. Quitting asks first while a session is
+ * busy.
  *
- * Electron loads inside `activateApp`, so the plugin stays importable under
+ * Electron loads inside `activate`, so the plugin stays importable under
  * plain Node in the tests.
  */
 import { join } from 'node:path'
-import { CapabilityError, type MainPlugin, type VaultCtx } from '../../../main/plugin-api'
+import type { MainPlugin } from '../../../main/plugin-api'
 import { AGENT_INFO } from '../info'
 import { claudeProvider } from './claude'
 import { claudeSeed } from './claude/seed'
 import { agentCapabilities, AGENT_NAMESPACES } from './host/capabilities'
-import { createAgentSessions, type AgentSessions } from './host/sessions'
+import { createAgentSessions } from './host/sessions'
 import { createAgentTerminals } from './host/terminals'
 import { openTurnLog } from './host/turn-log'
-
-let sessions: AgentSessions | null = null
-/** The vault the agent is active in, for the capabilities that commit. */
-let vault: VaultCtx | null = null
 
 export const agentMain: MainPlugin = {
   info: AGENT_INFO,
   seed: claudeSeed,
-  async activateApp(ctx) {
+  async activate(ctx) {
     const { nativeTheme } = await import('electron')
     const provider = claudeProvider({
       userData: ctx.userData,
@@ -44,17 +41,13 @@ export const agentMain: MainPlugin = {
       // What each turn changed, as a commit range, in the vault it ran in.
       turnLogFor: openTurnLog,
     })
-    sessions = started
     ctx.register(
       AGENT_NAMESPACES,
       agentCapabilities({
         sessions: started,
         terminals,
         liveRemote: () => ctx.active()?.remote ?? null,
-        commitNow: async () => {
-          if (vault === null) throw new CapabilityError('UNAVAILABLE', 'No vault is open.')
-          return vault.commitNow()
-        },
+        commitNow: () => ctx.commitNow(),
       }),
     )
     // Keystrokes and resizes, in the order they were typed. The host drops
@@ -87,25 +80,17 @@ export const agentMain: MainPlugin = {
         detail: `${one ? 'Its' : 'Their'} current turn is cut short. The conversation${one ? '' : 's'} stay in the agents list.`,
       }
     })
-    return () => {
-      sessions = null
-    }
-  },
-  activateVault(ctx) {
-    const running = sessions
-    if (running === null) return () => {}
-    vault = ctx
-    void running.ensure(ctx)
+    void started.ensure(ctx)
     // The per-turn hook reads the focused note from a file in this clone.
     const unreport = ctx.onReport((report) =>
-      running.setFocus({ focusedPath: report.focusedPath, openPaths: report.openPaths }),
+      started.setFocus({ focusedPath: report.focusedPath, openPaths: report.openPaths }),
     )
-    // A switch stops the vault's sessions (the renderer asked first if one
+    // Stopping stops the vault's sessions (the renderer asked first if one
     // was busy). They stay in the agents list and resume when opened.
     return async () => {
       unreport()
-      await running.leave().catch((err) => console.error('[agent] leave failed:', err))
-      if (vault === ctx) vault = null
+      await started.leave().catch((err) => console.error('[agent] leave failed:', err))
+      await terminals.closeAll().catch((err) => console.error('[agent] terminals:', err))
     }
   },
 }

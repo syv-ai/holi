@@ -194,7 +194,8 @@ export const agentLeaveGuardAtom = atom((get): string | null => {
         ? `${one.name} is waiting for you to answer something.`
         : `${one.name} is part way through a turn.`
   return (
-    `${why} Leaving this vault stops every session in it. What they have already ` +
+    `${why} Leaving this vault, or turning the agent off, stops every session in it. ` +
+    'What they have already ' +
     'written stays in it, and each conversation stays in the agents list, where it ' +
     'picks up where it left off.'
   )

@@ -31,6 +31,7 @@ vi.mock('@/lib/trpc', () => ({
     settings: {
       read: { query: () => read() },
       write: { mutate: (input: unknown) => write(input) },
+      pluginFailures: { query: async () => ({}) },
     },
     // The Appearance section renders the theme too, so the mock has to answer
     // for it, otherwise every test here passes while logging an unhandled

@@ -105,8 +105,8 @@ export interface RouterDeps {
    * is what the scanner claims in the vault at `root`.
    */
   plugins: {
-    enter(root: string): Promise<void>
-    opened(): Promise<void>
+    reconcile(why: 'open' | 'settings' | 'snapshot'): Promise<void>
+    failures(remote: string): Record<string, string>
     scanClaimsFor(root: string): Promise<readonly ScanClaim[]>
   }
   /** The managed root clones live under — `~/Holi` in the app, a tmpdir in
@@ -381,7 +381,6 @@ export function createRouter(deps: RouterDeps) {
       )
     }
     await deps.seed(repo.root)
-    await deps.plugins.enter(repo.root)
     await deps.registry.add({
       remote,
       path: repo.root,
@@ -389,7 +388,7 @@ export function createRouter(deps: RouterDeps) {
       lastOpenedAt: now(),
     })
     const active = await deps.host.open(remote)
-    await deps.plugins.opened()
+    await deps.plugins.reconcile('open')
     return active.snapshot()
   }
 
@@ -659,10 +658,9 @@ export function createRouter(deps: RouterDeps) {
          * ahead of the `.gitignore`.
          */
         await deps.seed(root)
-        await deps.plugins.enter(root)
         await deps.registry.touch(input.remote, now())
         const active = await deps.host.open(input.remote)
-        await deps.plugins.opened()
+        await deps.plugins.reconcile('open')
         return active.snapshot()
       }),
 
@@ -1401,6 +1399,12 @@ export function createRouter(deps: RouterDeps) {
         rootFor(input.remote).then(readVaultSettings),
       ),
 
+    /** Why each plugin the open vault `remote` runs did not start, by id:
+     *  the plugin's own message. Empty for any other vault. */
+    pluginFailures: t.procedure
+      .input(fields({ remote: 'string' }))
+      .query(({ input }): Record<string, string> => deps.plugins.failures(input.remote)),
+
     /**
      * The router's write to these files, used by onboarding and the settings
      * pane.
@@ -1436,12 +1440,14 @@ export function createRouter(deps: RouterDeps) {
         const local = parse(input.localJson ?? null)
         const root = await rootFor(input.remote)
         await writeVaultSettings(root, { committed: committed.patch, local: local.patch })
-        // A plugin just turned on gets its files and starts now, not at the
-        // vault's next open.
+        // A plugin just turned on gets its files and starts now, and one
+        // turned off stops now, not at the vault's next open.
         if ('plugins' in committed.patch || 'plugins' in local.patch) {
-          await deps.seed(root)
-          await deps.plugins.enter(root)
-          await deps.plugins.opened()
+          if (deps.host.active()?.remote === input.remote) {
+            await deps.plugins.reconcile('settings')
+          } else {
+            await deps.seed(root)
+          }
           // Which files are claimed follows the plugins, so the open vault's
           // snapshot is scanned again now rather than at its next change.
           const active = deps.host.active()

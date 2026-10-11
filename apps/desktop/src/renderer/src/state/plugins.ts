@@ -142,14 +142,22 @@ const contributionsAtom = atom((get): readonly Pick<RendererPlugin, 'surfaces' |
   ...get(runningPluginsAtom),
 ])
 
+/** What stopping each running plugin would cost now, by id: its
+ *  `leaveGuard` sentence, for one that says something. */
+export const leaveReasonByPluginAtom = atom((get): ReadonlyMap<string, string> => {
+  const reasons = new Map<string, string>()
+  for (const p of get(runningPluginsAtom)) {
+    const reason = p.leaveGuard === undefined ? null : get(p.leaveGuard)
+    if (reason !== null) reasons.set(p.info.id, reason)
+  }
+  return reasons
+})
+
 /** Why leaving the open vault costs something now: every running plugin's
  *  `leaveGuard` sentence. Empty when leaving costs nothing. */
-export const leaveReasonsAtom = atom((get): readonly string[] =>
-  get(runningPluginsAtom).flatMap((p) => {
-    const reason = p.leaveGuard === undefined ? null : get(p.leaveGuard)
-    return reason === null ? [] : [reason]
-  }),
-)
+export const leaveReasonsAtom = atom((get): readonly string[] => [
+  ...get(leaveReasonByPluginAtom).values(),
+])
 
 /** The first running plugin's agent, or null with none. */
 export const agentSourceAtom = atom(

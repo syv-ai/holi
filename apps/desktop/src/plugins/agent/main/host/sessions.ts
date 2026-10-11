@@ -22,7 +22,7 @@
  *
  * NOTE: no `electron` import, so this loads under vitest.
  */
-import type { VaultCtx } from '../../../../main/plugin-api'
+import type { PluginCtx } from '../../../../main/plugin-api'
 import type { VaultCliTarget } from '../claude/cli'
 import type { ClaudeRow, SessionSummary } from '../claude/listing'
 import type { AgentProvider, VaultRef } from '../provider'
@@ -51,7 +51,7 @@ export interface Geometry {
 export type { VaultRef }
 
 /** The vault the sessions run in, as its activation hands it over. */
-export type AgentVault = Pick<VaultCtx, 'remote' | 'root'> & TurnVault
+export type AgentVault = Pick<PluginCtx, 'remote' | 'root'> & TurnVault
 
 export interface AgentSessionsDeps {
   /** Tell the renderer `name` about the vault `remote`. */

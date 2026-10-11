@@ -22,7 +22,7 @@ import {
   paramsObject,
   pathParams,
   stringParam,
-  type AppContext,
+  type PluginCtx,
   type AppDoor,
   type CapabilityContext,
 } from '../../../main/plugin-api'
@@ -78,7 +78,7 @@ const LOG_LEVELS: readonly AppLogLevel[] = ['error', 'warn', 'info']
 export interface AppCapabilitiesDeps {
   /** The apps' events: `open` asks the renderer to open (or reload) a
    *  bundle's tab in the active pane, if that vault is the one on screen. */
-  events: Pick<AppContext, 'emit'>
+  events: Pick<PluginCtx, 'emit'>
   /** The app door, which the apps code opened. Read when a call arrives. */
   appDoor(): AppDoor
   /** This machine's approvals of apps' `dangerously-allow` reads. */

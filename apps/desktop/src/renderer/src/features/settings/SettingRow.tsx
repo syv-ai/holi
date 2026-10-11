@@ -12,10 +12,7 @@ import {
   PLUGINS_LOCAL_FILE,
   availableOptions,
   isLocalOnlyPath,
-  pluginLabels,
-  resolvePlugins,
   type PluginSettings,
-  type PluginStatus,
   type VaultSettingDescriptor,
   type VaultSettingOption,
 } from '@holi/shared'
@@ -26,6 +23,7 @@ import type { RendererPlugin, Surface } from '@/plugin-api/types'
 import { homeDocumentsAtom } from '@/state/home'
 import { installedPluginsAtom, surfacesAtom } from '@/state/plugins'
 import { SettingsRow } from '@/composites'
+import { PluginSwitches } from './PluginSwitches'
 import { VaultHooks } from './VaultHooks'
 
 export function Layer({
@@ -91,13 +89,6 @@ export function SettingRow({
 
   // A switch per installed plugin, so with none there is nothing to show.
   if (control.kind === 'plugins' && installed.length === 0) return null
-  // The tick is the vault's answer; whether the plugin runs also takes what it
-  // requires, which the row then names.
-  const infos = installed.map((p) => p.info)
-  const status =
-    control.kind === 'plugins'
-      ? resolvePlugins(value as PluginSettings, infos).status
-      : new Map<string, PluginStatus>()
 
   return (
     <SettingsRow
@@ -183,58 +174,12 @@ export function SettingRow({
       )}
 
       {control.kind === 'plugins' && (
-        <div className="flex flex-col gap-3">
-          {installed.map((plugin) => {
-            const { info } = plugin
-            const plugins = value as PluginSettings
-            const st = status.get(info.id)
-            const off = st?.kind === 'off-here'
-            const needs = st?.kind === 'needs' ? st.missing : []
-            const adds = pluginAdds(plugin)
-            return (
-              <label key={info.id} className="flex items-start gap-2.5">
-                <Checkbox
-                  className="mt-0.5"
-                  // The vault's answer. This machine's own off is the note.
-                  checked={plugins.vault[info.id] ?? info.default}
-                  // The vault's whole answer, as the flag group sends its block.
-                  onCheckedChange={(next) =>
-                    change(key, { ...plugins.vault, [info.id]: next === true })
-                  }
-                  aria-label={info.label}
-                />
-                <span className="flex min-w-0 flex-col gap-0.5">
-                  <span>
-                    <span className="text-xs">{info.label}</span>
-                    {info.description !== undefined && (
-                      <span className="ml-1.5 text-[11px] text-muted-foreground">
-                        {info.description}
-                      </span>
-                    )}
-                  </span>
-                  {adds.length > 0 && (
-                    <span className="text-[11px] text-muted-foreground">
-                      Adds {adds.join(' · ')}
-                    </span>
-                  )}
-                  {info.whenOff !== undefined && (
-                    <span className="text-[11px] text-muted-foreground">Off: {info.whenOff}</span>
-                  )}
-                  {needs.length > 0 && (
-                    <span className="text-[11px] text-muted-foreground">
-                      Needs {pluginLabels(needs, infos)}, so it is not running.
-                    </span>
-                  )}
-                  {off && (
-                    <span className="text-[11px] text-muted-foreground">
-                      Off on this machine, in {PLUGINS_LOCAL_FILE}.
-                    </span>
-                  )}
-                </span>
-              </label>
-            )
-          })}
-        </div>
+        <PluginSwitches
+          value={value as PluginSettings}
+          installed={installed}
+          adds={pluginAdds}
+          onChange={(vault) => change(key, vault)}
+        />
       )}
 
       {/* The resolver's own complaint about this key, which until the tab

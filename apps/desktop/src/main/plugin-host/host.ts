@@ -4,15 +4,18 @@
  * A plugin runs in a vault when the vault's settings enable it
  * (`resolvePlugins`). The host answers that question for dispatch, which
  * refuses a disabled plugin's capabilities, and for the seeder, which writes
- * only enabled plugins' files. It starts each plugin (`activateApp`) once per
- * process, the first time a vault that enables it is entered, and stops them
- * all at quit. Once a vault is open it activates each plugin the vault runs in
- * it (`activateVault`), and disposes those when the vault is left.
+ * only enabled plugins' files. And it keeps what is started in step with it:
+ * `reconcile` starts what the open vault runs and stops what it no longer
+ * does, at the open, on a settings write and on any change to the files (a
+ * hand edit). A plugin it requires starts first and stops last. Each vault is
+ * its own world: leaving one stops every plugin, so nothing started in one
+ * vault carries into the next.
  *
  * No `electron` import: this loads under plain Node in the tests.
  */
 import {
   CORE_TRANSFORMS,
+  pluginLabels,
   resolvePlugins,
   type PluginResolution,
   type ResolvedVaultSettings,
@@ -20,14 +23,13 @@ import {
 import type { AppDoor, AppDoorOpener } from '../capabilities/dispatch'
 import type { CapabilityRegistry } from '../capabilities/registry'
 import type {
-  AppContext,
   BridgeRoute,
   Disposer,
   LiveVault,
   MainPlugin,
+  PluginCtx,
   QuitQuestion,
   UiReport,
-  VaultCtx,
 } from '../plugin-api'
 import type { ActiveVault } from '../vault/active-vault'
 import type { ScanClaim } from '../vault/vault-store'
@@ -37,7 +39,7 @@ import { ensureSeeded, withoutOwned } from '../vault/seed/seed'
 import type { SeedContribution, SeedResult } from '../vault/seed/types'
 import { readVaultSettings } from '../vault/settings'
 
-/** The open vault, as far as a plugin's `VaultCtx` drives it. */
+/** The open vault, as far as a plugin's `PluginCtx` drives it. */
 export type OpenVault = LiveVault &
   Pick<ActiveVault, 'pause' | 'resume' | 'commitNow'> & {
     repo: Pick<ActiveVault['repo'], 'head'>
@@ -61,7 +63,8 @@ export interface PluginHostDeps {
   rootFor(remote: string): Promise<string | null>
   /** The window and `ipcMain`, for plugin events. */
   events: PluginEventsDeps
-  /** The capability host's app door, which one plugin opens. */
+  /** The capability host's app door, which one plugin opens and the host
+   *  closes when that plugin stops. */
   openAppDoor(opener: AppDoorOpener): AppDoor
   /** Serve a path on the bridge. Returns the undo. */
   route(path: string, route: BridgeRoute): () => void
@@ -87,36 +90,37 @@ export interface PluginHost {
   seed(root: string): Promise<SeedResult>
   /** Every contribution that seeds the vault at `root`, for `holi skills update`. */
   contributions(root: string): Promise<SeedContribution[]>
-  /** A vault is opening, or its settings were just written: start every
-   *  plugin it enables that is not running yet. */
-  enter(root: string): Promise<void>
-  /** The open vault is open: activate every plugin it runs that is not
-   *  active in it yet. A no-op with none open. */
-  opened(): Promise<void>
-  /** The open vault is closing: dispose its activations, newest first, while
-   *  it is still the open one. */
-  leave(): Promise<void>
+  /**
+   * Start what the open vault runs and stop what it no longer does, in
+   * dependency order; with no vault open, stop everything. `why` is what
+   * prompted it: an `open` (after `host.open`, which seeded), a `settings`
+   * write, or a `snapshot` (any change to the files, a hand edit to the
+   * settings among them). A plugin joining on a write or a snapshot is
+   * seeded first. One that failed to start is tried again on an open or a
+   * write, or when what the vault runs changes, never on a bare snapshot.
+   * Runs one at a time.
+   */
+  reconcile(why: 'open' | 'settings' | 'snapshot'): Promise<void>
+  /** Stop every plugin, newest first, while the vault is still the open one:
+   *  when Holi leaves it, and at quit. */
+  stop(): Promise<void>
+  /** Why each plugin the open vault `remote` runs did not start, by id. */
+  failures(remote: string): Record<string, string>
   /** What the renderer reports about the vault `remote`. */
   report(remote: string, report: UiReport): void
   /** The questions the started plugins' quit guards ask right now. */
   quitQuestions(): QuitQuestion[]
   /** The open vault's settings files may have changed on disk. */
   invalidate(): void
-  /** Stop every started plugin, newest first. At quit, after `leave`. */
-  disposeAll(): Promise<void>
 }
 
+/** One plugin started in the open vault. */
 interface Started {
-  dispose: Disposer
-  /** The capability registrations made through its context. */
-  undos: (() => void)[]
-}
-
-/** One plugin active in the open vault. */
-interface InVault {
   id: string
-  remote: string
-  dispose: Promise<Disposer | null>
+  dispose: Disposer
+  /** What it registered through its context and has not undone yet,
+   *  undone after its disposer. */
+  undos: Set<() => void>
 }
 
 export function createPluginHost(deps: PluginHostDeps): PluginHost {
@@ -124,10 +128,18 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
   const core = deps.core ?? []
   const coreIds = new Set(core.map((p) => p.info.id))
   const readSettings = deps.readSettings ?? readVaultSettings
-  const started = new Map<string, Promise<Started | null>>()
   const quitGuards = new Set<() => QuitQuestion | null>()
-  /** Activations in the open vault, oldest first. */
-  let inVault: InVault[] = []
+  /** The vault plugins are started in, and what is started, in start order. */
+  let live: { remote: string; root: string; started: Started[] } | null = null
+  /** Why a plugin did not start in the live vault, by id. */
+  const failed = new Map<string, string>()
+  /** What the live vault ran when its failures were last tried. */
+  let lastWant = ''
+  /** One reconcile or stop at a time. */
+  let queue: Promise<void> = Promise.resolve()
+  /** The vault `stop` stopped, which only its next open starts again: a
+   *  change landing while Holi leaves it must not restart anything. */
+  let parked: string | null = null
   const reportListeners = new Set<{ remote: string; cb: (report: UiReport) => void }>()
   /** The open vault's sync holds, and the vault they hold. */
   let holds: { remote: string; reasons: Map<symbol, string> } | null = null
@@ -180,40 +192,6 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
     return made
   }
 
-  async function start(plugin: MainPlugin): Promise<Started | null> {
-    const id = plugin.info.id
-    const undos: (() => void)[] = []
-    const keep = (undo: () => void): (() => void) => {
-      undos.push(undo)
-      return undo
-    }
-    const ctx: AppContext = {
-      userData: deps.userData,
-      active: deps.active,
-      register: (namespaces, table) =>
-        keep(deps.registry.register(namespaces, table, coreIds.has(id) ? undefined : id)),
-      emit: events(id).emit,
-      on: (name, handler) => keep(events(id).on(name, handler)),
-      openAppDoor: deps.openAppDoor,
-      guardQuit: (check) => {
-        quitGuards.add(check)
-        return keep(() => void quitGuards.delete(check))
-      },
-      route: (path, route) => keep(deps.route(path, route)),
-      binDir: deps.binDir,
-      githubToken: deps.githubToken,
-      frameOrigin: (origin) => keep(deps.frameOrigin(origin)),
-    }
-    if (plugin.activateApp === undefined) return { dispose: () => {}, undos }
-    try {
-      return { dispose: await plugin.activateApp(ctx), undos }
-    } catch (err) {
-      console.error(`[plugins] ${id} did not start:`, err)
-      undos.forEach((undo) => undo())
-      return null
-    }
-  }
-
   /** What seeds the vault at `root`, read fresh: a write to its settings
    *  seeds before the watcher has said anything. */
   async function seeding(root: string) {
@@ -233,21 +211,10 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
           : [],
       ),
     ]
-    return { enabled, contributions }
-  }
-
-  /** Start `plugin` for the process, once; null when it failed to start. */
-  function ensureStarted(plugin: MainPlugin): Promise<Started | null> {
-    let run = started.get(plugin.info.id)
-    if (run === undefined) {
-      // A failed start is not memoised: the next enter tries again.
-      run = start(plugin).then((s) => {
-        if (s === null) started.delete(plugin.info.id)
-        return s
-      })
-      started.set(plugin.info.id, run)
+    return {
+      contributions,
+      seedArgs: [contributions, [...enabled]] as [SeedContribution[], string[]],
     }
-    return run
   }
 
   function pauseSync(remote: string, reason: string): () => void {
@@ -270,52 +237,172 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
     }
   }
 
-  function vaultCtx(id: string, vault: LiveVault): VaultCtx {
+  /** What runs in the vault, providers before what requires them; otherwise
+   *  in list order. Core parts first: nothing requires them. */
+  function startOrder(want: ReadonlySet<string>): MainPlugin[] {
+    const byId = new Map(deps.plugins.map((p) => [p.info.id, p]))
+    const ordered: MainPlugin[] = [...core]
+    const placed = new Set<string>()
+    const place = (p: MainPlugin): void => {
+      if (placed.has(p.info.id) || !want.has(p.info.id)) return
+      placed.add(p.info.id)
+      for (const id of p.info.requires ?? []) {
+        const provider = byId.get(id)
+        if (provider !== undefined) place(provider)
+      }
+      ordered.push(p)
+    }
+    deps.plugins.forEach(place)
+    return ordered
+  }
+
+  /** Start `plugin` in `vault`; null when it threw, with what it registered
+   *  undone and why kept in `failed`. */
+  async function start(plugin: MainPlugin, vault: LiveVault): Promise<Started | null> {
+    const id = plugin.info.id
+    const undos = new Set<() => void>()
+    // Each undo runs once, and leaves the set when it does: a sync hold taken
+    // every turn must not pile up for the life of the vault.
+    const keep = (undo: () => void): (() => void) => {
+      const once = (): void => {
+        if (!undos.delete(once)) return
+        undo()
+      }
+      undos.add(once)
+      return once
+    }
     const { remote, root } = vault
     const open = (): OpenVault => {
       const now = deps.active()
       if (now === null || now.remote !== remote) throw new Error(`${remote} is not open`)
       return now
     }
-    return {
+    const ctx: PluginCtx = {
       remote,
       root,
-      pauseSync: (reason) => pauseSync(remote, reason),
+      userData: deps.userData,
+      active: deps.active,
+      register: (namespaces, table) =>
+        keep(deps.registry.register(namespaces, table, coreIds.has(id) ? undefined : id)),
+      emit: events(id).emit,
+      on: (name, handler) => keep(events(id).on(name, handler)),
+      openAppDoor: (opener) => {
+        const door = deps.openAppDoor(opener)
+        keep(() => door.close())
+        return door
+      },
+      guardQuit: (check) => {
+        quitGuards.add(check)
+        return keep(() => void quitGuards.delete(check))
+      },
+      route: (path, route) => keep(deps.route(path, route)),
+      binDir: deps.binDir,
+      githubToken: deps.githubToken,
+      frameOrigin: (origin) => keep(deps.frameOrigin(origin)),
+      pauseSync: (reason) => keep(pauseSync(remote, reason)),
       commitNow: async () => open().commitNow(),
       head: async () => open().repo.head(),
       onReport: (cb) => {
         const entry = { remote, cb }
         reportListeners.add(entry)
-        return () => void reportListeners.delete(entry)
+        return keep(() => void reportListeners.delete(entry))
       },
-      emit: (name, payload) => events(id).emit(remote, name, payload),
     }
-  }
-
-  async function activateIn(plugin: MainPlugin, vault: LiveVault): Promise<Disposer | null> {
-    if ((await ensureStarted(plugin)) === null) return null
-    // Left while it started: the next open activates it.
-    if (deps.active()?.remote !== vault.remote) return null
+    if (plugin.activate === undefined) return { id, dispose: () => {}, undos }
     try {
-      return await plugin.activateVault!(vaultCtx(plugin.info.id, vault))
+      return { id, dispose: await plugin.activate(ctx), undos }
     } catch (err) {
-      console.error(`[plugins] ${plugin.info.id} did not activate in ${vault.remote}:`, err)
+      console.error(`[plugins] ${id} did not start:`, err)
+      failed.set(id, err instanceof Error ? err.message : String(err))
+      undoAll(id, undos)
       return null
     }
   }
 
-  async function leaveVault(): Promise<void> {
-    const leaving = inVault.reverse()
-    inVault = []
-    for (const entry of leaving) {
-      const dispose = await entry.dispose
-      if (dispose === null) continue
-      await Promise.resolve()
-        .then(dispose)
-        .catch((err) => console.error(`[plugins] ${entry.id} leave failed:`, err))
+  function undoAll(id: string, undos: ReadonlySet<() => void>): void {
+    for (const undo of [...undos].reverse()) {
+      try {
+        undo()
+      } catch (err) {
+        console.error(`[plugins] ${id} undo failed:`, err)
+      }
     }
+  }
+
+  /** Its disposer, then what it registered. */
+  async function stopOne(s: Started): Promise<void> {
+    await Promise.resolve()
+      .then(s.dispose)
+      .catch((err) => console.error(`[plugins] ${s.id} stop failed:`, err))
+    undoAll(s.id, s.undos)
+  }
+
+  async function stopAll(): Promise<void> {
+    const was = live
+    live = null
+    failed.clear()
+    lastWant = ''
+    for (const s of [...(was?.started ?? [])].reverse()) await stopOne(s)
     reportListeners.clear()
     holds = null
+  }
+
+  async function reconcileNow(why: 'open' | 'settings' | 'snapshot'): Promise<void> {
+    const vault = deps.active()
+    if (vault === null) return stopAll()
+    if (why === 'open') parked = null
+    else if (vault.remote === parked) return
+    if (live !== null && live.remote !== vault.remote) await stopAll()
+    const { remote, root } = vault
+    const here = live ?? { remote, root, started: [] }
+    live = here
+    const want = (await read(root)).running
+    // Left while it read: the leave stops what is here.
+    if (live !== here || deps.active()?.remote !== remote) return
+    const wantKey = [...want].sort().join(' ')
+    if (why !== 'snapshot' || wantKey !== lastWant) failed.clear()
+    lastWant = wantKey
+
+    // What left, dependents first: the start order, backwards.
+    for (const s of [...here.started].reverse()) {
+      if (coreIds.has(s.id) || want.has(s.id)) continue
+      here.started = here.started.filter((x) => x !== s)
+      await stopOne(s)
+    }
+
+    const isStarted = (id: string): boolean => here.started.some((s) => s.id === id)
+    const joining = startOrder(want).filter((p) => !isStarted(p.info.id) && !failed.has(p.info.id))
+    if (joining.length === 0) return
+    // The open seeded before the vault opened, so nothing could be committed
+    // ahead of its `.gitignore`.
+    if (why !== 'open') {
+      await ensureSeeded(root, ...(await seeding(root)).seedArgs).catch((err) =>
+        console.error('[plugins] seed failed:', err),
+      )
+    }
+    for (const plugin of joining) {
+      if (live !== here || deps.active()?.remote !== remote) return
+      const id = plugin.info.id
+      const down = (plugin.info.requires ?? []).filter((r) => !isStarted(r))
+      if (down.length > 0) {
+        failed.set(id, `${pluginLabels(down, infos)} did not start.`)
+        continue
+      }
+      const s = await start(plugin, vault)
+      // Left while it started: stop it again rather than leave it running.
+      if (live !== here) {
+        if (s !== null) await stopOne(s)
+        return
+      }
+      if (s !== null) here.started.push(s)
+    }
+  }
+
+  /** Run `job` after whatever reconcile or stop is under way. */
+  function queued(job: () => Promise<void>): Promise<void> {
+    const run = queue.then(job, job)
+    queue = run.catch((err) => console.error('[plugins] reconcile failed:', err))
+    return run
   }
 
   return {
@@ -340,46 +427,19 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
     contributions: async (root) => (await seeding(root)).contributions,
 
     async seed(root) {
-      const { enabled, contributions } = await seeding(root)
-      return ensureSeeded(root, contributions, [...enabled])
+      return ensureSeeded(root, ...(await seeding(root)).seedArgs)
     },
 
-    async enter(root) {
-      const enabled = (await read(root)).running
-      await Promise.all(
-        running(enabled)
-          .filter((p) => p.activateApp !== undefined)
-          .map(ensureStarted),
-      )
-    },
+    reconcile: (why) => queued(() => reconcileNow(why)),
 
-    async opened() {
-      const vault = deps.active()
-      if (vault === null) return
-      const { remote, root } = vault
-      // Another vault's activations are disposed in its leave; any left over
-      // belong to a vault that is gone.
-      if (inVault.some((e) => e.remote !== remote)) await leaveVault()
-      const enabled = (await read(root)).running
-      const fresh = running(enabled).filter(
-        (p) => p.activateVault !== undefined && !inVault.some((e) => e.id === p.info.id),
-      )
-      const added = fresh.map((p) => ({
-        id: p.info.id,
-        remote,
-        dispose: activateIn(p, { remote, root }),
-      }))
-      inVault.push(...added)
-      const results = await Promise.all(added.map((e) => e.dispose))
-      // One that did not activate is tried again at the next open.
-      const failed = new Set(added.filter((_, i) => results[i] === null))
-      if (failed.size > 0) inVault = inVault.filter((e) => !failed.has(e))
-    },
-
-    async leave() {
-      await leaveVault()
+    async stop() {
+      parked = deps.active()?.remote ?? null
+      await queued(stopAll)
       forget()
     },
+
+    failures: (remote) => (live?.remote === remote ? Object.fromEntries(failed) : {}),
+
     invalidate: forget,
 
     report(remote, report) {
@@ -398,19 +458,5 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
         const question = check()
         return question === null ? [] : [question]
       }),
-
-    async disposeAll() {
-      await leaveVault()
-      const runs = [...started.values()].reverse()
-      started.clear()
-      for (const run of runs) {
-        const s = await run
-        if (s === null) continue
-        await Promise.resolve()
-          .then(s.dispose)
-          .catch((err) => console.error('[plugins] dispose failed:', err))
-        s.undos.forEach((undo) => undo())
-      }
-    },
   }
 }

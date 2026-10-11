@@ -65,7 +65,7 @@ import { createBridgeServer } from './bridge/server'
 // The plugins this build has: the one place main imports them.
 install(MAIN_PLUGINS)
 
-/** The origins plugins frame right now (`AppContext.frameOrigin`), which the
+/** The origins plugins frame right now (`PluginCtx.frameOrigin`), which the
  *  window guard confines; live, as their servers start and stop. */
 const FRAME_ORIGINS = new Set<string>()
 
@@ -218,10 +218,12 @@ async function main(): Promise<void> {
     claims: (root) => plugins.scanClaimsFor(root),
     onSnapshot: (snapshot) => {
       send('vault:snapshot', snapshot)
-      // A hand edit to the settings files arrives this way too. When it
-      // changed which plugins claim files, that scan used the old claims:
-      // scan again with the new ones.
+      // A hand edit to the settings files arrives this way too: what runs
+      // follows it now, not at the next open. When it changed which plugins
+      // claim files, that scan used the old claims: scan again with the new
+      // ones.
       plugins.invalidate()
+      void plugins.reconcile('snapshot')
       const active = host.active()
       if (active === null) return
       void plugins.scanClaimsFor(active.root).then((claims) => {
@@ -252,9 +254,9 @@ async function main(): Promise<void> {
     // every commit tick and once at open, so a vault switch resets it.
     onHeldBack: (files) => send('vault:heldback', files),
     onCommitted: (paths) => send('vault:committed', paths),
-    // What plugins run in the vault is disposed here, the only place that
-    // still holds the vault they ran in.
-    onLeave: () => plugins.leave(),
+    // What plugins run in the vault stops here, the only place that still
+    // holds the vault they ran in.
+    onLeave: () => plugins.stop(),
   })
 
   // Serve every scheme. A plugin's answers 404 while the open vault has it off.
@@ -592,12 +594,11 @@ async function main(): Promise<void> {
     tray = null
     await (async () => {
       try {
-        // Dispose what runs in the vault (the agent's sessions and terminals)
+        // Stop what runs in the vault (the agent's sessions and terminals)
         // before we flush and commit: nothing a session was mid-writing
         // should race the teardown.
-        await plugins.leave().catch((err) => console.error('[quit] plugins leave failed:', err))
+        await plugins.stop().catch((err) => console.error('[quit] plugins stop failed:', err))
         await bridge.stop().catch((err) => console.error('[quit] bridge stop failed:', err))
-        await plugins.disposeAll().catch((err) => console.error('[quit] plugins stop failed:', err))
         // A flush point is a flush THEN a commit, and only the renderer can do
         // the first half: the editor's newest words are not on disk until it
         // writes them. Quit is the one flush point main starts, so it asks.

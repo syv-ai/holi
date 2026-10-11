@@ -37,7 +37,7 @@ export interface ServeSpec {
 export interface SupervisorDeps {
   /** Every change of a server's state, by its key. */
   onState(key: string, state: ServerState): void
-  /** Confine frames on `origin` (`AppContext.frameOrigin`); returns the undo. */
+  /** Confine frames on `origin` (`PluginCtx.frameOrigin`); returns the undo. */
   frameOrigin(origin: string): () => void
   readyTimeoutMs?: number
   /** How long a stopped server has before SIGKILL. */

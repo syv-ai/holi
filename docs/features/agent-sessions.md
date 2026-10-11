@@ -31,7 +31,7 @@ default), and its renderer side (`renderer/index.tsx`) registers its tab (with `
 the palette and the recents read each terminal's label and status dot), its nav item (which runs
 `agent.show`), its commands (`agent.show` on ⌘J, `agent.new`), its rows, orbs and turn review, the
 palette's session rows, the leave question, and the agent service every "Ask" goes through
-(`useAgentService`). With the agent off there is no service, so no "Ask" is offered. Its main side attaches in `activateVault` and leaves in its disposer. The
+(`useAgentService`). With the agent off there is no service, so no "Ask" is offered. Its main side starts with the vault and attaches to it (`activate`), and its disposer stops the vault's sessions and terminals. The
 renderer reaches it through the `agent.*` capabilities (sessions, terminals, open, start, send,
 stop, respawn, duplicate, attach, detach, and the turn review's turns, turnFiles, turnDiff and
 revert). Main tells it the session and terminal lists and each terminal's bytes as the events

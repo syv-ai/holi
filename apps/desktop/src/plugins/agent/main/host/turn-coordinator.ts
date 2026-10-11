@@ -20,11 +20,11 @@
  * NOTE: no runtime `electron` import — this loads under vitest like the rest of
  * `agent/`.
  */
-import type { VaultCtx } from '../../../../main/plugin-api'
+import type { PluginCtx } from '../../../../main/plugin-api'
 import type { TurnLog } from './turn-log'
 
 /** What the coordinator needs of the vault its sessions run in. */
-export type TurnVault = Pick<VaultCtx, 'root' | 'pauseSync' | 'commitNow' | 'head'>
+export type TurnVault = Pick<PluginCtx, 'root' | 'pauseSync' | 'commitNow' | 'head'>
 
 export interface TurnCoordinatorDeps {
   /** The vault these sessions run in, or null when none is attached. Read per
