@@ -63,7 +63,8 @@ Claude Code's: `/rename`, or Ctrl+R in the list. **Start another session** on an
 one with no prompt, which waits for yours.
 
 **State is read, not inferred.** Main reads `claude agents --json` for the vault's config directory
-and keeps the background rows under the vault root. `needs-you` is `status: waiting`, `working` is
+and keeps the background rows under the vault root. `needs-you` is `status: waiting`, or a question
+Holi holds for a [quick agent](quick-agent.md) (its hook keeps the listing at `busy`), `working` is
 `busy` or `shell`, then the turn bracket; a session started with no prompt reads `state: blocked`
 and is idle. The read is triggered by a watch of `<configDir>/sessions/` and `jobs/` (edge triggers,
 never parsed), by each turn hook, and by a vault opening. The one timer is a second read about a second
@@ -84,8 +85,10 @@ clears it.
 **Asks are pasted, never submitted.** Text from a selection, task, mail thread or PDF comment goes
 to a live session the user picks (needs-you sessions are not offered), or to a new one named from
 its first line, as a bracketed paste with no Enter into that session's window. A window just opened
-holds the paste until its TUI has printed and settled, with a 5 s backstop. **Reconcile and a stuck
-push are the exception**: their first turn is the command's prompt.
+holds the paste until its TUI has printed and settled, with a 5 s backstop. **Reconcile, a stuck
+push and a quick agent are the exceptions**: their first turn is the command's prompt, or the task
+typed into the quick panel. A first turn goes after `--`, so one that starts with a dash is a prompt
+and not an option.
 
 **Git coexistence.** The seeded `UserPromptSubmit` and `Stop` hooks run `turn-signal.mjs`, which
 reads the vault's `bridge.local.env` ([agent-config](agent-config.md)) for the port and the vault's token, and posts
@@ -122,12 +125,13 @@ showing it busy, crosses it off), so a session resumed from the list is never re
   always Holi's.
 - Probe a pid before signalling it: signal the group only if it still leads its group. A reaped pid
   may already be a stranger's. Holi only ever signals its own terminal clients.
-- Only reconcile, a stuck push and a skills update's conflicts submit a turn. Holi cannot see the
-  composer.
+- Only reconcile, a stuck push, a skills update's conflicts and a quick agent's task submit a turn.
+  Holi cannot see the composer.
 - Record a turn after the vault resumes, fire-and-forget: a lost record beats a stuck pause.
 - A turn revert does not flush open buffers first; a dirty buffer 3-way merges.
 - Turn-hook and status-line responses are empty: a turn hook's body would be injected into
-  Claude's context, and the status line prints its own footer.
+  Claude's context, and the status line prints its own footer. A quick agent's question hook is the
+  one route with a body: a `PreToolUse` hook's JSON is its decision.
 
 ## Rejected
 

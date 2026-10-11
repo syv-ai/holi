@@ -10,7 +10,6 @@
  */
 import { readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
-import { pathToFileURL } from 'node:url'
 import {
   app,
   BrowserWindow,
@@ -23,7 +22,7 @@ import {
 } from 'electron'
 import { snapshotTasks } from '@holi/shared'
 import { requestFlush, type FlushChannel } from './flush'
-import { guardNavigation } from './window-guard'
+import { rendererWindow } from './renderer-window'
 import { vaultScheme } from './vault/asset-protocol'
 import { createSession } from './github/electron'
 import { createMembersCache } from './github/members-cache'
@@ -61,6 +60,7 @@ import { createUpdater, type Updater } from './updates/updater'
 import { installAppMenu } from './menu'
 import { createBridgeEnv } from './bridge/env-file'
 import { createBridgeServer } from './bridge/server'
+import { createPageWindows } from './page-windows'
 
 // The plugins this build has: the one place main imports them.
 install(MAIN_PLUGINS)
@@ -76,6 +76,9 @@ let mainWindow: BrowserWindow | null = null
 // Held at module scope, not inside `main()`: a `Tray` that gets garbage-collected
 // vanishes from the menu bar, so it must outlive the setup closure.
 let tray: Tray | null = null
+
+/** Set once the window helpers exist (`main()`); a plugin asks only later. */
+let showMainWindow: () => Promise<void> = () => Promise.resolve()
 
 // Every scheme this build serves, core's then each plugin's: vault assets,
 // and whatever plugins add (vault apps' `holi-app:`). Electron takes them only before
@@ -96,37 +99,11 @@ if (!app.requestSingleInstanceLock()) {
 }
 
 function createWindow(): BrowserWindow {
-  const win = new BrowserWindow({
-    width: 1200,
-    height: 800,
-    webPreferences: {
-      preload: join(__dirname, '../preload/index.js'),
-      contextIsolation: true,
-      nodeIntegration: false,
-    },
-  })
+  const win = rendererWindow({ width: 1200, height: 800 }, FRAME_SCHEMES)
   mainWindow = win
   win.on('closed', () => {
     if (mainWindow === win) mainWindow = null
   })
-
-  const devUrl = process.env['ELECTRON_RENDERER_URL']
-  if (devUrl) {
-    void win.loadURL(devUrl)
-  } else {
-    void win.loadFile(join(__dirname, '../renderer/index.html'))
-  }
-  // After the load, so the guard knows what "the app" is. A drop the renderer
-  // does not claim is a navigation, and Electron answers a navigation with a
-  // window — see window-guard.ts.
-  guardNavigation(
-    win,
-    devUrl ?? pathToFileURL(join(__dirname, '../renderer/index.html')).href,
-    (url) => {
-      void shell.openExternal(url)
-    },
-    FRAME_SCHEMES,
-  )
   return win
 }
 
@@ -169,6 +146,10 @@ async function main(): Promise<void> {
     return () => undo.forEach((u) => u())
   }
 
+  // Plugins' own windows (the agent's quick panel): core makes each one, the
+  // plugin places and shows it.
+  const pages = createPageWindows({ frameSchemes: FRAME_SCHEMES })
+
   /** Plugin events, both ways, over the one window. */
   const eventsDeps: PluginEventsDeps = {
     send,
@@ -198,6 +179,11 @@ async function main(): Promise<void> {
     // The bridge and the `holi` command exist before any vault can open.
     route: (path, route) => bridge.route(path, route),
     binDir: () => binDir,
+    windows: {
+      openPage: (plugin, options) => pages.open(plugin, options),
+      // Read lazily: the window helpers are declared further down.
+      showMain: () => showMainWindow(),
+    },
   })
 
   const host = createVaultHost({
@@ -459,21 +445,37 @@ async function main(): Promise<void> {
   win.on('focus', () => host.active()?.onFocus())
 
   // Create-or-focus the one window: the dock/`activate` path and the tray's
-  // Open Holi both funnel through here.
-  const openWindow = (): void => {
+  // Open Holi both funnel through here. The window it made, or null when it
+  // brought the open one forward.
+  const openWindow = (): BrowserWindow | null => {
     const existing = mainWindow
     if (existing !== null && !existing.isDestroyed()) {
       if (existing.isMinimized()) existing.restore()
       existing.show()
       existing.focus()
-      return
+      return null
     }
     const fresh = createWindow()
     fresh.on('focus', () => host.active()?.onFocus())
+    return fresh
   }
 
+  /**
+   * The main window forward, from somewhere that is not Holi (the quick
+   * panel). Holi may not be the active app, so it asks to be. A window made
+   * here resolves once its page has loaded, so what is sent next is heard.
+   */
+  showMainWindow = async (): Promise<void> => {
+    if (process.platform === 'darwin') app.focus({ steal: true })
+    const fresh = openWindow()
+    if (fresh === null) return
+    await new Promise<void>((resolve) => fresh.webContents.once('did-finish-load', () => resolve()))
+  }
+
+  // The dock: the main window, whatever other windows of Holi's (a quick
+  // panel) are open.
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) openWindow()
+    if (mainWindow === null || mainWindow.isDestroyed()) openWindow()
   })
 
   // Tray-resident: the sweep keeps running with the window closed, and the tray
@@ -588,6 +590,7 @@ async function main(): Promise<void> {
         await plugins.leave().catch((err) => console.error('[quit] plugins leave failed:', err))
         await bridge.stop().catch((err) => console.error('[quit] bridge stop failed:', err))
         await plugins.disposeAll().catch((err) => console.error('[quit] plugins stop failed:', err))
+        pages.closeAll()
         // A flush point is a flush THEN a commit, and only the renderer can do
         // the first half: the editor's newest words are not on disk until it
         // writes them. Quit is the one flush point main starts, so it asks.

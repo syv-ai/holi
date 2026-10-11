@@ -141,7 +141,7 @@ describe('claude-cli', () => {
     expect(calls.map((c) => c.args)).toEqual([
       ['agents', '--json'],
       ['stop', '1234abcd'],
-      ['--bg', '--name', 'Tidy', 'go'],
+      ['--bg', '--name', 'Tidy', '--', 'go'],
       ['--bg', '--resume', 'uuid-1', '--fork-session', '--name', 'Copy'],
     ])
     for (const { opts } of calls) {

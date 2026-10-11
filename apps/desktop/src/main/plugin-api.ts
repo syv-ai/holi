@@ -19,6 +19,9 @@ import type { SeedContribution } from './vault/seed/types'
 import type { Route } from './bridge/server'
 import type { UiReport } from './capabilities/services'
 import type { Transform } from './vault/hooks/runner'
+import type { PageWindow, PageWindowOptions } from './page-windows'
+
+export type { PageWindow, PageWindowOptions } from './page-windows'
 
 /** Undoes what an activation started: at leave for a vault's, at quit for
  *  the process's. */
@@ -98,6 +101,15 @@ export interface AppContext extends SchemeContext {
   route(path: string, route: BridgeRoute): () => void
   /** The directory holding the `holi` command, for a process a plugin starts. */
   binDir(): string
+  /**
+   * A window of the plugin's own, showing one of its renderer side's pages
+   * (`RendererPlugin.pages`), such as the agent's quick panel. Core makes it;
+   * the plugin sizes, places, shows and closes it. Every one is closed at quit.
+   */
+  openPage(options: PageWindowOptions): PageWindow
+  /** Bring the main window forward, opening it if it was closed. Resolves
+   *  once its page has loaded, so an event sent after it is heard. */
+  showMainWindow(): Promise<void>
 }
 
 /** What a quit guard asks. */

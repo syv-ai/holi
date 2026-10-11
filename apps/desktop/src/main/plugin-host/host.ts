@@ -20,6 +20,8 @@ import type {
   Disposer,
   LiveVault,
   MainPlugin,
+  PageWindow,
+  PageWindowOptions,
   QuitQuestion,
   UiReport,
   VaultCtx,
@@ -62,6 +64,12 @@ export interface PluginHostDeps {
   route(path: string, route: BridgeRoute): () => void
   /** Where the `holi` command lives. */
   binDir(): string
+  /** Windows beyond the main one. Absent in the tests: a plugin asking for
+   *  one there is told it cannot have one. */
+  windows?: {
+    openPage(plugin: string, options: PageWindowOptions): PageWindow
+    showMain(): Promise<void>
+  }
   readSettings?: (root: string) => Promise<ResolvedVaultSettings>
 }
 
@@ -190,6 +198,11 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
       },
       route: (path, route) => keep(deps.route(path, route)),
       binDir: deps.binDir,
+      openPage: (options) => {
+        if (deps.windows === undefined) throw new Error('this host opens no windows')
+        return deps.windows.openPage(id, options)
+      },
+      showMainWindow: () => deps.windows?.showMain() ?? Promise.resolve(),
     }
     if (plugin.activateApp === undefined) return { dispose: () => {}, undos }
     try {

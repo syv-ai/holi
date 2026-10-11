@@ -137,7 +137,10 @@ outranks an allow in every scope, so getting a tool back means removing it from 
 `curl`, `wget` and `holi google archive|trash|unschedule|send|reply` (one rule per verb), and allow
 `holi pdf comments`. Sending mail is
 behind a seeded `PreToolUse` hook that always asks ([google.md](google.md)). The agent's commits pass
-the vault's pre-commit transforms like anyone's ([vaults-sync.md](vaults-sync.md)).
+the vault's pre-commit transforms like anyone's ([vaults-sync.md](vaults-sync.md)). A quick agent
+follows the vault's permission mode like any session unless the person chose auto mode for quick
+agents in Settings; its hooks, and that choice, are flags on its own launch, never in the vault
+([quick-agent.md](quick-agent.md)).
 
 ## Rules
 

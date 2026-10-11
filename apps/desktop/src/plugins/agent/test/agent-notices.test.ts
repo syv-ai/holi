@@ -12,14 +12,14 @@ describe('agentIndicator', () => {
 
   it('is green while a session is live and nothing is happening', () => {
     const live = agentIndicator(idle)
-    expect(live.dot).toContain('bg-green-500')
+    expect(live.dot).toContain('bg-agent-done')
     expect(live.state).toBe('running')
   })
 
   it('pulses amber while a turn is open', () => {
     const working = agentIndicator({ state: 'working' })
     expect(working.dot).toContain('motion-pulse')
-    expect(working.dot).toContain('bg-amber-400')
+    expect(working.dot).toContain('bg-agent-working')
     expect(working.state).toBe('working…')
   })
 

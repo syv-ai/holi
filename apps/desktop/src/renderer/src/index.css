@@ -201,6 +201,10 @@
   --color-task-todo: var(--task-todo);
   --color-task-doing: var(--task-doing);
   --color-task-done: var(--task-done);
+  --color-agent-working: var(--agent-working);
+  --color-agent-needs-you: var(--agent-needs-you);
+  --color-agent-done: var(--agent-done);
+  --color-agent-failed: var(--agent-failed);
   --color-file-blue: var(--file-blue);
   --color-file-sky: var(--file-sky);
   --color-file-teal: var(--file-teal);

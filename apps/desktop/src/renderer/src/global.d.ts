@@ -61,6 +61,15 @@ declare global {
       updates: {
         onStatus(cb: (status: UpdateStatus) => void): () => void
       }
+      /** A plugin's own window (`main/page-windows.ts`), such as the agent's
+       *  quick panel: what main tells this page, and what it answers. Main
+       *  hears a message only from the window it opened. Present in every
+       *  window; only a page window is ever told anything. */
+      page: {
+        /** Returns its unsubscribe. */
+        on(cb: (event: { name: string; payload: unknown }) => void): () => void
+        send(name: string, payload: unknown): void
+      }
       openExternal(url: string): Promise<void>
       /** Reveal a local path — a vault's clone folder — in the system file
        *  manager (Finder on macOS), selected in its parent. */
