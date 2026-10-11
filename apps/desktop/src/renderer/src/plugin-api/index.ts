@@ -38,6 +38,7 @@ export { useAck } from '@/lib/use-ack'
 export { DRAWER_WIDTH } from '@/lib/drawer'
 export { activeRemoteAtom, historyEpochsAtom, snapshotAtom, syncStateAtom } from '@/state/vaults'
 export { sessionAtom } from '@/state/session'
+export { usePluginSetting } from '@/state/settings'
 export { activeModeAtom } from '@/state/color-scheme'
 export { openNoteTabAtom } from '@/state/panes'
 export {

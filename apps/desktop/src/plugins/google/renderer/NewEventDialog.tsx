@@ -1,11 +1,11 @@
 /**
  * Starting an event on a day: a title, the day (or days) and, unless it is all
  * day, a start and an end, and a place. It is a solo event on the primary
- * calendar: nobody is invited, so nobody is mailed (`google.createEvent`).
+ * calendar: nobody is invited, so nobody is mailed (`google.schedule`, the agent's own).
  */
 import { useState } from 'react'
+import { dayAfter, localDate } from '@holi/shared'
 import { Button, Checkbox, Dialog, Input, Label } from '@/primitives'
-import { nextDay } from './month-days'
 
 export interface NewEventValues {
   title: string
@@ -24,7 +24,7 @@ const pad = (n: number): string => String(n).padStart(2, '0')
 function defaultTimes(day: string): { start: string; end: string } {
   let hour = 9
   const now = new Date()
-  const isToday = day === `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
+  const isToday = day === localDate(now)
   if (isToday && now.getHours() >= hour) hour = Math.min(22, now.getHours() + 1)
   return { start: `${pad(hour)}:00`, end: `${pad(hour + 1)}:00` }
 }
@@ -70,8 +70,12 @@ function Form({
   const submit = (): void => {
     if (saving) return
     if (title.trim() === '') return setError('Give it a title.')
+    // A cleared field is no time at all, and would throw rather than say so.
+    if (startDay === '' || endDay === '' || (!allDay && (startTime === '' || endTime === ''))) {
+      return setError('Give it a start and an end.')
+    }
     const start = allDay ? startDay : new Date(`${startDay}T${startTime}`).toISOString()
-    const end = allDay ? nextDay(endDay) : new Date(`${endDay}T${endTime}`).toISOString()
+    const end = allDay ? dayAfter(endDay) : new Date(`${endDay}T${endTime}`).toISOString()
     if (endDay < startDay || (allDay ? false : Date.parse(end) <= Date.parse(start))) {
       return setError('It has to end after it starts.')
     }

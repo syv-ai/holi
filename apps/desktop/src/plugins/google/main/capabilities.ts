@@ -714,10 +714,10 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
         google(() => replyToThread(apiOf(ctx.remote), thread, body, { all })),
     }),
 
-    /** A solo event. There is no way to invite anyone: inviting would email
-     *  them. */
+    /** A solo event, the agent's and the agenda's alike. There is no way to
+     *  invite anyone: inviting would email them. */
     'google.schedule': cap({
-      doors: ['cli'],
+      doors: ['ui', 'cli'],
       cli: {
         args: [],
         flags: ['all-day'],
@@ -732,30 +732,6 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
           title: stringParam(p, 'title'),
           start: stringParam(p, 'start'),
           end: stringParam(p, 'end'),
-        }
-      },
-      run: async (ctx, event) => google(() => createEvent(apiOf(ctx.remote), event)),
-    }),
-
-    /**
-     * A solo event the person made by selecting a day in the agenda. The same
-     * `createEvent` the agent's `schedule` calls, so it has no `attendees` and
-     * mails nobody, on the primary calendar. `end` is exclusive for an all-day
-     * event, as Google's is: a single day ends on the day after.
-     */
-    'google.createEvent': cap({
-      doors: ['ui'],
-      params: (raw) => {
-        const p = paramsObject(raw)
-        const location = optionalStringParam(p, 'location')
-        const description = optionalStringParam(p, 'description')
-        return {
-          title: stringParam(p, 'title'),
-          start: stringParam(p, 'start'),
-          end: stringParam(p, 'end'),
-          ...(flagParam(p, 'allDay') ? { allDay: true } : {}),
-          ...(location === undefined || location === '' ? {} : { location }),
-          ...(description === undefined || description === '' ? {} : { description }),
         }
       },
       run: async (ctx, event) => google(() => createEvent(apiOf(ctx.remote), event)),
