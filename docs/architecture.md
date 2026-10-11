@@ -81,6 +81,10 @@ The dependency runs one way: the plugin underneath knows nothing of what require
 on this machine, or needing one that is off), and every reader in both processes asks it. Both
 processes check their list with `checkPluginCatalogue` at boot, which refuses a missing or circular
 requirement.
+A plugin that only adds to another says so in `PluginInfo.addsTo`: Google, PDF and vault apps add
+skills, hooks and settings fragments to the agent. Unlike `requires`, it runs without the other;
+what it adds waits until that one runs, and the resolver says what each running plugin is adding
+to right now (`addingTo`).
 A plugin claims vault paths: the first enabled claim with a `view` opens a note tab of that path,
 and its `rowMenu` items join the file tree's menu. On the main side a claim
 (`MainPlugin.claims`, `{match, parse, normalize?}`) owns markdown files in the snapshot: the scanner
@@ -109,9 +113,9 @@ plugins ([community plugins](features/community-plugins.md)), which hosts plugin
 repositories as processes it runs, never as code it loads. A renderer plugin may give its claims as
 an atom, for claims that follow what main tells it, and a plugin may register a frame origin with
 the window guard (`ctx.frameOrigin`).
-A seed contribution can own a path prefix (`owns`): the agent owns `.claude/`, so every other
-plugin's skills, hooks and settings fragments there are left out while the agent is off and
-seeded once when it turns on.
+A seed contribution can own a path prefix (`owns`): the agent owns `.claude/`. Another plugin seeds
+there only by declaring it adds to the agent, which `install` checks at boot, and its files and
+fragments there are left out while the agent is off and seeded once when it turns on.
 The app door, through which a vault app's frame calls capabilities, is core's, and the apps plugin
 is its one opener (`ctx.openAppDoor`), supplying the consent check for entries with an
 `appGrant`; with apps off, no entry is reachable through it.

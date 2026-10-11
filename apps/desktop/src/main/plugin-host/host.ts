@@ -11,7 +11,12 @@
  *
  * No `electron` import: this loads under plain Node in the tests.
  */
-import { CORE_TRANSFORMS, resolvePlugins, type ResolvedVaultSettings } from '@holi/shared'
+import {
+  CORE_TRANSFORMS,
+  resolvePlugins,
+  type PluginResolution,
+  type ResolvedVaultSettings,
+} from '@holi/shared'
 import type { AppDoor, AppDoorOpener } from '../capabilities/dispatch'
 import type { CapabilityRegistry } from '../capabilities/registry'
 import type {
@@ -127,16 +132,18 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
   /** The open vault's sync holds, and the vault they hold. */
   let holds: { remote: string; reasons: Map<symbol, string> } | null = null
 
-  let cache: { root: string; enabled: Set<string> } | null = null
+  let cache: { root: string; enabled: ReadonlySet<string> } | null = null
   // Bumped on every invalidation, so a read that raced one is not cached.
   let generation = 0
 
   /** Read off disk, and cache it when it is the open vault's. */
-  async function read(root: string): Promise<Set<string>> {
+  async function read(root: string): Promise<PluginResolution> {
     const at = generation
-    const enabled = new Set(resolvePlugins((await readSettings(root)).plugins, infos).running)
-    if (at === generation && root === deps.active()?.root) cache = { root, enabled }
-    return enabled
+    const resolution = resolvePlugins((await readSettings(root)).plugins, infos)
+    if (at === generation && root === deps.active()?.root) {
+      cache = { root, enabled: resolution.running }
+    }
+    return resolution
   }
 
   function forget(): void {
@@ -146,7 +153,7 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
 
   async function enabled(root: string): Promise<ReadonlySet<string>> {
     if (cache !== null && cache.root === root && root === deps.active()?.root) return cache.enabled
-    return read(root)
+    return (await read(root)).running
   }
 
   /** What runs in a vault with `enabled` on: core parts, then plugins. */
@@ -210,16 +217,23 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
   /** What seeds the vault at `root`, read fresh: a write to its settings
    *  seeds before the watcher has said anything. */
   async function seeding(root: string) {
-    const enabled = await read(root)
+    const { running: enabled, addingTo } = await read(root)
+    // What an owner holds (the agent's `.claude/`) waits for it: core's part
+    // there until it runs, a plugin's until it is adding to it (`addsTo`).
+    const owned = deps.plugins.flatMap((p) =>
+      (p.seed?.owns ?? []).map((prefix) => ({ id: p.info.id, prefix })),
+    )
+    const outside = (id: string, adding: readonly string[]) =>
+      owned.filter((o) => o.id !== id && !adding.includes(o.id)).map((o) => o.prefix)
     const contributions = [
-      ...deps.coreSeeds,
+      ...deps.coreSeeds.map((c) => withoutOwned(c, outside(c.id, [...enabled]))),
       ...deps.plugins.flatMap((p) =>
-        enabled.has(p.info.id) && p.seed !== undefined ? [p.seed] : [],
+        enabled.has(p.info.id) && p.seed !== undefined
+          ? [withoutOwned(p.seed, outside(p.info.id, addingTo.get(p.info.id) ?? []))]
+          : [],
       ),
     ]
-    // What a plugin that is off owns (the agent's `.claude/`) waits for it.
-    const off = deps.plugins.flatMap((p) => (enabled.has(p.info.id) ? [] : (p.seed?.owns ?? [])))
-    return { enabled, contributions: withoutOwned(contributions, off) }
+    return { enabled, contributions }
   }
 
   /** Start `plugin` for the process, once; null when it failed to start. */
@@ -331,7 +345,7 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
     },
 
     async enter(root) {
-      const enabled = await read(root)
+      const enabled = (await read(root)).running
       await Promise.all(
         running(enabled)
           .filter((p) => p.activateApp !== undefined)
@@ -346,7 +360,7 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
       // Another vault's activations are disposed in its leave; any left over
       // belong to a vault that is gone.
       if (inVault.some((e) => e.remote !== remote)) await leaveVault()
-      const enabled = await read(root)
+      const enabled = (await read(root)).running
       const fresh = running(enabled).filter(
         (p) => p.activateVault !== undefined && !inVault.some((e) => e.id === p.info.id),
       )

@@ -61,6 +61,8 @@ const under = (rel: string, prefixes: readonly string[] | undefined): boolean =>
  * The id a file is seeded under: its contribution's, or `<id>@<owner>` for a
  * file under a prefix another contribution owns (`google@agent`), so turning
  * the owner on later is told apart in the seed state like turning on a plugin.
+ * Only a plugin that declares it adds to the owner (`PluginInfo.addsTo`) gets
+ * a file there: `install` refuses any other.
  */
 function seedId(
   contributions: readonly SeedContribution[],
@@ -71,23 +73,28 @@ function seedId(
   return owner === undefined ? c.id : `${c.id}@${owner.id}`
 }
 
+/** Every vault path `c` writes or adds a fragment to. */
+export const seededPaths = (c: SeedContribution): string[] => [
+  ...Object.keys(c.merge ?? {}),
+  ...Object.keys(c.once),
+  ...Object.keys(c.shipped),
+  ...Object.keys(c.fragments ?? {}),
+]
+
 /**
- * `contributions` without what they seed under `prefixes`, the prefixes of
- * owners that are off: files and fragments both.
+ * `c` without what it seeds under `prefixes`, the prefixes of owners it is
+ * not adding to right now: files and fragments both.
  */
-export function withoutOwned(
-  contributions: readonly SeedContribution[],
-  prefixes: readonly string[],
-): SeedContribution[] {
-  if (prefixes.length === 0) return [...contributions]
+export function withoutOwned(c: SeedContribution, prefixes: readonly string[]): SeedContribution {
+  if (prefixes.length === 0) return c
   const keep = <T>(table: Record<string, T>): Record<string, T> =>
     Object.fromEntries(Object.entries(table).filter(([rel]) => !under(rel, prefixes)))
-  return contributions.map((c) => ({
+  return {
     ...c,
     once: keep(c.once),
     shipped: keep(c.shipped),
     ...(c.fragments === undefined ? {} : { fragments: keep(c.fragments) }),
-  }))
+  }
 }
 
 /** The shipped files of every contribution, for `holi skills update`. */

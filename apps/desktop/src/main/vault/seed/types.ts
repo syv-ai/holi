@@ -15,8 +15,9 @@ export interface SeedContribution {
   id: string
   /**
    * Path prefixes this contribution owns, such as the agent's `.claude/`.
-   * Another contribution's files and fragments under one are left out while
-   * the owner is off, and seeded once when it turns on.
+   * Another plugin seeds files and fragments under one only if it declares it
+   * adds to the owner (`PluginInfo.addsTo`); they are left out while the owner
+   * is off, and seeded once when it turns on.
    */
   owns?: readonly string[]
   /** Vault path to content. Bytes for a binary such as a font. */

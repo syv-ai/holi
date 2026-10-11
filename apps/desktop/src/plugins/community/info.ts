@@ -6,6 +6,7 @@ export const COMMUNITY_INFO: PluginInfo = {
   id: 'community',
   label: 'Community plugins',
   default: false,
+  addsTo: ['agent'],
   description:
     'Runs plugins from other repositories, such as Prezzi for slide decks: each opens its own files in a tab, served by a program it installs on this machine.',
   whenOff:

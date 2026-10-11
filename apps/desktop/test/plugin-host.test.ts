@@ -19,6 +19,7 @@ import {
 import type { PluginEvent } from '../src/main/plugin-host/events'
 import { schemeEntries, serveScheme } from '../src/main/plugin-host/schemes'
 import { createPluginHost, type OpenVault } from '../src/main/plugin-host/host'
+import { install } from '../src/main/plugin-host/installed'
 import { coreSeed } from '../src/main/vault/seed/core'
 import { readSeedState } from '../src/main/vault/seed/state'
 import { writeVaultSettings } from '../src/main/vault/settings'
@@ -294,9 +295,13 @@ describe('an owned prefix', () => {
       seed: { id: 'owner', owns: ['.claude/'], once: { [OWN]: '{}\n' }, shipped: {} },
     }
     const fake: MainPlugin = {
-      info: { id: 'fake', label: 'Fake', default: true },
+      info: { id: 'fake', label: 'Fake', default: true, addsTo: ['owner'] },
       seed: { id: 'fake', once: {}, shipped: { [SKILL]: '# fake\n', 'fake.md': '# fake\n' } },
     }
+    // Saying nothing of the owner, it may not seed there at all.
+    expect(() => install([owner, { ...fake, info: { ...fake.info, addsTo: [] } }])).toThrow(
+      'without adding to it',
+    )
     const host = createPluginHost({
       plugins: [owner, fake],
       registry: createCapabilityRegistry(),

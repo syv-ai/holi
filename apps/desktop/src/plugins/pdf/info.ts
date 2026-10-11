@@ -5,6 +5,7 @@ export const PDF_INFO: PluginInfo = {
   id: 'pdf',
   label: 'PDF',
   default: true,
+  addsTo: ['agent'],
   description:
     'Opens PDFs in a tab, with comments and signing, and turns a note into a PDF from a Typst template.',
   whenOff:

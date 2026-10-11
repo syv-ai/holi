@@ -7,6 +7,7 @@ export const GOOGLE_INFO: PluginInfo = {
   id: 'google',
   label: 'Google',
   default: true,
+  addsTo: ['agent'],
   description:
     'Mail and Agenda, for you and for the agent, once you connect a Google account on this machine.',
   whenOff: 'Mail and Agenda close. A connected account stays connected on this machine, unused.',
