@@ -74,7 +74,7 @@ describe('the quick panel beside the dock', () => {
     expect(sent).toEqual([
       { kind: 'step', dir: -1, agent: '1' },
       { kind: 'step', dir: 1, agent: '1' },
-      { kind: 'hide' },
+      { kind: 'hide', agent: '1' },
     ])
     expect(foot()).toBe('↑↓agentsescclose')
   })

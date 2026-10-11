@@ -131,7 +131,7 @@ export function QuickSettings(): React.JSX.Element {
     <section>
       <SettingsHeading
         title="From any app"
-        blurb="A hotkey opens a small panel at the pointer in whatever app you are in. Type a task and an agent starts on it, as a dot in a slim dock at the edge of the screen that turns orange when it needs you. Settings for this Mac."
+        blurb="A hotkey opens a small panel at the pointer in whatever app you are in. Type a task and an agent starts on it, as a dot in a slim dock at the edge of the screen that turns orange when it needs you. These settings are this Mac's and apply in every vault you open on it."
       />
       <SettingsList>
         <SettingsRow

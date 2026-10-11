@@ -84,8 +84,9 @@ export interface QuickSelection {
 }
 
 /** What the panel asks of main, as its page's `quick` message. One about an
- *  agent names it (`agent`, its view's `id`), so a request sent as the panel
- *  moved on to another agent never lands on that one. */
+ *  agent names it (`agent`, its view's `id`), and one that can be about the
+ *  prompt or an agent names no agent for the prompt, so a request sent as the
+ *  panel moved on to another view never lands on that one. */
 export type QuickRequest =
   /** The page is listening: send the view. */
   | { kind: 'ready' }
@@ -94,7 +95,7 @@ export type QuickRequest =
   /** Out of sight, the agent still running and its dot still there: esc in
    *  an agent's panel, or a prompt with a draft left when the person clicked
    *  away. */
-  | { kind: 'hide' }
+  | { kind: 'hide'; agent?: string }
   /** Gone: a prompt never sent (no `agent`), or a finished agent, whose
    *  session stops with it. */
   | { kind: 'clear'; agent?: string }
@@ -112,7 +113,7 @@ export type QuickRequest =
   | { kind: 'skip-access' }
   /** What the page needs to show itself, in CSS pixels, and how far down it
    *  the middle of its header is: that is what lines up with its dot. */
-  | { kind: 'size'; width: number; height: number; header?: number }
+  | { kind: 'size'; width: number; height: number; header?: number; agent?: string }
   /** It has painted what it shows now, answering main's `paint`: the window
    *  can stop being clear. Heard by the window itself (`surface.ts`). */
   | { kind: 'painted' }
@@ -125,16 +126,16 @@ export function parseQuickRequest(raw: unknown): QuickRequest | null {
   switch (raw['kind']) {
     case 'ready':
     case 'painted':
-    case 'hide':
     case 'new':
     case 'dock':
     case 'grant-access':
     case 'skip-access':
       return { kind: raw['kind'] }
+    case 'hide':
     case 'clear':
       return typeof raw['agent'] === 'string'
-        ? { kind: 'clear', agent: raw['agent'] }
-        : { kind: 'clear' }
+        ? { kind: raw['kind'], agent: raw['agent'] }
+        : { kind: raw['kind'] }
     case 'open-session':
       return typeof raw['agent'] === 'string' ? { kind: 'open-session', agent: raw['agent'] } : null
     case 'step':
@@ -154,9 +155,15 @@ export function parseQuickRequest(raw: unknown): QuickRequest | null {
         : null
     }
     case 'size': {
-      const { width, height, header } = raw
+      const { width, height, header, agent } = raw
       if (!finite(width) || !finite(height)) return null
-      return { kind: 'size', width, height, ...(finite(header) ? { header } : {}) }
+      return {
+        kind: 'size',
+        width,
+        height,
+        ...(finite(header) ? { header } : {}),
+        ...(typeof agent === 'string' ? { agent } : {}),
+      }
     }
     default:
       return null

@@ -421,11 +421,27 @@ describe('the dock', () => {
     expect(r.panel().focused).toBe(true)
   })
 
+  it('takes a hide or a size only for the agent it names', async () => {
+    const r = rig()
+    await sent(r, 'one')
+    await sent(r, 'two')
+    r.dock().request({ kind: 'pick', id: '1' })
+    r.panel().request({ kind: 'step', dir: 1, agent: '1' })
+    const at = r.panel().bounds()
+    // Sent about the first as the panel moved on to the second.
+    r.panel().request({ kind: 'size', width: 400, height: 300, header: 20, agent: '1' })
+    r.panel().request({ kind: 'hide', agent: '1' })
+    expect(r.panel().bounds()).toEqual(at)
+    expect(r.panel()).toMatchObject({ visible: true, focused: true })
+    r.panel().request({ kind: 'hide', agent: '2' })
+    expect(r.panel().visible).toBe(false)
+  })
+
   it('esc and a click into another app put the panel away; the dots stay', async () => {
     const r = rig()
     await sent(r)
     r.dock().request({ kind: 'pick', id: '1' })
-    r.panel().request({ kind: 'hide' })
+    r.panel().request({ kind: 'hide', agent: '1' })
     expect(r.panel().visible).toBe(false)
     r.dock().request({ kind: 'pick', id: '1' })
     r.panel().userBlur()

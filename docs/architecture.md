@@ -36,9 +36,11 @@ Electron. `@holi/shared/path-safety-node` is the one Node-only entrypoint.
 ## 2. Build only what Claude Code does not do
 
 The agent is Claude Code, unmodified. Holi adds no adapter layer and no prompt-building, and fixes
-forward when a Claude Code release changes something. Users are developers: the raw terminal is the
-interface, git is a tool they already know, and Claude Code is already installed and signed in. With
-the vault being plain files in a git repo, the agent needs no Holi-specific operations at all.
+forward when a Claude Code release changes something. The one exception is a person's own choice:
+the [quick agent](features/quick-agent.md)'s panel instructions, a setting that is off until turned
+on. Users are developers: the raw terminal is the interface, git is a tool they already know, and
+Claude Code is already installed and signed in. With the vault being plain files in a git repo, the
+agent needs no Holi-specific operations at all.
 
 ## 3. Processes and the IPC seam
 

@@ -129,11 +129,13 @@ export function QuickPanel(): React.JSX.Element {
     const box = root.getBoundingClientRect()
     if (box.width <= 0 || box.height <= 0) return
     const header = root.querySelector('[data-quick-header]')?.getBoundingClientRect()
+    const v = viewRef.current
     send({
       kind: 'size',
       width: box.width,
       height: box.height,
       ...(header === undefined ? {} : { header: header.top + header.height / 2 - box.top }),
+      ...(v?.kind === 'agent' ? { agent: v.id } : {}),
     })
   }, [])
   useLayoutEffect(() => {
@@ -225,7 +227,7 @@ export function QuickPanel(): React.JSX.Element {
           return
         case 'Escape':
           e.preventDefault()
-          send(finished(v) ? { kind: 'clear', agent: v.id } : { kind: 'hide' })
+          send({ kind: finished(v) ? 'clear' : 'hide', agent: v.id })
           return
         case 'Enter':
           if (e.shiftKey) return

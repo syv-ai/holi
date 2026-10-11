@@ -634,20 +634,23 @@ export function createQuickPanels(deps: QuickPanelsDeps): QuickPanels {
         greet(p)
         return
       case 'size': {
-        if (shows === null) return
+        // The size of the view it was measured on, the prompt (no `agent`) or
+        // that agent, whatever the panel has moved on to since; the window
+        // follows only while that view is the one out.
         const size = {
           width: Math.min(MAX.width, Math.max(MIN.width, Math.round(request.width))),
           height: Math.min(MAX.height, Math.max(MIN.height, Math.round(request.height))),
         }
-        if (shows === 'prompt') {
+        if (request.agent === undefined) {
           if (prompt === null || sameSize(prompt.size, size)) return
           prompt.size = size
-          if (!visible()) return
+          if (shows !== 'prompt' || !visible()) return
           const at = p.surface.bounds()
           p.surface.place(resizeInPlace(at, size, deps.workArea({ x: at.x, y: at.y })))
           return
         }
-        const a = shows
+        const a = byId(request.agent)
+        if (a === undefined) return
         const header =
           request.header === undefined
             ? a.header
@@ -655,7 +658,7 @@ export function createQuickPanels(deps: QuickPanelsDeps): QuickPanels {
         if (sameSize(a.size, size) && header === a.header) return
         a.size = size
         a.header = header
-        if (visible()) placeBeside(a)
+        if (shows === a && visible()) placeBeside(a)
         return
       }
       case 'submit':
@@ -664,11 +667,13 @@ export function createQuickPanels(deps: QuickPanelsDeps): QuickPanels {
         // The desk tells the panel, through `update`.
         deps.questions.answer(request.questionId, request.answers)
         return
-      case 'hide':
+      case 'hide': {
         // Out of sight: an agent still running and its dot still there, or a
-        // prompt with its draft.
-        putAway()
+        // prompt with its draft. Only the view asked about, if still out.
+        const asked = request.agent === undefined ? 'prompt' : byId(request.agent)
+        if (asked !== undefined && shows === asked) putAway()
         return
+      }
       case 'clear': {
         if (request.agent === undefined) {
           // A prompt never sent.

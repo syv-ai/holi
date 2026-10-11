@@ -9,7 +9,7 @@ import {
 } from '../shared/hotkey'
 import { parseQuickRequest, quickPrompt } from '../shared/quick'
 import { fitSelection, MAX_SELECTION, readSelection } from '../main/quick/selection'
-import { parseQuickSettings } from '../main/quick/settings'
+import { DEFAULT_QUICK_SETTINGS, parseQuickSettings } from '../main/quick/settings'
 
 const row = (over: Partial<ClaudeRow>): ClaudeRow => ({ id: 'quick001', name: 'Tidy', ...over })
 const live = (over: Partial<ClaudeRow>) => ({
@@ -100,18 +100,16 @@ describe('the global hotkey', () => {
 })
 
 describe('the settings', () => {
-  it('are off until chosen, each read key by key', () => {
-    expect(parseQuickSettings(null)).toEqual({
-      enabled: false,
-      hotkey: '⌘J',
-      dockHotkey: '⌃⌘J',
-      autoApprove: false,
-      instructions: false,
-      accessibilityAsked: false,
-    })
+  it('are the defaults until chosen, each read key by key', () => {
+    expect(parseQuickSettings(null)).toEqual(DEFAULT_QUICK_SETTINGS)
     expect(
       parseQuickSettings({ enabled: true, hotkey: 'J', autoApprove: 'yes', instructions: true }),
-    ).toMatchObject({ enabled: true, hotkey: '⌘J', autoApprove: false, instructions: true })
+    ).toMatchObject({
+      enabled: true,
+      hotkey: DEFAULT_QUICK_SETTINGS.hotkey,
+      autoApprove: DEFAULT_QUICK_SETTINGS.autoApprove,
+      instructions: true,
+    })
   })
 
   it('never make the two keys one: the dock key gives way, to its default or the other', () => {

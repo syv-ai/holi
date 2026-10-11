@@ -397,7 +397,13 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
       if (c === null) return noVault
       const res = await provider.cli.startBg(targetOf(c), args)
       if (!res.ok) return res
-      if (current !== c) return { ok: false, message: 'The vault closed as the session started.' }
+      if (current !== c) {
+        // The leave read the sessions to stop before this one was listed, so
+        // it would go on running in the vault left while its caller is told
+        // it failed: stop it here.
+        await provider.cli.stop(targetOf(c), res.id)
+        return { ok: false, message: 'The vault closed as the session started.' }
+      }
       await refresh()
       return { ok: true, sessionId: res.id }
     },

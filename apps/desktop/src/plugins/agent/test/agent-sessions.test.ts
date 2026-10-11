@@ -302,6 +302,26 @@ describe('launched sessions', () => {
     expect(sessions.sessions()).toEqual([expect.objectContaining({ id: 'launch00' })])
   })
 
+  it('are stopped when the vault closes as they start', async () => {
+    const { sessions, cli, attach } = setup()
+    await attach()
+    const started = cli.startBg.getMockImplementation()!
+    let release = () => {}
+    cli.startBg.mockImplementationOnce(async (t, opts) => {
+      await new Promise<void>((r) => (release = r))
+      return started(t, opts)
+    })
+    const launching = sessions.launch({ prompt: 'go' })
+    await vi.waitFor(() => expect(cli.startBg).toHaveBeenCalled())
+    await sessions.leave()
+    release()
+    expect(await launching).toEqual({
+      ok: false,
+      message: 'The vault closed as the session started.',
+    })
+    expect(cli.stop).toHaveBeenCalledWith(expect.anything(), 'launch00')
+  })
+
   it('needs you while Holi holds its question, though the listing says busy', async () => {
     const { sessions, attach } = setup(
       [row('aaaa0001', { status: 'busy', state: 'working' })],
