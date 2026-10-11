@@ -90,7 +90,7 @@ Todo / Doing / Done, with one swim lane per folder.
   become one summary. A timeless reminder fires at 09:00. Clicking a notification opens the task,
   switching vault if needed. The per-path watermark lives under `reminders` in the vault's
   machine-local `.holi/settings/app.local.yaml`.
-- **Assignees** are GitHub logins (`assignees: [mhenrichsen]`), the identity a vault already has:
+- **Assignees** are GitHub logins (`assignees: [ada]`), the identity a vault already has:
   its members are its repo's collaborators. Like `tags`, a task's assignees are always a list,
   empty when the task is no one's, and an empty list is no key at all. A hand-written `@login` or
   a single login without a list reads the same. One rule in shared says which logins are one
