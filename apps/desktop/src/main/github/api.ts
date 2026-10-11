@@ -8,7 +8,7 @@
  * different: re-authenticate, authorize the token for the org, wait for the
  * rate limit, or accept that this repo is not yours.
  */
-import type { Collaborator } from '@holi/shared'
+import { sameLogin, type Collaborator } from '@holi/shared'
 import { isRemote } from '../vault/registry'
 
 /**
@@ -150,8 +150,7 @@ export class GitHubApi {
     const raw = await this.#paginate(
       `${this.#base}/repos/${assertRemote(remote)}/collaborators?affiliation=direct&per_page=100`,
     )
-    const wanted = login.toLowerCase()
-    return raw.some((c) => String(c.login).toLowerCase() === wanted)
+    return raw.some((c) => sameLogin(String(c.login), login))
   }
 
   /**

@@ -14,6 +14,7 @@ import {
   isAgentSurfacePath,
   parseTaskFile,
   parseTaskPatch,
+  sameLogin,
   serializeTaskFile,
   vaultRelPath,
   withIcon,
@@ -480,9 +481,6 @@ export function createRouter(deps: RouterDeps) {
     if (!login) throw new TRPCError({ code: 'UNAUTHORIZED', message: 'not signed in to GitHub' })
     return login
   }
-
-  /** GitHub logins are case-insensitive. */
-  const sameLogin = (a: string, b: string) => a.toLowerCase() === b.toLowerCase()
 
   /**
    * Commit and push `remote`, then report what is still only here.
