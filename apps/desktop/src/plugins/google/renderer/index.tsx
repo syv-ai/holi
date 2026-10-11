@@ -4,21 +4,17 @@
  * of the settings tab.
  */
 import { CalendarDays, Mail } from 'lucide-react'
-import { useAtomValue } from 'jotai'
-import { headingId } from '@/composites'
-import type { RendererPlugin } from '@/plugin-api'
+import { usePluginSetting, type RendererPlugin } from '@/plugin-api'
 import { GOOGLE_INFO } from '../info'
 import { googleConnectedAtom } from './account'
-import { agendaMonthAtom } from './agenda-prefs'
-import { AgendaSection } from './AgendaSection'
 import { AgendaView } from './AgendaView'
 import { ConnectionsSection } from './ConnectionsSection'
 import { MailView } from './MailView'
 
-/** The Agenda tab, opened on the view the settings ask for. */
+/** The Agenda tab, opened on the view this machine's `agendaView` asks for. */
 function AgendaSurface(): React.JSX.Element {
-  const month = useAtomValue(agendaMonthAtom)
-  return <AgendaView initialView={month ? 'month' : 'list'} />
+  const view = usePluginSetting(GOOGLE_INFO, 'agendaView')
+  return <AgendaView initialView={view === 'month' ? 'month' : 'list'} />
 }
 
 export const googleRenderer: RendererPlugin = {
@@ -32,13 +28,6 @@ export const googleRenderer: RendererPlugin = {
     { surface: 'agenda', order: 50, visible: googleConnectedAtom },
   ],
   settingsSections: [
-    {
-      id: 'agenda',
-      label: 'Agenda',
-      headings: [{ id: headingId('Calendar view'), title: 'Calendar view' }],
-      files: [],
-      Component: () => <AgendaSection />,
-    },
     {
       id: 'connections',
       label: 'Connections',

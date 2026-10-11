@@ -9,9 +9,10 @@
  * out.
  */
 import { useMemo } from 'react'
+import { isoWeek, localDate, monthGrid } from '@holi/shared'
 import { Button } from '@/primitives'
 import { cn } from '@/plugin-api'
-import { groupByDay, isoWeek, localDay, weeksOf } from './month-days'
+import { groupByDay } from './month-days'
 
 /** What the grid needs of an event; the agenda's own is a superset. */
 export interface GridEvent {
@@ -29,21 +30,13 @@ export interface GridEvent {
 /** Chips a cell shows before it says "+N more". */
 const MAX_CHIPS = 3
 
-const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
-const MONTHS_SHORT = [
-  'Jan',
-  'Feb',
-  'Mar',
-  'Apr',
-  'May',
-  'Jun',
-  'Jul',
-  'Aug',
-  'Sep',
-  'Oct',
-  'Nov',
-  'Dec',
-]
+/** Monday to Sunday, short, in the person's language: 1 January 2024 was a
+ *  Monday. */
+const WEEKDAYS = Array.from({ length: 7 }, (_, i) =>
+  new Date(2024, 0, 1 + i).toLocaleDateString(undefined, { weekday: 'short' }),
+)
+const monthShort = (date: string): string =>
+  new Date(`${date}T00:00:00`).toLocaleDateString(undefined, { month: 'short' })
 
 const timeOf = (iso: string): string =>
   new Date(iso).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
@@ -71,9 +64,9 @@ export function MonthView({
   /** "+N more" on a day. */
   onMore: (day: string) => void
 }): React.JSX.Element {
-  const weeks = useMemo(() => weeksOf(year, month), [year, month])
+  const weeks = useMemo(() => monthGrid(year, month), [year, month])
   const byDay = useMemo(() => groupByDay(events), [events])
-  const today = localDay(new Date())
+  const today = localDate(new Date())
   const now = Date.now()
 
   return (
@@ -138,15 +131,13 @@ export function MonthView({
                       className={cn(
                         'inline-flex h-6 min-w-6 items-center justify-center rounded-full px-1 text-sm tabular-nums',
                         isToday
-                          ? 'bg-destructive font-medium text-white'
+                          ? 'bg-primary font-medium text-primary-foreground'
                           : inMonth
                             ? 'text-foreground'
                             : 'text-muted-foreground/60',
                       )}
                     >
-                      {day === 1 && !isToday
-                        ? `${MONTHS_SHORT[Number(date.slice(5, 7)) - 1]} ${day}`
-                        : day}
+                      {day === 1 && !isToday ? `${monthShort(date)} ${day}` : day}
                     </span>
                   </span>
                   {list.slice(0, shown).map((event) => {

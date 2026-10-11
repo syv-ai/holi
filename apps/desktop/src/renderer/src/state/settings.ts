@@ -21,6 +21,8 @@ import {
   PLUGINS_LOCAL_FILE,
   SETTINGS_FILE,
   SETTINGS_LOCAL_FILE,
+  pluginSettingValue,
+  type PluginInfo,
   type ResolvedVaultSettings,
 } from '@holi/shared'
 import { trpc } from '../lib/trpc'
@@ -85,4 +87,13 @@ export function useSettingsFollowDisk(): void {
     }
     load({ force: true }).catch((e: unknown) => console.warn('[settings] re-read failed:', e))
   }, [files, load])
+}
+
+/** A plugin's own setting in the open vault (`PluginInfo.settings`): its
+ *  default until the vault's settings are read. */
+export function usePluginSetting(info: PluginInfo, key: string): unknown {
+  const cached = useAtomValue(vaultSettingsAtom)
+  const remote = useAtomValue(activeRemoteAtom)
+  const values = cached !== null && cached.remote === remote ? cached.settings.pluginValues : {}
+  return pluginSettingValue(values, info, key)
 }

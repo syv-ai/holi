@@ -99,3 +99,12 @@ function shiftMonth(date: string, delta: number): string {
   const m = ((target % 12) + 12) % 12
   return formatDate(Date.UTC(y, m, Math.min(day, lastDayOfMonth(y, m + 1))))
 }
+
+/** The ISO week number (1-53) of a `YYYY-MM-DD`: the week of its Thursday. */
+export function isoWeek(day: string): number {
+  const epoch = parseDate(day) ?? 0
+  const weekday = (new Date(epoch).getUTCDay() + 6) % WEEK
+  const thursday = epoch + (3 - weekday) * DAY_MS
+  const jan1 = Date.UTC(new Date(thursday).getUTCFullYear(), 0, 1)
+  return Math.floor((thursday - jan1) / DAY_MS / WEEK) + 1
+}

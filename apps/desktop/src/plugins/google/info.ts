@@ -24,6 +24,21 @@ export const GOOGLE_INFO: PluginInfo = {
       target: 'local',
     },
     {
+      key: 'agendaView',
+      label: 'Agenda opens as',
+      explanation:
+        'What the Agenda shows when it opens on this machine. The other view stays one press away inside it.',
+      type: {
+        kind: 'enum',
+        options: [
+          { value: 'list', label: 'List' },
+          { value: 'month', label: 'Month' },
+        ],
+      },
+      default: 'list',
+      target: 'local',
+    },
+    {
       key: 'imageSenders',
       label: 'Images from',
       explanation:

@@ -12,7 +12,7 @@
  * **A list and a detail pane**, because a row cannot hold an invitation: the
  * detail is mostly the description (the dial-in, the agenda, the links).
  */
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   CalendarDays,
   ChevronLeft,
@@ -54,6 +54,7 @@ import { TASKS_CREATE, tasksCap } from './tasks'
 import { MonthView } from './MonthView'
 import { NewEventDialog, type NewEventValues } from './NewEventDialog'
 import { eventDays, monthWindow, shiftMonth } from './month-days'
+import { localDate } from '@holi/shared'
 
 /** The agenda is a month to look at and create in, or the next week as a list
  *  with each invitation beside it. */
@@ -139,8 +140,7 @@ function codeOf(error: unknown): string | null {
 /** `2026-08-04` for a timed instant or an all-day date, in local time. */
 function dayKeyOf(event: CalendarEvent): string {
   if (event.allDay) return event.start.slice(0, 10)
-  const d = new Date(event.start)
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  return localDate(new Date(event.start))
 }
 
 function dayLabel(key: string): string {
@@ -219,9 +219,6 @@ export function AgendaView({
   initialView = 'list',
 }: {
   initialView?: View
-  /** What a surface is handed; the agenda needs neither. */
-  id?: string
-  visible?: boolean
 } = {}) {
   const [state, setState] = useState<State>({ kind: 'loading' })
   const [view, setView] = useState<View>(initialView)
@@ -256,7 +253,13 @@ export function AgendaView({
       .catch(() => setCalendars([]))
   }, [remote])
 
+  /** The newest load: an answer for a month already paged away from, or a
+   *  view already left, arrives late and is dropped. */
+  const latestLoad = useRef(0)
+
   const load = useCallback(() => {
+    const asked = ++latestLoad.current
+    const stillAsked = (): boolean => asked === latestLoad.current
     if (remote === null) {
       setState({ kind: 'disconnected' })
       return
@@ -271,7 +274,7 @@ export function AgendaView({
     void googleCap
       .agendaCached(remote, window)
       .then((events) => {
-        if (events !== null && events.length > 0) {
+        if (stillAsked() && events !== null && events.length > 0) {
           setState((current) => (current.kind === 'loading' ? { kind: 'ready', events } : current))
         }
       })
@@ -279,8 +282,11 @@ export function AgendaView({
 
     void googleCap
       .agenda(remote, window)
-      .then((events) => setState({ kind: 'ready', events }))
+      .then((events) => {
+        if (stillAsked()) setState({ kind: 'ready', events })
+      })
       .catch((err: unknown) => {
+        if (!stillAsked()) return
         const message = err instanceof Error ? err.message : 'Could not load your agenda.'
         // A missing/expired connection is not an error to apologise for — it is
         // a state with an obvious next action, so it gets its own surface.
@@ -339,11 +345,11 @@ export function AgendaView({
   /** Make the event, then read the month again so it is on the grid. */
   const createEvent = async (values: NewEventValues): Promise<void> => {
     if (remote === null) throw new Error('No vault is open.')
-    await googleCap.createEvent(remote, {
+    await googleCap.schedule(remote, {
       title: values.title,
       start: values.start,
       end: values.end,
-      ...(values.allDay ? { allDay: true } : {}),
+      ...(values.allDay ? { 'all-day': true } : {}),
       ...(values.location === '' ? {} : { location: values.location }),
     })
     load()
