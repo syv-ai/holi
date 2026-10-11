@@ -175,6 +175,9 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   person writes the file by hand; nothing in Holi writes it, so a key never passes through an
   app's UI. The network is open, so a declared secret is the app's to send where it likes: the
   declaration is what the person reads before they set the value.
+- A key the whole vault shares is shared outside it: each person sets it in their own `.env`.
+  Nothing commits a secret, because git history keeps it for good and GitHub's push protection
+  refuses a push carrying a known key format, which would stall the vault's sync.
 - The frame is `sandbox="allow-scripts"` and never also `allow-same-origin`. Both together let the
   frame drop its own sandbox. The opaque origin is also why `localStorage` throws.
 - `AppFrame` identifies a message by `event.source === contentWindow`, never by origin (it is the

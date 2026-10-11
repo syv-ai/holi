@@ -231,6 +231,11 @@ app gets only the names it declares. When `holi.env` returns null, the app
 says which name to set and where. Do not write the `.env` for them, and do not
 ask them to paste a key into the app.
 
+A key the whole vault shares works the same way: each person puts it in their
+own `.env`, and the team passes it around the way it passes any key (a password
+manager). Never commit one to share it, in any file: git keeps it in the
+vault's history for good, and GitHub may refuse the push that carries it.
+
 ## Keeping data
 
 An app keeps records in **collections** it declares in `app.yaml`. A record is a
