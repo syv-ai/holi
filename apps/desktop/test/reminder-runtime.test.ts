@@ -28,6 +28,7 @@ const firingVault = (): VaultTasks => ({
       title: 'a task',
       status: 'todo',
       tags: [],
+      assignees: [],
       description: '',
       due: '2026-07-29',
       reminder: '2026-07-28T09:00',

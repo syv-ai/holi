@@ -10,6 +10,7 @@
  * "the overdue p1s" is an ordinary tag query. The fourth icon is quick add,
  * which is not a filter.
  */
+import { hasLogin, sameLogin } from '@holi/shared'
 import { useAtom, useAtomValue } from 'jotai'
 import { AtSign, Eye, EyeOff, Folder, ListFilter, Plus, Search, X } from 'lucide-react'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
@@ -27,6 +28,7 @@ import {
   settle,
 } from '@/primitives'
 import { nowAtom } from '@/state/clock'
+import { peopleList } from '@/state/members'
 import { sessionAtom } from '@/state/session'
 import {
   ROOT_LANE,
@@ -36,8 +38,8 @@ import {
   laneOrder,
   quickAddAtom,
   tasksAtom,
+  togglePerson,
 } from '@/state/tasks'
-import type { Task } from '@holi/shared'
 import { QuickAdd } from './QuickAdd'
 
 /** Labels are drawn bare, as on a card; a real tag carries its `#`. */
@@ -47,20 +49,6 @@ const folderName = (folder: string) => (folder === ROOT_LANE ? 'Vault root' : fo
 const personName = (login: string) => `@${login}`
 
 type FilterList = 'folders' | 'people' | 'tags'
-
-/** Everyone some task is assigned to, once each whatever the case, the
- *  signed-in person first. */
-function assignedPeople(tasks: Iterable<Task>, me: string | null): string[] {
-  const byKey = new Map<string, string>()
-  for (const t of tasks)
-    for (const login of t.assignees ?? []) {
-      if (!byKey.has(login.toLowerCase())) byKey.set(login.toLowerCase(), login)
-    }
-  const mine = me?.toLowerCase()
-  return [...byKey.values()].sort((a, b) =>
-    a.toLowerCase() === mine ? -1 : b.toLowerCase() === mine ? 1 : a.localeCompare(b),
-  )
-}
 
 /**
  * What the filter is narrowing by, floating just above the dock while it
@@ -136,7 +124,11 @@ export function BoardDock(): React.JSX.Element {
   const lanes = [...tasks.values()].map(laneOf)
   const folders = laneOrder(lanes).filter((l) => l !== ROOT_LANE || lanes.includes(ROOT_LANE))
   const me = useAtomValue(sessionAtom)?.login ?? null
-  const people = assignedPeople(tasks.values(), me)
+  // Everyone some task is assigned to, the signed-in person first.
+  const people = peopleList(
+    [...tasks.values()].flatMap((t) => t.assignees),
+    me,
+  )
   const narrowing = [
     ...filter.folders.map(folderName),
     ...filter.people.map(personName),
@@ -180,7 +172,7 @@ export function BoardDock(): React.JSX.Element {
    *  when some do), the people tasks are assigned to (when any are), then the
    *  tags. A folder or a person matches any chosen; a tag must be on the task. */
   const filterPanel = (): ReactNode => {
-    const toggle = (kind: FilterList, value: string) =>
+    const toggle = (kind: 'folders' | 'tags', value: string) =>
       setFilter((f) => ({
         ...f,
         [kind]: f[kind].includes(value) ? f[kind].filter((v) => v !== value) : [...f[kind], value],
@@ -208,12 +200,10 @@ export function BoardDock(): React.JSX.Element {
           <MorphRow
             key={login}
             icon={AtSign}
-            label={
-              me !== null && login.toLowerCase() === me.toLowerCase() ? `${login} (you)` : login
-            }
-            on={filter.people.includes(login)}
+            label={me !== null && sameLogin(login, me) ? `${login} (you)` : login}
+            on={hasLogin(filter.people, login)}
             data-filter-person={login}
-            onClick={() => toggle('people', login)}
+            onClick={() => setFilter((f) => togglePerson(f, login))}
           />
         ))}
         {heading('Tags')}

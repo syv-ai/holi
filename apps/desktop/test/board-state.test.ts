@@ -1,4 +1,5 @@
 import type { Task } from '@holi/shared'
+import { hasLogin } from '@holi/shared'
 import { describe, expect, it } from 'vitest'
 import {
   ROOT_LANE,
@@ -9,6 +10,7 @@ import {
   laneOrder,
   matchesFilter,
   taskCreateFolders,
+  togglePerson,
 } from '../src/renderer/src/state/tasks'
 
 const TODAY = '2026-07-14'
@@ -18,6 +20,7 @@ const task = (over: Partial<Task> = {}): Task => ({
   title: 'Review the Q2 doc',
   status: 'todo',
   tags: [],
+  assignees: [],
   description: '',
   ...over,
 })
@@ -125,6 +128,7 @@ describe('filter (three controls, and one vocabulary)', () => {
   it('the done toggle hides done tasks and nothing else', () => {
     expect(matchesFilter(task({ status: 'done' }), { ...F, hideDone: true }, TODAY)).toBe(false)
     expect(matchesFilter(task({ status: 'doing' }), { ...F, hideDone: true }, TODAY)).toBe(true)
+    expect(matchesFilter(task({ status: 'done' }), F, TODAY)).toBe(true)
   })
 
   it('narrows to tasks assigned to any chosen person, whatever the case', () => {
@@ -135,7 +139,14 @@ describe('filter (three controls, and one vocabulary)', () => {
     expect(matchesFilter(mine, filter, TODAY)).toBe(true)
     expect(matchesFilter(theirs, filter, TODAY)).toBe(false)
     expect(matchesFilter(nobody, filter, TODAY)).toBe(false)
-    expect(matchesFilter(task({ status: 'done' }), F, TODAY)).toBe(true)
+  })
+
+  it('has one switch per person, however their name was typed', () => {
+    // A card's `@Ada` chooses them; the panel lists them as `ada` (from
+    // another task) and shows them on, and pressing it turns them off.
+    const chosen = togglePerson(F, 'Ada')
+    expect(hasLogin(chosen.people, 'ada')).toBe(true)
+    expect(togglePerson(chosen, 'ada').people).toEqual([])
   })
 
   it('an empty filter matches everything', () => {

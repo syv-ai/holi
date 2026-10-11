@@ -2,9 +2,13 @@ import { describe, expect, it } from 'vitest'
 import {
   TaskFileError,
   assigneesInTitle,
+  cleanLogins,
+  hasLogin,
   isAssignedTo,
   isTaskFilePath,
   remindsViewer,
+  sameLogin,
+  toggleLogin,
   parseTaskFile,
   parseTaskPatch,
   serializeTaskFile,
@@ -99,6 +103,7 @@ describe('parseTaskFile', () => {
       due: '2026-07-20',
       priority: 'high',
       tags: ['finance', 'q2'],
+      assignees: [],
       reminder: '1d',
       recurrence: { frequency: 'weekly', interval: 2, weekdays: ['mon', 'wed'] },
       description: '# Review the Q2 doc\n\nBody text with [[a.md]].',
@@ -195,6 +200,7 @@ describe('serializeTaskFile', () => {
     title: 'Review',
     status: 'todo' as const,
     tags: [] as string[],
+    assignees: [] as string[],
     description: '',
   }
 
@@ -378,9 +384,9 @@ describe('assignees', () => {
     expect(parse('---\nassignees: "@mads"\n---\n# A\n').assignees).toEqual(['mads'])
   })
 
-  it('is absent when no one is named, and refuses what is not text', () => {
-    expect(parse('---\nassignees: []\n---\n# A\n').assignees).toBeUndefined()
-    expect(parse('---\nstatus: todo\n---\n# A\n').assignees).toBeUndefined()
+  it('is an empty list when no one is named, as tags are, and refuses what is not text', () => {
+    expect(parse('---\nassignees: []\n---\n# A\n').assignees).toEqual([])
+    expect(parse('---\nstatus: todo\n---\n# A\n').assignees).toEqual([])
     expect(() => parse('---\nassignees: [1]\n---\n# A\n')).toThrow(TaskFileError)
   })
 
@@ -405,24 +411,42 @@ describe('assignees', () => {
     expect(serializeTaskFile(parse(text))).toBe(text)
   })
 
-  it('can be set and cleared by a patch', () => {
-    expect(parseTaskPatch({ assignees: ['@a', 'b'] })).toEqual({ assignees: ['a', 'b'] })
-    expect(parseTaskPatch({ assignees: null })).toEqual({ assignees: undefined })
+  it('are set by a patch, and cleared by an empty one, as tags are', () => {
+    expect(parseTaskPatch({ assignees: ['@a', 'b', 'A'] })).toEqual({ assignees: ['a', 'b'] })
+    expect(parseTaskPatch({ assignees: [] })).toEqual({ assignees: [] })
+    expect(() => parseTaskPatch({ assignees: null })).toThrow(TaskFileError)
   })
 
   it('matches a login whatever its case', () => {
     expect(isAssignedTo({ assignees: ['MHenrichsen'] }, 'mhenrichsen')).toBe(true)
     expect(isAssignedTo({ assignees: ['a'] }, 'b')).toBe(false)
-    expect(isAssignedTo({}, 'a')).toBe(false)
+    expect(isAssignedTo({ assignees: [] }, 'a')).toBe(false)
     expect(isAssignedTo({ assignees: ['a'] }, null)).toBe(false)
   })
 
   it("reminds everyone of a task that is no one's, and only its assignees otherwise", () => {
-    expect(remindsViewer({}, 'anyone')).toBe(true)
-    expect(remindsViewer({}, null)).toBe(true)
+    expect(remindsViewer({ assignees: [] }, 'anyone')).toBe(true)
+    expect(remindsViewer({ assignees: [] }, null)).toBe(true)
     expect(remindsViewer({ assignees: ['a'] }, 'a')).toBe(true)
     expect(remindsViewer({ assignees: ['a'] }, 'b')).toBe(false)
     expect(remindsViewer({ assignees: ['a'] }, null)).toBe(false)
+  })
+})
+
+describe('one rule for a login', () => {
+  it('is the same person whatever the case', () => {
+    expect(sameLogin('Ada', 'ada')).toBe(true)
+    expect(sameLogin('ada', 'adam')).toBe(false)
+    expect(hasLogin(['Ada'], 'ADA')).toBe(true)
+  })
+
+  it('makes a clean list: no @, no blanks, each person once in the spelling given first', () => {
+    expect(cleanLogins(['Ada', ' @ada ', '', '@', 'nik', 'NIK'])).toEqual(['Ada', 'nik'])
+  })
+
+  it('toggles a person by any spelling of their name', () => {
+    expect(toggleLogin(['Ada', 'nik'], 'ada')).toEqual(['nik'])
+    expect(toggleLogin(['nik'], 'Ada')).toEqual(['nik', 'Ada'])
   })
 })
 

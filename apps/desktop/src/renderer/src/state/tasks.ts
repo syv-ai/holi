@@ -16,6 +16,7 @@ import {
   parseWikiLinks,
   snapshotTasks,
   taskArea,
+  toggleLogin,
   virtualLabels,
 } from '@holi/shared'
 import { atom } from 'jotai'
@@ -132,7 +133,7 @@ export type Filter = {
   tags: string[]
   /** Lanes (a task's folder, `ROOT_LANE` for the vault root): any of them. */
   folders: string[]
-  /** GitHub logins: a task assigned to any of them. */
+  /** GitHub logins, each person once: a task assigned to any of them. */
   people: string[]
   hideDone: boolean
 }
@@ -145,6 +146,12 @@ export const EMPTY_FILTER: Filter = {
   hideDone: false,
 }
 export const filterAtom = atom<Filter>(EMPTY_FILTER)
+
+/** The filter with a person chosen, or unchosen when they already are: a
+ *  card's `@Ada` and the panel's `ada` are one switch, as they are one person. */
+export function togglePerson(filter: Filter, login: string): Filter {
+  return { ...filter, people: toggleLogin(filter.people, login) }
+}
 
 /** Lane groups folded shut on the board, by cell key (`status:lane`): one
  *  column's lane folds without the others. A view convenience, so memory only. */

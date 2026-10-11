@@ -13,7 +13,6 @@ import {
   ListTodo,
   Settings2,
   Table,
-  AtSign,
   type IconNode,
 } from 'lucide'
 
@@ -26,5 +25,4 @@ export const GLYPHS: Record<string, IconNode> = {
   'holi-list-todo': ListTodo,
   'holi-table': Table,
   'holi-setting': Settings2,
-  'holi-person': AtSign,
 }

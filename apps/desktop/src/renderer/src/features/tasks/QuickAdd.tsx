@@ -24,10 +24,13 @@
 import type { Priority } from '@holi/shared'
 import {
   assigneesInTitle,
+  cleanLogins,
+  hasLogin,
   normalizeLogin,
   snapshotTasks,
   taskFilePath,
   taskSlug,
+  toggleLogin,
 } from '@holi/shared'
 import { completionStatus } from '@codemirror/autocomplete'
 import { insertNewlineAndIndent } from '@codemirror/commands'
@@ -240,12 +243,7 @@ export function QuickAdd({
   const { description } = written
   // An `@login` alone is no title: keep the text as typed then.
   const title = mentioned.title || written.title
-  const assignees = [
-    ...draft.assignees,
-    ...mentioned.assignees.filter(
-      (a) => !draft.assignees.some((d) => d.toLowerCase() === a.toLowerCase()),
-    ),
-  ]
+  const assignees = cleanLogins([...draft.assignees, ...mentioned.assignees])
 
   /** The editor owns the text; setting it from here goes through the view,
    *  so the undo history keeps it. */
@@ -322,17 +320,10 @@ export function QuickAdd({
       tags: draft.tags.includes(tag) ? draft.tags.filter((t) => t !== tag) : [...draft.tags, tag],
     })
 
-  const togglePerson = (login: string) =>
-    set({
-      assignees: draft.assignees.includes(login)
-        ? draft.assignees.filter((a) => a !== login)
-        : [...draft.assignees, login],
-    })
-
   /** People's rows: the vault's members matching what was typed, then the
    *  typed login as a new one, for someone GitHub has not listed yet. */
   const personChoices = (): Choice[] => {
-    const known = [...members, ...draft.assignees.filter((a) => !members.includes(a))]
+    const known = cleanLogins([...members, ...draft.assignees])
     const name = normalizeLogin(typed)
     const needle = name.toLowerCase()
     const rows: Choice[] = known
@@ -341,10 +332,10 @@ export function QuickAdd({
         key: login,
         icon: AtSign,
         label: login,
-        on: draft.assignees.includes(login),
-        pick: () => togglePerson(login),
+        on: hasLogin(draft.assignees, login),
+        pick: () => set({ assignees: toggleLogin(draft.assignees, login) }),
       }))
-    if (name && !known.some((k) => k.toLowerCase() === needle))
+    if (name && !hasLogin(known, name))
       rows.push({
         key: `new:${name}`,
         icon: AtSign,
