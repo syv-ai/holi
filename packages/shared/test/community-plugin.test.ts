@@ -4,6 +4,9 @@ import {
   opensPath,
   parsePluginManifest,
   parsePluginPin,
+  parseReleaseTag,
+  pluginManifestPath,
+  releaseTag,
   pluginPinPath,
   servedFile,
 } from '../src/community-plugin'
@@ -74,19 +77,48 @@ describe('parsePluginManifest', () => {
   })
 })
 
+describe('several plugins in one repository', () => {
+  it('finds a plugin at the root or in the folder named after it', () => {
+    expect(pluginManifestPath('')).toBe('holi-plugin.json')
+    expect(pluginManifestPath('notes')).toBe('notes/holi-plugin.json')
+    expect(parsePluginManifest(prezzi, 'prezzi').ok).toBe(true)
+    expect(parsePluginManifest(prezzi, 'notes')).toEqual({
+      ok: false,
+      problems: ['a plugin in the folder notes/ must have the id notes'],
+    })
+  })
+
+  it('gives each plugin its own release tags, and reads them back', () => {
+    expect(releaseTag('', '0.1.0')).toBe('v0.1.0')
+    expect(releaseTag('notes', '0.2.0')).toBe('notes-v0.2.0')
+    expect(parseReleaseTag('v1.0.0-rc.1')).toEqual({ path: '', version: '1.0.0-rc.1' })
+    expect(parseReleaseTag('tasks-extra-v0.2.0')).toEqual({ path: 'tasks-extra', version: '0.2.0' })
+    for (const junk of ['1.0.0', 'notes-1.0.0', 'Notes-v1.0.0', 'v1.0', 'release-candidate'])
+      expect(parseReleaseTag(junk)).toBeNull()
+  })
+})
+
 describe('parsePluginPin', () => {
   const commit = 'a'.repeat(40)
 
   it('is the manifest plus where it came from', () => {
-    expect(parsePluginPin({ ...prezzi, repo: 'syv-ai/prezzi', commit })).toEqual({
+    expect(parsePluginPin({ ...prezzi, repo: 'syv-ai/prezzi', path: '', commit })).toEqual({
       ok: true,
-      value: { ...prezzi, repo: 'syv-ai/prezzi', commit },
+      value: { ...prezzi, repo: 'syv-ai/prezzi', path: '', commit },
     })
   })
 
+  it('names the folder it came from, which is its id', () => {
+    const pin = { ...prezzi, repo: 'syv-ai/holi-plugins', commit }
+    expect(parsePluginPin({ ...pin, path: 'prezzi' }).ok).toBe(true)
+    expect(parsePluginPin({ ...pin, path: 'notes' }).ok).toBe(false)
+    expect(parsePluginPin(pin).ok).toBe(false)
+  })
+
   it('needs a full commit and an owner/repo', () => {
-    expect(parsePluginPin({ ...prezzi, repo: 'syv-ai/prezzi', commit: 'abc123' }).ok).toBe(false)
-    expect(parsePluginPin({ ...prezzi, repo: 'https://github.com/syv-ai/prezzi', commit }).ok).toBe(
+    const at = { ...prezzi, path: '' }
+    expect(parsePluginPin({ ...at, repo: 'syv-ai/prezzi', commit: 'abc123' }).ok).toBe(false)
+    expect(parsePluginPin({ ...at, repo: 'https://github.com/syv-ai/prezzi', commit }).ok).toBe(
       false,
     )
   })

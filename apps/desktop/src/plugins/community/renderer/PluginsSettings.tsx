@@ -106,6 +106,7 @@ export function PluginsSettings({ remote }: { remote: string }): React.JSX.Eleme
                   void act(() =>
                     installAndAsk(flow, {
                       repo: row.pin!.repo,
+                      path: row.pin!.path,
                       version: row.pin!.version,
                       id: row.id,
                     }),
@@ -239,7 +240,7 @@ function AddPlugin({
     <>
       <SettingsHeading
         title="Add a plugin"
-        blurb="A plugin is a GitHub repository with the holi-plugin topic. Search by name, or type owner/repo."
+        blurb="Plugins live in GitHub repositories with the holi-plugin topic, one at the root or several in folders. Search by name, or type owner/repo."
       />
       <div className="mt-2 flex items-center gap-2">
         <div className="min-w-0 flex-1">
@@ -247,7 +248,7 @@ function AddPlugin({
             remote={flow.remote}
             disabled={busy}
             onChoose={(c) =>
-              void act(() => installAndAsk(flow, { repo: c.repo, version: c.latest }))
+              void act(() => installAndAsk(flow, { repo: c.repo, path: c.path, version: c.latest }))
             }
           />
         </div>

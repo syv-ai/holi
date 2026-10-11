@@ -5,7 +5,7 @@
  */
 import { execFileSync, spawnSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import net from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -14,6 +14,7 @@ import type { CapabilityContext } from '../../../main/plugin-api'
 import { communityCapabilities, listPlugins } from '../main/capabilities'
 import { createConsentStore } from '../main/consent'
 import { listVersions } from '../main/fetch'
+import { describeRepo } from '../main/search'
 import { createInstallStore } from '../main/store'
 import { createSupervisor, type ServerState } from '../main/supervisor'
 
@@ -132,7 +133,8 @@ describe('installing', () => {
     git(repoDir, 'tag', 'v0.10.0')
     git(repoDir, 'tag', 'v0.2.0-beta.1')
     git(repoDir, 'tag', 'not-a-version')
-    expect(await listVersions('syv-ai/prezzi', { url: () => repoDir, token: () => null })).toEqual([
+    const access = { url: () => repoDir, token: () => null }
+    expect(await listVersions('syv-ai/prezzi', '', access)).toEqual([
       '0.10.0',
       '0.2.0-beta.1',
       '0.1.0',
@@ -142,7 +144,11 @@ describe('installing', () => {
   test('nothing runs before consent, and consent is to one commit', async () => {
     const commit = await makeRepo()
     const { call } = setup()
-    const row = await call('community.install', { repo: 'syv-ai/prezzi', version: '0.1.0' })
+    const row = await call('community.install', {
+      repo: 'syv-ai/prezzi',
+      path: '',
+      version: '0.1.0',
+    })
     expect(row.status).toBe('needs-consent')
     expect(row.install).toMatchObject({ kind: 'release', commit })
     await expect(call('community.setup', { id: 'prezzi' })).rejects.toThrow(/agreed/)
@@ -156,7 +162,7 @@ describe('installing', () => {
   test('setup runs in the plugin folder and streams its output', async () => {
     const commit = await makeRepo()
     const { call, deps, events } = setup()
-    await call('community.install', { repo: 'syv-ai/prezzi', version: '0.1.0' })
+    await call('community.install', { repo: 'syv-ai/prezzi', path: '', version: '0.1.0' })
     await call('community.consent', { id: 'prezzi', commit })
     expect(await call('community.setup', { id: 'prezzi' })).toBe(true)
     const install = (await deps.store.get('prezzi'))!
@@ -184,9 +190,9 @@ describe('installing', () => {
     )
     git(repoDir, 'tag', 'v0.2.0')
     const { call } = setup()
-    await call('community.install', { repo: 'syv-ai/prezzi', version: '0.1.0' })
+    await call('community.install', { repo: 'syv-ai/prezzi', path: '', version: '0.1.0' })
     expect(await call('community.updates', {})).toEqual({ prezzi: '0.2.0' })
-    await call('community.install', { repo: 'syv-ai/prezzi', version: '0.2.0' })
+    await call('community.install', { repo: 'syv-ai/prezzi', path: '', version: '0.2.0' })
     expect(await call('community.updates', {})).toEqual({})
   })
 
@@ -201,19 +207,19 @@ describe('installing', () => {
     git(repoDir, 'tag', 'v0.2.0')
     const { call } = setup()
     await expect(
-      call('community.install', { repo: 'syv-ai/prezzi', version: '0.2.0' }),
+      call('community.install', { repo: 'syv-ai/prezzi', path: '', version: '0.2.0' }),
     ).rejects.toThrow(/built into Holi/)
   })
 
   test('a pin offers the same commit to a machine without it', async () => {
     const commit = await makeRepo()
     const { call } = setup()
-    await call('community.install', { repo: 'syv-ai/prezzi', version: '0.1.0' })
+    await call('community.install', { repo: 'syv-ai/prezzi', path: '', version: '0.1.0' })
     await call('community.pin', { id: 'prezzi' })
     const pin = JSON.parse(
       await readFile(join(vault, '.holi/plugins/prezzi/manifest.json'), 'utf8'),
     )
-    expect(pin).toMatchObject({ id: 'prezzi', repo: 'syv-ai/prezzi', commit })
+    expect(pin).toMatchObject({ id: 'prezzi', repo: 'syv-ai/prezzi', path: '', commit })
     expect(await readFile(join(vault, '.gitignore'), 'utf8')).toContain('slides-export.pdf')
 
     await call('community.remove', { id: 'prezzi' })
@@ -249,7 +255,7 @@ describe('skills', () => {
     git(repoDir, 'tag', 'v0.2.0')
     void commit
     const { call } = setup()
-    await call('community.install', { repo: 'syv-ai/prezzi', version: '0.2.0' })
+    await call('community.install', { repo: 'syv-ai/prezzi', path: '', version: '0.2.0' })
     await call('community.pin', { id: 'prezzi' })
     expect(await readFile(join(vault, '.claude/skills/prezzi/references/cover.md'), 'utf8')).toBe(
       '# cover\n',
@@ -264,8 +270,154 @@ describe('skills', () => {
     git(repoDir, 'add', '-A')
     git(repoDir, '-c', 'user.name=Ada Holm', '-c', 'user.email=ada@syv.ai', 'commit', '-qm', 'out')
     git(repoDir, 'tag', 'v0.3.0')
-    await call('community.install', { repo: 'syv-ai/prezzi', version: '0.3.0' })
+    await call('community.install', { repo: 'syv-ai/prezzi', path: '', version: '0.3.0' })
     await expect(call('community.pin', { id: 'prezzi' })).rejects.toThrow(/outside the plugin/)
+  })
+})
+
+const commitAll = (message: string) => {
+  git(repoDir, 'add', '-A')
+  git(repoDir, '-c', 'user.name=Ada Holm', '-c', 'user.email=ada@syv.ai', 'commit', '-qm', message)
+}
+
+/** A repository of two plugins, `notes/` and `board/`, each shipping an app
+ *  and released on its own: notes at 0.1.0 and 0.2.0, board at 0.1.0. */
+async function makePluginsRepo() {
+  repoDir = join(dir, 'holi-plugins')
+  for (const [id, app] of [
+    ['notes', 'Notes.app'],
+    ['board', 'Board.app'],
+  ] as const) {
+    await mkdir(join(repoDir, id, app), { recursive: true })
+    await writeFile(join(repoDir, id, app, 'index.html'), `<p>${id}</p>`)
+    await writeFile(join(repoDir, id, app, 'app.yaml'), `name: ${id}\n`)
+    await writeFile(
+      join(repoDir, id, 'setup.cjs'),
+      "require('node:fs').writeFileSync('ready', 'yes')",
+    )
+    await writeFile(
+      join(repoDir, id, 'holi-plugin.json'),
+      JSON.stringify({
+        id,
+        name: id,
+        version: '0.1.0',
+        apps: [app],
+        setup: [process.execPath, 'setup.cjs'],
+      }),
+    )
+  }
+  git(repoDir, 'init', '-q', '-b', 'main')
+  commitAll('plugins')
+  git(repoDir, 'tag', 'notes-v0.1.0')
+  git(repoDir, 'tag', 'board-v0.1.0')
+  const manifest = JSON.parse(await readFile(join(repoDir, 'notes/holi-plugin.json'), 'utf8'))
+  await writeFile(
+    join(repoDir, 'notes/holi-plugin.json'),
+    JSON.stringify({ ...manifest, version: '0.2.0' }),
+  )
+  commitAll('notes 0.2.0')
+  git(repoDir, 'tag', 'notes-v0.2.0')
+}
+
+describe('several plugins in one repository', () => {
+  const repo = 'syv-ai/holi-plugins'
+
+  test('each plugin has its own releases', async () => {
+    await makePluginsRepo()
+    const access = { url: () => repoDir, token: () => null }
+    expect(await listVersions(repo, 'notes', access)).toEqual(['0.2.0', '0.1.0'])
+    expect(await listVersions(repo, 'board', access)).toEqual(['0.1.0'])
+    expect(await listVersions(repo, '', access)).toEqual([])
+  })
+
+  test('installs, sets up and updates each in its own folder, and pins where it came from', async () => {
+    await makePluginsRepo()
+    const { call, deps } = setup()
+    for (const id of ['notes', 'board']) {
+      const row = await call('community.install', { repo, path: id, version: '0.1.0' })
+      await call('community.consent', { id, commit: (row.install as { commit: string }).commit })
+      await call('community.setup', { id })
+      const install = (await deps.store.get(id))!
+      expect(deps.store.codeDir(install).endsWith(join(id))).toBe(true)
+      expect(existsSync(join(deps.store.codeDir(install), 'ready'))).toBe(true)
+    }
+    // Notes' newer tag is no update for Board.
+    expect(await call('community.updates', { fresh: true })).toEqual({ notes: '0.2.0' })
+
+    await call('community.pin', { id: 'board' })
+    const pin = JSON.parse(await readFile(join(vault, '.holi/plugins/board/manifest.json'), 'utf8'))
+    expect(pin).toMatchObject({ id: 'board', repo, path: 'board' })
+    expect(await readFile(join(vault, 'Board.app/index.html'), 'utf8')).toBe('<p>board</p>')
+    const [row] = (await call('community.list')).filter((r) => r.id === 'board')
+    expect(row?.pin).toMatchObject({ repo, path: 'board' })
+  })
+
+  test("a plugin's folder is its boundary: a link to a sibling plugin is refused", async () => {
+    await makePluginsRepo()
+    await mkdir(join(repoDir, 'notes/skills/notes'), { recursive: true })
+    await writeFile(join(repoDir, 'notes/skills/notes/SKILL.md'), '---\nname: notes\n---\n')
+    await symlink('../../../board', join(repoDir, 'notes/skills/notes/board'))
+    const manifest = JSON.parse(await readFile(join(repoDir, 'notes/holi-plugin.json'), 'utf8'))
+    await writeFile(
+      join(repoDir, 'notes/holi-plugin.json'),
+      JSON.stringify({ ...manifest, version: '0.3.0', skills: ['skills/notes'] }),
+    )
+    commitAll('notes skill')
+    git(repoDir, 'tag', 'notes-v0.3.0')
+    const { call } = setup()
+    await call('community.install', { repo, path: 'notes', version: '0.3.0' })
+    await expect(call('community.pin', { id: 'notes' })).rejects.toThrow(/outside the plugin/)
+  })
+
+  test('a folder whose manifest names another plugin is refused', async () => {
+    await makePluginsRepo()
+    await rename(join(repoDir, 'board'), join(repoDir, 'tasks'))
+    commitAll('board moved')
+    git(repoDir, 'tag', 'tasks-v0.1.0')
+    const { call } = setup()
+    await expect(
+      call('community.install', { repo, path: 'tasks', version: '0.1.0' }),
+    ).rejects.toThrow(/must have the id tasks/)
+  })
+
+  test('search lists each plugin in the repository with its own newest release', async () => {
+    const files: Record<string, unknown> = {
+      [`/repos/${repo}/contents`]: [
+        { name: 'notes', type: 'dir' },
+        { name: 'board', type: 'dir' },
+        { name: 'docs', type: 'dir' },
+        { name: 'README.md', type: 'file' },
+      ],
+      [`/repos/${repo}/contents/notes/holi-plugin.json`]: {
+        id: 'notes',
+        name: 'Notes',
+        version: '0.2.0',
+        apps: ['Notes.app'],
+      },
+      [`/repos/${repo}/contents/board/holi-plugin.json`]: {
+        id: 'board',
+        name: 'Board',
+        version: '0.1.0',
+        apps: ['Board.app'],
+      },
+      [`/repos/${repo}/tags?per_page=100`]: [
+        { name: 'notes-v0.1.0' },
+        { name: 'notes-v0.2.0' },
+        { name: 'v9.9.9' },
+      ],
+    }
+    const get = async (path: string) =>
+      path in files
+        ? new Response(JSON.stringify(files[path]), { status: 200 })
+        : new Response('', { status: 404 })
+    expect(await describeRepo(repo, '', get)).toEqual([
+      expect.objectContaining({ path: 'notes', latest: '0.2.0', problem: null }),
+      expect.objectContaining({
+        path: 'board',
+        latest: null,
+        problem: 'no release yet: tag board-v0.1.0 to publish it',
+      }),
+    ])
   })
 })
 
@@ -297,7 +449,11 @@ describe('apps', () => {
       join(vault, '.holi/settings/plugins.yaml'),
       'plugins:\n  community: true\n  notes: true\n',
     )
-    const row = await call('community.install', { repo: 'syv-ai/notes', version: '1.0.0' })
+    const row = await call('community.install', {
+      repo: 'syv-ai/notes',
+      path: '',
+      version: '1.0.0',
+    })
     expect(row).toMatchObject({ serve: null, apps: ['apps/Notes.app'], status: 'needs-consent' })
     await call('community.consent', {
       id: 'notes',
@@ -318,7 +474,7 @@ describe('serving', () => {
     const commit = await makeRepo(serveArgs)
     const s = setup(firstPort)
     await turnOn()
-    await s.call('community.install', { repo: 'syv-ai/prezzi', version: '0.1.0' })
+    await s.call('community.install', { repo: 'syv-ai/prezzi', path: '', version: '0.1.0' })
     await s.call('community.consent', { id: 'prezzi', commit })
     await s.call('community.setup', { id: 'prezzi' })
     return s
@@ -439,7 +595,11 @@ describe('serving', () => {
     await writeFile(join(vault, 'prezzis/q4.deck/slides.md'), '# Q4\n')
     const s = setup(4060)
     await turnOn()
-    const row = await s.call('community.install', { repo: 'syv-ai/prezzi', version: '0.2.0' })
+    const row = await s.call('community.install', {
+      repo: 'syv-ai/prezzi',
+      path: '',
+      version: '0.2.0',
+    })
     await s.call('community.consent', {
       id: 'prezzi',
       commit: (row.install as { commit: string }).commit,

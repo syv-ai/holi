@@ -10,6 +10,7 @@ import { readdir, readFile, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
   isCommunityPluginId,
+  isPluginPath,
   isRepoName,
   servedFile,
   parsePluginPin,
@@ -32,7 +33,15 @@ import {
   type CapabilityTable,
 } from '../../../main/plugin-api'
 import type { ConsentStore } from './consent'
-import { fetchRelease, listVersions, newestFirst, readManifest, type GitAccess } from './fetch'
+import {
+  fetchRelease,
+  listReleases,
+  listVersions,
+  newestFirst,
+  readManifest,
+  versionsOf,
+  type GitAccess,
+} from './fetch'
 import { searchPlugins } from './search'
 import { seedApps, writeSkills } from './skills'
 import { expandCommand, pluginEnv, runSetup } from './setup'
@@ -66,9 +75,10 @@ export interface PluginRow {
   on: boolean
   /** On, and able to serve here: its files open in its tab. */
   running: boolean
-  pin: { repo: string; version: string; commit: string } | null
+  /** `path` is where in `repo` the plugin is: `''` for its root. */
+  pin: { repo: string; path: string; version: string; commit: string } | null
   install:
-    | { kind: 'release'; repo: string; version: string; commit: string }
+    | { kind: 'release'; repo: string; path: string; version: string; commit: string }
     | { kind: 'dev'; folder: string; version: string }
     | null
   /** What it will run, for the consent dialog. */
@@ -149,7 +159,10 @@ function rowOf(
     status,
     on,
     running: on && status === 'ready',
-    pin: pin === null ? null : { repo: pin.repo, version: pin.version, commit: pin.commit },
+    pin:
+      pin === null
+        ? null
+        : { repo: pin.repo, path: pin.path, version: pin.version, commit: pin.commit },
     install:
       install === null
         ? null
@@ -157,6 +170,7 @@ function rowOf(
           ? {
               kind: 'release',
               repo: install.source.repo,
+              path: install.source.path,
               version: install.manifest.version,
               commit: install.source.commit,
             }
@@ -194,12 +208,30 @@ const pathParam = (raw: unknown): { path: string } => ({
 /** The server key: one per vault, plugin and file. */
 const serverKey = (root: string, id: string, path: string) => `${root}\0${id}\0${path}`
 
+const repoParam = (p: Record<string, unknown>): string => {
+  const repo = stringParam(p, 'repo')
+  if (!isRepoName(repo)) throw new CapabilityError('BAD_REQUEST', 'repo must be owner/repo')
+  return repo
+}
+
+/** Where in the repository the plugin is: `''` for its root. */
+const pluginPathParam = (p: Record<string, unknown>): string => {
+  const path = p.path
+  if (!isPluginPath(path))
+    throw new CapabilityError('BAD_REQUEST', "path must be '' or the plugin's folder")
+  return path
+}
+
 /** How long a check for newer releases is trusted before GitHub is asked again. */
 const UPDATE_CHECK_MS = 60 * 60 * 1000
 
 export function communityCapabilities(deps: CommunityDeps, now = () => Date.now()) {
-  /** The newest release of each repository, as last asked, and when. */
-  const newest = new Map<string, { at: number; version: string | null }>()
+  /** Each repository's releases, of every plugin in it, as last asked, and
+   *  when: one read serves all the plugins a repository holds. */
+  const releasesOf = new Map<
+    string,
+    { at: number; releases: { path: string; version: string }[] }
+  >()
 
   /** Each acquire's server key, by the lease it returned: a release names
    *  its lease, so it drops exactly what its acquire took, whatever has
@@ -245,8 +277,8 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
     }),
 
     // A newer release of each plugin installed here from one, by id: what
-    // settings and the vault notice offer as an update. GitHub is asked at
-    // most hourly per repository, or now with `fresh`.
+    // settings and the vault notice offer as an update, from that plugin's own
+    // tags. GitHub is asked at most hourly per repository, or now with `fresh`.
     'community.updates': cap({
       doors: ['ui'],
       params: (raw: unknown) => ({ fresh: paramsObject(raw).fresh === true }),
@@ -254,17 +286,18 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
         const updates: Record<string, string> = {}
         for (const install of await deps.store.list()) {
           if (install.source.kind !== 'release') continue
-          const { repo } = install.source
-          let known = newest.get(repo)
+          const { repo, path } = install.source
+          let known = releasesOf.get(repo)
           if (fresh || known === undefined || now() - known.at > UPDATE_CHECK_MS) {
-            const versions = await listVersions(repo, deps.git).catch(() => null)
+            const releases = await listReleases(repo, deps.git).catch(() => null)
             // An unreachable GitHub is no answer, not "no update": ask again next time.
-            if (versions === null) continue
-            known = { at: now(), version: versions[0] ?? null }
-            newest.set(repo, known)
+            if (releases === null) continue
+            known = { at: now(), releases }
+            releasesOf.set(repo, known)
           }
-          if (known.version !== null && newestFirst(known.version, install.manifest.version) < 0)
-            updates[install.id] = known.version
+          const latest = versionsOf(known.releases, path)[0]
+          if (latest !== undefined && newestFirst(latest, install.manifest.version) < 0)
+            updates[install.id] = latest
         }
         return updates
       },
@@ -273,11 +306,10 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
     'community.versions': cap({
       doors: ['ui'],
       params: (raw: unknown) => {
-        const repo = stringParam(paramsObject(raw), 'repo')
-        if (!isRepoName(repo)) throw new CapabilityError('BAD_REQUEST', 'repo must be owner/repo')
-        return { repo }
+        const p = paramsObject(raw)
+        return { repo: repoParam(p), path: pluginPathParam(p) }
       },
-      run: async (_ctx, { repo }) => listVersions(repo, deps.git),
+      run: async (_ctx, { repo, path }) => listVersions(repo, path, deps.git),
     }),
 
     // Fetch a release onto this machine. Nothing of it runs yet: setup waits
@@ -287,19 +319,19 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
       doors: ['ui'],
       params: (raw: unknown) => {
         const p = paramsObject(raw)
-        const repo = stringParam(p, 'repo')
-        if (!isRepoName(repo)) throw new CapabilityError('BAD_REQUEST', 'repo must be owner/repo')
-        const params: { repo: string; version: string; expectId?: string } = {
-          repo,
+        const params: { repo: string; path: string; version: string; expectId?: string } = {
+          repo: repoParam(p),
+          path: pluginPathParam(p),
           version: stringParam(p, 'version'),
         }
         if (p.expectId !== undefined) params.expectId = stringParam(p, 'expectId')
         return params
       },
-      run: async (ctx, { repo, version, expectId }) => {
+      run: async (ctx, { repo, path, version, expectId }) => {
         const fetched = await fetchRelease(
           {
             repo,
+            path,
             version,
             ...(expectId === undefined ? {} : { expectId }),
             scratch: deps.scratch,
@@ -310,7 +342,7 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
         claimFirstParty(fetched.manifest.id)
         await deps.store.put({
           id: fetched.manifest.id,
-          source: { kind: 'release', repo, tag: fetched.tag, commit: fetched.commit },
+          source: { kind: 'release', repo, path, tag: fetched.tag, commit: fetched.commit },
           manifest: fetched.manifest,
           setup: 'none',
         })
@@ -404,6 +436,7 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
         const pin: PluginPin = {
           ...install.manifest,
           repo: install.source.repo,
+          path: install.source.path,
           commit: install.source.commit,
         }
         await writeAtomic(

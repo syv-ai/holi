@@ -1,20 +1,22 @@
 /**
  * The community plugins installed on this machine (docs/features/community-plugins.md).
  *
- * One install per plugin id, in `userData/plugins/`: a release's code in
- * `<id>/<commit>/`, or a developer's own folder used in place. Never in a
+ * One install per plugin id, in `userData/plugins/`: a release's repository in
+ * `<id>/<commit>/`, the plugin's code its folder there, or a developer's own
+ * folder used in place. Never in a
  * vault: a plugin's `node_modules` would be scanned by the watcher, and the
  * `.local.` rule cannot keep a folder of code off the vault's history.
  *
  * No `electron` import: this loads under plain Node in the tests.
  */
 import { join } from 'node:path'
-import { parsePluginManifest, type PluginManifest } from '@holi/shared'
+import { isPluginPath, parsePluginManifest, type PluginManifest } from '@holi/shared'
 import { jsonFileStore } from '../../../main/plugin-api'
 
 /** Where an install's code came from. */
 export type InstallSource =
-  | { kind: 'release'; repo: string; tag: string; commit: string }
+  /** `path` is where in `repo` the plugin is, `isPluginPath`. */
+  | { kind: 'release'; repo: string; path: string; tag: string; commit: string }
   /** A folder the person works on: used in place, never fetched or pinned. */
   | { kind: 'dev'; folder: string }
 
@@ -35,7 +37,7 @@ export interface InstallStore {
   put(install: Install): Promise<void>
   setSetup(id: string, setup: SetupState): Promise<void>
   remove(id: string): Promise<Install | null>
-  /** Where an install's code is. */
+  /** Where an install's code is: the plugin's own folder. */
   codeDir(install: Pick<Install, 'id' | 'source'>): string
   /** The folder a release of `id` at `commit` is unpacked into. */
   releaseDir(id: string, commit: string): string
@@ -59,10 +61,11 @@ function parseInstalls(raw: unknown): Install[] {
     else if (
       s?.kind === 'release' &&
       typeof s.repo === 'string' &&
+      isPluginPath(s.path) &&
       typeof s.tag === 'string' &&
       typeof s.commit === 'string'
     )
-      src = { kind: 'release', repo: s.repo, tag: s.tag, commit: s.commit }
+      src = { kind: 'release', repo: s.repo, path: s.path, tag: s.tag, commit: s.commit }
     else return []
     const state: SetupState = setup === 'ok' || setup === 'failed' ? setup : 'none'
     return [{ id, source: src, manifest: parsed.value, setup: state }]
@@ -91,7 +94,7 @@ export function createInstallStore(userData: string): InstallStore {
       return removed
     },
     codeDir: ({ id, source }) =>
-      source.kind === 'dev' ? source.folder : releaseDir(id, source.commit),
+      source.kind === 'dev' ? source.folder : join(releaseDir(id, source.commit), source.path),
     releaseDir,
     setupLog: (id) => join(dir, id, 'setup.log'),
   }

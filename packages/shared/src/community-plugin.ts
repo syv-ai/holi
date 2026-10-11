@@ -1,13 +1,15 @@
 /**
  * What a community plugin says about itself, and what a vault pins of it.
  *
- * A community plugin is a third-party *process plugin*: a git repository with
- * a `holi-plugin.json` at its root, which Holi installs on this machine, sets
- * up once with the manifest's `setup` command, and runs with its `serve`
- * command for each file it opens, framing the local server it starts. Its code
- * never loads into Holi's own processes. A vault that uses one commits a
- * **pin**, `.holi/plugins/<id>/manifest.json`: the manifest plus the repository
- * and commit it came from, so every member is offered the same code.
+ * A community plugin is a third-party *process plugin*: a `holi-plugin.json`
+ * in a git repository, at its root or in a top-level folder named after the
+ * plugin's id, so one repository can hold several. Holi installs it on this
+ * machine, sets it up once with the manifest's `setup` command, and runs it
+ * with its `serve` command for each file it opens, framing the local server it
+ * starts. Its code never loads into Holi's own processes. A vault that uses one
+ * commits a **pin**, `.holi/plugins/<id>/manifest.json`: the manifest plus the
+ * repository, folder and commit it came from, so every member is offered the
+ * same code.
  * See docs/features/community-plugins.md.
  *
  * Main reads this grammar when it installs and pins; the renderer reads it to
@@ -15,8 +17,39 @@
  */
 import { isPluginId } from './plugins'
 
-/** The manifest's name at a plugin repository's root. */
+/** The manifest's name, in the plugin's folder. */
 export const PLUGIN_MANIFEST_FILE = 'holi-plugin.json'
+
+/**
+ * Where a plugin is in its repository: `''` for a manifest at the root, a
+ * repository of one plugin, or the top-level folder named after its id, one of
+ * several. The folder is its id, so a pin, an install and a release tag can
+ * never name the folder and the plugin differently.
+ */
+export function isPluginPath(value: unknown): value is string {
+  return value === '' || isPluginId(value)
+}
+
+/** The manifest's path in the repository, for a plugin at `path`. */
+export function pluginManifestPath(path: string): string {
+  return path === '' ? PLUGIN_MANIFEST_FILE : `${path}/${PLUGIN_MANIFEST_FILE}`
+}
+
+/** The tag a release of the plugin at `path` is fetched at: `v<version>` at
+ *  the root, `<id>-v<version>` in a folder, so each plugin in a repository has
+ *  its own releases. */
+export function releaseTag(path: string, version: string): string {
+  return path === '' ? `v${version}` : `${path}-v${version}`
+}
+
+/** A tag read back: which plugin's release it is (`''` for the root) and its
+ *  version, or null for a tag that is no release. */
+export function parseReleaseTag(tag: string): { path: string; version: string } | null {
+  const m = RELEASE_TAG.exec(tag)
+  if (m === null) return null
+  const path = m[1] ?? ''
+  return isPluginPath(path) ? { path, version: m[2]! } : null
+}
 
 /** Where a vault keeps its pins. */
 export const PLUGIN_PINS_DIR = '.holi/plugins'
@@ -32,7 +65,7 @@ export const COMMAND_PLACEHOLDERS = ['{file}', '{vault}', '{port}'] as const
 export interface PluginManifest {
   id: string
   name: string
-  /** Semver, and the tag a release is fetched at is `v<version>`. */
+  /** Semver; a release is fetched at `releaseTag(path, version)`. */
   version: string
   description?: string
   /** The oldest Holi it runs on. */
@@ -70,6 +103,8 @@ export interface PluginManifest {
 export interface PluginPin extends PluginManifest {
   /** `owner/repo` on GitHub. */
   repo: string
+  /** Where in it, `isPluginPath`. */
+  path: string
   /** The full commit the vault's members are offered. */
   commit: string
 }
@@ -77,6 +112,7 @@ export interface PluginPin extends PluginManifest {
 export type Parsed<T> = { ok: true; value: T } | { ok: false; problems: string[] }
 
 const SEMVER = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/
+const RELEASE_TAG = /^(?:([a-z][a-z0-9-]*)-)?v(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$/
 const BASENAME = /^[^/\\*?[\]{}]+$/
 const EXTENSION = /^\*\.[A-Za-z0-9][A-Za-z0-9.-]*$/
 const REPO = /^[A-Za-z0-9][A-Za-z0-9-]*\/[A-Za-z0-9._-]+$/
@@ -130,8 +166,9 @@ function isPluginRelativePath(path: string): boolean {
   return path.split('/').every((seg) => seg !== '' && seg !== '.' && seg !== '..')
 }
 
-/** Read a `holi-plugin.json`, already parsed from JSON. */
-export function parsePluginManifest(json: unknown): Parsed<PluginManifest> {
+/** Read a `holi-plugin.json`, already parsed from JSON, found at `path`
+ *  (`isPluginPath`): in a folder, the id must be the folder's name. */
+export function parsePluginManifest(json: unknown, path = ''): Parsed<PluginManifest> {
   if (!isRecord(json)) return { ok: false, problems: ['the manifest must be a JSON object'] }
   const problems: string[] = []
   const {
@@ -150,6 +187,8 @@ export function parsePluginManifest(json: unknown): Parsed<PluginManifest> {
   const opens = json.opens ?? []
 
   if (!isPluginId(id)) problems.push('id must be kebab-case, starting with a letter')
+  else if (path !== '' && id !== path)
+    problems.push(`a plugin in the folder ${path}/ must have the id ${path}`)
   if (typeof name !== 'string' || name.trim() === '')
     problems.push('name must be a non-empty string')
   if (typeof version !== 'string' || !SEMVER.test(version))
@@ -220,16 +259,24 @@ export function parsePluginManifest(json: unknown): Parsed<PluginManifest> {
 
 /** Read a vault's pin, already parsed from JSON. */
 export function parsePluginPin(json: unknown): Parsed<PluginPin> {
-  const manifest = parsePluginManifest(json)
-  const problems = manifest.ok ? [] : [...manifest.problems]
   const record = isRecord(json) ? json : {}
+  const path = isPluginPath(record.path) ? record.path : ''
+  const manifest = parsePluginManifest(json, path)
+  const problems = manifest.ok ? [] : [...manifest.problems]
   if (!isRepoName(record.repo)) problems.push('repo must be owner/repo')
+  if (!isPluginPath(record.path))
+    problems.push("path must be '' for the repository's root or the plugin's folder")
   if (typeof record.commit !== 'string' || !COMMIT.test(record.commit))
     problems.push('commit must be a full 40-character commit')
   if (!manifest.ok || problems.length > 0) return { ok: false, problems }
   return {
     ok: true,
-    value: { ...manifest.value, repo: record.repo as string, commit: record.commit as string },
+    value: {
+      ...manifest.value,
+      repo: record.repo as string,
+      path,
+      commit: record.commit as string,
+    },
   }
 }
 

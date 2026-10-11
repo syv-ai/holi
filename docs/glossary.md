@@ -142,14 +142,15 @@ own origin and reaching the vault only through the `holi.*` bridge. See [vault-a
 
 ### Community plugin
 
-A plugin from another repository, with a `holi-plugin.json`: installed on this machine, run as its
+A plugin from another repository, with a `holi-plugin.json` at its root or in a folder named after
+it (a repository can hold several): installed on this machine, run as its
 own process, and opening the files it names in a tab framing its local server. See
 [community-plugins](features/community-plugins.md).
 
 ### Pin
 
 A vault's record of the community plugin it uses, `.holi/plugins/<id>/manifest.json`: the manifest
-plus the repository and commit every member is offered.
+plus the repository, the plugin's folder in it and the commit every member is offered.
 
 ### Per-turn context
 

@@ -6,6 +6,7 @@
  */
 import { useAtomValue } from 'jotai'
 import { useEffect, useRef, useState } from 'react'
+import { releaseTag } from '@holi/shared'
 import { activeRemoteAtom, type PluginStore } from '@/plugin-api'
 import { Button, Dialog } from '@/primitives'
 import { communityCap, refreshRows, refreshUpdates, setupLogsAtom, type PluginRow } from './state'
@@ -74,7 +75,10 @@ export function ConsentDialog({
               {install?.kind === 'release' ? (
                 <>
                   Version {install.version} of{' '}
-                  <span className="font-mono text-foreground">{install.repo}</span>, at commit{' '}
+                  <span className="font-mono text-foreground">
+                    {install.path === '' ? install.repo : `${install.repo}/${install.path}`}
+                  </span>
+                  , at commit{' '}
                   <span className="font-mono text-foreground">{install.commit.slice(0, 12)}</span>.
                 </>
               ) : (
@@ -160,19 +164,23 @@ export interface InstallFlow {
   openDialog(render: (close: () => void) => React.JSX.Element): void
 }
 
-/** Fetch `repo` at `version` (the newest when absent), then ask. Resolves to
- *  an error message, or null when the dialog is up. */
+/** Fetch the plugin at `path` in `repo` at `version` (the newest when
+ *  absent), then ask. Resolves to an error message, or null when the dialog is
+ *  up. */
 export async function installAndAsk(
   flow: InstallFlow,
-  args: { repo: string; version?: string; id?: string },
+  args: { repo: string; path: string; version?: string; id?: string },
   onReady?: () => Promise<unknown>,
 ): Promise<string | null> {
   try {
     const version =
-      args.version ?? (await communityCap.versions(flow.remote, { repo: args.repo }))[0]
-    if (version === undefined) return `${args.repo} has no released version (a tag like v1.0.0).`
+      args.version ??
+      (await communityCap.versions(flow.remote, { repo: args.repo, path: args.path }))[0]
+    if (version === undefined)
+      return `${args.repo} has no released version of it (a tag like ${releaseTag(args.path, '1.0.0')}).`
     const row = await communityCap.install(flow.remote, {
       repo: args.repo,
+      path: args.path,
       version,
       ...(args.id === undefined ? {} : { expectId: args.id }),
     })
@@ -189,13 +197,18 @@ export async function installAndAsk(
  * pins the plugin, pin the new release so its members are offered it too.
  */
 export function updatePlugin(flow: InstallFlow, row: PluginRow, version: string) {
-  const repo = row.install?.kind === 'release' ? row.install.repo : row.pin?.repo
-  if (repo === undefined) return Promise.resolve('this plugin is not from a release')
+  const from = row.install?.kind === 'release' ? row.install : row.pin
+  if (from === null || from === undefined)
+    return Promise.resolve('this plugin is not from a release')
   const pinned = row.pin !== null
-  return installAndAsk(flow, { repo, version, id: row.id }, async () => {
-    if (pinned) await communityCap.pin(flow.remote, { id: row.id })
-    await refreshUpdates(flow.remote, flow.store)
-  })
+  return installAndAsk(
+    flow,
+    { repo: from.repo, path: from.path, version, id: row.id },
+    async () => {
+      if (pinned) await communityCap.pin(flow.remote, { id: row.id })
+      await refreshUpdates(flow.remote, flow.store)
+    },
+  )
 }
 
 /** Open the consent dialog for an installed row. */

@@ -112,8 +112,8 @@ export function PluginSearch({
                 const installable = c.latest !== null && c.problem === null
                 return (
                   <CommandItem
-                    key={c.repo}
-                    value={c.repo}
+                    key={`${c.repo}/${c.path}`}
+                    value={`${c.repo}/${c.path}`}
                     disabled={!installable}
                     onSelect={() => choose(c)}
                     className="flex-col items-start gap-0.5 rounded-md text-xs data-[disabled=true]:opacity-100"
@@ -123,7 +123,7 @@ export function PluginSearch({
                         {c.plugin?.name ?? c.repo}
                         {c.plugin !== null && (
                           <span className="ml-1.5 font-mono text-[11px] text-muted-foreground">
-                            {c.repo}
+                            {c.path === '' ? c.repo : `${c.repo}/${c.path}`}
                           </span>
                         )}
                       </span>

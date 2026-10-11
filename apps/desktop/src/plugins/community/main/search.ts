@@ -1,8 +1,9 @@
 /**
  * Finding a community plugin by typing: GitHub's repository search over the
- * repositories carrying the `holi-plugin` topic, each hit read for a
- * `holi-plugin.json` and its newest release, so the settings tab can say what
- * a repository is before anything is installed.
+ * repositories carrying the `holi-plugin` topic, each hit read for the
+ * `holi-plugin.json` at its root or in its top-level folders, and each plugin
+ * for its newest release, so the settings tab can say what a repository holds
+ * before anything is installed.
  *
  * A topic, not code search for the manifest: code search does not index a
  * private repository promptly, and a topic scopes the search to plugins
@@ -10,23 +11,33 @@
  *
  * No `electron` import: this loads under plain Node in the tests.
  */
-import { isRepoName, parsePluginManifest, PLUGIN_MANIFEST_FILE } from '@holi/shared'
-import { newestFirst } from './fetch'
+import {
+  isPluginPath,
+  isRepoName,
+  parsePluginManifest,
+  parseReleaseTag,
+  PLUGIN_MANIFEST_FILE,
+  pluginManifestPath,
+  releaseTag,
+} from '@holi/shared'
+import { versionsOf } from './fetch'
 
-/** One repository, as the search list shows it. */
+/** One plugin in a repository, or a repository that holds none, as the search
+ *  list shows it. */
 export interface Candidate {
   repo: string
+  /** Where in the repository: `''` for its root. */
+  path: string
   description: string
   /** Its manifest's name and description, when it is a plugin. */
   plugin: { id: string; name: string; description: string } | null
-  /** The newest released version (a `v<semver>` tag), or null for none. */
+  /** The newest released version (its `releaseTag`), or null for none. */
   latest: string | null
   /** Why it cannot be installed, in words, or null when it can. */
   problem: string | null
 }
 
 const RESULTS = 8
-const TAG = /^v(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$/
 
 /** The GitHub topic a plugin's repository carries, which is what makes it
  *  findable: search looks only at repositories with it, anyone's, and the
@@ -62,41 +73,87 @@ function githubGet(token: string | null): Get {
     })
 }
 
-/** Read `repo` as a plugin: its manifest at the default branch and its newest
- *  release. */
-export async function describeRepo(
-  repo: string,
-  description: string,
-  get: Get,
-): Promise<Candidate> {
-  const base = { repo, description, plugin: null, latest: null }
+/** Folders a repository is searched for plugins in, at most: each is one
+ *  more request, and a plugins repository is a handful. */
+const MAX_FOLDERS = 20
+
+type Read =
+  | { kind: 'absent' }
+  | { kind: 'problem'; problem: string }
+  | { kind: 'plugin'; plugin: Plugin; version: string }
+type Plugin = NonNullable<Candidate['plugin']>
+
+/** The manifest of the plugin at `path` in `repo`, at the default branch. */
+async function readAt(repo: string, path: string, get: Get): Promise<Read> {
   const res = await get(
-    `/repos/${repo}/contents/${PLUGIN_MANIFEST_FILE}`,
+    `/repos/${repo}/contents/${pluginManifestPath(path)}`,
     'application/vnd.github.raw+json',
   )
-  if (res.status === 404) return { ...base, problem: `no ${PLUGIN_MANIFEST_FILE}` }
-  if (!res.ok) return { ...base, problem: `GitHub answered ${res.status}` }
+  if (res.status === 404) return { kind: 'absent' }
+  if (!res.ok) return { kind: 'problem', problem: `GitHub answered ${res.status}` }
   let json: unknown
   try {
     json = await res.json()
   } catch {
-    return { ...base, problem: `${PLUGIN_MANIFEST_FILE} is not JSON` }
+    return { kind: 'problem', problem: `${pluginManifestPath(path)} is not JSON` }
   }
-  const parsed = parsePluginManifest(json)
-  if (!parsed.ok) return { ...base, problem: `${PLUGIN_MANIFEST_FILE} is invalid` }
-  const { id, name } = parsed.value
-  const plugin = { id, name, description: parsed.value.description ?? '' }
+  const parsed = parsePluginManifest(json, path)
+  if (!parsed.ok) return { kind: 'problem', problem: `${pluginManifestPath(path)} is invalid` }
+  const { id, name, description, version } = parsed.value
+  return { kind: 'plugin', plugin: { id, name, description: description ?? '' }, version }
+}
+
+/** The top-level folders of `repo` that could be a plugin's (named like an
+ *  id), at the default branch. */
+async function foldersOf(repo: string, get: Get): Promise<string[]> {
+  const res = await get(`/repos/${repo}/contents`)
+  if (!res.ok) return []
+  const entries = (await res.json()) as { name: string; type: string }[]
+  return entries
+    .filter((e) => e.type === 'dir' && isPluginPath(e.name) && e.name !== '')
+    .map((e) => e.name)
+    .slice(0, MAX_FOLDERS)
+}
+
+/**
+ * Read `repo` for plugins: the one at its root, or else one in each top-level
+ * folder named after its id, each with its own newest release. One candidate
+ * per plugin; a repository with none is one candidate saying so.
+ */
+export async function describeRepo(
+  repo: string,
+  description: string,
+  get: Get,
+): Promise<Candidate[]> {
+  const none = { repo, path: '', description, plugin: null, latest: null }
+  const root = await readAt(repo, '', get)
+  const reads: { path: string; read: Read }[] = []
+  if (root.kind !== 'absent') reads.push({ path: '', read: root })
+  else
+    for (const folder of await foldersOf(repo, get)) {
+      const read = await readAt(repo, folder, get)
+      if (read.kind !== 'absent') reads.push({ path: folder, read })
+    }
+  if (reads.length === 0) return [{ ...none, problem: `no ${PLUGIN_MANIFEST_FILE}` }]
   const tags = await get(`/repos/${repo}/tags?per_page=100`)
-  const versions = tags.ok
-    ? ((await tags.json()) as { name: string }[]).flatMap((t) => TAG.exec(t.name)?.[1] ?? [])
+  const releases = tags.ok
+    ? ((await tags.json()) as { name: string }[]).flatMap((t) => parseReleaseTag(t.name) ?? [])
     : []
-  const latest = versions.sort(newestFirst)[0] ?? null
-  return {
-    ...base,
-    plugin,
-    latest,
-    problem: latest === null ? `no release yet: tag v${parsed.value.version} to publish it` : null,
-  }
+  return reads.map(({ path, read }): Candidate => {
+    if (read.kind !== 'plugin')
+      return { ...none, path, problem: read.kind === 'problem' ? read.problem : null }
+    const latest = versionsOf(releases, path)[0] ?? null
+    return {
+      ...none,
+      path,
+      plugin: read.plugin,
+      latest,
+      problem:
+        latest === null
+          ? `no release yet: tag ${releaseTag(path, read.version)} to publish it`
+          : null,
+    }
+  })
 }
 
 type Hit = { full_name: string; description: string | null }
@@ -119,16 +176,17 @@ export async function searchPlugins(typed: string, token: string | null): Promis
   // An exact owner/repo is read even when search finds nothing for it: a
   // plugin whose repository lacks the topic still installs by its name.
   if (isRepoName(exact) && hits.length === 0) repos.unshift({ repo: exact, description: '' })
-  const described = await Promise.all(
-    repos.slice(0, RESULTS).map((r) =>
-      describeRepo(r.repo, r.description, get).catch((): Candidate => ({
-        ...r,
-        plugin: null,
-        latest: null,
-        problem: 'could not be read',
-      })),
-    ),
-  )
+  const described = (
+    await Promise.all(
+      repos
+        .slice(0, RESULTS)
+        .map((r) =>
+          describeRepo(r.repo, r.description, get).catch((): Candidate[] => [
+            { ...r, path: '', plugin: null, latest: null, problem: 'could not be read' },
+          ]),
+        ),
+    )
+  ).flat()
   const rank = (c: Candidate) => (c.plugin === null ? 2 : c.problem === null ? 0 : 1)
   // A typed repository search did not find may not exist at all, which a
   // missing manifest cannot tell apart.

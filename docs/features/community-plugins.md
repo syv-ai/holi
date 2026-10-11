@@ -8,7 +8,7 @@ with it off, no community plugin runs, as Obsidian's restricted mode.
 
 ## How it works
 
-**A plugin is a repository with a `holi-plugin.json`** at its root:
+**A plugin is a `holi-plugin.json` in a repository**, at its root for a repository of one plugin:
 
 ```json
 {
@@ -32,21 +32,31 @@ file's absolute path), `{vault}` and `{port}`. `serve` must pass `{port}` and li
 loopback there. `ignore` lines join the vault's `.gitignore` when the plugin is pinned: what the
 server writes beside a file and must not sync. The grammar is `packages/shared/src/community-plugin.ts`.
 
-**A release is a tag `v<version>`** whose manifest says that version. Installing clones it with system
-git and the person's GitHub token, as a vault is cloned, so a private plugin repository installs for
-whoever can read it.
+**Several plugins in one repository.** A repository without a root manifest can hold several, each in
+a top-level folder named after its id (`notes/holi-plugin.json` says `"id": "notes"`; a folder whose
+manifest names another id is refused), so a contributor keeps their plugins together. The folder is the plugin: its `apps`, `skills`, `setup` and `serve` are
+relative to it, it is the commands' working directory and what `holi community path` prints, and a
+link out of it, to a sibling plugin too, is refused.
+
+**A release is a tag** whose manifest says that version: `v<version>` for a root plugin,
+`<id>-v<version>` for one in a folder (`notes-v0.2.0`), so each plugin in a repository is released
+and updated on its own. Installing clones the whole repository at that tag with system git and the
+person's GitHub token, as a vault is cloned, so a private plugin repository installs for whoever can
+read it.
 
 **Finding one.** A plugin's repository carries the GitHub topic `holi-plugin`, which is what makes it
 findable. The settings field searches GitHub's repositories with that topic as you type (by name, or
-within `owner/`), anyone's and the private ones the person can read, and reads each hit's manifest
-and newest release: an installable plugin shows its name and version, anything else why it cannot
-be installed (no release yet, an invalid manifest). An exact `owner/repo` is read even when search
+within `owner/`), anyone's and the private ones the person can read, and reads each hit for its
+root manifest or else its top-level folders' (at most 20), then each plugin's newest release: one row
+per plugin, an installable one showing its name and version, anything else why it cannot be
+installed (no release yet, an invalid manifest). An exact `owner/repo` is read even when search
 does not find it, so a plugin without the topic still installs by name. A local folder, used in
 place, is for developing a plugin.
 
 **Code lives on the machine, the pin in the vault.** An install is `userData/plugins/<id>/<commit>/`,
-one per id, listed in `userData/plugins/installed.json`. A vault that uses a plugin commits its pin,
-`.holi/plugins/<id>/manifest.json` (the manifest plus `repo` and `commit`), and turns it on with
+the repository with the plugin in its folder there, one per id, listed in `userData/plugins/installed.json`. A vault that uses a plugin commits its pin,
+`.holi/plugins/<id>/manifest.json` (the manifest plus `repo`, `path`, which is `''` for a root
+plugin or its folder, and `commit`), and turns it on with
 `plugins: { community: true, <id>: true }` in `.holi/settings/plugins.yaml`, beside the first-party plugins. A folder
 install is never pinned.
 
@@ -63,8 +73,7 @@ opens files or folders.
 Code skill (`SKILL.md` and what it references). Turning the plugin on in a vault copies each to
 `.claude/skills/<folder name>/` (with the pin for a release, as it is for a folder install), and a
 newer pin writes them again. Links inside a skill folder are followed when they stay inside the
-plugin, so it can share references with its own repository's skills, and refused when they leave
-it. `holi community path <id>` prints a running plugin's folder on this machine, so a skill can
+plugin's folder, so it can share references with its own skills, and refused when they leave it. `holi community path <id>` prints a running plugin's folder on this machine, so a skill can
 run the plugin's own tools; it only reads, so it is allowed without asking.
 
 **Nothing runs before consent.** A fetched release waits until the person allows that commit, in a
@@ -89,9 +98,9 @@ and Start again if it fails or stops. Leaving the vault and quitting stop every 
 macOS). While a server is up its origin is registered with the window guard: the frame may move
 within it, and a link out of it opens in the browser.
 
-**Updates.** Holi asks GitHub for each release-installed plugin's newest `v<semver>` tag when a
+**Updates.** Holi asks GitHub for each release-installed plugin's newest release tag when a
 vault opens, hourly while it stays open, and freshly when the settings section opens (main caches
-an answer for an hour per repository). A newer one is offered as **Update to <version>…** on the
+a repository's tags for an hour, one read for every plugin in it). A newer one is offered as **Update to <version>…** on the
 plugin's settings row and as a line in the vault notice, and stays offered until it is done, as
 Holi's own update offer does, rather than a toast that could be missed. Updating fetches the
 release, asks in the consent dialog, sets it up and, where the vault pins the plugin, pins the new

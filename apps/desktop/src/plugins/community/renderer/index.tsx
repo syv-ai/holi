@@ -124,7 +124,12 @@ function WaitingNotice(): React.JSX.Element | null {
     setError(null)
     if (row.pin !== null && (row.status === 'not-installed' || row.status === 'pin-differs'))
       setError(
-        await installAndAsk(flow, { repo: row.pin.repo, version: row.pin.version, id: row.id }),
+        await installAndAsk(flow, {
+          repo: row.pin.repo,
+          path: row.pin.path,
+          version: row.pin.version,
+          id: row.id,
+        }),
       )
     else askToRun(flow, row)
   }
