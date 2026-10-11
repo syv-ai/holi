@@ -180,6 +180,9 @@ export interface SettingsSection {
   headings: readonly SettingsSectionHeading[]
   /** The files this section is a view of, offered at the bottom of it. */
   files: readonly string[]
+  /** Shown inside core's Plugins page, under its label, rather than as a
+   *  section of its own: a plugin's settings about plugins. */
+  within?: 'plugins'
   Component: (props: { remote: string }) => React.JSX.Element
 }
 
@@ -245,7 +248,9 @@ export interface RendererPlugin {
   /** Handlers for the plugin's events, by name. Subscribed at boot for every
    *  installed plugin. */
   events?: Readonly<Record<string, PluginEventHandler>>
-  claims?: readonly PathClaim[]
+  /** Its path claims, or an atom of them for a plugin whose claims follow
+   *  what main tells it (the community plugins' files). */
+  claims?: readonly PathClaim[] | Atom<readonly PathClaim[]>
   surfaces?: readonly Surface[]
   rail?: readonly RailItem[]
   settingsSections?: readonly SettingsSection[]

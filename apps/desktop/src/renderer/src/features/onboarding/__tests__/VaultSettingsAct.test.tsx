@@ -79,6 +79,7 @@ test('the transforms are one row of several switches', async () => {
     relink: true,
     'archive-done': true,
     'normalize-md': true,
+    'shrink-images': true,
     'memory-index': true,
   })
 })
