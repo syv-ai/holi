@@ -142,6 +142,10 @@ These are not oversights — build within them rather than around them.
   `<form>` is blocked before its submit handler runs, and pressing Enter or the
   button does nothing at all. Use a plain button's click, and a `keydown` on the
   input for Enter.
+- **It cannot open a pop-up dialog.** The frame is sandboxed without them, so
+  `confirm()` answers no, `prompt()` answers nothing and `alert()` shows
+  nothing, all at once. Ask in the page: a "Delete this note?" row with Delete
+  and Cancel.
 - **It cannot read the agent's files.** `AGENTS.md`, `CLAUDE.md`, `MEMORY.md`,
   `USER.local.md` and everything under `.claude/` **and `.holi/memory/`** are refused —
   `holi.docs.read` rejects, and they are absent from `holi.docs.list()`. The
@@ -305,7 +309,7 @@ holi apps init <path>       # scaffolds <path>, a folder ending in .app
 folder, a `vault-app check` runs and tells you what will not work — a
 syntax error and its line, a `.ts` file that has no bundler to build it, a
 `localStorage` call that will throw, a `<form>` that will never submit, a
-missing manifest. It never blocks a
+`confirm()` that will never ask, a missing manifest. It never blocks a
 write and it says nothing at all when there is nothing wrong, so **if it is
 quiet, that is the answer**.
 

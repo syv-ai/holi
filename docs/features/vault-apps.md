@@ -204,6 +204,8 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   while the agent is still writing.
 - No `allow-forms`: a form's submission is blocked before its submit handler runs, so the check
   flags `<form>` and the skill says to handle the click and Enter instead.
+- No `allow-modals`: `confirm()`, `alert()` and `prompt()` return at once and show nothing, so the
+  check flags them and the skill says to ask in the page instead.
 - A personal app is told apart by the `.local.` marker on its folder, which marks every path
   under it. Git already agrees: `*.local.*` has no slash, so it matches the folder. The watcher,
   which ignores local paths so per-turn state files do not storm the rescan, still watches a local
