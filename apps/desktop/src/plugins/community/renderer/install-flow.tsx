@@ -93,19 +93,28 @@ export function ConsentDialog({
                 </pre>
               </div>
             )}
-            <div>
+            {row.serve !== null && (
+              <div>
+                <p>
+                  Each time you open{' '}
+                  {[
+                    ...row.opens,
+                    ...(row.folder === undefined ? [] : [`a ${row.folder.suffix} folder`]),
+                  ].join(' or ')}
+                  :
+                </p>
+                <pre className="mt-1 whitespace-pre-wrap rounded-md bg-muted p-2 font-mono text-[11px] text-foreground">
+                  {shown(row.serve)}
+                </pre>
+              </div>
+            )}
+            {row.apps.length > 0 && (
               <p>
-                Each time you open{' '}
-                {[
-                  ...row.opens,
-                  ...(row.folder === undefined ? [] : [`a ${row.folder.suffix} folder`]),
-                ].join(' or ')}
-                :
+                It adds {row.apps.map((a) => a.slice(a.lastIndexOf('/') + 1)).join(', ')} to the
+                vault, an app that runs like any other vault app, and asks before it uses anything
+                sensitive.
               </p>
-              <pre className="mt-1 whitespace-pre-wrap rounded-md bg-muted p-2 font-mono text-[11px] text-foreground">
-                {shown(row.serve)}
-              </pre>
-            </div>
+            )}
             <p>Holi asks again when the vault moves to another version.</p>
           </div>
         ) : (

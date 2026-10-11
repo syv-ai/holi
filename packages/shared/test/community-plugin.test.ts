@@ -60,6 +60,14 @@ describe('parsePluginManifest', () => {
     expect(problems({ ...prezzi, skills: ['/etc'] })).toHaveLength(1)
   })
 
+  it('ships apps without a server, and needs a server only to open something', () => {
+    const notes = { id: 'notes', name: 'Notes', version: '1.0.0', apps: ['apps/Notes.app'] }
+    expect(problems(notes)).toEqual([])
+    expect(problems({ ...notes, apps: ['apps/notes'] })).toHaveLength(1)
+    expect(problems({ ...notes, apps: undefined })).toHaveLength(1)
+    expect(problems({ ...prezzi, serve: undefined })).toHaveLength(1)
+  })
+
   it('needs semver and a kebab-case id', () => {
     expect(problems({ ...prezzi, version: 'v1' })).toHaveLength(1)
     expect(problems({ ...prezzi, id: 'Prezzi' })).toHaveLength(1)

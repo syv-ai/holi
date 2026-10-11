@@ -50,6 +50,15 @@ one per id, listed in `userData/plugins/installed.json`. A vault that uses a plu
 `plugins: { community: true, <id>: true }` in `.holi/settings/plugins.yaml`, beside the first-party plugins. A folder
 install is never pinned.
 
+**Vault apps.** A manifest's `apps` names folders in the plugin, each a vault app (`Notes.app`
+with its `index.html` and `app.yaml`). Each is copied to the vault's root once: when the vault
+turns the plugin on, when setup finishes in a vault that runs it, and when a vault that runs it
+opens. From then on it is the vault's and is never overwritten, since an app keeps its records
+inside it; a `.local.app` never syncs, so each machine that runs the plugin gets its own. The app
+runs on the [vault apps](vault-apps.md) runtime with its consent rules, not as a process, so a
+plugin that only ships apps and skills has no `serve`, which is required only for a plugin that
+opens files or folders.
+
 **Skills for the vault's agent.** A manifest's `skills` names folders in the plugin, each a Claude
 Code skill (`SKILL.md` and what it references). Turning the plugin on in a vault copies each to
 `.claude/skills/<folder name>/` (with the pin for a release, as it is for a folder install), and a
