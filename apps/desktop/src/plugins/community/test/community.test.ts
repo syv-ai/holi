@@ -269,6 +269,50 @@ describe('skills', () => {
   })
 })
 
+describe('apps', () => {
+  test('a plugin that only ships an app needs no server, and its app is copied in once', async () => {
+    await makeRepo()
+    await mkdir(join(repoDir, 'apps/Notes.app'), { recursive: true })
+    await writeFile(join(repoDir, 'apps/Notes.app/index.html'), '<p>notes</p>')
+    await writeFile(join(repoDir, 'apps/Notes.app/app.yaml'), 'name: Notes\n')
+    await writeFile(
+      join(repoDir, 'holi-plugin.json'),
+      JSON.stringify({ id: 'notes', name: 'Notes', version: '1.0.0', apps: ['apps/Notes.app'] }),
+    )
+    git(repoDir, 'add', '.')
+    git(
+      repoDir,
+      '-c',
+      'user.name=Ada Holm',
+      '-c',
+      'user.email=ada@syv.ai',
+      'commit',
+      '-qm',
+      'notes',
+    )
+    git(repoDir, 'tag', 'v1.0.0')
+    const { call } = setup()
+    await mkdir(join(vault, '.holi/settings'), { recursive: true })
+    await writeFile(
+      join(vault, '.holi/settings/plugins.yaml'),
+      'plugins:\n  community: true\n  notes: true\n',
+    )
+    const row = await call('community.install', { repo: 'syv-ai/notes', version: '1.0.0' })
+    expect(row).toMatchObject({ serve: null, apps: ['apps/Notes.app'], status: 'needs-consent' })
+    await call('community.consent', {
+      id: 'notes',
+      commit: (row.install as { commit: string }).commit,
+    })
+    expect(await call('community.setup', { id: 'notes' })).toBe(true)
+    expect(await readFile(join(vault, 'Notes.app/index.html'), 'utf8')).toBe('<p>notes</p>')
+
+    // The vault's from then on: its records and edits are never overwritten.
+    await writeFile(join(vault, 'Notes.app/index.html'), '<p>mine</p>')
+    await call('community.pin', { id: 'notes' })
+    expect(await readFile(join(vault, 'Notes.app/index.html'), 'utf8')).toBe('<p>mine</p>')
+  })
+})
+
 describe('serving', () => {
   async function ready(serveArgs: string[] = [], firstPort?: number) {
     const commit = await makeRepo(serveArgs)

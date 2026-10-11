@@ -49,8 +49,15 @@ export interface PluginManifest {
    *  never a shell string. */
   setup?: string[]
   /** Run for each opened file; must carry `{port}`, where it must listen on
-   *  the loopback (127.0.0.1 or ::1), never a public address. An argv. */
-  serve: string[]
+   *  the loopback (127.0.0.1 or ::1), never a public address. An argv.
+   *  Required when the plugin opens files or folders, and absent when it only
+   *  ships apps and skills. */
+  serve?: string[]
+  /** Folders in the plugin, each a vault app (`Notes.app`, with its
+   *  `index.html` and `app.yaml`), copied to the vault's root once, when a
+   *  vault runs the plugin: then the vault's, never overwritten, since an app
+   *  keeps its records inside it. A `.local.app` is copied on each machine. */
+  apps?: string[]
   /** Lines for the vault's managed `.gitignore` block: what the server writes
    *  beside a file that must not sync. */
   ignore?: string[]
@@ -75,6 +82,8 @@ const EXTENSION = /^\*\.[A-Za-z0-9][A-Za-z0-9.-]*$/
 const REPO = /^[A-Za-z0-9][A-Za-z0-9-]*\/[A-Za-z0-9._-]+$/
 const COMMIT = /^[0-9a-f]{40}$/
 const FOLDER_SUFFIX = /^\.[a-z0-9][a-z0-9-]*$/
+/** An app folder's own name: anything ending in `.app` (`Home.local.app` too). */
+const APP_FOLDER = /(^|\/)[^/]+\.app$/
 const PLACEHOLDER = /\{[^}]*\}/g
 
 /** Is `value` a GitHub `owner/repo`? */
@@ -125,8 +134,19 @@ function isPluginRelativePath(path: string): boolean {
 export function parsePluginManifest(json: unknown): Parsed<PluginManifest> {
   if (!isRecord(json)) return { ok: false, problems: ['the manifest must be a JSON object'] }
   const problems: string[] = []
-  const { id, name, version, description, minHoliVersion, setup, serve, ignore, skills, folder } =
-    json
+  const {
+    id,
+    name,
+    version,
+    description,
+    minHoliVersion,
+    setup,
+    serve,
+    ignore,
+    skills,
+    folder,
+    apps,
+  } = json
   const opens = json.opens ?? []
 
   if (!isPluginId(id)) problems.push('id must be kebab-case, starting with a letter')
@@ -153,10 +173,19 @@ export function parsePluginManifest(json: unknown): Parsed<PluginManifest> {
     if (typeof f.entry !== 'string' || !BASENAME.test(f.entry))
       problems.push('folder.entry must be a file name, such as slides.md')
   }
-  if (isStringList(opens) && opens.length === 0 && folder === undefined)
-    problems.push('the plugin must open something: list opens, or give a folder')
+  const opensSomething = (isStringList(opens) && opens.length > 0) || folder !== undefined
+  if (
+    apps !== undefined &&
+    (!isStringList(apps) || apps.some((p) => !isPluginRelativePath(p) || !APP_FOLDER.test(p)))
+  )
+    problems.push(
+      'apps must be a list of folders inside the plugin ending in .app, like apps/Notes.app',
+    )
+  if (!opensSomething && apps === undefined && skills === undefined)
+    problems.push('the plugin must do something: list opens, give a folder, or ship apps or skills')
   if (setup !== undefined) problems.push(...commandProblems('setup', setup, []))
-  problems.push(...commandProblems('serve', serve, ['{port}']))
+  if (opensSomething || serve !== undefined)
+    problems.push(...commandProblems('serve', serve, ['{port}']))
   if (
     ignore !== undefined &&
     (!isStringList(ignore) || ignore.some((l) => l.trim() === '' || l.includes('\n')))
@@ -174,8 +203,9 @@ export function parsePluginManifest(json: unknown): Parsed<PluginManifest> {
     name: name as string,
     version: version as string,
     opens: opens as string[],
-    serve: serve as string[],
   }
+  if (serve !== undefined) manifest.serve = serve as string[]
+  if (apps !== undefined) manifest.apps = apps as string[]
   if (description !== undefined) manifest.description = description as string
   if (minHoliVersion !== undefined) manifest.minHoliVersion = minHoliVersion as string
   if (setup !== undefined) manifest.setup = setup as string[]

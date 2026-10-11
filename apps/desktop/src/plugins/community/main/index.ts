@@ -7,12 +7,22 @@
 import { join } from 'node:path'
 import { installedInfos, remoteUrl, type MainPlugin } from '../../../main/plugin-api'
 import { COMMUNITY_INFO } from '../info'
-import { COMMUNITY_NAMESPACES, communityCapabilities, parseServerKey } from './capabilities'
+import {
+  COMMUNITY_NAMESPACES,
+  communityCapabilities,
+  parseServerKey,
+  seedRunningApps,
+} from './capabilities'
 import { createConsentStore } from './consent'
 import { createInstallStore, pluginsDir } from './store'
 import { createSupervisor, type Supervisor } from './supervisor'
 
 let supervisor: Supervisor | null = null
+/** This machine's installs and consents, for the vault's open. */
+let stores: {
+  store: ReturnType<typeof createInstallStore>
+  consent: ReturnType<typeof createConsentStore>
+} | null = null
 
 export const communityMain: MainPlugin = {
   info: COMMUNITY_INFO,
@@ -27,6 +37,8 @@ export const communityMain: MainPlugin = {
   },
   activateApp(ctx) {
     const store = createInstallStore(ctx.userData)
+    const consent = createConsentStore(join(ctx.userData, 'plugin-consent.json'))
+    stores = { store, consent }
     const servers = createSupervisor({
       frameOrigin: ctx.frameOrigin,
       // Servers run only for the open vault; one stopping as it is left has
@@ -43,7 +55,7 @@ export const communityMain: MainPlugin = {
       COMMUNITY_NAMESPACES,
       communityCapabilities({
         store,
-        consent: createConsentStore(join(ctx.userData, 'plugin-consent.json')),
+        consent,
         supervisor: servers,
         git: { url: remoteUrl, token: ctx.githubToken },
         token: ctx.githubToken,
@@ -58,7 +70,13 @@ export const communityMain: MainPlugin = {
       supervisor = null
     }
   },
-  activateVault() {
+  activateVault(vault) {
+    // A running plugin's apps that this vault (or, for a `.local.app`, this
+    // machine) does not have yet.
+    if (stores !== null)
+      void seedRunningApps(vault.root, stores).catch((err) =>
+        console.error('[community] apps:', err),
+      )
     // Leaving the vault stops its servers: the tabs on them are gone too.
     return async () => {
       await supervisor?.stopAll()

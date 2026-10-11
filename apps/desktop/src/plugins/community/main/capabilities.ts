@@ -34,7 +34,7 @@ import {
 import type { ConsentStore } from './consent'
 import { fetchRelease, listVersions, newestFirst, readManifest, type GitAccess } from './fetch'
 import { searchPlugins } from './search'
-import { writeSkills } from './skills'
+import { seedApps, writeSkills } from './skills'
 import { expandCommand, pluginEnv, runSetup } from './setup'
 import type { Install, InstallStore } from './store'
 import type { ServerState, Supervisor } from './supervisor'
@@ -73,7 +73,10 @@ export interface PluginRow {
     | null
   /** What it will run, for the consent dialog. */
   setup: string[] | null
-  serve: string[]
+  /** Null for a plugin that only ships apps and skills. */
+  serve: string[] | null
+  /** The vault apps it ships. */
+  apps: string[]
 }
 
 export interface CommunityDeps {
@@ -159,7 +162,8 @@ function rowOf(
             }
           : { kind: 'dev', folder: install.source.folder, version: install.manifest.version },
     setup: manifest.setup ?? null,
-    serve: manifest.serve,
+    serve: manifest.serve ?? null,
+    apps: manifest.apps ?? [],
   }
 }
 
@@ -358,7 +362,11 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
         const commit = installCommit(install)
         if (commit !== null && !(await deps.consent.has(id, commit)))
           throw new CapabilityError('FORBIDDEN', `nobody here has agreed to run ${id} ${commit}`)
-        if (install.manifest.setup === undefined) return true
+        if (install.manifest.setup === undefined) {
+          await deps.store.setSetup(id, 'ok')
+          await seedRunningApps(ctx.root, deps)
+          return true
+        }
         deps.emit(ctx.remote, 'setup-log', { id, line: null })
         const ok = await runSetup({
           argv: expandCommand(install.manifest.setup, { vault: ctx.root }),
@@ -367,6 +375,8 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
           onLine: (line) => deps.emit(ctx.remote, 'setup-log', { id, line }),
         })
         await deps.store.setSetup(id, ok ? 'ok' : 'failed')
+        // Set up in a vault that runs it: its apps arrive now, not at the next open.
+        if (ok) await seedRunningApps(ctx.root, deps)
         return ok
       },
     }),
@@ -402,6 +412,7 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
           `${JSON.stringify(pin, null, 2)}\n`,
         )
         await writeSkills(install.manifest, deps.store.codeDir(install), ctx.root)
+        await seedApps(install.manifest, deps.store.codeDir(install), ctx.root)
         const lines = install.manifest.ignore ?? []
         if (lines.length > 0) {
           const existing = await readFile(join(ctx.root, '.gitignore'), 'utf8').catch(() => null)
@@ -418,7 +429,11 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
       params: idParams,
       run: async (ctx, { id }) => {
         const install = await installOf(id)
-        return writeSkills(install.manifest, deps.store.codeDir(install), ctx.root)
+        const dir = deps.store.codeDir(install)
+        return [
+          ...(await writeSkills(install.manifest, dir, ctx.root)),
+          ...(await seedApps(install.manifest, dir, ctx.root)),
+        ]
       },
     }),
 
@@ -482,7 +497,7 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
         const bridge = deps.bridgeScript()
         const { port } = await deps.supervisor.acquire(key, {
           cwd: deps.store.codeDir(install),
-          argv: (port) => expandCommand(install.manifest.serve, { file, vault: ctx.root, port }),
+          argv: (port) => expandCommand(install.manifest.serve!, { file, vault: ctx.root, port }),
           env: (port) =>
             pluginEnv({
               HOLI_VAULT_ROOT: ctx.root,
@@ -528,4 +543,23 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
 export function parseServerKey(key: string): { root: string; id: string; path: string } {
   const [root, id, path] = key.split('\0')
   return { root: root!, id: id!, path: path! }
+}
+
+/**
+ * Copy the apps of every plugin that runs in the vault at `root` and is not
+ * there yet: at the vault's open, and once a plugin is set up in it. A
+ * `.local.app` never syncs, so this is how each machine gets its own.
+ */
+export async function seedRunningApps(
+  root: string,
+  deps: Pick<CommunityDeps, 'store' | 'consent'>,
+): Promise<string[]> {
+  const written: string[] = []
+  for (const row of await listPlugins(root, deps)) {
+    if (!row.running || row.apps.length === 0) continue
+    const install = await deps.store.get(row.id)
+    if (install === null) continue
+    written.push(...(await seedApps(install.manifest, deps.store.codeDir(install), root)))
+  }
+  return written
 }
