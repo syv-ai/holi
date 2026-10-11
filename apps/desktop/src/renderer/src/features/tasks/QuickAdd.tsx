@@ -97,7 +97,7 @@ type Draft = {
   folder: string
   due?: string
   priority?: Priority
-  /** GitHub logins, from the People step. `@login` in the title adds more. */
+  /** GitHub logins, from the Assignees step. `@login` in the title adds more. */
   assignees: string[]
   tags: string[]
 }
