@@ -116,8 +116,15 @@ less trusted than the user (a vault app, a hook) is kept off them.
 
 ### Local file
 
-Any file with `.local.` in its name, or anything under a folder with `.local.` in its name.
-Machine-local: shown under _show hidden files_, never synced. The marker is the whole rule.
+Any file with `.local.` in its name, or anything under a folder with `.local.` in its name, and
+any secret file: `.env`, `.env.<x>`, `.secrets` or `.secrets.<x>`, in any folder.
+Machine-local: shown under _show hidden files_, never synced. The path is the whole rule.
+
+### Secret file
+
+A `.env`, `.env.<x>`, `.secrets` or `.secrets.<x>`: a local file no capability may read. A vault app
+gets one of its values only by declaring the name under `env` in its `app.yaml` (`holi.env`), from
+the vault root's `.env` with `.env.local` winning.
 
 ### Vault app
 

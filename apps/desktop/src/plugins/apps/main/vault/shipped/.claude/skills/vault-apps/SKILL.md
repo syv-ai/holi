@@ -54,6 +54,7 @@ Projects/Q2/Burndown.app/app.yaml     ← required: write this LAST
   description: Sprint retros # shown where the app is listed
   collections: # the records it keeps: see Keeping data
   dangerously-allow: # one person's data it reads: mail, calendar, location
+  env: # the secrets it needs, by name: see Secrets
   ```
 
   A blank key is unused, and an empty file is still a valid manifest. There is
@@ -209,6 +210,26 @@ the call rejects. A personal app (`Name.local.app`) needs the flag but no dialog
 Before you add the flag to a shared app, tell the user plainly: whatever the app
 keeps in its records syncs to everyone in the vault, so do not store someone's
 mail in a shared app's store unless they asked for exactly that.
+
+## Secrets
+
+An API key or token never goes in a record, the app's code or a note: records
+sync. Declare the name in `app.yaml` and read it with `holi.env`:
+
+```yaml
+env: [OPENAI_API_KEY]
+```
+
+```js
+const key = await holi.env('OPENAI_API_KEY') // null until it is set
+```
+
+The user puts the value in the vault root's `.env` themselves (`.env.local`
+wins over it), one `NAME=value` per line. Holi keeps `.env`, `.env.*`,
+`.secrets` and `.secrets.*` out of git and away from `holi.docs.read`, and an
+app gets only the names it declares. When `holi.env` returns null, the app
+says which name to set and where. Do not write the `.env` for them, and do not
+ask them to paste a key into the app.
 
 ## Keeping data
 

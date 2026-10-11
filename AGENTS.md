@@ -121,8 +121,10 @@ legacy alias with the same behavior as `pnpm lint`.
   `.holi/settings/plugins.local.yaml`,
   `.holi/memory/*.local.md`, and `*.local.*` must remain machine-local; the GitHub
   token is kept by the app's credential storage, not in source. Local-ness is
-  the `.local.` marker and nothing else: a bare `USER.md` is ordinary
-  committed content, whatever an older vault's `.gitignore` says.
+  read off the path and nothing else: the `.local.` marker, or a secret file's
+  name (`.env`, `.env.*`, `.secrets`, `.secrets.*`, `isSecretPath`). A bare
+  `USER.md` is ordinary committed content, whatever an older vault's
+  `.gitignore` says.
 - A vault's seed files are real files in seed folders: `vault/once/**` and
   `vault/shipped/**` beside the module that contributes them
   (`main/vault/seed/core.ts`, a plugin's `main/seed.ts`; the agent's is

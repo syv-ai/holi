@@ -40,6 +40,21 @@ export interface AppManifest {
    * `dangerously-allow` (`{ calendar: To show your next meeting }`).
    */
   allowReasons?: Partial<Record<AppAffordance, string>>
+  /**
+   * The secrets it needs, by name (`OPENAI_API_KEY`): the only keys
+   * `holi.env` gives it from the vault's `.env` (docs/features/vault-apps.md).
+   */
+  env?: string[]
+}
+
+/** What a secret's name may be: an environment variable's, upper case. */
+export const ENV_NAME = /^[A-Z][A-Z0-9_]*$/
+
+/** `env:` as a list of names; anything else in it is dropped. */
+function parseEnv(raw: unknown): string[] | undefined {
+  if (!Array.isArray(raw)) return undefined
+  const names = raw.filter((n): n is string => typeof n === 'string' && ENV_NAME.test(n))
+  return names.length > 0 ? [...new Set(names)] : undefined
 }
 
 /** The longest reason the approval dialog shows: a sentence, not a pitch. */
@@ -134,6 +149,8 @@ export function parseAppManifest(yaml: string): AppManifest | null {
   const collections = parseCollections((raw as Record<string, unknown>).collections)
   if (collections !== undefined) manifest.collections = collections
   Object.assign(manifest, parseAffordances((raw as Record<string, unknown>)['dangerously-allow']))
+  const env = parseEnv((raw as Record<string, unknown>).env)
+  if (env !== undefined) manifest.env = env
   return manifest
 }
 
@@ -159,6 +176,10 @@ export function appManifestText(description?: string): string {
     `# any of ${APP_AFFORDANCES.join(', ')}. As a map, each with a reason the approval shows:`,
     '#   { calendar: To show your next meeting }',
     'dangerously-allow:',
+    '',
+    '# The secrets holi.env(name) may read, by name, from the vault\u2019s .env:',
+    '#   [OPENAI_API_KEY]',
+    'env:',
     '',
   ].join('\n')
 }

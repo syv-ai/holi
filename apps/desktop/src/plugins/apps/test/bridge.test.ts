@@ -25,6 +25,7 @@ describe('APP_METHODS', () => {
       'google.agenda',
       'google.search',
       'tasks.complete',
+      'env.get',
     ])
   })
 

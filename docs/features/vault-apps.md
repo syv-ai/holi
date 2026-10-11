@@ -168,6 +168,13 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
 - This machine's state under `.holi/state/` (`isMachineStatePath`) is refused the same way and left
   out of every listing: it holds the loopback bridge's tokens, and an app holding one could drive
   Holi as the agent does.
+- Secret files (`.env`, `.env.*`, `.secrets`, `.secrets.*`, `isSecretPath`) are refused the same
+  way, and are local, so never synced. An app gets a secret only by naming it under `env` in
+  `app.yaml`: `holi.env(name)` (`env.get`, app door only) reads the vault root's `.env`, with
+  `.env.local` winning, fresh on each call, and refuses a name the manifest does not list. The
+  person writes the file by hand; nothing in Holi writes it, so a key never passes through an
+  app's UI. The network is open, so a declared secret is the app's to send where it likes: the
+  declaration is what the person reads before they set the value.
 - The frame is `sandbox="allow-scripts"` and never also `allow-same-origin`. Both together let the
   frame drop its own sandbox. The opaque origin is also why `localStorage` throws.
 - `AppFrame` identifies a message by `event.source === contentWindow`, never by origin (it is the
