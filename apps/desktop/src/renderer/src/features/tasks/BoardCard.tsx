@@ -37,7 +37,7 @@ import {
 } from '@/primitives'
 import { nowAtom, todayAtom } from '@/state/clock'
 import { openBesideAtom } from '@/state/panes'
-import { deleteTaskAtom, filterAtom, setTaskStatusAtom } from '@/state/tasks'
+import { deleteTaskAtom, filterAtom, setTaskStatusAtom, togglePerson } from '@/state/tasks'
 import { useCheckSequence, type Parking } from './use-check-sequence'
 import type { useBoardDrag } from './use-board-drag'
 
@@ -100,8 +100,7 @@ export function TaskMeta({
   const now = useAtomValue(nowAtom)
   const reduced = useReducedMotion() ?? false
   const labels = virtualLabels(task, now)
-  const assignees = task.assignees ?? []
-  if (!task.due && labels.length === 0 && task.tags.length === 0 && assignees.length === 0) {
+  if (!task.due && labels.length === 0 && task.tags.length === 0 && task.assignees.length === 0) {
     return null
   }
   return (
@@ -124,7 +123,7 @@ export function TaskMeta({
           {label}
         </FilterWord>
       ))}
-      {assignees.map((login) => (
+      {task.assignees.map((login) => (
         <FilterWord key={`@${login}`} word={login} onFilter={onFilterPerson}>
           @{login}
         </FilterWord>
@@ -168,11 +167,7 @@ export function BoardCard({
       ...f,
       tags: f.tags.includes(word) ? f.tags.filter((t) => t !== word) : [...f.tags, word],
     }))
-  const filterByPerson = (login: string) =>
-    setFilter((f) => ({
-      ...f,
-      people: f.people.includes(login) ? f.people.filter((p) => p !== login) : [...f.people, login],
-    }))
+  const filterByPerson = (login: string) => setFilter((f) => togglePerson(f, login))
   const reduced = useReducedMotion() ?? false
   const flight = useRef<HTMLDivElement>(null)
   const sequence = useCheckSequence(task, today, parking, setStatus)

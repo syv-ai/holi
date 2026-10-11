@@ -151,6 +151,7 @@ export const taskCapabilities = (deps: TaskCapabilitiesDeps) => ({
           ...patch,
           status: patch.status ?? 'todo',
           tags: patch.tags ?? [],
+          assignees: patch.assignees ?? [],
           // The title is the body's first heading, because that is where the
           // format keeps it.
           description: setFirstHeading(input.description ?? '', input.title),

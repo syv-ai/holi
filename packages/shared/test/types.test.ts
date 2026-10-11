@@ -19,6 +19,7 @@ describe('shared domain types', () => {
       title: 'Prove the slice',
       status: 'doing',
       tags: ['spike'],
+      assignees: [],
       description: 'Links to [[projects/q2/roadmap.md]].',
     }
     expect(task.status).toBe('doing')

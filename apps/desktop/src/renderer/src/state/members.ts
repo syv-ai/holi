@@ -10,6 +10,7 @@
  * Vault-scoped and loaded once in Shell (`useVaultMembers`), never by
  * whichever view asks first.
  */
+import { cleanLogins, sameLogin } from '@holi/shared'
 import { atom, useAtomValue, useSetAtom } from 'jotai'
 import { useEffect } from 'react'
 import { trpc } from '@/lib/trpc'
@@ -17,45 +18,32 @@ import { sessionAtom } from './session'
 import { snapshotTasksAtom } from './tasks'
 import { activeRemoteAtom } from './vaults'
 
-export interface Member {
-  login: string
-  avatarUrl?: string
+/** GitHub's answer for one vault, or null before it came (or when it failed). */
+const fetchedMembersAtom = atom<{ remote: string; logins: string[] } | null>(null)
+
+/** Logins as a list of people to show: each once, the signed-in person
+ *  (`me`) first, then the rest by name. */
+export function peopleList(logins: Iterable<string>, me: string | null): string[] {
+  const isMe = (login: string) => me !== null && sameLogin(login, me)
+  return cleanLogins(logins).sort((a, b) =>
+    isMe(a) ? -1 : isMe(b) ? 1 : a.localeCompare(b, undefined, { sensitivity: 'base' }),
+  )
 }
 
-/** GitHub's answer for one vault, or null before it came (or when it failed). */
-const fetchedMembersAtom = atom<{ remote: string; members: Member[] } | null>(null)
-
-/** Everyone a task in the open vault can name, sorted, the signed-in person
- *  first. */
-export const vaultMembersAtom = atom((get): Member[] => {
+/** Everyone a task in the open vault can name, the signed-in person first. */
+export const memberLoginsAtom = atom((get): string[] => {
   const remote = get(activeRemoteAtom)
   const fetched = get(fetchedMembersAtom)
   const me = get(sessionAtom)?.login ?? null
-  const byLogin = new Map<string, Member>()
-  const add = (m: Member): void => {
-    const key = m.login.toLowerCase()
-    const known = byLogin.get(key)
-    if (known === undefined || (known.avatarUrl === undefined && m.avatarUrl !== undefined)) {
-      byLogin.set(key, m)
-    }
-  }
-  if (fetched !== null && fetched.remote === remote) fetched.members.forEach(add)
-  if (me !== null) add({ login: me })
-  for (const task of get(snapshotTasksAtom).items) {
-    for (const login of task.assignees ?? []) add({ login })
-  }
-  const mine = me?.toLowerCase()
-  return [...byLogin.values()].sort((a, b) =>
-    a.login.toLowerCase() === mine
-      ? -1
-      : b.login.toLowerCase() === mine
-        ? 1
-        : a.login.localeCompare(b.login, undefined, { sensitivity: 'base' }),
+  return peopleList(
+    [
+      ...(fetched !== null && fetched.remote === remote ? fetched.logins : []),
+      ...(me === null ? [] : [me]),
+      ...get(snapshotTasksAtom).items.flatMap((task) => task.assignees),
+    ],
+    me,
   )
 })
-
-/** The logins alone, for a chip field's suggestions. */
-export const memberLoginsAtom = atom((get) => get(vaultMembersAtom).map((m) => m.login))
 
 /** Ask main for the open vault's collaborators whenever the vault changes.
  *  Mounted once, in Shell. A refusal (offline, not listable) leaves the
@@ -69,14 +57,7 @@ export function useVaultMembers(): void {
     trpc.github.collaborators
       .query({ remote })
       .then(({ collaborators }) => {
-        if (!live) return
-        setFetched({
-          remote,
-          members: collaborators.map((c) => ({
-            login: c.login,
-            ...(c.avatarUrl === undefined ? {} : { avatarUrl: c.avatarUrl }),
-          })),
-        })
+        if (live) setFetched({ remote, logins: collaborators.map((c) => c.login) })
       })
       .catch((err: unknown) => console.warn('[members] not listed:', err))
     return () => {

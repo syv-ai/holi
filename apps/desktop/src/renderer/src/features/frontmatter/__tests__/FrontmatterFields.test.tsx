@@ -2,6 +2,7 @@ import { render, screen, waitFor } from '@/test/render'
 import userEvent from '@testing-library/user-event'
 import { expect, test, vi } from 'vitest'
 import { Provider, createStore } from 'jotai'
+import { readYamlMapping } from '@holi/shared'
 import { nowAtom } from '@/state/clock'
 import { FrontmatterFields } from '../FrontmatterFields'
 
@@ -112,6 +113,14 @@ test('the last tag removed clears the key instead of writing an empty list', asy
   await user.click(screen.getByRole('button', { name: 'remove home' }))
 
   expect(onWrite.mock.calls[0]![0]).not.toContain('tags')
+})
+
+test('an assignee typed in another case is the same person, not a second one', async () => {
+  const onWrite = fields('status: todo\nassignees: [Ada]\n')
+  const user = userEvent.setup()
+  await user.click(screen.getByRole('combobox', { name: 'add to assignees' }))
+  await user.keyboard('@ada{Enter}')
+  expect(readYamlMapping(onWrite.mock.lastCall![0] as string)?.assignees).toEqual(['Ada'])
 })
 
 test('any key can be added as free text, below the rows', async () => {

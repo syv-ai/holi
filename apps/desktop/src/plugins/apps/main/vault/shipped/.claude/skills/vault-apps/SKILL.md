@@ -113,6 +113,7 @@ list (they are `holi.tasks.list()`), and neither are the agent's own files.
   due?: '2026-08-24',                       // YYYY-MM-DD
   priority?: 'low' | 'medium' | 'high',
   tags: ['auth'],                           // always an array, may be empty
+  assignees: ['mhenrichsen'],               // GitHub logins; always an array, may be empty
   reminder?: '2d',
   description: 'the markdown body',
 }

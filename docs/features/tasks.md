@@ -91,22 +91,25 @@ Todo / Doing / Done, with one swim lane per folder.
   switching vault if needed. The per-path watermark lives under `reminders` in the vault's
   machine-local `.holi/settings/app.local.yaml`.
 - **Assignees** are GitHub logins (`assignees: [mhenrichsen]`), the identity a vault already has:
-  its members are its repo's collaborators. A hand-written `@login` or a single login without a
-  list reads the same, duplicates whatever their case go, and an empty list is no key at all.
+  its members are its repo's collaborators. Like `tags`, a task's assignees are always a list,
+  empty when the task is no one's, and an empty list is no key at all. A hand-written `@login` or
+  a single login without a list reads the same. One rule in shared says which logins are one
+  person (`sameLogin`: GitHub ignores case) and makes every list of them (`cleanLogins`: no `@`,
+  no blanks, each person once in the spelling given first). The file reader, the pickers, the
+  filter and the reminder sweep all go through it, so `Ada` and `ada` are never two people.
   People to pick come from the collaborators (`github.collaborators`, the ten-minute cache), plus
   the signed-in login and every login a task already names, so the list works offline; it is
   loaded once in the shell (`state/members.ts`). They are offered as a task's `assignees` row,
-  quick add's People step (and `@login` in its title, which assigns a member and leaves the
-  title without it, while an `@` that names no member stays as written), the full create's
-  Assignees field, and the `@` popup in any editor, where People lead and insert `@login` as
-  text. A card shows `@login` after its labels, and clicking it filters by them; the Filter
-  panel lists everyone some task is assigned to, the signed-in person first, and a task matches
-  any chosen person. A login is a name and not an identity: a renamed account stops matching,
-  the trade GitHub's own `@mentions` make.
+  quick add's Assignees step (and `@login` in its title, which assigns a member and leaves the
+  title without it, while an `@` that names no member stays as written), and the full create's
+  Assignees field. A card shows `@login` after its labels, and clicking it filters by them; the
+  Filter panel lists everyone some task is assigned to, the signed-in person first, and a task
+  matches any chosen person. A login is a name and not an identity: a renamed account stops
+  matching, the trade GitHub's own `@mentions` make.
 - **An assigned task reminds its assignees only.** The sweep skips a task with assignees unless
   this machine is signed in as one of them (`remindsViewer`, case-insensitive), and does not mark
   it delivered, so handing the task to this person later still fires its reminder. A task with
-  no assignees reminds every member running Holi, as before.
+  no assignees reminds every member running Holi.
 - **Between machines** tasks sync like any file ([vaults and sync](vaults-sync.md)).
 
 ## Rules
@@ -137,6 +140,9 @@ Todo / Doing / Done, with one swim lane per folder.
 - Time-bucket views, per-user columns, presence, task ids, `related[]`.
 - Assignees by account id: stable across a rename, but unreadable in the file and unknown to the
   agent and to GitHub's own `@mentions`.
+- People in the editor's `@` popup: picking one would only type their name, which on a task looks
+  like an assignment that is not one, and a team's names would push every note down the list.
+  They belong there once `@login` does something.
 - Collapsing lanes by depth: a collapsed lane has no single folder to drop into.
 - Syncing note checkboxes with tasks: it couples notes to tasks again.
 - A cross-cell drop that keeps the card's old rank: the gap would show one place and the card land

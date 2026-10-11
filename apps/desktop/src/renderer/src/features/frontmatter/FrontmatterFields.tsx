@@ -13,6 +13,7 @@
  */
 import {
   type FieldSpec,
+  cleanLogins,
   completeTask,
   editYamlMapping,
   fieldList,
@@ -21,7 +22,6 @@ import {
   frontmatterSchema,
   isFieldSet,
   isTaskFilePath,
-  normalizeLogin,
   readYamlMapping,
 } from '@holi/shared'
 import { useAtomValue } from 'jotai'
@@ -121,15 +121,15 @@ export function FrontmatterFields({
           />
         )
       case 'people':
-        // GitHub logins, offered from the vault's members; one typed by hand
-        // with its `@` is kept without it, as the file reader keeps it.
+        // GitHub logins, offered from the vault's members, cleaned as the
+        // file reader cleans them: `@ada` is ada, and Ada and ada are one.
         return (
           <TagsField
             name={field.key}
             value={fieldList(value)}
             suggestions={members}
             onChange={(next) => {
-              const logins = [...new Set(next.map(normalizeLogin).filter((l) => l !== ''))]
+              const logins = cleanLogins(next)
               set(field.key, logins.length > 0 ? logins : undefined)
             }}
           />

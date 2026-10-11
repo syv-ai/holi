@@ -134,7 +134,7 @@ export function serializeTaskFile(
   if (task.due !== undefined) front.due = task.due
   if (task.priority !== undefined) front.priority = task.priority
   if (task.tags.length) front.tags = task.tags
-  if (task.assignees?.length) front.assignees = task.assignees
+  if (task.assignees.length) front.assignees = task.assignees
   if (task.reminder !== undefined) front.reminder = task.reminder
   if (task.recurrence !== undefined) front.recurrence = compactRecurrence(task.recurrence)
   if (task.order !== undefined) front.order = task.order
@@ -183,6 +183,7 @@ export function parseTaskFile(text: string, path: string): Task {
     title: firstHeading(body) ?? titleFromTaskPath(path),
     status: front.status === undefined ? 'todo' : enumOf(front.status, STATUSES, 'status'),
     tags: [],
+    assignees: [],
     description: body,
   }
 
@@ -202,8 +203,6 @@ export function parseTaskFile(text: string, path: string): Task {
     if (value === undefined || value === null) continue
     Object.assign(task, { [key]: PATCH_READERS[key]!(value) })
   }
-  // An empty list is no one: absent, so it serializes as never having been set.
-  if (task.assignees?.length === 0) delete task.assignees
 
   const extra = Object.fromEntries(Object.entries(front).filter(([k]) => !KNOWN_KEYS.has(k)))
   if (Object.keys(extra).length > 0) task.extra = extra
@@ -261,15 +260,7 @@ const PATCH_READERS: Record<string, (v: unknown) => unknown> = {
     if (!Array.isArray(raw) || raw.some((a) => typeof a !== 'string')) {
       throw new TaskFileError('assignees must be a list of GitHub usernames')
     }
-    const seen = new Set<string>()
-    const out: string[] = []
-    for (const entry of raw as string[]) {
-      const login = normalizeLogin(entry)
-      if (login === '' || seen.has(login.toLowerCase())) continue
-      seen.add(login.toLowerCase())
-      out.push(login)
-    }
-    return out
+    return cleanLogins(raw as string[])
   },
   reminder: (v) => {
     // Deliberately NOT checked against the stamp shape: these readers are shared
@@ -292,19 +283,47 @@ const PATCH_READERS: Record<string, (v: unknown) => unknown> = {
 
 /** The fields with a meaningful empty state. `null` on one of these clears it;
  * `null` anywhere else is a bug in the caller, not a value. */
-const CLEARABLE = new Set(['due', 'priority', 'assignees', 'reminder', 'recurrence'])
+const CLEARABLE = new Set(['due', 'priority', 'reminder', 'recurrence'])
 
 /** A login as written by hand or typed after `@`: trimmed, without the `@`. */
 export function normalizeLogin(raw: string): string {
   return raw.trim().replace(/^@+/, '').trim()
 }
 
-/** Whether `login` is among the task's assignees. GitHub logins are
- *  case-insensitive, so this is too. */
+/** Whether two logins are one person. GitHub ignores a login's case, so every
+ *  comparison of logins goes through here and none spells it out again. */
+export function sameLogin(a: string, b: string): boolean {
+  return a.toLowerCase() === b.toLowerCase()
+}
+
+/** Whether `login` is among `logins`, whatever its case. */
+export function hasLogin(logins: readonly string[], login: string): boolean {
+  return logins.some((l) => sameLogin(l, login))
+}
+
+/**
+ * Logins as a clean list: each without its `@`, the empty ones dropped, and
+ * each person once whatever the case, in the spelling given first. A task's
+ * assignees and every list of people to pick from are made with it.
+ */
+export function cleanLogins(raw: Iterable<string>): string[] {
+  const out: string[] = []
+  for (const entry of raw) {
+    const login = normalizeLogin(entry)
+    if (login !== '' && !hasLogin(out, login)) out.push(login)
+  }
+  return out
+}
+
+/** `logins` without `login` if it is there, in whatever case, and with it if
+ *  not: one switch per person, however their name was typed. */
+export function toggleLogin(logins: readonly string[], login: string): string[] {
+  return hasLogin(logins, login) ? logins.filter((l) => !sameLogin(l, login)) : [...logins, login]
+}
+
+/** Whether `login` is among the task's assignees. */
 export function isAssignedTo(task: Pick<Task, 'assignees'>, login: string | null): boolean {
-  if (login === null) return false
-  const wanted = login.toLowerCase()
-  return (task.assignees ?? []).some((a) => a.toLowerCase() === wanted)
+  return login !== null && hasLogin(task.assignees, login)
 }
 
 /**
@@ -313,7 +332,7 @@ export function isAssignedTo(task: Pick<Task, 'assignees'>, login: string | null
  * an assigned task reminds no one here.
  */
 export function remindsViewer(task: Pick<Task, 'assignees'>, login: string | null): boolean {
-  return (task.assignees ?? []).length === 0 || isAssignedTo(task, login)
+  return task.assignees.length === 0 || isAssignedTo(task, login)
 }
 
 /** A GitHub login after an `@`, at the start or after a space. */
@@ -328,12 +347,11 @@ export function assigneesInTitle(
   title: string,
   members: readonly string[],
 ): { title: string; assignees: string[] } {
-  const known = new Map(members.map((m) => [m.toLowerCase(), m]))
   const assignees: string[] = []
   const rest = title.replace(AT_LOGIN, (whole, lead: string, login: string) => {
-    const member = known.get(login.toLowerCase())
+    const member = members.find((m) => sameLogin(m, login))
     if (member === undefined) return whole
-    if (!assignees.includes(member)) assignees.push(member)
+    if (!hasLogin(assignees, member)) assignees.push(member)
     return lead
   })
   // A removed login leaves no gap before the punctuation that followed it.
