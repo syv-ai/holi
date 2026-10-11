@@ -36,6 +36,7 @@ const schedule = (over: Partial<ScheduleSummary>): ScheduleSummary => ({
   when: 'Every 30 minutes',
   allow: ['Edit(tilbud/**)'],
   prompt: 'Draft replies to my new mail.',
+  fingerprint: 'f1',
   runs: [],
   ...over,
 })
@@ -61,7 +62,7 @@ test('shows the prompt a schedule that is off would approve, and switches it on'
   await waitFor(() =>
     expect(calls).toContainEqual({
       name: 'schedules.enable',
-      params: { schedule: '.holi/schedules/inbox.md' },
+      params: { schedule: '.holi/schedules/inbox.md', fingerprint: 'f1' },
     }),
   )
 })
