@@ -17,7 +17,7 @@ status: todo
 due: 2026-08-25
 priority: high
 tags: [music, admin]
-assignees: [mhenrichsen]
+assignees: [ada]
 reminder: 2026-08-24T18:00
 recurrence:
   frequency: weekly
@@ -49,8 +49,8 @@ absent — do not write `due:` with nothing after it and do not write `null`.
 | `recurrence` | a map, see below |
 
 **Assignees are GitHub usernames.** `holi vault members` lists the vault's members;
-use their logins exactly. When the user says "give this to Nik" or "@nthomsencph",
-that is `assignees: [nthomsencph]`. A task with assignees reminds only them; one
+use their logins exactly. When the user says "give this to Bo" or "@bo",
+that is `assignees: [bo]`. A task with assignees reminds only them; one
 without reminds everyone who has the vault open in Holi. "My tasks" are the ones
 whose `assignees` include the user's own login: ask which member they are rather
 than guessing it. Leave `assignees` out rather than writing an empty list.

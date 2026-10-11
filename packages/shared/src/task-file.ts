@@ -339,7 +339,7 @@ export function remindsViewer(task: Pick<Task, 'assignees'>, login: string | nul
 const AT_LOGIN = /(^|\s)@([A-Za-z0-9](?:[A-Za-z0-9-]{0,38}))(?=$|[\s.,;:!?)])/g
 
 /**
- * `Send the tilbud @nthomsencph` → assigned to nthomsencph, titled "Send the
+ * `Send the tilbud @bo` → assigned to bo, titled "Send the
  * tilbud". Only logins of the vault's members count, so an `@` that is not a
  * person (`@home`, `5 @ 10`) stays in the title as written.
  */

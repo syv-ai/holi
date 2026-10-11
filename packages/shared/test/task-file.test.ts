@@ -376,8 +376,8 @@ describe('order', () => {
 
 describe('assignees', () => {
   it('reads GitHub logins, with or without the @, once each', () => {
-    const t = parse('---\nassignees: [mhenrichsen, "@nthomsencph", MHenrichsen, " "]\n---\n# A\n')
-    expect(t.assignees).toEqual(['mhenrichsen', 'nthomsencph'])
+    const t = parse('---\nassignees: [ada, "@bo", Ada, " "]\n---\n# A\n')
+    expect(t.assignees).toEqual(['ada', 'bo'])
   })
 
   it('reads one login written without a list', () => {
@@ -418,7 +418,7 @@ describe('assignees', () => {
   })
 
   it('matches a login whatever its case', () => {
-    expect(isAssignedTo({ assignees: ['MHenrichsen'] }, 'mhenrichsen')).toBe(true)
+    expect(isAssignedTo({ assignees: ['Ada'] }, 'ada')).toBe(true)
     expect(isAssignedTo({ assignees: ['a'] }, 'b')).toBe(false)
     expect(isAssignedTo({ assignees: [] }, 'a')).toBe(false)
     expect(isAssignedTo({ assignees: ['a'] }, null)).toBe(false)
@@ -441,31 +441,31 @@ describe('one rule for a login', () => {
   })
 
   it('makes a clean list: no @, no blanks, each person once in the spelling given first', () => {
-    expect(cleanLogins(['Ada', ' @ada ', '', '@', 'nik', 'NIK'])).toEqual(['Ada', 'nik'])
+    expect(cleanLogins(['Ada', ' @ada ', '', '@', 'bo', 'BO'])).toEqual(['Ada', 'bo'])
   })
 
   it('toggles a person by any spelling of their name', () => {
-    expect(toggleLogin(['Ada', 'nik'], 'ada')).toEqual(['nik'])
-    expect(toggleLogin(['nik'], 'Ada')).toEqual(['nik', 'Ada'])
+    expect(toggleLogin(['Ada', 'bo'], 'ada')).toEqual(['bo'])
+    expect(toggleLogin(['bo'], 'Ada')).toEqual(['bo', 'Ada'])
   })
 })
 
 describe('assigneesInTitle', () => {
-  const members = ['mhenrichsen', 'nthomsencph']
+  const members = ['ada', 'bo']
 
   it('takes members out of the title and assigns them', () => {
-    expect(assigneesInTitle('Send the tilbud @NThomsencph', members)).toEqual({
+    expect(assigneesInTitle('Send the tilbud @Bo', members)).toEqual({
       title: 'Send the tilbud',
-      assignees: ['nthomsencph'],
+      assignees: ['bo'],
     })
-    expect(assigneesInTitle('@mhenrichsen review @nthomsencph, then ship', members)).toEqual({
+    expect(assigneesInTitle('@ada review @bo, then ship', members)).toEqual({
       title: 'review, then ship',
-      assignees: ['mhenrichsen', 'nthomsencph'],
+      assignees: ['ada', 'bo'],
     })
   })
 
   it('leaves an @ that is no member, and an address, as written', () => {
     expect(assigneesInTitle('Work @home', members)).toEqual({ title: 'Work @home', assignees: [] })
-    expect(assigneesInTitle('Mail a@mhenrichsen.dk', members).assignees).toEqual([])
+    expect(assigneesInTitle('Mail ada@syv.ai', members).assignees).toEqual([])
   })
 })

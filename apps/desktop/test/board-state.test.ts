@@ -133,7 +133,7 @@ describe('filter (three controls, and one vocabulary)', () => {
 
   it('narrows to tasks assigned to any chosen person, whatever the case', () => {
     const mine = task({ assignees: ['Mads'] })
-    const theirs = task({ assignees: ['nik'] })
+    const theirs = task({ assignees: ['bo'] })
     const nobody = task({})
     const filter = { ...F, people: ['mads', 'someone'] }
     expect(matchesFilter(mine, filter, TODAY)).toBe(true)
