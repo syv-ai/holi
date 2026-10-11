@@ -119,6 +119,9 @@ export interface ScheduleSummary {
   model?: string
   allow?: string[]
   prompt?: string
+  /** What switching it on approves, as the row shows it: `enable` takes it
+   *  back and refuses if the file has changed since. */
+  fingerprint?: string
   /** ISO time of the next run, while it is on. */
   nextRun?: string
   lastRun?: string
@@ -196,8 +199,9 @@ export interface Scheduler {
   attach(vault: SchedulerVault): void
   detach(): void
   list(vault: SchedulerVault): Promise<ScheduleSummary[]>
-  /** Turn a schedule on here, approving what its file says now. */
-  enable(vault: SchedulerVault, ref: string): Promise<ScheduleSummary>
+  /** Turn a schedule on here, approving what its file says now; with `seen`,
+   *  only if that is still the fingerprint the person was shown. */
+  enable(vault: SchedulerVault, ref: string, seen?: string): Promise<ScheduleSummary>
   disable(vault: SchedulerVault, ref: string): Promise<ScheduleSummary>
   /** Run an approved schedule now, whatever its times say. */
   run(vault: SchedulerVault, ref: string): Promise<RunRecord>
@@ -345,6 +349,7 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       ...(def.model === undefined ? {} : { model: def.model }),
       allow: def.allow,
       prompt: def.prompt,
+      fingerprint: fingerprint(def),
       ...(next === null ? {} : { nextRun: next.toISOString() }),
     }
   }
@@ -568,7 +573,7 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       this.detach()
     },
 
-    async enable(vault, ref) {
+    async enable(vault, ref, seen) {
       const entry = find(await readSchedules(vault.root), ref)
       if (!entry.parsed.ok) {
         throw new CapabilityError(
@@ -577,6 +582,12 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
         )
       }
       const def = entry.parsed.def
+      if (seen !== undefined && seen !== fingerprint(def)) {
+        throw new CapabilityError(
+          'BAD_REQUEST',
+          `${def.name} changed since you looked. Read it again before turning it on.`,
+        )
+      }
       const at = now()
       if (def.when.kind === 'at' && def.when.local.getTime() <= at.getTime()) {
         throw new CapabilityError(

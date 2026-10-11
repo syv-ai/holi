@@ -65,7 +65,9 @@ a small script gets around, and an approval the agent could give itself would be
 Schedules** lists each schedule with its status (`on`, `off`, `changed`, `invalid` and why), when it
 runs and its next run, what it may do without asking, its last run, a link to its file and to its
 live run, a **Runs here** switch and **Run now**. While a schedule is off or changed, its row shows
-the prompt the switch would approve, so nobody approves text behind a link.
+the prompt the switch would approve, so nobody approves text behind a link. The switch approves
+exactly that text: it sends back the fingerprint the row showed, and a file that changed since is
+refused as "changed since you looked" and shown again.
 
 **One check every half minute**, while the vault is open, plus one five seconds after it opens. A
 check runs a schedule when its first moment after the last run (or after it was turned on) has

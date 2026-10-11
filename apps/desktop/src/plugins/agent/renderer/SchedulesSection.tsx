@@ -150,7 +150,12 @@ function ScheduleRow({
               disabled={busy || schedule.status === 'invalid'}
               onCheckedChange={(v) =>
                 void act(() =>
-                  v ? schedulesCap.enable(remote, ref) : schedulesCap.disable(remote, ref),
+                  v
+                    ? schedulesCap.enable(remote, {
+                        ...ref,
+                        fingerprint: schedule.fingerprint ?? '',
+                      })
+                    : schedulesCap.disable(remote, ref),
                 )
               }
             />

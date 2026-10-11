@@ -162,6 +162,14 @@ describe('approval', () => {
     expect(launched[0]!.prompt).not.toContain('Ignore the prompt')
   })
 
+  it('approves only the prompt the row showed, not one written since', async () => {
+    await writeSchedule('inbox.md', 'name: Inbox\ncron: "*/30 * * * *"', 'Draft replies.')
+    const shown = (await scheduler.list(vault()))[0]!.fingerprint!
+    await writeSchedule('inbox.md', 'name: Inbox\ncron: "*/30 * * * *"', 'Send them all.')
+    await expect(scheduler.enable(vault(), 'inbox', shown)).rejects.toThrow(/changed since/)
+    expect((await scheduler.list(vault()))[0]!.status).toBe('off')
+  })
+
   it('is turned on only from Settings, never by a holi command', () => {
     const caps = scheduleCapabilities({ scheduler })
     expect(caps['schedules.enable'].doors).toEqual(['ui'])

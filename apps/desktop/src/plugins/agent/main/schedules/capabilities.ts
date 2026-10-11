@@ -8,7 +8,9 @@
  * tools; so there is no `create`. **Turning one on is the UI door's alone**: it
  * approves what will run unattended, and an approval the agent could give,
  * however a permission rule is worded, would be none. So `enable` is a switch
- * in Settings, beside the prompt it approves, and no `holi` command. Running
+ * in Settings, beside the prompt it approves, and no `holi` command. The switch
+ * sends back the fingerprint the row showed, so it approves exactly that text
+ * and not whatever a pull or the agent wrote since. Running
  * one that is already on, or turning one off, approves nothing new: the agent
  * may (`run` asks the person first, `claude/seed.ts`).
  *
@@ -66,9 +68,12 @@ export const scheduleCapabilities = (deps: ScheduleCapabilitiesDeps) => ({
 
   'schedules.enable': cap({
     doors: ['ui'],
-    params: refParams,
-    run: (ctx, { schedule }): Promise<ScheduleSummary> =>
-      deps.scheduler.enable(vaultOf(ctx), schedule),
+    params: (raw) => {
+      const p = paramsObject(raw)
+      return { schedule: stringParam(p, 'schedule'), fingerprint: stringParam(p, 'fingerprint') }
+    },
+    run: (ctx, { schedule, fingerprint }): Promise<ScheduleSummary> =>
+      deps.scheduler.enable(vaultOf(ctx), schedule, fingerprint),
   }),
 
   'schedules.disable': cap({
