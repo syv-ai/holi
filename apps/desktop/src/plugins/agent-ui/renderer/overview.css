@@ -90,19 +90,34 @@
   height: min(calc(var(--rows) * var(--pitch) + var(--footer) + 2 * var(--pad)), 70vh);
   overflow: hidden;
 }
+/* Resting, the scroller takes no pointer: only the bubbles open the fan. */
+.agent-fan-scroll {
+  pointer-events: none;
+}
 /* The rows scroll when there are more than fit; the way to the history stays
    at the foot of the fan. */
 .agent-stack[data-open] .agent-fan-scroll {
   height: calc(100% - var(--footer));
   overflow-x: hidden;
   overflow-y: auto;
+  pointer-events: auto;
+}
+/* No bar: while the fan grows it is shorter than its rows, so a bar would come
+   for the length of the transition, take its 10px from the rows, and give it
+   back at the end, and every face would jump under the pointer. */
+.agent-fan-scroll::-webkit-scrollbar {
+  display: none;
 }
 .agent-fan-inner {
   position: relative;
-  height: calc(var(--rows) * var(--pitch) + 2 * var(--pad));
-  /* Resting, it is taller than the stack: only the bubbles take the pointer,
-     never the empty room under them. */
+  /* Only the bubbles take the pointer, never the room between them. */
   pointer-events: none;
+}
+/* As tall as its rows only while open. Resting, the bubbles are placed from
+   the top and need no room, and a column of every row would hang out of the
+   stack, and out of the window once there are enough of them. */
+.agent-stack[data-open] .agent-fan-inner {
+  height: calc(var(--rows) * var(--pitch) + 2 * var(--pad));
 }
 
 .agent-bubble {
@@ -114,6 +129,10 @@
   z-index: calc(100 - var(--i));
   display: flex;
   align-items: center;
+  /* Packed against the face's edge: while a row is still narrower than what
+     it holds, the rest hangs out to the left, and the face stays where the
+     resting bubble was, under the pointer. */
+  justify-content: flex-end;
   width: var(--size);
   height: var(--size);
   border-radius: 9999px;
@@ -158,6 +177,7 @@
 /* The words, open: their own button, which takes the room between the archive
    button and the face, and reads towards the face. Resting, it has none. */
 .agent-bubble-main {
+  position: relative;
   display: flex;
   align-items: center;
   min-width: 0;
@@ -190,21 +210,40 @@
   display: inline-flex;
   flex-shrink: 0;
 }
+/* As wide as an open row leaves them, from the start: sized by the row as it
+   grows, a name would be cut at a different letter on every frame. That is
+   the fan, less its room, the row's left padding, the archive button, the
+   margins of the words and the face. */
+/* The words are as wide as they will be, and this shows as much of them as
+   the row has room for yet. A box of its own, square: the button's round ends
+   would cut the corners off the first and last letters. */
+.agent-bubble-words {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
 .agent-bubble-label {
+  /* Held to the face's side of the row, whatever the row's width is yet. */
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
   display: flex;
-  width: 100%;
-  min-width: 0;
-  flex: 1;
+  width: calc(20rem - 2 * var(--pad) - 0.5rem - 1.5rem - 1rem - var(--size));
   flex-direction: column;
+  justify-content: center;
   gap: 0.125rem;
   text-align: right;
   opacity: 0;
   pointer-events: none;
-  transition: opacity 120ms;
 }
+/* The words fade in once their row has room, and go at once when the fan
+   closes: fading, they would be squeezed and laid over each other as the rows
+   shrink back to bubbles. */
 .agent-stack[data-open] .agent-bubble-label {
   opacity: 1;
-  transition-delay: 100ms;
+  transition: opacity 120ms 100ms;
 }
 /* Archive: at the left of an open row, quiet until the row is touched. */
 .agent-bubble-archive {
@@ -213,8 +252,15 @@
   opacity: 0.55;
   transition: opacity 120ms;
 }
+/* It comes with the words, not ahead of them into a row with no room yet. */
 .agent-stack[data-open] .agent-bubble-archive {
   display: inline-flex;
+  animation: agent-archive-in 120ms 100ms backwards;
+}
+@keyframes agent-archive-in {
+  from {
+    opacity: 0;
+  }
 }
 .agent-bubble:hover .agent-bubble-archive,
 .agent-bubble-archive:focus-visible {
@@ -225,6 +271,10 @@
   position: absolute;
   left: 1.25rem;
   bottom: 0.875rem;
+  /* Never wider than the fan: resting, the fan is one bubble wide, and the
+     words would reach out of it and past the window's edge. */
+  max-width: calc(100% - 2.5rem);
+  overflow: hidden;
   opacity: 0;
   pointer-events: none;
   transition: opacity 150ms;
@@ -247,10 +297,13 @@
 @media (prefers-reduced-motion: reduce) {
   .agent-fan,
   .agent-bubble,
-  .agent-bubble-label,
+  .agent-stack[data-open] .agent-bubble-label,
   .agent-bubble-archive,
   .agent-fan-footer,
   .agent-stack-more {
     transition: none;
+  }
+  .agent-stack[data-open] .agent-bubble-archive {
+    animation: none;
   }
 }

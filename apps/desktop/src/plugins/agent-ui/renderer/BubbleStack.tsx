@@ -183,15 +183,17 @@ export function BubbleStack({
                           setOpen(false)
                         }}
                       >
-                        <span className="agent-bubble-label">
-                          <span className="truncate text-sm text-foreground">{entry.name}</span>
-                          <span
-                            className={cn(
-                              'truncate text-xs',
-                              needsYou ? 'text-orange-400' : 'text-muted-foreground',
-                            )}
-                          >
-                            {subline(entry, now)}
+                        <span className="agent-bubble-words">
+                          <span className="agent-bubble-label">
+                            <span className="truncate text-sm text-foreground">{entry.name}</span>
+                            <span
+                              className={cn(
+                                'truncate text-xs',
+                                needsYou ? 'text-orange-400' : 'text-muted-foreground',
+                              )}
+                            >
+                              {subline(entry, now)}
+                            </span>
                           </span>
                         </span>
                       </Button>
@@ -273,8 +275,10 @@ export function BubbleStack({
                   setOpen(false)
                 }}
               >
-                <span className="agent-bubble-label">
-                  <span className="truncate text-sm text-foreground">New session</span>
+                <span className="agent-bubble-words">
+                  <span className="agent-bubble-label">
+                    <span className="truncate text-sm text-foreground">New session</span>
+                  </span>
                 </span>
               </Button>
               <Button

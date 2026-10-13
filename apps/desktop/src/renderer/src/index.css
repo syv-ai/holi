@@ -728,6 +728,19 @@
 }
 
 /**
+ * The document never scrolls: the frame is the height of the window and every
+ * pane scrolls itself. Without this, anything that reaches a pixel past the
+ * window's edge, even unseen, gives the document a scrollbar, which takes
+ * 10px, which makes the `h-screen` frame overflow the other way: two bars
+ * that come and go together and resize everything in the window by their
+ * width.
+ */
+html,
+body {
+  overflow: hidden;
+}
+
+/**
  * Scrollbars, app-wide.
  *
  * The paint is global: a bare `::-webkit-scrollbar` rule reaches every
