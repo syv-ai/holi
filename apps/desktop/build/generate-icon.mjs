@@ -18,7 +18,14 @@ try {
     for (const scale of [1, 2]) {
       const pixels = size * scale
       const name = `icon_${size}x${size}${scale === 2 ? '@2x' : ''}.png`
-      execFileSync('sips', ['-z', String(pixels), String(pixels), basePng, '--out', join(iconsetPath, name)])
+      execFileSync('sips', [
+        '-z',
+        String(pixels),
+        String(pixels),
+        basePng,
+        '--out',
+        join(iconsetPath, name),
+      ])
     }
   }
   execFileSync('iconutil', ['-c', 'icns', iconsetPath, '-o', join(buildDir, 'icon.icns')], {
