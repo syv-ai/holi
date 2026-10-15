@@ -42,30 +42,29 @@ hidden, the same menu runs down the rail.
   `surface="float"`, as the board's dock is). It is one row and opens upward from its middle. The
   rail is then empty. The plugin only says so (`RendererPlugin.layout`,
   `{hub: 'dock'}`); `Shell` places the menu, from `hubPlacementAtom`.
-- **Holding the open tabs.** The workspace plugin also takes the tabs out of the panes
-  (`{tabs: 'hub'}`, [tabs and panes](tabs-panes.md)) and the menu holds them. An item holds its
-  surface's open tabs, or those of the surface it names (`RailItem.tabs`: Apps is the page of apps and holds the
-  `app` tabs), when the surface is one tab per thing (an app): resting the pointer on its dock shortcut opens a card of them in place of
-  the tooltip (`primitives/HoverCard`, `features/nav/OpenTabs`). Each tab is a **bubble holding a small
-  picture of what it looks like**, with no words (its name is its accessible name), the one its pane
-  is showing outlined; pressing it goes to the tab, and a close button shows on its corner while the
-  pointer is on it. The last bubble is a **+**, a new tab: the item's own page (Apps' page of cards),
-  or Home for the files, which have no page of their own. A tab that has not been seen yet shows its
-  mark in place of a picture. A surface that is one page (Home, the board, mail, the
-  agents' overview) has nothing to list, so its item keeps its tooltip and is simply the way to
-  it. Every tab no item's surface owns, which
-  is the files (and History), is held by one more item, Open files (order 15, after Search),
-  there only while there are any, with their count as its badge; pressing it goes back to the file
-  its pane was showing. A shortcut with a card wears a dot under its glyph. The card is the
-  pointer's; the keyboard reaches a tab through the palette, as before.
-- **The pictures** (`state/tab-thumbs`) are the window's own pixels: a vault app is a page in a
-  frame, which nothing else can read. Main takes one on request (`holi:capturePage`, the window's
-  `capturePage` of the rectangle of a pane's body, shrunk to a JPEG data URL), and the renderer asks
-  for the tab each pane is showing 0.7 s and 2.6 s after it arrives and every 12 s while it stays,
-  never while a card, the agents' fan, a menu or a dialog is over the panes, which would be in the
-  picture. A tab can only be photographed while it shows, so a tab never opened since Holi started has
-  no picture yet; pictures are kept in memory only and go with their tab. The agents' bubbles that
-  float over a pane's top right are in its picture.
+- **The open tabs, its second section.** The workspace plugin also takes the tabs out of the panes
+  (`{tabs: 'hub'}`, [tabs and panes](tabs-panes.md)) and they become a **second section of the same
+  bar**, after the shortcuts and a thin vertical line that sets the two apart
+  (`features/nav/OpenTabs`, in `MorphingMenu`'s `trailing`); in the sidebar and the rail, where the
+  dock wraps, they wrap above the menu instead. One icon per tab, the one its pane is showing
+  marked, its name its tooltip; a note, which has no mark of its own, wears the file's. Pressing an
+  icon goes to its tab. **Resting the pointer on a tab opens a small label above the bar** (`primitives/HoverCard`):
+  the tab's name (its path, for a file) and a close button. It floats over the pane, so the bar
+  never changes size and nothing covers the icon; the pointer can move up into it to press close.
+  A middle press closes too, and the keyboard closes the focused tab with ⌘W. The section lists
+  every file, every tab of a surface that is one per thing (an app, an agent's terminal), and a
+  page no menu item goes to (Settings, History), so each can be closed. A surface that is a menu item's one page (Home, the board, mail) is not listed: its item
+  is the way to it. With nothing to list there is no section and no line. **A tab that opens pops up** into its place (up from a little
+  below, small and clear, with a bounce: `pop`), while the bar springs wider to make room
+  (`dockResize`): the bar inside the shell springs with it and the section takes what is left, so
+  the shortcuts stay put and the room opens at the end. A tab that closes shrinks away, the rest
+  close up, and the bar springs back. Reduced motion snaps. Apps reads as current
+  while an app is showing (`RailItem.tabs`). Past twelve tabs the section scrolls.
+- **Settings and sync in the sidebar's header.** The workspace plugin moves the two that are rarely
+  pressed out of the menu (`{utilities: 'header'}`, `features/nav/Utilities`): two icons beside the
+  vault's name, and at the head of the rail while the sidebar is hidden, so they are at the window's
+  top left either way. The sync icon is the menu's glyph, with its colour and turning, and opens the
+  same panel in a popover (`SyncButton`); the gear opens Settings.
 - **One surface.** The collapsed bar and the open list are one element that resizes between them
   with a spring (a squeeze, then the grow), with the rows cascading in. Open, it is pinned
   `position: fixed` at the dock's corner so it can grow out of the drawer and the 44px rail over
@@ -116,8 +115,20 @@ hidden, the same menu runs down the rail.
 - The dock floating over the panes: it covers a note's last lines and lands on the board's and
   the history's own centred docks. A row of its own costs 48px and covers nothing.
 - One dock item per open file: twenty files are twenty items with no icon to tell them apart (a
-  note has no glyph). One item that lists them reads the same at two files and at twenty. (The card
-  of an item's tabs is bubbles of pictures, which tell them apart by what they look like.)
+  note has no glyph). They are the bar's second section instead, which scrolls and takes nothing
+  from the menu.
+- The open tabs in a bar of their own beside the dock: two pills read as two things, and the gap
+  between them as a mistake. One bar with a line reads as one dock in two parts.
+- Settings and sync at the foot of the Home page: only there while Home shows, and floating over
+  nothing in particular. The sidebar's header is always there and is where the vault is named.
+- A card of previews over an item, opened by resting the pointer on it (bubbles of pictures of each
+  tab, taken with `capturePage`): it opened when you only passed over the dock, hid the tabs behind
+  a hover, needed an Open files item to hold the files, and photographed the window every few
+  seconds. The section shows what is open at a glance.
+- A close button on a tab's corner: on a 32px icon it covers the icon it closes.
+- A close button that opens beside the tab's icon, inside the bar: the bar grows under the
+  pointer and the dock shifts, even held at one edge. The label above the bar costs no room, and
+  names the tab, which an app's icon alone does not (every app wears the same glyph).
 - A plugin rendering the menu itself: the items, the sync panel and the hotkeys are core's, and a
   second copy would drift. A plugin says where; core draws.
 - A drill-down of the apps in the menu: a list of bare names with a Back row, which the Apps page
@@ -139,7 +150,8 @@ hidden, the same menu runs down the rail.
 - `apps/desktop/src/renderer/src/components/core-surfaces.tsx` (whose Home surface picks Home's
   folder document or `HomeView`), `features/home/HomeView.tsx` (the recents, or why Home is not there).
 - `apps/desktop/src/renderer/src/components/Shell.tsx`: the sidebar, rail and dock placement.
-- `apps/desktop/src/renderer/src/features/nav/OpenTabs.tsx`: the card of an item's open tabs (bubbles of
-  `state/tab-thumbs.ts`' pictures, taken by `main/ipc.ts`' `holi:capturePage`);
+- `apps/desktop/src/renderer/src/features/nav/OpenTabs.tsx`: the section of open tabs;
   `composites/tab-look.tsx` names and marks a tab there and in the strip.
+- `apps/desktop/src/renderer/src/features/nav/SyncItem.tsx`: the sync item, and the header's
+  `SyncButton`; `features/nav/Utilities.tsx` is it and Settings, placed by `Shell`.
 - `apps/desktop/src/plugins/workspace-ui/`: the plugin that docks it, puts the tabs in it and adds the Apps page.

@@ -157,6 +157,14 @@ export const tabsPlacementAtom = atom(
     get(runningPluginsAtom).find((p) => p.layout?.tabs !== undefined)?.layout?.tabs ?? 'strip',
 )
 
+/** Where Settings and sync are reached: the first running plugin's answer,
+ *  else the nav menu. */
+export const utilitiesPlacementAtom = atom(
+  (get): NonNullable<ShellLayout['utilities']> =>
+    get(runningPluginsAtom).find((p) => p.layout?.utilities !== undefined)?.layout?.utilities ??
+    'hub',
+)
+
 /** The first running plugin's agent, or null with none. */
 export const agentSourceAtom = atom(
   (get): AgentServiceSource | null =>

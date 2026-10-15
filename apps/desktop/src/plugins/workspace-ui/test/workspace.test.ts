@@ -13,6 +13,7 @@ import {
   railAtom,
   surfacesAtom,
   tabsPlacementAtom,
+  utilitiesPlacementAtom,
 } from '../../../renderer/src/state/plugins'
 import { googleRenderer } from '../../google/renderer'
 import { WORKSPACE_INFO } from '../info'
@@ -40,12 +41,14 @@ test('it is off until a vault turns it on', () => {
   const store = storeWith([workspaceRenderer, googleRenderer])
   expect(store.get(hubPlacementAtom)).toBe('sidebar')
   expect(store.get(tabsPlacementAtom)).toBe('strip')
+  expect(store.get(utilitiesPlacementAtom)).toBe('hub')
 })
 
-test('running, it docks the nav menu and puts the tabs in it', () => {
+test('running, it docks the nav menu, puts the tabs in it and Settings and sync in the header', () => {
   const store = storeWith([ON])
   expect(store.get(hubPlacementAtom)).toBe('dock')
   expect(store.get(tabsPlacementAtom)).toBe('hub')
+  expect(store.get(utilitiesPlacementAtom)).toBe('header')
 })
 
 test('the nav lists its Apps page in place of the apps plugin’s item', () => {

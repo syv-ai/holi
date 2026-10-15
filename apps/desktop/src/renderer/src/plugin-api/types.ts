@@ -155,9 +155,9 @@ export interface RailItem {
    *  surface with instances is listed as a group of them, such as "Apps". */
   label?: string
   visible?: Atom<boolean>
-  /** The surface whose tabs this item holds, when that is not `surface` itself:
+  /** A surface whose tabs are this item's too, when that is not `surface` itself:
    *  Apps is the page of apps, and each open app is a tab of the `app` surface,
-   *  which Apps' card of open tabs lists. */
+   *  so Apps reads as current while an app is showing. */
   tabs?: string
   /** A surface whose item this one stands in for while its plugin runs: the
    *  nav menu lists this item and leaves that one out. */
@@ -256,9 +256,12 @@ export interface ShellLayout {
    *  own), or centred at the foot of the window (`dock`). */
   hub?: 'sidebar' | 'dock'
   /** The open tabs: a strip at the head of each pane (`strip`, core's own), or
-   *  in the nav menu, each item holding its surface's tabs and one more
-   *  holding the files (`hub`). */
+   *  one section of them all beside the nav menu (`hub`). */
   tabs?: 'strip' | 'hub'
+  /** Settings and the vault's sync state: items of the nav menu (`hub`, core's
+   *  own), or two icons in the sidebar's header and at the head of its rail
+   *  (`header`). */
+  utilities?: 'hub' | 'header'
 }
 
 export interface RendererPlugin {

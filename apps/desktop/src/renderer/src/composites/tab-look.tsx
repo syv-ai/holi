@@ -1,6 +1,6 @@
 /**
  * How a tab is named and marked, wherever it is listed: a pane's strip, and
- * the nav menu's cards of open tabs (docs/features/tabs-panes.md). A file as
+ * the nav menu's section of open tabs (docs/features/tabs-panes.md). A file as
  * the tree names it, a surface tab by its surface.
  */
 import type { ReactNode } from 'react'

@@ -8,6 +8,9 @@
  * it when there is something, and the vault's history. A conflict can always
  * be tried again; a config conflict's reconcile stays with its banner, which
  * outranks this.
+ *
+ * Where the layout takes sync out of the menu (`ShellLayout.utilities`), the
+ * same glyph and panel are an icon in the sidebar's header (`SyncButton`).
  */
 import { useAtomValue, useSetAtom } from 'jotai'
 import {
@@ -21,16 +24,20 @@ import {
   RotateCw,
   Undo2,
 } from 'lucide-react'
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { isVaultConfigPath } from '@holi/shared'
 import type { SyncState } from '../../../../main/vault/active-vault'
 import {
   Button,
   Icon,
+  IconButton,
   type IconGlyph,
   type IconMotion,
   type IconTone,
   type MorphingMenuItem,
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
 } from '@/primitives'
 import { cn } from '@/lib/cn'
 import { syncLabel } from '@/lib/sync-label'
@@ -167,4 +174,30 @@ export function useSyncItem(): MorphingMenuItem {
       panel: (close) => <SyncPanel close={close} />,
     }
   }, [state])
+}
+
+/** The sync state as an icon of its own, outside the menu: the sidebar's
+ *  header and rail, where the layout takes sync out of the menu. It opens the
+ *  menu's panel in a popover on `side`. */
+export function SyncButton({ side }: { side: 'bottom' | 'right' }): React.JSX.Element {
+  const state = useAtomValue(syncStateAtom)
+  const [open, setOpen] = useState(false)
+  const glyph = glyphOf(state)
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <IconButton
+          icon={glyph.icon}
+          label={`Sync: ${syncLabel(state).text}`}
+          tooltipSide={side}
+          tone={glyph.tone}
+          motion={glyph.motion}
+          data-utility="sync"
+        />
+      </PopoverTrigger>
+      <PopoverContent side={side} align="start" className="w-auto p-0.5">
+        <SyncPanel close={() => setOpen(false)} />
+      </PopoverContent>
+    </Popover>
+  )
 }

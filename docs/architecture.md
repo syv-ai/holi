@@ -85,7 +85,8 @@ items to the nav menu ([tabs and panes](features/tabs-panes.md)), registered bes
 A plugin may also say where core's own parts of the frame sit (`layout`, a `ShellLayout`): core
 still draws them, and the first running plugin that answers a field decides it. The workspace plugin
 (`src/plugins/workspace-ui/`, off unless a vault turns it on) moves the
-[nav menu](features/nav-menu.md) to the foot of the window that way, and the open tabs into it.
+[nav menu](features/nav-menu.md) to the foot of the window that way, the open tabs into it, and
+Settings and sync to the sidebar's header.
 It also names a surface kind ahead of the plugin that owns it (`apps`, and the `agenda` opened on
 its month) and a rail item that stands in for another's (`RailItem.replaces`), so it is first in
 the plugin list and the second plugin pair, beside the agent's, that imports across plugins.

@@ -18,11 +18,12 @@ import {
   hubPlacementAtom,
   installedPluginsAtom,
   tabsPlacementAtom,
+  utilitiesPlacementAtom,
 } from '@/state/plugins'
 import { vaultSettingsAtom } from '@/state/settings'
 import { activeRemoteAtom } from '@/state/vaults'
-import { tabThumbsAtom } from '@/state/tab-thumbs'
 import { NavMenu } from '../NavMenu'
+import { Utilities } from '../Utilities'
 import type { RendererPlugin } from '@/plugin-api/types'
 import { Inbox } from 'lucide-react'
 
@@ -243,7 +244,7 @@ const TABS_IN_MENU: RendererPlugin = {
 }
 
 /** Vault apps as the plugin has them: a page of apps (the rail item) and one
- *  `app` tab per open app, which the Apps item holds (`RailItem.tabs`). */
+ *  `app` tab per open app, which are the Apps item's too (`RailItem.tabs`). */
 const APPS_WITH_TABS: RendererPlugin = {
   info: { id: 'apps-with-tabs', label: 'Apps', default: true },
   surfaces: [
@@ -278,12 +279,16 @@ test('the tabs stay in each pane until a running plugin puts them in the menu', 
   expect(store.get(tabsPlacementAtom)).toBe('hub')
 })
 
-test('with the tabs in the menu, Open files is there only while a file is open', () => {
+const tabsGroup = () => screen.queryByRole('group', { name: 'Open tabs' })
+
+test('with the tabs in the menu, the section of them is there only while one is listed', () => {
+  // The board is its item's one page, so there is nothing to list.
   setupTabs([{ tabs: [{ kind: 'surface', surface: 'board' }], active: 0 }])
+  expect(tabsGroup()).toBeNull()
   expect(screen.queryByRole('button', { name: 'Open files' })).toBeNull()
 })
 
-test('an item holds its open tabs in a card: go to one, or close it', async () => {
+test('the open tabs are a section of the bar: go to one, or close it', async () => {
   const { store, user } = setupTabs([
     {
       tabs: [
@@ -294,122 +299,144 @@ test('an item holds its open tabs in a card: go to one, or close it', async () =
       active: 0,
     },
   ])
-  const files = screen.getByRole('button', { name: 'Open files' })
-  expect(within(files).getByText('2')).toBeInTheDocument()
-
-  await user.hover(files)
-  const card = await screen.findByRole('group', { name: 'Open files: open tabs' })
-  // The board is its own item's, not a file.
-  expect(within(card).queryByText('Board')).toBeNull()
-
-  await user.click(within(card).getByRole('button', { name: 'notes/beta.md' }))
-  expect(activeTab(store.get(workspaceAtom))).toEqual({ kind: 'note', path: 'notes/beta.md' })
-
-  await user.click(within(card).getByRole('button', { name: 'Close alpha' }))
-  expect(store.get(workspaceAtom).panes[0]!.tabs).toEqual([
-    { kind: 'surface', surface: 'board' },
-    { kind: 'note', path: 'notes/beta.md' },
-  ])
-})
-
-test('a card shows a picture of each tab and no title, and a bubble to open a new one', async () => {
-  const { store, user } = setupTabs([
-    {
-      tabs: [
-        { kind: 'surface', surface: 'board' },
-        { kind: 'note', path: 'notes/alpha.md' },
-        { kind: 'note', path: 'notes/beta.md' },
-      ],
-      active: 1,
-    },
-  ])
-  store.set(tabThumbsAtom, new Map([['note:notes/alpha.md', 'data:image/jpeg;base64,AAAA']]))
-  store.set(activeRemoteAtom, 'me/notes')
-  store.set(vaultSettingsAtom, {
-    remote: 'me/notes',
-    settings: { ...VAULT_SETTING_DEFAULTS, warnings: [] },
-  })
-  await user.hover(screen.getByRole('button', { name: 'Open files' }))
-  const card = await screen.findByRole('group', { name: 'Open files: open tabs' })
-  // A title would be text in the card; the bubbles are pictures.
-  expect(card).toHaveTextContent('')
-  const shown = within(card).getByRole('button', { name: 'notes/alpha.md' })
-  expect(shown.querySelector('img')).toHaveAttribute('src', 'data:image/jpeg;base64,AAAA')
-  // Not seen yet: its mark, not a picture.
+  const group = tabsGroup()!
+  // Every file, and not the board, whose item is the way to it.
   expect(
-    within(card).getByRole('button', { name: 'notes/beta.md' }).querySelector('img'),
-  ).toBeNull()
+    within(group)
+      .getAllByRole('button')
+      .map((b) => b.getAttribute('aria-label')),
+  ).toEqual(['alpha', 'beta'])
 
-  // "+" is the group's main page: Home, for the files.
-  await user.click(within(card).getByRole('button', { name: 'Open a file' }))
+  await user.click(within(group).getByRole('button', { name: 'beta' }))
+  expect(activeTab(store.get(workspaceAtom))).toEqual({ kind: 'note', path: 'notes/beta.md' })
+  expect(within(group).getByRole('button', { name: 'beta' })).toHaveAttribute(
+    'aria-current',
+    'page',
+  )
+
+  await user.hover(within(group).getByRole('button', { name: 'alpha' }))
+  await user.click(await screen.findByRole('button', { name: 'Close alpha' }))
   await waitFor(() =>
-    expect(activeTab(store.get(workspaceAtom))).toEqual({ kind: 'surface', surface: 'home' }),
+    expect(store.get(workspaceAtom).panes[0]!.tabs).toEqual([
+      { kind: 'surface', surface: 'board' },
+      { kind: 'note', path: 'notes/beta.md' },
+    ]),
   )
 })
 
-test('open apps are held by the Apps item, with their pictures, and not by Open files', async () => {
-  const { store, user } = setupTabs(
+test('the section is in the menu’s own bar, after a line that sets it apart', () => {
+  setupTabs([{ tabs: [{ kind: 'note', path: 'notes/alpha.md' }], active: 0 }])
+  const group = tabsGroup()!
+  const bar = screen.getByRole('button', { name: 'Home' }).closest('.grid')!
+  expect(bar.contains(group)).toBe(true)
+  expect(group.firstElementChild).toHaveAttribute('data-open-tabs-line')
+})
+
+test('resting on a tab opens its name and close button above the bar, which keeps its size', async () => {
+  const { user } = setupTabs([{ tabs: [{ kind: 'note', path: 'notes/alpha.md' }], active: 0 }])
+  const tab = screen.getByRole('button', { name: 'alpha' })
+  const bar = tab.closest('.grid') as HTMLElement
+  const width = bar.style.width
+  expect(screen.queryByRole('button', { name: 'Close alpha' })).toBeNull()
+  await user.hover(tab)
+  const close = await screen.findByRole('button', { name: 'Close alpha' })
+  // Not in the bar at all, so it neither covers the icon nor moves the dock.
+  expect(bar.contains(close)).toBe(false)
+  expect(close.closest('[data-open-tab-label]')).toHaveTextContent('notes/alpha.md')
+  expect(bar.style.width).toBe(width)
+})
+
+test('open apps are in the section, and Apps reads as current while one shows', () => {
+  setupTabs(
     [
       {
         tabs: [
-          { kind: 'note', path: 'notes/alpha.md' },
-          { kind: 'surface', surface: 'app', id: 'char-count.app' },
           { kind: 'surface', surface: 'apps' },
+          { kind: 'surface', surface: 'app', id: 'tools/char-count.app' },
         ],
         active: 1,
       },
     ],
     [TABS_IN_MENU, APPS_WITH_TABS],
   )
-  store.set(tabThumbsAtom, new Map([['surface:app:char-count.app', 'data:image/jpeg;base64,BBBB']]))
-  store.set(activeRemoteAtom, 'me/notes')
-  store.set(vaultSettingsAtom, {
-    remote: 'me/notes',
-    settings: { ...VAULT_SETTING_DEFAULTS, warnings: [] },
-  })
-  // The note is the only file: the app is not counted with it.
+  // The app, and not the page of apps, which is the Apps item's.
   expect(
-    within(screen.getByRole('button', { name: 'Open files' })).getByText('1'),
-  ).toBeInTheDocument()
-
-  await user.hover(screen.getByRole('button', { name: 'Apps' }))
-  const card = await screen.findByRole('group', { name: 'Apps: open tabs' })
-  const shown = within(card).getByRole('button', { name: /^char-count,/ })
-  expect(shown.querySelector('img')).toHaveAttribute('src', 'data:image/jpeg;base64,BBBB')
-  // The page of apps is the item itself, not one of its tabs.
-  expect(within(card).queryByRole('button', { name: 'Apps' })).toBeNull()
-  // "+" is the Apps page.
-  await user.click(within(card).getByRole('button', { name: 'New Apps tab' }))
-  expect(activeTab(store.get(workspaceAtom))).toEqual({ kind: 'surface', surface: 'apps' })
+    within(tabsGroup()!)
+      .getAllByRole('button')
+      .map((b) => b.getAttribute('aria-label')),
+  ).toEqual(['char-count'])
 })
 
-test('pressing Open files goes back to the file its pane was showing', async () => {
-  const { store, user } = setupTabs([
-    { tabs: [{ kind: 'surface', surface: 'board' }], active: 0 },
-    {
-      tabs: [
-        { kind: 'note', path: 'a.md' },
-        { kind: 'note', path: 'b.md' },
-      ],
-      active: 0,
-    },
-  ])
-  await user.click(screen.getByRole('button', { name: 'Open files' }))
-  expect(activeTab(store.get(workspaceAtom))).toEqual({ kind: 'note', path: 'a.md' })
+test('a page no menu item goes to is listed, so it can be closed', async () => {
+  const { store, user } = setupTabs(
+    [{ tabs: [{ kind: 'surface', surface: 'settings' }], active: 0 }],
+    [{ ...TABS_IN_MENU, layout: { tabs: 'hub', utilities: 'header' } }],
+  )
+  await user.hover(within(tabsGroup()!).getByRole('button', { name: 'Settings' }))
+  await user.click(await screen.findByRole('button', { name: 'Close Settings' }))
+  await waitFor(() => expect(store.get(workspaceAtom).panes[0]!.tabs).toEqual([]))
 })
 
-test('a surface that is one page holds no card, only the way to it', async () => {
-  const { user } = setupTabs([
-    {
-      tabs: [
-        { kind: 'surface', surface: 'board' },
-        { kind: 'note', path: 'notes/alpha.md' },
-      ],
-      active: 0,
-    },
-  ])
-  await user.hover(screen.getByRole('button', { name: /Board/ }))
-  // Its tooltip, as ever, and no card of tabs.
-  expect(await screen.findByRole('tooltip')).toHaveTextContent('Board')
-  expect(screen.queryByRole('group', { name: 'Board: open tabs' })).toBeNull()
+/** A plugin that moves Settings and sync to the sidebar's header, as the
+ *  workspace plugin does. */
+const UTILITIES_IN_HEADER: RendererPlugin = {
+  info: { id: 'utilities-in-header', label: 'Utilities in header', default: true },
+  layout: { utilities: 'header' },
+}
+
+test('Settings and sync are the menu’s until a running plugin moves them to the header', () => {
+  const store = createStore()
+  expect(store.get(utilitiesPlacementAtom)).toBe('hub')
+  store.set(installedPluginsAtom, [UTILITIES_IN_HEADER])
+  expect(store.get(utilitiesPlacementAtom)).toBe('header')
+})
+
+function setupUtilities() {
+  const store = createStore()
+  store.set(coreContributionAtom, CORE_CONTRIBUTION)
+  store.set(installedPluginsAtom, [UTILITIES_IN_HEADER])
+  render(
+    <Provider store={store}>
+      <NavMenu orientation="vertical" />
+    </Provider>,
+  )
+  return { store, user: userEvent.setup() }
+}
+
+test('with them in the header, the menu leaves Settings and sync out', async () => {
+  const { user } = setupUtilities()
+  const list = await openList(user)
+  expect(
+    within(list)
+      .getAllByRole('button')
+      .map((b) => b.textContent),
+  ).toEqual(['Home', 'Search', 'Board'])
+})
+
+test('in the header they are two icons: sync opens its panel, Settings opens settings', async () => {
+  const store = createStore()
+  store.set(coreContributionAtom, CORE_CONTRIBUTION)
+  store.set(installedPluginsAtom, [UTILITIES_IN_HEADER])
+  render(
+    <Provider store={store}>
+      <Utilities />
+    </Provider>,
+  )
+  const user = userEvent.setup()
+  await user.click(screen.getByRole('button', { name: 'Sync: up to date' }))
+  expect(await screen.findByRole('button', { name: 'Open history' })).toBeInTheDocument()
+  await user.keyboard('{Escape}')
+  await user.click(screen.getByRole('button', { name: 'Settings' }))
+  expect(activeTab(store.get(workspaceAtom))).toEqual({ kind: 'surface', surface: 'settings' })
+})
+
+test('the icons are not there while Settings and sync are the menu’s', () => {
+  const store = createStore()
+  store.set(coreContributionAtom, CORE_CONTRIBUTION)
+  render(
+    <Provider store={store}>
+      <Utilities />
+    </Provider>,
+  )
+  expect(screen.queryByRole('button', { name: 'Settings' })).toBeNull()
 })

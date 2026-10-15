@@ -8,7 +8,7 @@ export const WORKSPACE_INFO: PluginInfo = {
   label: 'Workspace',
   default: false,
   description:
-    'A second look for the frame: the nav menu as a dock at the foot of the window holding the open tabs, an Apps page, and the Agenda opened on the month.',
+    'A second look for the frame: the nav menu as a dock at the foot of the window holding the open tabs, Settings and sync at the top of the sidebar, an Apps page, and the Agenda opened on the month.',
   whenOff:
-    'The nav menu returns to the sidebar, each pane gets its tab strip back, Apps lists its open apps in the menu, and the Agenda opens as a list.',
+    'The nav menu returns to the sidebar with Settings and sync in it, each pane gets its tab strip back, Apps lists its open apps in the menu, and the Agenda opens as a list.',
 }

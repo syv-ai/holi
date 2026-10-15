@@ -71,7 +71,17 @@ export {
   type MorphingMenuHandle,
   type MorphingMenuItem,
 } from './MorphingMenu'
-export { check, instant, rowFromMotion, settle, spring } from './springs'
+export {
+  check,
+  instant,
+  pop,
+  popAt,
+  popFrom,
+  popLeave,
+  rowFromMotion,
+  settle,
+  spring,
+} from './springs'
 export { ConfirmInPlace } from './ConfirmInPlace'
 export { RollingCount } from './RollingCount'
 export { StrikeText } from './StrikeText'

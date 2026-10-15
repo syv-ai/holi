@@ -26,6 +26,7 @@ import { DrawerShell } from '@/composites'
 import { cn } from '@/lib/cn'
 import { FileTree } from '@/features/explorer/FileTree'
 import { NavMenu } from '@/features/nav/NavMenu'
+import { Utilities } from '@/features/nav/Utilities'
 import { VaultPicker } from '@/features/vault/VaultPicker'
 import { trpc } from '../lib/trpc'
 import { sweepDailyAtom } from '../state/daily'
@@ -292,6 +293,7 @@ export function Shell() {
           }
           rail={
             <>
+              <Utilities rail />
               {running.map(({ info, railSection: Section }) =>
                 Section === undefined ? null : <Section key={info.id} />,
               )}
@@ -299,12 +301,15 @@ export function Shell() {
             </>
           }
           header={
-            <VaultPicker
-              vaults={vaults}
-              activeRemote={activeRemote}
-              onSelect={switchVault}
-              onAddVault={addVault}
-            />
+            <>
+              <VaultPicker
+                vaults={vaults}
+                activeRemote={activeRemote}
+                onSelect={switchVault}
+                onAddVault={addVault}
+              />
+              <Utilities />
+            </>
           }
         >
           <div className="relative flex min-h-0 flex-1 flex-col">

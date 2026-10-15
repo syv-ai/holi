@@ -156,12 +156,7 @@ export function PaneView({
 
       {/* The body is a drop surface too. Wrapped so the overlay covers the
           content but not the strip, which handles its own drops. */}
-      <div
-        className="relative flex min-h-0 flex-1 flex-col"
-        // What a preview of this tab is taken of (`state/tab-thumbs`).
-        data-pane-body=""
-        data-tab-key={tab == null ? undefined : tabKey(tab)}
-      >
+      <div className="relative flex min-h-0 flex-1 flex-col">
         {!strip && (
           <div className="absolute top-1.5 right-2 z-10 flex items-center">{trailing}</div>
         )}

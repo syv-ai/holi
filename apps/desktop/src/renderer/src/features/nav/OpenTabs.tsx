@@ -1,143 +1,145 @@
 /**
- * The open tabs one nav item holds, as the card over its dock shortcut
- * (docs/features/nav-menu.md): each a bubble holding a small picture of the
- * tab (`state/tab-thumbs`), no words, that goes to it, with a close button, and
- * a last "+" bubble that opens a new one, which is the item's own page. A surface's item holds
- * its surface's tabs when it is one tab per thing (an app); `FILES` holds
- * every tab no item's surface owns, which is the files. A surface that is one
- * page (Home, the board, mail) has nothing to list: its item is the way to it.
+ * The open tabs, as the nav menu's second section (docs/features/nav-menu.md):
+ * in the same bar as its shortcuts, after a line that sets the two apart. One
+ * icon per tab, the one its pane is showing marked. Pressing an icon goes to
+ * its tab. Resting the pointer on one opens a small label over it, above the
+ * bar: the tab's name and a button that closes it. The bar never changes size
+ * under the pointer, and nothing covers the icon. A tab that opens pops up
+ * into its place as the bar springs wider to make room; one that closes
+ * shrinks away. A tab whose surface is a
+ * menu item's one page (Home, the board, mail) is not listed: its item is the
+ * way to it.
  */
 import { useAtomValue, useSetAtom } from 'jotai'
-import { Plus, X } from 'lucide-react'
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
+import { FileText, X } from 'lucide-react'
 import { tabIcon, tabKey, tabName, tabTooltip } from '@/composites/tab-look'
 import { cn } from '@/lib/cn'
-import { Button, Icon, IconButton } from '@/primitives'
+import { Button, HoverCard, Icon, IconButton, pop, popAt, popFrom, popLeave } from '@/primitives'
 import { closeTabWithExitAtom } from '@/state/pane-exit'
-import { focusTabAtom, placedTabs, workspaceAtom, type PlacedTab, type Tab } from '@/state/panes'
+import { focusTabAtom, placedTabs, workspaceAtom, type PlacedTab } from '@/state/panes'
 import { useTabLook } from '@/state/tab-look'
-import { tabThumbsAtom } from '@/state/tab-thumbs'
 
-/** The group of every tab no nav item's surface owns. */
-export const FILES = 'files'
+/** The geometry, in px, which the bar that holds the section is sized from:
+ *  a tab, the line before them with its margins, and how many tabs show
+ *  before the section scrolls. */
+const TAB = 32
+const LINE = 9
+const MOST = 12
 
-/** Which nav item holds a surface's tabs, by surface: an item holds its own
- *  surface's, and whatever surface it says (`RailItem.tabs`). */
-export type TabOwners = ReadonlyMap<string, string>
-
-/** The group a tab is listed under: the item that holds its surface, else the
- *  files. */
-export function tabGroup(tab: Tab, owners: TabOwners): string {
-  return (tab.kind === 'surface' ? owners.get(tab.surface) : undefined) ?? FILES
+/** How wide the section is with `count` tabs. */
+export function openTabsWidth(count: number): number {
+  return count === 0 ? 0 : LINE + Math.min(count, MOST) * TAB
 }
 
-/** A group's open tabs, pane by pane: the files, or the tabs of a surface that
- *  is one per thing. A surface's only page is not listed. */
-export function groupTabs(
-  placed: readonly PlacedTab[],
-  group: string,
-  owners: TabOwners,
-): PlacedTab[] {
+/** The tabs the section lists, pane by pane: every file, every tab of a
+ *  surface that is one per thing (an app), and a surface's only page when no
+ *  menu item (`onMenu`, by surface) is the way to it. */
+export function listedTabs(placed: readonly PlacedTab[], onMenu: ReadonlySet<string>): PlacedTab[] {
   return placed.filter(
-    ({ tab }) =>
-      tabGroup(tab, owners) === group &&
-      (group === FILES || (tab.kind === 'surface' && tab.id !== undefined)),
+    ({ tab }) => tab.kind !== 'surface' || tab.id !== undefined || !onMenu.has(tab.surface),
   )
 }
 
-/** One bubble: wide enough to read what a page is, and round like the agents'. */
-const BUBBLE = 'relative h-20 w-32 shrink-0 overflow-hidden rounded-2xl'
-
 export function OpenTabs({
-  group,
-  title,
-  owners,
-  onNew,
-  newLabel,
+  onMenu,
+  wrap = false,
 }: {
-  group: string
-  /** What the group is called: the card's label for assistive technology, and
-   *  nothing on screen. */
-  title: string
-  /** Which nav item holds each surface's tabs. */
-  owners: TabOwners
-  /** Opens a new tab: the group's main page. */
-  onNew: () => void
-  /** What the "+" bubble is called, as "New tab". */
-  newLabel: string
-}): React.JSX.Element {
+  /** The surfaces a menu item goes to. */
+  onMenu: ReadonlySet<string>
+  /** Wrapping rows with no line before them, for a sidebar or a rail. */
+  wrap?: boolean
+}): React.JSX.Element | null {
   const workspace = useAtomValue(workspaceAtom)
   const focusTab = useSetAtom(focusTabAtom)
   const closeTab = useSetAtom(closeTabWithExitAtom)
-  const thumbs = useAtomValue(tabThumbsAtom)
   const { marks, sources } = useTabLook()
-  const tabs = groupTabs(placedTabs(workspace), group, owners)
+  const still = useReducedMotion() ?? false
+  const tabs = listedTabs(placedTabs(workspace), onMenu)
+  if (tabs.length === 0) return null
 
   return (
     <div
       role="group"
-      aria-label={`${title}: open tabs`}
-      className="flex max-w-[26rem] flex-wrap items-center gap-2 p-1"
+      aria-label="Open tabs"
+      data-open-tabs=""
+      className={cn('flex min-w-0 items-center', wrap && 'flex-wrap')}
     >
-      {tabs.map(({ tab, pane, index, showing }) => {
-        const current = showing && pane === workspace.active
-        const picture = thumbs.get(tabKey(tab))
-        const name = tabName(tab, sources)
-        return (
-          <div key={tabKey(tab)} className={cn('group/tab', BUBBLE)}>
-            <Button
-              variant="ghost"
-              size="sm"
-              aria-current={current ? 'page' : undefined}
-              aria-label={tabTooltip(tab, sources)}
-              data-open-tab={tabKey(tab)}
-              className={cn(
-                'size-full rounded-2xl border bg-muted/40 p-0 hover:bg-muted/60',
-                showing ? 'border-foreground/40' : 'border-border/60',
-                current && 'ring-2 ring-foreground/50',
-              )}
-              onClick={() => focusTab(tab)}
-            >
-              {picture !== undefined ? (
-                <img
-                  src={picture}
-                  alt=""
-                  draggable={false}
-                  className="size-full object-cover object-top"
-                />
-              ) : (
-                // Not seen yet, so nothing to show of it: its mark alone.
-                <span
-                  data-open-tab-blank=""
-                  className="flex size-full items-center justify-center text-muted-foreground [&_svg]:size-5"
-                >
-                  {tabIcon(tab, marks, sources)}
-                </span>
-              )}
-            </Button>
-            {/* The disc is the backdrop over a picture; the button is bare. */}
-            <span className="absolute top-1 right-1 rounded-full bg-popover/90 opacity-0 shadow-sm group-focus-within/tab:opacity-100 group-hover/tab:opacity-100">
-              <IconButton
-                icon={X}
-                label={`Close ${name}`}
-                tooltip={false}
-                size="sm"
-                className="size-6"
-                onClick={() => closeTab(pane, index)}
-              />
-            </span>
-          </div>
-        )
-      })}
-      <Button
-        variant="ghost"
-        size="sm"
-        aria-label={newLabel}
-        data-open-tab-new=""
-        className="size-12 shrink-0 rounded-full bg-muted p-0 text-muted-foreground"
-        onClick={onNew}
+      {!wrap && (
+        <span
+          aria-hidden="true"
+          data-open-tabs-line=""
+          className="mx-1 h-5 w-px shrink-0 bg-border"
+        />
+      )}
+      <div
+        className={cn(
+          'flex min-w-0 items-center',
+          'relative',
+          wrap ? 'flex-wrap' : 'overflow-x-auto [scrollbar-width:none]',
+        )}
       >
-        <Icon icon={Plus} />
-      </Button>
+        {/* Popping out of the flow as it leaves, so the rest close up while
+            it shrinks. */}
+        <AnimatePresence mode="popLayout">
+          {tabs.map(({ tab, pane, index, showing }) => {
+            const key = tabKey(tab)
+            const current = showing && pane === workspace.active
+            const name = tabName(tab, sources)
+            return (
+              <motion.div
+                key={key}
+                layout={still ? false : 'position'}
+                initial={still ? false : popFrom}
+                animate={popAt}
+                exit={still ? undefined : { ...popFrom, transition: popLeave }}
+                transition={pop}
+                className="shrink-0"
+              >
+                <HoverCard
+                  side={wrap ? 'right' : 'top'}
+                  openDelay={60}
+                  className="rounded-full py-0.5 pr-0.5 pl-3"
+                  content={
+                    <div data-open-tab-label={key} className="flex items-center gap-1.5">
+                      <span className="max-w-56 truncate text-xs">{tabTooltip(tab, sources)}</span>
+                      <IconButton
+                        icon={X}
+                        label={`Close ${name}`}
+                        tooltip={false}
+                        size="sm"
+                        shape="round"
+                        onClick={() => closeTab(pane, index)}
+                      />
+                    </div>
+                  }
+                >
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    aria-current={current ? 'page' : undefined}
+                    aria-label={name}
+                    data-open-tab={key}
+                    className={cn(
+                      'size-8 shrink-0 rounded-full p-0',
+                      current ? 'bg-accent' : showing && 'bg-accent/50',
+                    )}
+                    onClick={() => focusTab(tab)}
+                    // A middle press closes, as it does on a tab anywhere; the
+                    // keyboard closes the focused tab with ⌘W.
+                    onAuxClick={(event) => {
+                      if (event.button === 1) closeTab(pane, index)
+                    }}
+                  >
+                    {/* A note has no mark of its own, so it wears the file's. */}
+                    {tabIcon(tab, marks, sources) ?? <Icon icon={FileText} size="sm" />}
+                  </Button>
+                </HoverCard>
+              </motion.div>
+            )
+          })}
+        </AnimatePresence>
+      </div>
     </div>
   )
 }

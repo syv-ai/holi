@@ -55,8 +55,17 @@ import {
   type ReactNode,
 } from 'react'
 import { cn } from '@/lib/cn'
-import { compress, PILL, rowAt, rowArrive, rowFrom, rowGone, rowLeave, spring } from './springs'
-import { HoverCard } from './HoverCard'
+import {
+  compress,
+  dockResize,
+  PILL,
+  rowAt,
+  rowArrive,
+  rowFrom,
+  rowGone,
+  rowLeave,
+  spring,
+} from './springs'
 import { Icon, type IconGlyph } from './Icon'
 import { ICON_MOTION, ICON_TONE, IconButton, type IconMotion, type IconTone } from './IconButton'
 
@@ -87,10 +96,6 @@ export type MorphingMenuAction = {
   panel?: (close: () => void, open: boolean) => ReactNode
   /** Centred anchor only: the open panel rises toward the middle of its view. */
   rise?: boolean
-  /** What the item has open, shown in a card while the pointer rests on its
-   *  dock shortcut, in place of the tooltip; the shortcut wears a dot while it
-   *  has one. The list's row does not show it. */
-  hoverCard?: ReactNode
 }
 
 /** One level of children keeps the menu small and the way back predictable. */
@@ -115,6 +120,10 @@ export type MorphingMenuProps = {
    *  with its shadow, for a dock that floats over content (the board's). */
   surface?: boolean | 'float'
   className?: string
+  /** A second section in the same bar, after the shortcuts: what the host
+   *  draws there, and how wide it is, in px. One row only (not a wrapped or
+   *  vertical dock, which leaves it out). */
+  trailing?: { content: ReactNode; width: number }
   /** For opening a panel item from outside (a hotkey). */
   ref?: React.Ref<MorphingMenuHandle>
 }
@@ -184,6 +193,7 @@ export function MorphingMenu({
   backLabel = 'Back',
   surface = false,
   className,
+  trailing,
   ref,
 }: MorphingMenuProps): React.JSX.Element {
   const id = useId()
@@ -197,6 +207,8 @@ export function MorphingMenu({
   const shellRef = useRef<HTMLDivElement>(null)
   const barRef = useRef<HTMLDivElement>(null)
   const previousView = useRef<View>(view)
+  /** The bar's width last laid out, so a change of it at rest can spring. */
+  const previousWidth = useRef<number | null>(null)
   const returnTarget = useRef('more')
   /** A group opened straight from its dock shortcut: Back closes the menu
    *  rather than showing a list that was never open. */
@@ -211,9 +223,15 @@ export function MorphingMenu({
   const groups = items.filter((item) => item.children?.length)
   const panelItems = items.filter((item) => item.panel)
   const count = barItems.length + (overflow.length > 0 ? 1 : 0)
-  const grid = vertical ? { columns: 1, rows: count } : dockGrid(count, room)
+  const trailingRest = vertical ? 0 : (trailing?.width ?? 0)
+  const grid = vertical
+    ? { columns: 1, rows: count }
+    : dockGrid(count, room > 0 ? Math.max(BUTTON + 2 * INSET, room - trailingRest) : 0)
+  // The second section rides one row; a wrapped dock has no end to put it at.
+  const tail = trailing !== undefined && !vertical && grid.rows === 1 ? trailing : undefined
+  const tailWidth = tail?.width ?? 0
   const barSize = {
-    width: grid.columns * BUTTON + 2 * INSET,
+    width: grid.columns * BUTTON + 2 * INSET + tailWidth,
     height: grid.rows * BUTTON + 2 * INSET,
   }
 
@@ -402,11 +420,27 @@ export function MorphingMenu({
           ),
         )
     }
-    if (snap) {
+    const from = previousWidth.current
+    previousWidth.current = barSize.width
+    // At rest, a bar that changes width (its second section gaining or losing
+    // a tab) springs to it, the bar inside with it, so the shortcuts stay put
+    // and the section opens or closes at the end.
+    const resizing =
+      !expanded && !changed && !reducedMotion && from !== null && from !== barSize.width
+    if (resizing) {
+      const width = `${barSize.width}px`
+      Object.assign(shell.style, { width: `${from}px`, height: `${barSize.height}px` })
+      bar.style.width = `${from}px`
+      track(animate(bar, { width }, dockResize))
+      void track(animate(shell, { width }, dockResize))
+        .finished.then(() => !cancelled && settle())
+        .catch(() => {})
+    } else if (snap) {
       Object.assign(shell.style, {
         width: `${targetSize().width}px`,
         height: `${targetSize().height}px`,
       })
+      if (!expanded) bar.style.width = `${barSize.width}px`
       settle()
     } else if (crossingBar) {
       const squeezed = vertical
@@ -503,7 +537,7 @@ export function MorphingMenu({
     // `barSize` is derived from `count` and the grid; listing the object would
     // re-run every render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [view, reducedMotion, items, count, grid.columns, vertical, top, center])
+  }, [view, reducedMotion, items, count, grid.columns, tailWidth, vertical, top, center])
 
   useEffect(() => {
     if (!expanded) return
@@ -531,8 +565,6 @@ export function MorphingMenu({
         label={item.label}
         size="md"
         shape="round"
-        // The card names the item itself, so the tooltip would say it twice.
-        {...(item.hoverCard === undefined ? {} : { tooltip: false as const })}
         tooltipSide={tooltipSide}
         data-menu-item={item.id}
         aria-current={active ? (hasChildren ? 'true' : 'page') : undefined}
@@ -564,23 +596,11 @@ export function MorphingMenu({
             {item.badge}
           </span>
         )}
-        {item.hoverCard !== undefined && (
-          <span
-            aria-hidden="true"
-            className="absolute bottom-0 left-1/2 size-1 -translate-x-1/2 rounded-full bg-foreground/40"
-          />
-        )}
       </IconButton>
     )
     return (
       <Cell key={item.id} still={reducedMotion}>
-        {item.hoverCard === undefined ? (
-          button
-        ) : (
-          <HoverCard content={item.hoverCard} side={tooltipSide}>
-            {button}
-          </HoverCard>
-        )}
+        {button}
       </Cell>
     )
   }
@@ -687,7 +707,12 @@ export function MorphingMenu({
             top ? `top-0 ${FROM_RIGHT}` : center ? `bottom-0 ${FROM_CENTER}` : 'bottom-0 left-0',
             expanded && 'pointer-events-none',
           )}
-          style={{ ...barSize, gridTemplateColumns: `repeat(${grid.columns}, ${BUTTON}px)` }}
+          style={{
+            ...barSize,
+            // The section takes what is left, so it opens and closes as the
+            // bar's width springs.
+            gridTemplateColumns: `repeat(${grid.columns}, ${BUTTON}px)${tail === undefined ? '' : ' minmax(0, 1fr)'}`,
+          }}
         >
           {barItems.map(shortcut)}
           {overflow.length > 0 && (
@@ -704,6 +729,11 @@ export function MorphingMenu({
                 onClick={(event) => open({ kind: 'main' }, 'more', event.detail === 0)}
               />
             </Cell>
+          )}
+          {tail !== undefined && (
+            <div data-menu-trailing="" className="flex min-w-0 items-center overflow-hidden">
+              {tail.content}
+            </div>
           )}
         </div>
         <div

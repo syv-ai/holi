@@ -1,10 +1,11 @@
 /**
  * Workspace's renderer side (docs/features/nav-menu.md): a second look for the
  * frame, in one plugin. The nav menu leaves the sidebar and sits centred at
- * the foot of the window as a dock, holding the open tabs in place of each
- * pane's strip; the nav's Apps item opens a page of the vault's apps (every
- * open app a tab of the `app` surface, listed on its card); and the Agenda
- * opens on a month to look at and create in.
+ * the foot of the window as a dock, with the open tabs as its second section
+ * in place of each pane's strip, and Settings and sync in the sidebar's header;
+ * the nav's Apps item opens a page of the vault's apps (every open app a tab
+ * of the `app` surface); and the Agenda opens on a month to look at and
+ * create in.
  *
  * It names the surfaces of the apps and Google plugins and draws over them, so
  * it reads their code (the one other plugin pair, beside the agent's, that may).
@@ -24,8 +25,8 @@ export const APPS_SURFACE: Surface = {
   render: AppsPage,
 }
 
-/** Apps holds the open apps, tabs of the `app` surface, in its card of open
- *  tabs, and stands in for the apps plugin's own item. */
+/** Apps reads as current while an app, a tab of the `app` surface, is showing,
+ *  and stands in for the apps plugin's own item. */
 export const APPS_RAIL: RailItem = { surface: 'apps', order: 20, tabs: 'app', replaces: 'app' }
 
 /** Google's Agenda, opened on the month. Named first among the plugins, so it
@@ -40,7 +41,7 @@ const AGENDA_SURFACE: Surface = {
 
 export const workspaceRenderer: RendererPlugin = {
   info: WORKSPACE_INFO,
-  layout: { hub: 'dock', tabs: 'hub' },
+  layout: { hub: 'dock', tabs: 'hub', utilities: 'header' },
   surfaces: [APPS_SURFACE, AGENDA_SURFACE],
   rail: [APPS_RAIL],
 }
