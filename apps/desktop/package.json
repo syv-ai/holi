@@ -12,7 +12,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "rebuild:natives": "electron-rebuild -f -w node-pty",
-    "package:mac": "electron-vite build && electron-builder --mac --publish never"
+    "package:mac": "electron-vite build && electron-builder --mac --publish never",
+    "generate:icon": "node build/generate-icon.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",
