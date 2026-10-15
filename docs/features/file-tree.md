@@ -17,7 +17,7 @@ The sidebar explorer shows the vault as the folders and files on disk. It reads 
 
 **Opening.** A click opens a preview tab, a double click pins it, and ⌘-click opens the file in a new pane (see [tabs and panes](tabs-panes.md)). A click on a folder opens or closes it.
 
-**Selection.** ⌘⇧-click adds or removes one row, ⇧-click selects the range from the last clicked row, ⇧↑/↓ extends it and ⌘A selects every visible row. The row menu, the keys and a drag act on the whole selection when the row is part of it, and on just that row otherwise. A selection shows a fill only once it holds more than one row: a single one is already shown by the open file's weight and the focus ring.
+**Selection.** ⌘⇧-click adds or removes one row, ⇧-click selects the range from the last clicked row, ⇧↑/↓ extends it and ⌘A selects every visible row. The row menu, the keys and a drag act on the whole selection when the row is part of it, and on just that row otherwise. A selection shows a fill only once it holds more than one row: a single one is already shown by the open file's weight and the focus ring. Clicking blank space in the explorer clears the selection and row focus; clicks on rows, menus and name fields keep their own behavior.
 
 **Keyboard.** The tree is one tab stop. ↑/↓, Home and End move it, and the selection with it. → opens a folder and then steps into it; ← closes it and then steps out to the parent. Enter opens a file or toggles a folder. Letters typed in quick succession jump to the next row whose name begins with them. Escape collapses the selection to the focused row. F2, ⌫ and ⌘X/C/V/D do what the menu says.
 
