@@ -780,6 +780,18 @@ export function FileTree({
           'motion-respond min-h-0 flex-1 overflow-y-auto pb-4 pt-10',
           dropTarget === '' && 'bg-primary/5',
         )}
+        onClick={(e) => {
+          const target = e.target
+          if (
+            target instanceof Element &&
+            target.closest('[data-path], button, input, textarea, select, [contenteditable="true"]')
+          )
+            return
+          setSelected(new Set())
+          setAnchor(null)
+          setFocusId(null)
+          setFocusRoot(null)
+        }}
         onDragOver={onDragOver}
         onDragLeave={(e) => {
           if (!e.currentTarget.contains(e.relatedTarget as Node | null)) endDrag()
