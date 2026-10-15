@@ -16,6 +16,7 @@ import {
   BrowserWindow,
   dialog,
   ipcMain,
+  nativeImage,
   protocol,
   session as electronSession,
   shell,
@@ -147,6 +148,13 @@ async function main(): Promise<void> {
   })
 
   await app.whenReady()
+
+  // Electron does not consistently use the packaged app icon for an unpackaged
+  // process; set it explicitly so dev builds also show the Holi icon in the Dock
+  // and Cmd+Tab. Packaged builds use the same PNG alongside their ICNS.
+  if (process.platform === 'darwin') {
+    app.dock.setIcon(nativeImage.createFromPath(join(app.getAppPath(), 'build/icon.png')))
+  }
 
   // After whenReady: the keychain is not available before it.
   const session = await createSession()

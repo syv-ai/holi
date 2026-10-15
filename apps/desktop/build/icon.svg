@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 160 160">
+  <defs>
+    <linearGradient id="navy" x2="1" y2="1"><stop stop-color="#1e517f"/><stop offset="1" stop-color="#102a52"/></linearGradient>
+  </defs>
+  <rect x="5" y="5" width="150" height="150" rx="36" fill="url(#navy)"/>
+  <path d="M80 48c-12-8-29-12-50-8v73c20-4 38 0 50 9Z" fill="#d4f0ff"/>
+  <path d="M80 48c12-8 29-12 50-8v73c-20-4-38 0-50 9Z" fill="#fff"/>
+  <path d="M80 48v74" stroke="#4ba8df" stroke-width="6"/>
+  <g transform="translate(-2 -5)">
+    <path d="M41 58h9v9h-9zm0 19h9v9h-9zm0 19h9v9h-9z" fill="none" stroke="#3e92c3" stroke-width="2.5" stroke-linejoin="round"/>
+    <path d="m42 61 3 3 6-8" fill="none" stroke="#2178ae" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M56 63Q64 60 73 64M56 82Q64 79 73 83M56 101Q64 98 73 102" fill="none" stroke="#69a7ca" stroke-width="3.5" stroke-linecap="round"/>
+  </g>
+  <path d="M92 62Q105 58 119 61M92 75Q103 71 115 74M92 88Q105 84 119 87M92 101Q103 97 115 100" fill="none" stroke="#84b6d2" stroke-width="3.5" stroke-linecap="round"/>
+</svg>
