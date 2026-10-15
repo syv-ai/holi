@@ -1,93 +1,178 @@
 /**
- * A session as a face: a round head in a colour of its own, two eyes, and the
- * status dot every other place shows for it (`agentIndicator`). The eyes say
- * the state too (`overview.css`): a slow blink at rest, quick and glancing
- * while it works, held wide while it waits on you, shut for no session.
+ * A session as an orb: a round body in a colour of its own, two eyes and a
+ * mouth in one ink, and a status dot that is the dot of the "i". The face says
+ * the state by the shape of its features alone (`overview.css`): ready is
+ * neutral, working glances up and to the right with the dot orbiting the rim,
+ * done smiles, waiting on you is wide-eyed, failed frowns, no session is a
+ * flat line. The eyes follow the pointer and the orb breathes and blinks
+ * (`orb-loop.ts`), which is the orb's own idle life, bound to no state.
  */
 import './overview.css'
+import { useEffect, useRef, type CSSProperties } from 'react'
 import { cn } from '@/plugin-api'
-import { agentIndicator } from '../../agent/renderer/lib/notices'
 import type { SessionState } from '../../agent/renderer/state/sessions'
+import {
+  BLINK_GAP_MS,
+  BLINK_HOLD_MS,
+  DOUBLE_BLINK_AFTER_MS,
+  DOUBLE_BLINK_CHANCE,
+  blinkingOff,
+  trackOrb,
+} from './orb-loop'
 
-/** The heads. A session keeps its colour for as long as it has its id. */
-const HEADS = [
-  'bg-emerald-400',
-  'bg-amber-400',
-  'bg-rose-400',
-  'bg-violet-400',
-  'bg-sky-400',
-  'bg-pink-400',
-  'bg-teal-400',
-  'bg-orange-400',
+/** The bodies. A session keeps its colour for as long as it has its id. */
+const BODIES = [
+  'var(--session-mist)',
+  'var(--session-ochre)',
+  'var(--session-sage)',
+  'var(--session-clay)',
+  'var(--session-slate)',
 ] as const
 
-/** Which head `seed` gets: the same one every time. */
-export function headOf(seed: string): (typeof HEADS)[number] {
+/** Which body `seed` gets: the same one every time. */
+export function headOf(seed: string): (typeof BODIES)[number] {
   let hash = 0
   for (const ch of seed) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0
-  return HEADS[hash % HEADS.length]!
+  return BODIES[hash % BODIES.length]!
+}
+
+type Mood = 'neutral' | 'happy' | 'alert' | 'working' | 'idle' | 'error'
+
+function moodOf(
+  state: SessionState | 'off',
+  phase: 'new' | 'done' | 'failed' | undefined,
+  muted: boolean,
+): Mood {
+  if (state === 'off' || muted) return 'idle'
+  if (state === 'needs-you') return 'alert'
+  if (state === 'working') return 'working'
+  if (phase === 'failed') return 'error'
+  if (phase === 'done') return 'happy'
+  return 'neutral'
+}
+
+function dotOf(mood: Mood): string | null {
+  switch (mood) {
+    case 'alert':
+      return 'var(--session-dot-needs-you)'
+    case 'working':
+      return 'var(--session-dot-working)'
+    case 'happy':
+      return 'var(--session-dot-done)'
+    case 'error':
+      return 'var(--session-dot-error)'
+    case 'neutral':
+      return 'var(--session-dot-ready)'
+    case 'idle':
+      return null
+  }
 }
 
 export function AgentFace({
   seed,
   state,
-  waitingFor,
   phase,
   size = 'sm',
   muted = false,
 }: {
   /** What picks the colour: the session's id. */
   seed: string
-  /** `off` is no session: the eyes are shut and there is no dot. */
+  /** `off` is no session: a flat face and no dot. */
   state: SessionState | 'off'
   waitingFor?: string
   /** Only for an idle session: what it has behind it. */
   phase?: 'new' | 'done' | 'failed'
   size?: 'sm' | 'md' | 'lg'
   /** A session that has finished: with `off`, its own colour dimmed and the
-   *  eyes shut, rather than no session's grey. */
+   *  face flat, rather than no session's grey. */
   muted?: boolean
 }): React.JSX.Element {
-  const large = size === 'lg'
-  const medium = size === 'md'
-  const dot = state === 'off' ? null : agentIndicator({ state, waitingFor, phase }).dot
+  const mood = moodOf(state, phase, muted)
+  const dot = state === 'off' ? null : dotOf(mood)
+  const plain = state === 'off' && !muted
+  const root = useRef<HTMLSpanElement>(null)
+  const head = useRef<HTMLSpanElement>(null)
+  const feat = useRef<HTMLSpanElement>(null)
+
+  useEffect(() => {
+    const rootEl = root.current
+    const headEl = head.current
+    const featEl = feat.current
+    if (rootEl === null || headEl === null || featEl === null) return
+    const stop = trackOrb({
+      root: rootEl,
+      head: headEl,
+      feat: featEl,
+      pupils: Array.from(rootEl.querySelectorAll<HTMLElement>('.agent-face-eye')),
+    })
+
+    // A blink on its own clock, a random 2.5–6 s apart, one in five doubled.
+    const timers = new Set<ReturnType<typeof setTimeout>>()
+    const later = (fn: () => void, ms: number): void => {
+      const id = setTimeout(() => {
+        timers.delete(id)
+        fn()
+      }, ms)
+      timers.add(id)
+    }
+    const shut = (): void => {
+      rootEl.setAttribute('data-blink', '')
+      later(() => rootEl.removeAttribute('data-blink'), BLINK_HOLD_MS)
+    }
+    const next = (): void => {
+      const [lo, hi] = BLINK_GAP_MS
+      later(() => {
+        if (!blinkingOff()) {
+          shut()
+          if (Math.random() < DOUBLE_BLINK_CHANCE) later(shut, DOUBLE_BLINK_AFTER_MS)
+        }
+        next()
+      }, lo + Math.random() * (hi - lo))
+    }
+    next()
+
+    return () => {
+      stop()
+      for (const id of timers) clearTimeout(id)
+    }
+  }, [])
+
   return (
     <span
+      ref={root}
       aria-hidden="true"
       data-state={state}
-      className={cn(
-        'agent-face relative inline-flex shrink-0 items-center justify-center rounded-full',
-        state === 'off' && !muted ? 'bg-muted' : headOf(seed),
-        large ? 'size-24' : medium ? 'size-10' : 'size-7',
-        muted && 'opacity-55 saturate-50',
-      )}
+      data-mood={mood}
+      data-size={size}
+      style={
+        {
+          '--body': plain ? 'var(--muted)' : headOf(seed),
+          ...(plain ? { '--ink': 'var(--muted-foreground)' } : {}),
+        } as CSSProperties
+      }
+      className={cn('agent-face', muted && 'opacity-55 saturate-50')}
     >
-      <span
-        className={cn(
-          'agent-face-eyes flex items-center',
-          large ? 'gap-4' : medium ? 'gap-1.5' : 'gap-1',
+      <span ref={head} className="agent-face-head">
+        <span className="agent-face-body">
+          <span ref={feat} className="agent-face-feat">
+            {(['l', 'r'] as const).map((eye) => (
+              <span key={eye} className="agent-face-lid" data-eye={eye}>
+                <span className="agent-face-eye-tilt">
+                  <span className="agent-face-eye" />
+                </span>
+              </span>
+            ))}
+            <span className="agent-face-mouth">
+              <span />
+            </span>
+          </span>
+        </span>
+        {dot !== null && (
+          <span className={cn('agent-face-orbit', mood === 'working' && 'motion-orbit')}>
+            <span className="agent-face-dot" style={{ background: dot }} />
+          </span>
         )}
-      >
-        {[0, 1].map((eye) => (
-          <span
-            key={eye}
-            className={cn(
-              'agent-face-eye rounded-full',
-              state === 'off' && !muted ? 'bg-muted-foreground' : 'bg-neutral-950/85',
-              large ? 'h-7 w-3' : medium ? 'h-3 w-1.5' : 'h-2 w-1',
-            )}
-          />
-        ))}
       </span>
-      {dot !== null && (
-        <span
-          className={cn(
-            'absolute top-0 left-0 rounded-full ring-2 ring-background',
-            dot,
-            large ? 'size-4' : medium ? 'size-3' : 'size-2',
-          )}
-        />
-      )}
     </span>
   )
 }

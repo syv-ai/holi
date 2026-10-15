@@ -213,12 +213,7 @@ export function BubbleStack({
                           setOpen(false)
                         }}
                       >
-                        <span
-                          className={cn(
-                            'agent-bubble-face rounded-full',
-                            shown && 'ring-2 ring-foreground/60',
-                          )}
-                        >
+                        <span className="agent-bubble-face rounded-full">
                           {entry.kind === 'live' ? (
                             <AgentFace
                               size="md"

@@ -253,6 +253,27 @@
   /* --motion-stagger is NOT here. See the :root block below. */
 }
 
+/* The session orb (AgentFace): body colours, ink, status dots and the two
+ * timings of its face. A session keeps one body colour for life. Plain `:root`
+ * because `overview.css` and the orb's loop read them, not Tailwind. Vault
+ * themes recolour them like any token. */
+:root {
+  --session-mist: #8faec0;
+  --session-ochre: #d9a441;
+  --session-sage: #9daa8c;
+  --session-clay: #c9785b;
+  --session-slate: #7e8c94;
+  --session-ink: rgb(22 20 18 / 0.86);
+  --session-dot-ready: #555555;
+  --session-dot-done: #22c55e;
+  --session-dot-working: #0ea5e9;
+  --session-dot-error: #ef4444;
+  --session-dot-needs-you: #f97316;
+  /* An expression morphs; a blink is quicker than the eye can follow. */
+  --motion-morph: 220ms;
+  --motion-blink: 90ms;
+}
+
 /* Motion tokens NOT in `@theme`: a plain `:root` rule always emits.
  *
  * Tailwind v4 tree-shakes `@theme` variables the CSS does not reference. The

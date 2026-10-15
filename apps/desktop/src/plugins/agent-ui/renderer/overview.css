@@ -1,53 +1,223 @@
 /*
- * The overview's faces (AgentFace). The eyes blink: slowly at rest, quickly
- * and glancing from side to side while the session works, and not at all while
- * it waits on you, when they are held wide.
+ * The session orb (AgentFace). Every measure is a fraction of the diameter
+ * `--d`, as `--u` is a tenth of it, so one face serves every size. The face is
+ * one ink colour: moods change only the shape of the eyes and mouth, and they
+ * morph rather than swap. What moves with the pointer (eyes, features, head,
+ * breathing) is written per frame by `orb-loop.ts`; this file holds the rest.
  */
-.agent-face-eye {
-  transform-origin: center;
-  animation: agent-blink 4.6s ease-in-out infinite;
+.agent-face {
+  --u: calc(var(--d) / 10);
+  --ink: var(--session-ink);
+  position: relative;
+  display: inline-block;
+  flex-shrink: 0;
+  width: var(--d);
+  height: var(--d);
+  /* Per mood; neutral unless a mood says otherwise. */
+  --ew: 1.15;
+  --eh: 2.35;
+  --er: 0.58;
+  --mw: 1.2;
+  --mh: 0.45;
+  --mr1: 0;
+  --mr2: 0;
+  --mr3: 0.6;
+  --mr4: 0.6;
+  --mb1: 0;
+  --mb2: 0.26;
+  --mb3: 0.26;
+  --mb4: 0.26;
+  --mfill: transparent;
+  --mx: 0;
+  --eye-rot: 0deg;
 }
-.agent-face[data-state='working'] .agent-face-eye {
-  animation-duration: 1.6s;
+.agent-face[data-size='sm'] {
+  --d: 1.75rem;
 }
-.agent-face[data-state='working'] .agent-face-eyes {
-  animation: agent-look 3.2s ease-in-out infinite;
+.agent-face[data-size='md'] {
+  --d: 2.5rem;
 }
-.agent-face[data-state='needs-you'] .agent-face-eye {
-  animation: none;
+.agent-face[data-size='lg'] {
+  --d: 6rem;
+}
+.agent-face[data-mood='happy'] {
+  --ew: 1.22;
+  --eh: 1.35;
+  --mw: 1.7;
+  --mh: 0.6;
+  --mr1: 0;
+  --mr2: 0;
+  --mr3: 0.85;
+  --mr4: 0.85;
+  --mb1: 0;
+  --mb2: 0.28;
+  --mb3: 0.28;
+  --mb4: 0.28;
+}
+.agent-face[data-mood='alert'] {
+  --ew: 1.22;
+  --eh: 3;
+  --mw: 0.75;
+  --mh: 0.75;
+  --mr1: 0.375;
+  --mr2: 0.375;
+  --mr3: 0.375;
+  --mr4: 0.375;
+  --mb1: 0.26;
+  --mb2: 0.26;
+  --mb3: 0.26;
+  --mb4: 0.26;
+}
+.agent-face[data-mood='working'] {
+  --eh: 1.8;
+  --mw: 0.9;
+  --mh: 0.26;
+  --mr1: 0.13;
+  --mr2: 0.13;
+  --mr3: 0.13;
+  --mr4: 0.13;
+  --mb1: 0;
+  --mb2: 0;
+  --mb3: 0;
+  --mb4: 0;
+  --mfill: var(--ink);
+  --mx: 0.5;
+}
+.agent-face[data-mood='idle'] {
+  --ew: 1.4;
+  --eh: 0.32;
+  --er: 0.16;
+  --mw: 0.6;
+  --mh: 0.26;
+  --mr1: 0.13;
+  --mr2: 0.13;
+  --mr3: 0.13;
+  --mr4: 0.13;
+  --mb1: 0;
+  --mb2: 0;
+  --mb3: 0;
+  --mb4: 0;
+  --mfill: var(--ink);
+}
+.agent-face[data-mood='error'] {
+  --eh: 1.95;
+  --mr1: 0.6;
+  --mr2: 0.6;
+  --mr3: 0;
+  --mr4: 0;
+  --mb1: 0.26;
+  --mb2: 0.26;
+  --mb3: 0;
+  --mb4: 0.26;
+}
+.agent-face[data-mood='happy'] .agent-face-eye {
+  border-radius: calc(var(--u) * 0.61) calc(var(--u) * 0.61) calc(var(--u) * 0.26)
+    calc(var(--u) * 0.26);
+}
+.agent-face-head {
+  position: absolute;
+  inset: 0;
+  transform-origin: 50% 80%;
+}
+.agent-face-body {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
   border-radius: 9999px;
-  aspect-ratio: 1;
+  background: var(--body);
 }
-.agent-face[data-state='off'] .agent-face-eye {
-  animation: none;
-  transform: scaleY(0.15);
+.agent-face-feat {
+  position: absolute;
+  inset: 0;
 }
-
-@keyframes agent-blink {
-  0%,
-  90%,
-  100% {
-    transform: scaleY(1);
-  }
-  95% {
-    transform: scaleY(0.1);
-  }
+/* The lid is a fixed box; the blink shuts it and the eye inside keeps its shape. */
+.agent-face-lid {
+  position: absolute;
+  top: calc(var(--u) * 1.9);
+  width: calc(var(--u) * 1.7);
+  height: calc(var(--u) * 4.8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform var(--motion-blink) var(--ease-loop);
 }
-@keyframes agent-look {
-  0%,
-  100% {
-    transform: translateX(-14%);
-  }
-  50% {
-    transform: translateX(14%);
-  }
+.agent-face-lid[data-eye='l'] {
+  left: calc(var(--u) * 2.35);
 }
-
-@media (prefers-reduced-motion: reduce) {
-  .agent-face-eye,
-  .agent-face-eyes {
-    animation: none !important;
-  }
+.agent-face-lid[data-eye='r'] {
+  left: calc(var(--u) * 5.95);
+}
+.agent-face[data-blink] .agent-face-lid {
+  transform: scaleY(0.1);
+}
+.agent-face-eye-tilt {
+  display: flex;
+  transition: transform var(--motion-morph) ease;
+}
+.agent-face-lid[data-eye='l'] .agent-face-eye-tilt {
+  transform: rotate(var(--eye-rot));
+}
+.agent-face-lid[data-eye='r'] .agent-face-eye-tilt {
+  transform: rotate(calc(var(--eye-rot) * -1));
+}
+.agent-face[data-mood='error'] {
+  --eye-rot: 16deg;
+}
+.agent-face-eye {
+  width: calc(var(--u) * var(--ew));
+  height: calc(var(--u) * var(--eh));
+  border-radius: calc(var(--u) * var(--er));
+  background: var(--ink);
+  transition:
+    width var(--motion-morph) ease,
+    height var(--motion-morph) ease,
+    border-radius var(--motion-morph) ease;
+}
+.agent-face-mouth {
+  position: absolute;
+  top: calc(var(--u) * 6.75);
+  left: calc(var(--u) * 3.5);
+  width: calc(var(--u) * 3);
+  height: calc(var(--u) * 1);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  transform: translateX(calc(var(--u) * var(--mx)));
+  transition: transform var(--motion-morph) ease;
+}
+.agent-face-mouth > span {
+  box-sizing: border-box;
+  width: calc(var(--u) * var(--mw));
+  height: calc(var(--u) * var(--mh));
+  border-style: solid;
+  border-color: var(--ink);
+  border-width: calc(var(--u) * var(--mb1)) calc(var(--u) * var(--mb2))
+    calc(var(--u) * var(--mb3)) calc(var(--u) * var(--mb4));
+  border-radius: calc(var(--u) * var(--mr1)) calc(var(--u) * var(--mr2))
+    calc(var(--u) * var(--mr3)) calc(var(--u) * var(--mr4));
+  background: var(--mfill);
+  transition:
+    width var(--motion-morph) ease,
+    height var(--motion-morph) ease;
+}
+/* The dot of the "i". Its ring is the surface behind the orb, which is what
+   cuts it out of the body; the fan sets `--orb-ring` to its own. */
+.agent-face-orbit {
+  position: absolute;
+  inset: 0;
+}
+.agent-face-dot {
+  position: absolute;
+  top: calc(var(--u) * -0.2);
+  left: 0;
+  box-sizing: border-box;
+  width: calc(var(--u) * 3.3);
+  height: calc(var(--u) * 3.3);
+  border-radius: 9999px;
+  border: calc(var(--u) * 0.5) solid var(--orb-ring, var(--background));
+}
+.agent-stack[data-open] .agent-fan {
+  --orb-ring: var(--popover);
 }
 
 /*
@@ -160,9 +330,13 @@
   opacity: 1;
 }
 .agent-stack[data-open] .agent-bubble:hover,
-.agent-stack[data-open] .agent-bubble:focus-within {
+.agent-stack[data-open] .agent-bubble:focus-within,
+/* The chat that is open keeps its row lit, in place of a ring round its face:
+   a ring does not breathe or tilt with the head, and sat off it. */
+.agent-stack[data-open] .agent-bubble:has([data-shown]) {
   background: var(--color-accent);
 }
+
 /* The face: its own button, the circle of the resting stack. */
 .agent-bubble-face-button {
   display: flex;
