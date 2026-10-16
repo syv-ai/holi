@@ -160,6 +160,11 @@ jobs:
 
   release:
     needs: [version, build-mac]
+    # Two commits with the same bumped version can build concurrently. Only
+    # one may create the stable tag; a later run observes it and stops.
+    concurrency:
+      group: stable-${{ needs.version.outputs.tag }}
+      cancel-in-progress: false
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -175,6 +180,10 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          if gh release view "${{ needs.version.outputs.tag }}" > /dev/null 2>&1; then
+            echo "${{ needs.version.outputs.tag }} is already published."
+            exit 0
+          fi
           gh release create "${{ needs.version.outputs.tag }}" \
             --target "$GITHUB_SHA" \
             --title "Holi ${{ needs.version.outputs.tag }}" \
