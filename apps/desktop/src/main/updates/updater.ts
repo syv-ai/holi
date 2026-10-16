@@ -6,14 +6,12 @@
  * person does is restart once it is ready.
  *
  * Unpackaged development runs are not supported: there is no app to replace.
- * Packaged development builds use package.json's version, since macOS reports
- * only the numeric plist version through Electron's app.getVersion().
+ * Packaged development builds use Electron's app.getVersion(), which reports
+ * the packed package.json version.
  */
-import { readFileSync } from 'node:fs'
-import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { app, powerMonitor } from 'electron'
-import { MacUpdater, type ProgressInfo, type UpdateInfo } from 'electron-updater'
+import { autoUpdater, type ProgressInfo, type UpdateInfo } from 'electron-updater'
 import { jsonFileStore } from '../json-file-store'
 import {
   initialStatus,
@@ -26,32 +24,6 @@ import {
 
 const CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000
 const FIRST_CHECK_DELAY_MS = 10 * 1000
-
-function createUpdaterAdapter(): NonNullable<ConstructorParameters<typeof MacUpdater>[1]> {
-  const packageJson = JSON.parse(readFileSync(join(app.getAppPath(), 'package.json'), 'utf8')) as {
-    version: string
-  }
-  const cacheRoot =
-    process.platform === 'darwin'
-      ? join(homedir(), 'Library', 'Caches')
-      : process.platform === 'win32'
-        ? (process.env.LOCALAPPDATA ?? join(homedir(), 'AppData', 'Local'))
-        : (process.env.XDG_CACHE_HOME ?? join(homedir(), '.cache'))
-  return {
-    version: packageJson.version,
-    name: app.getName(),
-    isPackaged: app.isPackaged,
-    appUpdateConfigPath: app.isPackaged
-      ? join(process.resourcesPath, 'app-update.yml')
-      : join(app.getAppPath(), 'dev-app-update.yml'),
-    userDataPath: app.getPath('userData'),
-    baseCachePath: cacheRoot,
-    whenReady: () => app.whenReady(),
-    relaunch: () => app.relaunch(),
-    quit: () => app.quit(),
-    onQuit: (handler) => app.once('quit', (_event, exitCode) => handler(exitCode)),
-  }
-}
 
 export interface Updater {
   status(): UpdateStatus
@@ -74,8 +46,6 @@ export function createUpdater(deps: {
    *  confirm included. False when the person kept the app open. */
   beforeInstall: () => Promise<boolean>
 }): Updater {
-  const adapter = createUpdaterAdapter()
-  const autoUpdater = new MacUpdater(undefined, adapter)
   const prefs = jsonFileStore(join(app.getPath('userData'), 'updates.json'), (raw) => {
     const value = raw as { enabled?: unknown; channel?: unknown } | null
     return {
@@ -86,7 +56,7 @@ export function createUpdater(deps: {
   let status = initialStatus({
     supported: app.isPackaged,
     enabled: true,
-    version: adapter.version,
+    version: app.getVersion(),
     channel: 'stable',
   })
   let interval: ReturnType<typeof setInterval> | null = null
