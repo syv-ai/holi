@@ -102,6 +102,7 @@ export function RichInput({
   markers,
   onChange,
   onEnter,
+  onShiftTab,
   onPasteText,
   handle,
   disabled = false,
@@ -115,6 +116,8 @@ export function RichInput({
   onChange: (value: string) => void
   /** Enter, without Shift and not mid-composition. */
   onEnter: () => void
+  /** Shift+Tab, taken from the focus order when given. */
+  onShiftTab?: () => void
   /** A paste with no files in it: its text goes in as plain text. Claude Code
    *  has no use for another program's formatting. */
   onPasteText?: (event: React.ClipboardEvent) => boolean
@@ -235,6 +238,10 @@ export function RichInput({
       }}
       onKeyDown={(event) => {
         if ((event.key === 'Backspace' || event.key === 'Delete') && value === '') setBare(true)
+        if (event.key === 'Tab' && event.shiftKey && onShiftTab !== undefined) {
+          event.preventDefault()
+          return onShiftTab()
+        }
         if (event.key !== 'Enter' || event.nativeEvent.isComposing) return
         event.preventDefault()
         if (!event.shiftKey) return onEnter()

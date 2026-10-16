@@ -16,6 +16,7 @@ export function Composer({
   onChange,
   onSend,
   onStop,
+  onCycleMode,
   working,
   disabled = false,
   placeholder,
@@ -31,6 +32,8 @@ export function Composer({
   onSend: () => void
   /** Interrupt the running turn. */
   onStop: () => void
+  /** Shift+Tab: Claude Code's own permission-mode cycle, as in its terminal. */
+  onCycleMode?: () => void
   working: boolean
   /** Nothing can be sent now (the session waits on an answer). */
   disabled?: boolean
@@ -93,6 +96,7 @@ export function Composer({
         onEnter={() => {
           if (!empty && !uploading) onSend()
         }}
+        {...(onCycleMode === undefined ? {} : { onShiftTab: onCycleMode })}
       />
       <div className="mt-1 flex min-h-8 items-center gap-1">
         <IconButton

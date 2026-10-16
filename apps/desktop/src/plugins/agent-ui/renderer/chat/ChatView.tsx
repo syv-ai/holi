@@ -48,6 +48,8 @@ import { useRowErrors } from './rows/RowBoundary'
 import { UserBubble } from './rows/UserBubble'
 
 const ESCAPE = '\x1b'
+/** Shift+Tab as a terminal sends it (back-tab): Claude Code's mode cycle. */
+const SHIFT_TAB = '\x1b[Z'
 
 /** How many items the chat draws at first, and how many more each "Show
  *  earlier" reveals. */
@@ -548,6 +550,7 @@ export function ChatView({
                   onAttach={attach}
                   uploading={uploading}
                   onStop={() => pressKeys(ESCAPE)}
+                  onCycleMode={() => pressKeys(SHIFT_TAB)}
                   working={working}
                   disabled={needsYou}
                   placeholder={

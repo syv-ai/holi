@@ -4,13 +4,14 @@ import userEvent from '@testing-library/user-event'
 import { expect, test, vi } from 'vitest'
 import { RichInput } from '../renderer/chat/RichInput'
 
-function box(): HTMLElement {
+function box(onShiftTab?: () => void): HTMLElement {
   render(
     <RichInput
       value=""
       markers={[]}
       onChange={vi.fn()}
       onEnter={vi.fn()}
+      {...(onShiftTab === undefined ? {} : { onShiftTab })}
       handle={null}
       placeholder="Message Ada"
       label="Message"
@@ -35,4 +36,14 @@ test('leaving the box brings the placeholder back', async () => {
   await user.keyboard('{Backspace}')
   await user.tab()
   expect(field).toHaveAttribute('data-empty')
+})
+
+test('Shift+Tab goes to the session, and the focus stays in the box', async () => {
+  const user = userEvent.setup()
+  const onShiftTab = vi.fn()
+  const field = box(onShiftTab)
+  await user.click(field)
+  await user.keyboard('{Shift>}{Tab}{/Shift}')
+  expect(onShiftTab).toHaveBeenCalledOnce()
+  expect(field).toHaveFocus()
 })
