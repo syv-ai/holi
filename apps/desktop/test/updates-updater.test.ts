@@ -1,11 +1,20 @@
-import { EventEmitter } from 'node:events'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const mocks = vi.hoisted(() => ({
-  updater: new EventEmitter() as EventEmitter & Record<string, any>,
-  read: vi.fn(),
-  update: vi.fn(),
-}))
+const mocks = vi.hoisted(() => {
+  const listeners = new Map<string, Array<(...args: any[]) => void>>()
+  const updater = {
+    on: (event: string, listener: (...args: any[]) => void) => {
+      listeners.set(event, [...(listeners.get(event) ?? []), listener])
+      return updater
+    },
+    removeAllListeners: () => listeners.clear(),
+    emit: (event: string, ...args: any[]) => {
+      for (const listener of listeners.get(event) ?? []) listener(...args)
+    },
+    listeners,
+  } as Record<string, any>
+  return { updater, read: vi.fn(), update: vi.fn() }
+})
 
 vi.mock('electron', () => ({
   app: { getPath: () => '/tmp/holi-test', isPackaged: true, getVersion: () => '1.0.0', on: vi.fn(), removeListener: vi.fn() },
@@ -34,19 +43,17 @@ beforeEach(() => {
 })
 
 describe('updater channel switching', () => {
-  it('initializes the stable feed as latest before the first check and preserves quit installation', async () => {
-    const send = vi.fn()
-    const updater = createUpdater({ send, beforeInstall: async () => true })
+  it('keeps native install-on-quit disabled and only explicitly installs a ready candidate', async () => {
+    const updater = createUpdater({ send: vi.fn(), beforeInstall: async () => true })
     await tick()
     expect(mocks.updater.channel).toBe('latest')
     expect(mocks.updater.autoInstallOnAppQuit).toBe(false)
-    const downloadPromise = Promise.resolve()
-    mocks.updater.checkForUpdates.mockResolvedValue({ downloadPromise, cancellationToken: { cancel: vi.fn() } })
-    await updater.check()
     mocks.updater.emit('update-available', { version: '1.1.0' })
     mocks.updater.emit('update-downloaded')
-    expect(mocks.updater.autoInstallOnAppQuit).toBe(true)
+    expect(mocks.updater.autoInstallOnAppQuit).toBe(false)
     expect(updater.status()).toMatchObject({ state: 'ready', availableVersion: '1.1.0' })
+    expect(updater.installOnQuit()).toBe(true)
+    expect(mocks.updater.quitAndInstall).toHaveBeenCalledOnce()
     updater.dispose()
   })
 
@@ -62,6 +69,7 @@ describe('updater channel switching', () => {
     await check
     expect(mocks.updater.channel).toBe('latest')
     expect(mocks.updater.checkForUpdates).toHaveBeenCalledOnce()
+    expect(mocks.updater.allowDowngrade).toBe(true)
     updater.dispose()
   })
 
@@ -85,6 +93,52 @@ describe('updater channel switching', () => {
     expect(mocks.updater.channel).toBe('dev')
     expect(mocks.updater.checkForUpdates).toHaveBeenCalledTimes(2)
     expect(updater.status().channel).toBe('dev')
+    updater.dispose()
+  })
+
+  it('does not install a ready candidate staged on the previous channel', async () => {
+    const updater = createUpdater({ send: vi.fn(), beforeInstall: async () => true })
+    await tick()
+    mocks.updater.emit('update-available', { version: '1.1.0' })
+    mocks.updater.emit('update-downloaded')
+    mocks.updater.checkForUpdates.mockResolvedValue({ downloadPromise: Promise.resolve(), cancellationToken: { cancel: vi.fn() } })
+    await updater.setChannel('dev')
+    expect(updater.status()).toMatchObject({ channel: 'dev', state: 'idle' })
+    expect(updater.installOnQuit()).toBe(false)
+    expect(mocks.updater.quitAndInstall).not.toHaveBeenCalled()
+    expect(mocks.updater.autoInstallOnAppQuit).toBe(false)
+    updater.dispose()
+  })
+
+  it('restores channel switching after a failed preference write', async () => {
+    const updater = createUpdater({ send: vi.fn(), beforeInstall: async () => true })
+    await tick()
+    mocks.update.mockRejectedValueOnce(new Error('disk full'))
+    await expect(updater.setChannel('dev')).rejects.toThrow('disk full')
+    expect(updater.status().channel).toBe('stable')
+    mocks.updater.checkForUpdates.mockResolvedValue({ downloadPromise: Promise.resolve(), cancellationToken: { cancel: vi.fn() } })
+    await updater.check()
+    expect(mocks.updater.checkForUpdates).toHaveBeenCalledOnce()
+    updater.dispose()
+  })
+
+  it('drains an explicit download before changing channel', async () => {
+    const updater = createUpdater({ send: vi.fn(), beforeInstall: async () => true })
+    await tick()
+    mocks.updater.emit('update-available', { version: '1.1.0' })
+    let finish!: () => void
+    mocks.updater.downloadUpdate.mockReturnValue(new Promise<void>((resolve) => { finish = resolve }))
+    const downloading = updater.download()
+    await tick()
+    const switching = updater.setChannel('dev')
+    await tick()
+    expect(mocks.updater.checkForUpdates).not.toHaveBeenCalled()
+    finish()
+    await downloading
+    mocks.updater.checkForUpdates.mockResolvedValue({ downloadPromise: Promise.resolve(), cancellationToken: { cancel: vi.fn() } })
+    await switching
+    expect(updater.status().channel).toBe('dev')
+    expect(updater.installOnQuit()).toBe(false)
     updater.dispose()
   })
 })

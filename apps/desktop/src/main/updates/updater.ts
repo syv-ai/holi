@@ -23,7 +23,9 @@ export interface Updater {
   check(): Promise<UpdateStatus>
   /** Retry a download that failed. */
   download(): Promise<UpdateStatus>
-  /** Quit and install the downloaded update. */
+  /** Quit and install the downloaded update after the normal quit teardown. */
+  installOnQuit(): boolean
+  /** Quit and install the downloaded update after explicit restart confirmation. */
   install(): void
   setEnabled(enabled: boolean): Promise<UpdateStatus>
   setChannel(channel: UpdateChannel): Promise<UpdateStatus>
@@ -64,7 +66,6 @@ export function createUpdater(deps: {
     if (switching || !initialized) return
     status = reduce(status, event, Date.now())
     if (event.type === 'available' || event.type === 'downloaded') installChannel = status.channel
-    if (event.type === 'downloaded') autoUpdater.autoInstallOnAppQuit = true
     deps.send(status)
   }
 
@@ -98,9 +99,9 @@ export function createUpdater(deps: {
 
   if (status.supported) {
     autoUpdater.autoDownload = true
-    // Preserve electron-updater's normal install-on-quit behavior for the
-    // candidate on the currently selected feed. Channel switches drain and
-    // cancel any in-flight candidate before changing feeds.
+    // checkForUpdates stages its candidate natively, and electron-updater
+    // cannot unstage it on a feed switch. Never let its implicit quit hook
+    // install a candidate; installOnQuit validates the current channel instead.
     autoUpdater.autoInstallOnAppQuit = false
     autoUpdater.logger = {
       info: (m: unknown) => console.log('[updates]', m),
@@ -162,6 +163,11 @@ export function createUpdater(deps: {
       await active
       return status
     },
+    installOnQuit() {
+      if (!status.supported || status.state !== 'ready' || installChannel !== status.channel) return false
+      autoUpdater.quitAndInstall()
+      return true
+    },
     install() {
       if (!status.supported || status.state !== 'ready') return
       // The person clicked "Restart to update": that is the confirmation. The
@@ -186,7 +192,26 @@ export function createUpdater(deps: {
       generation += 1
       cancellationToken?.cancel()
       cancellationToken = null
-      await prefs.update((current) => ({ ...current, channel }))
+      try {
+        await prefs.update((current) => ({ ...current, channel }))
+      } catch (err) {
+        // The old operation was invalidated before persisting. Drain it and
+        // clear its transient state so a failed write cannot strand checking.
+        await operation
+        if (status.state === 'checking' || status.state === 'downloading') {
+          installChannel = null
+          status = {
+            ...status,
+            state: 'idle',
+            availableVersion: null,
+            percent: null,
+            checkStartedAt: null,
+          }
+          deps.send(status)
+        }
+        switching = false
+        throw err
+      }
       await operation
       autoUpdater.channel = channel === 'dev' ? 'dev' : 'latest'
       autoUpdater.allowPrerelease = channel === 'dev'
@@ -216,8 +241,8 @@ export function createUpdater(deps: {
       if (firstCheck !== null) clearTimeout(firstCheck)
       app.removeListener('browser-window-focus', background)
       powerMonitor.removeListener('resume', background)
-      // The updater's own listeners stay: a downloaded update installs on the
-      // quit this precedes.
+      // The updater's own listeners stay for a downloaded update's explicit
+      // quit-and-install path.
     },
   }
 }
