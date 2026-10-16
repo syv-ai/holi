@@ -11,7 +11,6 @@ directories:
   output: release
 files:
   - out/**/*
-  - build/icon.png
   - package.json
 asarUnpack:
   # A native module and its spawn helper are executed, so they cannot live
@@ -28,7 +27,6 @@ publish:
   repo: holi
   releaseType: release
 mac:
-  icon: build/icon.icns
   target:
     # The dmg is what a person downloads; the zip and latest-mac.yml are what
     # the updater downloads.

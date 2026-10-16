@@ -149,10 +149,9 @@ async function main(): Promise<void> {
 
   await app.whenReady()
 
-  // Electron does not consistently use the packaged app icon for an unpackaged
-  // process; set it explicitly so dev builds also show the Holi icon in the Dock
-  // and Cmd+Tab. Packaged builds use the same PNG alongside their ICNS.
-  if (process.platform === 'darwin' && app.dock) {
+  // Electron does not consistently use the app icon for an unpackaged process.
+  // Packaged builds use electron-builder's generated native bundle icon.
+  if (process.platform === 'darwin' && !app.isPackaged && app.dock) {
     app.dock.setIcon(nativeImage.createFromPath(join(app.getAppPath(), 'build/icon.png')))
   }
 
