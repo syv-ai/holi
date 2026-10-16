@@ -270,8 +270,6 @@ export function agentVault(remote: string, store: PluginStore): () => void {
   void agentCap.sessions(remote).then((list) => {
     if (store.get(agentSessionsAtom) === sessionsAsked) store.set(agentSessionsAtom, list)
   })
-  // A main older than this window has no history to give: the stack is then
-  // the live sessions alone, until Holi is restarted.
   void agentCap
     .history(remote)
     .then((list) => {

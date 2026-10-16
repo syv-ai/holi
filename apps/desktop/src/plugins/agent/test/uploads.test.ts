@@ -4,7 +4,7 @@
  */
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, sep } from 'node:path'
+import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { MAX_UPLOAD_BYTES, UPLOADS_DIR, saveUpload } from '../main/host/uploads'
 import {
@@ -31,15 +31,15 @@ describe('saveUpload', () => {
     const res = await saveUpload(root, { name: 'My shot (1).PNG', data: PNG })
     expect(res.ok).toBe(true)
     if (!res.ok) return
-    expect(res.path.startsWith(join(root, UPLOADS_DIR) + sep)).toBe(true)
+    expect(res.path.startsWith(`${UPLOADS_DIR}/`)).toBe(true)
     expect(UPLOADS_DIR).toContain('.local.')
     expect(res.path).toMatch(/-My-shot-1\.png$/i)
-    expect((await readFile(res.path)).toString()).toBe('not really a png')
+    expect((await readFile(join(root, res.path))).toString()).toBe('not really a png')
   })
 
   it('keeps a name from climbing out of the folder', async () => {
     const res = await saveUpload(root, { name: '../../etc/passwd.png', data: PNG })
-    expect(res.ok && res.path.startsWith(join(root, UPLOADS_DIR))).toBe(true)
+    expect(res.ok && res.path.startsWith(`${UPLOADS_DIR}/`) && !res.path.includes('..')).toBe(true)
   })
 
   it('takes a file of any kind, keeping its extension', async () => {
@@ -105,30 +105,30 @@ describe('the message', () => {
 
   it('replaces each marker with its @path, where it stood', () => {
     const paths = new Map([
-      ['[Image 1]', '/v/.holi/state/chat.local.uploads/a-ab12cd-one.png'],
-      ['[Image 2]', '/v/.holi/state/chat.local.uploads/b-ab12cd-two.png'],
+      ['[Image 1]', '.holi/state/chat.local.uploads/a-ab12cd-one.png'],
+      ['[Image 2]', '.holi/state/chat.local.uploads/b-ab12cd-two.png'],
     ])
     expect(withPaths('Broken: [Image 1] and it should be [Image 2].', paths)).toBe(
-      'Broken: @/v/.holi/state/chat.local.uploads/a-ab12cd-one.png and it should be @/v/.holi/state/chat.local.uploads/b-ab12cd-two.png .',
+      'Broken: @.holi/state/chat.local.uploads/a-ab12cd-one.png and it should be @.holi/state/chat.local.uploads/b-ab12cd-two.png .',
     )
     expect(withPaths('[Image 1]', paths)).toBe(
-      '@/v/.holi/state/chat.local.uploads/a-ab12cd-one.png',
+      '@.holi/state/chat.local.uploads/a-ab12cd-one.png',
     )
     // The same marker twice is the same file twice.
-    expect(withPaths('[Image 1] [Image 1]', paths).match(/@\//g)).toHaveLength(2)
+    expect(withPaths('[Image 1] [Image 1]', paths).match(/@\./g)).toHaveLength(2)
   })
 
   it('quotes a path with a space, and reads it back', () => {
-    const path = '/v/My Vault/.holi/state/chat.local.uploads/lq3x9-ab12cd-notes.pdf'
-    expect(withPaths('Read [notes.pdf]', new Map([['[notes.pdf]', path]]))).toBe(`Read @"${path}"`)
+    const path = '.holi/state/chat.local.uploads/lq3x9-ab12cd-my notes.pdf'
+    expect(withPaths('Read [my notes.pdf]', new Map([['[my notes.pdf]', path]]))).toBe(`Read @"${path}"`)
     expect(splitUserText(`Read\n\n@"${path}"`)).toEqual([
       { kind: 'text', text: 'Read' },
-      { kind: 'file', path, label: 'notes.pdf', image: false },
+      { kind: 'file', path, label: 'my notes.pdf', image: false },
     ])
   })
 
   it('reads an upload back as a chip, in its place among the words', () => {
-    const path = '/v/.holi/state/chat.local.uploads/lq3x9-ab12cd-screenshot.png'
+    const path = '.holi/state/chat.local.uploads/lq3x9-ab12cd-screenshot.png'
     expect(uploadLabel(path)).toBe('screenshot.png')
     expect(splitUserText(`Look at @${path} then fix it`)).toEqual([
       { kind: 'text', text: 'Look at' },

@@ -30,8 +30,8 @@ const STEP_MS = 120
 const READ_MS = 4000
 
 const PILL =
-  'shrink-0 rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-600 dark:text-amber-400'
-const CARD = 'rounded-2xl border border-border/60 bg-muted/20 p-3 text-sm'
+  'shrink-0 text-[11px] font-medium text-amber-600 dark:text-amber-400'
+const CARD = 'rounded-2xl bg-muted/40 p-3 text-sm'
 
 type Pressed = Promise<{ ok: true } | { ok: false; message: string }>
 
@@ -152,7 +152,7 @@ export function QuickAsk({
                     aria-checked={on}
                     disabled={sending}
                     onClick={() => choose(i)}
-                    className="h-auto w-full flex-col items-start gap-0 rounded-lg border border-border/60 bg-card px-2.5 py-1.5 text-left font-normal whitespace-normal hover:border-ring/60 aria-checked:border-ring"
+                    className="h-auto w-full flex-col items-start gap-0 rounded-lg bg-card px-2.5 py-1.5 text-left font-normal whitespace-normal hover:bg-accent aria-checked:bg-accent"
                   >
                     <span className="text-xs text-foreground">
                       {option.label}
@@ -272,7 +272,7 @@ export function QuickAsk({
                 </Button>
                 <Button
                   size="sm"
-                  variant="outline"
+                  variant="secondary"
                   disabled={sending}
                   onClick={() => void run([ESCAPE])}
                 >
@@ -283,7 +283,7 @@ export function QuickAsk({
             {!permission && (
               <Button
                 size="sm"
-                variant="outline"
+                variant="secondary"
                 disabled={sending}
                 onClick={() => void run([ESCAPE])}
               >

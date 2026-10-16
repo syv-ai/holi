@@ -11,8 +11,9 @@
 import { randomBytes } from 'node:crypto'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { basename, extname, join } from 'node:path'
+import { CHAT_UPLOADS_DIR } from '@holi/shared'
 
-export const UPLOADS_DIR = '.holi/state/chat.local.uploads'
+export const UPLOADS_DIR = CHAT_UPLOADS_DIR
 
 /** The most one file may weigh, decoded: it travels as one message to main. */
 export const MAX_UPLOAD_BYTES = 50 * 1024 * 1024
@@ -35,7 +36,8 @@ function safeExt(name: string): string {
   return /^\.[a-z0-9]{1,10}$/.test(ext) ? ext : ''
 }
 
-/** Write one attachment into the vault; answers its absolute path. */
+/** Write one attachment into the vault; answers its path inside the vault,
+ *  which is how the session, already running there, is told of it. */
 export async function saveUpload(
   root: string,
   { name, data }: { name: string; data: string },
@@ -46,15 +48,12 @@ export async function saveUpload(
     return { ok: false, message: 'That file is over 50 MB.' }
   }
   const dir = join(root, UPLOADS_DIR)
-  const path = join(
-    dir,
-    `${Date.now().toString(36)}-${randomBytes(3).toString('hex')}-${safeStem(name)}${safeExt(name)}`,
-  )
+  const file = `${Date.now().toString(36)}-${randomBytes(3).toString('hex')}-${safeStem(name)}${safeExt(name)}`
   try {
     await mkdir(dir, { recursive: true })
-    await writeFile(path, bytes)
+    await writeFile(join(dir, file), bytes)
   } catch (err) {
     return { ok: false, message: err instanceof Error ? err.message : String(err) }
   }
-  return { ok: true, path }
+  return { ok: true, path: `${UPLOADS_DIR}/${file}` }
 }

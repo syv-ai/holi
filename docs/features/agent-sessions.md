@@ -164,8 +164,8 @@ Code's listing says its last turn finished (`state: done`), `failed` when it end
 `ready` before its first message (`SessionSummary.phase`), on its bubble. It is
 never called running: its process being alive says nothing about a turn.
 
-**Stop, restart, duplicate.** A row's **Stop** runs `claude stop <id>`. An idle session stops at
-once; one mid-turn or waiting on you asks first. Its context menu adds **Restart** (`claude
+**Stop, restart, duplicate.** A bubble's context menu has **Stop**, which runs `claude stop <id>`:
+an idle session stops at once, one mid-turn or waiting on you asks first. It adds **Restart** (`claude
 respawn`, a fresh process for the same conversation, which re-reads settings and `AGENTS.md`) and
 **Duplicate** (a background copy of the conversation, opened in a window of its own). Rename is
 Claude Code's: `/rename`, or Ctrl+R in the list. **Start another session** on an agent tab starts

@@ -25,7 +25,7 @@ import { agentSessionsAtom } from '../../agent/renderer/state/sessions'
 const ENTER = '\r'
 const ESCAPE = '\x1b'
 
-const PILL = 'shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-medium'
+const PILL = 'shrink-0 text-[11px] font-medium'
 
 function NoticeCard({ notice }: { notice: AgentNotice }): React.JSX.Element {
   const session = useAtomValue(agentSessionsAtom).find((s) => s.id === notice.sessionId) ?? null
@@ -54,7 +54,7 @@ function NoticeCard({ notice }: { notice: AgentNotice }): React.JSX.Element {
     <article
       data-agent-notice={notice.kind}
       data-notice-session={notice.sessionId}
-      className="pointer-events-auto motion-in-right overflow-hidden rounded-2xl border border-border/60 bg-popover text-popover-foreground shadow-popover"
+      className="pointer-events-auto motion-in-right overflow-hidden rounded-2xl bg-popover text-popover-foreground shadow-popover"
       onPointerEnter={() => setHovered(true)}
       onPointerLeave={() => setHovered(false)}
     >
@@ -87,10 +87,10 @@ function NoticeCard({ notice }: { notice: AgentNotice }): React.JSX.Element {
               <span
                 className={
                   notice.kind === 'needs-you'
-                    ? `${PILL} border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400`
+                    ? `${PILL} text-amber-600 dark:text-amber-400`
                     : notice.failed === true
-                      ? `${PILL} border-destructive/30 bg-destructive/10 text-destructive`
-                      : `${PILL} border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400`
+                      ? `${PILL} text-destructive`
+                      : `${PILL} text-emerald-600 dark:text-emerald-400`
                 }
               >
                 {notice.kind === 'needs-you'
@@ -135,7 +135,7 @@ function NoticeCard({ notice }: { notice: AgentNotice }): React.JSX.Element {
               <Button size="sm" onClick={() => answer(ENTER)}>
                 Allow
               </Button>
-              <Button size="sm" variant="outline" onClick={() => answer(ESCAPE)}>
+              <Button size="sm" variant="secondary" onClick={() => answer(ESCAPE)}>
                 Deny
               </Button>
             </>

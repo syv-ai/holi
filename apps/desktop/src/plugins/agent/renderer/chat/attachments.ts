@@ -11,6 +11,7 @@
  *
  * Pure, so it is testable without a DOM.
  */
+import { CHAT_UPLOADS_DIR } from '@holi/shared'
 
 /** The most attachments one message may carry. */
 export const MAX_ATTACHMENTS = 8
@@ -159,7 +160,8 @@ export function withPaths(text: string, paths: ReadonlyMap<string, string>): str
 }
 
 /** An `@path` into the chat's uploads folder, quoted or not. */
-const MENTION = /@(?:"([^"]*chat\.local\.uploads\/[^"]+)"|(\S*chat\.local\.uploads\/\S+))(?=\s|$)/g
+const DIR = escapeRe(CHAT_UPLOADS_DIR)
+const MENTION = new RegExp(`@(?:"(${DIR}/[^"]+)"|(${DIR}/\\S+))(?=\\s|$)`, 'g')
 
 /** A message split into what was typed and the files it names, in order. */
 export type UserPart =
@@ -191,15 +193,11 @@ export function splitUserText(text: string): UserPart[] {
   return parts
 }
 
-/** The uploads folder, as a vault-relative path. */
-const UPLOADS = '.holi/state/chat.local.uploads/'
-
 /**
  * Where an uploaded file is in the vault, which is what `holi-vault://` serves
- * (`vaultAssetUrl`): an upload is named in a message by its absolute path, so
- * this is the part from the uploads folder on. Null for any other path.
+ * (`vaultAssetUrl`): an upload is named in a message by its path inside the
+ * vault, so that is the path itself. Null for any other path.
  */
 export function uploadVaultPath(path: string): string | null {
-  const at = path.indexOf(UPLOADS)
-  return at === -1 ? null : path.slice(at)
+  return path.startsWith(`${CHAT_UPLOADS_DIR}/`) ? path : null
 }

@@ -123,7 +123,7 @@ export function QuickChat({ sessionId }: { sessionId: string }): React.JSX.Eleme
     <section
       data-quick-chat={sessionId}
       aria-label={`Message ${session.name}`}
-      className="pointer-events-auto motion-in-right overflow-hidden rounded-2xl border border-border/60 bg-popover text-popover-foreground shadow-popover data-[over]:border-ring"
+      className="pointer-events-auto motion-in-right overflow-hidden rounded-2xl bg-popover text-popover-foreground shadow-popover data-[over]:bg-accent"
       data-over={over ? '' : undefined}
       onKeyDown={(event) => {
         if (event.key === 'Escape') setQuick(null)
@@ -213,10 +213,10 @@ export function QuickChat({ sessionId }: { sessionId: string }): React.JSX.Eleme
                   <img
                     src={previews[i]!}
                     alt={file.name === '' ? 'Pasted image' : file.name}
-                    className="size-14 rounded-lg border border-border/60 object-cover"
+                    className="size-14 rounded-lg object-cover"
                   />
                 ) : (
-                  <span className="flex h-14 max-w-32 items-center rounded-lg border border-border/60 bg-muted px-2 text-xs">
+                  <span className="flex h-14 max-w-32 items-center rounded-lg bg-muted px-2 text-xs">
                     <span className="truncate">{file.name}</span>
                   </span>
                 )}
@@ -237,7 +237,7 @@ export function QuickChat({ sessionId }: { sessionId: string }): React.JSX.Eleme
         )}
         <div
           className={cn(
-            'flex items-end gap-1.5 rounded-3xl border border-border/60 bg-card p-1.5 pl-3.5 motion-respond focus-within:border-ring/60',
+            'flex items-end gap-1.5 rounded-3xl bg-muted p-1.5 pl-3.5 motion-respond focus-within:bg-accent',
             needsYou && 'opacity-60',
           )}
         >

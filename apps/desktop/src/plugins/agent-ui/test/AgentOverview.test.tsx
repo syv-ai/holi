@@ -224,11 +224,11 @@ test('a message is sent as a turn, and shows at once', async () => {
 })
 
 test('a send that main refuses puts the text back and says why', async () => {
-  cap.say.mockRejectedValue(new Error('no such method: agent.say'))
+  cap.say.mockRejectedValue(new Error('say failed'))
   const { user } = setup()
   const box = screen.getByRole('textbox', { name: 'Message' })
   await user.type(box, 'And a hotel{Enter}')
-  expect(await screen.findByText(/needs a restart/)).toBeInTheDocument()
+  expect(await screen.findByText(/say failed/)).toBeInTheDocument()
   expect(draftOf()).toBe('And a hotel')
 })
 
@@ -325,7 +325,7 @@ test('a finished session has no menu to stop it with', async () => {
   expect(screen.queryByRole('menuitem', { name: 'Stop session' })).toBeNull()
 })
 
-const PATH = (name: string) => `/v/.holi/state/chat.local.uploads/x-ab12cd-${name}`
+const PATH = (name: string) => `.holi/state/chat.local.uploads/x-ab12cd-${name}`
 const bitmap = () => new File(['png-bytes'], 'image.png', { type: 'image/png' })
 const composer = () => document.querySelector<HTMLElement>('[data-chat-composer]')!
 const box = () => screen.getByRole('textbox', { name: 'Message' })
@@ -658,7 +658,7 @@ test('a screenshot in a message is drawn from the vault, not as a filename', asy
       {
         kind: 'user',
         id: 'u1',
-        text: 'Look @/Users/me/vault/.holi/state/chat.local.uploads/mus3nfro-32b3a6-image.png at this',
+        text: 'Look @.holi/state/chat.local.uploads/mus3nfro-32b3a6-image.png at this',
       },
     ],
   })

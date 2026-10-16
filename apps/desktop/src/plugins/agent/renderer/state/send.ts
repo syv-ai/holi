@@ -203,11 +203,7 @@ type UploadAnswer = { ok: true; path: string } | { ok: false; message: string }
 /** Why a call to main failed, in words for the chat. */
 export function failure(err: unknown): string {
   const message = err instanceof Error ? err.message : String(err)
-  // Main is older than this window: a running Holi keeps its main process
-  // until it is restarted.
-  return /no such method/i.test(message)
-    ? 'Holi needs a restart before the chat can reach its sessions.'
-    : message
+  return message
 }
 
 /** How long a terminal just opened gets to draw its dialog before a key

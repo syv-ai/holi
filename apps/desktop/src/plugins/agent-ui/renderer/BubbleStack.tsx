@@ -314,7 +314,7 @@ export function BubbleStack({
           data-agent-stack-more=""
           className={cn(
             'agent-stack-more rounded-full bg-secondary px-1.5 text-[11px] text-secondary-foreground tabular-nums',
-            hiddenNeedsYou && 'ring-2 ring-orange-400',
+            hiddenNeedsYou && 'bg-orange-400 text-neutral-950',
           )}
         >
           +{entries.length - RESTING}
