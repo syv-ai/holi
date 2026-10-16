@@ -48,9 +48,22 @@ beforeEach(() => {
   Object.assign(mocks.updater, {
     autoDownload: false,
     autoInstallOnAppQuit: false,
+    allowDowngrade: false,
+    _channel: null,
     checkForUpdates: vi.fn(),
     downloadUpdate: vi.fn(),
     quitAndInstall: vi.fn(),
+  })
+  // electron-updater's channel setter enables downgrades automatically.
+  Object.defineProperty(mocks.updater, 'channel', {
+    configurable: true,
+    get() {
+      return this._channel
+    },
+    set(channel) {
+      this._channel = channel
+      this.allowDowngrade = true
+    },
   })
   mocks.read.mockResolvedValue({ enabled: true, channel: 'stable' })
   mocks.update.mockImplementation(async (change) => change({ enabled: true, channel: 'stable' }))

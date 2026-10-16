@@ -110,9 +110,9 @@ export function createUpdater(deps: {
 
   if (status.supported) {
     autoUpdater.autoDownload = true
-    // checkForUpdates stages its candidate natively, and electron-updater
-    // cannot unstage it on a feed switch. Never let its implicit quit hook
-    // install a candidate; installOnQuit validates the current channel instead.
+    // With this true, MacUpdater stages a downloaded ZIP natively, and there
+    // is no public way to unstage it on a channel switch. Install explicitly
+    // on quit only after validating the selected candidate.
     autoUpdater.autoInstallOnAppQuit = false
     autoUpdater.logger = {
       info: (m: unknown) => console.log('[updates]', m),
@@ -141,13 +141,8 @@ export function createUpdater(deps: {
   void prefs.read().then(
     ({ enabled, channel }) => {
       status = { ...status, enabled, channel }
-      // A cached candidate can survive app restarts, and electron-updater exposes
-      // no public API to inspect or discard its channel. Do not auto-install it
-      // until this process downloads a candidate from the selected feed.
-      autoUpdater.autoInstallOnAppQuit = false
       autoUpdater.channel = channel === 'dev' ? 'dev' : 'latest'
       autoUpdater.allowPrerelease = channel === 'dev'
-      autoUpdater.allowDowngrade = true
       initialized = true
       resolveInitialized()
       deps.send(status)
@@ -224,7 +219,6 @@ export function createUpdater(deps: {
     await initialization
     if (channel === status.channel) return status
     switching = true
-    autoUpdater.autoInstallOnAppQuit = false
     generation += 1
     cancellationToken?.cancel()
     cancellationToken = null
@@ -251,7 +245,6 @@ export function createUpdater(deps: {
     await operation
     autoUpdater.channel = channel === 'dev' ? 'dev' : 'latest'
     autoUpdater.allowPrerelease = channel === 'dev'
-    autoUpdater.allowDowngrade = true
     installChannel = null
     status = {
       ...status,
