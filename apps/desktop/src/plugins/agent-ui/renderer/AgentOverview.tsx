@@ -12,7 +12,7 @@ import { Button } from '@/primitives'
 import { AgentFace } from './AgentFace'
 import { AgentHistory } from './AgentHistory'
 import { ChatView } from './chat/ChatView'
-import { startSessionAtom } from '../../agent/renderer/state/send'
+import { startErrorAtom, startSessionAtom } from '../../agent/renderer/state/send'
 import {
   agentViewAtom,
   shownEntryAtom,
@@ -32,6 +32,7 @@ export function AgentOverview({ visible }: { visible: boolean }): React.JSX.Elem
   const shown = useAtomValue(shownEntryAtom)
   const view = useAtomValue(agentViewAtom)
   const startSession = useSetAtom(startSessionAtom)
+  const startError = useAtomValue(startErrorAtom)
 
   return (
     <div className="flex min-h-0 flex-1 justify-center overflow-hidden" data-agent-overview="">
@@ -46,6 +47,15 @@ export function AgentOverview({ visible }: { visible: boolean }): React.JSX.Elem
             <Button variant="outline" size="sm" onClick={() => void startSession()}>
               Start a session
             </Button>
+            {startError !== null && (
+              <p
+                role="alert"
+                data-agent-start-error=""
+                className="max-w-md text-xs/relaxed whitespace-pre-wrap break-words text-destructive select-text"
+              >
+                {startError}
+              </p>
+            )}
           </div>
         ) : (
           <>

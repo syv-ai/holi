@@ -13,6 +13,14 @@ Code for one (`claude --bg [--name] [prompt]`, `--resume <id> --fork-session` fo
 person starts one in the agent list. A session is keyed by its **job id** everywhere: capabilities, the turn
 bracket, turn records. The id survives `/clear`, which changes the conversation's `sessionId`.
 
+**A start that fails says so.** `claude --bg` refuses a directory its config directory has not
+trusted ("Workspace not trusted"), which is the state of every vault on a Holi profile that has not
+run the agent before. Its own advice (run `claude` there) would trust the directory for `~/.claude`
+and change nothing, so `explainStartFailure` swaps it for the command that does: `claude` run in the
+vault with `CLAUDE_CONFIG_DIR` set to the vault's agent config directory, once, to accept the prompt
+and sign in. The agents page prints whatever message a failed start returns (`startErrorAtom`); the
+bubble stack's "New session" brings that page forward to show it.
+
 **One way to run `claude`.** `claude-cli.ts` runs every command Holi issues for a vault in the vault
 clone, on its config directory, with one environment. The supervisor takes its environment from
 whichever `claude` process started it and hands it to every session, so every call carrying Holi's
@@ -63,8 +71,9 @@ how it ended, and when it began) beside each bubble, then "New session"; Escape 
 Pressing a bubble opens that chat, one at a time; the page opens on the most recent. The stack keeps
 its margin from the window's edges and never clips a bubble, its ring or its dot; each row of the fan
 has its own room: an **archive button** at the left, the name and line, and the face at the right,
-where the resting bubble is, so the pointer that opened the fan is already on a face (the bubble and the button are siblings, never a button in a button). The last row is "New session", with the **History** link at its
-left where the other rows have their archive button, so the fan takes no line of its own for it. A bubble,
+where the resting bubble is, so the pointer that opened the fan is already on a face (the bubble and the button are siblings, never a button in a button). The last row is "New session", with the **History** button (a quiet
+pill with the clock icon and the count) at its left where the other rows have their archive button, so
+the fan takes no line of its own for it. A bubble,
 the palette and a new session all land there (`land` sets `overviewSelectionAtom` and opens
 the surface), and ⌘J and the agent item open the page as it was left. Order is `startedAt`, newest
 first (one without a start time is oldest), and the open chat's bubble is ringed.

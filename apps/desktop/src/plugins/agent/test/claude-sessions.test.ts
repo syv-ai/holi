@@ -225,6 +225,25 @@ describe('claude-cli', () => {
     expect(await failing.stop(target, 'x')).toEqual({ ok: false, message: 'boom' })
   })
 
+  it("says what to run when Claude Code does not trust the vault's directory", async () => {
+    const cli = createClaudeCli({
+      resolveBin: () => '/c',
+      run: async () => {
+        throw new Error(
+          'Workspace not trusted. Run `claude` in /v/root once and accept the trust prompt, then retry.',
+        )
+      },
+      log: () => {},
+    })
+    const res = await cli.startBg(target, {})
+    expect(res.ok).toBe(false)
+    const message = res.ok ? '' : res.message
+    // The advice names this vault's config directory: a bare `claude` would
+    // trust the directory for `~/.claude` and change nothing here.
+    expect(message).toContain(`CLAUDE_CONFIG_DIR='${target.configDir}' claude`)
+    expect(message).toContain(`cd '${target.root}'`)
+  })
+
   it('refuses without a binary', async () => {
     const cli = createClaudeCli({ resolveBin: () => null, log: () => {} })
     expect(await cli.list(target)).toBeNull()

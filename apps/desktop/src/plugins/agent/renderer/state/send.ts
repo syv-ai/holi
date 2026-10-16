@@ -94,6 +94,9 @@ export const openSessionAtom = atom(null, (_get, set, id: string): Promise<Agent
   return Promise.resolve({ ok: true })
 })
 
+/** Why the last session could not start, for the agents page to say. */
+export const startErrorAtom = atom<string | null>(null)
+
 /**
  * A new background session and its window. With a `prompt` that prompt is its
  * first turn (reconcile, a stuck push); without one it waits for yours. With
@@ -107,10 +110,17 @@ export const startSessionAtom = atom(
     set,
     { quick = false, ...opts }: { name?: string; prompt?: string; quick?: boolean } = {},
   ): Promise<AgentResult> => {
+    set(startErrorAtom, null)
     const res = await inVault(get, (remote) =>
       agentCap.start(remote, { ...opts, ...geometry(get) }),
-    )
-    if (!res.ok) return res
+    ).catch((err: unknown) => ({ ok: false as const, message: failure(err) }))
+    if (!res.ok) {
+      // Said where the person is looking: the agents page, which shows it.
+      set(startErrorAtom, res.message)
+      set(agentViewAtom, 'chat')
+      set(openSurfaceAtom, AGENT_SURFACE)
+      return res
+    }
     if (quick) set(quickChatAtom, res.sessionId)
     else land(set, res.sessionId)
     return { ok: true }

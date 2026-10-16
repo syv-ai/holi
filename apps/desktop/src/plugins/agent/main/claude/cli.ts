@@ -204,6 +204,18 @@ export function cliEnv(base: NodeJS.ProcessEnv, target: VaultCliTarget): Record<
   return buildAgentEnv(base, { configDir: target.configDir, binDir: target.binDir })
 }
 
+/** Claude Code refuses `--bg` in a directory it has not been told to trust, and
+ *  tells you to run `claude` there: which runs on `~/.claude`, not on the
+ *  config directory Holi gives the vault's agent, so the advice does not help.
+ *  This says what does. */
+export function explainStartFailure(message: string, target: VaultCliTarget): string {
+  if (!/Workspace not trusted/i.test(message)) return message
+  return (
+    'Claude Code has not been set up for this vault on this Holi profile yet. Run this once in a terminal, accept the trust prompt and sign in, then start a session again:\n' +
+    `cd '${target.root}' && CLAUDE_CONFIG_DIR='${target.configDir}' claude`
+  )
+}
+
 /** The binary when it is not on the machine. */
 export const NOT_INSTALLED =
   'Claude CLI not found on PATH. Install it (https://claude.com/claude-code) and restart Holi.'
@@ -274,7 +286,10 @@ export function createClaudeCli(deps: ClaudeCliDeps = {}): ClaudeCli {
       stdout = await exec(target, args, ACTION_TIMEOUT_MS)
     } catch (err: unknown) {
       log(`--bg failed: ${String(err)}`)
-      return { ok: false, message: err instanceof Error ? err.message : String(err) }
+      return {
+        ok: false,
+        message: explainStartFailure(err instanceof Error ? err.message : String(err), target),
+      }
     }
     const id = parseBackgrounded(stdout)
     if (id === null)

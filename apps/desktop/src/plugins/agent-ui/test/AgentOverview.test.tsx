@@ -288,6 +288,13 @@ test('with no session ever it says so and offers one', () => {
   expect(screen.getByRole('button', { name: 'Start a session' })).toBeInTheDocument()
 })
 
+test('a session that could not start says why, where it was asked for', async () => {
+  cap.start.mockResolvedValue({ ok: false, message: 'Claude Code needs setting up.' })
+  const { user } = setup([], [])
+  await user.click(screen.getByRole('button', { name: 'Start a session' }))
+  expect(await screen.findByRole('alert')).toHaveTextContent('Claude Code needs setting up.')
+})
+
 test('a tool call and its result are one item', () => {
   const items = toChatItems(TRANSCRIPT.entries as Parameters<typeof toChatItems>[0])
   expect(items.map((i) => i.kind)).toEqual(['user', 'assistant', 'tool'])

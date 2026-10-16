@@ -8,7 +8,7 @@
  * closing is a transition (`overview.css`). The finished ones are dimmed with
  * their eyes shut, and a live one keeps its status dot.
  */
-import { Archive, Plus } from 'lucide-react'
+import { Archive, History, Plus } from 'lucide-react'
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import {
   Button,
@@ -262,16 +262,19 @@ export function BubbleStack({
               {/* The way to the archived chats, where the other rows have their
                   archive button: one line with "New session", not one of its own. */}
               <Button
-                variant="link"
+                variant="ghost"
                 size="xs"
                 data-agent-history-link=""
-                className="agent-bubble-history h-auto p-0 text-xs font-normal text-muted-foreground hover:text-foreground"
+                aria-label={`History${archivedCount > 0 ? ` · ${archivedCount}` : ''}`}
+                className="agent-bubble-history h-7 gap-1.5 rounded-full px-2.5 text-xs font-normal text-muted-foreground hover:bg-background/70 hover:text-foreground"
                 onClick={() => {
                   onHistory()
                   setOpen(false)
                 }}
               >
-                History{archivedCount > 0 ? ` · ${archivedCount}` : ''}
+                <Icon icon={History} />
+                History
+                {archivedCount > 0 && <span className="tabular-nums">{archivedCount}</span>}
               </Button>
               <Button
                 variant="ghost"
