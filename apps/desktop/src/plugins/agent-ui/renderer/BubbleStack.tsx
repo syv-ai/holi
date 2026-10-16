@@ -259,6 +259,20 @@ export function BubbleStack({
               className="agent-bubble agent-bubble-new"
               style={{ '--i': entries.length } as CSSProperties}
             >
+              {/* The way to the archived chats, where the other rows have their
+                  archive button: one line with "New session", not one of its own. */}
+              <Button
+                variant="link"
+                size="xs"
+                data-agent-history-link=""
+                className="agent-bubble-history h-auto p-0 text-xs font-normal text-muted-foreground hover:text-foreground"
+                onClick={() => {
+                  onHistory()
+                  setOpen(false)
+                }}
+              >
+                History{archivedCount > 0 ? ` · ${archivedCount}` : ''}
+              </Button>
               <Button
                 variant="ghost"
                 size="sm"
@@ -294,19 +308,6 @@ export function BubbleStack({
             </div>
           </div>
         </div>
-        {/* The way to the archived chats, small, at the foot of the menu. */}
-        <Button
-          variant="link"
-          size="xs"
-          data-agent-history-link=""
-          className="agent-fan-footer h-auto p-0 text-xs font-normal text-muted-foreground hover:text-foreground"
-          onClick={() => {
-            onHistory()
-            setOpen(false)
-          }}
-        >
-          History{archivedCount > 0 ? ` · ${archivedCount}` : ''}
-        </Button>
       </div>
       {entries.length > RESTING && (
         <span

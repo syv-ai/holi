@@ -191,10 +191,10 @@
   height: calc(var(--u) * var(--mh));
   border-style: solid;
   border-color: var(--ink);
-  border-width: calc(var(--u) * var(--mb1)) calc(var(--u) * var(--mb2))
-    calc(var(--u) * var(--mb3)) calc(var(--u) * var(--mb4));
-  border-radius: calc(var(--u) * var(--mr1)) calc(var(--u) * var(--mr2))
-    calc(var(--u) * var(--mr3)) calc(var(--u) * var(--mr4));
+  border-width: calc(var(--u) * var(--mb1)) calc(var(--u) * var(--mb2)) calc(var(--u) * var(--mb3))
+    calc(var(--u) * var(--mb4));
+  border-radius: calc(var(--u) * var(--mr1)) calc(var(--u) * var(--mr2)) calc(var(--u) * var(--mr3))
+    calc(var(--u) * var(--mr4));
   background: var(--mfill);
   transition:
     width var(--motion-morph) ease,
@@ -245,7 +245,6 @@
   --pitch: 3.25rem;
   --peek: 0.875rem;
   --pad: 0.625rem;
-  --footer: 2.5rem;
   position: relative;
   width: calc(var(--size) + 2 * var(--pad));
   height: calc(var(--size) + 2 * var(--pad) + 2 * var(--peek));
@@ -257,17 +256,17 @@
 }
 .agent-stack[data-open] .agent-fan {
   width: 20rem;
-  height: min(calc(var(--rows) * var(--pitch) + var(--footer) + 2 * var(--pad)), 70vh);
+  height: min(calc(var(--rows) * var(--pitch) + 2 * var(--pad)), 70vh);
   overflow: hidden;
 }
 /* Resting, the scroller takes no pointer: only the bubbles open the fan. */
 .agent-fan-scroll {
   pointer-events: none;
 }
-/* The rows scroll when there are more than fit; the way to the history stays
-   at the foot of the fan. */
+/* The rows scroll when there are more than fit; the way to the history is on
+   the last of them, "New session"'s. */
 .agent-stack[data-open] .agent-fan-scroll {
-  height: calc(100% - var(--footer));
+  height: 100%;
   overflow-x: hidden;
   overflow-y: auto;
   pointer-events: auto;
@@ -440,23 +439,18 @@
 .agent-bubble-archive:focus-visible {
   opacity: 1;
 }
-/* The way to the history: the last line of the open fan, hidden at rest. */
-.agent-fan-footer {
-  position: absolute;
-  left: 1.25rem;
-  bottom: 0.875rem;
-  /* Never wider than the fan: resting, the fan is one bubble wide, and the
-     words would reach out of it and past the window's edge. */
-  max-width: calc(100% - 2.5rem);
-  overflow: hidden;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 150ms;
+/* The way to the history: at the left of the "New session" row, where the other
+   rows have their archive button. It comes with the words, as that does. */
+.agent-bubble-history {
+  display: none;
+  flex-shrink: 0;
+  align-self: center;
+  margin-right: 0.25rem;
+  white-space: nowrap;
 }
-.agent-stack[data-open] .agent-fan-footer {
-  opacity: 1;
-  pointer-events: auto;
-  transition-delay: 100ms;
+.agent-stack[data-open] .agent-bubble-history {
+  display: inline-flex;
+  animation: agent-archive-in 120ms 100ms backwards;
 }
 .agent-stack-more {
   position: absolute;
@@ -473,11 +467,11 @@
   .agent-bubble,
   .agent-stack[data-open] .agent-bubble-label,
   .agent-bubble-archive,
-  .agent-fan-footer,
   .agent-stack-more {
     transition: none;
   }
-  .agent-stack[data-open] .agent-bubble-archive {
+  .agent-stack[data-open] .agent-bubble-archive,
+  .agent-stack[data-open] .agent-bubble-history {
     animation: none;
   }
 }

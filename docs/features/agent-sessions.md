@@ -63,8 +63,8 @@ how it ended, and when it began) beside each bubble, then "New session"; Escape 
 Pressing a bubble opens that chat, one at a time; the page opens on the most recent. The stack keeps
 its margin from the window's edges and never clips a bubble, its ring or its dot; each row of the fan
 has its own room: an **archive button** at the left, the name and line, and the face at the right,
-where the resting bubble is, so the pointer that opened the fan is already on a face (the bubble and the button are siblings, never a button in a button), and "History" is pinned
-at its foot while the rows scroll. A bubble,
+where the resting bubble is, so the pointer that opened the fan is already on a face (the bubble and the button are siblings, never a button in a button). The last row is "New session", with the **History** link at its
+left where the other rows have their archive button, so the fan takes no line of its own for it. A bubble,
 the palette and a new session all land there (`land` sets `overviewSelectionAtom` and opens
 the surface), and ⌘J and the agent item open the page as it was left. Order is `startedAt`, newest
 first (one without a start time is oldest), and the open chat's bubble is ringed.
@@ -83,7 +83,7 @@ needs-you card, for the dialogs the chat cannot draw.
 session **stops it first** (asking first when that cuts a turn short), so nothing runs out of sight.
 The archive is Holi's own record, the job ids in `.holi/state/archive.local.json` (a `.local.` file:
 Claude Code has no archived session), told to the renderer as the `archive` event
-(`agent.archived`, `agent.archive`). The fan ends in a small **History · N** link, which opens the
+(`agent.archived`, `agent.archive`). The last row of the fan carries a small **History · N** link, which opens the
 history on the agents page: the archived chats, searchable by name, each of which can be read (a
 chat like any other, with Pick up, which un-archives it), **brought back** into the stack, or
 **deleted for good** (`agent.remove`, `claude rm`: the conversation goes, what it wrote in the vault
