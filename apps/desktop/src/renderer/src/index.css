@@ -258,12 +258,14 @@
  * because `overview.css` and the orb's loop read them, not Tailwind. Vault
  * themes recolour them like any token. */
 :root {
-  --session-mist: #8faec0;
-  --session-ochre: #d9a441;
-  --session-sage: #9daa8c;
-  --session-clay: #c9785b;
-  --session-slate: #7e8c94;
+  --session-teal: #8daa91;
+  --session-olive: #788475;
+  --session-charcoal: #5e5d5c;
+  --session-mauve: #453643;
+  --session-violet: #28112b;
+  /* The face's ink: dark on the light bodies, light on the dark ones. */
   --session-ink: rgb(22 20 18 / 0.86);
+  --session-ink-light: rgb(250 250 250 / 0.9);
   --session-dot-ready: #555555;
   --session-dot-done: #22c55e;
   --session-dot-working: #0ea5e9;

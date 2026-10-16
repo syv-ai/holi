@@ -20,20 +20,42 @@ import {
   trackOrb,
 } from './orb-loop'
 
-/** The bodies. A session keeps its colour for as long as it has its id. */
+/** The bodies, each with the ink that reads on it. Five that are far apart in
+ *  lightness, so neighbours in a stack are told apart at a glance. */
 const BODIES = [
-  'var(--session-mist)',
-  'var(--session-ochre)',
-  'var(--session-sage)',
-  'var(--session-clay)',
-  'var(--session-slate)',
+  { body: 'var(--session-teal)', ink: 'var(--session-ink)' },
+  { body: 'var(--session-mauve)', ink: 'var(--session-ink-light)' },
+  { body: 'var(--session-olive)', ink: 'var(--session-ink)' },
+  { body: 'var(--session-violet)', ink: 'var(--session-ink-light)' },
+  { body: 'var(--session-charcoal)', ink: 'var(--session-ink-light)' },
 ] as const
 
-/** Which body `seed` gets: the same one every time. */
+const STORE = 'holi.agent-bodies'
+/** Which body each session has, handed out in turn the first time a session is
+ *  drawn and kept, so a session keeps its colour in every place it shows and
+ *  sessions that start one after another are never alike. A hash would put two
+ *  neighbours in one colour one time in five. */
+const given: Map<string, number> = (() => {
+  try {
+    return new Map(Object.entries(JSON.parse(localStorage.getItem(STORE) ?? '{}')))
+  } catch {
+    return new Map()
+  }
+})() as Map<string, number>
+let nextBody = Math.max(-1, ...given.values()) + 1
+
 export function headOf(seed: string): (typeof BODIES)[number] {
-  let hash = 0
-  for (const ch of seed) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0
-  return BODIES[hash % BODIES.length]!
+  let n = given.get(seed)
+  if (n === undefined) {
+    n = nextBody++ % BODIES.length
+    given.set(seed, n)
+    try {
+      localStorage.setItem(STORE, JSON.stringify(Object.fromEntries(given)))
+    } catch {
+      // Private window or blocked storage: it lasts until the app closes.
+    }
+  }
+  return BODIES[n % BODIES.length]!
 }
 
 type Mood = 'neutral' | 'happy' | 'alert' | 'working' | 'idle' | 'error'
@@ -88,6 +110,7 @@ export function AgentFace({
   muted?: boolean
 }): React.JSX.Element {
   const mood = moodOf(state, phase, muted)
+  const look = headOf(seed)
   const dot = state === 'off' ? null : dotOf(mood)
   const plain = state === 'off' && !muted
   const root = useRef<HTMLSpanElement>(null)
@@ -146,8 +169,8 @@ export function AgentFace({
       data-size={size}
       style={
         {
-          '--body': plain ? 'var(--muted)' : headOf(seed),
-          ...(plain ? { '--ink': 'var(--muted-foreground)' } : {}),
+          '--body': plain ? 'var(--muted)' : look.body,
+          '--ink': plain ? 'var(--muted-foreground)' : look.ink,
         } as CSSProperties
       }
       className={cn('agent-face', muted && 'opacity-55 saturate-50')}
