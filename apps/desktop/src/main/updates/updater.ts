@@ -28,9 +28,9 @@ const CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000
 const FIRST_CHECK_DELAY_MS = 10 * 1000
 
 function createUpdaterAdapter(): NonNullable<ConstructorParameters<typeof MacUpdater>[1]> {
-  const packageJson = JSON.parse(
-    readFileSync(join(app.getAppPath(), 'package.json'), 'utf8'),
-  ) as { version: string }
+  const packageJson = JSON.parse(readFileSync(join(app.getAppPath(), 'package.json'), 'utf8')) as {
+    version: string
+  }
   const cacheRoot =
     process.platform === 'darwin'
       ? join(homedir(), 'Library', 'Caches')
@@ -74,7 +74,8 @@ export function createUpdater(deps: {
    *  confirm included. False when the person kept the app open. */
   beforeInstall: () => Promise<boolean>
 }): Updater {
-  const autoUpdater = new MacUpdater(undefined, createUpdaterAdapter())
+  const adapter = createUpdaterAdapter()
+  const autoUpdater = new MacUpdater(undefined, adapter)
   const prefs = jsonFileStore(join(app.getPath('userData'), 'updates.json'), (raw) => {
     const value = raw as { enabled?: unknown; channel?: unknown } | null
     return {
@@ -85,7 +86,7 @@ export function createUpdater(deps: {
   let status = initialStatus({
     supported: app.isPackaged,
     enabled: true,
-    version: app.getVersion(),
+    version: adapter.version,
     channel: 'stable',
   })
   let interval: ReturnType<typeof setInterval> | null = null

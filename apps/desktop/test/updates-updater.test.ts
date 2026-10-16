@@ -38,7 +38,6 @@ vi.mock('electron', () => ({
     isPackaged: true,
     getVersion: () => '0.1.2',
     on: vi.fn(),
-    once: vi.fn(),
     removeListener: vi.fn(),
   },
   powerMonitor: { on: vi.fn(), removeListener: vi.fn() },
@@ -60,6 +59,7 @@ import { createUpdater } from '../src/main/updates/updater'
 const tick = () => new Promise((resolve) => setImmediate(resolve))
 
 beforeEach(() => {
+  Object.defineProperty(process, 'resourcesPath', { value: '/resources', configurable: true })
   mocks.updater.removeAllListeners()
   Object.assign(mocks.updater, {
     autoDownload: false,
@@ -76,17 +76,19 @@ beforeEach(() => {
 
 describe('updater channel switching', () => {
   it('uses the packed package version while forwarding Electron app paths and lifecycle', async () => {
-    createUpdater({ send: vi.fn(), beforeInstall: async () => true })
-    const adapter = mocks.adapter as {    version: string
-    name: string
-    isPackaged: boolean
-    appUpdateConfigPath: string
-    userDataPath: string
-    baseCachePath: string
-    whenReady(): Promise<void>
-    relaunch(): void
-    quit(): void
-    onQuit(handler: (exitCode: number) => void): void
+    const updater = createUpdater({ send: vi.fn(), beforeInstall: async () => true })
+    expect(updater.status().version).toBe('0.1.2-dev.42')
+    const adapter = mocks.adapter as {
+      version: string
+      name: string
+      isPackaged: boolean
+      appUpdateConfigPath: string
+      userDataPath: string
+      baseCachePath: string
+      whenReady(): Promise<void>
+      relaunch(): void
+      quit(): void
+      onQuit(handler: (exitCode: number) => void): void
     }
     expect(adapter.version).toBe('0.1.2-dev.42')
     expect(adapter.name).toBe('Holi')
