@@ -11,7 +11,9 @@ newer skills and hooks are offered to each vault, never written unasked.
 and reads `apps/desktop/package.json`'s `version`. When `v<version>` has no tag yet, it builds,
 packages with `electron-builder` (`apps/desktop/electron-builder.yml`), and publishes the release
 `v<version>` with the dmg, the zip, their blockmaps and `latest-mac.yml`. When the tag exists, it
-stops after that check, so an ordinary merge ships nothing. Only arm64 macOS is built.
+stops after that check, so an ordinary merge ships nothing. Pushes run independently rather than
+replacing a queued commit; concurrent attempts to publish the same stable tag cannot replace its
+assets, and only the first release creation succeeds. Only arm64 macOS is built.
 
 **Signing and notarizing happen inside `electron-builder`.** It signs with the Developer ID
 certificate in `CSC_LINK`/`CSC_KEY_PASSWORD` under the hardened runtime and
@@ -59,7 +61,9 @@ A dev build reports updates as unsupported.
 
 ## Rules
 
-- A release is immutable: a new build is a new version. The workflow never replaces a release.
+- A stable release is immutable: a new build is a new version, and stable assets are never
+  overwritten. The dev prerelease uses the CI run number in its version and bundle metadata;
+  rerunning the same workflow run reuses that prerelease tag and deliberately replaces its assets.
 - An update is never installed behind someone's back mid-session; it waits for a quit or the button.
 - Stable is the default channel. Dev prereleases are an explicit per-app opt-in, and switching back to
   stable can install an older version on restart.
