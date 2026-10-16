@@ -52,25 +52,42 @@ export function createUpdater(deps: {
   let interval: ReturnType<typeof setInterval> | null = null
   let firstCheck: ReturnType<typeof setTimeout> | null = null
   let switching = false
+  let generation = 0
   let operation: Promise<unknown> = Promise.resolve()
+  let cancellationToken: { cancel(): void } | null = null
   let installChannel: UpdateChannel | null = null
+  let initialized = false
+  let resolveInitialized!: () => void
+  const initialization = new Promise<void>((resolve) => { resolveInitialized = resolve })
 
   const apply = (event: UpdateEvent): void => {
-    if (switching) return
+    if (switching || !initialized) return
     status = reduce(status, event, Date.now())
     if (event.type === 'available' || event.type === 'downloaded') installChannel = status.channel
+    if (event.type === 'downloaded') autoUpdater.autoInstallOnAppQuit = true
     deps.send(status)
   }
 
   const run = async (source: 'user' | 'background'): Promise<UpdateStatus> => {
+    await initialization
     if (switching || !shouldCheck(status, source, Date.now())) return status
     apply({ type: 'check-started' })
+    const runGeneration = generation
     const active = (async () => {
       try {
-        await autoUpdater.checkForUpdates()
+        const result = await autoUpdater.checkForUpdates()
+        if (!result) return
+        cancellationToken = result.cancellationToken
+        if (runGeneration !== generation) cancellationToken.cancel()
+        // checkForUpdates resolves before electron-updater's auto-download.
+        // Drain the download before a channel switch starts its new check.
+        await result.downloadPromise
       } catch (err) {
-        // `error` usually fires too, but not for every rejection.
-        apply({ type: 'error', message: err instanceof Error ? err.message : String(err) })
+        if (runGeneration === generation) {
+          apply({ type: 'error', message: err instanceof Error ? err.message : String(err) })
+        }
+      } finally {
+        if (runGeneration === generation) cancellationToken = null
       }
     })()
     operation = active
@@ -81,8 +98,9 @@ export function createUpdater(deps: {
 
   if (status.supported) {
     autoUpdater.autoDownload = true
-    // Never let electron-updater install a cached candidate on an ordinary quit.
-    // Only our channel-checked explicit install path may install it.
+    // Preserve electron-updater's normal install-on-quit behavior for the
+    // candidate on the currently selected feed. Channel switches drain and
+    // cancel any in-flight candidate before changing feeds.
     autoUpdater.autoInstallOnAppQuit = false
     autoUpdater.logger = {
       info: (m: unknown) => console.log('[updates]', m),
@@ -110,16 +128,27 @@ export function createUpdater(deps: {
 
   void prefs.read().then(({ enabled, channel }) => {
     status = { ...status, enabled, channel }
-    autoUpdater.channel = channel === 'dev' ? 'dev' : null
+    // A cached candidate can survive app restarts, and electron-updater exposes
+    // no public API to inspect or discard its channel. Do not auto-install it
+    // until this process downloads a candidate from the selected feed.
+    autoUpdater.autoInstallOnAppQuit = false
+    autoUpdater.channel = channel === 'dev' ? 'dev' : 'latest'
     autoUpdater.allowPrerelease = channel === 'dev'
     autoUpdater.allowDowngrade = true
+    initialized = true
+    resolveInitialized()
     deps.send(status)
+  }, (err: unknown) => {
+    initialized = true
+    resolveInitialized()
+    status = { ...status, lastError: err instanceof Error ? err.message : String(err) }
   })
 
   return {
     status: () => status,
     check: () => run('user'),
     async download() {
+      await initialization
       if (!status.supported || status.state !== 'available') return status
       apply({ type: 'progress', percent: 0 })
       const active = (async () => {
@@ -151,10 +180,15 @@ export function createUpdater(deps: {
     },
     async setChannel(channel) {
       if (channel === status.channel) return status
+      await initialization
       switching = true
+      autoUpdater.autoInstallOnAppQuit = false
+      generation += 1
+      cancellationToken?.cancel()
+      cancellationToken = null
       await prefs.update((current) => ({ ...current, channel }))
       await operation
-      autoUpdater.channel = channel === 'dev' ? 'dev' : null
+      autoUpdater.channel = channel === 'dev' ? 'dev' : 'latest'
       autoUpdater.allowPrerelease = channel === 'dev'
       autoUpdater.allowDowngrade = true
       installChannel = null
