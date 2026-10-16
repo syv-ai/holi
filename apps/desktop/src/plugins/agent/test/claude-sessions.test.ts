@@ -43,6 +43,7 @@ describe('parseListing', () => {
         pid: 4242,
         status: 'busy',
         state: 'working',
+        startedAt: 1790627831838,
       },
     ])
   })
@@ -50,7 +51,7 @@ describe('parseListing', () => {
   it('keeps a row under the root and drops one for another tree', () => {
     const under = { ...LIVE, id: 'aaaaaaaa', cwd: `${ROOT}/notes` }
     const sibling = { ...LIVE, id: 'bbbbbbbb', cwd: `${ROOT}-other` }
-    expect(parseListing(listing([under, sibling]), ROOT).map((r) => r.id)).toEqual(['aaaaaaaa'])
+    expect(parseListing(listing([under, sibling]), ROOT)?.map((r) => r.id)).toEqual(['aaaaaaaa'])
   })
 
   it('drops interactive rows, which Holi never starts', () => {
@@ -59,20 +60,21 @@ describe('parseListing', () => {
 
   it('keeps a row whose process has exited, without pid or status', () => {
     const { pid: _p, status: _s, ...exited } = LIVE
-    const [row] = parseListing(listing([{ ...exited, state: 'stopped' }]), ROOT)
+    const [row] = parseListing(listing([{ ...exited, state: 'stopped' }]), ROOT) ?? []
     expect(row?.pid).toBeUndefined()
     expect(row !== undefined && isLive(row)).toBe(false)
   })
 
   it('costs a malformed row that row only', () => {
     const rows = parseListing(listing([{ ...LIVE, id: 7 }, null, LIVE]), ROOT)
-    expect(rows.map((r) => r.id)).toEqual(['20c9f6e8'])
+    expect(rows?.map((r) => r.id)).toEqual(['20c9f6e8'])
   })
 
-  it('answers nothing for a failed or garbled listing', () => {
-    expect(parseListing(null, ROOT)).toEqual([])
-    expect(parseListing('not json', ROOT)).toEqual([])
-    expect(parseListing('{}', ROOT)).toEqual([])
+  it('says a failed or garbled listing failed, which is not an empty one', () => {
+    expect(parseListing(null, ROOT)).toBeNull()
+    expect(parseListing('not json', ROOT)).toBeNull()
+    expect(parseListing('{}', ROOT)).toBeNull()
+    expect(parseListing('[]', ROOT)).toEqual([])
   })
 })
 
@@ -139,7 +141,7 @@ describe('claude-cli', () => {
     await cli.forkBg(target, 'uuid-1', 'Copy')
 
     expect(calls.map((c) => c.args)).toEqual([
-      ['agents', '--json'],
+      ['agents', '--json', '--all'],
       ['stop', '1234abcd'],
       ['--bg', '--name', 'Tidy', 'go'],
       ['--bg', '--resume', 'uuid-1', '--fork-session', '--name', 'Copy'],
@@ -185,6 +187,24 @@ describe('claude-cli', () => {
     ])
   })
 
+  it('asks again without --all of a Claude Code that does not know it', async () => {
+    const asked: string[][] = []
+    const cli = createClaudeCli({
+      resolveBin: () => '/c',
+      run: async (_bin, args) => {
+        asked.push(args)
+        if (args.includes('--all')) throw new Error("unknown option '--all'")
+        return '[]'
+      },
+      log: () => {},
+    })
+    expect(await cli.list(target)).toBe('[]')
+    expect(asked).toEqual([
+      ['agents', '--json', '--all'],
+      ['agents', '--json'],
+    ])
+  })
+
   it('answers the new id, or why there is none', async () => {
     const ok = createClaudeCli({
       resolveBin: () => '/c',
@@ -204,6 +224,25 @@ describe('claude-cli', () => {
     })
     expect(await failing.list(target)).toBeNull()
     expect(await failing.stop(target, 'x')).toEqual({ ok: false, message: 'boom' })
+  })
+
+  it("says what to run when Claude Code does not trust the vault's directory", async () => {
+    const cli = createClaudeCli({
+      resolveBin: () => '/c',
+      run: async () => {
+        throw new Error(
+          'Workspace not trusted. Run `claude` in /v/root once and accept the trust prompt, then retry.',
+        )
+      },
+      log: () => {},
+    })
+    const res = await cli.startBg(target, {})
+    expect(res.ok).toBe(false)
+    const message = res.ok ? '' : res.message
+    // The advice names this vault's config directory: a bare `claude` would
+    // trust the directory for `~/.claude` and change nothing here.
+    expect(message).toContain(`CLAUDE_CONFIG_DIR='${target.configDir}' claude`)
+    expect(message).toContain(`cd '${target.root}'`)
   })
 
   it('refuses without a binary', async () => {

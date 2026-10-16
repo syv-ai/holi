@@ -29,6 +29,7 @@ import { vaultScheme } from './vault/asset-protocol'
 import { createSession } from './github/electron'
 import { createMembersCache } from './github/members-cache'
 import { installHoliCli } from './bridge/cli'
+import { installNodeFallback } from './bridge/node-fallback'
 import { createCapabilityHost } from './capabilities/dispatch'
 import { CapabilityError } from './capabilities/error'
 import { createCapabilityRegistry } from './capabilities/registry'
@@ -408,6 +409,7 @@ async function main(): Promise<void> {
   registerIpc({ router, rootFor: (remote) => rootFor(remote) })
 
   const holiCliPath = await installHoliCli(app.getPath('userData'))
+  await installNodeFallback(app.getPath('userData'), process.execPath)
 
   // The bridge: what runs inside a vault (the `holi` command, the agent's
   // hooks, git's hook and merge driver) reaching this Holi on loopback.

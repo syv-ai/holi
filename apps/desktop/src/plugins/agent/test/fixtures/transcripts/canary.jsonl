@@ -1,0 +1,5 @@
+{"type":"zz-invented-top-level","uuid":"00000000-0000-4000-8000-0000000000c1","timestamp":"2030-01-01T00:00:00.000Z","payload":{"a":1}}
+{"type":"attachment","uuid":"00000000-0000-4000-8000-0000000000c2","parentUuid":null,"isSidechain":false,"timestamp":"2030-01-01T00:00:01.000Z","attachment":{"type":"zz_invented_attachment","content":"xxxx"},"version":"2.1.999"}
+{"type":"assistant","uuid":"00000000-0000-4000-8000-0000000000c3","parentUuid":null,"isSidechain":false,"timestamp":"2030-01-01T00:00:02.000Z","message":{"role":"assistant","id":"msg_canary","model":"claude-sonnet-5-5","content":[{"type":"zz_invented_block","x":1},{"type":"text","text":"xxxx"}],"stop_reason":"end_turn"},"version":"2.1.999"}
+{"type":"user","uuid":"00000000-0000-4000-8000-0000000000c4","parentUuid":null,"isSidechain":false,"timestamp":"2030-01-01T00:00:03.000Z","message":{"role":"user","content":[{"type":"zz_invented_user_block","y":2}]},"origin":{"kind":"human"}}
+{"type":"system","subtype":"zz_invented_subtype","uuid":"00000000-0000-4000-8000-0000000000c5","timestamp":"2030-01-01T00:00:04.000Z","content":"xxxx"}

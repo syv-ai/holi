@@ -12,7 +12,10 @@ sanitised half alone is not unique). The machine's `~/.claude` (global settings,
 marketplaces, MCP servers) is excluded by construction, and one vault's plugins never reach another.
 It is also the key of the vault's Claude Code supervisor, so the agent list shows that vault's
 sessions only. Holi creates the directory when it opens the vault and merges into its
-`settings.json`: `disableClaudeAiConnectors` (only when absent), `theme` (dark or light, from the
+`settings.json`: `disableClaudeAiConnectors` (only when absent), `permissions.defaultMode:
+"bypassPermissions"` with `skipDangerousModePermissionPrompt` (only when absent: every session
+starts in bypass permissions, and Shift+Tab in the chat's composer presses Shift+Tab in the
+session, Claude Code's own mode cycle), `theme` (dark or light, from the
 app's resolved colour mode) and an `env` block with Holi's static paths (`HOLI_BIN`), the one
 channel that reaches every background session. It
 removes the `statusLine` older versions installed. A theme change reaches a running session on

@@ -29,6 +29,10 @@ import { TerminalMirror } from './terminal-mirror'
  *  there is no `\r`, so nothing Holi writes can submit a draft. */
 export const bracketedPaste = (text: string): string => `\x1b[200~${text}\x1b[201~`
 
+/** After a paste, how long the TUI gets to take it in before the Enter that
+ *  submits it: sent together, the Enter lands inside the paste. */
+const SUBMIT_AFTER_PASTE_MS = 120
+
 /** After a terminal's first output, how long to let the TUI settle into raw
  *  mode before a held paste goes in. */
 const PASTE_SETTLE_MS = 200
@@ -79,8 +83,10 @@ export interface AgentTerminals {
   attach(id: string): Promise<string>
   write(id: string, data: string): void
   resize(id: string, cols: number, rows: number): void
-  /** Put text in the terminal's input, unsent. False for a terminal that is gone. */
-  paste(id: string, text: string): boolean
+  /** Put text in the terminal's input, unsent. False for a terminal that is gone.
+   *  With `submit` it is then sent as a turn: the chat's composer is Holi's, so
+   *  there is no draft in the terminal's own box to send along with it. */
+  paste(id: string, text: string, submit?: boolean): boolean
   /** Detach: end the client. The session it shows keeps running. */
   close(id: string): Promise<void>
   closeAll(): Promise<void>
@@ -104,7 +110,7 @@ interface Terminal {
   ready: boolean
   /** The settle timer is running. */
   settling: boolean
-  pending: string[]
+  pending: { text: string; submit: boolean }[]
   timers: ReturnType<typeof setTimeout>[]
 }
 
@@ -129,10 +135,20 @@ export function createAgentTerminals(deps: AgentTerminalsDeps): AgentTerminals {
     deps.emit(remote, 'terminals', next)
   }
 
+  /** Paste into a terminal that is ready for it, and submit if asked. */
+  function put(t: Terminal, text: string, submit: boolean): void {
+    t.runtime.write(bracketedPaste(text))
+    if (!submit) return
+    const timer = setTimeout(() => {
+      if (terminals.get(t.id) === t) t.runtime.write('\r')
+    }, SUBMIT_AFTER_PASTE_MS)
+    t.timers.push(timer)
+  }
+
   function markReady(t: Terminal): void {
     if (t.ready) return
     t.ready = true
-    for (const text of t.pending.splice(0)) t.runtime.write(bracketedPaste(text))
+    for (const { text, submit } of t.pending.splice(0)) put(t, text, submit)
   }
 
   function drop(t: Terminal): void {
@@ -228,11 +244,11 @@ export function createAgentTerminals(deps: AgentTerminalsDeps): AgentTerminals {
       t.mirror.resize(cols, rows)
     },
 
-    paste(id, text) {
+    paste(id, text, submit = false) {
       const t = terminals.get(id)
       if (t === undefined) return false
-      if (t.ready) t.runtime.write(bracketedPaste(text))
-      else t.pending.push(text)
+      if (t.ready) put(t, text, submit)
+      else t.pending.push({ text, submit })
       return true
     },
 

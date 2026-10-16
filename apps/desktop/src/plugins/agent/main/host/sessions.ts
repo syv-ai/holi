@@ -8,14 +8,13 @@
  * (the provider's listing). This module ties those to the vault it is
  * attached to (`ensure`), which is the open one.
  *
- * Three things belong to the **vault**, not to any session, and live here: the
- * config directory, the sync pause (owned by
- * the turn coordinator), and the focus file the per-turn hook reads.
+ * Two things belong to the **vault**, not to any session, and live here: the
+ * config directory and the focus file the per-turn hook reads.
  *
- * **Holi does not decide what a session is doing.** The listing says so; the
- * hook bracket stays as the floor under it, because a slow or missing CLI
- * must still report a live turn, and the sync pause has a deadline a watcher
- * cannot meet.
+ * **Holi does not decide what a session is doing.** `session-state.ts` does:
+ * the listing says so, the hook bracket stays as the floor under it, and the
+ * sync pause is the turn coordinator's behind it. This module hands it the
+ * vault's listing and the hook's edges, and asks it for the sessions.
  *
  * The session list is told to the renderer as the agent's `sessions` event,
  * whenever it changes.
@@ -23,17 +22,18 @@
  * NOTE: no `electron` import, so this loads under vitest.
  */
 import type { PluginCtx } from '../../../../main/plugin-api'
+import type { EarlierChunk, TranscriptChunk } from '../claude/transcript'
 import type { VaultCliTarget } from '../claude/cli'
-import type { ClaudeRow, SessionSummary } from '../claude/listing'
+import type { PastSession, SessionSummary } from '../claude/listing'
 import type { AgentProvider, VaultRef } from '../provider'
 import type { AgentTerminals } from './terminals'
+import { readArchive, writeArchive } from './archive'
+import { saveUpload, type UploadResult } from './uploads'
 import { ContextSnapshot, type FocusInput } from './context-snapshot'
-import { createTurnCoordinator, type TurnCoordinator, type TurnVault } from './turn-coordinator'
+import { createSessionState, type ListingSource } from './session-state'
+import type { TurnVault } from './turn-coordinator'
 import type { TurnLog } from './turn-log'
 
-/** How long after an `idle` reading to take the second one that confirms it.
- *  A quiet session produces no watcher edge, so nothing else would. */
-const IDLE_RECHECK_MS = 1_100
 /** The cap on stopping sessions as Holi leaves a vault: a hung CLI must not
  *  hold a vault switch or a quit. */
 const LEAVE_CAP_MS = 5_000
@@ -62,9 +62,15 @@ export interface AgentSessionsDeps {
     | 'parseListing'
     | 'isLive'
     | 'summarise'
+    | 'summarisePast'
     | 'readContextPercent'
     | 'watch'
     | 'configure'
+    | 'transcript'
+    | 'transcriptEarlier'
+    | 'subagent'
+    | 'setLogger'
+    | 'blockedQuestion'
     | 'takeFirstSpawn'
     | 'signInNotice'
   >
@@ -74,7 +80,7 @@ export interface AgentSessionsDeps {
   turnLogFor?: (vaultRoot: string) => TurnLog
   turnSafetyMs?: number
   idleRecheckMs?: number
-  /** Forwarded to the turn coordinator. */
+  /** Forwarded to the session state's turn coordinator. */
   idleConfirmMs?: number
   leaveCapMs?: number
   log?: (msg: string) => void
@@ -87,6 +93,8 @@ export interface AgentSessions {
   ensure(vault?: AgentVault): Promise<void>
   /** The vault's live sessions, in listing order. */
   sessions(): SessionSummary[]
+  /** The vault's finished sessions: its history, in listing order. */
+  history(): PastSession[]
   /** Re-read the listing now. Never rejects. */
   refresh(): Promise<void>
   /** A terminal on the list (no `attach`) or on one session. */
@@ -111,6 +119,32 @@ export interface AgentSessions {
   /** Put text in a session's input, unsent: a live one by id, or a new one
    *  named from the text. Opens a terminal on it when Holi has none. */
   send(args: Geometry & { text: string; target: string | 'new' }): Promise<OpenResult>
+  /** Send `text` to a live session as a turn, through a terminal on it. */
+  say(args: Geometry & { id: string; text: string }): Promise<OpenResult>
+  /** The archived chats' job ids. */
+  archived(): string[]
+  /** Archive a chat, or bring it back. Never stops a session: the caller
+   *  stops a live one first. */
+  archive(id: string, archived: boolean): Promise<ActionResult>
+  /** Delete a finished chat for good, conversation and all (`claude rm`). */
+  remove(id: string): Promise<ActionResult>
+  /** Write an image the person attached into the vault; answers its path. */
+  upload(args: { name: string; data: string }): Promise<UploadResult>
+  /** A live session's conversation from `offset` on. */
+  transcript(id: string, offset?: number, fingerprint?: string): Promise<TranscriptChunk | null>
+  /** The part of a live session's conversation before `before`, a line start
+   *  of the transcript (a chunk's `start`). */
+  transcriptEarlier(id: string, before: number): Promise<EarlierChunk | null>
+  /** A sub-agent's conversation of a live session, from `offset` on. */
+  subagent(
+    id: string,
+    agentId: string,
+    offset?: number,
+    fingerprint?: string,
+  ): Promise<TranscriptChunk | null>
+  /** The question a session waits on, as JSON, when only Claude Code's job
+   *  record has it. */
+  question(id: string): Promise<string | null>
   stop(id: string): Promise<ActionResult>
   respawn(id: string): Promise<ActionResult>
   duplicate(id: string, geometry?: Geometry): Promise<StartResult>
@@ -135,13 +169,16 @@ interface Current {
    *  the marker is the directory's, so no later terminal needs to. */
   spawnChecked: boolean
   unwatch: () => void
-  /** False until the first listing read, which seeds the working set. */
-  seeded: boolean
+  /** Where this vault's listing is read from. */
+  source: ListingSource
+  /** The archived chats, by job id (`archive.ts`). */
+  archived: Set<string>
 }
 
 export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
   const log = deps.log ?? ((msg: string) => console.log(`[agent] ${msg}`))
   const provider = deps.provider
+  provider.setLogger?.(log)
   let current: Current | null = null
   /** The vault `ensure` attached to, until `leave`. */
   let attached: AgentVault | null = null
@@ -149,61 +186,48 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
   /** Set while `leave` runs: nothing may attach to a vault on its way out,
    *  which would watch a directory Holi is letting go of. */
   let leaving: Promise<void> | null = null
-  /** The latest listing for the current vault, live or not. */
-  let rows: ClaudeRow[] = []
   let lastPushed = ''
-  let idleRecheck: ReturnType<typeof setTimeout> | null = null
+  let lastHistory = ''
+  let lastArchive = ''
   let focusWriter: { root: string; snapshot: ContextSnapshot } | null = null
-  /**
-   * Sessions Holi started with no prompt that have not had a turn yet. Left
-   * as they are, each one sits in Claude Code's list after Holi stops it, a
-   * nameless row that resumes blank; so leaving the vault removes them.
-   *
-   * Holi's own record, not a reading of the listing, which cannot say whether
-   * a session ever had a turn. A session resumed from the list is never on
-   * it, so a conversation that exists is never removed.
-   */
-  const unprompted = new Set<string>()
-  /**
-   * Each live session's context use, by job id, from its status line. Claude
-   * Code's listing does not carry it. The status line runs on Claude Code's
-   * own events, a background session with no client attached included, and a
-   * session between turns is not using any more.
-   */
-  const contextPercent = new Map<string, number>()
 
-  const turnEnds = new Set<(id: string, pending: number | null) => void>()
-  /** What the Stop that is ending a turn said was pending, until the end is
-   *  told. */
-  const stopPending = new Map<string, number>()
-
-  const coordinator: TurnCoordinator = createTurnCoordinator({
+  const state = createSessionState({
+    source: () => current?.source ?? null,
     vault: () => current?.vault ?? null,
+    provider,
+    onChange: () => push(),
     ...(deps.turnLogFor === undefined ? {} : { turnLogFor: deps.turnLogFor }),
     ...(deps.turnSafetyMs === undefined ? {} : { turnSafetyMs: deps.turnSafetyMs }),
     ...(deps.idleConfirmMs === undefined ? {} : { idleConfirmMs: deps.idleConfirmMs }),
-    onChange: () => push(),
-    onTurnEnd: (id) => {
-      const pending = stopPending.get(id) ?? null
-      stopPending.delete(id)
-      for (const listener of turnEnds) listener(id, pending)
-    },
+    ...(deps.idleRecheckMs === undefined ? {} : { idleRecheckMs: deps.idleRecheckMs }),
     log,
   })
-
-  const live = (): ClaudeRow[] => rows.filter((row) => provider.isLive(row))
-  const summaries = (): SessionSummary[] =>
-    live().map((row) => provider.summarise(row, coordinator.working, contextPercent.get(row.id)))
+  const refresh = state.refresh
 
   /** Tell the renderer the list, when it changed: the vault's, or `remote`'s
    *  as Holi lets go of it. */
   function push(remote = current?.remote): void {
     if (remote === undefined) return
-    const next = summaries()
+    const next = state.sessions()
     const encoded = JSON.stringify(next)
-    if (encoded === lastPushed) return
-    lastPushed = encoded
-    deps.emit(remote, 'sessions', next)
+    if (encoded !== lastPushed) {
+      lastPushed = encoded
+      deps.emit(remote, 'sessions', next)
+    }
+    // The history moves far less often than the sessions do and rides the
+    // same read, so it is told only when it differs.
+    const history = state.history()
+    const encodedHistory = JSON.stringify(history)
+    if (encodedHistory !== lastHistory) {
+      lastHistory = encodedHistory
+      deps.emit(remote, 'history', history)
+    }
+    const archived = [...(current?.archived ?? [])]
+    const encodedArchive = JSON.stringify(archived)
+    if (encodedArchive !== lastArchive) {
+      lastArchive = encodedArchive
+      deps.emit(remote, 'archive', archived)
+    }
   }
 
   const targetOf = (c: Current): VaultCliTarget => ({
@@ -227,7 +251,12 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
       configDir: config.dir,
       spawnChecked: false,
       unwatch: () => {},
-      seeded: false,
+      source: {
+        root: vault.root,
+        read: () =>
+          provider.cli.list({ root: vault.root, configDir: config.dir, binDir: deps.binDir() }),
+      },
+      archived: new Set(await readArchive(vault.root)),
     }
     next.unwatch = provider.watch(config.dir, () => void refresh(), log)
     return next
@@ -255,74 +284,6 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     }
     if (current !== null) await refresh()
     return current
-  }
-
-  /** Serialised: a read that lands after a newer one must not win. */
-  let reading: Promise<void> | null = null
-  let readAgain = false
-
-  async function readOnce(): Promise<void> {
-    const c = current
-    if (c === null) return
-    const stdout = await provider.cli.list(targetOf(c))
-    if (current !== c) return // the vault moved while we read
-    rows = provider.parseListing(stdout, c.root)
-    const liveRows = live()
-    const liveIds = new Set(liveRows.map((r) => r.id))
-
-    // Sessions keep running while Holi is closed, so the first read after
-    // opening a vault may find one mid-turn: that turn holds sync too.
-    if (!c.seeded) {
-      c.seeded = true
-      for (const row of liveRows) {
-        if (row.status === 'busy' || row.status === 'shell') coordinator.begin(row.id)
-      }
-    }
-
-    // A session whose process has gone will not end its turn now.
-    for (const id of coordinator.working) if (!liveIds.has(id)) coordinator.forget(id)
-    // Nor use any more context; resumed, it says so again at its first event.
-    for (const id of contextPercent.keys()) if (!liveIds.has(id)) contextPercent.delete(id)
-
-    let wantsRecheck = false
-    for (const row of liveRows) {
-      // Busy, or waiting on an answer, means a turn: the hook's floor.
-      if (row.status !== undefined && row.status !== 'idle') unprompted.delete(row.id)
-      if (row.status !== 'idle') {
-        // Whatever it is doing, it is not between turns. That cancels any idle
-        // candidacy, which makes the confirmation two CONSECUTIVE readings.
-        coordinator.noteBusy(row.id)
-        continue
-      }
-      if (!coordinator.working.has(row.id)) continue
-      coordinator.noteIdle(row.id)
-      if (coordinator.working.has(row.id)) wantsRecheck = true
-    }
-    if (wantsRecheck && idleRecheck === null) {
-      idleRecheck = setTimeout(() => {
-        idleRecheck = null
-        void refresh()
-      }, deps.idleRecheckMs ?? IDLE_RECHECK_MS)
-    }
-    push()
-  }
-
-  async function refresh(): Promise<void> {
-    if (reading !== null) {
-      readAgain = true
-      return reading
-    }
-    reading = (async () => {
-      do {
-        readAgain = false
-        await readOnce().catch((err: unknown) => log(`refresh failed: ${String(err)}`))
-      } while (readAgain)
-    })()
-    try {
-      await reading
-    } finally {
-      reading = null
-    }
   }
 
   async function release(c: Current): Promise<void> {
@@ -357,7 +318,34 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
       await ensureCurrent()
     },
 
-    sessions: summaries,
+    sessions: state.sessions,
+    history: state.history,
+    archived: () => [...(current?.archived ?? [])],
+    async archive(id, archived) {
+      const c = await ensureCurrent()
+      if (c === null) return noVault
+      if (archived) c.archived.add(id)
+      else c.archived.delete(id)
+      await writeArchive(c.root, c.archived).catch((err: unknown) =>
+        log(`archive not saved: ${String(err)}`),
+      )
+      push()
+      return { ok: true }
+    },
+    async remove(id) {
+      const c = await ensureCurrent()
+      if (c === null) return noVault
+      if (state.isLive(id)) {
+        return { ok: false, message: 'That session is still running. Stop it first.' }
+      }
+      const res = await provider.cli.rm(targetOf(c), id)
+      if (res.ok) {
+        c.archived.delete(id)
+        await writeArchive(c.root, c.archived).catch(() => {})
+      }
+      await refresh()
+      return res
+    },
     refresh,
 
     async open(args) {
@@ -374,7 +362,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
         ...(prompt === undefined ? {} : { prompt }),
       })
       if (!res.ok) return res
-      if (prompt === undefined) unprompted.add(res.id)
+      if (prompt === undefined) state.startedEmpty(res.id)
       await refresh()
       const opened = await openOn(c, { attach: res.id, cols, rows: r })
       return opened.ok ? { ok: true, sessionId: res.id, terminalId: opened.terminalId } : opened
@@ -396,10 +384,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
 
     watched: (id) => deps.terminals.launchedFor(id) !== null,
 
-    onTurnEnd(listener) {
-      turnEnds.add(listener)
-      return () => turnEnds.delete(listener)
-    },
+    onTurnEnd: state.onTurnEnd,
 
     async send({ text, target, cols, rows: r }) {
       const c = await ensureCurrent()
@@ -411,7 +396,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
         if (!started.ok) return started
         terminalId = started.terminalId
       } else {
-        if (!live().some((row) => row.id === target)) {
+        if (!state.isLive(target)) {
           return { ok: false, message: 'That session has ended. Pick another one.' }
         }
         const existing = deps.terminals.launchedFor(target)
@@ -424,6 +409,57 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
       }
       deps.terminals.paste(terminalId, text)
       return { ok: true, terminalId }
+    },
+
+    async say({ id, text, cols, rows: r }) {
+      const c = await ensureCurrent()
+      if (c === null) return noVault
+      if (!state.isLive(id)) {
+        return { ok: false, message: 'That session has ended.' }
+      }
+      let terminalId = deps.terminals.launchedFor(id)
+      if (terminalId === null) {
+        const opened = await openOn(c, { attach: id, cols, rows: r })
+        if (!opened.ok) return opened
+        terminalId = opened.terminalId
+      }
+      deps.terminals.paste(terminalId, text, true)
+      state.spoke(id)
+      return { ok: true, terminalId }
+    },
+
+    async upload(args) {
+      const c = await ensureCurrent()
+      return c === null ? noVault : saveUpload(c.root, args)
+    },
+
+    async transcript(id, offset, fingerprint) {
+      const c = await ensureCurrent()
+      const sessionId = state.row(id)?.sessionId
+      if (c === null || sessionId === undefined) return null
+      return provider.transcript(c.configDir, sessionId, offset, fingerprint)
+    },
+
+    async transcriptEarlier(id, before) {
+      const c = await ensureCurrent()
+      const sessionId = state.row(id)?.sessionId
+      if (c === null || sessionId === undefined || provider.transcriptEarlier === undefined) {
+        return null
+      }
+      return provider.transcriptEarlier(c.configDir, sessionId, before)
+    },
+
+    async subagent(id, agentId, offset, fingerprint) {
+      const c = await ensureCurrent()
+      const sessionId = state.row(id)?.sessionId
+      if (c === null || sessionId === undefined || provider.subagent === undefined) return null
+      return provider.subagent(c.configDir, sessionId, agentId, offset, fingerprint)
+    },
+
+    async question(id) {
+      const c = await ensureCurrent()
+      if (c === null || state.row(id) === undefined) return null
+      return provider.blockedQuestion(c.configDir, id)
     },
 
     async stop(id) {
@@ -445,11 +481,11 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     async duplicate(id, geometry = {}) {
       const c = await ensureCurrent()
       if (c === null) return noVault
-      const row = rows.find((r) => r.id === id)
+      const row = state.row(id)
       if (row?.sessionId === undefined) {
         return { ok: false, message: 'Claude Code has not said which conversation this is yet.' }
       }
-      const label = provider.summarise(row, coordinator.working).name
+      const label = state.nameOf(id) ?? ''
       const name = label === 'New session' ? undefined : `${label} (copy)`
       const res = await provider.cli.forkBg(targetOf(c), row.sessionId, name)
       if (!res.ok) return res
@@ -461,23 +497,13 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     noteTurn(remote, jobId, active, pending = null) {
       // A turn in a vault Holi is not showing is not this vault's pause.
       if (current?.remote !== remote) return
-      if (active) unprompted.delete(jobId)
-      if (active) coordinator.begin(jobId)
-      else {
-        if (pending !== null) stopPending.set(jobId, pending)
-        coordinator.end(jobId)
-        stopPending.delete(jobId)
-      }
-      void refresh()
+      state.noteTurn(jobId, active, pending)
     },
 
     noteStatus(remote, jobId, status) {
       // Only the vault Holi is showing has rows to put a number on.
       if (current?.remote !== remote) return
-      const percent = provider.readContextPercent(status)
-      if (percent === null) contextPercent.delete(jobId)
-      else contextPercent.set(jobId, percent)
-      push()
+      state.noteStatus(jobId, status)
     },
 
     setFocus(focus) {
@@ -508,11 +534,11 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     const c = current
     if (c === null) return
     if (stopSessions) {
-      // Stop, then remove the ones that never had a turn (`unprompted`).
+      // Stop, then remove the ones that never had a turn.
       const stops = Promise.all(
-        live().map(async (row) => {
-          const stopped = await provider.cli.stop(targetOf(c), row.id)
-          if (stopped.ok && unprompted.has(row.id)) await provider.cli.rm(targetOf(c), row.id)
+        state.liveIds().map(async (id) => {
+          const stopped = await provider.cli.stop(targetOf(c), id)
+          if (stopped.ok && state.hasHadNoTurn(id)) await provider.cli.rm(targetOf(c), id)
         }),
       )
       await Promise.race([
@@ -521,17 +547,10 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
       ])
     }
     await deps.terminals.closeAll()
-    for (const id of [...coordinator.working]) coordinator.forget(id)
-    unprompted.clear()
-    contextPercent.clear()
-    if (idleRecheck !== null) {
-      clearTimeout(idleRecheck)
-      idleRecheck = null
-    }
+    state.reset()
     focusWriter?.snapshot.stop()
     focusWriter = null
     current = null
-    rows = []
     await release(c)
     push(c.remote)
   }

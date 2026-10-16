@@ -1,0 +1,500 @@
+/*
+ * The session orb (AgentFace). Every measure is a fraction of the diameter
+ * `--d`, as `--u` is a tenth of it, so one face serves every size. The face is
+ * one ink colour: moods change only the shape of the eyes and mouth, and they
+ * morph rather than swap. What moves with the pointer (eyes, features, head,
+ * breathing) is written per frame by `orb-loop.ts`; this file holds the rest.
+ */
+.agent-face {
+  --u: calc(var(--d) / 10);
+  --ink: var(--session-ink);
+  position: relative;
+  display: inline-block;
+  flex-shrink: 0;
+  width: var(--d);
+  height: var(--d);
+  /* Per mood; neutral unless a mood says otherwise. */
+  --ew: 1.15;
+  --eh: 2.35;
+  --er: 0.58;
+  --mw: 1.2;
+  --mh: 0.45;
+  --mr1: 0;
+  --mr2: 0;
+  --mr3: 0.6;
+  --mr4: 0.6;
+  --mb1: 0;
+  --mb2: 0.26;
+  --mb3: 0.26;
+  --mb4: 0.26;
+  --mfill: transparent;
+  --mx: 0;
+  --eye-rot: 0deg;
+}
+.agent-face[data-size='sm'] {
+  --d: 1.75rem;
+}
+.agent-face[data-size='md'] {
+  --d: 2.5rem;
+}
+.agent-face[data-size='lg'] {
+  --d: 6rem;
+}
+.agent-face[data-mood='happy'] {
+  --ew: 1.22;
+  --eh: 1.35;
+  --mw: 1.7;
+  --mh: 0.6;
+  --mr1: 0;
+  --mr2: 0;
+  --mr3: 0.85;
+  --mr4: 0.85;
+  --mb1: 0;
+  --mb2: 0.28;
+  --mb3: 0.28;
+  --mb4: 0.28;
+}
+.agent-face[data-mood='alert'] {
+  --ew: 1.22;
+  --eh: 3;
+  --mw: 0.75;
+  --mh: 0.75;
+  --mr1: 0.375;
+  --mr2: 0.375;
+  --mr3: 0.375;
+  --mr4: 0.375;
+  --mb1: 0.26;
+  --mb2: 0.26;
+  --mb3: 0.26;
+  --mb4: 0.26;
+}
+.agent-face[data-mood='working'] {
+  --eh: 1.8;
+  --mw: 0.9;
+  --mh: 0.26;
+  --mr1: 0.13;
+  --mr2: 0.13;
+  --mr3: 0.13;
+  --mr4: 0.13;
+  --mb1: 0;
+  --mb2: 0;
+  --mb3: 0;
+  --mb4: 0;
+  --mfill: var(--ink);
+  --mx: 0.5;
+}
+.agent-face[data-mood='idle'] {
+  --ew: 1.4;
+  --eh: 0.32;
+  --er: 0.16;
+  --mw: 0.6;
+  --mh: 0.26;
+  --mr1: 0.13;
+  --mr2: 0.13;
+  --mr3: 0.13;
+  --mr4: 0.13;
+  --mb1: 0;
+  --mb2: 0;
+  --mb3: 0;
+  --mb4: 0;
+  --mfill: var(--ink);
+}
+.agent-face[data-mood='error'] {
+  --eh: 1.95;
+  --mr1: 0.6;
+  --mr2: 0.6;
+  --mr3: 0;
+  --mr4: 0;
+  --mb1: 0.26;
+  --mb2: 0.26;
+  --mb3: 0;
+  --mb4: 0.26;
+}
+.agent-face[data-mood='happy'] .agent-face-eye {
+  border-radius: calc(var(--u) * 0.61) calc(var(--u) * 0.61) calc(var(--u) * 0.26)
+    calc(var(--u) * 0.26);
+}
+.agent-face-head {
+  position: absolute;
+  inset: 0;
+  transform-origin: 50% 80%;
+}
+.agent-face-body {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  border-radius: 9999px;
+  background: var(--body);
+}
+.agent-face-feat {
+  position: absolute;
+  inset: 0;
+}
+/* The lid is a fixed box; the blink shuts it and the eye inside keeps its shape. */
+.agent-face-lid {
+  position: absolute;
+  top: calc(var(--u) * 1.9);
+  width: calc(var(--u) * 1.7);
+  height: calc(var(--u) * 4.8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform var(--motion-blink) var(--ease-loop);
+}
+.agent-face-lid[data-eye='l'] {
+  left: calc(var(--u) * 2.35);
+}
+.agent-face-lid[data-eye='r'] {
+  left: calc(var(--u) * 5.95);
+}
+.agent-face[data-blink] .agent-face-lid {
+  transform: scaleY(0.1);
+}
+.agent-face-eye-tilt {
+  display: flex;
+  transition: transform var(--motion-morph) ease;
+}
+.agent-face-lid[data-eye='l'] .agent-face-eye-tilt {
+  transform: rotate(var(--eye-rot));
+}
+.agent-face-lid[data-eye='r'] .agent-face-eye-tilt {
+  transform: rotate(calc(var(--eye-rot) * -1));
+}
+.agent-face[data-mood='error'] {
+  --eye-rot: 16deg;
+}
+.agent-face-eye {
+  width: calc(var(--u) * var(--ew));
+  height: calc(var(--u) * var(--eh));
+  border-radius: calc(var(--u) * var(--er));
+  background: var(--ink);
+  transition:
+    width var(--motion-morph) ease,
+    height var(--motion-morph) ease,
+    border-radius var(--motion-morph) ease;
+}
+.agent-face-mouth {
+  position: absolute;
+  top: calc(var(--u) * 6.75);
+  left: calc(var(--u) * 3.5);
+  width: calc(var(--u) * 3);
+  height: calc(var(--u) * 1);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  transform: translateX(calc(var(--u) * var(--mx)));
+  transition: transform var(--motion-morph) ease;
+}
+.agent-face-mouth > span {
+  box-sizing: border-box;
+  width: calc(var(--u) * var(--mw));
+  height: calc(var(--u) * var(--mh));
+  border-style: solid;
+  border-color: var(--ink);
+  border-width: calc(var(--u) * var(--mb1)) calc(var(--u) * var(--mb2)) calc(var(--u) * var(--mb3))
+    calc(var(--u) * var(--mb4));
+  border-radius: calc(var(--u) * var(--mr1)) calc(var(--u) * var(--mr2)) calc(var(--u) * var(--mr3))
+    calc(var(--u) * var(--mr4));
+  background: var(--mfill);
+  transition:
+    width var(--motion-morph) ease,
+    height var(--motion-morph) ease;
+}
+/* The dot of the "i". Its ring is the surface behind the orb, which is what
+   cuts it out of the body; the fan sets `--orb-ring` to its own. */
+.agent-face-orbit {
+  position: absolute;
+  inset: 0;
+}
+.agent-face-dot {
+  position: absolute;
+  top: calc(var(--u) * -0.2);
+  left: 0;
+  box-sizing: border-box;
+  width: calc(var(--u) * 3.3);
+  height: calc(var(--u) * 3.3);
+  border-radius: 9999px;
+  border: calc(var(--u) * 0.5) solid var(--orb-ring, var(--background));
+}
+.agent-stack[data-open] .agent-fan {
+  --orb-ring: var(--popover);
+}
+
+/*
+ * The stack of bubbles (BubbleStack). Resting, the top few overlap, each a
+ * little lower and smaller than the one before; open, the same bubbles move
+ * to a column and their names show. Everything is placed from `--i`, the
+ * bubble's place from the top, so one rule says where each goes and the
+ * change between the two is a transition.
+ *
+ * The margins are the point: the stack keeps `--gap` from the window's edges,
+ * the fan keeps `--pad` of room round its bubbles (a ring and a status dot
+ * reach past a face), and nothing resting is clipped.
+ */
+.agent-stack {
+  position: absolute;
+  top: 1rem;
+  right: 1.25rem;
+  z-index: 20;
+  /* Its host floats over the panes and lets everything else through. */
+  pointer-events: auto;
+}
+.agent-fan {
+  --size: 2.5rem;
+  --row: 3rem;
+  --pitch: 3.25rem;
+  --peek: 0.875rem;
+  --pad: 0.625rem;
+  position: relative;
+  width: calc(var(--size) + 2 * var(--pad));
+  height: calc(var(--size) + 2 * var(--pad) + 2 * var(--peek));
+  transition:
+    width 300ms var(--ease-settle),
+    height 300ms var(--ease-settle),
+    background-color 200ms,
+    box-shadow 200ms;
+}
+.agent-stack[data-open] .agent-fan {
+  width: 20rem;
+  height: min(calc(var(--rows) * var(--pitch) + 2 * var(--pad)), 70vh);
+  overflow: hidden;
+}
+/* Resting, the scroller takes no pointer: only the bubbles open the fan. */
+.agent-fan-scroll {
+  pointer-events: none;
+}
+/* The rows scroll when there are more than fit; the way to the history is on
+   the last of them, "New session"'s. */
+.agent-stack[data-open] .agent-fan-scroll {
+  height: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
+  pointer-events: auto;
+}
+/* No bar: while the fan grows it is shorter than its rows, so a bar would come
+   for the length of the transition, take its 10px from the rows, and give it
+   back at the end, and every face would jump under the pointer. */
+.agent-fan-scroll::-webkit-scrollbar {
+  display: none;
+}
+.agent-fan-inner {
+  position: relative;
+  /* Only the bubbles take the pointer, never the room between them. */
+  pointer-events: none;
+}
+/* As tall as its rows only while open. Resting, the bubbles are placed from
+   the top and need no room, and a column of every row would hang out of the
+   stack, and out of the window once there are enough of them. */
+.agent-stack[data-open] .agent-fan-inner {
+  height: calc(var(--rows) * var(--pitch) + 2 * var(--pad));
+}
+
+.agent-bubble {
+  box-sizing: border-box;
+  pointer-events: auto;
+  position: absolute;
+  top: var(--pad);
+  right: var(--pad);
+  z-index: calc(100 - var(--i));
+  display: flex;
+  align-items: center;
+  /* Packed against the face's edge: while a row is still narrower than what
+     it holds, the rest hangs out to the left, and the face stays where the
+     resting bubble was, under the pointer. */
+  justify-content: flex-end;
+  width: var(--size);
+  height: var(--size);
+  border-radius: 9999px;
+  transform-origin: center;
+  /* Resting: the top three show, each a step lower and smaller, and the rest
+     wait under the third. */
+  transform: translateY(calc(min(var(--i), 2) * var(--peek)))
+    scale(calc(1 - min(var(--i), 2) * 0.1));
+  opacity: clamp(0, calc(3 - var(--i)), 1);
+  transition:
+    transform 300ms var(--ease-settle),
+    width 300ms var(--ease-settle),
+    height 300ms var(--ease-settle),
+    opacity 200ms,
+    background-color 150ms;
+}
+.agent-stack[data-open] .agent-bubble {
+  /* A row: the archive button at the left edge, the name and its line, and
+     the face at the right edge, where the resting bubble is, each with room
+     round it. */
+  width: calc(100% - 2 * var(--pad));
+  height: var(--row);
+  padding: 0 0 0 0.5rem;
+  transform: translateY(calc(var(--i) * var(--pitch) - (var(--row) - var(--size)) / 2));
+  opacity: 1;
+}
+.agent-stack[data-open] .agent-bubble:hover,
+.agent-stack[data-open] .agent-bubble:focus-within,
+/* The chat that is open keeps its row lit, in place of a ring round its face:
+   a ring does not breathe or tilt with the head, and sat off it. */
+.agent-stack[data-open] .agent-bubble:has([data-shown]) {
+  background: var(--color-accent);
+}
+
+/* The face: its own button, the circle of the resting stack. */
+.agent-bubble-face-button {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: var(--size);
+  height: var(--size);
+  border-radius: 9999px;
+  cursor: pointer;
+}
+/* The words, open: their own button, which takes the room between the archive
+   button and the face, and reads towards the face. Resting, it has none. */
+.agent-bubble-main {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  flex: 1;
+  height: 100%;
+  justify-content: flex-end;
+  border-radius: 9999px;
+  cursor: pointer;
+}
+.agent-stack[data-open] .agent-bubble-main {
+  margin: 0 0.75rem 0 0.25rem;
+}
+.agent-bubble-face-button:hover,
+.agent-bubble-main:hover {
+  background: transparent;
+}
+/* "New session" is a row of the open fan, never one of the resting stack. Its
+   row is two pills, History and the new session's, each lit on its own, so
+   the row itself takes no highlight. */
+.agent-stack[data-open] .agent-bubble.agent-bubble-new,
+.agent-stack[data-open] .agent-bubble.agent-bubble-new:hover,
+.agent-stack[data-open] .agent-bubble.agent-bubble-new:focus-within {
+  padding: 0;
+  background: transparent;
+}
+.agent-bubble-new-pill {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  border-radius: 9999px;
+}
+.agent-stack[data-open] .agent-bubble-new-pill {
+  padding-left: 0.5rem;
+}
+.agent-stack[data-open] .agent-bubble-new-pill:hover,
+.agent-stack[data-open] .agent-bubble-new-pill:focus-within {
+  background: var(--color-accent);
+}
+.agent-bubble-new {
+  opacity: 0;
+  pointer-events: none;
+}
+.agent-stack[data-open] .agent-bubble-new {
+  pointer-events: auto;
+}
+.agent-stack[data-empty] .agent-bubble-new {
+  opacity: 1;
+  pointer-events: auto;
+}
+.agent-bubble-face {
+  display: inline-flex;
+  flex-shrink: 0;
+}
+/* As wide as an open row leaves them, from the start: sized by the row as it
+   grows, a name would be cut at a different letter on every frame. That is
+   the fan, less its room, the row's left padding, the archive button, the
+   margins of the words and the face. */
+/* The words are as wide as they will be, and this shows as much of them as
+   the row has room for yet. A box of its own, square: the button's round ends
+   would cut the corners off the first and last letters. */
+.agent-bubble-words {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+.agent-bubble-label {
+  /* Held to the face's side of the row, whatever the row's width is yet. */
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  width: calc(20rem - 2 * var(--pad) - 0.5rem - 1.5rem - 1rem - var(--size));
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.125rem;
+  text-align: right;
+  opacity: 0;
+  pointer-events: none;
+}
+/* The words fade in once their row has room, and go at once when the fan
+   closes: fading, they would be squeezed and laid over each other as the rows
+   shrink back to bubbles. */
+.agent-stack[data-open] .agent-bubble-label {
+  opacity: 1;
+  transition: opacity 120ms 100ms;
+}
+/* Archive: at the left of an open row, quiet until the row is touched. */
+.agent-bubble-archive {
+  flex-shrink: 0;
+  display: none;
+  opacity: 0.55;
+  transition: opacity 120ms;
+}
+/* It comes with the words, not ahead of them into a row with no room yet. */
+.agent-stack[data-open] .agent-bubble-archive {
+  display: inline-flex;
+  animation: agent-archive-in 120ms 100ms backwards;
+}
+@keyframes agent-archive-in {
+  from {
+    opacity: 0;
+  }
+}
+.agent-bubble:hover .agent-bubble-archive,
+.agent-bubble-archive:focus-visible {
+  opacity: 1;
+}
+/* The way to the history: at the left of the "New session" row, where the other
+   rows have their archive button. It comes with the words, as that does. */
+.agent-bubble-history {
+  display: none;
+  flex-shrink: 0;
+  margin-right: 0.375rem;
+  white-space: nowrap;
+}
+.agent-stack[data-open] .agent-bubble-history {
+  display: inline-flex;
+  animation: agent-archive-in 120ms 100ms backwards;
+}
+.agent-stack-more {
+  position: absolute;
+  right: 0;
+  bottom: -0.5rem;
+  z-index: 1;
+  transition: opacity 150ms;
+}
+.agent-stack[data-open] .agent-stack-more {
+  opacity: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .agent-fan,
+  .agent-bubble,
+  .agent-stack[data-open] .agent-bubble-label,
+  .agent-bubble-archive,
+  .agent-stack-more {
+    transition: none;
+  }
+  .agent-stack[data-open] .agent-bubble-archive,
+  .agent-stack[data-open] .agent-bubble-history {
+    animation: none;
+  }
+}

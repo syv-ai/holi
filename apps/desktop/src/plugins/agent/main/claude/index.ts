@@ -6,10 +6,25 @@
  * No `electron` import: the caller hands in the colour mode it reads from
  * `nativeTheme`, so this loads under plain Node in the tests.
  */
+import { readBlockedQuestion } from './blocked'
+import {
+  findTranscript,
+  readEarlier,
+  readSubagent,
+  readTranscript,
+  setTranscriptLogger,
+} from './transcript'
 import type { AgentProvider } from '../provider'
 import { createClaudeCli, terminalCommand } from './cli'
 import { resolveVaultAgentConfig, SIGN_IN_NOTICE, takeFirstSpawn } from './config-dir'
-import { isLive, parseListing, readContextPercent, summarise, watchConfigDir } from './listing'
+import {
+  isLive,
+  parseListing,
+  readContextPercent,
+  summarise,
+  summarisePast,
+  watchConfigDir,
+} from './listing'
 import { registerAgentRoutes } from './routes'
 import { claudeSeed } from './seed'
 
@@ -28,6 +43,7 @@ export function claudeProvider(deps: ClaudeProviderDeps): AgentProvider {
     parseListing,
     isLive,
     summarise,
+    summarisePast,
     readContextPercent,
     watch: watchConfigDir,
     // Per vault open, not per launch: the open vault moves, and the theme
@@ -42,6 +58,21 @@ export function claudeProvider(deps: ClaudeProviderDeps): AgentProvider {
         systemPrefersDark: deps.systemPrefersDark(),
         env: { HOLI_BIN: deps.holiBin() },
       }),
+    transcript: async (configDir, sessionId, offset, fingerprint) => {
+      const path = await findTranscript(configDir, sessionId)
+      return path === null
+        ? null
+        : readTranscript(path, sessionId, offset, {
+            ...(fingerprint === undefined ? {} : { fingerprint }),
+          })
+    },
+    transcriptEarlier: async (configDir, sessionId, before) => {
+      const path = await findTranscript(configDir, sessionId)
+      return path === null ? null : readEarlier(path, sessionId, before)
+    },
+    subagent: readSubagent,
+    setLogger: (log) => setTranscriptLogger((message) => log(message)),
+    blockedQuestion: readBlockedQuestion,
     takeFirstSpawn,
     signInNotice: SIGN_IN_NOTICE,
     terminal: (target, attach) => terminalCommand(target, attach),

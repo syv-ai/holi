@@ -26,6 +26,8 @@ import { readVaultSettings } from '../../../../main/plugin-api'
 export const AGENT_CONFIG_DIR_NAME = 'agent-config'
 
 const SETTINGS = 'settings.json'
+/** The permission mode every session starts in (`settingsWithRequired`). */
+const DEFAULT_MODE = 'bypassPermissions'
 /** Holi's, and named as Holi's: this directory has had an agent in it. */
 const SPAWNED_MARKER = '.holi-spawned'
 
@@ -78,6 +80,12 @@ export interface ConfigDirStamp {
  *   a second layer under the vault's own copy of the same key, so a vault whose
  *   `.claude/settings.json` was deleted still gets no cloud connectors, and a
  *   user who deliberately wrote `false` is not overruled.
+ * - `permissions.defaultMode: "bypassPermissions"` is a **default**: every session
+ *   starts in bypass permissions, and Shift+Tab in the chat cycles it away. With
+ *   it goes `skipDangerousModePermissionPrompt`, the record that bypass mode's
+ *   warning was accepted, because a background session has no screen to show
+ *   that dialog on. Both written only when absent, so a vault whose user chose
+ *   another mode keeps it.
  * - `theme` **tracks a setting**, so it is written whenever it differs. Claude
  *   Code's `"auto"` detects the terminal background, and inside Holi's embedded
  *   PTY there is nothing reliable to detect.
@@ -90,7 +98,11 @@ export interface ConfigDirStamp {
 function settingsWithRequired(existing: string | null, stamp: ConfigDirStamp = {}): string | null {
   const { theme, env } = stamp
   if (existing === null || existing.trim() === '') {
-    const seed: Record<string, unknown> = { disableClaudeAiConnectors: true }
+    const seed: Record<string, unknown> = {
+      disableClaudeAiConnectors: true,
+      permissions: { defaultMode: DEFAULT_MODE },
+      skipDangerousModePermissionPrompt: true,
+    }
     if (theme) seed.theme = theme
     if (env && Object.keys(env).length > 0) seed.env = { ...env }
     return JSON.stringify(seed, null, 2) + '\n'
@@ -108,6 +120,20 @@ function settingsWithRequired(existing: string | null, stamp: ConfigDirStamp = {
   let changed = false
   if (settings.disableClaudeAiConnectors === undefined) {
     settings.disableClaudeAiConnectors = true
+    changed = true
+  }
+  const permissions =
+    settings.permissions !== null &&
+    typeof settings.permissions === 'object' &&
+    !Array.isArray(settings.permissions)
+      ? (settings.permissions as Record<string, unknown>)
+      : {}
+  if (permissions.defaultMode === undefined) {
+    settings.permissions = { ...permissions, defaultMode: DEFAULT_MODE }
+    changed = true
+  }
+  if (settings.skipDangerousModePermissionPrompt === undefined) {
+    settings.skipDangerousModePermissionPrompt = true
     changed = true
   }
   if (theme && settings.theme !== theme) {

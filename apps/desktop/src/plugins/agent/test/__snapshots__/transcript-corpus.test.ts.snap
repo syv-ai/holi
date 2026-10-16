@@ -1,0 +1,193 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`transcript corpus: attachments.jsonl > what the chat draws, by line shape (a classifier change shows here) 1`] = `
+[
+  "attachment|agent_listing_delta -> hidden model-facing",
+  "attachment|auto_mode -> hidden model-facing",
+  "attachment|command_permissions -> hidden model-facing",
+  "attachment|compact_file_reference -> hidden model-facing",
+  "attachment|credential_org -> hidden model-facing",
+  "attachment|date -> hidden model-facing",
+  "attachment|deferred_tools_delta -> hidden model-facing",
+  "attachment|deferred_tools_record -> hidden model-facing",
+  "attachment|edited_text_file -> hidden model-facing",
+  "attachment|environment -> hidden model-facing",
+  "attachment|file -> hidden model-facing",
+  "attachment|hook_additional_context -> hidden model-facing",
+  "attachment|hook_non_blocking_error -> rendered notice(hook)",
+  "attachment|hook_success -> hidden model-facing",
+  "attachment|hook_system_message -> rendered notice(hook)",
+  "attachment|instructions -> hidden model-facing",
+  "attachment|invoked_skills -> hidden model-facing",
+  "attachment|mcp_instructions_delta -> hidden model-facing",
+  "attachment|model -> hidden model-facing",
+  "attachment|nested_memory -> hidden model-facing",
+  "attachment|pdf_reference -> hidden model-facing",
+  "attachment|plan_file_reference -> hidden model-facing",
+  "attachment|plan_mode -> hidden model-facing",
+  "attachment|plan_mode_exit -> hidden model-facing",
+  "attachment|prompt_snapshot -> hidden model-facing",
+  "attachment|queued_command -> hidden machinery",
+  "attachment|queued_command -> rendered task-note",
+  "attachment|queued_command -> rendered user",
+  "attachment|read_truncation_notice -> hidden model-facing",
+  "attachment|remote_session_change -> hidden model-facing",
+  "attachment|session_context -> hidden model-facing",
+  "attachment|silent_turn_reminder -> hidden model-facing",
+  "attachment|skill_listing -> hidden model-facing",
+  "attachment|skill_mention -> hidden model-facing",
+  "attachment|task_reminder -> hidden model-facing",
+  "attachment|task_status -> rendered notice(task)",
+  "attachment|thinking_drop -> hidden model-facing",
+  "attachment|total_tokens_reminder -> hidden model-facing",
+  "attachment|workflow_keyword_request -> hidden model-facing",
+]
+`;
+
+exports[`transcript corpus: compaction.jsonl > what the chat draws, by line shape (a classifier change shows here) 1`] = `
+[
+  "system|compact_boundary -> rendered compaction",
+  "user [isCompactSummary] -> rendered notice(compact-summary)",
+]
+`;
+
+exports[`transcript corpus: messages.jsonl > what the chat draws, by line shape (a classifier change shows here) 1`] = `
+[
+  "assistant -> hidden empty",
+  "assistant -> rendered assistant",
+  "assistant -> rendered assistant+interrupt",
+  "assistant -> rendered thinking",
+  "user -> rendered user",
+  "user [isMeta] -> hidden machinery",
+]
+`;
+
+exports[`transcript corpus: metadata.jsonl > what the chat draws, by line shape (a classifier change shows here) 1`] = `
+[
+  "agent-name -> hidden metadata",
+  "ai-title -> hidden metadata",
+  "api-request -> hidden debug-copy",
+  "api-request-blob -> hidden debug-copy",
+  "api-request-shape -> hidden debug-copy",
+  "artifact-autoreact-ledger -> hidden metadata",
+  "artifact-comment-monitor -> hidden metadata",
+  "atis-latch -> hidden debug-copy",
+  "cost-state -> hidden metadata",
+  "custom-title -> hidden metadata",
+  "failed -> hidden metadata",
+  "file-history-delta -> hidden machinery",
+  "file-history-snapshot -> hidden machinery",
+  "frame-link -> hidden metadata",
+  "last-prompt -> hidden metadata",
+  "launched -> hidden metadata",
+  "mode -> hidden metadata",
+  "permission-mode -> hidden metadata",
+  "pr-link -> hidden metadata",
+  "relocated -> hidden metadata",
+  "result -> hidden metadata",
+  "started -> hidden metadata",
+  "worktree-state -> hidden metadata",
+]
+`;
+
+exports[`transcript corpus: subagent.jsonl > what the chat draws, by line shape (a classifier change shows here) 1`] = `
+[
+  "assistant [isSidechain,isApiErrorMessage] -> rendered notice(api-error)",
+  "assistant [isSidechain] -> hidden empty",
+  "assistant [isSidechain] -> rendered assistant",
+  "assistant [isSidechain] -> rendered assistant+tool(Read)",
+  "assistant [isSidechain] -> rendered thinking",
+  "assistant [isSidechain] -> rendered tool(Agent)",
+  "assistant [isSidechain] -> rendered tool(Bash)",
+  "assistant [isSidechain] -> rendered tool(Read)",
+  "assistant [isSidechain] -> rendered tool(SubagentHandback)",
+  "assistant [isSidechain] -> rendered tool(ToolSearch)",
+  "assistant [isSidechain] -> rendered tool(WebFetch)",
+  "assistant [isSidechain] -> rendered tool(mcp)",
+  "attachment|agent_listing_delta [isSidechain] -> hidden model-facing",
+  "attachment|auto_mode [isSidechain] -> hidden model-facing",
+  "attachment|credential_org [isSidechain] -> hidden model-facing",
+  "attachment|date [isSidechain] -> hidden model-facing",
+  "attachment|deferred_tools_delta [isSidechain] -> hidden model-facing",
+  "attachment|deferred_tools_record [isSidechain] -> hidden model-facing",
+  "attachment|edited_text_file [isSidechain] -> hidden model-facing",
+  "attachment|environment [isSidechain] -> hidden model-facing",
+  "attachment|hook_additional_context [isSidechain] -> hidden model-facing",
+  "attachment|instructions [isSidechain] -> hidden model-facing",
+  "attachment|mcp_instructions_delta [isSidechain] -> hidden model-facing",
+  "attachment|model [isSidechain] -> hidden model-facing",
+  "attachment|nested_memory [isSidechain] -> hidden model-facing",
+  "attachment|plan_mode [isSidechain] -> hidden model-facing",
+  "attachment|prompt_snapshot [isSidechain] -> hidden model-facing",
+  "attachment|queued_command [isSidechain] -> hidden machinery",
+  "attachment|queued_command [isSidechain] -> rendered task-note",
+  "attachment|read_truncation_notice [isSidechain] -> hidden model-facing",
+  "attachment|remote_session_change [isSidechain] -> hidden model-facing",
+  "attachment|session_context [isSidechain] -> hidden model-facing",
+  "attachment|skill_listing [isSidechain] -> hidden model-facing",
+  "attachment|structured_output [isSidechain] -> hidden model-facing",
+  "attachment|task_reminder [isSidechain] -> hidden model-facing",
+  "attachment|total_tokens_reminder [isSidechain] -> hidden model-facing",
+  "user [isMeta,isSidechain] -> hidden machinery",
+  "user [isSidechain] -> hidden machinery",
+  "user [isSidechain] -> rendered interrupt",
+  "user [isSidechain] -> rendered tool-result",
+  "user [isSidechain] -> rendered tool-result(failed)",
+  "user [isSidechain] -> rendered tool-result+user",
+  "user [isSidechain] -> rendered user",
+]
+`;
+
+exports[`transcript corpus: system.jsonl > what the chat draws, by line shape (a classifier change shows here) 1`] = `
+[
+  "system|away_summary -> rendered notice(away)",
+  "system|informational -> rendered notice(info)",
+  "system|local_command -> rendered notice(local-command)",
+  "system|model_refusal_fallback -> rendered notice(refusal)",
+  "system|stop_hook_summary -> hidden machinery",
+  "system|stop_hook_summary -> rendered notice(hook)",
+  "system|turn_duration -> rendered turn-end",
+]
+`;
+
+exports[`transcript corpus: tools.jsonl > what the chat draws, by line shape (a classifier change shows here) 1`] = `
+[
+  "assistant -> rendered tool(Agent)",
+  "assistant -> rendered tool(AskUserQuestion)",
+  "assistant -> rendered tool(Bash)",
+  "assistant -> rendered tool(Edit)",
+  "assistant -> rendered tool(EnterWorktree)",
+  "assistant -> rendered tool(ExitPlanMode)",
+  "assistant -> rendered tool(ListAgents)",
+  "assistant -> rendered tool(ListSkills)",
+  "assistant -> rendered tool(Monitor)",
+  "assistant -> rendered tool(Read)",
+  "assistant -> rendered tool(ReadMcpResourceTool)",
+  "assistant -> rendered tool(SendMessage)",
+  "assistant -> rendered tool(Skill)",
+  "assistant -> rendered tool(TaskCreate)",
+  "assistant -> rendered tool(TaskStop)",
+  "assistant -> rendered tool(TaskUpdate)",
+  "assistant -> rendered tool(Tool)",
+  "assistant -> rendered tool(ToolSearch)",
+  "assistant -> rendered tool(WebFetch)",
+  "assistant -> rendered tool(WebSearch)",
+  "assistant -> rendered tool(Workflow)",
+  "assistant -> rendered tool(Write)",
+  "assistant -> rendered tool(mcp)",
+  "user -> rendered tool-result",
+  "user -> rendered tool-result(failed)",
+]
+`;
+
+exports[`transcript corpus: wrappers.jsonl > what the chat draws, by line shape (a classifier change shows here) 1`] = `
+[
+  "queue-operation -> hidden metadata",
+  "user -> rendered command",
+  "user -> rendered interrupt",
+  "user -> rendered shell",
+  "user -> rendered task-note",
+  "user -> rendered user",
+  "user [isMeta] -> hidden machinery",
+]
+`;

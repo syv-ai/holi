@@ -1,7 +1,17 @@
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { ARCHIVE_FILE, readArchive } from '../main/host/archive'
 import { describe, expect, it, vi } from 'vitest'
 import type { ClaudeCli } from '../main/claude/cli'
 import { SIGN_IN_NOTICE } from '../main/claude/config-dir'
-import { isLive, parseListing, readContextPercent, summarise } from '../main/claude/listing'
+import {
+  isLive,
+  parseListing,
+  readContextPercent,
+  summarise,
+  summarisePast,
+} from '../main/claude/listing'
 import { createAgentSessions, type AgentVault } from '../main/host/sessions'
 import type { AgentTerminals, OpenArgs } from '../main/host/terminals'
 
@@ -21,10 +31,13 @@ const row = (id: string, over: Row = {}): Row => ({
   ...over,
 })
 
-function setup(initial: Row[] = []) {
+function setup(initial: Row[] = [], root = ROOT) {
   let listing: Row[] = initial
+  /** What `claude agents --json` printed instead of the listing: null is a
+   *  call that failed (a timeout, a missing binary). */
+  let broken: { stdout: string | null } | null = null
   const cli = {
-    list: vi.fn(async () => JSON.stringify(listing)),
+    list: vi.fn(async () => (broken !== null ? broken.stdout : JSON.stringify(listing))),
     stop: vi.fn(async (_t, id: string) => {
       listing = listing.map((r) => (r.id === id ? { ...r, pid: undefined, state: 'stopped' } : r))
       return { ok: true as const }
@@ -68,14 +81,17 @@ function setup(initial: Row[] = []) {
   }
   const sent: Array<[string, unknown]> = []
   const pauses: string[] = []
+  const released: string[] = []
   const vault: AgentVault = {
     remote: REMOTE,
-    root: ROOT,
+    root,
     head: () => Promise.resolve('base-sha'),
     commitNow: () => Promise.resolve(null),
     pauseSync: (reason: string) => {
       pauses.push(reason)
-      return () => {}
+      return () => {
+        released.push(reason)
+      }
     },
   }
   const sessions = createAgentSessions({
@@ -85,9 +101,12 @@ function setup(initial: Row[] = []) {
       parseListing,
       isLive,
       summarise,
+      summarisePast,
       readContextPercent,
       watch: () => () => {},
       configure: async () => ({ dir: '/cfg/vault' }),
+      transcript: async () => null,
+      blockedQuestion: async () => null,
       takeFirstSpawn: async () => true,
       signInNotice: SIGN_IN_NOTICE,
     },
@@ -109,6 +128,16 @@ function setup(initial: Row[] = []) {
       listing = rows
     },
     pauses,
+    /** The sync holds given back. */
+    released,
+    /** The next listings fail, as `claude agents` printing `stdout` (null:
+     *  not at all) rather than the listing. */
+    breakListing: (stdout: string | null) => {
+      broken = { stdout }
+    },
+    mendListing: () => {
+      broken = null
+    },
     /** The vault opened: what its activation does. */
     attach: () => sessions.ensure(vault),
   }
@@ -120,10 +149,85 @@ describe('agent sessions', () => {
     await t.attach()
 
     expect(t.sessions.sessions().map((s) => s.id)).toEqual(['aaaaaaaa'])
-    expect(t.sent.at(-1)).toEqual([
+    expect(t.sent.filter(([name]) => name === 'sessions').at(-1)).toEqual([
       'sessions',
-      [{ id: 'aaaaaaaa', name: 'Session aaaaaaaa', state: 'idle' }],
+      // Idle, and finished: the listing's `state: done` is passed on.
+      [{ id: 'aaaaaaaa', name: 'Session aaaaaaaa', state: 'idle', phase: 'done' }],
     ])
+  })
+
+  it('tells the finished sessions apart as the history, and only when it changes', async () => {
+    const t = setup([
+      row('aaaaaaaa'),
+      row('bbbbbbbb', { pid: undefined, status: undefined, startedAt: 7 }),
+      row('cccccccc', { pid: undefined, status: undefined, state: 'failed' }),
+    ])
+    await t.attach()
+
+    expect(t.sessions.history()).toEqual([
+      { id: 'bbbbbbbb', name: 'Session bbbbbbbb', phase: 'done', startedAt: 7 },
+      { id: 'cccccccc', name: 'Session cccccccc', phase: 'failed' },
+    ])
+    const told = () => t.sent.filter(([name]) => name === 'history').length
+    expect(told()).toBe(1)
+    // A read that finds the same past says nothing more.
+    await t.sessions.refresh()
+    expect(told()).toBe(1)
+  })
+
+  it('archives a chat, keeps it across a restart, and tells the renderer', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'holi-archive-'))
+    try {
+      const gone = { pid: undefined, status: undefined, cwd: root }
+      const t = setup([row('aaaaaaaa', gone)], root)
+      await t.attach()
+      expect(t.sessions.archived()).toEqual([])
+
+      expect(await t.sessions.archive('aaaaaaaa', true)).toEqual({ ok: true })
+      expect(t.sessions.archived()).toEqual(['aaaaaaaa'])
+      expect(t.sent.filter(([name]) => name === 'archive').at(-1)).toEqual([
+        'archive',
+        ['aaaaaaaa'],
+      ])
+      // Kept in the vault's machine state, a `.local.` file.
+      expect(await readArchive(root)).toEqual(['aaaaaaaa'])
+      expect(ARCHIVE_FILE).toContain('.local.')
+
+      // A new run of Holi reads it back.
+      const again = setup([row('aaaaaaaa', gone)], root)
+      await again.attach()
+      expect(again.sessions.archived()).toEqual(['aaaaaaaa'])
+
+      expect(await t.sessions.archive('aaaaaaaa', false)).toEqual({ ok: true })
+      expect(await readArchive(root)).toEqual([])
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('deletes a finished chat for good, and refuses a running one', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'holi-remove-'))
+    try {
+      const t = setup(
+        [
+          row('aaaaaaaa', { cwd: root }),
+          row('bbbbbbbb', { pid: undefined, status: undefined, cwd: root }),
+        ],
+        root,
+      )
+      await t.attach()
+      expect(await t.sessions.remove('aaaaaaaa')).toEqual({
+        ok: false,
+        message: 'That session is still running. Stop it first.',
+      })
+      await t.sessions.archive('bbbbbbbb', true)
+      expect(await t.sessions.remove('bbbbbbbb')).toEqual({ ok: true })
+      expect(t.cli.rm).toHaveBeenCalledWith(expect.anything(), 'bbbbbbbb')
+      expect(t.sessions.history()).toEqual([])
+      expect(t.sessions.archived()).toEqual([])
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
   })
 
   it('holds sync for a session found mid-turn when the vault opens', async () => {
@@ -136,6 +240,17 @@ describe('agent sessions', () => {
     t.setListing([row('aaaaaaaa', { status: 'idle' })])
     await t.sessions.refresh()
     await vi.waitFor(() => expect(t.sessions.sessions()[0]?.state).toBe('idle'))
+  })
+
+  // The rules of a failed read are `session-state.test.ts`'s; this is the
+  // wiring: a listing the CLI could not print reaches the state as one.
+  it('keeps its sessions when the CLI fails to print the listing', async () => {
+    const t = setup([row('aaaaaaaa', { status: 'busy', state: 'working' })])
+    await t.attach()
+    t.breakListing(null)
+    await t.sessions.refresh()
+    expect(t.sessions.sessions().map((s) => [s.id, s.state])).toEqual([['aaaaaaaa', 'working']])
+    expect(t.released).toEqual([])
   })
 
   it('takes the turn bracket from the hook, for this vault only', async () => {
