@@ -32,7 +32,7 @@ import type { ActionResult, AgentSessions, Geometry, OpenResult, StartResult } f
 import type { AgentTerminals, TerminalSummary } from './terminals'
 import type { PastSession, SessionSummary } from '../claude/listing'
 import type { UploadResult } from './uploads'
-import type { TranscriptChunk } from '../claude/transcript'
+import type { EarlierChunk, TranscriptChunk } from '../claude/transcript'
 import { openTurnLog, type TurnRecord } from './turn-log'
 
 export const AGENT_NAMESPACES = ['agent'] as const
@@ -52,6 +52,8 @@ export interface AgentCapabilitiesDeps {
     | 'send'
     | 'say'
     | 'transcript'
+    | 'transcriptEarlier'
+    | 'subagent'
     | 'question'
     | 'upload'
     | 'stop'
@@ -85,6 +87,28 @@ function geometry(raw: Record<string, unknown>): Geometry {
     ...(cols === undefined ? {} : { cols }),
     ...(rows === undefined ? {} : { rows }),
   }
+}
+
+/** A byte offset into a file: absent, or a whole non-negative number (a
+ *  fraction, NaN or a huge value would throw in the file read). */
+function offsetParam(p: Record<string, unknown>): number | undefined {
+  const offset = p['offset']
+  if (offset === undefined) return undefined
+  if (typeof offset !== 'number' || !Number.isSafeInteger(offset) || offset < 0) {
+    throw new CapabilityError('BAD_REQUEST', 'offset must be a non-negative whole number')
+  }
+  return offset
+}
+
+/** The `fingerprint` of the chunk an offset came from: absent, or the short
+ *  opaque string main made. */
+function fingerprintParam(p: Record<string, unknown>): string | undefined {
+  const fingerprint = p['fingerprint']
+  if (fingerprint === undefined) return undefined
+  if (typeof fingerprint !== 'string' || fingerprint.length > 64) {
+    throw new CapabilityError('BAD_REQUEST', 'fingerprint must be a short string')
+  }
+  return fingerprint
 }
 
 const idParams = (raw: unknown): { id: string } => ({ id: stringParam(paramsObject(raw), 'id') })
@@ -242,14 +266,55 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
       doors: ['ui'],
       params: (raw) => {
         const p = paramsObject(raw)
-        const offset = p['offset']
-        if (offset !== undefined && (typeof offset !== 'number' || offset < 0)) {
-          throw new CapabilityError('BAD_REQUEST', 'offset must be a positive number')
+        const offset = offsetParam(p)
+        const fingerprint = fingerprintParam(p)
+        return {
+          id: stringParam(p, 'id'),
+          ...(offset === undefined ? {} : { offset }),
+          ...(fingerprint === undefined ? {} : { fingerprint }),
         }
-        return { id: stringParam(p, 'id'), ...(offset === undefined ? {} : { offset }) }
       },
-      run: async (ctx, { id, offset }): Promise<TranscriptChunk | null> =>
-        live(ctx) ? deps.sessions.transcript(id, offset) : null,
+      run: async (ctx, { id, offset, fingerprint }): Promise<TranscriptChunk | null> =>
+        live(ctx) ? deps.sessions.transcript(id, offset, fingerprint) : null,
+    }),
+
+    /** The part of a session's conversation before `before`: the `start` a
+     *  transcript chunk reported (a line start of the file). */
+    'agent.transcriptEarlier': cap({
+      doors: ['ui'],
+      params: (raw) => {
+        const p = paramsObject(raw)
+        const before = p['before']
+        if (typeof before !== 'number' || !Number.isInteger(before) || before < 0) {
+          throw new CapabilityError('BAD_REQUEST', 'before must be a non-negative whole number')
+        }
+        return { id: stringParam(p, 'id'), before }
+      },
+      run: async (ctx, { id, before }): Promise<EarlierChunk | null> =>
+        live(ctx) ? deps.sessions.transcriptEarlier(id, before) : null,
+    }),
+
+    /** A sub-agent's own conversation, for the card of the call that started
+     *  it: `agentId` as the call's result named it. */
+    'agent.subagent': cap({
+      doors: ['ui'],
+      params: (raw) => {
+        const p = paramsObject(raw)
+        const agentId = stringParam(p, 'agentId')
+        if (!/^[A-Za-z0-9_-]{4,64}$/.test(agentId)) {
+          throw new CapabilityError('BAD_REQUEST', 'agentId is not an agent id')
+        }
+        const offset = offsetParam(p)
+        const fingerprint = fingerprintParam(p)
+        return {
+          id: stringParam(p, 'id'),
+          agentId,
+          ...(offset === undefined ? {} : { offset }),
+          ...(fingerprint === undefined ? {} : { fingerprint }),
+        }
+      },
+      run: async (ctx, { id, agentId, offset, fingerprint }): Promise<TranscriptChunk | null> =>
+        live(ctx) ? deps.sessions.subagent(id, agentId, offset, fingerprint) : null,
     }),
 
     /** The question a session waits on, as JSON, for when its call is not in

@@ -15,7 +15,7 @@ import type { BridgeRoute, SeedContribution } from '../../../main/plugin-api'
 import type { ClaudeCli, VaultCliTarget } from './claude/cli'
 import type { ClaudeRow, PastSession, SessionSummary } from './claude/listing'
 import type { AgentRoutesDeps } from './claude/routes'
-import type { TranscriptChunk } from './claude/transcript'
+import type { EarlierChunk, TranscriptChunk } from './claude/transcript'
 
 /** A vault the provider is asked about. */
 export interface VaultRef {
@@ -50,7 +50,32 @@ export interface AgentProvider {
   readContextPercent(status: unknown): number | null
   /** A conversation from `offset` on, for the chat. Null when it has no
    *  transcript to read. */
-  transcript(configDir: string, sessionId: string, offset?: number): Promise<TranscriptChunk | null>
+  transcript(
+    configDir: string,
+    sessionId: string,
+    offset?: number,
+    fingerprint?: string,
+  ): Promise<TranscriptChunk | null>
+  /** The part of that conversation before `before` (a line start: the
+   *  `start` of a chunk already had). Null when it has no transcript. A
+   *  provider without it cannot be read backwards. */
+  transcriptEarlier?(
+    configDir: string,
+    sessionId: string,
+    before: number,
+  ): Promise<EarlierChunk | null>
+  /** A sub-agent's own conversation, from `offset` on. Null when it has no
+   *  file. A provider without sub-agents omits it. */
+  subagent?(
+    configDir: string,
+    sessionId: string,
+    agentId: string,
+    offset?: number,
+    fingerprint?: string,
+  ): Promise<TranscriptChunk | null>
+  /** Where the provider tells of what it cannot place (one line each, never
+   *  content). Called once by the host with its own log. */
+  setLogger?(log: (message: string) => void): void
   /** The question a session is blocked on, as the JSON of its
    *  `AskUserQuestion` input, when the transcript does not hold it yet. */
   blockedQuestion(configDir: string, jobId: string): Promise<string | null>

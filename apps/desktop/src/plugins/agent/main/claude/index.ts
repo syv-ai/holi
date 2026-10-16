@@ -7,7 +7,13 @@
  * `nativeTheme`, so this loads under plain Node in the tests.
  */
 import { readBlockedQuestion } from './blocked'
-import { findTranscript, readTranscript } from './transcript'
+import {
+  findTranscript,
+  readEarlier,
+  readSubagent,
+  readTranscript,
+  setTranscriptLogger,
+} from './transcript'
 import type { AgentProvider } from '../provider'
 import { createClaudeCli, terminalCommand } from './cli'
 import { resolveVaultAgentConfig, SIGN_IN_NOTICE, takeFirstSpawn } from './config-dir'
@@ -52,10 +58,20 @@ export function claudeProvider(deps: ClaudeProviderDeps): AgentProvider {
         systemPrefersDark: deps.systemPrefersDark(),
         env: { HOLI_BIN: deps.holiBin() },
       }),
-    transcript: async (configDir, sessionId, offset) => {
+    transcript: async (configDir, sessionId, offset, fingerprint) => {
       const path = await findTranscript(configDir, sessionId)
-      return path === null ? null : readTranscript(path, sessionId, offset)
+      return path === null
+        ? null
+        : readTranscript(path, sessionId, offset, {
+            ...(fingerprint === undefined ? {} : { fingerprint }),
+          })
     },
+    transcriptEarlier: async (configDir, sessionId, before) => {
+      const path = await findTranscript(configDir, sessionId)
+      return path === null ? null : readEarlier(path, sessionId, before)
+    },
+    subagent: readSubagent,
+    setLogger: (log) => setTranscriptLogger((message) => log(message)),
     blockedQuestion: readBlockedQuestion,
     takeFirstSpawn,
     signInNotice: SIGN_IN_NOTICE,

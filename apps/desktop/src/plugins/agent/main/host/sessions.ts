@@ -23,7 +23,7 @@
  * NOTE: no `electron` import, so this loads under vitest.
  */
 import type { PluginCtx } from '../../../../main/plugin-api'
-import type { TranscriptChunk } from '../claude/transcript'
+import type { EarlierChunk, TranscriptChunk } from '../claude/transcript'
 import type { VaultCliTarget } from '../claude/cli'
 import type { ClaudeRow, PastSession, SessionSummary } from '../claude/listing'
 import type { AgentProvider, VaultRef } from '../provider'
@@ -70,6 +70,9 @@ export interface AgentSessionsDeps {
     | 'watch'
     | 'configure'
     | 'transcript'
+    | 'transcriptEarlier'
+    | 'subagent'
+    | 'setLogger'
     | 'blockedQuestion'
     | 'takeFirstSpawn'
     | 'signInNotice'
@@ -131,7 +134,17 @@ export interface AgentSessions {
   /** Write an image the person attached into the vault; answers its path. */
   upload(args: { name: string; data: string }): Promise<UploadResult>
   /** A live session's conversation from `offset` on. */
-  transcript(id: string, offset?: number): Promise<TranscriptChunk | null>
+  transcript(id: string, offset?: number, fingerprint?: string): Promise<TranscriptChunk | null>
+  /** The part of a live session's conversation before `before`, a line start
+   *  of the transcript (a chunk's `start`). */
+  transcriptEarlier(id: string, before: number): Promise<EarlierChunk | null>
+  /** A sub-agent's conversation of a live session, from `offset` on. */
+  subagent(
+    id: string,
+    agentId: string,
+    offset?: number,
+    fingerprint?: string,
+  ): Promise<TranscriptChunk | null>
   /** The question a session waits on, as JSON, when only Claude Code's job
    *  record has it. */
   question(id: string): Promise<string | null>
@@ -168,6 +181,7 @@ interface Current {
 export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
   const log = deps.log ?? ((msg: string) => console.log(`[agent] ${msg}`))
   const provider = deps.provider
+  provider.setLogger?.(log)
   let current: Current | null = null
   /** The vault `ensure` attached to, until `leave`. */
   let attached: AgentVault | null = null
@@ -521,11 +535,27 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
       return c === null ? noVault : saveUpload(c.root, args)
     },
 
-    async transcript(id, offset) {
+    async transcript(id, offset, fingerprint) {
       const c = await ensureCurrent()
       const sessionId = rows.find((row) => row.id === id)?.sessionId
       if (c === null || sessionId === undefined) return null
-      return provider.transcript(c.configDir, sessionId, offset)
+      return provider.transcript(c.configDir, sessionId, offset, fingerprint)
+    },
+
+    async transcriptEarlier(id, before) {
+      const c = await ensureCurrent()
+      const sessionId = rows.find((row) => row.id === id)?.sessionId
+      if (c === null || sessionId === undefined || provider.transcriptEarlier === undefined) {
+        return null
+      }
+      return provider.transcriptEarlier(c.configDir, sessionId, before)
+    },
+
+    async subagent(id, agentId, offset, fingerprint) {
+      const c = await ensureCurrent()
+      const sessionId = rows.find((row) => row.id === id)?.sessionId
+      if (c === null || sessionId === undefined || provider.subagent === undefined) return null
+      return provider.subagent(c.configDir, sessionId, agentId, offset, fingerprint)
     },
 
     async question(id) {
