@@ -7,9 +7,6 @@ name: Release
 on:
   push:
     branches: [main]
-    paths-ignore:
-      - '**.md'
-      - 'docs/**'
   workflow_dispatch:
 
 concurrency:
@@ -89,6 +86,71 @@ jobs:
             apps/desktop/release/*.blockmap
             apps/desktop/release/latest-mac.yml
           if-no-files-found: error
+
+  build-prerelease-mac:
+    # Every main commit gets an isolated prerelease version and feed. Re-runs
+    # reuse the run number, tag and release, replacing the same release assets.
+    if: github.ref == 'refs/heads/main'
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Calculate prerelease version
+        id: version
+        run: |
+          VERSION="$(node -e 'const [major, minor, patch] = require("./apps/desktop/package.json").version.split(".").map(Number); console.log(`${major}.${minor}.${patch + 1}-dev.${process.env.GITHUB_RUN_NUMBER}`)')"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm --filter @holi/desktop build
+
+      - name: Package, sign and notarize
+        working-directory: apps/desktop
+        run: pnpm exec electron-builder --mac --arm64 --publish never --config.extraMetadata.version="${{ steps.version.outputs.version }}" --config.publish.releaseType=prerelease --config.publish.channel=dev
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+      - name: Verify signature and notarization
+        working-directory: apps/desktop
+        run: |
+          codesign --verify --deep --strict --verbose=2 release/mac-arm64/Holi.app
+          spctl --assess --type execute --verbose=2 release/mac-arm64/Holi.app
+          xcrun stapler validate release/mac-arm64/Holi.app
+
+      - name: Publish or update prerelease
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --target "$GITHUB_SHA" --title "Holi $VERSION" --prerelease --generate-notes
+          fi
+          gh release upload "$TAG" \
+            apps/desktop/release/*.dmg \
+            apps/desktop/release/*.zip \
+            apps/desktop/release/*.blockmap \
+            apps/desktop/release/dev-mac.yml \
+            --clobber
 
   release:
     needs: [version, build-mac]
