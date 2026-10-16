@@ -1579,6 +1579,7 @@ export function createRouter(deps: RouterDeps) {
   /** Updating Holi itself; the status also arrives pushed, on change. */
   const unsupported = (): UpdateStatus => ({
     supported: false,
+    channel: 'stable',
     enabled: false,
     version: '',
     state: 'idle',
@@ -1600,6 +1601,15 @@ export function createRouter(deps: RouterDeps) {
       deps.updates?.install()
       return { ok: true as const }
     }),
+    setChannel: t.procedure
+      .input((raw: unknown): { channel: 'stable' | 'dev' } => {
+        const channel = (raw as { channel?: unknown } | null)?.channel
+        if (channel !== 'stable' && channel !== 'dev') throw new TRPCError({ code: 'BAD_REQUEST' })
+        return { channel }
+      })
+      .mutation(async ({ input }): Promise<UpdateStatus> =>
+        (await deps.updates?.setChannel(input.channel)) ?? unsupported(),
+      ),
     setEnabled: t.procedure
       .input(fields({ enabled: 'boolean' }))
       .mutation(

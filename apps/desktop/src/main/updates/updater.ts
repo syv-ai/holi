@@ -12,7 +12,7 @@ import { join } from 'node:path'
 import { app, powerMonitor } from 'electron'
 import { autoUpdater, type ProgressInfo, type UpdateInfo } from 'electron-updater'
 import { jsonFileStore } from '../json-file-store'
-import { initialStatus, reduce, shouldCheck, type UpdateEvent, type UpdateStatus } from './state'
+import { initialStatus, reduce, shouldCheck, type UpdateChannel, type UpdateEvent, type UpdateStatus } from './state'
 
 const CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000
 const FIRST_CHECK_DELAY_MS = 10 * 1000
@@ -26,6 +26,7 @@ export interface Updater {
   /** Quit and install the downloaded update. */
   install(): void
   setEnabled(enabled: boolean): Promise<UpdateStatus>
+  setChannel(channel: UpdateChannel): Promise<UpdateStatus>
   dispose(): void
 }
 
@@ -35,38 +36,54 @@ export function createUpdater(deps: {
    *  confirm included. False when the person kept the app open. */
   beforeInstall: () => Promise<boolean>
 }): Updater {
-  const prefs = jsonFileStore(join(app.getPath('userData'), 'updates.json'), (raw) => ({
-    enabled: (raw as { enabled?: unknown } | null)?.enabled !== false,
-  }))
+  const prefs = jsonFileStore(join(app.getPath('userData'), 'updates.json'), (raw) => {
+    const value = raw as { enabled?: unknown; channel?: unknown } | null
+    return {
+      enabled: value?.enabled !== false,
+      channel: value?.channel === 'dev' ? 'dev' as const : 'stable' as const,
+    }
+  })
   let status = initialStatus({
     supported: app.isPackaged,
     enabled: true,
     version: app.getVersion(),
+    channel: 'stable',
   })
   let interval: ReturnType<typeof setInterval> | null = null
   let firstCheck: ReturnType<typeof setTimeout> | null = null
+  let switching = false
+  let operation: Promise<unknown> = Promise.resolve()
+  let installChannel: UpdateChannel | null = null
 
   const apply = (event: UpdateEvent): void => {
+    if (switching) return
     status = reduce(status, event, Date.now())
+    if (event.type === 'available' || event.type === 'downloaded') installChannel = status.channel
     deps.send(status)
   }
 
   const run = async (source: 'user' | 'background'): Promise<UpdateStatus> => {
-    if (!shouldCheck(status, source, Date.now())) return status
+    if (switching || !shouldCheck(status, source, Date.now())) return status
     apply({ type: 'check-started' })
-    try {
-      await autoUpdater.checkForUpdates()
-    } catch (err) {
-      // `error` usually fires too, but not for every rejection.
-      apply({ type: 'error', message: err instanceof Error ? err.message : String(err) })
-    }
+    const active = (async () => {
+      try {
+        await autoUpdater.checkForUpdates()
+      } catch (err) {
+        // `error` usually fires too, but not for every rejection.
+        apply({ type: 'error', message: err instanceof Error ? err.message : String(err) })
+      }
+    })()
+    operation = active
+    await active
     return status
   }
   const background = (): void => void run('background')
 
   if (status.supported) {
     autoUpdater.autoDownload = true
-    autoUpdater.autoInstallOnAppQuit = true
+    // Never let electron-updater install a cached candidate on an ordinary quit.
+    // Only our channel-checked explicit install path may install it.
+    autoUpdater.autoInstallOnAppQuit = false
     autoUpdater.logger = {
       info: (m: unknown) => console.log('[updates]', m),
       warn: (m: unknown) => console.warn('[updates]', m),
@@ -91,8 +108,11 @@ export function createUpdater(deps: {
     powerMonitor.on('resume', background)
   }
 
-  void prefs.read().then(({ enabled }) => {
-    status = { ...status, enabled }
+  void prefs.read().then(({ enabled, channel }) => {
+    status = { ...status, enabled, channel }
+    autoUpdater.channel = channel === 'dev' ? 'dev' : null
+    autoUpdater.allowPrerelease = channel === 'dev'
+    autoUpdater.allowDowngrade = true
     deps.send(status)
   })
 
@@ -102,11 +122,15 @@ export function createUpdater(deps: {
     async download() {
       if (!status.supported || status.state !== 'available') return status
       apply({ type: 'progress', percent: 0 })
-      try {
-        await autoUpdater.downloadUpdate()
-      } catch (err) {
-        apply({ type: 'error', message: err instanceof Error ? err.message : String(err) })
-      }
+      const active = (async () => {
+        try {
+          await autoUpdater.downloadUpdate()
+        } catch (err) {
+          apply({ type: 'error', message: err instanceof Error ? err.message : String(err) })
+        }
+      })()
+      operation = active
+      await active
       return status
     },
     install() {
@@ -120,11 +144,35 @@ export function createUpdater(deps: {
           return true
         })
         .then((go) => {
-          if (go) autoUpdater.quitAndInstall()
+          if (go && status.state === 'ready' && installChannel === status.channel) {
+            autoUpdater.quitAndInstall()
+          }
         })
     },
+    async setChannel(channel) {
+      if (channel === status.channel) return status
+      switching = true
+      await prefs.update((current) => ({ ...current, channel }))
+      await operation
+      autoUpdater.channel = channel === 'dev' ? 'dev' : null
+      autoUpdater.allowPrerelease = channel === 'dev'
+      autoUpdater.allowDowngrade = true
+      installChannel = null
+      status = {
+        ...status,
+        channel,
+        state: 'idle',
+        availableVersion: null,
+        percent: null,
+        checkStartedAt: null,
+        lastError: null,
+      }
+      switching = false
+      deps.send(status)
+      return run('user')
+    },
     async setEnabled(enabled) {
-      await prefs.update(() => ({ enabled }))
+      await prefs.update((current) => ({ ...current, enabled }))
       status = { ...status, enabled }
       deps.send(status)
       return status
