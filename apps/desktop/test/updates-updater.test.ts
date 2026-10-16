@@ -13,20 +13,44 @@ const mocks = vi.hoisted(() => {
     },
     listeners,
   } as Record<string, any>
-  return { updater, read: vi.fn(), update: vi.fn() }
+  return {
+    updater,
+    read: vi.fn(),
+    update: vi.fn(),
+    readPackage: vi.fn(),
+    adapter: null as any,
+    appOnce: vi.fn(),
+    appQuit: vi.fn(),
+    appRelaunch: vi.fn(),
+  }
 })
 
+vi.mock('node:fs', () => ({ readFileSync: mocks.readPackage }))
 vi.mock('electron', () => ({
   app: {
-    getPath: () => '/tmp/holi-test',
+    getPath: (name: string) => `/tmp/holi-test/${name}`,
+    getAppPath: () => '/tmp/holi-app',
+    getName: () => 'Holi',
+    whenReady: () => Promise.resolve(),
+    relaunch: mocks.appRelaunch,
+    quit: mocks.appQuit,
+    once: mocks.appOnce,
     isPackaged: true,
-    getVersion: () => '1.0.0',
+    getVersion: () => '0.1.2',
     on: vi.fn(),
+    once: vi.fn(),
     removeListener: vi.fn(),
   },
   powerMonitor: { on: vi.fn(), removeListener: vi.fn() },
 }))
-vi.mock('electron-updater', () => ({ autoUpdater: mocks.updater }))
+vi.mock('electron-updater', () => ({
+  MacUpdater: class {
+    constructor(_options: unknown, adapter: unknown) {
+      mocks.adapter = adapter
+      return mocks.updater as any
+    }
+  },
+}))
 vi.mock('../src/main/json-file-store', () => ({
   jsonFileStore: () => ({ read: mocks.read, update: mocks.update }),
 }))
@@ -45,10 +69,67 @@ beforeEach(() => {
     quitAndInstall: vi.fn(),
   })
   mocks.read.mockResolvedValue({ enabled: true, channel: 'stable' })
+  mocks.readPackage.mockReturnValue(JSON.stringify({ version: '0.1.2-dev.42' }))
+  mocks.adapter = null
   mocks.update.mockImplementation(async (change) => change({ enabled: true, channel: 'stable' }))
 })
 
 describe('updater channel switching', () => {
+  it('uses the packed package version while forwarding Electron app paths and lifecycle', async () => {
+    createUpdater({ send: vi.fn(), beforeInstall: async () => true })
+    const adapter = mocks.adapter as {    version: string
+    name: string
+    isPackaged: boolean
+    appUpdateConfigPath: string
+    userDataPath: string
+    baseCachePath: string
+    whenReady(): Promise<void>
+    relaunch(): void
+    quit(): void
+    onQuit(handler: (exitCode: number) => void): void
+    }
+    expect(adapter.version).toBe('0.1.2-dev.42')
+    expect(adapter.name).toBe('Holi')
+    expect(adapter.isPackaged).toBe(true)
+    expect(adapter.appUpdateConfigPath).toBe('/resources/app-update.yml')
+    expect(adapter.userDataPath).toBe('/tmp/holi-test/userData')
+    expect(adapter.baseCachePath).toBeTypeOf('string')
+    await expect(adapter.whenReady()).resolves.toBeUndefined()
+    adapter.relaunch()
+    adapter.quit()
+    expect(mocks.appRelaunch).toHaveBeenCalledOnce()
+    expect(mocks.appQuit).toHaveBeenCalledOnce()
+    const onExit = vi.fn()
+    adapter.onQuit(onExit)
+    expect(mocks.appOnce).toHaveBeenCalledWith('quit', expect.any(Function))
+    mocks.appOnce.mock.calls[0][1]({}, 3)
+    expect(onExit).toHaveBeenCalledWith(3)
+  })
+
+  it('applies rapid channel selections in order', async () => {
+    const updater = createUpdater({ send: vi.fn(), beforeInstall: async () => true })
+    await tick()
+    let persistFirst!: () => void
+    const firstPersist = new Promise<void>((resolve) => {
+      persistFirst = resolve
+    })
+    mocks.update.mockImplementationOnce(async (change) => {
+      await firstPersist
+      return change({ enabled: true, channel: 'stable' })
+    })
+    mocks.updater.checkForUpdates.mockResolvedValue({
+      downloadPromise: Promise.resolve(),
+      cancellationToken: { cancel: vi.fn() },
+    })
+    const toDev = updater.setChannel('dev')
+    const toStable = updater.setChannel('stable')
+    await tick()
+    persistFirst()
+    await Promise.all([toDev, toStable])
+    expect(updater.status().channel).toBe('stable')
+    expect(mocks.updater.channel).toBe('latest')
+    updater.dispose()
+  })
   it('keeps native install-on-quit disabled and only explicitly installs a ready candidate', async () => {
     const updater = createUpdater({ send: vi.fn(), beforeInstall: async () => true })
     await tick()

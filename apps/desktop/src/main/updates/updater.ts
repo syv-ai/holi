@@ -5,12 +5,15 @@
  * observes one status, pushed whole on `updates:status`, and the one thing a
  * person does is restart once it is ready.
  *
- * A dev build is not supported: there is no packaged app to replace, and
- * electron-updater would refuse anyway.
+ * Unpackaged development runs are not supported: there is no app to replace.
+ * Packaged development builds use package.json's version, since macOS reports
+ * only the numeric plist version through Electron's app.getVersion().
  */
+import { readFileSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { app, powerMonitor } from 'electron'
-import { autoUpdater, type ProgressInfo, type UpdateInfo } from 'electron-updater'
+import { MacUpdater, type ProgressInfo, type UpdateInfo } from 'electron-updater'
 import { jsonFileStore } from '../json-file-store'
 import {
   initialStatus,
@@ -23,6 +26,32 @@ import {
 
 const CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000
 const FIRST_CHECK_DELAY_MS = 10 * 1000
+
+function createUpdaterAdapter(): NonNullable<ConstructorParameters<typeof MacUpdater>[1]> {
+  const packageJson = JSON.parse(
+    readFileSync(join(app.getAppPath(), 'package.json'), 'utf8'),
+  ) as { version: string }
+  const cacheRoot =
+    process.platform === 'darwin'
+      ? join(homedir(), 'Library', 'Caches')
+      : process.platform === 'win32'
+        ? (process.env.LOCALAPPDATA ?? join(homedir(), 'AppData', 'Local'))
+        : (process.env.XDG_CACHE_HOME ?? join(homedir(), '.cache'))
+  return {
+    version: packageJson.version,
+    name: app.getName(),
+    isPackaged: app.isPackaged,
+    appUpdateConfigPath: app.isPackaged
+      ? join(process.resourcesPath, 'app-update.yml')
+      : join(app.getAppPath(), 'dev-app-update.yml'),
+    userDataPath: app.getPath('userData'),
+    baseCachePath: cacheRoot,
+    whenReady: () => app.whenReady(),
+    relaunch: () => app.relaunch(),
+    quit: () => app.quit(),
+    onQuit: (handler) => app.once('quit', (_event, exitCode) => handler(exitCode)),
+  }
+}
 
 export interface Updater {
   status(): UpdateStatus
@@ -45,6 +74,7 @@ export function createUpdater(deps: {
    *  confirm included. False when the person kept the app open. */
   beforeInstall: () => Promise<boolean>
 }): Updater {
+  const autoUpdater = new MacUpdater(undefined, createUpdaterAdapter())
   const prefs = jsonFileStore(join(app.getPath('userData'), 'updates.json'), (raw) => {
     const value = raw as { enabled?: unknown; channel?: unknown } | null
     return {
@@ -63,6 +93,7 @@ export function createUpdater(deps: {
   let switching = false
   let generation = 0
   let operation: Promise<unknown> = Promise.resolve()
+  let channelQueue: Promise<unknown> = Promise.resolve()
   let cancellationToken: { cancel(): void } | null = null
   let installChannel: UpdateChannel | null = null
   let initialized = false
@@ -197,51 +228,10 @@ export function createUpdater(deps: {
           }
         })
     },
-    async setChannel(channel) {
-      if (channel === status.channel) return status
-      await initialization
-      switching = true
-      autoUpdater.autoInstallOnAppQuit = false
-      generation += 1
-      cancellationToken?.cancel()
-      cancellationToken = null
-      try {
-        await prefs.update((current) => ({ ...current, channel }))
-      } catch (err) {
-        // The old operation was invalidated before persisting. Drain it and
-        // clear its transient state so a failed write cannot strand checking.
-        await operation
-        if (status.state === 'checking' || status.state === 'downloading') {
-          installChannel = null
-          status = {
-            ...status,
-            state: 'idle',
-            availableVersion: null,
-            percent: null,
-            checkStartedAt: null,
-          }
-          deps.send(status)
-        }
-        switching = false
-        throw err
-      }
-      await operation
-      autoUpdater.channel = channel === 'dev' ? 'dev' : 'latest'
-      autoUpdater.allowPrerelease = channel === 'dev'
-      autoUpdater.allowDowngrade = true
-      installChannel = null
-      status = {
-        ...status,
-        channel,
-        state: 'idle',
-        availableVersion: null,
-        percent: null,
-        checkStartedAt: null,
-        lastError: null,
-      }
-      switching = false
-      deps.send(status)
-      return run('user')
+    setChannel(channel) {
+      const request = channelQueue.then(() => switchChannel(channel))
+      channelQueue = request.catch(() => {})
+      return request
     },
     async setEnabled(enabled) {
       await prefs.update((current) => ({ ...current, enabled }))
@@ -257,5 +247,52 @@ export function createUpdater(deps: {
       // The updater's own listeners stay for a downloaded update's explicit
       // quit-and-install path.
     },
+  }
+
+  async function switchChannel(channel: UpdateChannel): Promise<UpdateStatus> {
+    await initialization
+    if (channel === status.channel) return status
+    switching = true
+    autoUpdater.autoInstallOnAppQuit = false
+    generation += 1
+    cancellationToken?.cancel()
+    cancellationToken = null
+    try {
+      await prefs.update((current) => ({ ...current, channel }))
+    } catch (err) {
+      // The old operation was invalidated before persisting. Drain it and
+      // clear its transient state so a failed write cannot strand checking.
+      await operation
+      if (status.state === 'checking' || status.state === 'downloading') {
+        installChannel = null
+        status = {
+          ...status,
+          state: 'idle',
+          availableVersion: null,
+          percent: null,
+          checkStartedAt: null,
+        }
+        deps.send(status)
+      }
+      switching = false
+      throw err
+    }
+    await operation
+    autoUpdater.channel = channel === 'dev' ? 'dev' : 'latest'
+    autoUpdater.allowPrerelease = channel === 'dev'
+    autoUpdater.allowDowngrade = true
+    installChannel = null
+    status = {
+      ...status,
+      channel,
+      state: 'idle',
+      availableVersion: null,
+      percent: null,
+      checkStartedAt: null,
+      lastError: null,
+    }
+    switching = false
+    deps.send(status)
+    return run('user')
   }
 }
