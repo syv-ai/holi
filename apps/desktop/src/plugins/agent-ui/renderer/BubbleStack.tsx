@@ -266,7 +266,7 @@ export function BubbleStack({
                 size="xs"
                 data-agent-history-link=""
                 aria-label={`History${archivedCount > 0 ? ` · ${archivedCount}` : ''}`}
-                className="agent-bubble-history h-full gap-1.5 rounded-full px-3 text-xs font-normal text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:bg-accent"
+                className="agent-bubble-history h-full gap-2 rounded-full px-4 text-xs font-normal text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:bg-accent"
                 onClick={() => {
                   onHistory()
                   setOpen(false)
