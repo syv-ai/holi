@@ -10,7 +10,9 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: release
+  # Serialize reruns of the same commit, but never discard a later push while
+  # an earlier release is still building.
+  group: release-${{ github.sha }}
   cancel-in-progress: false
 
 jobs:
@@ -109,7 +111,9 @@ jobs:
       - name: Calculate prerelease version
         id: version
         run: |
-          VERSION="$(node -e 'const [major, minor, patch] = require("./apps/desktop/package.json").version.split(".").map(Number); console.log(`${major}.${minor}.${patch + 1}-dev.${process.env.GITHUB_RUN_NUMBER}`)')"
+          read -r NEXT_PATCH < <(node -e 'const [major, minor, patch] = require("./apps/desktop/package.json").version.split(".").map(Number); console.log(`${major}.${minor}.${patch + 1}`)')
+          VERSION="${NEXT_PATCH}-dev.${GITHUB_RUN_NUMBER}"
+          echo "next_patch=$NEXT_PATCH" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
 
@@ -121,7 +125,9 @@ jobs:
 
       - name: Package, sign and notarize
         working-directory: apps/desktop
-        run: pnpm exec electron-builder --mac --arm64 --publish never --config.extraMetadata.version="${{ steps.version.outputs.version }}" --config.publish.releaseType=prerelease --config.publish.channel=dev
+        # Apple requires numeric bundle versions; preserve the semver prerelease
+        # in package.json for electron-updater while using numeric macOS fields.
+        run: pnpm exec electron-builder --mac --arm64 --publish never --config.extraMetadata.version="${{ steps.version.outputs.version }}" --config.mac.bundleShortVersion="${{ steps.version.outputs.next_patch }}" --config.mac.bundleVersion="${{ github.run_number }}" --config.publish.releaseType=prerelease --config.publish.channel=dev
         env:
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
