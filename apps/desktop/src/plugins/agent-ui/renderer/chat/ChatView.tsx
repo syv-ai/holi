@@ -2,28 +2,15 @@
  * One session as a chat (docs/features/agent-sessions.md, The chat): what was
  * said, what the agent did, what it asks, and a composer. Read from Claude
  * Code's transcript; written through the session's terminal, which is not
- * shown unless asked for. The rows, the approval card and the composer follow
- * Fisher UI's agent components (jakobfisker.dk/en/ui), on Holi's primitives.
+ * shown unless asked for. The rows (`rows/`) draw each kind of item; this
+ * keeps the list: a window of the latest items, the follow of its end, and
+ * the footer that says what could not be placed.
  */
 import { useAtom, useSetAtom } from 'jotai'
-import {
-  Bot,
-  ChevronDown,
-  CircleAlert,
-  FileText,
-  ImageIcon,
-  Globe,
-  MessagesSquare,
-  PencilLine,
-  Search,
-  SquareTerminal,
-  Wrench,
-  type LucideIcon,
-} from 'lucide-react'
-import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { ArrowDown, MessagesSquare, SquareTerminal } from 'lucide-react'
+import { useReducedMotion } from 'motion/react'
+import { useCallback, useEffect, useLayoutEffect, useReducer, useRef, useState } from 'react'
 import { Button, Icon, IconButton } from '@/primitives'
-import { cn, vaultAssetUrl } from '@/plugin-api'
 import { SessionTerminal } from '../SessionTerminal'
 import {
   archiveSessionAtom,
@@ -37,14 +24,11 @@ import {
   chatDraftsAtom,
   type AgentSession,
 } from '../../../agent/renderer/state/sessions'
-import { ChatMarkdown } from './ChatMarkdown'
 import {
   MAX_ATTACHMENTS,
   insertMarker,
   markerFor,
   pastedFiles,
-  splitUserText,
-  uploadVaultPath,
   stillAttached,
   toBase64,
   uploadName,
@@ -55,164 +39,26 @@ import { Composer } from './Composer'
 import { QuickAsk } from './QuickAsk'
 import { askFailed } from '../../../agent/renderer/lib/ask'
 import type { RichInputHandle } from './RichInput'
-import {
-  useQuestions,
-  useTranscript,
-  type ChatItem,
-} from '../../../agent/renderer/chat/use-transcript'
+import { useQuestions, useTranscript } from '../../../agent/renderer/chat/use-transcript'
+import type { ChatItem, ToolItem } from '../../../agent/renderer/chat/items'
+import { chatDiagnostics, claudeVersions, unplacedTotal } from './diagnostics'
+import { ItemRow } from './rows/ItemRow'
+import { copyText } from './rows/parts'
+import { useRowErrors } from './rows/RowBoundary'
+import { UserBubble } from './rows/UserBubble'
 
-/** Fisher UI's ease-out, for a row opening. */
-const EASE_OUT = [0.16, 1, 0.3, 1] as const
 const ESCAPE = '\x1b'
 
-/** How a tool call reads as one row: what it did, and with what glyph. */
-const TOOLS: Readonly<Record<string, { label: string; icon: LucideIcon }>> = {
-  Read: { label: 'Read', icon: FileText },
-  Edit: { label: 'Edited', icon: PencilLine },
-  Write: { label: 'Wrote', icon: PencilLine },
-  NotebookEdit: { label: 'Edited', icon: PencilLine },
-  Bash: { label: 'Ran', icon: SquareTerminal },
-  Grep: { label: 'Searched', icon: Search },
-  Glob: { label: 'Searched', icon: Search },
-  WebFetch: { label: 'Fetched', icon: Globe },
-  WebSearch: { label: 'Searched the web', icon: Globe },
-  Agent: { label: 'Delegated', icon: Bot },
-  Task: { label: 'Delegated', icon: Bot },
-}
+/** How many items the chat draws at first, and how many more each "Show
+ *  earlier" reveals. */
+export const INITIAL_ITEMS = 150
+export const MORE_ITEMS = 100
+/** How near the end counts as at the end, in pixels. */
+const NEAR_END = 80
+/** The window starts at the first item (every earlier one is shown). */
+const FROM_START = '*'
 
-type Tool = Extract<ChatItem, { kind: 'tool' }>
-
-function ToolRow({ item }: { item: Tool }): React.JSX.Element {
-  const [open, setOpen] = useState(false)
-  const reduce = useReducedMotion() ?? false
-  const look = TOOLS[item.name] ?? { label: item.name, icon: Wrench }
-  const running = item.result === undefined
-  const failed = item.result?.ok === false
-  return (
-    <div className="text-sm" data-chat-tool={item.name}>
-      <Button
-        variant="ghost"
-        size="sm"
-        aria-expanded={open}
-        className="h-auto min-h-7 w-full justify-start gap-2.5 rounded-lg px-1.5 py-1 font-normal text-muted-foreground"
-        onClick={() => setOpen((o) => !o)}
-      >
-        <span className="grid size-4 shrink-0 place-items-center">
-          {running ? (
-            <span className="size-1.5 motion-pulse rounded-full bg-amber-400" />
-          ) : (
-            <Icon icon={failed ? CircleAlert : look.icon} size="sm" />
-          )}
-        </span>
-        <span className={cn('shrink-0', failed ? 'text-destructive' : 'text-foreground/90')}>
-          {look.label}
-        </span>
-        <span className="min-w-0 truncate font-mono text-xs">{item.summary}</span>
-        <Icon
-          icon={ChevronDown}
-          size="sm"
-          className={cn('ml-auto shrink-0 motion-respond', open && 'rotate-180')}
-        />
-      </Button>
-      <AnimatePresence initial={false}>
-        {open && (
-          <motion.div
-            initial={reduce ? { opacity: 0 } : { height: 0, opacity: 0 }}
-            animate={reduce ? { opacity: 1 } : { height: 'auto', opacity: 1 }}
-            exit={reduce ? { opacity: 0 } : { height: 0, opacity: 0 }}
-            transition={{ duration: reduce ? 0 : 0.22, ease: EASE_OUT }}
-            className="overflow-hidden"
-          >
-            <pre className="mt-1 ml-6 max-h-64 overflow-auto rounded-lg border border-border/50 bg-muted/30 px-2.5 py-2 font-mono text-xs whitespace-pre-wrap text-muted-foreground">
-              {item.input}
-              {item.result !== undefined && item.result.text !== '' && `\n\n${item.result.text}`}
-            </pre>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
-  )
-}
-
-/**
- * A picture the person attached, drawn from the vault where it was saved
- * (`holi-vault://`), so a screenshot reads as a screenshot. A file that cannot
- * be read back (gone, or not an image after all) falls back to its name.
- */
-export function AttachedImage({ path, label }: { path: string; label: string }): React.JSX.Element {
-  const [failed, setFailed] = useState(false)
-  if (failed) {
-    return (
-      <span
-        data-chat-image=""
-        className="flex w-fit items-center gap-1.5 rounded-lg bg-background/60 px-2 py-1 text-xs"
-      >
-        <Icon icon={ImageIcon} size="sm" />
-        <span className="truncate">{label}</span>
-      </span>
-    )
-  }
-  return (
-    <img
-      data-chat-image=""
-      src={vaultAssetUrl(path)}
-      alt={label}
-      draggable={false}
-      onError={() => setFailed(true)}
-      className="max-h-60 w-auto max-w-full rounded-lg object-contain"
-    />
-  )
-}
-
-/**
- * A person's message, as a bubble. A file it names (`@path`, which is how
- * Claude Code is given one) reads as a chip with the file's name, not as a
- * path, in the place the person put it; one with pictures pasted straight
- * into Claude Code's own input says how many.
- */
-function UserBubble({
-  text,
-  images = 0,
-  pending = false,
-}: {
-  text: string
-  /** Pictures that came with it, as the transcript counts them. */
-  images?: number
-  pending?: boolean
-}): React.JSX.Element {
-  const parts = splitUserText(text)
-  const chip = 'flex w-fit items-center gap-1.5 rounded-lg bg-background/60 px-2 py-1 text-xs'
-  return (
-    <div
-      data-chat-user=""
-      className={cn(
-        'flex max-w-[85%] flex-col gap-2 self-end rounded-2xl rounded-br-md bg-secondary px-3.5 py-2 text-sm text-secondary-foreground',
-        pending && 'opacity-60',
-      )}
-    >
-      {Array.from({ length: images }, (_, i) => (
-        <span key={`image-${i}`} data-chat-image="" className={chip}>
-          <Icon icon={ImageIcon} size="sm" />
-          <span>Image {i + 1}</span>
-        </span>
-      ))}
-      {parts.map((part, i) =>
-        part.kind === 'text' ? (
-          <span key={i} className="whitespace-pre-wrap">
-            {part.text}
-          </span>
-        ) : part.image && uploadVaultPath(part.path) !== null ? (
-          <AttachedImage key={i} path={uploadVaultPath(part.path)!} label={part.label} />
-        ) : (
-          <span key={i} data-chat-image={part.image ? '' : undefined} className={chip}>
-            <Icon icon={part.image ? ImageIcon : FileText} size="sm" />
-            <span className="truncate">{part.label}</span>
-          </span>
-        ),
-      )}
-    </div>
-  )
-}
+const keyOf = (item: ChatItem): string => `${item.kind}:${item.id}`
 
 /** How long a finished session gets to come back after "Pick up" before the
  *  chat says it did not. */
@@ -251,7 +97,7 @@ function PickUp({ session }: { session: AgentSession }): React.JSX.Element {
   return (
     <div
       data-chat-past=""
-      className="flex items-center gap-3 rounded-3xl border border-border/60 bg-card px-4 py-2.5 text-sm shadow-sm"
+      className="flex items-center gap-3 rounded-3xl bg-secondary px-4 py-2.5 text-sm"
     >
       <span className="min-w-0 flex-1 truncate text-muted-foreground">
         {error ??
@@ -263,7 +109,6 @@ function PickUp({ session }: { session: AgentSession }): React.JSX.Element {
     </div>
   )
 }
-
 export function ChatView({
   session,
   past = false,
@@ -277,9 +122,14 @@ export function ChatView({
 }): React.JSX.Element {
   const {
     items,
+    ctx,
     loaded,
     error: unread,
     refresh,
+    drift,
+    canLoadEarlier,
+    loadingEarlier,
+    loadEarlier,
   } = useTranscript(session.id, session.state !== 'idle')
   const say = useSetAtom(sayAtom)
   const press = useSetAtom(pressAtom)
@@ -301,14 +151,113 @@ export function ChatView({
   const [error, setError] = useState<string | null>(null)
   /** The terminal on this session while it is the one showing, by id. */
   const [terminal, setTerminal] = useState<string | null>(null)
+  const reduceMotion = useReducedMotion() ?? false
 
   const scroller = useRef<HTMLDivElement | null>(null)
-  /** Whether the list is at its end, and so follows what arrives. */
-  const stuck = useRef(true)
-  useLayoutEffect(() => {
+  const list = useRef<HTMLDivElement | null>(null)
+  /** Whether the list is at its end, and so follows what arrives. Only the
+   *  person scrolling up lets go of it. */
+  const pinned = useRef(true)
+  const lastTop = useRef(0)
+  const lastHeight = useRef(0)
+  /** Content arrived while the person was reading above: "Jump to latest". */
+  const [away, setAway] = useState(false)
+  const toEnd = useCallback(
+    (smooth = false): void => {
+      const el = scroller.current
+      if (el === null) return
+      if (smooth && !reduceMotion && typeof el.scrollTo === 'function') {
+        el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
+      } else el.scrollTop = el.scrollHeight
+    },
+    [reduceMotion],
+  )
+
+  // The window: the first item drawn, by key, so what arrives at the end adds
+  // to the list and nothing slides out of the top of it.
+  const first = useRef<string | null>(null)
+  const head = useRef<string | null>(null)
+  /** Earlier items were asked for: when they arrive, some are revealed. */
+  const loadingMore = useRef(false)
+  /** The list's size and place before a reveal, to put the view back. */
+  const anchor = useRef<{ height: number; top: number; token: string } | null>(null)
+  const suppressAway = useRef(false)
+  const [, redraw] = useReducer((n: number) => n + 1, 0)
+
+  const headKey = items.length === 0 ? null : keyOf(items[0]!)
+  const findStart = (): number =>
+    first.current === FROM_START
+      ? 0
+      : first.current === null
+        ? -1
+        : items.findIndex((i) => keyOf(i) === first.current)
+  let start = findStart()
+  if (start < 0) {
+    start = Math.max(0, items.length - INITIAL_ITEMS)
+    first.current = start > 0 ? keyOf(items[start]!) : null
+  }
+  if (loadingMore.current && head.current !== null && headKey !== head.current) {
+    // Earlier items arrived above the first drawn: reveal a page of them.
+    loadingMore.current = false
+    start = Math.max(0, start - MORE_ITEMS)
+    first.current = start > 0 ? keyOf(items[start]!) : FROM_START
+  }
+  head.current = headKey
+  const token = `${start}|${headKey}`
+
+  const showEarlier = (): void => {
     const el = scroller.current
-    if (el !== null && stuck.current) el.scrollTop = el.scrollHeight
-  }, [items, pending, session.state, terminal])
+    if (el !== null) anchor.current = { height: el.scrollHeight, top: el.scrollTop, token }
+    pinned.current = false
+    suppressAway.current = true
+    if (start > 0) {
+      const next = Math.max(0, start - MORE_ITEMS)
+      first.current = next > 0 ? keyOf(items[next]!) : FROM_START
+      redraw()
+    } else if (canLoadEarlier && !loadingEarlier) {
+      // Everything loaded is shown: ask for more, and reveal it as it comes.
+      if (items.length > 0 && (first.current === FROM_START || first.current === null)) {
+        first.current = keyOf(items[0]!)
+      }
+      loadingMore.current = true
+      void loadEarlier()
+    }
+  }
+
+  // The view goes back where it was after earlier items are drawn above it.
+  useLayoutEffect(() => {
+    const a = anchor.current
+    const el = scroller.current
+    if (a === null || el === null || a.token === token) return
+    anchor.current = null
+    el.scrollTop = a.top + (el.scrollHeight - a.height)
+  })
+
+  useLayoutEffect(() => {
+    if (pinned.current) toEnd()
+  }, [items, pending, session.state, terminal, toEnd])
+
+  // Whatever makes the content taller (a row opening, a picture loading, late
+  // layout) or the viewport shorter (the composer growing) is seen here,
+  // which a scroll handler cannot: at the end the list stays there, above the
+  // end it is left alone and says that there is more.
+  useEffect(() => {
+    const el = scroller.current
+    const content = list.current
+    if (terminal !== null || el === null || content === null) return
+    if (typeof ResizeObserver === 'undefined') return
+    lastHeight.current = el.scrollHeight
+    const observer = new ResizeObserver(() => {
+      const grew = el.scrollHeight > lastHeight.current
+      lastHeight.current = el.scrollHeight
+      if (pinned.current) toEnd()
+      else if (grew && !suppressAway.current) setAway(true)
+      suppressAway.current = false
+    })
+    observer.observe(el)
+    observer.observe(content)
+    return () => observer.disconnect()
+  }, [terminal, toEnd])
 
   // The message has landed once the transcript has one more of ours.
   const said = items.filter((i) => i.kind === 'user').length
@@ -317,8 +266,11 @@ export function ChatView({
   const working = session.state === 'working'
   const needsYou = session.state === 'needs-you' && !askFailed(items)
   const questions = useQuestions(session.id, items, needsYou)
-  const lastTool = [...items].reverse().find((i): i is Tool => i.kind === 'tool') ?? null
+  const lastTool = [...items].reverse().find((i): i is ToolItem => i.kind === 'tool') ?? null
   const asked = lastTool !== null && lastTool.result === undefined ? lastTool : null
+
+  const rowErrors = useRowErrors(session.id)
+  const notPlaced = unplacedTotal(drift) + rowErrors.total
 
   /**
    * Attach files: each gets a marker, put into the draft at the cursor (or at
@@ -381,7 +333,8 @@ export function ChatView({
     // Only what the text still names goes: a deleted marker is a removed file.
     const sending = stillAttached(text, attachments)
     setError(null)
-    stuck.current = true
+    pinned.current = true
+    setAway(false)
     const deliver = async (): Promise<void> => {
       // Each file is written into the vault first: Claude Code takes it by path.
       const paths = new Map<string, string>()
@@ -422,6 +375,18 @@ export function ChatView({
     )
   }
 
+  const shown = start === 0 ? items : items.slice(start)
+  const lastIndex = items.length - 1
+  const copyDiagnostics = (): void => {
+    void copyText(
+      chatDiagnostics({
+        drift,
+        failed: rowErrors,
+        versions: claudeVersions(items),
+      }),
+    )
+  }
+
   return (
     <div ref={root} className="relative flex min-h-0 flex-1 flex-col" data-agent-chat={session.id}>
       {/* A finished session has no terminal to show: opening one picks it up. */}
@@ -440,61 +405,132 @@ export function ChatView({
         </div>
       ) : (
         <>
-          <div
-            ref={scroller}
-            className="min-h-0 flex-1 overflow-y-auto px-4 pt-2 pb-3"
-            onScroll={(event) => {
-              const el = event.currentTarget
-              stuck.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80
-            }}
-          >
-            <div className="mx-auto flex w-full max-w-2xl flex-col gap-3">
-              {unread !== null && (
-                <p className="py-10 text-center text-sm text-destructive" data-chat-unread="">
-                  The conversation could not be read. {unread}
-                </p>
-              )}
-              {unread === null && loaded && items.length === 0 && pending === null && (
-                <p className="py-10 text-center text-sm text-muted-foreground">
-                  {past ? 'Nothing was said.' : 'Nothing said yet. Tell it what you want done.'}
-                </p>
-              )}
-              {items.map((item) =>
-                item.kind === 'user' ? (
-                  <UserBubble key={`u:${item.id}`} text={item.text} images={item.images} />
-                ) : item.kind === 'assistant' ? (
-                  <ChatMarkdown key={`a:${item.id}`} text={item.text} />
-                ) : (
-                  <ToolRow key={`t:${item.id}`} item={item} />
-                ),
-              )}
-              {pending !== null && <UserBubble text={pending} pending />}
-              {working && (
-                <div
-                  className="flex items-center gap-1.5 px-1.5 py-1 text-sm text-muted-foreground"
-                  data-chat-working=""
-                >
-                  {[0, 1, 2].map((dot) => (
-                    <span key={dot} className="size-1.5 motion-pulse rounded-full bg-amber-400" />
-                  ))}
-                  <span className="ml-1">Working…</span>
-                </div>
-              )}
-              {needsYou && (
-                <QuickAsk
-                  waitingFor={session.waitingFor}
-                  tool={
-                    asked === null
-                      ? ''
-                      : `${asked.name}${asked.summary === '' ? '' : `: ${asked.summary}`}`
-                  }
-                  questions={questions}
-                  press={(keys) => press({ id: session.id, keys })}
-                  fallbackLabel="Answer in the terminal"
-                  onFallback={toggleTerminal}
-                />
-              )}
+          <div className="relative flex min-h-0 flex-1 flex-col">
+            <div
+              ref={scroller}
+              data-chat-scroll=""
+              className="min-h-0 flex-1 overflow-y-auto px-4 pt-2 pb-3"
+              // A wheel up lets go at once: the scroll event that follows may
+              // be read against a position from before the list last grew.
+              onWheel={(event) => {
+                if (event.deltaY < 0) pinned.current = false
+              }}
+              onScroll={(event) => {
+                const el = event.currentTarget
+                if (el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_END) {
+                  pinned.current = true
+                  setAway(false)
+                } else if (el.scrollTop < lastTop.current) pinned.current = false
+                lastTop.current = el.scrollTop
+              }}
+            >
+              <div
+                ref={list}
+                role="log"
+                aria-label="Conversation"
+                className="agent-chat-list mx-auto flex w-full max-w-2xl flex-col gap-3"
+              >
+                {unread !== null && (
+                  <p className="py-10 text-center text-sm text-destructive" data-chat-unread="">
+                    The conversation could not be read. {unread}
+                  </p>
+                )}
+                {unread === null && loaded && items.length === 0 && pending === null && (
+                  <p className="py-10 text-center text-sm text-muted-foreground">
+                    {past ? 'Nothing was said.' : 'Nothing said yet. Tell it what you want done.'}
+                  </p>
+                )}
+                {(start > 0 || canLoadEarlier) && (
+                  <Button
+                    variant="ghost"
+                    size="xs"
+                    data-chat-earlier=""
+                    aria-busy={loadingEarlier || undefined}
+                    className="self-center font-normal text-muted-foreground"
+                    onClick={showEarlier}
+                  >
+                    {start === 0 && loadingEarlier
+                      ? 'Loading earlier…'
+                      : start > 0
+                        ? `Show earlier (${start})`
+                        : 'Load earlier'}
+                  </Button>
+                )}
+                {shown.map((item, i) => (
+                  <ItemRow
+                    key={keyOf(item)}
+                    item={item}
+                    ctx={ctx}
+                    live={working && start + i === lastIndex}
+                  />
+                ))}
+                {pending !== null && <UserBubble text={pending} pending />}
+                {working && (
+                  <div
+                    className="flex items-center gap-1.5 px-1.5 py-1 text-sm text-muted-foreground"
+                    data-chat-working=""
+                  >
+                    {[0, 1, 2].map((dot) => (
+                      <span
+                        key={dot}
+                        className="size-1.5 motion-pulse rounded-full bg-[var(--context-warm)]"
+                      />
+                    ))}
+                    <span className="ml-1">Working…</span>
+                  </div>
+                )}
+                {needsYou && (
+                  <QuickAsk
+                    waitingFor={session.waitingFor}
+                    tool={
+                      asked === null
+                        ? ''
+                        : `${asked.name}${asked.summary === '' ? '' : `: ${asked.summary}`}`
+                    }
+                    questions={questions}
+                    press={(keys) => press({ id: session.id, keys })}
+                    fallbackLabel="Answer in the terminal"
+                    onFallback={toggleTerminal}
+                  />
+                )}
+                {notPlaced > 0 && (
+                  <div
+                    data-chat-drift=""
+                    className="flex flex-wrap items-center gap-x-2 px-1 pt-2 text-xs text-muted-foreground"
+                  >
+                    <span>
+                      {notPlaced === 1
+                        ? '1 part of this conversation was not recognised'
+                        : `${notPlaced} parts of this conversation were not recognised`}
+                    </span>
+                    <Button
+                      variant="ghost"
+                      size="xs"
+                      className="font-normal text-muted-foreground"
+                      onClick={copyDiagnostics}
+                    >
+                      Copy diagnostics
+                    </Button>
+                  </div>
+                )}
+              </div>
             </div>
+            {away && (
+              <Button
+                variant="secondary"
+                size="sm"
+                data-chat-jump=""
+                className="motion-in-bottom absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full shadow-popover"
+                onClick={() => {
+                  pinned.current = true
+                  setAway(false)
+                  toEnd(true)
+                }}
+              >
+                <Icon icon={ArrowDown} size="sm" />
+                Jump to latest
+              </Button>
+            )}
           </div>
           <div className="shrink-0 px-4 pb-3">
             <div className="mx-auto w-full max-w-2xl">
