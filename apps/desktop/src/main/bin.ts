@@ -49,3 +49,9 @@ export function resolveBin(name: string, env: NodeJS.ProcessEnv = process.env): 
 export function toolPath(env: NodeJS.ProcessEnv = process.env): string {
   return [...(env.PATH ?? '').split(':').filter(Boolean), ...fallbackDirs(env)].join(':')
 }
+
+/** Where Holi's last-resort `node` lives, under its own `bin` directory. Kept
+ *  apart from `holi` so it can sit last on a PATH while `holi` sits first. */
+export function nodeFallbackDir(binDir: string): string {
+  return join(binDir, 'fallback')
+}
