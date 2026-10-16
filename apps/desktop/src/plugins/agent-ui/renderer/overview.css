@@ -367,7 +367,31 @@
 .agent-bubble-main:hover {
   background: transparent;
 }
-/* "New session" is a row of the open fan, never one of the resting stack. */
+/* "New session" is a row of the open fan, never one of the resting stack. Its
+   row is two pills, History and the new session's, each lit on its own, so
+   the row itself takes no highlight. */
+.agent-stack[data-open] .agent-bubble.agent-bubble-new,
+.agent-stack[data-open] .agent-bubble.agent-bubble-new:hover,
+.agent-stack[data-open] .agent-bubble.agent-bubble-new:focus-within {
+  padding: 0;
+  background: transparent;
+}
+.agent-bubble-new-pill {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  border-radius: 9999px;
+}
+.agent-stack[data-open] .agent-bubble-new-pill {
+  padding-left: 0.5rem;
+}
+.agent-stack[data-open] .agent-bubble-new-pill:hover,
+.agent-stack[data-open] .agent-bubble-new-pill:focus-within {
+  background: var(--color-accent);
+}
 .agent-bubble-new {
   opacity: 0;
   pointer-events: none;
@@ -444,8 +468,7 @@
 .agent-bubble-history {
   display: none;
   flex-shrink: 0;
-  align-self: center;
-  margin: 0 0.25rem 0 0.375rem;
+  margin-right: 0.375rem;
   white-space: nowrap;
 }
 .agent-stack[data-open] .agent-bubble-history {

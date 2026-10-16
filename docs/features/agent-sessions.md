@@ -71,9 +71,10 @@ how it ended, and when it began) beside each bubble, then "New session"; Escape 
 Pressing a bubble opens that chat, one at a time; the page opens on the most recent. The stack keeps
 its margin from the window's edges and never clips a bubble, its ring or its dot; each row of the fan
 has its own room: an **archive button** at the left, the name and line, and the face at the right,
-where the resting bubble is, so the pointer that opened the fan is already on a face (the bubble and the button are siblings, never a button in a button). The last row is "New session", with the **History** button (a quiet
-pill with the clock icon and the count) at its left where the other rows have their archive button, so
-the fan takes no line of its own for it. A bubble,
+where the resting bubble is, so the pointer that opened the fan is already on a face (the bubble and the button are siblings, never a button in a button). The last row is "New session", with the **History** button (a pill with
+the clock icon and the count) at its left where the other rows have their archive button, so the fan
+takes no line of its own for it. The row is two pills, History and the new session's, each lit
+alone under the pointer. A bubble,
 the palette and a new session all land there (`land` sets `overviewSelectionAtom` and opens
 the surface), and ⌘J and the agent item open the page as it was left. Order is `startedAt`, newest
 first (one without a start time is oldest), and the open chat's bubble is ringed.

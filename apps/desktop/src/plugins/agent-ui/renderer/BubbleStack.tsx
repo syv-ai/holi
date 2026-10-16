@@ -266,7 +266,7 @@ export function BubbleStack({
                 size="xs"
                 data-agent-history-link=""
                 aria-label={`History${archivedCount > 0 ? ` · ${archivedCount}` : ''}`}
-                className="agent-bubble-history h-7 gap-1.5 rounded-full px-2.5 text-xs font-normal text-muted-foreground hover:bg-background/70 hover:text-foreground"
+                className="agent-bubble-history h-full gap-1.5 rounded-full px-3 text-xs font-normal text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:bg-accent"
                 onClick={() => {
                   onHistory()
                   setOpen(false)
@@ -276,38 +276,41 @@ export function BubbleStack({
                 History
                 {archivedCount > 0 && <span className="tabular-nums">{archivedCount}</span>}
               </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                aria-hidden="true"
-                tabIndex={-1}
-                className="agent-bubble-main p-0 font-normal"
-                onClick={() => {
-                  onNew()
-                  setOpen(false)
-                }}
-              >
-                <span className="agent-bubble-words">
-                  <span className="agent-bubble-label">
-                    <span className="truncate text-sm text-foreground">New session</span>
+              {/* Its own pill beside History's: each lights alone. */}
+              <div className="agent-bubble-new-pill">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  aria-hidden="true"
+                  tabIndex={-1}
+                  className="agent-bubble-main p-0 font-normal"
+                  onClick={() => {
+                    onNew()
+                    setOpen(false)
+                  }}
+                >
+                  <span className="agent-bubble-words">
+                    <span className="agent-bubble-label">
+                      <span className="truncate text-sm text-foreground">New session</span>
+                    </span>
                   </span>
-                </span>
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                data-agent-bubble-new=""
-                aria-label="New session"
-                className="agent-bubble-face-button p-0"
-                onClick={() => {
-                  onNew()
-                  setOpen(false)
-                }}
-              >
-                <span className="agent-bubble-face size-10 items-center justify-center rounded-full bg-muted text-muted-foreground">
-                  <Icon icon={Plus} />
-                </span>
-              </Button>
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  data-agent-bubble-new=""
+                  aria-label="New session"
+                  className="agent-bubble-face-button p-0"
+                  onClick={() => {
+                    onNew()
+                    setOpen(false)
+                  }}
+                >
+                  <span className="agent-bubble-face size-10 items-center justify-center rounded-full bg-muted text-muted-foreground">
+                    <Icon icon={Plus} />
+                  </span>
+                </Button>
+              </div>
             </div>
           </div>
         </div>
