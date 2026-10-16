@@ -55,6 +55,7 @@ export function initialStatus(input: {
 }): UpdateStatus {
   return {
     ...input,
+    channel: input.channel ?? 'stable',
     state: 'idle',
     availableVersion: null,
     percent: null,
