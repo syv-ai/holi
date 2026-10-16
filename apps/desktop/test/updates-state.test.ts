@@ -18,6 +18,9 @@ const run = (status: UpdateStatus, ...events: UpdateEvent[]): UpdateStatus =>
   events.reduce((s, e) => reduce(s, e, 1_000), status)
 
 describe('reduce', () => {
+  it('defaults the update channel to stable', () => {
+    expect(fresh().channel).toBe('stable')
+  })
   it('walks a check through download to ready', () => {
     const s = run(
       fresh(),

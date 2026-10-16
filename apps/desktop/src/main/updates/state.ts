@@ -11,7 +11,10 @@
 export type UpdateState = 'idle' | 'checking' | 'available' | 'downloading' | 'ready'
 
 /** Everything the renderer knows about updating Holi, pushed whole on change. */
+export type UpdateChannel = 'stable' | 'dev'
+
 export interface UpdateStatus {
+  channel: UpdateChannel
   /** False in a dev build, where there is nothing to update. */
   supported: boolean
   /** Whether Holi checks on its own (Settings → Updates). */
@@ -48,6 +51,7 @@ export function initialStatus(input: {
   supported: boolean
   enabled: boolean
   version: string
+  channel?: UpdateChannel
 }): UpdateStatus {
   return {
     ...input,
