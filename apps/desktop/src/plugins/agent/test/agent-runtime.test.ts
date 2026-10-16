@@ -95,7 +95,7 @@ describe('buildAgentEnv', () => {
     expect(env.CLAUDECODE).toBeUndefined()
     expect(env.CLAUDE_CODE_ENTRYPOINT).toBeUndefined()
     expect(env.UNDEFINED_VAR).toBeUndefined()
-    expect(env.PATH).toBe('/usr/bin')
+    expect(env.PATH?.startsWith('/usr/bin:')).toBe(true)
     expect(env.HOME).toBe('/Users/nic')
     expect(env.TERM).toBe('xterm-256color')
     // No configDir given → no redirect, and the key is absent rather than empty.
@@ -168,20 +168,37 @@ describe('buildAgentEnv', () => {
    * has to be predictable: the agent types the bare `holi`.
    */
   it('prepends the Holi bin dir to PATH so the bare names resolve', () => {
-    const env = buildAgentEnv({ PATH: '/usr/bin:/bin' }, { binDir: '/data/bin' })
+    const env = buildAgentEnv({ PATH: '/usr/bin:/bin', HOME: '/h' }, { binDir: '/data/bin' })
 
-    expect(env.PATH).toBe('/data/bin:/usr/bin:/bin')
     // Prepended, not appended: another `holi` earlier in PATH would win.
-    expect(env.PATH!.startsWith('/data/bin:')).toBe(true)
+    expect(env.PATH!.startsWith('/data/bin:/usr/bin:/bin:')).toBe(true)
   })
 
-  it('leaves PATH alone when there is no bin dir', () => {
-    expect(buildAgentEnv({ PATH: '/usr/bin:/bin' }).PATH).toBe('/usr/bin:/bin')
-    expect(buildAgentEnv({ PATH: '/usr/bin:/bin' }, { binDir: null }).PATH).toBe('/usr/bin:/bin')
+  it('puts the usual tool directories after the inherited PATH, and Holi’s node last', () => {
+    const env = buildAgentEnv({ PATH: '/usr/bin:/bin', HOME: '/h' }, { binDir: '/data/bin' })
+    const path = env.PATH!.split(':')
+
+    // What a Dock launch lacks: Homebrew's, the home directory's.
+    expect(path).toContain('/opt/homebrew/bin')
+    expect(path).toContain('/h/.local/bin')
+    expect(path.indexOf('/opt/homebrew/bin')).toBeGreaterThan(path.indexOf('/bin'))
+    // A node the machine has wins, so the last resort is the last entry.
+    expect(path.at(-1)).toBe('/data/bin/fallback')
+  })
+
+  it('adds the tool directories but no node of its own without a bin dir', () => {
+    for (const opts of [{}, { binDir: null }]) {
+      const path = buildAgentEnv({ PATH: '/usr/bin:/bin', HOME: '/h' }, opts).PATH!.split(':')
+      expect(path.slice(0, 2)).toEqual(['/usr/bin', '/bin'])
+      expect(path).toContain('/opt/homebrew/bin')
+      expect(path.some((dir) => dir.endsWith('/fallback'))).toBe(false)
+    }
   })
 
   it('still sets a usable PATH when the parent had none', () => {
-    expect(buildAgentEnv({}, { binDir: '/data/bin' }).PATH).toBe('/data/bin')
+    const path = buildAgentEnv({ HOME: '/h' }, { binDir: '/data/bin' }).PATH!.split(':')
+    expect(path[0]).toBe('/data/bin')
+    expect(path.at(-1)).toBe('/data/bin/fallback')
   })
 
   it('strips inherited bridge keys so a vault cannot spoof them (reserved)', () => {
@@ -218,7 +235,7 @@ describe('buildAgentEnv', () => {
       { configDir: '/data/agent-config', binDir: '/data/bin' },
     )
     expect(env.CLAUDE_CONFIG_DIR).toBe('/data/agent-config')
-    expect(env.PATH).toBe('/data/bin:/usr/bin:/bin')
+    expect(env.PATH!.startsWith('/data/bin:/usr/bin:/bin:')).toBe(true)
   })
 })
 

@@ -17,7 +17,7 @@
  */
 import { execFile } from 'node:child_process'
 import { accessSync, constants } from 'node:fs'
-import { resolveBin } from '../../../../main/plugin-api'
+import { nodeFallbackDir, resolveBin, toolPath } from '../../../../main/plugin-api'
 import type { TerminalCommand } from '../provider'
 
 /**
@@ -94,11 +94,14 @@ export function buildAgentEnv(
   // back on the machine's `~/.claude`.
   delete env.CLAUDE_CONFIG_DIR
   if (opts.configDir) env.CLAUDE_CONFIG_DIR = opts.configDir
-  // Prepended, never appended: an earlier `holi` on the
-  // inherited PATH would otherwise win under a name the gate trusts.
-  if (opts.binDir) {
-    env.PATH = env.PATH ? `${opts.binDir}:${env.PATH}` : opts.binDir
-  }
+  // `holi` is prepended, never appended: an earlier `holi` on the inherited
+  // PATH would otherwise win under a name the gate trusts. What follows the
+  // inherited PATH is what a Dock-launched Holi lacks and every hook needs:
+  // the usual tool directories, then Holi's own `node` as the last resort, so
+  // a `node` the machine has always wins (`main/bridge/node-fallback.ts`).
+  env.PATH = [opts.binDir, toolPath(env), opts.binDir ? nodeFallbackDir(opts.binDir) : undefined]
+    .filter((dir): dir is string => !!dir)
+    .join(':')
   return env
 }
 
