@@ -16,6 +16,7 @@ import {
   BrowserWindow,
   dialog,
   ipcMain,
+  nativeImage,
   protocol,
   session as electronSession,
   shell,
@@ -147,6 +148,12 @@ async function main(): Promise<void> {
   })
 
   await app.whenReady()
+
+  // Electron does not consistently use the app icon for an unpackaged process.
+  // Packaged builds use electron-builder's generated native bundle icon.
+  if (process.platform === 'darwin' && !app.isPackaged && app.dock) {
+    app.dock.setIcon(nativeImage.createFromPath(join(app.getAppPath(), 'build/icon.png')))
+  }
 
   // After whenReady: the keychain is not available before it.
   const session = await createSession()
