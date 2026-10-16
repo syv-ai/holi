@@ -17,6 +17,7 @@ import {
   installUpdateAtom,
   retryUpdateDownloadAtom,
   setAutoUpdateAtom,
+  setUpdateChannelAtom,
   updateHeadline,
   updateStatusAtom,
 } from '@/state/updates'
@@ -38,6 +39,7 @@ export function UpdatesSection(): React.JSX.Element {
   const retry = useSetAtom(retryUpdateDownloadAtom)
   const install = useSetAtom(installUpdateAtom)
   const setEnabled = useSetAtom(setAutoUpdateAtom)
+  const setChannel = useSetAtom(setUpdateChannelAtom)
   const supported = status?.supported === true
 
   const action =
@@ -82,6 +84,18 @@ export function UpdatesSection(): React.JSX.Element {
           <SettingsNote className="break-words">{status.lastError}</SettingsNote>
         )}
       </SettingsRow>
+      <SettingsRow
+        label="Dev prereleases"
+        description="Opt in to development releases. Turning this off checks for and downloads the latest stable release, even if it is older than the version you have; restart to install it."
+        control={
+          <Checkbox
+            aria-label="Dev prereleases"
+            disabled={!supported}
+            checked={status?.channel === 'dev'}
+            onCheckedChange={(v) => void setChannel(v === true ? 'dev' : 'stable')}
+          />
+        }
+      />
       <SettingsRow
         label="Update automatically"
         description="Check every few hours and download new versions in the background. An update installs when you quit Holi or choose Restart to update."

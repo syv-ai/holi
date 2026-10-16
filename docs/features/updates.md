@@ -37,9 +37,13 @@ brand colour when an update is ready, with its panel's **Restart to update**, an
 download failed, with **Try again**. It stays until acted on; a toast would be missed. Settings →
 **Updates** shows the running version, where the updater has got to, **Check now**, and **Update
 automatically**, which turns the background checks off (stored in `userData/updates.json`). A
-person's own check ignores the cooldown and the preference. Beside them, **Open at login**, this
-machine's login item: Holi starts in the menu bar with its window loaded but out of sight, so the
-vault opens, syncs and fires its reminders from the start.
+person's own check ignores the cooldown and the preference. **Dev prereleases** opts this app into
+the development release channel. Switching channels immediately checks and downloads from the
+selected feed. Turning dev off selects stable and downloads its latest release, even when that
+version is older than the installed one; **Restart to update** installs the downloaded stable
+version. Beside them, **Open at login**, this machine's login item: Holi starts in the menu bar with
+its window loaded but out of sight, so the vault opens, syncs and fires its reminders from the
+start.
 
 **A release's skills reach a vault by asking.** Skills and hooks are the vault's once written, so an
 app update leaves every vault's copies where they were ([agent config](agent-config.md)). Whenever a
@@ -57,6 +61,8 @@ A dev build reports updates as unsupported.
 
 - A release is immutable: a new build is a new version. The workflow never replaces a release.
 - An update is never installed behind someone's back mid-session; it waits for a quit or the button.
+- Stable is the default channel. Dev prereleases are an explicit per-app opt-in, and switching back to
+  stable can install an older version on restart.
 - A vault's files change only when its user asks: the skills offer writes nothing until Update
   skills is chosen, and is not an opt-in to update on open.
 - Repository secrets the workflow needs: `CSC_LINK`, `CSC_KEY_PASSWORD`, `APPLE_ID`,
