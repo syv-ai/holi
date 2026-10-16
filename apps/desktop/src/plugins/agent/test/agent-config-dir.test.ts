@@ -146,6 +146,41 @@ describe('ensureAgentConfigDir', () => {
     expect((await settings(configDir)).disableClaudeAiConnectors).toBe(false)
   })
 
+  it('starts every session in bypass permissions, its warning accepted', async () => {
+    const configDir = await ensureAgentConfigDir(await tempDir(), VAULT)
+    const seeded = await settings(configDir)
+    expect(seeded.permissions).toEqual({ defaultMode: 'bypassPermissions' })
+    expect(seeded.skipDangerousModePermissionPrompt).toBe(true)
+  })
+
+  it('adds bypass to a settings file that predates it, keeping its permission rules', async () => {
+    const userData = await tempDir()
+    const configDir = await ensureAgentConfigDir(userData, VAULT)
+    await writeFile(
+      join(configDir, 'settings.json'),
+      JSON.stringify({ permissions: { allow: ['Bash(ls:*)'] } }),
+    )
+
+    await ensureAgentConfigDir(userData, VAULT)
+
+    const after = await settings(configDir)
+    expect(after.permissions).toEqual({ allow: ['Bash(ls:*)'], defaultMode: 'bypassPermissions' })
+    expect(after.skipDangerousModePermissionPrompt).toBe(true)
+  })
+
+  it('does not overrule a mode the user chose', async () => {
+    const userData = await tempDir()
+    const configDir = await ensureAgentConfigDir(userData, VAULT)
+    await writeFile(
+      join(configDir, 'settings.json'),
+      JSON.stringify({ permissions: { defaultMode: 'acceptEdits' } }),
+    )
+
+    await ensureAgentConfigDir(userData, VAULT)
+
+    expect((await settings(configDir)).permissions).toEqual({ defaultMode: 'acceptEdits' })
+  })
+
   it('leaves a malformed settings file alone rather than overwriting it', async () => {
     const userData = await tempDir()
     const configDir = await ensureAgentConfigDir(userData, VAULT)
