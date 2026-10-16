@@ -95,14 +95,12 @@ export function createUpdater(deps: {
   const background = (): void => void run('background')
 
   if (status.supported) {
-    // Squirrel cannot unstage a ZIP after a feed switch; install only the
-    // selected candidate after quit teardown.
+    // Squirrel cannot unstage ZIPs; install only the selected one after quit teardown.
     autoUpdater.autoInstallOnAppQuit = false
     autoUpdater.logger = {
       info: (m: unknown) => console.log('[updates]', m),
       warn: (m: unknown) => console.warn('[updates]', m),
       error: (m: unknown) => console.error('[updates]', m),
-      debug: () => {},
     }
     autoUpdater.on('update-available', (info: UpdateInfo) =>
       apply({ type: 'available', version: info.version }),
