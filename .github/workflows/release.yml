@@ -1,7 +1,5 @@
-# Release Holi (docs/features/updates.md): on main, when apps/desktop's version
-# has no release yet, build a signed and notarized macOS app and publish it as
-# the GitHub release v<version>. The installed app's updater reads that
-# release's latest-mac.yml, so bumping the version is what ships an update.
+# Publish stable releases for new versions and dev prereleases for every main
+# commit (docs/features/updates.md).
 name: Release
 
 on:
@@ -127,7 +125,7 @@ jobs:
         working-directory: apps/desktop
         # Apple requires numeric bundle versions; preserve the semver prerelease
         # in package.json for electron-updater while using numeric macOS fields.
-        run: pnpm exec electron-builder --mac --arm64 --publish never --config.extraMetadata.version="${{ steps.version.outputs.version }}" --config.mac.bundleShortVersion="${{ steps.version.outputs.next_patch }}" --config.mac.bundleVersion="${{ github.run_number }}" --config.publish.releaseType=prerelease --config.publish.channel=dev
+        run: pnpm exec electron-builder --mac --arm64 --publish never --config.extraMetadata.version="${{ steps.version.outputs.version }}" --config.mac.bundleShortVersion="${{ steps.version.outputs.next_patch }}" --config.mac.bundleVersion="${{ github.run_number }}" --config.publish.channel=dev
         env:
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}

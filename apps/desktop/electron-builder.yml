@@ -1,6 +1,4 @@
-# Packaging Holi for macOS (docs/features/updates.md). CI runs this on main and
-# publishes the result as a GitHub release, which is where the installed app's
-# updater looks.
+# Package Holi for GitHub release updates (docs/features/updates.md).
 appId: ai.syv.holi
 productName: Holi
 # The installed app is named Holi: its menu, and its own userData folder. Not
@@ -22,13 +20,10 @@ asarUnpack:
   # The PDF plugin hands pdfium's wasm to the engine by path.
   - '**/node_modules/@embedpdf/pdfium/**'
 publish:
-  # Stable releases use electron-updater's default latest-mac.yml. The
-  # prerelease workflow overrides this to channel=dev, producing dev-mac.yml
-  # without changing the stable feed.
+  # CI selects channel=dev for prereleases; stable uses latest-mac.yml.
   provider: github
   owner: syv-ai
   repo: holi
-  releaseType: release
 mac:
   target:
     # The dmg is what a person downloads; the zip and latest-mac.yml are what

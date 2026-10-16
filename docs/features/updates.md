@@ -7,13 +7,11 @@ newer skills and hooks are offered to each vault, never written unasked.
 
 ## How it works
 
-**Shipping is bumping the version.** `.github/workflows/release.yml` runs on every push to `main`
-and reads `apps/desktop/package.json`'s `version`. When `v<version>` has no tag yet, it builds,
-packages with `electron-builder` (`apps/desktop/electron-builder.yml`), and publishes the release
-`v<version>` with the dmg, the zip, their blockmaps and `latest-mac.yml`. When the tag exists, it
-stops after that check, so an ordinary merge ships nothing. Pushes run independently rather than
-replacing a queued commit; concurrent attempts to publish the same stable tag cannot replace its
-assets, and only the first release creation succeeds. Only arm64 macOS is built.
+**Shipping stable is bumping the version.** On each `main` push, `.github/workflows/release.yml`
+checks the version in `apps/desktop/package.json`. If `v<version>` has no tag, it builds arm64
+macOS with `electron-builder` (`apps/desktop/electron-builder.yml`) and publishes the dmg, zip,
+blockmaps and `latest-mac.yml`. Existing tags skip stable publication; concurrent builds cannot
+overwrite its assets. Every push keeps its own CI run.
 
 **Signing and notarizing happen inside `electron-builder`.** It signs with the Developer ID
 certificate in `CSC_LINK`/`CSC_KEY_PASSWORD` under the hardened runtime and
