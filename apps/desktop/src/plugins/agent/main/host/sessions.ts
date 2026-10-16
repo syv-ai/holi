@@ -326,7 +326,15 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     if (c === null) return
     const stdout = await provider.cli.list(targetOf(c))
     if (current !== c) return // the vault moved while we read
-    rows = provider.parseListing(stdout, c.root)
+    const read = provider.parseListing(stdout, c.root)
+    if (read === null) {
+      // A failed read is not an empty listing. Taken for one it would forget
+      // every working session, release the vault's sync hold mid-turn and
+      // empty the stack; so what was last read stands until a read lands.
+      log('listing failed; keeping the last one')
+      return
+    }
+    rows = read
     const liveRows = live()
     const liveIds = new Set(liveRows.map((r) => r.id))
 

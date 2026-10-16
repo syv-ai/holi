@@ -120,17 +120,19 @@ function toRow(value: unknown, vaultRoot: string): ClaudeRow | null {
   }
 }
 
-/** The vault's background sessions out of `claude agents --json`. Every
- *  failure, including a null listing, is an empty answer. */
-export function parseListing(stdout: string | null, vaultRoot: string): ClaudeRow[] {
-  if (stdout === null) return []
+/** The vault's background sessions out of `claude agents --json`, or null when
+ *  the read failed: no output, or output that is not a listing. A failed read
+ *  says nothing about the sessions, so it is not the same as `[]`, which is a
+ *  listing read and found empty. A row that is malformed costs that row only. */
+export function parseListing(stdout: string | null, vaultRoot: string): ClaudeRow[] | null {
+  if (stdout === null) return null
   let parsed: unknown
   try {
     parsed = JSON.parse(stdout)
   } catch {
-    return []
+    return null
   }
-  if (!Array.isArray(parsed)) return []
+  if (!Array.isArray(parsed)) return null
   return parsed.map((entry) => toRow(entry, vaultRoot)).filter((r): r is ClaudeRow => r !== null)
 }
 

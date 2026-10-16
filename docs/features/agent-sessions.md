@@ -213,7 +213,7 @@ and keeps the background rows under the vault root. `needs-you` is `status: wait
 and is idle. The read is triggered by a watch of `<configDir>/sessions/` and `jobs/` (edge triggers,
 never parsed), by each turn hook, and by a vault opening. The one timer is a second read about a second
 after an `idle` one, because a quiet session makes no watcher edge: a turn ends only when two
-consecutive reads say idle. A failed read answers nothing, and the bracket still reports `working`.
+consecutive reads say idle. A failed read (no output, a timeout, output that is not a listing) is not an empty listing: the last one stands, so a turn keeps its sync hold and the stack keeps its bubbles until a read lands. Only a listing that was read and no longer has a session lets it go.
 
 **Context is the status line's.** `claude agents --json` carries no context figure and `/context`
 is interactive, so the reading comes from the documented `statusLine` command: one inline shell

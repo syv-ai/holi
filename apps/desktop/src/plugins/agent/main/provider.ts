@@ -38,8 +38,9 @@ export interface RouteServer {
 export interface AgentProvider {
   /** The provider's CLI verbs, each run for one vault. */
   cli: ClaudeCli
-  /** The vault's sessions out of the CLI's listing. */
-  parseListing(stdout: string | null, vaultRoot: string): ClaudeRow[]
+  /** The vault's sessions out of the CLI's listing, or null when the read
+   *  failed, which is not the same as a listing that is empty. */
+  parseListing(stdout: string | null, vaultRoot: string): ClaudeRow[] | null
   /** Is the session's process alive? */
   isLive(row: ClaudeRow): boolean
   /** A session whose process has gone, as a line of the agent's history. */

@@ -51,7 +51,7 @@ describe('parseListing', () => {
   it('keeps a row under the root and drops one for another tree', () => {
     const under = { ...LIVE, id: 'aaaaaaaa', cwd: `${ROOT}/notes` }
     const sibling = { ...LIVE, id: 'bbbbbbbb', cwd: `${ROOT}-other` }
-    expect(parseListing(listing([under, sibling]), ROOT).map((r) => r.id)).toEqual(['aaaaaaaa'])
+    expect(parseListing(listing([under, sibling]), ROOT)?.map((r) => r.id)).toEqual(['aaaaaaaa'])
   })
 
   it('drops interactive rows, which Holi never starts', () => {
@@ -60,20 +60,21 @@ describe('parseListing', () => {
 
   it('keeps a row whose process has exited, without pid or status', () => {
     const { pid: _p, status: _s, ...exited } = LIVE
-    const [row] = parseListing(listing([{ ...exited, state: 'stopped' }]), ROOT)
+    const [row] = parseListing(listing([{ ...exited, state: 'stopped' }]), ROOT) ?? []
     expect(row?.pid).toBeUndefined()
     expect(row !== undefined && isLive(row)).toBe(false)
   })
 
   it('costs a malformed row that row only', () => {
     const rows = parseListing(listing([{ ...LIVE, id: 7 }, null, LIVE]), ROOT)
-    expect(rows.map((r) => r.id)).toEqual(['20c9f6e8'])
+    expect(rows?.map((r) => r.id)).toEqual(['20c9f6e8'])
   })
 
-  it('answers nothing for a failed or garbled listing', () => {
-    expect(parseListing(null, ROOT)).toEqual([])
-    expect(parseListing('not json', ROOT)).toEqual([])
-    expect(parseListing('{}', ROOT)).toEqual([])
+  it('says a failed or garbled listing failed, which is not an empty one', () => {
+    expect(parseListing(null, ROOT)).toBeNull()
+    expect(parseListing('not json', ROOT)).toBeNull()
+    expect(parseListing('{}', ROOT)).toBeNull()
+    expect(parseListing('[]', ROOT)).toEqual([])
   })
 })
 
