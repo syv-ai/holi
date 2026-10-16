@@ -22,12 +22,11 @@ certificate in `CSC_LINK`/`CSC_KEY_PASSWORD` under the hardened runtime and
 stapled app. The workflow then checks `codesign`, `spctl` and `stapler`. The updater installs from
 the zip, and macOS refuses an update that is not signed by the same team as the running app.
 
-**The updater** is `electron-updater` in main (`src/main/updates/updater.ts`), on in the packaged
-app only. It checks ten seconds after launch, every four hours, when the window gains focus and when
-the machine wakes; `shouldCheck` (`src/main/updates/state.ts`) holds those to a five-minute
-cooldown and never checks once an update is in hand. A found update downloads at once. The whole
-status (version, state, progress, last check, last error) is pushed on `updates:status` on every
-change and read through `trpc.updates.*`.
+**The updater** is `electron-updater` in main (`src/main/updates/updater.ts`), for packaged apps
+only. It checks ten seconds after launch, every four hours, on focus and on wake. `shouldCheck`
+(`src/main/updates/state.ts`) enforces a five-minute cooldown and stops checks once an update is
+held. electron-updater downloads it automatically; main pushes status through `updates:status` and
+`trpc.updates.*`.
 
 **Installing is a quit.** A downloaded update installs on any quit. **Restart to update** runs the
 same path as ⌘Q first: the plugins' quit questions (a busy agent session asks), then the teardown

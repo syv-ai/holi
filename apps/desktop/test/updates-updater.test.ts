@@ -46,8 +46,8 @@ const tick = () => new Promise((resolve) => setImmediate(resolve))
 beforeEach(() => {
   mocks.updater.removeAllListeners()
   Object.assign(mocks.updater, {
-    autoDownload: false,
-    autoInstallOnAppQuit: false,
+    autoDownload: true,
+    autoInstallOnAppQuit: true,
     allowDowngrade: false,
     _channel: null,
     checkForUpdates: vi.fn(),
@@ -104,6 +104,7 @@ describe('updater channel switching', () => {
     const updater = createUpdater({ send: vi.fn(), beforeInstall: async () => true })
     await tick()
     expect(mocks.updater.channel).toBe('latest')
+    expect(mocks.updater.autoDownload).toBe(true)
     expect(mocks.updater.autoInstallOnAppQuit).toBe(false)
     mocks.updater.emit('update-available', { version: '1.1.0' })
     mocks.updater.emit('update-downloaded')
