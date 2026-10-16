@@ -7,7 +7,7 @@
  * it. Only a call that cannot be read (no options, a shape this does not know)
  * is left to the terminal.
  */
-import type { ChatItem } from '../chat/use-transcript'
+import type { ChatItem } from '../chat/items'
 
 export interface AskOption {
   label: string
@@ -41,13 +41,23 @@ const ASK_TOOL = 'AskUserQuestion'
 const text = (value: unknown): string => (typeof value === 'string' ? value : '')
 
 /** The questions of the call still waiting for an answer, or null when the
- *  session is not asking one, or asks one this cannot read. */
+ *  session is not asking one, or asks one this cannot read. A call is waiting
+ *  while it has no result. */
 export function pendingQuestions(items: readonly ChatItem[]): AskQuestion[] | null {
-  const call = [...items]
-    .reverse()
-    .find((i) => i.kind === 'tool' && i.name === ASK_TOOL && i.result === undefined)
-  if (call === undefined || call.kind !== 'tool') return null
-  return parseQuestions(call.input)
+  for (let i = items.length - 1; i >= 0; i--) {
+    const item = items[i]!
+    if (item.kind !== 'tool' || item.name !== ASK_TOOL || item.result !== undefined) continue
+    return parseQuestionsFrom(inputOf(item))
+  }
+  return null
+}
+
+/** A call's input: the structured `args`, or the JSON text an older item
+ *  carried as `input`. */
+function inputOf(item: object): unknown {
+  const { args, input } = item as { args?: unknown; input?: unknown }
+  if (args !== undefined && args !== null && typeof args === 'object') return args
+  return typeof input === 'string' ? input : undefined
 }
 
 /** The questions in an `AskUserQuestion` input's JSON, or null when it has
@@ -59,7 +69,15 @@ export function parseQuestions(json: string): AskQuestion[] | null {
   } catch {
     return null
   }
-  const raw = (input as { questions?: unknown } | null)?.questions
+  return parseQuestionsFrom(input)
+}
+
+/** The questions in an `AskUserQuestion` input already parsed (a call's
+ *  `args`), or null when it has none this can read. A string is taken as the
+ *  input's JSON. */
+export function parseQuestionsFrom(input: unknown): AskQuestion[] | null {
+  if (typeof input === 'string') return parseQuestions(input)
+  const raw = (input as { questions?: unknown } | null | undefined)?.questions
   if (!Array.isArray(raw) || raw.length === 0) return null
   const questions: AskQuestion[] = []
   for (const q of raw as unknown[]) {
@@ -89,7 +107,11 @@ export function parseQuestions(json: string): AskQuestion[] | null {
  *  waiting on anyone, whatever its status still says. */
 export function askFailed(items: readonly ChatItem[]): boolean {
   const call = [...items].reverse().find((i) => i.kind === 'tool' && i.name === ASK_TOOL)
-  return call !== undefined && call.kind === 'tool' && call.result?.ok === false
+  return (
+    call !== undefined &&
+    call.kind === 'tool' &&
+    (call.state === 'error' || call.state === 'rejected' || call.result?.ok === false)
+  )
 }
 
 const DOWN = '\x1b[B'
