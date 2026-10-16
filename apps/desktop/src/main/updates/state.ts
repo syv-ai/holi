@@ -1,11 +1,6 @@
 /**
- * The app updater's state, and when a check is worth running
- * (docs/features/updates.md). Pure: no Electron, no I/O, so the transitions
- * are pinned by tests rather than by shipping a release to find out.
- *
- * The trap it exists to avoid: once an update has been found, a further check
- * makes electron-updater announce it again, and a download mid-flight must not
- * be wiped by a check that lands during it.
+ * Pure updater state and check scheduling (docs/features/updates.md).
+ * Keep a found or downloading update when checks overlap.
  */
 
 export type UpdateState = 'idle' | 'checking' | 'available' | 'downloading' | 'ready'

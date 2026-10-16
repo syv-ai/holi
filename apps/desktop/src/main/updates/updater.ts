@@ -47,7 +47,6 @@ export function createUpdater(deps: {
     supported: app.isPackaged,
     enabled: true,
     version: app.getVersion(),
-    channel: 'stable',
   })
   let interval: ReturnType<typeof setInterval> | null = null
   let firstCheck: ReturnType<typeof setTimeout> | null = null
