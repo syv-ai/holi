@@ -1,12 +1,4 @@
-/**
- * Updating Holi itself (docs/features/updates.md): the version you run, where
- * the updater has got to, a "Check now", and whether Holi checks on its own.
- * Beside it, whether Holi opens at login, the other property of this machine's
- * app.
- *
- * A property of this machine's app, not of the open vault, so it sits with
- * Account at the end of the rail and writes nothing into the vault.
- */
+/** App-scoped update and login settings (docs/features/updates.md). */
 import { useAtomValue, useSetAtom } from 'jotai'
 import { useEffect, useState } from 'react'
 import { trpc } from '@/lib/trpc'
@@ -42,25 +34,24 @@ export function UpdatesSection(): React.JSX.Element {
   const setChannel = useSetAtom(setUpdateChannelAtom)
   const supported = status?.supported === true
 
-  const action =
-    status === null || !supported ? null : status.state === 'ready' ? (
-      <Button size="xs" onClick={() => void install()}>
-        Restart to update
-      </Button>
-    ) : status.state === 'available' && status.lastError !== null ? (
-      <Button variant="secondary" size="xs" onClick={() => void retry()}>
-        Try again
-      </Button>
-    ) : (
-      <Button
-        variant="secondary"
-        size="xs"
-        disabled={status.state !== 'idle'}
-        onClick={() => void check()}
-      >
-        Check now
-      </Button>
-    )
+  const action = !supported ? null : status.state === 'ready' ? (
+    <Button size="xs" onClick={() => void install()}>
+      Restart to update
+    </Button>
+  ) : status.state === 'available' && status.lastError !== null ? (
+    <Button variant="secondary" size="xs" onClick={() => void retry()}>
+      Try again
+    </Button>
+  ) : (
+    <Button
+      variant="secondary"
+      size="xs"
+      disabled={status.state !== 'idle'}
+      onClick={() => void check()}
+    >
+      Check now
+    </Button>
+  )
 
   return (
     <SettingsList>
@@ -113,10 +104,6 @@ export function UpdatesSection(): React.JSX.Element {
   )
 }
 
-/**
- * Whether Holi opens at login, in the menu bar with its window out of sight:
- * reminders fire and the vault syncs only while Holi runs.
- */
 function OpenAtLoginRow(): React.JSX.Element {
   const [open, setOpen] = useState<boolean | null>(null)
   useEffect(() => {
