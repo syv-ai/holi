@@ -1,17 +1,15 @@
 /**
- * The app updater's state, and when a check is worth running
- * (docs/features/updates.md). Pure: no Electron, no I/O, so the transitions
- * are pinned by tests rather than by shipping a release to find out.
- *
- * The trap it exists to avoid: once an update has been found, a further check
- * makes electron-updater announce it again, and a download mid-flight must not
- * be wiped by a check that lands during it.
+ * Pure updater state and check scheduling (docs/features/updates.md).
+ * Keep a found or downloading update when checks overlap.
  */
 
 export type UpdateState = 'idle' | 'checking' | 'available' | 'downloading' | 'ready'
 
 /** Everything the renderer knows about updating Holi, pushed whole on change. */
+export type UpdateChannel = 'stable' | 'dev'
+
 export interface UpdateStatus {
+  channel: UpdateChannel
   /** False in a dev build, where there is nothing to update. */
   supported: boolean
   /** Whether Holi checks on its own (Settings → Updates). */
@@ -48,9 +46,11 @@ export function initialStatus(input: {
   supported: boolean
   enabled: boolean
   version: string
+  channel?: UpdateChannel
 }): UpdateStatus {
   return {
     ...input,
+    channel: input.channel ?? 'stable',
     state: 'idle',
     availableVersion: null,
     percent: null,

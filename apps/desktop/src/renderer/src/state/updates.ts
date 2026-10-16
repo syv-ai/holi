@@ -38,6 +38,10 @@ export const setAutoUpdateAtom = atom(null, async (_get, set, enabled: boolean) 
   set(updateStatusAtom, await trpc.updates.setEnabled.mutate({ enabled }))
 })
 
+export const setUpdateChannelAtom = atom(null, async (_get, set, channel: 'stable' | 'dev') => {
+  set(updateStatusAtom, await trpc.updates.setChannel.mutate({ channel }))
+})
+
 /** One line on where the updater has got to, for Settings. */
 export function updateHeadline(status: UpdateStatus | null): string {
   if (status === null) return 'Loading…'

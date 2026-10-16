@@ -605,6 +605,9 @@ async function main(): Promise<void> {
 
   async function teardownAndQuit(): Promise<void> {
     await teardown()
+    // Only install a candidate downloaded from the selected channel. Squirrel
+    // may have staged a different channel's candidate during its check.
+    if (updater.installOnQuit()) return
     // Always quit, even if the flush threw: a failed teardown must not trap
     // someone in an app they are trying to leave.
     app.quit()
