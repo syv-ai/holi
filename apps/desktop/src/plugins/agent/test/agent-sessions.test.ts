@@ -242,39 +242,15 @@ describe('agent sessions', () => {
     await vi.waitFor(() => expect(t.sessions.sessions()[0]?.state).toBe('idle'))
   })
 
-  it.each([
-    ['a call that failed', null],
-    ['output that is not a listing', 'Error: could not reach the supervisor'],
-  ])('keeps a turn, its hold and the stack through %s', async (_name, stdout) => {
+  // The rules of a failed read are `session-state.test.ts`'s; this is the
+  // wiring: a listing the CLI could not print reaches the state as one.
+  it('keeps its sessions when the CLI fails to print the listing', async () => {
     const t = setup([row('aaaaaaaa', { status: 'busy', state: 'working' })])
     await t.attach()
-    expect(t.pauses).toEqual(['the assistant is working'])
-
-    t.breakListing(stdout)
+    t.breakListing(null)
     await t.sessions.refresh()
-    // A slow or failed read says nothing about the session: it is still
-    // there, still working, and the vault is still held.
     expect(t.sessions.sessions().map((s) => [s.id, s.state])).toEqual([['aaaaaaaa', 'working']])
     expect(t.released).toEqual([])
-
-    // A listing that is read and empty is another matter: it has gone.
-    t.mendListing()
-    t.setListing([])
-    await t.sessions.refresh()
-    expect(t.sessions.sessions()).toEqual([])
-    expect(t.released).toEqual(['the assistant is working'])
-  })
-
-  it('does not take a failed first read for a vault with no sessions', async () => {
-    const t = setup([row('aaaaaaaa', { status: 'busy', state: 'working' })])
-    t.breakListing(null)
-    await t.attach()
-    expect(t.pauses).toEqual([])
-
-    // The first read that lands still finds the session mid-turn.
-    t.mendListing()
-    await t.sessions.refresh()
-    expect(t.pauses).toEqual(['the assistant is working'])
   })
 
   it('takes the turn bracket from the hook, for this vault only', async () => {

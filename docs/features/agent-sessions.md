@@ -207,7 +207,7 @@ respawn`, a fresh process for the same conversation, which re-reads settings and
 Claude Code's: `/rename`, or Ctrl+R in the list. **Start another session** on an agent tab starts
 one with no prompt, which waits for yours.
 
-**State is read, not inferred.** Main reads `claude agents --json` for the vault's config directory
+**State is read, not inferred.** `session-state.ts` does the reading, and nothing outside it knows how the listing, the hooks and the status line combine. Main reads `claude agents --json` for the vault's config directory
 and keeps the background rows under the vault root. `needs-you` is `status: waiting`, `working` is
 `busy` or `shell`, then the turn bracket; a session started with no prompt reads `state: blocked`
 and is idle. The read is triggered by a watch of `<configDir>/sessions/` and `jobs/` (edge triggers,
@@ -306,6 +306,7 @@ showing it busy, crosses it off), so a session resumed from the list is never re
 - `apps/desktop/src/plugins/agent/main/host/terminals.ts`, `pty.ts`, `terminal-mirror.ts`: terminals, the PTY and
   kill path
 - `apps/desktop/src/plugins/agent/main/host/sessions.ts`: the vault controller
+- `apps/desktop/src/plugins/agent/main/host/session-state.ts`: what the sessions are doing (the listing, the hooks and the status line combined, behind one interface)
 - `apps/desktop/src/plugins/agent/main/host/capabilities.ts`: the `agent.*` capabilities
 - `apps/desktop/src/main/bridge/env-file.ts`, `apps/desktop/src/plugins/agent/main/claude/vault/shipped/.claude/hooks/turn-signal.mjs`,
   `apps/desktop/src/plugins/agent/main/claude/seed.ts` (`STATUS_LINE`): how sessions find Holi
