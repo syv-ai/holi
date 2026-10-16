@@ -17,7 +17,13 @@ const mocks = vi.hoisted(() => {
 })
 
 vi.mock('electron', () => ({
-  app: { getPath: () => '/tmp/holi-test', isPackaged: true, getVersion: () => '1.0.0', on: vi.fn(), removeListener: vi.fn() },
+  app: {
+    getPath: () => '/tmp/holi-test',
+    isPackaged: true,
+    getVersion: () => '1.0.0',
+    on: vi.fn(),
+    removeListener: vi.fn(),
+  },
   powerMonitor: { on: vi.fn(), removeListener: vi.fn() },
 }))
 vi.mock('electron-updater', () => ({ autoUpdater: mocks.updater }))
@@ -59,13 +65,20 @@ describe('updater channel switching', () => {
 
   it('waits for persisted preferences before checking and migrates unknown preferences to stable', async () => {
     let resolveRead!: (value: { enabled: boolean; channel: 'stable' }) => void
-    mocks.read.mockReturnValue(new Promise((resolve) => { resolveRead = resolve }))
+    mocks.read.mockReturnValue(
+      new Promise((resolve) => {
+        resolveRead = resolve
+      }),
+    )
     const updater = createUpdater({ send: vi.fn(), beforeInstall: async () => true })
     const check = updater.check()
     await tick()
     expect(mocks.updater.checkForUpdates).not.toHaveBeenCalled()
     resolveRead({ enabled: true, channel: 'stable' })
-    mocks.updater.checkForUpdates.mockResolvedValue({ downloadPromise: Promise.resolve(), cancellationToken: { cancel: vi.fn() } })
+    mocks.updater.checkForUpdates.mockResolvedValue({
+      downloadPromise: Promise.resolve(),
+      cancellationToken: { cancel: vi.fn() },
+    })
     await check
     expect(mocks.updater.channel).toBe('latest')
     expect(mocks.updater.checkForUpdates).toHaveBeenCalledOnce()
@@ -77,9 +90,14 @@ describe('updater channel switching', () => {
     const updater = createUpdater({ send: vi.fn(), beforeInstall: async () => true })
     await tick()
     let finish!: () => void
-    const downloadPromise = new Promise<void>((resolve) => { finish = resolve })
+    const downloadPromise = new Promise<void>((resolve) => {
+      finish = resolve
+    })
     const cancel = vi.fn()
-    mocks.updater.checkForUpdates.mockResolvedValue({ downloadPromise, cancellationToken: { cancel } })
+    mocks.updater.checkForUpdates.mockResolvedValue({
+      downloadPromise,
+      cancellationToken: { cancel },
+    })
     const priorCheck = updater.check()
     await tick()
     const switching = updater.setChannel('dev')
@@ -88,7 +106,10 @@ describe('updater channel switching', () => {
     expect(mocks.updater.checkForUpdates).toHaveBeenCalledOnce()
     finish()
     await priorCheck
-    mocks.updater.checkForUpdates.mockResolvedValue({ downloadPromise: Promise.resolve(), cancellationToken: { cancel: vi.fn() } })
+    mocks.updater.checkForUpdates.mockResolvedValue({
+      downloadPromise: Promise.resolve(),
+      cancellationToken: { cancel: vi.fn() },
+    })
     await switching
     expect(mocks.updater.channel).toBe('dev')
     expect(mocks.updater.checkForUpdates).toHaveBeenCalledTimes(2)
@@ -101,9 +122,16 @@ describe('updater channel switching', () => {
     await tick()
     mocks.updater.emit('update-available', { version: '1.1.0' })
     mocks.updater.emit('update-downloaded')
-    mocks.updater.checkForUpdates.mockResolvedValue({ downloadPromise: Promise.resolve(), cancellationToken: { cancel: vi.fn() } })
+    mocks.updater.checkForUpdates.mockResolvedValue({
+      downloadPromise: Promise.resolve(),
+      cancellationToken: { cancel: vi.fn() },
+    })
     await updater.setChannel('dev')
-    expect(updater.status()).toMatchObject({ channel: 'dev', state: 'idle' })
+    expect(updater.status()).toMatchObject({
+      channel: 'dev',
+      state: 'checking',
+      availableVersion: null,
+    })
     expect(updater.installOnQuit()).toBe(false)
     expect(mocks.updater.quitAndInstall).not.toHaveBeenCalled()
     expect(mocks.updater.autoInstallOnAppQuit).toBe(false)
@@ -116,7 +144,10 @@ describe('updater channel switching', () => {
     mocks.update.mockRejectedValueOnce(new Error('disk full'))
     await expect(updater.setChannel('dev')).rejects.toThrow('disk full')
     expect(updater.status().channel).toBe('stable')
-    mocks.updater.checkForUpdates.mockResolvedValue({ downloadPromise: Promise.resolve(), cancellationToken: { cancel: vi.fn() } })
+    mocks.updater.checkForUpdates.mockResolvedValue({
+      downloadPromise: Promise.resolve(),
+      cancellationToken: { cancel: vi.fn() },
+    })
     await updater.check()
     expect(mocks.updater.checkForUpdates).toHaveBeenCalledOnce()
     updater.dispose()
@@ -127,7 +158,11 @@ describe('updater channel switching', () => {
     await tick()
     mocks.updater.emit('update-available', { version: '1.1.0' })
     let finish!: () => void
-    mocks.updater.downloadUpdate.mockReturnValue(new Promise<void>((resolve) => { finish = resolve }))
+    mocks.updater.downloadUpdate.mockReturnValue(
+      new Promise<void>((resolve) => {
+        finish = resolve
+      }),
+    )
     const downloading = updater.download()
     await tick()
     const switching = updater.setChannel('dev')
@@ -135,7 +170,10 @@ describe('updater channel switching', () => {
     expect(mocks.updater.checkForUpdates).not.toHaveBeenCalled()
     finish()
     await downloading
-    mocks.updater.checkForUpdates.mockResolvedValue({ downloadPromise: Promise.resolve(), cancellationToken: { cancel: vi.fn() } })
+    mocks.updater.checkForUpdates.mockResolvedValue({
+      downloadPromise: Promise.resolve(),
+      cancellationToken: { cancel: vi.fn() },
+    })
     await switching
     expect(updater.status().channel).toBe('dev')
     expect(updater.installOnQuit()).toBe(false)

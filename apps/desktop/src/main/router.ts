@@ -1607,8 +1607,9 @@ export function createRouter(deps: RouterDeps) {
         if (channel !== 'stable' && channel !== 'dev') throw new TRPCError({ code: 'BAD_REQUEST' })
         return { channel }
       })
-      .mutation(async ({ input }): Promise<UpdateStatus> =>
-        (await deps.updates?.setChannel(input.channel)) ?? unsupported(),
+      .mutation(
+        async ({ input }): Promise<UpdateStatus> =>
+          (await deps.updates?.setChannel(input.channel)) ?? unsupported(),
       ),
     setEnabled: t.procedure
       .input(fields({ enabled: 'boolean' }))

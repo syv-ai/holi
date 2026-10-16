@@ -12,7 +12,14 @@ import { join } from 'node:path'
 import { app, powerMonitor } from 'electron'
 import { autoUpdater, type ProgressInfo, type UpdateInfo } from 'electron-updater'
 import { jsonFileStore } from '../json-file-store'
-import { initialStatus, reduce, shouldCheck, type UpdateChannel, type UpdateEvent, type UpdateStatus } from './state'
+import {
+  initialStatus,
+  reduce,
+  shouldCheck,
+  type UpdateChannel,
+  type UpdateEvent,
+  type UpdateStatus,
+} from './state'
 
 const CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000
 const FIRST_CHECK_DELAY_MS = 10 * 1000
@@ -42,7 +49,7 @@ export function createUpdater(deps: {
     const value = raw as { enabled?: unknown; channel?: unknown } | null
     return {
       enabled: value?.enabled !== false,
-      channel: value?.channel === 'dev' ? 'dev' as const : 'stable' as const,
+      channel: value?.channel === 'dev' ? ('dev' as const) : ('stable' as const),
     }
   })
   let status = initialStatus({
@@ -60,7 +67,9 @@ export function createUpdater(deps: {
   let installChannel: UpdateChannel | null = null
   let initialized = false
   let resolveInitialized!: () => void
-  const initialization = new Promise<void>((resolve) => { resolveInitialized = resolve })
+  const initialization = new Promise<void>((resolve) => {
+    resolveInitialized = resolve
+  })
 
   const apply = (event: UpdateEvent): void => {
     if (switching || !initialized) return
@@ -78,8 +87,8 @@ export function createUpdater(deps: {
       try {
         const result = await autoUpdater.checkForUpdates()
         if (!result) return
-        cancellationToken = result.cancellationToken
-        if (runGeneration !== generation) cancellationToken.cancel()
+        cancellationToken = result.cancellationToken ?? null
+        if (runGeneration !== generation) cancellationToken?.cancel()
         // checkForUpdates resolves before electron-updater's auto-download.
         // Drain the download before a channel switch starts its new check.
         await result.downloadPromise
@@ -127,23 +136,26 @@ export function createUpdater(deps: {
     powerMonitor.on('resume', background)
   }
 
-  void prefs.read().then(({ enabled, channel }) => {
-    status = { ...status, enabled, channel }
-    // A cached candidate can survive app restarts, and electron-updater exposes
-    // no public API to inspect or discard its channel. Do not auto-install it
-    // until this process downloads a candidate from the selected feed.
-    autoUpdater.autoInstallOnAppQuit = false
-    autoUpdater.channel = channel === 'dev' ? 'dev' : 'latest'
-    autoUpdater.allowPrerelease = channel === 'dev'
-    autoUpdater.allowDowngrade = true
-    initialized = true
-    resolveInitialized()
-    deps.send(status)
-  }, (err: unknown) => {
-    initialized = true
-    resolveInitialized()
-    status = { ...status, lastError: err instanceof Error ? err.message : String(err) }
-  })
+  void prefs.read().then(
+    ({ enabled, channel }) => {
+      status = { ...status, enabled, channel }
+      // A cached candidate can survive app restarts, and electron-updater exposes
+      // no public API to inspect or discard its channel. Do not auto-install it
+      // until this process downloads a candidate from the selected feed.
+      autoUpdater.autoInstallOnAppQuit = false
+      autoUpdater.channel = channel === 'dev' ? 'dev' : 'latest'
+      autoUpdater.allowPrerelease = channel === 'dev'
+      autoUpdater.allowDowngrade = true
+      initialized = true
+      resolveInitialized()
+      deps.send(status)
+    },
+    (err: unknown) => {
+      initialized = true
+      resolveInitialized()
+      status = { ...status, lastError: err instanceof Error ? err.message : String(err) }
+    },
+  )
 
   return {
     status: () => status,
@@ -164,7 +176,8 @@ export function createUpdater(deps: {
       return status
     },
     installOnQuit() {
-      if (!status.supported || status.state !== 'ready' || installChannel !== status.channel) return false
+      if (!status.supported || status.state !== 'ready' || installChannel !== status.channel)
+        return false
       autoUpdater.quitAndInstall()
       return true
     },
