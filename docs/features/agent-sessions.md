@@ -92,13 +92,39 @@ every chat archived the stack remains as the "New session" bubble.
 
 **The chat.** A session is shown as a chat, not as its terminal (`chat/ChatView`). What
 was said and done is read from Claude Code's transcript,
-`<configDir>/projects/<cwd>/<sessionId>.jsonl`, by `agent.transcript` (`main/claude/transcript.ts`):
-from a byte offset, whole lines only, at most the last 768 KB when first opened, about once a
-second while a turn runs and every 2.5 s otherwise. A person's message is a bubble, Claude's text
-is rendered markdown (`marked`, sanitised with DOMPurify, links opened in the browser), and each
-tool call is one row with its result folded in, opening to its input and output. Subagent
-conversations, injected reminders and slash commands are left out. A `/clear` is a new
-conversation id, and the chat starts over. **Writing goes through the session's terminal**, which
+`<configDir>/projects/<cwd>/<sessionId>.jsonl`, by `agent.transcript` (`main/claude/transcript/`):
+from a byte offset, whole lines only, at most the last 768 KB when first opened (`agent.transcriptEarlier`
+reads the part before, on request), about once a second while a turn runs and every 2.5 s otherwise.
+A person's message is a bubble (one typed while the agent was busy is marked queued), Claude's text
+is rendered markdown (`marked`, sanitised with DOMPurify, links opened in the browser, a copy button
+on each code block), its visible reasoning is a collapsed "Thought", and each tool call is one row
+with its result folded in, drawn by what the tool is (below). Slash commands, `!` commands, the
+person's interrupts, compactions (a divider, the summary behind it), turn durations, API errors,
+refusals and background-task reports are rows of their own; injected reminders and bookkeeping are
+not shown. A sub-agent's conversation (its own file, `<sessionId>/subagents/agent-<id>.jsonl`) is read
+when its card is opened (`agent.subagent`), never merged into the timeline. A `/clear` is a new
+conversation id, and the chat starts over. The list shows the last 150 rows, "Show earlier"
+reveals more and reads further back, and it follows the end only while the person is at it.
+
+**The chat never drops what it cannot place.** The transcript is not a documented interface, so one
+module (`transcript/classify.ts`, with its tables in `known.ts`) knows its shapes and turns each
+line into Holi's own entries (`transcript/entries.ts`); everything after it depends on those. Every
+line is drawn, hidden for a named reason, or kept as an `unknown` entry that shows its signature and
+raw JSON; a line of a type the reader has never seen is hidden but counted, and the chat says how many
+parts it did not recognise, with a button that copies their signatures (never their content). A tool
+is drawn through a registry by name (`rows/tool-registry.ts`: Bash, Read, Edit/Write as a diff, search, web,
+sub-agents, task lists, answered questions, plans, MCP, and a generic card for every other name,
+which also catches a renderer that returns nothing or throws); every row sits in an error boundary,
+so a row that fails to draw is one line with its raw JSON, never a blank chat. Results are joined to
+calls by id, in any order, since Claude Code writes one line per block and interleaves parallel calls;
+file order is the order, never timestamps. **Keeping up** is a check, not a promise:
+`scripts/chat-drift.ts` (`pnpm --filter @holi/desktop run chat:drift`) replays a machine's real
+transcripts through the reader and lists every shape it has no rule for, with the Claude Code versions
+seen against `VERIFIED_CLAUDE_VERSIONS`; the scrubbed fixtures in `agent/test/fixtures/transcripts/`
+(structure kept, content gone; `chat:fixtures` regenerates them) are replayed by a test that fails on
+any unknown shape and on any private-looking string.
+
+**Writing goes through the session's terminal**, which
 Holi opens when it is first needed and does not show: `agent.say` pastes the message and then
 presses Enter (`terminals.paste(id, text, true)`), and an ask lands in the composer as a draft
 (`chatDraftsAtom`) rather than in the terminal's box. While a turn runs the composer's button
@@ -113,8 +139,8 @@ more Enter to confirm when there were several questions. A question not yet in t
 waited for, and where the transcript does not have it (Claude Code can hold a question in the
 job's `state.json`, `block.questions`, alone) main reads it from there (`agent.question`,
 `claude/blocked.ts`). A question that stays unreadable for a few seconds offers the terminal, and
-every question and waiting card has Cancel, which sends Escape. Only a dialog the chat cannot read at all (a plan, another dialog) offers the
-terminal, and the chat's corner button shows it in the chat's place. The composer,
+every question and waiting card has Cancel, which sends Escape. Only a dialog the chat cannot read at all (approving a plan, which the chat draws but does not
+answer, or another dialog) offers the terminal, and the chat's corner button shows it in the chat's place. The composer,
 the tool rows and the card follow Fisher UI's agent components (jakobfisker.dk/en/ui), built on
 Holi's primitives.
 
@@ -257,7 +283,7 @@ showing it busy, crosses it off), so a session resumed from the list is never re
 - A `Notification` or `PermissionRequest` hook for needs-you: late or partial.
 - Reading context use from transcripts or the PTY: Claude Code's files and screen are not an
   interface; its status-line JSON is. The chat does read the transcript, for the messages nothing
-  else carries, and takes a format change as an empty chat with the terminal one button away.
+  else carries, and takes a format change as one unrecognised row (see the drift check) with the terminal one button away.
 - A three-pane merge editor: resolves positionally, wrong for prose.
 
 ## Code
@@ -277,7 +303,10 @@ showing it busy, crosses it off), so a session resumed from the list is never re
 - `apps/desktop/src/plugins/agent-ui/renderer/AgentOverview.tsx`, `BubbleStack.tsx`, `AgentFace.tsx`, `overview.css`: the agents page and its stack of bubbles
 - `apps/desktop/src/plugins/agent-ui/renderer/chat/`: the chat (`ChatView`, `Composer`, `ChatMarkdown`);
   `apps/desktop/src/plugins/agent/renderer/chat/use-transcript.ts`: reading it;
-  `apps/desktop/src/plugins/agent/main/claude/transcript.ts`: the transcript reader
+  `apps/desktop/src/plugins/agent/main/claude/transcript/`: the transcript reader (`classify.ts`, `known.ts`,
+  `sanitise.ts`, `entries.ts`); `agent/renderer/chat/fold.ts`: results joined to calls;
+  `agent-ui/renderer/chat/rows/`: the rows and `tools/`, the tool registry; `apps/desktop/scripts/chat-drift.ts`,
+  `scrub-transcript.ts`: the drift check and the fixture scrubber
 - `apps/desktop/src/plugins/agent-ui/renderer/`: `BubbleStack.tsx`/`AgentBubbles.tsx`, `QuickChat.tsx`, terminal (`terminal.css`), turn chip and review; `index.tsx`: the
   interface's renderer side
 - `apps/desktop/src/plugins/agent/renderer/`: `index.tsx`: the agent's renderer side; `service.ts`: the agent service
