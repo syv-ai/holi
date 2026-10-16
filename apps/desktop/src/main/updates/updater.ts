@@ -1,14 +1,4 @@
-/**
- * Updating Holi itself (docs/features/updates.md): electron-updater against
- * the GitHub releases of `syv-ai/holi`, which CI publishes signed and
- * notarized. An update downloads on its own and installs on quit; the renderer
- * observes one status, pushed whole on `updates:status`, and the one thing a
- * person does is restart once it is ready.
- *
- * Unpackaged development runs are not supported: there is no app to replace.
- * Packaged development builds use Electron's app.getVersion(), which reports
- * the packed package.json version.
- */
+/** GitHub release updates for packaged Holi (docs/features/updates.md). */
 import { join } from 'node:path'
 import { app, powerMonitor } from 'electron'
 import { autoUpdater, type ProgressInfo, type UpdateInfo } from 'electron-updater'
@@ -68,10 +58,6 @@ export function createUpdater(deps: {
   let cancellationToken: { cancel(): void } | null = null
   let installChannel: UpdateChannel | null = null
   let initialized = false
-  let resolveInitialized!: () => void
-  const initialization = new Promise<void>((resolve) => {
-    resolveInitialized = resolve
-  })
 
   const apply = (event: UpdateEvent): void => {
     if (switching || !initialized) return
@@ -110,9 +96,8 @@ export function createUpdater(deps: {
 
   if (status.supported) {
     autoUpdater.autoDownload = true
-    // With this true, MacUpdater stages a downloaded ZIP natively, and there
-    // is no public way to unstage it on a channel switch. Install explicitly
-    // on quit only after validating the selected candidate.
+    // Squirrel cannot unstage a ZIP after a feed switch. Install only the
+    // selected candidate, after Holi's quit teardown.
     autoUpdater.autoInstallOnAppQuit = false
     autoUpdater.logger = {
       info: (m: unknown) => console.log('[updates]', m),
@@ -138,18 +123,16 @@ export function createUpdater(deps: {
     powerMonitor.on('resume', background)
   }
 
-  void prefs.read().then(
+  const initialization = prefs.read().then(
     ({ enabled, channel }) => {
       status = { ...status, enabled, channel }
       autoUpdater.channel = channel === 'dev' ? 'dev' : 'latest'
       autoUpdater.allowPrerelease = channel === 'dev'
       initialized = true
-      resolveInitialized()
       deps.send(status)
     },
     (err: unknown) => {
       initialized = true
-      resolveInitialized()
       status = { ...status, lastError: err instanceof Error ? err.message : String(err) }
     },
   )
