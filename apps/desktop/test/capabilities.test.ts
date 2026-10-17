@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, readFile as readText, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile as readText, writeFile, symlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { emptyVaultSnapshot } from '@holi/shared'
@@ -336,6 +336,31 @@ describe('docs CLI writes', () => {
         revision,
       }),
     ).rejects.toThrow(/Stale revision/)
+  })
+
+  it('creates nested notes, and refuses a symlink target and case aliases', async () => {
+    const nested = await runCapability('docs.create', 'cli', ctx({}, null), {
+      path: 'nested/deep/note.md',
+      body: 'nested',
+    })
+    expect(nested.value).toMatchObject({ path: 'nested/deep/note.md' })
+    await writeFile(join(root, 'outside.md'), 'outside')
+    await symlink(join(root, 'outside.md'), join(root, 'linked.md'))
+    written.push('linked.md')
+    await expect(
+      runCapability('docs.update', 'cli', ctx({}, null), {
+        path: 'linked.md',
+        revision: createHash('sha256').update('outside').digest('hex'),
+        body: 'bad',
+      }),
+    ).rejects.toThrow()
+    await put('.holi/memory/x.md', 'secret')
+    await expect(
+      runCapability('docs.create', 'cli', ctx({}, null), {
+        path: '.HOLI/memory/new.md',
+        body: 'bad',
+      }),
+    ).rejects.toThrow()
   })
 
   it('keeps writes CLI-only and refuses task and non-Markdown paths', async () => {
