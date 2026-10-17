@@ -304,12 +304,14 @@ describe('vault.history', () => {
 })
 
 describe('docs CLI writes', () => {
+  const cliCtx = () => ctx({ syncState: () => ({ kind: 'up-to-date' }) }, null)
+
   beforeEach(() => {
     execFileSync('git', ['init', '-q', root])
   })
 
   it('creates and updates ordinary notes with exact-byte revisions', async () => {
-    const created = await runCapability('docs.create', 'cli', ctx({}, null), {
+    const created = await runCapability('docs.create', 'cli', cliCtx(), {
       path: 'with space.md',
       body: '# First\n',
     })
@@ -323,11 +325,11 @@ describe('docs CLI writes', () => {
       reason: 'vault-not-open',
     })
     await put('with space.md', '# First\n')
-    const inspected = await runCapability('docs.inspect', 'cli', ctx({}, null), {
+    const inspected = await runCapability('docs.inspect', 'cli', cliCtx(), {
       path: 'with space.md',
     })
     const revision = (inspected.value as { revision: string }).revision
-    const updated = await runCapability('docs.update', 'cli', ctx({}, null), {
+    const updated = await runCapability('docs.update', 'cli', cliCtx(), {
       path: 'with space.md',
       revision,
       body: '# Second\n',
@@ -335,7 +337,7 @@ describe('docs CLI writes', () => {
     expect(updated.writes).toBe(true)
     expect(await readText(join(root, 'with space.md'), 'utf8')).toBe('# Second\n')
     await expect(
-      runCapability('docs.delete', 'cli', ctx({}, null), {
+      runCapability('docs.delete', 'cli', cliCtx(), {
         path: 'with space.md',
         revision,
       }),
@@ -343,7 +345,7 @@ describe('docs CLI writes', () => {
   })
 
   it('creates nested notes, and refuses a symlink target and case aliases', async () => {
-    const nested = await runCapability('docs.create', 'cli', ctx({}, null), {
+    const nested = await runCapability('docs.create', 'cli', cliCtx(), {
       path: 'nested/deep/note.md',
       body: 'nested',
     })
@@ -352,7 +354,7 @@ describe('docs CLI writes', () => {
     await symlink(join(root, 'outside.md'), join(root, 'linked.md'))
     written.push('linked.md')
     await expect(
-      runCapability('docs.update', 'cli', ctx({}, null), {
+      runCapability('docs.update', 'cli', cliCtx(), {
         path: 'linked.md',
         revision: createHash('sha256').update('outside').digest('hex'),
         body: 'bad',
@@ -360,7 +362,7 @@ describe('docs CLI writes', () => {
     ).rejects.toThrow()
     await put('.holi/memory/x.md', 'secret')
     await expect(
-      runCapability('docs.create', 'cli', ctx({}, null), {
+      runCapability('docs.create', 'cli', cliCtx(), {
         path: '.HOLI/memory/new.md',
         body: 'bad',
       }),
@@ -370,7 +372,7 @@ describe('docs CLI writes', () => {
   it('offers retry settlement only to the CLI and requires an explicit absent marker', async () => {
     await put('retry.md', 'retry body')
     const revision = createHash('sha256').update('retry body').digest('hex')
-    const result = await runCapability('docs.settle', 'cli', ctx({}, null), {
+    const result = await runCapability('docs.settle', 'cli', cliCtx(), {
       path: 'retry.md',
       revision,
     })
@@ -379,8 +381,15 @@ describe('docs CLI writes', () => {
       runCapability('docs.settle', 'app', ctx({}), { path: 'retry.md', revision }),
     ).rejects.toThrow(/no such method/)
     await expect(
-      runCapability('docs.settle', 'cli', ctx({}, null), { path: 'gone.md', absent: true }),
+      runCapability('docs.settle', 'cli', cliCtx(), { path: 'gone.md' }),
     ).rejects.toThrow()
+    expect(
+      (await runCapability('docs.settle', 'cli', cliCtx(), { path: 'gone.md', absent: 'true' }))
+        .value,
+    ).toMatchObject({ revision: null, pushed: false })
+    await expect(
+      runCapability('docs.settle', 'cli', ctx({}, null), { path: 'gone.md', absent: 'true' }),
+    ).rejects.toThrow(/vault-not-open/)
   })
 
   it('keeps writes CLI-only and refuses task and non-Markdown paths', async () => {
@@ -392,7 +401,7 @@ describe('docs CLI writes', () => {
     ).rejects.toThrow(/no such method/)
     for (const path of ['task.rent.md', 'note.txt', 'A.app/note.md', '.holi/memory/note.md']) {
       await expect(
-        runCapability('docs.create', 'cli', ctx({}, null), {
+        runCapability('docs.create', 'cli', cliCtx(), {
           path,
           body: 'x',
         }),

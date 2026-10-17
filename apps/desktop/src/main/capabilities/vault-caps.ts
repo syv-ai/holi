@@ -112,6 +112,12 @@ async function readFromStart(handle: Awaited<ReturnType<typeof open>>): Promise<
   return bytes.subarray(0, offset)
 }
 
+function pushedReceipt(result: unknown): boolean {
+  return (
+    typeof result === 'object' && result !== null && 'pushed' in result && result.pushed === true
+  )
+}
+
 function receipt(
   path: string,
   revision: string | null,
@@ -166,6 +172,7 @@ export const vaultCapabilities = (deps: VaultCapabilitiesDeps) => ({
     doors: ['cli'],
     cli: { args: ['path'], summary: 'create an ordinary Markdown note from stdin', stdin: 'body' },
     writes: true,
+    cliSucceeded: pushedReceipt,
     params: (raw) => writeParams(raw, false, true),
     run: async (ctx, { path, body }) => {
       requireOpen(ctx)
@@ -190,10 +197,8 @@ export const vaultCapabilities = (deps: VaultCapabilitiesDeps) => ({
         if (err.code === 'EEXIST') throw new CapabilityError('CONFLICT', path)
         throw err
       })
-      const settlement = await ctx.core.settle(rel, revision(bytes))
-      const actual = await readFile(abs)
-      const rev = revision(actual)
-      return receipt(rel, rev, settlement)
+      const expected = revision(bytes)
+      return receipt(rel, expected, await ctx.core.settle(rel, expected))
     },
   }),
 
@@ -205,6 +210,7 @@ export const vaultCapabilities = (deps: VaultCapabilitiesDeps) => ({
       stdin: 'body',
     },
     writes: true,
+    cliSucceeded: pushedReceipt,
     params: (raw) => writeParams(raw, true, true),
     run: async (ctx, { path, body, revision: expected }) => {
       requireOpen(ctx)
@@ -247,9 +253,8 @@ export const vaultCapabilities = (deps: VaultCapabilitiesDeps) => ({
       } finally {
         await handle.close()
       }
-      const actual = await readFile(abs)
-      const rev = revision(actual)
-      return receipt(rel, rev, await ctx.core.settle(rel, rev))
+      const expectedRevision = revision(bytes)
+      return receipt(rel, expectedRevision, await ctx.core.settle(rel, expectedRevision))
     },
   }),
 
@@ -257,6 +262,7 @@ export const vaultCapabilities = (deps: VaultCapabilitiesDeps) => ({
     doors: ['cli'],
     cli: { args: ['path', 'revision'], summary: 'delete a note when its SHA256 revision matches' },
     writes: true,
+    cliSucceeded: pushedReceipt,
     params: (raw) => writeParams(raw, true, false),
     run: async (ctx, { path, revision: expected }) => {
       requireOpen(ctx)
@@ -288,8 +294,7 @@ export const vaultCapabilities = (deps: VaultCapabilitiesDeps) => ({
       summary: 'retry commit and push for the current note revision',
     },
     writes: true,
-    cliSucceeded: (result) =>
-      typeof result === 'object' && result !== null && 'pushed' in result && result.pushed === true,
+    cliSucceeded: pushedReceipt,
     params: (raw) => {
       const p = paramsObject(raw)
       const path = stringParam(p, 'path')
