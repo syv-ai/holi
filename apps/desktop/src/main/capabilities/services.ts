@@ -15,6 +15,7 @@ import { tryGit } from '../git'
 import { openRepo, type GitRepo } from '../git'
 import type { MembersCache } from '../github/members-cache'
 import type { SyncState } from '../vault/active-vault'
+import type { ScanClaim } from '../vault/vault-store'
 import { CapabilityError } from './error'
 
 export interface CoreServices {
@@ -25,6 +26,8 @@ export interface CoreServices {
   /** The repo's collaborators, cached for a few minutes. Rejects on a GitHub error. */
   members(): Promise<Collaborator[]>
   repo(): GitRepo
+  /** Whether a running plugin claims this path, including before the file exists. */
+  claimed(path: string): Promise<boolean>
   /** Commit/push a CLI note mutation only when this clone is the open vault. */
   settle(
     path: string,
@@ -50,6 +53,7 @@ export interface CoreServicesDeps {
   } | null
   members: MembersCache
   reports: UiReports
+  claims(root: string): Promise<readonly ScanClaim[]>
 }
 
 /**
@@ -89,6 +93,7 @@ export function createCoreServices(
     recents: () => deps.reports.get(remote).recents,
     members: () => deps.members.get(remote),
     repo: () => openRepo(root),
+    claimed: async (path) => (await deps.claims(root)).some((claim) => claim.match(path)),
     settle: async (path, expectedRevision) => {
       const active = deps.active()
       if (active?.remote !== remote || active.root !== root) {
@@ -191,6 +196,7 @@ export function noCoreServices(): CoreServices {
     recents: () => [],
     members: async () => none(),
     repo: none,
+    claimed: async () => false,
     settle: async () => ({
       commitSha: null,
       pushed: false,

@@ -436,7 +436,13 @@ describe('docs CLI writes', () => {
         body: 'x',
       }),
     ).rejects.toThrow(/no such method/)
-    for (const path of ['task.rent.md', 'note.txt', 'A.app/note.md', '.holi/memory/note.md']) {
+    for (const path of [
+      'task.rent.md',
+      'note.txt',
+      'A.app/note.md',
+      '.holi/memory/note.md',
+      '.holi/settings/note.md',
+    ]) {
       await expect(
         runCapability('docs.create', 'cli', cliCtx(), {
           path,
@@ -444,6 +450,14 @@ describe('docs CLI writes', () => {
         }),
       ).rejects.toThrow()
     }
+    await expect(
+      runCapability(
+        'docs.create',
+        'cli',
+        ctx({ syncState: () => ({ kind: 'up-to-date' }), claimed: async () => true }, null),
+        { path: 'claimed.md', body: 'x' },
+      ),
+    ).rejects.toThrow()
   })
 })
 

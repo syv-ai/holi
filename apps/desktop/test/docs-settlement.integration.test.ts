@@ -62,6 +62,7 @@ describe('CLI note settlement with a real local origin', () => {
       active: () => active,
       reports: reports as never,
       members: { get: async () => [] } as never,
+      claims: async () => [],
     })
     const registry = createCapabilityRegistry()
     registry.register(

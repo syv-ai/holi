@@ -80,7 +80,8 @@ function writePath(path: string): string {
     !rel.endsWith('.md') ||
     appBundleOf(rel) !== null ||
     isTaskFilePath(rel) ||
-    isLocalOnlyPath(rel)
+    isLocalOnlyPath(rel) ||
+    rel.split('/').some((part) => part.startsWith('.'))
   ) {
     throw new CapabilityError('FORBIDDEN', path)
   }
@@ -179,6 +180,7 @@ export const vaultCapabilities = (deps: VaultCapabilitiesDeps) => ({
       const rel = writePath(path)
       const snapshot = await ctx.snapshot()
       if (
+        (await ctx.core.claimed(rel)) ||
         Object.values(snapshot.claimed).some(
           (set) =>
             set.items.some((item) => item.path === rel) ||
