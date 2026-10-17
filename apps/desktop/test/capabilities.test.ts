@@ -97,6 +97,43 @@ describe('the capability host', () => {
     expect(await host(() => false).names('o/r', 'ui')).toEqual(['core.ping'])
   })
 
+  it('serializes CLI note mutations and their settlement', async () => {
+    let calls = 0
+    let release!: () => void
+    const first = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const caps = createCapabilityRegistry()
+    caps.register(['docs'], {
+      'docs.update': cap({
+        doors: ['cli'],
+        cli: { args: [], summary: 'test' },
+        params: () => ({}),
+        run: async () => {
+          calls++
+          if (calls === 1) await first
+          return calls
+        },
+      }),
+    })
+    const h = createCapabilityHost({
+      registry: caps,
+      rootFor: async () => '/vault',
+      active: () => null,
+      core: noCoreServices,
+      pluginEnabled: async () => true,
+      claims: async () => [],
+    })
+    const call = () => h.dispatch({ door: 'cli', remote: 'o/r', name: 'docs.update', params: {} })
+    const one = call()
+    const two = call()
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(calls).toBe(1)
+    release()
+    expect((await one).value).toBe(1)
+    expect((await two).value).toBe(2)
+  })
+
   it('opens the app door once', () => {
     const h = host(() => true)
     h.openAppDoor({ admit: async () => {} })

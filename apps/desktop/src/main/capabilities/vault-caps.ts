@@ -221,7 +221,8 @@ export const vaultCapabilities = (deps: VaultCapabilitiesDeps) => ({
       const bytes = Buffer.from(body!, 'utf8')
       if (bytes.length > MAX_NOTE_BYTES)
         throw new CapabilityError('BAD_REQUEST', 'Note is too large')
-      const handle = await open(abs, constants.O_RDWR | constants.O_NOFOLLOW)
+      const handle = await open(abs, constants.O_RDONLY | constants.O_NOFOLLOW)
+      const temporary = `${abs}.holi-${process.pid}-${Date.now()}.local.tmp`
       try {
         const initial = await readFromStart(handle)
         if (revision(initial) !== expected) throw new CapabilityError('CONFLICT', 'Stale revision')
@@ -229,7 +230,6 @@ export const vaultCapabilities = (deps: VaultCapabilitiesDeps) => ({
         if (revision(current) !== expected || (await exactPath(ctx.root, rel)) !== abs) {
           throw new CapabilityError('CONFLICT', 'Stale revision')
         }
-        const temporary = `${abs}.holi-${process.pid}-${Date.now()}.tmp`
         const tempHandle = await open(
           temporary,
           constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY,
@@ -245,13 +245,13 @@ export const vaultCapabilities = (deps: VaultCapabilitiesDeps) => ({
           (await exactPath(ctx.root, rel)) !== abs ||
           revision(await readFromStart(handle)) !== expected
         ) {
-          await unlink(temporary)
           throw new CapabilityError('CONFLICT', 'Stale revision')
         }
         const { rename } = await import('node:fs/promises')
         await rename(temporary, abs)
       } finally {
         await handle.close()
+        await unlink(temporary).catch(() => {})
       }
       const expectedRevision = revision(bytes)
       return receipt(rel, expectedRevision, await ctx.core.settle(rel, expectedRevision))
