@@ -24,8 +24,8 @@ import { readVaultSettings } from '../vault/settings'
 import { isSearchable, searchVault, type SearchHit } from '../vault/search'
 import { CapabilityError, unavailable } from './error'
 import { readableOrNull, readablePath, readNote } from './fences'
-import { limitParam, noParams, paramsObject, pathParams, stringParam } from './params'
-import { cap } from './registry'
+import { flagParam, limitParam, noParams, paramsObject, pathParams, stringParam } from './params'
+import { cap, type CapabilityContext } from './registry'
 import { renderNote } from './render-note'
 
 /** Recents an app may see: things it can name or open. The renderer leaves
@@ -69,6 +69,10 @@ export interface VaultCapabilitiesDeps {
 }
 
 const revision = (bytes: Buffer): string => createHash('sha256').update(bytes).digest('hex')
+
+function requireOpen(ctx: CapabilityContext): void {
+  if (ctx.core.syncState() === null) throw new CapabilityError('UNAVAILABLE', 'vault-not-open')
+}
 
 function writePath(path: string): string {
   const rel = readablePath(path)
@@ -164,6 +168,7 @@ export const vaultCapabilities = (deps: VaultCapabilitiesDeps) => ({
     writes: true,
     params: (raw) => writeParams(raw, false, true),
     run: async (ctx, { path, body }) => {
+      requireOpen(ctx)
       const rel = writePath(path)
       const snapshot = await ctx.snapshot()
       if (
@@ -202,6 +207,7 @@ export const vaultCapabilities = (deps: VaultCapabilitiesDeps) => ({
     writes: true,
     params: (raw) => writeParams(raw, true, true),
     run: async (ctx, { path, body, revision: expected }) => {
+      requireOpen(ctx)
       const rel = writePath(path)
       const snapshot = await ctx.snapshot()
       if (!snapshot.docs.some((d) => d.path === rel)) throw new CapabilityError('FORBIDDEN', path)
@@ -253,6 +259,7 @@ export const vaultCapabilities = (deps: VaultCapabilitiesDeps) => ({
     writes: true,
     params: (raw) => writeParams(raw, true, false),
     run: async (ctx, { path, revision: expected }) => {
+      requireOpen(ctx)
       const rel = writePath(path)
       const snapshot = await ctx.snapshot()
       if (!snapshot.docs.some((d) => d.path === rel)) throw new CapabilityError('FORBIDDEN', path)
@@ -275,22 +282,26 @@ export const vaultCapabilities = (deps: VaultCapabilitiesDeps) => ({
 
   'docs.settle': cap({
     doors: ['cli'],
-    cli: { args: ['path'], summary: 'retry commit and push for the current note revision' },
+    cli: {
+      args: ['path'],
+      flags: ['absent'],
+      summary: 'retry commit and push for the current note revision',
+    },
     writes: true,
+    cliSucceeded: (result) =>
+      typeof result === 'object' && result !== null && 'pushed' in result && result.pushed === true,
     params: (raw) => {
       const p = paramsObject(raw)
       const path = stringParam(p, 'path')
-      const absent = p.absent === true
+      const absent = flagParam(p, 'absent')
       const expected = absent ? null : stringParam(p, 'revision')
       if (expected !== null && !/^[a-f0-9]{64}$/.test(expected)) {
         throw new CapabilityError('BAD_REQUEST', 'revision must be a SHA256 hex digest')
       }
-      if (p.absent !== undefined && typeof p.absent !== 'boolean') {
-        throw new CapabilityError('BAD_REQUEST', 'absent must be boolean')
-      }
       return { path, expected }
     },
     run: async (ctx, { path, expected }) => {
+      requireOpen(ctx)
       const rel = writePath(path)
       const abs = await writableAbs(ctx, rel)
       if (expected === null) {
