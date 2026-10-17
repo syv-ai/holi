@@ -120,7 +120,7 @@ export function createBridgeServer(deps: BridgeServerDeps = {}): BridgeServer {
       const succeeded = commandSucceeded(cli.commands(), request.name, result.value)
       return {
         status: succeeded ? 200 : 422,
-        body: request.json ? JSON.stringify(result.value, null, 2) : result.text,
+        body: request.json || !succeeded ? JSON.stringify(result.value, null, 2) : result.text,
       }
     } catch (error) {
       return { status: 422, body: `${request.label}: ${message(error)}` }
