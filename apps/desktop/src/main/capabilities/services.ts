@@ -149,12 +149,20 @@ export function createCoreServices(
         }
         await active.pushNow()
         const head = await tryGit(root, ['rev-parse', 'HEAD'])
-        const upstream = await tryGit(root, ['rev-parse', '--verify', '@{upstream}'])
+        // Holi pushes to origin's default branch, or the current branch when
+        // the remote is empty. A first push has no @{upstream} to inspect.
+        const status = await openRepo(root).status()
+        const target = status.defaultBranch ?? status.branch
+        const origin = await tryGit(root, [
+          'rev-parse',
+          '--verify',
+          `refs/remotes/origin/${target}`,
+        ])
         if (
           head.ok &&
-          upstream.ok &&
+          origin.ok &&
           head.stdout.trim() === commitSha &&
-          upstream.stdout.trim() === commitSha
+          origin.stdout.trim() === commitSha
         ) {
           return {
             commitSha,

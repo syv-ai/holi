@@ -1,14 +1,21 @@
 import { createHash } from 'node:crypto'
-import { readFile } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import { createCoreServices } from '../src/main/capabilities/services'
+import { openRepo } from '../src/main/git'
 import { VAULT_NAMESPACES, vaultCapabilities } from '../src/main/capabilities/vault-caps'
 import type { SyncState } from '@holi/shared'
 import { createCapabilityHost } from '../src/main/capabilities/dispatch'
 import { createCapabilityRegistry } from '../src/main/capabilities/registry'
 import { scanVault } from '../src/main/vault/vault-store'
-import { cleanupFixtures, makeClone, makeRemote, plainGit } from './helpers/git-fixtures'
+import {
+  cleanupFixtures,
+  makeClone,
+  makeEmptyRemote,
+  makeRemote,
+  plainGit,
+} from './helpers/git-fixtures'
 
 const REMOTE = 'owner/repo'
 const digest = (text: string) => createHash('sha256').update(text).digest('hex')
@@ -131,5 +138,37 @@ describe('CLI note settlement with a real local origin', () => {
       pushed: false,
       reason: 'vault-not-open',
     })
+  })
+
+  it('verifies the first push to an empty remote without an upstream', async () => {
+    const origin = await makeEmptyRemote()
+    const root = await makeClone(origin, 'docs-first-push')
+    await writeFile(join(root, 'seed.md'), 'seed')
+    await plainGit(root, ['add', 'seed.md'])
+    await plainGit(root, ['commit', '-m', 'seed'])
+    await plainGit(root, ['branch', '--unset-upstream'])
+    await expect(plainGit(root, ['rev-parse', '@{upstream}'])).rejects.toThrow()
+    await writeFile(join(root, 'first.md'), 'first')
+    const repo = openRepo(root)
+    const core = createCoreServices({
+      active: () => ({
+        remote: REMOTE,
+        root,
+        syncState: () => ({ kind: 'up-to-date' as const }),
+        heldBack: () => [],
+        commitNow: () => repo.commitAll('Add first note', ['first.md']),
+        pushNow: async () => {
+          await repo.push()
+        },
+      }),
+      reports: { get: () => ({ focusedPath: null, openPaths: [], recents: [] }) } as never,
+      members: { get: async () => [] } as never,
+      claims: async () => [],
+    })
+
+    const result = await core(REMOTE, root).settle('first.md', digest('first'))
+    expect(result).toMatchObject({ pushed: true, phase: 'complete' })
+    expect(await plainGit(origin, ['rev-parse', 'refs/heads/main'])).toBe(result.commitSha)
+    await expect(plainGit(root, ['rev-parse', '@{upstream}'])).rejects.toThrow()
   })
 })
