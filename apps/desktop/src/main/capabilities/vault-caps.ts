@@ -6,10 +6,13 @@
  * No `electron` import: this loads under plain Node in the tests.
  */
 import { createHash } from 'node:crypto'
-import { lstat, readFile, writeFile, unlink } from 'node:fs/promises'
+import { constants } from 'node:fs'
+import { lstat, readFile, writeFile, unlink, mkdir, open, readdir } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 import {
   appBundleOf,
   isTaskFilePath,
+  isLocalOnlyPath,
   syncLabel,
   type RecentEntry,
   type SyncState,
@@ -69,7 +72,12 @@ const revision = (bytes: Buffer): string => createHash('sha256').update(bytes).d
 
 function writePath(path: string): string {
   const rel = readablePath(path)
-  if (!rel.endsWith('.md') || appBundleOf(rel) !== null || isTaskFilePath(rel)) {
+  if (
+    !rel.endsWith('.md') ||
+    appBundleOf(rel) !== null ||
+    isTaskFilePath(rel) ||
+    isLocalOnlyPath(rel)
+  ) {
     throw new CapabilityError('FORBIDDEN', path)
   }
   return rel
@@ -86,9 +94,29 @@ function writeParams(raw: unknown, withRevision: boolean, withBody: boolean) {
   return { path, body, revision: expected }
 }
 
+const MAX_NOTE_BYTES = 1024 * 1024
+
+async function readFromStart(handle: Awaited<ReturnType<typeof open>>): Promise<Buffer> {
+  const stat = await handle.stat()
+  const bytes = Buffer.alloc(stat.size)
+  const { bytesRead } = await handle.read(bytes, 0, bytes.length, 0)
+  return bytes.subarray(0, bytesRead)
+}
+
 async function writableAbs(ctx: Parameters<typeof readNote>[0], rel: string): Promise<string> {
   const abs = await exactPath(ctx.root, rel)
   if (abs === null) throw new CapabilityError('FORBIDDEN', rel)
+  // On case-insensitive filesystems, reject alternate spellings of any existing
+  // component instead of letting a caller address a protected path by alias.
+  let parent = ctx.root
+  for (const part of rel.split('/')) {
+    const entries = await readdir(parent).catch(() => [])
+    const alias = entries.find(
+      (entry) => entry.toLowerCase() === part.toLowerCase() && entry !== part,
+    )
+    if (alias !== undefined) throw new CapabilityError('FORBIDDEN', rel)
+    parent = join(parent, part)
+  }
   const ignored = await tryGit(ctx.root, ['check-ignore', '-q', '--', rel]).catch(() => null)
   if (ignored === null || (ignored.code !== 0 && ignored.code !== 1)) {
     throw new CapabilityError('UNAVAILABLE', 'Could not verify git ignore status')
@@ -124,15 +152,22 @@ export const vaultCapabilities = (deps: VaultCapabilitiesDeps) => ({
     params: (raw) => writeParams(raw, false, true),
     run: async (ctx, { path, body }): Promise<{ path: string; revision: string }> => {
       const rel = writePath(path)
-      const abs = await writableAbs(ctx, rel)
+      const snapshot = await ctx.snapshot()
       if (
-        await lstat(abs).then(
-          () => true,
-          () => false,
+        Object.values(snapshot.claimed).some(
+          (set) =>
+            set.items.some((item) => item.path === rel) ||
+            set.broken.some((item) => item.path === rel),
         )
       )
-        throw new CapabilityError('CONFLICT', path)
+        throw new CapabilityError('FORBIDDEN', path)
+      const abs = await writableAbs(ctx, rel)
       const bytes = Buffer.from(body!, 'utf8')
+      if (bytes.length > MAX_NOTE_BYTES)
+        throw new CapabilityError('BAD_REQUEST', 'Note is too large')
+      await mkdir(dirname(abs), { recursive: true })
+      // Revalidate after directory creation; never create through a swapped symlink.
+      if ((await exactPath(ctx.root, rel)) !== abs) throw new CapabilityError('FORBIDDEN', path)
       await writeFile(abs, bytes, { flag: 'wx' }).catch((err: NodeJS.ErrnoException) => {
         if (err.code === 'EEXIST') throw new CapabilityError('CONFLICT', path)
         throw err
@@ -158,11 +193,23 @@ export const vaultCapabilities = (deps: VaultCapabilitiesDeps) => ({
       const snapshot = await ctx.snapshot()
       if (!snapshot.docs.some((d) => d.path === rel)) throw new CapabilityError('FORBIDDEN', path)
       const abs = await writableAbs(ctx, rel)
-      const existing = await readFile(abs).catch(() => null)
-      if (existing === null) throw new CapabilityError('NOT_FOUND', path)
-      if (revision(existing) !== expected) throw new CapabilityError('CONFLICT', 'Stale revision')
       const bytes = Buffer.from(body!, 'utf8')
-      await writeFile(abs, bytes)
+      if (bytes.length > MAX_NOTE_BYTES)
+        throw new CapabilityError('BAD_REQUEST', 'Note is too large')
+      const handle = await open(abs, constants.O_RDWR | constants.O_NOFOLLOW)
+      try {
+        const initial = await readFromStart(handle)
+        if (revision(initial) !== expected) throw new CapabilityError('CONFLICT', 'Stale revision')
+        const current = await readFromStart(handle)
+        if (revision(current) !== expected || (await exactPath(ctx.root, rel)) !== abs) {
+          throw new CapabilityError('CONFLICT', 'Stale revision')
+        }
+        await handle.truncate(0)
+        await handle.write(bytes, 0, bytes.length, 0)
+        await handle.sync()
+      } finally {
+        await handle.close()
+      }
       return { path: rel, revision: revision(bytes) }
     },
   }),
@@ -177,9 +224,17 @@ export const vaultCapabilities = (deps: VaultCapabilitiesDeps) => ({
       const snapshot = await ctx.snapshot()
       if (!snapshot.docs.some((d) => d.path === rel)) throw new CapabilityError('FORBIDDEN', path)
       const abs = await writableAbs(ctx, rel)
-      const existing = await readFile(abs).catch(() => null)
-      if (existing === null) throw new CapabilityError('NOT_FOUND', path)
-      if (revision(existing) !== expected) throw new CapabilityError('CONFLICT', 'Stale revision')
+      const handle = await open(abs, constants.O_RDONLY | constants.O_NOFOLLOW)
+      try {
+        const existing = await readFromStart(handle)
+        if (revision(existing) !== expected) throw new CapabilityError('CONFLICT', 'Stale revision')
+        const current = await readFromStart(handle)
+        if (revision(current) !== expected || (await exactPath(ctx.root, rel)) !== abs) {
+          throw new CapabilityError('CONFLICT', 'Stale revision')
+        }
+      } finally {
+        await handle.close()
+      }
       await unlink(abs)
       return { path: rel }
     },
@@ -197,8 +252,13 @@ export const vaultCapabilities = (deps: VaultCapabilitiesDeps) => ({
         throw new CapabilityError('FORBIDDEN', path)
       }
       const abs = await writableAbs(ctx, rel)
-      const bytes = await readFile(abs).catch(() => null)
-      if (bytes === null) throw new CapabilityError('NOT_FOUND', path)
+      const handle = await open(abs, constants.O_RDONLY | constants.O_NOFOLLOW)
+      let bytes: Buffer
+      try {
+        bytes = await readFromStart(handle)
+      } finally {
+        await handle.close()
+      }
       return { body: bytes.toString('utf8'), revision: revision(bytes) }
     },
   }),
