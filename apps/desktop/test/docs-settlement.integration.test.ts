@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import { createCoreServices } from '../src/main/capabilities/services'
-import { vaultCapabilities } from '../src/main/capabilities/vault-caps'
+import { VAULT_NAMESPACES, vaultCapabilities } from '../src/main/capabilities/vault-caps'
 import type { SyncState } from '@holi/shared'
 import { createCapabilityHost } from '../src/main/capabilities/dispatch'
 import { createCapabilityRegistry } from '../src/main/capabilities/registry'
@@ -65,7 +65,7 @@ describe('CLI note settlement with a real local origin', () => {
     })
     const registry = createCapabilityRegistry()
     registry.register(
-      ['docs'],
+      VAULT_NAMESPACES,
       vaultCapabilities({
         updateSkills: async () => ({ summary: '', conflicts: null }),
         pendingSkills: async () => [],
