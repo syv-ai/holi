@@ -5,7 +5,18 @@
  *
  * No `electron` import: this loads under plain Node in the tests.
  */
-import { syncLabel, type RecentEntry, type SyncState, type VaultSnapshot } from '@holi/shared'
+import { createHash } from 'node:crypto'
+import { lstat, readFile, writeFile, unlink } from 'node:fs/promises'
+import {
+  appBundleOf,
+  isTaskFilePath,
+  syncLabel,
+  type RecentEntry,
+  type SyncState,
+  type VaultSnapshot,
+} from '@holi/shared'
+import { exactPath } from '@holi/shared/path-safety-node'
+import { tryGit } from '../git'
 import { readVaultSettings } from '../vault/settings'
 import { isSearchable, searchVault, type SearchHit } from '../vault/search'
 import { CapabilityError, unavailable } from './error'
@@ -54,6 +65,38 @@ export interface VaultCapabilitiesDeps {
   pendingSkills(remote: string): Promise<string[]>
 }
 
+const revision = (bytes: Buffer): string => createHash('sha256').update(bytes).digest('hex')
+
+function writePath(path: string): string {
+  const rel = readablePath(path)
+  if (!rel.endsWith('.md') || appBundleOf(rel) !== null || isTaskFilePath(rel)) {
+    throw new CapabilityError('FORBIDDEN', path)
+  }
+  return rel
+}
+
+function writeParams(raw: unknown, withRevision: boolean, withBody: boolean) {
+  const p = paramsObject(raw)
+  const path = stringParam(p, 'path')
+  const body = withBody ? stringParam(p, 'body') : undefined
+  const expected = withRevision ? stringParam(p, 'revision') : undefined
+  if (expected !== undefined && !/^[a-f0-9]{64}$/.test(expected)) {
+    throw new CapabilityError('BAD_REQUEST', 'revision must be a SHA256 hex digest')
+  }
+  return { path, body, revision: expected }
+}
+
+async function writableAbs(ctx: Parameters<typeof readNote>[0], rel: string): Promise<string> {
+  const abs = await exactPath(ctx.root, rel)
+  if (abs === null) throw new CapabilityError('FORBIDDEN', rel)
+  const ignored = await tryGit(ctx.root, ['check-ignore', '-q', '--', rel]).catch(() => null)
+  if (ignored === null || (ignored.code !== 0 && ignored.code !== 1)) {
+    throw new CapabilityError('UNAVAILABLE', 'Could not verify git ignore status')
+  }
+  if (ignored.code === 0) throw new CapabilityError('FORBIDDEN', rel)
+  return abs
+}
+
 export const vaultCapabilities = (deps: VaultCapabilitiesDeps) => ({
   'docs.list': cap({
     doors: ['app', 'cli'],
@@ -74,6 +117,74 @@ export const vaultCapabilities = (deps: VaultCapabilitiesDeps) => ({
     text: (body) => body,
   }),
 
+  'docs.create': cap({
+    doors: ['cli'],
+    cli: { args: ['path'], summary: 'create an ordinary Markdown note from stdin', stdin: 'body' },
+    writes: true,
+    params: (raw) => writeParams(raw, false, true),
+    run: async (ctx, { path, body }): Promise<{ path: string; revision: string }> => {
+      const rel = writePath(path)
+      const abs = await writableAbs(ctx, rel)
+      if (
+        await lstat(abs).then(
+          () => true,
+          () => false,
+        )
+      )
+        throw new CapabilityError('CONFLICT', path)
+      const bytes = Buffer.from(body!, 'utf8')
+      await writeFile(abs, bytes, { flag: 'wx' }).catch((err: NodeJS.ErrnoException) => {
+        if (err.code === 'EEXIST') throw new CapabilityError('CONFLICT', path)
+        throw err
+      })
+      return { path: rel, revision: revision(bytes) }
+    },
+  }),
+
+  'docs.update': cap({
+    doors: ['cli'],
+    cli: {
+      args: ['path', 'revision'],
+      summary: 'replace a note when its SHA256 revision matches',
+      stdin: 'body',
+    },
+    writes: true,
+    params: (raw) => writeParams(raw, true, true),
+    run: async (
+      ctx,
+      { path, body, revision: expected },
+    ): Promise<{ path: string; revision: string }> => {
+      const rel = writePath(path)
+      const snapshot = await ctx.snapshot()
+      if (!snapshot.docs.some((d) => d.path === rel)) throw new CapabilityError('FORBIDDEN', path)
+      const abs = await writableAbs(ctx, rel)
+      const existing = await readFile(abs).catch(() => null)
+      if (existing === null) throw new CapabilityError('NOT_FOUND', path)
+      if (revision(existing) !== expected) throw new CapabilityError('CONFLICT', 'Stale revision')
+      const bytes = Buffer.from(body!, 'utf8')
+      await writeFile(abs, bytes)
+      return { path: rel, revision: revision(bytes) }
+    },
+  }),
+
+  'docs.delete': cap({
+    doors: ['cli'],
+    cli: { args: ['path', 'revision'], summary: 'delete a note when its SHA256 revision matches' },
+    writes: true,
+    params: (raw) => writeParams(raw, true, false),
+    run: async (ctx, { path, revision: expected }): Promise<{ path: string }> => {
+      const rel = writePath(path)
+      const snapshot = await ctx.snapshot()
+      if (!snapshot.docs.some((d) => d.path === rel)) throw new CapabilityError('FORBIDDEN', path)
+      const abs = await writableAbs(ctx, rel)
+      const existing = await readFile(abs).catch(() => null)
+      if (existing === null) throw new CapabilityError('NOT_FOUND', path)
+      if (revision(existing) !== expected) throw new CapabilityError('CONFLICT', 'Stale revision')
+      await unlink(abs)
+      return { path: rel }
+    },
+  }),
+
   'docs.inspect': cap({
     // A CLI-only read paired with a revision from the exact bytes it returns.
     // Apps retain their existing docs.read string contract.
@@ -81,9 +192,14 @@ export const vaultCapabilities = (deps: VaultCapabilitiesDeps) => ({
     cli: { args: ['path'], summary: "a note's body and SHA256 revision from the same read" },
     params: pathParams,
     run: async (ctx, { path }): Promise<{ body: string; revision: string }> => {
-      const body = await readNote(ctx, path)
-      const { createHash } = await import('node:crypto')
-      return { body, revision: createHash('sha256').update(body, 'utf8').digest('hex') }
+      const rel = writePath(path)
+      if (!(await ctx.snapshot()).docs.some((d) => d.path === rel)) {
+        throw new CapabilityError('FORBIDDEN', path)
+      }
+      const abs = await writableAbs(ctx, rel)
+      const bytes = await readFile(abs).catch(() => null)
+      if (bytes === null) throw new CapabilityError('NOT_FOUND', path)
+      return { body: bytes.toString('utf8'), revision: revision(bytes) }
     },
   }),
 

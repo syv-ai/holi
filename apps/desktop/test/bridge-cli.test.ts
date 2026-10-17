@@ -307,12 +307,12 @@ describe('a command that reads stdin', () => {
     await writeVaultEnv(dir, bridgeLines(server.port()!, server.tokenForVault('owner/repo')))
   })
 
-  it('runs once, with stdin, when the body is not an argument', async () => {
-    const res = await run(bin, ['x', 'echo', 'ada'], env, 'hello\nthere\n')
+  it('runs once, with stdin, preserving paths with spaces', async () => {
+    const res = await run(bin, ['x', 'echo', 'My notes/a b.md'], env, 'hello\nthere\n')
     expect(res).toMatchObject({ code: 0, stdout: 'hello\nthere\n\n' })
     // The first leg ran nothing: a write never runs without its body.
     expect(ran).toHaveBeenCalledTimes(1)
-    expect(ran).toHaveBeenCalledWith({ to: 'ada', body: 'hello\nthere\n' })
+    expect(ran).toHaveBeenCalledWith({ to: 'My notes/a b.md', body: 'hello\nthere\n' })
   })
 
   it('never reads stdin when the body is given', async () => {
