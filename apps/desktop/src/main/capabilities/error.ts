@@ -7,7 +7,13 @@
 export class CapabilityError extends Error {
   constructor(
     readonly code:
-      'BAD_REQUEST' | 'FORBIDDEN' | 'NOT_FOUND' | 'UNAVAILABLE' | 'UNAUTHORIZED' | 'RATE_LIMITED',
+      | 'BAD_REQUEST'
+      | 'FORBIDDEN'
+      | 'NOT_FOUND'
+      | 'CONFLICT'
+      | 'UNAVAILABLE'
+      | 'UNAUTHORIZED'
+      | 'RATE_LIMITED',
     message: string,
   ) {
     super(message)
@@ -24,7 +30,7 @@ export function trpcCodeOf(
   | 'PRECONDITION_FAILED'
   | 'UNAUTHORIZED'
   | 'TOO_MANY_REQUESTS' {
-  if (code === 'UNAVAILABLE') return 'PRECONDITION_FAILED'
+  if (code === 'UNAVAILABLE' || code === 'CONFLICT') return 'PRECONDITION_FAILED'
   if (code === 'RATE_LIMITED') return 'TOO_MANY_REQUESTS'
   return code
 }

@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { mkdir, mkdtemp, readFile as readText, writeFile } from 'node:fs/promises'
+import { execFileSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
+import { mkdir, mkdtemp, readFile as readText, writeFile, symlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { emptyVaultSnapshot } from '@holi/shared'
@@ -95,6 +97,43 @@ describe('the capability host', () => {
     expect(await host(() => false).names('o/r', 'ui')).toEqual(['core.ping'])
   })
 
+  it('serializes CLI note mutations and their settlement', async () => {
+    let calls = 0
+    let release!: () => void
+    const first = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const caps = createCapabilityRegistry()
+    caps.register(['docs'], {
+      'docs.update': cap({
+        doors: ['cli'],
+        cli: { args: [], summary: 'test' },
+        params: () => ({}),
+        run: async () => {
+          calls++
+          if (calls === 1) await first
+          return calls
+        },
+      }),
+    })
+    const h = createCapabilityHost({
+      registry: caps,
+      rootFor: async () => '/vault',
+      active: () => null,
+      core: noCoreServices,
+      pluginEnabled: async () => true,
+      claims: async () => [],
+    })
+    const call = () => h.dispatch({ door: 'cli', remote: 'o/r', name: 'docs.update', params: {} })
+    const one = call()
+    const two = call()
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(calls).toBe(1)
+    release()
+    expect((await one).value).toBe(1)
+    expect((await two).value).toBe(2)
+  })
+
   it('opens the app door once', () => {
     const h = host(() => true)
     h.openAppDoor({ admit: async () => {} })
@@ -163,6 +202,7 @@ function ctx(core: Partial<CoreServices>, bundle: string | null = 'A.app'): Capa
     snapshot: async () => ({
       ...emptyVaultSnapshot(),
       files: written.map((path) => ({ path, updatedAt: '' })),
+      docs: written.filter((path) => path.endsWith('.md')).map((path) => ({ path, updatedAt: '' })),
     }),
     core: { ...noCoreServices(), ...core },
   }
@@ -297,6 +337,127 @@ describe('vault.history', () => {
         runCapability('vault.history', 'app', ctx({ repo }), { path: '.claude/settings.json' }),
       ),
     ).toMatchObject({ code: 'FORBIDDEN' })
+  })
+})
+
+describe('docs CLI writes', () => {
+  const cliCtx = () => ctx({ syncState: () => ({ kind: 'up-to-date' }) }, null)
+
+  beforeEach(() => {
+    execFileSync('git', ['init', '-q', root])
+  })
+
+  it('creates and updates ordinary notes with exact-byte revisions', async () => {
+    const created = await runCapability('docs.create', 'cli', cliCtx(), {
+      path: 'with space.md',
+      body: '# First\n',
+    })
+    expect(created.writes).toBe(true)
+    expect(created.value).toMatchObject({
+      path: 'with space.md',
+      revision: createHash('sha256').update('# First\n').digest('hex'),
+      commitSha: null,
+      pushed: false,
+      phase: 'commit',
+      reason: 'vault-not-open',
+    })
+    await put('with space.md', '# First\n')
+    const inspected = await runCapability('docs.inspect', 'cli', cliCtx(), {
+      path: 'with space.md',
+    })
+    const revision = (inspected.value as { revision: string }).revision
+    const updated = await runCapability('docs.update', 'cli', cliCtx(), {
+      path: 'with space.md',
+      revision,
+      body: '# Second\n',
+    })
+    expect(updated.writes).toBe(true)
+    expect(await readText(join(root, 'with space.md'), 'utf8')).toBe('# Second\n')
+    await expect(
+      runCapability('docs.delete', 'cli', cliCtx(), {
+        path: 'with space.md',
+        revision,
+      }),
+    ).rejects.toThrow(/Stale revision/)
+  })
+
+  it('creates nested notes, and refuses a symlink target and case aliases', async () => {
+    const nested = await runCapability('docs.create', 'cli', cliCtx(), {
+      path: 'nested/deep/note.md',
+      body: 'nested',
+    })
+    expect(nested.value).toMatchObject({ path: 'nested/deep/note.md' })
+    await writeFile(join(root, 'outside.md'), 'outside')
+    await symlink(join(root, 'outside.md'), join(root, 'linked.md'))
+    written.push('linked.md')
+    await expect(
+      runCapability('docs.update', 'cli', cliCtx(), {
+        path: 'linked.md',
+        revision: createHash('sha256').update('outside').digest('hex'),
+        body: 'bad',
+      }),
+    ).rejects.toThrow()
+    await put('.holi/memory/x.md', 'secret')
+    await expect(
+      runCapability('docs.create', 'cli', cliCtx(), {
+        path: '.HOLI/memory/new.md',
+        body: 'bad',
+      }),
+    ).rejects.toThrow()
+  })
+
+  it('offers retry settlement only to the CLI and requires an explicit absent marker', async () => {
+    await put('retry.md', 'retry body')
+    const revision = createHash('sha256').update('retry body').digest('hex')
+    const result = await runCapability('docs.settle', 'cli', cliCtx(), {
+      path: 'retry.md',
+      revision,
+    })
+    expect(result.value).toMatchObject({ pushed: false, phase: 'commit', reason: 'vault-not-open' })
+    await expect(
+      runCapability('docs.settle', 'app', ctx({}), { path: 'retry.md', revision }),
+    ).rejects.toThrow(/no such method/)
+    await expect(
+      runCapability('docs.settle', 'cli', cliCtx(), { path: 'gone.md' }),
+    ).rejects.toThrow()
+    expect(
+      (await runCapability('docs.settle', 'cli', cliCtx(), { path: 'gone.md', absent: 'true' }))
+        .value,
+    ).toMatchObject({ revision: null, pushed: false })
+    await expect(
+      runCapability('docs.settle', 'cli', ctx({}, null), { path: 'gone.md', absent: 'true' }),
+    ).rejects.toThrow(/vault-not-open/)
+  })
+
+  it('keeps writes CLI-only and refuses task and non-Markdown paths', async () => {
+    await expect(
+      runCapability('docs.create', 'app', ctx({}), {
+        path: 'note.md',
+        body: 'x',
+      }),
+    ).rejects.toThrow(/no such method/)
+    for (const path of [
+      'task.rent.md',
+      'note.txt',
+      'A.app/note.md',
+      '.holi/memory/note.md',
+      '.holi/settings/note.md',
+    ]) {
+      await expect(
+        runCapability('docs.create', 'cli', cliCtx(), {
+          path,
+          body: 'x',
+        }),
+      ).rejects.toThrow()
+    }
+    await expect(
+      runCapability(
+        'docs.create',
+        'cli',
+        ctx({ syncState: () => ({ kind: 'up-to-date' }), claimed: async () => true }, null),
+        { path: 'claimed.md', body: 'x' },
+      ),
+    ).rejects.toThrow()
   })
 })
 

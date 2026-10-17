@@ -83,6 +83,11 @@ const TEXT = 'text/plain; charset=utf-8'
 
 const message = (error: unknown): string => (error instanceof Error ? error.message : String(error))
 
+function commandSucceeded(commands: readonly CliCommand[], name: string, value: unknown): boolean {
+  const predicate = commands.find((command) => command.name === name)?.succeeded
+  return predicate?.(value) ?? true
+}
+
 export function createBridgeServer(deps: BridgeServerDeps = {}): BridgeServer {
   const log = deps.log ?? ((msg: string) => console.log(`[bridge] ${msg}`))
   /** token → the vault it speaks for. */
@@ -112,9 +117,10 @@ export function createBridgeServer(deps: BridgeServerDeps = {}): BridgeServer {
         name: request.name,
         params: request.params,
       })
+      const succeeded = commandSucceeded(cli.commands(), request.name, result.value)
       return {
-        status: 200,
-        body: request.json ? JSON.stringify(result.value, null, 2) : result.text,
+        status: succeeded ? 200 : 422,
+        body: request.json || !succeeded ? JSON.stringify(result.value, null, 2) : result.text,
       }
     } catch (error) {
       return { status: 422, body: `${request.label}: ${message(error)}` }
