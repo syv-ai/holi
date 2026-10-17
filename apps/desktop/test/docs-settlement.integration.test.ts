@@ -3,7 +3,7 @@ import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import { createCoreServices } from '../src/main/capabilities/services'
-import { openRepo } from '../src/main/git'
+import { openRepo, type GitRepo } from '../src/main/git'
 import { VAULT_NAMESPACES, vaultCapabilities } from '../src/main/capabilities/vault-caps'
 import type { SyncState } from '@holi/shared'
 import { createCapabilityHost } from '../src/main/capabilities/dispatch'
@@ -11,6 +11,7 @@ import { createCapabilityRegistry } from '../src/main/capabilities/registry'
 import { scanVault } from '../src/main/vault/vault-store'
 import {
   cleanupFixtures,
+  commitFile,
   makeClone,
   makeEmptyRemote,
   makeRemote,
@@ -20,6 +21,26 @@ import {
 const REMOTE = 'owner/repo'
 const digest = (text: string) => createHash('sha256').update(text).digest('hex')
 afterAll(cleanupFixtures)
+
+function realRepoServices(root: string, push?: (repo: GitRepo) => Promise<void>) {
+  const repo = openRepo(root)
+  return createCoreServices({
+    active: () => ({
+      remote: REMOTE,
+      root,
+      syncState: () => ({ kind: 'up-to-date' as const }),
+      heldBack: () => [],
+      commitNow: () => repo.commitAll('CLI note mutation', ['integration.md']),
+      pushNow: async () => {
+        if (push) await push(repo)
+        else await repo.push()
+      },
+    }),
+    reports: { get: () => ({ focusedPath: null, openPaths: [], recents: [] }) } as never,
+    members: { get: async () => [] } as never,
+    claims: async () => [],
+  })(REMOTE, root)
+}
 
 describe('CLI note settlement with a real local origin', () => {
   it('settles create, update and delete only after the matching commit reaches upstream; pending changes retry', async () => {
@@ -156,6 +177,86 @@ describe('CLI note settlement with a real local origin', () => {
       pushed: false,
       reason: 'vault-not-open',
     })
+  })
+
+  it('settles Git-normalized CRLF notes with a retriable worktree revision', async () => {
+    const origin = await makeRemote()
+    const root = await makeClone(origin, 'docs-normalized')
+    await plainGit(root, ['config', 'core.autocrlf', 'true'])
+    const body = 'first\r\nsecond\r\n'
+    await writeFile(join(root, 'integration.md'), body)
+    let offline = true
+    const core = realRepoServices(root, async (repo) => {
+      if (offline) throw new Error('offline')
+      await repo.push()
+    })
+
+    const pending = await core.settle('integration.md', digest(body))
+    expect(pending).toMatchObject({ pushed: false, phase: 'push', revision: digest(body) })
+    expect(await plainGit(root, ['show', 'HEAD:integration.md'])).toBe('first\nsecond')
+    expect(await readFile(join(root, 'integration.md'), 'utf8')).toBe(body)
+    offline = false
+    const delivered = await core.settle('integration.md', pending.revision!)
+    expect(delivered).toMatchObject({ pushed: true, phase: 'complete', revision: digest(body) })
+    expect(await plainGit(origin, ['rev-parse', 'refs/heads/main'])).toBe(delivered.commitSha)
+  })
+
+  it('does not mistake a hook rewrite for Git normalization', async () => {
+    const origin = await makeRemote()
+    const root = await makeClone(origin, 'docs-hook-rewrite')
+    await writeFile(join(root, 'integration.md'), 'requested')
+    const repo = openRepo(root)
+    const core = createCoreServices({
+      active: () => ({
+        remote: REMOTE,
+        root,
+        syncState: () => ({ kind: 'up-to-date' as const }),
+        heldBack: () => [],
+        commitNow: async () => {
+          await writeFile(join(root, 'integration.md'), 'rewritten')
+          return repo.commitAll('Hook rewrite', ['integration.md'])
+        },
+        pushNow: async () => {
+          throw new Error('must not push a rewritten note')
+        },
+      }),
+      reports: { get: () => ({ focusedPath: null, openPaths: [], recents: [] }) } as never,
+      members: { get: async () => [] } as never,
+      claims: async () => [],
+    })(REMOTE, root)
+
+    expect(await core.settle('integration.md', digest('requested'))).toMatchObject({
+      pushed: false,
+      phase: 'commit',
+      reason: 'post-hook-mismatch',
+    })
+    expect(await plainGit(origin, ['cat-file', '-e', 'main:integration.md']).catch(() => '')).toBe(
+      '',
+    )
+  })
+
+  it('reports the delivered merge commit after a non-fast-forward recovery', async () => {
+    const origin = await makeRemote()
+    const root = await makeClone(origin, 'docs-recovery')
+    const teammate = await makeClone(origin, 'docs-teammate')
+    await writeFile(join(root, 'integration.md'), 'my note')
+    await commitFile(teammate, 'teammate.md', 'their note')
+    await plainGit(teammate, ['push', 'origin', 'HEAD:main'])
+    let beforeMerge: string | null = null
+    const core = realRepoServices(root, async (repo) => {
+      beforeMerge = await repo.head()
+      const rejected = await repo.push()
+      expect(rejected.kind).toBe('rejected')
+      expect((await repo.pull()).kind).toBe('merged')
+      expect((await repo.push()).kind).toBe('pushed')
+    })
+
+    const result = await core.settle('integration.md', digest('my note'))
+    expect(result).toMatchObject({ pushed: true, phase: 'complete', revision: digest('my note') })
+    expect(result.commitSha).not.toBe(beforeMerge)
+    expect(await plainGit(origin, ['rev-parse', 'refs/heads/main'])).toBe(result.commitSha)
+    expect(await plainGit(origin, ['show', 'main:integration.md'])).toBe('my note')
+    expect(await plainGit(origin, ['show', 'main:teammate.md'])).toBe('their note')
   })
 
   it('verifies the first push to an empty remote without an upstream', async () => {

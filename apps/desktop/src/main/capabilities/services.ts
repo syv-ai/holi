@@ -10,6 +10,8 @@
  * No `electron` import: the registry's tests hand in a fake instead.
  */
 import { createHash } from 'node:crypto'
+import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import type { Collaborator, RecentEntry } from '@holi/shared'
 import { tryGit } from '../git'
 import { openRepo, type GitRepo } from '../git'
@@ -128,14 +130,18 @@ export function createCoreServices(
         const committedRevision = current.ok
           ? createHash('sha256').update(current.stdout).digest('hex')
           : null
-        // Compare the requested revision to the worktree bytes as well: Git may
-        // clean-filter those bytes (for example CRLF to LF) in the commit.
+        const worktree =
+          expectedRevision === null ? null : await readFile(join(root, path)).catch(() => null)
+        const worktreeRevision =
+          worktree === null ? null : createHash('sha256').update(worktree).digest('hex')
+        // Git may clean-filter written bytes, but a hook must not change them.
         const cleanWorktree =
-          expectedRevision === null
-            ? null
-            : await tryGit(root, ['hash-object', '--path', path, path])
-        const committedObject =
-          expectedRevision === null ? null : await tryGit(root, ['rev-parse', `HEAD:${path}`])
+          worktreeRevision === expectedRevision && expectedRevision !== null
+            ? await tryGit(root, ['hash-object', '--path', path, path])
+            : null
+        const committedObject = cleanWorktree?.ok
+          ? await tryGit(root, ['rev-parse', `HEAD:${path}`])
+          : null
         const normalizationOnly =
           cleanWorktree?.ok &&
           committedObject?.ok &&
@@ -143,7 +149,8 @@ export function createCoreServices(
         if (
           expectedRevision === null
             ? current.ok
-            : committedRevision !== expectedRevision && !normalizationOnly
+            : (committedRevision !== expectedRevision || worktreeRevision !== expectedRevision) &&
+              !normalizationOnly
         ) {
           return {
             commitSha,
@@ -174,19 +181,32 @@ export function createCoreServices(
           '--verify',
           `refs/remotes/origin/${target}`,
         ])
+        const final =
+          expectedRevision === null
+            ? await tryGit(root, ['cat-file', '-e', `HEAD:${path}`])
+            : await tryGit(root, ['show', `HEAD:${path}`])
+        const finalRevision = final.ok
+          ? createHash('sha256').update(final.stdout).digest('hex')
+          : null
+        const finalWorktree = await readFile(join(root, path)).catch(() => null)
+        const finalWorktreeRevision =
+          finalWorktree === null ? null : createHash('sha256').update(finalWorktree).digest('hex')
         if (
           head.ok &&
           origin.ok &&
           origin.stdout.trim() === head.stdout.trim() &&
           (head.stdout.trim() === commitSha ||
-            (await tryGit(root, ['merge-base', '--is-ancestor', commitSha, head.stdout.trim()])).ok)
+            (await tryGit(root, ['merge-base', '--is-ancestor', commitSha, head.stdout.trim()]))
+              .ok) &&
+          finalRevision === committedRevision &&
+          finalWorktreeRevision === expectedRevision
         ) {
           return {
-            commitSha,
+            commitSha: head.stdout.trim(),
             pushed: true,
             phase: 'complete',
             reason: null,
-            revision: committedRevision,
+            revision: expectedRevision,
           }
         }
         return {
@@ -194,7 +214,7 @@ export function createCoreServices(
           pushed: false,
           phase: 'push',
           reason: 'not-verified-on-origin',
-          revision: committedRevision,
+          revision: expectedRevision,
         }
       } catch (error) {
         return {
@@ -202,6 +222,7 @@ export function createCoreServices(
           pushed: false,
           phase: commitSha === null ? 'commit' : 'push',
           reason: error instanceof Error ? error.message : 'commit-failed',
+          revision: expectedRevision,
         }
       }
     },
