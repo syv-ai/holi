@@ -92,9 +92,27 @@ describe('CLI note settlement with a real local origin', () => {
     const receipt = async (name: string, params: Record<string, unknown>) =>
       (await call(name, params)).value as { pushed: boolean; commitSha: string | null }
 
-    const created = await receipt('docs.create', { path: 'integration.md', body: 'first' })
-    expect(created.pushed).toBe(true)
-    expect(await plainGit(origin, ['rev-parse', 'refs/heads/main'])).toBe(created.commitSha)
+    const empty = await receipt('docs.create', { path: 'integration.md', body: '' })
+    expect(empty.pushed).toBe(true)
+    expect(await readFile(join(root, 'integration.md'), 'utf8')).toBe('')
+    const filled = await receipt('docs.update', {
+      path: 'integration.md',
+      revision: digest(''),
+      body: 'first',
+    })
+    expect(filled.pushed).toBe(true)
+    const cleared = await receipt('docs.update', {
+      path: 'integration.md',
+      revision: digest('first'),
+      body: '',
+    })
+    expect(cleared.pushed).toBe(true)
+    const restored = await receipt('docs.update', {
+      path: 'integration.md',
+      revision: digest(''),
+      body: 'first',
+    })
+    expect(restored.pushed).toBe(true)
     const current = digest('first')
     state = { kind: 'paused', reason: 'test pause' }
     const updated = await receipt('docs.update', {

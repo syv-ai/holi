@@ -91,7 +91,13 @@ function writePath(path: string): string {
 function writeParams(raw: unknown, withRevision: boolean, withBody: boolean) {
   const p = paramsObject(raw)
   const path = stringParam(p, 'path')
-  const body = withBody ? stringParam(p, 'body') : undefined
+  const body = withBody
+    ? typeof p.body === 'string'
+      ? p.body
+      : (() => {
+          throw new CapabilityError('BAD_REQUEST', 'body is required')
+        })()
+    : undefined
   const expected = withRevision ? stringParam(p, 'revision') : undefined
   if (expected !== undefined && !/^[a-f0-9]{64}$/.test(expected)) {
     throw new CapabilityError('BAD_REQUEST', 'revision must be a SHA256 hex digest')
