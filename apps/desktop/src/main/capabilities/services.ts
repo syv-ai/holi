@@ -34,6 +34,7 @@ export interface CoreServices {
     pushed: boolean
     phase: 'complete' | 'commit' | 'push'
     reason: string | null
+    revision?: string | null
   }>
 }
 
@@ -105,10 +106,11 @@ export function createCoreServices(
       if (active.heldBack().some((file) => file.path === path)) {
         return { commitSha: null, pushed: false, phase: 'commit', reason: 'oversized' }
       }
+      let commitSha: string | null = null
       try {
         const newCommitSha = await active.commitNow()
         const initialHead = await tryGit(root, ['rev-parse', 'HEAD'])
-        const commitSha = newCommitSha ?? (initialHead.ok ? initialHead.stdout.trim() : '')
+        commitSha = newCommitSha ?? (initialHead.ok ? initialHead.stdout.trim() : '')
         if (!commitSha) {
           return { commitSha: null, pushed: false, phase: 'commit', reason: 'no-commit' }
         }
@@ -122,7 +124,23 @@ export function createCoreServices(
           ? createHash('sha256').update(current.stdout).digest('hex')
           : null
         if (expectedRevision === null ? current.ok : committedRevision !== expectedRevision) {
-          return { commitSha, pushed: false, phase: 'commit', reason: 'post-hook-mismatch' }
+          return {
+            commitSha,
+            pushed: false,
+            phase: 'commit',
+            reason: 'post-hook-mismatch',
+            revision: committedRevision,
+          }
+        }
+        const stillActive = deps.active()
+        if (stillActive?.remote !== remote || stillActive.root !== root) {
+          return {
+            commitSha,
+            pushed: false,
+            phase: 'push',
+            reason: 'vault-not-open',
+            revision: committedRevision,
+          }
         }
         await active.pushNow()
         const head = await tryGit(root, ['rev-parse', 'HEAD'])
@@ -133,14 +151,26 @@ export function createCoreServices(
           head.stdout.trim() === commitSha &&
           upstream.stdout.trim() === commitSha
         ) {
-          return { commitSha, pushed: true, phase: 'complete', reason: null }
+          return {
+            commitSha,
+            pushed: true,
+            phase: 'complete',
+            reason: null,
+            revision: committedRevision,
+          }
         }
-        return { commitSha, pushed: false, phase: 'push', reason: 'not-verified-on-origin' }
+        return {
+          commitSha,
+          pushed: false,
+          phase: 'push',
+          reason: 'not-verified-on-origin',
+          revision: committedRevision,
+        }
       } catch (error) {
         return {
-          commitSha: null,
+          commitSha,
           pushed: false,
-          phase: 'commit',
+          phase: commitSha === null ? 'commit' : 'push',
           reason: error instanceof Error ? error.message : 'commit-failed',
         }
       }
