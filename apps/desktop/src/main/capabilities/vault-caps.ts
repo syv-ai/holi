@@ -74,6 +74,19 @@ export const vaultCapabilities = (deps: VaultCapabilitiesDeps) => ({
     text: (body) => body,
   }),
 
+  'docs.inspect': cap({
+    // A CLI-only read paired with a revision from the exact bytes it returns.
+    // Apps retain their existing docs.read string contract.
+    doors: ['cli'],
+    cli: { args: ['path'], summary: "a note's body and SHA256 revision from the same read" },
+    params: pathParams,
+    run: async (ctx, { path }): Promise<{ body: string; revision: string }> => {
+      const body = await readNote(ctx, path)
+      const { createHash } = await import('node:crypto')
+      return { body, revision: createHash('sha256').update(body, 'utf8').digest('hex') }
+    },
+  }),
+
   'docs.render': cap({
     doors: ['app', 'cli'],
     cli: { args: ['path'], summary: 'a note as the HTML a vault app shows' },
