@@ -128,7 +128,23 @@ export function createCoreServices(
         const committedRevision = current.ok
           ? createHash('sha256').update(current.stdout).digest('hex')
           : null
-        if (expectedRevision === null ? current.ok : committedRevision !== expectedRevision) {
+        // Compare the requested revision to the worktree bytes as well: Git may
+        // clean-filter those bytes (for example CRLF to LF) in the commit.
+        const cleanWorktree =
+          expectedRevision === null
+            ? null
+            : await tryGit(root, ['hash-object', '--path', path, path])
+        const committedObject =
+          expectedRevision === null ? null : await tryGit(root, ['rev-parse', `HEAD:${path}`])
+        const normalizationOnly =
+          cleanWorktree?.ok &&
+          committedObject?.ok &&
+          cleanWorktree.stdout.trim() === committedObject.stdout.trim()
+        if (
+          expectedRevision === null
+            ? current.ok
+            : committedRevision !== expectedRevision && !normalizationOnly
+        ) {
           return {
             commitSha,
             pushed: false,
@@ -161,8 +177,9 @@ export function createCoreServices(
         if (
           head.ok &&
           origin.ok &&
-          head.stdout.trim() === commitSha &&
-          origin.stdout.trim() === commitSha
+          origin.stdout.trim() === head.stdout.trim() &&
+          (head.stdout.trim() === commitSha ||
+            (await tryGit(root, ['merge-base', '--is-ancestor', commitSha, head.stdout.trim()])).ok)
         ) {
           return {
             commitSha,
