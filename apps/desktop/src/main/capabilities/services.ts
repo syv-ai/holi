@@ -9,7 +9,9 @@
  *
  * No `electron` import: the registry's tests hand in a fake instead.
  */
+import { createHash } from 'node:crypto'
 import type { Collaborator, RecentEntry } from '@holi/shared'
+import { tryGit } from '../git'
 import { openRepo, type GitRepo } from '../git'
 import type { MembersCache } from '../github/members-cache'
 import type { SyncState } from '../vault/active-vault'
@@ -23,11 +25,28 @@ export interface CoreServices {
   /** The repo's collaborators, cached for a few minutes. Rejects on a GitHub error. */
   members(): Promise<Collaborator[]>
   repo(): GitRepo
+  /** Commit/push a CLI note mutation only when this clone is the open vault. */
+  settle(
+    path: string,
+    revision: string | null,
+  ): Promise<{
+    commitSha: string | null
+    pushed: boolean
+    phase: 'complete' | 'commit' | 'push'
+    reason: string | null
+  }>
 }
 
 export interface CoreServicesDeps {
   /** The open vault's remote and sync state, or null with none open. */
-  active(): { remote: string; syncState(): SyncState } | null
+  active(): {
+    remote: string
+    root: string
+    syncState(): SyncState
+    commitNow(): Promise<string | null>
+    pushNow(): Promise<void>
+    heldBack(): { path: string }[]
+  } | null
   members: MembersCache
   reports: UiReports
 }
@@ -69,6 +88,63 @@ export function createCoreServices(
     recents: () => deps.reports.get(remote).recents,
     members: () => deps.members.get(remote),
     repo: () => openRepo(root),
+    settle: async (path, expectedRevision) => {
+      const active = deps.active()
+      if (active?.remote !== remote || active.root !== root) {
+        return { commitSha: null, pushed: false, phase: 'commit', reason: 'vault-not-open' }
+      }
+      const state = active.syncState()
+      if (
+        state.kind === 'conflict' ||
+        state.kind === 'reconciling' ||
+        state.kind === 'paused' ||
+        state.kind === 'pulling'
+      ) {
+        return { commitSha: null, pushed: false, phase: 'commit', reason: 'sync-blocked' }
+      }
+      if (active.heldBack().some((file) => file.path === path)) {
+        return { commitSha: null, pushed: false, phase: 'commit', reason: 'oversized' }
+      }
+      try {
+        const newCommitSha = await active.commitNow()
+        const initialHead = await tryGit(root, ['rev-parse', 'HEAD'])
+        const commitSha = newCommitSha ?? (initialHead.ok ? initialHead.stdout.trim() : '')
+        if (!commitSha) {
+          return { commitSha: null, pushed: false, phase: 'commit', reason: 'no-commit' }
+        }
+        // A hook may rewrite the document while committing. The caller includes
+        // the revision it observed after the write; do not claim a different result.
+        const current =
+          expectedRevision === null
+            ? await tryGit(root, ['cat-file', '-e', `HEAD:${path}`])
+            : await tryGit(root, ['show', `HEAD:${path}`])
+        const committedRevision = current.ok
+          ? createHash('sha256').update(current.stdout).digest('hex')
+          : null
+        if (expectedRevision === null ? current.ok : committedRevision !== expectedRevision) {
+          return { commitSha, pushed: false, phase: 'commit', reason: 'post-hook-mismatch' }
+        }
+        await active.pushNow()
+        const head = await tryGit(root, ['rev-parse', 'HEAD'])
+        const upstream = await tryGit(root, ['rev-parse', '--verify', '@{upstream}'])
+        if (
+          head.ok &&
+          upstream.ok &&
+          head.stdout.trim() === commitSha &&
+          upstream.stdout.trim() === commitSha
+        ) {
+          return { commitSha, pushed: true, phase: 'complete', reason: null }
+        }
+        return { commitSha, pushed: false, phase: 'push', reason: 'not-verified-on-origin' }
+      } catch (error) {
+        return {
+          commitSha: null,
+          pushed: false,
+          phase: 'commit',
+          reason: error instanceof Error ? error.message : 'commit-failed',
+        }
+      }
+    },
   })
 }
 
@@ -85,5 +161,11 @@ export function noCoreServices(): CoreServices {
     recents: () => [],
     members: async () => none(),
     repo: none,
+    settle: async () => ({
+      commitSha: null,
+      pushed: false,
+      phase: 'commit',
+      reason: 'vault-not-open',
+    }),
   }
 }

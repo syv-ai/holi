@@ -99,8 +99,21 @@ const MAX_NOTE_BYTES = 1024 * 1024
 async function readFromStart(handle: Awaited<ReturnType<typeof open>>): Promise<Buffer> {
   const stat = await handle.stat()
   const bytes = Buffer.alloc(stat.size)
-  const { bytesRead } = await handle.read(bytes, 0, bytes.length, 0)
-  return bytes.subarray(0, bytesRead)
+  let offset = 0
+  while (offset < bytes.length) {
+    const { bytesRead } = await handle.read(bytes, offset, bytes.length - offset, offset)
+    if (bytesRead === 0) break
+    offset += bytesRead
+  }
+  return bytes.subarray(0, offset)
+}
+
+function receipt(
+  path: string,
+  revision: string | null,
+  settlement: Awaited<ReturnType<CapabilityContext['core']['settle']>>,
+) {
+  return { path, revision, ...settlement }
 }
 
 async function writableAbs(ctx: Parameters<typeof readNote>[0], rel: string): Promise<string> {
@@ -150,7 +163,7 @@ export const vaultCapabilities = (deps: VaultCapabilitiesDeps) => ({
     cli: { args: ['path'], summary: 'create an ordinary Markdown note from stdin', stdin: 'body' },
     writes: true,
     params: (raw) => writeParams(raw, false, true),
-    run: async (ctx, { path, body }): Promise<{ path: string; revision: string }> => {
+    run: async (ctx, { path, body }) => {
       const rel = writePath(path)
       const snapshot = await ctx.snapshot()
       if (
@@ -172,7 +185,10 @@ export const vaultCapabilities = (deps: VaultCapabilitiesDeps) => ({
         if (err.code === 'EEXIST') throw new CapabilityError('CONFLICT', path)
         throw err
       })
-      return { path: rel, revision: revision(bytes) }
+      const settlement = await ctx.core.settle(rel, revision(bytes))
+      const actual = await readFile(abs)
+      const rev = revision(actual)
+      return receipt(rel, rev, settlement)
     },
   }),
 
@@ -185,10 +201,7 @@ export const vaultCapabilities = (deps: VaultCapabilitiesDeps) => ({
     },
     writes: true,
     params: (raw) => writeParams(raw, true, true),
-    run: async (
-      ctx,
-      { path, body, revision: expected },
-    ): Promise<{ path: string; revision: string }> => {
+    run: async (ctx, { path, body, revision: expected }) => {
       const rel = writePath(path)
       const snapshot = await ctx.snapshot()
       if (!snapshot.docs.some((d) => d.path === rel)) throw new CapabilityError('FORBIDDEN', path)
@@ -204,13 +217,33 @@ export const vaultCapabilities = (deps: VaultCapabilitiesDeps) => ({
         if (revision(current) !== expected || (await exactPath(ctx.root, rel)) !== abs) {
           throw new CapabilityError('CONFLICT', 'Stale revision')
         }
-        await handle.truncate(0)
-        await handle.write(bytes, 0, bytes.length, 0)
-        await handle.sync()
+        const temporary = `${abs}.holi-${process.pid}-${Date.now()}.tmp`
+        const tempHandle = await open(
+          temporary,
+          constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY,
+          0o600,
+        )
+        try {
+          await tempHandle.writeFile(bytes)
+          await tempHandle.sync()
+        } finally {
+          await tempHandle.close()
+        }
+        if (
+          (await exactPath(ctx.root, rel)) !== abs ||
+          revision(await readFromStart(handle)) !== expected
+        ) {
+          await unlink(temporary)
+          throw new CapabilityError('CONFLICT', 'Stale revision')
+        }
+        const { rename } = await import('node:fs/promises')
+        await rename(temporary, abs)
       } finally {
         await handle.close()
       }
-      return { path: rel, revision: revision(bytes) }
+      const actual = await readFile(abs)
+      const rev = revision(actual)
+      return receipt(rel, rev, await ctx.core.settle(rel, rev))
     },
   }),
 
@@ -219,7 +252,7 @@ export const vaultCapabilities = (deps: VaultCapabilitiesDeps) => ({
     cli: { args: ['path', 'revision'], summary: 'delete a note when its SHA256 revision matches' },
     writes: true,
     params: (raw) => writeParams(raw, true, false),
-    run: async (ctx, { path, revision: expected }): Promise<{ path: string }> => {
+    run: async (ctx, { path, revision: expected }) => {
       const rel = writePath(path)
       const snapshot = await ctx.snapshot()
       if (!snapshot.docs.some((d) => d.path === rel)) throw new CapabilityError('FORBIDDEN', path)
@@ -236,7 +269,46 @@ export const vaultCapabilities = (deps: VaultCapabilitiesDeps) => ({
         await handle.close()
       }
       await unlink(abs)
-      return { path: rel }
+      return receipt(rel, null, await ctx.core.settle(rel, null))
+    },
+  }),
+
+  'docs.settle': cap({
+    doors: ['cli'],
+    cli: { args: ['path'], summary: 'retry commit and push for the current note revision' },
+    writes: true,
+    params: (raw) => {
+      const p = paramsObject(raw)
+      const path = stringParam(p, 'path')
+      const absent = p.absent === true
+      const expected = absent ? null : stringParam(p, 'revision')
+      if (expected !== null && !/^[a-f0-9]{64}$/.test(expected)) {
+        throw new CapabilityError('BAD_REQUEST', 'revision must be a SHA256 hex digest')
+      }
+      if (p.absent !== undefined && typeof p.absent !== 'boolean') {
+        throw new CapabilityError('BAD_REQUEST', 'absent must be boolean')
+      }
+      return { path, expected }
+    },
+    run: async (ctx, { path, expected }) => {
+      const rel = writePath(path)
+      const abs = await writableAbs(ctx, rel)
+      if (expected === null) {
+        if (
+          await lstat(abs).then(
+            () => true,
+            () => false,
+          )
+        ) {
+          throw new CapabilityError('CONFLICT', 'Expected path to be absent')
+        }
+      } else {
+        const bytes = await readFile(abs).catch(() => null)
+        if (bytes === null || revision(bytes) !== expected) {
+          throw new CapabilityError('CONFLICT', 'Current revision does not match')
+        }
+      }
+      return receipt(rel, expected, await ctx.core.settle(rel, expected))
     },
   }),
 

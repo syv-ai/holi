@@ -314,9 +314,13 @@ describe('docs CLI writes', () => {
       body: '# First\n',
     })
     expect(created.writes).toBe(true)
-    expect(created.value).toEqual({
+    expect(created.value).toMatchObject({
       path: 'with space.md',
       revision: createHash('sha256').update('# First\n').digest('hex'),
+      commitSha: null,
+      pushed: false,
+      phase: 'commit',
+      reason: 'vault-not-open',
     })
     await put('with space.md', '# First\n')
     const inspected = await runCapability('docs.inspect', 'cli', ctx({}, null), {
@@ -360,6 +364,22 @@ describe('docs CLI writes', () => {
         path: '.HOLI/memory/new.md',
         body: 'bad',
       }),
+    ).rejects.toThrow()
+  })
+
+  it('offers retry settlement only to the CLI and requires an explicit absent marker', async () => {
+    await put('retry.md', 'retry body')
+    const revision = createHash('sha256').update('retry body').digest('hex')
+    const result = await runCapability('docs.settle', 'cli', ctx({}, null), {
+      path: 'retry.md',
+      revision,
+    })
+    expect(result.value).toMatchObject({ pushed: false, phase: 'commit', reason: 'vault-not-open' })
+    await expect(
+      runCapability('docs.settle', 'app', ctx({}), { path: 'retry.md', revision }),
+    ).rejects.toThrow(/no such method/)
+    await expect(
+      runCapability('docs.settle', 'cli', ctx({}, null), { path: 'gone.md', absent: true }),
     ).rejects.toThrow()
   })
 
