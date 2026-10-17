@@ -119,15 +119,13 @@ additions are commands in a directory prepended to `PATH`, plus skills that docu
   `vault members|recents`. The registry's reads the agent already has as Grep, Read and git
   (search, history, settings) stay app-only rather than grow a second way in. The script is
   generated at `<Electron userData>/bin/holi`, and Holi supplies its path as `HOLI_BIN` to its
-  Claude sessions; it finds the bridge through the vault's `bridge.local.env`. The `holi-cli`
-  skill documents conditional note writes and settlement receipts. A CLI document write exits 0 only when
+  Claude sessions; it finds the bridge through the vault's `bridge.local.env`. A CLI document write exits 0 only when
   pushed; exit 1 preserves a pending receipt (or reports a refusal), and exit 2 is a CLI usage error. All reversible
   or read-only (a record write is a file change in git history) except `google send` and
   `google reply`, which the send gate asks about.
 - `holi google <verb>`: mail and calendar through main, which holds the tokens ([google.md](google.md)).
 - `holi pdf typst` for PDF export, which prints the Typst binary's path ([pdf.md](pdf.md)).
-- Shipped skills: `memory`, `using-tasks`, `scheduled-agents`, `vault-apps`, `holi-cli` (ordinary
-  Markdown note changes through revision-conditional CLI writes), `theme`,
+- Shipped skills: `memory`, `using-tasks`, `scheduled-agents`, `vault-apps`, `theme`,
   `gmail-calendar`, `md-to-pdf`, `pdf-comments`, `holi-feedback` (a GitHub issue on syv-ai/holi, labelled `vault-assistant`,
   through `.github/ISSUE_TEMPLATE/vault-assistant.yml`).
 

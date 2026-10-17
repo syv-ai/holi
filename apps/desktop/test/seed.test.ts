@@ -134,7 +134,6 @@ describe('the seed tables', () => {
       '.claude/hooks/memory-overview.mjs',
       '.claude/hooks/turn-signal.mjs',
       '.claude/hooks/user-prompt-submit.mjs',
-      '.claude/skills/holi-cli/SKILL.md',
       '.claude/skills/holi-feedback/SKILL.md',
       '.claude/skills/memory/SKILL.md',
       '.claude/skills/scheduled-agents/SKILL.md',
@@ -791,27 +790,6 @@ describe('ensureSeeded — the vault-apps skill', () => {
     await writeFile(join(root, rel), '# mine\n', 'utf8')
     expect((await ensureSeeded(root)).written).not.toContain(rel)
     expect(await readFile(join(root, rel), 'utf8')).toBe('# mine\n')
-  })
-})
-
-describe('ensureSeeded — the holi CLI skill', () => {
-  it('ships revision-conditional note guidance into a new vault', async () => {
-    const root = await tempDir()
-    const { written } = await ensureSeeded(root)
-    const rel = '.claude/skills/holi-cli/SKILL.md'
-    expect(written).toContain(rel)
-    const skill = (await readFile(join(root, rel), 'utf8')).replace(/\s+/g, ' ')
-    expect(skill).toContain('docs list --json')
-    expect(skill).toContain('docs inspect')
-    expect(skill).toContain('docs create')
-    expect(skill).toContain('docs update')
-    expect(skill).toContain('docs delete')
-    expect(skill).toContain('docs settle')
-    expect(skill).toContain('--revision')
-    expect(skill).toContain('--absent')
-    expect(skill).toContain('Exit 0 means the change was verified pushed')
-    expect(skill).toContain('Do not repeat the write or blindly retry it')
-    expect(skill).toContain('not an MCP server')
   })
 })
 
