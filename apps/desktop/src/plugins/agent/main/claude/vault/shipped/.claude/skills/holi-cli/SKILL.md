@@ -14,7 +14,7 @@ Holi's generated CLI script. Use `"$HOLI_BIN"` in a shell command. Holi also
 places its generated `holi` command on `PATH`. An external agent may run the
 same script by its absolute path if it has been provided one; do not guess a
 machine's Electron `userData` directory. The generated script is
-`<Electron userData>/bin/holi`, rewritten when the agent starts.
+`<Electron userData>/bin/holi`, rewritten when Holi starts.
 
 Run bare `holi` (or `"$HOLI_BIN"`) to see the commands currently available to
 your vault. Commands are grouped broadly into namespaces such as `docs`,
@@ -49,7 +49,7 @@ on stdin:
 printf '%s\n' '# New note' '' 'Text.' | "$HOLI_BIN" docs create "notes/new.md" --json
 ```
 
-Replace a note only with the revision returned by the read/list inspection:
+Replace a note only with the revision returned by `docs inspect`:
 
 ```sh
 cat /tmp/new-note.md | "$HOLI_BIN" docs update "notes/example.md" <revision> --json
@@ -90,8 +90,8 @@ Settlement checks the current file state before trying commit and push. It
 cannot make progress if the vault is closed, Holi is offline, sync is blocked,
 or the file is held back as oversized. A failed receipt can include a commit
 SHA even when the push did not complete; leave the file in place and resolve
-the reported condition before deciding what to do next. Exit 2 means command
-usage or arguments were invalid, not a pending write.
+the reported condition before deciding what to do next. Exit 2 means the CLI syntax was invalid, not a pending write. A command can
+also refuse invalid content with exit 1.
 
 Holi's editor may also be changing the same note. If an editor buffer conflicts
 with external changes, use Holi's editor merge workflow to reconcile it rather
