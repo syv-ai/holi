@@ -113,15 +113,21 @@ additions are commands in a directory prepended to `PATH`, plus skills that docu
   body from stdin and was not given one is answered 428 without running, and the script sends
   stdin once (`send --draft <id>` reads none). Today: `apps open|init`, `skills update`,
   `pdf comments|typst`, `google agenda|search|read|mark-read|star|archive|trash|draft|send|reply|schedule|reschedule|unschedule`, `tasks list|complete`,
-  `store list|get|put|delete|check`, `docs list|read|render`, `sync status`, `agent sessions`,
+  `store list|get|put|delete|check`,
+  `docs list|read|inspect|render|create|update|delete|settle`, `sync status`, `agent sessions`,
   `schedules list|enable|disable|run`,
   `vault members|recents`. The registry's reads the agent already has as Grep, Read and git
-  (search, history, settings) stay app-only rather than grow a second way in. The script finds
-  the bridge through the vault's `bridge.local.env`. All reversible or read-only (a record write is a file
-  change in git history) except `google send` and `google reply`, which the send gate asks about.
+  (search, history, settings) stay app-only rather than grow a second way in. The script is
+  generated at `<Electron userData>/bin/holi`, and Holi supplies its path as `HOLI_BIN` to its
+  Claude sessions; it finds the bridge through the vault's `bridge.local.env`. The `holi-cli`
+  skill documents conditional note writes and settlement receipts. A CLI write exits 0 only when
+  pushed; exit 1 preserves a pending/refused receipt, and exit 2 is a usage error. All reversible
+  or read-only (a record write is a file change in git history) except `google send` and
+  `google reply`, which the send gate asks about.
 - `holi google <verb>`: mail and calendar through main, which holds the tokens ([google.md](google.md)).
 - `holi pdf typst` for PDF export, which prints the Typst binary's path ([pdf.md](pdf.md)).
-- Shipped skills: `memory`, `using-tasks`, `scheduled-agents`, `vault-apps`, `theme`,
+- Shipped skills: `memory`, `using-tasks`, `scheduled-agents`, `vault-apps`, `holi-cli` (ordinary
+  Markdown note changes through revision-conditional CLI writes), `theme`,
   `gmail-calendar`, `md-to-pdf`, `pdf-comments`, `holi-feedback` (a GitHub issue on syv-ai/holi, labelled `vault-assistant`,
   through `.github/ISSUE_TEMPLATE/vault-assistant.yml`).
 
