@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { execFileSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, readFile as readText, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -163,6 +165,7 @@ function ctx(core: Partial<CoreServices>, bundle: string | null = 'A.app'): Capa
     snapshot: async () => ({
       ...emptyVaultSnapshot(),
       files: written.map((path) => ({ path, updatedAt: '' })),
+      docs: written.filter((path) => path.endsWith('.md')).map((path) => ({ path, updatedAt: '' })),
     }),
     core: { ...noCoreServices(), ...core },
   }
@@ -297,6 +300,59 @@ describe('vault.history', () => {
         runCapability('vault.history', 'app', ctx({ repo }), { path: '.claude/settings.json' }),
       ),
     ).toMatchObject({ code: 'FORBIDDEN' })
+  })
+})
+
+describe('docs CLI writes', () => {
+  beforeEach(() => {
+    execFileSync('git', ['init', '-q', root])
+  })
+
+  it('creates and updates ordinary notes with exact-byte revisions', async () => {
+    const created = await runCapability('docs.create', 'cli', ctx({}, null), {
+      path: 'with space.md',
+      body: '# First\n',
+    })
+    expect(created.writes).toBe(true)
+    expect(created.value).toEqual({
+      path: 'with space.md',
+      revision: createHash('sha256').update('# First\n').digest('hex'),
+    })
+    await put('with space.md', '# First\n')
+    const inspected = await runCapability('docs.inspect', 'cli', ctx({}, null), {
+      path: 'with space.md',
+    })
+    const revision = (inspected.value as { revision: string }).revision
+    const updated = await runCapability('docs.update', 'cli', ctx({}, null), {
+      path: 'with space.md',
+      revision,
+      body: '# Second\n',
+    })
+    expect(updated.writes).toBe(true)
+    expect(await readText(join(root, 'with space.md'), 'utf8')).toBe('# Second\n')
+    await expect(
+      runCapability('docs.delete', 'cli', ctx({}, null), {
+        path: 'with space.md',
+        revision,
+      }),
+    ).rejects.toThrow(/Stale revision/)
+  })
+
+  it('keeps writes CLI-only and refuses task and non-Markdown paths', async () => {
+    await expect(
+      runCapability('docs.create', 'app', ctx({}), {
+        path: 'note.md',
+        body: 'x',
+      }),
+    ).rejects.toThrow(/no such method/)
+    for (const path of ['task.rent.md', 'note.txt', 'A.app/note.md', '.holi/memory/note.md']) {
+      await expect(
+        runCapability('docs.create', 'cli', ctx({}, null), {
+          path,
+          body: 'x',
+        }),
+      ).rejects.toThrow()
+    }
   })
 })
 
