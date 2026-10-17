@@ -285,6 +285,54 @@ describe('a command', () => {
   })
 })
 
+describe('a pending docs mutation receipt', () => {
+  const result =
+    vi.fn<(params: Record<string, string>) => { path: string; revision: string; pushed: boolean }>()
+  let pushed = false
+  const mutation = cap({
+    doors: ['cli'],
+    writes: true,
+    cli: { args: ['path'], summary: 'create note from stdin', stdin: 'body' },
+    cliSucceeded: (value) =>
+      typeof value === 'object' && value !== null && 'pushed' in value && value.pushed === true,
+    params: (raw) => raw as Record<string, string>,
+    run: async (_ctx, params) => {
+      result(params)
+      return { path: params.path!, revision: 'a'.repeat(64), pushed }
+    },
+  })
+
+  beforeEach(async () => {
+    await server.stop()
+    result.mockClear()
+    pushed = false
+    server = bridge({ 'docs.create': mutation }, ['docs'])
+    await server.start()
+    await writeVaultEnv(dir, bridgeLines(server.port()!, server.tokenForVault('owner/repo')))
+  })
+
+  it('exits 1 with the JSON receipt on stderr and writes stdin only once', async () => {
+    const res = await run(bin, ['docs', 'create', 'draft.md'], env, '# Draft\n')
+    expect(res.code).toBe(1)
+    expect(res.stdout).toBe('')
+    expect(JSON.parse(res.stderr)).toEqual({
+      path: 'draft.md',
+      revision: 'a'.repeat(64),
+      pushed: false,
+    })
+    expect(result).toHaveBeenCalledTimes(1)
+    expect(result).toHaveBeenCalledWith({ path: 'draft.md', body: '# Draft\n' })
+  })
+
+  it('exits 0 when the receipt confirms the push', async () => {
+    pushed = true
+    const res = await run(bin, ['docs', 'create', 'draft.md'], env, '# Draft\n')
+    expect(res.code).toBe(0)
+    expect(res.stdout).toContain('"pushed": true')
+    expect(result).toHaveBeenCalledTimes(1)
+  })
+})
+
 describe('a command that reads stdin', () => {
   const ran = vi.fn<(params: unknown) => void>()
   const echo = cap({
