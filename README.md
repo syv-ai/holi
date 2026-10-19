@@ -30,11 +30,11 @@ docs/             Living documentation
 Install the [`holi` skill](skills/holi/SKILL.md) for external agents:
 
 ```sh
-npx skills add syv-ai/holi --skill holi -g
+npx skills add syv-ai/holi
 ```
 
-Omit `-g` to install it in the current project. The skill explains Holi's CLI;
-it does not install the app. Run the CLI from an open vault.
+Add `-g` to install globally instead of in the current project. The skill
+explains Holi's CLI; it does not install the app. Run the CLI from an open vault.
 
 ## Dev
 
