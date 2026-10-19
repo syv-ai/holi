@@ -36,12 +36,13 @@ List ordinary notes, then inspect the exact note to get its current revision:
 
 ```sh
 holi docs list --json
-holi docs inspect "notes/example.md" --json
+holi docs inspect "notes/example.md"
 ```
 
-`docs list` returns vault-relative note paths. `docs inspect` returns the
-note's body and SHA-256 revision from the same read. Use that revision for a
-conditional update or delete. `docs read` returns note text without a revision;
+`docs list` prints one vault-relative path per line, or a JSON array with
+`--json`. `docs inspect` returns the note's body and SHA-256 revision as JSON
+from the same read. Use that revision for a conditional update or delete.
+`docs read` returns note text without a revision;
 do not use it to obtain a write token. Never infer a revision from a path or
 from content you have not just inspected. These commands concern ordinary
 Markdown notes, not task files, local files, or app bundles.
@@ -52,20 +53,20 @@ Create only when the path does not already exist. Send the whole Markdown body
 on stdin:
 
 ```sh
-printf '%s\n' '# New note' '' 'Text.' | holi docs create "notes/new.md" --json
+printf '%s\n' '# New note' '' 'Text.' | holi docs create "notes/new.md"
 ```
 
 Set `REVISION` to the `.revision` field returned by `docs inspect` before
 changing a note. Replace only at that revision:
 
 ```sh
-cat /tmp/new-note.md | holi docs update "notes/example.md" "$REVISION" --json
+cat /tmp/new-note.md | holi docs update "notes/example.md" "$REVISION"
 ```
 
 Delete is also conditional:
 
 ```sh
-holi docs delete "notes/example.md" "$REVISION" --json
+holi docs delete "notes/example.md" "$REVISION"
 ```
 
 A create refuses an existing path; update and delete refuse if the note no
@@ -90,8 +91,8 @@ To retry settlement without repeating the write, set `RESULT_REVISION` to the
 a deletion:
 
 ```sh
-holi docs settle "notes/example.md" --revision "$RESULT_REVISION" --json
-holi docs settle "notes/example.md" --absent --json
+holi docs settle "notes/example.md" --revision "$RESULT_REVISION"
+holi docs settle "notes/example.md" --absent
 ```
 
 Settlement checks the current file state before trying commit and push. It
