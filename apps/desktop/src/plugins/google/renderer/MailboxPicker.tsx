@@ -124,9 +124,9 @@ export function MailboxPicker({
     <DropdownMenu onOpenChange={(open) => open && onOpen()}>
       {/* Short on purpose. The "tabs only apply if your inbox uses them"
           caveat lives in the empty-state message for a tab. */}
-      <Tooltip content="choose a mailbox">
+      <Tooltip content="Choose a mailbox">
         <DropdownMenuTrigger asChild>
-          <Button variant="ghost" size="xs" className="gap-1" aria-label="choose a mailbox">
+          <Button variant="ghost" size="xs" className="gap-1" aria-label="Choose a mailbox">
             {mailboxLabelOf(view)}
             {/* The chevron makes this read as a menu, not a clickable label. */}
             <Icon icon={ChevronDown} size="sm" tone="muted" />
@@ -147,9 +147,7 @@ export function MailboxPicker({
                 <span>{entry.label}</span>
                 {/* Nothing rather than a zero while counts are in flight or a
                     request failed: absent means "not known". */}
-                <span className="text-[10px] text-muted-foreground tabular-nums">
-                  {entry.badge}
-                </span>
+                <span className="text-xs text-muted-foreground tabular-nums">{entry.badge}</span>
               </span>
             </DropdownMenuItem>
           </div>

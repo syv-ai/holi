@@ -133,7 +133,21 @@ describe('ConnectionsSection', () => {
     await screen.findByText('ada@syv.ai')
 
     await userEvent.click(screen.getAllByRole('button', { name: 'Remove from Holi' })[0]!)
+    // It revokes at Google for every vault, so it asks first.
+    expect(removeAccount).not.toHaveBeenCalled()
+    await userEvent.click(await screen.findByRole('button', { name: 'Remove account' }))
 
     await waitFor(() => expect(removeAccount).toHaveBeenCalledWith({ sub: 'sub-1' }))
+  })
+
+  it('cancelling the remove confirm revokes nothing', async () => {
+    render()
+    await screen.findByText('ada@syv.ai')
+
+    await userEvent.click(screen.getAllByRole('button', { name: 'Remove from Holi' })[0]!)
+    await userEvent.click(await screen.findByRole('button', { name: 'Cancel' }))
+
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Remove account' })).toBeNull())
+    expect(removeAccount).not.toHaveBeenCalled()
   })
 })

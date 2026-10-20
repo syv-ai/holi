@@ -12,12 +12,17 @@ import { watchPendingSkills } from './state/skills'
 import { subscribeToUpdates } from './state/updates'
 import { subscribeToVault } from './state/vaults'
 import { RENDERER_PLUGINS } from '../../plugins/renderer'
+import '@fontsource-variable/geist'
+import '@fontsource-variable/geist-mono'
 import './index.css'
 
 /** One store, so the push subscriptions outlive every component: one owned by
  *  a component would stop when it unmounts and the vault would go quietly
  *  stale. */
 const store = createStore()
+// macOS draws the window's traffic lights over the page (`hiddenInset`), so
+// the chrome makes room for them where this is set (index.css, Window).
+if (navigator.userAgent.includes('Mac')) document.documentElement.dataset.platform = 'mac'
 // The plugins this build has: the one place the renderer imports them. Core's
 // own surfaces go in beside them.
 checkPluginCatalogue(RENDERER_PLUGINS.map((p) => p.info))

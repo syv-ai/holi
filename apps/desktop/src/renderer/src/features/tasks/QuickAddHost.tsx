@@ -1,22 +1,24 @@
 /**
- * Quick add away from the board (⌘T): centred at the top, on the palette's
- * morphing surface (`MorphDialog`). Mounted once in the shell. On the board
- * the dock shows quick add instead, and this stays closed.
+ * Quick add (⌘T, the board's New task, a lane's +): a dialog anchored near the
+ * top, as the palette is. Mounted once in the shell.
  */
 import { useAtom } from 'jotai'
-import { MorphDialog } from '@/primitives'
+import { Dialog } from '@/primitives'
 import { quickAddAtom } from '@/state/tasks'
 import { QuickAdd } from './QuickAdd'
 
 export function QuickAddHost(): React.JSX.Element {
-  const [quickAdd, setQuickAdd] = useAtom(quickAddAtom)
+  const [open, setOpen] = useAtom(quickAddAtom)
   return (
-    <MorphDialog
-      open={quickAdd?.where === 'centre'}
-      onOpenChange={(open) => !open && setQuickAdd(null)}
+    <Dialog
+      open={open}
+      onClose={() => setOpen(false)}
+      size="bare"
+      placement="top"
+      closable={false}
       title="New task"
       description="Write the task; Tab walks its fields; Enter adds it"
-      width="w-fit"
+      className="max-w-[30rem]"
       // A field's step goes back to the text first, and an open completion
       // closes first; only then does Escape close quick add.
       onEscapeKeyDown={(event) => {
@@ -28,7 +30,7 @@ export function QuickAddHost(): React.JSX.Element {
           event.preventDefault()
       }}
     >
-      <QuickAdd onAdded={() => setQuickAdd(null)} />
-    </MorphDialog>
+      <QuickAdd onAdded={() => setOpen(false)} />
+    </Dialog>
   )
 }

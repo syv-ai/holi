@@ -23,9 +23,8 @@ type ExportResult = {
   landed: { from: string; to: string }[]
   failed: { name: string; reason: string }[]
 }
-const exportMock = vi.fn(
-  (_input: unknown): Promise<ExportResult> =>
-    Promise.resolve({ landed: [{ from: 'b.md', to: '/out/b.md' }], failed: [] }),
+const exportMock = vi.fn((_input: unknown): Promise<ExportResult> =>
+  Promise.resolve({ landed: [{ from: 'b.md', to: '/out/b.md' }], failed: [] }),
 )
 const deleteMock = vi.fn((_input: unknown) => Promise.resolve(undefined))
 const backrefsMock = vi.fn((_input: unknown) => Promise.resolve([]))

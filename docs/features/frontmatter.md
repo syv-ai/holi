@@ -16,7 +16,7 @@ A markdown file's YAML frontmatter is drawn as one block at the top of the edito
 
 **A new note is empty.** The file tree's `+` creates it with no frontmatter, and nothing adds a block on commit: a note gets one when a value is first given, however it arrived. An empty block (`---` then `---`) reads as an empty mapping and draws as rows.
 
-**Look and motion.** The block takes one width open or closed (`min(24rem, …)`), is centred in the column, and keeps `2.5rem` beneath it. Opening animates from the old height to `auto`. Values carry no edge and no fill, in either theme and under the pointer (the primitives' `field` variant); the row tints under the pointer instead.
+**Look and motion.** The block sits on the text's own edge, as wide as the text, so the summary line, the title under it and the body share one left edge; the open fields keep the properties' 24rem. It has `0.5rem` above and `1rem` beneath it. Opening animates from the old height to `auto`. Values carry no edge and no fill, in either theme and under the pointer (the primitives' `field` variant); the row tints under the pointer instead.
 
 ## Rules
 
@@ -41,7 +41,7 @@ A markdown file's YAML frontmatter is drawn as one block at the top of the edito
 
 - `apps/desktop/src/renderer/src/editor/frontmatter.ts`, `frontmatter-region.ts`, `frontmatter-portals.ts`
 - `apps/desktop/src/renderer/src/features/frontmatter/`: `FrontmatterFields.tsx` (kind to control), one file per control, `FrontmatterFieldsHost.tsx` (mounted by the Shell)
-- `apps/desktop/src/renderer/src/composites/FieldRow.tsx`, `DateTimePicker.tsx`, `RecurrenceField.tsx`: the domain-agnostic rows and pickers, shared with task creation
+- `apps/desktop/src/renderer/src/primitives/Field.tsx` (`FormField`, horizontal), `composites/DateTimePicker.tsx`, `composites/RecurrenceField.tsx`: the domain-agnostic rows and pickers, shared with task creation
 - `apps/desktop/src/renderer/src/lib/date-presets.ts`: the date pickers' shortcuts
 - `apps/desktop/src/renderer/src/primitives/Field.tsx`, `Combobox.tsx`, `field-look.ts`
 - `packages/shared/src/frontmatter-schema.ts`, `yaml-document.ts`

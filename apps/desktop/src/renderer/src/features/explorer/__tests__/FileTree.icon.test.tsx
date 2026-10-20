@@ -63,13 +63,14 @@ test('a note with an entry shows the emoji instead of its type glyph', () => {
   expect(slot.innerHTML).not.toContain('<svg')
 })
 
-test('a note without one has no glyph at all, only the empty slot', () => {
-  // A note is the unmarked row; the slot stays so every name lines up.
+test('a note without one shows its type glyph, as every file does', () => {
+  // Every row is a chevron column, an icon and a name, so a root note lines up
+  // with the folders beside it.
   tree(['plain.md'])
 
   const slot = iconSlotOf('plain.md')
   expect(slot.textContent).toBe('')
-  expect(slot.innerHTML).not.toContain('<svg')
+  expect(slot.innerHTML).toContain('<svg')
 })
 
 test('any other file keeps its type glyph', () => {

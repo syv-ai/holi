@@ -405,10 +405,10 @@ test('dragging a pill inside the strip opens a hole instead of drawing a caret',
 
     // The hole says where it lands, so the line saying so is redundant.
     expect(screen.queryByTestId('tab-caret')).toBeNull()
-    // a.md steps over b.md — one pill (60) plus the strip's gap (4) — and b.md
-    // comes back by exactly what a.md vacated. Nothing past them moves.
-    expect(styleOf('a').transform).toBe('translateX(64px)')
-    expect(styleOf('b').transform).toBe('translateX(-64px)')
+    // a.md steps over b.md, one pill (60; the tabs share their dividers, so
+    // there is no gap), and b.md comes back by exactly what a.md vacated. Nothing past them moves.
+    expect(styleOf('a').transform).toBe('translateX(60px)')
+    expect(styleOf('b').transform).toBe('translateX(-60px)')
     expect(styleOf('c').transform).toBe('translateX(0px)')
     // And you can see which one you picked up.
     expect(pillFor('a')).toHaveClass('opacity-40')

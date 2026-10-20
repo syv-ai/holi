@@ -23,56 +23,50 @@ Todo / Doing / Done, with one swim lane per folder.
 - **Editing a task is editing its file.** A card click opens it beside the board as a preview,
   with frontmatter drawn as typed rows ([frontmatter](frontmatter.md)). Its body is a narrower
   column than a note's, as wide as those rows.
-- **Board.** Todo, Doing and Done are three column surfaces; lanes are groups inside each: the
-  vault root (always present, unlabelled), then folders alphabetically. A lane group with no cards in a column
-  rests hidden and springs open while a drag is on, so every cell can take a drop. A folder's
-  name folds its group shut in that column alone, its count at the row's end; a folded group still
-  takes a drop, at its top. Hovering a folder's group shows a + on its row that opens quick add
-  with that folder as its lane. The root lane has no name, so it does not fold. Cards are
-  tinted (`--muted` on the column's `--card`, both faint), with no edge, and a title stays on one line; Done
-  cards recede to flat rows. Each
-  column counts its cards. `overdue` and `p1`–`p3` are labels computed at render, drawn as
-  coloured text and filtered like tags; clicking a label or tag on a card toggles it in the
-  filter, and each active one floats as a chip above the dock whose click takes it off. A todo card's check is a plain ring, a doing card's a dotted one in `--task-doing`. A
-  timed due is late after its minute; a timeless one once
-  its day has passed. Task files that fail to parse show in a "could not be read" strip.
-- **The board reflows as one motion.** A pane opening or closing beside it, or Hide done, springs
-  the columns, headers, cards and dock to their new widths together: the board's real width
-  follows its container on a spring, so nothing is scaled. A window resize or splitter drag
-  follows the pointer instead. The lane a drag aims at lights its name.
-- **The dock.** One dock floats at the board's foot (the [nav menu](nav-menu.md)'s morph): Search,
-  Filter and Hide done, still the only three narrowing controls, each growing the dock into its
-  panel, and quick add. Filter lists the folders that hold tasks (a task in any chosen one) and
-  the tags (a task carrying every chosen one); a filter or search moves the board on one spring,
-  cards and lane groups together.
-- **Completing plays before it moves.** The check fills and ticks, the strike runs across the
-  title, the card flicks, and then it flies to Done, over everything it crosses. The write goes out as the tick starts; the
-  card is parked in its column until the sequence and the write are both done. A recurring task
-  ticks and strikes, then unwinds in place with its next due date. Unticking runs it backwards.
-- **Deleting** is Delete in the card's ⋯ menu (on hover), whose row turns into a solid Delete
-  that a second pick commits, or the card's context menu. Done's header has a bin of its own that empties the column: it grows
-  into a solid Delete pill, a shade crossing it from the right over four seconds. Nothing is
-  deleted unless the pill is pressed; when the shade reaches the end it folds back, or waits
-  while the pointer is on it. It deletes every done task the column shows. Git keeps them.
-- **Dragging.** The card folds out of its cell and a gap springs open where it would land, in any
-  cell. Between columns rewrites `status` (into Done means complete). Between lanes moves the file
-  through the rename that rewrites inbound [wiki-links](wiki-links.md). **The drop lands at the
-  gap**: the card takes a sparse `order` rank between its new neighbours, and the rank rides with
-  the status or the move, so a drag writes one file. Unranked cards sort last and by title, so a
-  drop below one ranks the unranked cards above it too, in the order shown: that happens once per
-  cell. The gap holds until the writes land, then the card unfolds into it. A no-op drop writes
-  nothing.
+- **Board.** ReUI's kanban (`primitives/Kanban.tsx`): Todo, Doing and Done are three column
+  surfaces (`bg-muted`, rounded, full height, `gap-4` apart in `p-4`), each headed by its name, a
+  count `Badge` and a + that opens quick add creating in that column. Inside a column the cards
+  are grouped by lane: the vault root first (unlabelled), then folders alphabetically, each
+  folder's name heading its first card, with a + on hover that opens quick add in that folder. A
+  card is a surface on the column (`--background`, `shadow-xs`) with one-line title; a done card's
+  title is struck through and muted. `overdue` and `p1`–`p3` are labels computed at render, drawn
+  as coloured text and filtered like tags; clicking a label or tag on a card toggles it in the
+  filter. A todo card's check is a plain ring, a doing card's a dotted one in `--task-doing`. A
+  timed due is late after its minute; a timeless one once its day has passed. An empty column says
+  so inside itself: Todo with "No tasks" (or "Nothing matches" under a filter) and an Add task
+  button, the others a quiet "Nothing here". Task files that fail to parse show in a "could not
+  be read" strip.
+- **The toolbar.** A row across the board's top, in the panel header's style: Search, Filter
+  and View (Show Done), still the only three narrowing controls, then a chip per active filter
+  whose click takes it off, and New task on the right. Filter is a menu of checkboxes: the folders
+  that hold tasks (a task in any chosen one), the people tasks are assigned to (any chosen one),
+  and the tags (a task carrying every chosen one). Turning Show Done off drops the whole Done
+  column, not just its cards.
+- **The check** on a card fills at once, a single calm fade, and strikes the title;
+  the status write goes out on the same click and the card moves to Done when the vault re-reads.
+  A recurring task rolls forward instead: its check empties again and its due date moves.
+  Unticking a done card reopens it to Todo.
+- **Deleting** is Delete… in the card's ⋯ menu (on hover) or its context menu, and Delete every
+  done task… in Done's header menu; each asks once in a dialog. Git keeps them.
+- **Dragging** is the kanban's: a press that moves 10px picks the card up (a click without
+  moving opens it), its neighbours make room, and a copy follows the pointer. Between columns
+  rewrites `status` (into Done means complete). Dropped among another lane's cards (the lane of
+  the card above it, or below it at the top), it moves the file through the rename that rewrites
+  inbound [wiki-links](wiki-links.md). **The drop lands where it is shown**: the card takes a
+  sparse `order` rank between its new neighbours in that cell, and the rank rides with the status
+  or the move, so a drag writes one file. Unranked cards sort last and by title, so a drop below
+  one ranks the unranked cards above it too, in the order shown: that happens once per cell. The
+  board keeps the dropped arrangement until the writes land. A no-op drop writes nothing.
 - **Quick add (⌘T)** is the card it will make: a small note editor (mentions, wiki-links, live
   preview) whose first line is the title, set larger, and whose later lines are the description. It
-  opens one line tall and grows when Shift+Enter starts a description. On the board it grows out of
-  the dock and rises to just under the middle of the view, and the new card flies to its cell;
-  anywhere else it opens centred at the top, on the palette's surface. Tab is a wizard: it swaps the
+  opens one line tall and grows when Shift+Enter starts a description. It is a dialog anchored
+  near the top of the window, as the palette is, wherever it is opened from. Tab is a wizard: it swaps the
   whole panel for the next field (lane, due, priority, tags) and cycles back to the text; Shift+Tab
   goes back. On a field, ↑/↓ move, and Space, → or a click picks; a single choice then moves on to
   the next field, a tag toggles and stays. Enter on a field returns to the text; Enter in the text
   adds; Shift+Enter is a new line. Escape on a field returns to the text, then closes. The bar at
-  the foot is the fields as icons, centred, each opening out to show its value once set. Everything
-  is created in Todo. Lane is any folder, defaulting to the active note's; typing on lane or tags
+  the foot is the fields as icons, centred, each showing its value once set. It creates in Todo, or
+  in the column whose + opened it. Lane is any folder, defaulting to the active note's; typing on lane or tags
   narrows the list or names a new one; an add closes quick add, the text clears and the lane stays.
   ⌘⇧T is the full-create dialog, which opens the result. Both write the whole task in one create.
   The agent writes the file.
@@ -144,6 +138,8 @@ Todo / Doing / Done, with one swim lane per folder.
   like an assignment that is not one, and a team's names would push every note down the list.
   They belong there once `@login` does something.
 - Collapsing lanes by depth: a collapsed lane has no single folder to drop into.
+- A floating dock at the board's foot for its controls: it covered the last cards and hid what
+  the board was narrowed by; a toolbar across the top shows both.
 - Syncing note checkboxes with tasks: it couples notes to tasks again.
 - A cross-cell drop that keeps the card's old rank: the gap would show one place and the card land
   in another.
@@ -160,9 +156,8 @@ Todo / Doing / Done, with one swim lane per folder.
 - `apps/desktop/src/renderer/src/state/tasks.ts`: task set, filter, drops, writes.
 - `apps/desktop/src/renderer/src/state/clock.ts`: `nowAtom` and `todayAtom`, the minute the overdue labels and the daily note read.
 - `apps/desktop/src/renderer/src/features/tasks/`: the board (`BoardView`, `BoardCard`,
-  `BoardDock`), the completion sequence (`use-check-sequence.ts`) and the drag
-  (`use-board-drag.ts`), quick add (`QuickAdd`, `QuickAddHost`); `lib/board-order.ts`, `lib/date-presets.ts`,
-  `composites/DateTimePicker.tsx`, `composites/RecurrenceField.tsx`.
-- `apps/desktop/src/renderer/src/primitives/TaskCheck.tsx`, `StrikeText.tsx`, `ConfirmInPlace.tsx`,
-  `RollingCount.tsx`, `Choice.tsx`, and the board's springs in `springs.ts`.
+  `BoardToolbar`, `ConfirmDelete`), quick add (`QuickAdd`, `QuickAddHost`); `lib/board-order.ts`,
+  `lib/date-presets.ts`, `composites/DateTimePicker.tsx`, `composites/RecurrenceField.tsx`.
+- `apps/desktop/src/renderer/src/primitives/Kanban.tsx` (ReUI's kanban, on dnd-kit) and
+  `TaskCheck.tsx`.
 - `apps/desktop/src/plugins/agent/main/claude/vault/shipped/.claude/skills/using-tasks/SKILL.md`: the seeded agent skill.

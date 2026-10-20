@@ -25,7 +25,7 @@ import {
   readYamlMapping,
 } from '@holi/shared'
 import { useAtomValue } from 'jotai'
-import { DateTimePicker, FieldRow, RecurrenceField } from '@/composites'
+import { DateTimePicker, RecurrenceField } from '@/composites'
 import { AddFieldRow } from './AddFieldRow'
 import { EnumField } from './EnumField'
 import { TagsField } from './TagsField'
@@ -34,6 +34,7 @@ import { duePresets, reminderPresets } from '@/lib/date-presets'
 import { nowAtom, todayAtom } from '@/state/clock'
 import { memberLoginsAtom } from '@/state/members'
 import { taskTagsAtom } from '@/state/tasks'
+import { FormField } from '@/primitives'
 
 export function FrontmatterFields({
   path,
@@ -158,8 +159,9 @@ export function FrontmatterFields({
       data-frontmatter-fields={path}
     >
       {frontmatterRows(schema, Object.keys(values)).map((field) => (
-        <FieldRow
+        <FormField
           key={field.key}
+          orientation="horizontal"
           label={field.key}
           hover
           // Removing unsets a schema key (its row stays, empty) and deletes any
@@ -171,7 +173,7 @@ export function FrontmatterFields({
           }
         >
           {control(field)}
-        </FieldRow>
+        </FormField>
       ))}
       <AddFieldRow existing={Object.keys(values)} schema={schema} onAdd={set} />
     </div>

@@ -5,6 +5,8 @@ import {
   startingAct,
   initialState,
   canAdvance,
+  DEFAULT_VAULT_NAME,
+  vaultSlug,
   atFloor,
   reduce,
 } from '../src/renderer/src/state/onboarding-flow'
@@ -30,8 +32,10 @@ describe('reduce', () => {
   it('advance walks every act in order and stops at the threshold', () => {
     const s1 = reduce(s0, { type: 'advance' })
     expect(s1.act).toBe('naming')
-    // act2 cannot advance without a slug
-    expect(reduce(s1, { type: 'advance' }).act).toBe('naming')
+    // act2 cannot advance on a typed name that slugifies to nothing (an
+    // empty one is the default name, and advances)
+    const unnamed = reduce(s1, { type: 'setName', name: '!!!' })
+    expect(reduce(unnamed, { type: 'advance' }).act).toBe('naming')
     const named = reduce(s1, { type: 'setName', name: 'notes' })
     const plugins = reduce(named, { type: 'advance' })
     expect(plugins.act).toBe('plugins')
@@ -43,6 +47,16 @@ describe('reduce', () => {
     expect(threshold.act).toBe('threshold')
     // The threshold is the floor of "there is nowhere further".
     expect(reduce(threshold, { type: 'advance' }).act).toBe('threshold')
+  })
+
+  it('an empty name falls back to the default, a typed one is slugified', () => {
+    expect(vaultSlug('')).toBe(DEFAULT_VAULT_NAME)
+    expect(vaultSlug('   ')).toBe(DEFAULT_VAULT_NAME)
+    expect(vaultSlug('Team Notes')).toBe('team-notes')
+    // Typed punctuation alone is not "nothing typed": it stays empty and blocks.
+    expect(vaultSlug('!!!')).toBe('')
+    expect(canAdvance({ ...s0, act: 'naming', name: '' })).toBe(true)
+    expect(canAdvance({ ...s0, act: 'naming', name: '!!!' })).toBe(false)
   })
 
   it('canAdvance is true on the plugins and settings acts and false on the threshold', () => {
@@ -67,13 +81,31 @@ describe('reduce', () => {
     expect(reduce({ ...s0, act: 'naming' }, { type: 'back', mode: 'add-vault' }).act).toBe('naming') // add-vault floor
   })
 
-  it('created advances to the PLUGINS act and clears the pending state', () => {
-    // The vault exists by here: the plugins and settings acts write into it.
-    const naming = reduce(reduce(s0, { type: 'advance' }), { type: 'setName', name: 'notes' })
-    const submitting = reduce(naming, { type: 'submitStart' })
-    const done = reduce(submitting, { type: 'created' })
-    expect(done).toMatchObject({ act: 'plugins', submitting: false, error: null })
-    expect(reduce(done, { type: 'advance' }).act).toBe('settings')
+  it('created leaves the threshold in place and clears the pending state', () => {
+    let s = reduce(s0, { type: 'advance' })
+    for (let i = 0; i < 3; i++) s = reduce(s, { type: 'advance' })
+    expect(s.act).toBe('threshold')
+    const done = reduce(reduce(s, { type: 'submitStart' }), { type: 'created' })
+    expect(done).toMatchObject({ act: 'threshold', submitting: false, error: null })
+  })
+
+  it('createFailed goes back to naming with the reason, keeping the answers', () => {
+    let s = reduce(s0, { type: 'advance' })
+    s = reduce(s, { type: 'setName', name: 'notes' })
+    s = reduce(s, { type: 'setSetting', key: 'dailyNotes', value: false })
+    for (let i = 0; i < 3; i++) s = reduce(s, { type: 'advance' })
+    const failed = reduce(reduce(s, { type: 'submitStart' }), {
+      type: 'createFailed',
+      error: 'name already exists',
+    })
+    expect(failed).toMatchObject({
+      act: 'naming',
+      view: 'form',
+      name: 'notes',
+      submitting: false,
+      error: 'name already exists',
+    })
+    expect(failed.settings.dailyNotes).toBe(false)
   })
 
   it('failInPlace shows the error without leaving the current act/view (join adopt)', () => {

@@ -16,6 +16,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { ChevronDown, ChevronUp, Search, X } from 'lucide-react'
 import { Icon, IconButton, Input } from '@/primitives'
+import { PaneToolbar } from '@/composites'
 import { clearIn, findIn, setActiveMark } from './mail-find'
 import { mailFrameFor, useMailFrameVersion } from './mail-frames'
 
@@ -112,7 +113,7 @@ export function ThreadFind({
   }
 
   return (
-    <div className="flex h-11 shrink-0 items-center gap-1 border-b border-divider px-3">
+    <PaneToolbar className="border-b border-divider">
       <Icon icon={Search} size="sm" tone="muted" />
       <Input
         ref={inputRef}
@@ -129,7 +130,7 @@ export function ThreadFind({
           if (event.key === 'Escape') onClose()
         }}
         placeholder="Find in this conversation"
-        aria-label="find in conversation"
+        aria-label="Find in conversation"
         className="h-7 text-xs"
       />
       {/* Nothing until a term is typed. A live region, because the number
@@ -138,28 +139,28 @@ export function ThreadFind({
       {term !== '' && (
         <span
           role="status"
-          aria-label={marks.length === 0 ? 'no matches' : `match ${active + 1} of ${marks.length}`}
-          className="shrink-0 text-[10px] text-muted-foreground tabular-nums"
+          aria-label={marks.length === 0 ? 'No matches' : `Match ${active + 1} of ${marks.length}`}
+          className="shrink-0 text-xs text-muted-foreground tabular-nums"
         >
-          {marks.length === 0 ? 'no matches' : `${active + 1}/${marks.length}`}
+          {marks.length === 0 ? 'No matches' : `${active + 1}/${marks.length}`}
         </span>
       )}
       <IconButton
         icon={ChevronUp}
-        label="previous match"
-        tooltip="previous match (⇧⏎)"
+        label="Previous match"
+        tooltip="Previous match (⇧⏎)"
         disabled={marks.length === 0}
         onClick={() => step(-1)}
       />
       <IconButton
         icon={ChevronDown}
-        label="next match"
-        tooltip="next match (⏎)"
+        label="Next match"
+        tooltip="Next match (⏎)"
         disabled={marks.length === 0}
         onClick={() => step(1)}
       />
-      <IconButton icon={X} label="close find" onClick={onClose} />
-    </div>
+      <IconButton icon={X} label="Close find" onClick={onClose} />
+    </PaneToolbar>
   )
 }
 

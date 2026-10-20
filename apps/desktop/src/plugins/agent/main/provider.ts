@@ -58,7 +58,12 @@ export interface AgentProvider {
   signInNotice: string
   /** What a terminal on the list (no `attach`) or on one session runs. Null
    *  when the agent is not installed on this machine. */
-  terminal(target: VaultCliTarget, attach?: string): TerminalCommand | null
+  terminal(
+    target: VaultCliTarget,
+    attach?: string,
+    fork?: string,
+    login?: boolean,
+  ): TerminalCommand | null
   /** Serve the hook routes that report turns and status. Returns the undo. */
   routes(server: RouteServer, deps: AgentRoutesDeps): () => void
   /** What the provider writes into a vault. */

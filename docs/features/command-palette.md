@@ -30,18 +30,18 @@ app-level action is one row of one command table that keys, palette and menu all
 - **⌃⇥** opens the same box over the open tabs of every pane, most recent first, current one left
   out. Each further ⇥ moves down (⇧⇥ up) while Control is held, and releasing Control opens the
   selection. It means the literal Control key on every platform.
-- **Ask the assistant.** With any text typed outside `>` mode, the last row sends it to the
+- **Ask the agent.** With any text typed outside `>` mode, the last row ("Ask the agent: …") sends it to the
   session the showing agent tab was opened for (else the last one opened, else a new one), where it
-  lands unsent in the input box ([agent sessions](agent-sessions.md)).
+  lands unsent in the input box ([agent sessions](agent-sessions.md)). Nothing matching says so,
+  naming the query.
 - **The overlay** is its own atom, mounted once in Shell: top-anchored, no dimmed backdrop, 60vh
   list with an always-painted scrollbar, ↑ on the first row wraps. Every chosen row closes the
   palette first, then opens or runs.
-- **It is the [nav menu](nav-menu.md)'s family:** the same surface, rows and springs. Opening, it
-  appears as a bar the height of its input, widens to full width, shows the input, then drops to
-  its full height while the rows it opened with cascade in; closing runs that backwards, in about
-  a fifth of a second. A keystroke's re-rank does not cascade. Reduced motion snaps. The input is
+- **It is the house `Dialog`** with `placement="top"`, `size="bare"` and no close button: the
+  menus' surface, growing in from the top and shrinking away with the overlay motion every popup
+  uses (`motion-in-origin`, `motion-out-origin`). Quick add is the same dialog. The input is
   `text-xs`, like the app's other search fields. There are no scroll-edge shades; the
-  always-painted scrollbar says there is more, and its thumb shows once the palette has its size.
+  always-painted scrollbar says there is more.
 - **The command table** (`state/commands.ts`): each row is an id, a label, an optional hotkey
   glyph, an optional `when`, and a Jotai write; a running plugin adds its own
   (`RendererPlugin.commands`: the agent's two). One `keydown` listener installed by Shell matches
@@ -73,9 +73,8 @@ app-level action is one row of one command table that keys, palette and menu all
   write regenerates the file; a list that changes on every tab switch is UI state.
 - Command declarations in `@holi/shared` with the menu built from them: each accelerator is a
   deliberate choice.
-- The exit on Radix's own `Presence`: it waits for a CSS animation, and the morph is a `motion`
-  spring, so `forceMount` hands unmounting to `AnimatePresence`. Radix drops the focus trap as
-  `open` turns false, so a row that focuses a terminal keeps it through the exit.
+- A morph of its own (a bar that widens, then drops with its rows cascading in): a second motion
+  language beside the one every other popup speaks, on a surface opened many times a day.
 - The palette as a sixth entry in the form-dialog registry: it is a different overlay class, and
   its keys must work while a form dialog is up.
 - Rebindable keys and a keybindings file; VS Code's other prefixes (`@`, `:`, `#`, `?`);
@@ -87,9 +86,7 @@ app-level action is one row of one command table that keys, palette and menu all
   `useCommandHotkeys`.
 - `apps/desktop/src/renderer/src/features/palette/CommandPalette.tsx`: the overlay, ⌃⇥, the Ask row.
 - `apps/desktop/src/renderer/src/primitives/Command.tsx`: shadcn Command on `cmdk`, in
-  `primitives/MorphDialog.tsx`, the morphing top-anchored shell it shares with
-  [quick add](tasks.md).
-- `apps/desktop/src/renderer/src/primitives/springs.ts`: the springs it shares with the nav menu.
+  `primitives/Dialog.tsx`, the top-anchored dialog it shares with [quick add](tasks.md).
 - `apps/desktop/src/renderer/src/lib/palette-rows.ts`: rows and ranking.
 - `apps/desktop/src/renderer/src/state/palette.ts`, `state/recents.ts`, `lib/recents.ts`.
 - `apps/desktop/src/renderer/src/state/pane-exit.ts`, `state/vault-switch.ts`.

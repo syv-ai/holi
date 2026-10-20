@@ -20,6 +20,8 @@ import {
   setThreadStarred,
   archiveThread,
   trashThread,
+  unarchiveThread,
+  untrashThread,
   fetchCategoryUnread,
   fetchCategoryCounts,
   textOnly,
@@ -1268,6 +1270,23 @@ describe('thread mutations', () => {
     expect(posts).toHaveLength(1)
     expect(posts[0]!.url).toBe('https://gmail.googleapis.com/gmail/v1/users/me/threads/t1/trash')
     expect(JSON.stringify(posts[0]!.body)).not.toContain('TRASH')
+  })
+
+  it('undoes an archive by adding INBOX back', async () => {
+    const { posts, api } = writable()
+
+    await unarchiveThread(api, 't1')
+
+    expect(posts).toEqual([{ url: MODIFY, body: { addLabelIds: ['INBOX'] } }])
+  })
+
+  it('undoes a trash through /untrash, not a label change', async () => {
+    const { posts, api } = writable()
+
+    await untrashThread(api, 't1')
+
+    expect(posts).toHaveLength(1)
+    expect(posts[0]!.url).toBe('https://gmail.googleapis.com/gmail/v1/users/me/threads/t1/untrash')
   })
 
   it('lets a refusal through rather than reporting a write that did not happen', async () => {

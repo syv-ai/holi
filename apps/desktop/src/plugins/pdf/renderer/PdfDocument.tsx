@@ -55,6 +55,8 @@ import '@fontsource/great-vibes/400.css'
 import '@fontsource/pacifico/400.css'
 import { formatCommentThreads, pdfAskHeader } from '../shared/pdf-comments'
 import { AskAgentPopover } from '@/composites/AskAgentPopover'
+import { FileWarning } from 'lucide-react'
+import { EmptyState } from '@/composites'
 import {
   ASK_AGENT_PDF,
   ASK_AGENT_THREAD,
@@ -690,8 +692,29 @@ export function PdfDocument({
       className="flex min-h-0 flex-1 flex-col bg-background outline-none"
     >
       {error !== null ? (
-        <p className="m-auto text-xs text-muted-foreground">{error}</p>
-      ) : src === null ? null : (
+        <EmptyState
+          icon={FileWarning}
+          role="alert"
+          title="This PDF didn’t open"
+          description={error}
+          action={{
+            label: 'Try again',
+            onClick: () => {
+              setError(null)
+              setGeneration((g) => g + 1)
+            },
+          }}
+        />
+      ) : src === null ? (
+        // The bytes are on their way: a page's shape where the page will be.
+        <div
+          role="status"
+          aria-label="Loading PDF"
+          className="flex min-h-0 flex-1 justify-center p-6"
+        >
+          <span className="block aspect-[3/4] w-full max-w-xl rounded-md motion-shimmer" />
+        </div>
+      ) : (
         <PDFViewer
           key={src}
           ref={viewerRef}

@@ -102,8 +102,12 @@ export function PluginSearch({
           }}
         >
           <CommandList className="max-h-72 overflow-y-auto">
-            {results.kind === 'searching' && <Note>Searching…</Note>}
-            {results.kind === 'failed' && <Note>{results.message}</Note>}
+            {results.kind === 'searching' && <Note role="status">Searching…</Note>}
+            {results.kind === 'failed' && (
+              <Note role="alert" className="text-destructive">
+                {results.message}
+              </Note>
+            )}
             {results.kind === 'done' && results.candidates.length === 0 && (
               <Note>No repositories match.</Note>
             )}
@@ -119,21 +123,30 @@ export function PluginSearch({
                     className="flex-col items-start gap-0.5 rounded-md text-xs data-[disabled=true]:opacity-100"
                   >
                     <span className="flex w-full items-baseline justify-between gap-2">
-                      <span className={cn('truncate', !installable && 'text-muted-foreground')}>
+                      {/* Wraps rather than truncates: the path is how two
+                          plugins of one name are told apart. */}
+                      <span
+                        className={cn(
+                          'min-w-0 break-words',
+                          !installable && 'text-muted-foreground',
+                        )}
+                      >
                         {c.plugin?.name ?? c.repo}
                         {c.plugin !== null && (
-                          <span className="ml-1.5 font-mono text-[11px] text-muted-foreground">
+                          <span className="ml-1.5 font-mono text-xs break-all text-muted-foreground">
                             {c.path === '' ? c.repo : `${c.repo}/${c.path}`}
                           </span>
                         )}
                       </span>
                       {installable && (
-                        <span className="shrink-0 text-[11px] text-muted-foreground">
+                        <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
                           {c.latest}
                         </span>
                       )}
                     </span>
-                    <span className="w-full truncate text-[11px] text-muted-foreground">
+                    {/* Wrapped, never truncated: a problem is the reason this
+                        repository cannot be installed. */}
+                    <span className="w-full text-xs text-pretty break-words text-muted-foreground">
                       {c.problem ?? (c.plugin?.description || c.description)}
                     </span>
                   </CommandItem>
@@ -146,6 +159,21 @@ export function PluginSearch({
   )
 }
 
-function Note({ children }: { children: React.ReactNode }): React.JSX.Element {
-  return <p className="px-2.5 py-2 text-[11px] text-muted-foreground">{children}</p>
+function Note({
+  children,
+  role,
+  className,
+}: {
+  children: React.ReactNode
+  role?: 'status' | 'alert'
+  className?: string
+}): React.JSX.Element {
+  return (
+    <p
+      role={role}
+      className={cn('px-2.5 py-2 text-xs text-pretty break-words text-muted-foreground', className)}
+    >
+      {children}
+    </p>
+  )
 }

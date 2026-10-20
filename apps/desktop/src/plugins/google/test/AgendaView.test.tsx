@@ -125,7 +125,7 @@ afterEach(() => {
 async function openPicker() {
   const user = userEvent.setup()
   render(<AgendaView />)
-  await user.click(await screen.findByRole('button', { name: /choose calendars/i }))
+  await user.click(await screen.findByRole('button', { name: /^calendars/i }))
   return { user, menu: await screen.findByRole('menu') }
 }
 
@@ -221,7 +221,7 @@ test('marks out-of-office distinctly from a meeting', async () => {
   expect(screen.getAllByText(/out of office/i)).toHaveLength(1)
 })
 
-test('dims an event that does not block time', async () => {
+test('says an event that does not block time is free, and mutes only its title', async () => {
   agendaMock.mockResolvedValue([
     event({ id: 'free', title: 'FYI release', busy: false }),
     event({ id: 'busy', title: 'Interview', busy: true }),
@@ -230,10 +230,15 @@ test('dims an event that does not block time', async () => {
   render(<AgendaView />)
   await screen.findByText('FYI release')
 
+  // Muted text, never opacity on top of it: that would drop the row's meta
+  // below a readable contrast.
   const free = screen.getByText('FYI release').closest('li')!
   const busy = screen.getByText('Interview').closest('li')!
-  expect(free.className).toContain('opacity-60')
-  expect(busy.className).not.toContain('opacity-60')
+  expect(free.className).not.toContain('opacity')
+  expect(screen.getByText('FYI release').className).toContain('text-muted-foreground')
+  expect(screen.getByText('Interview').className).not.toContain('text-muted-foreground')
+  expect(within(free).getByText(/^free · /)).toBeInTheDocument()
+  expect(within(busy).queryByText(/^free · /)).toBeNull()
 })
 
 test('offers the video link for a Zoom conference, not just Meet', async () => {
@@ -288,7 +293,7 @@ test('says nothing about calendars when Google gives none', async () => {
 
   // The agenda's own error surface covers the outage; a second broken control
   // saying the same thing is noise.
-  expect(screen.queryByRole('button', { name: /choose calendars/i })).toBeNull()
+  expect(screen.queryByRole('button', { name: /^calendars/i })).toBeNull()
 })
 
 /**
@@ -392,8 +397,8 @@ test('names the things the row had to drop to fit', async () => {
   expect(await screen.findByText('Room 3, second floor')).toBeInTheDocument()
   expect(screen.getByText('Mette')).toBeInTheDocument()
   expect(screen.getByText('12 people')).toBeInTheDocument()
-  // On a row, repeating is invisible and not blocking time is only a dimming.
-  expect(screen.getByText('repeats')).toBeInTheDocument()
+  // On a row, repeating is invisible.
+  expect(screen.getByText('Repeats')).toBeInTheDocument()
 })
 
 test('lets go of an event that a refresh drops from the agenda', async () => {

@@ -21,7 +21,7 @@ import { useAtomValue } from 'jotai'
 import { useEffect, useRef, useState } from 'react'
 import { SettingsHeading, SettingsNote } from '@/composites'
 import { activeRemoteAtom } from '@/plugin-api'
-import { Button } from '@/primitives'
+import { Button, Dialog } from '@/primitives'
 import { googleCap, useGoogleAccount } from './account'
 import { useAlwaysAllowedSenders, useForgetImageSenders } from './mail-images'
 
@@ -50,6 +50,10 @@ export function ConnectionsSection(): React.JSX.Element {
   /** The vault a connect in flight is for, so unmounting cancels it rather
    *  than leaving a listener holding a port for the life of the app. */
   const connecting = useRef<string | null>(null)
+  /** The account a "Remove from Holi" is asking about, and whether the
+   *  removal is in flight: it revokes at Google, so it is confirmed first. */
+  const [removing, setRemoving] = useState<{ sub: string; email: string } | null>(null)
+  const [removePending, setRemovePending] = useState(false)
 
   useEffect(() => {
     return () => {
@@ -98,10 +102,21 @@ export function ConnectionsSection(): React.JSX.Element {
     refreshGoogle()
   }
 
-  /** Revoke at Google and drop it everywhere. The destructive one. */
+  /**
+   * Revoke at Google and drop it everywhere. The destructive one, and the only
+   * one confirmed: unlinking this vault (Disconnect) is undone by "Use in this
+   * vault", but a revoke takes mail and calendar from every vault using the
+   * account and needs a fresh consent to get back.
+   */
   const removeAccount = async (sub: string) => {
-    if (remote !== null) await googleCap.removeAccount(remote, { sub }).catch(() => undefined)
-    refreshGoogle()
+    setRemovePending(true)
+    try {
+      if (remote !== null) await googleCap.removeAccount(remote, { sub }).catch(() => undefined)
+      refreshGoogle()
+    } finally {
+      setRemovePending(false)
+      setRemoving(null)
+    }
   }
 
   /** Connected here, but not the one this vault uses. */
@@ -131,7 +146,7 @@ export function ConnectionsSection(): React.JSX.Element {
       <SettingsHeading title="Google" />
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
-          <p className="truncate text-[11px] text-muted-foreground">
+          <p className="text-xs text-pretty break-words text-muted-foreground">
             {connected ? (
               <>
                 Connected as <span className="text-foreground">{account.email}</span>
@@ -143,7 +158,9 @@ export function ConnectionsSection(): React.JSX.Element {
             )}
           </p>
           {!connected && phase.kind === 'idle' && phase.error !== undefined && (
-            <p className="mt-0.5 truncate text-[11px] text-amber-400">{phase.error}</p>
+            <p role="alert" className="mt-0.5 text-xs text-pretty text-destructive">
+              {phase.error}
+            </p>
           )}
         </div>
 
@@ -175,17 +192,19 @@ export function ConnectionsSection(): React.JSX.Element {
           Picking one is a mapping, not a consent round trip, so it is one click
           and deliberately not dressed up as connecting. */}
       {others.length > 0 && (
-        <ul className="mt-2 space-y-1">
+        <ul className="mt-2 flex flex-col gap-1">
           {others.map((other) => (
             <li key={other.sub} className="flex items-center justify-between gap-3">
-              <span className="min-w-0 truncate text-[11px] text-muted-foreground">
-                {other.email}
-              </span>
+              <span className="min-w-0 text-xs break-all text-muted-foreground">{other.email}</span>
               <span className="flex shrink-0 items-center gap-2">
                 <Button size="xs" variant="secondary" onClick={() => void linkAccount(other.sub)}>
                   Use in this vault
                 </Button>
-                <Button size="xs" variant="ghost" onClick={() => void removeAccount(other.sub)}>
+                <Button
+                  size="xs"
+                  variant="ghost"
+                  onClick={() => setRemoving({ sub: other.sub, email: other.email })}
+                >
                   Remove from Holi
                 </Button>
               </span>
@@ -195,7 +214,7 @@ export function ConnectionsSection(): React.JSX.Element {
       )}
       {connected &&
         (needsReconsent ? (
-          <p className="mt-2 text-[11px] text-amber-400">
+          <p className="mt-2 text-xs text-pretty text-destructive">
             Holi needs new permissions. Mail still loads, but marking read, starring, archiving and
             contacts will not work until you reconnect.
           </p>
@@ -206,6 +225,40 @@ export function ConnectionsSection(): React.JSX.Element {
           </SettingsNote>
         ))}
       {connected && <ImageSenders />}
+
+      <Dialog
+        open={removing !== null}
+        onClose={() => {
+          if (!removePending) setRemoving(null)
+        }}
+        size="sm"
+      >
+        {removing !== null && (
+          <>
+            <Dialog.Header>
+              Remove <span className="break-all">{removing.email}</span> from Holi?
+            </Dialog.Header>
+            <Dialog.Body>
+              <p className="text-sm text-pretty text-muted-foreground">
+                Holi revokes its access at Google. Every vault using this account stops reading mail
+                and calendar.
+              </p>
+            </Dialog.Body>
+            <Dialog.Footer>
+              <Button variant="ghost" disabled={removePending} onClick={() => setRemoving(null)}>
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                disabled={removePending}
+                onClick={() => void removeAccount(removing.sub)}
+              >
+                {removePending ? 'Removing…' : 'Remove account'}
+              </Button>
+            </Dialog.Footer>
+          </>
+        )}
+      </Dialog>
     </section>
   )
 }
@@ -225,7 +278,7 @@ function ImageSenders(): React.JSX.Element | null {
   if (senders === undefined || senders.size === 0) return null
 
   return (
-    <p className="mt-2 flex items-baseline gap-2 text-[11px] text-muted-foreground">
+    <p className="mt-2 flex items-baseline gap-2 text-xs text-muted-foreground">
       <span className="min-w-0 flex-1">
         Images load automatically from {senders.size} {senders.size === 1 ? 'sender' : 'senders'}.
       </span>

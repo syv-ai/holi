@@ -16,9 +16,9 @@ import { useAtomValue } from 'jotai'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
-import { Button, ChipInput, Input } from '@/primitives'
+import { Button, ChipInput, Input, PillGroup } from '@/primitives'
 import { SandboxedHtml } from './SandboxedHtml'
-import { activeRemoteAtom, plainMarkdownExtensions } from '@/plugin-api'
+import { activeRemoteAtom, cn, plainMarkdownExtensions } from '@/plugin-api'
 import { composeFrom, type ComposeIntent } from './compose-intent'
 import { renderMailMarkdown } from './mail-markdown'
 import { mailHtmlToMarkdown } from './mail-unmarkdown'
@@ -58,7 +58,15 @@ export interface MailComposerProps {
   onClose: () => void
   /** Routes to vault settings for a `reconnect` failure. */
   onReconnect?: () => void
+  /** Drop the seam and inset the composer draws under a thread: in a dialog
+   *  the dialog is already the frame. */
+  bare?: boolean
 }
+
+const COMPOSE_VIEWS = [
+  { value: 'edit', label: 'Edit' },
+  { value: 'preview', label: 'Preview' },
+] as const satisfies readonly { value: 'edit' | 'preview'; label: string }[]
 
 interface LoadedDraft {
   to: MailAddress[]
@@ -79,6 +87,7 @@ export function MailComposer({
   onDiscarded,
   onClose,
   onReconnect,
+  bare = false,
 }: MailComposerProps): React.JSX.Element {
   /**
    * The vault whose account this message is written in, fixed at mount: a
@@ -380,7 +389,7 @@ export function MailComposer({
 
   return (
     <section
-      className="flex min-h-0 flex-col gap-2 border-t border-divider p-3"
+      className={cn('flex min-h-0 flex-col gap-2', !bare && 'border-t border-divider py-3')}
       aria-label="Compose mail"
       onKeyDown={(event) => {
         if (event.key === 'Escape') {
@@ -453,24 +462,16 @@ export function MailComposer({
         </p>
       )}
 
-      <div className="flex gap-1 text-xs" role="tablist" aria-label="Compose view">
-        {(['edit', 'preview'] as const).map((which) => (
-          <Button
-            key={which}
-            role="tab"
-            aria-selected={tab === which}
-            variant={tab === which ? 'secondary' : 'ghost'}
-            size="sm"
-            onClick={() => {
-              // Switching to preview is a natural save point.
-              if (which === 'preview') void save()
-              setTab(which)
-            }}
-          >
-            {which === 'edit' ? 'Edit' : 'Preview'}
-          </Button>
-        ))}
-      </div>
+      <PillGroup
+        label="Compose view"
+        options={COMPOSE_VIEWS}
+        isOn={(which) => tab === which}
+        onPick={(which) => {
+          // Switching to preview is a natural save point.
+          if (which === 'preview' && tab !== 'preview') void save()
+          setTab(which)
+        }}
+      />
 
       {tab === 'edit' ? (
         <MarkdownEditor
@@ -483,7 +484,7 @@ export function MailComposer({
           onBlur={() => void save()}
         />
       ) : (
-        <SandboxedHtml html={html} label="preview of your message" />
+        <SandboxedHtml html={html} label="Preview of your message" />
       )}
 
       {failure !== null && (
@@ -588,6 +589,9 @@ function MarkdownEditor({
         doc: initial.current,
         extensions: [
           ...plainMarkdownExtensions(),
+          // The field's accessible name: CodeMirror's content element is a
+          // bare `contenteditable` otherwise.
+          EditorView.contentAttributes.of({ 'aria-label': 'Message', 'aria-multiline': 'true' }),
           EditorView.updateListener.of((update) => {
             if (update.docChanged) notify.current(update.state.doc.toString())
             if (update.focusChanged && !update.view.hasFocus) blurred.current()

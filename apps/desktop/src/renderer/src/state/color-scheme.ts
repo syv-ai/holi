@@ -15,7 +15,9 @@
 import { atom, useAtomValue, useSetAtom } from 'jotai'
 import { useEffect } from 'react'
 import { VAULT_SETTING_DEFAULTS, resolveColorMode, type ColorScheme } from '@holi/shared'
-import { vaultSettingsAtom } from './settings'
+import { trpc } from '../lib/trpc'
+import { loadVaultSettingsAtom, vaultSettingsAtom } from './settings'
+import { activeRemoteAtom } from './vaults'
 
 /** What the active vault asked for. */
 export const colorSchemeAtom = atom<ColorScheme>(VAULT_SETTING_DEFAULTS.colorScheme)
@@ -63,3 +65,20 @@ export function useColorScheme(): void {
     document.documentElement.dataset.theme = mode
   }, [mode])
 }
+
+/**
+ * Choose light, dark or system from outside Settings (the profile menu): the
+ * same `settings.write` of the machine-local `colorScheme` the Appearance row
+ * makes, applied at once and then re-read so the cache agrees with the file.
+ */
+export const writeColorSchemeAtom = atom(null, async (get, set, scheme: ColorScheme) => {
+  const remote = get(activeRemoteAtom)
+  set(colorSchemeAtom, scheme)
+  if (remote === null) return
+  const cached = get(vaultSettingsAtom)
+  if (cached !== null && cached.remote === remote) {
+    set(vaultSettingsAtom, { remote, settings: { ...cached.settings, colorScheme: scheme } })
+  }
+  await trpc.settings.write.mutate({ remote, localJson: JSON.stringify({ colorScheme: scheme }) })
+  await set(loadVaultSettingsAtom, { force: true })
+})

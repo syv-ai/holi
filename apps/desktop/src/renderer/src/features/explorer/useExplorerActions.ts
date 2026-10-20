@@ -98,16 +98,21 @@ export function useExplorerActions(docPaths: string[]): ExplorerActions {
 
   // A transient folder becomes real once the snapshot carries a note inside it.
   useEffect(() => {
-    setPendingFolders((f) => f.filter((folder) => !docPaths.some((p) => p.startsWith(`${folder}/`))))
+    setPendingFolders((f) =>
+      f.filter((folder) => !docPaths.some((p) => p.startsWith(`${folder}/`))),
+    )
   }, [docPaths])
 
   const cut = useCallback((paths: string[]) => setClipboard({ mode: 'cut', paths }), [])
   const copy = useCallback((paths: string[]) => setClipboard({ mode: 'copy', paths }), [])
 
-  const moveInto = useCallback((sources: string[], destFolder: string) => {
-    const moves = planMoveInto(docPathsRef.current, sources, destFolder)
-    if (moves.length) void moveNotes({ moves })
-  }, [moveNotes])
+  const moveInto = useCallback(
+    (sources: string[], destFolder: string) => {
+      const moves = planMoveInto(docPathsRef.current, sources, destFolder)
+      if (moves.length) void moveNotes({ moves })
+    },
+    [moveNotes],
+  )
 
   const paste = useCallback(
     (destFolder: string) => {
@@ -217,10 +222,7 @@ export function useExplorerActions(docPaths: string[]): ExplorerActions {
     })()
   }, [deleteMany, exportFiles])
 
-  const addPendingFolder = useCallback(
-    (path: string) => setPendingFolders((f) => [...f, path]),
-    [],
-  )
+  const addPendingFolder = useCallback((path: string) => setPendingFolders((f) => [...f, path]), [])
 
   return {
     clipboard,

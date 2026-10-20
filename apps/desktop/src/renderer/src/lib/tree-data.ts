@@ -13,6 +13,8 @@
  * first file is still being written) is a folder.
  */
 
+import { orderChildren } from './tree-order'
+
 export const ROOT_ID = '__root__'
 
 export interface TreeItemData {
@@ -29,6 +31,9 @@ export function buildTreeData(
   paths: string[],
   folders: string[] = [],
   isDocument: (folder: string, has: (path: string) => boolean) => boolean = () => false,
+  /** The order you gave a folder's children ('' is the root), if any
+   *  (`lib/tree-order.ts`); unplaced children follow in the default order. */
+  order: Readonly<Record<string, readonly string[]>> = {},
 ): Record<string, TreeItemData> {
   const root: TreeItemData = { name: '', isFolder: true, isDocument: false, children: [] }
   const present = new Set(paths)
@@ -66,8 +71,10 @@ export function buildTreeData(
   const nameOf = (id: string): string => data[id]?.name ?? ''
 
   const rank = (id: string) => (data[id]?.isFolder && !data[id]?.isDocument ? 0 : 1)
-  for (const item of Object.values(data)) {
-    item.children.sort((a, b) => rank(a) - rank(b) || nameOf(a).localeCompare(nameOf(b)))
+  const byDefault = (a: string, b: string) =>
+    rank(a) - rank(b) || nameOf(a).localeCompare(nameOf(b))
+  for (const [id, item] of Object.entries(data)) {
+    item.children = orderChildren(item.children, order[id === ROOT_ID ? '' : id], byDefault)
   }
 
   return data

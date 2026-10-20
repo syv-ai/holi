@@ -13,6 +13,7 @@ import { getDefaultStore } from 'jotai'
 import { resetMailImagesForTests } from '../renderer/mail-images'
 import { resetMailFramesForTests } from '../renderer/mail-frames'
 import { activeRemoteAtom } from '@/plugin-api'
+import { Dialog } from '@/primitives'
 
 const threadMock = vi.fn()
 const readMock = vi.fn()
@@ -22,6 +23,8 @@ const setReadMock = vi.fn()
 const setStarredMock = vi.fn()
 const archiveMock = vi.fn()
 const trashMock = vi.fn()
+const untrashMock = vi.fn()
+const toastMock = vi.fn()
 const categoryCountsMock = vi.fn()
 const imageSendersMock = vi.fn()
 const allowImagesFromMock = vi.fn()
@@ -47,6 +50,7 @@ const google: Record<string, (params: unknown) => unknown> = {
   star: (p) => setStarredMock(p),
   archive: (p) => archiveMock(p),
   trash: (p) => trashMock(p),
+  untrash: (p) => untrashMock(p),
   categoryCounts: () => categoryCountsMock(),
   imageSenders: () => imageSendersMock(),
   allowImagesFrom: (p) => allowImagesFromMock(p),
@@ -67,6 +71,11 @@ vi.mock('@/plugin-api', async (original) => {
     openDialogAtom: atom(null, (_get, _set, dialog: unknown) => openedDialog(dialog)),
   }
 })
+
+vi.mock('sonner', async (original) => ({
+  ...(await original<typeof import('sonner')>()),
+  toast: (...args: unknown[]) => toastMock(...args),
+}))
 
 vi.mock('@/lib/trpc', () => ({
   trpc: {
@@ -252,7 +261,7 @@ test('marks a thread the user has replied to', async () => {
 
   render(<MailView />)
 
-  expect(await screen.findByLabelText('you replied')).toBeInTheDocument()
+  expect(await screen.findByLabelText('You replied')).toBeInTheDocument()
 })
 
 test('leaves a thread awaiting the user unmarked', async () => {
@@ -261,7 +270,7 @@ test('leaves a thread awaiting the user unmarked', async () => {
   render(<MailView />)
   await screen.findByRole('button', { name: /Q2 budget/ })
 
-  expect(screen.queryByLabelText('you replied')).toBeNull()
+  expect(screen.queryByLabelText('You replied')).toBeNull()
 })
 
 /** The list: tabs, search, chips and paging. */
@@ -329,7 +338,7 @@ test('marks a starred thread', async () => {
 
   render(<MailView />)
 
-  expect(await screen.findByLabelText('starred')).toBeInTheDocument()
+  expect(await screen.findByLabelText('Starred')).toBeInTheDocument()
 })
 
 test('marks a thread with an unsent draft', async () => {
@@ -338,7 +347,7 @@ test('marks a thread with an unsent draft', async () => {
   render(<MailView />)
 
   // You started replying and stopped.
-  expect(await screen.findByLabelText('unsent draft')).toBeInTheDocument()
+  expect(await screen.findByLabelText('Unsent draft')).toBeInTheDocument()
 })
 
 test('names the tab a thread came from, when it is not Primary', async () => {
@@ -381,7 +390,7 @@ test('marks a thread carrying a calendar invite', async () => {
 
   render(<MailView />)
 
-  expect(await screen.findByLabelText('meeting invite')).toBeInTheDocument()
+  expect(await screen.findByLabelText('Meeting invite')).toBeInTheDocument()
 })
 
 test('says nothing about meetings on a thread that is not one', async () => {
@@ -390,7 +399,7 @@ test('says nothing about meetings on a thread that is not one', async () => {
   render(<MailView />)
 
   expect(await screen.findByText('Q2 budget')).toBeInTheDocument()
-  expect(screen.queryByLabelText('meeting invite')).not.toBeInTheDocument()
+  expect(screen.queryByLabelText('Meeting invite')).not.toBeInTheDocument()
 })
 
 /**
@@ -412,7 +421,7 @@ test('groups the stamp, the count and the meeting badge apart from the text', as
   expect(rail).not.toBeNull()
   expect(rail!.textContent).toMatch(/\d{1,2}:\d{2}/)
   expect(rail).toHaveTextContent('(3)')
-  expect(rail!.querySelector('[aria-label="meeting invite"]')).not.toBeNull()
+  expect(rail!.querySelector('[aria-label="Meeting invite"]')).not.toBeNull()
   // The truncating text is NOT in here.
   expect(rail).not.toHaveTextContent('Q2 budget')
   expect(rail).not.toHaveTextContent('Jane')
@@ -434,7 +443,7 @@ test('offers an unsubscribe link for a newsletter', async () => {
 
   render(<MailView />)
   await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
-  await user.click(await screen.findByRole('button', { name: /unsubscribe/i }))
+  await moreAction(user, /unsubscribe/i)
 
   // Opened, never requested by Holi.
   expect(openExternal).toHaveBeenCalledWith('https://list.test/unsub?u=9')
@@ -1104,11 +1113,11 @@ test('stars and unstars the open thread', async () => {
   await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
   await screen.findByRole('article')
 
-  await user.click(screen.getByRole('button', { name: 'star this thread' }))
+  await user.click(screen.getByRole('button', { name: 'Star this thread' }))
 
   await waitFor(() => expect(setStarredMock).toHaveBeenCalledWith({ id: 't1', off: false }))
   // The button becomes its own inverse.
-  const unstar = await screen.findByRole('button', { name: 'unstar this thread' })
+  const unstar = await screen.findByRole('button', { name: 'Unstar this thread' })
   await user.click(unstar)
   await waitFor(() => expect(setStarredMock).toHaveBeenLastCalledWith({ id: 't1', off: true }))
 })
@@ -1120,7 +1129,7 @@ test('archiving removes the row and closes the reader', async () => {
   await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
   await screen.findByRole('article')
 
-  await user.click(screen.getByRole('button', { name: 'archive this thread' }))
+  await user.click(screen.getByRole('button', { name: 'Archive this thread' }))
 
   await waitFor(() => expect(archiveMock).toHaveBeenCalledWith({ id: 't1' }))
   // Both halves: the row goes and the reader closes.
@@ -1136,10 +1145,35 @@ test('trashing removes the row and closes the reader', async () => {
   await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
   await screen.findByRole('article')
 
-  await user.click(screen.getByRole('button', { name: 'move this thread to trash' }))
+  await user.click(screen.getByRole('button', { name: 'Move this thread to trash' }))
 
   await waitFor(() => expect(trashMock).toHaveBeenCalledWith({ id: 't1' }))
   await waitFor(() => expect(screen.queryByRole('button', { name: /Q2 budget/ })).toBeNull())
+})
+
+test('a trash offers Undo, which puts the thread back through untrash', async () => {
+  const user = userEvent.setup()
+  threadMock.mockResolvedValue(page([summary()]))
+  trashMock.mockResolvedValue({ ok: true })
+  untrashMock.mockResolvedValue({ ok: true })
+  render(<MailView />)
+  await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
+  await screen.findByRole('article')
+
+  await user.click(screen.getByRole('button', { name: 'Move this thread to trash' }))
+
+  await waitFor(() => expect(toastMock).toHaveBeenCalled())
+  const [message, options] = toastMock.mock.calls.at(-1) as [
+    string,
+    { action: { label: string; onClick: () => void } },
+  ]
+  expect(message).toBe('Thread moved to Trash')
+  expect(options.action.label).toBe('Undo')
+  const loads = threadMock.mock.calls.length
+  options.action.onClick()
+  await waitFor(() => expect(untrashMock).toHaveBeenCalledWith({ id: 't1' }))
+  // The list is read again, which is where the thread reappears.
+  await waitFor(() => expect(threadMock.mock.calls.length).toBeGreaterThan(loads))
 })
 
 test('a refused archive puts the thread back in the list', async () => {
@@ -1150,7 +1184,7 @@ test('a refused archive puts the thread back in the list', async () => {
   await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
   await screen.findByRole('article')
 
-  await user.click(screen.getByRole('button', { name: 'archive this thread' }))
+  await user.click(screen.getByRole('button', { name: 'Archive this thread' }))
 
   await waitFor(() => expect(archiveMock).toHaveBeenCalled())
   // Still there.
@@ -1179,7 +1213,7 @@ test('a rate limit is not reported as a permissions problem', async () => {
   await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
   await screen.findByRole('article')
 
-  await user.click(screen.getByRole('button', { name: 'archive this thread' }))
+  await user.click(screen.getByRole('button', { name: 'Archive this thread' }))
 
   expect(await screen.findByText(/rate limiting/)).toBeInTheDocument()
   expect(screen.queryByText(/Reconnect Google/)).toBeNull()
@@ -1311,7 +1345,7 @@ test('the category picker spends nothing until it is opened', async () => {
 
   expect(categoryCountsMock).not.toHaveBeenCalled()
 
-  await user.click(screen.getByRole('button', { name: 'choose a mailbox' }))
+  await user.click(screen.getByRole('button', { name: 'Choose a mailbox' }))
 
   await waitFor(() => expect(categoryCountsMock).toHaveBeenCalledTimes(1))
 })
@@ -1328,7 +1362,7 @@ test('shows the unread count beside each tab, and 500+ past a page', async () =>
   render(<MailView />)
   await screen.findByRole('button', { name: /Q2 budget/ })
 
-  await user.click(screen.getByRole('button', { name: 'choose a mailbox' }))
+  await user.click(screen.getByRole('button', { name: 'Choose a mailbox' }))
 
   const menu = await screen.findByRole('menu')
   expect(within(menu).getByRole('menuitem', { name: /Primary/ })).toHaveTextContent('4')
@@ -1413,7 +1447,7 @@ test('⌘F in the list still opens the mailbox search', async () => {
   await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
   await screen.findByRole('button', { name: /collapse message 2 of 2/i })
   // Back to the list, where ⌘F means the other thing.
-  await user.click(screen.getByRole('button', { name: 'refresh mail' }))
+  await user.click(screen.getByRole('button', { name: 'Refresh mail' }))
   await user.keyboard('{Meta>}f{/Meta}')
 
   expect(await screen.findByRole('combobox', { name: /search mail/i })).toBeInTheDocument()
@@ -1464,7 +1498,7 @@ test('closing the find takes every mark with it', async () => {
   await user.type(await screen.findByRole('textbox', { name: /find in conversation/i }), 'budget')
   await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('1/2'))
 
-  await user.click(screen.getByRole('button', { name: 'close find' }))
+  await user.click(screen.getByRole('button', { name: 'Close find' }))
 
   await waitFor(() => expect(document.querySelectorAll('[data-holi-find]')).toHaveLength(0))
   // The text is intact, not left in pieces by the unwrapping.
@@ -1554,7 +1588,7 @@ test('archives every selected thread through the same per-thread write', async (
 
   await user.click(screen.getByRole('checkbox', { name: /select One/i }))
   await user.click(screen.getByRole('checkbox', { name: /select Two/i }))
-  await user.click(await screen.findByRole('button', { name: 'archive' }))
+  await user.click(await screen.findByRole('button', { name: 'Archive' }))
 
   await waitFor(() => expect(archiveMock).toHaveBeenCalledTimes(2))
   expect(archiveMock).toHaveBeenCalledWith({ id: 't1' })
@@ -1573,12 +1607,12 @@ test('the toolbar gives way to the selection bar, and comes back', async () => {
 
   // Every one of these would destroy or invalidate the selection.
   expect(screen.queryByRole('button', { name: /search mail/i })).toBeNull()
-  expect(screen.queryByRole('button', { name: 'refresh mail' })).toBeNull()
-  expect(screen.queryByRole('button', { name: 'choose a mailbox' })).toBeNull()
+  expect(screen.queryByRole('button', { name: 'Refresh mail' })).toBeNull()
+  expect(screen.queryByRole('button', { name: 'Choose a mailbox' })).toBeNull()
 
-  await user.click(screen.getByRole('button', { name: 'clear selection' }))
+  await user.click(screen.getByRole('button', { name: 'Clear selection' }))
 
-  expect(await screen.findByRole('button', { name: 'refresh mail' })).toBeInTheDocument()
+  expect(await screen.findByRole('button', { name: 'Refresh mail' })).toBeInTheDocument()
 })
 
 test('Escape clears a selection', async () => {
@@ -1609,8 +1643,8 @@ test('forgets a selected thread that is no longer in the list', async () => {
 
   // t1 goes away underneath the selection.
   threadMock.mockResolvedValue(page([summary({ id: 't2', subject: 'Two' })]))
-  await user.click(screen.getByRole('button', { name: 'clear selection' }))
-  await user.click(await screen.findByRole('button', { name: 'refresh mail' }))
+  await user.click(screen.getByRole('button', { name: 'Clear selection' }))
+  await user.click(await screen.findByRole('button', { name: 'Refresh mail' }))
   await waitFor(() => expect(screen.queryByRole('button', { name: /One/ })).toBeNull())
 
   await user.click(screen.getByRole('checkbox', { name: /select Two/i }))
@@ -1624,6 +1658,12 @@ test('forgets a selected thread that is no longer in the list', async () => {
  */
 
 /** Right-click the one thread row and hand back the menu. */
+/** Open the reader's More actions menu and choose one of its items. */
+async function moreAction(user: ReturnType<typeof userEvent.setup>, name: string | RegExp) {
+  await user.click(await screen.findByRole('button', { name: 'More actions' }))
+  await user.click(await screen.findByRole('menuitem', { name }))
+}
+
 async function openRowMenu(user: ReturnType<typeof userEvent.setup>): Promise<HTMLElement> {
   fireEvent.contextMenu(await screen.findByRole('button', { name: /Q2 budget/ }))
   return await screen.findByRole('menu')
@@ -1738,7 +1778,7 @@ test('offers the tabs, Sent and Drafts from one control', async () => {
   render(<MailView />)
   await screen.findByRole('button', { name: /Q2 budget/ })
 
-  await user.click(screen.getByRole('button', { name: 'choose a mailbox' }))
+  await user.click(screen.getByRole('button', { name: 'Choose a mailbox' }))
 
   const menu = await screen.findByRole('menu')
   for (const label of [/^All mail/, /Primary/, /Social/, /Promotions/, /Updates/, /Forums/]) {
@@ -1758,7 +1798,7 @@ test('asks Gmail for the Sent mailbox, and says so on the trigger', async () => 
 
   await waitFor(() => expect(queryOf(1)).toMatchObject({ mailbox: 'sent' }))
   // The trigger says where you are without being opened.
-  expect(screen.getByRole('button', { name: 'choose a mailbox' })).toHaveTextContent('Sent')
+  expect(screen.getByRole('button', { name: 'Choose a mailbox' })).toHaveTextContent('Sent')
 })
 
 test('drops the unread filter in Sent, where a message cannot be unread', async () => {
@@ -1809,8 +1849,8 @@ test('compose sits on the toolbar row, in line with refresh', async () => {
   render(<MailView />)
   await screen.findByRole('button', { name: /Q2 budget/ })
 
-  const compose = screen.getByRole('button', { name: 'new message' })
-  const refresh = screen.getByRole('button', { name: 'refresh mail' })
+  const compose = screen.getByRole('button', { name: 'New message' })
+  const refresh = screen.getByRole('button', { name: 'Refresh mail' })
 
   expect(compose.parentElement).toBe(refresh.parentElement)
 })
@@ -1835,7 +1875,7 @@ test('a failed write does not roll back a refresh that landed while it was in fl
 
   // A refresh lands with different mail entirely.
   threadMock.mockResolvedValue(page([{ ...summary(), id: 't9', subject: 'Newer thing' }]))
-  await user.click(screen.getByRole('button', { name: 'refresh mail' }))
+  await user.click(screen.getByRole('button', { name: 'Refresh mail' }))
   await screen.findByRole('button', { name: /Newer thing/ })
 
   refuse(new Error('this Google permission was not granted'))
@@ -1859,7 +1899,7 @@ test('reads the refusal from the code, not from Google’s prose', async () => {
   await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
   await screen.findByRole('article')
 
-  await user.click(screen.getByRole('button', { name: 'archive this thread' }))
+  await user.click(screen.getByRole('button', { name: 'Archive this thread' }))
 
   expect(await screen.findByText(/Reconnect Google in settings/)).toBeInTheDocument()
 })
@@ -1874,7 +1914,7 @@ test('a rate-limit code is not reported as a permissions problem either', async 
   await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
   await screen.findByRole('article')
 
-  await user.click(screen.getByRole('button', { name: 'archive this thread' }))
+  await user.click(screen.getByRole('button', { name: 'Archive this thread' }))
 
   expect(await screen.findByText(/rate limiting/)).toBeInTheDocument()
   expect(screen.queryByText(/Reconnect Google/)).toBeNull()
@@ -1950,7 +1990,7 @@ async function openForCompose() {
 test('reply opens a composer inside the thread, not a browser', async () => {
   const user = await openForCompose()
 
-  await user.click(await screen.findByRole('button', { name: 'reply' }))
+  await user.click(await screen.findByRole('button', { name: 'Reply' }))
 
   const composer = await screen.findByRole('region', { name: 'Compose mail' })
   expect(composer).toBeInTheDocument()
@@ -1963,7 +2003,7 @@ test('reply opens a composer inside the thread, not a browser', async () => {
 test('reply addresses the sender; reply-all copies the rest', async () => {
   const user = await openForCompose()
 
-  await user.click(await screen.findByRole('button', { name: 'reply' }))
+  await user.click(await screen.findByRole('button', { name: 'Reply' }))
 
   const chips = await screen.findAllByTestId('chip-name')
   expect(chips.map((c) => c.textContent)).toEqual(['Jane'])
@@ -1972,7 +2012,7 @@ test('reply addresses the sender; reply-all copies the rest', async () => {
 test('forward opens with no recipients at all', async () => {
   const user = await openForCompose()
 
-  await user.click(await screen.findByRole('button', { name: 'forward' }))
+  await moreAction(user, 'Forward')
 
   await screen.findByRole('region', { name: 'Compose mail' })
   expect(screen.queryAllByTestId('chip-name')).toEqual([])
@@ -1982,10 +2022,10 @@ test('switching from reply to forward rebuilds the composer', async () => {
   // `composeFrom` runs once, on mount. Without a remount the second intent
   // would open showing the first one's recipients.
   const user = await openForCompose()
-  await user.click(await screen.findByRole('button', { name: 'reply' }))
+  await user.click(await screen.findByRole('button', { name: 'Reply' }))
   expect((await screen.findAllByTestId('chip-name')).length).toBe(1)
 
-  await user.click(screen.getByRole('button', { name: 'forward' }))
+  await moreAction(user, 'Forward')
 
   await screen.findByRole('region', { name: 'Compose mail' })
   expect(screen.queryAllByTestId('chip-name')).toEqual([])
@@ -1993,7 +2033,7 @@ test('switching from reply to forward rebuilds the composer', async () => {
 
 test('sending closes the composer and refetches the thread', async () => {
   const user = await openForCompose()
-  await user.click(await screen.findByRole('button', { name: 'reply' }))
+  await user.click(await screen.findByRole('button', { name: 'Reply' }))
   const before = readMock.mock.calls.length
 
   await user.click(await screen.findByRole('button', { name: 'Send' }))
@@ -2008,7 +2048,7 @@ test('sending closes the composer and refetches the thread', async () => {
 test('a failed send keeps the composer open with the text intact', async () => {
   const user = await openForCompose()
   sendMock.mockRejectedValue(new Error('no network'))
-  await user.click(await screen.findByRole('button', { name: 'reply' }))
+  await user.click(await screen.findByRole('button', { name: 'Reply' }))
 
   await user.click(await screen.findByRole('button', { name: 'Send' }))
 
@@ -2019,7 +2059,7 @@ test('a failed send keeps the composer open with the text intact', async () => {
 test('open in Gmail is still there — leaving is a choice, not a fallback', async () => {
   const user = await openForCompose()
 
-  await user.click(await screen.findByRole('button', { name: 'open in Gmail' }))
+  await moreAction(user, 'Open in Gmail')
 
   expect(openExternal).toHaveBeenCalledWith('https://mail.google.com/x')
 })
@@ -2127,7 +2167,7 @@ test('Drafts says so when there are none, rather than showing an empty pane', as
 
   await chooseMailbox(user, 'Drafts')
 
-  expect(await screen.findByText('No drafts.')).toBeInTheDocument()
+  expect(await screen.findByText('No drafts')).toBeInTheDocument()
 })
 
 test('Continue draft opens the newest draft in the open thread', async () => {
@@ -2153,7 +2193,7 @@ test('Continue draft opens the newest draft in the open thread', async () => {
   render(<MailView />)
   await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
 
-  await user.click(await screen.findByRole('button', { name: 'continue draft' }))
+  await moreAction(user, 'Continue your draft')
 
   await waitFor(() => expect(draftMock).toHaveBeenCalledWith({ id: 'new' }))
 })
@@ -2166,7 +2206,9 @@ test('no Continue draft on a thread that has none', async () => {
   await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
 
   await screen.findByRole('article')
-  expect(screen.queryByRole('button', { name: 'continue draft' })).toBeNull()
+  await user.click(screen.getByRole('button', { name: 'More actions' }))
+  await screen.findByRole('menu')
+  expect(screen.queryByRole('menuitem', { name: 'Continue your draft' })).toBeNull()
 })
 
 test('the thread list comes back when Mail is chosen again', async () => {
@@ -2174,7 +2216,7 @@ test('the thread list comes back when Mail is chosen again', async () => {
   threadMock.mockResolvedValue(page([summary()]))
   render(<MailView />)
   await chooseMailbox(user, 'Drafts')
-  await screen.findByText('No drafts.')
+  await screen.findByText('No drafts')
 
   await chooseMailbox(user, /^All mail/)
 
@@ -2192,7 +2234,7 @@ test('new message opens the compose dialog rather than an inline composer', asyn
   threadMock.mockResolvedValue(page([summary()]))
   render(<MailView />)
 
-  await user.click(await screen.findByRole('button', { name: 'new message' }))
+  await user.click(await screen.findByRole('button', { name: 'New message' }))
 
   // The plugin dialog is the contract with core's dialog host: it renders
   // what the plugin hands it.
@@ -2200,8 +2242,15 @@ test('new message opens the compose dialog rather than an inline composer', asyn
   const { render: content } = openedDialog.mock.calls[0]![0] as {
     render: (close: () => void) => React.ReactNode
   }
-  render(<>{content(() => {})}</>)
-  expect(await screen.findByRole('textbox', { name: 'Subject' })).toBeInTheDocument()
+  render(
+    <Dialog open onClose={() => {}}>
+      {content(() => {})}
+    </Dialog>,
+  )
+  // Named by its visible title, and the body field by its own label.
+  expect(await screen.findByRole('dialog', { name: 'New message' })).toBeInTheDocument()
+  expect(screen.getByRole('textbox', { name: 'Subject' })).toBeInTheDocument()
+  expect(screen.getByRole('textbox', { name: 'Message' })).toBeInTheDocument()
 })
 
 test('new message does not disturb an open thread', async () => {
@@ -2212,7 +2261,7 @@ test('new message does not disturb an open thread', async () => {
   await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
   await screen.findByRole('article')
 
-  await user.click(screen.getByRole('button', { name: 'new message' }))
+  await user.click(screen.getByRole('button', { name: 'New message' }))
 
   expect(screen.getByRole('article')).toBeInTheDocument()
 })

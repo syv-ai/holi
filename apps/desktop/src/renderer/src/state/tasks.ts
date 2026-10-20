@@ -24,7 +24,7 @@ import type { taskCapabilities } from '../../../main/vault/task-capabilities'
 import { capClient } from '../lib/cap-client'
 import { trpc } from '../lib/trpc'
 import { nowAtom, todayAtom } from './clock'
-import { activeTab, closeTabsForPaths, workspaceAtom, type Tab } from './panes'
+import { closeTabsForPaths, workspaceAtom } from './panes'
 import { activeRemoteAtom, loadSnapshotAtom, snapshotAtom } from './vaults'
 
 /** The vault root's lane. The lane IS the containing folder, and the root
@@ -81,21 +81,11 @@ export const todayLinkCountAtom = atom((get) =>
   countOpenTasksLinking(get(snapshotTasksAtom).items, dailyNoteFilename(get(todayAtom))),
 )
 
-/**
- * Quick add (⌘T), open, and where it shows: in the board's dock when the
- * focused pane is on the board, otherwise centred at the top like the
- * palette. The board's dock takes its request and clears it at once; the
- * centred one stays set while it is open.
- */
-export const quickAddAtom = atom<{ where: 'board' | 'centre' } | null>(null)
+/** Quick add (⌘T) is open: one dialog near the top, wherever it was asked
+ *  for (`QuickAddHost`). */
+export const quickAddAtom = atom(false)
 
-const isBoardTab = (tab: Tab | null): boolean => tab?.kind === 'surface' && tab.surface === 'board'
-
-export const openQuickAddAtom = atom(null, (get, set) =>
-  set(quickAddAtom, {
-    where: isBoardTab(activeTab(get(workspaceAtom))) ? 'board' : 'centre',
-  }),
-)
+export const openQuickAddAtom = atom(null, (_get, set) => set(quickAddAtom, true))
 
 /** The folder quick add opens in, asked for by a board lane's +. Taken once:
  *  quick add fills its Lane from it and clears it. */
@@ -104,6 +94,16 @@ export const quickAddFolderAtom = atom<string | null>(null)
 /** Quick add, opened in `folder`. */
 export const openQuickAddInAtom = atom(null, (_get, set, folder: string) => {
   set(quickAddFolderAtom, folder)
+  set(openQuickAddAtom)
+})
+
+/** The column quick add creates in, asked for by a board column's +. Taken
+ *  once, like the folder; Todo otherwise. */
+export const quickAddStatusAtom = atom<TaskStatus>('todo')
+
+/** Quick add, creating in the `status` column. */
+export const openQuickAddInColumnAtom = atom(null, (_get, set, status: TaskStatus) => {
+  set(quickAddStatusAtom, status)
   set(openQuickAddAtom)
 })
 
@@ -152,10 +152,6 @@ export const filterAtom = atom<Filter>(EMPTY_FILTER)
 export function togglePerson(filter: Filter, login: string): Filter {
   return { ...filter, people: toggleLogin(filter.people, login) }
 }
-
-/** Lane groups folded shut on the board, by cell key (`status:lane`): one
- *  column's lane folds without the others. A view convenience, so memory only. */
-export const collapsedLanesAtom = atom<ReadonlySet<string>>(new Set<string>())
 
 /** The board's only narrowing. Three controls, deliberately: the bar is a
  * search-and-narrow aid, not a second configuration surface. The filter

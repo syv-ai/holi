@@ -28,16 +28,20 @@ other rather than repeating each other.
 | [wiki-links](features/wiki-links.md)               | Link grammar, rename, backrefs                                           |
 | [tasks](features/tasks.md)                         | Task files, the board, dates, recurrence, reminders                      |
 | [daily-notes](features/daily-notes.md)             | Idempotent daily notes and their archive                                 |
-| [agent-sessions](features/agent-sessions.md)       | Claude Code background sessions, agent tabs, turn review, reconcile      |
+| [agent-sessions](features/agent-sessions.md)       | Background sessions, the Agents view, turn review, reconcile             |
+| [chat](features/chat.md)                           | The optional plugin that draws Claude Code as a conversation             |
 | [agent-config](features/agent-config.md)           | Config layering, the per-vault silo, seeded files, tools, permissions    |
 | [agent-memory](features/agent-memory.md)           | The vault's `.holi/memory/` directory                                    |
 | [scheduled-agents](features/scheduled-agents.md)   | Prompts Holi runs as agent sessions on a cron schedule, on this machine  |
+| [holis](features/holis.md)                         | Agents that belong to the vault, sent a document from its Agent menu     |
 | [google](features/google.md)                       | Gmail and Calendar per vault                                             |
 | [pdf](features/pdf.md)                             | Typst export, templates, the PDF viewer                                  |
 | [vault-apps](features/vault-apps.md)               | Agent-written apps in their own origin                                   |
 | [community-plugins](features/community-plugins.md) | Plugins from other repositories, run as their own processes              |
 | [command-palette](features/command-palette.md)     | Quick open and the one table of commands                                 |
-| [nav-menu](features/nav-menu.md)                   | The morphing menu at the sidebar's foot, and Home                        |
+| [nav-menu](features/nav-menu.md)                   | The nav's items, their menu, and Home                                    |
+| [sidebar](features/sidebar.md)                     | The sidebar, its two modes, the seam and the profile                     |
+| [home](features/home.md)                           | Home: the vault's library (recent, notes, tasks, activity)               |
 | [onboarding](features/onboarding.md)               | First run, creating or joining a vault                                   |
 | [updates](features/updates.md)                     | Releases from CI, and the app updating itself                            |
 

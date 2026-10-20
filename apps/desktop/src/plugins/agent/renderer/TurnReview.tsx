@@ -12,8 +12,8 @@
  */
 import { useAtomValue, useSetAtom } from 'jotai'
 import { useEffect, useState } from 'react'
-import { DiffView, DrawerShell, DrawerTitle } from '@/composites'
-import { Button } from '@/primitives'
+import { DiffView, DrawerShell, DrawerTitle, EmptyState, LoadingRows } from '@/composites'
+import { Button, Tooltip } from '@/primitives'
 import { cn, useAck } from '@/plugin-api'
 import {
   reviewTurnAtom,
@@ -35,6 +35,9 @@ const when = (iso: string) =>
     hour: '2-digit',
     minute: '2-digit',
   })
+
+const basename = (path: string): string => path.slice(path.lastIndexOf('/') + 1)
+const folder = (path: string): string => path.slice(0, Math.max(0, path.lastIndexOf('/')))
 
 export function TurnReview(): React.JSX.Element | null {
   const open = useAtomValue(turnReviewOpenAtom)
@@ -94,20 +97,34 @@ export function TurnReview(): React.JSX.Element | null {
 
   const row = (file: TurnFile) => (
     <Button
-      key={file.path}
       variant="ghost"
+      // The whole path, read in order: the row shows its name first.
+      aria-label={`${file.path}, +${file.added} −${file.removed}`}
       onClick={() => void loadDiff(file.path)}
       className={cn(
         'h-auto w-full min-w-0 justify-between gap-2 px-2 py-1 text-left text-xs font-normal',
         selected === file.path ? 'bg-accent text-foreground' : 'text-muted-foreground',
       )}
     >
-      <span className="min-w-0 flex-1 truncate">{file.path}</span>
-      <span className="shrink-0 font-mono text-[10px]">
-        <span className="text-emerald-500">+{file.added}</span>{' '}
-        <span className="text-destructive">−{file.removed}</span>
+      {/* The name first and the folder after it, muted: a path cut at its
+          end loses the filename, the one part that says which file it is.
+          The whole path is the tooltip. */}
+      <span className="flex min-w-0 flex-1 items-baseline gap-1.5">
+        <span className="shrink-0 truncate text-foreground">{basename(file.path)}</span>
+        {folder(file.path) !== '' && (
+          <span className="min-w-0 truncate text-muted-foreground">{folder(file.path)}</span>
+        )}
+      </span>
+      <span className="shrink-0 font-mono text-xs tabular-nums">
+        <span className="text-diff-added-foreground">+{file.added}</span>{' '}
+        <span className="text-diff-removed-foreground">−{file.removed}</span>
       </span>
     </Button>
+  )
+  const tipped = (file: TurnFile) => (
+    <Tooltip key={file.path} content={file.path}>
+      {row(file)}
+    </Tooltip>
   )
 
   return (
@@ -128,26 +145,30 @@ export function TurnReview(): React.JSX.Element | null {
               // Not "it changed nothing": a turn that changed nothing is never
               // recorded, so an empty list against a real turn means the commits it
               // names are no longer reachable (a reset, a re-clone).
-              <p className="px-2 py-1 text-xs text-muted-foreground">
-                This turn&rsquo;s history is gone. The commits it recorded are no longer in the
-                vault, so there is nothing left to compare.
-              </p>
+              <EmptyState
+                title="This turn’s history is gone"
+                description="The commits it recorded are no longer in the vault, so there is nothing left to compare."
+              />
             ) : (
-              files.map(row)
+              files.map(tipped)
             )}
           </div>
 
           <div className="min-h-0 flex-1 overflow-hidden">
             {selected === null ? (
-              <p className="p-3 text-xs text-muted-foreground">Pick a file to see what changed.</p>
+              <EmptyState title="Pick a file to see what changed" />
             ) : diff === null ? (
-              <p className="p-3 text-xs text-muted-foreground">Loading…</p>
+              <LoadingRows label="Loading the change" lines={3} />
             ) : (
               <DiffView before={diff.before} after={diff.after} onResolve={setResolved} />
             )}
           </div>
 
-          {error !== null && <p className="px-3 pb-1 text-xs text-destructive">{error}</p>}
+          {error !== null && (
+            <p role="alert" className="px-4 pb-1 text-xs text-pretty text-destructive">
+              {error}
+            </p>
+          )}
           <div className="border-t border-divider p-2">
             {/* Acknowledge: keeping a resolution writes a revert COMMIT, so it
             gets a beat. Fired on the way in rather than after the await: the

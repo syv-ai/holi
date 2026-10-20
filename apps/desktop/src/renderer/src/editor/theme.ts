@@ -2,7 +2,12 @@ import { HighlightStyle, syntaxHighlighting } from '@codemirror/language'
 import { tags as t } from '@lezer/highlight'
 import { EditorView } from '@codemirror/view'
 import { EDITOR_FONT_STACKS, VAULT_SETTING_DEFAULTS } from '@holi/shared'
-import { COMPLETION_CLASS, OPTION_CLASS } from './completion'
+import {
+  BLOCK_OPTION_CLASS,
+  COMPLETION_CLASS,
+  EMPTY_OPTION_CLASS,
+  OPTION_CLASS,
+} from './completion'
 
 /** The one mono stack, named once so the places that must *stay* mono when the
  *  notes editor goes proportional cannot drift from the base they restore. */
@@ -40,25 +45,29 @@ export const completionChrome = {
     color: 'var(--popover-foreground)',
     // Borderless on the popover shadow, like every overlay; see `primitives/Popover.tsx`.
     border: 'none',
-    borderRadius: 'var(--radius-md, 6px)',
+    // The menus' surface (`MENU_SURFACE`): `rounded-lg p-1`.
+    borderRadius: 'var(--radius-lg, 8px)',
     boxShadow: 'var(--shadow-popover)',
     padding: '4px',
   },
   // The app's UI font: CodeMirror's own rule here is `fontFamily: monospace`.
   [`${POPUP} > ul`]: {
     fontFamily: 'inherit',
-    fontSize: '13px',
+    fontSize: 'var(--text-nav, 13px)',
     maxHeight: '18em',
     minWidth: '220px',
     padding: '0',
   },
+  // The slash menu is ReUI's width, and tall enough for a group and a half.
+  [`${POPUP} > ul:has(> li.${BLOCK_OPTION_CLASS})`]: { width: '18rem', maxHeight: '22rem' },
+  // A row is the menus' row (`MENU_ROW`): `rounded-md px-1.5 py-1 text-nav`.
   [`${POPUP} > ul > li`]: {
     display: 'flex',
     alignItems: 'center',
-    gap: '8px',
-    padding: '5px 8px',
-    borderRadius: 'var(--radius-sm, 4px)',
-    lineHeight: '1.4',
+    gap: '6px',
+    padding: '4px 6px',
+    borderRadius: 'var(--radius-md, 6px)',
+    lineHeight: 'calc(18 / 13)',
     color: 'var(--popover-foreground)',
     transition: 'background var(--motion-respond, 150ms) var(--ease-settle, ease-out)',
   },
@@ -75,18 +84,15 @@ export const completionChrome = {
   // silver` at 0.7 opacity, which belongs to no theme at all.
   [`${POPUP} > ul > completion-section`]: {
     borderBottom: 'none',
-    borderTop: '1px solid var(--divider)',
-    marginTop: '3px',
-    padding: '7px 8px 4px',
-    fontSize: '10.5px',
-    fontWeight: '600',
-    letterSpacing: '0.06em',
-    textTransform: 'uppercase',
+    borderTop: 'none',
+    marginTop: '4px',
+    padding: '6px 6px 4px',
+    fontSize: '12px',
+    fontWeight: '500',
     color: 'var(--muted-foreground)',
     opacity: '1',
   },
   [`${POPUP} > ul > completion-section:first-child`]: {
-    borderTop: 'none',
     marginTop: '0',
   },
   [`${POPUP} .cm-completionLabel`]: {
@@ -137,7 +143,7 @@ export const completionChrome = {
   // Text, not a pill: no text on a tinted fill of its own ground.
   [`${POPUP} .cm-holi-meta`]: {
     flex: 'none',
-    fontSize: '11px',
+    fontSize: 'var(--text-xs, 12px)',
     color: 'var(--muted-foreground)',
   },
   [`${POPUP} > ul > li[aria-selected] .cm-holi-meta`]: { color: 'inherit' },
@@ -146,11 +152,69 @@ export const completionChrome = {
   // moves. `opacity`, not `display`, so the row's width does not jump.
   [`${POPUP} .cm-holi-enter`]: {
     flex: 'none',
-    fontSize: '11px',
+    fontSize: 'var(--text-xs, 12px)',
     color: 'var(--muted-foreground)',
     opacity: '0',
   },
   [`${POPUP} > ul > li[aria-selected] .cm-holi-enter`]: { opacity: '1', color: 'inherit' },
+  /**
+   * A slash menu block (after ReUI's slash menu): its glyph on a small raised
+   * tile, the title over a one-line hint, and the markdown that makes the
+   * same block at the end.
+   */
+  [`${POPUP} > ul > li.${BLOCK_OPTION_CLASS}`]: {
+    display: 'grid',
+    gridTemplateColumns: 'auto minmax(0, 1fr) auto',
+    columnGap: '8px',
+    alignItems: 'center',
+  },
+  [`${POPUP} > ul > li.${BLOCK_OPTION_CLASS} .cm-holi-icon`]: {
+    gridColumn: '1',
+    gridRow: '1 / span 2',
+    boxSizing: 'content-box',
+    width: 'var(--icon-md, 16px)',
+    height: 'var(--icon-md, 16px)',
+    padding: '5px',
+    color: 'var(--foreground)',
+    background: 'var(--background)',
+    border: '1px solid var(--border)',
+    borderRadius: 'var(--radius-md, 6px)',
+    boxShadow: '0 1px 2px color-mix(in oklab, var(--foreground) 6%, transparent)',
+  },
+  [`${POPUP} > ul > li.${BLOCK_OPTION_CLASS} .cm-completionLabel`]: {
+    gridColumn: '2',
+    gridRow: '1',
+  },
+  [`${POPUP} > ul > li.${BLOCK_OPTION_CLASS} .cm-completionDetail`]: {
+    gridColumn: '2',
+    gridRow: '2',
+    marginLeft: '0',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+  },
+  [`${POPUP} > ul > li.${BLOCK_OPTION_CLASS} .cm-holi-meta`]: {
+    gridColumn: '3',
+    gridRow: '1 / span 2',
+    fontSize: '12px',
+    letterSpacing: '0.1em',
+  },
+  [`${POPUP} > ul > li.${BLOCK_OPTION_CLASS}[aria-selected] .cm-completionDetail, ${POPUP} > ul > li.${BLOCK_OPTION_CLASS}[aria-selected] .cm-holi-meta`]:
+    { color: 'var(--muted-foreground)' },
+  [`${POPUP} > ul > li.${BLOCK_OPTION_CLASS} .cm-holi-enter`]: { display: 'none' },
+  [`${POPUP} > ul > li.${BLOCK_OPTION_CLASS} > .cm-completionIcon`]: { display: 'none' },
+  // Nothing matched: the menu stays, saying so, as ReUI's `CommandEmpty`.
+  [`${POPUP} > ul > li.${EMPTY_OPTION_CLASS}`]: {
+    justifyContent: 'center',
+    padding: '20px 8px',
+    color: 'var(--muted-foreground)',
+  },
+  [`${POPUP} > ul > li.${EMPTY_OPTION_CLASS}[aria-selected]`]: {
+    background: 'transparent',
+    color: 'var(--muted-foreground)',
+  },
+  [`${POPUP} > ul > li.${EMPTY_OPTION_CLASS} .cm-completionLabel`]: { flex: 'none' },
+  [`${POPUP} > ul > li.${EMPTY_OPTION_CLASS} .cm-holi-enter`]: { display: 'none' },
   [`${POPUP}.cm-tooltip-above`]: { transformOrigin: 'bottom left' },
   '@keyframes cm-completion-in': {
     from: { opacity: '0', transform: 'translateY(-4px) scale(0.97)' },
@@ -158,7 +222,14 @@ export const completionChrome = {
   },
 }
 
-export const editorTheme = EditorView.baseTheme({
+/**
+ * The editor's look, in both modes. Exported as a plain object so
+ * `test/completion.test.ts` can hold all of it to the rule the completion
+ * chrome follows: no hex or `rgba(` literal, since a literal is one mode's
+ * colour (a `#e5e5e5` caret vanished on the light page) and no vault can
+ * re-theme it.
+ */
+export const editorThemeSpec = {
   ...completionChrome,
   // The table widget reads its own `--tbl-style-font-family` (default
   // `system-ui`). Declared on the editor element, not `:root`, so the notes
@@ -179,6 +250,9 @@ export const editorTheme = EditorView.baseTheme({
     '--list-space': '0.7em',
     '--list-bullet': '0.6em',
     '--list-check': '1.15em',
+    // Where a filled block (a quote, a code block) starts: just outside the
+    // text's edge, so its own text sits a step in. One edge for every fill.
+    '--block-inset': 'calc(var(--editor-inset) - 8px)',
   },
   // Mono for every stack that borrows this base (plain/code editor, mail
   // composer, `DiffView`). Only the notes editor overrides it (`notesFontTheme`).
@@ -188,7 +262,7 @@ export const editorTheme = EditorView.baseTheme({
    * `DiffView` share. The notes stack centres its column in its pane
    * (`noteColumn` in `extensions.ts`).
    */
-  '.cm-content': { padding: '16px 0', maxWidth: '48rem', caretColor: '#e5e5e5' },
+  '.cm-content': { padding: '16px 0', maxWidth: '48rem', caretColor: 'var(--foreground)' },
   /**
    * The side margins live on the LINE, not on `.cm-content`.
    *
@@ -221,7 +295,12 @@ export const editorTheme = EditorView.baseTheme({
 
   // drawSelection() draws its own cursor and hides the native one, so caretColor
   // alone is invisible — the drawn cursor is a border-left element, style it.
-  '.cm-cursor, .cm-cursor-primary': { borderLeftColor: '#e5e5e5', borderLeftWidth: '2px' },
+  // The text's own colour, so it is the brightest thing on the page in either
+  // mode: it is the editor's only focus indicator.
+  '.cm-cursor, .cm-cursor-primary': {
+    borderLeftColor: 'var(--foreground)',
+    borderLeftWidth: '2px',
+  },
   /**
    * The theme's `--selection`, themeable per vault. Written at this depth because
    * CodeMirror's own selection rule is five classes deep and a shallower one
@@ -234,11 +313,20 @@ export const editorTheme = EditorView.baseTheme({
     background: 'var(--selection)',
   },
 
-  // Headings: size only, no extra margins, so render/un-render doesn't jump.
+  /**
+   * Headings. A heading belongs to what follows it, so it has air above and
+   * none below, and a list straight under it drops its own air above
+   * (`--list-space`). Padding, not margin, for the reason a list's is; and the
+   * same whether the `#` shows or not, so moving the caret onto it never jumps.
+   * H1 at the notes' 16px is 24px, the `text-2xl` of Home's and Settings' titles.
+   */
   '.cm-heading': { fontWeight: '600' },
-  '.cm-heading-1': { fontSize: '1.5em' },
-  '.cm-heading-2': { fontSize: '1.25em' },
-  '.cm-heading-3': { fontSize: '1.1em' },
+  '.cm-heading-1': { fontSize: '1.5em', paddingTop: '0.6em' },
+  '.cm-heading-2': { fontSize: '1.25em', paddingTop: '0.5em' },
+  '.cm-heading-3': { fontSize: '1.1em', paddingTop: '0.4em' },
+  '.cm-heading + .cm-list, .cm-heading + .cm-line:not(.cm-heading) + .cm-list': {
+    paddingTop: '0',
+  },
   /**
    * The editor text's one animation: a mark at the start of a line slides
    * rather than blinks. A heading's `#`, a quote's `>` and a fence's
@@ -313,7 +401,23 @@ export const editorTheme = EditorView.baseTheme({
   // fenced block carries `cm-cell-code` too), so the selector scopes them.
   '.tbl-cell-view .cm-cell-code': { color: 'var(--code)', fontFamily: MONO },
   '.tbl-cell-view .cm-cell-link': { color: 'var(--link)' },
-  '.cm-code-line': { background: 'rgba(255,255,255,0.04)' },
+  /**
+   * A fenced block: the quote's geometry (`--block-inset` each side, only its
+   * ends rounded), with the house `[0.04]` fill mixed from the text so it
+   * shows in either mode. Margins, not padding (see `.cm-line`).
+   */
+  '.cm-code-line': {
+    marginInline: 'var(--block-inset)',
+    background: 'color-mix(in oklab, var(--foreground) 4%, transparent)',
+  },
+  '.cm-code-line.cm-code-first': {
+    borderTopLeftRadius: 'var(--radius-md, 6px)',
+    borderTopRightRadius: 'var(--radius-md, 6px)',
+  },
+  '.cm-code-line.cm-code-last': {
+    borderBottomLeftRadius: 'var(--radius-md, 6px)',
+    borderBottomRightRadius: 'var(--radius-md, 6px)',
+  },
   // A quiet label while its backticks are shut, the raw text while they are open.
   '.cm-code-line:not(.cm-code-raw) .cm-code-info': {
     color: 'var(--muted-foreground)',
@@ -332,7 +436,7 @@ export const editorTheme = EditorView.baseTheme({
     margin: '0',
     fontFamily: MONO,
     whiteSpace: 'pre-wrap',
-    background: 'rgba(255,255,255,0.04)',
+    background: 'color-mix(in oklab, var(--foreground) 4%, transparent)',
     color: 'var(--muted-foreground)',
   },
   /**
@@ -433,7 +537,7 @@ export const editorTheme = EditorView.baseTheme({
    * hang lines up in there as it does outside.
    */
   '.cm-quote': {
-    '--quote-inset': '2em',
+    '--quote-inset': 'var(--block-inset)',
     // Toward the text, so it lifts off the page in either mode.
     '--quote-surface': 'color-mix(in srgb, var(--foreground) 16%, transparent)',
     marginRight: 'var(--quote-inset)',
@@ -573,15 +677,359 @@ export const editorTheme = EditorView.baseTheme({
    * positions tooltips against a range: a button that opens into a field.
    */
   '.cm-ask-agent-trigger': {
-    padding: '0.15rem 0.5rem',
-    fontSize: '0.75rem',
-    lineHeight: '1.4',
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '6px',
+    height: '28px',
+    padding: '0 8px',
+    fontFamily: 'var(--font-sans, ui-sans-serif, system-ui, sans-serif)',
+    fontSize: 'var(--text-nav, 13px)',
     color: 'var(--foreground)',
     background: 'transparent',
     border: 'none',
-    cursor: 'pointer',
+    borderRadius: 'var(--radius-md, 6px)',
+    outline: 'none',
+    cursor: 'default',
+    transition: 'background var(--motion-respond, 150ms) var(--ease-settle, ease-out)',
   },
-  '.cm-ask-agent-trigger:hover': { color: 'var(--link)' },
+  '.cm-ask-agent-trigger:hover': { background: 'var(--accent)' },
+  '.cm-ask-agent-trigger:focus-visible': { boxShadow: '0 0 0 1px var(--ring)' },
+  /**
+   * The format bar (`formatBar.ts`, after ReUI's bubble bar): toggles in the
+   * icon size the toolbar uses, pressed as the menus' accent fill, a labelled
+   * block type trigger, and hairlines between the groups.
+   */
+  '.cm-format-bar': {
+    position: 'relative',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '4px',
+    padding: '4px',
+    fontFamily: 'var(--font-sans, ui-sans-serif, system-ui, sans-serif)',
+  },
+  '.cm-format-group': { display: 'flex', alignItems: 'center', gap: '2px' },
+  '.cm-format-btn': {
+    position: 'relative',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: '2px',
+    minWidth: '28px',
+    height: '28px',
+    padding: '0',
+    color: 'var(--color-icon, var(--muted-foreground))',
+    background: 'transparent',
+    border: 'none',
+    borderRadius: 'var(--radius-md, 6px)',
+    outline: 'none',
+    cursor: 'default',
+    transition:
+      'background var(--motion-respond, 150ms) var(--ease-settle, ease-out), color var(--motion-respond, 150ms) var(--ease-settle, ease-out)',
+  },
+  '.cm-format-btn:hover, .cm-format-btn[aria-expanded="true"]': {
+    color: 'var(--color-icon-active, var(--foreground))',
+    background: 'var(--accent)',
+  },
+  '.cm-format-btn[aria-pressed="true"]': {
+    color: 'var(--accent-foreground)',
+    background: 'var(--accent)',
+  },
+  '.cm-format-btn:focus-visible, .cm-format-row:focus-visible, .cm-format-swatch:focus-visible': {
+    boxShadow: '0 0 0 1px var(--ring)',
+  },
+  '.cm-format-btn[aria-disabled="true"]': { opacity: '0.5', background: 'transparent' },
+  '.cm-format-icon': {
+    width: 'var(--icon-md, 16px)',
+    height: 'var(--icon-md, 16px)',
+    strokeWidth: 'var(--icon-stroke, 2)',
+    flex: 'none',
+  },
+  '.cm-format-chevron': {
+    width: 'var(--icon-sm, 14px)',
+    height: 'var(--icon-sm, 14px)',
+    opacity: '0.6',
+  },
+  /** Fixed width, so the bar never shifts as the block's type changes. */
+  '.cm-format-select': {
+    width: '7rem',
+    justifyContent: 'space-between',
+    padding: '0 6px 0 8px',
+    color: 'var(--foreground)',
+    fontSize: 'var(--text-nav, 13px)',
+  },
+  '.cm-format-select-label': { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  '.cm-format-align': { padding: '0 4px' },
+  '.cm-format-rule': {
+    flex: 'none',
+    width: '1px',
+    height: '16px',
+    background: 'var(--border)',
+  },
+  /** A control's name and key, over it, as the app's tooltips read. */
+  '.cm-format-btn[data-tip]:is(:hover, :focus-visible)::after': {
+    content: 'attr(data-tip)',
+    position: 'absolute',
+    bottom: 'calc(100% + 8px)',
+    left: '50%',
+    transform: 'translateX(-50%)',
+    padding: '4px 8px',
+    whiteSpace: 'pre',
+    fontSize: '12px',
+    lineHeight: '1.4',
+    color: 'var(--popover-foreground)',
+    background: 'var(--popover)',
+    borderRadius: 'var(--radius-md, 6px)',
+    boxShadow: 'var(--shadow-popover)',
+    pointerEvents: 'none',
+    zIndex: '2',
+    animation: 'cm-tip-in var(--motion-respond, 150ms) var(--ease-settle, ease-out) 400ms both',
+  },
+  '@keyframes cm-tip-in': { from: { opacity: '0' }, to: { opacity: '1' } },
+  /** A menu or popover hanging under its trigger, on the menus' surface. */
+  '.cm-format-panel': {
+    position: 'absolute',
+    top: 'calc(100% + 4px)',
+    zIndex: '3',
+    padding: '4px',
+    color: 'var(--popover-foreground)',
+    background: 'var(--popover)',
+    borderRadius: 'var(--radius-lg, 8px)',
+    boxShadow: 'var(--shadow-popover)',
+    transformOrigin: 'top left',
+    animation: 'cm-completion-in var(--motion-arrive, 300ms) var(--ease-settle, ease-out) both',
+  },
+  '.cm-format-menu': { display: 'flex', flexDirection: 'column', minWidth: '13rem' },
+  '.cm-format-menu-label': {
+    padding: '4px 6px',
+    fontSize: '12px',
+    fontWeight: '500',
+    color: 'var(--muted-foreground)',
+  },
+  '.cm-format-row': {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px',
+    width: '100%',
+    padding: '4px 6px',
+    fontSize: 'var(--text-nav, 13px)',
+    lineHeight: 'calc(18 / 13)',
+    textAlign: 'left',
+    color: 'var(--popover-foreground)',
+    background: 'transparent',
+    border: 'none',
+    borderRadius: 'var(--radius-md, 6px)',
+    outline: 'none',
+    cursor: 'default',
+    transition: 'background var(--motion-respond, 150ms) var(--ease-settle, ease-out)',
+  },
+  '.cm-format-row:hover, .cm-format-row:focus': {
+    background: 'var(--accent)',
+    color: 'var(--accent-foreground)',
+  },
+  '.cm-format-row .cm-format-icon': {
+    width: 'var(--icon-md, 16px)',
+    height: 'var(--icon-md, 16px)',
+    color: 'var(--color-icon, var(--muted-foreground))',
+  },
+  '.cm-format-row-label': { flex: '1' },
+  '.cm-format-kbd': {
+    marginLeft: 'auto',
+    fontSize: '12px',
+    letterSpacing: '0.1em',
+    color: 'var(--muted-foreground)',
+  },
+  '.cm-format-row .cm-format-check': {
+    width: 'var(--icon-sm, 14px)',
+    height: 'var(--icon-sm, 14px)',
+    color: 'var(--foreground)',
+  },
+  '.cm-format-swatches': { display: 'flex', alignItems: 'center', gap: '4px' },
+  '.cm-format-swatch': {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '28px',
+    height: '28px',
+    padding: '0',
+    background: 'transparent',
+    border: 'none',
+    borderRadius: 'var(--radius-md, 6px)',
+    outline: 'none',
+    transition: 'background var(--motion-respond, 150ms) var(--ease-settle, ease-out)',
+  },
+  '.cm-format-swatch:hover': { background: 'var(--accent)' },
+  '.cm-format-dot': {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '20px',
+    height: '20px',
+    borderRadius: '9999px',
+    color: 'var(--foreground)',
+  },
+  '.cm-format-dot .cm-format-icon': {
+    width: 'var(--icon-sm, 14px)',
+    height: 'var(--icon-sm, 14px)',
+  },
+  '.cm-format-linkpanel': { width: '20rem' },
+  /** The house text field: a calm grey fill and no edge; invalid tints it. */
+  '.cm-format-input': {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px',
+    height: '32px',
+    padding: '0 2px 0 8px',
+    background: 'var(--muted)',
+    borderRadius: 'var(--radius-md, 6px)',
+    color: 'var(--color-icon, var(--muted-foreground))',
+  },
+  '.cm-format-input .cm-format-btn': { minWidth: '24px', height: '24px' },
+  '.cm-format-input .cm-format-icon': {
+    width: 'var(--icon-sm, 14px)',
+    height: 'var(--icon-sm, 14px)',
+  },
+  '.cm-format-input-invalid': {
+    background: 'color-mix(in oklab, var(--destructive) 15%, transparent)',
+  },
+  '.cm-format-input-field': {
+    flex: '1',
+    minWidth: '0',
+    height: '100%',
+    padding: '0',
+    fontSize: 'var(--text-nav, 13px)',
+    color: 'var(--foreground)',
+    background: 'transparent',
+    border: 'none',
+    outline: 'none',
+  },
+  '.cm-format-input-field::placeholder': { color: 'var(--muted-foreground)' },
+  '.cm-format-error': { padding: '6px 2px 0', fontSize: '12px', color: 'var(--destructive)' },
+  '.cm-format-error:empty': { display: 'none' },
+
+  /** The caret's link (after ReUI's link bubble): its address, Edit, Remove. */
+  '.cm-tooltip.cm-link-bubble': {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '2px',
+    padding: '4px',
+    color: 'var(--popover-foreground)',
+    background: 'var(--popover)',
+    border: 'none',
+    borderRadius: 'var(--radius-lg, 8px)',
+    boxShadow: 'var(--shadow-popover)',
+    fontFamily: 'var(--font-sans, ui-sans-serif, system-ui, sans-serif)',
+  },
+  '.cm-link-bubble-href': {
+    gap: '6px',
+    maxWidth: '16rem',
+    padding: '0 8px',
+    fontSize: 'var(--text-nav, 13px)',
+    color: 'var(--muted-foreground)',
+  },
+  '.cm-link-bubble-href span': {
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+  },
+
+  /** The caret's empty line says what it can do (`placeholder.ts`). */
+  '.cm-line-hint': {
+    color: 'var(--muted-foreground)',
+    opacity: '0.7',
+    pointerEvents: 'none',
+    userSelect: 'none',
+  },
+  /** Space on an empty line (`askSpace.ts`): the Ask field on its own, under the line. */
+  '.cm-tooltip.cm-space-ask': { transformOrigin: 'top left', overflow: 'hidden' },
+  // A line's height, near enough, so it sits on the line it replaces.
+  '.cm-space-ask .cm-ask-agent-field': { paddingBlock: '0.3rem' },
+
+  /** The block whose menu is open, tinted like a selection, and the one being
+   *  dragged, faded (`blockActions.ts`). Paint only. */
+  '.cm-line.cm-block-menu': {
+    background: 'color-mix(in oklab, var(--foreground) 7%, transparent)',
+  },
+  '.cm-line.cm-block-dragging': { opacity: '0.5' },
+  '.cm-block-droplayer': { pointerEvents: 'none' },
+  '.cm-block-dropline': {
+    position: 'absolute',
+    height: '2px',
+    borderRadius: '9999px',
+    background: 'var(--foreground)',
+  },
+
+  /** The Contents block (`contents.ts`), after ReUI's: a quiet label and the
+   *  headings as links, indented by depth. */
+  '.cm-contents': {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '6px',
+    padding: '4px var(--editor-inset, 0)',
+    fontFamily: 'var(--font-sans, ui-sans-serif, system-ui, sans-serif)',
+  },
+  '.cm-contents-title': {
+    margin: '0',
+    fontSize: '12px',
+    fontWeight: '500',
+    color: 'var(--muted-foreground)',
+  },
+  '.cm-contents-empty': { margin: '0', fontSize: '14px', color: 'var(--muted-foreground)' },
+  '.cm-contents-list': { display: 'flex', flexDirection: 'column', alignItems: 'flex-start' },
+  '.cm-contents-link': {
+    maxWidth: '100%',
+    padding: '2px 0',
+    paddingInlineStart: 'calc(var(--contents-depth, 0) * 1rem)',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+    fontSize: '14px',
+    textAlign: 'left',
+    color: 'var(--muted-foreground)',
+    background: 'transparent',
+    border: 'none',
+    borderRadius: 'var(--radius-sm, 4px)',
+    outline: 'none',
+    cursor: 'pointer',
+    transition: 'color var(--motion-respond, 150ms) var(--ease-settle, ease-out)',
+  },
+  '.cm-contents-link:hover': {
+    color: 'var(--foreground)',
+    textDecoration: 'underline',
+    textUnderlineOffset: '4px',
+  },
+  '.cm-contents-link:focus-visible': { boxShadow: '0 0 0 1px var(--ring)' },
+
+  /** Highlights, in Tailwind's 200 on light and 400 at 30% on dark (ReUI's
+   *  pairs), and underline. */
+  '.cm-highlight': { borderRadius: '2px', boxDecorationBreak: 'clone', padding: '0 0.1em' },
+  '&light .cm-highlight-yellow': { background: 'oklch(94.5% 0.129 101.54)' },
+  '&light .cm-highlight-green': { background: 'oklch(90.5% 0.093 164.15)' },
+  '&light .cm-highlight-blue': { background: 'oklch(90.1% 0.058 230.902)' },
+  '&light .cm-highlight-pink': { background: 'oklch(89.9% 0.061 343.231)' },
+  '&light .cm-highlight-violet': { background: 'oklch(89.4% 0.057 293.283)' },
+  '&dark .cm-highlight-yellow': { background: 'oklch(85.2% 0.199 91.936 / 0.3)' },
+  '&dark .cm-highlight-green': { background: 'oklch(76.5% 0.177 163.223 / 0.3)' },
+  '&dark .cm-highlight-blue': { background: 'oklch(74.6% 0.16 232.661 / 0.3)' },
+  '&dark .cm-highlight-pink': { background: 'oklch(71.8% 0.202 349.761 / 0.3)' },
+  '&dark .cm-highlight-violet': { background: 'oklch(70.2% 0.183 293.541 / 0.3)' },
+  '.cm-underline': { textDecoration: 'underline', textUnderlineOffset: '3px' },
+  '.cm-task-done-text': { color: 'var(--muted-foreground)', textDecoration: 'line-through' },
+
+  /** Aligned blocks (`marks.ts`): the lines take the alignment, and the
+   *  wrapper's tags and blank lines stay small and quiet at a fixed size. */
+  '.cm-align-center': { textAlign: 'center' },
+  '.cm-align-right': { textAlign: 'right' },
+  '.cm-align-justify': { textAlign: 'justify' },
+  '.cm-align-tag': {
+    fontFamily: MONO,
+    fontSize: '0.75em',
+    lineHeight: '1.4',
+    color: 'var(--muted-foreground)',
+    opacity: '0.6',
+  },
+  '.cm-align-gap': { fontSize: '0.5em', lineHeight: '1' },
+  // The tag is markup, not content: no HTML highlighting on it.
+  '.cm-align-tag span': { color: 'inherit' },
   /**
    * The target row: which session this ask goes to. Styled like the pane's tab
    * strip, neutral fill for the chosen one and no state colour. It scrolls
@@ -603,7 +1051,7 @@ export const editorTheme = EditorView.baseTheme({
     whiteSpace: 'nowrap',
     padding: '0.1rem 0.45rem',
     borderRadius: '9999px',
-    fontSize: '0.6875rem',
+    fontSize: 'var(--text-xs, 12px)',
     lineHeight: '1.5',
     color: 'var(--muted-foreground)',
     background: 'transparent',
@@ -618,7 +1066,7 @@ export const editorTheme = EditorView.baseTheme({
   /** Why a send did not go. Empty, and so invisible, until one does not. */
   '.cm-ask-agent-notice': {
     padding: '0 0.6rem 0.45rem',
-    fontSize: '0.6875rem',
+    fontSize: 'var(--text-xs, 12px)',
     lineHeight: '1.5',
     color: 'var(--destructive)',
   },
@@ -637,13 +1085,16 @@ export const editorTheme = EditorView.baseTheme({
     padding: '0',
     // It sits above the passage, so it grows out of its own bottom edge.
     transformOrigin: 'bottom center',
-    overflow: 'hidden',
+    // Visible while it is the bar: its menus and tooltips hang outside it.
+    overflow: 'visible',
     color: 'var(--popover-foreground)',
     background: 'var(--popover)',
-    border: '1px solid var(--border)',
-    borderRadius: '8px',
+    // The one floating surface: the shadow carries the hairline.
+    border: 'none',
+    borderRadius: 'var(--radius-lg, 8px)',
     boxShadow: 'var(--shadow-popover)',
   },
+  '.cm-tooltip.cm-ask-agent.cm-ask-agent-open': { overflow: 'hidden' },
   /**
    * The field reads as the note does; its face is set only in `notesFontTheme`.
    * No `font-family` here: a `theme` and a `baseTheme` produce selectors of
@@ -695,21 +1146,27 @@ export const editorTheme = EditorView.baseTheme({
     from: { opacity: '1', transform: 'none' },
     to: { opacity: '0', transform: 'translateY(8px) scale(0.90)' },
   },
-  '.cm-ySelectionInfo': { fontSize: '10px', padding: '0 3px', borderRadius: '3px' },
+  '.cm-ySelectionInfo': {
+    fontSize: 'var(--text-xs, 12px)',
+    padding: '0 3px',
+    borderRadius: 'var(--radius-sm, 4px)',
+  },
 
   // Wiki-link hover preview. The card owns its chrome, so strip the base
-  // tooltip wrapper.
+  // tooltip wrapper. The one floating surface: `--popover` under the popover
+  // shadow, which carries the hairline, and the menus' radius.
   '.cm-tooltip.cm-tooltip-hover': { background: 'transparent', border: 'none' },
   '.cm-wiki-preview': {
     background: 'var(--popover)',
     color: 'var(--popover-foreground)',
-    border: '1px solid var(--border)',
-    borderRadius: '6px',
+    border: 'none',
+    borderRadius: 'var(--radius-lg, 8px)',
     padding: '8px 10px',
     maxWidth: '320px',
-    fontSize: '12px',
+    fontFamily: 'var(--font-sans, ui-sans-serif, system-ui, sans-serif)',
+    fontSize: 'var(--text-xs, 12px)',
     lineHeight: '1.5',
-    boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
+    boxShadow: 'var(--shadow-popover)',
   },
   '.cm-wiki-preview-title': {
     fontWeight: '600',
@@ -727,7 +1184,7 @@ export const editorTheme = EditorView.baseTheme({
   },
 
   // Validity status strip (plain/code editor). A bottom panel; strip CM's default
-  // panel chrome so it reads as part of the dark editor, not a boxed toolbar.
+  // panel chrome so it reads as part of the editor, not a boxed toolbar.
   '.cm-panels, .cm-panels-bottom': { background: 'transparent', border: 'none' },
   '.cm-validity': {
     display: 'flex',
@@ -735,21 +1192,24 @@ export const editorTheme = EditorView.baseTheme({
     justifyContent: 'flex-end',
     gap: '0.4rem',
     padding: '3px 12px',
-    borderTop: '1px solid #262626',
+    borderTop: '1px solid var(--divider)',
     fontFamily: MONO,
-    fontSize: '0.72rem',
+    fontSize: 'var(--text-xs, 12px)',
     // Neutral while valid: quiet until wrong.
-    color: '#737373',
+    color: 'var(--muted-foreground)',
   },
   '.cm-validity-dot': {
     width: '7px',
     height: '7px',
     borderRadius: '9999px',
-    background: '#737373',
+    background: 'var(--muted-foreground)',
   },
-  '.cm-validity-invalid': { color: '#f87171' },
-  '.cm-validity-invalid .cm-validity-dot': { background: '#f87171' },
-})
+  // `--syntax-invalid`, the frontmatter mark's red: `--destructive` is a fill.
+  '.cm-validity-invalid': { color: 'var(--syntax-invalid)' },
+  '.cm-validity-invalid .cm-validity-dot': { background: 'var(--syntax-invalid)' },
+}
+
+export const editorTheme = EditorView.baseTheme(editorThemeSpec)
 
 /**
  * Token colours for the plain/code editor (`plainTextExtensions`). The markdown
@@ -829,7 +1289,14 @@ const PROSE = EDITOR_FONT_STACKS[VAULT_SETTING_DEFAULTS.editorFont]
  * of the inherited font.
  */
 export const notesFontTheme = EditorView.theme({
-  '&': { '--tbl-style-font-family': `var(--editor-font, ${PROSE})` },
+  /**
+   * Reading size and measure. A note is long-form prose, so it is set at 16px
+   * (the plain editor, the composer and `DiffView` keep the base's 14px), in a
+   * column of about 70 characters plus the side insets: at 14px in 48rem a
+   * line ran to some 110. Small text sets it back a step (`EditorPane`).
+   */
+  '&': { fontSize: '16px', '--tbl-style-font-family': `var(--editor-font, ${PROSE})` },
+  '& > .cm-scroller > .cm-content': { maxWidth: 'calc(70ch + 2 * var(--editor-inset))' },
   '.cm-scroller': { fontFamily: `var(--editor-font, ${PROSE})` },
   // The running text's colour (`--prose` in index.css); marks, links and chips
   // keep their own.

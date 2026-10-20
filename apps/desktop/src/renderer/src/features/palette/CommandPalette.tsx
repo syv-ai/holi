@@ -28,7 +28,7 @@
  * Once two characters are typed, the notes whose text holds them follow the
  * name matches, after a short pause and only for the query still in the box.
  *
- * The last row, once anything is typed outside `>` mode, asks the assistant:
+ * The last row, once anything is typed outside `>` mode, asks the agent:
  * the text goes to the session ⌘J goes to and lands unsent in its input,
  * starting a session when there is none.
  */
@@ -349,7 +349,11 @@ export function CommandPalette(): React.JSX.Element {
           placeholder={placeholder}
         />
         <CommandList>
-          <CommandEmpty>Nothing matches</CommandEmpty>
+          <CommandEmpty>
+            {(cmdQuery ?? query).trim() === ''
+              ? 'Nothing to show yet'
+              : `Nothing matches “${(cmdQuery ?? query).trim()}”`}
+          </CommandEmpty>
           {cmdQuery === null ? (
             <>
               <RowGroup
@@ -367,7 +371,7 @@ export function CommandPalette(): React.JSX.Element {
                 <CommandGroup>
                   <CommandItem value={`ask:${query}`} onSelect={ask}>
                     <Icon icon={Sparkles} />
-                    <span className="truncate">Ask the assistant: {query.trim()}</span>
+                    <span className="truncate">Ask the agent: {query.trim()}</span>
                   </CommandItem>
                 </CommandGroup>
               )}

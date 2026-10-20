@@ -590,6 +590,31 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
       },
     }),
 
+    /**
+     * The view's Undo after an archive or a trash. UI only: an agent that
+     * wants a thread back in the inbox has no "undo" to mean, and the CLI's
+     * surface stays the writes it was granted.
+     */
+    'google.unarchive': cap({
+      doors: ['ui'],
+      params: idParams,
+      run: async (ctx, { id }) => {
+        const data = await dataOf(ctx.remote)
+        await google(() => data.unarchive(id))
+        return ok
+      },
+    }),
+
+    'google.untrash': cap({
+      doors: ['ui'],
+      params: idParams,
+      run: async (ctx, { id }) => {
+        const data = await dataOf(ctx.remote)
+        await google(() => data.untrash(id))
+        return ok
+      },
+    }),
+
     /** The composer's drafts list and one draft's body, straight from Google:
      *  `readDraft` is the one call that answers "is this ours?". */
     'google.drafts': cap({

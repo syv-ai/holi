@@ -12,14 +12,14 @@ describe('agentIndicator', () => {
 
   it('is green while a session is live and nothing is happening', () => {
     const live = agentIndicator(idle)
-    expect(live.dot).toContain('bg-green-500')
+    expect(live.dot).toContain('bg-emerald-600')
     expect(live.state).toBe('running')
   })
 
-  it('pulses amber while a turn is open', () => {
+  it('pulses while a turn is open, keeping amber for needs you', () => {
     const working = agentIndicator({ state: 'working' })
     expect(working.dot).toContain('motion-pulse')
-    expect(working.dot).toContain('bg-amber-400')
+    expect(working.dot).not.toContain('amber')
     expect(working.state).toBe('working…')
   })
 
@@ -29,6 +29,8 @@ describe('agentIndicator', () => {
     const waiting = agentIndicator({ state: 'needs-you', waitingFor: 'permission prompt' })
     expect(waiting.state).toBe('needs you')
     expect(waiting.title).toContain('permission prompt')
+    // A steady amber dot with its light pair: nothing breathes.
+    expect(waiting.dot).toBe('bg-amber-600 dark:bg-amber-400')
   })
 
   it('still says needs you when the listing gives no reason', () => {

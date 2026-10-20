@@ -46,10 +46,10 @@ const displayLocalPath = (fullPath: string, remote: string): string => {
  *  `alt=""`. */
 function CollaboratorAvatar({ login, avatarUrl }: { login: string; avatarUrl?: string }) {
   if (avatarUrl) {
-    return <img src={avatarUrl} alt="" className="size-4 shrink-0 rounded-full" />
+    return <img src={avatarUrl} alt="" className="size-5 shrink-0 rounded-full" />
   }
   return (
-    <span className="flex size-4 shrink-0 items-center justify-center rounded-full bg-muted text-[9px] uppercase text-muted-foreground">
+    <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-muted text-xs uppercase text-muted-foreground">
       {login.charAt(0)}
     </span>
   )
@@ -92,7 +92,7 @@ export function VaultSection(): React.JSX.Element {
       ) : (
         // A vault IS its remote; the local path is the clone, which survives a
         // sign-out. The remote opens GitHub, the path reveals it in Finder.
-        <div className="space-y-2">
+        <div className="flex flex-col gap-2">
           <SettingsField label="Remote">
             <ExternalLink
               url={originUrl(entry.remote)}
@@ -120,7 +120,11 @@ export function VaultSection(): React.JSX.Element {
                   'text-xs',
                   // The one place this tab shouts. A vault silently becoming
                   // public is the highest-severity thing that can happen to it.
-                  members.visibility === 'public' ? 'text-amber-400' : 'text-muted-foreground',
+                  // Amber's light shade, with its dark pair: 400 is unreadable on
+                  // the light page.
+                  members.visibility === 'public'
+                    ? 'text-amber-700 dark:text-amber-400'
+                    : 'text-muted-foreground',
                 )}
               >
                 {members.visibility}
@@ -154,11 +158,11 @@ export function VaultSection(): React.JSX.Element {
           crash. The raw message stays in the tooltip. */}
       {error !== null && (
         <Tooltip content={error.raw}>
-          <p className="mt-2 text-[11px] text-muted-foreground">{error.text}</p>
+          <p className="mt-2 text-xs text-muted-foreground">{error.text}</p>
         </Tooltip>
       )}
       {members === null && error === null && <SettingsNote className="mt-2">loading…</SettingsNote>}
-      <ul className="mt-2 space-y-1">
+      <ul className="mt-2 flex flex-col gap-1">
         {members?.collaborators.map((c) => (
           <li key={c.accountId} className="flex items-center gap-2">
             <CollaboratorAvatar login={c.login} avatarUrl={c.avatarUrl} />
@@ -170,9 +174,7 @@ export function VaultSection(): React.JSX.Element {
             </ExternalLink>
             {/* Push permission is the whole access model (FR-10/FR-13): the
                 level itself, muted, right-aligned. */}
-            <span className="ml-auto shrink-0 text-[10px] uppercase tracking-wider text-muted-foreground">
-              {c.permission}
-            </span>
+            <span className="ml-auto shrink-0 text-xs text-muted-foreground">{c.permission}</span>
           </li>
         ))}
       </ul>

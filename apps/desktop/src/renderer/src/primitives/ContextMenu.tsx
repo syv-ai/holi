@@ -46,7 +46,7 @@ function ContextMenuSubTrigger({
       data-slot="context-menu-sub-trigger"
       data-inset={inset}
       className={cn(
-        "motion-respond flex cursor-default items-center rounded px-2 py-1 outline-hidden select-none focus:bg-accent focus:text-accent-foreground data-[inset]:pl-8 data-[state=open]:bg-accent data-[state=open]:text-accent-foreground [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='text-'])]:text-icon",
+        "motion-respond flex cursor-default items-center gap-1.5 rounded-md px-1.5 py-1 outline-hidden select-none focus:bg-accent focus:text-accent-foreground data-[inset]:pl-8 data-[state=open]:bg-accent data-[state=open]:text-accent-foreground [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='text-'])]:text-icon",
         className,
       )}
       {...props}
@@ -65,7 +65,7 @@ function ContextMenuSubContent({
     <ContextMenuPrimitive.SubContent
       data-slot="context-menu-sub-content"
       className={cn(
-        'z-50 min-w-32 origin-(--radix-context-menu-content-transform-origin) overflow-hidden rounded-lg bg-popover p-1 text-xs text-popover-foreground shadow-popover data-[state=open]:motion-in-origin data-[state=closed]:motion-out-origin',
+        'z-50 min-w-32 origin-(--radix-context-menu-content-transform-origin) overflow-hidden rounded-lg bg-popover p-1 text-nav text-popover-foreground shadow-popover data-[state=open]:motion-in-origin data-[state=closed]:motion-out-origin',
         className,
       )}
       {...props}
@@ -86,7 +86,7 @@ function ContextMenuContent({
       <ContextMenuPrimitive.Content
         data-slot="context-menu-content"
         className={cn(
-          'z-50 max-h-(--radix-context-menu-content-available-height) w-56 origin-(--radix-context-menu-content-transform-origin) overflow-x-hidden overflow-y-auto rounded-lg bg-popover p-1 text-xs text-popover-foreground shadow-popover data-[state=open]:motion-in-origin data-[state=closed]:motion-out-origin',
+          'z-50 max-h-(--radix-context-menu-content-available-height) w-56 origin-(--radix-context-menu-content-transform-origin) overflow-x-hidden overflow-y-auto rounded-lg bg-popover p-1 text-nav text-popover-foreground shadow-popover data-[state=open]:motion-in-origin data-[state=closed]:motion-out-origin',
           className,
         )}
         {...props}
@@ -110,7 +110,7 @@ function ContextMenuItem({
       data-inset={inset}
       data-variant={variant}
       className={cn(
-        "relative flex cursor-default items-center justify-between gap-2 rounded px-2 py-1 outline-hidden select-none focus:bg-accent focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50 data-[inset]:pl-8 data-[variant=destructive]:text-destructive data-[variant=destructive]:focus:bg-destructive/10 data-[variant=destructive]:focus:text-destructive dark:data-[variant=destructive]:focus:bg-destructive/20 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='text-'])]:text-icon data-[variant=destructive]:*:[svg]:text-destructive!",
+        "relative flex cursor-default items-center gap-1.5 rounded-md px-1.5 py-1 outline-hidden select-none focus:bg-accent focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50 data-[inset]:pl-8 data-[variant=destructive]:text-destructive data-[variant=destructive]:focus:bg-destructive/10 data-[variant=destructive]:focus:text-destructive dark:data-[variant=destructive]:focus:bg-destructive/20 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='text-'])]:text-icon data-[variant=destructive]:*:[svg]:text-destructive!",
         className,
       )}
       {...props}
@@ -128,7 +128,7 @@ function ContextMenuCheckboxItem({
     <ContextMenuPrimitive.CheckboxItem
       data-slot="context-menu-checkbox-item"
       className={cn(
-        'relative flex cursor-default items-center gap-2 rounded py-1 pr-2 pl-8 outline-hidden select-none focus:bg-accent focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0',
+        'relative flex cursor-default items-center gap-1.5 rounded-md py-1 pr-2 pl-7 outline-hidden select-none focus:bg-accent focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0',
         className,
       )}
       checked={checked}
@@ -153,7 +153,7 @@ function ContextMenuRadioItem({
     <ContextMenuPrimitive.RadioItem
       data-slot="context-menu-radio-item"
       className={cn(
-        'relative flex cursor-default items-center gap-2 rounded py-1 pr-2 pl-8 outline-hidden select-none focus:bg-accent focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0',
+        'relative flex cursor-default items-center gap-1.5 rounded-md py-1 pr-2 pl-7 outline-hidden select-none focus:bg-accent focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0',
         className,
       )}
       {...props}

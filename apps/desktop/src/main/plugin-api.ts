@@ -124,6 +124,13 @@ export interface PluginCtx extends LiveVault, SchemeContext {
   head(): Promise<string | null>
   /** Hear what the renderer reports the person is looking at in this vault. */
   onReport(cb: (report: UiReport) => void): () => void
+  /**
+   * Call a capability in this vault at the UI door, as this plugin's
+   * renderer would: how one plugin's main side reaches another's, which it
+   * requires. Refused like any call while that plugin is off. Resolves to the
+   * entry's value.
+   */
+  call(name: string, params: unknown): Promise<unknown>
 }
 
 /** What a quit guard asks. */
@@ -198,7 +205,7 @@ export { resolveBin, toolPath } from './bin'
 export { defaultProbePid, type PidState } from './process-group'
 export { remoteUrl, runGit, type RangeFile } from './git'
 export { gitignoreWith } from './vault/seed/core'
-export { writeAtomic } from './vault/vault-files'
+export { removeDocFile, writeAtomic } from './vault/vault-files'
 export { holiTheme, readVaultTheme } from './vault/theme'
 export { readVaultSettings, writePluginSettings } from './vault/settings'
 export { installedInfos } from './plugin-host/installed'

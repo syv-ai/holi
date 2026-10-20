@@ -1,6 +1,6 @@
 # File tree
 
-The sidebar explorer shows the vault as the folders and files on disk. It reads as a navigation list: root entries are headings, and each open folder's contents hang from a rounded connector. It does what an editor's explorer does: context menu, inline create and rename, multi-select, keyboard navigation, drag to move, cut, copy and paste. Every move keeps `[[links]]` intact, and files dropped in from Finder are copied into the vault.
+The sidebar explorer shows the vault as the folders and files on disk. It reads as a plain list: each row is a chevron, an icon and a name, indented a step per level. It does what an editor's explorer does: context menu, inline create and rename, multi-select, keyboard navigation, drag to move, cut, copy and paste. Every move keeps `[[links]]` intact, and files dropped in from Finder are copied into the vault.
 
 ## How it works
 
@@ -8,12 +8,11 @@ The sidebar explorer shows the vault as the folders and files on disk. It reads 
 
 **Folders are real.** A folder row comes from `snapshot.dirs`, which lists every directory holding a file, so a folder whose contents are all filtered out still shows. New Folder writes a `.gitkeep` so the empty folder persists and syncs; a keep-file is a folder signal and never shown as a leaf. A folder still being named exists only in client state.
 
-**The look.** Root entries are larger and muted unless they are focused or on the open file's path. The focused root is marked by a brand bar at its left, which slides to the next one; there is no line under it. Inside a folder, each row hangs from its parent's chevron by a rounded elbow. The line from the root to the open file is drawn in brand, and so are the chevrons of every folder on it. The open file is bold.
+**The look.** The app's one tree (`primitives/Tree.tsx`, ReUI's `tree` from its `c-tree-1` example; see [ui-system](../ui-system.md#trees)). Every row is the same size at every level: a folder's chevron, an icon and the name, with a flat indent per level and nothing drawn between levels. The open file is bold. Nothing moves except a row's hover fill: a folder opens and closes at once, the chevron turns without a transition, and rows that appear (a pull, a new file) are simply there. It replaced a tree with connector rails, a brand-lit path to the open file, a brand bar sliding between roots, folders sliding open and rows fading in, which was too much motion for the thing you look at most.
 
-- A folder leads with a chevron only. A file leads with its type glyph in the chevron's column, except a note, which has no glyph and no `.md`: it is the unmarked row. The empty slot keeps names aligned.
-- The root's folders and its loose files are two groups with a gap between them.
-- A folder opens with the disclose motion (see [ui-system](../ui-system.md)).
+- A folder leads with its chevron and a folder glyph (open or closed). A file has no chevron, and its icon sits in the folder glyph's column, so a root file lines up with the root folders: its type glyph, a note's included (no `.md` in its name), a task's status, or the vault icon map's emoji, which also replaces a folder's glyph.
 - `expansion` is `single` by default: opening a folder closes the other branches, so one path is open. `multi` lets folders stay open. The open file's branch always opens.
+- A `@headless-tree/react` instance turns the tree data and the open set into the flat, indented rows and their `aria` tree semantics. It is fed controlled state and nothing else: the clicks, keys, drag and drop, menus and name fields below are the explorer's own handlers on the rows.
 
 **Opening.** A click opens a preview tab, a double click pins it, and ⌘-click opens the file in a new pane (see [tabs and panes](tabs-panes.md)). A click on a folder opens or closes it.
 
@@ -31,7 +30,7 @@ the editor rather than past the window's edge.
 
 - **Where a new item goes** is next to the focused row (`newItemPlace`): inside a focused folder as
   its first row, right after a focused file or app in its folder, and at the root when nothing is
-  focused. The name field slides in there, making room with the disclose motion.
+  focused. The name field appears there as a row at that level.
 - **A task** is named by its title; main names the file and it opens pinned, as ⌘⇧T's does, whether
   or not the tree shows task files. **An app** is `holi apps init`'s scaffold (`index.html` and an
   `app.yaml`, never overwriting), and its `index.html` opens, which expands the bundle. A typed
@@ -50,7 +49,17 @@ the editor rather than past the window's edge.
 
 **Drag and drop.** One mechanism. A row's drag is a native OS drag of the target files, so they can be dropped into other apps. Everything dropped on the tree arrives as files, and the path decides: a source inside this vault is a move through the move path, anything else is copied in. The destination is the folder under the pointer, a file's folder, or the root for empty space. The target folder is tinted while a drag is over it, and a closed folder opens after a short hover. A name clash is refused per file with an exclusive copy, and the skipped names stay listed until dismissed. A cloud placeholder that is not downloaded (`ETIMEDOUT`) is refused by name, and a folder from Finder is refused with a sentence. Dropping a row into Finder does not work, which is why Copy to Folder and Move to Folder exist; both auto-rename at the destination, and a move warns about dangling links and removes only the files whose copy landed.
 
-**Folder documents.** A claim's `folder` (`{surface, entry, ready?}`) makes a matched directory that holds its entry file one document, and its `decorate` (`{icon, name, suffix}`) names and marks the row; a rename keeps the suffix. Vault apps are the one such claim, from the apps plugin. A vault app's bundle (a `<name>.app` folder) is a folder that behaves as a file. It shows as one row with an app glyph and its name without `.app`, sorts with the files, and opens the app with a note's gestures. →, Show App Files, or the chevron that hover or focus reveals at the row's right end expands it so its files can be edited, and only then does it lead with a chevron; ←, Hide App Files or that chevron closes it. A drop on it lands beside it, and New File or Paste on it land beside it too. It moves, renames, copies and deletes as a folder. It needs its `index.html` to be an app; before that, or for a macOS app copied in, it is a folder. Without its `app.yaml` it is dimmed, a click shows its files instead of opening it, and its menu offers Finish this app instead of Open. See [vault apps](vault-apps.md).
+**Your own order.** The tree sorts folders first, then by name, until you arrange it. A drag onto a
+row's top or bottom edge (the tree's drag line, a rule with a ring at its start, shows where) drops beside that row: into its folder if it came from
+elsewhere, and at that place in the folder's order, which the tree then keeps
+(`lib/tree-order.ts`, `state/tree-order.ts`). The middle of a closed folder still drops into it; an
+open folder's lower part does too, since its contents show under it. The order is per vault and
+machine-local, like pins: how one person arranges the tree is not a decision about the vault, and a
+kept order never conflicts with a teammate's. Placed children come first in their order; anything
+never placed (new, or pulled in) follows in name order. A placed path that has gone is ignored rather
+than removed, so an undone rename finds its place again.
+
+**Folder documents.** A claim's `folder` (`{surface, entry, ready?}`) makes a matched directory that holds its entry file one document, and its `decorate` (`{icon, name, suffix}`) names and marks the row; a rename keeps the suffix. Vault apps are the one such claim, from the apps plugin. A vault app's bundle (a `<name>.app` folder) is a folder that behaves as a file. It shows as one row with an app glyph and its name without `.app`, sorts with the files, and opens the app with a note's gestures. →, Show App Files, or its chevron expands it so its files can be edited; the chevron sits where a folder's does, shown on hover or focus and while the files are open. ←, Hide App Files or that chevron closes it. A drop on it lands beside it, and New File or Paste on it land beside it too. It moves, renames, copies and deletes as a folder. It needs its `index.html` to be an app; before that, or for a macOS app copied in, it is a folder. Without its `app.yaml` it is dimmed, a click shows its files instead of opening it, and its menu offers Finish this app instead of Open. See [vault apps](vault-apps.md).
 
 **Reveal.** A command elsewhere (Edit Source on a vault app) can ask the tree to show a path. The tree opens down to it, selects it and scrolls it into view, even while it is hidden. A request made while a name is being typed is dropped.
 
@@ -58,7 +67,7 @@ the editor rather than past the window's edge.
 
 **Local and ignored files.** Machine-local files reach the snapshot and show in the tree, dimmed because git ignores them, but never sync. Local markdown is listed as a file, outside the note link graph. The watcher ignores them, so they refresh on the 30 s heal, except the personal theme, the personal settings and a personal app, which reload live. Anything git ignores is dimmed, from `git check-ignore` carried on the snapshot. The dim is on the row's contents, not the row, so a selection behind it stays solid. `.git`, `node_modules`, temp write files and OS junk are never content.
 
-**Task files.** Hidden by default behind a second per-vault toggle, because the board owns them. The tree lists them from `snapshot.claimed.tasks`, a file that would not parse included; another plugin's claimed files always show. When shown, a task leaf carries its status glyph and a done task is struck through. Today's daily note is marked `today`, with its link count, in brand text at the row's right end, centred on the name's x-height like the name itself.
+**Task files.** Hidden by default behind a second per-vault toggle, because the board owns them. The tree lists them from `snapshot.claimed.tasks`, a file that would not parse included; another plugin's claimed files always show. When shown, a task leaf carries its status glyph and a done task is struck through. Today's daily note is marked `today`, with its link count, in brand text at the row's right end.
 
 **Icons.** A file's type glyph is coloured by extension; git's own files show the Git mark. Any row (note, folder, binary) can instead carry one emoji from the vault's icon map: `.holi/settings/icons.yaml`, committed, under a per-key `.holi/settings/icons.local.yaml`. Set it with Edit Icon; an empty field removes the entry. Keys are normalized vault paths, written back sorted; a key outside the vault is dropped. The value must be exactly one emoji (either variation-selector spelling, or a lone pictograph) and anything else is ignored. The note's tab shows the same icon. The Icons settings section lists every entry and marks those whose path is gone.
 
@@ -73,7 +82,8 @@ the editor rather than past the window's edge.
 
 ## Rejected
 
-- A tree library (headless-tree, used before): it captured handlers once, so every action read state through refs; its click handling had to be overridden for the modifier clicks; and its drop and focus handling needed workarounds to stop a refused drop opening a window and a first drop throwing. The rules it provided fit in one small module.
+- Letting headless-tree run the tree (as an earlier version did): it captured handlers once, so every action read state through refs; its click handling had to be overridden for the modifier clicks; and its drop and focus handling needed workarounds to stop a refused drop opening a window and a first drop throwing. It is back only to flatten and indent for ReUI's component, with its state controlled and none of its selection, hotkey or drag-and-drop features; the rules stay in `lib/tree-view.ts`.
+- Connector rails, a brand-lit path, a sliding root bar, a disclose slide and row arrivals: each was a motion or a line to read past on the surface looked at most. The tree is calm now and is the ReUI component the rest of the app's design system already uses.
 - Two drag mechanisms (native for files, the web drag for folders): two drop paths for one move.
 - ⌘-click as the selection toggle: ⌘-click already opens a file in a new pane, as it does on a link in the editor.
 - An icon in the note's frontmatter: it cannot serve folders, binaries, agent instructions or local markdown, and two sources need a precedence rule.
@@ -85,6 +95,7 @@ the editor rather than past the window's edge.
 ## Code
 
 - `apps/desktop/src/renderer/src/features/explorer/FileTree.tsx`: the tree, its state, keys and drops
+- `apps/desktop/src/renderer/src/primitives/Tree.tsx`: the tree's look (ReUI `tree`), shared with the settings rail and History
 - `apps/desktop/src/renderer/src/lib/tree-view.ts`: visible rows, ranges, typeahead, move validity, where a new item goes
 - `apps/desktop/src/renderer/src/features/explorer/RowMenu.tsx`, `ExplorerHeader.tsx`: the row menu; the toolbar
 - `apps/desktop/src/renderer/src/features/explorer/useTreeProjection.ts`, `lib/tree-data.ts`: snapshot to tree data, filters

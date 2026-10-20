@@ -10,10 +10,15 @@
  * another pane, which has no slot here and a width this strip cannot know.
  * Every other position change glides rather than snaps.
  */
-import { useAtomValue } from 'jotai'
+import { useAtomValue, useSetAtom } from 'jotai'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   Button,
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -22,7 +27,7 @@ import {
   IconButton,
   Tooltip,
 } from '@/primitives'
-import { ChevronLeft, ChevronRight, X } from 'lucide-react'
+import { ChevronDown, ChevronLeft, ChevronRight, FileText, Plus, X } from 'lucide-react'
 import { snapshotTasks, type TaskStatus } from '@holi/shared'
 import { pathGlyph, pathLabel } from '@/composites/file-icons'
 import { surfaceLabel } from '@/lib/folder-documents'
@@ -43,9 +48,11 @@ import type { Tab } from '@/state/panes'
 import { surfaceTabLooksAtom, surfacesAtom } from '@/state/plugins'
 import { cn } from '@/lib/cn'
 import { snapshotAtom } from '@/state/vaults'
+import { runCommandAtom } from '@/state/commands'
 
-/** The strip's `gap-1`, in px: the caret is drawn in the gap before a pill. */
-const GAP = 4
+/** The space between tabs, in px: none, since they share their dividers (the
+ *  caret is drawn on the divider before a tab). */
+const GAP = 0
 
 /** One identity for "nothing is off either edge", so the common case does not
  *  hand React a new object on every scroll event. */
@@ -92,7 +99,7 @@ interface PathMarks {
 
 /** The registry a surface tab is, and how the tabs of a surface that says
  *  (`Surface.tabs`) look now. */
-interface TabSources {
+export interface TabSources {
   surfaces: ReadonlyMap<string, Surface>
   looks: ReadonlyMap<string, ReadonlyMap<string, SurfaceTabLook>>
 }
@@ -103,11 +110,15 @@ function lookOf(tab: Tab, sources: TabSources): SurfaceTabLook | null {
   return sources.looks.get(tab.surface)?.get(tab.id) ?? null
 }
 
-/** A note leads with nothing, as its tree row does; the pill keeps no empty
- *  slot, since nothing here lines up with it. */
+/** A note leads with its glyph (an emoji, a task's status, a file type), or a
+ *  page when it has none: every tab carries an icon, so the row reads as a set. */
 function tabIcon(tab: Tab, marks: PathMarks, sources: TabSources): ReactNode {
   if (tab.kind === 'note') {
-    return pathGlyph(tab.path, { emoji: marks.icons[tab.path], task: marks.tasks.get(tab.path) })
+    return (
+      pathGlyph(tab.path, { emoji: marks.icons[tab.path], task: marks.tasks.get(tab.path) }) ?? (
+        <Icon icon={FileText} size="sm" className="text-muted-foreground" />
+      )
+    )
   }
   // A dot its surface gives it (an agent session's state) stands in for
   // the surface's icon.
@@ -123,7 +134,7 @@ function tabIcon(tab: Tab, marks: PathMarks, sources: TabSources): ReactNode {
   return emoji ? pathGlyph(tab.id!, { emoji }) : <Icon icon={surface.icon} size="sm" />
 }
 
-function tabName(tab: Tab, sources: TabSources): string {
+export function tabName(tab: Tab, sources: TabSources): string {
   if (tab.kind === 'note') return pathLabel(tab.path)
   const look = lookOf(tab, sources)
   if (look !== null) return look.label
@@ -191,7 +202,7 @@ function OverflowMenu({
             <Button
               variant="ghost"
               size="xs"
-              className={`shrink-0 gap-0 rounded-full px-1.5 text-muted-foreground ${
+              className={`shrink-0 gap-0 rounded-lg px-1.5 text-muted-foreground ${
                 visible ? 'pointer-events-auto' : 'pointer-events-none'
               }`}
               aria-label={label}
@@ -237,6 +248,8 @@ export interface TabStripProps {
   /** Double-click promotes a preview tab (the VS Code rule). */
   onPin: (index: number) => void
   onClose: (index: number) => void
+  /** The context menu's Close others / Close to the right: keep `index`. */
+  onCloseOthers?: (index: number, which: 'others' | 'right') => void
   /** Whether this pane is the focused one. An unfocused pane's active tab loses
    *  its weight, so split strips say where the next file will land. */
   focused?: boolean
@@ -248,8 +261,11 @@ export interface TabStripProps {
   /** A tab drag entered or left this strip. The workspace hides the panes'
    *  landing strips meanwhile: a reorder should not light up the pane below. */
   onDragOverStrip?: (over: boolean) => void
-  /** Controls pinned to the right-hand end, outside the scroll (version history). */
+  /** Controls at the right-hand end, outside the scroll and before New and All
+   *  tabs: a page with no header row keeps its controls here. */
   trailing?: ReactNode
+  /** A control before the tabs (the hidden sidebar's toggle, in the first pane). */
+  leading?: ReactNode
 }
 
 export function TabStrip({
@@ -258,11 +274,13 @@ export function TabStrip({
   onSelect,
   onPin,
   onClose,
+  onCloseOthers,
   focused = true,
   onDropTab,
   onDragBegin,
   onDragOverStrip,
   trailing,
+  leading,
 }: TabStripProps) {
   const snapshot = useAtomValue(snapshotAtom)
   const marks = useMemo<PathMarks>(
@@ -275,6 +293,7 @@ export function TabStrip({
   const surfaces = useAtomValue(surfacesAtom)
   const looks = useAtomValue(surfaceTabLooksAtom)
   const sources = useMemo<TabSources>(() => ({ surfaces, looks }), [surfaces, looks])
+  const runCommand = useSetAtom(runCommandAtom)
   const hostRef = useRef<HTMLDivElement | null>(null)
   const pillRefs = useRef(new Map<string, HTMLElement>())
   /** Where the dragged tab would land. `x` is in the scroller's content
@@ -535,16 +554,20 @@ export function TabStrip({
   }
 
   return (
-    <div className="flex h-11 min-w-0 items-center gap-1 px-2">
+    // Browser tabs (after Arc's and Cursor's): cells that share their
+    // dividers on the window's ground, the active one in the page's colour and
+    // open at the bottom into the header below it.
+    <div className="app-drag flex h-9 min-w-0 shrink-0 items-stretch bg-ground">
+      {leading}
       {/* The frame the side counts float in, so they sit on the scroller's
           edges and `trailing` keeps its place. */}
-      <div className="relative flex min-w-0 flex-1 items-center">
+      <div className="relative flex min-w-0 flex-1 items-stretch">
         <div
           ref={hostRef}
           // `min-w-0`: without it the flex row grows the pane instead of
           // scrolling. The scrollbar is hidden; the side counts say there is
           // more.
-          className="relative flex min-w-0 flex-1 items-center gap-1 overflow-x-auto [scrollbar-width:none]"
+          className="relative flex min-w-0 flex-1 items-stretch overflow-x-auto [scrollbar-width:none]"
           data-testid="tab-strip"
           onDragOver={dragOver}
           onDragLeave={(e) => {
@@ -569,76 +592,122 @@ export function TabStrip({
           {tabs.map((t, i) => {
             const key = tabKey(t)
             return (
-              <span
-                key={key}
-                ref={(el) => {
-                  if (el === null) pillRefs.current.delete(key)
-                  else pillRefs.current.set(key, el)
-                }}
-                // On the pill, not on the Radix trigger or the Button.
-                draggable
-                onDragStart={(e) => {
-                  e.dataTransfer.setData(TAB_MIME, tabPayload(t))
-                  e.dataTransfer.effectAllowed = 'move'
-                  setDragFromKey(key)
-                  onDragBegin?.(t)
-                }}
-                onDragEnd={endDrag}
-                // The preview is a transform, never layout. A dragged pill dims
-                // to 40%, like a cut tree row.
-                //
-                // Only the property list is conditional: a drop must clear the
-                // transition as well as the transform (see `shift`). Timing
-                // comes from `motion-respond`.
-                style={{
-                  transform: shift === null ? undefined : `translateX(${shift[i] ?? 0}px)`,
-                  transitionProperty: shift === null ? 'opacity' : 'opacity, transform',
-                }}
-                className={`motion-respond group group/tab flex shrink-0 items-center gap-1 rounded-full px-3 py-1 text-xs ${
-                  dragFromKey === key ? 'opacity-40' : ''
-                } ${
-                  i === active
-                    ? focused
-                      ? 'bg-secondary text-foreground'
-                      : 'bg-secondary/40 text-muted-foreground'
-                    : 'text-muted-foreground hover:text-foreground'
-                }`}
-              >
-                <Tooltip content={tabTooltip(t, sources)}>
-                  <Button
-                    variant="ghost"
-                    // Ghost bg/padding neutralised so the pill owns the surface.
-                    // A preview tab reads italic (VS Code).
+              // Right-click: what a browser's tab offers (docs/features/tabs-panes.md).
+              <ContextMenu key={key}>
+                <ContextMenuTrigger asChild>
+                  <span
+                    ref={(el) => {
+                      if (el === null) pillRefs.current.delete(key)
+                      else pillRefs.current.set(key, el)
+                    }}
+                    // On the pill, not on the Radix trigger or the Button.
+                    draggable
+                    onDragStart={(e) => {
+                      e.dataTransfer.setData(TAB_MIME, tabPayload(t))
+                      e.dataTransfer.effectAllowed = 'move'
+                      setDragFromKey(key)
+                      onDragBegin?.(t)
+                    }}
+                    onDragEnd={endDrag}
+                    // The preview is a transform, never layout. A dragged pill dims
+                    // to 40%, like a cut tree row.
                     //
-                    // The 10px nudge centres an unhovered label against the
-                    // invisible close control's reserved width. A transform, not
-                    // padding: a pill changing width on hover would shift the
-                    // pills after it and the drop midpoints.
-                    className={`motion-respond h-auto translate-x-[10px] gap-1.5 p-0 group-hover/tab:translate-x-0 hover:bg-transparent ${
-                      t.kind === 'note' && t.preview ? 'italic' : ''
+                    // Only the property list is conditional: a drop must clear the
+                    // transition as well as the transform (see `shift`). Timing
+                    // comes from `motion-respond`.
+                    style={{
+                      transform: shift === null ? undefined : `translateX(${shift[i] ?? 0}px)`,
+                      transitionProperty:
+                        shift === null
+                          ? 'opacity, color, background-color'
+                          : 'opacity, transform, color, background-color',
+                    }}
+                    // One width for every tab, so the row reads as a set and a
+                    // close never reflows it. The active tab is the page's colour
+                    // with no bottom edge, so it runs on into the header below;
+                    // a light line on its top says which pane is focused.
+                    className={`motion-respond group group/tab relative flex w-44 shrink-0 items-center gap-1 border-r border-divider py-0 pr-1.5 pl-3 text-nav ${
+                      dragFromKey === key ? 'opacity-40' : ''
+                    } ${
+                      i === active
+                        ? `bg-background text-foreground ${
+                            focused
+                              ? 'before:absolute before:inset-x-0 before:top-0 before:h-0.5 before:bg-foreground/60'
+                              : ''
+                          }`
+                        : 'border-b text-muted-foreground hover:bg-foreground/[0.03] hover:text-foreground'
                     }`}
-                    onClick={() => onSelect(i)}
-                    // Double-click pins a preview note.
-                    onDoubleClick={() => onPin(i)}
                   >
-                    {tabIcon(t, marks, sources)}
-                    <span>{tabName(t, sources)}</span>
-                  </Button>
-                </Tooltip>
-                {/* Shown on hover or focus. Hidden with `opacity`, never
+                    <Tooltip content={tabTooltip(t, sources)}>
+                      <Button
+                        variant="ghost"
+                        // Ghost bg/padding neutralised so the pill owns the surface.
+                        // A preview tab reads italic (VS Code). `min-w-0` lets a
+                        // long name truncate at the pill's max width.
+                        aria-current={i === active ? 'page' : undefined}
+                        className={`h-auto min-w-0 flex-1 justify-start gap-2 p-0 text-nav font-normal hover:bg-transparent ${
+                          t.kind === 'note' && t.preview ? 'italic' : ''
+                        }`}
+                        onClick={() => onSelect(i)}
+                        // Double-click pins a preview note.
+                        onDoubleClick={() => onPin(i)}
+                      >
+                        {tabIcon(t, marks, sources)}
+                        <span className="truncate">{tabName(t, sources)}</span>
+                      </Button>
+                    </Tooltip>
+                    {/* Shown on hover or focus. Hidden with `opacity`, never
                   `hidden`, so the pill's width never changes. */}
-                <IconButton
-                  icon={X}
-                  label="close tab"
-                  shape="round"
-                  // Boxed to the pill's line height, so it never makes the pill
-                  // taller than its label.
-                  className="size-4 opacity-0 group-hover/tab:opacity-100 focus-visible:opacity-100"
-                  onClick={() => onClose(i)}
-                />
-              </span>
+                    <IconButton
+                      icon={X}
+                      label={`Close ${tabName(t, sources)}`}
+                      shape="round"
+                      // A 20px hit area around the 16px glyph. Shown on the active
+                      // tab, on hover and on focus; always laid out, so no label
+                      // shifts when it appears.
+                      className={`size-5 shrink-0 group-hover/tab:opacity-100 focus-visible:opacity-100 ${
+                        i === active ? 'opacity-100' : 'opacity-0'
+                      }`}
+                      onClick={() => onClose(i)}
+                    />
+                  </span>
+                </ContextMenuTrigger>
+                <ContextMenuContent className="w-52">
+                  <ContextMenuItem onSelect={() => onClose(i)}>Close</ContextMenuItem>
+                  {onCloseOthers !== undefined && (
+                    <>
+                      <ContextMenuItem
+                        disabled={tabs.length < 2}
+                        onSelect={() => onCloseOthers(i, 'others')}
+                      >
+                        Close others
+                      </ContextMenuItem>
+                      <ContextMenuItem
+                        disabled={i === tabs.length - 1}
+                        onSelect={() => onCloseOthers(i, 'right')}
+                      >
+                        Close to the right
+                      </ContextMenuItem>
+                    </>
+                  )}
+                  {t.kind === 'note' && (
+                    <>
+                      <ContextMenuSeparator />
+                      {t.preview === true && (
+                        <ContextMenuItem onSelect={() => onPin(i)}>Keep open</ContextMenuItem>
+                      )}
+                      <ContextMenuItem onSelect={() => void navigator.clipboard.writeText(t.path)}>
+                        Copy path
+                      </ContextMenuItem>
+                    </>
+                  )}
+                </ContextMenuContent>
+              </ContextMenu>
             )
           })}
+          {/* The rest of the row: the strip's bottom edge, which the active
+            tab breaks. */}
+          <span aria-hidden className="min-w-2 flex-1 border-b border-divider" />
         </div>
         <OverflowMenu
           side="left"
@@ -657,7 +726,30 @@ export function TabStrip({
           onReveal={reveal}
         />
       </div>
-      {trailing}
+      <div className="flex shrink-0 items-center gap-0.5 border-b border-l border-divider px-1.5">
+        {trailing}
+        <IconButton
+          icon={Plus}
+          label="New note"
+          quiet
+          onClick={() => void runCommand('note.new')}
+        />
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <IconButton icon={ChevronDown} label="All tabs" quiet disabled={tabs.length === 0} />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="max-w-72">
+            {tabs.map((t, i) => (
+              <DropdownMenuItem key={tabKey(t)} className="gap-2" onSelect={() => onSelect(i)}>
+                {tabIcon(t, marks, sources)}
+                <span className={cn('truncate', i === active && 'font-medium')}>
+                  {tabName(t, sources)}
+                </span>
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
     </div>
   )
 }

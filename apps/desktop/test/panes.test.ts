@@ -9,6 +9,7 @@ import {
   activePane,
   activeTab,
   closePane,
+  closeOtherTabs,
   closeTab,
   closingTabRemovesPane,
   closeTabsForPaths,
@@ -942,5 +943,27 @@ describe('closingTabRemovesPane', () => {
     expect(closingTabRemovesPane(w, 0)).toBe(true)
     agrees(w, 0)
     agrees(w, 9)
+  })
+})
+
+describe('closeOtherTabs', () => {
+  const three = () => {
+    let w = emptyWorkspace()
+    for (const p of ['a.md', 'b.md', 'c.md']) w = openPinned(w, p)
+    return w
+  }
+  it('keeps only the pointed-at tab, active', () => {
+    const w = closeOtherTabs(three(), 1, 'others')
+    expect(w.panes[0]!.tabs).toEqual([{ kind: 'note', path: 'b.md' }])
+    expect(w.panes[0]!.active).toBe(0)
+  })
+  it('closes the tabs to its right and makes it active', () => {
+    const w = closeOtherTabs(three(), 0, 'right')
+    expect(w.panes[0]!.tabs.map((t) => (t.kind === 'note' ? t.path : ''))).toEqual(['a.md'])
+    expect(w.panes[0]!.active).toBe(0)
+  })
+  it('ignores an index outside the pane', () => {
+    const w = three()
+    expect(closeOtherTabs(w, 9, 'others')).toEqual(w)
   })
 })

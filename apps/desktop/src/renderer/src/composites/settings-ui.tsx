@@ -7,15 +7,16 @@
  *
  * | | |
  * |---|---|
- * | section title (the view's `h2`) | `text-sm font-medium` |
- * | group heading | `text-[10px] uppercase tracking-wider text-muted-foreground` |
- * | group blurb | `text-[11px] text-muted-foreground` |
- * | row label | `text-xs font-medium` |
- * | row description | `text-[11px] text-muted-foreground` |
- * | badges and other meta | `text-[10px]` |
+ * | page title (the view's `h1`) | `text-2xl font-semibold tracking-tight` |
+ * | group heading | `text-xs font-medium text-muted-foreground` |
+ * | group blurb | `text-xs text-muted-foreground` |
+ * | row label | `text-sm font-medium` |
+ * | row description | `text-sm text-muted-foreground` |
+ * | notes, badges and other meta | `text-xs` |
  *
- * A group heading is *smaller* than the rows it introduces (the settings
- * idiom); weight and case carry the hierarchy so it cannot read as a row.
+ * Body is `text-sm` and meta `text-xs`, as everywhere else, and nothing is
+ * smaller (docs/ui-system.md, Type). A group heading is the sidebar's section
+ * label: smaller and muted, so it cannot read as a row.
  *
  * **Buttons: `xs` in content, `sm` in a dialog footer**, where a settings
  * action is the primary thing on screen.
@@ -53,11 +54,12 @@ export function SettingsHeading({
   return (
     // `scroll-mt` because the theme's mode and layer switches are sticky above
     // this: without it a jump parks the heading underneath them.
-    <div data-heading={headingId(title)} className="scroll-mt-14 pb-1 pt-5 first:pt-1">
-      <h3 className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-        {title}
-      </h3>
-      {blurb !== undefined && <p className="mt-0.5 text-[11px] text-muted-foreground">{blurb}</p>}
+    <div
+      data-heading={headingId(title)}
+      className="flex scroll-mt-14 flex-col gap-0.5 pt-6 pb-1 first:pt-1"
+    >
+      <h3 className="text-xs font-medium text-muted-foreground">{title}</h3>
+      {blurb !== undefined && <p className="text-xs text-muted-foreground">{blurb}</p>}
     </div>
   )
 }
@@ -111,13 +113,13 @@ export function SettingsRow({
   return (
     <div ref={ref} className={cn('flex flex-col gap-2 py-3', className)} {...rest}>
       <div className="flex flex-wrap items-start justify-end gap-x-3 gap-y-2">
-        <div className="min-w-0 grow basis-48">
+        <div className="flex min-w-0 grow basis-48 flex-col gap-0.5">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs font-medium">{label}</span>
+            <span className="text-sm font-medium">{label}</span>
             {meta}
           </div>
           {description !== undefined && (
-            <p className="mt-0.5 text-[11px] text-muted-foreground">{description}</p>
+            <p className="text-sm text-pretty text-muted-foreground">{description}</p>
           )}
         </div>
         {/* Shrinkable, not `shrink-0`: once it is alone on the second line and
@@ -137,7 +139,7 @@ export function SettingsNote({
   children: ReactNode
   className?: string
 }): React.JSX.Element {
-  return <p className={cn('text-[11px] text-muted-foreground', className)}>{children}</p>
+  return <p className={cn('text-xs text-muted-foreground', className)}>{children}</p>
 }
 
 /**
@@ -159,7 +161,7 @@ export function SettingsLink({
       variant="link"
       onClick={onClick}
       className={cn(
-        'h-auto max-w-full justify-start truncate p-0 align-baseline text-[11px] font-normal',
+        'h-auto max-w-full justify-start truncate p-0 align-baseline text-xs font-normal',
         className,
       )}
     >
@@ -211,10 +213,8 @@ export function SettingsField({
   children: ReactNode
 }): React.JSX.Element {
   return (
-    <div className="space-y-0.5">
-      <div className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-        {label}
-      </div>
+    <div className="flex flex-col gap-0.5">
+      <div className="text-xs font-medium text-muted-foreground">{label}</div>
       {children}
     </div>
   )

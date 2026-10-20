@@ -50,9 +50,9 @@ beforeEach(() => {
   store.set(coreContributionAtom, { surfaces: [APP_SURFACE], rail: [], claims: [] })
 })
 
-test('a note is named without .md and leads with nothing', () => {
+test('a note is named without .md and leads with a page when it has no glyph', () => {
   const pill = strip({ kind: 'note', path: 'notes/roadmap.md' }, 'roadmap')
-  expect(pill.innerHTML).not.toContain('<svg')
+  expect(pill.querySelector('svg.lucide-file-text')).not.toBeNull()
 })
 
 test('a note with an icon-map entry leads with the emoji', () => {

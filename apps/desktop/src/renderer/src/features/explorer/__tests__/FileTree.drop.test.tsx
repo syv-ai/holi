@@ -13,6 +13,7 @@ import { beforeEach, expect, test, vi } from 'vitest'
 import { render } from '@/test/render'
 import { FileTree } from '../FileTree'
 import { activeRemoteAtom, snapshotAtom, vaultsAtom } from '../../../state/vaults'
+import { treeOrderByVaultAtom } from '../../../state/tree-order'
 
 const importMock = vi.fn((_input: unknown) => Promise.resolve({ skipped: [] }))
 const moveMock = vi.fn((_input: unknown) => Promise.resolve(undefined))
@@ -175,4 +176,43 @@ test('a file dropped on empty space imports into the vault root', () => {
   tree_.dispatchEvent(dragEvent('drop', new FakeDataTransfer()))
 
   expect(importMock).toHaveBeenCalledWith(expect.objectContaining({ folder: '' }))
+})
+
+test('a row dropped on the top edge of a sibling takes its place, kept as the folder order', async () => {
+  store.set(treeOrderByVaultAtom, {})
+  store.set(activeRemoteAtom, REMOTE)
+  store.set(vaultsAtom, [{ remote: REMOTE, path: VAULT_PATH } as never])
+  store.set(snapshotAtom, {
+    ...EMPTY,
+    docs: [
+      { path: 'b.md', kind: 'note', updatedAt: '' },
+      { path: 'c.md', kind: 'note', updatedAt: '' },
+    ],
+  })
+  render(
+    <FileTree
+      activePath={null}
+      onOpenPreview={() => {}}
+      onOpenPinned={() => {}}
+      onOpenInNewPane={() => {}}
+    />,
+  )
+  window.holi = { pathForFile: () => `${VAULT_PATH}/c.md` } as never
+  const target = rowFor('b.md') as HTMLElement
+  // jsdom lays nothing out: a 28px row at y 100, the pointer on its top edge.
+  target.getBoundingClientRect = () => ({ top: 100, height: 28 }) as DOMRect
+  const drop = dragEvent('drop', new FakeDataTransfer([{ name: 'c.md' }]))
+  Object.defineProperty(drop, 'clientY', { value: 102 })
+
+  target.dispatchEvent(drop)
+
+  // Already in the folder: no move, only the order.
+  expect(moveMock).not.toHaveBeenCalled()
+  expect(store.get(treeOrderByVaultAtom)[REMOTE]?.['']).toEqual(['c.md', 'b.md'])
+  await vi.waitFor(() => {
+    const rows = [...document.querySelectorAll('[data-path]')].map((r) =>
+      r.getAttribute('data-path'),
+    )
+    expect(rows.indexOf('c.md')).toBeLessThan(rows.indexOf('b.md'))
+  })
 })

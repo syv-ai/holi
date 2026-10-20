@@ -18,6 +18,34 @@ asked. Also absent: surfacing a hook failure in the sync status bar when no sess
 
 **A cap on concurrent sessions.** A vault can run any number.
 
+**Scheduled Holis in the cloud.** A Holi file with a `cron` or `at` parses, is refused for anything
+that needs a machine (`holi` commands, `.local.` files), and is listed in the Agents view as "Not set
+up in the cloud"; nothing runs it. It would be Claude Code's scheduled cloud runs against the vault's
+GitHub repository, once per moment for everyone, its outcome read from its commit (the message its
+report, the diff its review). Claude Code drives those from its `/schedule` skill against claude.ai,
+which Holi has no interface to yet ([holis](features/holis.md)).
+
+**More ways to send a Holi work.** Only a document, from its Agent menu, today. Each further trigger
+would start the same session under the same per-machine approval:
+
+- **the selection's lines** with the document, which the pane header's slot does not carry yet;
+- **a Claude Code hook**, a session handing work to a Holi, as `holi holis send <holi> <path>`
+  behind a seeded `ask` rule, the person answering in the tab it opens;
+- **the CLI with a prompt** (`holi holis ask <holi> "…"`) and the same as an **MCP tool** for other
+  agents, returning the run's id, its report read in Holi;
+- **a connection**, such as a new mail matching a filter, offered as a notification the person
+  accepts rather than a run that starts unattended.
+
+**A Holi from another vault.** A file here that only names another of the person's vaults and a
+Holi in it (`from: owner/repo#id`), read from that vault each time, its approval still this
+vault's.
+
+**Context use on a chat's row.** Read from each turn's `result` and kept on the record, not yet
+drawn ([chat](features/chat.md)).
+
+**Steering a working chat.** A message written while a turn runs waits for it to finish; Claude Code
+can take one mid-turn.
+
 **Memory tooling.** Lint findings as proposals, a graph view, and per-directory indexes. See
 [agent-memory](features/agent-memory.md).
 

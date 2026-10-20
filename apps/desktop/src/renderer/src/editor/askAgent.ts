@@ -8,9 +8,24 @@
  * `EditorDeps`, which the editors route through the agent service
  * (`useAskAgentSeam`). With no agent there is no seam and no button.
  */
-import { EditorSelection, StateField, type EditorState, type Extension } from '@codemirror/state'
-import { showTooltip, type EditorView, type Tooltip, type TooltipView } from '@codemirror/view'
+import {
+  EditorSelection,
+  Prec,
+  StateEffect,
+  StateField,
+  type EditorState,
+  type Extension,
+} from '@codemirror/state'
+import {
+  keymap,
+  showTooltip,
+  type EditorView,
+  type Tooltip,
+  type TooltipView,
+} from '@codemirror/view'
 import { motionDurationMs, prefersReducedMotion } from '@/lib/motion'
+import { formatBar, focusFormatBar, type BubblePanel } from './formatBar'
+import { linkAt } from './formatting'
 
 /**
  * The seeded turn for a selection. `from`/`to` are 1-based inclusive line
@@ -98,7 +113,12 @@ const exitMs = (): number => (prefersReducedMotion() ? 0 : motionDurationMs('--m
  * Sending collapses the selection on purpose: that is how the tooltip closes,
  * one mechanism rather than a second dismiss path. The collapse follows the fade.
  */
-function askAgentView(view: EditorView, quote: string, seam: AskAgentSeam): TooltipView {
+function askAgentView(
+  view: EditorView,
+  quote: string,
+  seam?: AskAgentSeam,
+  panel: BubblePanel = null,
+): TooltipView {
   const dom = document.createElement('div')
   dom.className = 'cm-ask-agent'
 
@@ -124,7 +144,7 @@ function askAgentView(view: EditorView, quote: string, seam: AskAgentSeam): Tool
     field.className = 'cm-ask-agent-field'
 
     // Read as the popover opens. A default that has gone falls back to a new session.
-    const { sessions, initial } = seam.targets()
+    const { sessions, initial } = seam!.targets()
     let target: string | 'new' =
       initial !== 'new' && sessions.some((s) => s.id === initial) ? initial : 'new'
 
@@ -172,7 +192,7 @@ function askAgentView(view: EditorView, quote: string, seam: AskAgentSeam): Tool
       if (leaving !== null || sending) return // already on the way out, or already going
       sending = true
       notice.textContent = ''
-      const res = await seam.onAsk(askPrompt(instruction, quote), target)
+      const res = await seam!.onAsk(askPrompt(instruction, quote), target)
       sending = false
       /**
        * The popover may be gone by now (Escape, a new selection during spawn).
@@ -242,7 +262,7 @@ function askAgentView(view: EditorView, quote: string, seam: AskAgentSeam): Tool
         e.preventDefault()
         e.stopPropagation()
         dom.classList.remove('cm-ask-agent-open')
-        dom.replaceChildren(trigger())
+        dom.replaceChildren(bar())
         view.dispatch({})
       }
     }
@@ -255,6 +275,15 @@ function askAgentView(view: EditorView, quote: string, seam: AskAgentSeam): Tool
     wrap.append(row, field, notice)
     return wrap
   }
+
+  /** The bubble's resting row: ReUI's format bar (`formatBar.ts`), then
+   *  Ask agent after a hairline when there is an agent. Each control acts like
+   *  its key, so the selection changes and the bubble is rebuilt around it. */
+  const bar = (): HTMLElement =>
+    formatBar(view, {
+      initialPanel: panel,
+      ...(seam !== undefined && quote !== '' ? { trailing: trigger() } : {}),
+    })
 
   const trigger = (): HTMLElement => {
     const button = document.createElement('button')
@@ -274,7 +303,7 @@ function askAgentView(view: EditorView, quote: string, seam: AskAgentSeam): Tool
     return button
   }
 
-  dom.appendChild(trigger())
+  dom.appendChild(bar())
   return {
     dom,
     // The tooltip can go before the fade finishes; the pending dispatch must not
@@ -287,39 +316,80 @@ function askAgentView(view: EditorView, quote: string, seam: AskAgentSeam): Tool
   }
 }
 
-function tooltipFor(state: EditorState, notePath: string, seam: AskAgentSeam): Tooltip[] {
-  // A read-only file is one a reconcile is resolving (docs/features/vaults-sync.md):
-  // do not hand it to a second conversation mid-merge. `state.readOnly`, not the
+/** Opens the bubble on a panel: ⌘K and the link bubble's Edit open the link
+ *  field, with a selection or at a bare caret. */
+export const openBubblePanel = StateEffect.define<BubblePanel>()
+
+interface BubbleState {
+  panel: BubblePanel
+  tooltips: readonly Tooltip[]
+}
+
+function tooltipFor(
+  state: EditorState,
+  notePath: string,
+  seam: AskAgentSeam | undefined,
+  panel: BubblePanel,
+): Tooltip[] {
+  // A read-only file is one a reconcile is resolving (docs/features/vaults-sync.md),
+  // or a page you locked: do not hand it to a second conversation mid-merge, and
+  // offer no marks on text that cannot change. `state.readOnly`, not the
   // `editable` facet, which is about the caret rather than the file.
   if (state.readOnly) return []
-  const prompt = promptForSelection(state, notePath)
-  if (prompt === null) return []
-
   const range = state.selection.main
+  // Whitespace alone is nothing to format or ask about.
+  if (panel === null && (range.empty || state.sliceDoc(range.from, range.to).trim() === ''))
+    return []
+  const prompt = promptForSelection(state, notePath) ?? ''
   return [
     {
       pos: range.from,
       end: range.to,
       above: true,
-      create: (view) => askAgentView(view, prompt, seam),
+      create: (view) => askAgentView(view, prompt, seam, panel),
     },
   ]
 }
 
+/** ⌘K: the link field, over the selection, the link at the caret, or the bare
+ *  caret, where the address becomes its own link text. */
+function openLinkField(view: EditorView): boolean {
+  if (view.state.readOnly) return false
+  const sel = view.state.selection.main
+  const link = sel.empty ? linkAt(view.state, sel.from) : null
+  view.dispatch({
+    ...(link === null ? {} : { selection: { anchor: link.textFrom, head: link.textTo } }),
+    effects: openBubblePanel.of('link'),
+  })
+  return true
+}
+
 /**
- * Shows an "Ask agent" button over a non-empty selection. `notePath` is static
+ * The selection bubble: ReUI's format bar over a non-empty selection, and an
+ * "Ask agent" button when there is an agent (`seam`). `notePath` is static
  * because `EditorPane` rebuilds the view per document.
  */
-export function askAgentTooltip(notePath: string, seam: AskAgentSeam): Extension {
-  const field = StateField.define<readonly Tooltip[]>({
-    create: (state) => tooltipFor(state, notePath, seam),
-    update(tooltips, tr) {
+export function askAgentTooltip(notePath: string, seam?: AskAgentSeam): Extension {
+  const field = StateField.define<BubbleState>({
+    create: (state) => ({ panel: null, tooltips: tooltipFor(state, notePath, seam, null) }),
+    update(value, tr) {
+      let panel: BubblePanel | undefined
+      for (const e of tr.effects) if (e.is(openBubblePanel)) panel = e.value
       // Not on other transactions: rebuilding would replace the button under
       // the pointer.
-      if (!tr.docChanged && tr.selection === undefined) return tooltips
-      return tooltipFor(tr.state, notePath, seam)
+      if (panel === undefined && !tr.docChanged && tr.selection === undefined) return value
+      const next = panel ?? null
+      return { panel: next, tooltips: tooltipFor(tr.state, notePath, seam, next) }
     },
-    provide: (f) => showTooltip.computeN([f], (state) => state.field(f)),
+    provide: (f) => showTooltip.computeN([f], (state) => state.field(f).tooltips),
   })
-  return field
+  return [
+    field,
+    Prec.high(
+      keymap.of([
+        { key: 'Mod-k', run: openLinkField },
+        { key: 'Alt-F10', run: focusFormatBar },
+      ]),
+    ),
+  ]
 }

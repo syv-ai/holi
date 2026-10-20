@@ -107,6 +107,12 @@ function createWindow({ show = true }: { show?: boolean } = {}): BrowserWindow {
     width: 1200,
     height: 800,
     show,
+    // No title bar on macOS: the traffic lights sit in the sidebar's top band
+    // and the tab strip is the window's handle (docs/ui-system.md, Window).
+    // The lights' centre is the tab strip's (36px tall).
+    ...(process.platform === 'darwin'
+      ? { titleBarStyle: 'hiddenInset' as const, trafficLightPosition: { x: 14, y: 12 } }
+      : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
@@ -218,6 +224,10 @@ async function main(): Promise<void> {
       FRAME_ORIGINS.add(origin)
       return () => void FRAME_ORIGINS.delete(origin)
     },
+    // One plugin's main side calling another's, at the UI door its renderer
+    // would use. `capabilityHost` is built below, before any vault opens.
+    call: async (remote, name, params) =>
+      (await capabilityHost.dispatch({ door: 'ui', remote, name, params })).value,
   })
 
   const host = createVaultHost({

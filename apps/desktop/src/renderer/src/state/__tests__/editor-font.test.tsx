@@ -23,6 +23,7 @@ const settings = (editorFont: ResolvedVaultSettings['editorFont']): ResolvedVaul
   plugins: VAULT_SETTING_DEFAULTS.plugins,
   pluginValues: {},
   dailyNotes: true,
+  spaceAsksAgent: true,
   colorScheme: 'system',
   editorFont,
   hooks: VAULT_SETTING_DEFAULTS.hooks,

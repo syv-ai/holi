@@ -40,7 +40,7 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   `.app` folder with its `index.html` is one, finished once `app.yaml` is there. Reload is the
   surface's pane-header action, beside the other per-file buttons, that remounts the
   frame. If the bundle disappears under an open tab (a teammate's pull), the tab stays as a
-  tombstone saying the app was deleted. Deleting from a menu removes the files and closes the tab
+  tombstone (the shared empty state) saying the app was deleted, with Close tab. Deleting from a menu removes the files and closes the tab
   instead. A move of the bundle carries its tab along, like a note's.
 - **Serving.** `holi-app://<host>/<path>` is served by a protocol handler rooted at that app's own
   bundle. The host is the bundle path's UTF-8 bytes in hex, split into DNS-sized labels, then a
@@ -73,7 +73,7 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   that sync to every member, or send it over the network. So the app declares
   `dangerously-allow: [mail, calendar]` in `app.yaml`, or as a map giving each one a reason
   (`{ calendar: To show your next meeting }`, plain text, at most 200 characters) that the dialog
-  quotes as the developer's explanation (without the flag the call fails and names it), and each person approves the app in a dialog before its frame loads. The approval is
+  quotes "in the developer's words" (without the flag the call fails and names it), and each person approves the app in a dialog before its frame loads. The dialog is a security consent and reads as one: in body text, it says plainly that the app can store what it reads and that what it stores may sync to others or leave the machine, and to allow it only if you trust who wrote it. The approval is
   kept in main (`userData/app-grants.json`), never the renderer, which is the process running the
   app. It lapses after 30 days and whenever the app's code (anything but `data/`) changes, whoever
   changed it: approving a teammate's app approves that code, not what it becomes after a pull. A

@@ -175,6 +175,23 @@ export function closeTab(workspace: Workspace, index: number): Workspace {
 }
 
 /**
+ * A tab's context menu: close every other tab in the focused pane, or those
+ * to its right. The kept tab becomes active, so the one you pointed at is
+ * what you are left looking at. The pane always stays: it still holds a tab.
+ */
+export function closeOtherTabs(
+  workspace: Workspace,
+  keep: number,
+  which: 'others' | 'right',
+): Workspace {
+  return updatePane(workspace, (pane) => {
+    if (keep < 0 || keep >= pane.tabs.length) return pane
+    const tabs = which === 'others' ? [pane.tabs[keep]!] : pane.tabs.slice(0, keep + 1)
+    return { tabs, active: which === 'others' ? 0 : keep }
+  })
+}
+
+/**
  * Would closing this tab take its pane with it?
  *
  * Derived by RUNNING `closeTab` rather than restating its rule, so the answer

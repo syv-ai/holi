@@ -15,9 +15,16 @@
  */
 import { atom, useAtomValue, useSetAtom } from 'jotai'
 import { useCallback, useEffect, useState } from 'react'
-import { SettingsHeading, SettingsList, SettingsNote, SettingsRow } from '@/composites'
+import {
+  EmptyState,
+  LoadingRows,
+  SettingsHeading,
+  SettingsList,
+  SettingsNote,
+  SettingsRow,
+} from '@/composites'
 import { capClient, cn, openNoteTabAtom } from '@/plugin-api'
-import { Button, Switch, Tooltip } from '@/primitives'
+import { Badge, Button, Switch, Tooltip } from '@/primitives'
 import type { scheduleCapabilities } from '../main/schedules/capabilities'
 import type { RunRecord, ScheduleSummary } from '../main/schedules/scheduler'
 import { agentIndicator } from './lib/notices'
@@ -35,10 +42,10 @@ export const schedulesEpochAtom = atom(0)
 const REFRESH_MS = 30_000
 
 const STATUS_WORD: Record<ScheduleSummary['status'], string> = {
-  on: 'on',
-  off: 'off',
-  changed: 'changed',
-  invalid: 'invalid',
+  on: 'On',
+  off: 'Off',
+  changed: 'Changed',
+  invalid: 'Invalid',
 }
 
 const STATUS_TIP: Record<ScheduleSummary['status'], string> = {
@@ -75,16 +82,17 @@ function runWords(run: RunRecord): string {
 function StatusChip({ status }: { status: ScheduleSummary['status'] }): React.JSX.Element {
   return (
     <Tooltip content={STATUS_TIP[status]}>
-      {/* A chip, so `--border` like the settings tab's layer badge. */}
-      <span
-        className={cn(
-          'rounded border border-border px-1.5 py-0.5 text-[10px] leading-4',
-          status === 'on' ? 'text-brand' : 'text-muted-foreground',
-          status === 'changed' || status === 'invalid' ? 'text-destructive' : null,
-        )}
+      <Badge
+        variant={
+          status === 'changed' || status === 'invalid'
+            ? 'destructive-light'
+            : status === 'on'
+              ? 'primary-light'
+              : 'outline'
+        }
       >
         {STATUS_WORD[status]}
-      </span>
+      </Badge>
     </Tooltip>
   )
 }
@@ -143,7 +151,7 @@ function ScheduleRow({
               Run now
             </Button>
           )}
-          <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+          <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
             Runs here
             <Switch
               checked={on}
@@ -163,12 +171,12 @@ function ScheduleRow({
         </div>
       }
     >
-      <div className="space-y-1 text-[11px] text-muted-foreground">
+      <div className="flex flex-col gap-1 text-xs text-muted-foreground">
         {schedule.allow !== undefined && (
           <p>
             {schedule.allow.length === 0 ? 'Asks before every tool it uses.' : 'Without asking: '}
             {schedule.allow.map((rule) => (
-              <code key={rule} className="mr-1 rounded bg-muted px-1 py-0.5 text-[10px]">
+              <code key={rule} className="mr-1 rounded bg-muted px-1 py-0.5 text-xs">
                 {rule}
               </code>
             ))}
@@ -176,13 +184,13 @@ function ScheduleRow({
           </p>
         )}
         {!on && schedule.prompt !== undefined && (
-          <div className="space-y-1">
+          <div className="flex flex-col gap-1">
             <p>
               {schedule.status === 'changed'
                 ? 'The prompt now, which switching it on approves:'
                 : 'Switching it on approves this prompt:'}
             </p>
-            <pre className="max-h-48 overflow-auto rounded bg-muted px-2 py-1.5 font-mono text-[10px] whitespace-pre-wrap text-foreground">
+            <pre className="max-h-48 overflow-auto rounded bg-muted px-2 py-1.5 font-mono text-xs whitespace-pre-wrap text-foreground">
               {schedule.prompt}
             </pre>
           </div>
@@ -191,7 +199,7 @@ function ScheduleRow({
         <div className="flex flex-wrap items-center gap-3">
           <Button
             variant="link"
-            className="h-auto p-0 text-[11px] font-normal"
+            className="h-auto p-0 text-xs font-normal"
             onClick={() => openNote(schedule.path)}
           >
             Open {schedule.path}
@@ -199,7 +207,7 @@ function ScheduleRow({
           {session !== undefined && (
             <Button
               variant="link"
-              className="h-auto gap-1.5 p-0 text-[11px] font-normal"
+              className="h-auto gap-1.5 p-0 text-xs font-normal"
               onClick={() => void openSession(session.id)}
             >
               <span className={cn('size-1.5 rounded-full', agentIndicator(session).dot)} />
@@ -207,7 +215,11 @@ function ScheduleRow({
             </Button>
           )}
         </div>
-        {error !== null && <p className="text-destructive">{error}</p>}
+        {error !== null && (
+          <p role="alert" className="text-pretty text-destructive">
+            {error}
+          </p>
+        )}
       </div>
     </SettingsRow>
   )
@@ -243,7 +255,17 @@ export function SchedulesSection({ remote }: { remote: string }): React.JSX.Elem
         title="Scheduled agents"
         blurb="Prompts Holi runs as agent sessions at set times, on this machine, while this vault is open. Each one is a file in .holi/schedules/."
       />
-      {error !== null && <SettingsNote className="text-destructive">{error}</SettingsNote>}
+      {error !== null && (
+        <EmptyState
+          role="alert"
+          title="Couldn’t load the scheduled agents"
+          description={error}
+          action={{ label: 'Try again', onClick: load }}
+        />
+      )}
+      {schedules === null && error === null && (
+        <LoadingRows label="Loading scheduled agents" rows={2} />
+      )}
       {schedules !== null && schedules.length === 0 && (
         <SettingsNote className="py-3">
           None yet. Ask the agent for one, for example: “Every 30 minutes on weekdays, check my new

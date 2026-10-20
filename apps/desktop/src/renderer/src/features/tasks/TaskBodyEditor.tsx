@@ -118,6 +118,7 @@ export function TaskDescriptionEditor({
                 }),
             notePath,
             frontmatter: false,
+            lineHint: false,
           }),
           ...extensions,
           placeholder(placeholderText),

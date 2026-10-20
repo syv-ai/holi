@@ -2,16 +2,14 @@ import { Command as CommandPrimitive } from 'cmdk'
 import { Search } from 'lucide-react'
 import { Icon } from './Icon'
 import { cn } from '@/lib/cn'
-import { MorphDialog } from './MorphDialog'
+import { Dialog } from './Dialog'
 
 /**
  * shadcn's Command (registry `command`, shadcn 4.21, cmdk 1.1.1), for the
- * palette. Every export is the registry's, restyled as the nav menu's
- * family (`MorphingMenu`): its surface, its rows, its springs. One export is
- * composed by hand:
+ * palette, on the menus' surface and rows. One export is composed by hand:
  *
- * `CommandDialog` puts cmdk in `MorphDialog`, the top-anchored surface that
- * morphs in (no dimmed backdrop, no close button), which quick add shares.
+ * `CommandDialog` puts cmdk in the house `Dialog`, anchored near the top
+ * (`placement="top"`) with no close button, as quick add is.
  *
  * Filtering is the caller's (`lib/palette-rows.ts`, `shouldFilter={false}`).
  */
@@ -43,13 +41,9 @@ type CommandDialogProps = {
    *  its own pure function and passes `false`. */
   shouldFilter?: boolean
   children: React.ReactNode
-} & Pick<React.ComponentProps<typeof MorphDialog>, 'onCloseAutoFocus'>
+} & Pick<React.ComponentProps<typeof Dialog>, 'onCloseAutoFocus'>
 
-/**
- * The palette: cmdk inside the morphing top-anchored surface (`MorphDialog`).
- * Only the opening rows cascade: a keystroke re-ranks cmdk's list, and a
- * cascade per keystroke would read as flicker.
- */
+/** The palette: cmdk inside the top-anchored dialog. */
 function CommandDialog({
   open,
   onOpenChange,
@@ -61,14 +55,15 @@ function CommandDialog({
   onCloseAutoFocus,
 }: CommandDialogProps): React.JSX.Element {
   return (
-    <MorphDialog
+    <Dialog
       open={open}
-      onOpenChange={onOpenChange}
+      onClose={() => onOpenChange(false)}
+      size="bare"
+      placement="top"
+      closable={false}
       title={title}
       description={description}
       className={className}
-      rows={ROWS}
-      bar="[data-slot=command-input-wrapper]"
       onCloseAutoFocus={onCloseAutoFocus}
     >
       <Command
@@ -82,12 +77,9 @@ function CommandDialog({
       >
         {children}
       </Command>
-    </MorphDialog>
+    </Dialog>
   )
 }
-
-/** The rows that cascade: cmdk's items and the group headings between them. */
-const ROWS = '[cmdk-item], [cmdk-group-heading]'
 
 function CommandInput({
   className,

@@ -3,7 +3,14 @@
  *
  * The acts, in order, are `ACTS`; everything that walks them (advance, back,
  * the floor, the step dots) reads that list, so adding an act is adding it
- * there. `OnboardingRitual.tsx` is a thin view over this reducer, and keeping
+ * there.
+ *
+ * **Nothing is created until the last question is answered.** Naming, plugins
+ * and settings only collect answers; "Create vault" on the settings act moves
+ * to the threshold, which shows the vault being built (repo, then answers)
+ * and turns into "ready" when it is. So backing out of any act before that
+ * leaves nothing behind on GitHub, and the answers land in the first commit
+ * after the seed rather than over a vault someone could already have cloned. `OnboardingRitual.tsx` is a thin view over this reducer, and keeping
  * the flow pure lets it be unit-tested without a DOM.
  */
 import { VAULT_SETTING_DESCRIPTORS, normaliseAnswers, type PluginSettings } from '@holi/shared'
@@ -57,8 +64,19 @@ export const initialState = (mode: Mode, owner: string): OnboardingState => ({
   settings: Object.fromEntries(VAULT_SETTING_DESCRIPTORS.map((d) => [d.key, d.default])),
 })
 
+/** The name a vault gets when the field is left empty: shown as the field's
+ *  placeholder and in the repo path, so the naming act never starts on a
+ *  blank or an ellipsis, and Create works without typing anything. */
+export const DEFAULT_VAULT_NAME = 'holi-vault'
+
+/** The repo name the naming act would create: the typed name slugified, or
+ *  the default while nothing is typed. A typed name that slugifies to nothing
+ *  (only punctuation) stays empty rather than quietly becoming the default. */
+export const vaultSlug = (name: string): string =>
+  name.trim() === '' ? DEFAULT_VAULT_NAME : slugify(name)
+
 export const canAdvance = (s: OnboardingState): boolean => {
-  if (s.act === 'naming') return slugify(s.name).length > 0
+  if (s.act === 'naming') return vaultSlug(s.name).length > 0
   // The plugins and settings acts always advance: every row carries a default,
   // so there is nothing to fill in and nothing to block on. The threshold is
   // the last.
@@ -80,6 +98,7 @@ export type Action =
   | { type: 'setPlugin'; id: string; on: boolean; byDefault: boolean }
   | { type: 'submitStart' }
   | { type: 'created' }
+  | { type: 'createFailed'; error: string }
   | { type: 'failInPlace'; error: string }
 
 export const reduce = (s: OnboardingState, a: Action): OnboardingState => {
@@ -119,11 +138,14 @@ export const reduce = (s: OnboardingState, a: Action): OnboardingState => {
     case 'submitStart':
       return { ...s, submitting: true, error: null }
     case 'created':
-      // The repo now exists and is pushed: advance to the PLUGINS act. Its
-      // answer and the settings act's are merged over the seed's defaults
-      // together, when the settings act continues. Only reached from naming
-      // (naming), after create.
-      return { ...s, act: 'plugins', submitting: false, error: null }
+      // The repo exists, is pushed and holds the answers: the threshold, where
+      // the build has been showing, now says ready.
+      return { ...s, submitting: false, error: null }
+    case 'createFailed':
+      // The repo could not be made, which is nearly always about its name
+      // (taken, or not allowed under that owner): back to naming with the
+      // reason, the other answers kept.
+      return { ...s, act: 'naming', view: 'form', submitting: false, error: a.error }
     case 'failInPlace':
       // A submit failure (create, or a join adopt) stays exactly where it
       // happened, with the message shown, rather than navigating away, which

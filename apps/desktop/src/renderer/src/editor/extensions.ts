@@ -13,6 +13,13 @@ import { fenceLanguage } from './fence-languages'
 import { formattingKeymap } from './formatting'
 import { linkClickHandler, type LinkNav } from './links'
 import { askAgentTooltip, type AskAgentSeam } from './askAgent'
+import { spaceAsk } from './askSpace'
+import { blockActions } from './blockActions'
+import { contentsBlock } from './contents'
+import { updateBus } from './update-bus'
+import { linkBubble } from './linkBubble'
+import { alignPreview, highlightSyntax } from './marks'
+import { linePlaceholder, spaceAskHintFacet } from './placeholder'
 import { frontmatterExtension } from './frontmatter'
 import { mermaidExtension } from './mermaid'
 import { commentExtension } from './comments'
@@ -78,6 +85,13 @@ export interface EditorDeps {
   /** The note's properties bar; off for text that is not a note (a task's
    *  description, whose file's frontmatter is the task's own). */
   frontmatter?: boolean
+  /** Whether Space on an empty line asks the agent (the `spaceAsksAgent`
+   *  setting), read at the keypress. Absent is off. */
+  spaceAsksAgent?: () => boolean
+  /** The caret line's hint ("Type / for commands"). Off where the editor
+   *  draws its own placeholder, as a task's description and quick add do:
+   *  two hints would sit on top of each other. */
+  lineHint?: boolean
 }
 
 /**
@@ -108,7 +122,8 @@ export function baseEditorExtensions(deps: EditorDeps): Extension[] {
     markdown({
       base: markdownLanguage,
       codeLanguages: fenceLanguage,
-      extensions: [emptyTaskMarker, alphaLists],
+      // `==highlight==` (`marks.ts`): CommonMark has no syntax for it.
+      extensions: [emptyTaskMarker, alphaLists, highlightSyntax],
     }),
     // Colours the code nested in fences. Overlap: markdown's `#`/`**` marks take
     // the punctuation grey, visible only on the active line.
@@ -116,7 +131,24 @@ export function baseEditorExtensions(deps: EditorDeps): Extension[] {
     docExistsFacet.of(deps.docExists),
     taskByPathFacet.of(deps.taskByPath),
     notePathFacet.of(deps.notePath),
-    deps.askAgent === undefined ? [] : askAgentTooltip(deps.notePath, deps.askAgent),
+    // The selection bubble: ReUI's format bar always, Ask agent when there is
+    // an agent. ⌘K opens its link field; Alt+F10 reaches it from the text.
+    askAgentTooltip(deps.notePath, deps.askAgent),
+    // The caret's link: its address, Edit, Remove.
+    linkBubble((url) => deps.nav().openExternal(url)),
+    // Space on an empty line opens an ask for a new agent session.
+    spaceAsk(deps.notePath, deps.askAgent, () => deps.spaceAsksAgent?.() ?? false),
+    // The caret's empty line says what it can do.
+    spaceAskHintFacet.of(() => deps.askAgent !== undefined && (deps.spaceAsksAgent?.() ?? false)),
+    deps.lineHint === false ? [] : linePlaceholder,
+    // The gutter's CodeMirror half: active block, drop line, block keys.
+    blockActions,
+    // `<div align>` blocks.
+    alignPreview,
+    // `[toc]` drawn as the note's headings. A StateField: a block decoration.
+    contentsBlock,
+    // What renders beside the editor (Undo, Redo) follows it from here.
+    updateBus,
     livePreview,
     // The caret's half of a mark's slide: the transition is CSS, and the
     // drawn caret has to be moved along while it runs.

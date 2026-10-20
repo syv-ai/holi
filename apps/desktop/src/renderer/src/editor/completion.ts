@@ -33,8 +33,17 @@ export interface HoliCompletion extends Completion {
   emoji?: string
 }
 
+/** A slash menu block row: an icon tile and a two-line body (`theme.ts`). */
+export const BLOCK_OPTION_CLASS = 'cm-holi-block'
+/** The slash menu's "No matching blocks" row. */
+export const EMPTY_OPTION_CLASS = 'cm-holi-empty'
+
 export function holiOptionClass(completion: Completion): string {
-  return (completion.type?.startsWith(HOLI_TYPE_PREFIX) ?? false) ? OPTION_CLASS : ''
+  const type = completion.type ?? ''
+  if (!type.startsWith(HOLI_TYPE_PREFIX)) return ''
+  if (type.startsWith('holi-block-')) return `${OPTION_CLASS} ${BLOCK_OPTION_CLASS}`
+  if (type === 'holi-empty') return `${OPTION_CLASS} ${EMPTY_OPTION_CLASS}`
+  return OPTION_CLASS
 }
 
 /**

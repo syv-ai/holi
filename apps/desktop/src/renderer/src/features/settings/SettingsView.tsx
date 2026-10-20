@@ -17,8 +17,8 @@
  * heading by scrolling this element, so a section that owned its own scrolling
  * would be a section the rail could not reach into.
  */
-import { Fragment, useEffect, useRef, useState } from 'react'
-import { useAtomValue, useSetAtom } from 'jotai'
+import { Fragment, useEffect, useRef } from 'react'
+import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { TriangleAlert } from 'lucide-react'
 import { Icon } from '@/primitives'
 import { openPinned, workspaceAtom } from '@/state/panes'
@@ -26,6 +26,9 @@ import { activeRemoteAtom } from '@/state/vaults'
 import { SettingsPicker, SettingsRail } from './SettingsRail'
 import { DEFAULT_SECTION_ID, settingsSectionsAtom } from './sections'
 import { SettingsLink, SettingsNote } from '@/composites'
+import { cn } from '@/lib/cn'
+import { navOpenAtom } from '@/state/preferences'
+import { settingsJumpAtom, settingsSectionAtom } from '@/state/settings-section'
 import { useVaultSettings } from './useVaultSettings'
 
 export function SettingsView(): React.JSX.Element {
@@ -33,7 +36,11 @@ export function SettingsView(): React.JSX.Element {
   const sections = useAtomValue(settingsSectionsAtom)
   const { resolved, error, unattributed } = useVaultSettings()
   const setWorkspace = useSetAtom(workspaceAtom)
-  const [activeId, setActiveId] = useState(DEFAULT_SECTION_ID)
+  // Shared with the sidebar's rail, which shows while the sidebar is open.
+  const [chosen, setActiveId] = useAtom(settingsSectionAtom)
+  const activeId = chosen ?? DEFAULT_SECTION_ID
+  const railInSidebar = useAtomValue(navOpenAtom)
+  const [jumpRequest, setJumpRequest] = useAtom(settingsJumpAtom)
   const scroller = useRef<HTMLDivElement | null>(null)
 
   // A section change is a change of place, so it starts at the top rather than
@@ -48,6 +55,12 @@ export function SettingsView(): React.JSX.Element {
       behavior: 'smooth',
     })
   }
+  // A jump asked for by the sidebar's rail.
+  useEffect(() => {
+    if (jumpRequest === null) return
+    jump(jumpRequest.id)
+    setJumpRequest(null)
+  }, [jumpRequest, setJumpRequest])
 
   if (remote === null) {
     return <Placeholder>No vault is open.</Placeholder>
@@ -69,7 +82,12 @@ export function SettingsView(): React.JSX.Element {
     // never match.
     <div className="@container h-full min-h-0">
       <div className="flex h-full min-h-0 flex-col @min-[560px]:flex-row">
-        <div className="hidden w-56 shrink-0 overflow-y-auto @min-[560px]:block">
+        <div
+          className={cn(
+            'hidden w-56 shrink-0 overflow-y-auto',
+            !railInSidebar && '@min-[560px]:block',
+          )}
+        >
           <SettingsRail
             sections={sections}
             activeId={section.id}
@@ -78,7 +96,12 @@ export function SettingsView(): React.JSX.Element {
           />
         </div>
 
-        <div className="shrink-0 border-b border-divider p-2 @min-[560px]:hidden">
+        <div
+          className={cn(
+            'shrink-0 border-b border-divider px-3 py-2 @min-[560px]:hidden',
+            railInSidebar && 'hidden',
+          )}
+        >
           <SettingsPicker
             sections={sections}
             activeId={section.id}
@@ -89,27 +112,29 @@ export function SettingsView(): React.JSX.Element {
 
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <div ref={scroller} className="min-h-0 flex-1 overflow-y-auto">
-            <div className="mx-auto max-w-2xl px-6 py-4">
-              <h2 className="text-sm font-medium">{section.label}</h2>
+            <div className="mx-auto flex max-w-2xl flex-col gap-4 px-8 pt-8 pb-12">
+              <h2 className="text-2xl font-semibold tracking-tight text-foreground">
+                {section.label}
+              </h2>
 
               {error !== null && (
-                <p className="mt-3 rounded border border-destructive/40 bg-destructive/10 px-3 py-2 text-[11px] text-destructive">
+                <p
+                  role="alert"
+                  className="rounded-lg bg-destructive/10 px-3 py-2 text-xs text-destructive"
+                >
                   {error}
                 </p>
               )}
               {/* Warnings the resolver could not attribute to any key. Shown once
                   at the top of whichever section you are in rather than dropped. */}
               {unattributed.map((warning) => (
-                <p
-                  key={warning}
-                  className="mt-3 flex items-start gap-1.5 text-[11px] text-muted-foreground"
-                >
+                <p key={warning} className="flex items-start gap-1.5 text-xs text-muted-foreground">
                   <Icon icon={TriangleAlert} size="sm" className="mt-0.5" />
                   {warning}
                 </p>
               ))}
 
-              <div className="mt-2">
+              <div>
                 <section.Component remote={remote} />
               </div>
             </div>
@@ -120,7 +145,7 @@ export function SettingsView(): React.JSX.Element {
               and never collides with a section's trailing content. Absent for
               sections backed by nothing on disk (GitHub, Google). */}
           {section.files.length > 0 && (
-            <div className="shrink-0 border-t border-divider px-6 py-2">
+            <div className="shrink-0 border-t border-divider px-8 py-2.5">
               <div className="mx-auto max-w-2xl">
                 <SettingsNote>
                   A view of{' '}

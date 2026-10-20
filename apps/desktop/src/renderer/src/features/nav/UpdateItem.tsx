@@ -16,7 +16,7 @@
 import { useAtomValue, useSetAtom } from 'jotai'
 import { CircleArrowUp, Clock, RotateCw, Sparkles } from 'lucide-react'
 import { useMemo, useState } from 'react'
-import { Button, Icon, type MorphingMenuItem } from '@/primitives'
+import { Button, Icon } from '@/primitives'
 import { dismissSkillsOfferAtom, skillsOfferAtom, updateSkillsAtom } from '@/state/skills'
 import {
   installUpdateAtom,
@@ -24,6 +24,7 @@ import {
   updateHeadline,
   updateStatusAtom,
 } from '@/state/updates'
+import type { NavItem } from './nav-item'
 
 const ROW = 'h-auto min-h-8 w-full justify-start gap-2 rounded-xl px-2.5 py-1.5 text-sm font-normal'
 /** How many of the pending files the panel names before it counts the rest. */
@@ -38,17 +39,15 @@ function AppUpdate({ close }: { close: () => void }): React.JSX.Element {
 
   return (
     <>
-      <p data-morph-row="" className="px-2.5 py-1.5 text-sm">
-        {updateHeadline(status)}
-      </p>
+      <p className="px-2.5 py-1.5 text-sm">{updateHeadline(status)}</p>
       {ready ? (
         <>
-          <p data-morph-row="" className="px-2.5 pb-1 text-xs text-muted-foreground">
+          <p className="px-2.5 pb-1 text-xs text-muted-foreground">
             Holi saves and syncs your notes first, and asks before stopping a busy agent session.
           </p>
           <Button
             variant="ghost"
-            data-morph-row=""
+
             className={ROW}
             disabled={restarting}
             onClick={() => {
@@ -63,13 +62,11 @@ function AppUpdate({ close }: { close: () => void }): React.JSX.Element {
       ) : (
         <>
           {status?.lastError != null && (
-            <p data-morph-row="" className="truncate px-2.5 pb-1 text-xs text-muted-foreground">
-              {status.lastError}
-            </p>
+            <p className="truncate px-2.5 pb-1 text-xs text-muted-foreground">{status.lastError}</p>
           )}
           <Button
             variant="ghost"
-            data-morph-row=""
+
             className={ROW}
             onClick={() => {
               close()
@@ -98,10 +95,10 @@ function SkillsOffer({
 
   return (
     <>
-      <p data-morph-row="" className="px-2.5 py-1.5 text-sm">
+      <p className="px-2.5 py-1.5 text-sm">
         This version of Holi has newer skills and hooks for this vault
       </p>
-      <ul data-morph-row="" className="px-2.5 pb-1 text-xs text-muted-foreground">
+      <ul className="px-2.5 pb-1 text-xs text-muted-foreground">
         {pending.slice(0, NAMED).map((path) => (
           <li key={path} className="truncate font-mono">
             {path}
@@ -111,7 +108,7 @@ function SkillsOffer({
       </ul>
       <Button
         variant="ghost"
-        data-morph-row=""
+
         className={ROW}
         onClick={() => {
           close()
@@ -123,7 +120,7 @@ function SkillsOffer({
       </Button>
       <Button
         variant="ghost"
-        data-morph-row=""
+
         className={ROW}
         onClick={() => {
           close()
@@ -138,7 +135,7 @@ function SkillsOffer({
 }
 
 /** The item, or null while there is nothing to act on. */
-export function useUpdateItem(): MorphingMenuItem | null {
+export function useUpdateItem(): NavItem | null {
   const status = useAtomValue(updateStatusAtom)
   const offer = useAtomValue(skillsOfferAtom)
   const ready = status?.state === 'ready'

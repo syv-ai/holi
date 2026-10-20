@@ -9,8 +9,14 @@
  * the field as nothing at all, the same as a field never set.
  */
 import { useRef, useState } from 'react'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/primitives'
-import { useFieldControlId } from '@/composites'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+  useFieldControlId,
+} from '@/primitives'
 
 /** The item VALUE for the empty choice: Radix forbids '' on an item. */
 const EMPTY = '—'

@@ -9,7 +9,7 @@
  */
 import { useState } from 'react'
 import { pluginSettingValue, type PluginInfo, type PluginSetting } from '@holi/shared'
-import { Button, Checkbox, Input, Textarea } from '@/primitives'
+import { Checkbox, Input, Textarea, ToggleGroup, ToggleGroupItem } from '@/primitives'
 import { SettingsList, SettingsNote, SettingsRow } from '@/composites'
 import { Layer } from './SettingRow'
 import { useVaultSettings } from './useVaultSettings'
@@ -56,21 +56,25 @@ function PluginSettingRow({
             aria-label={label}
           />
         ) : type.kind === 'enum' ? (
-          <div role="radiogroup" aria-label={label} className="flex flex-wrap justify-end gap-1.5">
-            {type.options.map((option) => (
-              <Button
+          // Keyed by place: an option's value may be any value the setting holds.
+          <ToggleGroup
+            type="single"
+            size="sm"
+            spacing={1.5}
+            aria-label={label}
+            value={String(type.options.findIndex((option) => option.value === value))}
+            className="flex-wrap justify-end"
+          >
+            {type.options.map((option, i) => (
+              <ToggleGroupItem
                 key={option.label}
-                type="button"
-                variant={option.value === value ? 'secondary' : 'ghost'}
-                size="xs"
-                role="radio"
-                aria-checked={option.value === value}
+                value={String(i)}
                 onClick={() => onChange(option.value)}
               >
                 {option.label}
-              </Button>
+              </ToggleGroupItem>
             ))}
-          </div>
+          </ToggleGroup>
         ) : type.kind === 'number' || type.kind === 'text' ? (
           <CommitInput
             label={label}
@@ -102,7 +106,7 @@ function PluginSettingRow({
         <Switches value={value as Record<string, boolean>} onChange={onChange} />
       )}
       {warnings.map((warning) => (
-        <p key={warning} className="text-[11px] text-destructive">
+        <p key={warning} className="text-xs text-destructive">
           {warning}
         </p>
       ))}

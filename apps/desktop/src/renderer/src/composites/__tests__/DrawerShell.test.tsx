@@ -7,8 +7,7 @@ import { act, render, screen } from '@/test/render'
 import userEvent from '@testing-library/user-event'
 import { Provider, createStore } from 'jotai'
 import { expect, test, vi } from 'vitest'
-import { DRAWER_RAIL_WIDTH, DRAWER_WIDTH } from '@/lib/drawer'
-import { Button } from '@/primitives'
+import { DRAWER_WIDTH } from '@/lib/drawer'
 import { DrawerShell, DrawerTitle, drawerWidthsAtom } from '../DrawerShell'
 
 function drawer(
@@ -88,22 +87,20 @@ test('keepMounted holds the content while hidden, inert', () => {
   expect(screen.getByText('body').closest('[inert]')).not.toBeNull()
 })
 
-test('a drawer with a rail closes to the rail, which is live while the content is not', () => {
-  const { rerender } = drawer({
-    id: 'nav',
-    side: 'left',
-    rail: <Button>show</Button>,
-  })
-  // Open: the rail is there but asleep, so it cannot be tabbed to.
-  expect(
-    screen.getByRole('button', { name: 'show', hidden: true }).closest('[inert]'),
-  ).not.toBeNull()
+test('a collapsible drawer keeps its seam when closed, and a click on it toggles', async () => {
+  const onToggle = vi.fn()
+  const { rerender } = drawer({ id: 'nav', side: 'left', onToggle })
+  const user = userEvent.setup()
+  await user.click(screen.getByRole('separator', { name: 'Resize History' }))
+  expect(onToggle).toHaveBeenCalledTimes(1)
 
   rerender({ open: false })
-  // One width, moving: the closed width is the rail's, never 0, so the panes
-  // beside it are never jumped by a rail appearing next to an emptied drawer.
-  expect(section()!.style.getPropertyValue('--drawer-closed-w')).toBe(`${DRAWER_RAIL_WIDTH}px`)
-  expect(screen.getByRole('button', { name: 'show' }).closest('[inert]')).toBeNull()
+  // Closed to nothing, the seam stays to bring it back; the content sleeps.
+  const seam = screen.getByRole('separator', { name: 'Resize History' })
+  expect(seam).toHaveAttribute('aria-expanded', 'false')
+  seam.focus()
+  await user.keyboard('{Enter}')
+  expect(onToggle).toHaveBeenCalledTimes(2)
   expect(screen.getByText('body').closest('[inert]')).not.toBeNull()
 })
 
@@ -133,16 +130,4 @@ test('a close control calls onClose', async () => {
   drawer({ onClose })
   await userEvent.setup().click(screen.getByRole('button', { name: 'Close History' }))
   expect(onClose).toHaveBeenCalledOnce()
-})
-
-test('the edge control stays live open and closed, outside the inert content', () => {
-  const { rerender } = drawer({
-    id: 'nav',
-    side: 'left',
-    rail: <Button>orb</Button>,
-    edgeControl: <Button>toggle</Button>,
-  })
-  expect(screen.getByRole('button', { name: 'toggle' }).closest('[inert]')).toBeNull()
-  rerender({ open: false })
-  expect(screen.getByRole('button', { name: 'toggle' }).closest('[inert]')).toBeNull()
 })

@@ -1,7 +1,7 @@
 /**
- * The explorer's toolbar is the nav menu's morphing menu, anchored at the
- * tree's top-right: "+" unfolds into what can be made, and the rest are
- * shortcuts. Where a new item lands is the tree's (`FileTree`, `newItemPlace`).
+ * The explorer's toolbar: "+" makes a note, "⋯" holds the rest (a folder, a
+ * task, what claims make, the filters, Collapse all). Where a new item lands
+ * is the tree's (`FileTree`, `newItemPlace`).
  */
 import { render, screen } from '@/test/render'
 import userEvent from '@testing-library/user-event'
@@ -34,39 +34,48 @@ function setup(over: Partial<Parameters<typeof ExplorerHeader>[0]> = {}) {
   return props
 }
 
-test('"+" unfolds into task, file, folder and what claims make, each asking for its kind', async () => {
+// `hidden`: while the last menu plays its exit, the page behind it is hidden
+// from the accessibility tree.
+const more = () =>
+  userEvent.click(screen.getByRole('button', { name: 'File options', hidden: true }))
+
+test('"+" makes a note', async () => {
   const p = setup()
-  for (const [label, kind] of [
-    ['New Task', 'task'],
-    ['New File', 'file'],
-    ['New Folder', 'folder'],
-    ['New App', APP],
-  ] as const) {
-    await userEvent.click(screen.getByRole('button', { name: 'New' }))
-    await userEvent.click(screen.getByRole('button', { name: label }))
-    expect(p.onNew).toHaveBeenLastCalledWith(kind)
-  }
-  expect(p.onNew).toHaveBeenCalledTimes(4)
+  await userEvent.click(screen.getByRole('button', { name: 'New note' }))
+  expect(p.onNew).toHaveBeenLastCalledWith('file')
 })
 
-test('Collapse All is a shortcut', async () => {
+test('"⋯" makes a folder, a task and what claims make, each asking for its kind', async () => {
   const p = setup()
-  await userEvent.click(screen.getByRole('button', { name: 'Collapse All' }))
+  for (const [label, kind] of [
+    ['New folder', 'folder'],
+    ['New task', 'task'],
+    ['New App', APP],
+  ] as const) {
+    await more()
+    await userEvent.click(screen.getByRole('menuitem', { name: label }))
+    expect(p.onNew).toHaveBeenLastCalledWith(kind)
+  }
+  expect(p.onNew).toHaveBeenCalledTimes(3)
+})
+
+test('Collapse all is in the menu', async () => {
+  const p = setup()
+  await more()
+  await userEvent.click(screen.getByRole('menuitem', { name: 'Collapse all' }))
   expect(p.onCollapseAll).toHaveBeenCalledOnce()
 })
 
-test('the hidden-files toggle reflects state via aria-pressed and label', async () => {
-  const p = setup({ hiddenShown: true })
-  const toggle = screen.getByRole('button', { name: 'Hide hidden files' })
-  expect(toggle).toHaveAttribute('aria-pressed', 'true')
-  await userEvent.click(toggle)
-  expect(p.onToggleHidden).toHaveBeenCalledOnce()
-})
-
-test('the task-files toggle reflects state via aria-pressed and label', async () => {
-  const p = setup({ tasksShown: false })
-  const toggle = screen.getByRole('button', { name: 'Show task files' })
-  expect(toggle).toHaveAttribute('aria-pressed', 'false')
-  await userEvent.click(toggle)
+test('the filters are checkable rows that say their state', async () => {
+  const p = setup({ hiddenShown: true, tasksShown: false })
+  await more()
+  expect(screen.getByRole('menuitemcheckbox', { name: 'Show hidden files' })).toHaveAttribute(
+    'aria-checked',
+    'true',
+  )
+  await userEvent.click(screen.getByRole('menuitemcheckbox', { name: 'Show task files' }))
   expect(p.onToggleTasks).toHaveBeenCalledOnce()
+  await more()
+  await userEvent.click(screen.getByRole('menuitemcheckbox', { name: 'Show hidden files' }))
+  expect(p.onToggleHidden).toHaveBeenCalledOnce()
 })

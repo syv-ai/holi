@@ -207,6 +207,8 @@ export interface ResolvedAppSettings {
   dailyNotes: boolean
   colorScheme: ColorScheme
   editorFont: EditorFont
+  /** Space on an empty line opens an ask for a new agent session. */
+  spaceAsksAgent: boolean
   hooks: VaultHooks
   maxCommittedFileBytes: number
   /** Human-readable notes about dropped keys/values, surfaced so a typo is
@@ -368,7 +370,13 @@ export type VaultSettingControl =
  *  with a row in the settings tab. A superset of what the ritual asks
  *  (`askedAtBirth`). */
 export type VaultSettingKey =
-  'dailyNotes' | 'home' | 'hooks' | 'colorScheme' | 'editorFont' | 'maxCommittedFileBytes'
+  | 'dailyNotes'
+  | 'home'
+  | 'hooks'
+  | 'colorScheme'
+  | 'editorFont'
+  | 'spaceAsksAgent'
+  | 'maxCommittedFileBytes'
 
 export interface VaultSettingDescriptor {
   /** A key of `app.yaml`, or `plugins` for the plugins row, whose answer is
@@ -511,7 +519,7 @@ export const VAULT_SETTINGS: readonly VaultSetting[] = [
     type: {
       kind: 'home',
       options: [
-        { value: 'recents', label: 'Recently opened' },
+        { value: 'recents', label: 'Vault overview' },
         // Only on offer while the vault actually keeps one: a Home on a daily
         // note the vault does not make would read as a broken choice.
         {
@@ -589,7 +597,7 @@ export const VAULT_SETTINGS: readonly VaultSetting[] = [
       ],
     },
     default: 'system' as ColorScheme,
-    // Machine-local, and the only row that is: a teammate's committed choice
+    // Machine-local: a teammate's committed choice
     // must not flip your app to light mode.
     target: 'local',
     askedAtBirth: true,
@@ -615,6 +623,20 @@ export const VAULT_SETTINGS: readonly VaultSetting[] = [
     // consequence at a vault's first moment.
     askedAtBirth: false,
     whereToChange: SETTINGS_FILE_HINT,
+    section: 'editor',
+  },
+  {
+    key: 'spaceAsksAgent',
+    label: 'Space on an empty line asks the agent',
+    explanation:
+      'Press Space on an empty line to write an ask for a new agent session, with the note and the line as context. Off, Space is only a space.',
+    type: { kind: 'boolean' },
+    default: true,
+    // Machine-local: how one person's Space key behaves is not the vault's
+    // decision, and a teammate turning it off must not turn it off for you.
+    target: 'local',
+    askedAtBirth: false,
+    whereToChange: LOCAL_FILE_HINT,
     section: 'editor',
   },
 ]

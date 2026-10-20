@@ -35,41 +35,36 @@ afterEach(() => {
  * The blink this exists to remove: CodeMirror builds the container in `toDOM`
  * and paints it, and React can only fill it on a later tick, so switching
  * between two task files collapsed the block to nothing and snapped it back.
+ * The block is filled in the same commit it is published, and without a fade:
+ * the note it belongs to does not fade either.
  */
-test('a block opens rather than appearing at full height', () => {
+test('a block is filled the moment it is published, without a fade', () => {
   render(<FrontmatterFieldsHost />)
   const { el } = publish()
 
-  expect(el).toHaveClass('motion-in-fade')
   expect(el.childElementCount).toBeGreaterThan(0)
+  expect(el).not.toHaveClass('motion-in-fade')
 })
 
 /**
  * Editing a field writes back through the widget, which maps its decoration
  * rather than rebuilding it — so the container survives and only the yaml
- * changes. Re-opening the block on every keystroke would be worse than the bug.
+ * changes.
  */
-test('editing a field does not re-open the block', () => {
+test('editing a field keeps the block and its contents', () => {
   render(<FrontmatterFieldsHost />)
   const { el, id } = publish('status: todo\n')
 
-  act(() => {
-    el.dispatchEvent(new Event('animationend', { bubbles: true }))
-  })
-  expect(el).not.toHaveClass('motion-in-fade')
-
   act(() => updateFrontmatterPortal(id, 'status: doing\n'))
-  expect(el).not.toHaveClass('motion-in-fade')
+  expect(el.isConnected).toBe(true)
+  expect(el.childElementCount).toBeGreaterThan(0)
 })
 
-test('a different block gets its own opening', () => {
+test('a different block gets its own fields', () => {
   render(<FrontmatterFieldsHost />)
   const first = publish()
-  act(() => {
-    first.el.dispatchEvent(new Event('animationend', { bubbles: true }))
-  })
-
   const second = publish('status: done\n')
-  expect(second.el).toHaveClass('motion-in-fade')
-  expect(first.el).not.toHaveClass('motion-in-fade')
+
+  expect(first.el.childElementCount).toBeGreaterThan(0)
+  expect(second.el.childElementCount).toBeGreaterThan(0)
 })

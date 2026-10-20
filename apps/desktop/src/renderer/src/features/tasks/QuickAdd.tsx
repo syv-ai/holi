@@ -1,7 +1,7 @@
 /**
- * Quick add (⌘T, and the board dock's New): the card as it will look, filled
- * in place (docs/features/tasks.md). It rises out of the board's dock, or
- * opens centred like the palette anywhere else (`QuickAddHost`).
+ * Quick add (⌘T, and the board's New task): the card as it will look, filled
+ * in place (docs/features/tasks.md), in a dialog anchored near the top like
+ * the palette (`QuickAddHost`).
  *
  * - **The card is the form.** A small note editor (the notes stack:
  *   `@`-mentions, `[[wiki-links]]`, live preview): the first line is the
@@ -15,11 +15,10 @@
  * - **Enter adds** from anywhere; Shift+Enter is a new line. The editor's own
  *   Enter and Tab yield to these (`quickKeys`), except while a completion is
  *   open, whose Enter picks.
- * - Everything is created in Todo. **Lane is any folder**, not only a board
+ * - It creates in Todo, or in the column whose + opened it. **Lane is any folder**, not only a board
  *   lane, as the full create allows; it defaults to the active note's folder.
  * - An add closes quick add (`onAdded`); the text clears and the lane stays,
- *   since the next task usually goes to the same place. On the board, the card flies from the dock to its
- *   cell (a shared `layoutId`, the path it will have).
+ *   since the next task usually goes to the same place.
  */
 import type { Priority } from '@holi/shared'
 import {
@@ -28,8 +27,6 @@ import {
   hasLogin,
   normalizeLogin,
   snapshotTasks,
-  taskFilePath,
-  taskSlug,
   toggleLogin,
 } from '@holi/shared'
 import { completionStatus } from '@codemirror/autocomplete'
@@ -38,29 +35,20 @@ import { insertNewlineContinueMarkup } from '@codemirror/lang-markdown'
 import { Prec } from '@codemirror/state'
 import { Decoration, EditorView, keymap, tooltips } from '@codemirror/view'
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
-import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { AtSign, CalendarDays, Check, Flag, Folder, Hash, PenLine } from 'lucide-react'
-import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { duePresets, shortStamp } from '@/lib/date-presets'
-import {
-  Icon,
-  MORPH_OWNED,
-  MorphRow,
-  TaskCheck,
-  Token,
-  instant,
-  settle,
-  type IconGlyph,
-} from '@/primitives'
+import { cn } from '@/lib/cn'
+import { Button, DIALOG_OWNED, Icon, TaskCheck, type IconGlyph } from '@/primitives'
 import { nowAtom } from '@/state/clock'
 import { memberLoginsAtom } from '@/state/members'
 import {
   ROOT_LANE,
   createTaskAtom,
   quickAddFolderAtom,
+  quickAddStatusAtom,
   taskCreateFolders,
   taskTagsAtom,
-  tasksAtom,
 } from '@/state/tasks'
 import { activeDocAtom, snapshotAtom } from '@/state/vaults'
 import { TaskDescriptionEditor } from './TaskBodyEditor'
@@ -169,24 +157,17 @@ function quickKeys(keys: React.RefObject<QuickKeys>, floats: HTMLElement) {
 }
 
 export function QuickAdd({
-  flight = false,
-  open = true,
   onAdded,
 }: {
-  flight?: boolean
-  /** An add is done with quick add: its host folds or closes it. */
+  /** An add is done with quick add: its host closes it. */
   onAdded?: () => void
-  /** The dock keeps its panel mounted while folded; folding it resets the wizard. */
-  open?: boolean
 }): React.JSX.Element {
   const snapshot = useAtomValue(snapshotAtom)
   const activeDoc = useAtomValue(activeDocAtom)
-  const tasks = useAtomValue(tasksAtom)
   const allTags = useAtomValue(taskTagsAtom)
   const members = useAtomValue(memberLoginsAtom)
   const now = useAtomValue(nowAtom)
   const create = useSetAtom(createTaskAtom)
-  const reduced = useReducedMotion() ?? false
 
   const [draft, setDraft] = useState<Draft>(() => ({
     text: '',
@@ -202,17 +183,15 @@ export function QuickAdd({
     set({ folder: folderAsked })
     setFolderAsked(null)
   }, [folderAsked, setFolderAsked])
+  // Opened from a column's +: that column, taken once.
+  const [askedStatus, setAskedStatus] = useAtom(quickAddStatusAtom)
+  const [status] = useState(askedStatus)
+  useEffect(() => setAskedStatus('todo'), [setAskedStatus])
   const [step, setStep] = useState<Step>('text')
-  /** Which way the last step went, so the panels slide the same way. */
-  const [direction, setDirection] = useState<1 | -1>(1)
   /** What was typed on Lane or Tags: it narrows the list, or names a new one. */
   const [typed, setTyped] = useState('')
   /** The row ↑/↓ have reached on a step; Space, → or a click picks it. */
   const [cursor, setCursor] = useState(0)
-  /** The preview's layoutId: a draft's own, then, for one add, the path the
-   *  new card will have, so the card takes over from the preview mid-air. */
-  const draftId = useId()
-  const [flightId, setFlightId] = useState(draftId)
   const viewRef = useRef<EditorView | null>(null)
   const listRef = useRef<HTMLDivElement>(null)
 
@@ -253,7 +232,6 @@ export function QuickAdd({
   }
 
   const go = (next: Step) => {
-    setDirection(STEPS.indexOf(next) >= STEPS.indexOf(step) ? 1 : -1)
     setStep(next)
     setTyped('')
   }
@@ -262,13 +240,6 @@ export function QuickAdd({
   const submit = async () => {
     if (!title) return
     const folder = cleanFolder(draft.folder)
-    // The path the new file will have (main's `freeTaskPath`), so the card can
-    // take over the preview's layoutId. A guess that misses costs the flight.
-    const taken = new Set([...tasks.keys(), ...snapshotTasks(snapshot).broken.map((b) => b.path)])
-    let predicted = taskFilePath(folder, taskSlug(title))
-    for (let n = 2; taken.has(predicted); n++)
-      predicted = taskFilePath(folder, `${taskSlug(title)}-${n}`)
-    if (flight) setFlightId(predicted)
     const sent = draft
     setText('')
     set({ due: undefined, priority: undefined, assignees: [], tags: [] })
@@ -277,7 +248,7 @@ export function QuickAdd({
     try {
       await create({
         title,
-        status: 'todo',
+        status,
         folder,
         ...(description ? { description } : {}),
         extra: {
@@ -293,17 +264,16 @@ export function QuickAdd({
       setDraft(sent)
       setText(sent.text)
     }
-    setFlightId(`${draftId}-${predicted}`)
   }
 
   // The editor binds its keys once; they call whatever this render made.
   const keys = useRef<QuickKeys>({ add: () => {}, tab: () => {} })
   keys.current = { add: () => void submit(), tab: walk }
-  /** Where the editor's completion lists float: above the panel, the dialog
-   *  and the board, and still counted as inside them (`MORPH_OWNED`). */
+  /** Where the editor's completion lists float: above the dialog, and still
+   *  counted as inside it (`DIALOG_OWNED`). */
   const floats = useMemo(() => {
     const layer = document.createElement('div')
-    layer.setAttribute(MORPH_OWNED, '')
+    layer.setAttribute(DIALOG_OWNED, '')
     // Above the dialog's layer; clickable though a modal dialog turns the
     // page's pointer events off.
     Object.assign(layer.style, { position: 'relative', zIndex: '60', pointerEvents: 'auto' })
@@ -449,18 +419,10 @@ export function QuickAdd({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step])
 
-  // Opening puts the caret in the text: centred, quick add mounts with its
-  // opening; in the dock it stays mounted and `open` turns on. Folded away
-  // mid-wizard, it opens on the text again.
+  // Opening puts the caret in the text: quick add mounts with its opening.
   useEffect(() => {
-    if (open) {
-      viewRef.current?.focus()
-      return
-    }
-    setStep('text')
-    shownStep.current = 'text'
-    setTyped('')
-  }, [open])
+    viewRef.current?.focus()
+  }, [])
 
   // The row a key reached stays in sight. The list scrolls, and only the list:
   // `scrollIntoView` would also scroll the clipped panel around it.
@@ -476,8 +438,8 @@ export function QuickAdd({
         : bottom > list.scrollTop + list.clientHeight
           ? bottom - list.clientHeight
           : null
-    if (to !== null) list.scrollTo({ top: to, behavior: reduced ? 'auto' : 'smooth' })
-  }, [step, at, reduced])
+    if (to !== null) list.scrollTo({ top: to })
+  }, [step, at])
 
   const onKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     const { key } = event
@@ -538,147 +500,117 @@ export function QuickAdd({
 
   /** A step in the bar at the foot: its icon, and its value once it has one. */
   const stepToken = (id: Step, icon: IconGlyph, value: string | undefined) => (
-    <Token
+    <Button
       key={id}
-      icon={icon}
-      label={value}
+      variant="ghost"
+      size="xs"
       aria-label={value ? `${STEP_NAMES[id]}: ${value}` : STEP_NAMES[id]}
-      set={value !== undefined}
-      open={step === id}
+      aria-expanded={step === id}
       tabIndex={-1}
       data-step-token={id}
       onClick={() => go(id)}
-    />
+      className={cn(
+        'font-normal aria-expanded:bg-accent',
+        // Out of room, a value gives way (and truncates); a bare icon never does.
+        value === undefined ? 'shrink-0 text-muted-foreground' : 'min-w-0 shrink text-foreground',
+      )}
+    >
+      <Icon icon={icon} size="sm" />
+      {value !== undefined && <span className="max-w-40 truncate">{value}</span>}
+    </Button>
   )
 
   return (
-    <div
-      className="w-[30rem] max-w-[calc(100vw-2rem)]"
-      data-quick-add=""
-      data-step={step}
-      onKeyDown={onKeyDown}
-    >
-      <motion.div
-        data-morph-row=""
-        initial={false}
-        animate={{ height: bodyHeight }}
-        transition={reduced ? instant : settle}
-        className="relative overflow-hidden"
-      >
+    <div className="flex flex-col gap-1.5" data-quick-add="" data-step={step} onKeyDown={onKeyDown}>
+      <div className="relative overflow-hidden" style={{ height: bodyHeight }}>
         {/* The text stays mounted under the steps: its undo history and a
             half-typed mention survive a trip round the wizard. */}
-        <motion.div
+        <div
           inert={step !== 'text'}
           aria-hidden={step !== 'text'}
-          animate={
-            step === 'text'
-              ? { opacity: 1, x: 0 }
-              : { opacity: 0, x: reduced ? 0 : direction * -24 }
-          }
-          transition={reduced ? instant : settle}
-          className="absolute inset-0"
-        >
-          <motion.div
-            layoutId={flight && !reduced ? flightId : undefined}
-            transition={reduced ? instant : settle}
-            style={{ borderRadius: 12 }}
-            className="flex h-full items-start gap-2.5 px-3 pt-2.5"
-          >
-            {/* What the card will look like: the check is a picture here,
-                centred on the title's line (28px). */}
-            <span inert aria-hidden className="mt-1">
-              <TaskCheck filled={false} label="" />
-            </span>
-            <div className="h-full min-w-0 flex-1">
-              <TaskDescriptionEditor
-                notePath=""
-                initial=""
-                placeholderText="What needs doing?"
-                extensions={extensions}
-                viewRef={viewRef}
-                onChange={(text) => set({ text })}
-                hostClassName="h-full overflow-hidden"
-              />
-            </div>
-          </motion.div>
-        </motion.div>
-
-        <AnimatePresence initial={false} custom={direction}>
-          {step !== 'text' && (
-            <motion.div
-              key={step}
-              custom={direction}
-              variants={{
-                from: (d: number) => ({ opacity: 0, x: reduced ? 0 : d * 24 }),
-                at: { opacity: 1, x: 0 },
-                gone: (d: number) => ({ opacity: 0, x: reduced ? 0 : d * -24 }),
-              }}
-              initial="from"
-              animate="at"
-              exit="gone"
-              transition={reduced ? instant : settle}
-              className="absolute inset-0 flex flex-col px-1.5 pt-1.5"
-            >
-              <div className="flex items-baseline justify-between px-2.5 pb-1.5">
-                <span className="text-sm font-medium">{STEP_NAMES[step]}</span>
-                {typed && (
-                  <span className="truncate pl-3 text-xs text-muted-foreground">{typed}</span>
-                )}
-              </div>
-              <div
-                ref={listRef}
-                role="listbox"
-                aria-label={STEP_NAMES[step]}
-                aria-multiselectable={step === 'tags' || step === 'people' || undefined}
-                tabIndex={-1}
-                className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto overscroll-contain outline-none"
-              >
-                {step === 'people' && choices.length === 0 && (
-                  <p className="px-2.5 py-1.5 text-sm text-muted-foreground">
-                    Type a GitHub username
-                  </p>
-                )}
-                {step === 'tags' && choices.length === 0 && (
-                  <p className="px-2.5 py-1.5 text-sm text-muted-foreground">
-                    No tags in this vault yet
-                  </p>
-                )}
-                {choices.map((choice, index) => (
-                  <MorphRow
-                    key={choice.key}
-                    role="option"
-                    aria-selected={choice.on}
-                    tabIndex={-1}
-                    icon={choice.icon}
-                    label={choice.label}
-                    value={
-                      choice.on ? (
-                        <span className="flex items-center gap-2">
-                          {choice.value}
-                          <Icon icon={Check} />
-                        </span>
-                      ) : (
-                        choice.value
-                      )
-                    }
-                    active={index === at}
-                    onClick={() => {
-                      setCursor(index)
-                      choice.pick()
-                    }}
-                  />
-                ))}
-              </div>
-            </motion.div>
+          className={cn(
+            'absolute inset-0 flex items-start gap-2.5 px-3 pt-2.5',
+            step !== 'text' && 'invisible',
           )}
-        </AnimatePresence>
-      </motion.div>
+        >
+          {/* What the card will look like: the check is a picture here,
+              centred on the title's line (28px). */}
+          <span inert aria-hidden className="mt-1">
+            <TaskCheck filled={false} label="" />
+          </span>
+          <div className="h-full min-w-0 flex-1">
+            <TaskDescriptionEditor
+              notePath=""
+              initial=""
+              placeholderText="What needs doing?"
+              extensions={extensions}
+              viewRef={viewRef}
+              onChange={(text) => set({ text })}
+              hostClassName="h-full overflow-hidden"
+            />
+          </div>
+        </div>
+
+        {step !== 'text' && (
+          <div className="absolute inset-0 flex flex-col gap-1.5 px-1.5 pt-1.5">
+            <div className="flex items-baseline justify-between px-2.5">
+              <span className="text-sm font-medium">{STEP_NAMES[step]}</span>
+              {typed && (
+                <span className="truncate pl-3 text-xs text-muted-foreground">{typed}</span>
+              )}
+            </div>
+            <div
+              ref={listRef}
+              role="listbox"
+              aria-label={STEP_NAMES[step]}
+              aria-multiselectable={step === 'tags' || step === 'people' || undefined}
+              tabIndex={-1}
+              className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto overscroll-contain outline-none"
+            >
+              {step === 'people' && choices.length === 0 && (
+                <p className="px-2.5 py-1.5 text-sm text-muted-foreground">
+                  Type a GitHub username
+                </p>
+              )}
+              {step === 'tags' && choices.length === 0 && (
+                <p className="px-2.5 py-1.5 text-sm text-muted-foreground">
+                  No tags in this vault yet
+                </p>
+              )}
+              {choices.map((choice, index) => (
+                <Button
+                  key={choice.key}
+                  variant="ghost"
+                  size="sm"
+                  role="option"
+                  aria-selected={choice.on}
+                  tabIndex={-1}
+                  data-active={index === at ? '' : undefined}
+                  onClick={() => {
+                    setCursor(index)
+                    choice.pick()
+                  }}
+                  className="w-full justify-start font-normal data-active:bg-accent"
+                >
+                  {choice.icon && <Icon icon={choice.icon} tone="muted" />}
+                  <span className="min-w-0 truncate">{choice.label}</span>
+                  {(choice.value !== undefined || choice.on) && (
+                    <span className="ml-auto flex items-center gap-2 text-muted-foreground">
+                      {choice.value}
+                      {choice.on && <Icon icon={Check} className="text-foreground" />}
+                    </span>
+                  )}
+                </Button>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
 
       <div
-        data-morph-row=""
         role="toolbar"
         aria-label="Task fields"
-        className="flex items-center justify-center gap-0.5 pt-1.5"
+        className="flex items-center justify-center gap-0.5"
       >
         {stepToken('text', PenLine, undefined)}
         {stepToken('lane', Folder, draft.folder === ROOT_LANE ? undefined : draft.folder)}

@@ -17,6 +17,7 @@ import {
 } from '@holi/shared'
 import {
   Button,
+  FormField,
   Input,
   Popover,
   PopoverContent,
@@ -26,9 +27,11 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
+  ToggleGroup,
+  ToggleGroupItem,
+  useFieldControlId,
 } from '@/primitives'
 import { DateTimePicker } from './DateTimePicker'
-import { FieldRow, useFieldControlId } from './FieldRow'
 import { cn } from '@/lib/cn'
 
 const WEEKDAYS: RecurrenceWeekday[] = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']
@@ -79,7 +82,7 @@ export function RecurrenceField({
       </PopoverTrigger>
 
       <PopoverContent align="end" className="flex w-64 flex-col gap-1 p-3">
-        <FieldRow label="repeats">
+        <FormField orientation="horizontal" label="repeats">
           {(rowId) => (
             /* 'never' is the sentinel for "no recurrence" (Radix forbids ''). */
             <Select
@@ -105,11 +108,11 @@ export function RecurrenceField({
               </SelectContent>
             </Select>
           )}
-        </FieldRow>
+        </FormField>
 
         {value !== undefined && (
           <>
-            <FieldRow label="every">
+            <FormField orientation="horizontal" label="every">
               {(rowId) => (
                 <>
                   <Input
@@ -131,44 +134,37 @@ export function RecurrenceField({
                   </span>
                 </>
               )}
-            </FieldRow>
+            </FormField>
 
             {/* Weekly only. None selected is stored as absent: an empty set makes
                 `nextWeeklyWeekday` return null and stop the recurrence. */}
             {value.frequency === 'weekly' && (
-              <FieldRow label="on">
-                <span className="flex gap-0.5">
-                  {WEEKDAYS.map((d) => {
-                    const on = value.weekdays?.includes(d) ?? false
-                    return (
-                      <Button
-                        key={d}
-                        size="xs"
-                        variant={on ? 'secondary' : 'ghost'}
-                        data-detail-weekday={d}
-                        className={cn('min-w-5 px-0 text-[10px]', !on && 'text-muted-foreground')}
-                        onClick={() => {
-                          const next = on
-                            ? (value.weekdays ?? []).filter((w) => w !== d)
-                            : [...(value.weekdays ?? []), d]
-                          set({
-                            weekdays: next.length
-                              ? WEEKDAYS.filter((w) => next.includes(w))
-                              : undefined,
-                          })
-                        }}
-                      >
-                        {d[0]}
-                      </Button>
-                    )
-                  })}
-                </span>
-              </FieldRow>
+              <FormField orientation="horizontal" label="on">
+                <ToggleGroup
+                  type="multiple"
+                  size="sm"
+                  spacing={0.5}
+                  aria-label="Weekdays"
+                  value={value.weekdays ?? []}
+                  onValueChange={(next) =>
+                    // In the week's order, and none stored as absent.
+                    set({
+                      weekdays: next.length ? WEEKDAYS.filter((w) => next.includes(w)) : undefined,
+                    })
+                  }
+                >
+                  {WEEKDAYS.map((d) => (
+                    <ToggleGroupItem key={d} value={d} aria-label={d} data-detail-weekday={d}>
+                      {d[0]}
+                    </ToggleGroupItem>
+                  ))}
+                </ToggleGroup>
+              </FormField>
             )}
 
             {/* No time row and no shortcuts: `until` is a boundary on the rule,
                 not an appointment, and "in a week" is not a thing a repeat ends. */}
-            <FieldRow label="until">
+            <FormField orientation="horizontal" label="until">
               <DateTimePicker
                 value={value.endDate ?? null}
                 placeholder="never ends"
@@ -176,12 +172,12 @@ export function RecurrenceField({
                 data-testid="detail-recurrence-end"
                 onChange={(next) => set({ endDate: next ?? undefined })}
               />
-            </FieldRow>
+            </FormField>
 
             {/* A recurring task with no due date never rolls: `nextDue` needs
                 one to advance from. */}
             {warnNoDue === true && (
-              <p className="px-1 text-[10px] text-amber-400/80">
+              <p className="px-1 text-xs text-amber-700 dark:text-amber-400">
                 Set a due date — a repeat has nothing to advance from without one.
               </p>
             )}

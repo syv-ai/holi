@@ -16,6 +16,8 @@ import { join } from 'node:path'
 import { jsonFileStore, type MainPlugin } from '../../../main/plugin-api'
 import { AGENT_INFO } from '../info'
 import { claudeProvider } from './claude'
+import { holiCapabilities, HOLI_NAMESPACES } from './holis/capabilities'
+import { createHolis, parseHolisFile, type NeedsYou } from './holis/holis'
 import { claudeSeed } from './claude/seed'
 import { agentCapabilities, AGENT_NAMESPACES } from './host/capabilities'
 import { createAgentSessions } from './host/sessions'
@@ -28,7 +30,7 @@ export const agentMain: MainPlugin = {
   info: AGENT_INFO,
   seed: claudeSeed,
   async activate(ctx) {
-    const { nativeTheme } = await import('electron')
+    const { BrowserWindow, Notification, nativeTheme } = await import('electron')
     const provider = claudeProvider({
       userData: ctx.userData,
       holiBin: () => join(ctx.binDir(), 'holi'),
@@ -52,6 +54,22 @@ export const agentMain: MainPlugin = {
         commitNow: () => ctx.commitNow(),
       }),
     )
+    // A run that needs the person says so where they are, which is often not
+    // Holi: a system notification, and a click opens Agents mode on it.
+    const notify = (n: NeedsYou): void => {
+      if (!Notification.isSupported()) return
+      const note = new Notification({ title: `${n.name} needs you`, body: n.text })
+      note.on('click', () => {
+        const win = BrowserWindow.getAllWindows()[0]
+        if (win !== undefined) {
+          if (win.isMinimized()) win.restore()
+          win.show()
+          win.focus()
+        }
+        ctx.emit(n.remote, 'holi-open', { holi: n.id })
+      })
+      note.show()
+    }
     // Which schedules this machine runs, and what they did: outside the
     // vault, where the agent cannot approve its own (`schedules/scheduler.ts`).
     const schedules = createScheduler({
@@ -60,6 +78,15 @@ export const agentMain: MainPlugin = {
       emit: ctx.emit,
     })
     ctx.register(SCHEDULE_NAMESPACES, scheduleCapabilities({ scheduler: schedules }))
+    // Which Holis this machine approved, and their runs: outside the vault
+    // for the same reason (`holis/holis.ts`).
+    const holis = createHolis({
+      store: jsonFileStore(join(ctx.userData, 'holis.json'), parseHolisFile),
+      sessions: started,
+      emit: ctx.emit,
+      needsYou: notify,
+    })
+    ctx.register(HOLI_NAMESPACES, holiCapabilities({ holis }))
     // Keystrokes and resizes, in the order they were typed. The host drops
     // any about a vault that is not the open one.
     ctx.on('pty-write', (_remote, payload) => {

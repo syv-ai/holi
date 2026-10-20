@@ -609,8 +609,8 @@ describe('the preview', () => {
     const user = setup()
     mount()
 
-    await user.click(screen.getByRole('tab', { name: 'Preview' }))
+    await user.click(screen.getByRole('radio', { name: 'Preview' }))
 
-    expect(screen.getByLabelText('preview of your message')).toBeInTheDocument()
+    expect(screen.getByLabelText('Preview of your message')).toBeInTheDocument()
   })
 })

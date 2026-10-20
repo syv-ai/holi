@@ -159,9 +159,10 @@ export interface ClaudeCli {
   /** Remove a stopped session from Claude Code's list, conversation and all. */
   rm(target: VaultCliTarget, id: string): Promise<ActionResult>
   /** A new background session in the vault. With no prompt it waits for its
-   *  first one; with a prompt, that prompt is its first turn. `model` and
+   *  first one; with a prompt, that prompt is its first turn. `model`,
    *  `allow` (Claude Code permission rules it may use without asking) are a
-   *  scheduled run's. */
+   *  scheduled run's or a Holi's; `appendSystemPrompt` (Claude Code's own
+   *  flag) is a Holi's, who it is and its instructions. */
   startBg(target: VaultCliTarget, opts: StartBgOptions): Promise<StartResult>
   /** A background copy of a conversation, by Claude Code's full session id. */
   forkBg(target: VaultCliTarget, sessionId: string, name?: string): Promise<StartResult>
@@ -172,6 +173,7 @@ export interface StartBgOptions {
   prompt?: string
   model?: string
   allow?: readonly string[]
+  appendSystemPrompt?: string
 }
 
 /** The longest a session name is worth being: a row is narrow, and the source
@@ -208,18 +210,29 @@ export function cliEnv(base: NodeJS.ProcessEnv, target: VaultCliTarget): Record<
 export const NOT_INSTALLED =
   'Claude CLI not found on PATH. Install it (https://claude.com/claude-code) and restart Holi.'
 
-/** What a terminal runs: `claude agents` (the list) or `claude attach <id>`.
- *  Null when the binary is not on this machine. */
+/** What a terminal runs: `claude agents` (the list), `claude attach <id>`,
+ *  a copy of a chat session's conversation (`--resume <id>
+ *  --fork-session`), or Claude Code's own `/login` for the vault's config
+ *  directory, which a chat session has no TUI to run. Null when the binary
+ *  is not on this machine. */
 export function terminalCommand(
   target: VaultCliTarget,
   attach?: string,
   resolveBin: () => string | null = () => resolveClaudeBin(),
+  fork?: string,
+  login?: boolean,
 ): TerminalCommand | null {
   const bin = resolveBin()
   if (bin === null) return null
   return {
     bin,
-    args: attach === undefined ? ['agents'] : ['attach', attach],
+    args: login
+      ? ['/login']
+      : fork !== undefined
+        ? ['--resume', fork, '--fork-session']
+        : attach === undefined
+          ? ['agents']
+          : ['attach', attach],
     env: cliEnv(process.env, target),
   }
 }
@@ -294,11 +307,12 @@ export function createClaudeCli(deps: ClaudeCliDeps = {}): ClaudeCli {
     stop: (target, id) => action(target, ['stop', id]),
     respawn: (target, id) => action(target, ['respawn', id]),
     rm: (target, id) => action(target, ['rm', id]),
-    startBg(target, { name, prompt, model, allow = [] }) {
+    startBg(target, { name, prompt, model, allow = [], appendSystemPrompt }) {
       const label = sessionName(name)
       return start(target, [
         '--bg',
         ...(model === undefined ? [] : ['--model', model]),
+        ...(appendSystemPrompt === undefined ? [] : ['--append-system-prompt', appendSystemPrompt]),
         // `--allowedTools` takes any number of values, so each rule is one
         // `=` argument and a plain option always follows to end the list:
         // the name, which an allow list therefore always gets.

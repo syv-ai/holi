@@ -10,17 +10,16 @@
  * `@` completes notes and open tasks; either inserts an ordinary path
  * wiki-link.
  */
-import { EditorSelection, EditorState } from '@codemirror/state'
+import { Compartment, EditorSelection, EditorState, Prec, type Extension } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import { snapshotTasks, type Task } from '@holi/shared'
 import { useAtomValue, useSetAtom, useStore } from 'jotai'
-import { useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { baseEditorExtensions, plainTextExtensions } from '@/editor/extensions'
 import { bodyStart, frontmatterValid, setFrontmatterCommit } from '@/editor/frontmatter'
 import { syntaxValid } from '@/editor/languages'
 import type { LinkNav } from '@/editor/links'
 import type { MentionData } from '@/editor/mentions'
-import { playOnce } from '@/lib/motion'
 import { applyReload } from '@/lib/apply-reload'
 import { registerBuffer } from '@/lib/buffer-registry'
 import { decideReload, hasNewText, type ConflictResolvers } from '@/lib/editor-reload'
@@ -29,11 +28,45 @@ import { historyOpenAtom } from '@/state/history'
 import { normalizersAtom } from '@/state/plugins'
 import { trpc } from '@/lib/trpc'
 import { fileHistoryAtom } from '@/state/file-history'
+import { OutlineRail } from './OutlineRail'
+import { BlockGutter } from './BlockGutter'
+import { PageActions } from './PageActions'
+import { Button, toast } from '@/primitives'
+import { runCommandAtom } from '@/state/commands'
+import { notePageAtom, NOTE_PAGE_DEFAULTS, type NotePage } from '@/state/note-page'
+import { vaultSettingsAtom } from '@/state/settings'
 import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
+import { VAULT_SETTING_DEFAULTS } from '@holi/shared'
 
 /** Quiet before the buffer reaches disk. Shorter than main's commit debounce on
  *  purpose: the file has to be there before the commit timer decides to look. */
 const SAVE_QUIET_MS = 600
+
+/** Below this the outline rail would sit on the text: the page actions carry
+ *  the outline as a button instead. */
+const RAIL_MIN_WIDTH = 640
+
+/** How long a notice with Undo stays (WCAG 2.2.1: long enough to reach it). */
+const NOTICE_MS = 8000
+
+/** A read slower than this shows the skeleton; a quick one shows nothing. */
+const SKELETON_AFTER_MS = 150
+
+/**
+ * A note's page toggles as editor extensions (docs/features/editor.md): full
+ * width lifts the column's cap, small text sets the page a step down, and a
+ * lock makes the document read-only. `Prec.highest`, since the first
+ * `readOnly`/`editable` value is the one that counts.
+ */
+function pageExtensions(page: NotePage): Extension {
+  return [
+    page.locked ? Prec.highest([EditorState.readOnly.of(true), EditorView.editable.of(false)]) : [],
+    page.fullWidth
+      ? EditorView.theme({ '& > .cm-scroller > .cm-content': { maxWidth: 'none' } })
+      : [],
+    page.smallText ? EditorView.theme({ '& .cm-content': { fontSize: '0.875em' } }) : [],
+  ]
+}
 
 type JotaiStore = ReturnType<typeof useStore>
 
@@ -92,11 +125,42 @@ export function EditorPane({
   normalizers.current = normalizerList
   const store = useStore()
   const hostRef = useRef<HTMLDivElement>(null)
+  /** The positioned box the gutter and the page actions sit in. */
+  const [frame, setFrame] = useState<HTMLDivElement | null>(null)
+  const frameRef = useCallback((el: HTMLDivElement | null) => setFrame(el), [])
+  /** Whether the frame is too narrow for the outline rail. */
+  const [narrow, setNarrow] = useState(false)
+  /** A write is pending or in flight; the page actions say "Saving…". */
+  const [saving, setSaving] = useState(false)
+  /** The read is taking long enough to show the page's shape. */
+  const [slow, setSlow] = useState(false)
+  /** What just happened, with a way back: the shell's one toaster, whose live
+   *  region exists before the message does, so it is announced. */
+  const showNotice = useCallback((message: string, undo?: () => void) => {
+    toast(message, {
+      duration: NOTICE_MS,
+      ...(undo === undefined ? {} : { action: { label: 'Undo', onClick: undo } }),
+    })
+  }, [])
+  const runCommand = useSetAtom(runCommandAtom)
+  /** This note's page toggles, machine-local (`state/note-page.ts`). */
+  const pageAtom = notePageAtom(remote ?? '', path ?? '')
+  const page = useAtomValue(pageAtom)
+  const setPage = useSetAtom(pageAtom)
+  const pageRef = useRef<NotePage>(NOTE_PAGE_DEFAULTS)
+  pageRef.current = page
+  const pageCompartment = useRef(new Compartment())
+  /** Space on an empty line asks the agent: read at the keypress. */
+  const settings = useAtomValue(vaultSettingsAtom)
+  const spaceAsks = useRef(true)
+  spaceAsks.current = settings?.settings.spaceAsksAgent ?? VAULT_SETTING_DEFAULTS.spaceAsksAgent
 
   /** The text last loaded or saved; advanced by the save before the watcher
    *  reports it. */
   const baseRef = useRef('')
   const viewRef = useRef<EditorView | null>(null)
+  /** The same view as state, for what renders beside it (the outline rail). */
+  const [shownView, setShownView] = useState<EditorView | null>(null)
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   /** Whether `onEdit` has fired for this open note; reset per open. */
   const editedRef = useRef(false)
@@ -182,11 +246,26 @@ export function EditorPane({
 
     const scheduleSave = () => {
       if (saveTimer.current !== null) clearTimeout(saveTimer.current)
-      saveTimer.current = setTimeout(() => void save(), SAVE_QUIET_MS)
+      if (!plain) setSaving(true)
+      saveTimer.current = setTimeout(
+        () =>
+          void save().then(
+            // Held off (broken frontmatter) is not saved: it stays "Saving…"
+            // until the YAML parses and the next save lands.
+            (done) => !disposed && done && setSaving(false),
+            () => !disposed && setSaving(false),
+          ),
+        SAVE_QUIET_MS,
+      )
     }
+    setSaving(false)
+    setSlow(false)
+    const slowTimer = setTimeout(() => !disposed && setSlow(true), SKELETON_AFTER_MS)
 
     void trpc.notes.read.query({ remote, path }).then((text) => {
+      clearTimeout(slowTimer)
       if (disposed) return
+      setSlow(false)
       baseRef.current = text
       const view = new EditorView({
         state: EditorState.create({
@@ -222,7 +301,10 @@ export function EditorPane({
                     : {}),
                   notePath: path,
                   readOnly,
+                  spaceAsksAgent: () => spaceAsks.current,
                 })),
+            // The page menu's toggles; reconfigured when they change.
+            pageCompartment.current.of(plain ? [] : pageExtensions(pageRef.current)),
             EditorView.updateListener.of((update) => {
               if (!update.docChanged) return
               scheduleSave()
@@ -236,10 +318,9 @@ export function EditorPane({
         parent: host,
       })
       viewRef.current = view
-      // Fade in when the document arrives, after the IPC read, not when the
-      // tab changed. Opacity only: anything that changes the layout box drags
-      // CodeMirror's measure loop into every frame.
-      playOnce(host, 'motion-in-fade')
+      if (!plain) setShownView(view)
+      // No fade on arrival: opening a note is the most frequent action, often
+      // from the keyboard, and it should land at once.
       view.focus()
 
       if (!plain) unfollow = followCommit(view, path, store)
@@ -256,6 +337,7 @@ export function EditorPane({
 
     return () => {
       disposed = true
+      clearTimeout(slowTimer)
       unfollow()
       window.removeEventListener('blur', onBlur)
       unregister()
@@ -270,11 +352,28 @@ export function EditorPane({
         view.destroy()
       }
       viewRef.current = null
+      setShownView(null)
     }
     // `readOnly` rebuilds the view: entering a reconcile re-reads the file, so
     // you see the markers the agent is working on. So does an agent coming or
     // going, which adds or drops the Ask button. The teardown flushes first.
   }, [path, remote, plain, readOnly, store, hasAgent])
+
+  // A page toggle reaches the open editor without rebuilding it.
+  useEffect(() => {
+    if (shownView === null) return
+    shownView.dispatch({ effects: pageCompartment.current.reconfigure(pageExtensions(page)) })
+  }, [page, shownView])
+
+  // The rail needs a margin to sit in; a narrow pane gets the outline button.
+  useEffect(() => {
+    if (frame === null) return
+    const observer = new ResizeObserver(([entry]) => {
+      setNarrow((entry?.contentRect.width ?? frame.clientWidth) < RAIL_MIN_WIDTH)
+    })
+    observer.observe(frame)
+    return () => observer.disconnect()
+  }, [frame])
 
   /**
    * The vault changed somewhere: re-read our own file and decide. The snapshot
@@ -332,10 +431,62 @@ export function EditorPane({
 
   if (path === null) {
     return (
-      <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
-        select or create a note
+      <div className="flex flex-1 flex-col items-center justify-center gap-3 text-sm text-muted-foreground">
+        No note open
+        <Button variant="outline" size="sm" onClick={() => void runCommand('note.new')}>
+          New note
+        </Button>
       </div>
     )
   }
-  return <div ref={hostRef} className="min-w-0 flex-1 overflow-hidden" />
+  const title = path.split('/').pop()?.replace(/\.md$/, '') ?? path
+  return (
+    <div ref={frameRef} className="relative flex min-w-0 flex-1 overflow-hidden">
+      <div ref={hostRef} className="min-w-0 flex-1 overflow-hidden" />
+      {slow && shownView === null && !plain && <PageSkeleton />}
+      {!narrow && <OutlineRail view={shownView} />}
+      {shownView !== null && frame !== null && (
+        <>
+          <BlockGutter view={shownView} container={frame} onNotice={showNotice} />
+          <div className="absolute top-2 right-4 z-20">
+            <PageActions
+              view={shownView}
+              title={title}
+              page={page}
+              onPageChange={setPage}
+              saving={saving}
+              showOutline={narrow}
+              onNotice={showNotice}
+            />
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
+/** The page's shape while a slow read finishes (after ReUI's editor skeleton):
+ *  a title and two paragraphs, in the column the note will take. */
+function PageSkeleton(): React.JSX.Element {
+  return (
+    <div aria-hidden className="absolute inset-0 flex justify-center px-6 pt-8">
+      <div className="flex w-full max-w-2xl flex-col gap-8">
+        <div className="flex flex-col gap-4">
+          <div className="h-8 w-2/3 rounded-md motion-shimmer" />
+          <div className="flex flex-col gap-2.5">
+            <div className="h-4 w-full rounded-md motion-shimmer" />
+            <div className="h-4 w-11/12 rounded-md motion-shimmer" />
+            <div className="h-4 w-3/5 rounded-md motion-shimmer" />
+          </div>
+        </div>
+        <div className="flex flex-col gap-4">
+          <div className="h-6 w-1/4 rounded-md motion-shimmer" />
+          <div className="flex flex-col gap-2.5">
+            <div className="h-4 w-5/6 rounded-md motion-shimmer" />
+            <div className="h-4 w-3/4 rounded-md motion-shimmer" />
+          </div>
+        </div>
+      </div>
+    </div>
+  )
 }

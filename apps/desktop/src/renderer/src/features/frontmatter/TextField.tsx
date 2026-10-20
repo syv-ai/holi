@@ -4,8 +4,7 @@
  * clears the key.
  */
 import { useState } from 'react'
-import { Input } from '@/primitives'
-import { useFieldControlId } from '@/composites'
+import { Input, useFieldControlId } from '@/primitives'
 
 export function TextField({
   name,

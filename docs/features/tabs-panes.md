@@ -16,6 +16,19 @@ The workspace is one or more side-by-side panes, each with its own tab strip. Ta
 
 **Rename and delete** retarget open tabs (`retargetTab`/`retargetTabs`) and close deleted ones, so the strip never holds a path that is gone.
 
+**An empty pane** (after Obsidian's new tab) shows the Holi mark, large and faint, and under it
+New note, Go to file (⌘P), Commands (⌘⇧P) and Go home: the one place inside the app the mark
+stands on its own (`components/EmptyPane.tsx`).
+
+**The strip and the header** (after Arc's and Cursor's tabs, Linear's page header). Tabs are
+browser tabs: cells of one width that share their dividers on the window's ground, every one with
+an icon (a note without a glyph wears a page). The active tab is the page's colour and open at the
+bottom, so it runs into the header below it; a light line on its top marks the focused pane. At
+the strip's end, "+" makes a note and a chevron lists every tab. Under the strip, each pane has a
+header row: where the active tab is as a breadcrumb (a note's folders, muted, then its name) and
+the pane's actions at its right end (the surface's own controls, history, close pane, and Agent,
+which brings the [sidebar](sidebar.md)'s Agents mode forward). A right-click on a tab offers Close, Close others, Close to the right (`closeOtherTabs`, which leaves the tab you pointed at active), and for a note Keep open (a preview's pin) and Copy path.
+
 **Panes.** ⌘\ opens an empty pane beside the focused one; Open in a New Pane (a tree row) fills one. The focused pane is the one "open" means, and it follows both pointer and keyboard focus. The unfocused pane's active pill loses its weight. Closing a split's last tab removes the pane; the last pane never goes. ⌘W is the menu's Close Tab and runs the `tab.close` command; ⌘⇧W closes the window. A board card opens its task file beside the board (`openBeside`), reusing the pane to the right.
 
 **Moving a tab.** Native HTML5 drag. Drop in a strip to reorder, on another pane to move there, or on a pane's left/right quarter (capped at 120px) to split. The payload is the tab's identity under the `application/x-holi-tab` MIME type (a surface's name is checked by spelling only, and a drop of one that is not registered finds nothing); `findTab` finds it anywhere, so one `moveTab` serves reorder and move. Landing strips appear dim once the pointer leaves the strip, and light under it. While dragging, the pills between the slot and the pointer slide aside and the held pill dims to 40%; a tab arriving from another pane gets a caret line instead. Holding within 28px of a strip end auto-scrolls it.

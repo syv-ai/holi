@@ -16,7 +16,7 @@ import {
   type VaultSettingDescriptor,
   type VaultSettingOption,
 } from '@holi/shared'
-import { Button, Checkbox, Icon, Tooltip } from '@/primitives'
+import { Badge, Checkbox, Icon, ToggleGroup, ToggleGroupItem, Tooltip } from '@/primitives'
 import { useAck } from '@/lib/use-ack'
 import { surfaceLabel } from '@/lib/folder-documents'
 import type { RendererPlugin, Surface } from '@/plugin-api/types'
@@ -47,11 +47,10 @@ export function Layer({
           : `this machine only, written to ${files.local}, which is never committed`
       }
     >
-      {/* `--border`, not `--divider`: this is a chip, and a chip is an object
-          whose edge has to be seen. See the note in `composites/settings-ui.tsx`. */}
-      <span className="rounded border border-border px-1.5 py-0.5 text-[10px] leading-4 text-muted-foreground">
+      {/* A quiet fact beside a name: the house outline badge. */}
+      <Badge variant="outline" radius="full">
         {committed ? 'vault' : 'this machine'}
-      </span>
+      </Badge>
     </Tooltip>
   )
 }
@@ -112,35 +111,39 @@ export function SettingRow({
         ) : control.kind === 'choice' ? (
           // `justify-end` so a group that has wrapped onto its own line stays
           // against the right edge, and so does a second row of options.
-          <div role="radiogroup" aria-label={label} className="flex flex-col items-end gap-2">
-            {groups.map((group) => (
+          // One group across the headed rows, so arrow keys walk every option.
+          // An option is keyed by its place: its value may be any value the
+          // setting holds, compared structurally (`isChosen`).
+          <ToggleGroup
+            type="single"
+            size="sm"
+            spacing={1.5}
+            aria-label={label}
+            value={chosenKey(groups, isChosen)}
+            className="flex-col items-end gap-2"
+          >
+            {groups.map((group, g) => (
               <div
                 key={group.heading ?? ''}
                 className="flex flex-wrap items-center justify-end gap-1.5"
               >
                 {group.heading !== undefined && (
-                  <span className="mr-1 text-[11px] text-muted-foreground">{group.heading}</span>
+                  <span className="mr-1 text-xs text-muted-foreground">{group.heading}</span>
                 )}
                 {/* Filtered, not disabled — the same call the ritual makes. A greyed
                     out choice invites "why not?" and the answer is another row. */}
-                {group.options.map((option) => (
-                  <Button
+                {group.options.map((option, o) => (
+                  <ToggleGroupItem
                     key={option.label}
-                    type="button"
-                    variant={isChosen(option) ? 'secondary' : 'ghost'}
-                    size="xs"
-                    role="radio"
-                    // Structural equality: an option's value may be any value the
-                    // setting holds, and the answer a different object of that shape.
-                    aria-checked={isChosen(option)}
+                    value={`${g}:${o}`}
                     onClick={() => change(key, option.value)}
                   >
                     {option.label}
-                  </Button>
+                  </ToggleGroupItem>
                 ))}
               </div>
             ))}
-          </div>
+          </ToggleGroup>
         ) : undefined
       }
     >
@@ -160,10 +163,8 @@ export function SettingRow({
                   aria-label={`${toggle.label}. ${toggle.explanation}`}
                 />
                 <span className="min-w-0">
-                  <span className="text-xs">{toggle.label}</span>
-                  <span className="ml-1.5 text-[11px] text-muted-foreground">
-                    {toggle.explanation}
-                  </span>
+                  <span className="text-sm">{toggle.label}</span>
+                  <span className="ml-1.5 text-sm text-muted-foreground">{toggle.explanation}</span>
                 </span>
               </label>
             )
@@ -186,7 +187,7 @@ export function SettingRow({
           existed nothing displayed at all — a value dropped for being malformed
           was silently replaced by a default and never mentioned. */}
       {warnings.map((warning) => (
-        <p key={warning} className="flex items-start gap-1.5 text-[11px] text-destructive">
+        <p key={warning} className="flex items-start gap-1.5 text-xs text-destructive">
           <Icon icon={TriangleAlert} size="sm" className="mt-0.5" />
           {warning}
         </p>
@@ -199,6 +200,18 @@ export function SettingRow({
 interface OptionGroup {
   heading?: string
   options: readonly VaultSettingOption[]
+}
+
+/** The chosen option's key (`group:option`), or `''` when none is. */
+function chosenKey(
+  groups: readonly OptionGroup[],
+  isChosen: (option: VaultSettingOption) => boolean,
+): string {
+  for (const [g, group] of groups.entries()) {
+    const o = group.options.findIndex(isChosen)
+    if (o !== -1) return `${g}:${o}`
+  }
+  return ''
 }
 
 /**

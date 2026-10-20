@@ -8,14 +8,14 @@ import { FIELD_LOOK } from './field-look'
 const buttonVariants = cva(
   'inline-flex shrink-0 items-center justify-center gap-2 rounded-md text-sm font-medium whitespace-nowrap motion-respond outline-none active:scale-[0.97] focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive [&_svg]:pointer-events-none [&_svg]:shrink-0',
   {
-    // `size` before `variant`, so the ceremony variant's own height/padding
-    // wins in tailwind-merge.
     variants: {
       size: {
-        default: 'h-9 px-4 py-2 has-[>svg]:px-3',
-        xs: 'h-6 gap-1 rounded-md px-2 text-xs has-[>svg]:px-1.5',
-        sm: 'h-8 gap-1.5 rounded-md px-3 has-[>svg]:px-2.5',
-        lg: 'h-10 rounded-md px-6 has-[>svg]:px-4',
+        // No `has-[>svg]:px-*` arms: tailwind-merge cannot see them as
+        // padding, so they beat a caller's own `px-*` and broke shared edges.
+        default: 'h-9 px-4 py-2',
+        xs: 'h-6 gap-1 rounded-md px-2 text-xs',
+        sm: 'h-8 gap-1.5 rounded-md px-3',
+        lg: 'h-10 rounded-md px-6',
         // No icon sizes: a control that is only an icon is an `IconButton`.
       },
       variant: {
@@ -29,9 +29,6 @@ const buttonVariants = cva(
         // A value in a labelled row: `field-look.ts`. `shrink`, because the
         // base is `shrink-0` and a full-width button would overhang its row.
         field: `${FIELD_LOOK} shrink gap-2`,
-        // The ceremony pill (onboarding ritual CTAs).
-        ceremony:
-          'h-[38px] gap-2 rounded-full bg-primary px-5 text-[13px] font-medium tracking-[0.005em] text-background shadow-sm hover:brightness-110',
       },
     },
     defaultVariants: {

@@ -31,14 +31,14 @@ test('shows the active vault name on the trigger', () => {
 test('switching to a different vault reports its remote', async () => {
   const { onSelect } = setup()
   await userEvent.click(screen.getByRole('button', { name: /Alpha/ }))
-  await userEvent.click(await screen.findByRole('menuitem', { name: 'Beta' }))
+  await userEvent.click(await screen.findByRole('menuitem', { name: /^Beta/ }))
   expect(onSelect).toHaveBeenCalledWith('git@b')
 })
 
 test('picking the already-active vault is a no-op', async () => {
   const { onSelect } = setup()
   await userEvent.click(screen.getByRole('button', { name: /Alpha/ }))
-  await userEvent.click(await screen.findByRole('menuitem', { name: 'Alpha' }))
+  await userEvent.click(await screen.findByRole('menuitem', { name: /^Alpha/ }))
   expect(onSelect).not.toHaveBeenCalled()
 })
 
@@ -51,5 +51,5 @@ test('the add-vault row invokes onAddVault', async () => {
 
 test('falls back to "no vaults" with an empty vault list', () => {
   setup({ vaults: [], activeRemote: null })
-  expect(screen.getByRole('button', { name: /no vaults/ })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: /no vaults/i })).toBeInTheDocument()
 })

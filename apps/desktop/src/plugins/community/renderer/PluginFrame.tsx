@@ -95,7 +95,7 @@ export function PluginFrame({ path }: { path: string }): React.JSX.Element {
         )}
       </div>
       {log.length > 0 && (
-        <pre className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap rounded-md bg-muted p-3 font-mono text-[11px] leading-relaxed text-muted-foreground">
+        <pre className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap rounded-md bg-muted p-3 font-mono text-xs leading-relaxed text-muted-foreground">
           {log.join('\n')}
         </pre>
       )}

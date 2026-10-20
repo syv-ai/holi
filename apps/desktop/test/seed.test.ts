@@ -135,6 +135,7 @@ describe('the seed tables', () => {
       '.claude/hooks/turn-signal.mjs',
       '.claude/hooks/user-prompt-submit.mjs',
       '.claude/skills/holi-feedback/SKILL.md',
+      '.claude/skills/holis/SKILL.md',
       '.claude/skills/memory/SKILL.md',
       '.claude/skills/scheduled-agents/SKILL.md',
       '.claude/skills/theme/SKILL.md',

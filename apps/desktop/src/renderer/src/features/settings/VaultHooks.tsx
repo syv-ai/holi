@@ -24,7 +24,7 @@ function HookLine({ hook }: { hook: PreCommitHook }): React.JSX.Element {
   return (
     <li className="flex items-baseline gap-1.5">
       <span className="text-xs">{hook.name}</span>
-      <span className="text-[11px] text-muted-foreground">{repoLabel(hook.repo)}</span>
+      <span className="text-xs text-muted-foreground">{repoLabel(hook.repo)}</span>
     </li>
   )
 }
@@ -57,11 +57,11 @@ export function VaultHooks(): React.JSX.Element | null {
 
   if (status.config === 'absent') {
     return (
-      <p className="text-[11px] text-muted-foreground">
+      <p className="text-xs text-muted-foreground">
         Your own hooks go in {PRE_COMMIT_CONFIG} and run after these, with{' '}
         <Button
           variant="link"
-          className="h-auto p-0 text-[11px] font-normal"
+          className="h-auto p-0 text-xs font-normal"
           onClick={() => void window.holi.openExternal(PRE_COMMIT_SITE)}
         >
           pre-commit
@@ -73,7 +73,7 @@ export function VaultHooks(): React.JSX.Element | null {
 
   if (status.config === 'invalid') {
     return (
-      <p className="text-[11px] text-destructive">
+      <p className="text-xs text-destructive">
         {PRE_COMMIT_CONFIG} is not valid, so it does not run: {status.error}
       </p>
     )
@@ -106,7 +106,7 @@ export function VaultHooks(): React.JSX.Element | null {
         />
         <span className="min-w-0">
           <span className="text-xs">Run {PRE_COMMIT_CONFIG}</span>
-          <span className="ml-1.5 text-[11px] text-muted-foreground">
+          <span className="ml-1.5 text-xs text-muted-foreground">
             {status.tool === null
               ? 'pre-commit is not installed on this machine.'
               : status.allowed === 'changed'
@@ -124,7 +124,7 @@ export function VaultHooks(): React.JSX.Element | null {
 
       {asking && (
         <div className="ml-6 flex flex-wrap items-center gap-2 rounded-md bg-muted px-3 py-2">
-          <span className="text-[11px]">
+          <span className="text-xs">
             These run commands from this vault on this machine, at every save. Allow them?
           </span>
           <Button size="xs" variant="default" onClick={() => void allow()}>
@@ -140,15 +140,13 @@ export function VaultHooks(): React.JSX.Element | null {
         <div className="ml-6 flex flex-col gap-0.5">
           <span
             className={
-              status.lastRun.ok
-                ? 'text-[11px] text-muted-foreground'
-                : 'text-[11px] text-destructive'
+              status.lastRun.ok ? 'text-xs text-muted-foreground' : 'text-xs text-destructive'
             }
           >
             Last save: {status.lastRun.ok ? 'fine' : 'a hook reported a problem'}
           </span>
           {status.lastRun.summary !== '' && (
-            <pre className="font-mono text-[10px] whitespace-pre-wrap text-muted-foreground">
+            <pre className="font-mono text-xs whitespace-pre-wrap text-muted-foreground">
               {status.lastRun.summary}
             </pre>
           )}

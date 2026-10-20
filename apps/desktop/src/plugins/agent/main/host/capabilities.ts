@@ -23,6 +23,7 @@ import {
   noParams,
   optionalStringParam,
   paramsObject,
+  removeDocFile,
   stringParam,
   writeAtomic,
   type CapabilityContext,
@@ -32,6 +33,15 @@ import type { ActionResult, AgentSessions, Geometry, OpenResult, StartResult } f
 import type { AgentTerminals, TerminalSummary } from './terminals'
 import type { SessionSummary } from '../claude/listing'
 import { openTurnLog, type TurnRecord } from './turn-log'
+import { cliEnv, resolveClaudeBin } from '../claude/cli'
+
+/** Where and how a process runs Claude Code in the open vault. */
+export interface CommandTarget {
+  root: string
+  env: Record<string, string>
+  /** The `claude` binary, or null when it is not on this machine. */
+  claude: string | null
+}
 
 export const AGENT_NAMESPACES = ['agent'] as const
 
@@ -39,7 +49,16 @@ export interface AgentCapabilitiesDeps {
   /** The sessions of the open vault. */
   sessions: Pick<
     AgentSessions,
-    'ensure' | 'sessions' | 'open' | 'start' | 'send' | 'stop' | 'respawn' | 'duplicate'
+    | 'ensure'
+    | 'sessions'
+    | 'open'
+    | 'start'
+    | 'send'
+    | 'stop'
+    | 'respawn'
+    | 'duplicate'
+    | 'bracket'
+    | 'target'
   >
   terminals: Pick<AgentTerminals, 'list' | 'attach' | 'close'>
   /** The open vault's remote, or null with none open. */
@@ -111,13 +130,21 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
       run: async (ctx): Promise<TerminalSummary[]> => (live(ctx) ? deps.terminals.list() : []),
     }),
 
-    /** A terminal on the agents list, or on one session with `attach`. */
+    /** A terminal on the agents list, on one session with `attach`, on a
+     *  copy of a conversation (Claude Code's session id) with `fork`, or on
+     *  Claude Code's `/login` for the vault with `login`. */
     'agent.open': cap({
       doors: ['ui'],
       params: (raw) => {
         const p = paramsObject(raw)
         const attach = optionalStringParam(p, 'attach')
-        return { ...geometry(p), ...(attach === undefined ? {} : { attach }) }
+        const fork = optionalStringParam(p, 'fork')
+        return {
+          ...geometry(p),
+          ...(attach === undefined ? {} : { attach }),
+          ...(fork === undefined ? {} : { fork }),
+          ...(p['login'] === true ? { login: true } : {}),
+        }
       },
       run: async (ctx, args): Promise<OpenResult> =>
         live(ctx) ? deps.sessions.open(args) : notOpen,
@@ -198,6 +225,42 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
       },
     }),
 
+    /**
+     * A turn edge from a driver that runs its own process in the vault and
+     * knows its turns without a hook: sync pauses for it and the turn is
+     * recorded like a session's. The id is the driver's own, never a job id.
+     */
+    'agent.turn': cap({
+      doors: ['ui'],
+      params: (raw) => {
+        const p = paramsObject(raw)
+        const edge = p['edge']
+        if (edge !== 'begin' && edge !== 'end' && edge !== 'forget') {
+          throw new CapabilityError('BAD_REQUEST', 'edge is begin, end or forget')
+        }
+        return { id: stringParam(p, 'id'), edge: edge as 'begin' | 'end' | 'forget' }
+      },
+      run: async (ctx, { id, edge }): Promise<null> => {
+        if (!live(ctx)) throw new CapabilityError('UNAVAILABLE', 'That vault is not open.')
+        deps.sessions.bracket(id, edge)
+        return null
+      },
+    }),
+
+    /** How to run Claude Code in the open vault as a session runs: in its
+     *  clone, with the environment every session gets (its config directory,
+     *  Holi's commands first on `PATH`), and the binary, null when it is not
+     *  installed. Null with no vault attached. */
+    'agent.target': cap({
+      doors: ['ui'],
+      params: noParams,
+      run: async (ctx): Promise<CommandTarget | null> => {
+        const target = live(ctx) ? await deps.sessions.target() : null
+        if (target === null) return null
+        return { root: target.root, env: cliEnv(process.env, target), claude: resolveClaudeBin() }
+      },
+    }),
+
     /** This machine's turn records for the vault, newest first. */
     'agent.turns': cap({
       doors: ['ui'],
@@ -233,20 +296,24 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
       },
     }),
 
-    /** Write the text the reviewer resolved to, and commit it. */
+    /** Write the text the reviewer resolved to, and commit it; or, with
+     *  `delete`, remove a file the turn created: taking a turn back leaves
+     *  the vault as it was before it, not with an empty file in its place. */
     'agent.revert': cap({
       doors: ['ui'],
       writes: true,
-      params: (raw) => {
+      params: (raw): { path: string; text: string } | { path: string; delete: true } => {
         const p = paramsObject(raw)
+        const path: string = relPath(stringParam(p, 'path'))
+        if (p['delete'] === true) return { path, delete: true }
         const text = p['text']
         if (typeof text !== 'string') throw new CapabilityError('BAD_REQUEST', 'text is required')
-        const path: string = relPath(stringParam(p, 'path'))
         return { path, text }
       },
-      run: async (ctx, { path, text }): Promise<{ ok: true }> => {
+      run: async (ctx, args): Promise<{ ok: true }> => {
         if (!live(ctx)) throw new CapabilityError('UNAVAILABLE', 'That vault is not open.')
-        await writeAtomic(ctx.root, relPath(path), text)
+        if ('delete' in args) await removeDocFile(ctx.root, relPath(args.path))
+        else await writeAtomic(ctx.root, relPath(args.path), args.text)
         await deps.commitNow()
         return { ok: true }
       },

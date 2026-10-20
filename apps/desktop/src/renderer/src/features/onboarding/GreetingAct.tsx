@@ -1,25 +1,25 @@
 /** The first-run greeting: what Holi is, before anything is asked. */
-import { Button } from '@/primitives'
+import { ArrowRight } from 'lucide-react'
+import { Button, Icon, Kbd } from '@/primitives'
+import { ActHeading } from './ActHeading'
 
 export function GreetingAct({ onBegin }: { onBegin: () => void }) {
   return (
-    <>
-      <div className="obrit-eyebrow">HOLI</div>
-      <h1 className="obrit-display">A vault for notes and tasks.</h1>
-      <p className="obrit-lede">
-        It is a private GitHub repo, cloned to this machine and kept in sync. Mail, calendar and an
-        agent are plugins: keep the ones you want.
-      </p>
-      <div className="obrit-cta-row">
-        <Button variant="ceremony" onClick={onBegin}>
+    <div className="flex flex-col items-center gap-6">
+      <ActHeading
+        center
+        title="A vault for notes and tasks."
+        description="It is a private GitHub repo, cloned to this machine and kept in sync. Mail, calendar and an agent are plugins: keep the ones you want."
+      />
+      <div className="flex flex-col items-center gap-3">
+        <Button onClick={onBegin}>
           Begin
-          <span aria-hidden>→</span>
+          <Icon icon={ArrowRight} size="sm" />
         </Button>
+        <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          or press <Kbd>Space</Kbd>
+        </span>
       </div>
-      <div className="obrit-keyhint">
-        <span>or press</span>
-        <span className="obrit-kbd-inline">space</span>
-      </div>
-    </>
+    </div>
   )
 }

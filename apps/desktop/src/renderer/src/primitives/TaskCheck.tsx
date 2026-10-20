@@ -1,18 +1,14 @@
 /**
- * A task's check: a ring that fills with the brand, pops, and draws a tick
- * (ported from rare-ui's task list, fitted to the house tokens). Todo is a
- * plain ring; doing is dotted, in the doing colour.
+ * A task's check: a ring that fills with the brand and shows a tick. Todo is a
+ * plain ring; doing is dotted, in the doing colour. The fill and the tick fade
+ * in with the house's respond timing (`motion-respond`): one calm beat, no pop.
  *
  * **Presentational.** `filled` is what it shows, not the task's status: the
- * board drives it from its completion sequence, which runs ahead of the write
- * and behind it (`features/tasks/use-check-sequence.ts`). `onDrawn` fires when
- * the tick has finished drawing, or undrawing, so the next beat can start.
+ * board fills it the moment it is clicked, ahead of the write.
  *
  * Genuine checkboxes (settings, filters, PDF fields) stay `Checkbox`.
  */
-import { motion, useReducedMotion, type Transition } from 'motion/react'
 import { cn } from '@/lib/cn'
-import { check, instant } from './springs'
 
 /** Dashes that divide the circumference evenly, so the ring closes without a seam. */
 const RING_R = 10
@@ -21,23 +17,19 @@ const RING_DASH = `1 ${(2 * Math.PI * RING_R) / 13 - 1}`
 export function TaskCheck({
   filled,
   doing = false,
-  onDrawn,
   label,
   onClick,
   className,
 }: {
   filled: boolean
   /** In progress: the ring goes dotted and takes the doing colour, as the
-   *  file tree's icon does (`--task-doing`). The fill on completion is the same. */
+   *  file tree's icon does (`--task-doing`). */
   doing?: boolean
-  onDrawn?: () => void
   /** The accessible name: "Complete Fix login", "Reopen Fix login". */
   label: string
   onClick?: (event: React.MouseEvent<HTMLButtonElement>) => void
   className?: string
 }): React.JSX.Element {
-  const reduced = useReducedMotion() ?? false
-  const timing = (transition: Transition) => (reduced ? instant : transition)
   return (
     <button
       type="button"
@@ -51,15 +43,12 @@ export function TaskCheck({
         className,
       )}
     >
-      <motion.svg
+      <svg
         viewBox="0 0 24 24"
         aria-hidden
         className={cn('size-4', doing ? 'text-task-doing' : 'text-muted-foreground')}
-        initial={false}
-        animate={{ scale: filled ? check.popScale : 1 }}
-        transition={filled ? timing(check.pop) : instant}
       >
-        <motion.circle
+        <circle
           cx="12"
           cy="12"
           r={RING_R}
@@ -68,33 +57,20 @@ export function TaskCheck({
           strokeWidth={doing ? 2.2 : 1.8}
           strokeLinecap="round"
           strokeDasharray={doing ? RING_DASH : undefined}
-          initial={false}
-          animate={{ opacity: filled ? 0 : 1 }}
-          transition={timing(check.fill)}
+          className={cn('motion-respond', filled && 'opacity-0')}
         />
-        <motion.circle
-          cx="12"
-          cy="12"
-          r="12"
-          className="fill-primary"
-          style={{ transformBox: 'view-box', transformOrigin: '12px 12px' }}
-          initial={false}
-          animate={{ scale: filled ? 1 : 0 }}
-          transition={timing(check.fill)}
-        />
-        <motion.path
-          d="M7.4 12.4 10.6 15.5 16.6 8.9"
-          fill="none"
-          className="stroke-primary-foreground"
-          strokeWidth="2.6"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          initial={false}
-          animate={{ pathLength: filled ? 1 : 0, opacity: filled ? 1 : 0 }}
-          transition={timing(check.tick)}
-          onAnimationComplete={onDrawn}
-        />
-      </motion.svg>
+        <g className={cn('motion-respond', !filled && 'opacity-0')}>
+          <circle cx="12" cy="12" r="12" className="fill-primary" />
+          <path
+            d="M7.4 12.4 10.6 15.5 16.6 8.9"
+            fill="none"
+            className="stroke-primary-foreground"
+            strokeWidth="2.6"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </g>
+      </svg>
     </button>
   )
 }

@@ -49,7 +49,7 @@ findable. The settings field searches GitHub's repositories with that topic as y
 within `owner/`), anyone's and the private ones the person can read, and reads each hit for its
 root manifest or else its top-level folders' (at most 20), then each plugin's newest release: one row
 per plugin, an installable one showing its name and version, anything else why it cannot be
-installed (no release yet, an invalid manifest). An exact `owner/repo` is read even when search
+installed (no release yet, an invalid manifest), wrapped in full rather than cut off, since it is the reason. An exact `owner/repo` is read even when search
 does not find it, so a plugin without the topic still installs by name. A local folder, used in
 place, is for developing a plugin.
 
@@ -77,7 +77,7 @@ plugin's folder, so it can share references with its own skills, and refused whe
 run the plugin's own tools; it only reads, so it is allowed without asking.
 
 **Nothing runs before consent.** A fetched release waits until the person allows that commit, in a
-dialog naming the repository, version, commit and both commands. Consent is per `(id, commit)` in
+dialog naming the repository, version, commit and both commands, in body text, as the vault-app consent is. Consent is per `(id, commit)` in
 `userData/plugin-consent.json`, with no expiry; a different commit asks again. Then setup runs once,
 its output streamed into the dialog and kept in `setup.log`. A folder install asks nothing: it is
 the person's own checkout.

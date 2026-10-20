@@ -4,8 +4,8 @@
  *
  * - **At rest** the icon is muted (`text-icon`), on no surface.
  * - **Under the pointer** it brightens to `text-icon-active`, takes the neutral
- *   `accent` background and grows a little (`scale-110`). A press settles it
- *   back (`active:scale-95`). All of it is `motion-respond`, so leaving reverses.
+ *   `accent` background; it does not grow, so a row of icons stays still under
+ *   a passing pointer. A press settles it (`active:scale-95`). All of it is `motion-respond`, so leaving reverses.
  * - **Pressed** (`pressed`, a toggle that is on), **active** (`active`, the
  *   current destination) and **open** (a menu trigger, Radix's
  *   `data-state=open`) all look like the hover, and stay.
@@ -35,9 +35,9 @@ export type IconTone = 'busy' | 'warn' | 'alert' | 'live'
  *  gate-legal), `alert` destructive, `live` the green of a running session. */
 export const ICON_TONE: Record<IconTone, string> = {
   busy: 'text-brand',
-  warn: 'text-amber-400',
+  warn: 'text-amber-600 dark:text-amber-400',
   alert: 'text-destructive',
-  live: 'text-green-500',
+  live: 'text-green-600 dark:text-green-500',
 }
 /** A loop on the glyph, bound to a state that is in flight (`index.css`). */
 export type IconMotion = 'orbit' | 'pulse'
@@ -115,7 +115,7 @@ export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(functio
           : quiet
             ? 'hover:text-icon-active data-[state=open]:text-icon-active'
             : [
-                'hover:scale-110 hover:bg-accent hover:text-icon-active active:scale-95',
+                'hover:bg-accent hover:text-icon-active active:scale-95',
                 'aria-pressed:bg-accent aria-pressed:text-icon-active data-active:bg-accent data-active:text-icon-active data-[state=open]:bg-accent data-[state=open]:text-icon-active',
               ],
         'focus-visible:ring-1 focus-visible:ring-ring',

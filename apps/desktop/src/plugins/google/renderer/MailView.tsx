@@ -33,9 +33,12 @@ import {
   FilePen,
   FileText,
   Forward,
+  Inbox,
   Link2,
   MailMinus,
   MailOpen,
+  MailX,
+  MoreHorizontal,
   Paperclip,
   RefreshCw,
   Reply,
@@ -53,6 +56,7 @@ import {
   activeRemoteAtom,
   matchHotkey,
   openDialogAtom,
+  openSettingsSectionAtom,
   openNoteTabAtom,
   useAgentService,
   useGlobalPanelLayout,
@@ -60,19 +64,27 @@ import {
 } from '@/plugin-api'
 import { buildSummarizePrompt } from './summarize-prompt'
 import {
+  Badge,
   Button,
   Checkbox,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
   Icon,
   IconButton,
   Input,
   Popover,
+  PopoverAnchor,
   PopoverContent,
   PopoverTrigger,
   ResizableHandle,
   ResizablePanel,
   ResizablePanelGroup,
   Tooltip,
+  toast,
 } from '@/primitives'
+import { EmptyState, LoadingRows, PaneToolbar } from '@/composites'
 import { SandboxedHtml } from './SandboxedHtml'
 import { ComposeMailDialog } from './ComposeMailDialog'
 import { MailComposer } from './MailComposer'
@@ -243,6 +255,9 @@ export function MailView() {
   )
   const openNote = useSetAtom(openNoteTabAtom)
   const openDialog = useSetAtom(openDialogAtom)
+  const openSettingsSection = useSetAtom(openSettingsSectionAtom)
+  /** Where Google is connected: the Connections section of Settings. */
+  const openConnections = () => openSettingsSection('connections')
   /** Summarize shows only while a plugin provides an agent. */
   const agent = useAgentService()
   const store = useStore()
@@ -524,14 +539,18 @@ export function MailView() {
    * because a cached write Google refused is a divergence the `history.list`
    * delta sync can never find.
    *
-   * The whole previous list is the undo, rather than an inverse per operation:
-   * a removed row goes back at its index, and "unarchive" is not expressible.
+   * The whole previous list is the undo for a REFUSED write, rather than an
+   * inverse per operation: a removed row goes back at its index. The user's
+   * own Undo, after Google agreed, is the inverse capability (see
+   * `removeThreads`).
+   *
+   * Resolves `true` once Google has agreed.
    */
   const write = async (
     mutate: () => Promise<unknown>,
     next: (threads: ThreadSummary[]) => ThreadSummary[],
-  ) => {
-    if (list.kind !== 'ready') return
+  ): Promise<boolean> => {
+    if (list.kind !== 'ready') return false
     const snapshot = list.threads
     const at = ++listGeneration.current
     setWriteError(null)
@@ -540,6 +559,7 @@ export function MailView() {
     )
     try {
       await mutate()
+      return true
     } catch (err: unknown) {
       /**
        * The snapshot is only a valid undo while nothing else has touched the
@@ -556,6 +576,7 @@ export function MailView() {
       // A silent revert is indistinguishable from the click never registering
       // (e.g. a grant missing `gmail.modify`), so always say why.
       setWriteError(explainWriteFailure(err))
+      return false
     }
   }
 
@@ -587,6 +608,38 @@ export function MailView() {
   }
 
   /**
+   * Archive or trash some threads, then offer Undo.
+   *
+   * Undo rather than a confirmation: the removal is frequent and reversible
+   * (Trash keeps a thread for 30 days), and nothing else in Holi says how to
+   * get it back. The toast names what happened and stays until dismissed,
+   * because it carries an action. Undo calls the inverse capability for the
+   * threads Google actually moved and re-reads the list, which is where they
+   * reappear.
+   */
+  const removeThreads = async (ids: readonly string[], kind: 'archive' | 'trash') => {
+    const done = await Promise.all(
+      ids.map((id) => removeThread(id, () => call((r) => googleCap[kind](r, { id })))),
+    )
+    const moved = ids.filter((_, index) => done[index])
+    if (moved.length === 0) return
+    const subject = moved.length === 1 ? 'Thread' : `${moved.length} threads`
+    toast(kind === 'archive' ? `${subject} archived` : `${subject} moved to Trash`, {
+      duration: Infinity,
+      closeButton: true,
+      action: {
+        label: 'Undo',
+        onClick: () => {
+          const inverse = kind === 'archive' ? googleCap.unarchive : googleCap.untrash
+          void Promise.all(moved.map((id) => call((r) => inverse(r, { id }))))
+            .catch((err: unknown) => setWriteError(explainWriteFailure(err)))
+            .finally(load)
+        },
+      },
+    })
+  }
+
+  /**
    * Link the open thread into a task.
    *
    * The link is an ordinary markdown link in the task **body**, with no
@@ -610,8 +663,8 @@ export function MailView() {
   const threadActions: ThreadActions = {
     setRead,
     setStarred,
-    archive: (id) => void removeThread(id, () => call((r) => googleCap.archive(r, { id }))),
-    trash: (id) => void removeThread(id, () => call((r) => googleCap.trash(r, { id }))),
+    archive: (id) => void removeThreads([id], 'archive'),
+    trash: (id) => void removeThreads([id], 'trash'),
     linkToTask: (thread) => void linkToTask(thread),
     canLinkToTask,
     openExternal: (url) => void window.holi.openExternal(url),
@@ -674,6 +727,13 @@ export function MailView() {
     for (const id of ids) action(id)
   }
 
+  /** Archive or trash the selection, as one Undo. */
+  const removeSelection = (kind: 'archive' | 'trash') => {
+    const ids = [...live]
+    clearSelection()
+    void removeThreads(ids, kind)
+  }
+
   /**
    * The open thread's row, as the list has it *now*.
    *
@@ -728,8 +788,8 @@ export function MailView() {
               count={live.size}
               onSetRead={(read) => applyToSelection((id) => void setRead(id, read))}
               onSetStarred={(starred) => applyToSelection((id) => void setStarred(id, starred))}
-              onArchive={() => applyToSelection(threadActions.archive)}
-              onTrash={() => applyToSelection(threadActions.trash)}
+              onArchive={() => removeSelection('archive')}
+              onTrash={() => removeSelection('trash')}
               onClear={clearSelection}
             />
           ) : (
@@ -774,23 +834,49 @@ export function MailView() {
               and trash close the reader, so a message anchored there would
               vanish with the pane that raised it. */}
           {writeError !== null && (
-            <div className="flex shrink-0 items-start gap-2 border-b border-border bg-secondary px-3 py-1.5 text-[11px] text-amber-400">
-              <span className="min-w-0 flex-1">{writeError}</span>
-              <IconButton icon={X} label="dismiss" onClick={() => setWriteError(null)} />
+            <div
+              role="alert"
+              className="flex shrink-0 items-center gap-2 border-b border-divider py-1.5 pr-2 pl-4 text-xs text-destructive"
+            >
+              <span className="min-w-0 flex-1 text-pretty">{writeError}</span>
+              <IconButton icon={X} label="Dismiss" onClick={() => setWriteError(null)} />
             </div>
           )}
 
           <div className="min-h-0 flex-1 overflow-y-auto">
             {showDrafts && <DraftsList reloadKey={draftsGeneration} onOpen={continueDraft} />}
-            {!showDrafts && list.kind === 'loading' && <Note>Loading…</Note>}
-            {!showDrafts && list.kind === 'disconnected' && (
-              <Note>Google isn&rsquo;t connected. Connect it in vault settings.</Note>
+            {!showDrafts && list.kind === 'loading' && (
+              <LoadingRows label="Loading mail" lines={3} />
             )}
-            {!showDrafts && list.kind === 'error' && <Note>{list.message}</Note>}
+            {!showDrafts && list.kind === 'disconnected' && (
+              <EmptyState
+                icon={MailX}
+                title="Google isn’t connected"
+                description="Connect an account to read mail here."
+                action={{ label: 'Open Connections', onClick: openConnections }}
+              />
+            )}
+            {!showDrafts && list.kind === 'error' && (
+              <EmptyState
+                role="alert"
+                title="Couldn’t load your mail"
+                description={list.message}
+                action={{ label: 'Try again', onClick: load }}
+              />
+            )}
             {/* Names the filter: an empty tab and an empty mailbox otherwise
                 look identical. */}
             {!showDrafts && list.kind === 'ready' && list.threads.length === 0 && (
-              <Note>{emptyMessage(view, filter, unreadOnly)}</Note>
+              <EmptyState
+                icon={Inbox}
+                title={emptyMessage(view, filter, unreadOnly)}
+                description={emptyDetail(filter)}
+                action={
+                  unreadOnly && view.kind === 'category'
+                    ? { label: 'Show all mail', onClick: () => setUnreadOnly(false) }
+                    : undefined
+                }
+              />
             )}
             {!showDrafts &&
               list.kind === 'ready' &&
@@ -812,7 +898,7 @@ export function MailView() {
                 </ThreadMenu>
               ))}
             {!showDrafts && list.kind === 'ready' && list.nextPageToken !== null && (
-              <div className="p-2">
+              <div className="px-4 py-2">
                 {/* A button, not an infinite scroller: see `loadMore`. */}
                 <Button
                   variant="secondary"
@@ -845,7 +931,7 @@ export function MailView() {
           {/* A draft opened from the Drafts list has no thread behind it, so
               it goes in the reader pane. */}
           {composing !== null && openId === null ? (
-            <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+            <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-4">
               <MailComposer
                 key={composeKey}
                 intent={composing}
@@ -858,13 +944,18 @@ export function MailView() {
               />
             </div>
           ) : openId === null ? (
-            <Note>Pick a thread to read it.</Note>
+            <EmptyState icon={MailOpen} title="Pick a thread to read it" />
           ) : open === null ? (
-            <Note>Loading…</Note>
+            <LoadingRows label="Loading the thread" lines={3} />
           ) : (
             <>
-              <div className="flex h-11 shrink-0 items-center gap-2 px-4">
-                <h3 className="min-w-0 flex-1 truncate text-sm font-medium">{open.subject}</h3>
+              {/* The subject on its own row, wrapping: it is the one place a
+                  subject the list truncated can be read in full, and a pane at
+                  its 280px floor still has room for it. */}
+              <h3 className="px-4 pt-3 text-sm font-medium text-pretty break-words">
+                {open.subject}
+              </h3>
+              <PaneToolbar>
                 {/* First, as the only time-sensitive action. The link is NOT
                     parsed out of the invite: main matched its `UID` to the
                     calendar event, and this is that event's `conferenceUrl`,
@@ -873,18 +964,17 @@ export function MailView() {
                   <Tooltip
                     content={
                       meeting.conferenceUrl !== null
-                        ? `join ${meeting.title}`
-                        : `open ${meeting.title} in Google Calendar`
+                        ? `Join ${meeting.title}`
+                        : `Open ${meeting.title} in Google Calendar`
                     }
                   >
                     <Button
                       variant="secondary"
                       size="xs"
-                      className="shrink-0 gap-1"
                       aria-label={
                         meeting.conferenceUrl !== null
-                          ? 'join this meeting'
-                          : 'open this meeting in Google Calendar'
+                          ? 'Join this meeting'
+                          : 'Open this meeting in Google Calendar'
                       }
                       onClick={() =>
                         void window.holi.openExternal(meeting.conferenceUrl ?? meeting.htmlLink)
@@ -898,108 +988,89 @@ export function MailView() {
                     </Button>
                   </Tooltip>
                 )}
-                {/* Goes to a real session, where follow-up questions live. It
-                    lands unsent like every other ask. */}
-                {agent !== null && (
-                  <Tooltip content="ask the vault assistant to summarise this thread">
-                    <Button
-                      variant="secondary"
-                      size="xs"
-                      className="shrink-0 gap-1"
-                      onClick={() => void summarize()}
-                    >
-                      <Icon icon={Sparkles} size="sm" />
-                      Summarize
-                    </Button>
-                  </Tooltip>
-                )}
-                {canLinkToTask && (
-                  <Tooltip content="make a task linking this thread">
-                    <Button
-                      variant="secondary"
-                      size="xs"
-                      className="shrink-0 gap-1"
-                      onClick={() => void linkToTask(open)}
-                    >
-                      <Icon icon={Link2} size="sm" />
-                      Task
-                    </Button>
-                  </Tooltip>
-                )}
-                {/* Advertised by the sender in List-Unsubscribe. Opened, never
-                    requested: it is a URL a stranger chose. */}
-                {openRow?.unsubscribeUrl != null && (
-                  <Tooltip content="open this sender’s unsubscribe page">
-                    <Button
-                      variant="ghost"
-                      size="xs"
-                      className="shrink-0 gap-1"
-                      aria-label="unsubscribe from this sender"
-                      onClick={() => void window.holi.openExternal(openRow.unsubscribeUrl!)}
-                    >
-                      <Icon icon={MailMinus} size="sm" />
-                      Unsubscribe
-                    </Button>
-                  </Tooltip>
-                )}
-                {/* Triage. Star is a toggle that says which way it goes;
-                    archive and trash both take the thread out of the list. */}
+                {/* Reply, reply-all and forward all open the same inline
+                    composer below. `replyTarget` rather than the last message:
+                    replying to your own last reply addresses you. */}
+                <IconButton icon={Reply} label="Reply" onClick={() => startCompose(false)} />
                 <IconButton
-                  // Filled means starred.
-                  icon={Star}
-                  filled={openRow?.starred === true}
-                  label={openRow?.starred === true ? 'unstar this thread' : 'star this thread'}
-                  tooltip={openRow?.starred === true ? 'unstar' : 'star'}
-                  onClick={() => void setStarred(open.id, openRow?.starred !== true)}
+                  icon={ReplyAll}
+                  label="Reply to everyone"
+                  onClick={() => startCompose(true)}
                 />
+                {/* Triage. Archive and trash both take the thread out of the
+                    list; star is a toggle that says which way it goes. */}
                 <IconButton
                   icon={Archive}
-                  label="archive this thread"
-                  tooltip="archive — removes it from the inbox, keeps it in All Mail"
-                  onClick={() =>
-                    void removeThread(open.id, () =>
-                      call((r) => googleCap.archive(r, { id: open.id })),
-                    )
-                  }
+                  label="Archive this thread"
+                  tooltip="Archive: removes it from the inbox, keeps it in All Mail"
+                  onClick={() => void removeThreads([open.id], 'archive')}
                 />
                 {/* Trash, which Gmail keeps for 30 days. Not called Delete:
                     Holi has no scope to delete mail permanently. */}
                 <IconButton
                   icon={Trash2}
-                  label="move this thread to trash"
-                  tooltip="move to trash — recoverable for 30 days"
-                  onClick={() =>
-                    void removeThread(open.id, () =>
-                      call((r) => googleCap.trash(r, { id: open.id })),
-                    )
-                  }
+                  label="Move this thread to trash"
+                  tooltip="Move to trash: recoverable for 30 days"
+                  onClick={() => void removeThreads([open.id], 'trash')}
                 />
-                {/* Reply, reply-all and forward all open the same inline
-                    composer below. `replyTarget` rather than the last message:
-                    replying to your own last reply addresses you. */}
-                <IconButton icon={Reply} label="reply" onClick={() => startCompose(false)} />
                 <IconButton
-                  icon={ReplyAll}
-                  label="reply to everyone"
-                  onClick={() => startCompose(true)}
+                  // Filled means starred.
+                  icon={Star}
+                  filled={openRow?.starred === true}
+                  label={openRow?.starred === true ? 'Unstar this thread' : 'Star this thread'}
+                  tooltip={openRow?.starred === true ? 'Unstar' : 'Star'}
+                  onClick={() => void setStarred(open.id, openRow?.starred !== true)}
                 />
-                {/* "Continue draft": opens the thread's NEWEST unsent draft.
-                    Any other is reachable from the Drafts list. */}
-                {openSummary?.hasDraft === true && (
-                  <IconButton
-                    icon={FilePen}
-                    label="continue draft"
-                    tooltip="continue your draft"
-                    onClick={openThreadDraft}
-                  />
-                )}
-                <IconButton icon={Forward} label="forward" onClick={startForward} />
-                <IconButton
-                  icon={ExternalLink}
-                  label="open in Gmail"
-                  onClick={() => void window.holi.openExternal(open.webUrl)}
-                />
-              </div>
+                {/* Everything less frequent, in one menu, so the row fits a
+                    reader at its narrowest instead of clipping off the pane. */}
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <IconButton icon={MoreHorizontal} label="More actions" />
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    {/* Goes to a real session, where follow-up questions live.
+                        It lands unsent like every other ask. */}
+                    {agent !== null && (
+                      <DropdownMenuItem onSelect={() => void summarize()}>
+                        <Icon icon={Sparkles} />
+                        Summarize with the assistant
+                      </DropdownMenuItem>
+                    )}
+                    {canLinkToTask && (
+                      <DropdownMenuItem onSelect={() => void linkToTask(open)}>
+                        <Icon icon={Link2} />
+                        Make a task linking this thread
+                      </DropdownMenuItem>
+                    )}
+                    {/* "Continue draft": opens the thread's NEWEST unsent draft.
+                        Any other is reachable from the Drafts list. */}
+                    {openSummary?.hasDraft === true && (
+                      <DropdownMenuItem onSelect={openThreadDraft}>
+                        <Icon icon={FilePen} />
+                        Continue your draft
+                      </DropdownMenuItem>
+                    )}
+                    <DropdownMenuItem onSelect={startForward}>
+                      <Icon icon={Forward} />
+                      Forward
+                    </DropdownMenuItem>
+                    {/* Advertised by the sender in List-Unsubscribe. Opened,
+                        never requested: it is a URL a stranger chose. */}
+                    {openRow?.unsubscribeUrl != null && (
+                      <DropdownMenuItem
+                        onSelect={() => void window.holi.openExternal(openRow.unsubscribeUrl!)}
+                      >
+                        <Icon icon={MailMinus} />
+                        Open the sender’s unsubscribe page
+                      </DropdownMenuItem>
+                    )}
+                    <DropdownMenuItem onSelect={() => void window.holi.openExternal(open.webUrl)}>
+                      <Icon icon={ExternalLink} />
+                      Open in Gmail
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </PaneToolbar>
 
               {/* One scroller for the whole thread. Each message renders at its
                   full height inside it: see `SandboxedHtml` for how a frame is
@@ -1121,15 +1192,15 @@ function emptyMessage(
   filter: MailCategory | undefined,
   unreadOnly: boolean,
 ): string {
-  if (view.kind === 'sent') return 'Nothing sent.'
-  if (filter === undefined) return unreadOnly ? 'Nothing unread.' : 'No threads.'
+  if (view.kind === 'sent') return 'Nothing sent'
+  if (filter === undefined) return unreadOnly ? 'Nothing unread' : 'No threads'
   const label = CATEGORIES.find((c) => c.value === filter)?.label ?? filter
-  const nothing = unreadOnly ? `Nothing unread in ${label}` : `Nothing in ${label}`
-  return `${nothing}. Gmail’s tabs only apply if your inbox uses them.`
+  return unreadOnly ? `Nothing unread in ${label}` : `Nothing in ${label}`
 }
 
-function Note({ children }: { children: React.ReactNode }) {
-  return <p className="p-6 text-center text-sm text-muted-foreground">{children}</p>
+/** The second line under an empty tab: the caveat only a tab needs. */
+function emptyDetail(filter: MailCategory | undefined): string | undefined {
+  return filter === undefined ? undefined : 'Gmail’s tabs only apply if your inbox uses them.'
 }
 
 /**
@@ -1194,7 +1265,7 @@ function MailToolbar({
 
   if (searchOpen) {
     return (
-      <div className="flex h-11 shrink-0 items-center gap-1 px-2">
+      <PaneToolbar>
         <SearchField
           query={query}
           onQueryChange={onQueryChange}
@@ -1207,35 +1278,34 @@ function MailToolbar({
             onSearchOpenChange(false)
           }}
         />
-      </div>
+      </PaneToolbar>
     )
   }
 
   return (
-    <div className="flex h-11 shrink-0 items-center gap-1 px-2">
+    <PaneToolbar>
       <IconButton
         ref={searchButtonRef}
         icon={Search}
-        label="search mail"
-        tooltip="search mail (⌘F)"
+        label="Search mail"
+        tooltip="Search mail (⌘F)"
         onClick={() => onSearchOpenChange(true)}
       />
 
       {/* A state, not a place: it survives a search, and it is a toggle rather
           than an entry in the picker. Absent for Sent and Drafts. */}
       {view.kind === 'category' && (
-        <Tooltip content={unreadOnly ? 'showing unread only' : 'show unread only'}>
+        <Tooltip content={unreadOnly ? 'Showing unread only' : 'Show unread only'}>
           <Button
             variant={unreadOnly ? 'secondary' : 'ghost'}
             size="xs"
-            className="gap-1"
-            aria-label="show unread only"
+            aria-label="Show unread only"
             aria-pressed={unreadOnly}
             onClick={() => onUnreadChange(!unreadOnly)}
           >
             <Icon icon={MailOpen} size="sm" />
             {unreadCount !== null && unreadCount > 0 && (
-              <span className="text-[10px] text-muted-foreground">{unreadCount}</span>
+              <span className="text-xs text-muted-foreground tabular-nums">{unreadCount}</span>
             )}
           </Button>
         </Tooltip>
@@ -1259,13 +1329,13 @@ function MailToolbar({
             has no context to preserve. */}
         <IconButton
           icon={SquarePen}
-          label="new message"
-          tooltip="write a new message"
+          label="New message"
+          tooltip="Write a new message"
           onClick={onCompose}
         />
-        <IconButton icon={RefreshCw} label="refresh mail" tooltip="refresh" onClick={onRefresh} />
+        <IconButton icon={RefreshCw} label="Refresh mail" tooltip="Refresh" onClick={onRefresh} />
       </div>
-    </div>
+    </PaneToolbar>
   )
 }
 
@@ -1333,28 +1403,35 @@ function SearchField({
   }
 
   return (
-    <div className="relative flex min-w-0 flex-1 items-center gap-1">
-      <Icon icon={Search} size="sm" tone="muted" />
-      <Input
-        ref={ref}
-        value={query}
-        onChange={(e) => onQueryChange(e.target.value)}
-        onKeyDown={onKeyDown}
-        placeholder="Gmail syntax — @ for people"
-        className="h-7 text-xs"
-        aria-label="search mail"
-        role="combobox"
-        aria-expanded={matches.length > 0}
-        aria-controls="mail-people"
-      />
-      <IconButton icon={X} label="close search" onClick={onClose} />
-
-      {matches.length > 0 && (
-        <ul
-          id="mail-people"
-          role="listbox"
-          className="absolute top-8 right-0 left-0 z-20 max-h-56 overflow-y-auto rounded-md border border-border bg-popover py-1 shadow-md"
-        >
+    // The people list floats on a popover anchored to the field, the one
+    // floating surface; the input keeps the keyboard throughout.
+    <Popover open={matches.length > 0}>
+      <PopoverAnchor asChild>
+        <div className="flex min-w-0 flex-1 items-center gap-1">
+          <Icon icon={Search} size="sm" tone="muted" />
+          <Input
+            ref={ref}
+            value={query}
+            onChange={(e) => onQueryChange(e.target.value)}
+            onKeyDown={onKeyDown}
+            placeholder="Gmail syntax — @ for people"
+            className="h-7 text-xs"
+            aria-label="Search mail"
+            role="combobox"
+            aria-expanded={matches.length > 0}
+            aria-controls="mail-people"
+          />
+          <IconButton icon={X} label="Close search" onClick={onClose} />
+        </div>
+      </PopoverAnchor>
+      <PopoverContent
+        align="start"
+        className="w-(--radix-popover-trigger-width) p-1"
+        onOpenAutoFocus={(e) => e.preventDefault()}
+        // Typing goes on in the field; only Escape there closes the list.
+        onInteractOutside={(e) => e.preventDefault()}
+      >
+        <ul id="mail-people" role="listbox" className="max-h-56 overflow-y-auto">
           {matches.map((person, index) => (
             // The button IS the option, not a child of one, so the clicked and
             // the announced element are the same.
@@ -1363,8 +1440,8 @@ function SearchField({
                 variant="ghost"
                 role="option"
                 aria-selected={index === highlighted}
-                className={`block h-auto w-full rounded-none px-2 py-1 text-left ${
-                  index === highlighted ? 'bg-secondary' : ''
+                className={`block h-auto w-full px-2 py-1 text-left ${
+                  index === highlighted ? 'bg-accent' : ''
                 }`}
                 // Mouse down, not click: a click fires after the input has
                 // already lost focus, and the list would be gone by then.
@@ -1373,16 +1450,16 @@ function SearchField({
                   accept(person)
                 }}
               >
-                <span className="block truncate text-xs">{person.name}</span>
-                <span className="block truncate text-[10px] text-muted-foreground">
+                <span className="block truncate text-sm">{person.name}</span>
+                <span className="block truncate text-xs font-normal text-muted-foreground">
                   {person.email} · {person.count} {person.count === 1 ? 'thread' : 'threads'}
                 </span>
               </Button>
             </li>
           ))}
         </ul>
-      )}
-    </div>
+      </PopoverContent>
+    </Popover>
   )
 }
 
@@ -1481,12 +1558,12 @@ function ListFooter({
   shown: number
 }): React.JSX.Element {
   return (
-    <div className="flex h-7 shrink-0 items-center justify-between gap-2 border-t border-divider px-2 text-[10px] text-muted-foreground">
+    <div className="flex h-7 shrink-0 items-center justify-between gap-2 border-t border-divider px-4 text-xs text-muted-foreground">
       <span className="flex min-w-0 items-center gap-1 truncate">
         <Icon icon={RefreshCw} size="sm" className={syncing ? 'motion-orbit' : undefined} />
         {syncing ? 'Syncing…' : syncedAt === null ? 'Not synced' : `Synced ${ago(syncedAt)}`}
       </span>
-      <span className="shrink-0">
+      <span className="shrink-0 tabular-nums">
         {counts === null
           ? // Only what is on screen: "0 unread" would be a claim.
             `${shown} shown`
@@ -1496,7 +1573,8 @@ function ListFooter({
   )
 }
 
-/** Coarse on purpose: nobody needs mail sync time to the second. */
+/** Coarse on purpose: nobody needs mail sync time to the second. `Date.now()`
+ *  is the real clock here, the age of a real sync, not placeholder data. */
 function ago(iso: string): string {
   const seconds = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 1000))
   if (seconds < 60) return 'just now'
@@ -1539,25 +1617,24 @@ function ThreadRow({
   return (
     <div
       className={`motion-respond group/row flex items-stretch border-b border-divider ${
-        active
-          ? 'bg-secondary'
-          : selected
-            ? 'bg-primary/10 hover:bg-primary/20'
-            : 'hover:bg-accent/40'
+        // The chrome rows' fill scale (docs/ui-system.md, Rules), not
+        // `secondary`: a label badge is `secondary`, and on a row of the same
+        // grey it vanished in light.
+        active || selected ? 'bg-foreground/[0.06]' : 'hover:bg-foreground/[0.04]'
       }`}
     >
       <div
+        // Shown on hover, and on keyboard focus: a Tab-reachable box at
+        // opacity 0 would hide the focus ring with it.
         className={`flex shrink-0 items-center pl-1.5 ${
-          showCheckbox || selected ? '' : 'opacity-0 group-hover/row:opacity-100'
+          showCheckbox || selected
+            ? ''
+            : 'opacity-0 group-hover/row:opacity-100 focus-within:opacity-100'
         }`}
       >
         <Checkbox
           checked={selected}
-          aria-label={`select ${thread.subject}`}
-          // `--input` and `--secondary` are the same neutral, so on the OPEN row
-          // an unchecked box's border would vanish. Fixed here rather than by
-          // moving `--input`, which every input draws its edge from.
-          className={active ? 'border-muted-foreground' : ''}
+          aria-label={`Select ${thread.subject}`}
           // onClick rather than the Radix change event: shift-click needs the
           // modifier, and `onCheckedChange` is handed only a boolean.
           onClick={(event) => {
@@ -1593,7 +1670,7 @@ function ThreadRow({
                 }`}
               />
               <span
-                className={`min-w-0 flex-1 truncate text-xs ${
+                className={`min-w-0 flex-1 truncate text-sm ${
                   thread.unread ? 'font-semibold text-foreground' : 'text-muted-foreground'
                 }`}
               >
@@ -1602,46 +1679,39 @@ function ThreadRow({
               {/* These three stay on the sender's line: they are things *you*
                   did, where the rail holds what the thread is. */}
               {thread.starred && (
-                <span role="img" aria-label="starred" className="flex shrink-0 self-center">
+                <span role="img" aria-label="Starred" className="flex shrink-0 self-center">
                   <Icon icon={Star} size="sm" tone="muted" />
                 </span>
               )}
               {/* "You started replying and stopped". */}
               {thread.hasDraft && (
-                <span role="img" aria-label="unsent draft" className="flex shrink-0 self-center">
+                <span role="img" aria-label="Unsent draft" className="flex shrink-0 self-center">
                   <Icon icon={FilePen} size="sm" tone="muted" />
                 </span>
               )}
               {/* "You replied and are waiting on them": see `answered` in
                   main/google/gmail.ts for why the LAST message decides. */}
               {thread.answered && (
-                <span role="img" aria-label="you replied" className="flex shrink-0 self-center">
+                <span role="img" aria-label="You replied" className="flex shrink-0 self-center">
                   <Icon icon={Reply} size="sm" tone="muted" />
                 </span>
               )}
             </span>
-            <span className={`mt-0.5 block truncate pl-3.5 text-xs ${subjectWeight}`}>
+            <span className={`mt-0.5 block truncate pl-3.5 text-sm ${subjectWeight}`}>
               {thread.subject}
             </span>
-            <span className="mt-0.5 block truncate pl-3.5 text-[11px] text-muted-foreground">
+            <span className="mt-0.5 block truncate pl-3.5 text-xs text-muted-foreground">
               {thread.snippet}
             </span>
             {chips && (
               <span className="mt-1.5 flex flex-wrap gap-1 pl-3.5">
                 {/* Outlined, where a user label is filled: the tab is Gmail's
                     classification, not a label the reader chose. */}
-                {categoryLabel !== null && (
-                  <span className="rounded border border-border px-1 py-px text-[10px] text-muted-foreground">
-                    {categoryLabel}
-                  </span>
-                )}
+                {categoryLabel !== null && <Badge variant="outline">{categoryLabel}</Badge>}
                 {thread.labels.map((label) => (
-                  <span
-                    key={label}
-                    className="rounded bg-secondary px-1 py-px text-[10px] text-muted-foreground"
-                  >
+                  <Badge key={label} variant="secondary">
                     {label}
-                  </span>
+                  </Badge>
                 ))}
               </span>
             )}
@@ -1653,14 +1723,14 @@ function ThreadRow({
               wrapping the stamp instead of truncating the text. */}
           <span
             data-thread-meta
-            className="flex shrink-0 flex-col items-end gap-0.5 whitespace-nowrap text-[10px] text-muted-foreground"
+            className="flex shrink-0 flex-col items-end gap-0.5 text-xs whitespace-nowrap text-muted-foreground tabular-nums"
           >
             <span>{listStamp(thread.date)}</span>
             {(thread.hasInvite || thread.messageCount > 1) && (
               <span className="flex items-center gap-1">
                 {/* A meeting, not a message: the second has a deadline. */}
                 {thread.hasInvite && (
-                  <span role="img" aria-label="meeting invite" className="flex">
+                  <span role="img" aria-label="Meeting invite" className="flex">
                     <Icon icon={CalendarDays} size="sm" />
                   </span>
                 )}
@@ -1712,10 +1782,12 @@ function MessageBlock({
         variant="ghost"
         onClick={() => setExpanded((value) => !value)}
         aria-expanded={shown}
-        aria-label={`${shown ? 'collapse' : 'expand'} message ${position} of ${total} from ${message.from.name}`}
-        className="block h-auto w-full rounded px-1 py-1 text-left"
+        aria-label={`${shown ? 'Collapse' : 'Expand'} message ${position} of ${total} from ${message.from.name}`}
+        // `px-0`: the chevron, the addresses and the body share the subject's
+        // left edge; the hover fill bleeds nowhere it would misalign.
+        className="block h-auto w-full rounded-none px-0 py-1 text-left hover:bg-transparent dark:hover:bg-transparent"
       >
-        <span className="flex items-baseline gap-2 text-xs">
+        <span className="flex items-baseline gap-2 text-sm">
           <Icon
             icon={shown ? ChevronDown : ChevronRight}
             size="sm"
@@ -1726,21 +1798,23 @@ function MessageBlock({
           {/* Where you are in the conversation. Suppressed on a one-message
               thread, where "1/1" is noise. */}
           {total > 1 && (
-            <span className="shrink-0 text-[10px] text-muted-foreground tabular-nums">
+            <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
               {position}/{total}
             </span>
           )}
-          <span className="shrink-0 text-muted-foreground">{messageStamp(message.date)}</span>
+          <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+            {messageStamp(message.date)}
+          </span>
         </span>
         {!shown && (
-          <span className="block truncate pl-5 text-[11px] text-muted-foreground">
+          <span className="block truncate pl-5.5 text-xs font-normal text-muted-foreground">
             {message.body.slice(0, 200)}
           </span>
         )}
       </Button>
 
       {shown && (
-        <div className="pl-1">
+        <div>
           <MessageAddresses message={message} />
           <MessageBody message={message} />
           <Attachments attachments={message.attachments} webUrl={threadUrl} />
@@ -1768,7 +1842,7 @@ function MessageAddresses({ message }: { message: ThreadMessage }): React.JSX.El
   ]
 
   return (
-    <dl className="mb-2 grid grid-cols-[auto_1fr] gap-x-2 text-[11px] text-muted-foreground">
+    <dl className="mb-2 grid grid-cols-[auto_1fr] gap-x-2 text-xs text-muted-foreground">
       {rows
         .filter((row) => row.addresses.length > 0)
         .map((row) => (
@@ -1815,8 +1889,9 @@ function AddressLink({ address }: { address: MailAddress }): React.JSX.Element {
         <Button
           variant="ghost"
           size="xs"
-          className="h-auto px-1 py-0 text-[11px] font-medium"
-          aria-label={`about ${address.name}`}
+          // No inset: a comma follows the name with no space before it.
+          className="h-auto px-0 py-0 text-xs font-medium"
+          aria-label={`About ${address.name}`}
         >
           {address.name}
         </Button>
@@ -1828,7 +1903,6 @@ function AddressLink({ address }: { address: MailAddress }): React.JSX.Element {
           <Button
             variant="secondary"
             size="xs"
-            className="gap-1"
             onClick={() => void window.holi.openExternal(`mailto:${address.email}`)}
           >
             <Icon icon={Reply} size="sm" />
@@ -1859,11 +1933,13 @@ function Attachments({ attachments, webUrl }: { attachments: Attachment[]; webUr
     <ul className="mt-2 flex flex-wrap gap-1">
       {attachments.map((attachment) => (
         <li key={attachment.filename}>
-          <Tooltip content="open in Gmail — Holi does not download attachments">
+          {/* The full name, which the chip truncates, and where it opens. */}
+          <Tooltip
+            content={`${attachment.filename}: opens in Gmail, Holi does not download attachments`}
+          >
             <Button
               variant="secondary"
               size="xs"
-              className="gap-1"
               onClick={() => void window.holi.openExternal(webUrl)}
             >
               <Icon
@@ -1915,7 +1991,7 @@ function MessageBody({ message }: { message: ThreadMessage }) {
   return (
     <SandboxedHtml
       html={message.html}
-      label={`message from ${message.from.name}`}
+      label={`Message from ${message.from.name}`}
       // The message id is what makes "load images" survive the reader closing;
       // the sender is what makes "always from this sender" possible at all.
       identity={{ key: message.id, sender: message.from.email }}

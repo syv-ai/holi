@@ -1,30 +1,38 @@
 import {
   ChevronsDownUp,
   CircleCheck,
+  Ellipsis,
   Eye,
-  EyeOff,
-  FilePlus,
   FolderPlus,
   ListTodo,
   Plus,
 } from 'lucide-react'
-import { useMemo, useRef } from 'react'
 import type { ClaimCreate } from '@/plugin-api/types'
-import { MorphingMenu, type MorphingMenuItem } from '@/primitives'
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+  Icon,
+  IconButton,
+} from '@/primitives'
 
 /** What "+" makes: core's kinds, or what a claim makes (an app). Where it
  *  lands is the tree's to decide. */
 export type NewKind = 'task' | 'file' | 'folder' | ClaimCreate
 
 /**
- * The explorer's toolbar: the nav menu's morphing menu, anchored at the tree's
- * top-right and opening downward. "+" unfolds into what can be made; Collapse
- * All and the two filters are shortcuts, the filters pressed while on. Icons
- * on the page's background, so the rows under them do not show through, shown
- * while the tree is hovered or anything in the menu has focus,
- * and kept while the menu is open. The parent FileTree carries `group/explorer`.
+ * The explorer's toolbar: one band over the tree with the section's name at
+ * its start and two controls at its end (docs/features/sidebar.md): "+" makes
+ * a note, and "⋯" holds the rest, making a folder, a task or what a claim
+ * makes (an app), the two filters as checkable rows, and Collapse all. Two
+ * icons, always there: the everyday act is one press, everything else one
+ * menu away.
  */
 export function ExplorerHeader({
+  label,
   creates = [],
   onNew,
   onCollapseAll,
@@ -33,7 +41,9 @@ export function ExplorerHeader({
   tasksShown,
   onToggleTasks,
 }: {
-  /** What enabled claims add to "+", after core's own. */
+  /** The section's name at the band's start ("Files"). */
+  label?: string
+  /** What enabled claims add to the menu, after core's own. */
   creates?: readonly ClaimCreate[]
   onNew: (kind: NewKind) => void
   onCollapseAll: () => void
@@ -44,72 +54,51 @@ export function ExplorerHeader({
   tasksShown: boolean
   onToggleTasks: () => void
 }) {
-  // The menu restarts its layout pass when its items change identity, so the
-  // items depend on the two states and what claims make only, and call the
-  // latest handlers.
-  const handlers = useRef({ onNew, onCollapseAll, onToggleHidden, onToggleTasks })
-  handlers.current = { onNew, onCollapseAll, onToggleHidden, onToggleTasks }
-
-  const items = useMemo((): MorphingMenuItem[] => {
-    const make = (kind: NewKind) => () => handlers.current.onNew(kind)
-    return [
-      {
-        id: 'new',
-        label: 'New',
-        icon: Plus,
-        children: [
-          {
-            id: 'new-task',
-            label: 'New Task',
-            icon: CircleCheck,
-            onSelect: make('task'),
-          },
-          {
-            id: 'new-file',
-            label: 'New File',
-            icon: FilePlus,
-            onSelect: make('file'),
-          },
-          {
-            id: 'new-folder',
-            label: 'New Folder',
-            icon: FolderPlus,
-            onSelect: make('folder'),
-          },
-          ...creates.map((c) => ({
-            id: `new-${c.id}`,
-            label: c.label,
-            icon: c.icon,
-            onSelect: make(c),
-          })),
-        ],
-      },
-      {
-        id: 'collapse',
-        label: 'Collapse All',
-        icon: ChevronsDownUp,
-        onSelect: () => handlers.current.onCollapseAll(),
-      },
-      {
-        id: 'tasks',
-        label: tasksShown ? 'Hide task files' : 'Show task files',
-        icon: ListTodo,
-        pressed: tasksShown,
-        onSelect: () => handlers.current.onToggleTasks(),
-      },
-      {
-        id: 'hidden',
-        label: hiddenShown ? 'Hide hidden files' : 'Show hidden files',
-        icon: hiddenShown ? Eye : EyeOff,
-        pressed: hiddenShown,
-        onSelect: () => handlers.current.onToggleHidden(),
-      },
-    ]
-  }, [tasksShown, hiddenShown, creates])
-
   return (
-    <div className="motion-respond pointer-events-none absolute top-1 right-3 left-3 z-10 opacity-0 focus-within:pointer-events-auto focus-within:opacity-100 group-hover/explorer:pointer-events-auto group-hover/explorer:opacity-100 has-[nav:not([data-view=collapsed])]:pointer-events-auto has-[nav:not([data-view=collapsed])]:opacity-100">
-      <MorphingMenu label="Explorer" anchor="top-right" surface items={items} />
+    <div className="absolute inset-x-2 top-0 z-10 flex h-9 items-center gap-1 ps-2">
+      {label !== undefined && (
+        <span className="min-w-0 flex-1 truncate text-xs font-medium text-muted-foreground">
+          {label}
+        </span>
+      )}
+      <span className="ms-auto flex items-center gap-0.5">
+        <IconButton icon={Plus} label="New note" quiet onClick={() => onNew('file')} />
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <IconButton icon={Ellipsis} label="File options" quiet />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-52">
+            <DropdownMenuItem onSelect={() => onNew('folder')}>
+              <Icon icon={FolderPlus} size="sm" />
+              New folder
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => onNew('task')}>
+              <Icon icon={CircleCheck} size="sm" />
+              New task
+            </DropdownMenuItem>
+            {creates.map((c) => (
+              <DropdownMenuItem key={c.id} onSelect={() => onNew(c)}>
+                <Icon icon={c.icon} size="sm" />
+                {c.label}
+              </DropdownMenuItem>
+            ))}
+            <DropdownMenuSeparator />
+            <DropdownMenuCheckboxItem checked={tasksShown} onCheckedChange={onToggleTasks}>
+              <Icon icon={ListTodo} size="sm" />
+              Show task files
+            </DropdownMenuCheckboxItem>
+            <DropdownMenuCheckboxItem checked={hiddenShown} onCheckedChange={onToggleHidden}>
+              <Icon icon={Eye} size="sm" />
+              Show hidden files
+            </DropdownMenuCheckboxItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onSelect={onCollapseAll}>
+              <Icon icon={ChevronsDownUp} size="sm" />
+              Collapse all
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </span>
     </div>
   )
 }

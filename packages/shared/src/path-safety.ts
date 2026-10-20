@@ -166,16 +166,21 @@ export const AGENT_SURFACE_FILES: readonly string[] = [
  *  below needs it and that module imports this one. */
 export const MEMORY_DIR = '.holi/memory'
 
-/** Scheduled agents' prompts (`schedule.ts`'s `SCHEDULES_DIR`, restated here
- *  for the same import-order reason as `MEMORY_DIR`). A prompt the agent runs
- *  unattended is the agent's surface: an app that could write one could make
- *  the agent do anything it may do without asking. */
+/** Scheduled agents from before Holis, each read as a Holi in place
+ *  (`schedule.ts`'s `SCHEDULES_DIR`, restated here for the same import-order
+ *  reason as `MEMORY_DIR`). A prompt the agent runs unattended is the agent's
+ *  surface: an app that could write one could make the agent do anything it
+ *  may do without asking. */
 export const SCHEDULES_SURFACE_DIR = '.holi/schedules'
+
+/** Holi files (`holi.ts`'s `HOLIS_DIR`): instructions the agent runs
+ *  unattended once approved, the agent's surface for the same reason. */
+export const HOLIS_SURFACE_DIR = '.holi/holis'
 
 /** Whether a vault-relative path is part of the agent surface. The four named
  *  files match **exactly** (like `isVaultConfigPath`, so `notes/AGENTS.md` is an
- *  ordinary note someone wrote); `.claude/`, `.holi/memory/` and
- *  `.holi/schedules/` match as whole subtrees.
+ *  ordinary note someone wrote); `.claude/`, `.holi/memory/`,
+ *  `.holi/schedules/` and `.holi/holis/` match as whole subtrees.
  *
  *  **`.holi/memory/` is `MEMORY.md` subdivided**: what the user told the
  *  assistant does not become readable to untrusted app code by spreading it
@@ -190,7 +195,8 @@ export function isAgentSurfacePath(path: string): boolean {
     AGENT_SURFACE_FILES.includes(path) ||
     path.startsWith('.claude/') ||
     path.startsWith(`${MEMORY_DIR}/`) ||
-    path.startsWith(`${SCHEDULES_SURFACE_DIR}/`)
+    path.startsWith(`${SCHEDULES_SURFACE_DIR}/`) ||
+    path.startsWith(`${HOLIS_SURFACE_DIR}/`)
   )
 }
 

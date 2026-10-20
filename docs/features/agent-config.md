@@ -114,14 +114,14 @@ additions are commands in a directory prepended to `PATH`, plus skills that docu
   stdin once (`send --draft <id>` reads none). Today: `apps open|init`, `skills update`,
   `pdf comments|typst`, `google agenda|search|read|mark-read|star|archive|trash|draft|send|reply|schedule|reschedule|unschedule`, `tasks list|complete`,
   `store list|get|put|delete|check`, `docs list|read|render`, `sync status`, `agent sessions`,
-  `schedules list|enable|disable|run`,
+  `schedules list|enable|disable|run`, `holis list|report`,
   `vault members|recents`. The registry's reads the agent already has as Grep, Read and git
   (search, history, settings) stay app-only rather than grow a second way in. The script finds
   the bridge through the vault's `bridge.local.env`. All reversible or read-only (a record write is a file
   change in git history) except `google send` and `google reply`, which the send gate asks about.
 - `holi google <verb>`: mail and calendar through main, which holds the tokens ([google.md](google.md)).
 - `holi pdf typst` for PDF export, which prints the Typst binary's path ([pdf.md](pdf.md)).
-- Shipped skills: `memory`, `using-tasks`, `scheduled-agents`, `vault-apps`, `theme`,
+- Shipped skills: `memory`, `using-tasks`, `scheduled-agents`, `holis`, `vault-apps`, `theme`,
   `gmail-calendar`, `md-to-pdf`, `pdf-comments`, `holi-feedback` (a GitHub issue on syv-ai/holi, labelled `vault-assistant`,
   through `.github/ISSUE_TEMPLATE/vault-assistant.yml`).
 
@@ -136,10 +136,12 @@ the vault's machine (a vault's schedules are Holi's, [scheduled-agents](schedule
 outranks an allow in every scope, so getting a tool back means removing it from the vault's
 `settings.json`; a skill comes back by setting it to `"on"`, which the merge leaves alone.
 
-**Permissions.** Claude Code's native prompts are the permission UX. The seeded rules ask for
-`curl`, `wget`, `holi schedules run` and `holi google archive|trash|unschedule|send|reply` (one
-rule per verb), and allow `holi pdf comments` and `holi schedules list`. Turning a schedule on is
-no command at all ([scheduled-agents](scheduled-agents.md)). Sending mail is
+**Permissions.** Claude Code's native prompts are the permission UX. In a chat (the optional chat
+plugin) they arrive through `--permission-prompt-tool stdio` after Claude Code's own rules and
+hooks, and are answered from a card ([chat](chat.md)). The seeded rules ask for `curl`, `wget`, `holi schedules run` and
+`holi google archive|trash|unschedule|send|reply` (one rule per verb), and allow
+`holi pdf comments` and `holi schedules list`. Turning a schedule on is no command at all
+([scheduled-agents](scheduled-agents.md)), nor is approving a Holi ([holis](holis.md)). Sending mail is
 behind a seeded `PreToolUse` hook that always asks ([google.md](google.md)). The agent's commits pass
 the vault's pre-commit transforms like anyone's ([vaults-sync.md](vaults-sync.md)).
 

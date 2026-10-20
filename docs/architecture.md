@@ -39,6 +39,8 @@ The agent is Claude Code, unmodified. Holi adds no adapter layer and no prompt-b
 forward when a Claude Code release changes something. Users are developers: the raw terminal is the
 interface, git is a tool they already know, and Claude Code is already installed and signed in. With
 the vault being plain files in a git repo, the agent needs no Holi-specific operations at all.
+Drawing Claude Code as a conversation instead of a terminal is an adapter, so it is not core: it is
+the optional chat plugin, off by default ([chat](features/chat.md)).
 
 ## 3. Processes and the IPC seam
 
@@ -70,7 +72,8 @@ holds the renderer side and plugin code to that, and `test/plugin-boundary.test.
 A plugin's renderer reaches its main side only through capabilities that open the `ui` door: the
 `cap.run` mutation, called through `capClient<typeof table>(namespace)`, which offers just those
 verbs with their types read from the table (params cross as JSON, results by structured clone).
-Plugins call each other the same way, each typing only the slice it calls; before offering such a
+Plugins call each other the same way, each typing only the slice it calls, and a plugin's main
+side reaches another's through `ctx.call(name, params)`, the same UI-door call its renderer makes; before offering such a
 call, a plugin asks `useHasCapability(name)`, backed by the `cap.names` query (the UI door's names
 whose owner the vault runs), so a button for another plugin's verb hides while that plugin is off.
 Core's `tasks.create` is one: the board and the Google views create tasks through it.
@@ -107,7 +110,7 @@ marked `frame` serves framed pages: the window guard lets such a frame move with
 sends a link out of it to the browser.
 A plugin's own code sits in `main/`, `renderer/`, `shared/` and `test/` under its folder; its
 renderer imports its main side as types only, for `capClient`. The plugins are the agent
-([agent-sessions](features/agent-sessions.md)), PDF ([pdf](features/pdf.md)), Google
+([agent-sessions](features/agent-sessions.md)), chat, which requires it ([chat](features/chat.md)), PDF ([pdf](features/pdf.md)), Google
 ([google](features/google.md)), vault apps ([vault apps](features/vault-apps.md)) and community
 plugins ([community plugins](features/community-plugins.md)), which hosts plugins from other
 repositories as processes it runs, never as code it loads. A renderer plugin may give its claims as
@@ -184,10 +187,19 @@ range it produced.
 
 **Scheduled agents** are files in `.holi/schedules/` that the open vault's agent plugin starts as
 background sessions at their times, on machines that approved their content
-([scheduled-agents](features/scheduled-agents.md)).
+([scheduled-agents](features/scheduled-agents.md)). **Holis** are agents that belong to the vault,
+files in `.holi/holis/` that a person sends a document to from its Agent menu: an agent tab running
+Claude Code with the Holi's instructions, once this machine approved what the file says. Core draws
+that menu from a plugin slot and knows nothing of Holis ([holis](features/holis.md)).
+
+**Chat** is the optional plugin that draws Claude Code as a conversation: Claude Code on its
+structured channel (`stream-json`, with `--permission-prompt-tool stdio`), its prompts Claude Code's
+own, answered from a card. The agent knows nothing of it; chat reaches the agent's turn bracket,
+command target and terminals through general capabilities ([chat](features/chat.md)).
 
 See [agent-sessions](features/agent-sessions.md), [agent-config](features/agent-config.md),
-[agent-memory](features/agent-memory.md) and [scheduled-agents](features/scheduled-agents.md).
+[agent-memory](features/agent-memory.md), [scheduled-agents](features/scheduled-agents.md) and
+[holis](features/holis.md).
 
 ## 6. The pillars
 
@@ -209,7 +221,8 @@ See [agent-sessions](features/agent-sessions.md), [agent-config](features/agent-
 
 - `userData` holds the GitHub and Google tokens (encrypted with Electron `safeStorage`), the vault
   registry (which repos are added and where), each vault's agent config directory, the Google cache,
-  which schedules this machine runs (and their run log) and the `holi` CLIs. It is a machine fact: a
+  which schedules this machine runs (and their run log), the chat plugin's records and transcripts
+  (`agent-chats/`) and the `holi` CLIs. It is a machine fact: a
   second laptop starts empty.
 - Per vault, `.holi/settings/app.local.yaml` and `plugins.local.yaml` hold machine-local settings
   (the first also the reminder watermark); `app.yaml` and `plugins.yaml` hold the shared ones.

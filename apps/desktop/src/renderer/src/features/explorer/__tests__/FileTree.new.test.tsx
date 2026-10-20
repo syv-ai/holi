@@ -76,9 +76,15 @@ const order = () =>
     (el) => el.dataset.path ?? `<${el.getAttribute('placeholder')}>`,
   )
 
+/** New note is the toolbar's "+"; the rest (a folder, a task, an app) are
+ *  under "⋯". */
 async function make(label: string) {
-  await userEvent.click(screen.getByRole('button', { name: 'New' }))
-  await userEvent.click(screen.getByRole('button', { name: label }))
+  if (label === 'New note') {
+    await userEvent.click(screen.getByRole('button', { name: label }))
+    return
+  }
+  await userEvent.click(screen.getByRole('button', { name: 'File options' }))
+  await userEvent.click(screen.getByRole('menuitem', { name: label }))
 }
 
 /** Type into the field once it has focused and placed its caret (a tick after
@@ -96,7 +102,7 @@ beforeEach(() => {
 
 test('with nothing focused, the field is the first row at the root', async () => {
   tree()
-  await make('New File')
+  await make('New note')
   expect(order()[0]).toBe('<note name>')
 })
 
@@ -104,7 +110,7 @@ test('with a folder focused, the field is first inside it, and the folder opens'
   tree()
   await userEvent.click(rowFor('Travel')!)
   await userEvent.click(rowFor('Travel')!) // closed again: the field opens it
-  await make('New Folder')
+  await make('New folder')
   expect(order()).toEqual(['Finance', 'Travel', '<folder name>', 'Travel/Rome.md', 'inbox.md'])
 })
 
@@ -115,7 +121,7 @@ test('clicking blank tree space clears a focused folder and makes at the root', 
 
   await userEvent.click(screen.getByRole('tree'))
   expect(rowFor('Travel')).toHaveAttribute('aria-selected', 'false')
-  await make('New File')
+  await make('New note')
 
   expect(order()[0]).toBe('<note name>')
 })
@@ -124,7 +130,7 @@ test('with a file focused, a task is named right under it and opens once made', 
   const open = tree()
   await userEvent.click(rowFor('Finance')!)
   await userEvent.click(rowFor('Finance/2026.md')!)
-  await make('New Task')
+  await make('New task')
   const list = order()
   expect(list.slice(list.indexOf('Finance/2026.md'), list.indexOf('Finance/2026.md') + 3)).toEqual([
     'Finance/2026.md',

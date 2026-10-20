@@ -10,6 +10,10 @@
  * consequence at a vault's first moment lives in the settings tab instead;
  * `askedAtBirth` is where each row says which it is.
  *
+ * **One row per question** (`SettingCard`, stacked in one `Frame`), each
+ * with its mark: a switch sits beside the heading, a choice is pills under
+ * it, a group is a list of switches under it.
+ *
  * Nothing here is required. The seed has already written every default, so
  * clicking straight through is a no-op.
  */
@@ -24,8 +28,17 @@ import {
   type VaultSettingDescriptor,
 } from '@holi/shared'
 import { useAtomValue } from 'jotai'
+import {
+  CalendarDays,
+  GitCommitHorizontal,
+  House,
+  SlidersHorizontal,
+  SunMoon,
+  type LucideIcon,
+} from 'lucide-react'
 import { installedPluginsAtom } from '@/state/plugins'
-import { Button, Switch } from '@/primitives'
+import { SettingCard } from '@/composites'
+import { Badge, Frame, Icon, Label, PillGroup, Switch } from '@/primitives'
 
 interface Props {
   /** The answers so far, keyed by descriptor. A missing key falls back to the
@@ -34,31 +47,17 @@ interface Props {
   onChange: (key: string, value: unknown) => void
 }
 
-/** A pill in a `choice`, with **radio** semantics: the group is one decision
- *  with one answer. The ritual's own `obrit-choice-pill` supplies the look,
- *  since this palette is self-contained and not the app's. */
-function ChoicePill({
-  label,
-  checked,
-  onSelect,
-}: {
-  label: string
-  checked: boolean
-  onSelect: () => void
-}) {
-  return (
-    <Button
-      type="button"
-      variant="ghost"
-      role="radio"
-      aria-checked={checked}
-      onClick={onSelect}
-      className={`obrit-choice-pill${checked ? ' is-on' : ''}`}
-    >
-      {label}
-    </Button>
-  )
+/** Each question's mark, by setting key; one without falls back to sliders. */
+const MARKS: Record<string, LucideIcon> = {
+  dailyNotes: CalendarDays,
+  home: House,
+  hooks: GitCommitHorizontal,
+  colorScheme: SunMoon,
 }
+
+/** Structural equality: an option's value may be any value the setting holds,
+ *  and the answer a different object of that shape. */
+const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
 
 function Row({
   descriptor,
@@ -74,75 +73,86 @@ function Row({
 }) {
   const { key, label, explanation, control } = descriptor
   const value = settings[key] ?? descriptor.default
+  const mark = <Icon icon={MARKS[key] ?? SlidersHorizontal} size="lg" />
 
-  return (
-    <div
-      className="obrit-setting"
-      role="group"
-      aria-label={label}
-      data-setting={key}
-      data-kind={control.kind}
-    >
-      <div className="obrit-setting-head">
-        <div className="obrit-setting-label">{label}</div>
-        <p className="obrit-setting-explain">{explanation}</p>
-      </div>
-
-      <div className="obrit-setting-control">
-        {control.kind === 'toggle' && (
+  if (control.kind === 'toggle')
+    return (
+      <SettingCard
+        mark={mark}
+        title={label}
+        description={explanation}
+        data-setting={key}
+        control={
           <Switch
             checked={value === true}
             onCheckedChange={(next) => onChange(key, next === true)}
             aria-label={label}
           />
-        )}
+        }
+      />
+    )
 
-        {control.kind === 'choice' && (
-          <div role="radiogroup" aria-label={label} className="obrit-choice-row">
-            {/* Filtered, not disabled: a greyed-out choice invites "why not?"
-                and the answer is already one row up. */}
-            {availableOptions(descriptor, settings).map((option) => (
-              <ChoicePill
-                key={option.label}
-                label={option.label}
-                // Structural equality: an option's value may be any value the
-                // setting holds, and the answer a different object of that shape.
-                checked={JSON.stringify(option.value) === JSON.stringify(value)}
-                onSelect={() => onChange(key, option.value)}
-              />
-            ))}
-          </div>
-        )}
+  if (control.kind === 'choice') {
+    // Filtered, not disabled: a greyed-out choice invites "why not?" and the
+    // answer is already one row up. Pills take string values, so each option
+    // is its index; the value itself may be a number or an object.
+    const options = availableOptions(descriptor, settings)
+    return (
+      <SettingCard mark={mark} title={label} description={explanation} data-setting={key}>
+        <PillGroup
+          label={label}
+          options={options.map((o, i) => ({ value: String(i), label: o.label }))}
+          isOn={(i) => same(options[Number(i)]?.value, value)}
+          onPick={(i) => {
+            const option = options[Number(i)]
+            if (option !== undefined) onChange(key, option.value)
+          }}
+          className="self-start"
+        />
+      </SettingCard>
+    )
+  }
 
-        {control.kind === 'group' && (
-          <div className="obrit-setting-group">
-            {control.toggles.map((toggle) => {
-              const block = (value ?? {}) as Record<string, boolean>
-              const owner = owners.get(toggle.key)
-              return (
-                <label key={toggle.key} className="obrit-setting-sub">
-                  <Switch
-                    checked={block[toggle.key] === true}
-                    // The whole block, not just the switch that moved: a patch
-                    // naming one transform must not read as an answer about the
-                    // others.
-                    onCheckedChange={(next) =>
-                      onChange(key, { ...block, [toggle.key]: next === true })
-                    }
-                    aria-label={`${toggle.label}. ${toggle.explanation}`}
-                  />
-                  <span className="obrit-setting-sub-label">
+  // A group: one switch per thing it runs, each with its own line.
+  const block = (value ?? {}) as Record<string, boolean>
+  return (
+    <SettingCard mark={mark} title={label} description={explanation} data-setting={key}>
+      <div className="flex flex-col divide-y divide-border">
+        {control.kind === 'group' &&
+          control.toggles.map((toggle) => {
+            const owner = owners.get(toggle.key)
+            return (
+              <Label
+                key={toggle.key}
+                className="flex cursor-pointer items-start gap-3 py-2.5 leading-normal font-normal"
+              >
+                <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                  <span className="flex flex-wrap items-center gap-2 text-sm font-medium">
                     {toggle.label}
-                    {owner !== undefined && <span className="obrit-setting-owner">{owner}</span>}
+                    {owner !== undefined && (
+                      <Badge variant="outline" radius="full">
+                        {owner}
+                      </Badge>
+                    )}
                   </span>
-                  <span className="obrit-setting-sub-explain">{toggle.explanation}</span>
-                </label>
-              )
-            })}
-          </div>
-        )}
+                  <span className="text-xs text-muted-foreground">{toggle.explanation}</span>
+                </span>
+                <Switch
+                  className="mt-0.5"
+                  checked={block[toggle.key] === true}
+                  // The whole block, not just the switch that moved: a patch
+                  // naming one transform must not read as an answer about the
+                  // others.
+                  onCheckedChange={(next) =>
+                    onChange(key, { ...block, [toggle.key]: next === true })
+                  }
+                  aria-label={`${toggle.label}. ${toggle.explanation}`}
+                />
+              </Label>
+            )
+          })}
       </div>
-    </div>
+    </SettingCard>
   )
 }
 
@@ -159,7 +169,7 @@ export function VaultSettingsAct({ settings, onChange }: Props) {
   )
   return (
     <>
-      <div className="obrit-settings">
+      <Frame stacked>
         {asked.map((descriptor) => (
           <Row
             key={descriptor.key}
@@ -169,11 +179,12 @@ export function VaultSettingsAct({ settings, onChange }: Props) {
             owners={owners}
           />
         ))}
-      </div>
+      </Frame>
       {/* Once for the act rather than under every row: the same answer to the
           same question, eight times over, was the loudest thing on screen. */}
-      <p className="obrit-settings-where">
-        Change any of these later in Settings, or in <code>{SETTINGS_FILE}</code>.
+      <p className="text-xs text-muted-foreground">
+        Change any of these later in Settings, or in{' '}
+        <code className="font-mono">{SETTINGS_FILE}</code>.
       </p>
     </>
   )

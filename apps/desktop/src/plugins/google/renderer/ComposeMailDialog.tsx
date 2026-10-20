@@ -13,6 +13,7 @@ import { useEffect, useState } from 'react'
 import { MailComposer } from './MailComposer'
 import { googleCap } from './account'
 import { activeRemoteAtom } from '@/plugin-api'
+import { Dialog } from '@/primitives'
 import type { MailAddress } from './mail-types'
 
 export function ComposeMailDialog({
@@ -40,15 +41,22 @@ export function ComposeMailDialog({
       .catch(() => setContacts([]))
   }, [remote])
 
+  // The header is the dialog's accessible name as well as its visible title.
   return (
-    <MailComposer
-      intent={{ kind: 'new' }}
-      draftId={draftId}
-      sendAs={sendAs}
-      suggestions={contacts}
-      onSent={onClose}
-      onDiscarded={onClose}
-      onClose={onClose}
-    />
+    <>
+      <Dialog.Header>New message</Dialog.Header>
+      <Dialog.Body>
+        <MailComposer
+          intent={{ kind: 'new' }}
+          draftId={draftId}
+          sendAs={sendAs}
+          suggestions={contacts}
+          onSent={onClose}
+          onDiscarded={onClose}
+          onClose={onClose}
+          bare
+        />
+      </Dialog.Body>
+    </>
   )
 }

@@ -50,6 +50,12 @@ export interface OpenArgs {
   target: VaultCliTarget
   /** A session to attach to; omitted opens the list. */
   attach?: string
+  /** A chat session's conversation to open a copy of (`--resume <id>
+   *  --fork-session`): its raw view, which never fights the chat's own
+   *  process for the conversation. */
+  fork?: string
+  /** Claude Code's `/login`, for a vault whose config directory has none. */
+  login?: boolean
   cols?: number
   rows?: number
   /** Written into the record before the program's first byte (the sign-in
@@ -142,8 +148,8 @@ export function createAgentTerminals(deps: AgentTerminalsDeps): AgentTerminals {
   }
 
   const api: AgentTerminals = {
-    open({ remote, target, attach, cols, rows, notice }) {
-      const command = deps.command(target, attach)
+    open({ remote, target, attach, fork, login, cols, rows, notice }) {
+      const command = deps.command(target, attach, fork, login)
       if (command === null) return { ok: false, message: NOT_INSTALLED }
       const id = randomUUID()
       const mirror = new TerminalMirror(cols ?? 80, rows ?? 24)

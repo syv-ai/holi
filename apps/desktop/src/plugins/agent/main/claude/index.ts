@@ -44,7 +44,8 @@ export function claudeProvider(deps: ClaudeProviderDeps): AgentProvider {
       }),
     takeFirstSpawn,
     signInNotice: SIGN_IN_NOTICE,
-    terminal: (target, attach) => terminalCommand(target, attach),
+    terminal: (target, attach, fork, login) =>
+      terminalCommand(target, attach, undefined, fork, login),
     routes: registerAgentRoutes,
     seed: claudeSeed,
   }

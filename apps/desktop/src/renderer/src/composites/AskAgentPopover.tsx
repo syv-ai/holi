@@ -1,7 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { AskResult, AskTargets } from '@/editor/askAgent'
-import { cn } from '@/lib/cn'
-import { Button, Popover, PopoverAnchor, PopoverContent, Textarea } from '@/primitives'
+import {
+  Popover,
+  PopoverAnchor,
+  PopoverContent,
+  Textarea,
+  ToggleGroup,
+  ToggleGroupItem,
+} from '@/primitives'
 
 /** What a new session is called in the picker, as in the note popover. */
 const NEW_SESSION = 'New session'
@@ -85,30 +91,27 @@ export function AskAgentPopover({
           ;(e.currentTarget as HTMLElement).querySelector('textarea')?.focus()
         }}
       >
-        <div
-          role="radiogroup"
+        <ToggleGroup
+          type="single"
+          size="sm"
+          spacing={0.5}
           aria-label="Which session to ask"
-          className="flex items-center gap-0.5 overflow-x-auto px-2 pt-1.5 [scrollbar-width:none]"
+          value={target}
+          onValueChange={(next) => next !== '' && setTarget(next)}
+          className="w-full overflow-x-auto px-2 pt-1.5 [scrollbar-width:none]"
         >
           {choices.map((choice) => (
-            <Button
+            <ToggleGroupItem
               key={choice.value}
-              type="button"
-              role="radio"
-              aria-checked={choice.value === target}
-              variant="ghost"
-              size="xs"
-              className={cn(
-                'h-auto max-w-36 shrink-0 truncate rounded-full px-2 py-0.5 text-[0.6875rem] font-normal text-muted-foreground hover:bg-transparent hover:text-foreground',
-                choice.value === target && 'bg-secondary text-foreground hover:bg-secondary',
-              )}
+              value={choice.value}
+              className="max-w-36 font-normal"
+              // Picking keeps the caret in the field.
               onMouseDown={(e) => e.preventDefault()}
-              onClick={() => setTarget(choice.value)}
             >
-              {choice.label}
-            </Button>
+              <span className="truncate">{choice.label}</span>
+            </ToggleGroupItem>
           ))}
-        </div>
+        </ToggleGroup>
         <Textarea
           rows={1}
           value={text}
@@ -125,7 +128,7 @@ export function AskAgentPopover({
           }}
         />
         {notice !== '' && (
-          <p role="alert" className="px-3 pb-2 text-[0.6875rem] text-destructive">
+          <p role="alert" className="px-3 pb-2 text-xs text-destructive">
             {notice}
           </p>
         )}

@@ -110,26 +110,22 @@ export function PluginSwitches({
                 <span>
                   <span className="text-xs">{info.label}</span>
                   {info.description !== undefined && (
-                    <span className="ml-1.5 text-[11px] text-muted-foreground">
-                      {info.description}
-                    </span>
+                    <span className="ml-1.5 text-xs text-muted-foreground">{info.description}</span>
                   )}
                 </span>
                 {added.length > 0 && (
-                  <span className="text-[11px] text-muted-foreground">
-                    Adds {added.join(' · ')}
-                  </span>
+                  <span className="text-xs text-muted-foreground">Adds {added.join(' · ')}</span>
                 )}
                 {info.whenOff !== undefined && (
-                  <span className="text-[11px] text-muted-foreground">Off: {info.whenOff}</span>
+                  <span className="text-xs text-muted-foreground">Off: {info.whenOff}</span>
                 )}
                 {needs.length > 0 && (
-                  <span className="text-[11px] text-muted-foreground">
+                  <span className="text-xs text-muted-foreground">
                     Needs {pluginLabels(needs, infos)}, so it is not running.
                   </span>
                 )}
                 {st?.kind === 'off-here' && (
-                  <span className="text-[11px] text-muted-foreground">
+                  <span className="text-xs text-muted-foreground">
                     Off on this machine, in {PLUGINS_LOCAL_FILE}.
                   </span>
                 )}
@@ -138,7 +134,7 @@ export function PluginSwitches({
             {failure !== undefined && (
               // Beside the switch's label, not inside it: a click on Diagnose
               // must not flip the switch.
-              <span className="flex flex-wrap items-center gap-x-2 pl-6.5 text-[11px] text-destructive">
+              <span className="flex flex-wrap items-center gap-x-2 pl-6.5 text-xs text-destructive">
                 Did not start: {failure}
                 {agent !== null && agentPlugin !== null && failures[agentPlugin] === undefined && (
                   <Button

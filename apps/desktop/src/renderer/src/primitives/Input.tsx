@@ -19,12 +19,13 @@ const inputVariants = cva(
         // No box of its own: the text-entry part of a control whose box is
         // something else (a chip field), so the two never read as nested fields.
         bare: 'h-auto border-0 p-0',
-        // Onboarding ritual: the giant serif vault-name display input.
+        // Onboarding ritual: the vault name, set as large as the heading it
+        // stands in for. Display tracking, tight leading for one short line.
         display:
-          "border-0 p-0 text-center text-[80px] font-medium leading-[1.05] tracking-[-0.028em] [font-family:'Fraunces',serif] [font-variation-settings:'opsz'_144,'SOFT'_50]",
-        // Onboarding ritual: a serif field with only an underline that lights on focus.
+          'border-0 p-0 text-center text-7xl leading-[1.1] font-semibold tracking-[-0.03em] placeholder:text-muted-foreground/50',
+        // Onboarding ritual: a field with only an underline that lights on focus.
         underline:
-          "border-0 border-b border-input px-0.5 py-2 text-[19px] leading-[1.4] [font-family:'Newsreader',serif] [font-variation-settings:'opsz'_22] focus-visible:border-ring",
+          'border-0 border-b border-input px-0.5 py-2 text-base leading-normal focus-visible:border-ring',
       },
     },
     defaultVariants: { variant: 'default' },

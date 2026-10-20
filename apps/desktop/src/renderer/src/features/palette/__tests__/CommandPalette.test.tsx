@@ -220,11 +220,9 @@ test('the Ask row is last once something is typed, and sends to the default targ
 
   await userEvent.keyboard('{Meta>}p{/Meta}')
   await userEvent.keyboard('why is the board empty')
-  await waitFor(() =>
-    expect(itemNames().at(-1)).toContain('Ask the assistant: why is the board empty'),
-  )
+  await waitFor(() => expect(itemNames().at(-1)).toContain('Ask the agent: why is the board empty'))
 
-  await userEvent.click(screen.getByText(/Ask the assistant/))
+  await userEvent.click(screen.getByText(/Ask the agent/))
 
   await waitFor(() =>
     expect(send).toHaveBeenCalledWith(

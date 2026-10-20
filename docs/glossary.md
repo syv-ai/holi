@@ -111,16 +111,32 @@ while the vault is open, on a machine that turned it on: **on** approves its cur
 and `allow` list, and any change to those reads **changed** until approved again. See
 [scheduled-agents](features/scheduled-agents.md).
 
+### Holi
+
+An agent that belongs to the vault: a YAML file in `.holi/holis/` with a name and a face, the
+documents it takes (`accepts`), what it may do without asking and its instructions. A person sends
+it a document from the menu beside the document's Agent button, which opens an agent tab running
+Claude Code with its instructions; the first send on a machine, and the first after what it does
+changed, asks that machine's person to approve it. A file with a `cron` or `at` is a **scheduled
+Holi**: shared vault work for Claude Code's cloud, which Holi cannot set up yet. See
+[holis](features/holis.md).
+
 ### Ask
 
 Text sent from Holi to a session (a selection, a task, a mail thread). It lands in the input as a
 bracketed paste with no Enter, so Holi never submits a draft the user was typing. A reconcile or a
 stuck push is the exception: it submits its instruction as the first turn of its own session.
 
+### Chat session
+
+Claude Code run on its structured channel (`stream-json`) by the optional chat plugin, drawn as a
+conversation in the Agents view, its permission prompts Claude Code's own as cards. Named by a UUID;
+its transcript is kept on this machine, never in the vault. See [chat](features/chat.md).
+
 ### Agent surface
 
 The files that configure the agent rather than hold content: `AGENTS.md`, `CLAUDE.md`, `.holi/memory/`,
-`.holi/schedules/`, `USER.local.md`, and all of `.claude/`. Writing them changes what the agent does next, so anything
+`.holi/schedules/`, `.holi/holis/`, `USER.local.md`, and all of `.claude/`. Writing them changes what the agent does next, so anything
 less trusted than the user (a vault app, a hook) is kept off them.
 
 ### Local file

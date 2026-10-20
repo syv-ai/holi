@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { OnboardingRitual } from '@/features/onboarding/OnboardingRitual'
 import { SignIn } from './features/auth/SignIn'
 import { Shell } from './components/Shell'
+import { Splash } from './components/Splash'
 import { useColorScheme } from './state/color-scheme'
 import { useEditorFont } from './state/editor-font'
 import { loadSessionAtom, sessionAtom } from './state/session'
@@ -32,9 +33,9 @@ export function App() {
   const [dryRunOnboarding, setDryRunOnboarding] = useState(false)
   useEffect(() => window.holi.dev.onTestOnboarding(() => setDryRunOnboarding(true)), [])
 
-  if (session === undefined) return null // loading keychain
+  if (session === undefined) return <Splash /> // loading keychain
   if (session === null) return <SignIn />
-  if (!vaultsLoaded) return null // loading vault list
+  if (!vaultsLoaded) return <Splash /> // loading vault list
   if (vaults.length === 0) return <OnboardingRitual mode="first-run" />
   // Over the top of a running Shell, so the ritual can be walked without
   // disturbing the vault that is open behind it.

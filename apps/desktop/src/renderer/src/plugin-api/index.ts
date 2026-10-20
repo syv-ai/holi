@@ -9,6 +9,9 @@
 export type {
   AgentService,
   AgentServiceSource,
+  AgentsMode,
+  AgentsSlot,
+  AgentsStatus,
   AgentSessionRow,
   AskResult,
   AskTargets,
@@ -40,7 +43,10 @@ export { activeRemoteAtom, historyEpochsAtom, snapshotAtom, syncStateAtom } from
 export { sessionAtom } from '@/state/session'
 export { usePluginSetting } from '@/state/settings'
 export { activeModeAtom } from '@/state/color-scheme'
+export { appModeAtom, type AppMode } from '@/state/app-mode'
+export { agentsSelectionAtom, agentsSlotsAtom, type AgentsSelection } from '@/state/agents-slots'
 export { openNoteTabAtom } from '@/state/panes'
+export { openSettingsSectionAtom } from '@/state/settings-section'
 export {
   activeSurfaceIdAtom,
   closeSurfaceTabAtom,

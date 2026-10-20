@@ -24,20 +24,14 @@ import {
 import { useMemo } from 'react'
 import { isVaultConfigPath } from '@holi/shared'
 import type { SyncState } from '../../../../main/vault/active-vault'
-import {
-  Button,
-  Icon,
-  type IconGlyph,
-  type IconMotion,
-  type IconTone,
-  type MorphingMenuItem,
-} from '@/primitives'
+import { Button, Icon, type IconGlyph, type IconMotion, type IconTone } from '@/primitives'
 import { cn } from '@/lib/cn'
 import { syncLabel } from '@/lib/sync-label'
 import { useAgentService } from '@/state/agent-service'
 import { reconcileAtom } from '@/state/reconcile'
 import { openSurface, workspaceAtom } from '@/state/panes'
 import { abandonReconcileAtom, retrySyncAtom, syncStateAtom } from '@/state/vaults'
+import type { NavItem } from './nav-item'
 
 type Glyph = { icon: IconGlyph; tone?: IconTone; motion?: IconMotion }
 
@@ -61,7 +55,11 @@ function glyphOf(state: SyncState): Glyph {
 }
 
 /** The label's colour in the panel: coloured text on no background. */
-const TEXT_TONE = { quiet: 'text-muted-foreground', busy: 'text-brand', warn: 'text-amber-400' }
+const TEXT_TONE = {
+  quiet: 'text-muted-foreground',
+  busy: 'text-brand',
+  warn: 'text-amber-700 dark:text-amber-400',
+}
 
 const ROW = 'h-auto min-h-8 w-full justify-start gap-2 rounded-xl px-2.5 py-1.5 text-sm font-normal'
 
@@ -79,11 +77,9 @@ function SyncPanel({ close }: { close: () => void }): React.JSX.Element {
 
   return (
     <div className="flex w-72 flex-col gap-0.5 p-1">
-      <p data-morph-row="" className={cn('px-2.5 py-1.5 text-sm', TEXT_TONE[label.tone])}>
-        {label.text}
-      </p>
+      <p className={cn('px-2.5 py-1.5 text-sm', TEXT_TONE[label.tone])}>{label.text}</p>
       {state.kind === 'conflict' && (
-        <ul data-morph-row="" className="px-2.5 pb-1 text-xs text-muted-foreground">
+        <ul className="px-2.5 pb-1 text-xs text-muted-foreground">
           {state.paths.map((path) => (
             <li key={path} className="truncate font-mono">
               {path}
@@ -96,7 +92,7 @@ function SyncPanel({ close }: { close: () => void }): React.JSX.Element {
       {state.kind === 'conflict' && (
         <Button
           variant="ghost"
-          data-morph-row=""
+
           className={ROW}
           onClick={() => {
             close()
@@ -110,7 +106,7 @@ function SyncPanel({ close }: { close: () => void }): React.JSX.Element {
       {contentConflict && agent !== null && (
         <Button
           variant="ghost"
-          data-morph-row=""
+
           className={ROW}
           onClick={() => {
             close()
@@ -126,7 +122,7 @@ function SyncPanel({ close }: { close: () => void }): React.JSX.Element {
       {state.kind === 'reconciling' && (
         <Button
           variant="ghost"
-          data-morph-row=""
+
           className={ROW}
           onClick={() => {
             close()
@@ -139,7 +135,7 @@ function SyncPanel({ close }: { close: () => void }): React.JSX.Element {
       )}
       <Button
         variant="ghost"
-        data-morph-row=""
+
         className={ROW}
         onClick={() => {
           close()
@@ -154,7 +150,7 @@ function SyncPanel({ close }: { close: () => void }): React.JSX.Element {
 }
 
 /** The nav menu's sync item, rebuilt only when the state changes. */
-export function useSyncItem(): MorphingMenuItem {
+export function useSyncItem(): NavItem {
   const state = useAtomValue(syncStateAtom)
   return useMemo(() => {
     const glyph = glyphOf(state)

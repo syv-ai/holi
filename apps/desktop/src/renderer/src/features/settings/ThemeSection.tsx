@@ -32,7 +32,16 @@ import {
   THEME_FILE,
   THEME_LOCAL_FILE,
 } from '@holi/shared'
-import { Button, ColorSwatch, Dialog, IconButton, Input, Tooltip } from '@/primitives'
+import {
+  Button,
+  ColorSwatch,
+  Dialog,
+  IconButton,
+  Input,
+  ToggleGroup,
+  ToggleGroupItem,
+  Tooltip,
+} from '@/primitives'
 import { SettingsNote } from '@/composites'
 import { SettingsHeading } from '@/composites'
 import { LIGHT_AND_DARK } from './appearance-headings'
@@ -47,8 +56,8 @@ type Layer = 'committed' | 'local'
 /** Holi's own theme, both modes. */
 type HoliTheme = Record<ThemeMode, Record<string, string>>
 
-/** A pair of buttons that read as one choice, the same shape the settings rows
- *  use for `choice`. */
+/** One choice of a few, the same shape the settings rows use for `choice`;
+ *  a `hint` (the file a choice writes) shows on hover. */
 function Segmented<T extends string>({
   value,
   options,
@@ -61,22 +70,22 @@ function Segmented<T extends string>({
   label: string
 }): React.JSX.Element {
   return (
-    <div role="radiogroup" aria-label={label} className="flex flex-wrap gap-1.5">
+    <ToggleGroup
+      type="single"
+      size="sm"
+      spacing={1.5}
+      aria-label={label}
+      value={value}
+      // A press on the current pick is not a deselect: only a value is passed on.
+      onValueChange={(next) => next !== '' && onChange(next as T)}
+      className="flex-wrap"
+    >
       {options.map((option) => (
-        <Button
-          key={option.value}
-          type="button"
-          role="radio"
-          aria-checked={option.value === value}
-          variant={option.value === value ? 'secondary' : 'ghost'}
-          size="xs"
-          title={option.hint}
-          onClick={() => onChange(option.value)}
-        >
-          {option.label}
-        </Button>
+        <Tooltip key={option.value} content={option.hint}>
+          <ToggleGroupItem value={option.value}>{option.label}</ToggleGroupItem>
+        </Tooltip>
       ))}
-    </div>
+    </ToggleGroup>
   )
 }
 
@@ -146,7 +155,7 @@ function TokenCell({
             if (draft.trim() === '') onClear()
             else if (draft !== set) onSet(draft.trim())
           }}
-          className="h-6 min-w-0 flex-1 px-1.5 py-0 font-mono text-[11px]"
+          className="h-6 min-w-0 flex-1 px-1.5 py-0 font-mono text-xs"
         />
       )}
       {/* Invisible rather than absent while there is nothing to reset, so a
@@ -291,7 +300,7 @@ function ThemeTokens({
                   switching mode moves the words, never the layout. */}
               <span
                 className={cn(
-                  'text-[10px] leading-4 text-muted-foreground',
+                  'text-xs leading-4 text-muted-foreground',
                   mode !== showing && 'invisible',
                 )}
               >
@@ -303,7 +312,7 @@ function ThemeTokens({
       </div>
 
       {error !== null && (
-        <p className="mt-3 rounded border border-destructive/40 bg-destructive/10 px-3 py-2 text-[11px] text-destructive">
+        <p className="mt-3 rounded border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
           {error}
         </p>
       )}
@@ -326,9 +335,9 @@ function ThemeTokens({
                 <div key={slug} className={cn(GRID, 'rounded-md px-1 py-1.5 hover:bg-accent/50')}>
                   <span className="flex min-w-0 flex-col">
                     <span className="text-xs">{themeTokenLabel(slug)}</span>
-                    <code className="text-[10px] text-muted-foreground">--{slug}</code>
+                    <code className="text-xs text-muted-foreground">--{slug}</code>
                     {note !== undefined && (
-                      <span className="text-[11px] text-muted-foreground">{note}</span>
+                      <span className="text-xs text-muted-foreground">{note}</span>
                     )}
                   </span>
                   {MODES.map((mode) => (

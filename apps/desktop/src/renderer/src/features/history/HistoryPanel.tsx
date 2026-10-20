@@ -136,7 +136,7 @@ export function HistoryPanel() {
       <span className="block w-full truncate text-[13px] text-foreground">
         {v.subject || '(no message)'}
       </span>
-      <span className="block w-full truncate text-[11px] text-muted-foreground">
+      <span className="block w-full truncate text-xs text-muted-foreground">
         {when(v.date)} · {v.author}
         <Churn added={v.added} removed={v.removed} />
       </span>
@@ -197,7 +197,7 @@ export function HistoryPanel() {
                 <p className="text-[13px] break-words text-foreground">
                   {selected.subject || '(no message)'}
                 </p>
-                <p className="mt-0.5 flex min-w-0 items-center text-[11px] text-muted-foreground">
+                <p className="mt-0.5 flex min-w-0 items-center text-xs text-muted-foreground">
                   <span className="min-w-0 truncate">
                     {when(selected.date)} · {selected.author}
                     <Churn added={selected.added} removed={selected.removed} />
@@ -206,7 +206,7 @@ export function HistoryPanel() {
                     <Button
                       variant="link"
                       onClick={() => openCommit(selected.sha)}
-                      className="ml-auto h-auto shrink-0 p-0 pl-2 font-mono text-[11px] font-normal"
+                      className="ml-auto h-auto shrink-0 p-0 pl-2 font-mono text-xs font-normal"
                     >
                       {selected.sha.slice(0, 7)}
                     </Button>

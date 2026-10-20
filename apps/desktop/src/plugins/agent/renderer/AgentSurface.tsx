@@ -19,7 +19,7 @@ function AgentTurnChip({ terminalId }: { terminalId: string }): React.JSX.Elemen
   const sessionId = terminals.find((t) => t.id === terminalId)?.launchedFor ?? null
   if (sessionId === null) return null
   return (
-    <div className="shrink-0 border-t border-divider px-2 py-1">
+    <div className="shrink-0 border-t border-divider px-4 py-1">
       {/* Keyed, so the chip's "just landed" refs belong to one session. */}
       <TurnChip key={sessionId} sessionId={sessionId} />
     </div>

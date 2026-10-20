@@ -89,11 +89,22 @@ export interface AgentSessions {
   sessions(): SessionSummary[]
   /** Re-read the listing now. Never rejects. */
   refresh(): Promise<void>
-  /** A terminal on the list (no `attach`) or on one session. */
-  open(args: Geometry & { attach?: string }): Promise<OpenResult>
+  /** A terminal on the list (no `attach`), on one session, on a copy of a
+   *  conversation by Claude Code's session id (`fork`), or running Claude
+   *  Code's `/login` for the vault's config directory (`login`). */
+  open(args: Geometry & { attach?: string; fork?: string; login?: boolean }): Promise<OpenResult>
   /** A new background session, and a terminal on it. With a prompt, that
    *  prompt is its first turn (reconcile); without, it waits for one. */
-  start(args: Geometry & { name?: string; prompt?: string }): Promise<StartResult>
+  start(
+    args: Geometry & {
+      name?: string
+      prompt?: string
+      /** A Holi's: its model, its rules and who it is (`holis/holis.ts`). */
+      model?: string
+      allow?: readonly string[]
+      appendSystemPrompt?: string
+    },
+  ): Promise<StartResult>
   /** A new background session whose first turn is `prompt`, and no
    *  terminal: nobody is watching it start. A scheduled run. */
   launch(args: {
@@ -121,6 +132,17 @@ export interface AgentSessions {
   noteStatus(remote: string, jobId: string, status: unknown): void
   /** The focus file is the vault's, so this names no session. */
   setFocus(focus: FocusInput): void
+  /** Where the open vault's commands run: its clone, config directory and
+   *  `PATH`. Null with no vault attached. For a process another driver runs
+   *  in the vault, so it reads what a session reads. */
+  target(): Promise<VaultCliTarget | null>
+  /**
+   * A turn edge from a driver outside the listing, which knows its turns
+   * without a hook: the same working set, sync pause and turn record as a
+   * session's. `forget` is its process gone mid-turn: nothing recorded. The
+   * listing never names such an id, so its reconcile leaves these alone.
+   */
+  bracket(id: string, edge: 'begin' | 'end' | 'forget'): void
   /** Let go of the vault: optionally stop its live sessions, close every
    *  terminal, stop watching its config directory. Bounded; never rejects. */
   leave(opts?: { stopSessions?: boolean }): Promise<void>
@@ -164,6 +186,9 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
    * it, so a conversation that exists is never removed.
    */
   const unprompted = new Set<string>()
+  /** Turns an outside driver opened (`bracket`): its own ids, which the
+   *  listing will never read live, so the reconcile must not forget them. */
+  const bracketed = new Set<string>()
   /**
    * Each live session's context use, by job id, from its status line. Claude
    * Code's listing does not carry it. The status line runs on Claude Code's
@@ -279,8 +304,11 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
       }
     }
 
-    // A session whose process has gone will not end its turn now.
-    for (const id of coordinator.working) if (!liveIds.has(id)) coordinator.forget(id)
+    // A session whose process has gone will not end its turn now. Only the
+    // listing's own: a bracketed turn is its driver's to end.
+    for (const id of coordinator.working) {
+      if (!bracketed.has(id) && !liveIds.has(id)) coordinator.forget(id)
+    }
     // Nor use any more context; resumed, it says so again at its first event.
     for (const id of contextPercent.keys()) if (!liveIds.has(id)) contextPercent.delete(id)
 
@@ -329,7 +357,10 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     c.unwatch()
   }
 
-  async function openOn(c: Current, args: Geometry & { attach?: string }): Promise<OpenResult> {
+  async function openOn(
+    c: Current,
+    args: Geometry & { attach?: string; fork?: string; login?: boolean },
+  ): Promise<OpenResult> {
     // Taken here, at a terminal, not at vault open: a run that opens no
     // terminal must leave the notice for the one that does.
     let firstSpawn = false
@@ -342,6 +373,8 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
       remote: c.remote,
       target: targetOf(c),
       ...(args.attach === undefined ? {} : { attach: args.attach }),
+      ...(args.fork === undefined ? {} : { fork: args.fork }),
+      ...(args.login === true ? { login: true } : {}),
       ...(args.cols === undefined ? {} : { cols: args.cols }),
       ...(args.rows === undefined ? {} : { rows: args.rows }),
       ...(notice === undefined ? {} : { notice }),
@@ -366,12 +399,15 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
       return openOn(c, args)
     },
 
-    async start({ name, prompt, cols, rows: r }) {
+    async start({ name, prompt, model, allow, appendSystemPrompt, cols, rows: r }) {
       const c = await ensureCurrent()
       if (c === null) return noVault
       const res = await provider.cli.startBg(targetOf(c), {
         ...(name === undefined ? {} : { name }),
         ...(prompt === undefined ? {} : { prompt }),
+        ...(model === undefined ? {} : { model }),
+        ...(allow === undefined ? {} : { allow }),
+        ...(appendSystemPrompt === undefined ? {} : { appendSystemPrompt }),
       })
       if (!res.ok) return res
       if (prompt === undefined) unprompted.add(res.id)
@@ -490,6 +526,22 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
       focusWriter.snapshot.setFocus(focus)
     },
 
+    async target() {
+      const c = await ensureCurrent()
+      return c === null ? null : targetOf(c)
+    },
+
+    bracket(id, edge) {
+      if (edge === 'begin') {
+        bracketed.add(id)
+        coordinator.begin(id)
+        return
+      }
+      bracketed.delete(id)
+      if (edge === 'end') coordinator.end(id)
+      else coordinator.forget(id)
+    },
+
     async leave({ stopSessions = true } = {}) {
       if (leaving !== null) return leaving
       leaving = leaveNow(stopSessions)
@@ -522,6 +574,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     }
     await deps.terminals.closeAll()
     for (const id of [...coordinator.working]) coordinator.forget(id)
+    bracketed.clear()
     unprompted.clear()
     contextPercent.clear()
     if (idleRecheck !== null) {

@@ -26,6 +26,7 @@ import {
 import { bareLinks } from './bare-links'
 import { frontmatterRegion } from './frontmatter-region'
 import { isListNode } from './lists'
+import { markSpans } from './marks'
 import { ImageWidget } from './imageWidget'
 import { vaultAssetUrl } from '../lib/vault-asset'
 import { WikiLinkChip } from './wikiLinkChips'
@@ -110,6 +111,12 @@ const strong = Decoration.mark({ class: 'cm-strong' })
 const emphasis = Decoration.mark({ class: 'cm-emphasis' })
 const strike = Decoration.mark({ class: 'cm-strikethrough' })
 const inlineCode = Decoration.mark({ class: 'cm-inline-code' })
+const underline = Decoration.mark({ class: 'cm-underline' })
+/** A done task's text. */
+const doneTask = Decoration.mark({ class: 'cm-task-done-text' })
+/** A highlight's text, in its colour's light and dark pair (`theme.ts`). */
+const highlightMark = (color: string) =>
+  Decoration.mark({ class: `cm-highlight cm-highlight-${color}` })
 /** A quote's `> `, always in the DOM, like a heading's `#` (`headingLine`). */
 const quoteMark = Decoration.mark({ class: 'cm-slide-mark cm-quote-mark' })
 /** A comment inside a paragraph, left as text; one on its own lines is a
@@ -134,8 +141,12 @@ const headingLine = (level: number, raw: boolean) =>
 
 /** The `# `, always in the DOM, its box opened and closed by the theme. */
 const headingMark = Decoration.mark({ class: 'cm-slide-mark cm-heading-mark' })
-const codeLine = (raw: boolean) =>
-  Decoration.line({ class: `cm-code-line${raw ? ' cm-code-raw' : ''}` })
+/** A fenced block's line, and whether it opens or closes the block: like a
+ *  quote, only its ends are rounded. */
+const codeLine = (raw: boolean, first: boolean, last: boolean) =>
+  Decoration.line({
+    class: `cm-code-line${first ? ' cm-code-first' : ''}${last ? ' cm-code-last' : ''}${raw ? ' cm-code-raw' : ''}`,
+  })
 /** A fence's backticks, always in the DOM, like a heading's `#`. */
 const codeMark = Decoration.mark({ class: 'cm-slide-mark cm-code-mark' })
 /** A fence's language, left as a quiet label once its backticks are hidden. */
@@ -387,6 +398,10 @@ export function buildDecorations(state: EditorState, from: number, to: number): 
   const spans: Span[] = wikiLinks.map((link) => ({ from: from + link.start, to: from + link.end }))
   const wikiSpans = [...spans]
   const inlineOnly = state.facet(inlineOnlyFacet)
+  // `==highlight==`, `<mark>` and `<u>` (`marks.ts`): each reveals as one
+  // element, its two marks together, like `**`.
+  const pairs = markSpans(state, from, to)
+  for (const pair of pairs) spans.push({ from: pair.from, to: pair.to })
   syntaxTree(state).iterate({
     from,
     to,
@@ -476,7 +491,11 @@ export function buildDecorations(state: EditorState, from: number, to: number): 
           const last = state.doc.lineAt(node.to).number
           for (let n = first; n <= last; n++) {
             const line = state.doc.line(n)
-            ranges.push({ from: line.from, to: line.from, deco: codeLine(activeHere) })
+            ranges.push({
+              from: line.from,
+              to: line.from,
+              deco: codeLine(activeHere, n === first, n === last),
+            })
           }
           // The fence lines stay, so the block keeps its height when the caret
           // arrives; only the backticks go, sliding shut under `cm-code-raw`'s
@@ -559,6 +578,13 @@ export function buildDecorations(state: EditorState, from: number, to: number): 
               }),
             })
             concealSpaceAfter(state, taskMark.to, ranges)
+            // A done item reads as done (ReUI's task item): its text muted and
+            // struck through, the box ticked.
+            if (
+              /^\[[xX]\]$/.test(state.sliceDoc(taskMark.from, taskMark.to)) &&
+              line.to > taskMark.to + 1
+            )
+              ranges.push({ from: taskMark.to + 1, to: line.to, deco: doneTask })
             break
           }
           // A bullet glyph, except on the active line; both wear the same box.
@@ -660,6 +686,19 @@ export function buildDecorations(state: EditorState, from: number, to: number): 
       }
     },
   })
+
+  for (const pair of pairs) {
+    if (pair.innerTo <= pair.innerFrom) continue
+    ranges.push({
+      from: pair.innerFrom,
+      to: pair.innerTo,
+      deco: pair.kind === 'underline' ? underline : highlightMark(pair.color ?? 'yellow'),
+    })
+    if (!isActive({ from: pair.from, to: pair.to })) {
+      ranges.push({ from: pair.from, to: pair.innerFrom, deco: conceal })
+      ranges.push({ from: pair.innerTo, to: pair.to, deco: conceal })
+    }
+  }
 
   // Bare links (`github.com`, `https://…`) in prose. Clickable in Holi only:
   // the file is left as it was written.

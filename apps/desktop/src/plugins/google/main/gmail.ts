@@ -887,6 +887,17 @@ export async function trashThread(api: GoogleApi, id: string): Promise<void> {
   await api.post(`${BASE}/threads/${encodeURIComponent(id)}/trash`, {})
 }
 
+/** Undo for archive: `INBOX` back on. The view's Undo, nothing else. */
+export async function unarchiveThread(api: GoogleApi, id: string): Promise<void> {
+  await modifyThread(api, id, { add: ['INBOX'] })
+}
+
+/** Undo for trash, through `/untrash` for the same reason trash has its own
+ *  endpoint: a label change on `TRASH` is answered 200 and ignored. */
+export async function untrashThread(api: GoogleApi, id: string): Promise<void> {
+  await api.post(`${BASE}/threads/${encodeURIComponent(id)}/untrash`, {})
+}
+
 /** The one shape every label write shares, so the URL and the body exist once.
  *  Empty arrays are omitted rather than sent. */
 async function modifyThread(

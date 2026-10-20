@@ -75,6 +75,9 @@ export interface PluginHostDeps {
   /** Confine frames on `origin` to it (`window-guard.ts`). Returns the undo. */
   frameOrigin(origin: string): () => void
   readSettings?: (root: string) => Promise<ResolvedVaultSettings>
+  /** One capability call at the UI door in the vault `remote`, for
+   *  `ctx.call`. Absent, a call is refused. */
+  call?: (remote: string, name: string, params: unknown) => Promise<unknown>
 }
 
 export interface PluginHost {
@@ -306,6 +309,10 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
         const entry = { remote, cb }
         reportListeners.add(entry)
         return keep(() => void reportListeners.delete(entry))
+      },
+      call: async (name, params) => {
+        if (deps.call === undefined) throw new Error(`no capability calls here: ${name}`)
+        return deps.call(remote, name, params)
       },
     }
     if (plugin.activate === undefined) return { id, dispose: () => {}, undos }

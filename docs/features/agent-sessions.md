@@ -34,26 +34,37 @@ palette's session rows, the leave question, and the agent service every "Ask" go
 (`useAgentService`). With the agent off there is no service, so no "Ask" is offered. Its main side starts with the vault and attaches to it (`activate`), and its disposer stops the vault's sessions and terminals. The
 renderer reaches it through the `agent.*` capabilities (sessions, terminals, open, start, send,
 stop, respawn, duplicate, attach, detach, and the turn review's turns, turnFiles, turnDiff and
-revert). Main tells it the session and terminal lists and each terminal's bytes as the events
+revert, which deletes a file the turn created rather than leaving it empty). Main tells it the session and terminal lists and each terminal's bytes as the events
 `sessions`, `terminals`, `pty-data` and `pty-exit`; keystrokes and resizes go back as the events
 `pty-write` and `pty-resize`, which keep their order. A terminal's bytes go straight to its xterm
 (`renderer/lib/session-terminals.ts`), never through an atom. Its main side is the plugin `agent`
 (`src/plugins/agent/main/`), so in a vault with the agent off its capabilities are refused, its
 events are not sent and nothing under `.claude/` is seeded.
 
+**Other plugins drive Claude Code through it, never around it.** The agent knows nothing of a
+plugin that requires it ([architecture](../architecture.md), Plugins); it offers general
+capabilities any such plugin calls, from its renderer or, through `ctx.call`, from its main side:
+`agent.target` (how to run Claude Code in the vault as a session does: the clone, the one
+environment, the binary), `agent.turn` (begin, end or forget a turn by an id the caller owns, on the
+vault's one working set, so sync pauses and the turn is recorded like a session's), and
+`agent.open` with `fork` (a terminal on a copy of a conversation) or `login` (Claude Code's
+`/login` for the vault's config directory). The listing never names a bracketed id, so its
+reconcile forgets only the turns of its own sessions. The optional chat plugin is one such caller
+([chat](chat.md)).
+
 **Where you meet it.** ⌘J and the nav menu's agent item focus a terminal showing the list, or
 open one. Which terminal shows it is read from its title, since `←` and Enter move a terminal
-between the list and a session. An agent tab's **Open overview** always opens a new one. The agent item is green while any session
-is live. Under the file tree, one row per **live** session (its process alive): the state orb,
-aligned with the nav menu's first icon, the name, and what it waits for when it needs you. At the
-right end, where **Stop** shows on hover and keyboard focus, the rest of the time sits how much of
-the session's context window is used: muted text below 60%, then text ramping from amber to
-full red at 99%, nothing before the first message. A row opens its session in a terminal whose title names it, else the one Holi
-opened for it, else a new `claude attach` window. An unnamed session, or a name two sessions
-share, matches no title, so it can land in a second window; two windows on one session mirror
-each other. With the nav hidden, the rail
-shows one orb per live session. A stopped or finished session is not in the sidebar: it is in the
-agent list, where opening it picks it up again.
+between the list and a session. An agent tab's **Open overview** always opens a new one. The agent
+item is green while any session is live. The sidebar's **Agents** mode ([sidebar](sidebar.md)) is
+the agent's: **New session** (⌘N) starts one there, the vault's [Holis](holis.md) come next, then
+one row per **live** session (its process alive) grouped as Needs you, Working and Idle, with its
+state in words and what it waits for when it needs you; a row opens the session in a terminal of
+the view's own. Work in flight turns the house loader (`motion-orbit`), the one loop on a row; a
+session or Holi that needs you is a steady amber dot, never a breathing one, since waiting is a
+state and not work. The words beside a step stay still. A Holi's runs are shown on its page, not again here. A stopped or finished session
+is not in the view: it is in the agent list, where opening it picks it up again. The mode toggle
+counts what needs you and what works, sessions and Holis and what other plugins add, from either
+mode.
 
 **Stop, restart, duplicate.** A row's **Stop** runs `claude stop <id>`. An idle session stops at
 once; one mid-turn or waiting on you asks first. Its context menu adds **Restart** (`claude
@@ -85,8 +96,9 @@ clears it.
 to a live session the user picks (needs-you sessions are not offered), or to a new one named from
 its first line, as a bracketed paste with no Enter into that session's window. A window just opened
 holds the paste until its TUI has printed and settled, with a 5 s backstop. **Reconcile, a stuck
-push and a scheduled run are the exception**: their first turn is the command's prompt. A scheduled
-run opens no window at all ([scheduled-agents](scheduled-agents.md)).
+push, a scheduled run and a Holi's send are the exception**: their first turn is the command's
+prompt. A scheduled run opens no window at all ([scheduled-agents](scheduled-agents.md)); a Holi's
+send opens its agent tab ([holis](holis.md)).
 
 **Git coexistence.** The seeded `UserPromptSubmit` and `Stop` hooks run `turn-signal.mjs`, which
 reads the vault's `bridge.local.env` ([agent-config](agent-config.md)) for the port and the vault's token, and posts
@@ -125,7 +137,7 @@ showing it busy, crosses it off), so a session resumed from the list is never re
   always Holi's.
 - Probe a pid before signalling it: signal the group only if it still leads its group. A reaped pid
   may already be a stranger's. Holi only ever signals its own terminal clients.
-- Only reconcile, a stuck push, a skills update's conflicts and a scheduled run submit a turn, each
+- Only reconcile, a stuck push, a skills update's conflicts, a scheduled run and a Holi's send submit a turn, each
   as the first turn of a session of its own. Holi cannot see the composer.
 - Record a turn after the vault resumes, fire-and-forget: a lost record beats a stuck pause.
 - A turn revert does not flush open buffers first; a dirty buffer 3-way merges.
@@ -138,7 +150,9 @@ showing it busy, crosses it off), so a session resumed from the list is never re
   process Holi never spawned.
 - A bearer or port in a session's environment: a background session's environment is the
   supervisor's, and the supervisor outlives a Holi restart.
-- A headless chat panel or a server-side agent: re-implements the TUI.
+- A headless chat panel in core: re-implements the TUI. Offered only as the optional chat plugin
+  ([chat](chat.md)), off by default, on Claude Code's own structured channel and prompts.
+- A server-side agent: there is no server.
 - A Holi list of past sessions: the agent list is that list.
 - A gate before the agent's writes: Claude Code already asks.
 - Recording touched paths from `PostToolUse`: misses edits made through `Bash`.
@@ -159,7 +173,10 @@ showing it busy, crosses it off), so a session resumed from the list is never re
 - `apps/desktop/src/plugins/agent/main/host/terminals.ts`, `pty.ts`, `terminal-mirror.ts`: terminals, the PTY and
   kill path
 - `apps/desktop/src/plugins/agent/main/host/sessions.ts`: the vault controller
-- `apps/desktop/src/plugins/agent/main/host/capabilities.ts`: the `agent.*` capabilities
+- `apps/desktop/src/plugins/agent/main/host/capabilities.ts`: the `agent.*` capabilities, the
+  outside drivers' `agent.target` and `agent.turn` among them
+- `apps/desktop/src/main/plugin-api.ts` (`ctx.call`): one plugin's main side calling another's
+  capabilities
 - `apps/desktop/src/main/bridge/env-file.ts`, `apps/desktop/src/plugins/agent/main/claude/vault/shipped/.claude/hooks/turn-signal.mjs`,
   `apps/desktop/src/plugins/agent/main/claude/seed.ts` (`STATUS_LINE`): how sessions find Holi
 - `apps/desktop/src/plugins/agent/main/host/turn-coordinator.ts`, `turn-log.ts`: working set and turn records

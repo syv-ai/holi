@@ -149,8 +149,20 @@ describe('agent.revert', () => {
     expect(await repo.head()).not.toBe(before)
   })
 
+  it('deletes a file the turn created, so the vault is as it was before', async () => {
+    const { run, root } = await rig()
+    const repo = openRepo(root)
+    await commitFile(root, 'new-note.md', 'the agent made this\n')
+    const before = (await repo.head())!
+    await run('agent.revert', { path: 'new-note.md', delete: true })
+    await expect(readFile(join(root, 'new-note.md'), 'utf8')).rejects.toThrow()
+    expect(await repo.head()).not.toBe(before)
+    expect(await plainGit(root, ['ls-files', 'new-note.md'])).toBe('')
+  })
+
   it('refuses a path outside the vault', async () => {
     const { run } = await rig()
+    await expect(run('agent.revert', { path: '../escape.md', delete: true })).rejects.toThrow()
     await expect(run('agent.revert', { path: '../escape.md', text: 'nope' })).rejects.toThrow()
   })
 

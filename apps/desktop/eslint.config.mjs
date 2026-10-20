@@ -81,6 +81,20 @@ const motionRules = [
   { selector: `${MOTION_STYLE} > TemplateLiteral`, message: motionMessage },
 ]
 
+// Type under the floor. Body is `text-sm`, meta `text-xs`, and nothing is
+// smaller (docs/ui-system.md, Type): an arbitrary `text-[11px]` or
+// `text-[0.6875rem]` is how Settings came to sit two steps under the rest of
+// the app. Sizes of 12px and up, and `text-[length:…]`/`text-(--token)` forms,
+// pass.
+const TYPE_BODY =
+  'text-\\[(?:(?:[0-9]|1[01])(?:\\.\\d+)?px|0?\\.(?:[0-6]\\d*|7(?:[0-4]\\d*)?)rem)\\]'
+const typeMessage =
+  'type under the floor (text-[10px], text-[11px]) — use text-xs for meta and text-sm for body. Nothing is smaller than text-xs.'
+const typeRules = [
+  { selector: `Literal[value=/${TYPE_BODY}/]`, message: typeMessage },
+  { selector: `TemplateElement[value.raw=/${TYPE_BODY}/]`, message: typeMessage },
+]
+
 // Native `title=""` on a DOM element (lowercase tag) is a browser tooltip — banned
 // in favour of the Tooltip primitive. Component `title` PROPS (uppercase names, e.g.
 // <SidePanel title=…>) are not matched. A disabled trigger — where Radix never fires
@@ -246,7 +260,14 @@ export default [
       'react-hooks/rules-of-hooks': 'warn',
       'react-hooks/exhaustive-deps': 'warn',
       // The hierarchy gate — LEVEL over the whole (still-migrating) tree.
-      'no-restricted-syntax': [LEVEL, nativeRule, ...colourRules, ...motionRules, titleRule],
+      'no-restricted-syntax': [
+        LEVEL,
+        nativeRule,
+        ...colourRules,
+        ...motionRules,
+        titleRule,
+        ...typeRules,
+      ],
       'boundaries/element-types': [LEVEL, elementTypes],
       'boundaries/external': [LEVEL, external],
       'holi/icon-through-primitive': LEVEL,
@@ -292,7 +313,30 @@ export default [
   // The colour ban still applies (tokens or nothing, everywhere).
   {
     files: ['src/renderer/src/primitives/**/*.{ts,tsx}'],
-    rules: { 'no-restricted-syntax': [LEVEL, ...colourRules, ...motionRules, titleRule] },
+    rules: {
+      'no-restricted-syntax': [LEVEL, ...colourRules, ...motionRules, titleRule, ...typeRules],
+    },
+  },
+  // Plugins get the gate, and their renderers the type floor too; main-side
+  // plugin code draws no type.
+  {
+    files: PLUGIN_FILES,
+    rules: {
+      'no-restricted-syntax': [LEVEL, nativeRule, ...colourRules, ...motionRules, titleRule],
+    },
+  },
+  {
+    files: ['src/plugins/*/renderer/**/*.{ts,tsx}'],
+    rules: {
+      'no-restricted-syntax': [
+        LEVEL,
+        nativeRule,
+        ...colourRules,
+        ...motionRules,
+        titleRule,
+        ...typeRules,
+      ],
+    },
   },
 
   // ── Ratchet: migrated paths are enforced at error regardless of GATE_LEVEL. ──
@@ -306,23 +350,21 @@ export default [
   {
     files: MIGRATED_NO_NATIVE,
     rules: {
-      'no-restricted-syntax': ['error', nativeRule, ...colourRules, ...motionRules, titleRule],
+      'no-restricted-syntax': [
+        'error',
+        nativeRule,
+        ...colourRules,
+        ...motionRules,
+        titleRule,
+        ...typeRules,
+      ],
     },
   },
   {
     files: ['src/renderer/src/primitives/**/*.{ts,tsx}'],
-    rules: { 'no-restricted-syntax': ['error', ...colourRules, ...motionRules, titleRule] },
-  },
-
-  // The onboarding ritual is the ONE motion exemption. It is a one-time ceremony
-  // with its own stylesheet, its own palette and its own spring (`--ease-spring`
-  // and the `obrit-*` keyframes live in onboarding-ritual.css, and nowhere else
-  // in the app may have them). Everything ELSE still applies here — native
-  // elements, colour literals and native titles are banned in the ritual as
-  // anywhere. Listed after the blocks above so it wins for these paths.
-  {
-    files: ['src/renderer/src/features/onboarding/**/*.{ts,tsx}'],
-    rules: { 'no-restricted-syntax': ['error', nativeRule, ...colourRules, titleRule] },
+    rules: {
+      'no-restricted-syntax': ['error', ...colourRules, ...motionRules, titleRule, ...typeRules],
+    },
   },
 
   // Gate self-test fixtures deliberately CONTAIN every violation. Keep the rules
@@ -332,7 +374,14 @@ export default [
   {
     files: ['test/fixtures/gate/**/*.{ts,tsx}'],
     rules: {
-      'no-restricted-syntax': ['warn', nativeRule, ...colourRules, ...motionRules, titleRule],
+      'no-restricted-syntax': [
+        'warn',
+        nativeRule,
+        ...colourRules,
+        ...motionRules,
+        titleRule,
+        ...typeRules,
+      ],
       'boundaries/element-types': ['warn', elementTypes],
       'boundaries/external': ['warn', external],
     },

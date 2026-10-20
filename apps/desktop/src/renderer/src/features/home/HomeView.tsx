@@ -15,6 +15,7 @@ import { openHomeAtom } from '@/state/home'
 import { openPinned, openSurface, workspaceAtom } from '@/state/panes'
 import { surfacesAtom } from '@/state/plugins'
 import { recentsAtom } from '@/state/recents'
+import { runCommandAtom } from '@/state/commands'
 
 export function HomeView({ target }: { target: HomeTarget }): React.JSX.Element {
   return target.kind === 'recents' ? <Recents /> : <NotThere target={target} />
@@ -51,6 +52,7 @@ function Recents(): React.JSX.Element {
   const recents = useAtomValue(recentsAtom)
   const surfaces = useAtomValue(surfacesAtom)
   const setWorkspace = useSetAtom(workspaceAtom)
+  const runCommand = useSetAtom(runCommandAtom)
   // A surface whose plugin is off is left out, as a deleted file would be.
   const entries = recents
     .filter((e) =>
@@ -67,12 +69,17 @@ function Recents(): React.JSX.Element {
 
   return (
     <div className="flex flex-1 items-center justify-center px-4 py-8 text-sm">
-      <section className="w-full max-w-[22rem]">
-        <h2 className="mb-2 text-xs font-medium text-muted-foreground">Recently opened</h2>
+      <section className="flex w-full max-w-[22rem] flex-col gap-2">
+        <h2 className="text-xs font-medium text-muted-foreground">Recently opened</h2>
         {entries.length === 0 ? (
-          <p className="text-muted-foreground">Nothing yet.</p>
+          <div className="flex flex-col items-start gap-3">
+            <p className="text-muted-foreground">Nothing opened yet.</p>
+            <Button variant="outline" size="sm" onClick={() => void runCommand('note.new')}>
+              New note
+            </Button>
+          </div>
         ) : (
-          <ul className="-mx-2">
+          <ul className="-mx-3">
             {entries.map((entry) => {
               const { name, where } = labelOf(entry, surfaces)
               return (
@@ -80,7 +87,7 @@ function Recents(): React.JSX.Element {
                   <Button
                     variant="ghost"
                     size="sm"
-                    className="h-auto w-full justify-start gap-3 px-2 py-1 font-normal"
+                    className="w-full justify-start gap-3 font-normal"
                     onClick={() => open(entry)}
                   >
                     <span className="truncate">{name}</span>

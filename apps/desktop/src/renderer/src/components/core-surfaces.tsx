@@ -11,6 +11,7 @@ import { History, House, Settings, SquareKanban } from 'lucide-react'
 import type { RailItem, Surface } from '@/plugin-api/types'
 import { HistoryView } from '@/features/history/HistoryView'
 import { HomeView } from '@/features/home/HomeView'
+import { LibraryView } from '@/features/home/LibraryView'
 import { SettingsView } from '@/features/settings/SettingsView'
 import { BoardView } from '@/features/tasks/BoardView'
 import { homeDocumentAtom, homeTargetAtom } from '@/state/home'
@@ -18,8 +19,7 @@ import { surfacesAtom, type CoreContribution } from '@/state/plugins'
 
 /**
  * The Home tab: the folder document Home names (a vault app), in its own surface,
- * when the vault has it; otherwise HomeView shows the recents, or says why
- * Home is not there (`state/home.ts`).
+ * when the vault has it; otherwise the vault's library (docs/features/home.md).
  */
 function HomeSurface(): React.JSX.Element {
   const home = useAtomValue(homeTargetAtom)
@@ -27,7 +27,10 @@ function HomeSurface(): React.JSX.Element {
   const View = useAtomValue(surfacesAtom).get(doc?.surface ?? '')?.render
   return doc !== null && View !== undefined ? (
     <View id={doc.id} visible />
+  ) : home.kind === 'recents' ? (
+    <LibraryView />
   ) : (
+    // Home names something that is not there: say so.
     <HomeView target={home} />
   )
 }

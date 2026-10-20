@@ -1,33 +1,18 @@
 import {
-  Fragment,
   useEffect,
   useMemo,
   useRef,
   useState,
-  type CSSProperties,
   type DragEvent,
   type KeyboardEvent,
   type MouseEvent,
   type ReactNode,
 } from 'react'
-import { ChevronRight } from 'lucide-react'
+import { ChevronDown, Folder, FolderOpen } from 'lucide-react'
 import { useAtomValue, useSetAtom } from 'jotai'
-import {
-  DeleteConfirm,
-  TREE_LABEL,
-  TREE_NESTED_HANG,
-  TREE_NESTED_ROW,
-  TREE_ROOT_HANG,
-  TREE_ROOT_ROW,
-  TREE_ROW,
-  TREE_ROW_RESET,
-  TreeBar,
-  TreeBranch,
-  TreeDisclose,
-  treeLead,
-  treeNestedTone,
-  treeRootTone,
-} from '@/composites'
+import { syncDataLoaderFeature, type ItemInstance } from '@headless-tree/core'
+import { useTree } from '@headless-tree/react'
+import { DeleteConfirm } from '@/composites'
 import { fileIconFor, pathGlyph, pathLabel } from '@/composites/file-icons'
 import { cn } from '@/lib/cn'
 import { folderDocumentAt, surfaceLabel } from '@/lib/folder-documents'
@@ -40,6 +25,8 @@ import {
   visibleRows,
 } from '@/lib/tree-view'
 import { buildTreeData, ROOT_ID, type TreeItemData } from '@/lib/tree-data'
+import { placeAmong } from '@/lib/tree-order'
+import { setTreeOrderAtom, treeOrderAtom } from '@/state/tree-order'
 import {
   ancestorsOf,
   joinPath,
@@ -47,8 +34,18 @@ import {
   renameBasenameRange,
   withMdExtension,
 } from '@/lib/tree-paths'
-import { useArrivals } from '@/lib/use-arrivals'
-import { Button, ContextMenu, ContextMenuTrigger, Icon, Input, Tooltip } from '@/primitives'
+import {
+  Button,
+  ContextMenu,
+  ContextMenuTrigger,
+  Icon,
+  Input,
+  Tooltip,
+  Tree,
+  TreeDragLine,
+  TreeItem,
+  TreeItemLabel,
+} from '@/primitives'
 import { todayDailyPathAtom } from '@/state/daily'
 import { claimsAtom, folderClaimsAtom, surfacesAtom } from '@/state/plugins'
 import { revealRequestAtom } from '@/state/reveal'
@@ -68,10 +65,12 @@ import { useExplorerActions } from './useExplorerActions'
 import { useTreeProjection } from './useTreeProjection'
 
 /**
- * The explorer (docs/features/file-tree.md): root entries as headings, the
- * focused one marked by a bar at their left that slides between them, and each
- * open folder's contents hung from a rounded connector whose path to the open
- * file is drawn in the brand colour.
+ * The explorer (docs/features/file-tree.md), drawn with the app's one tree
+ * (`primitives/Tree.tsx`, ReUI's): a chevron, an icon and a name per row, a
+ * flat indent per level, and nothing that moves but the hover colour. A
+ * `@headless-tree` instance flattens and indents what `open` shows and gives
+ * the rows their tree semantics; clicks, keys, drag and drop and the menus are
+ * this file's own.
  *
  * A folder document (a claim's `folder`, such as an app bundle) is a folder
  * that behaves as a file: a click opens it, and its files show only when it
@@ -91,6 +90,11 @@ export type TreeExpansion = 'single' | 'multi'
 const SPRING_OPEN_MS = 600
 /** How long typed letters keep adding to one typeahead query. */
 const TYPEAHEAD_MS = 700
+/** Each level's indent: the chevron and its gap, so a child's chevron sits
+ *  under its parent's icon. */
+const TREE_INDENT = 20
+/** What the data loader answers for an id the data no longer has. */
+const MISSING: TreeItemData = { name: '', isFolder: false, isDocument: false, children: [] }
 
 /** The new item's field says what it is naming. */
 const PLACEHOLDERS: Record<'task' | 'file' | 'folder', string> = {
@@ -101,10 +105,6 @@ const PLACEHOLDERS: Record<'task' | 'file' | 'folder', string> = {
 
 const placeholderOf = (kind: NewKind): string =>
   typeof kind === 'string' ? PLACEHOLDERS[kind] : kind.placeholder
-
-/** A folder for grouping: a folder document sits with the files, as it sorts. */
-const isGroupFolder = (node: TreeItemData | undefined) =>
-  node?.isFolder === true && !node.isDocument
 
 /**
  * The inline name field, for a rename and for a new file, folder, task or app. Enter
@@ -133,7 +133,7 @@ function NameInput({
   return (
     <Input
       ref={ref}
-      className="h-[20px] min-w-0 flex-1 rounded px-1 py-0 text-[13px]"
+      className="h-6 min-w-0 flex-1 rounded-md px-1.5 py-0 text-nav"
       placeholder={placeholder}
       value={value}
       onChange={(e) => setValue(e.target.value)}
@@ -151,14 +151,16 @@ function NameInput({
   )
 }
 
-/** One child's slice of its group's connector: the rail past it and its elbow. */
 export function FileTree({
   activePath,
   onOpenPreview,
   onOpenPinned,
   onOpenInNewPane,
   expansion = 'single',
+  sectionLabel,
 }: {
+  /** A section name at the start of the toolbar's band ("Files"). */
+  sectionLabel?: string
   activePath: string | null
   onOpenPreview: (path: string) => void
   onOpenPinned: (path: string) => void
@@ -183,14 +185,17 @@ export function FileTree({
     const surface = surfaces.get(documentAt(id)?.folder.surface ?? '')
     return surface === undefined ? 'Document' : surfaceLabel(surface)
   }
+  const treeOrder = useAtomValue(treeOrderAtom)
+  const setTreeOrder = useSetAtom(setTreeOrderAtom)
   const data = useMemo(
     () =>
       buildTreeData(
         visible.paths,
         [...visible.dirs, ...actions.pendingFolders],
         (dir, has) => folderDocumentAt(folderClaims, dir, has) !== null,
+        treeOrder,
       ),
-    [visible, actions.pendingFolders, folderClaims],
+    [visible, actions.pendingFolders, folderClaims, treeOrder],
   )
   const renameNote = useSetAtom(renameNoteAtom)
   const createNote = useSetAtom(createNoteAtom)
@@ -206,8 +211,6 @@ export function FileTree({
   const vaultPrefix = vault ? `${vault.path}/` : null
 
   const [open, setOpen] = useState<Set<string>>(() => new Set())
-  /** The root entry the bar marks: the last one used, else the open file's. */
-  const [focusRoot, setFocusRoot] = useState<string | null>(null)
   /** The selection, and the row a ⇧ range runs from. */
   const [selected, setSelected] = useState<Set<string>>(() => new Set())
   const [anchor, setAnchor] = useState<string | null>(null)
@@ -224,12 +227,16 @@ export function FileTree({
   } | null>(null)
   /** The folder a drag from the OS would land in ('' = root), while one is over the tree. */
   const [dropTarget, setDropTarget] = useState<string | null>(null)
+  /** Where a drop beside a row would land: the row, and above or below it. */
+  const [dropLine, setDropLine] = useState<{ id: string; side: 'before' | 'after' } | null>(null)
   /** Files the last drop refused, held until dismissed or superseded: a file that
    *  silently did not arrive is the worst outcome of an import. */
   const [skipped, setSkipped] = useState<{ name: string; reason: string }[]>([])
 
   const rows = useMemo(() => visibleRows(data, open), [data, open])
-  const { arrivalProps } = useArrivals(useMemo(() => rows.map((r) => r.id), [rows]))
+  // A new array as the data changes too, which is what makes the tree flatten again.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const expandedItems = useMemo(() => [...open], [open, data])
 
   const navRef = useRef<HTMLDivElement>(null)
   const rowEl = (id: string) =>
@@ -241,20 +248,15 @@ export function FileTree({
   }
 
   // Opening a file (from anywhere: a tab, a link, the palette) opens its
-  // branch and moves the focus to its root; but only a file the tree shows. A
-  // task opened from the board while tasks are hidden has no row to go to, and
-  // following it would open folders around nothing and slide the bar toward
-  // where it would be. Showing tasks then follows it.
+  // branch; but only a file the tree shows. A task opened from the board while
+  // tasks are hidden has no row to go to, and following it would open folders
+  // around nothing. Showing tasks then follows it.
   const activeShown = activePath !== null && data[activePath] !== undefined
   useEffect(() => {
     if (activePath === null || !activeShown) return
     openBranch(activePath, false)
-    setFocusRoot(activePath.split('/')[0]!)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activePath, activeShown, expansion])
-
-  const onPath = (id: string) =>
-    activePath !== null && (id === activePath || activePath.startsWith(`${id}/`))
 
   const toggle = (id: string) => {
     if (!open.has(id)) return openBranch(id, true)
@@ -287,7 +289,6 @@ export function FileTree({
     const { path } = revealRequest
     openBranch(path, false)
     select([path], path)
-    setFocusRoot(path.split('/')[0]!)
     setFocusId(path)
     scrollTo.current = path
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -373,7 +374,6 @@ export function FileTree({
     }
     if (e.shiftKey && anchor !== null) return setSelected(new Set(rangeBetween(rows, anchor, id)))
     select([id], id)
-    setFocusRoot(id.split('/')[0]!)
     // A draft document has nothing to open yet, so it shows its files instead.
     if (node.isFolder && (!node.isDocument || isDraft(id))) toggle(id)
     else if (e.metaKey) onOpenInNewPane(id)
@@ -471,27 +471,43 @@ export function FileTree({
   // One mechanism. A row's drag is a native OS drag of the target files, so it
   // can leave the app; anything dropped on the tree arrives as files. A source
   // inside this vault is a move (links rewritten, tabs follow), anything else
-  // is an import. The folder under the pointer is the destination.
+  // is an import. The middle of a closed folder drops into it; a row's top or
+  // bottom edge drops beside it, at that place in its folder, which the tree
+  // then keeps as its order (`lib/tree-order.ts`), on this machine.
   const springOpen = useRef<{ id: string; timer: ReturnType<typeof setTimeout> } | null>(null)
   const endDrag = () => {
     if (springOpen.current) clearTimeout(springOpen.current.timer)
     springOpen.current = null
     setDropTarget(null)
+    setDropLine(null)
   }
-  /** The row under a drag event, if any, and the folder a drop there lands in. */
+  /** The row under a drag event, if any, the folder a drop there lands in,
+   *  and whether it lands beside the row (`line`) rather than in a folder. */
   const dropAt = (e: DragEvent) => {
     const row = (e.target as HTMLElement).closest<HTMLElement>('[data-path]')
     const id = row?.getAttribute('data-path') ?? null
     // A drop on a document lands beside it, as on a file, not among its files.
     const isFolder = id !== null && data[id]?.isFolder === true && !data[id]?.isDocument
-    return { id, isFolder, dest: dropFolder(id, isFolder) }
+    let line: { id: string; side: 'before' | 'after' } | null = null
+    if (row != null && id !== null) {
+      const box = row.getBoundingClientRect()
+      const y = box.height > 0 ? (e.clientY - box.top) / box.height : 0.5
+      // A closed folder keeps its middle for "into"; an open one gives its
+      // lower part to "into" too, since what shows under it is its contents.
+      if (!isFolder) line = { id, side: y < 0.5 ? 'before' : 'after' }
+      else if (y < 0.28) line = { id, side: 'before' }
+      else if (y > 0.72 && !open.has(id)) line = { id, side: 'after' }
+    }
+    const dest = line !== null ? parentOf(line.id) : dropFolder(id, isFolder)
+    return { id, isFolder, dest, line }
   }
   const onDragOver = (e: DragEvent) => {
     if (!e.dataTransfer.types.includes('Files')) return
     e.preventDefault()
     e.dataTransfer.dropEffect = 'copy'
-    const { id, isFolder, dest } = dropAt(e)
-    setDropTarget(dest)
+    const { id, isFolder, dest, line } = dropAt(e)
+    setDropLine(line)
+    setDropTarget(line === null ? dest : null)
     // Hovering a closed folder opens it, as Finder does.
     if (springOpen.current?.id === id) return
     if (springOpen.current) clearTimeout(springOpen.current.timer)
@@ -503,20 +519,35 @@ export function FileTree({
   const onDrop = (e: DragEvent) => {
     if (!e.dataTransfer.types.includes('Files')) return
     e.preventDefault()
-    const { dest } = dropAt(e)
+    const { dest, line } = dropAt(e)
     endDrag()
     const sources = [...e.dataTransfer.files].map((f) => window.holi.pathForFile(f))
     const mine = vaultPrefix ? sources.filter((p) => p.startsWith(vaultPrefix)) : []
     const theirs = sources.filter((p) => !mine.includes(p))
     const moving = mine.map((p) => p.slice(vaultPrefix!.length))
-    if (moving.length > 0 && canMoveInto(moving, dest)) actions.moveInto(moving, dest)
+    // Those not in the destination yet move there; then, beside a row, every
+    // moved path takes its place in the destination's order.
+    const arriving = moving.filter((p) => parentOf(p) !== dest)
+    if (arriving.length > 0 && canMoveInto(arriving, dest)) actions.moveInto(arriving, dest)
+    if (
+      line !== null &&
+      moving.length > 0 &&
+      (arriving.length === 0 || canMoveInto(arriving, dest))
+    ) {
+      const here = moving.map((p) =>
+        parentOf(p) === dest
+          ? p
+          : `${dest === '' ? '' : `${dest}/`}${p.slice(p.lastIndexOf('/') + 1)}`,
+      )
+      const siblings = data[dest === '' ? ROOT_ID : dest]?.children ?? []
+      setTreeOrder(dest, placeAmong(siblings, here, line.id, line.side))
+    }
     if (theirs.length > 0) void importFiles(theirs, dest).then(setSkipped)
   }
 
   /**
-   * A note is the default row: no `.md` and no glyph (its slot stays, so names
-   * line up). Everything else keeps its extension and type glyph. The rule is
-   * `pathLabel`/`pathGlyph`, which the tabs share.
+   * A note is named without its `.md`; everything else keeps its extension.
+   * The rule is `pathLabel`, which the tabs share.
    */
   const label = (id: string, node: TreeItemData) =>
     node.isDocument
@@ -526,91 +557,118 @@ export function FileTree({
         : pathLabel(id)
 
   /**
-   * What a row leads with: a folder's chevron, or a file's type glyph in the
-   * chevron's column, so the two read apart at a glance. On the open file's
-   * path it is brand, file and every folder above it, so the chevrons trace
-   * the way down alongside the connector.
+   * The row's icon, after the folder's chevron (or a file's empty chevron
+   * column, so every icon lines up): the vault icon map's emoji first, a
+   * document's own glyph (an app's), a folder's folder, a task's status, and
+   * otherwise the file's type glyph, a note's included.
    */
-  const lead = (id: string, node: TreeItemData, isOpen: boolean) => {
-    const slot = cn(treeLead(onPath(id)), ignored.has(id) && 'opacity-50')
+  const rowIcon = (id: string, node: TreeItemData, isOpen: boolean) => {
     const emoji = iconByPath.get(id)
-    // A document leads with its glyph, as a file does; the chevron joins it
-    // only while its contents are shown, which is when there is something to
-    // close.
+    let glyph: ReactNode
     if (node.isDocument) {
       const icon = documentAt(id)?.claim.decorate?.icon
-      return (
-        <>
-          {isOpen && (
-            <span className={slot}>
-              <Icon icon={ChevronRight} size="sm" className="motion-respond rotate-90" />
-            </span>
-          )}
-          <span data-slot="row-icon" className={slot}>
-            {emoji || icon === undefined ? fileIconFor(id, emoji) : <Icon icon={icon} size="sm" />}
-          </span>
-        </>
+      glyph = emoji || icon === undefined ? fileIconFor(id, emoji) : <Icon icon={icon} size="sm" />
+    } else if (node.isFolder) {
+      glyph = emoji ? (
+        fileIconFor(id, emoji)
+      ) : (
+        <Icon icon={isOpen ? FolderOpen : Folder} size="sm" tone="muted" />
       )
-    }
-    if (!node.isFolder) {
-      return (
-        <span data-slot="row-icon" className={slot}>
-          {pathGlyph(id, { emoji, task: taskByPath.get(id)?.status })}
-        </span>
-      )
+    } else {
+      glyph = pathGlyph(id, { emoji, task: taskByPath.get(id)?.status }) ?? fileIconFor(id)
     }
     return (
-      <>
-        <span className={slot}>
-          <Icon
-            icon={ChevronRight}
-            size="sm"
-            className={cn('motion-respond', isOpen && 'rotate-90')}
-          />
-        </span>
-        {/* A chosen icon still shows; the plain folder glyph would repeat the chevron. */}
-        {emoji && (
-          <span data-slot="row-icon" className={slot}>
-            {fileIconFor(id, emoji)}
-          </span>
-        )}
-      </>
+      <span
+        data-slot="row-icon"
+        className={cn('flex w-3.5 shrink-0 justify-center', ignored.has(id) && 'opacity-50')}
+      >
+        {glyph}
+      </span>
     )
   }
 
   /**
-   * A row: its button under the row menu, or, while it is being renamed, the
+   * A folder document's chevron: its files are behind it, and this is the way
+   * in that a newcomer can see, shown on hover or focus and while they are
+   * open. Not a button: it sits in the row's, and the keyboard's way is → as
+   * for any folder.
+   */
+  const documentToggle = (id: string, isOpen: boolean) => (chevron: ReactNode) => (
+    <Tooltip content={`${isOpen ? 'Hide' : 'Show'} ${nounOf(id).toLowerCase()} files`}>
+      <span
+        aria-hidden="true"
+        data-slot="document-files"
+        onClick={(e) => {
+          e.stopPropagation()
+          toggle(id)
+        }}
+        onDoubleClick={(e) => e.stopPropagation()}
+        className={cn(
+          'motion-respond flex shrink-0',
+          !isOpen && 'opacity-0 group-hover/doc:opacity-100 group-focus-visible/doc:opacity-100',
+        )}
+      >
+        {chevron}
+      </span>
+    </Tooltip>
+  )
+
+  const tree = useTree<TreeItemData>({
+    rootItemId: ROOT_ID,
+    indent: TREE_INDENT,
+    getItemName: (item) => label(item.getId(), item.getItemData()),
+    isItemFolder: (item) => item.getItemData().isFolder,
+    dataLoader: {
+      getItem: (id) => data[id] ?? MISSING,
+      getChildren: (id) => data[id]?.children ?? [],
+    },
+    // Ours, controlled: the tree flattens and indents what `open` shows. Its
+    // own clicks are overridden, so nothing asks it to change these.
+    state: { expandedItems, focusedItem: focusId },
+    setExpandedItems: () => {},
+    setFocusedItem: () => {},
+    features: [syncDataLoaderFeature],
+  })
+  const items = tree.getItems()
+
+  /**
+   * A row: a tree item under the row menu, or, while it is being renamed, the
    * same row holding the name field (a field cannot sit inside a button).
    * A selection shows only once it is more than one row: a single one is
    * already said by the open file's weight and the focus ring. A gitignored
-   * row dims its contents, not itself, so a selection behind it stays solid.
+   * row dims its name and icon, not itself, so a selection behind it stays solid.
    */
-  const row = (id: string, node: TreeItemData, className: string, style?: CSSProperties) => {
+  const row = (item: ItemInstance<TreeItemData>) => {
+    const id = item.getId()
+    const node = item.getItemData()
     const isOpen = node.isFolder && open.has(id)
     const isCut = actions.clipboard?.mode === 'cut' && actions.clipboard.paths.includes(id)
     if (renaming === id)
       return (
-        <div data-path={id} className={cn(className, 'flex items-center')} style={style}>
-          {lead(id, node, isOpen)}
-          <NameInput
-            // As listed: a note without its `.md`, which the rename adds back.
-            initial={label(id, node)}
-            onCommit={(name) => rename(id, node, name)}
-            onCancel={() => setRenaming(null)}
-          />
-        </div>
+        <TreeItem key={id} item={item} asChild onClick={undefined}>
+          <div data-path={id}>
+            <TreeItemLabel className="py-0.5">
+              {rowIcon(id, node, isOpen)}
+              <NameInput
+                // As listed: a note without its `.md`, which the rename adds back.
+                initial={label(id, node)}
+                onCommit={(name) => rename(id, node, name)}
+                onCancel={() => setRenaming(null)}
+              />
+            </TreeItemLabel>
+          </div>
+        </TreeItem>
       )
-    const arrival = arrivalProps(id)
     return (
-      <ContextMenu>
+      <ContextMenu key={id}>
         <ContextMenuTrigger asChild>
-          <Button
-            variant="ghost"
+          <TreeItem
+            item={item}
             data-path={id}
-            role="treeitem"
-            aria-level={id.split('/').length}
             aria-selected={selected.has(id)}
             aria-expanded={node.isFolder ? isOpen : undefined}
+            data-selected={selected.size > 1 && selected.has(id)}
+            data-drag-target={dropTarget === id}
             tabIndex={id === (focusId ?? rows[0]?.id) ? 0 : -1}
             draggable
             onDragStart={(e) => {
@@ -623,59 +681,49 @@ export function FileTree({
               if (rowKey(e, id, node)) e.preventDefault()
             }}
             className={cn(
-              TREE_ROW_RESET,
-              className,
+              'w-full',
               node.isDocument && 'group/doc',
-              // Hover-proof: ROW_RESET clears the ghost hover fill, which would
-              // otherwise wipe these under the pointer.
-              selected.size > 1 &&
-                selected.has(id) &&
-                'rounded-md bg-accent/60 hover:bg-accent/60 dark:hover:bg-accent/60',
-              dropTarget === id && 'rounded-md bg-accent hover:bg-accent dark:hover:bg-accent',
               isCut && 'opacity-40',
-              arrival.className,
+              dropLine?.id === id && 'relative',
             )}
-            style={{ ...style, ...arrival.style }}
           >
-            {lead(id, node, isOpen)}
-            <span
-              data-slot="row-name"
-              className={cn(
-                TREE_LABEL,
-                taskByPath.get(id)?.status === 'done' && 'line-through',
-                (ignored.has(id) || (node.isDocument && isDraft(id))) && 'opacity-50',
-              )}
+            {dropLine?.id === id && (
+              // The place a drop beside this row lands: a line on its edge.
+              <TreeDragLine
+                aria-hidden
+                data-testid="tree-drop-line"
+                className="pointer-events-none"
+                style={{
+                  insetInlineStart: 'var(--tree-padding)',
+                  insetInlineEnd: 0,
+                  ...(dropLine.side === 'before' ? { top: 0 } : { bottom: 0 }),
+                }}
+              />
+            )}
+            <TreeItemLabel
+              className={cn('min-w-0', id === activePath && 'font-semibold')}
+              renderToggle={node.isDocument ? documentToggle(id, isOpen) : undefined}
             >
-              {label(id, node)}
-            </span>
-            {/* Today's daily, marked where it lives (docs/features/daily-notes.md):
-                at the row's right end, boxed to its x-height like the name so
-                the row's centring lines the two up. */}
-            {/* A document's files are behind it: this is the way in that a
-                newcomer can see, on hover or focus. Not a button: it sits in
-                the row's, and the keyboard's way is → as for any folder. */}
-            {node.isDocument && (
-              <Tooltip content={`${isOpen ? 'Hide' : 'Show'} ${nounOf(id).toLowerCase()} files`}>
-                <span
-                  aria-hidden="true"
-                  data-slot="document-files"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    toggle(id)
-                  }}
-                  onDoubleClick={(e) => e.stopPropagation()}
-                  className="motion-respond ml-auto flex shrink-0 rounded-sm px-1 text-muted-foreground opacity-0 group-hover/doc:opacity-100 group-focus-visible/doc:opacity-100 hover:text-foreground"
-                >
-                  <Icon icon={ChevronRight} size="sm" className={cn(isOpen && 'rotate-90')} />
-                </span>
-              </Tooltip>
-            )}
-            {id === todayDailyPath && (
-              <span className="ml-auto shrink-0 text-[11px] text-brand [text-box:trim-both_ex_alphabetic]">
-                today{todayLinkCount > 0 && ` · ${todayLinkCount}`}
+              {rowIcon(id, node, isOpen)}
+              <span
+                data-slot="row-name"
+                className={cn(
+                  'min-w-0 truncate',
+                  taskByPath.get(id)?.status === 'done' && 'line-through',
+                  (ignored.has(id) || (node.isDocument && isDraft(id))) && 'opacity-50',
+                )}
+              >
+                {label(id, node)}
               </span>
-            )}
-          </Button>
+              {/* Today's daily, marked where it lives (docs/features/daily-notes.md),
+                  at the row's right end. */}
+              {id === todayDailyPath && (
+                <span className="ml-auto shrink-0 text-xs tabular-nums text-brand">
+                  today{todayLinkCount > 0 && ` · ${todayLinkCount}`}
+                </span>
+              )}
+            </TreeItemLabel>
+          </TreeItem>
         </ContextMenuTrigger>
         <RowMenu
           path={id}
@@ -695,14 +743,41 @@ export function FileTree({
     )
   }
 
-  /** The name input for a new item, as a row of the group it joins. It
-   *  slides in, making room, with a folder's disclose motion. */
-  const pendingInput = (className: string, style?: CSSProperties) =>
+  /** Where the new item's field goes among the rows, and at what level: first
+   *  in its folder, or after the row `after` and everything open under it. */
+  const pendingAt = (): { index: number; level: number } | null => {
+    if (pending === null) return null
+    const { parent, after } = pending
+    const at = (id: string) => items.findIndex((it) => it.getId() === id)
+    if (after === null) {
+      if (parent === '') return { index: 0, level: 0 }
+      const i = at(parent)
+      return i < 0 ? null : { index: i + 1, level: items[i]!.getItemMeta().level + 1 }
+    }
+    const i = at(after)
+    if (i < 0) return null
+    const level = items[i]!.getItemMeta().level
+    let j = i + 1
+    while (j < items.length && items[j]!.getItemMeta().level > level) j++
+    return { index: j, level }
+  }
+
+  /** The name field for a new item, as a row at its place: a folder's chevron
+   *  and glyph, else the empty chevron column, so the name lines up. */
+  const pendingRow = (level: number) =>
     pending && (
-      <TreeDisclose open group={false}>
-        <div className={cn(className, 'flex items-center')} style={style}>
+      <div key="__pending__" className="pb-0.5" style={{ paddingInlineStart: level * TREE_INDENT }}>
+        <div
+          className={cn(
+            'flex items-center gap-1 px-2 py-0.5 text-nav',
+            pending.kind !== 'folder' && 'ps-7',
+          )}
+        >
+          {pending.kind === 'folder' && (
+            <Icon icon={ChevronDown} tone="muted" className="-rotate-90" />
+          )}
           <span className="flex w-3.5 shrink-0 justify-center">
-            {pending.kind === 'folder' && <Icon icon={ChevronRight} size="sm" tone="muted" />}
+            {pending.kind === 'folder' && <Icon icon={Folder} size="sm" tone="muted" />}
           </span>
           <NameInput
             initial=""
@@ -711,59 +786,20 @@ export function FileTree({
             onCancel={() => setPending(null)}
           />
         </div>
-      </TreeDisclose>
-    )
-
-  /** A folder's children, hung from its connector; a new name's input first. */
-  const group = (parent: string) => {
-    const children = data[parent]?.children ?? []
-    const litIndex = children.findIndex(onPath)
-    const nested = (id: string) =>
-      cn(TREE_NESTED_ROW, treeNestedTone(id === activePath, onPath(id)))
-    const here = pending?.parent === parent ? pending : null
-    /** The new item's field as a child of this group: first, or under `after`. */
-    const field = (last: boolean, litThrough: boolean) => (
-      <TreeBranch last={last} lit={false} litThrough={litThrough}>
-        {pendingInput('gap-2 pr-3', { height: TREE_ROW })}
-      </TreeBranch>
-    )
-    return (
-      <div className="relative py-1">
-        {here?.after === null && field(children.length === 0, litIndex >= 0)}
-        {children.map((id, i) => {
-          const node = data[id]
-          if (!node) return null
-          const fieldAfter = here?.after === id
-          return (
-            <Fragment key={id}>
-              <TreeBranch
-                last={i === children.length - 1 && !fieldAfter}
-                lit={i === litIndex}
-                litThrough={litIndex > i}
-              >
-                {row(id, node, nested(id), { height: TREE_ROW })}
-                {node.isFolder && (
-                  // Hangs from the centre of the chevron above it.
-                  <div style={{ marginLeft: TREE_NESTED_HANG }}>
-                    <TreeDisclose open={open.has(id)}>{group(id)}</TreeDisclose>
-                  </div>
-                )}
-              </TreeBranch>
-              {fieldAfter && field(i === children.length - 1, litIndex > i)}
-            </Fragment>
-          )
-        })}
       </div>
     )
-  }
 
-  const roots = data[ROOT_ID]?.children ?? []
+  const field = pendingAt()
+  const listed: ReactNode[] = items.map(row)
+  if (field !== null) listed.splice(field.index, 0, pendingRow(field.level))
+
   /** Everything the last import or export refused, in one list. */
   const refused = [...skipped, ...actions.exportFailures]
 
   return (
     <div className="group/explorer relative flex min-h-0 flex-1 flex-col">
       <ExplorerHeader
+        label={sectionLabel}
         creates={creates}
         onNew={(kind) => {
           const { parent, after } = newItemPlace(focusId, data)
@@ -778,7 +814,7 @@ export function FileTree({
       <div
         className={cn(
           'motion-respond min-h-0 flex-1 overflow-y-auto pb-4 pt-10',
-          dropTarget === '' && 'bg-primary/5',
+          dropTarget === '' && 'bg-foreground/[0.03]',
         )}
         onClick={(e) => {
           const target = e.target
@@ -790,7 +826,6 @@ export function FileTree({
           setSelected(new Set())
           setAnchor(null)
           setFocusId(null)
-          setFocusRoot(null)
         }}
         onDragOver={onDragOver}
         onDragLeave={(e) => {
@@ -806,55 +841,24 @@ export function FileTree({
               actions.dismissExportFailures()
             }}
             // amber = the warning role (no token yet); named utilities are gate-legal.
-            className="mb-2 h-auto w-full justify-start whitespace-normal p-0 px-3 text-left text-[11px] text-amber-300/90 hover:text-amber-200"
+            className="mb-2 h-auto w-full justify-start whitespace-normal p-0 px-3 text-left text-xs text-amber-700 hover:text-amber-800 dark:text-amber-300 dark:hover:text-amber-200"
           >
             {refused.map((s) => s.name).join(', ')}: {refused[0]!.reason}. Click to dismiss.
           </Button>
         )}
-        <div
+        <Tree
           ref={navRef}
-          role="tree"
+          tree={tree}
+          indent={TREE_INDENT}
           aria-label="Files"
           aria-multiselectable
-          className="relative flex flex-col"
+          className="relative px-2"
         >
-          {/* The bar slides to the focused root row. */}
-          <TreeBar
-            container={navRef}
-            selector={focusRoot ? `:scope > div > [data-path="${CSS.escape(focusRoot)}"]` : null}
-            deps={[data, open]}
-          />
-          {pending?.parent === '' &&
-            pending.after === null &&
-            pendingInput('h-7 gap-2 pl-6 pr-3 text-[15px]')}
-          {roots.map((id, i) => {
-            const node = data[id]
-            if (!node) return null
-            return (
-              <Fragment key={id}>
-                <div
-                  // A break between the root's folders and its loose files
-                  // (folders sort first), so the two groups read apart.
-                  className={cn(
-                    !isGroupFolder(node) && i > 0 && isGroupFolder(data[roots[i - 1]!]) && 'mt-3',
-                  )}
-                >
-                  {row(id, node, cn(TREE_ROOT_ROW, treeRootTone(focusRoot === id || onPath(id))))}
-                  {node.isFolder && (
-                    // Hangs from the centre of the heading's chevron.
-                    <div style={{ marginLeft: TREE_ROOT_HANG }}>
-                      <TreeDisclose open={open.has(id)}>{group(id)}</TreeDisclose>
-                    </div>
-                  )}
-                </div>
-                {pending?.parent === '' &&
-                  pending.after === id &&
-                  pendingInput('h-7 gap-2 pl-6 pr-3 text-[15px]')}
-              </Fragment>
-            )
-          })}
-          {roots.length === 0 && <p className="px-6 text-xs text-muted-foreground">no notes yet</p>}
-        </div>
+          {listed}
+          {items.length === 0 && pending === null && (
+            <p className="px-2 text-xs text-muted-foreground">no notes yet</p>
+          )}
+        </Tree>
       </div>
 
       {actions.confirming && (

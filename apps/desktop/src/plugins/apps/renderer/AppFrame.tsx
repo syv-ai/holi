@@ -44,6 +44,8 @@ import {
   snapshotAtom,
   surfacesAtom,
 } from '@/plugin-api'
+import { AppWindow } from 'lucide-react'
+import { EmptyState } from '@/composites'
 import { Button, Dialog } from '@/primitives'
 import { appPushSignaturesAtom, storeSignatures } from './app-push'
 import { appOpensAtom, appPathsAtom } from './apps'
@@ -244,14 +246,11 @@ export function AppFrame({ path }: { path: string }): React.JSX.Element {
 
   if (!exists) {
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-3 text-sm">
-        <p className="text-muted-foreground">
-          <span className="text-foreground">{name}</span> was deleted.
-        </p>
-        <Button variant="ghost" onClick={() => closeTab('app', path)}>
-          close tab
-        </Button>
-      </div>
+      <EmptyState
+        icon={AppWindow}
+        title={`${name} was deleted.`}
+        action={{ label: 'Close tab', onClick: () => closeTab('app', path) }}
+      />
     )
   }
 
@@ -279,16 +278,13 @@ export function AppFrame({ path }: { path: string }): React.JSX.Element {
             {name} wants permission to read {reads}
           </Dialog.Header>
           <Dialog.Body>
-            <div className="grid gap-3 text-xs leading-relaxed text-muted-foreground">
+            <div className="grid gap-3 text-sm text-pretty text-muted-foreground">
               <p>
-                What it reads, it can store, which may sync to others in this vault or over the
-                network. Sounds scary, but it doesn&rsquo;t mean it does these things, just that it
-                requests a permission that can potentially be used like that.
+                {name} can store what it reads, and what it stores may sync to others in this vault
+                or leave this machine. Allow it only if you trust who wrote it.
               </p>
               <AppsWords asked={ask.affordances} reasons={reasons} />
-              <p>
-                Allow it if you trust them. Holi will ask again in 30 days, or if the app changes.
-              </p>
+              <p>Holi asks again in 30 days, or sooner if the app changes.</p>
             </div>
             <WrittenBy authorship={authorship} />
           </Dialog.Body>
@@ -353,7 +349,7 @@ function AppsWords({
   if (said.length === 0) return null
   return (
     <figure className="grid gap-1">
-      <figcaption>The dev&rsquo;s explanation:</figcaption>
+      <figcaption>In the developer&rsquo;s words:</figcaption>
       {said.map(([affordance, reason]) => (
         <blockquote key={affordance} className="pt-1.5 italic text-foreground">
           &ldquo;{reason}&rdquo;

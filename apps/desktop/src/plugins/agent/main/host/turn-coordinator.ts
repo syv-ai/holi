@@ -33,6 +33,9 @@ export interface TurnCoordinatorDeps {
   /** Records what a turn changed, as a commit range. Keyed by vault ROOT.
    *  Absent means no recording rather than a broken one. */
   turnLogFor?: (vaultRoot: string) => TurnLog
+  /** How long to wait before asking again for a settle commit that answered
+   *  null. Default 1000. */
+  settleRetryMs?: number
   /** Force-release a session whose turn never ends. Default 600000 (10 min). */
   turnSafetyMs?: number
   /** How long a session must have read `idle` before that counts as its turn
@@ -126,7 +129,16 @@ export function createTurnCoordinator(deps: TurnCoordinatorDeps): TurnCoordinato
     // fire on its own would make the end sha race a 3-second timer that the
     // safety-cap path does not respect; `commitNow` returns null on a clean
     // tree, which is the ordinary outcome of a turn that only read.
-    const end = (await vault.commitNow()) ?? (await vault.head())
+    //
+    // Resuming the vault starts a commit of its own (its retry), which can be
+    // the one holding the tree when this asks: `commitNow` then answers null
+    // with the turn's work still landing. So a null is asked again once that
+    // commit has had a moment, and only then read as "nothing to commit".
+    let end = await vault.commitNow()
+    if (end === null) {
+      await new Promise((r) => setTimeout(r, deps.settleRetryMs ?? 1_000))
+      end = (await vault.commitNow()) ?? (await vault.head())
+    }
     if (end === null) return
     const at = new Date().toISOString()
     const turnLog = turnLogFor(vault.root)

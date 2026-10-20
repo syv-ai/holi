@@ -10,27 +10,23 @@
  * One host rather than one per editor: a widget does not know which pane it is
  * in, and every editor in the app wants the same treatment anyway.
  */
-import { useLayoutEffect, useSyncExternalStore } from 'react'
+import { useSyncExternalStore } from 'react'
 import { createPortal } from 'react-dom'
 import {
   frontmatterPortals,
   subscribeFrontmatterPortals,
   type FrontmatterPortal,
 } from '@/editor/frontmatter-portals'
-import { playOnce } from '@/lib/motion'
 import { FrontmatterFields } from './FrontmatterFields'
 
 /**
  * One block, faded in. CodeMirror paints the widget's container in `toDOM` and
  * React fills it on a later tick, so the block would blink empty for a frame.
- * The layout effect runs after the rows mount but before paint, so the block
- * fades up instead. Opening its height too was rejected as too much motion.
+ * It appears with the note, without a fade: the note itself does not fade.
  *
  * A component per portal because this needs a hook.
  */
 function FrontmatterBlock({ portal }: { portal: FrontmatterPortal }): React.JSX.Element {
-  useLayoutEffect(() => playOnce(portal.el, 'motion-in-fade'), [portal.el])
-
   return createPortal(
     <FrontmatterFields path={portal.path} yaml={portal.yaml} onWrite={portal.write} />,
     portal.el,

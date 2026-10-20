@@ -57,7 +57,7 @@ test('a choice shows which option is currently selected', () => {
   setup({ home: 'daily' })
   const row = screen.getByRole('group', { name: 'Home is' })
   expect(within(row).getByRole('radio', { name: 'Today’s note' })).toBeChecked()
-  expect(within(row).getByRole('radio', { name: 'Recently opened' })).not.toBeChecked()
+  expect(within(row).getByRole('radio', { name: 'Vault overview' })).not.toBeChecked()
 })
 
 test('appearance is a choice too, and reports a plain string', async () => {

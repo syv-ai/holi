@@ -134,10 +134,10 @@ function WaitingNotice(): React.JSX.Element | null {
     else askToRun(flow, row)
   }
   return (
-    <div className="grid gap-1.5 px-3 py-2 text-[11px] text-muted-foreground">
+    <div className="grid gap-1.5 px-3 py-2 text-xs text-muted-foreground">
       {waiting.map((row) => (
         <div key={row.id} className="flex items-center justify-between gap-2">
-          <span className="min-w-0 truncate">
+          <span className="min-w-0 text-pretty break-words">
             This vault uses <span className="text-foreground">{row.name}</span>
             {row.pin !== null && <> {row.pin.version}</>}
           </span>
@@ -150,7 +150,7 @@ function WaitingNotice(): React.JSX.Element | null {
       ))}
       {updatable.map(({ row, version }) => (
         <div key={row.id} className="flex items-center justify-between gap-2">
-          <span className="min-w-0 truncate">
+          <span className="min-w-0 text-pretty break-words">
             <span className="text-foreground">{row.name}</span> {version} is available
           </span>
           <Button
@@ -162,7 +162,11 @@ function WaitingNotice(): React.JSX.Element | null {
           </Button>
         </div>
       ))}
-      {error !== null && <p className="text-amber-400">{error}</p>}
+      {error !== null && (
+        <p role="alert" className="text-pretty break-words text-destructive">
+          {error}
+        </p>
+      )}
     </div>
   )
 }

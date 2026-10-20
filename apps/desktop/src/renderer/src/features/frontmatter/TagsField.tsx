@@ -18,8 +18,8 @@ import {
   ComboboxItem,
   ComboboxList,
   Icon,
+  useFieldControlId,
 } from '@/primitives'
-import { useFieldControlId } from '@/composites'
 
 export function TagsField({
   name,

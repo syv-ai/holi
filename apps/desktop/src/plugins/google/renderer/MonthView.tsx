@@ -93,7 +93,7 @@ export function MonthView({
             role="row"
             className="grid min-h-0 grid-cols-[2rem_repeat(7,minmax(0,1fr))] border-b border-divider last:border-b-0"
           >
-            <span className="px-1 pt-1.5 text-[11px] text-muted-foreground/70 tabular-nums">
+            <span className="px-1 pt-1.5 text-xs text-muted-foreground tabular-nums">
               {isoWeek(week[0]!.date)}
             </span>
             {week.map(({ date, inMonth }, column) => {
@@ -134,7 +134,7 @@ export function MonthView({
                           ? 'bg-primary font-medium text-primary-foreground'
                           : inMonth
                             ? 'text-foreground'
-                            : 'text-muted-foreground/60',
+                            : 'text-muted-foreground',
                       )}
                     >
                       {day === 1 && !isToday ? `${monthShort(date)} ${day}` : day}
@@ -147,12 +147,13 @@ export function MonthView({
                         key={`${event.calendarId}:${event.id}:${date}`}
                         variant="ghost"
                         size="xs"
-                        aria-label={`${event.title}, ${event.allDay ? 'all day' : timeOf(event.start)}`}
+                        aria-label={`${event.title}, ${event.allDay ? 'all day' : timeOf(event.start)}${event.busy ? '' : ', free'}`}
                         data-event={event.id}
                         className={cn(
                           'h-5 w-full min-w-0 justify-start gap-1.5 rounded-md p-0 px-1 text-left text-xs font-normal',
-                          (past || !event.busy) && 'opacity-60',
-                          !event.mine && 'text-muted-foreground',
+                          // Past, free and someone else's events mute their text;
+                          // never opacity, which would stack on the muted token.
+                          (past || !event.busy || !event.mine) && 'text-muted-foreground',
                         )}
                         style={event.allDay ? { background: tint(event.color) } : undefined}
                         onClick={(click) => {

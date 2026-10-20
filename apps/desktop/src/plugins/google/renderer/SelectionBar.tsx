@@ -12,6 +12,7 @@
  */
 import { Archive, MailOpen, Mail, Star, StarOff, Trash2, X } from 'lucide-react'
 import { IconButton } from '@/primitives'
+import { PaneToolbar } from '@/composites'
 
 export function SelectionBar({
   count,
@@ -29,20 +30,20 @@ export function SelectionBar({
   onClear: () => void
 }): React.JSX.Element {
   return (
-    <div className="flex h-11 shrink-0 items-center gap-1 bg-secondary px-2">
+    <PaneToolbar className="bg-secondary">
       <span className="shrink-0 text-xs font-medium tabular-nums">{count} selected</span>
 
       <div className="ml-auto flex shrink-0 items-center gap-1">
         {/* Both directions of both toggles, spelled out rather than derived:
             a mixed selection has no "current" state to flip. */}
-        <IconButton icon={MailOpen} label="mark read" onClick={() => onSetRead(true)} />
-        <IconButton icon={Mail} label="mark unread" onClick={() => onSetRead(false)} />
-        <IconButton icon={Star} label="star" onClick={() => onSetStarred(true)} />
-        <IconButton icon={StarOff} label="unstar" onClick={() => onSetStarred(false)} />
+        <IconButton icon={MailOpen} label="Mark read" onClick={() => onSetRead(true)} />
+        <IconButton icon={Mail} label="Mark unread" onClick={() => onSetRead(false)} />
+        <IconButton icon={Star} label="Star" onClick={() => onSetStarred(true)} />
+        <IconButton icon={StarOff} label="Unstar" onClick={() => onSetStarred(false)} />
         <IconButton
           icon={Archive}
-          label="archive"
-          tooltip="archive — removes them from the inbox, keeps them in All Mail"
+          label="Archive"
+          tooltip="Archive: removes them from the inbox, keeps them in All Mail"
           onClick={onArchive}
         />
         {/* Trash, which Gmail keeps for 30 days. Not called Delete: Holi cannot
@@ -50,17 +51,17 @@ export function SelectionBar({
             let it. */}
         <IconButton
           icon={Trash2}
-          label="move to trash"
-          tooltip="move to trash — recoverable for 30 days"
+          label="Move to trash"
+          tooltip="Move to trash: recoverable for 30 days"
           onClick={onTrash}
         />
         <IconButton
           icon={X}
-          label="clear selection"
-          tooltip="clear selection (Esc)"
+          label="Clear selection"
+          tooltip="Clear selection (Esc)"
           onClick={onClear}
         />
       </div>
-    </div>
+    </PaneToolbar>
   )
 }

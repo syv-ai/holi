@@ -16,9 +16,7 @@ test('renders the leading region and action controls', () => {
 
 test('an action reports clicks through onSelect', async () => {
   const onSelect = vi.fn()
-  render(
-    <PanelHeader actions={[{ icon: RotateCw, label: 'Restart', onSelect }]}>x</PanelHeader>,
-  )
+  render(<PanelHeader actions={[{ icon: RotateCw, label: 'Restart', onSelect }]}>x</PanelHeader>)
   await userEvent.click(screen.getByRole('button', { name: 'Restart' }))
   expect(onSelect).toHaveBeenCalledOnce()
 })
@@ -34,9 +32,7 @@ test('a hidden action is not rendered', () => {
 
 test('a hotkey is shown in the tooltip and bound while mounted', async () => {
   const onSelect = vi.fn()
-  render(
-    <PanelHeader close={{ icon: X, label: 'Hide', hotkey: '⌘J', onSelect }}>x</PanelHeader>,
-  )
+  render(<PanelHeader close={{ icon: X, label: 'Hide', hotkey: '⌘J', onSelect }}>x</PanelHeader>)
   // Shown — the custom Tooltip (never a native title), with the hotkey as a kbd.
   expect(screen.getByRole('button', { name: 'Hide' })).not.toHaveAttribute('title')
   await userEvent.tab()
@@ -50,9 +46,7 @@ test('a hotkey is shown in the tooltip and bound while mounted', async () => {
 
 test('the bound hotkey ignores a non-matching chord', () => {
   const onSelect = vi.fn()
-  render(
-    <PanelHeader close={{ icon: X, label: 'Hide', hotkey: '⌘J', onSelect }}>x</PanelHeader>,
-  )
+  render(<PanelHeader close={{ icon: X, label: 'Hide', hotkey: '⌘J', onSelect }}>x</PanelHeader>)
   fireEvent.keyDown(window, { key: 'j' }) // no modifier
   fireEvent.keyDown(window, { key: 'k', metaKey: true })
   expect(onSelect).not.toHaveBeenCalled()

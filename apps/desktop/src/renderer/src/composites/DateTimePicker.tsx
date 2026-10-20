@@ -27,8 +27,8 @@ import {
   PopoverContent,
   PopoverTrigger,
   Tooltip,
+  useFieldControlId,
 } from '@/primitives'
-import { useFieldControlId } from './FieldRow'
 import { cn } from '@/lib/cn'
 import type { DatePreset } from '@/lib/date-presets'
 
@@ -224,8 +224,8 @@ export function DateTimePicker({
               <Button
                 key={p.label}
                 variant="ghost"
-                size="sm"
-                className="h-7 justify-between gap-3 px-2 text-xs font-normal whitespace-nowrap"
+                size="xs"
+                className="justify-between gap-3 font-normal whitespace-nowrap"
                 onClick={() => {
                   onChange(p.value)
                   setOpen(false)
@@ -233,7 +233,7 @@ export function DateTimePicker({
               >
                 {p.label}
                 {p.hint !== undefined && (
-                  <span className="shrink-0 text-[10px] text-muted-foreground">{p.hint}</span>
+                  <span className="shrink-0 text-xs text-muted-foreground">{p.hint}</span>
                 )}
               </Button>
             ))}
@@ -267,7 +267,7 @@ export function DateTimePicker({
               <span
                 key={i}
                 aria-hidden
-                className="flex h-6 items-center justify-center text-[10px] text-muted-foreground"
+                className="flex h-6 items-center justify-center text-xs text-muted-foreground"
               >
                 {d}
               </span>
@@ -283,7 +283,7 @@ export function DateTimePicker({
                 aria-current={cell.date === today ? 'date' : undefined}
                 onClick={() => pickDay(cell.date)}
                 className={cn(
-                  'h-7 w-7 justify-center rounded-md p-0 text-[11px] font-normal',
+                  'h-7 w-7 justify-center rounded-md p-0 text-xs font-normal',
                   !cell.inMonth && 'text-muted-foreground/50',
                   cell.date === today && 'ring-1 ring-brand ring-inset',
                   cell.date === selected && SELECTED_DAY,
@@ -302,9 +302,9 @@ export function DateTimePicker({
               {time === null ? (
                 <Button
                   variant="ghost"
-                  size="sm"
+                  size="xs"
                   disabled={selected === null}
-                  className="h-7 px-2 text-xs font-normal text-brand"
+                  className="font-normal text-brand"
                   onClick={() => selected !== null && onChange(withTime(selected, ANCHOR_TIME))}
                 >
                   + add a time
@@ -332,9 +332,9 @@ export function DateTimePicker({
               )}
               <Button
                 variant="ghost"
-                size="sm"
+                size="xs"
                 disabled={value === null}
-                className="ml-auto h-7 px-2 text-xs font-normal text-muted-foreground"
+                className="ml-auto font-normal text-muted-foreground"
                 onClick={() => onChange(null)}
               >
                 clear

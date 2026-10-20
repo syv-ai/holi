@@ -147,6 +147,22 @@ describe('agent sessions', () => {
     expect(t.sessions.sessions()[0]?.state).toBe('working')
   })
 
+  it('holds sync for a turn an outside driver brackets, which the listing never forgets', async () => {
+    const t = setup([row('aaaaaaaa')])
+    await t.attach()
+    t.sessions.bracket('chat-1', 'begin')
+    expect(t.pauses).toEqual(['the assistant is working'])
+    // The listing never names a bracketed id: a reread must not drop its
+    // turn, or the next turn would take the pause a second time.
+    await t.sessions.refresh()
+    t.sessions.bracket('chat-2', 'begin')
+    expect(t.pauses).toHaveLength(1)
+    t.sessions.bracket('chat-1', 'end')
+    t.sessions.bracket('chat-2', 'forget')
+    t.sessions.bracket('chat-3', 'begin')
+    expect(t.pauses).toHaveLength(2)
+  })
+
   it("puts a session's context reading on its row, by job id and for this vault only", async () => {
     const t = setup([row('aaaaaaaa'), row('bbbbbbbb')])
     await t.attach()

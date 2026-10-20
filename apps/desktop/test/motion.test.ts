@@ -131,23 +131,3 @@ describe('index.css is the one motion vocabulary', () => {
     },
   )
 })
-
-/**
- * The ritual paints with Holi's tokens and nothing of its own.
- *
- * It once carried a private palette of bare HSL triplets, and every
- * `color-mix()` of one was silently dropped: a <color> was wanted. With Holi's
- * tokens there is no triplet to mix, so the trap is gone as long as nothing
- * brings a palette back.
- */
-test('the ritual paints only with Holi’s tokens', () => {
-  const css = readFileSync(
-    fileURLToPath(
-      new URL('../src/renderer/src/features/onboarding/onboarding-ritual.css', import.meta.url),
-    ),
-    'utf8',
-  )
-  expect(css).not.toMatch(/hsl\(var\(/)
-  const redefined = THEME_TOKENS.filter((slug) => new RegExp(`--${slug}\\s*:`).test(css))
-  expect(redefined).toEqual([])
-})

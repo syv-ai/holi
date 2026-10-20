@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, test } from 'vitest'
 import { COMPLETION_CLASS, OPTION_CLASS, holiOptionClass } from '@/editor/completion'
-import { completionChrome } from '@/editor/theme'
+import { completionChrome, editorThemeSpec } from '@/editor/theme'
 
 describe('a row we author is marked, and nothing else is', () => {
   test('our own sources name a `holi-` type, and get the class the chrome needs', () => {
@@ -51,6 +51,15 @@ describe('the chrome cannot go quietly dead again', () => {
   // light mode, because this block was written in hex.
   test('nothing here is a colour literal', () => {
     expect(JSON.stringify(completionChrome)).not.toMatch(/#[0-9a-fA-F]{3}/)
+  })
+
+  // The whole editor, not just the popup: a literal is one mode's colour. The
+  // caret was `#e5e5e5`, invisible on the light page, and code blocks a white
+  // wash that vanished there.
+  test('nothing in the editor theme is a hex or rgba literal', () => {
+    const theme = JSON.stringify(editorThemeSpec)
+    expect(theme).not.toMatch(/#[0-9a-fA-F]{3}/)
+    expect(theme).not.toMatch(/rgba?\(/)
   })
 
   // `:has()` carries its argument's specificity, so the table menu outranks

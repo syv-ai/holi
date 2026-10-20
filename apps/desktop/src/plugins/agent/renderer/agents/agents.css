@@ -1,0 +1,101 @@
+/*
+ * The Agents view's own motion (docs/features/agent-sessions.md, The Agents
+ * view). Ported from MonoCode (MIT, Copyright (c) 2026 Nick; see NOTICE.md):
+ * the pixel mascots' bob, hop, chatter, blink and idea bulb. Everything else
+ * in the view moves through the house utilities (`motion-orbit` for work in
+ * flight, `motion-shimmer` for loading); a Holi that needs you is a steady
+ * amber dot, not a breathing one.
+ *
+ * Every duration is a multiple of `--motion-inflight`, the app's one loop
+ * pace, so re-pacing the app re-paces these. The mascots move half a sprite
+ * cell at a time on `step-end`, the arcade feel MonoCode chose. Reduced motion
+ * stops all of it, as it stops every loop.
+ */
+
+.pixel-bob {
+  animation: pixel-bob calc(var(--motion-inflight) * 1.5) step-end infinite;
+}
+.pixel-hop {
+  animation: pixel-bob calc(var(--motion-inflight) * 0.5) step-end infinite;
+}
+.pixel-frame-a {
+  animation: pixel-frame-a calc(var(--motion-inflight) * 0.25) step-end infinite;
+}
+.pixel-frame-b {
+  opacity: 0;
+  animation: pixel-frame-b calc(var(--motion-inflight) * 0.25) step-end infinite;
+}
+.pixel-eyes-open {
+  animation: pixel-eyes-open calc(var(--motion-inflight) * 2.1667) step-end infinite;
+}
+.pixel-eyes-closed {
+  opacity: 0;
+  animation: pixel-eyes-closed calc(var(--motion-inflight) * 2.1667) step-end infinite;
+}
+.pixel-bulb {
+  animation: pixel-flicker var(--motion-inflight) step-end infinite;
+}
+
+@keyframes pixel-bob {
+  0% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-0.75px);
+  }
+}
+@keyframes pixel-frame-a {
+  0% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0;
+  }
+}
+@keyframes pixel-frame-b {
+  0% {
+    opacity: 0;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+@keyframes pixel-eyes-open {
+  0% {
+    opacity: 1;
+  }
+  96% {
+    opacity: 0;
+  }
+  98.5% {
+    opacity: 1;
+  }
+}
+@keyframes pixel-eyes-closed {
+  0% {
+    opacity: 0;
+  }
+  96% {
+    opacity: 1;
+  }
+  98.5% {
+    opacity: 0;
+  }
+}
+@keyframes pixel-flicker {
+  0% {
+    opacity: 1;
+  }
+  40% {
+    opacity: 0.7;
+  }
+  48% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pixel-mascot * {
+    animation: none !important;
+  }
+}

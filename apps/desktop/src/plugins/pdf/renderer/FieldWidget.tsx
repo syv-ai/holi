@@ -14,6 +14,10 @@ export interface WidgetProps {
   field: TemplateField
   value: string
   onChange: (value: string) => void
+  /** The id its `FormField` label points at, so pressing the label works. */
+  id?: string
+  /** A required field left empty: marked for assistive tech and the field look. */
+  invalid?: boolean
 }
 
 // Radix Select forbids an empty-string value, so a blank selection rides this
@@ -28,12 +32,14 @@ const NONE = '__none__'
  * but the switch falls back to a text input for safety. Every control is a
  * primitive — no native form element survives here.
  */
-export function FieldWidget({ field, value, onChange }: WidgetProps) {
+export function FieldWidget({ field, value, onChange, id, invalid }: WidgetProps) {
+  const a11y = { id, 'aria-invalid': invalid === true ? true : undefined }
   switch (field.type) {
     case 'textarea':
       return (
         <Textarea
           data-convert-field={field.key}
+          {...a11y}
           rows={4}
           value={value}
           onChange={(e) => onChange(e.target.value)}
@@ -43,6 +49,7 @@ export function FieldWidget({ field, value, onChange }: WidgetProps) {
       return (
         <Input
           data-convert-field={field.key}
+          {...a11y}
           type="date"
           value={value}
           onChange={(e) => onChange(e.target.value)}
@@ -52,6 +59,7 @@ export function FieldWidget({ field, value, onChange }: WidgetProps) {
       return (
         <Input
           data-convert-field={field.key}
+          {...a11y}
           type="number"
           value={value}
           onChange={(e) => onChange(e.target.value)}
@@ -63,7 +71,7 @@ export function FieldWidget({ field, value, onChange }: WidgetProps) {
           value={value === '' ? NONE : value}
           onValueChange={(v) => onChange(v === NONE ? '' : v)}
         >
-          <SelectTrigger className="w-full" data-convert-field={field.key}>
+          <SelectTrigger className="w-full" data-convert-field={field.key} {...a11y}>
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -80,6 +88,7 @@ export function FieldWidget({ field, value, onChange }: WidgetProps) {
       return (
         <Checkbox
           data-convert-field={field.key}
+          {...a11y}
           checked={value === 'true'}
           onCheckedChange={(c) => onChange(c === true ? 'true' : 'false')}
         />
@@ -88,6 +97,7 @@ export function FieldWidget({ field, value, onChange }: WidgetProps) {
       return (
         <Input
           data-convert-field={field.key}
+          {...a11y}
           value={value}
           onChange={(e) => onChange(e.target.value)}
         />

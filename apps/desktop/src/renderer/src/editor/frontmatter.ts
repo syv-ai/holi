@@ -598,15 +598,15 @@ const frontmatterTheme = EditorView.baseTheme({
   // border box, so a vertical margin is height it does not know about and
   // clicks below land a line off. Horizontal auto margins are harmless.
   //
-  // One width open or closed, centred in the column; a narrower column keeps
-  // the text's inset.
+  // On the text's own edge, as wide as the text, so the summary line, the
+  // title under it and the body share one left edge. The open fields keep the
+  // properties' width (`.cm-fm-reveal`).
   '.cm-fm': {
-    width: 'min(24rem, 100% - 2 * var(--editor-inset))',
+    width: 'calc(100% - 2 * var(--editor-inset))',
     margin: '0 auto',
-    // Room above too, so the properties do not crowd the pane's top edge.
-    paddingTop: '1.25rem',
-    paddingBottom: '2.5rem',
-    textAlign: 'center',
+    paddingTop: '0.5rem',
+    paddingBottom: '1rem',
+    textAlign: 'start',
   },
   /**
    * Opening and closing (`playResize`). An animation, not a transition: the
@@ -640,7 +640,7 @@ const frontmatterTheme = EditorView.baseTheme({
   // Never wrapped: in a narrow pane the text truncates and the name stays whole.
   '.cm-fm-line': {
     display: 'flex',
-    justifyContent: 'center',
+    justifyContent: 'flex-start',
     alignItems: 'baseline',
     gap: '0.3em',
     minWidth: '0',
@@ -684,7 +684,7 @@ const frontmatterTheme = EditorView.baseTheme({
     lineHeight: '1.2',
     color: 'var(--muted-foreground)',
   },
-  '.cm-fm-reveal': { paddingTop: '0.5rem', textAlign: 'start' },
+  '.cm-fm-reveal': { maxWidth: '24rem', paddingTop: '0.5rem', textAlign: 'start' },
   '.cm-fm-pill:hover': { color: 'var(--foreground)' },
   // Centred on the text: an svg's own baseline is its bottom edge.
   '.cm-fm-mark': { display: 'inline-flex', alignSelf: 'center' },

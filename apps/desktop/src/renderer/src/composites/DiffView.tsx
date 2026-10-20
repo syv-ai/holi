@@ -107,5 +107,5 @@ export function DiffView({
     return () => view.destroy()
   }, [before, after, resolvable])
 
-  return <div ref={host} className="h-full overflow-auto text-[11px]" />
+  return <div ref={host} className="h-full overflow-auto text-xs" />
 }

@@ -20,27 +20,23 @@
  * Arrow keys move it by 16px for the keyboard. Every drawer shares one range
  * (`DRAWER_WIDTH`).
  *
- * **A rail** is what a drawer can close to instead of nothing (the nav's).
- * The closed width is then `DRAWER_RAIL_WIDTH`, so one width moves continuously
- * between the two; a separate rail mounted beside the drawer made the panes
- * jump. The rail sits over the collapsed column, fading in as the drawer lands
- * and out as soon as an open starts.
- *
- * **An edge control** (the nav's toggle) is pinned to the drawer's moving
- * edge, outside the content that goes inert, so it slides into the rail's top
- * slot rather than one button vanishing and another blinking in.
+ * **A collapsible drawer** (the nav's, after ReUI's app shell) draws its seam
+ * as a hairline outside the column, so it stays when the drawer closes to
+ * nothing: dragging it resizes, a click without moving toggles, and a grip
+ * shows under the pointer. Arrow keys resize, Enter or Space toggles.
  *
  * **The edge** is `--drawer-edge`, a vault theme token, transparent by default:
- * a drawer lies flat on the page. The handle shows `--divider` under the
+ * a drawer lies flat on the page (a collapsible one draws `--divider`). The handle shows `--divider` under the
  * pointer, so the seam can be found without being drawn.
  */
 import { useAtom } from 'jotai'
-import { X } from 'lucide-react'
+import { GripVertical, X } from 'lucide-react'
 import { atomWithStorage } from 'jotai/utils'
 import { useEffect, useRef, useState } from 'react'
 import { cn } from '@/lib/cn'
-import { DRAWER_RAIL_WIDTH, DRAWER_WIDTH, clampDrawerWidth } from '@/lib/drawer'
+import { DRAWER_WIDTH, clampDrawerWidth } from '@/lib/drawer'
 import { prefersReducedMotion } from '@/lib/motion'
+import { Icon, Tooltip } from '@/primitives'
 import { PanelHeader, type HeaderAction } from './PanelHeader'
 
 /** Each drawer's dragged width, by id. Account-wide rather than per vault: a
@@ -55,12 +51,12 @@ export function DrawerShell({
   open,
   label,
   header,
+  headerClassName,
   aside,
   actions,
   onClose,
   keepMounted = false,
-  rail,
-  edgeControl,
+  onToggle,
   className,
   children,
 }: {
@@ -74,6 +70,8 @@ export function DrawerShell({
   /** The header's leading region: a `DrawerTitle`, or a composition (the nav's
    *  vault picker). */
   header: React.ReactNode
+  /** The header row's own classes: the nav aligns it to its rows' inset. */
+  headerClassName?: string
   /** A dim fact at the header's right edge, before the actions. */
   aside?: React.ReactNode
   actions?: HeaderAction[]
@@ -85,12 +83,10 @@ export function DrawerShell({
    * away. Other drawers unmount once they have slid out.
    */
   keepMounted?: boolean
-  /** What the drawer closes to, in a `DRAWER_RAIL_WIDTH` column at its edge,
-   *  rather than to nothing. Implies the content stays mounted. */
-  rail?: React.ReactNode
-  /** A control pinned to the drawer's inner edge, in the header row, that
-   *  moves with the slide and stays live open or closed (the nav's toggle). */
-  edgeControl?: React.ReactNode
+  /** Makes the seam the drawer's toggle (see A collapsible drawer above):
+   *  a click on it without dragging calls this. Implies the content stays
+   *  mounted, since the drawer comes back. */
+  onToggle?: () => void
   className?: string
   children: React.ReactNode
 }): React.JSX.Element | null {
@@ -107,7 +103,7 @@ export function DrawerShell({
 
   const [resizing, setResizing] = useState(false)
 
-  const kept = keepMounted || rail !== undefined
+  const kept = keepMounted || onToggle !== undefined
   if (!present && !kept) return null
 
   const store = (px: number) => setWidths((prev) => ({ ...prev, [id]: clampDrawerWidth(px) }))
@@ -122,17 +118,24 @@ export function DrawerShell({
     handle.setPointerCapture(e.pointerId)
     const startX = e.clientX
     let next = width
-    setResizing(true)
+    // A drag starts past a few pixels, so a click that wobbles still toggles.
+    let dragging = false
     const move = (ev: PointerEvent) => {
+      if (!open) return
+      if (!dragging && Math.abs(ev.clientX - startX) < 4) return
+      if (!dragging) setResizing(true)
+      dragging = true
       next = clampDrawerWidth(width + grow * (ev.clientX - startX))
       el.style.setProperty('--drawer-w', `${next}px`)
     }
-    const up = () => {
+    const up = (ev: PointerEvent) => {
       handle.removeEventListener('pointermove', move)
       handle.removeEventListener('pointerup', up)
       handle.removeEventListener('pointercancel', up)
-      setResizing(false)
-      store(next)
+      if (dragging) {
+        setResizing(false)
+        store(next)
+      } else if (ev.type === 'pointerup') onToggle?.()
     }
     handle.addEventListener('pointermove', move)
     handle.addEventListener('pointerup', up)
@@ -140,13 +143,19 @@ export function DrawerShell({
   }
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (onToggle !== undefined && (e.key === 'Enter' || e.key === ' ')) {
+      e.preventDefault()
+      onToggle()
+      return
+    }
+    if (!open) return
     const dir = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0
     if (dir === 0) return
     e.preventDefault()
     store(width + grow * dir * KEY_STEP)
   }
 
-  return (
+  const section = (
     <section
       ref={ref}
       data-slot="drawer"
@@ -158,12 +167,7 @@ export function DrawerShell({
       data-appear={kept ? undefined : ''}
       data-resizing={resizing ? '' : undefined}
       aria-label={label}
-      style={
-        {
-          '--drawer-w': `${width}px`,
-          ...(rail !== undefined && { '--drawer-closed-w': `${DRAWER_RAIL_WIDTH}px` }),
-        } as React.CSSProperties
-      }
+      style={{ '--drawer-w': `${width}px` } as React.CSSProperties}
       className={cn(
         'relative flex h-full shrink-0 overflow-clip',
         side === 'left' ? 'justify-end' : 'justify-start',
@@ -173,74 +177,103 @@ export function DrawerShell({
         if (e.target === e.currentTarget && e.propertyName === 'width' && !open) setPresent(false)
       }}
     >
-      <div className="flex h-full w-(--drawer-w) shrink-0 flex-col" inert={!open}>
+      <div
+        data-drawer-body=""
+        className="flex h-full w-(--drawer-w) shrink-0 flex-col"
+        inert={!open}
+      >
         <PanelHeader
           actions={actions}
           close={onClose ? { icon: X, label: `Close ${label}`, onSelect: onClose } : undefined}
-          className={cn(
-            'border-drawer-edge',
-            // Room for the edge control, which sits over the header's end.
-            edgeControl !== undefined && (side === 'left' ? 'pr-11' : 'pl-11'),
-          )}
+          className={cn('border-drawer-edge', headerClassName)}
         >
           {header}
           {aside !== undefined && (
-            <span className="ml-auto shrink-0 text-muted-foreground">{aside}</span>
+            <span className="ml-auto shrink-0 text-xs text-muted-foreground tabular-nums">
+              {aside}
+            </span>
           )}
         </PanelHeader>
         <div className="flex min-h-0 flex-1 flex-col">{children}</div>
       </div>
-      {rail !== undefined && (
-        <nav
-          aria-label={`${label} rail`}
-          data-drawer-rail=""
-          inert={open}
-          className={cn(
-            // Its fade is timed to the slide, in `index.css`.
-            'absolute inset-y-0 z-10 flex w-(--drawer-closed-w) flex-col items-center gap-1 bg-background pb-2',
-            side === 'left' ? 'left-0' : 'right-0',
-            // The edge control holds the rail's first slot.
-            edgeControl !== undefined && 'pt-11',
-          )}
-        >
-          {rail}
-        </nav>
-      )}
-      {edgeControl !== undefined && (
+      {onToggle === undefined && (
         <div
-          data-drawer-edge-control=""
+          role="separator"
+          aria-orientation="vertical"
+          aria-label={`Resize ${label}`}
+          aria-valuemin={DRAWER_WIDTH.min}
+          aria-valuemax={DRAWER_WIDTH.max}
+          aria-valuenow={width}
+          tabIndex={open ? 0 : -1}
+          hidden={!open}
           className={cn(
-            // 44px, the rail's width (`DRAWER_RAIL_WIDTH`), so closed it is the
-            // rail's first slot exactly.
-            'absolute top-0 z-20 flex h-11 w-11 items-center justify-center',
-            side === 'left' ? 'right-0' : 'left-0',
+            // A 7px strip to catch the pointer, drawing a 1px line in its middle:
+            // the theme's edge at rest, the divider while found or held. Keyboard
+            // focus is the house ring (docs/ui-system.md, Focus).
+            'absolute inset-y-0 z-10 w-[7px] cursor-col-resize touch-none outline-none',
+            'after:absolute after:inset-y-0 after:left-[3px] after:w-px after:bg-drawer-edge',
+            'after:motion-respond hover:after:bg-divider focus-visible:ring-1 focus-visible:ring-ring',
+            resizing && 'after:bg-divider',
+            side === 'left' ? '-right-[3px]' : '-left-[3px]',
           )}
-        >
-          {edgeControl}
-        </div>
+          onPointerDown={onPointerDown}
+          onKeyDown={onKeyDown}
+        />
       )}
+    </section>
+  )
+
+  if (onToggle === undefined) return section
+
+  const seam = (
+    <Tooltip content={open ? 'Drag to resize · Click to hide' : 'Click to show'}>
       <div
         role="separator"
         aria-orientation="vertical"
         aria-label={`Resize ${label}`}
         aria-valuemin={DRAWER_WIDTH.min}
         aria-valuemax={DRAWER_WIDTH.max}
-        aria-valuenow={width}
-        tabIndex={open ? 0 : -1}
-        hidden={!open}
+        aria-valuenow={open ? width : 0}
+        aria-expanded={open}
+        tabIndex={0}
+        data-resizing={resizing ? '' : undefined}
         className={cn(
-          // A 7px strip to catch the pointer, drawing a 1px line in its middle:
-          // the theme's edge at rest, the divider while found or held.
-          'absolute inset-y-0 z-10 w-[7px] cursor-col-resize outline-none',
-          'after:absolute after:inset-y-0 after:left-[3px] after:w-px after:bg-drawer-edge',
-          'after:motion-respond hover:after:bg-divider focus-visible:ring-1 focus-visible:ring-ring',
-          resizing && 'after:bg-divider',
-          side === 'left' ? '-right-[3px]' : '-left-[3px]',
+          // One hairline, wider to the pointer than it looks (the ::after),
+          // lit while found or held; the grip names what it does.
+          'group/seam relative z-10 w-px shrink-0 cursor-col-resize touch-none bg-divider outline-none',
+          'motion-respond after:absolute after:inset-y-0 after:-inset-x-1.5',
+          'hover:bg-foreground/25 data-resizing:bg-foreground/25 focus-visible:ring-1 focus-visible:ring-ring',
         )}
         onPointerDown={onPointerDown}
         onKeyDown={onKeyDown}
-      />
-    </section>
+      >
+        <span
+          aria-hidden="true"
+          className={cn(
+            'absolute top-1/2 grid h-7 w-3 -translate-y-1/2 place-items-center rounded-sm bg-ground text-muted-foreground ring-1 ring-foreground/15',
+            // Centred on the line; closed, against the window's edge, it sits
+            // just inside it rather than half off-screen.
+            open ? 'left-1/2 -translate-x-1/2' : 'left-1',
+            'motion-respond opacity-0 group-hover/seam:opacity-100 group-focus-visible/seam:opacity-100 group-data-resizing/seam:opacity-100',
+            // Closed, the grip is the only sign the sidebar is there.
+            !open && 'opacity-100',
+          )}
+        >
+          <Icon icon={GripVertical} size="sm" />
+        </span>
+      </div>
+    </Tooltip>
+  )
+  return side === 'left' ? (
+    <>
+      {section}
+      {seam}
+    </>
+  ) : (
+    <>
+      {seam}
+      {section}
+    </>
   )
 }
 
@@ -255,9 +288,9 @@ export function DrawerTitle({
 }): React.JSX.Element {
   return (
     <>
-      <span className="font-medium text-foreground">{title}</span>
+      <span className="shrink-0 text-nav font-medium text-foreground">{title}</span>
       {subtitle !== undefined && (
-        <span className="min-w-0 flex-1 truncate text-muted-foreground">{subtitle}</span>
+        <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{subtitle}</span>
       )}
     </>
   )

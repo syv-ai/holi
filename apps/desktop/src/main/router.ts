@@ -36,6 +36,7 @@ import { createCapabilityRegistry } from './capabilities/registry'
 import { noCoreServices, type UiReport } from './capabilities/services'
 import { scanBackrefs, scanBackrefsMany } from './vault/backrefs'
 import { fileHistory, type FileHistory } from './vault/file-facts'
+import { fileCards, type FileCard } from './vault/file-cards'
 import { copyNotes } from './vault/copy'
 import { importFiles } from './vault/import-files'
 import { exportFiles } from './vault/export-files'
@@ -293,6 +294,10 @@ function deleteManyInput(raw: unknown): { remote: string; paths: string[]; folde
     folders: folders === undefined ? [] : stringList(raw, 'folders'),
   }
 }
+
+/** Home's feed: this many commits, and this many of each one's files. */
+const ACTIVITY_LIMIT = 12
+const ACTIVITY_FILES = 5
 
 export function createRouter(deps: RouterDeps) {
   const now = deps.now ?? (() => new Date().toISOString())
@@ -1054,6 +1059,18 @@ export function createRouter(deps: RouterDeps) {
         )
       }),
 
+    /** The finder's facts about each of a folder's files (`file-cards.ts`):
+     *  size, last commit, and a note's summary. Against the active vault's
+     *  repo, which is the only one the finder shows. */
+    fileCards: t.procedure.input(pathsInput).query(async ({ input }): Promise<FileCard[]> => {
+      const root = await rootFor(input.remote)
+      const repo = activeOrThrow().repo
+      return fileCards(root, input.paths.map(safe), async (path) => {
+        const [last] = await repo.log({ path, limit: 1 })
+        return last === undefined ? null : { date: last.date, author: last.author }
+      })
+    }),
+
     /** The file's last commit, first commit and commit count. Null when the
      *  file has no history yet. Resolved against the active vault's repo, since
      *  the editor only shows the active vault. The log is never limited: the
@@ -1304,6 +1321,22 @@ export function createRouter(deps: RouterDeps) {
     /** The whole vault's commit log, newest-first — the broad history dialog. */
     log: t.procedure.query((): Promise<Commit[]> =>
       activeOrThrow().repo.log({ limit: HISTORY_LIMIT }),
+    ),
+
+    /** What changed lately, for Home's feed: the newest commits, each with
+     *  the paths it touched (at most `ACTIVITY_FILES` of them, and how many in
+     *  all). Read from git on asking, never kept. */
+    activity: t.procedure.query(
+      async (): Promise<{ commit: Commit; files: string[]; total: number }[]> => {
+        const repo = activeOrThrow().repo
+        const commits = await repo.log({ limit: ACTIVITY_LIMIT })
+        return Promise.all(
+          commits.map(async (commit) => {
+            const files = await repo.changedFiles(commit.sha).catch(() => [])
+            return { commit, files: files.slice(0, ACTIVITY_FILES), total: files.length }
+          }),
+        )
+      },
     ),
 
     /** The paths one commit changed — the file list beside a commit's diff. */

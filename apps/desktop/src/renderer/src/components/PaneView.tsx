@@ -17,7 +17,8 @@ import { EditorPane } from '@/features/editor/EditorPane'
 import { FilePlaceholder } from '@/features/files/FilePlaceholder'
 import { ImageViewer } from '@/features/files/ImageViewer'
 import type { Pane, Tab } from '@/state/panes'
-import { useArrivalOnChange } from '@/lib/use-arrivals'
+import { EmptyPane } from './EmptyPane'
+import { PaneHeader } from './PaneHeader'
 import { TabStrip, tabKey } from './TabStrip'
 
 /** What every drop target shares. `pointer-events-none` keeps the overlay a
@@ -35,9 +36,10 @@ function EdgeBand({ side, active }: { side: 'before' | 'after'; active: boolean 
   return (
     <div
       data-testid={`pane-drop-${side}`}
-      className={`${DROP_BAND} inset-y-0 ${side === 'before' ? 'left-0' : 'right-0'} ${
-        // No outline, so the resting fill is heavy enough to be findable.
-        active ? 'bg-primary/25' : 'bg-primary/10'
+      className={`${DROP_BAND} inset-y-1 rounded-lg ${side === 'before' ? 'left-1' : 'right-1'} ${
+        // Fill, not outline (monotone): the resting fill is heavy enough to be
+        // findable, and the lit one is a clear step above it.
+        active ? 'bg-foreground/[0.10]' : 'bg-foreground/[0.04]'
       }`}
       style={{ width: 'min(25%, 120px)' }}
     />
@@ -48,8 +50,6 @@ export interface PaneViewProps {
   pane: Pane
   /** Whether this is the pane that "open" means. */
   focused: boolean
-  /** Closing: play the exit, and stop taking input while it runs. */
-  leaving?: boolean
   /** Clicking or focusing anywhere in the pane, content included, focuses it. */
   onFocus: () => void
   onSelect: (index: number) => void
@@ -59,6 +59,7 @@ export interface PaneViewProps {
   onEdit: () => void
   onOpenNote: (path: string) => void
   onConflict: (path: string, resolve: ConflictResolvers) => void
+  onCloseOthers?: (index: number, which: 'others' | 'right') => void
   /** A tab was dropped on this pane's strip or body. `index` is absolute within
    *  this pane's tabs. */
   onDropTab?: (tab: Tab, index: number) => void
@@ -71,18 +72,20 @@ export interface PaneViewProps {
   onDragBegin?: (tab: Tab) => void
   /** Whether a tab drag is over this pane's strip (see `overStrip` in Shell). */
   onDragOverStrip?: (over: boolean) => void
-  /** Controls at the right-hand end of this pane's strip. */
+  /** Controls at the right-hand end of this pane's header. */
   trailing?: ReactNode
+  /** A control before this pane's tabs. */
+  leading?: ReactNode
 }
 
 export function PaneView({
   pane,
   focused,
-  leaving = false,
   onFocus,
   onSelect,
   onPin,
   onCloseTab,
+  onCloseOthers,
   onEdit,
   onOpenNote,
   onConflict,
@@ -92,6 +95,7 @@ export function PaneView({
   onDragBegin,
   onDragOverStrip,
   trailing,
+  leading,
 }: PaneViewProps) {
   const tab = pane.active < 0 ? null : (pane.tabs[pane.active] ?? null)
   const syncState = useAtomValue(syncStateAtom)
@@ -119,19 +123,11 @@ export function PaneView({
   const zoneAt = (e: React.DragEvent) =>
     paneDropZone(e.currentTarget.getBoundingClientRect(), e.clientX)
 
-  // The pane's body fades when the tab it is showing changes identity. `tabKey`
-  // rather than the index: moving a tab must not read as navigating to it.
-  const bodyRef = useArrivalOnChange<HTMLDivElement>(tab == null ? 'empty' : tabKey(tab))
-
   return (
     // `onFocusCapture` too: keyboard or CodeMirror focus must also move the
     // workspace's idea of "here".
     <main
-      className={cn(
-        'flex h-full min-w-0 flex-col',
-        // A closed pane must not take clicks while it leaves.
-        leaving && 'motion-out-origin pointer-events-none',
-      )}
+      className="flex h-full min-w-0 flex-col"
       onPointerDownCapture={onFocus}
       onFocusCapture={onFocus}
     >
@@ -142,24 +138,30 @@ export function PaneView({
         onSelect={onSelect}
         onPin={onPin}
         onClose={onCloseTab}
+        onCloseOthers={onCloseOthers}
         onDropTab={onDropTab}
         onDragBegin={onDragBegin}
         onDragOverStrip={onDragOverStrip}
-        trailing={trailing}
+        leading={leading}
+        trailing={tab?.kind === 'note' ? undefined : trailing}
       />
+      {/* A document gets a header row: where it is, and what to do with it. A
+          page (Home, the board, an app) heads itself, so its controls sit at
+          the strip's end instead and nothing repeats the tab's name. */}
+      {tab?.kind === 'note' && <PaneHeader tab={tab} actions={trailing} />}
 
       {/* The body is a drop surface too. Wrapped so the overlay covers the
           content but not the strip, which handles its own drops. */}
       <div className="relative flex min-h-0 flex-1 flex-col">
-        {/* Fade on a swap. Opacity only: this wraps CodeMirror, and a layout
-            change would drag its measure loop into every frame.
-
-            Kept-mounted surfaces render below, outside the fade: fading a
-            terminal that stays mounted read as blinking. Nothing rather than
-            an empty flex-1 box, which would take their height. */}
+        {/* No fade on a swap: switching tabs is the most frequent thing done
+            here, often from the keyboard, and it should land at once.
+            Kept-mounted surfaces render below instead: nothing rather than an
+            empty flex-1 box, which would take their height. */}
         {activeSurface?.keepMounted === true ? null : (
-          <div ref={bodyRef} className="flex min-h-0 flex-1 flex-col">
-            {tab?.kind === 'surface' ? (
+          <div className="flex min-h-0 flex-1 flex-col">
+            {tab === null ? (
+              <EmptyPane />
+            ) : tab.kind === 'surface' ? (
               SurfaceView === null ? null : (
                 <SurfaceView {...(tab.id === undefined ? {} : { id: tab.id })} visible />
               )
@@ -243,7 +245,10 @@ export function PaneView({
             {allowed.includes('before') && <EdgeBand side="before" active={zone === 'before'} />}
             {allowed.includes('after') && <EdgeBand side="after" active={zone === 'after'} />}
             {zone === 'into' && (
-              <div data-testid="pane-drop-into" className={`${DROP_BAND} inset-0 bg-primary/10`} />
+              <div
+                data-testid="pane-drop-into"
+                className={`${DROP_BAND} inset-1 rounded-lg bg-foreground/[0.04]`}
+              />
             )}
           </div>
         )}

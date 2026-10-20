@@ -26,7 +26,7 @@ import { trpc } from '../lib/trpc'
 import { openHomeAtom } from './home'
 import { openTodaysDailyAtom } from './daily'
 import { openDialogAtom } from './dialogs'
-import { closeActiveTabWithExitAtom } from './pane-exit'
+import { closeActiveTabAtom } from './pane-exit'
 import { openPaletteAtom } from './palette'
 import { navOpenAtom } from './preferences'
 import { touchRecentAtom } from './recents'
@@ -138,7 +138,7 @@ export const STATIC_COMMANDS: readonly Command[] = [
     label: 'Close tab',
     hotkey: '⌘W',
     boundBy: 'menu',
-    run: (_get, set) => set(closeActiveTabWithExitAtom),
+    run: (_get, set) => set(closeActiveTabAtom),
   },
   // Home is wherever the vault's `home` setting says, not always its tab. The
   // other surfaces' rows come from the registry (`commandsAtom`).

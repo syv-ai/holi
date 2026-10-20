@@ -7,7 +7,7 @@
 import { useAtomValue } from 'jotai'
 import { useEffect, useRef, useState } from 'react'
 import { releaseTag } from '@holi/shared'
-import { activeRemoteAtom, type PluginStore } from '@/plugin-api'
+import { activeRemoteAtom, cn, type PluginStore } from '@/plugin-api'
 import { Button, Dialog } from '@/primitives'
 import { communityCap, refreshRows, refreshUpdates, setupLogsAtom, type PluginRow } from './state'
 
@@ -70,7 +70,7 @@ export function ConsentDialog({
       </Dialog.Header>
       <Dialog.Body>
         {step.kind === 'ask' ? (
-          <div className="grid gap-3 text-xs leading-relaxed text-muted-foreground">
+          <div className="grid gap-3 text-sm text-pretty text-muted-foreground">
             <p>
               {install?.kind === 'release' ? (
                 <>
@@ -92,7 +92,7 @@ export function ConsentDialog({
             {row.setup !== null && (
               <div>
                 <p>Once now, to set it up:</p>
-                <pre className="mt-1 whitespace-pre-wrap rounded-md bg-muted p-2 font-mono text-[11px] text-foreground">
+                <pre className="mt-1 whitespace-pre-wrap rounded-md bg-muted p-2 font-mono text-xs text-foreground">
                   {shown(row.setup)}
                 </pre>
               </div>
@@ -107,7 +107,7 @@ export function ConsentDialog({
                   ].join(' or ')}
                   :
                 </p>
-                <pre className="mt-1 whitespace-pre-wrap rounded-md bg-muted p-2 font-mono text-[11px] text-foreground">
+                <pre className="mt-1 whitespace-pre-wrap rounded-md bg-muted p-2 font-mono text-xs text-foreground">
                   {shown(row.serve)}
                 </pre>
               </div>
@@ -123,13 +123,19 @@ export function ConsentDialog({
           </div>
         ) : (
           <div className="grid gap-2">
-            <p className="text-xs text-muted-foreground">
+            <p
+              role={step.kind === 'failed' ? 'alert' : 'status'}
+              className={cn(
+                'text-xs text-pretty break-words',
+                step.kind === 'failed' ? 'text-destructive' : 'text-muted-foreground',
+              )}
+            >
               {step.kind === 'setup' && 'Running setup…'}
               {step.kind === 'done' && `${row.name} is ready.`}
               {step.kind === 'failed' && step.message}
             </p>
             {log.length > 0 && (
-              <pre className="max-h-72 overflow-auto whitespace-pre-wrap rounded-md bg-muted p-2 font-mono text-[11px] leading-relaxed text-muted-foreground">
+              <pre className="max-h-72 overflow-auto whitespace-pre-wrap rounded-md bg-muted p-2 font-mono text-xs leading-relaxed text-muted-foreground">
                 {log.join('\n')}
                 <div ref={logEnd} />
               </pre>
@@ -199,7 +205,7 @@ export async function installAndAsk(
 export function updatePlugin(flow: InstallFlow, row: PluginRow, version: string) {
   const from = row.install?.kind === 'release' ? row.install : row.pin
   if (from === null || from === undefined)
-    return Promise.resolve('this plugin is not from a release')
+    return Promise.resolve('This plugin is not from a release.')
   const pinned = row.pin !== null
   return installAndAsk(
     flow,

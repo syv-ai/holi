@@ -8,6 +8,7 @@ import {
 } from '@/primitives'
 import { parentOf } from '@/lib/tree-paths'
 import { openDialogAtom } from '@/state/dialogs'
+import { pinsAtom, togglePinAtom } from '@/state/pins'
 import { claimsAtom } from '@/state/plugins'
 import { activeRemoteAtom, snapshotAtom, vaultsAtom } from '@/state/vaults'
 import type { ExplorerActions } from './useExplorerActions'
@@ -51,6 +52,8 @@ export function RowMenu({
   const snapshot = useAtomValue(snapshotAtom)
   const icons = snapshot.icons
   const openDialog = useSetAtom(openDialogAtom)
+  const pinned = useAtomValue(pinsAtom)
+  const togglePin = useSetAtom(togglePinAtom)
   // What enabled claims add for this path, in claim order: those whose
   // condition holds.
   const claimItems = useAtomValue(claimsAtom).flatMap((c) =>
@@ -103,6 +106,10 @@ export function RowMenu({
             New Folder…
           </ContextMenuItem>
           <ContextMenuSeparator />
+          {/* Into the sidebar's Pinned section, on this machine. */}
+          <ContextMenuItem onSelect={() => togglePin(path)}>
+            {pinned.includes(path) ? 'Unpin from Sidebar' : 'Pin to Sidebar'}
+          </ContextMenuItem>
           <ContextMenuItem onSelect={onRename}>
             Rename…
             <ContextMenuShortcut>F2</ContextMenuShortcut>

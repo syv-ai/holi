@@ -40,13 +40,13 @@ function AppHeaderActions({ id }: { id?: string }): React.JSX.Element | null {
     <>
       <IconButton
         icon={RotateCw}
-        label="reload this app"
+        label="Reload this app"
         className="ml-1"
         onClick={() => setReloads((n) => ({ ...n, [id]: (n[id] ?? 0) + 1 }))}
       />
       <IconButton
         icon={Logs}
-        label={hasLog ? "open this app's log" : 'no log yet'}
+        label={hasLog ? 'Open this app’s log' : 'No log yet'}
         className="ml-1"
         disabled={!hasLog}
         onClick={() => openPath(log, 'pane')}
@@ -98,9 +98,9 @@ export const APP_CLAIM: PathClaim = {
   // `holi apps init`'s scaffold. Opening its entry expands the bundle.
   create: {
     id: 'app',
-    label: 'New App',
+    label: 'New app',
     icon: AppWindow,
-    placeholder: 'app name',
+    placeholder: 'App name',
     run: async ({ remote, parent, name }) => {
       const file = name.endsWith(APP_SUFFIX) ? name : `${name}${APP_SUFFIX}`
       const bundle = parent === '' ? file : `${parent}/${file}`

@@ -83,8 +83,9 @@ test('the pane still renders its strip and its body', () => {
   pane()
 
   expect(screen.getByTestId('tab-strip')).toBeInTheDocument()
-  // The wrapper must not have swallowed the content.
-  expect(screen.getByText('select or create a note')).toBeInTheDocument()
+  // The wrapper must not have swallowed the content: an empty pane's face.
+  expect(screen.getByRole('img', { name: 'Holi' })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: /Go to file/ })).toBeInTheDocument()
 })
 
 test('a dragover carrying something other than a tab is refused', () => {
@@ -164,28 +165,6 @@ test('a drag starting in this strip reports the tab it picked up', () => {
   expect(onDragBegin).toHaveBeenCalledWith({ kind: 'note', path: 'notes/a.pdf' })
 })
 
-/**
- * Leaving a split.
- *
- * The shell holds the close for `--motion-leave` and marks the pane `leaving`.
- * Checked here: the class goes on, and the pane stops taking input.
- */
-test('a pane on its way out plays the exit and stops taking input', () => {
-  pane({ leaving: true })
-
-  const main = screen.getByTestId('tab-strip').closest('main')!
-  expect(main).toHaveClass('motion-out-origin')
-  expect(main).toHaveClass('pointer-events-none')
-})
-
-test('a pane that is staying is untouched', () => {
-  pane()
-
-  const main = screen.getByTestId('tab-strip').closest('main')!
-  expect(main).not.toHaveClass('motion-out-origin')
-  expect(main).not.toHaveClass('pointer-events-none')
-})
-
 test('keeps every tab of a kept-mounted surface mounted, showing only the active one', () => {
   // An unmounted terminal loses its scrollback and must visibly replay main's
   // mirror.
@@ -199,7 +178,7 @@ test('a kept-mounted tab shows instead of the editor', () => {
   pane({ pane: { tabs: [kept('a')], active: 0 } })
 
   expect(document.querySelector('[data-terminal="a"]')).not.toBeNull()
-  expect(screen.queryByText('select or create a note')).not.toBeInTheDocument()
+  expect(screen.queryByText('No note open')).not.toBeInTheDocument()
 })
 
 test('a note tab beside a kept-mounted tab keeps it alive', () => {

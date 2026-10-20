@@ -55,3 +55,15 @@ test('gate leaves a computed delay and the motion utilities alone', async () => 
   const [result] = await eslint.lintFiles(['test/fixtures/gate/features/b/motion-ok.tsx'])
   expect(result.messages.filter((m) => /motion/i.test(m.message))).toEqual([])
 })
+
+/**
+ * Nothing is smaller than `text-xs` (docs/ui-system.md, Type). An arbitrary
+ * size under 12px, in px or rem, in a string or a template, is flagged; 12px
+ * and up passes.
+ */
+test('gate flags type under the floor, and only that', async () => {
+  const eslint = new ESLint({ cwd, overrideConfigFile: `${cwd}/eslint.config.mjs` })
+  const [result] = await eslint.lintFiles(['test/fixtures/gate/features/b/type.tsx'])
+  const type = result.messages.filter((m) => /under the floor/.test(m.message))
+  expect(type.map((m) => m.line)).toEqual([3, 5, 6])
+})

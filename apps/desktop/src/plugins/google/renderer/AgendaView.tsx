@@ -26,6 +26,7 @@ import {
   Video,
 } from 'lucide-react'
 import { useAtomValue, useSetAtom } from 'jotai'
+import { EmptyState, LoadingRows, PaneToolbar } from '@/composites'
 import {
   Button,
   Dialog,
@@ -37,6 +38,7 @@ import {
   DropdownMenuTrigger,
   Icon,
   IconButton,
+  PillGroup,
   ResizableHandle,
   ResizablePanel,
   ResizablePanelGroup,
@@ -46,6 +48,7 @@ import { SandboxedHtml } from './SandboxedHtml'
 import {
   activeRemoteAtom,
   openNoteTabAtom,
+  openSettingsSectionAtom,
   useGlobalPanelLayout,
   useHasCapability,
 } from '@/plugin-api'
@@ -59,6 +62,11 @@ import { localDate } from '@holi/shared'
 /** The agenda is a month to look at and create in, or the next week as a list
  *  with each invitation beside it. */
 type View = 'month' | 'list'
+
+const VIEW_OPTIONS = [
+  { value: 'month', label: 'Month' },
+  { value: 'list', label: 'List' },
+] as const
 
 /** Mirrors `main/google/calendar.ts`. */
 type RsvpStatus = 'needsAction' | 'tentative' | 'accepted' | 'declined'
@@ -160,6 +168,8 @@ function dayLabel(key: string): string {
 function detailLine(event: CalendarEvent): string {
   return [
     KIND_LABELS[event.kind],
+    // Said in words: the row no longer dims a whole event that takes no time.
+    event.busy ? undefined : 'free',
     event.calendarName || undefined,
     event.location,
     event.attendeeCount > 1 ? `${event.attendeeCount} people` : undefined,
@@ -170,7 +180,7 @@ function detailLine(event: CalendarEvent): string {
 }
 
 function timeLabel(event: CalendarEvent): string {
-  if (event.allDay) return 'all day'
+  if (event.allDay) return 'All day'
   const fmt = (iso: string) =>
     new Date(iso).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
   return `${fmt(event.start)} – ${fmt(event.end)}`
@@ -242,6 +252,7 @@ export function AgendaView({
   /** Account-scoped, not per-vault: the agenda is the same calendar in every
    *  vault, and opens with no vault at all. See `useGlobalPanelLayout`. */
   const layout = useGlobalPanelLayout('agenda')
+  const openSettings = useSetAtom(openSettingsSectionAtom)
 
   const loadCalendars = useCallback(() => {
     // No error surface of its own: the agenda's error state already covers
@@ -356,25 +367,28 @@ export function AgendaView({
   }
 
   if (state.kind === 'loading') {
-    return <Placeholder>Loading your agenda…</Placeholder>
+    return <LoadingRows label="Loading your agenda" />
   }
 
   if (state.kind === 'disconnected') {
     return (
-      <Placeholder>
-        Google isn&rsquo;t connected. Connect it in vault settings to see your calendar.
-      </Placeholder>
+      <EmptyState
+        icon={CalendarDays}
+        title="Google isn’t connected"
+        description="Connect an account to see your calendar here."
+        action={{ label: 'Open Connections', onClick: () => openSettings('connections') }}
+      />
     )
   }
 
   if (state.kind === 'error') {
     return (
-      <Placeholder>
-        {state.message}
-        <Button variant="secondary" size="sm" className="mt-3" onClick={load}>
-          Try again
-        </Button>
-      </Placeholder>
+      <EmptyState
+        role="alert"
+        title="Couldn’t load your agenda"
+        description={state.message}
+        action={{ label: 'Try again', icon: RefreshCw, onClick: load }}
+      />
     )
   }
 
@@ -388,26 +402,34 @@ export function AgendaView({
   // old object could pin the pane to an event no longer on the agenda.
   const openEvent = state.events.find((event) => eventKey(event) === selected) ?? null
 
-  const switcher = <ViewSwitch view={view} onChange={setView} />
-
-  if (view === 'month') {
-    const dayEvents =
-      moreDay === null ? [] : state.events.filter((e) => eventDays(e).includes(moreDay))
-    return (
-      <div className="flex h-full min-h-0 flex-col">
-        <div className="flex shrink-0 items-center gap-3 px-4 pt-3 pb-2">
-          <h2 className="mr-auto text-2xl tracking-tight" aria-live="polite">
-            <span className="font-semibold">
-              {new Date(year, month - 1, 1).toLocaleDateString(undefined, { month: 'long' })}
-            </span>{' '}
-            <span className="font-light">{year}</span>
-          </h2>
-          {switcher}
-          <div className="flex items-center gap-1">
+  /**
+   * One header for both views, so switching does not move the switch or
+   * change the header's height: the switch leads, the month's name follows it
+   * in month view, and the paging, calendars and refresh sit at the end.
+   */
+  const toolbar = (
+    <PaneToolbar>
+      <PillGroup
+        label="Agenda view"
+        options={VIEW_OPTIONS}
+        isOn={(choice) => choice === view}
+        onPick={setView}
+        className="flex-nowrap"
+      />
+      {view === 'month' && (
+        <h2 className="ml-2 truncate text-sm font-medium tabular-nums" aria-live="polite">
+          {new Date(year, month - 1, 1).toLocaleDateString(undefined, {
+            month: 'long',
+            year: 'numeric',
+          })}
+        </h2>
+      )}
+      <div className="ml-auto flex shrink-0 items-center gap-1">
+        {view === 'month' && (
+          <>
             <IconButton
               icon={ChevronLeft}
-              label="previous month"
-              tooltip="previous month"
+              label="Previous month"
               onClick={() => setCursor(shiftMonth(year, month, -1))}
             />
             <Button
@@ -422,14 +444,23 @@ export function AgendaView({
             </Button>
             <IconButton
               icon={ChevronRight}
-              label="next month"
-              tooltip="next month"
+              label="Next month"
               onClick={() => setCursor(shiftMonth(year, month, 1))}
             />
-          </div>
-          <CalendarPicker calendars={calendars} onToggle={toggleCalendar} />
-          <IconButton icon={RefreshCw} label="refresh agenda" tooltip="refresh" onClick={load} />
-        </div>
+          </>
+        )}
+        <CalendarPicker calendars={calendars} onToggle={toggleCalendar} />
+        <IconButton icon={RefreshCw} label="Refresh agenda" tooltip="Refresh" onClick={load} />
+      </div>
+    </PaneToolbar>
+  )
+
+  if (view === 'month') {
+    const dayEvents =
+      moreDay === null ? [] : state.events.filter((e) => eventDays(e).includes(moreDay))
+    return (
+      <div className="flex h-full min-h-0 flex-col">
+        {toolbar}
         <div className="min-h-0 flex-1">
           <MonthView
             year={year}
@@ -466,7 +497,7 @@ export function AgendaView({
             <>
               <Dialog.Header>{dayLabel(moreDay)}</Dialog.Header>
               <Dialog.Body>
-                <ul className="space-y-1">
+                <ul className="flex flex-col gap-1">
                   {dayEvents.map((event) => (
                     <li key={eventKey(event)}>
                       <Button
@@ -514,37 +545,34 @@ export function AgendaView({
       <ResizablePanel id="agenda-list" defaultSize={480} minSize={320}>
         <div className="flex h-full min-h-0 flex-col">
           {/* No "Agenda" heading: the tab already says so. */}
-          <div className="flex h-11 shrink-0 items-center justify-between gap-2 px-4">
-            {switcher}
-            <div className="flex items-center gap-1">
-              <CalendarPicker calendars={calendars} onToggle={toggleCalendar} />
-              <IconButton
-                icon={RefreshCw}
-                label="refresh agenda"
-                tooltip="refresh"
-                onClick={load}
-              />
-            </div>
-          </div>
+          {toolbar}
 
-          <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-6">
-            {byDay.size === 0 ? (
-              <p className="mt-6 text-sm text-muted-foreground">
-                Nothing scheduled in the next week.
-              </p>
-            ) : (
-              [...byDay.entries()].map(([day, events]) => (
-                <section key={day} className="mb-5">
-                  <h3 className="sticky top-0 bg-background py-1 text-xs font-medium text-muted-foreground">
+          {byDay.size === 0 ? (
+            <EmptyState
+              icon={CalendarDays}
+              title="Nothing scheduled in the next week"
+              description="Events from the calendars you show appear here."
+              action={{ label: 'Show the month', onClick: () => setView('month') }}
+            />
+          ) : (
+            // `px-2`, not the pane's `px-4`: each row's fill bleeds 8px past
+            // its text, so the swatch and the day headings land on the
+            // toolbar's 16px edge.
+            <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-2 pb-6">
+              {[...byDay.entries()].map(([day, events]) => (
+                <section key={day}>
+                  <h3 className="sticky top-0 bg-background px-2 py-1 text-xs font-medium text-muted-foreground">
                     {dayLabel(day)}
                   </h3>
-                  <ul className="space-y-1">
+                  <ul className="flex flex-col gap-1">
                     {events.map((event) => (
                       <li
                         key={eventKey(event)}
-                        // An event that does not block time is dimmed.
-                        className={`motion-respond group relative rounded ${event.busy ? '' : 'opacity-60'} ${
-                          selected === eventKey(event) ? 'bg-secondary' : 'hover:bg-secondary/60'
+                        data-busy={event.busy ? '' : undefined}
+                        className={`motion-respond group relative rounded ${
+                          selected === eventKey(event)
+                            ? 'bg-foreground/[0.06]'
+                            : 'hover:bg-foreground/[0.04]'
                         }`}
                       >
                         {/* The row contains buttons, and a button inside a
@@ -554,7 +582,7 @@ export function AgendaView({
                             pointer events back on. */}
                         <Button
                           variant="ghost"
-                          aria-label={`show ${event.title}`}
+                          aria-label={`Show ${event.title}`}
                           className="absolute inset-0 h-full w-full rounded p-0 hover:bg-transparent"
                           onClick={() => setSelected(eventKey(event))}
                         />
@@ -564,10 +592,15 @@ export function AgendaView({
                             {timeLabel(event)}
                           </span>
                           <span className="min-w-0 flex-1">
-                            {/* Someone else's event is dimmed rather than
-                                hidden: it was asked for, but is not the user's. */}
+                            {/* Someone else's event, and one that does not
+                                block time, dim their title only: the meta
+                                under it is already muted, and dimming it again
+                                would drop it below a readable contrast. */}
+                            {/* Truncated here; the detail pane wraps it in full. */}
                             <span
-                              className={`block truncate text-sm ${event.mine ? '' : 'text-muted-foreground'}`}
+                              className={`block truncate text-sm ${
+                                event.mine && event.busy ? '' : 'text-muted-foreground'
+                              }`}
                             >
                               {event.title}
                             </span>
@@ -585,11 +618,11 @@ export function AgendaView({
                               select it. */}
                           <span className="pointer-events-auto flex shrink-0 items-center gap-1">
                             {event.myResponse === 'needsAction' && (
-                              <Tooltip content="answer this invitation in Google Calendar">
+                              <Tooltip content="Answer this invitation in Google Calendar">
                                 <Button
                                   variant="secondary"
                                   size="xs"
-                                  aria-label={`answer ${event.title} in Google Calendar`}
+                                  aria-label={`Answer ${event.title} in Google Calendar`}
                                   onClick={() => void window.holi.openExternal(event.htmlLink)}
                                 >
                                   RSVP
@@ -599,8 +632,8 @@ export function AgendaView({
                             {event.conferenceUrl !== null && (
                               <IconButton
                                 icon={Video}
-                                label={`join ${event.title}`}
-                                tooltip="join the meeting"
+                                label={`Join ${event.title}`}
+                                tooltip="Join the meeting"
                                 onClick={() => void window.holi.openExternal(event.conferenceUrl!)}
                               />
                             )}
@@ -610,9 +643,9 @@ export function AgendaView({
                     ))}
                   </ul>
                 </section>
-              ))
-            )}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
       </ResizablePanel>
 
@@ -620,7 +653,7 @@ export function AgendaView({
 
       <ResizablePanel id="agenda-detail" minSize={260}>
         {openEvent === null ? (
-          <Placeholder>Pick an event to read the invitation.</Placeholder>
+          <EmptyState icon={CalendarDays} title="Pick an event to read the invitation" />
         ) : (
           <EventDetail
             event={openEvent}
@@ -651,9 +684,9 @@ function EventDetail({
 }): React.JSX.Element {
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex h-11 shrink-0 items-center justify-end gap-1 px-4">
+      <PaneToolbar className="justify-end">
         {event.conferenceUrl !== null && (
-          <Tooltip content="join the meeting">
+          <Tooltip content="Join the meeting">
             <Button
               variant="secondary"
               size="xs"
@@ -666,7 +699,7 @@ function EventDetail({
           </Tooltip>
         )}
         {canCreateTask && (
-          <Tooltip content="make a task linking this event">
+          <Tooltip content="Make a task linking this event">
             <Button variant="secondary" size="xs" disabled={creating} onClick={onCreateTask}>
               {creating ? 'Creating…' : 'Task'}
             </Button>
@@ -674,36 +707,36 @@ function EventDetail({
         )}
         <IconButton
           icon={ExternalLink}
-          label={`open ${event.title} in Google Calendar`}
-          tooltip="open in Google Calendar"
+          label={`Open ${event.title} in Google Calendar`}
+          tooltip="Open in Google Calendar"
           onClick={() => void window.holi.openExternal(event.htmlLink)}
         />
-      </div>
+      </PaneToolbar>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-6">
         {/* Wrapped, not truncated: the one place a long title fits. */}
-        <h3 className="text-sm font-medium">{event.title}</h3>
+        <h3 className="text-sm font-medium text-pretty break-words">{event.title}</h3>
         <p className="mt-0.5 text-xs text-muted-foreground">
           {longDayLabel(event)} · {timeLabel(event)}
         </p>
 
-        <dl className="mt-3 space-y-1.5">
+        <dl className="mt-3 flex flex-col gap-1.5">
           <Fact icon={<Swatch color={event.color} />}>
             {event.calendarName}
-            {!event.mine && <span className="text-muted-foreground"> · subscribed</span>}
+            {!event.mine && <span className="text-muted-foreground"> · Subscribed</span>}
           </Fact>
           {KIND_LABELS[event.kind] !== undefined && (
             <Fact icon={<Icon icon={CalendarDays} size="sm" tone="muted" />}>
-              {KIND_LABELS[event.kind]}
+              {sentence(KIND_LABELS[event.kind]!)}
             </Fact>
           )}
           {event.recurring && (
-            <Fact icon={<Icon icon={Repeat} size="sm" tone="muted" />}>repeats</Fact>
+            <Fact icon={<Icon icon={Repeat} size="sm" tone="muted" />}>Repeats</Fact>
           )}
           {/* On the row this is only a dimming; here it is said in words. */}
           {!event.busy && (
             <Fact icon={<Icon icon={CalendarDays} size="sm" tone="muted" />}>
-              does not block time
+              Free: doesn’t block time
             </Fact>
           )}
           {event.location !== undefined && event.location !== '' && (
@@ -788,10 +821,10 @@ function CalendarPicker({
 
   return (
     <DropdownMenu>
-      <Tooltip content="which calendars this agenda shows">
+      <Tooltip content="Which calendars this agenda shows">
         <DropdownMenuTrigger asChild>
-          <Button variant="ghost" size="xs" className="gap-1" aria-label="choose calendars">
-            calendars
+          <Button variant="ghost" size="xs" className="gap-1">
+            Calendars
             {off > 0 && <span className="text-muted-foreground">({calendars.length - off})</span>}
           </Button>
         </DropdownMenuTrigger>
@@ -825,34 +858,7 @@ function Swatch({ color }: { color: string | null }) {
   )
 }
 
-/** Month or list: two pills, the one showing pressed. */
-function ViewSwitch({ view, onChange }: { view: View; onChange: (view: View) => void }) {
-  return (
-    <div
-      role="group"
-      aria-label="agenda view"
-      className="flex items-center rounded-full bg-muted p-0.5"
-    >
-      {(['month', 'list'] as const).map((choice) => (
-        <Button
-          key={choice}
-          variant={view === choice ? 'secondary' : 'ghost'}
-          size="xs"
-          aria-pressed={view === choice}
-          className="rounded-full px-3 capitalize"
-          onClick={() => onChange(choice)}
-        >
-          {choice}
-        </Button>
-      ))}
-    </div>
-  )
-}
-
-function Placeholder({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="flex h-full flex-col items-center justify-center gap-1 p-8 text-center text-sm text-muted-foreground">
-      {children}
-    </div>
-  )
+/** A label that starts a line: `focus time` → `Focus time`. */
+function sentence(text: string): string {
+  return text.charAt(0).toUpperCase() + text.slice(1)
 }

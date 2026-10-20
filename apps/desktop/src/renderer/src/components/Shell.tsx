@@ -5,16 +5,16 @@
  * (rail and sidebar sections, drawers) comes from the running plugins.
  */
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
-import { History, PanelLeftClose, PanelLeftOpen, PanelRight } from 'lucide-react'
+import { History, PanelRight } from 'lucide-react'
 import { Fragment, useEffect, useRef, useState } from 'react'
 import { isVaultConfigPath } from '@holi/shared'
 import {
   Button,
   IconButton,
-  Kbd,
   ResizableHandle,
   ResizablePanel,
   ResizablePanelGroup,
+  Toaster,
   Tooltip,
 } from '@/primitives'
 import { OnboardingRitual } from '@/features/onboarding/OnboardingRitual'
@@ -23,16 +23,21 @@ import { DialogHost } from './DialogHost'
 import { FrontmatterFieldsHost } from '@/features/frontmatter/FrontmatterFieldsHost'
 import { PaneView } from './PaneView'
 import { DrawerShell } from '@/composites'
+import { cn } from '@/lib/cn'
 import { FileTree } from '@/features/explorer/FileTree'
-import { NavMenu } from '@/features/nav/NavMenu'
+import { ModeToggle, useAgentsMode } from '@/features/nav/ModeToggle'
+import { SidebarLinks, SidebarPinned, SidebarProfile } from '@/features/nav/Sidebar'
+import { SettingsSidebar } from '@/features/settings/SettingsSidebar'
 import { VaultPicker } from '@/features/vault/VaultPicker'
 import { trpc } from '../lib/trpc'
 import { sweepDailyAtom } from '../state/daily'
+import { activeModeAtom } from '../state/color-scheme'
 import { openLandingAtom } from '../state/home'
 import { useSettingsFollowDisk } from '../state/settings'
 import { useVaultMembers } from '../state/members'
 import {
   activeTab,
+  closeOtherTabs,
   dropZones,
   focusPane,
   moveTab,
@@ -54,7 +59,7 @@ import { CommandPalette } from '@/features/palette/CommandPalette'
 import { QuickAddHost } from '@/features/tasks/QuickAddHost'
 import { runCommandAtom, useCommandHotkeys } from '../state/commands'
 import { recentOfTab, touchRecentAtom } from '../state/recents'
-import { closePaneWithExitAtom, closeTabWithExitAtom, leavingPaneAtom } from '../state/pane-exit'
+import { closePaneAtom, closeTabAtom } from '../state/pane-exit'
 import { applyVaultSwitchAtom, leavingVaultAtom, switchVaultAtom } from '../state/vault-switch'
 import { pendingVaultPromptAtom, startPendingVaultPromptAtom } from '../state/vault-removal'
 import { openPathAtom, useSurfaceTabs } from '@/state/surfaces'
@@ -71,6 +76,7 @@ import { reconcileAtom } from '@/state/reconcile'
  *  `allowed` reference between renders. */
 const NO_ZONES: PaneDropZone[] = []
 import { navOpenAtom } from '../state/preferences'
+import { appModeAtom } from '../state/app-mode'
 import { useVaultTheme } from '../state/theme'
 import {
   activeRemoteAtom,
@@ -98,6 +104,7 @@ export function Shell() {
   const vaults = useAtomValue(vaultsAtom)
   const activeRemote = useAtomValue(activeRemoteAtom)
   const syncState = useAtomValue(syncStateAtom)
+  const colorMode = useAtomValue(activeModeAtom)
   const [workspace, setWorkspace] = useAtom(workspaceAtom)
   const openVault = useSetAtom(openVaultAtom)
   const openLanding = useSetAtom(openLandingAtom)
@@ -110,16 +117,17 @@ export function Shell() {
   const surfaces = useAtomValue(surfacesAtom)
   const running = useAtomValue(runningPluginsAtom)
   const [navOpen, setNavOpen] = useAtom(navOpenAtom)
+  const agentsMode = useAgentsMode()
+  const [mode, setMode] = useAtom(appModeAtom)
+  const agentsInFront = mode === 'agents' && agentsMode !== undefined
   const historyTarget = useAtomValue(historyTargetPathAtom)
   const reconcile = useSetAtom(reconcileAtom)
   const agent = useAgentService()
   const retrySync = useSetAtom(retrySyncAtom)
   const [heldBack, setHeldBack] = useAtom(heldBackAtom)
-  /** The pane playing its exit, if any; the timer is the atom's
-   *  (`state/pane-exit.ts`), so every close path shares it. */
-  const leavingPane = useAtomValue(leavingPaneAtom)
-  const closePaneWithExit = useSetAtom(closePaneWithExitAtom)
-  const closeTabWithExit = useSetAtom(closeTabWithExitAtom)
+  /** Closes go through `state/pane-exit.ts`, so a key and a click agree. */
+  const closePaneNow = useSetAtom(closePaneAtom)
+  const closeTabNow = useSetAtom(closeTabAtom)
   const runCommand = useSetAtom(runCommandAtom)
 
   // The application menu runs commands by id through the same table. ⌘W is
@@ -191,6 +199,15 @@ export function Shell() {
   useCommandHotkeys()
 
   const tab = activeTab(workspace)
+  // Opening something (a note from the palette, a link, Settings) brings
+  // Documents back, since the panes are where it opens. Not on the first
+  // render: the mode a launch remembers stands.
+  const seenTab = useRef(tab)
+  useEffect(() => {
+    if (seenTab.current === tab) return
+    seenTab.current = tab
+    setMode('documents')
+  }, [tab, setMode])
   // The one place tab recents are recorded: whatever opened it, active is
   // what "recently opened" means.
   const touchRecent = useSetAtom(touchRecentAtom)
@@ -257,7 +274,7 @@ export function Shell() {
   }
 
   return (
-    <div className="flex h-screen flex-col bg-background text-foreground">
+    <div className="relative flex h-screen flex-col bg-ground text-foreground">
       <div className="flex min-h-0 flex-1">
         {/* The nav is a DrawerShell; its content stays mounted while hidden, so
             the tree's expansion survives. */}
@@ -266,30 +283,12 @@ export function Shell() {
           side="left"
           open={navOpen}
           label="Sidebar"
-          // Hidden, the nav closes to a rail: the plugins' rail sections (the
-          // session orbs), then the nav menu on its side at the foot. The toggle rides the drawer's moving edge
-          // and lands in the rail's top slot.
-          edgeControl={
-            <IconButton
-              icon={navOpen ? PanelLeftClose : PanelLeftOpen}
-              label={navOpen ? 'Hide sidebar' : 'Show sidebar'}
-              tooltip={
-                <span className="inline-flex items-center gap-1.5">
-                  {navOpen ? 'Hide sidebar' : 'Show sidebar'}
-                  <Kbd>⌘B</Kbd>
-                </span>
-              }
-              onClick={() => setNavOpen((open) => !open)}
-            />
-          }
-          rail={
-            <>
-              {running.map(({ info, railSection: Section }) =>
-                Section === undefined ? null : <Section key={info.id} />,
-              )}
-              <NavMenu orientation="vertical" />
-            </>
-          }
+          // Its seam is the toggle (after ReUI's app shell): drag to resize,
+          // click to hide, and hidden it stays at the window's edge.
+          onToggle={() => setNavOpen((open) => !open)}
+          // The sidebar's one inset: its rows, the switchers and the labels
+          // all start from 8px, so their icons share one left edge.
+          headerClassName="h-9 border-b-0 px-2"
           header={
             <VaultPicker
               vaults={vaults}
@@ -299,7 +298,9 @@ export function Shell() {
             />
           }
         >
-          <div className="relative flex min-h-0 flex-1 flex-col">
+          {/* Groups are spaced by the column's gap, never by their own margins:
+              one step between groups, rows tight within one. */}
+          <div className="relative flex min-h-0 flex-1 flex-col gap-4 pt-2">
             {showAdd && <OnboardingRitual mode="add-vault" onDismiss={() => setShowAdd(false)} />}
             {leaving !== null && (
               <LeaveConfirm
@@ -318,50 +319,80 @@ export function Shell() {
               />
             )}
 
-            {/* The tree, then the plugins' sidebar sections (the vault's live
-              sessions) directly above the nav menu: no header, nothing to
-              resize. */}
-            <div className="flex min-h-0 flex-1 flex-col">
-              {/* A flex column, so the tree's own `flex-1` has a height to
-                  fill and its list scrolls inside it rather than running on
-                  under the sessions and the menu. The bottom margin keeps a
-                  clear band between a scrolled tree and what sits below it. */}
-              <div className="mb-3 flex min-h-0 flex-1 flex-col">
-                <FileTree
-                  activePath={pathOfTab(folderClaims, tab)}
-                  onOpenPreview={open}
-                  onOpenPinned={openPin}
-                  onOpenInNewPane={(path) => openPath(path, 'pane')}
-                />
-              </div>
-              {running.map(({ info, sidebarSection: Section }) =>
-                Section === undefined ? null : <Section key={info.id} />,
-              )}
-            </div>
+            {tab?.kind === 'surface' && tab.surface === 'settings' && !agentsInFront ? (
+              // Settings in front: the sidebar is its sections (after Linear).
+              <SettingsSidebar />
+            ) : (
+              <>
+                {/* Top to bottom: the mode, then the mode's own list, then who
+                is signed in (docs/features/sidebar.md). */}
+                <div className="shrink-0 px-2 empty:hidden">
+                  <ModeToggle />
+                </div>
+                {agentsInFront ? (
+                  <div className="flex min-h-0 flex-1 flex-col">
+                    <agentsMode.sidebar />
+                  </div>
+                ) : (
+                  <>
+                    <div className="flex shrink-0 flex-col gap-4 px-2">
+                      <SidebarLinks />
+                      <SidebarPinned />
+                    </div>
+                    <div className="flex min-h-0 flex-1 flex-col">
+                      {/* A flex column, so the tree's own `flex-1` has a height
+                      to fill and its list scrolls inside it rather than running
+                      on under the profile. */}
+                      <div className="flex min-h-0 flex-1 flex-col">
+                        <FileTree
+                          sectionLabel="Files"
+                          activePath={pathOfTab(folderClaims, tab)}
+                          onOpenPreview={open}
+                          onOpenPinned={openPin}
+                          onOpenInNewPane={(path) => openPath(path, 'pane')}
+                        />
+                      </div>
+                      {running.map(({ info, sidebarSection: Section }) =>
+                        Section === undefined ? null : <Section key={info.id} />,
+                      )}
+                    </div>
+                  </>
+                )}
+              </>
+            )}
 
-            {/* The nav menu on the sidebar's floor. It opens upward
-              over the sessions and the tree. The left padding centres its
-              first icons on the tree's chevrons: a root row's `pl-6` puts a
-              14px chevron's centre at 31px, and 11px here plus the bar's 4px
-              and a 32px button's 8px inset puts a 16px icon's centre there. */}
-            <div className="flex shrink-0 py-2 pr-2 pl-2.75">
-              <NavMenu />
+            <div className="shrink-0 px-2 pb-2">
+              <SidebarProfile />
             </div>
           </div>
         </DrawerShell>
 
-        <div className="flex min-w-60 flex-1 flex-col">
+        {/* The content, flush beside the sidebar: the sidebar on the window's
+            ground, the content on the page, the drawer's seam between them. In
+            Agents mode the agent plugin's view stands in for the panes, which
+            stay mounted underneath so nothing open is lost. */}
+        <div className="relative flex min-w-60 flex-1 flex-col overflow-hidden bg-background">
+          {agentsInFront && (
+            <div className="absolute inset-0 z-10 flex flex-col bg-background">
+              <agentsMode.main />
+            </div>
+          )}
           {/* The panes. Layout deliberately not persisted: a stored layout
                 is weights keyed to a panel count, and panes come and go. */}
-          <ResizablePanelGroup orientation="horizontal" className="min-h-0">
+          {/* `isolate`: the panes are their own stacking context, so nothing
+              raised inside a note (its page controls, the outline) can come up
+              through the Agents view laid over them. */}
+          <ResizablePanelGroup orientation="horizontal" className="isolate min-h-0">
             {workspace.panes.map((p, i) => (
               <Fragment key={i}>
                 {i > 0 && <ResizableHandle />}
                 <ResizablePanel id={`pane-${i}`} minSize={240}>
                   <PaneView
                     pane={p}
+                    // The window's lights sit over the first pane's tabs once
+                    // the sidebar is hidden (index.css, Window).
+                    leading={i === 0 && !navOpen ? <span data-window-inset="" /> : undefined}
                     focused={i === workspace.active}
-                    leaving={leavingPane === i}
                     onFocus={() => setWorkspace((w) => focusPane(w, i))}
                     // Every action focuses this pane first, then acts on the
                     // active pane.
@@ -377,7 +408,10 @@ export function Shell() {
                       })
                     }
                     onPin={(t) => setWorkspace((w) => pinTab(focusPane(w, i), t))}
-                    onCloseTab={(t) => closeTabWithExit(i, t)}
+                    onCloseTab={(t) => closeTabNow(i, t)}
+                    onCloseOthers={(t, which) =>
+                      setWorkspace((w) => closeOtherTabs(focusPane(w, i), t, which))
+                    }
                     onEdit={() => setWorkspace((w) => pinActive(focusPane(w, i)))}
                     onOpenNote={open}
                     onConflict={(path, resolve) => setBanner({ path, resolve })}
@@ -408,7 +442,7 @@ export function Shell() {
                         {i === workspace.active && historyTarget !== null && (
                           <IconButton
                             icon={History}
-                            label="version history"
+                            label="Version history"
                             className="ml-1"
                             onClick={() => setHistoryOpen((v) => !v)}
                           />
@@ -418,9 +452,9 @@ export function Shell() {
                         {workspace.panes.length > 1 && (
                           <IconButton
                             icon={PanelRight}
-                            label="close this pane"
+                            label="Close pane"
                             className="ml-1"
-                            onClick={() => closePaneWithExit(i)}
+                            onClick={() => closePaneNow(i)}
                           />
                         )}
                       </>
@@ -441,6 +475,8 @@ export function Shell() {
         <DialogHost />
         <CommandPalette />
         <QuickAddHost />
+        {/* The app's one toaster: an editor's "Page cleared · Undo" and the like. */}
+        <Toaster theme={colorMode} position="bottom-center" />
 
         {/* Every frontmatter block's controls, portalled into their CodeMirror
             widgets. Here, not in EditorPane: a widget does not know its pane,
@@ -451,7 +487,7 @@ export function Shell() {
       {/* A config conflict outranks the quiet footer button, so a
           misconfigured vault cannot hide (docs/features/vaults-sync.md). */}
       {configConflicts.length > 0 && (
-        <div className="flex items-center justify-between gap-3 border-t border-destructive bg-destructive/10 px-3 py-2 text-xs text-destructive">
+        <div className="flex items-center justify-between gap-3 border-t border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
           <p className="min-w-0">
             <span className="font-semibold">Configuration conflict.</span>{' '}
             {configConflicts.map((p, i) => (
@@ -482,12 +518,12 @@ export function Shell() {
       )}
 
       {/* The large-file gate (docs/features/vaults-sync.md): files over the
-          size cap are held out of git. Amber, not destructive: nothing is
+          size cap are held out of git. Quiet, not destructive: nothing is
           wrong, there is a decision to make. */}
       {heldBack.length > 0 && (
-        <div className="border-t border-amber-700/50 bg-amber-950/30 px-3 py-2 text-xs text-amber-200">
+        <div className="border-t border-divider bg-muted px-3 py-2 text-xs text-muted-foreground">
           <p className="mb-1.5">
-            <span className="font-semibold">
+            <span className="font-semibold text-foreground">
               {heldBack.length} file{heldBack.length === 1 ? '' : 's'} held back
             </span>{' '}
             — over the size limit, kept out of git so they don&rsquo;t bloat every clone.
@@ -495,10 +531,10 @@ export function Shell() {
           <ul className="space-y-1">
             {heldBack.map((f) => (
               <li key={f.path} className="flex items-center gap-2">
-                <code className="min-w-0 flex-1 truncate rounded bg-amber-900/30 px-1 font-mono">
+                <code className="min-w-0 flex-1 truncate rounded bg-foreground/[0.06] px-1 font-mono text-foreground">
                   {f.path}
                 </code>
-                <span className="shrink-0 text-amber-300/70">{formatBytes(f.bytes)}</span>
+                <span className="shrink-0 tabular-nums">{formatBytes(f.bytes)}</span>
                 <Button
                   variant="outline"
                   size="xs"

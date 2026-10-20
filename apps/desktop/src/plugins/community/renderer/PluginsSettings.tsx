@@ -216,7 +216,11 @@ export function PluginsSettings({ remote }: { remote: string }): React.JSX.Eleme
       )}
 
       <AddPlugin flow={flow} busy={busy} act={act} />
-      {error !== null && <p className="mt-2 text-[11px] text-amber-400">{error}</p>}
+      {error !== null && (
+        <p role="alert" className="mt-2 text-xs text-pretty break-words text-destructive">
+          {error}
+        </p>
+      )}
     </section>
   )
 }

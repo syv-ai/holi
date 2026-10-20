@@ -10,6 +10,7 @@ import { useAtomValue } from 'jotai'
 import { useEffect, useState } from 'react'
 import { FilePen } from 'lucide-react'
 import { Button, Icon } from '@/primitives'
+import { EmptyState, LoadingRows } from '@/composites'
 import { googleCap } from './account'
 import { activeRemoteAtom } from '@/plugin-api'
 import type { MailAddress } from './mail-types'
@@ -47,6 +48,8 @@ export function DraftsList({
 }): React.JSX.Element {
   const [drafts, setDrafts] = useState<DraftSummary[] | null>(null)
   const [error, setError] = useState<string | null>(null)
+  /** Bumped by Try again, so a failed fetch can be asked again. */
+  const [attempt, setAttempt] = useState(0)
   const remote = useAtomValue(activeRemoteAtom)
 
   useEffect(() => {
@@ -66,16 +69,27 @@ export function DraftsList({
     return () => {
       cancelled = true
     }
-  }, [reloadKey, remote])
+  }, [reloadKey, remote, attempt])
 
   if (error !== null) {
-    return <p className="p-6 text-center text-sm text-muted-foreground">{error}</p>
+    return (
+      <EmptyState
+        role="alert"
+        title="Couldn’t load your drafts"
+        description={error}
+        action={{ label: 'Try again', onClick: () => setAttempt((n) => n + 1) }}
+      />
+    )
   }
-  if (drafts === null) {
-    return <p className="p-6 text-center text-sm text-muted-foreground">Loading drafts…</p>
-  }
+  if (drafts === null) return <LoadingRows label="Loading drafts" lines={3} />
   if (drafts.length === 0) {
-    return <p className="p-6 text-center text-sm text-muted-foreground">No drafts.</p>
+    return (
+      <EmptyState
+        icon={FilePen}
+        title="No drafts"
+        description="A message you start and leave unsent waits here."
+      />
+    )
   }
 
   return (
@@ -85,20 +99,22 @@ export function DraftsList({
           {/* The `Button` primitive: the boundaries gate bans native `<button>`. */}
           <Button
             variant="ghost"
-            className="block h-auto w-full rounded-none border-b border-divider px-3 py-2 text-left"
+            className="block h-auto w-full rounded-none border-b border-divider px-4 py-2 text-left"
             onClick={() => onOpen(draft)}
           >
-            <span className="flex items-baseline gap-1">
+            {/* The second lines start where the recipient does: the icon's
+                14px plus the row's `gap-2`. */}
+            <span className="flex items-baseline gap-2">
               <Icon icon={FilePen} size="sm" tone="muted" className="self-center" />
-              <span className="min-w-0 flex-1 truncate text-xs">{recipients(draft.to)}</span>
-              <span className="shrink-0 text-[10px] text-muted-foreground">
+              <span className="min-w-0 flex-1 truncate text-sm">{recipients(draft.to)}</span>
+              <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
                 {shortDate(draft.date)}
               </span>
             </span>
-            <span className="block truncate pl-3.5 text-xs">
+            <span className="block truncate pl-5.5 text-sm">
               {draft.subject === '' ? '(no subject)' : draft.subject}
             </span>
-            <span className="block truncate pl-3.5 text-[11px] text-muted-foreground">
+            <span className="block truncate pl-5.5 text-xs text-muted-foreground">
               {draft.snippet}
             </span>
           </Button>

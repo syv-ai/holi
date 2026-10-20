@@ -243,6 +243,34 @@ export interface AgentServiceSource {
   start: WritableAtom<null, [{ name?: string; prompt: string }], Promise<AskResult>>
 }
 
+export interface AgentsStatus {
+  /** Sessions or Holis waiting on the person (a permission, a question). */
+  needsYou: number
+  /** Sessions or Holis mid-turn. */
+  working: number
+}
+
+export interface AgentsMode {
+  sidebar: ComponentType
+  main: ComponentType
+  status: Atom<AgentsStatus>
+}
+
+/**
+ * What another plugin adds to the Agents mode, which the plugin providing it
+ * draws without knowing who adds what (docs/features/sidebar.md). Its rows
+ * select `{owner: <its id>, id}` in `agentsSelectionAtom`, and while one of
+ * them is selected `main` is the main view.
+ */
+export interface AgentsSlot {
+  /** Its section of the Agents sidebar, after the provider's own. */
+  sidebar?: ComponentType
+  /** The main view while the selection is its own; gets the selected id. */
+  main?: ComponentType<{ id: string }>
+  /** Added to what the mode toggle reports. */
+  status?: Atom<AgentsStatus>
+}
+
 export interface RendererPlugin {
   info: PluginInfo
   /** Handlers for the plugin's events, by name. Subscribed at boot for every
@@ -254,8 +282,21 @@ export interface RendererPlugin {
   surfaces?: readonly Surface[]
   rail?: readonly RailItem[]
   settingsSections?: readonly SettingsSection[]
-  /** Shown in the hidden sidebar's rail, above the nav menu. */
-  railSection?: ComponentType
+  /**
+   * The sidebar's Agents mode (docs/features/sidebar.md): its sidebar body and
+   * main view replace Documents' while the mode toggle is on Agents, and
+   * `status` is what the toggle reports from either mode. One plugin provides
+   * it (the agent); without it the toggle is not shown.
+   */
+  agentsMode?: AgentsMode
+  /** Its additions to the Agents mode another plugin provides. */
+  agentsSlot?: AgentsSlot
+  /**
+   * What it offers to do with the open document, as rows of the Agent
+   * button's menu in a pane's header (`DropdownMenuItem`s and the like from
+   * `@/primitives`). Core draws the menu and knows nothing of the rows.
+   */
+  documentActions?: ComponentType<{ path: string }>
   /** Shown in the sidebar, under the file tree. */
   sidebarSection?: ComponentType
   /** Right-hand drawers; each decides whether it is open. */

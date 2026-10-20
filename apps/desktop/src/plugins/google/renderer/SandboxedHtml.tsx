@@ -81,7 +81,7 @@ export function SandboxedHtml({
   return (
     <>
       {sanitized.blockedRemoteCount > 0 && (
-        <div className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md bg-secondary px-2 py-1 text-[11px] text-muted-foreground">
+        <div className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md bg-secondary px-2 py-1 text-xs text-muted-foreground">
           <Icon icon={ImageOff} size="sm" />
           <span className="min-w-0 flex-1">
             Images blocked — loading them tells the sender you opened this.

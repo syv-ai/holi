@@ -2,8 +2,9 @@
  * The one way a glyph is drawn in the renderer's React tree
  * (`docs/ui-system.md`, Icons).
  *
- * **Size and stroke live here and nowhere else.** Two sizes, `sm` (14px, beside
- * text and in dense controls) and `md` (16px, toolbars, menus, the dock), from
+ * **Size and stroke live here and nowhere else.** Three sizes, `sm` (14px,
+ * beside text and in dense controls), `md` (16px, toolbars, menus, the dock)
+ * and `lg` (20px, the mark in an `IconTile`), from
  * the `--icon-*` tokens in `index.css`. The size is a class, never lucide's
  * `width` attribute, so no container rule can quietly override it. The lint
  * gate rejects a lucide or simple-icons glyph rendered anywhere but here.
@@ -20,7 +21,7 @@ import { cn } from '@/lib/cn'
  *  glyph, or one of Holi's own (`PdfIcon`, a vault app's `AppIcon`). */
 export type IconGlyph = ComponentType<{ className?: string; 'aria-hidden'?: boolean }>
 
-export type IconSize = 'sm' | 'md'
+export type IconSize = 'sm' | 'md' | 'lg'
 
 export function Icon({
   icon: Glyph,
@@ -43,7 +44,7 @@ export function Icon({
       aria-hidden
       className={cn(
         'pointer-events-none shrink-0',
-        size === 'sm' ? 'icon-sm' : 'icon-md',
+        size === 'sm' ? 'icon-sm' : size === 'lg' ? 'icon-lg' : 'icon-md',
         tone === 'muted' && 'text-icon',
         filled && 'fill-current',
         className,

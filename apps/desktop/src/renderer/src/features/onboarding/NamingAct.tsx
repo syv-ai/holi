@@ -2,23 +2,33 @@
  * Naming a new vault: one name, slugified live, and the account or org it is
  * created under. The link to join an existing vault instead lives here too.
  *
+ * **The owner is part of the address.** Under the name sits the repo's path,
+ * `github.com / owner / slug`, and the owner in it is a switcher (after ReUI's
+ * `app-shell-7` header crumbs): the choice is made where its effect shows,
+ * rather than in a separate field restating the same path.
+ *
  * Owns the org list: `read:org` buys exactly one feature, offering an org as
  * the owner, and when it fails the personal account still works.
  */
 import { useEffect, useRef, useState } from 'react'
 import { useAtomValue } from 'jotai'
+import { ChevronsUpDown, CornerDownRight, Lock } from 'lucide-react'
 import {
   Button,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+  Icon,
   Input,
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
 } from '@/primitives'
 import { trpc } from '@/lib/trpc'
+import { DEFAULT_VAULT_NAME } from '@/state/onboarding-flow'
 import { sessionAtom } from '@/state/session'
-import { CEREMONY_GHOST } from './ceremony'
+import { ActHeading } from './ActHeading'
+import { OwnerAvatar, type Owner } from './OwnerAvatar'
 
 interface Props {
   name: string
@@ -34,74 +44,117 @@ interface Props {
 
 export function NamingAct({ name, owner, slug, error, active, onName, onOwner, onJoin }: Props) {
   const session = useAtomValue(sessionAtom)
-  const [orgs, setOrgs] = useState<string[]>([])
+  const [orgs, setOrgs] = useState<Owner[]>([])
   const nameRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     void trpc.github.orgs
       .query()
-      .then((list) => setOrgs(list.map((o) => o.login)))
+      .then((list) => setOrgs(list.map((o) => ({ ...o, kind: 'org' as const }))))
       .catch(() => {})
   }, [])
 
-  // After the act has crossfaded in, not during, or the caret lands mid-fade.
   useEffect(() => {
-    if (!active) return
-    const t = setTimeout(() => nameRef.current?.focus(), 220)
-    return () => clearTimeout(t)
+    if (active) nameRef.current?.focus()
   }, [active])
 
-  const owners = session ? [session.login, ...orgs.filter((o) => o !== session.login)] : orgs
+  const owners: Owner[] = session
+    ? [
+        { login: session.login, avatarUrl: session.avatarUrl, kind: 'personal' },
+        ...orgs.filter((o) => o.login !== session.login),
+      ]
+    : orgs
 
   return (
-    <>
-      <div className="obrit-name-stage">
-        <div className="obrit-eyebrow">NAME YOUR VAULT</div>
+    <div className="flex flex-col items-center gap-6">
+      <ActHeading
+        center
+        title="Name your vault"
+        description="A private repository on GitHub, made when you finish."
+      />
+      <div className="flex w-full max-w-sm flex-col gap-2">
         <Input
           ref={nameRef}
-          variant="display"
-          className="obrit-vault-input"
           value={name}
           onChange={(e) => onName(e.target.value)}
-          placeholder="your vault"
+          placeholder={DEFAULT_VAULT_NAME}
+          aria-label="Vault name"
           autoComplete="off"
           spellCheck={false}
           autoCapitalize="off"
           maxLength={40}
         />
-        <div className="obrit-input-underline" />
-        <div className="obrit-path-caption">
-          github.com/{owner || '…'}/<span className="obrit-slug-out">{slug || '…'}</span> · private
+        {/* The repo's address, the owner a switcher. A URL reads left to right
+            in any language. */}
+        <div
+          className="flex flex-wrap items-center gap-1 font-mono text-xs text-muted-foreground"
+          dir="ltr"
+        >
+          <span>github.com</span>
+          <span aria-hidden>/</span>
+          <OwnerSwitcher owners={owners} owner={owner} onOwner={onOwner} />
+          <span aria-hidden>/</span>
+          <span className="break-all text-foreground">{slug}</span>
+          <span className="ms-auto flex items-center gap-1 font-sans">
+            <Icon icon={Lock} size="sm" />
+            Private
+          </span>
         </div>
       </div>
 
-      <div className="obrit-form">
-        <div className="obrit-field">
-          <div className="obrit-field-label">OWNER</div>
-          <Select value={owner} onValueChange={onOwner}>
-            <SelectTrigger variant="underline">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {owners.map((o) => (
-                <SelectItem key={o} value={o}>
-                  {o}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <div className="obrit-field-caption">
-            the account or org this private repo is created under.
-          </div>
-        </div>
-        <div className="obrit-cta-row">
-          <Button variant="ghost" className={CEREMONY_GHOST} onClick={onJoin}>
-            <span aria-hidden>↳</span>
-            join one you've been added to
-          </Button>
-        </div>
-        {error && <div className="obrit-error">{error}</div>}
+      <div className="flex flex-col items-center gap-3">
+        <Button variant="ghost" onClick={onJoin}>
+          <Icon icon={CornerDownRight} size="sm" tone="muted" />
+          Join vaults in your accounts
+        </Button>
+        {error && (
+          <p role="alert" className="text-center text-sm text-destructive">
+            {error}
+          </p>
+        )}
       </div>
-    </>
+    </div>
+  )
+}
+
+/** The owner crumb in the path: who the repo is created under, as a menu of
+ *  the signed-in account and its orgs. */
+function OwnerSwitcher({
+  owners,
+  owner,
+  onOwner,
+}: {
+  owners: Owner[]
+  owner: string
+  onOwner: (owner: string) => void
+}) {
+  const current = owners.find((o) => o.login === owner)
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="ghost" size="sm" className="max-w-64 min-w-0 shrink font-mono">
+          <span className="sr-only">Owner: </span>
+          <OwnerAvatar owner={current ?? { login: owner, kind: 'personal' }} />
+          <span className="truncate">{owner || 'owner'}</span>
+          <Icon icon={ChevronsUpDown} size="sm" tone="muted" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="w-60">
+        <DropdownMenuLabel>Create under</DropdownMenuLabel>
+        <DropdownMenuRadioGroup value={owner} onValueChange={onOwner}>
+          {owners.map((o) => (
+            <DropdownMenuRadioItem key={o.login} value={o.login}>
+              <OwnerAvatar owner={o} />
+              <span className="flex min-w-0 flex-col">
+                <span className="truncate">{o.login}</span>
+                <span className="truncate text-xs text-muted-foreground">
+                  {o.kind === 'personal' ? 'Personal account' : 'Organisation'}
+                </span>
+              </span>
+            </DropdownMenuRadioItem>
+          ))}
+        </DropdownMenuRadioGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 }

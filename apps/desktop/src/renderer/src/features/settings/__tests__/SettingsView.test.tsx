@@ -9,7 +9,7 @@
  * a section that does not exist renders NOWHERE, and a declared heading the
  * section never renders is a jump that scrolls to nothing.
  */
-import { fireEvent, render, screen, waitFor, within } from '@/test/render'
+import { render, screen, waitFor, within } from '@/test/render'
 import userEvent from '@testing-library/user-event'
 import { Provider, createStore } from 'jotai'
 import { beforeEach, expect, test, vi } from 'vitest'
@@ -89,7 +89,7 @@ async function go(label: string): Promise<void> {
   // `find`, not `get`: the tab shows a placeholder until the first settings read
   // lands, so the very first `go` of a test can arrive before the rail exists.
   const rail = await screen.findByRole('navigation', { name: 'Settings sections' })
-  await userEvent.click(within(rail).getByRole('button', { name: label }))
+  await userEvent.click(within(rail).getByRole('treeitem', { name: label }))
   await waitFor(() => expect(screen.getByRole('heading', { name: label })).toBeInTheDocument())
 }
 
@@ -166,17 +166,13 @@ test('the section you are in is the one expanded in the rail', async () => {
   const rail = await screen.findByRole('navigation', { name: 'Settings sections' })
   // Selection IS expansion, so Appearance's token groups are only offered while
   // Appearance is what you are looking at.
-  expect(within(rail).queryByRole('button', { name: 'Surfaces' })).not.toBeInTheDocument()
+  expect(within(rail).queryByRole('treeitem', { name: 'Surfaces' })).not.toBeInTheDocument()
 
   await go('Appearance')
-  expect(within(rail).getByRole('button', { name: 'Surfaces' })).toBeInTheDocument()
+  expect(within(rail).getByRole('treeitem', { name: 'Surfaces' })).toBeInTheDocument()
 
   await go('Commits')
-  // A group closes by sliding shut, and leaves once the slide has ended.
-  for (const closing of rail.querySelectorAll('[data-slot="disclose"][data-state="closed"]')) {
-    fireEvent.transitionEnd(closing)
-  }
-  expect(within(rail).queryByRole('button', { name: 'Surfaces' })).not.toBeInTheDocument()
+  expect(within(rail).queryByRole('treeitem', { name: 'Surfaces' })).not.toBeInTheDocument()
 })
 
 test('says which layer each value comes from', async () => {

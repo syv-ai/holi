@@ -1,7 +1,7 @@
 import type { TemplateField } from '../shared/template-fields'
 import { useSetAtom } from 'jotai'
 import { useEffect, useMemo, useState } from 'react'
-import { FormField } from '@/composites/FormField'
+import { TriangleAlert } from 'lucide-react'
 import { capClient, openNoteTabAtom, trpc } from '@/plugin-api'
 import type { PdfCapabilities } from '../main/capabilities'
 import { FieldWidget } from './FieldWidget'
@@ -9,6 +9,8 @@ import { metaFromValues, missingRequired, parseFrontmatter, prefillValues } from
 import {
   Button,
   Dialog,
+  FormField,
+  Icon,
   Select,
   SelectContent,
   SelectItem,
@@ -50,6 +52,8 @@ export function ConvertToPdf({
   const [frontmatter, setFrontmatter] = useState<Record<string, unknown>>({})
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  /** Required fields left empty at the last Convert, marked at the field. */
+  const [missing, setMissing] = useState<ReadonlySet<string>>(new Set())
   const name = path.split('/').at(-1) ?? path
   const selected = templates?.find((t) => t.slug === slug) ?? null
 
@@ -102,13 +106,10 @@ export function ConvertToPdf({
 
   const convert = async () => {
     if (selected === null) return
-    const missing = missingRequired(selected.fields, values)
-    if (missing.length > 0) {
-      setError(
-        `Fill required field${missing.length > 1 ? 's' : ''}: ${missing
-          .map((f) => f.label)
-          .join(', ')}`,
-      )
+    const empty = missingRequired(selected.fields, values)
+    setMissing(new Set(empty.map((f) => f.key)))
+    if (empty.length > 0) {
+      setError(null)
       return
     }
     setBusy(true)
@@ -150,7 +151,10 @@ export function ConvertToPdf({
 
       <Dialog.Body>
         {templates === null && error === null && (
-          <p className="text-xs text-muted-foreground">Loading templates…</p>
+          <div role="status" aria-label="Loading templates" className="flex flex-col gap-1">
+            <span className="block h-3.5 w-16 rounded-md motion-shimmer" />
+            <span className="block h-9 w-full rounded-md motion-shimmer" />
+          </div>
         )}
         {templates !== null && templates.length === 0 && (
           <p className="text-xs text-muted-foreground">
@@ -176,30 +180,65 @@ export function ConvertToPdf({
         )}
 
         {selected !== null && selected.warnings.length > 0 && (
-          <div className="rounded border border-amber-900/60 bg-amber-950/40 px-2.5 py-2 text-xs text-amber-100">
-            <p className="mb-1 font-medium">
-              This template's manifest had issues (using safe defaults):
-            </p>
-            <ul className="list-disc space-y-0.5 pl-4">
-              {selected.warnings.map((w) => (
-                <li key={w}>{w}</li>
-              ))}
-            </ul>
+          <div className="flex gap-2 rounded-md bg-muted px-2.5 py-2 text-xs text-foreground">
+            <Icon icon={TriangleAlert} size="sm" tone="muted" className="mt-px shrink-0" />
+            <div className="flex min-w-0 flex-col gap-1">
+              <p className="font-medium">
+                This template&rsquo;s manifest had problems, so Holi used safe defaults:
+              </p>
+              <ul className="flex list-disc flex-col gap-0.5 pl-4 break-words">
+                {selected.warnings.map((w) => (
+                  <li key={w}>{w}</li>
+                ))}
+              </ul>
+            </div>
           </div>
         )}
 
         {selected !== null &&
-          selected.fields.map((f) => (
-            <FormField key={f.key} label={f.label} required={f.required && f.type !== 'checkbox'}>
+          selected.fields.map((f) => {
+            const invalid = missing.has(f.key)
+            const widget = (id?: string) => (
               <FieldWidget
                 field={f}
+                id={id}
+                invalid={invalid}
                 value={values[f.key] ?? ''}
-                onChange={(v) => setValues((prev) => ({ ...prev, [f.key]: v }))}
+                onChange={(v) => {
+                  setValues((prev) => ({ ...prev, [f.key]: v }))
+                  if (invalid) {
+                    setMissing((prev) => {
+                      const next = new Set(prev)
+                      next.delete(f.key)
+                      return next
+                    })
+                  }
+                }}
               />
-            </FormField>
-          ))}
+            )
+            // A checkbox reads as one row, its label beside the box; every
+            // other control takes its caption above.
+            return f.type === 'checkbox' ? (
+              <FormField key={f.key} label={f.label} orientation="horizontal">
+                {(id) => widget(id)}
+              </FormField>
+            ) : (
+              <FormField
+                key={f.key}
+                label={f.label}
+                required={f.required}
+                error={invalid ? `${f.label} is required.` : undefined}
+              >
+                {widget()}
+              </FormField>
+            )
+          })}
 
-        {error !== null && <p className="text-xs text-destructive">{error}</p>}
+        {error !== null && (
+          <p role="alert" className="text-xs text-pretty break-words text-destructive">
+            {error}
+          </p>
+        )}
       </Dialog.Body>
 
       <Dialog.Footer>

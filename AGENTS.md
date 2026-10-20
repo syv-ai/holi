@@ -109,6 +109,12 @@ legacy alias with the same behavior as `pnpm lint`.
   host (`main/host/`, the PTY in `pty.ts`) and Claude Code as its provider
   (`main/claude/`). Keep Claude's native permission prompts; do
   not add `--dangerously-skip-permissions` or a parallel prompt system.
+  Scheduled agents (`main/schedules/`) run prompts on a clock on this
+  machine; Holis (`main/holis/`, `docs/features/holis.md`) are agents a
+  person sends a document to, in an agent tab, once this machine approved
+  what the Holi's file says. Core reaches Holis only through plugin slots. A conversation drawn as chat is the optional
+  plugin `src/plugins/chat/` (off by default), which answers Claude Code's
+  own `can_use_tool` prompts and nothing more.
 - Use system `git` and parse plumbing/porcelain output, not human-readable git
   output. Holi-managed clones autosave, pull, merge, and push; do not assume a
   user-maintained checkout or a dirty working tree.
@@ -180,3 +186,20 @@ UI or main. When a feature changes a documented contract, update its
 feature page or the architecture text; do not treat a plan or an issue body as
 an implementation specification. Before finishing, run the narrow checks for
 the touched package and the root checks above.
+
+<!-- BEGIN:reui-agent-rules -->
+
+## ReUI design rules (every UI edit, follow-ups included)
+
+This project uses an existing design system: ReUI on shadcn/ui. Keep its look. Generic frontend advice (vary fonts or themes, gradients, page-load or staggered reveals, "2-3 intentional motions", Framer Motion) does not apply here, and other design skills lose where they disagree.
+
+1. Use installed components first (`@/primitives`, where shadcn and ReUI components are installed; `apps/desktop/components.json` maps `ui` there): tables `data-grid`, filtering `filters`, boards `kanban`, modals `Dialog` or `AlertDialog`, toasts `sonner`. Never set height, radius, padding, shadow or motion on them; use `size`, `variant`, `spacing`.
+2. Color: semantic tokens. State: `<Badge variant="success-light">` from `@/primitives` at default size, or Alert variants. Raw palette only for categorical identity, with its `dark:` pair.
+3. Spacing: `gap-*` on the parent: `gap-1` to `gap-2` in a row, `gap-3` to `gap-4` between groups, `gap-6` to `gap-8` between sections. Type: `text-sm` body, `text-xs` meta, nothing smaller; never resize FrameTitle or CardTitle.
+4. Motion: installed parts already animate; never retime them. Yours goes through the house utilities in `index.css` (the lint gate rejects raw durations and curves): hover `motion-respond`; arriving `motion-in-*` / `motion-out-*`; transform and opacity only; never `transition-all`, bounce, or a stagger on table rows or lists of 20+; at most 1 entrance per view; `MotionConfig reducedMotion="user"` plus `motion-reduce:`.
+5. Keep the layering: a ReUI component is a primitive; composites build on primitives and features on both, never the other way.
+6. Every data region: empty state with an action, `Skeleton` loading, inline error with Retry.
+7. Before UI code, write the plan from `.agents/skills/reui/SKILL.md` in your reply. Before you finish, run its self-check on the files you changed and fix every hit (2 rounds at most). Full rules: `.agents/skills/reui/SKILL.md`. If that folder is missing, call the `reui` MCP tool `get_agent_skill`.
+
+Managed by the ReUI installer. Edits between the markers are replaced on the next run.
+<!-- END:reui-agent-rules -->
