@@ -5,16 +5,21 @@
     <link rel="stylesheet" href="style.css" />
   </head>
   <body>
-    <section class="card" id="rec">
-      <div class="row">
-        <button id="start" class="primary">● Start recording</button>
-        <button id="stop" class="primary stop" hidden>■ Stop &amp; transcribe</button>
-        <span id="timer" class="muted">00:00</span>
+    <section class="deck" id="rec" data-state="idle">
+      <div class="top">
+        <button id="recBtn" class="morph" aria-label="Start recording"><span class="ring"></span><span class="core"></span></button>
+        <div class="info">
+          <span class="tag" id="tag">Ready</span>
+          <span class="time" id="timer">00:00</span>
+        </div>
+        <canvas id="wave" class="wave"></canvas>
       </div>
-      <label class="check"><input type="checkbox" id="useMic" checked /> My microphone</label>
-      <label class="check"><input type="checkbox" id="useSys" checked /> Meeting audio (the computer’s sound, whatever app plays it)</label>
+      <div class="sources">
+        <label class="switch"><input type="checkbox" id="useMic" checked /><span class="track"></span><span>My microphone</span></label>
+        <label class="switch"><input type="checkbox" id="useSys" checked /><span class="track"></span><span>Meeting audio <small class="muted">(computer sound)</small></span></label>
+      </div>
+      <p class="muted status" id="status">Ready.</p>
       <div class="meter" hidden><div id="level"></div></div>
-      <p class="muted" id="status">Ready.</p>
     </section>
 
     <details class="card" id="cfg">

@@ -7,6 +7,7 @@ export const TRANSCRIBE_INFO: PluginInfo = {
   id: 'transcribe',
   label: 'Transcribe',
   default: false,
+  requires: ['apps'],
   description:
     'Records an online meeting (your microphone and the meeting’s sound) and transcribes it with syv.ai. Adds a Transcribe.local.app folder, kept on this machine.',
   whenOff:

@@ -42,8 +42,7 @@ async function startRecording() {
   await holi.record.start({ microphone, system })
   rec = { startedAt: Date.now() }
   rec.tick = setInterval(() => ($('timer').textContent = fmt((Date.now() - rec.startedAt) / 1000)), 500)
-  $('start').hidden = true
-  $('stop').hidden = false
+  setDeck('recording')
   setStatus('Recording…')
 }
 
@@ -53,8 +52,7 @@ async function finishRecording() {
   rec = null
   clearInterval(r.tick)
   $('level').style.width = '0'
-  $('stop').hidden = true
-  $('start').hidden = false
+  setDeck('idle')
   setStatus('Finishing the recording…')
   const blob = await holi.record.stop()
   const duration = Math.round((Date.now() - r.startedAt) / 1000)
@@ -216,7 +214,65 @@ async function render() {
   }
 }
 
-$('start').onclick = () => startRecording().catch((e) => { showErr(e); setStatus('Not recording.') })
-$('stop').onclick = () => finishRecording().catch(showErr)
+const TAGS = { idle: 'Ready', starting: 'Starting', recording: 'Recording' }
+function setDeck(s) {
+  $('rec').dataset.state = s
+  $('tag').textContent = TAGS[s] ?? s
+  $('recBtn').setAttribute('aria-label', s === 'recording' ? 'Stop and transcribe' : 'Start recording')
+}
+$('recBtn').onclick = () => {
+  if (rec) return finishRecording().catch(showErr)
+  setDeck('starting')
+  startRecording().catch((e) => { setDeck('idle'); showErr(e); setStatus('Not recording.') })
+}
 holi.on('store:meetings', () => render().catch(showErr))
 loadCfg().then(render).catch(showErr)
+
+// ── live waveform (ElevenLabs "static" style) ──────────────────────────────
+// Bars stay in place and each one is a slice of the spectrum, lowest pitch in
+// the middle, mirrored outward. Holi pushes the 32 bands about 20 times a
+// second while recording: holi.record.onSpectrum(fn(bands)).
+const wave = (() => {
+  const cv = $('wave')
+  const ctx = cv.getContext('2d')
+  const BAR = 3, GAP = 3, STEP = BAR + GAP
+  let bands = null // latest spectrum
+  let shown = [] // eased heights, one per bar
+  const fit = () => {
+    const r = window.devicePixelRatio || 1
+    cv.width = cv.clientWidth * r
+    cv.height = cv.clientHeight * r
+    ctx.setTransform(r, 0, 0, r, 0, 0)
+  }
+  function draw() {
+    requestAnimationFrame(draw)
+    const w = cv.clientWidth, h = cv.clientHeight
+    if (!w) return
+    const on = $('rec').dataset.state === 'recording'
+    if (!on) bands = null
+    const n = Math.max(2, Math.floor(w / STEP))
+    const st = getComputedStyle(document.body)
+    ctx.clearRect(0, 0, w, h)
+    ctx.fillStyle = (on ? st.getPropertyValue('--brand') : st.getPropertyValue('--muted-foreground')).trim() || '#888'
+    const half = n / 2
+    const x0 = (w - n * STEP + GAP) / 2
+    for (let i = 0; i < n; i++) {
+      // distance from the centre picks the band: low pitches in the middle
+      const d = Math.abs(i + 0.5 - half) / half
+      const raw = bands ? bands[Math.min(bands.length - 1, Math.floor(d * bands.length))] ?? 0 : 0
+      const target = Math.pow(raw, 1.4) * (1 - 0.35 * d) // the highs run quieter: keep the shape
+      shown[i] = (shown[i] ?? 0) + (target - (shown[i] ?? 0)) * (target > (shown[i] ?? 0) ? 0.5 : 0.18)
+      const v = shown[i]
+      const bh = Math.max(3, v * (h - 8))
+      ctx.globalAlpha = on ? 0.4 + 0.6 * Math.min(1, v * 1.6) : 0.3
+      ctx.beginPath()
+      ctx.roundRect(x0 + i * STEP, (h - bh) / 2, BAR, bh, 1.5)
+      ctx.fill()
+    }
+    ctx.globalAlpha = 1
+  }
+  new ResizeObserver(fit).observe(cv)
+  fit()
+  requestAnimationFrame(draw)
+  holi.record?.onSpectrum?.((b) => (bands = b))
+})()
