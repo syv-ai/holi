@@ -28,7 +28,7 @@ import { NavMenu } from '@/features/nav/NavMenu'
 import { VaultPicker } from '@/features/vault/VaultPicker'
 import { trpc } from '../lib/trpc'
 import { sweepDailyAtom } from '../state/daily'
-import { openLandingAtom } from '../state/home'
+import { openHomeAtom, openLandingAtom } from '../state/home'
 import { useSettingsFollowDisk } from '../state/settings'
 import { useVaultMembers } from '../state/members'
 import {
@@ -101,6 +101,7 @@ export function Shell() {
   const [workspace, setWorkspace] = useAtom(workspaceAtom)
   const openVault = useSetAtom(openVaultAtom)
   const openLanding = useSetAtom(openLandingAtom)
+  const openHome = useSetAtom(openHomeAtom)
   const sweepDaily = useSetAtom(sweepDailyAtom)
   const startPendingPrompt = useSetAtom(startPendingVaultPromptAtom)
   const setPendingPrompt = useSetAtom(pendingVaultPromptAtom)
@@ -167,6 +168,9 @@ export function Shell() {
   /** The vault already opened in main, so a re-render, or `openVault`
    *  re-setting `activeRemoteAtom` to the same value, does not re-open it. */
   const openedRemote = useRef<string | null>(null)
+  /** The vault that has landed, so an empty window before then is the landing's
+   *  to fill, not the empty-window rule's below. */
+  const [landedRemote, setLandedRemote] = useState<string | null>(null)
 
   // Open the active vault in main, land, then sweep prior days: once per
   // remote, deliberately sequential. The ONLY caller of `vaults.open`, so cold
@@ -180,12 +184,21 @@ export function Shell() {
     void (async () => {
       await openVault(activeRemote)
       await openLanding()
+      setLandedRemote(activeRemote)
       // A session asked for before this vault was open: the stuck push a
       // leave or delete was blocked on.
       await startPendingPrompt(activeRemote)
       await sweepDaily()
     })()
   }, [activeRemote, openVault, openLanding, startPendingPrompt, sweepDaily])
+
+  // Never an empty window: once the vault has landed, closing the last tab
+  // opens Home in its place, so the editor's blank "select or create a note"
+  // is never what a vault shows.
+  const windowEmpty = workspace.panes.every((p) => p.tabs.length === 0)
+  useEffect(() => {
+    if (windowEmpty && landedRemote !== null && landedRemote === activeRemote) void openHome()
+  }, [windowEmpty, landedRemote, activeRemote, openHome])
 
   // Every app-level key, from the one table (`state/commands.ts`).
   useCommandHotkeys()
