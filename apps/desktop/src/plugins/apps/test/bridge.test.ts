@@ -26,6 +26,9 @@ describe('APP_METHODS', () => {
       'google.search',
       'tasks.complete',
       'env.get',
+      'record.start',
+      'record.stop',
+      'net.fetch',
     ])
   })
 
@@ -50,6 +53,8 @@ describe('topics', () => {
     expect(isAppTopic(storeTopic('items'))).toBe(true)
     expect(isAppTopic('store:')).toBe(false)
     expect(isAppTopic('store:../x')).toBe(false)
+    expect(isAppTopic('record:level')).toBe(true)
+    expect(isAppTopic('record:spectrum')).toBe(true)
     expect(isAppTopic('mail')).toBe(false)
   })
 })

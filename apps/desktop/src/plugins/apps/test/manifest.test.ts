@@ -90,6 +90,20 @@ describe('parseAppManifest collections', () => {
 })
 
 describe('parseAppManifest dangerously-allow', () => {
+  it('knows recording', () => {
+    expect(parseAppManifest('dangerously-allow: [recording]\n')).toEqual({
+      dangerouslyAllow: ['recording'],
+    })
+  })
+
+  it('knows network and its hosts, keeping only plain hostnames', () => {
+    expect(
+      parseAppManifest(
+        'dangerously-allow: [network]\nhosts: [Platform.Syv.AI, "https://x.y/", "a.b:443", 3]\n',
+      ),
+    ).toEqual({ dangerouslyAllow: ['network'], hosts: ['platform.syv.ai'] })
+  })
+
   it('reads the list of opted-in affordances', () => {
     expect(parseAppManifest('dangerously-allow: [mail, calendar]\n')).toEqual({
       dangerouslyAllow: ['mail', 'calendar'],

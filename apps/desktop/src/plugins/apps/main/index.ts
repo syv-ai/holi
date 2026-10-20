@@ -14,6 +14,7 @@ import { APPS_INFO } from '../info'
 import { appsCapabilities, storeCapabilities } from './capabilities'
 import { envCapabilities, ENV_NAMESPACES } from './env'
 import { admitApps, createAppGrants } from './grants'
+import { netCapabilities } from './net'
 import { appScheme } from './protocol'
 import { appsSeed } from './seed'
 
@@ -30,6 +31,7 @@ export const appsMain: MainPlugin = {
     ctx.register(['apps'], appsCapabilities({ events: ctx, appDoor: () => door, grants }))
     ctx.register(['store'], storeCapabilities())
     ctx.register(ENV_NAMESPACES, envCapabilities())
+    ctx.register(['net'], netCapabilities())
     return () => {}
   },
 }

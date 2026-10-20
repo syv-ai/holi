@@ -26,14 +26,34 @@ const bridgeMock = vi.fn((input: { remote: string; method: string }): Promise<un
   return Promise.resolve([])
 })
 
+/** Main's approvals. By default no `dangerously-allow` reads to approve, so
+ *  the frame mounts at once. */
+const grantsMock = vi.fn(
+  (): Promise<{ codeHash: string; affordances: { affordance: string; granted: boolean }[] }> =>
+    Promise.resolve({ codeHash: 'h', affordances: [] }),
+)
+
 vi.mock('../renderer/apps-cap', () => ({
   appsCap: {
     call: (remote: string, input: { method: string }) => bridgeMock({ remote, ...input }),
-    // No `dangerously-allow` reads to approve, so the frame mounts at once.
-    grants: () => Promise.resolve({ codeHash: 'h', affordances: [] }),
+    grants: () => grantsMock(),
     log: () => Promise.resolve(true),
   },
 }))
+
+/** The audio a recording hands back, and the recorder that "records" it. */
+const AUDIO = vi.hoisted(() => ({ audio: 'bytes' }))
+const startRecordingMock = vi.hoisted(() =>
+  vi.fn((_params: unknown) =>
+    Promise.resolve({
+      level: () => 0.5,
+      spectrum: () => [0.25],
+      stop: () => Promise.resolve(AUDIO),
+      discard() {},
+    }),
+  ),
+)
+vi.mock('../renderer/recorder', () => ({ startRecording: startRecordingMock }))
 
 /** The tabs the tombstone's button closed, as `[surface, id]`. */
 const closed = vi.hoisted(() => [] as [string, string][])
@@ -98,6 +118,34 @@ test('is sandboxed WITHOUT allow-same-origin', async () => {
   const sandbox = frameOf().getAttribute('sandbox')!.split(' ')
   expect(sandbox).toContain('allow-scripts')
   expect(sandbox).not.toContain('allow-same-origin')
+})
+
+test('may not record until recording is granted', async () => {
+  await renderApp()
+  const post = vi.spyOn(frameOf().contentWindow!, 'postMessage')
+  fromFrame({ id: 'r', method: 'record.start' })
+  await waitFor(() => expect(post).toHaveBeenCalled())
+  expect(post.mock.calls[0]![0]).toMatchObject({ id: 'r', ok: false })
+  expect(startRecordingMock).not.toHaveBeenCalled()
+})
+
+test('records for a granted app here, never in the frame, and hands back the audio', async () => {
+  grantsMock.mockResolvedValueOnce({
+    codeHash: 'h',
+    affordances: [{ affordance: 'recording', granted: true }],
+  })
+  await renderApp()
+  const post = vi.spyOn(frameOf().contentWindow!, 'postMessage')
+  const replies = (): unknown[] =>
+    post.mock.calls.map((c) => c[0]).filter((m) => (m as { id?: string }).id !== undefined)
+  fromFrame({ id: 's', method: 'record.start', params: { system: false } })
+  await waitFor(() => expect(replies()).toHaveLength(1))
+  expect(startRecordingMock).toHaveBeenCalledWith({ system: false })
+  fromFrame({ id: 'e', method: 'record.stop' })
+  await waitFor(() => expect(replies()).toHaveLength(2))
+  expect(replies()[1]).toEqual({ id: 'e', ok: true, value: AUDIO })
+  // Neither ever reached main.
+  expect(bridgeMock).not.toHaveBeenCalled()
 })
 
 test('ignores a message that did not come from the frame', async () => {
@@ -179,4 +227,29 @@ test('a deleted app leaves a tombstone, not a frame', async () => {
   // closing it is the user's move, not ours.
   await userEvent.click(screen.getByRole('button', { name: /close/i }))
   expect(closed).toEqual([['app', 'Team/Retro.app']])
+})
+
+test('pushes the recording level to the frame while recording, and stops after', async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true })
+  try {
+    grantsMock.mockResolvedValueOnce({
+      codeHash: 'h',
+      affordances: [{ affordance: 'recording', granted: true }],
+    })
+    await renderApp()
+    const post = vi.spyOn(frameOf().contentWindow!, 'postMessage')
+    fromFrame({ id: 's', method: 'record.start' })
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(1))
+    await vi.advanceTimersByTimeAsync(120)
+    expect(post).toHaveBeenCalledWith({ push: 'record:level', value: 0.5 }, '*')
+    fromFrame({ id: 'e', method: 'record.stop' })
+    await waitFor(() =>
+      expect(post.mock.calls.some((c) => (c[0] as { id?: string }).id === 'e')).toBe(true),
+    )
+    const sent = post.mock.calls.length
+    await vi.advanceTimersByTimeAsync(200)
+    expect(post.mock.calls.length).toBe(sent)
+  } finally {
+    vi.useRealTimers()
+  }
 })
