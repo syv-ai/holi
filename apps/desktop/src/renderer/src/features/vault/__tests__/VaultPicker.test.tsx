@@ -31,14 +31,14 @@ test('shows the active vault name on the trigger', () => {
 test('switching to a different vault reports its remote', async () => {
   const { onSelect } = setup()
   await userEvent.click(screen.getByRole('button', { name: /Alpha/ }))
-  await userEvent.click(await screen.findByRole('menuitem', { name: 'Beta' }))
+  await userEvent.click(await screen.findByRole('button', { name: 'Beta' }))
   expect(onSelect).toHaveBeenCalledWith('git@b')
 })
 
 test('picking the already-active vault is a no-op', async () => {
   const { onSelect } = setup()
   await userEvent.click(screen.getByRole('button', { name: /Alpha/ }))
-  await userEvent.click(await screen.findByRole('menuitem', { name: 'Alpha' }))
+  await userEvent.click(await screen.findByRole('button', { name: 'Alpha', current: true }))
   expect(onSelect).not.toHaveBeenCalled()
 })
 
