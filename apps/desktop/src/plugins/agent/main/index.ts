@@ -4,38 +4,33 @@
  * the turn coordinator and turn review; Claude Code is the provider
  * (`claude/`).
  *
- * It starts once per process with its capabilities, events and hook routes,
- * attaches to each vault once it is open and lets go when Holi leaves it, and
- * quitting asks first while a session is busy.
+ * It starts in a vault with its capabilities, events and hook routes and
+ * attaches to the vault; stopping (turned off, the vault left, Holi quitting)
+ * stops its sessions and terminals, and the quick agent with them. Quitting
+ * asks first while a session is busy.
  *
- * Electron loads inside `activateApp`, so the plugin stays importable under
+ * Electron loads inside `activate`, so the plugin stays importable under
  * plain Node in the tests.
  */
 import { join } from 'node:path'
-import { CapabilityError, type MainPlugin, type VaultCtx } from '../../../main/plugin-api'
+import { jsonFileStore, type MainPlugin } from '../../../main/plugin-api'
 import { AGENT_INFO } from '../info'
 import { claudeProvider } from './claude'
 import { claudeSeed } from './claude/seed'
 import { agentCapabilities, AGENT_NAMESPACES } from './host/capabilities'
 import { createQuestionDesk } from './host/questions'
-import { createAgentSessions, type AgentSessions } from './host/sessions'
+import { createAgentSessions } from './host/sessions'
 import { createAgentTerminals } from './host/terminals'
 import { openTurnLog } from './host/turn-log'
 import { startQuickAgent, type QuickAgent } from './quick'
 import { quickCapabilities } from './quick/capabilities'
-
-let sessions: AgentSessions | null = null
-/** The vault the agent is active in, for the capabilities that commit. */
-let vault: VaultCtx | null = null
-/** Lets go of the questions quick agents wait on, as Holi leaves a vault. */
-let releaseQuestions: () => void = () => {}
-/** The quick agent's keys follow whether the open vault has the agent. */
-let vaultChanged: () => void = () => {}
+import { scheduleCapabilities, SCHEDULE_NAMESPACES } from './schedules/capabilities'
+import { createScheduler, parseSchedulesFile } from './schedules/scheduler'
 
 export const agentMain: MainPlugin = {
   info: AGENT_INFO,
   seed: claudeSeed,
-  async activateApp(ctx) {
+  async activate(ctx) {
     const { nativeTheme } = await import('electron')
     const provider = claudeProvider({
       userData: ctx.userData,
@@ -52,11 +47,9 @@ export const agentMain: MainPlugin = {
       onChange: (pending) => {
         started.touch()
         quick?.update()
-        const remote = liveRemote()
-        if (remote !== null) ctx.emit(remote, 'questions', pending)
+        ctx.emit(ctx.remote, 'questions', pending)
       },
     })
-    releaseQuestions = () => desk.releaseAll()
     const started = createAgentSessions({
       emit: ctx.emit,
       provider,
@@ -66,19 +59,23 @@ export const agentMain: MainPlugin = {
       turnLogFor: openTurnLog,
       pendingQuestion: (job) => desk.has(job),
     })
-    sessions = started
     ctx.register(AGENT_NAMESPACES, {
       ...agentCapabilities({
         sessions: started,
         terminals,
         liveRemote,
-        commitNow: async () => {
-          if (vault === null) throw new CapabilityError('UNAVAILABLE', 'No vault is open.')
-          return vault.commitNow()
-        },
+        commitNow: () => ctx.commitNow(),
       }),
       ...quickCapabilities({ desk, quick: () => quick, liveRemote }),
     })
+    // Which schedules this machine runs, and what they did: outside the
+    // vault, where the agent cannot approve its own (`schedules/scheduler.ts`).
+    const schedules = createScheduler({
+      store: jsonFileStore(join(ctx.userData, 'schedules.json'), parseSchedulesFile),
+      sessions: started,
+      emit: ctx.emit,
+    })
+    ctx.register(SCHEDULE_NAMESPACES, scheduleCapabilities({ scheduler: schedules }))
     // Keystrokes and resizes, in the order they were typed. The host drops
     // any about a vault that is not the open one.
     ctx.on('pty-write', (_remote, payload) => {
@@ -93,7 +90,8 @@ export const agentMain: MainPlugin = {
     })
     provider.routes(ctx, {
       // A turn edge in one of a vault's background sessions, by job id.
-      onJobTurn: (remote, jobId, active) => started.noteTurn(remote, jobId, active),
+      onJobTurn: (remote, jobId, active, pending) =>
+        started.noteTurn(remote, jobId, active, pending),
       // A session's status line: how much of its context is used.
       onStatus: (remote, jobId, status) => started.noteStatus(remote, jobId, status),
       // A quick agent's question, held until the person answers. Any other
@@ -117,19 +115,6 @@ export const agentMain: MainPlugin = {
       }
       quick?.update()
     })
-    // The quick agent: the global hotkey and its panel. A failure costs that
-    // feature, never the agent. On only in a vault with the agent.
-    quick = await startQuickAgent({
-      ctx,
-      sessions: started,
-      terminals,
-      desk,
-      agentOn: () => vault !== null,
-    }).catch((err: unknown) => {
-      console.error('[agent] quick agent did not start:', err)
-      return null
-    })
-    vaultChanged = () => quick?.vaultChanged()
     // Quitting stops the vault's sessions, so it asks first when one of them
     // is working or waiting on you: that turn is cut short. Idle sessions
     // stop without a question; their conversations stay in the agents list.
@@ -142,35 +127,34 @@ export const agentMain: MainPlugin = {
         detail: `${one ? 'Its' : 'Their'} current turn is cut short. The conversation${one ? '' : 's'} stay in the agents list.`,
       }
     })
-    return () => {
-      unrows()
-      vaultChanged = () => {}
-      quick?.dispose()
-      quick = null
-      desk.releaseAll()
-      sessions = null
-    }
-  },
-  activateVault(ctx) {
-    const running = sessions
-    if (running === null) return () => {}
-    vault = ctx
-    vaultChanged()
-    void running.ensure(ctx)
+    void started.ensure(ctx)
+    // The open vault's schedules run while it is open.
+    schedules.attach({ remote: ctx.remote, root: ctx.root })
     // The per-turn hook reads the focused note from a file in this clone.
     const unreport = ctx.onReport((report) =>
-      running.setFocus({ focusedPath: report.focusedPath, openPaths: report.openPaths }),
+      started.setFocus({ focusedPath: report.focusedPath, openPaths: report.openPaths }),
     )
-    // A switch stops the vault's sessions (the renderer asked first if one
+    // The quick agent: the global hotkey and its panel, while this vault is
+    // open. A failure costs that feature, never the agent.
+    quick = await startQuickAgent({ ctx, sessions: started, terminals, desk }).catch(
+      (err: unknown) => {
+        console.error('[agent] quick agent did not start:', err)
+        return null
+      },
+    )
+    // Stopping stops the vault's sessions (the renderer asked first if one
     // was busy). They stay in the agents list and resume when opened.
     return async () => {
+      unrows()
+      quick?.dispose()
+      quick = null
+      schedules.dispose()
       unreport()
       // Stopping a session ends its hook too; this is the backstop for one
       // that outlives the stop.
-      releaseQuestions()
-      await running.leave().catch((err) => console.error('[agent] leave failed:', err))
-      if (vault === ctx) vault = null
-      vaultChanged()
+      desk.releaseAll()
+      await started.leave().catch((err) => console.error('[agent] leave failed:', err))
+      await terminals.closeAll().catch((err) => console.error('[agent] terminals:', err))
     }
   },
 }

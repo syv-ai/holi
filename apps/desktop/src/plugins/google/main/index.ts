@@ -23,17 +23,15 @@ import { googleSeed } from './seed'
 export const googleMain: MainPlugin = {
   info: GOOGLE_INFO,
   seed: googleSeed,
-  async activateApp(ctx) {
+  async activate(ctx) {
     // The keychain and the system browser: Electron, loaded only when the
     // plugin starts (after `whenReady`), so the module stays importable under
     // plain Node in the tests.
     const { createGoogleAccountsManager } = await import('./electron')
     const accounts = await createGoogleAccountsManager(ctx.userData)
 
-    /**
-     * Each account's data, memoized, so switching between two vaults on one
-     * account does not re-fetch mail and calendar: one cache file per account.
-     */
+    /** Each account's data, memoized while the plugin runs: one cache file
+     *  per account, which outlives it, so a later start does not re-fetch. */
     const bySub = new Map<string, { data: GoogleData; cache: GoogleCache }>()
     const dataForSub = (sub: string): GoogleData => {
       const held = bySub.get(sub)

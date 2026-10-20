@@ -9,6 +9,7 @@ import {
   isHiddenPath,
   isKeepFile,
   isLocalOnlyPath,
+  isSecretPath,
   isVaultConfigPath,
   vaultRelPath,
 } from '../src/path-safety'
@@ -171,7 +172,25 @@ describe('LOCAL_ONLY_IGNORE_LINES', () => {
     }
   })
 
-  it('does not ignore ordinary vault content — incl. a bare USER.md (local-ness is only the .local. marker)', () => {
+  it('keeps secret files local and ignored in any folder, and nothing a note could be called', () => {
+    for (const path of [
+      '.env',
+      '.env.local',
+      'Work/.env.production',
+      '.secrets',
+      'a/.secrets.json',
+    ]) {
+      expect(isSecretPath(path)).toBe(true)
+      expect(isLocalOnlyPath(path)).toBe(true)
+      expect(ignoredBy(LOCAL_ONLY_IGNORE_LINES, path)).toBe(true)
+    }
+    for (const path of ['env.md', 'secrets.md', '.envrc', 'notes/.environment.md']) {
+      expect(isSecretPath(path)).toBe(false)
+      expect(ignoredBy(LOCAL_ONLY_IGNORE_LINES, path)).toBe(false)
+    }
+  })
+
+  it('does not ignore ordinary vault content — incl. a bare USER.md (local-ness is read off the path)', () => {
     // USER.md is no longer special-cased: a synced-looking name IS synced. The
     // personal model lives at USER.local.md, whose name declares its locality.
     for (const path of [
@@ -219,6 +238,12 @@ describe('isAgentSurfacePath (what a vault app may never touch)', () => {
     expect(isAgentSurfacePath('.holi/memory/index.md')).toBe(true)
     // A personal one is refused for a second reason on top of this one.
     expect(isAgentSurfacePath('.holi/memory/salary.local.md')).toBe(true)
+  })
+
+  it('covers scheduled agents\' prompts, which the agent runs unattended', () => {
+    expect(isAgentSurfacePath('.holi/schedules/inbox-triage.md')).toBe(true)
+    expect(isAgentSurfacePath('.holi/schedules/mine.local.md')).toBe(true)
+    expect(isAgentSurfacePath('notes/.holi/schedules/x.md')).toBe(false)
   })
 
   it('is an exact match at the root, so a same-named note elsewhere is ordinary content', () => {

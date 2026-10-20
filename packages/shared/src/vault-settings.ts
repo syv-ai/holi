@@ -77,6 +77,13 @@ export const CORE_TRANSFORMS: readonly TransformToggle[] = [
     default: true,
   },
   {
+    name: 'shrink-images',
+    label: 'Keep images small',
+    explanation:
+      'Shrinks a large PNG or JPEG as it is committed, in place: at most 4K, and to 256 colours only where that cannot be seen. Every version of an image stays in the history, so it is kept small from the start.',
+    default: true,
+  },
+  {
     name: 'memory-index',
     label: 'Keep the memory index current',
     explanation:
@@ -658,8 +665,8 @@ void _keysAgree
  */
 /**
  * The plugins row: not an `app.yaml` key, since which plugins run is written to
- * `plugins.yaml`, but a row in General like any other setting, and an answer
- * the ritual carries.
+ * `plugins.yaml`, but a row on the settings tab's Plugins page like any other
+ * setting, and an answer the ritual carries.
  */
 export const PLUGINS_DESCRIPTOR: VaultSettingDescriptor = {
   key: 'plugins',
@@ -672,7 +679,7 @@ export const PLUGINS_DESCRIPTOR: VaultSettingDescriptor = {
   target: 'committed',
   askedAtBirth: false,
   whereToChange: `Change it any time in ${PLUGINS_FILE}. Turn one off on this machine alone in ${PLUGINS_LOCAL_FILE}`,
-  section: 'general',
+  section: 'plugins',
 }
 
 export const VAULT_SETTING_DESCRIPTORS: readonly VaultSettingDescriptor[] = [

@@ -54,6 +54,8 @@ it('seeds nothing under .claude/ and refuses agent.* until the agent is on', asy
     },
     route: () => () => {},
     binDir: () => '/holi/bin',
+    githubToken: () => null,
+    frameOrigin: () => () => {},
   })
   const capabilities = createCapabilityHost({
     registry,

@@ -20,11 +20,11 @@
  * NOTE: no runtime `electron` import — this loads under vitest like the rest of
  * `agent/`.
  */
-import type { VaultCtx } from '../../../../main/plugin-api'
+import type { PluginCtx } from '../../../../main/plugin-api'
 import type { TurnLog } from './turn-log'
 
 /** What the coordinator needs of the vault its sessions run in. */
-export type TurnVault = Pick<VaultCtx, 'root' | 'pauseSync' | 'commitNow' | 'head'>
+export type TurnVault = Pick<PluginCtx, 'root' | 'pauseSync' | 'commitNow' | 'head'>
 
 export interface TurnCoordinatorDeps {
   /** The vault these sessions run in, or null when none is attached. Read per
@@ -42,6 +42,9 @@ export interface TurnCoordinatorDeps {
   /** The working set changed, so whatever renders session state should re-derive
    *  it. Called once per membership change. */
   onChange?: () => void
+  /** A session's turn ended: `Stop`, a confirmed idle, or the safety cap. Not
+   *  for a session that died, whose turn has no end of its own. */
+  onTurnEnd?: (sessionId: string) => void
   log?: (msg: string) => void
 }
 
@@ -169,6 +172,7 @@ export function createTurnCoordinator(deps: TurnCoordinatorDeps): TurnCoordinato
       }
     }
     deps.onChange?.()
+    if (record) deps.onTurnEnd?.(sessionId)
   }
 
   return {

@@ -54,6 +54,7 @@ Projects/Q2/Burndown.app/app.yaml     ← required: write this LAST
   description: Sprint retros # shown where the app is listed
   collections: # the records it keeps: see Keeping data
   dangerously-allow: # one person's data it reads: mail, calendar, location
+  env: # the secrets it needs, by name: see Secrets
   ```
 
   A blank key is unused, and an empty file is still a valid manifest. There is
@@ -112,6 +113,7 @@ list (they are `holi.tasks.list()`), and neither are the agent's own files.
   due?: '2026-08-24',                       // YYYY-MM-DD
   priority?: 'low' | 'medium' | 'high',
   tags: ['auth'],                           // always an array, may be empty
+  assignees: ['ada'],               // GitHub logins; always an array, may be empty
   reminder?: '2d',
   description: 'the markdown body',
 }
@@ -140,6 +142,10 @@ These are not oversights — build within them rather than around them.
   `<form>` is blocked before its submit handler runs, and pressing Enter or the
   button does nothing at all. Use a plain button's click, and a `keydown` on the
   input for Enter.
+- **It cannot open a pop-up dialog.** The frame is sandboxed without them, so
+  `confirm()` answers no, `prompt()` answers nothing and `alert()` shows
+  nothing, all at once. Ask in the page: a "Delete this note?" row with Delete
+  and Cancel.
 - **It cannot read the agent's files.** `AGENTS.md`, `CLAUDE.md`, `MEMORY.md`,
   `USER.local.md` and everything under `.claude/` **and `.holi/memory/`** are refused —
   `holi.docs.read` rejects, and they are absent from `holi.docs.list()`. The
@@ -210,6 +216,31 @@ Before you add the flag to a shared app, tell the user plainly: whatever the app
 keeps in its records syncs to everyone in the vault, so do not store someone's
 mail in a shared app's store unless they asked for exactly that.
 
+## Secrets
+
+An API key or token never goes in a record, the app's code or a note: records
+sync. Declare the name in `app.yaml` and read it with `holi.env`:
+
+```yaml
+env: [OPENAI_API_KEY]
+```
+
+```js
+const key = await holi.env('OPENAI_API_KEY') // null until it is set
+```
+
+The user puts the value in the vault root's `.env` themselves (`.env.local`
+wins over it), one `NAME=value` per line. Holi keeps `.env`, `.env.*`,
+`.secrets` and `.secrets.*` out of git and away from `holi.docs.read`, and an
+app gets only the names it declares. When `holi.env` returns null, the app
+says which name to set and where. Do not write the `.env` for them, and do not
+ask them to paste a key into the app.
+
+A key the whole vault shares works the same way: each person puts it in their
+own `.env`, and the team passes it around the way it passes any key (a password
+manager). Never commit one to share it, in any file: git keeps it in the
+vault's history for good, and GitHub may refuse the push that carries it.
+
 ## Keeping data
 
 An app keeps records in **collections** it declares in `app.yaml`. A record is a
@@ -278,7 +309,7 @@ holi apps init <path>       # scaffolds <path>, a folder ending in .app
 folder, a `vault-app check` runs and tells you what will not work — a
 syntax error and its line, a `.ts` file that has no bundler to build it, a
 `localStorage` call that will throw, a `<form>` that will never submit, a
-missing manifest. It never blocks a
+`confirm()` that will never ask, a missing manifest. It never blocks a
 write and it says nothing at all when there is nothing wrong, so **if it is
 quiet, that is the answer**.
 

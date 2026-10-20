@@ -12,6 +12,38 @@ import type { TurnRecord } from '../main/host/turn-log'
 
 const VAULT = 'owner/repo'
 
+describe('telling a turn ended', () => {
+  const ctx: TurnVault = {
+    root: '/work',
+    head: () => Promise.resolve('sha'),
+    commitNow: () => Promise.resolve(null),
+    pauseSync: () => () => {},
+  }
+
+  it('says so on Stop and on a confirmed idle, and not for a session that died', () => {
+    let clock = 0
+    const ended: string[] = []
+    const coordinator = createTurnCoordinator({
+      vault: () => ctx,
+      log: () => {},
+      now: () => clock,
+      idleConfirmMs: 1_000,
+      onTurnEnd: (id) => ended.push(id),
+    })
+    coordinator.begin('a')
+    coordinator.end('a')
+    coordinator.begin('b')
+    coordinator.noteIdle('b')
+    clock = 1_500
+    coordinator.noteIdle('b')
+    coordinator.begin('c')
+    coordinator.forget('c')
+    // Not mid-turn: a Stop with no turn open is nothing to tell.
+    coordinator.end('d')
+    expect(ended).toEqual(['a', 'b'])
+  })
+})
+
 /** The recording is fire-and-forget, so a test has to let the microtasks run. */
 const settle = () => new Promise((r) => setTimeout(r, 10))
 

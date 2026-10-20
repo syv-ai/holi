@@ -714,10 +714,10 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
         google(() => replyToThread(apiOf(ctx.remote), thread, body, { all })),
     }),
 
-    /** A solo event. There is no way to invite anyone: inviting would email
-     *  them. */
+    /** A solo event, the agent's and the agenda's alike. There is no way to
+     *  invite anyone: inviting would email them. */
     'google.schedule': cap({
-      doors: ['cli'],
+      doors: ['ui', 'cli'],
       cli: {
         args: [],
         flags: ['all-day'],

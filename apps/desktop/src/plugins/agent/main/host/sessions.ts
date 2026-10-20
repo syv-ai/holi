@@ -22,7 +22,7 @@
  *
  * NOTE: no `electron` import, so this loads under vitest.
  */
-import type { VaultCtx } from '../../../../main/plugin-api'
+import type { PluginCtx } from '../../../../main/plugin-api'
 import type { StartBgOptions, VaultCliTarget } from '../claude/cli'
 import type { ClaudeRow, SessionSummary } from '../claude/listing'
 import type { AgentProvider, VaultRef } from '../provider'
@@ -52,7 +52,7 @@ export interface Geometry {
 export type { VaultRef }
 
 /** The vault the sessions run in, as its activation hands it over. */
-export type AgentVault = Pick<VaultCtx, 'remote' | 'root'> & TurnVault
+export type AgentVault = Pick<PluginCtx, 'remote' | 'root'> & TurnVault
 
 export interface AgentSessionsDeps {
   /** Tell the renderer `name` about the vault `remote`. */
@@ -100,7 +100,8 @@ export interface AgentSessions {
    *  prompt is its first turn (reconcile); without, it waits for one. */
   start(args: Geometry & { name?: string; prompt?: string }): Promise<StartResult>
   /** A new background session whose first turn is `prompt`, and no
-   *  terminal: nobody is watching it start. A quick agent, with its options. */
+   *  terminal: nobody is watching it start. A scheduled run, or a quick agent
+   *  with its options. */
   launch(args: Omit<StartBgOptions, 'prompt'> & { prompt: string }): Promise<LaunchResult>
   /** Its row in the latest listing, live or not. */
   row(id: string): ClaudeRow | undefined
@@ -112,6 +113,12 @@ export interface AgentSessions {
   /** Push the list again: something Holi holds about a session changed (a
    *  question arrived or was answered). */
   touch(): void
+  /** Whether Holi has a terminal open on the session. */
+  watched(id: string): boolean
+  /** Hear each session's turn end, by job id, with how much its Stop said
+   *  was still pending (null when no Stop said: a confirmed idle, the safety
+   *  cap, an older hook script). Returns the undo. */
+  onTurnEnd(listener: (id: string, pending: number | null) => void): () => void
   /** Put text in a session's input, unsent: a live one by id, or a new one
    *  named from the text. Opens a terminal on it when Holi has none. */
   send(args: Geometry & { text: string; target: string | 'new' }): Promise<OpenResult>
@@ -119,7 +126,7 @@ export interface AgentSessions {
   respawn(id: string): Promise<ActionResult>
   duplicate(id: string, geometry?: Geometry): Promise<StartResult>
   /** A turn edge from the seeded hook, by vault and job id. */
-  noteTurn(remote: string, jobId: string, active: boolean): void
+  noteTurn(remote: string, jobId: string, active: boolean, pending?: number | null): void
   /** A session's status line fired: Claude Code's status JSON, by vault and
    *  job id. */
   noteStatus(remote: string, jobId: string, status: unknown): void
@@ -180,12 +187,22 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     for (const cb of [...rowListeners]) cb()
   }
 
+  const turnEnds = new Set<(id: string, pending: number | null) => void>()
+  /** What the Stop that is ending a turn said was pending, until the end is
+   *  told. */
+  const stopPending = new Map<string, number>()
+
   const coordinator: TurnCoordinator = createTurnCoordinator({
     vault: () => current?.vault ?? null,
     ...(deps.turnLogFor === undefined ? {} : { turnLogFor: deps.turnLogFor }),
     ...(deps.turnSafetyMs === undefined ? {} : { turnSafetyMs: deps.turnSafetyMs }),
     ...(deps.idleConfirmMs === undefined ? {} : { idleConfirmMs: deps.idleConfirmMs }),
     onChange: () => push(),
+    onTurnEnd: (id) => {
+      const pending = stopPending.get(id) ?? null
+      stopPending.delete(id)
+      for (const listener of turnEnds) listener(id, pending)
+    },
     log,
   })
 
@@ -419,6 +436,13 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
 
     touch: () => push(),
 
+    watched: (id) => deps.terminals.launchedFor(id) !== null,
+
+    onTurnEnd(listener) {
+      turnEnds.add(listener)
+      return () => turnEnds.delete(listener)
+    },
+
     async send({ text, target, cols, rows: r }) {
       const c = await ensureCurrent()
       if (c === null) return noVault
@@ -476,12 +500,16 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
       return opened.ok ? { ok: true, sessionId: res.id, terminalId: opened.terminalId } : opened
     },
 
-    noteTurn(remote, jobId, active) {
+    noteTurn(remote, jobId, active, pending = null) {
       // A turn in a vault Holi is not showing is not this vault's pause.
       if (current?.remote !== remote) return
       if (active) unprompted.delete(jobId)
       if (active) coordinator.begin(jobId)
-      else coordinator.end(jobId)
+      else {
+        if (pending !== null) stopPending.set(jobId, pending)
+        coordinator.end(jobId)
+        stopPending.delete(jobId)
+      }
       void refresh()
     },
 

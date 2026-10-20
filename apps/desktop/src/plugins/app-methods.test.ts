@@ -13,6 +13,7 @@ import type { GoogleAccountsManager } from './google/main/accounts'
 import { googleCapabilities, GOOGLE_NAMESPACES } from './google/main/capabilities'
 import { PDF_NAMESPACES, pdfCapabilities } from './pdf/main/capabilities'
 import { appsCapabilities, storeCapabilities } from './apps/main/capabilities'
+import { envCapabilities, ENV_NAMESPACES } from './apps/main/env'
 
 it('answers every bridge method that is not the renderer’s at the app door', () => {
   const registry = createCapabilityRegistry()
@@ -59,6 +60,7 @@ it('answers every bridge method that is not the renderer’s at the app door', (
     }),
   )
   registry.register(['store'], storeCapabilities())
+  registry.register(ENV_NAMESPACES, envCapabilities())
 
   const open = new Set(registry.names('app'))
   const renderer: readonly string[] = RENDERER_METHODS

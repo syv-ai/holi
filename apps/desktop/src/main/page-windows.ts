@@ -21,7 +21,7 @@ import {
 } from 'electron'
 import { rendererWindow } from './renderer-window'
 
-/** What a plugin asks for (`AppContext.openPage`). */
+/** What a plugin asks for (`PluginCtx.openPage`). */
 export interface PageWindowOptions {
   /** The page its renderer side draws in it (`RendererPlugin.pages`). */
   page: string
@@ -42,15 +42,16 @@ export interface PageWindow {
 const PAGE = /^[a-z][a-z0-9-]*$/
 
 export interface PageWindows {
+  /** A window for `plugin`. The plugin host closes it when the plugin stops. */
   open(plugin: string, options: PageWindowOptions): PageWindow
-  /** Close every page window: at quit. */
-  closeAll(): void
 }
 
-export function createPageWindows(deps: { frameSchemes: ReadonlySet<string> }): PageWindows {
+export function createPageWindows(deps: {
+  frameSchemes: ReadonlySet<string>
+  frameOrigins: ReadonlySet<string>
+}): PageWindows {
   /** webContents id → its window's message handlers. */
   const listeners = new Map<number, Map<string, Set<(payload: unknown) => void>>>()
-  const open = new Set<BrowserWindow>()
 
   ipcMain.on('page:message', (event: IpcMainEvent, message: unknown) => {
     const handlers = listeners.get(event.sender.id)
@@ -69,14 +70,17 @@ export function createPageWindows(deps: { frameSchemes: ReadonlySet<string> }): 
   return {
     open(plugin, options) {
       if (!PAGE.test(options.page)) throw new Error(`page name ${options.page} is not kebab-case`)
-      const win = rendererWindow(options.window, deps.frameSchemes, `${plugin}/${options.page}`)
+      const win = rendererWindow(
+        options.window,
+        deps.frameSchemes,
+        deps.frameOrigins,
+        `${plugin}/${options.page}`,
+      )
       const contentsId = win.webContents.id
       const handlers = new Map<string, Set<(payload: unknown) => void>>()
       listeners.set(contentsId, handlers)
-      open.add(win)
       win.on('closed', () => {
         listeners.delete(contentsId)
-        open.delete(win)
       })
 
       return {
@@ -92,11 +96,6 @@ export function createPageWindows(deps: { frameSchemes: ReadonlySet<string> }): 
           return () => void set.delete(handler)
         },
       }
-    },
-
-    closeAll() {
-      for (const win of [...open]) if (!win.isDestroyed()) win.destroy()
-      open.clear()
     },
   }
 }

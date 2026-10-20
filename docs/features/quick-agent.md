@@ -9,8 +9,9 @@ brings the panel out beside it showing that agent; a second key opens the dock w
 ## How it works
 
 **Off until turned on.** Settings, Quick agent, which is this machine's (`userData/quick-agent.json`,
-never a vault). Off, nothing is loaded and no key is taken from the other apps. On, it works only in
-a vault with the agent plugin: opening one without it lets the keys go and closes the windows.
+never a vault). Off, nothing is loaded and no key is taken from the other apps. On, it runs with the agent
+plugin: it starts as a vault with the agent opens, and leaving the vault lets the keys go and closes
+the windows.
 
 **The keys.** The prompt key (⌘J) opens a new prompt at the pointer, or the one left with a draft.
 The dock key (⌃⌘J) opens the dock with the keyboard on the agent that most needs you: the oldest
@@ -23,7 +24,7 @@ pressing them, are never one key (a hand edit that makes them one gives the dock
 and a key another app holds is reported under its row.
 
 **The panel.** One window for every prompt and agent, the agent plugin's page `quick`
-(`AppContext.openPage`): a macOS panel (`type: 'panel'`), so it takes the keyboard without making
+(`PluginCtx.openPage`): a macOS panel (`type: 'panel'`), so it takes the keyboard without making
 Holi the active app, floating above everything on every Space, on the HUD material. The agents are
 records in main and the panel shows whichever one is picked; its page holds a prompt's draft by the
 prompt's id, so the draft outlasts the panel showing an agent. Its page reports its size and main

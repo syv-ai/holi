@@ -180,6 +180,19 @@ function boundaries(source, ext) {
         'Handle the button click, and Enter as a keydown on the input, instead.',
     ])
   }
+  const dialog =
+    /(?<![\w$.]|function\s+)(?:(?:window|self|globalThis)\.)?(alert|confirm|prompt)\s*\((?![^()]*\)\s*\{)/.exec(
+      code,
+    )
+  if (dialog !== null) {
+    found.push([
+      ERROR,
+      `${dialog[1]}() does nothing in an app: the frame is sandboxed without pop-up ` +
+        'dialogs, so it returns at once (confirm as no, prompt as nothing) and shows ' +
+        'nothing. Ask in the page instead, such as a "Delete this note?" row with ' +
+        'Delete and Cancel.',
+    ])
+  }
   if (/<script[^>]*\bsrc\s*=\s*["'][^"']*(?:holi|bridge)[^"']*["']/i.test(source)) {
     found.push([
       ERROR,

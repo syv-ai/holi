@@ -10,7 +10,7 @@
  * beside the plugins' (`components/core-surfaces.tsx`): they render features,
  * which state does not import.
  */
-import { atom, type createStore } from 'jotai'
+import { atom, type Atom, type createStore } from 'jotai'
 import {
   resolvePlugins,
   type PluginResolution,
@@ -45,7 +45,9 @@ export const settingDescriptorsAtom = atom((get) =>
 
 /** What core contributes the way a plugin does: its own surfaces, rail items
  *  and claims. Always on. */
-export type CoreContribution = Pick<Required<RendererPlugin>, 'surfaces' | 'rail' | 'claims'>
+export type CoreContribution = Pick<Required<RendererPlugin>, 'surfaces' | 'rail'> & {
+  claims: readonly PathClaim[]
+}
 
 export const coreContributionAtom = atom<CoreContribution>({ surfaces: [], rail: [], claims: [] })
 
@@ -71,7 +73,10 @@ export const claimsAtom = atom((get): readonly PathClaim[] => {
   const enabled = get(enabledPluginsAtom)
   return [
     ...get(coreContributionAtom).claims,
-    ...get(installedPluginsAtom).flatMap((p) => (enabled.has(p.info.id) ? (p.claims ?? []) : [])),
+    ...get(installedPluginsAtom).flatMap((p) => {
+      if (!enabled.has(p.info.id) || p.claims === undefined) return []
+      return Array.isArray(p.claims) ? p.claims : get(p.claims as Atom<readonly PathClaim[]>)
+    }),
   ]
 })
 
@@ -137,19 +142,37 @@ const contributionsAtom = atom((get): readonly Pick<RendererPlugin, 'surfaces' |
   ...get(runningPluginsAtom),
 ])
 
+/** What stopping each running plugin would cost now, by id: its
+ *  `leaveGuard` sentence, for one that says something. */
+export const leaveReasonByPluginAtom = atom((get): ReadonlyMap<string, string> => {
+  const reasons = new Map<string, string>()
+  for (const p of get(runningPluginsAtom)) {
+    const reason = p.leaveGuard === undefined ? null : get(p.leaveGuard)
+    if (reason !== null) reasons.set(p.info.id, reason)
+  }
+  return reasons
+})
+
 /** Why leaving the open vault costs something now: every running plugin's
  *  `leaveGuard` sentence. Empty when leaving costs nothing. */
-export const leaveReasonsAtom = atom((get): readonly string[] =>
-  get(runningPluginsAtom).flatMap((p) => {
-    const reason = p.leaveGuard === undefined ? null : get(p.leaveGuard)
-    return reason === null ? [] : [reason]
-  }),
+export const leaveReasonsAtom = atom((get): readonly string[] => [
+  ...get(leaveReasonByPluginAtom).values(),
+])
+
+/** The first running plugin that provides an agent, or null with none. */
+const agentProviderAtom = atom(
+  (get): RendererPlugin | null =>
+    get(runningPluginsAtom).find((p) => p.agent !== undefined) ?? null,
 )
 
 /** The first running plugin's agent, or null with none. */
 export const agentSourceAtom = atom(
-  (get): AgentServiceSource | null =>
-    get(runningPluginsAtom).find((p) => p.agent !== undefined)?.agent ?? null,
+  (get): AgentServiceSource | null => get(agentProviderAtom)?.agent ?? null,
+)
+
+/** Which plugin provides the agent, by id, or null with none. */
+export const agentPluginIdAtom = atom(
+  (get): string | null => get(agentProviderAtom)?.info.id ?? null,
 )
 
 /**

@@ -5,7 +5,8 @@
  * keyboard.
  *
  * **Off until a person turns it on**, and on only in a vault with the agent:
- * off, nothing is loaded and no key is taken from the other apps.
+ * it starts with the agent as a vault opens and stops as the vault is left.
+ * Off, nothing is loaded and no key is taken from the other apps.
  *
  * **The keys are held only while Holi is not the app in front.** Inside Holi
  * each page answers them itself: in the main window the hotkey keeps its
@@ -14,10 +15,10 @@
  * both (another agent, the dock). So they are registered as Holi loses the
  * keyboard and released as Holi takes it.
  *
- * Electron is loaded here, inside `activateApp`'s call, so the plugin stays
+ * Electron is loaded here, inside `activate`'s call, so the plugin stays
  * importable under plain Node.
  */
-import type { AppContext } from '../../../../main/plugin-api'
+import type { PluginCtx } from '../../../../main/plugin-api'
 import { toAccelerator } from '../../shared/hotkey'
 import type { QuickSettingsPatch, QuickSettingsState } from '../../shared/quick'
 import { isLive } from '../claude/listing'
@@ -39,8 +40,6 @@ export interface QuickAgent {
   /** Whether `job` is one of the quick agents: only their questions and
    *  answers are the panel's. */
   owns(job: string): boolean
-  /** A vault was opened or left: the keys follow whether it has the agent. */
-  vaultChanged(): void
   settings(): Promise<QuickSettingsState>
   setSettings(patch: QuickSettingsPatch): Promise<QuickSettingsState>
   /** The dock's key, pressed inside the main window, which answers it itself
@@ -53,12 +52,10 @@ export interface QuickAgent {
 }
 
 export async function startQuickAgent(deps: {
-  ctx: AppContext
+  ctx: PluginCtx
   sessions: AgentSessions
   terminals: Pick<AgentTerminals, 'close'>
   desk: QuestionDesk
-  /** The open vault has the agent turned on: a quick agent can start there. */
-  agentOn(): boolean
 }): Promise<QuickAgent> {
   const { ctx, sessions, desk } = deps
   const { app, BrowserWindow, globalShortcut, screen, systemPreferences } = await import('electron')
@@ -73,7 +70,7 @@ export async function startQuickAgent(deps: {
     openDock: () => electronDock(ctx),
     cursor: () => screen.getCursorScreenPoint(),
     workArea: (point) => screen.getDisplayNearestPoint(point).workArea,
-    remote: () => ctx.active()?.remote ?? null,
+    remote: () => ctx.remote,
     sessions: {
       // With the options the person chose, read as each agent starts.
       launch: async (args) => sessions.launch({ ...args, ...quickLaunch(await store.read()) }),
@@ -97,10 +94,8 @@ export async function startQuickAgent(deps: {
     hotkey: () => hotkey,
     dockHotkey: () => dockHotkey,
     openSession: async (job) => {
-      const remote = ctx.active()?.remote
-      if (remote === undefined) return
       await ctx.showMainWindow()
-      ctx.emit(remote, 'open-session', { id: job })
+      ctx.emit(ctx.remote, 'open-session', { id: job })
     },
   })
 
@@ -131,8 +126,8 @@ export async function startQuickAgent(deps: {
     }
   }
 
-  /** Switched on, in a vault with the agent. */
-  const on = (settings: QuickSettings): boolean => settings.enabled && deps.agentOn()
+  /** Switched on. It runs only in a vault with the agent. */
+  const on = (settings: QuickSettings): boolean => settings.enabled
 
   /** The accelerators the settings ask for, while the quick agent is on.
    *  They are two keys, never one (`parseQuickSettings`). */
@@ -198,7 +193,6 @@ export async function startQuickAgent(deps: {
     update: () => panels.update(),
     result: (job, message) => panels.result(job, message),
     owns: (job) => panels.owns(job),
-    vaultChanged: () => void sync(),
     settings: state,
     async setSettings(patch) {
       for (const key of [patch.hotkey, patch.dockHotkey]) {

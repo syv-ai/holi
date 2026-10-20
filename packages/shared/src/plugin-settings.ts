@@ -274,8 +274,9 @@ export function pluginSettingsProblems(info: PluginInfo): string[] {
 
 /**
  * The plugin list a build hands each process, checked once for what could
- * never work: a bad or repeated id, a requirement this build does not have,
- * plugins requiring each other in a circle, or a setting declared wrong. Main and the renderer both
+ * never work: a bad or repeated id, a requirement or an `addsTo` this build
+ * does not have, a plugin adding to itself, plugins requiring each other in a
+ * circle, or a setting declared wrong. Main and the renderer both
  * call it at boot, so a broken list fails in either.
  */
 export function checkPluginCatalogue(known: readonly PluginInfo[]): void {
@@ -288,6 +289,8 @@ export function checkPluginCatalogue(known: readonly PluginInfo[]): void {
   for (const p of known) {
     const missing = (p.requires ?? []).filter((id) => !byId.has(id))
     if (missing.length > 0) throw new Error(`plugin ${p.id} requires ${missing.join(', ')}`)
+    const absent = (p.addsTo ?? []).filter((id) => !byId.has(id) || id === p.id)
+    if (absent.length > 0) throw new Error(`plugin ${p.id} adds to ${absent.join(', ')}`)
   }
   const done = new Set<string>()
   const visit = (id: string, path: string[]): void => {

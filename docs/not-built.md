@@ -84,15 +84,10 @@ during a reconcile; the lock covers note tabs only.
 
 **A time-grouped board view** ("Today / This week / Later"), as an option, never a mode to configure.
 
-**Assignees**, and with them per-person reminders on shared tasks. This is the answer if vault-wide
-reminders prove noisy, not a private reminder channel.
-
 **A renumber pass** for exhausted ranks. `needsRenumber` exists in `packages/shared/src/rank.ts`;
 nothing calls it.
 
 **Mail and calendar chips on a board card**, for the Gmail and Calendar links in a task's body.
-
-**A launch-at-login toggle** after the first-launch prompt.
 
 **A task that lights up for a recurring event series**, tying reminders to the agenda.
 

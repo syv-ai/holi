@@ -4,13 +4,15 @@
  * each grows the dock into what it does.
  *
  * **Still three narrowing controls, deliberately:** search, filter, hide done.
- * The filter holds the folders that have tasks and the tags. `overdue` and
+ * The filter holds the folders that have tasks, the people tasks are
+ * assigned to, and the tags. `overdue` and
  * `p1`–`p3` are labels, so they sit in the tag list beside real tags and
  * "the overdue p1s" is an ordinary tag query. The fourth icon is quick add,
  * which is not a filter.
  */
+import { hasLogin, sameLogin } from '@holi/shared'
 import { useAtom, useAtomValue } from 'jotai'
-import { Eye, EyeOff, Folder, ListFilter, Plus, Search, X } from 'lucide-react'
+import { AtSign, Eye, EyeOff, Folder, ListFilter, Plus, Search, X } from 'lucide-react'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { useEffect, useMemo, useRef, type ReactNode } from 'react'
 import {
@@ -26,6 +28,8 @@ import {
   settle,
 } from '@/primitives'
 import { nowAtom } from '@/state/clock'
+import { peopleList } from '@/state/members'
+import { sessionAtom } from '@/state/session'
 import {
   ROOT_LANE,
   availableLabels,
@@ -34,6 +38,7 @@ import {
   laneOrder,
   quickAddAtom,
   tasksAtom,
+  togglePerson,
 } from '@/state/tasks'
 import { QuickAdd } from './QuickAdd'
 
@@ -41,10 +46,14 @@ import { QuickAdd } from './QuickAdd'
 const VIRTUAL = new Set(['overdue', 'p1', 'p2', 'p3'])
 const tagName = (tag: string) => (VIRTUAL.has(tag) ? tag : `#${tag}`)
 const folderName = (folder: string) => (folder === ROOT_LANE ? 'Vault root' : folder)
+const personName = (login: string) => `@${login}`
+
+type FilterList = 'folders' | 'people' | 'tags'
 
 /**
  * What the filter is narrowing by, floating just above the dock while it
- * narrows: one chip per folder, then per tag, each one's ✕ taking it off.
+ * narrows: one chip per folder, then per person, then per tag, each one's ✕
+ * taking it off.
  * Nothing at rest.
  */
 export function FilterChips(): React.JSX.Element {
@@ -52,15 +61,21 @@ export function FilterChips(): React.JSX.Element {
   const reduced = useReducedMotion() ?? false
   const chips = [
     ...filter.folders.map((value) => ({ kind: 'folders' as const, value })),
+    ...filter.people.map((value) => ({ kind: 'people' as const, value })),
     ...filter.tags.map((value) => ({ kind: 'tags' as const, value })),
   ]
-  const remove = (kind: 'folders' | 'tags', value: string) =>
+  const remove = (kind: FilterList, value: string) =>
     setFilter((f) => ({ ...f, [kind]: f[kind].filter((v) => v !== value) }))
   return (
     <div className="flex flex-wrap justify-center gap-1.5">
       <AnimatePresence initial={false} mode="popLayout">
         {chips.map(({ kind, value }) => {
-          const name = kind === 'folders' ? folderName(value) : tagName(value)
+          const name =
+            kind === 'folders'
+              ? folderName(value)
+              : kind === 'people'
+                ? personName(value)
+                : tagName(value)
           return (
             <motion.div
               key={`${kind}:${value}`}
@@ -108,7 +123,17 @@ export function BoardDock(): React.JSX.Element {
   const labels = availableLabels(tasks.values(), now)
   const lanes = [...tasks.values()].map(laneOf)
   const folders = laneOrder(lanes).filter((l) => l !== ROOT_LANE || lanes.includes(ROOT_LANE))
-  const narrowing = [...filter.folders.map(folderName), ...filter.tags.map(tagName)]
+  const me = useAtomValue(sessionAtom)?.login ?? null
+  // Everyone some task is assigned to, the signed-in person first.
+  const people = peopleList(
+    [...tasks.values()].flatMap((t) => t.assignees),
+    me,
+  )
+  const narrowing = [
+    ...filter.folders.map(folderName),
+    ...filter.people.map(personName),
+    ...filter.tags.map(tagName),
+  ]
   const menu = useRef<MorphingMenuHandle>(null)
 
   // ⌘T on the board grows the dock into quick add, and the request is done.
@@ -143,9 +168,9 @@ export function BoardDock(): React.JSX.Element {
     </div>
   )
 
-  /** The filter's two lists: the folders that hold tasks (the vault root
-   *  only when some do), then the tags. A folder matches any chosen; a tag
-   *  must be on the task. */
+  /** The filter's lists: the folders that hold tasks (the vault root only
+   *  when some do), the people tasks are assigned to (when any are), then the
+   *  tags. A folder or a person matches any chosen; a tag must be on the task. */
   const filterPanel = (): ReactNode => {
     const toggle = (kind: 'folders' | 'tags', value: string) =>
       setFilter((f) => ({
@@ -168,6 +193,17 @@ export function BoardDock(): React.JSX.Element {
             on={filter.folders.includes(folder)}
             data-filter-folder={folder}
             onClick={() => toggle('folders', folder)}
+          />
+        ))}
+        {people.length > 0 && heading('People')}
+        {people.map((login) => (
+          <MorphRow
+            key={login}
+            icon={AtSign}
+            label={me !== null && sameLogin(login, me) ? `${login} (you)` : login}
+            on={hasLogin(filter.people, login)}
+            data-filter-person={login}
+            onClick={() => setFilter((f) => togglePerson(f, login))}
           />
         ))}
         {heading('Tags')}
@@ -217,7 +253,7 @@ export function BoardDock(): React.JSX.Element {
     // The panels close over the filter and the labels; the items are memoised
     // because a change of identity restarts the menu's layout pass.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [filter, labels.join('\n'), folders.join('\n')],
+    [filter, labels.join('\n'), folders.join('\n'), people.join('\n')],
   )
 
   return (

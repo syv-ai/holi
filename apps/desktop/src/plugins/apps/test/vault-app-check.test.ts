@@ -192,6 +192,14 @@ describe('the boundaries the skill states', () => {
     expect(text).toMatch(/bridge/)
   })
 
+  it('reports a pop-up dialog, which the frame answers without showing', async () => {
+    for (const source of ['if (confirm("Delete?")) remove()\n', 'window.alert("Saved")\n']) {
+      expect(said(await wrote('retro.app/app.js', source))).toMatch(/without pop-up dialogs/)
+    }
+    const own = 'const dialog = { confirm() {} }\ndialog.confirm()\nfunction prompt() {}\n'
+    expect(said(await wrote('retro.app/app.js', own))).toBe('')
+  })
+
   it('nudges about a hard-coded colour, below the rest', async () => {
     const text = said(await wrote('retro.app/style.css', 'body { color: #1e1e1e; }\n'))
     expect(text).toMatch(/#1e1e1e/)

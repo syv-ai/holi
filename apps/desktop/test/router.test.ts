@@ -116,7 +116,7 @@ async function rig(files: Record<string, string> = {}, auth?: StoredAuth) {
   })
   const caller = createRouter({
     seed: seedVault,
-    plugins: { enter: async () => {}, opened: async () => {}, scanClaimsFor: TASKS },
+    plugins: { reconcile: async () => {}, failures: () => ({}), scanClaimsFor: TASKS },
     capabilities: capabilityHost,
     registry,
     session,
@@ -146,6 +146,7 @@ describe('settings', () => {
       relink: true,
       'archive-done': false,
       'normalize-md': true,
+      'shrink-images': true,
       'memory-index': true,
     })
     expect(settings.warnings).toEqual([])
@@ -183,6 +184,7 @@ describe('settings', () => {
       relink: true,
       'archive-done': false,
       'normalize-md': true,
+      'shrink-images': true,
       'memory-index': true,
     })
   })
@@ -1116,7 +1118,7 @@ async function authRig(routes: Record<string, Scripted[]>, seed?: StoredAuth) {
   hosts.push(host)
   const caller = createRouter({
     seed: seedVault,
-    plugins: { enter: async () => {}, opened: async () => {}, scanClaimsFor: TASKS },
+    plugins: { reconcile: async () => {}, failures: () => ({}), scanClaimsFor: TASKS },
     registry,
     session,
     host,

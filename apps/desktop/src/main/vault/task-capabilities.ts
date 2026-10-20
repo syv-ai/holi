@@ -56,13 +56,13 @@ export interface CreateTaskInput {
   status?: string
   /** Seeds the body, under the title. */
   description?: string
-  /** Fields set before the task exists: due, priority, tags, reminder,
-   *  recurrence. */
+  /** Fields set before the task exists: due, priority, tags, assignees,
+   *  reminder, recurrence. */
   extra?: Record<string, unknown>
 }
 
 /** What a create may set besides title, status, folder and body. */
-const CREATE_FIELDS = ['due', 'priority', 'tags', 'reminder', 'recurrence']
+const CREATE_FIELDS = ['due', 'priority', 'tags', 'assignees', 'reminder', 'recurrence']
 
 /** A field edit, read by the module that owns the format. */
 function patchOf(raw: unknown): TaskPatch {
@@ -151,6 +151,7 @@ export const taskCapabilities = (deps: TaskCapabilitiesDeps) => ({
           ...patch,
           status: patch.status ?? 'todo',
           tags: patch.tags ?? [],
+          assignees: patch.assignees ?? [],
           // The title is the body's first heading, because that is where the
           // format keeps it.
           description: setFirstHeading(input.description ?? '', input.title),

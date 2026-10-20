@@ -7,11 +7,11 @@ newer skills and hooks are offered to each vault, never written unasked.
 
 ## How it works
 
-**Shipping is bumping the version.** `.github/workflows/release.yml` runs on every push to `main`
-and reads `apps/desktop/package.json`'s `version`. When `v<version>` has no tag yet, it builds,
-packages with `electron-builder` (`apps/desktop/electron-builder.yml`), and publishes the release
-`v<version>` with the dmg, the zip, their blockmaps and `latest-mac.yml`. When the tag exists, it
-stops after that check, so an ordinary merge ships nothing. Only arm64 macOS is built.
+**Shipping stable is bumping the version.** On each `main` push, `.github/workflows/release.yml`
+checks the version in `apps/desktop/package.json`. If `v<version>` has no tag, it builds arm64
+macOS with `electron-builder` (`apps/desktop/electron-builder.yml`) and publishes the dmg, zip,
+blockmaps and `latest-mac.yml`. Existing tags skip stable publication; concurrent builds cannot
+overwrite its assets. Every push keeps its own CI run.
 
 **Signing and notarizing happen inside `electron-builder`.** It signs with the Developer ID
 certificate in `CSC_LINK`/`CSC_KEY_PASSWORD` under the hardened runtime and
@@ -20,12 +20,11 @@ certificate in `CSC_LINK`/`CSC_KEY_PASSWORD` under the hardened runtime and
 stapled app. The workflow then checks `codesign`, `spctl` and `stapler`. The updater installs from
 the zip, and macOS refuses an update that is not signed by the same team as the running app.
 
-**The updater** is `electron-updater` in main (`src/main/updates/updater.ts`), on in the packaged
-app only. It checks ten seconds after launch, every four hours, when the window gains focus and when
-the machine wakes; `shouldCheck` (`src/main/updates/state.ts`) holds those to a five-minute
-cooldown and never checks once an update is in hand. A found update downloads at once. The whole
-status (version, state, progress, last check, last error) is pushed on `updates:status` on every
-change and read through `trpc.updates.*`.
+**The updater** is `electron-updater` in main (`src/main/updates/updater.ts`), for packaged apps
+only. It checks ten seconds after launch, every four hours, on focus and on wake. `shouldCheck`
+(`src/main/updates/state.ts`) enforces a five-minute cooldown and stops checks once an update is
+held. electron-updater downloads it automatically; main pushes status through `updates:status` and
+`trpc.updates.*`.
 
 **Installing is a quit.** A downloaded update installs on any quit. **Restart to update** runs the
 same path as ⌘Q first: the plugins' quit questions (a busy agent session asks), then the teardown
@@ -37,7 +36,13 @@ brand colour when an update is ready, with its panel's **Restart to update**, an
 download failed, with **Try again**. It stays until acted on; a toast would be missed. Settings →
 **Updates** shows the running version, where the updater has got to, **Check now**, and **Update
 automatically**, which turns the background checks off (stored in `userData/updates.json`). A
-person's own check ignores the cooldown and the preference.
+person's own check ignores the cooldown and the preference. **Dev prereleases** opts this app into
+the development release channel. Switching channels immediately checks and downloads from the
+selected feed. Turning dev off selects stable and downloads its latest release, even when that
+version is older than the installed one; **Restart to update** installs the downloaded stable
+version. Beside them, **Open at login**, this machine's login item: Holi starts in the menu bar with
+its window loaded but out of sight, so the vault opens, syncs and fires its reminders from the
+start.
 
 **A release's skills reach a vault by asking.** Skills and hooks are the vault's once written, so an
 app update leaves every vault's copies where they were ([agent config](agent-config.md)). Whenever a
@@ -53,8 +58,12 @@ A dev build reports updates as unsupported.
 
 ## Rules
 
-- A release is immutable: a new build is a new version. The workflow never replaces a release.
+- A stable release is immutable: a new build is a new version, and stable assets are never
+  overwritten. The dev prerelease uses the CI run number in its version and bundle metadata;
+  rerunning the same workflow run reuses that prerelease tag and deliberately replaces its assets.
 - An update is never installed behind someone's back mid-session; it waits for a quit or the button.
+- Stable is the default channel. Dev prereleases are an explicit per-app opt-in, and switching back to
+  stable can install an older version on restart.
 - A vault's files change only when its user asks: the skills offer writes nothing until Update
   skills is chosen, and is not an opt-in to update on open.
 - Repository secrets the workflow needs: `CSC_LINK`, `CSC_KEY_PASSWORD`, `APPLE_ID`,

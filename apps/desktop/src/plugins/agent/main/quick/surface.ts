@@ -1,6 +1,6 @@
 /**
  * The quick panel's window: a page of the agent's (`renderer/quick/`) in a
- * window core makes (`AppContext.openPage`), set up the way a launcher's is.
+ * window core makes (`PluginCtx.openPage`), set up the way a launcher's is.
  * One for every quick agent (`panels.ts`).
  *
  * - **A panel, not a window** (`type: 'panel'`): macOS gives it the keyboard
@@ -16,7 +16,7 @@
  * Only Electron's window, which core hands over, is touched here: nothing
  * imports `electron`, so the plugin stays importable under plain Node.
  */
-import type { AppContext, PageWindow, PageWindowOptions } from '../../../../main/plugin-api'
+import type { PluginCtx, PageWindow, PageWindowOptions } from '../../../../main/plugin-api'
 import { parseQuickRequest, type QuickRequest } from '../../shared/quick'
 import { PROMPT_SIZE, type PanelSurface } from './panels'
 
@@ -81,7 +81,7 @@ export function revealWhenPainted(page: PageWindow): {
   }
 }
 
-export function electronSurface(ctx: AppContext): PanelSurface {
+export function electronSurface(ctx: PluginCtx): PanelSurface {
   const page = ctx.openPage({
     page: 'quick',
     window: {

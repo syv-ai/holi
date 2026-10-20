@@ -29,6 +29,11 @@ export interface PluginInfo {
   /** The plugins it builds on: it runs only where every one of them runs, so
    *  turning one off leaves this off too. */
   requires?: readonly string[]
+  /** The plugins it adds to while they run: skills, hooks and settings
+   *  fragments in a place another plugin owns (the agent's `.claude/`). Unlike
+   *  `requires`, it runs without them; what it adds waits until they run. A
+   *  plugin that seeds there without saying so is refused at boot. */
+  addsTo?: readonly string[]
   /** Its own settings, written under its id in the plugins files
    *  (`plugin-settings.ts`). */
   settings?: readonly PluginSetting[]
@@ -73,6 +78,9 @@ export interface PluginResolution {
   running: ReadonlySet<string>
   /** Every known plugin's status, in catalogue order. */
   status: ReadonlyMap<string, PluginStatus>
+  /** For each running plugin, the plugins in its `addsTo` that run too: what
+   *  it is adding to right now. */
+  addingTo: ReadonlyMap<string, readonly string[]>
 }
 
 /**
@@ -80,8 +88,9 @@ export interface PluginResolution {
  * the plugin's own default, minus what this machine turned off, minus any
  * plugin whose `requires` are not all running (down a chain: one built on a
  * plugin left off is left off too). A local `true` cannot turn on a plugin the
- * vault has off, so it is never read. Every "is it running" in both processes
- * reads this, so the rule has one home.
+ * vault has off, so it is never read. What each running plugin adds to is
+ * whichever of its `addsTo` run. Every "is it running" in both processes reads
+ * this, so the rule has one home.
  */
 export function resolvePlugins(
   settings: PluginSettings,
@@ -110,7 +119,13 @@ export function resolvePlugins(
       dropped = true
     }
   }
-  return { running, status }
+  const addingTo = new Map<string, readonly string[]>()
+  for (const id of running) {
+    const adds = known.find((p) => p.id === id)?.addsTo ?? []
+    const live = adds.filter((target) => running.has(target))
+    addingTo.set(id, live)
+  }
+  return { running, status, addingTo }
 }
 
 /** Plugin ids as the settings tab names them, joined: "Vault apps and Agent". */

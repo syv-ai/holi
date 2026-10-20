@@ -42,17 +42,30 @@ export function vaultRelPath(raw: string): VaultRelPath {
   return segments.join('/') as VaultRelPath
 }
 
+/** A secret file's name, in any folder: `.env`, `.env.local`, `.env.<x>`,
+ *  `.secrets`, `.secrets.<x>`. The names people already keep secrets under,
+ *  and nothing a note could be called (`env.md`, `secrets.md`). */
+const SECRET_NAME = /^\.(env|secrets)(\..+)?$/i
+
+/** Is `path` a secret file, or inside a folder named like one? Local-only,
+ *  and never readable through a capability (`fences.ts`). */
+export function isSecretPath(path: string): boolean {
+  return path.split('/').some((segment) => SECRET_NAME.test(segment))
+}
+
 /** Machine-local paths that sync and export layers must never treat as
- * committed vault content, identified **solely** by the `.local.` marker in the
- * file's name or in any folder above it (`.holi/settings/app.local.yaml`,
- * `USER.local.md`, and everything in a personal app, `Home.local.app/…`).
+ * committed vault content, identified by their path alone: the `.local.`
+ * marker in the file's name or in any folder above it
+ * (`.holi/settings/app.local.yaml`, `USER.local.md`, and everything in a
+ * personal app, `Home.local.app/…`), or a secret file's name (`.env`,
+ * `isSecretPath`).
  *
- * The marker is the whole rule on purpose: a file's git-vs-local status
+ * The path is the whole rule on purpose: a file's git-vs-local status
  * must be legible from its path, never a special-cased exception. A folder
  * counts because git already says so: `*.local.*` has no slash, so it matches
  * a directory and ignores everything under it. */
 export function isLocalOnlyPath(path: string): boolean {
-  return path.split('/').some((segment) => /\.local\./.test(segment))
+  return path.split('/').some((segment) => /\.local\./.test(segment)) || isSecretPath(path)
 }
 
 /**
@@ -63,7 +76,13 @@ export function isLocalOnlyPath(path: string): boolean {
  * `.gitignore`, is the only thing standing between a machine-local file and a
  * commit published to every collaborator.
  */
-export const LOCAL_ONLY_IGNORE_LINES: readonly string[] = ['*.local.*']
+export const LOCAL_ONLY_IGNORE_LINES: readonly string[] = [
+  '*.local.*',
+  '.env',
+  '.env.*',
+  '.secrets',
+  '.secrets.*',
+]
 
 /**
  * The sentinel that says a clone IS a Holi vault, and the durable on-disk twin
@@ -128,7 +147,8 @@ export function isKeepFile(path: string): boolean {
  * the hook that asks before mail leaves.
  *
  * The rest of `.holi/` is deliberately absent: that is Holi's own config, not
- * the agent's. `.holi/memory/` is the one agent subtree under it (`MEMORY_DIR`).
+ * the agent's. `.holi/memory/` and `.holi/schedules/` are the agent subtrees
+ * under it (`MEMORY_DIR`, `SCHEDULES_SURFACE_DIR`).
  */
 export const AGENT_SURFACE_FILES: readonly string[] = [
   'AGENTS.md',
@@ -146,10 +166,16 @@ export const AGENT_SURFACE_FILES: readonly string[] = [
  *  below needs it and that module imports this one. */
 export const MEMORY_DIR = '.holi/memory'
 
+/** Scheduled agents' prompts (`schedule.ts`'s `SCHEDULES_DIR`, restated here
+ *  for the same import-order reason as `MEMORY_DIR`). A prompt the agent runs
+ *  unattended is the agent's surface: an app that could write one could make
+ *  the agent do anything it may do without asking. */
+export const SCHEDULES_SURFACE_DIR = '.holi/schedules'
+
 /** Whether a vault-relative path is part of the agent surface. The four named
  *  files match **exactly** (like `isVaultConfigPath`, so `notes/AGENTS.md` is an
- *  ordinary note someone wrote); `.claude/` and `.holi/memory/` match as whole
- *  subtrees.
+ *  ordinary note someone wrote); `.claude/`, `.holi/memory/` and
+ *  `.holi/schedules/` match as whole subtrees.
  *
  *  **`.holi/memory/` is `MEMORY.md` subdivided**: what the user told the
  *  assistant does not become readable to untrusted app code by spreading it
@@ -163,7 +189,8 @@ export function isAgentSurfacePath(path: string): boolean {
   return (
     AGENT_SURFACE_FILES.includes(path) ||
     path.startsWith('.claude/') ||
-    path.startsWith(`${MEMORY_DIR}/`)
+    path.startsWith(`${MEMORY_DIR}/`) ||
+    path.startsWith(`${SCHEDULES_SURFACE_DIR}/`)
   )
 }
 

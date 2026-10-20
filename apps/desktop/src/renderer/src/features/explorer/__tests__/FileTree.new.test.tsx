@@ -108,6 +108,18 @@ test('with a folder focused, the field is first inside it, and the folder opens'
   expect(order()).toEqual(['Finance', 'Travel', '<folder name>', 'Travel/Rome.md', 'inbox.md'])
 })
 
+test('clicking blank tree space clears a focused folder and makes at the root', async () => {
+  tree()
+  await userEvent.click(rowFor('Travel')!)
+  expect(rowFor('Travel')).toHaveAttribute('aria-selected', 'true')
+
+  await userEvent.click(screen.getByRole('tree'))
+  expect(rowFor('Travel')).toHaveAttribute('aria-selected', 'false')
+  await make('New File')
+
+  expect(order()[0]).toBe('<note name>')
+})
+
 test('with a file focused, a task is named right under it and opens once made', async () => {
   const open = tree()
   await userEvent.click(rowFor('Finance')!)

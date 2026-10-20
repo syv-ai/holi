@@ -4,16 +4,14 @@
  *
  * **The keys are read off the commands**, core's and those of the plugins kept
  * on, so a hint cannot name a key nothing binds or a plugin this vault does
- * not run. Which few are worth a first look is the one thing written here.
+ * not run. Which few are worth a first look each command says itself
+ * (`firstKey`), so this act names no plugin.
  */
 import { useState } from 'react'
 import { useAtomValue } from 'jotai'
 import { Button, Tooltip } from '@/primitives'
 import { STATIC_COMMANDS, type Command } from '@/state/commands'
 import { installedPluginsAtom } from '@/state/plugins'
-
-/** The keys a new vault is worth meeting with, in the order they show. */
-const FIRST_KEYS = ['palette.open', 'task.new', 'agent.show'] as const
 
 interface Props {
   slug: string
@@ -30,18 +28,17 @@ export function ThresholdAct({ slug, owner, remote, running, error, onOpen }: Pr
   const installed = useAtomValue(installedPluginsAtom)
   const [copied, setCopied] = useState(false)
 
-  const commands = new Map<string, Command>(
-    [
-      ...STATIC_COMMANDS,
-      ...installed.filter((p) => running.has(p.info.id)).flatMap((p) => p.commands ?? []),
-    ].map((c) => [c.id, c]),
-  )
-  const keys = FIRST_KEYS.flatMap((id) => {
-    const command = commands.get(id)
-    return command?.hotkey === undefined
-      ? []
-      : [{ id, hotkey: command.hotkey, label: command.label }]
-  })
+  // The keys a new vault is worth meeting with, in the order they show.
+  const keys = [
+    ...STATIC_COMMANDS,
+    ...installed.filter((p) => running.has(p.info.id)).flatMap((p) => p.commands ?? []),
+  ]
+    .flatMap((c: Command) =>
+      c.firstKey === undefined || c.hotkey === undefined
+        ? []
+        : [{ id: c.id, hotkey: c.hotkey, label: c.label, at: c.firstKey }],
+    )
+    .sort((a, b) => a.at - b.at)
 
   const copy = () => {
     if (remote === null) return

@@ -109,6 +109,9 @@ export const BRIDGE_JS = `(() => {
       agenda: (range) => call('google.agenda', range || {}),
       search: (query) => call('google.search', query === undefined ? {} : { query }),
     },
+    // A secret from the vault's .env (.env.local wins), or null when unset:
+    // only the names app.yaml lists under env.
+    env: (name) => call('env.get', { name }),
     on,
     // A line in the app's log, for whoever debugs it next.
     log: (...parts) => report('info', parts),

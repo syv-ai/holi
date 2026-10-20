@@ -30,6 +30,7 @@ import { trpc } from '../lib/trpc'
 import { sweepDailyAtom } from '../state/daily'
 import { openLandingAtom } from '../state/home'
 import { useSettingsFollowDisk } from '../state/settings'
+import { useVaultMembers } from '../state/members'
 import {
   activeTab,
   dropZones,
@@ -132,6 +133,7 @@ export function Shell() {
   useVaultTheme()
   // Settings edited on disk (the agent's `home:`, a pull) reach the app.
   useSettingsFollowDisk()
+  useVaultMembers()
   useSurfaceTabs()
 
   // Keep `nowAtom` on the current minute so `overdue` turns over on the clock.

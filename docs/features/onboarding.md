@@ -28,7 +28,8 @@ them push access to. The same ritual, minus the greeting, is how any later vault
      are written into the new vault together on continue ([settings](settings.md)).
   5. Threshold: "Welcome to <slug>.", the copyable remote, a few hotkeys, and "Open vault", which
      activates the vault and flips the gate to the shell. The hotkeys are read off core's commands
-     and the kept plugins', so a hint never names a key nothing binds.
+     and the kept plugins', so a hint never names a key nothing binds; a command marks itself as one
+     of these few (`Command.firstKey`, its place in the order).
 - **Join** is a quiet link on act 2 that swaps in a searchable repo picker. It lists only repos
   with the `holi-vault` topic that are not already added. Repos you cannot push to are shown
   disabled, with the reason. Picking one clones it and opens it directly: no settings act and no

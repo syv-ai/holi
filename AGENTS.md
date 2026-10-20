@@ -21,11 +21,12 @@ Node access or GitHub credentials. `router.ts` is main's typed API seam; keep
 Electron dependencies out of code that should remain testable under plain Node.
 
 Optional parts of Holi are plugins under `src/plugins/<id>/` (the agent, PDF,
-Google and vault apps so far), each with its own `main/`, `renderer/`, `shared/` and
+Google, vault apps and community plugins so far), each with its own `main/`, `renderer/`, `shared/` and
 `test/`, reaching core only through `src/main/plugin-api.ts` and
 `@/plugin-api`. Vault apps live in `src/plugins/apps/`; what a synced vault
 holds of an app (the bundle grammar, the record merge, the `.local.app` rule)
-stays in `packages/shared` and core main.
+stays in `packages/shared` and core main. Plugins from other repositories are
+community plugins: processes the `community` plugin runs, never code it loads.
 
 ## Authoritative documentation
 
@@ -120,8 +121,10 @@ legacy alias with the same behavior as `pnpm lint`.
   `.holi/settings/plugins.local.yaml`,
   `.holi/memory/*.local.md`, and `*.local.*` must remain machine-local; the GitHub
   token is kept by the app's credential storage, not in source. Local-ness is
-  the `.local.` marker and nothing else: a bare `USER.md` is ordinary
-  committed content, whatever an older vault's `.gitignore` says.
+  read off the path and nothing else: the `.local.` marker, or a secret file's
+  name (`.env`, `.env.*`, `.secrets`, `.secrets.*`, `isSecretPath`). A bare
+  `USER.md` is ordinary committed content, whatever an older vault's
+  `.gitignore` says.
 - A vault's seed files are real files in seed folders: `vault/once/**` and
   `vault/shipped/**` beside the module that contributes them
   (`main/vault/seed/core.ts`, a plugin's `main/seed.ts`; the agent's is

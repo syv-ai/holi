@@ -15,6 +15,7 @@ import {
   BrowserWindow,
   dialog,
   ipcMain,
+  nativeImage,
   protocol,
   session as electronSession,
   shell,
@@ -65,6 +66,10 @@ import { createPageWindows } from './page-windows'
 // The plugins this build has: the one place main imports them.
 install(MAIN_PLUGINS)
 
+/** The origins plugins frame right now (`PluginCtx.frameOrigin`), which the
+ *  window guard confines; live, as their servers start and stop. */
+const FRAME_ORIGINS = new Set<string>()
+
 /** What seeds every vault, core first: its `.gitignore` is written before
  *  any file that could be committed. Enabled plugins' seeds follow. */
 const CORE_SEEDS = [coreSeed(MAIN_PLUGINS.map((p) => p.info))]
@@ -98,8 +103,10 @@ if (!app.requestSingleInstanceLock()) {
   void main()
 }
 
-function createWindow(): BrowserWindow {
-  const win = rendererWindow({ width: 1200, height: 800 }, FRAME_SCHEMES)
+/** The main window. `show: false` for a launch at login: its page still loads
+ *  and opens the vault, out of sight until the tray's Open Holi or the dock. */
+function createWindow({ show = true }: { show?: boolean } = {}): BrowserWindow {
+  const win = rendererWindow({ width: 1200, height: 800, show }, FRAME_SCHEMES, FRAME_ORIGINS)
   mainWindow = win
   win.on('closed', () => {
     if (mainWindow === win) mainWindow = null
@@ -116,6 +123,12 @@ async function main(): Promise<void> {
   })
 
   await app.whenReady()
+
+  // Electron does not consistently use the app icon for an unpackaged process.
+  // Packaged builds use electron-builder's generated native bundle icon.
+  if (process.platform === 'darwin' && !app.isPackaged && app.dock) {
+    app.dock.setIcon(nativeImage.createFromPath(join(app.getAppPath(), 'build/icon.png')))
+  }
 
   // After whenReady: the keychain is not available before it.
   const session = await createSession()
@@ -148,7 +161,7 @@ async function main(): Promise<void> {
 
   // Plugins' own windows (the agent's quick panel): core makes each one, the
   // plugin places and shows it.
-  const pages = createPageWindows({ frameSchemes: FRAME_SCHEMES })
+  const pages = createPageWindows({ frameSchemes: FRAME_SCHEMES, frameOrigins: FRAME_ORIGINS })
 
   /** Plugin events, both ways, over the one window. */
   const eventsDeps: PluginEventsDeps = {
@@ -184,6 +197,11 @@ async function main(): Promise<void> {
       // Read lazily: the window helpers are declared further down.
       showMain: () => showMainWindow(),
     },
+    githubToken: () => session.token(),
+    frameOrigin: (origin) => {
+      FRAME_ORIGINS.add(origin)
+      return () => void FRAME_ORIGINS.delete(origin)
+    },
   })
 
   const host = createVaultHost({
@@ -194,10 +212,12 @@ async function main(): Promise<void> {
     claims: (root) => plugins.scanClaimsFor(root),
     onSnapshot: (snapshot) => {
       send('vault:snapshot', snapshot)
-      // A hand edit to the settings files arrives this way too. When it
-      // changed which plugins claim files, that scan used the old claims:
-      // scan again with the new ones.
+      // A hand edit to the settings files arrives this way too: what runs
+      // follows it now, not at the next open. When it changed which plugins
+      // claim files, that scan used the old claims: scan again with the new
+      // ones.
       plugins.invalidate()
+      void plugins.reconcile('snapshot')
       const active = host.active()
       if (active === null) return
       void plugins.scanClaimsFor(active.root).then((claims) => {
@@ -228,9 +248,9 @@ async function main(): Promise<void> {
     // every commit tick and once at open, so a vault switch resets it.
     onHeldBack: (files) => send('vault:heldback', files),
     onCommitted: (paths) => send('vault:committed', paths),
-    // What plugins run in the vault is disposed here, the only place that
-    // still holds the vault they ran in.
-    onLeave: () => plugins.leave(),
+    // What plugins run in the vault stops here, the only place that still
+    // holds the vault they ran in.
+    onLeave: () => plugins.stop(),
   })
 
   // Serve every scheme. A plugin's answers 404 while the open vault has it off.
@@ -342,6 +362,10 @@ async function main(): Promise<void> {
 
   const router = createRouter({
     updates: updater,
+    loginItem: {
+      get: () => app.getLoginItemSettings().openAtLogin,
+      set: (open) => app.setLoginItemSettings({ openAtLogin: open }),
+    },
     capabilities: capabilityHost,
     preCommit,
     seed: (root) => plugins.seed(root),
@@ -436,10 +460,19 @@ async function main(): Promise<void> {
     win.webContents.send('reminders:open', payload)
   }
   const notifier = createNotifier((remote, path) => focusTask(remote, path))
-  const reminders = createReminderRuntime({ corpus, notifier, delivered })
+  const reminders = createReminderRuntime({
+    corpus,
+    notifier,
+    delivered,
+    // An assigned task reminds only its assignees (docs/features/tasks.md).
+    viewerLogin: () => session.viewer?.login ?? null,
+  })
   reminders.start()
 
-  const win = createWindow()
+  // Opened at login, Holi starts in the menu bar: the window loads (so the
+  // vault opens) without showing.
+  const atLogin = process.platform === 'darwin' && app.getLoginItemSettings().wasOpenedAtLogin
+  const win = createWindow({ show: !atLogin })
   // Pull on focus. The interval exists for the case where the window never
   // loses focus at all.
   win.on('focus', () => host.active()?.onFocus())
@@ -472,10 +505,11 @@ async function main(): Promise<void> {
     await new Promise<void>((resolve) => fresh.webContents.once('did-finish-load', () => resolve()))
   }
 
-  // The dock: the main window, whatever other windows of Holi's (a quick
-  // panel) are open.
+  // The dock: the main window, opened if it was closed and brought out if a
+  // launch at login left it out of sight, whatever other windows of Holi's (a
+  // quick panel) are open.
   app.on('activate', () => {
-    if (mainWindow === null || mainWindow.isDestroyed()) openWindow()
+    if (mainWindow === null || mainWindow.isDestroyed() || !mainWindow.isVisible()) openWindow()
   })
 
   // Tray-resident: the sweep keeps running with the window closed, and the tray
@@ -570,6 +604,9 @@ async function main(): Promise<void> {
 
   async function teardownAndQuit(): Promise<void> {
     await teardown()
+    // Only install a candidate downloaded from the selected channel. Squirrel
+    // may have staged a different channel's candidate during its check.
+    if (updater.installOnQuit()) return
     // Always quit, even if the flush threw: a failed teardown must not trap
     // someone in an app they are trying to leave.
     app.quit()
@@ -584,13 +621,11 @@ async function main(): Promise<void> {
     tray = null
     await (async () => {
       try {
-        // Dispose what runs in the vault (the agent's sessions and terminals)
+        // Stop what runs in the vault (the agent's sessions and terminals)
         // before we flush and commit: nothing a session was mid-writing
         // should race the teardown.
-        await plugins.leave().catch((err) => console.error('[quit] plugins leave failed:', err))
+        await plugins.stop().catch((err) => console.error('[quit] plugins stop failed:', err))
         await bridge.stop().catch((err) => console.error('[quit] bridge stop failed:', err))
-        await plugins.disposeAll().catch((err) => console.error('[quit] plugins stop failed:', err))
-        pages.closeAll()
         // A flush point is a flush THEN a commit, and only the renderer can do
         // the first half: the editor's newest words are not on disk until it
         // writes them. Quit is the one flush point main starts, so it asks.

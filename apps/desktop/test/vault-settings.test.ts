@@ -125,6 +125,7 @@ describe('a machine-local hooks override', () => {
       relink: false,
       'archive-done': true,
       'normalize-md': true,
+      'shrink-images': true,
       'memory-index': true,
     })
   })

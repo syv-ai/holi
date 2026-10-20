@@ -28,6 +28,10 @@ export interface ReminderRuntimeDeps {
   delivered: DeliveredLog
   /** Sweep interval. Defaults to 60s — minute granularity suits the 09:00 anchor. */
   tickMs?: number
+  /** The GitHub login this machine is signed in as, or null: an assigned
+   *  task reminds only its assignees. Read at every sweep, so a sign-in
+   *  counts at once. */
+  viewerLogin?: () => string | null
 }
 
 export function createReminderRuntime(deps: ReminderRuntimeDeps): ReminderRuntime {
@@ -40,7 +44,12 @@ export function createReminderRuntime(deps: ReminderRuntimeDeps): ReminderRuntim
     if (closed) return
     const vaults = await deps.corpus.all()
     if (closed) return // a sweep begun before `close()` must not fire after it
-    const { event, marks } = sweep(vaults, now(), (remote) => deps.delivered.read(remote))
+    const { event, marks } = sweep(
+      vaults,
+      now(),
+      (remote) => deps.delivered.read(remote),
+      deps.viewerLogin?.() ?? null,
+    )
     if (!event) return
     deps.notifier.fire(event)
     for (const m of marks) deps.delivered.markDelivered(m.remote, m.path, m.fireAt)

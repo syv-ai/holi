@@ -83,6 +83,10 @@ The dependency runs one way: the plugin underneath knows nothing of what require
 on this machine, or needing one that is off), and every reader in both processes asks it. Both
 processes check their list with `checkPluginCatalogue` at boot, which refuses a missing or circular
 requirement.
+A plugin that only adds to another says so in `PluginInfo.addsTo`: Google, PDF and vault apps add
+skills, hooks and settings fragments to the agent. Unlike `requires`, it runs without the other;
+what it adds waits until that one runs, and the resolver says what each running plugin is adding
+to right now (`addingTo`).
 A plugin claims vault paths: the first enabled claim with a `view` opens a note tab of that path,
 and its `rowMenu` items join the file tree's menu. On the main side a claim
 (`MainPlugin.claims`, `{match, parse, normalize?}`) owns markdown files in the snapshot: the scanner
@@ -96,7 +100,7 @@ A plugin may have windows of its own: `ctx.openPage` makes one showing a page of
 (`RendererPlugin.pages`), loaded as `?page=<plugin>/<page>`, which boots only that page, with no
 vault subscription and no flush answer. Core makes the window (preload, isolation, navigation
 guard), from the same helper as the main window (`main/renderer-window.ts`); the plugin places,
-shows and closes it, and talks to its page over the window's own channel (`page:event`,
+shows and closes it (core closes any left open when the plugin stops), and talks to its page over the window's own channel (`page:event`,
 `page:message`), so the plugin's events stay the main window's. `ctx.showMainWindow` brings the main
 window forward. The agent's quick panel and its dock are two such windows.
 Main tells a plugin's renderer something through events: `ctx.emit(remote, name, payload)` sends
@@ -113,10 +117,14 @@ sends a link out of it to the browser.
 A plugin's own code sits in `main/`, `renderer/`, `shared/` and `test/` under its folder; its
 renderer imports its main side as types only, for `capClient`. The plugins are the agent
 ([agent-sessions](features/agent-sessions.md)), PDF ([pdf](features/pdf.md)), Google
-([google](features/google.md)) and vault apps ([vault apps](features/vault-apps.md)).
-A seed contribution can own a path prefix (`owns`): the agent owns `.claude/`, so every other
-plugin's skills, hooks and settings fragments there are left out while the agent is off and
-seeded once when it turns on.
+([google](features/google.md)), vault apps ([vault apps](features/vault-apps.md)) and community
+plugins ([community plugins](features/community-plugins.md)), which hosts plugins from other
+repositories as processes it runs, never as code it loads. A renderer plugin may give its claims as
+an atom, for claims that follow what main tells it, and a plugin may register a frame origin with
+the window guard (`ctx.frameOrigin`).
+A seed contribution can own a path prefix (`owns`): the agent owns `.claude/`. Another plugin seeds
+there only by declaring it adds to the agent, which `install` checks at boot, and its files and
+fragments there are left out while the agent is off and seeded once when it turns on.
 The app door, through which a vault app's frame calls capabilities, is core's, and the apps plugin
 is its one opener (`ctx.openAppDoor`), supplying the consent check for entries with an
 `appGrant`; with apps off, no entry is reachable through it.
@@ -126,15 +134,20 @@ grammar is in `packages/shared` and the merge driver and fences in core.
 
 Enablement has two layers: `.holi/settings/plugins.yaml` declares the vault's plugins for everyone,
 and `plugins.local.yaml` can only turn one off on this machine ([settings](features/settings.md)).
-The same pair holds each plugin's own settings under its id (`PluginInfo.settings`). The
-plugin host (`src/main/plugin-host/`) starts a plugin once per process when a vault that enables it
-opens (`activateApp`), seeds only enabled plugins' files, and stops them all at quit. Once the vault
-is open it runs `activateVault` with a context bound to that vault (hold sync, commit, read the
-head, hear the renderer's focus report, emit), at most once per open; the disposer runs when Holi
-leaves the vault, while it is still open, and at quit before the bridge stops and the editor
-flushes. A plugin can also ask before Holi quits (`guardQuit`) and serve a bridge route
-(`route`). Dispatch refuses a
-capability whose plugin is off in the calling vault, as "no such method".
+The same pair holds each plugin's own settings under its id (`PluginInfo.settings`).
+Each vault is its own world: a plugin starts in the open vault (`MainPlugin.activate`, with one
+context bound to that vault: register capabilities, emit, hold sync, commit, read the head, hear the
+renderer's focus report, serve a bridge route, ask before quit) and nothing it starts outlives the
+vault, so nothing carries from one vault to the next. The plugin host (`src/main/plugin-host/`)
+keeps what is started in step with the vault's resolution (`reconcile`): at the open, on a settings
+write and on any change to the files, so a hand edit to `plugins.yaml` takes effect at once. It
+starts a plugin's providers before it and stops it before them, seeds a plugin that joins before
+starting it, and stops everything, newest first, when Holi leaves the vault or quits: each
+disposer, then what it registered. A plugin that throws as it starts is reported with its message
+(`settings.pluginFailures`) and tried again on the next write or open, never on a bare change.
+Turning off a plugin whose renderer side says stopping it costs something (`leaveGuard`, the
+agent's busy sessions) asks before the write; a hand edit stops it without asking. Dispatch refuses
+a capability whose plugin is off in the calling vault, as "no such method".
 
 Whatever runs inside a vault (the `holi` CLI, the agent's hooks, git's pre-commit hook and merge
 driver) reaches main through one loopback bridge (`src/main/bridge/`) with a token per vault,
@@ -178,8 +191,12 @@ stay on. There is no MCP server: the agent uses its native tools plus one small 
 that talks to main. Holi pauses sync while a turn runs and reviews a turn as the commit
 range it produced.
 
-See [agent-sessions](features/agent-sessions.md), [agent-config](features/agent-config.md) and
-[agent-memory](features/agent-memory.md).
+**Scheduled agents** are files in `.holi/schedules/` that the open vault's agent plugin starts as
+background sessions at their times, on machines that approved their content
+([scheduled-agents](features/scheduled-agents.md)).
+
+See [agent-sessions](features/agent-sessions.md), [agent-config](features/agent-config.md),
+[agent-memory](features/agent-memory.md) and [scheduled-agents](features/scheduled-agents.md).
 
 ## 6. The pillars
 
@@ -200,8 +217,9 @@ See [agent-sessions](features/agent-sessions.md), [agent-config](features/agent-
 ## 7. State outside the repo
 
 - `userData` holds the GitHub and Google tokens (encrypted with Electron `safeStorage`), the vault
-  registry (which repos are added and where), each vault's agent config directory, the Google cache
-  and the `holi` CLIs. It is a machine fact: a second laptop starts empty.
+  registry (which repos are added and where), each vault's agent config directory, the Google cache,
+  which schedules this machine runs (and their run log) and the `holi` CLIs. It is a machine fact: a
+  second laptop starts empty.
 - Per vault, `.holi/settings/app.local.yaml` and `plugins.local.yaml` hold machine-local settings
   (the first also the reminder watermark); `app.yaml` and `plugins.yaml` hold the shared ones.
 - Conversations are Claude Code's own transcripts, local to the machine that ran them.

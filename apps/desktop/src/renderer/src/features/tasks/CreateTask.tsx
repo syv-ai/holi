@@ -1,5 +1,5 @@
 import type { Priority, Recurrence, Task, TaskStatus } from '@holi/shared'
-import { snapshotTasks } from '@holi/shared'
+import { cleanLogins, snapshotTasks } from '@holi/shared'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { useMemo, useRef, useState } from 'react'
 import { DateTimePicker, FormField, RecurrenceField } from '@/composites'
@@ -39,6 +39,8 @@ const STATUSES: TaskStatus[] = ['todo', 'doing', 'done']
 type Draft = {
   due?: string
   priority?: Priority
+  /** GitHub logins. */
+  assignees: string[]
   tags: string[]
   reminder?: string
   recurrence?: Recurrence
@@ -60,7 +62,7 @@ export function CreateTask({ onClose }: { onClose: () => void }): React.JSX.Elem
   const [title, setTitle] = useState('')
   const [folder, setFolder] = useState(() => (activeDoc ? folderOf(activeDoc.path) : ROOT_LANE))
   const [status, setStatus] = useState<TaskStatus>('todo')
-  const [draft, setDraft] = useState<Draft>({ tags: [] })
+  const [draft, setDraft] = useState<Draft>({ assignees: [], tags: [] })
   const [busy, setBusy] = useState(false)
   const now = useAtomValue(nowAtom)
   // The body rides a ref, not state: the editor is mount-once, and re-rendering
@@ -94,6 +96,7 @@ export function CreateTask({ onClose }: { onClose: () => void }): React.JSX.Elem
     title: title.trim() || 'New task',
     status,
     tags: draft.tags,
+    assignees: draft.assignees,
     description: '',
     due: draft.due,
     priority: draft.priority,
@@ -117,6 +120,7 @@ export function CreateTask({ onClose }: { onClose: () => void }): React.JSX.Elem
       extra: {
         ...(draft.due ? { due: draft.due } : {}),
         ...(draft.priority ? { priority: draft.priority } : {}),
+        ...(draft.assignees.length ? { assignees: draft.assignees } : {}),
         ...(draft.tags.length ? { tags: draft.tags } : {}),
         ...(draft.reminder ? { reminder: draft.reminder } : {}),
         ...(draft.recurrence ? { recurrence: draft.recurrence } : {}),
@@ -206,6 +210,16 @@ export function CreateTask({ onClose }: { onClose: () => void }): React.JSX.Elem
                 <SelectItem value="low">low</SelectItem>
               </SelectContent>
             </Select>
+          </FormField>
+
+          <FormField label="Assignees">
+            <Input
+              data-create-task-assignees
+              placeholder="GitHub usernames, comma separated"
+              defaultValue={draft.assignees.map((a) => `@${a}`).join(', ')}
+              onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+              onBlur={(e) => draftSave({ assignees: cleanLogins(e.target.value.split(/[,\s]+/)) })}
+            />
           </FormField>
 
           <FormField label="Tags">

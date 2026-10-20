@@ -32,7 +32,8 @@ A `.md` file in the vault, named by its vault-relative path. The file is the doc
 ### Task
 
 A file named `task.<name>.md` in the folder it is about. Frontmatter carries `status`, `due`,
-`priority`, `tags`, `reminder`, `recurrence`; the body is the description. The path is its identity
+`priority`, `tags`, `assignees` (GitHub logins), `reminder`, `recurrence`; the body is the
+description. The path is its identity
 and the filename prefix is what makes it a task. See [tasks](features/tasks.md).
 
 ### Lane
@@ -102,6 +103,14 @@ sessions: the agent list, or one session attached. Its name and its state (`need
 `idle`) come from Claude Code itself. Closing a tab detaches; Stop, a vault switch or quitting stops
 it, and it stays in the agent list. See [agent-sessions](features/agent-sessions.md).
 
+### Schedule
+
+A file in `.holi/schedules/` whose frontmatter says when (`cron` or `at`, local time) and what the
+run may do without asking, and whose body is a prompt. Holi starts it as a session at those times
+while the vault is open, on a machine that turned it on: **on** approves its current prompt, model
+and `allow` list, and any change to those reads **changed** until approved again. See
+[scheduled-agents](features/scheduled-agents.md).
+
 ### Ask
 
 Text sent from Holi to a session (a selection, a task, a mail thread). It lands in the input as a
@@ -120,18 +129,37 @@ as cards answered with one key. See [quick-agent](features/quick-agent.md).
 ### Agent surface
 
 The files that configure the agent rather than hold content: `AGENTS.md`, `CLAUDE.md`, `.holi/memory/`,
-`USER.local.md`, and all of `.claude/`. Writing them changes what the agent does next, so anything
+`.holi/schedules/`, `USER.local.md`, and all of `.claude/`. Writing them changes what the agent does next, so anything
 less trusted than the user (a vault app, a hook) is kept off them.
 
 ### Local file
 
-Any file with `.local.` in its name, or anything under a folder with `.local.` in its name.
-Machine-local: shown under _show hidden files_, never synced. The marker is the whole rule.
+Any file with `.local.` in its name, or anything under a folder with `.local.` in its name, and
+any secret file: `.env`, `.env.<x>`, `.secrets` or `.secrets.<x>`, in any folder.
+Machine-local: shown under _show hidden files_, never synced. The path is the whole rule.
+
+### Secret file
+
+A `.env`, `.env.<x>`, `.secrets` or `.secrets.<x>`: a local file no capability may read. A vault app
+gets one of its values only by declaring the name under `env` in its `app.yaml` (`holi.env`), from
+the vault root's `.env` with `.env.local` winning.
 
 ### Vault app
 
 A web app the agent writes as a `<name>.app` folder anywhere in the vault, opened as a tab in its
 own origin and reaching the vault only through the `holi.*` bridge. See [vault-apps](features/vault-apps.md).
+
+### Community plugin
+
+A plugin from another repository, with a `holi-plugin.json` at its root or in a folder named after
+it (a repository can hold several): installed on this machine, run as its
+own process, and opening the files it names in a tab framing its local server. See
+[community-plugins](features/community-plugins.md).
+
+### Pin
+
+A vault's record of the community plugin it uses, `.holi/plugins/<id>/manifest.json`: the manifest
+plus the repository, the plugin's folder in it and the commit every member is offered.
 
 ### Per-turn context
 

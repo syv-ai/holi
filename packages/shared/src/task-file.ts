@@ -60,7 +60,16 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 
 /** The keys this version understands. Everything else in the frontmatter lands in
  * `Task.extra` and is written back verbatim. */
-const KNOWN_KEYS = new Set(['status', 'due', 'priority', 'tags', 'reminder', 'recurrence', 'order'])
+const KNOWN_KEYS = new Set([
+  'status',
+  'due',
+  'priority',
+  'tags',
+  'assignees',
+  'reminder',
+  'recurrence',
+  'order',
+])
 
 const SLUG_MAX = 60
 const SLUG_FALLBACK = 'task'
@@ -125,6 +134,7 @@ export function serializeTaskFile(
   if (task.due !== undefined) front.due = task.due
   if (task.priority !== undefined) front.priority = task.priority
   if (task.tags.length) front.tags = task.tags
+  if (task.assignees.length) front.assignees = task.assignees
   if (task.reminder !== undefined) front.reminder = task.reminder
   if (task.recurrence !== undefined) front.recurrence = compactRecurrence(task.recurrence)
   if (task.order !== undefined) front.order = task.order
@@ -173,13 +183,22 @@ export function parseTaskFile(text: string, path: string): Task {
     title: firstHeading(body) ?? titleFromTaskPath(path),
     status: front.status === undefined ? 'todo' : enumOf(front.status, STATUSES, 'status'),
     tags: [],
+    assignees: [],
     description: body,
   }
 
   // The same readers a patch goes through (PATCH_READERS), so a file and an edit
   // are held to one vocabulary. Absent *and* null both mean "not set": a key
   // written as `due:` with nothing after it is an empty field, not a malformed one.
-  for (const key of ['due', 'priority', 'tags', 'reminder', 'recurrence', 'order'] as const) {
+  for (const key of [
+    'due',
+    'priority',
+    'tags',
+    'assignees',
+    'reminder',
+    'recurrence',
+    'order',
+  ] as const) {
     const value = front[key]
     if (value === undefined || value === null) continue
     Object.assign(task, { [key]: PATCH_READERS[key]!(value) })
@@ -199,7 +218,15 @@ export function parseTaskFile(text: string, path: string): Task {
 export type TaskPatch = Partial<
   Pick<
     Task,
-    'status' | 'due' | 'priority' | 'tags' | 'reminder' | 'recurrence' | 'order' | 'description'
+    | 'status'
+    | 'due'
+    | 'priority'
+    | 'tags'
+    | 'assignees'
+    | 'reminder'
+    | 'recurrence'
+    | 'order'
+    | 'description'
   >
 >
 
@@ -225,6 +252,16 @@ const PATCH_READERS: Record<string, (v: unknown) => unknown> = {
     }
     return v
   },
+  // Lenient like `reminder`: a hand-written `assignees: mads` or `@mads` is
+  // what someone meant, and a typo must not break the whole task. A login that
+  // names nobody is inert, the way an unknown tag is.
+  assignees: (v) => {
+    const raw = typeof v === 'string' ? [v] : v
+    if (!Array.isArray(raw) || raw.some((a) => typeof a !== 'string')) {
+      throw new TaskFileError('assignees must be a list of GitHub usernames')
+    }
+    return cleanLogins(raw as string[])
+  },
   reminder: (v) => {
     // Deliberately NOT checked against the stamp shape: these readers are shared
     // with `parseTaskFile`, so a strict reader would make a hand-written
@@ -247,6 +284,83 @@ const PATCH_READERS: Record<string, (v: unknown) => unknown> = {
 /** The fields with a meaningful empty state. `null` on one of these clears it;
  * `null` anywhere else is a bug in the caller, not a value. */
 const CLEARABLE = new Set(['due', 'priority', 'reminder', 'recurrence'])
+
+/** A login as written by hand or typed after `@`: trimmed, without the `@`. */
+export function normalizeLogin(raw: string): string {
+  return raw.trim().replace(/^@+/, '').trim()
+}
+
+/** Whether two logins are one person. GitHub ignores a login's case, so every
+ *  comparison of logins goes through here and none spells it out again. */
+export function sameLogin(a: string, b: string): boolean {
+  return a.toLowerCase() === b.toLowerCase()
+}
+
+/** Whether `login` is among `logins`, whatever its case. */
+export function hasLogin(logins: readonly string[], login: string): boolean {
+  return logins.some((l) => sameLogin(l, login))
+}
+
+/**
+ * Logins as a clean list: each without its `@`, the empty ones dropped, and
+ * each person once whatever the case, in the spelling given first. A task's
+ * assignees and every list of people to pick from are made with it.
+ */
+export function cleanLogins(raw: Iterable<string>): string[] {
+  const out: string[] = []
+  for (const entry of raw) {
+    const login = normalizeLogin(entry)
+    if (login !== '' && !hasLogin(out, login)) out.push(login)
+  }
+  return out
+}
+
+/** `logins` without `login` if it is there, in whatever case, and with it if
+ *  not: one switch per person, however their name was typed. */
+export function toggleLogin(logins: readonly string[], login: string): string[] {
+  return hasLogin(logins, login) ? logins.filter((l) => !sameLogin(l, login)) : [...logins, login]
+}
+
+/** Whether `login` is among the task's assignees. */
+export function isAssignedTo(task: Pick<Task, 'assignees'>, login: string | null): boolean {
+  return login !== null && hasLogin(task.assignees, login)
+}
+
+/**
+ * Whether the person signed in as `login` is reminded of the task: everyone
+ * when it has no assignees, only them when it has some. Signed out (`null`),
+ * an assigned task reminds no one here.
+ */
+export function remindsViewer(task: Pick<Task, 'assignees'>, login: string | null): boolean {
+  return task.assignees.length === 0 || isAssignedTo(task, login)
+}
+
+/** A GitHub login after an `@`, at the start or after a space. */
+const AT_LOGIN = /(^|\s)@([A-Za-z0-9](?:[A-Za-z0-9-]{0,38}))(?=$|[\s.,;:!?)])/g
+
+/**
+ * `Send the tilbud @bo` → assigned to bo, titled "Send the
+ * tilbud". Only logins of the vault's members count, so an `@` that is not a
+ * person (`@home`, `5 @ 10`) stays in the title as written.
+ */
+export function assigneesInTitle(
+  title: string,
+  members: readonly string[],
+): { title: string; assignees: string[] } {
+  const assignees: string[] = []
+  const rest = title.replace(AT_LOGIN, (whole, lead: string, login: string) => {
+    const member = members.find((m) => sameLogin(m, login))
+    if (member === undefined) return whole
+    if (!hasLogin(assignees, member)) assignees.push(member)
+    return lead
+  })
+  // A removed login leaves no gap before the punctuation that followed it.
+  const tidied = rest
+    .replace(/\s+([.,;:!?)])/g, '$1')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+  return { title: tidied, assignees }
+}
 
 /**
  * Validate a field edit before it becomes a file write.

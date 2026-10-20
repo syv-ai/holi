@@ -41,6 +41,7 @@ export const APP_METHODS = [
   'google.agenda',
   'google.search',
   'tasks.complete',
+  'env.get',
 ] as const
 
 export type AppMethod = (typeof APP_METHODS)[number]

@@ -4,18 +4,24 @@
  * of the settings tab.
  */
 import { CalendarDays, Mail } from 'lucide-react'
-import type { RendererPlugin } from '@/plugin-api'
+import { usePluginSetting, type RendererPlugin } from '@/plugin-api'
 import { GOOGLE_INFO } from '../info'
 import { googleConnectedAtom } from './account'
 import { AgendaView } from './AgendaView'
 import { ConnectionsSection } from './ConnectionsSection'
 import { MailView } from './MailView'
 
+/** The Agenda tab, opened on the view this machine's `agendaView` asks for. */
+function AgendaSurface(): React.JSX.Element {
+  const view = usePluginSetting(GOOGLE_INFO, 'agendaView')
+  return <AgendaView initialView={view === 'month' ? 'month' : 'list'} />
+}
+
 export const googleRenderer: RendererPlugin = {
   info: GOOGLE_INFO,
   surfaces: [
     { kind: 'mail', label: 'Mail', icon: Mail, render: MailView, homeable: true },
-    { kind: 'agenda', label: 'Agenda', icon: CalendarDays, render: AgendaView, homeable: true },
+    { kind: 'agenda', label: 'Agenda', icon: CalendarDays, render: AgendaSurface, homeable: true },
   ],
   rail: [
     { surface: 'mail', order: 40, visible: googleConnectedAtom },

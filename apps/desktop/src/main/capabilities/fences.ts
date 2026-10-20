@@ -9,6 +9,7 @@ import {
   isAgentSurfacePath,
   isAppPrivatePath,
   isMachineStatePath,
+  isSecretPath,
   vaultRelPath,
   type VaultRelPath,
 } from '@holi/shared'
@@ -19,9 +20,10 @@ import type { CapabilityContext } from './registry'
 /**
  * The note a read may reach, or a refusal: not the agent surface, a real
  * vault path, not this machine's state under `.holi/state/` (it holds the
- * bridge's tokens), and not any app's records, its own included (the store is
- * the only way in, so one app cannot read another's data, a personal app's
- * least of all). `docs.read`, `docs.render` and `tasks.complete` share it.
+ * bridge's tokens), not a secret file (`.env`: an app gets only the keys it
+ * declares, through `holi.env`), and not any app's records, its own included
+ * (the store is the only way in, so one app cannot read another's data, a
+ * personal app's least of all). `docs.read`, `docs.render` and `tasks.complete` share it.
  */
 export function readablePath(path: string): VaultRelPath {
   if (isAgentSurfacePath(path)) throw new CapabilityError('FORBIDDEN', path)
@@ -32,7 +34,7 @@ export function readablePath(path: string): VaultRelPath {
     throw new CapabilityError('BAD_REQUEST', (err as Error).message)
   }
   // Checked again on the normalised path: `./.holi/memory/x.md` is `.holi/memory/x.md`.
-  if (isAgentSurfacePath(rel) || isMachineStatePath(rel)) {
+  if (isAgentSurfacePath(rel) || isMachineStatePath(rel) || isSecretPath(rel)) {
     throw new CapabilityError('FORBIDDEN', path)
   }
   const bundle = appBundleOf(rel)

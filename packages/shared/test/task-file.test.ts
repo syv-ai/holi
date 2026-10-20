@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import {
   TaskFileError,
+  assigneesInTitle,
+  cleanLogins,
+  hasLogin,
+  isAssignedTo,
   isTaskFilePath,
+  remindsViewer,
+  sameLogin,
+  toggleLogin,
   parseTaskFile,
   parseTaskPatch,
   serializeTaskFile,
@@ -96,6 +103,7 @@ describe('parseTaskFile', () => {
       due: '2026-07-20',
       priority: 'high',
       tags: ['finance', 'q2'],
+      assignees: [],
       reminder: '1d',
       recurrence: { frequency: 'weekly', interval: 2, weekdays: ['mon', 'wed'] },
       description: '# Review the Q2 doc\n\nBody text with [[a.md]].',
@@ -192,6 +200,7 @@ describe('serializeTaskFile', () => {
     title: 'Review',
     status: 'todo' as const,
     tags: [] as string[],
+    assignees: [] as string[],
     description: '',
   }
 
@@ -362,5 +371,101 @@ describe('order', () => {
     // sort key. An absent rank sorts last; that is a fine answer for junk.
     const task = parseTaskFile('---\ntitle: T\nstatus: todo\norder: first\n---\n', 'task.t.md')
     expect(task.order).toBeUndefined()
+  })
+})
+
+describe('assignees', () => {
+  it('reads GitHub logins, with or without the @, once each', () => {
+    const t = parse('---\nassignees: [ada, "@bo", Ada, " "]\n---\n# A\n')
+    expect(t.assignees).toEqual(['ada', 'bo'])
+  })
+
+  it('reads one login written without a list', () => {
+    expect(parse('---\nassignees: "@mads"\n---\n# A\n').assignees).toEqual(['mads'])
+  })
+
+  it('is an empty list when no one is named, as tags are, and refuses what is not text', () => {
+    expect(parse('---\nassignees: []\n---\n# A\n').assignees).toEqual([])
+    expect(parse('---\nstatus: todo\n---\n# A\n').assignees).toEqual([])
+    expect(() => parse('---\nassignees: [1]\n---\n# A\n')).toThrow(TaskFileError)
+  })
+
+  it('writes them after the tags, and nothing for none', () => {
+    const text = serializeTaskFile({
+      status: 'todo',
+      tags: ['x'],
+      assignees: ['mads'],
+      reminder: '2026-10-12',
+      description: '# A',
+    })
+    expect(text).toBe(
+      '---\nstatus: todo\ntags:\n  - x\nassignees:\n  - mads\nreminder: 2026-10-12\n---\n\n# A\n',
+    )
+    expect(serializeTaskFile({ status: 'todo', tags: [], assignees: [], description: '' })).toBe(
+      '---\nstatus: todo\n---\n',
+    )
+  })
+
+  it('round-trips through the canonical form', () => {
+    const text = '---\nstatus: todo\nassignees:\n  - mads\n---\n\n# A\n'
+    expect(serializeTaskFile(parse(text))).toBe(text)
+  })
+
+  it('are set by a patch, and cleared by an empty one, as tags are', () => {
+    expect(parseTaskPatch({ assignees: ['@a', 'b', 'A'] })).toEqual({ assignees: ['a', 'b'] })
+    expect(parseTaskPatch({ assignees: [] })).toEqual({ assignees: [] })
+    expect(() => parseTaskPatch({ assignees: null })).toThrow(TaskFileError)
+  })
+
+  it('matches a login whatever its case', () => {
+    expect(isAssignedTo({ assignees: ['Ada'] }, 'ada')).toBe(true)
+    expect(isAssignedTo({ assignees: ['a'] }, 'b')).toBe(false)
+    expect(isAssignedTo({ assignees: [] }, 'a')).toBe(false)
+    expect(isAssignedTo({ assignees: ['a'] }, null)).toBe(false)
+  })
+
+  it("reminds everyone of a task that is no one's, and only its assignees otherwise", () => {
+    expect(remindsViewer({ assignees: [] }, 'anyone')).toBe(true)
+    expect(remindsViewer({ assignees: [] }, null)).toBe(true)
+    expect(remindsViewer({ assignees: ['a'] }, 'a')).toBe(true)
+    expect(remindsViewer({ assignees: ['a'] }, 'b')).toBe(false)
+    expect(remindsViewer({ assignees: ['a'] }, null)).toBe(false)
+  })
+})
+
+describe('one rule for a login', () => {
+  it('is the same person whatever the case', () => {
+    expect(sameLogin('Ada', 'ada')).toBe(true)
+    expect(sameLogin('ada', 'adam')).toBe(false)
+    expect(hasLogin(['Ada'], 'ADA')).toBe(true)
+  })
+
+  it('makes a clean list: no @, no blanks, each person once in the spelling given first', () => {
+    expect(cleanLogins(['Ada', ' @ada ', '', '@', 'bo', 'BO'])).toEqual(['Ada', 'bo'])
+  })
+
+  it('toggles a person by any spelling of their name', () => {
+    expect(toggleLogin(['Ada', 'bo'], 'ada')).toEqual(['bo'])
+    expect(toggleLogin(['bo'], 'Ada')).toEqual(['bo', 'Ada'])
+  })
+})
+
+describe('assigneesInTitle', () => {
+  const members = ['ada', 'bo']
+
+  it('takes members out of the title and assigns them', () => {
+    expect(assigneesInTitle('Send the tilbud @Bo', members)).toEqual({
+      title: 'Send the tilbud',
+      assignees: ['bo'],
+    })
+    expect(assigneesInTitle('@ada review @bo, then ship', members)).toEqual({
+      title: 'review, then ship',
+      assignees: ['ada', 'bo'],
+    })
+  })
+
+  it('leaves an @ that is no member, and an address, as written', () => {
+    expect(assigneesInTitle('Work @home', members)).toEqual({ title: 'Work @home', assignees: [] })
+    expect(assigneesInTitle('Mail ada@syv.ai', members).assignees).toEqual([])
   })
 })

@@ -14,6 +14,7 @@ const task = (path: string, over: Partial<Task> = {}): Task => ({
   title: path,
   status: 'todo',
   tags: [],
+  assignees: [],
   description: '',
   ...over,
 })

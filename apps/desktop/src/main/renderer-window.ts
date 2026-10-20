@@ -14,6 +14,7 @@ import { guardNavigation } from './window-guard'
 export function rendererWindow(
   options: Omit<BrowserWindowConstructorOptions, 'webPreferences'>,
   frameSchemes: ReadonlySet<string>,
+  frameOrigins: ReadonlySet<string>,
   page?: string,
 ): BrowserWindow {
   const win = new BrowserWindow({
@@ -41,6 +42,7 @@ export function rendererWindow(
     devUrl ?? pathToFileURL(file).href,
     (url) => void shell.openExternal(url),
     frameSchemes,
+    frameOrigins,
   )
   return win
 }

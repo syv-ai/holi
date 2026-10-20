@@ -15,7 +15,7 @@
  * Only Electron's window, which core hands over, is touched here: nothing
  * imports `electron`, so the plugin stays importable under plain Node.
  */
-import type { AppContext } from '../../../../main/plugin-api'
+import type { PluginCtx } from '../../../../main/plugin-api'
 import { parseDockRequest, type DockRequest, type DockView } from '../../shared/quick'
 import { DOCK_WIDTH } from './panels'
 import type { Rect } from './placement'
@@ -37,7 +37,7 @@ export interface DockSurface {
   close(): void
 }
 
-export function electronDock(ctx: AppContext): DockSurface {
+export function electronDock(ctx: PluginCtx): DockSurface {
   const page = ctx.openPage({
     page: 'dock',
     window: {

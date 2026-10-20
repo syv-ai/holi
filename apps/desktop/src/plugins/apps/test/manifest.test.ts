@@ -135,3 +135,12 @@ describe('dangerously-allow as a map', () => {
     })
   })
 })
+
+describe('parseAppManifest env', () => {
+  it('keeps the secrets an app declares, by name, and drops what is not a name', () => {
+    expect(parseAppManifest('env: [OPENAI_API_KEY, lower_case, 3X, OPENAI_API_KEY]\n')).toEqual({
+      env: ['OPENAI_API_KEY'],
+    })
+    expect(parseAppManifest('env: OPENAI_API_KEY\n')).toEqual({})
+  })
+})

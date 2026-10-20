@@ -14,6 +14,7 @@ import {
   isAgentSurfacePath,
   parseTaskFile,
   parseTaskPatch,
+  sameLogin,
   serializeTaskFile,
   vaultRelPath,
   withIcon,
@@ -105,8 +106,8 @@ export interface RouterDeps {
    * is what the scanner claims in the vault at `root`.
    */
   plugins: {
-    enter(root: string): Promise<void>
-    opened(): Promise<void>
+    reconcile(why: 'open' | 'settings' | 'snapshot'): Promise<void>
+    failures(remote: string): Record<string, string>
     scanClaimsFor(root: string): Promise<readonly ScanClaim[]>
   }
   /** The managed root clones live under — `~/Holi` in the app, a tmpdir in
@@ -171,6 +172,9 @@ export interface RouterDeps {
   /** Updating Holi itself (`updates/updater.ts`). Optional: absent, as in
    *  tests, the app reads as a build that cannot update. */
   updates?: Omit<Updater, 'dispose'>
+  /** Whether Holi opens at login, this machine's login item. Optional: absent,
+   *  as in tests, it reads as off and cannot be set. */
+  loginItem?: { get(): boolean; set(open: boolean): void }
 }
 
 /** `YYYY-MM-DD` in the machine's own timezone. `toISOString().slice(0, 10)`
@@ -381,7 +385,6 @@ export function createRouter(deps: RouterDeps) {
       )
     }
     await deps.seed(repo.root)
-    await deps.plugins.enter(repo.root)
     await deps.registry.add({
       remote,
       path: repo.root,
@@ -389,7 +392,7 @@ export function createRouter(deps: RouterDeps) {
       lastOpenedAt: now(),
     })
     const active = await deps.host.open(remote)
-    await deps.plugins.opened()
+    await deps.plugins.reconcile('open')
     return active.snapshot()
   }
 
@@ -480,9 +483,6 @@ export function createRouter(deps: RouterDeps) {
     if (!login) throw new TRPCError({ code: 'UNAUTHORIZED', message: 'not signed in to GitHub' })
     return login
   }
-
-  /** GitHub logins are case-insensitive. */
-  const sameLogin = (a: string, b: string) => a.toLowerCase() === b.toLowerCase()
 
   /**
    * Commit and push `remote`, then report what is still only here.
@@ -659,10 +659,9 @@ export function createRouter(deps: RouterDeps) {
          * ahead of the `.gitignore`.
          */
         await deps.seed(root)
-        await deps.plugins.enter(root)
         await deps.registry.touch(input.remote, now())
         const active = await deps.host.open(input.remote)
-        await deps.plugins.opened()
+        await deps.plugins.reconcile('open')
         return active.snapshot()
       }),
 
@@ -1401,6 +1400,12 @@ export function createRouter(deps: RouterDeps) {
         rootFor(input.remote).then(readVaultSettings),
       ),
 
+    /** Why each plugin the open vault `remote` runs did not start, by id:
+     *  the plugin's own message. Empty for any other vault. */
+    pluginFailures: t.procedure
+      .input(fields({ remote: 'string' }))
+      .query(({ input }): Record<string, string> => deps.plugins.failures(input.remote)),
+
     /**
      * The router's write to these files, used by onboarding and the settings
      * pane.
@@ -1436,12 +1441,14 @@ export function createRouter(deps: RouterDeps) {
         const local = parse(input.localJson ?? null)
         const root = await rootFor(input.remote)
         await writeVaultSettings(root, { committed: committed.patch, local: local.patch })
-        // A plugin just turned on gets its files and starts now, not at the
-        // vault's next open.
+        // A plugin just turned on gets its files and starts now, and one
+        // turned off stops now, not at the vault's next open.
         if ('plugins' in committed.patch || 'plugins' in local.patch) {
-          await deps.seed(root)
-          await deps.plugins.enter(root)
-          await deps.plugins.opened()
+          if (deps.host.active()?.remote === input.remote) {
+            await deps.plugins.reconcile('settings')
+          } else {
+            await deps.seed(root)
+          }
           // Which files are claimed follows the plugins, so the open vault's
           // snapshot is scanned again now rather than at its next change.
           const active = deps.host.active()
@@ -1572,6 +1579,7 @@ export function createRouter(deps: RouterDeps) {
   /** Updating Holi itself; the status also arrives pushed, on change. */
   const unsupported = (): UpdateStatus => ({
     supported: false,
+    channel: 'stable',
     enabled: false,
     version: '',
     state: 'idle',
@@ -1593,12 +1601,36 @@ export function createRouter(deps: RouterDeps) {
       deps.updates?.install()
       return { ok: true as const }
     }),
+    setChannel: t.procedure
+      .input((raw: unknown): { channel: 'stable' | 'dev' } => {
+        const channel = (raw as { channel?: unknown } | null)?.channel
+        if (channel !== 'stable' && channel !== 'dev') throw new TRPCError({ code: 'BAD_REQUEST' })
+        return { channel }
+      })
+      .mutation(
+        async ({ input }): Promise<UpdateStatus> =>
+          (await deps.updates?.setChannel(input.channel)) ?? unsupported(),
+      ),
     setEnabled: t.procedure
       .input(fields({ enabled: 'boolean' }))
       .mutation(
         async ({ input }): Promise<UpdateStatus> =>
           (await deps.updates?.setEnabled(input.enabled)) ?? unsupported(),
       ),
+  })
+
+  /** This machine's app: whether it opens at login, so the reminders and
+   *  sync are there from the start. */
+  const app = t.router({
+    loginItem: t.procedure.query((): { openAtLogin: boolean } => ({
+      openAtLogin: deps.loginItem?.get() ?? false,
+    })),
+    setLoginItem: t.procedure
+      .input(fields({ openAtLogin: 'boolean' }))
+      .mutation(({ input }): { openAtLogin: boolean } => {
+        deps.loginItem?.set(input.openAtLogin)
+        return { openAtLogin: deps.loginItem?.get() ?? false }
+      }),
   })
 
   return t.router({
@@ -1615,6 +1647,7 @@ export function createRouter(deps: RouterDeps) {
     ui,
     cap,
     updates,
+    app,
   })
 }
 

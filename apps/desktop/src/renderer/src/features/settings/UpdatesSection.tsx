@@ -1,11 +1,7 @@
-/**
- * Updating Holi itself (docs/features/updates.md): the version you run, where
- * the updater has got to, a "Check now", and whether Holi checks on its own.
- *
- * A property of this machine's app, not of the open vault, so it sits with
- * Account at the end of the rail and writes nothing into the vault.
- */
+/** App-scoped update and login settings (docs/features/updates.md). */
 import { useAtomValue, useSetAtom } from 'jotai'
+import { useEffect, useState } from 'react'
+import { trpc } from '@/lib/trpc'
 import { Button, Checkbox } from '@/primitives'
 import { SettingsList, SettingsNote, SettingsRow } from '@/composites'
 import {
@@ -13,6 +9,7 @@ import {
   installUpdateAtom,
   retryUpdateDownloadAtom,
   setAutoUpdateAtom,
+  setUpdateChannelAtom,
   updateHeadline,
   updateStatusAtom,
 } from '@/state/updates'
@@ -34,27 +31,27 @@ export function UpdatesSection(): React.JSX.Element {
   const retry = useSetAtom(retryUpdateDownloadAtom)
   const install = useSetAtom(installUpdateAtom)
   const setEnabled = useSetAtom(setAutoUpdateAtom)
+  const setChannel = useSetAtom(setUpdateChannelAtom)
   const supported = status?.supported === true
 
-  const action =
-    status === null || !supported ? null : status.state === 'ready' ? (
-      <Button size="xs" onClick={() => void install()}>
-        Restart to update
-      </Button>
-    ) : status.state === 'available' && status.lastError !== null ? (
-      <Button variant="secondary" size="xs" onClick={() => void retry()}>
-        Try again
-      </Button>
-    ) : (
-      <Button
-        variant="secondary"
-        size="xs"
-        disabled={status.state !== 'idle'}
-        onClick={() => void check()}
-      >
-        Check now
-      </Button>
-    )
+  const action = !supported ? null : status.state === 'ready' ? (
+    <Button size="xs" onClick={() => void install()}>
+      Restart to update
+    </Button>
+  ) : status.state === 'available' && status.lastError !== null ? (
+    <Button variant="secondary" size="xs" onClick={() => void retry()}>
+      Try again
+    </Button>
+  ) : (
+    <Button
+      variant="secondary"
+      size="xs"
+      disabled={status.state !== 'idle'}
+      onClick={() => void check()}
+    >
+      Check now
+    </Button>
+  )
 
   return (
     <SettingsList>
@@ -79,6 +76,18 @@ export function UpdatesSection(): React.JSX.Element {
         )}
       </SettingsRow>
       <SettingsRow
+        label="Dev prereleases"
+        description="Opt in to development releases. Turning this off checks for and downloads the latest stable release, even if it is older than the version you have; restart to install it."
+        control={
+          <Checkbox
+            aria-label="Dev prereleases"
+            disabled={!supported}
+            checked={status?.channel === 'dev'}
+            onCheckedChange={(v) => void setChannel(v === true ? 'dev' : 'stable')}
+          />
+        }
+      />
+      <SettingsRow
         label="Update automatically"
         description="Check every few hours and download new versions in the background. An update installs when you quit Holi or choose Restart to update."
         control={
@@ -90,6 +99,32 @@ export function UpdatesSection(): React.JSX.Element {
           />
         }
       />
+      <OpenAtLoginRow />
     </SettingsList>
+  )
+}
+
+function OpenAtLoginRow(): React.JSX.Element {
+  const [open, setOpen] = useState<boolean | null>(null)
+  useEffect(() => {
+    void trpc.app.loginItem.query().then((r) => setOpen(r.openAtLogin))
+  }, [])
+  return (
+    <SettingsRow
+      label="Open at login"
+      description="Start Holi in the menu bar when you log in, its window out of sight, so reminders and sync work from the start."
+      control={
+        <Checkbox
+          aria-label="Open at login"
+          disabled={open === null}
+          checked={open === true}
+          onCheckedChange={(v) =>
+            void trpc.app.setLoginItem
+              .mutate({ openAtLogin: v === true })
+              .then((r) => setOpen(r.openAtLogin))
+          }
+        />
+      }
+    />
   )
 }
