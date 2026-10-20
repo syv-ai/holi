@@ -44,6 +44,7 @@ import {
 } from './fetch'
 import { searchPlugins } from './search'
 import { seedApps, writeSkills } from './skills'
+import { linkCommands, type LinkedCommands } from './commands'
 import { expandCommand, pluginEnv, runSetup } from './setup'
 import type { Install, InstallStore } from './store'
 import type { ServerState, Supervisor } from './supervisor'
@@ -87,6 +88,8 @@ export interface PluginRow {
   serve: string[] | null
   /** The vault apps it ships. */
   apps: string[]
+  /** The commands it adds to the agent's `PATH`, for the consent dialog. */
+  bin: string[]
 }
 
 export interface CommunityDeps {
@@ -103,6 +106,9 @@ export interface CommunityDeps {
   bridgeScript(): string | null
   /** Staging for fetches. */
   scratch: string
+  /** The `PATH` the vault's agent inherits, before Holi's own folders: a
+   *  plugin's command may not take a name already on it. */
+  searchPath?(): string
 }
 
 /** The vault's pins, by id; an unreadable one is left out. */
@@ -178,6 +184,7 @@ function rowOf(
     setup: manifest.setup ?? null,
     serve: manifest.serve ?? null,
     apps: manifest.apps ?? [],
+    bin: Object.keys(manifest.bin ?? {}),
   }
 }
 
@@ -397,6 +404,7 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
         if (install.manifest.setup === undefined) {
           await deps.store.setSetup(id, 'ok')
           await seedRunningApps(ctx.root, deps)
+          await linkRunningCommands(ctx.root, deps)
           return true
         }
         deps.emit(ctx.remote, 'setup-log', { id, line: null })
@@ -407,8 +415,12 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
           onLine: (line) => deps.emit(ctx.remote, 'setup-log', { id, line }),
         })
         await deps.store.setSetup(id, ok ? 'ok' : 'failed')
-        // Set up in a vault that runs it: its apps arrive now, not at the next open.
-        if (ok) await seedRunningApps(ctx.root, deps)
+        // Set up in a vault that runs it: its apps and commands arrive now, not
+        // at the next open.
+        if (ok) {
+          await seedRunningApps(ctx.root, deps)
+          await linkRunningCommands(ctx.root, deps)
+        }
         return ok
       },
     }),
@@ -446,6 +458,7 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
         )
         await writeSkills(install.manifest, deps.store.codeDir(install), ctx.root)
         await seedApps(install.manifest, deps.store.codeDir(install), ctx.root)
+        await linkRunningCommands(ctx.root, deps)
         const lines = install.manifest.ignore ?? []
         if (lines.length > 0) {
           const existing = await readFile(join(ctx.root, '.gitignore'), 'utf8').catch(() => null)
@@ -468,6 +481,15 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
           ...(await seedApps(install.manifest, dir, ctx.root)),
         ]
       },
+    }),
+
+    // Link the commands of every plugin that runs in the vault now, after its
+    // `plugins.<id>` switch moved: the settings tab's own write, which no
+    // capability sees. Returns what it refused, for the tab to say.
+    'community.commands': cap({
+      doors: ['ui'],
+      params: () => ({}),
+      run: async (ctx) => linkRunningCommands(ctx.root, deps),
     }),
 
     // Where a plugin's code is on this machine, for the vault's agent to run
@@ -502,11 +524,12 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
     'community.remove': cap({
       doors: ['ui'],
       params: idParams,
-      run: async (_ctx, { id }) => {
+      run: async (ctx, { id }) => {
         // Its servers first: their code is about to go.
         await deps.supervisor.stopAll((key) => parseServerKey(key).id === id)
         const install = await deps.store.remove(id)
         await deps.consent.forget(id)
+        await linkRunningCommands(ctx.root, deps)
         if (install?.source.kind === 'release')
           await rm(join(deps.store.releaseDir(id, install.source.commit), '..'), {
             recursive: true,
@@ -595,4 +618,23 @@ export async function seedRunningApps(
     written.push(...(await seedApps(install.manifest, deps.store.codeDir(install), root)))
   }
   return written
+}
+
+/**
+ * Link the commands of every plugin that runs in the vault at `root`
+ * (`commands.ts`): at the vault's open, and whenever what runs in it may have
+ * changed.
+ */
+export async function linkRunningCommands(
+  root: string,
+  deps: Pick<CommunityDeps, 'store' | 'consent' | 'searchPath'>,
+): Promise<LinkedCommands> {
+  const plugins = []
+  for (const row of await listPlugins(root, deps)) {
+    if (!row.running || row.bin.length === 0) continue
+    const install = await deps.store.get(row.id)
+    if (install?.manifest.bin === undefined) continue
+    plugins.push({ id: row.id, bin: install.manifest.bin, codeDir: deps.store.codeDir(install) })
+  }
+  return linkCommands(root, plugins, deps.searchPath?.() ?? process.env.PATH ?? '')
 }

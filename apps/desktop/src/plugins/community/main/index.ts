@@ -10,6 +10,7 @@ import { COMMUNITY_INFO } from '../info'
 import {
   COMMUNITY_NAMESPACES,
   communityCapabilities,
+  linkRunningCommands,
   parseServerKey,
   seedRunningApps,
 } from './capabilities'
@@ -60,6 +61,10 @@ export const communityMain: MainPlugin = {
     // machine) does not have yet.
     void seedRunningApps(ctx.root, { store, consent }).catch((err) =>
       console.error('[community] apps:', err),
+    )
+    // Its running plugins' commands, as this machine has them now.
+    void linkRunningCommands(ctx.root, { store, consent }).catch((err) =>
+      console.error('[community] commands:', err),
     )
     // Stopping stops its servers: the tabs on them are gone too.
     return () => servers.stopAll()

@@ -119,6 +119,14 @@ export function ConsentDialog({
                 sensitive.
               </p>
             )}
+            {row.bin.length > 0 && (
+              <p>
+                It gives the vault&rsquo;s agent{' '}
+                {row.bin.length === 1 ? 'the command' : 'the commands'}{' '}
+                <span className="font-mono text-foreground">{row.bin.join(', ')}</span>, which run
+                as programs on this machine like the commands above.
+              </p>
+            )}
             <p>Holi asks again when the vault moves to another version.</p>
           </div>
         ) : (

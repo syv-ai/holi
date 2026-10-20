@@ -34,8 +34,9 @@ const STATUS: Record<PluginRow['status'], string> = {
 const versionOf = (row: PluginRow) => row.install?.version ?? row.pin?.version ?? ''
 
 /** Turn a plugin on or off for the vault: its `plugins.<id>` switch, beside
- *  the vault's other plugins, and its pin when it is a release. */
-async function setOn(remote: string, row: PluginRow, on: boolean): Promise<void> {
+ *  the vault's other plugins, and its pin when it is a release. Then the
+ *  agent's commands follow; says which of them it could not add. */
+async function setOn(remote: string, row: PluginRow, on: boolean): Promise<string | null> {
   if (on && row.install?.kind === 'release' && row.pin?.commit !== row.install.commit)
     await communityCap.pin(remote, { id: row.id })
   if (on && row.install?.kind === 'dev') await communityCap.skills(remote, { id: row.id })
@@ -44,6 +45,11 @@ async function setOn(remote: string, row: PluginRow, on: boolean): Promise<void>
     remote,
     committedJson: JSON.stringify({ plugins: { ...settings.plugins.vault, [row.id]: on } }),
   })
+  const { refused } = await communityCap.commands(remote)
+  if (refused.length === 0) return null
+  return refused
+    .map((r) => `${r.name} (${r.id}) is not on the agent's PATH: ${r.reason}.`)
+    .join(' ')
 }
 
 export function PluginsSettings({ remote }: { remote: string }): React.JSX.Element {

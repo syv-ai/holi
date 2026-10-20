@@ -34,7 +34,7 @@ server writes beside a file and must not sync. The grammar is `packages/shared/s
 
 **Several plugins in one repository.** A repository without a root manifest can hold several, each in
 a top-level folder named after its id (`notes/holi-plugin.json` says `"id": "notes"`; a folder whose
-manifest names another id is refused), so a contributor keeps their plugins together. The folder is the plugin: its `apps`, `skills`, `setup` and `serve` are
+manifest names another id is refused), so a contributor keeps their plugins together. The folder is the plugin: its `apps`, `skills`, `bin`, `setup` and `serve` are
 relative to it, it is the commands' working directory and what `holi community path` prints, and a
 link out of it, to a sibling plugin too, is refused.
 
@@ -76,8 +76,22 @@ newer pin writes them again. Links inside a skill folder are followed when they 
 plugin's folder, so it can share references with its own skills, and refused when they leave it. `holi community path <id>` prints a running plugin's folder on this machine, so a skill can
 run the plugin's own tools; it only reads, so it is allowed without asking.
 
+**Commands for the vault's agent.** A manifest's `bin` maps command names to executable files in
+the plugin (`{"dashctl": "bin/dashctl"}`), so a skill can say "run `dashctl`" rather than spell out
+where the plugin lives. While the plugin runs in a vault, each is linked into
+`.holi/state/commands.local.d/`, and the agent's `PATH` ends with that folder: last, after the
+machine's own, so a plugin adds a command but never stands in for one the machine has, and never
+for `holi`, which no plugin may name. A name already on the agent's `PATH`, or already taken by
+another running plugin (the first by id keeps it), is refused rather than linked unreached, and the
+settings tab says so when the plugin is switched on. The folder is rebuilt whole when the vault
+opens, when setup finishes, on pin, on remove, and after a plugin's switch moves, so nothing stale
+stays callable; its path never changes, so a running session sees the change at once. It reaches a
+session through its supervisor's environment, as `holi` does, so a supervisor started before this
+Holi learns it at its next start. The consent dialog lists the commands; a call to one still asks
+for permission like any other command, until the person allows it.
+
 **Nothing runs before consent.** A fetched release waits until the person allows that commit, in a
-dialog naming the repository, version, commit and both commands. Consent is per `(id, commit)` in
+dialog naming the repository, version, commit, both commands and the commands it gives the agent. Consent is per `(id, commit)` in
 `userData/plugin-consent.json`, with no expiry; a different commit asks again. Then setup runs once,
 its output streamed into the dialog and kept in `setup.log`. A folder install asks nothing: it is
 the person's own checkout.
@@ -132,6 +146,11 @@ tree, with the one next step (install the pinned version, or allow and set up).
 
 ## Rejected
 
+- **A plugin's commands first on `PATH`, as Holi's own `holi` is.** A plugin could then answer to
+  `git` or `node` for the agent; last on `PATH`, with taken names refused, it can only add.
+- **Allow rules in the manifest.** Calls to a plugin's command ask, as any command does; a plugin
+  that could pre-allow itself would be consented to once and never asked about again.
+
 - **Loading plugin JavaScript into main or the renderer.** A deck needs a Node server anyway, and a
   process boundary keeps plugin code out of the processes that hold the token and the vault.
 - **Renderer-only third-party plugins in a vault-app sandbox.** Cannot run Slidev, or anything else
@@ -148,9 +167,9 @@ tree, with the one next step (install the pinned version, or allow and set up).
 ## Code
 
 - `packages/shared/src/community-plugin.ts`: the manifest and pin grammar, `opensPath`,
-  `pluginServerOrigin`.
+  `pluginServerOrigin`, `PLUGIN_COMMANDS_DIR`.
 - `apps/desktop/src/plugins/community/main/`: the install store, fetch, the topic search, setup,
-  consent, the supervisor and the `community.*` capabilities.
+  consent, the supervisor, the agent's commands (`commands.ts`) and the `community.*` capabilities.
 - `apps/desktop/src/plugins/community/renderer/`: the tab (`PluginFrame`), the settings section, the
   consent dialog and the vault notice.
 - `apps/desktop/src/main/window-guard.ts`: `originFrameExit`.
