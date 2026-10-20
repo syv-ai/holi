@@ -1,4 +1,5 @@
 export { DeleteConfirm } from './DeleteConfirm'
+export { RepoMeter, RepoUsage } from './RepoMeter'
 export { DateTimePicker } from './DateTimePicker'
 export { Churn } from './Churn'
 export { DiffView } from './DiffView'

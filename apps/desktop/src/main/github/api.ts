@@ -42,6 +42,8 @@ export interface Repo {
   /** ISO. The picker's sort key. */
   pushedAt: string
   defaultBranch: string
+  /** GitHub's `size`, in KiB: what the repo weighs on GitHub (`repoUsagePercent`). */
+  sizeKb: number
   /**
    * `permissions.push`. A repo you cannot push to would become a vault that
    * cannot publish, so the picker offers it visibly disabled rather than
@@ -357,6 +359,7 @@ function toRepo(raw: Record<string, unknown>): Repo {
           : 'public',
     pushedAt: String(raw.pushed_at),
     defaultBranch: String(raw.default_branch),
+    sizeKb: typeof raw.size === 'number' ? raw.size : 0,
     canPush: permissions.push === true,
     canAdmin: permissions.admin === true,
     owner: {

@@ -621,6 +621,13 @@ export function createRouter(deps: RouterDeps) {
       }),
     ),
 
+    /** What the vault's repo weighs on GitHub, for its usage reading. */
+    repoSize: t.procedure.input(fields({ remote: 'string' })).query(({ input }) =>
+      gh(async () => ({
+        sizeKb: (await deps.session.api.repo(safeRemote(input.remote))).sizeKb,
+      })),
+    ),
+
     openCollaboratorSettings: t.procedure
       .input(fields({ remote: 'string' }))
       .mutation(async ({ input }) => {
