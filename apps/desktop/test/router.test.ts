@@ -485,6 +485,26 @@ describe('notes', () => {
     expect(await readFile(join(root, 'index.md'), 'utf8')).toBe('[[work/a.md]] and [[work/b.md]]')
   })
 
+  it('move carries a moved folder whole and leaves nothing behind', async () => {
+    // The document moves never list a `.gitkeep`, an empty subfolder or an
+    // ignored `node_modules`; they held the source folder on the tree.
+    const { caller, root } = await rig({
+      'talk.deck/slides.md': 'S',
+      'talk.deck/public/.gitkeep': '',
+      'talk.deck/node_modules/.slidev/cache': 'x',
+    })
+    await mkdir(join(root, 'talk.deck/empty'), { recursive: true })
+    await caller.notes.move({
+      remote: REMOTE,
+      moves: [{ from: 'talk.deck/slides.md', to: 'kunder/talk.deck/slides.md' }],
+      folders: [{ from: 'talk.deck', to: 'kunder/talk.deck' }],
+    })
+    await expect(stat(join(root, 'talk.deck'))).rejects.toThrow()
+    expect(await readFile(join(root, 'kunder/talk.deck/slides.md'), 'utf8')).toBe('S')
+    await stat(join(root, 'kunder/talk.deck/public/.gitkeep'))
+    await stat(join(root, 'kunder/talk.deck/node_modules/.slidev/cache'))
+  })
+
   it('move refuses to clobber a destination outside the moved set', async () => {
     const { caller } = await rig({ 'a.md': 'a', 'taken.md': 'b' })
     await expect(

@@ -2,7 +2,7 @@
  * directory so the agent's Read never sees a torn file; every path from disk
  * re-validates through vaultRelPath. */
 import { randomBytes } from 'node:crypto'
-import { mkdir, readdir, rename, rm, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { dirname, join, relative, sep } from 'node:path'
 import {
   GITKEEP,
@@ -137,6 +137,36 @@ export async function pruneEmptiedFolder(root: string, rel: VaultRelPath): Promi
     return empty
   }
   await prune(absPathFor(root, rel))
+}
+
+/**
+ * Finish a folder move (`notes.move`): what the document moves did not carry
+ * follows the folder to `to`, then the emptied source goes. That is its
+ * `.gitkeep`s, its empty subfolders, and its machine-local and ignored files,
+ * such as a deck's `node_modules`. A move takes the whole folder, as Finder
+ * would, and loses nothing, so unlike a delete there is nothing to leave
+ * behind. An entry whose destination is taken stays rather than clobber, and
+ * keeps its folder with it.
+ */
+export async function carryFolder(
+  root: string,
+  from: VaultRelPath,
+  to: VaultRelPath,
+): Promise<void> {
+  if (to === from || to.startsWith(`${from}/`)) return
+  const carry = async (src: string, dest: string): Promise<void> => {
+    const entries = await readdir(src, { withFileTypes: true }).catch(() => null)
+    if (entries === null) return
+    await mkdir(dest, { recursive: true })
+    for (const e of entries) {
+      const taken = await stat(join(dest, e.name)).catch(() => null)
+      if (taken === null) await rename(join(src, e.name), join(dest, e.name))
+      else if (e.isDirectory() && taken.isDirectory())
+        await carry(join(src, e.name), join(dest, e.name))
+    }
+  }
+  await carry(absPathFor(root, from), absPathFor(root, to))
+  await pruneEmptiedFolder(root, from)
 }
 
 export async function moveDocFile(

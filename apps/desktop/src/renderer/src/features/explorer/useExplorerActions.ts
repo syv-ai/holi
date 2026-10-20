@@ -14,6 +14,7 @@ import {
   deleteLabel,
   filesUnder,
   planDuplicate,
+  foldersMovedInto,
   planMoveInto,
   planPaste,
   planRenameFolder,
@@ -106,7 +107,8 @@ export function useExplorerActions(docPaths: string[]): ExplorerActions {
 
   const moveInto = useCallback((sources: string[], destFolder: string) => {
     const moves = planMoveInto(docPathsRef.current, sources, destFolder)
-    if (moves.length) void moveNotes({ moves })
+    const folders = foldersMovedInto(docPathsRef.current, sources, destFolder)
+    if (moves.length || folders.length) void moveNotes({ moves, folders })
   }, [moveNotes])
 
   const paste = useCallback(
@@ -115,7 +117,9 @@ export function useExplorerActions(docPaths: string[]): ExplorerActions {
       if (!clip) return
       const plan = planPaste(docPathsRef.current, clip, destFolder)
       if (plan.mode === 'move') {
-        if (plan.moves.length) void moveNotes({ moves: plan.moves })
+        if (plan.moves.length || plan.folders.length) {
+          void moveNotes({ moves: plan.moves, folders: plan.folders })
+        }
         setClipboard(null) // a cut is consumed; a copy stays for repeat paste.
       } else if (plan.copies.length) {
         void copyNotes({ copies: plan.copies })
@@ -141,7 +145,7 @@ export function useExplorerActions(docPaths: string[]): ExplorerActions {
         setPendingFolders((f) => f.map((x) => (x === folder ? dest : x)))
         return
       }
-      if (moves.length) void moveNotes({ moves })
+      if (moves.length) void moveNotes({ moves, folders: [{ from: folder, to: dest }] })
     },
     [moveNotes],
   )

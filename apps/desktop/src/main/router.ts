@@ -48,7 +48,13 @@ import { createMembersCache, type MembersCache } from './github/members-cache'
 import type { GitHubSession } from './github/session'
 import type { ActiveVault, SyncState, VaultHost } from './vault/active-vault'
 import { ensureClone } from './vault/clone'
-import { pruneEmptiedFolder, removeDocFile, writeAtomic, absPathFor } from './vault/vault-files'
+import {
+  carryFolder,
+  pruneEmptiedFolder,
+  removeDocFile,
+  writeAtomic,
+  absPathFor,
+} from './vault/vault-files'
 import { renameNote } from './vault/rename'
 import { scanVault, type ScanClaim, type VaultSnapshot } from './vault/vault-store'
 import { holiTheme, readVaultTheme, resetVaultTheme, writeVaultTheme } from './vault/theme'
@@ -240,7 +246,10 @@ function fields<T extends Record<string, FieldKind>>(spec: T) {
 /** Batch inputs the `fields` helper cannot express. Each throws on a
  *  bad shape; tRPC turns that into a BAD_REQUEST. The RETURN type is the client's
  *  input contract (tRPC infers it), so the keys here are what callers pass. */
-function pairsOf(raw: unknown, key: 'moves' | 'copies'): { from: string; to: string }[] {
+function pairsOf(
+  raw: unknown,
+  key: 'moves' | 'copies' | 'folders',
+): { from: string; to: string }[] {
   if (raw === null || typeof raw !== 'object') throw new Error('input must be an object')
   const arr = (raw as Record<string, unknown>)[key]
   if (!Array.isArray(arr)) throw new Error(`${key} must be an array`)
@@ -254,8 +263,17 @@ function pairsOf(raw: unknown, key: 'moves' | 'copies'): { from: string; to: str
   })
 }
 
-function movesInput(raw: unknown): { remote: string; moves: { from: string; to: string }[] } {
-  return { ...fields({ remote: 'string' })(raw), moves: pairsOf(raw, 'moves') }
+function movesInput(raw: unknown): {
+  remote: string
+  moves: { from: string; to: string }[]
+  folders: { from: string; to: string }[]
+} {
+  const folders = (raw as Record<string, unknown>).folders
+  return {
+    ...fields({ remote: 'string' })(raw),
+    moves: pairsOf(raw, 'moves'),
+    folders: folders === undefined ? [] : pairsOf(raw, 'folders'),
+  }
 }
 
 function copiesInput(raw: unknown): { remote: string; copies: { from: string; to: string }[] } {
@@ -1151,7 +1169,9 @@ export function createRouter(deps: RouterDeps) {
     // rewrite here. The renderer expands a folder to its file list before
     // calling; each `to` outside the moved set must be free (a swap-shaped chain,
     // where a `to` IS another move's `from`, is allowed, which is why it is one
-    // procedure).
+    // procedure). `folders` are the folders the move was aimed at: once their
+    // documents have moved, the rest of each follows it (`carryFolder`), or
+    // the source would stay behind on its `.gitkeep` and ignored files.
     move: vaultMutation
       .input(movesInput)
       .mutation(async ({ input }): Promise<{ rewritten: { path: string; count: number }[] }> => {
@@ -1164,7 +1184,9 @@ export function createRouter(deps: RouterDeps) {
             throw new TRPCError({ code: 'CONFLICT', message: `already exists: ${m.to}` })
           }
         }
-        return moveNotes(root, input.moves)
+        const result = await moveNotes(root, input.moves)
+        for (const f of input.folders) await carryFolder(root, safe(f.from), safe(f.to))
+        return result
       }),
 
     // Batch copy: verbatim, no link rewrite. Refuses to clobber
