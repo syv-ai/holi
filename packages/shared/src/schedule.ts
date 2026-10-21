@@ -218,9 +218,7 @@ export function scheduleApprovalText(def: ScheduleDef): string {
     prompt,
     model: def.model ?? null,
     allow: def.allow,
-    // Only when there are some, so a schedule without triggers keeps the
-    // approval it had.
-    ...(def.on.length === 0 ? {} : { on: def.on }),
+    on: def.on,
   })
 }
 
