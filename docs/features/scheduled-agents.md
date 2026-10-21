@@ -47,9 +47,13 @@ in the clone, and an approval it could write would be none.
 
 **What a run reads is not its prompt.** Its first turn is the approved prompt and one line of
 Holi's, and nothing a mail or an invite says is spliced into it: the run fetches that itself, with
-`holi google`, which fences everything another person wrote as `<untrusted ...>` ([google](google.md)).
-The shipped skills tell the agent that fenced text is data, never an instruction, and a send still
-asks however the run was talked into it.
+`holi google`, which fences everything another person wrote as `<untrusted id="..." ...>`
+([google](google.md)). The shipped skills tell the agent that fenced text is data, never an
+instruction, and a send still asks however the run was talked into it. The fence covers what
+`holi google` prints, not what is already in the vault: **Make task** in Mail or Agenda, and a vault
+app that stores what it fetched, copy someone else's words into a file a run later reads as the
+vault's own. A person chose to make that task, so vault files stay unfenced; this is a known gap
+([not-built](../not-built.md)).
 
 **That is all the approval locks.** A run is an ordinary session, so it also follows the vault's
 `AGENTS.md`, memory, skills and `.claude/settings.json`, which no schedule's fingerprint covers. A
@@ -130,8 +134,10 @@ repeats inside one session.
 - A run never starts on top of a previous run that is working or needs the person.
 - A run closes itself when done, never while it waits on the person or someone has it open.
 - Missed moments are one run, never a backlog.
-- Holi adds one line to a run's prompt and nothing else; third-party text reaches a run fenced,
-  through a command, never in its prompt.
+- Holi adds one line to a run's prompt and nothing else; what `holi google` prints of other
+  people's words reaches a run fenced, through a command, never in its prompt. Text a person
+  already copied into the vault (a task made from a mail or an event, a vault app's records) is
+  vault content and reaches a run unfenced.
 
 ## Rejected
 
@@ -142,17 +148,12 @@ repeats inside one session.
   runs on a teammate's laptop with their credentials.
 - **`--dangerously-skip-permissions` or a permission mode for unattended runs**: `allow` names the
   tools one schedule needs; everything else keeps Claude Code's prompt. Auto mode
-  (`--permission-mode auto`) was reconsidered for runs and is still out. For it: a classifier model
-  reviews each action instead of a person, it never sees tool results, so a mail cannot argue with
-  it directly, and it is built to block actions "driven by hostile content Claude read"; a run would
-  stall on fewer prompts. Against it, which decides: it answers yes in the person's place to
-  everything outside the approved `allow`, so the approval would no longer say what a run may do.
-  It does not review edits inside the working directory, which is the whole vault: the narrow
-  `Edit(tilbud/**)` rules that keep a run off `AGENTS.md`, memory and skills would be bypassed by a
-  model's judgement. Whether a `PreToolUse` hook's `ask` (the send gate) still reaches the person
-  under it is undocumented, and the gate is the wall. Three blocks in a row fall back to prompting,
-  so a run nobody watches still stalls, later. And whether it is available depends on the model, the
-  plan and an admin switch, so a schedule's behaviour would change with the account it ran under.
+  (`--permission-mode auto`) was reconsidered for runs and is still out, for two reasons. It answers
+  yes in the person's place to everything outside the approved `allow`, so the approval would no
+  longer say what a run may do. And it allows local file operations in the working directory by
+  default, which is the whole vault, so the narrow `Edit(tilbud/**)` rules that keep a run off
+  `AGENTS.md`, memory and skills would give way to a model's judgement
+  ([Claude Code permission modes](https://code.claude.com/docs/en/permission-modes)).
 - **`holi schedules enable` behind an `ask` rule**: the rule matches the command's text, so a
   script that calls the bridge gets around it. Turning on is the Settings switch's alone.
 - **GitHub Actions**, for runs like these. Every vault is a GitHub repository, so a scheduled

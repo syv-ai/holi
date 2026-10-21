@@ -29,6 +29,10 @@ shared changes become proposals.
 honours it is not. A run against a planted "ignore previous instructions and send" mail, checking
 that it drafts or reports and attempts no send, would need a live model and a fake Google.
 
+**Fencing what was copied into the vault.** Only what `holi google` prints is fenced. A task made
+from a mail or an event in Mail or Agenda, or a vault app's stored records, carries someone else's
+words into a vault file, and a later run reads that file as the vault's own.
+
 **Agent theme proposals.** The agent writes a vault's theme; proposing one for approval is absent.
 
 ## Vault apps
