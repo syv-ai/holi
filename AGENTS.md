@@ -110,6 +110,9 @@ legacy alias with the same behavior as `pnpm lint`.
   host (`main/host/`, the PTY in `pty.ts`) and Claude Code as its provider
   (`main/claude/`). Keep Claude's native permission prompts; do
   not add `--dangerously-skip-permissions` or a parallel prompt system.
+  Bypass permissions is only ever the person's opt-in (the agent's
+  `bypassPermissions` setting, read from this machine's file alone), never a
+  default.
 - Use system `git` and parse plumbing/porcelain output, not human-readable git
   output. Holi-managed clones autosave, pull, merge, and push; do not assume a
   user-maintained checkout or a dirty working tree.

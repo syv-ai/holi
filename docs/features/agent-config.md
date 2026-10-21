@@ -12,14 +12,25 @@ sanitised half alone is not unique). The machine's `~/.claude` (global settings,
 marketplaces, MCP servers) is excluded by construction, and one vault's plugins never reach another.
 It is also the key of the vault's Claude Code supervisor, so the agent list shows that vault's
 sessions only. Holi creates the directory when it opens the vault and merges into its
-`settings.json`: `disableClaudeAiConnectors` (only when absent), `permissions.defaultMode:
-"bypassPermissions"` with `skipDangerousModePermissionPrompt` (only when absent: every session
-starts in bypass permissions, and Shift+Tab in the chat's composer presses Shift+Tab in the
-session, Claude Code's own mode cycle), `theme` (dark or light, from the
+`settings.json`: `disableClaudeAiConnectors` (only when absent), `theme` (dark or light, from the
 app's resolved colour mode) and an `env` block with Holi's static paths (`HOLI_BIN`), the one
 channel that reaches every background session. It
-removes the `statusLine` older versions installed. A theme change reaches a running session on
-**Restart** (`claude respawn`).
+removes the `statusLine` older versions installed. It stamps the directory again before every
+session process it starts (a new session, a launch, a copy, **Restart**), so a theme change reaches
+a running session on Restart (`claude respawn`).
+
+**Bypass permissions is opt-in, per machine.** Sessions ask before they act, as Claude Code does,
+unless the person turns on the agent's `bypassPermissions` setting (the settings tab's Agent
+section, written to `plugins.local.yaml` as `agent.bypassPermissions`). On, Holi writes
+`permissions.defaultMode: "bypassPermissions"` and `skipDangerousModePermissionPrompt` (the record
+that bypass mode's warning was accepted: a background session has no screen to show it on) into
+the directory's `settings.json`, and every session started after that runs without asking. Off,
+which is the default, Holi takes a `bypassPermissions` default and that record out again, and
+leaves any other mode a person chose alone; a directory that never had bypass is not touched. It
+is read from this machine's file alone, never from the committed `plugins.yaml`: whether the agent
+may act without asking is the person's, and a teammate who commits it changes nothing. In any
+mode, Shift+Tab in the chat's composer presses Shift+Tab in the session, Claude Code's own mode
+cycle, for that session only.
 
 **Where a session finds Holi.** Not in this directory, and not in the environment: a background
 session's environment is its supervisor's, which may predate this Holi. Every command and hook

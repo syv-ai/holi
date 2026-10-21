@@ -19,15 +19,22 @@
 import { createHash } from 'node:crypto'
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { resolveColorMode } from '@holi/shared'
+import {
+  PLUGINS_LOCAL_FILE,
+  pluginSettingValue,
+  resolveColorMode,
+  resolvePluginSettings,
+} from '@holi/shared'
 import { readVaultSettings } from '../../../../main/plugin-api'
+import { AGENT_INFO } from '../../info'
 
 /** Under `userData/`, beside `vaults.json`, `google-cache.db` and the rest. */
 export const AGENT_CONFIG_DIR_NAME = 'agent-config'
 
 const SETTINGS = 'settings.json'
-/** The permission mode every session starts in (`settingsWithRequired`). */
-const DEFAULT_MODE = 'bypassPermissions'
+/** The permission mode the agent's `bypassPermissions` setting starts every
+ *  session in (`settingsWithRequired`). */
+const BYPASS_MODE = 'bypassPermissions'
 /** Holi's, and named as Holi's: this directory has had an agent in it. */
 const SPAWNED_MARKER = '.holi-spawned'
 
@@ -66,6 +73,11 @@ export interface ConfigDirStamp {
    * per app run lives in the vault's `bridge.local.env` (`bridge/env-file.ts`).
    */
   env?: Record<string, string>
+  /**
+   * The agent's `bypassPermissions` setting, this machine's (off unless turned
+   * on). Undefined leaves the permission keys as they are.
+   */
+  bypass?: boolean
 }
 
 /**
@@ -80,12 +92,15 @@ export interface ConfigDirStamp {
  *   a second layer under the vault's own copy of the same key, so a vault whose
  *   `.claude/settings.json` was deleted still gets no cloud connectors, and a
  *   user who deliberately wrote `false` is not overruled.
- * - `permissions.defaultMode: "bypassPermissions"` is a **default**: every session
- *   starts in bypass permissions, and Shift+Tab in the chat cycles it away. With
- *   it goes `skipDangerousModePermissionPrompt`, the record that bypass mode's
- *   warning was accepted, because a background session has no screen to show
- *   that dialog on. Both written only when absent, so a vault whose user chose
- *   another mode keeps it.
+ * - `permissions.defaultMode: "bypassPermissions"` **tracks the agent's
+ *   `bypassPermissions` setting**, which is off unless the person turns it on.
+ *   On, every session starts in bypass permissions, and with it goes
+ *   `skipDangerousModePermissionPrompt`, the record that bypass mode's warning
+ *   was accepted, because a background session has no screen to show that
+ *   dialog on. Off, a `bypassPermissions` default and that record are taken
+ *   out, so the switch is the one place bypass is chosen; any other mode a
+ *   person chose is left alone. Claude Code's own prompts stay in every other
+ *   mode, and Shift+Tab in the chat still cycles one session's mode.
  * - `theme` **tracks a setting**, so it is written whenever it differs. Claude
  *   Code's `"auto"` detects the terminal background, and inside Holi's embedded
  *   PTY there is nothing reliable to detect.
@@ -96,12 +111,12 @@ export interface ConfigDirStamp {
  * syncs: a path on this machine means nothing on a teammate's.
  */
 function settingsWithRequired(existing: string | null, stamp: ConfigDirStamp = {}): string | null {
-  const { theme, env } = stamp
+  const { theme, env, bypass } = stamp
   if (existing === null || existing.trim() === '') {
-    const seed: Record<string, unknown> = {
-      disableClaudeAiConnectors: true,
-      permissions: { defaultMode: DEFAULT_MODE },
-      skipDangerousModePermissionPrompt: true,
+    const seed: Record<string, unknown> = { disableClaudeAiConnectors: true }
+    if (bypass === true) {
+      seed.permissions = { defaultMode: BYPASS_MODE }
+      seed.skipDangerousModePermissionPrompt = true
     }
     if (theme) seed.theme = theme
     if (env && Object.keys(env).length > 0) seed.env = { ...env }
@@ -128,13 +143,27 @@ function settingsWithRequired(existing: string | null, stamp: ConfigDirStamp = {
     !Array.isArray(settings.permissions)
       ? (settings.permissions as Record<string, unknown>)
       : {}
-  if (permissions.defaultMode === undefined) {
-    settings.permissions = { ...permissions, defaultMode: DEFAULT_MODE }
-    changed = true
-  }
-  if (settings.skipDangerousModePermissionPrompt === undefined) {
-    settings.skipDangerousModePermissionPrompt = true
-    changed = true
+  if (bypass === true) {
+    if (permissions.defaultMode !== BYPASS_MODE) {
+      settings.permissions = { ...permissions, defaultMode: BYPASS_MODE }
+      changed = true
+    }
+    if (settings.skipDangerousModePermissionPrompt !== true) {
+      settings.skipDangerousModePermissionPrompt = true
+      changed = true
+    }
+  } else if (bypass === false) {
+    if (permissions.defaultMode === BYPASS_MODE) {
+      const rest = { ...permissions }
+      delete rest.defaultMode
+      if (Object.keys(rest).length > 0) settings.permissions = rest
+      else delete settings.permissions
+      changed = true
+    }
+    if (settings.skipDangerousModePermissionPrompt !== undefined) {
+      delete settings.skipDangerousModePermissionPrompt
+      changed = true
+    }
   }
   if (theme && settings.theme !== theme) {
     settings.theme = theme
@@ -218,6 +247,18 @@ export async function takeFirstSpawn(configDir: string): Promise<boolean> {
   return true
 }
 
+/**
+ * The agent's `bypassPermissions` setting, from this machine's plugins file
+ * **alone**. Every other plugin setting reads both files, the local one
+ * winning; this one is never read from the committed file, so a teammate who
+ * commits it cannot take away the prompts on anyone else's machine.
+ */
+async function readBypass(root: string): Promise<boolean> {
+  const local = await readFile(join(root, PLUGINS_LOCAL_FILE), 'utf8').catch(() => null)
+  const { values } = resolvePluginSettings(null, local, [AGENT_INFO])
+  return pluginSettingValue(values, AGENT_INFO, 'bypassPermissions') === true
+}
+
 /** Everything a spawn needs to know about the vault's config directory. */
 export interface AgentConfigResolution {
   /** Absolute path, handed to the child as `$CLAUDE_CONFIG_DIR`. */
@@ -226,7 +267,8 @@ export interface AgentConfigResolution {
 
 /**
  * Everything the spawn path needs, in one call: provision the vault's config
- * directory and stamp the theme it should open in. The sign-in marker is left
+ * directory and stamp the theme it should open in, and the permission mode the
+ * agent's `bypassPermissions` setting says (`readBypass`). The sign-in marker is left
  * alone (`takeFirstSpawn`): it is taken by the first terminal, not the open.
  *
  * The mode comes from the same pair the app uses for `data-theme` (the vault's
@@ -248,8 +290,10 @@ export async function resolveVaultAgentConfig(args: {
 }): Promise<AgentConfigResolution> {
   const { colorScheme } = await readVaultSettings(args.root)
   const theme = resolveColorMode(colorScheme, args.systemPrefersDark)
+  const bypass = await readBypass(args.root)
   const dir = await ensureAgentConfigDir(args.userDataDir, args.remote, {
     theme,
+    bypass,
     ...(args.env === undefined ? {} : { env: args.env }),
   })
   return { dir }

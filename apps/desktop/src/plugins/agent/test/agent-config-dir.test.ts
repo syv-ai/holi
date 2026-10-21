@@ -1,4 +1,4 @@
-import { SETTINGS_LOCAL_FILE } from '@holi/shared'
+import { PLUGINS_FILE, PLUGINS_LOCAL_FILE, SETTINGS_LOCAL_FILE } from '@holi/shared'
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -146,39 +146,83 @@ describe('ensureAgentConfigDir', () => {
     expect((await settings(configDir)).disableClaudeAiConnectors).toBe(false)
   })
 
-  it('starts every session in bypass permissions, its warning accepted', async () => {
-    const configDir = await ensureAgentConfigDir(await tempDir(), VAULT)
+  it('starts no session in bypass permissions unless asked', async () => {
+    // A vault the person never chose bypass for asks before it acts, as
+    // Claude Code does by default.
+    const configDir = await ensureAgentConfigDir(await tempDir(), VAULT, { bypass: false })
+    const seeded = await settings(configDir)
+    expect(seeded.permissions).toBeUndefined()
+    expect(seeded.skipDangerousModePermissionPrompt).toBeUndefined()
+  })
+
+  it('changes nothing in an existing directory while bypass stays off', async () => {
+    const userData = await tempDir()
+    const configDir = await ensureAgentConfigDir(userData, VAULT)
+    const text = JSON.stringify({
+      disableClaudeAiConnectors: true,
+      permissions: { allow: ['Bash(ls:*)'], defaultMode: 'acceptEdits' },
+    })
+    await writeFile(join(configDir, 'settings.json'), text)
+
+    await ensureAgentConfigDir(userData, VAULT, { bypass: false })
+
+    expect(await readFile(join(configDir, 'settings.json'), 'utf8')).toBe(text)
+  })
+
+  it('starts every session in bypass permissions, its warning accepted, once turned on', async () => {
+    const configDir = await ensureAgentConfigDir(await tempDir(), VAULT, { bypass: true })
     const seeded = await settings(configDir)
     expect(seeded.permissions).toEqual({ defaultMode: 'bypassPermissions' })
     expect(seeded.skipDangerousModePermissionPrompt).toBe(true)
   })
 
-  it('adds bypass to a settings file that predates it, keeping its permission rules', async () => {
+  it('turned on, sets bypass over another mode, keeping the permission rules', async () => {
     const userData = await tempDir()
     const configDir = await ensureAgentConfigDir(userData, VAULT)
     await writeFile(
       join(configDir, 'settings.json'),
-      JSON.stringify({ permissions: { allow: ['Bash(ls:*)'] } }),
+      JSON.stringify({ permissions: { allow: ['Bash(ls:*)'], defaultMode: 'acceptEdits' } }),
     )
 
-    await ensureAgentConfigDir(userData, VAULT)
+    await ensureAgentConfigDir(userData, VAULT, { bypass: true })
 
     const after = await settings(configDir)
     expect(after.permissions).toEqual({ allow: ['Bash(ls:*)'], defaultMode: 'bypassPermissions' })
     expect(after.skipDangerousModePermissionPrompt).toBe(true)
   })
 
-  it('does not overrule a mode the user chose', async () => {
+  it('turned off again, takes bypass out and leaves the rest', async () => {
     const userData = await tempDir()
-    const configDir = await ensureAgentConfigDir(userData, VAULT)
+    const configDir = await ensureAgentConfigDir(userData, VAULT, { bypass: true })
     await writeFile(
       join(configDir, 'settings.json'),
-      JSON.stringify({ permissions: { defaultMode: 'acceptEdits' } }),
+      JSON.stringify({
+        model: 'opus',
+        permissions: { allow: ['Bash(ls:*)'], defaultMode: 'bypassPermissions' },
+        skipDangerousModePermissionPrompt: true,
+      }),
     )
 
-    await ensureAgentConfigDir(userData, VAULT)
+    await ensureAgentConfigDir(userData, VAULT, { bypass: false })
 
-    expect((await settings(configDir)).permissions).toEqual({ defaultMode: 'acceptEdits' })
+    const after = await settings(configDir)
+    expect(after.permissions).toEqual({ allow: ['Bash(ls:*)'] })
+    expect(after.skipDangerousModePermissionPrompt).toBeUndefined()
+    expect(after.model).toBe('opus')
+  })
+
+  it('turned off, leaves no empty permissions block behind', async () => {
+    const userData = await tempDir()
+    const configDir = await ensureAgentConfigDir(userData, VAULT, { bypass: true })
+    await ensureAgentConfigDir(userData, VAULT, { bypass: false })
+    expect('permissions' in (await settings(configDir))).toBe(false)
+  })
+
+  it('leaves the permission keys alone when it is not told the setting', async () => {
+    const userData = await tempDir()
+    const configDir = await ensureAgentConfigDir(userData, VAULT, { bypass: true })
+    await ensureAgentConfigDir(userData, VAULT)
+    expect((await settings(configDir)).permissions).toEqual({ defaultMode: 'bypassPermissions' })
   })
 
   it('leaves a malformed settings file alone rather than overwriting it', async () => {
@@ -277,6 +321,48 @@ describe('resolveVaultAgentConfig', () => {
     }
     return root
   }
+
+  it('starts sessions asking first in a vault that never turned bypass on', async () => {
+    const { dir } = await resolveVaultAgentConfig({
+      userDataDir: await tempDir(),
+      remote: 'owner/repo',
+      root: await vault(),
+      systemPrefersDark: false,
+    })
+    const seeded = await settings(dir)
+    expect(seeded.permissions).toBeUndefined()
+    expect(seeded.skipDangerousModePermissionPrompt).toBeUndefined()
+  })
+
+  it("starts them in bypass once this machine's local plugins file turns it on", async () => {
+    const root = await vault()
+    await writeFile(join(root, PLUGINS_LOCAL_FILE), 'agent:\n  bypassPermissions: true\n')
+    const args = {
+      userDataDir: await tempDir(),
+      remote: 'owner/repo',
+      root,
+      systemPrefersDark: false,
+    }
+    const { dir } = await resolveVaultAgentConfig(args)
+    expect((await settings(dir)).permissions).toEqual({ defaultMode: 'bypassPermissions' })
+
+    // Turned off again, the next resolve takes it out.
+    await writeFile(join(root, PLUGINS_LOCAL_FILE), 'agent:\n  bypassPermissions: false\n')
+    await resolveVaultAgentConfig(args)
+    expect((await settings(dir)).permissions).toBeUndefined()
+  })
+
+  it('ignores bypass in the committed plugins file: it is not a teammate’s to push', async () => {
+    const root = await vault()
+    await writeFile(join(root, PLUGINS_FILE), 'agent:\n  bypassPermissions: true\n')
+    const { dir } = await resolveVaultAgentConfig({
+      userDataDir: await tempDir(),
+      remote: 'owner/repo',
+      root,
+      systemPrefersDark: false,
+    })
+    expect((await settings(dir)).permissions).toBeUndefined()
+  })
 
   it("hands the agent the vault's own colour, not Claude Code's `auto`", async () => {
     const userDataDir = await tempDir()
