@@ -9,9 +9,9 @@
  * on this machine), so the seed allows them without a prompt; the quiet is in
  * the inbox's rules, not a gate.
  *
- * The work log needs only the vault's folder, so it is written even when Holi
- * does not have the vault open; the inbox is the open vault's, so a notice
- * for another vault is a log line only.
+ * Both need Holi to have the vault open: the `holi` command finds Holi through
+ * the vault's bridge file, which Holi deletes when it leaves the vault. A
+ * session that outlives a switch away from its vault reaches nothing.
  *
  * No `electron` import: this loads under plain Node in the tests.
  */
@@ -47,13 +47,10 @@ function bounded(raw: Record<string, unknown>, key: string, max: number): string
   return value.length > max ? `${value.slice(0, max - 1)}…` : value
 }
 
-type NotifyResult = RaiseResult | 'logged'
-
-const NOTIFY_TEXT: Record<NotifyResult, string> = {
+const NOTIFY_TEXT: Record<RaiseResult, string> = {
   banner: 'notified',
   inbox: 'added to the inbox',
   repeat: 'already in the inbox, not repeated',
-  logged: 'Holi does not have this vault open: written to the work log only',
 }
 
 export const inboxCapabilities = (deps: InboxCapabilitiesDeps) => {
@@ -94,13 +91,10 @@ export const inboxCapabilities = (deps: InboxCapabilitiesDeps) => {
           ...(session === undefined ? {} : { session }),
         }
       },
-      run: async (ctx, notice): Promise<NotifyResult> => {
+      run: async (ctx, notice): Promise<RaiseResult> => {
+        live(ctx)
         const link = notice.path === undefined ? '' : ` [[${notice.path}]]`
         const line = `${notice.title}: ${notice.line}${link}`
-        if (!isLive(ctx)) {
-          await appendWorkLog(ctx.root, now(), line)
-          return 'logged'
-        }
         const result = await deps.inbox.raise(notice)
         if (result !== 'repeat') await logQuietly(ctx.root, line)
         return result

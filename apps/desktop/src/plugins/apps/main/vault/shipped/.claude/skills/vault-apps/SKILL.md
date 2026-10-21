@@ -95,6 +95,10 @@ const off = holi.on('docs', () => redraw()) // see Hearing about changes
 Plus `holi.google.agenda({ from, to })` and `holi.google.search(query)`, which
 need an opt-in (see Reading someone's mail or calendar). That is the whole API.
 
+`holi.tasks` answers only while the Tasks plugin is on; with it off, each call
+rejects with `no such method`. An app that shows tasks says so rather than
+showing an empty board.
+
 `<holi-note path="projects/q2.md"></holi-note>` shows a note, rendered and themed,
 with its `[[links]]` opening in Holi. It renders again when the note changes.
 

@@ -146,15 +146,36 @@ function normalize(text) {
 
 const isLocal = (path) => (path.split('/').at(-1) ?? '').includes('.local.')
 
+/** When a scratch note's `expires` passes, on this machine's clock, or null when
+ *  it is no stamp. A date lasts through that day; `YYYY-MM-DDTHH:MM` ends at
+ *  that minute. The overview's `expiry` and `scratchExpiry` in `@holi/shared`:
+ *  a vault script imports nothing, so it is written again here. */
+function expiry(value) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2})(?::(\d{2}))?)?$/.exec(value ?? '')
+  if (!m) return null
+  const [y, mo, d] = [Number(m[1]), Number(m[2]) - 1, Number(m[3])]
+  const day = new Date(y, mo, d)
+  if (day.getMonth() !== mo || day.getDate() !== d) return null
+  if (m[4] === undefined) return new Date(y, mo, d + 1)
+  const [h, min, sec] = [Number(m[4]), Number(m[5]), Number(m[6] ?? 0)]
+  if (h > 23 || min > 59 || sec > 59) return null
+  return new Date(y, mo, d, h, min, sec)
+}
+
 /**
  * The lint, pure: memory files in, findings out, in a stable order.
  *
  * `exists(path)` answers whether a vault-relative path exists; the caller owns
  * the disk. Each finding is `{ path, kind, message }`, where `kind` is one of
- * `frontmatter`, `broken-link`, `stale` and `duplicate`, and the message says
- * what to do. A finding is a proposal: nothing here is ever applied.
+ * `frontmatter`, `scratch`, `broken-link`, `stale` and `duplicate`, and the
+ * message says what to do. A finding is a proposal: nothing here is ever
+ * applied.
+ *
+ * A personal scratch note past its `expires` is left out, as the overview
+ * leaves it out: Holi deletes it on its next sweep. Unless its frontmatter is
+ * one YAML rejects, which the sweep cannot read and so never deletes.
  */
-export function lintMemory(files, exists) {
+export function lintMemory(files, exists, now = new Date()) {
   const findings = []
   const add = (path, kind, message) => findings.push({ path, kind, message })
   const byDescription = new Map()
@@ -172,6 +193,27 @@ export function lintMemory(files, exists) {
 
   for (const { path, text } of files) {
     const fm = splitFrontmatter(text)
+    if (value(fm.block, 'type') === 'scratch') {
+      const ends = expiry(value(fm.block, 'expires'))
+      const readable = !['type', 'expires', 'description', 'title'].some((key) =>
+        breaksYaml(rawValue(fm.block, key)),
+      )
+      if (!isLocal(path)) {
+        add(
+          path,
+          'scratch',
+          'a shared scratch note is never deleted (Holi deletes only `.local.md` ones): rename it to `.local.md`, or give it a lasting `type`',
+        )
+      } else if (ends === null) {
+        add(
+          path,
+          'scratch',
+          'no readable `expires` (`YYYY-MM-DD` or `YYYY-MM-DDTHH:MM`), so it is never deleted: add one',
+        )
+      } else if (now >= ends && readable) {
+        continue
+      }
+    }
     if (fm.unclosed) {
       add(path, 'frontmatter', 'the frontmatter has no closing `---`, so none of it is read')
     } else if (fm.block === null) {

@@ -142,6 +142,7 @@ describe('the seed tables', () => {
       '.claude/skills/note-comments/SKILL.md',
       '.claude/skills/notify/SKILL.md',
       '.claude/skills/scheduled-agents/SKILL.md',
+      '.claude/skills/show-the-user/SKILL.md',
       '.claude/skills/theme/SKILL.md',
     ])
     expect(keys(claudeSeed.merge!)).toEqual(['.claude/settings.json'])

@@ -87,7 +87,8 @@ Not everything worth writing down is a fact.
   Holi stamps the time. Do not log every step, and do not log what
   `holi agent notify` already logged. To answer "what did we do last week?",
   grep the log. The session overview names today's file, not its content.
-  Outside Holi, where `holi` is not available, skip the log.
+  When Holi does not have this vault open, `holi` cannot reach it: skip the
+  log.
 
 ## What you do not do
 
@@ -115,6 +116,9 @@ and what to do:
 
 - **frontmatter**: no frontmatter, no `type` or `description`, a fence that never
   closes, or a value with an unquoted `: ` (invalid YAML, which hides every key).
+- **scratch**: a scratch note that is never deleted: a shared one (only a
+  `.local.md` one goes), or one with no readable `expires`. One past its
+  `expires` is not listed: Holi deletes it.
 - **broken-link**: a link to a memory that does not exist, or a shared memory
   linking a personal one, which no other clone has.
 - **stale**: a link to a vault file that is not there any more. The fact may no

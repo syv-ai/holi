@@ -18,8 +18,9 @@ today's work log, `.holi/state/log/<YYYY-MM-DD>.local.md`. Clicking the entry or
 the notification opens `--path` (a note, task or file you wrote) or `--session`
 (a conversation). In a background session `--session` is filled in for you,
 so the entry can always lead back here. It prints `notified`,
-`added to the inbox`, or `already in the inbox, not repeated`. If Holi does not
-have this vault open, it only writes the work-log line, and says so.
+`added to the inbox`, or `already in the inbox, not repeated`. It needs Holi to
+have this vault open: otherwise it fails, nothing reaches the user, and the
+result has to wait in the vault where they will find it.
 
 ## When
 
@@ -63,6 +64,6 @@ holi agent log "<one line>"
 
 For example `Checked mail: two drafts filed under [[drafts/]]` or
 `Board tidied, nothing due`. One line per piece of work, not per step. It never
-interrupts anyone and works whether or not Holi has the vault open. Results themselves still go in a
-note or task where they belong. The work log is personal to this machine and
+interrupts anyone, and like `notify` it needs Holi to have the vault open.
+Results themselves still go in a note or task where they belong. The work log is personal to this machine and
 never synced.

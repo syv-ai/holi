@@ -224,10 +224,9 @@ describe('holi agent notify', () => {
     expect(ok.raised).toEqual([{ title: 'T', line: 'L', path: 'notes/a.md' }])
   })
 
-  it('still logs the line when Holi does not have the vault open', async () => {
-    const r = await notify({ title: 'Offer drafted', line: 'Check it.' }, false)
-    expect(r.result).toBe('logged')
-    expect(r.raised).toEqual([])
-    expect(r.log).toContain('Offer drafted: Check it.')
+  it('refuses, raising nothing, when Holi does not have the vault open', async () => {
+    await expect(
+      notify({ title: 'Offer drafted', line: 'Check it.' }, false),
+    ).rejects.toMatchObject({ code: 'UNAVAILABLE' })
   })
 })
