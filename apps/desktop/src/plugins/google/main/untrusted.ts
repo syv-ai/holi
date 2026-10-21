@@ -13,7 +13,10 @@
  * quotes the one it answers, and an event on their own calendar may be an
  * invite's title copied in: Holi cannot tell which text is theirs, so none of
  * it is. Ids, addresses, dates, links and flags are left as they are: they are
- * what the agent passes back to a command, and none is free prose.
+ * what the agent passes back to a command, and none is free prose. So an
+ * organizer's display name is fenced and their address is not, and a calendar
+ * name is fenced unless the person owns that calendar: a subscribed one is
+ * named by whoever shares it.
  */
 import { fenceUntrusted } from '@holi/shared'
 import type { CalendarEvent } from './calendar'
@@ -60,6 +63,11 @@ export function fenceEvents(events: CalendarEvent[]): CalendarEvent[] {
     title: calendar(e.title),
     ...(e.location === undefined ? {} : { location: calendar(e.location) }),
     description: e.description === null ? null : calendar(e.description),
-    organizer: e.organizer === null ? null : calendar(e.organizer),
+    ...(e.mine ? {} : { calendarName: calendar(e.calendarName) }),
+    // A bare address is a fact to pass back; only a display name is prose.
+    organizer:
+      e.organizer === null || e.organizer === e.organizerEmail
+        ? e.organizer
+        : calendar(e.organizer),
   }))
 }
