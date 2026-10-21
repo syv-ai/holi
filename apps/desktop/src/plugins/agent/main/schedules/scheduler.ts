@@ -760,11 +760,12 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
           `${entry.path} was for ${def.when.stamp}, which has passed`,
         )
       }
-      await changeState(vault.remote, entry.path, (s) => ({
+      await changeState(vault.remote, entry.path, ({ momentsSince: _, ...s }) => ({
         ...s,
         approved: fingerprint(def),
         approvedAt: at.toISOString(),
-        // Turned on now: the moments before this are not missed runs.
+        // Turned on now: the moments before this are not missed runs, and
+        // neither are the triggers' (they count from `approvedAt` again).
         lastRun: at.toISOString(),
       }))
       changed(vault.remote)
