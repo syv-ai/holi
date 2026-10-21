@@ -2,7 +2,7 @@
  * What core seeds into every vault, whatever else runs: the vault marker,
  * `AGENTS.md` (a vault file every agent reads, so not the agent's), the icons
  * file, the settings and theme pairs, the memory index, and the `.gitignore`
- * that keeps machine-local files local.
+ * that keeps machine-local files local and OS junk out of a commit.
  *
  * The plain files live in `vault/once/` beside this module. The settings,
  * theme and memory files are computed from shared's vocabularies, so the
@@ -11,6 +11,7 @@
 import {
   applyThemePatch,
   LOCAL_ONLY_IGNORE_LINES,
+  OS_JUNK_FILES,
   MEMORY_INDEX,
   MEMORY_INDEX_EMPTY,
   seedSettings,
@@ -50,10 +51,13 @@ const THEME_LOCAL_SEED = applyThemePatch(null, {})
 
 export const GITIGNORE = '.gitignore'
 
+const LOCAL_ONLY_HEADER = '# Machine-local, never committed. Managed by Holi.'
+const OS_JUNK_HEADER = '# OS junk, never committed. Managed by Holi.'
+
 /**
- * The `.gitignore` text this vault should have, or **null** if it already has
- * every line it needs: core's `*.local.*` lines plus any a contribution adds
- * as a fragment (a list of lines).
+ * The `.gitignore` text with `lines` added under `header`, or **null** if it
+ * already has every one of them. The header defaults to the machine-local one,
+ * which is what a contribution's fragment (a list of lines) is.
  *
  * Merged rather than create-if-missing: an adopted repo usually already has
  * one, and the sync engine commits with `git add -A`, so skipping it would let
@@ -62,16 +66,30 @@ export const GITIGNORE = '.gitignore'
  * trailing newline is added first, or the append would produce
  * `node_modules*.local.*`, which ignores nothing.
  */
-export function gitignoreWith(existing: string | null, lines: readonly string[]): string | null {
+export function gitignoreWith(
+  existing: string | null,
+  lines: readonly string[],
+  header: string = LOCAL_ONLY_HEADER,
+): string | null {
   const present = new Set((existing ?? '').split('\n').map((l) => l.trim()))
   const missing = [...new Set(lines)].filter((line) => !present.has(line))
   if (missing.length === 0) return null
 
   if (existing === null || existing.trim() === '') {
-    return `# Machine-local — never committed. Managed by Holi.\n${missing.join('\n')}\n`
+    return `${header}\n${missing.join('\n')}\n`
   }
   const base = existing.endsWith('\n') ? existing : `${existing}\n`
-  return `${base}\n# Machine-local — never committed. Managed by Holi.\n${missing.join('\n')}\n`
+  return `${base}\n${header}\n${missing.join('\n')}\n`
+}
+
+/**
+ * The `.gitignore` this vault should have, or **null** if it has every line it
+ * needs: the machine-local lines (core's `*.local.*` ones plus any fragment's)
+ * and, in a section of their own, the OS junk files.
+ */
+function vaultGitignore(existing: string | null, fragments: readonly string[]): string | null {
+  const local = gitignoreWith(existing, [...LOCAL_ONLY_IGNORE_LINES, ...fragments])
+  return gitignoreWith(local ?? existing, OS_JUNK_FILES, OS_JUNK_HEADER) ?? local
 }
 
 /** Core's contribution. `known` is the build's plugins, which the settings
@@ -97,6 +115,6 @@ export const coreSeed = (known: readonly PluginInfo[]): SeedContribution => ({
   shipped: folder.shipped,
   merge: {
     [GITIGNORE]: async (existing, fragments) =>
-      gitignoreWith(existing, [...LOCAL_ONLY_IGNORE_LINES, ...(fragments as string[][]).flat()]),
+      vaultGitignore(existing, (fragments as string[][]).flat()),
   },
 })

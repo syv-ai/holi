@@ -14,6 +14,7 @@ import {
   askAgentTooltip,
   askPrompt,
   promptForSelection,
+  selectedLines,
   selectionPrompt,
   type AskAgentSeam,
   type AskTarget,
@@ -74,6 +75,22 @@ describe('promptForSelection', () => {
       'a.md',
     )
     expect(prompt).toBe('[From a.md, line 3]\n> ship it')
+  })
+
+  it('leaves out the line a selection ends at the start of', () => {
+    // A triple-click, Mod-L or shift+down ends the selection at column 0 of
+    // the next line, which holds nothing of it.
+    const from = DOC.indexOf('two')
+    const to = DOC.indexOf('three')
+    const state = stateFor(DOC, EditorSelection.single(from, to))
+    expect(selectedLines(state)).toEqual({ startLine: 2, endLine: 2 })
+    expect(promptForSelection(state, 'a.md')).toBe('[From a.md, line 2]\n> two')
+  })
+
+  it('keeps a line when only its line break is selected', () => {
+    const from = DOC.indexOf('two') + 'two'.length
+    const state = stateFor(DOC, EditorSelection.single(from, from + 1))
+    expect(selectedLines(state)).toEqual({ startLine: 2, endLine: 2 })
   })
 })
 
@@ -520,9 +537,8 @@ describe('the selection tooltip', () => {
 describe('which stacks get it', () => {
   const deps = {
     docExists: () => true,
-    taskByPath: () => null,
     readNote: async () => null,
-    mentionData: () => ({ notes: [], tasks: [] }),
+    mentionData: () => ({ notes: [], groups: [] }),
     nav: () => ({ openNote: () => {}, openExternal: () => {} }),
     notePath: 'note.md',
     askAgent: seam(),

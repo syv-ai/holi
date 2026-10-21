@@ -20,21 +20,21 @@ Every note is a `.md` file, edited in CodeMirror 6 with live preview: markdown r
 
 **Tables** (`codemirror-markdown-tables`) sit centred in the column, their cells keeping their own alignment; a table wider than the column scrolls from its left edge. A focused cell is a nested editor given inline live preview under `inlineOnlyFacet`. An unfocused cell is rendered by the package from the root highlighter, so a `HighlightStyle` is the only thing that styles it: it can hide `**`, `*` and `` ` ``, and keeps a link's brackets. The app-wide stable scrollbar gutter skips a cell's editor, whose scroller is `overflow: hidden`: the reserved lane widened a cell as it took focus, and the centred table shifted with it.
 
-**Images and binaries.** Any file may live in a vault; markdown is what you write. `![](path)` (note-relative) and `[[img.png]]` (vault-relative) render inline via `holi-vault://`. An image opens in its own tab on a light checkerboard plate, a PDF in the viewer ([pdf.md](pdf.md)), other known binaries in a typed placeholder. Binaries stay out of the link graph.
+**Images and binaries.** Any file may live in a vault; markdown is what you write. `![](path)` (note-relative) and `[[img.png]]` (vault-relative) render inline via `holi-vault://`, at their natural size up to the column's width, aspect ratio kept and never scaled up. Height is capped at 70% of the window but never below the column's widest, so a square figure always fills the column and only a tall portrait one is held to the screen. In a table cell an image stays thumbnail-sized. There is no per-image size syntax. An image opens in its own tab on a light checkerboard plate, a PDF in the viewer ([pdf.md](pdf.md)), other known binaries in a typed placeholder. Binaries stay out of the link graph.
 
 **Inline code** is the prose's size, in mono scaled to the prose face's x-height (`font-size-adjust: from-font`), with no fill: the `--code` theme token colours it.
 
 **Quotes** are a flat translucent surface, centred and narrower than the column, holding what the quote holds (lists hang inside it as outside). The `> ` shows only on the caret's line.
 
-**Comments.** An HTML comment on lines of its own draws as a small floating banner, centred, in the `--comment` and `--comment-background` tokens, and shows its source when touched. One inside a paragraph stays text in the comment colour. The banner is exactly as tall as its source, whose first and last lines take the banner's padding while they show, so opening a comment does not move the note.
+**Comments.** Comment threads with authors, replies and resolve are not in the note at all: they live in a sidecar, mark their passages with a fill, and are listed in a right-hand drawer ([note-comments](note-comments.md)). An HTML comment on lines of its own draws as a small floating banner, centred, in the `--comment` and `--comment-background` tokens, and shows its source when touched. One inside a paragraph stays text in the comment colour. The banner is exactly as tall as its source, whose first and last lines take the banner's padding while they show, so opening a comment does not move the note.
 
 **Fenced code** hides its backticks while the caret is outside the block, leaving the language as a small label. The fence lines stay, so the block keeps its height when the caret enters and the fences show.
 
 **Mermaid.** A mermaid fence draws as a diagram and shows source when touched. Mermaid loads on first use, a broken diagram shows its source, and the palette follows light/dark at render time. A PDF draws it too, always light ([pdf.md](pdf.md)).
 
-**Completion.** Every popup in the app comes from `holiCompletion`. `@` lists notes, then open tasks, and inserts a `[[path]]`. `/todo` inserts a checkbox; `/table` reopens on sizes (columns by body rows).
+**Completion.** Every popup in the app comes from `holiCompletion`. `@` lists notes, then open tasks, and inserts a `[[path]]`. `/todo` inserts a checkbox; `/table` reopens on sizes (columns by body rows). A running plugin adds commands of its own after these (`RendererPlugin.slashCommands`), read each time the menu opens; a built-in's name stays the built-in's. A command may say where it is offered (`SlashCommand.offeredIn(path)`); without one it is offered in every note. Vault apps add theirs this way, offered only in a note an app may both read and write ([vault apps](vault-apps.md)). Typing `/` over a selection replaces it as any typing does, but the command still gets it: picking a command puts the text back, selected, and runs the command on `{ text, line, path }` (that text, the line as it was, the note). Its answer replaces the text (unless that text was edited while the command ran: the answer then goes after it, so nothing typed is lost), inserts after it, or opens the ask-the-agent popover with an instruction written in, over the text or at the caret, where the person still picks the session and sends. A command that fails leaves the text as it was put back. Nothing more of the buffer is handed over.
 
-**Ask the agent.** A selection shows a button that opens a field and a session picker. The message is your instruction, then `[From <path>, lines 12-18]` and the passage quoted with `> `; line numbers come from CodeMirror's range, so they are exact.
+**Ask the agent.** A selection shows a button that opens a field and a session picker, beside **Comment**, which starts a comment thread on the passage. The message is your instruction, then `[From <path>, lines 12-18]` and the passage quoted with `> `; line numbers come from CodeMirror's range, so they are exact.
 
 **Saving.** Written after 600 ms of quiet and on blur, flushed on tab close, vault switch and quit. ⌘S saves every buffer, commits and pushes. Invalid frontmatter YAML holds the save; a flush writes anyway.
 
@@ -69,7 +69,7 @@ Every note is a `.md` file, edited in CodeMirror 6 with live preview: markdown r
 
 ## Code
 
-- `apps/desktop/src/renderer/src/editor/`: `extensions.ts` (stacks), `livePreview.ts` (`revealedSpans`), `mark-slide.ts`, `mermaid.ts`, `comments.ts`, `arrows.ts`, `bare-links.ts`, `completion.ts`, `slash.ts`, `mentions.ts`, `askAgent.ts`, `theme.ts`
+- `apps/desktop/src/renderer/src/editor/`: `extensions.ts` (stacks), `livePreview.ts` (`revealedSpans`), `mark-slide.ts`, `mermaid.ts`, `comments.ts`, `arrows.ts`, `bare-links.ts`, `completion.ts`, `slash.ts`, `mentions.ts`, `askAgent.ts`, `comment-threads.ts`, `theme.ts`
 - `apps/desktop/src/renderer/src/features/editor/EditorPane.tsx`: load, save, flush, reload
 - `apps/desktop/src/renderer/src/lib/editor-reload.ts`, `apply-reload.ts`
 - `packages/shared/src/merge3.ts`, `normalize-md.ts`, `file-kind.ts`, `image-ref.ts`

@@ -9,7 +9,7 @@ import {
   inlineOnlyFacet,
   revealedSpans,
   spanKey,
-  taskByPathFacet,
+  linkChipFacet,
   touches,
 } from '../src/renderer/src/editor/livePreview'
 import type { WikiLinkChip } from '../src/renderer/src/editor/wikiLinkChips'
@@ -95,15 +95,15 @@ describe('buildDecorations', () => {
 })
 
 /**
- * Task chips. A task is a file, so a link to a task is an ordinary path wiki-link
- * `[[…/task.foo.md]]`. The editor renders it as a task chip — carrying the
- * task's status for the orb — when the path resolves to a task via the store, and as a
- * plain note chip otherwise.
+ * Claimed chips. A claimed file (a task) is a file, so a link to one is an
+ * ordinary path wiki-link. The editor draws it as its claim says (title, orb)
+ * when the path resolves through the claims, and as a plain note chip
+ * otherwise.
  */
-describe('buildDecorations — task-path chips', () => {
+describe('buildDecorations — claimed-path chips', () => {
   const TASK = 'projects/task.ship.md'
-  const known = taskByPathFacet.of((path) =>
-    path === TASK ? { title: 'Ship the thing', status: 'todo' } : null,
+  const known = linkChipFacet.of((path) =>
+    path === TASK ? { title: 'Ship the thing', orb: 'red' } : null,
   )
 
   const chipIn = (doc: string, extra: Extension[]): WikiLinkChip | undefined => {
@@ -112,21 +112,21 @@ describe('buildDecorations — task-path chips', () => {
     return found?.spec['widget'] as WikiLinkChip | undefined
   }
 
-  it('renders a task chip titled by the resolver, carrying its status', () => {
+  it('renders a claimed chip titled by the resolver, carrying its look', () => {
     const chip = chipIn(`first\nsee [[${TASK}]] ok`, [known])
     expect(chip).toMatchObject({
       target: TASK,
       label: 'Ship the thing',
       exists: true,
-      task: { status: 'todo' },
+      look: { orb: 'red' },
     })
   })
 
-  // A path the store does not know is an ordinary note chip — never a task, never a lie.
-  it('renders a note chip for a non-task path', () => {
+  // A path no claim knows is an ordinary note chip, never a lie.
+  it('renders a note chip for an unclaimed path', () => {
     const chip = chipIn('first\nsee [[notes/plan.md]] ok', [known])
     expect(chip).toMatchObject({ target: 'notes/plan.md', label: 'notes/plan' })
-    expect(chip?.task).toBeUndefined()
+    expect(chip?.look).toBeUndefined()
   })
 
   // An explicit label is the author's words; the live title must not overwrite them.
@@ -136,12 +136,12 @@ describe('buildDecorations — task-path chips', () => {
     })
   })
 
-  // The unwired default resolves nothing as a task, so a task path with no store is a
-  // plain note chip — no invented tombstone.
-  it('with no store, a task path is just a note chip', () => {
+  // The unwired default resolves nothing, so a claimed path with no claim is a
+  // plain note chip: no invented tombstone.
+  it('with no claims, a task path is just a note chip', () => {
     const chip = chipIn(`first\nsee [[${TASK}]] ok`, [])
     expect(chip).toMatchObject({ target: TASK, label: TASK.replace(/\.md$/, '') })
-    expect(chip?.task).toBeUndefined()
+    expect(chip?.look).toBeUndefined()
   })
 
   it('reveals the raw [[…]] when the caret is inside it', () => {

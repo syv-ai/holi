@@ -12,12 +12,19 @@ Todo / Doing / Done, with one swim lane per folder.
   `assignees`, `reminder`, `recurrence` and `order`, all optional. Unknown keys are written back verbatim. The body is the
   description, and its first heading is the title, falling back to the filename
   (`task.fix-login.md` reads "Fix login"). There is no `title:` key.
-- **Claimed in the snapshot.** Tasks claim `task.*.md` (`taskClaim` in shared): main's scanner
-  parses each into `snapshot.claimed.tasks`, as `items` and the `broken` ones that did not parse,
-  and keeps them out of the notes. The `normalize-md` commit transform writes a task's frontmatter
-  in canonical key order through the claim's `normalize`, which the editor also recognises as
-  Holi's own tidy. Tasks is still a core part, so
-  the claim runs in every vault; with a claim absent its files are plain notes.
+- **A plugin.** Tasks is the plugin `src/plugins/tasks/`, on by default. In a vault with it off
+  (`tasks: false` under `plugins` in `.holi/settings/plugins.yaml`, or this machine's `.local`
+  twin), a task file is a plain note: there is no board, quick add, New Task, task chip, task
+  frontmatter row or reminder, `holi tasks` answers "no such method", and Google's Link to task
+  buttons hide. The files stay as they are.
+- **Claimed in the snapshot.** Tasks claim `task.*.md` (`taskClaim`): main's scanner parses each
+  into `snapshot.claimed.tasks`, as `items` and the `broken` ones that did not parse, and keeps
+  them out of the notes. The `normalize-md` commit transform writes a task's frontmatter in
+  canonical key order through the claim's `normalize`, which the editor also recognises as Holi's
+  own tidy. The renderer's claim draws a link to a task as a chip with its status orb, offers open
+  tasks in the `@` menu, gives a task its frontmatter rows and narrower column, marks task files in
+  the tree and the tabs, adds New Task to the explorer, and keeps task files out of the tree until
+  Show task files.
 - **Dates are stamps**: `YYYY-MM-DD` or `YYYY-MM-DDTHH:MM`, local, no timezone. The time is
   optional on `due` and `reminder`, and its absence means "that day", not midnight.
 - **Editing a task is editing its file.** A card click opens it beside the board as a preview,
@@ -84,12 +91,16 @@ Todo / Doing / Done, with one swim lane per folder.
 - **Date picker.** `DateTimePicker` edits `due`, `reminder` and a recurrence's `endDate`. Presets
   resolve to a stamp on choosing: reminders are relative to `due` when set ("1 day before"), to now
   otherwise ("tomorrow 09:00"). The month grid is one tab stop with arrow and PageUp/Down keys.
-- **Reminders.** Closing the window leaves Holi in the tray, and first launch asks once about
-  starting at login. Every 60s, and once at launch as catch-up, main sweeps every registered vault
-  and fires each reminder that is due and newer than its watermark. More than 3 in one sweep
-  become one summary. A timeless reminder fires at 09:00. Clicking a notification opens the task,
-  switching vault if needed. The per-path watermark lives under `reminders` in the vault's
-  machine-local `.holi/settings/app.local.yaml`.
+- **Reminders.** While some registered vault runs tasks, closing the window leaves Holi in the
+  tray, and Settings > Updates > Open at login starts it at login. Every 60s, and once at launch
+  as catch-up, main sweeps every registered vault that runs tasks, open or not, and fires each
+  reminder that is due and newer than its watermark. Every notification names the vault its task
+  is in. More than 3 in one sweep become a summary per vault ("3 reminders in notes"), never one
+  across vaults, and a vault with a single fire keeps its own. A timeless reminder fires at 09:00.
+  Clicking a notification opens the task through the same arrival as a Holi link, switching vault
+  if needed; that is the only way the sweep reaches the open window. Each vault's tasks are read
+  from its own clone at every sweep and kept nowhere, and the per-path watermark lives under
+  `reminders` in that vault's machine-local `.holi/settings/app.local.yaml`.
 - **Assignees** are GitHub logins (`assignees: [ada]`), the identity a vault already has:
   its members are its repo's collaborators. Like `tags`, a task's assignees are always a list,
   empty when the task is no one's, and an empty list is no key at all. A hand-written `@login` or
@@ -115,10 +126,16 @@ Todo / Doing / Done, with one swim lane per folder.
 ## Rules
 
 - The marker is in the filename, never frontmatter. A pasted `type: task` must not make tasks.
-- Done is completion wherever the app writes it: `tasks.update` and `tasks.move` apply
-  `completeTask`, and the frontmatter widget writes its result into the buffer, as does the
-  agent's `holi tasks complete <path>`. Only a hand edit of the file can write a bare
-  `status: done`, and that ends a recurring series.
+- Done is completion wherever the app writes it: `tasks.update` (the board's and a vault
+  app's `holi.tasks.update`) and `tasks.move` apply `completeTask`, and the
+  frontmatter widget writes its result into the buffer, as does the agent's
+  `holi tasks complete <path>`. Only a hand edit of the file can write a bare
+  `status: done`, and that ends a recurring series. A vault app's note write
+  (`docs.write`) to a task file changes its body only: the frontmatter must parse to the
+  same fields as the file's, or it is refused and names `tasks.update`.
+- Task writes (`tasks.create`, `tasks.update`, `tasks.complete`) each check and write a file
+  under that file's lock in main (`withFileLock`), so two at once cannot both
+  read the same text, and two creates with one title take two names.
 - A reminder is an absolute moment. A non-stamp reminder is inert, never an error, so a legacy
   `1d` costs a notification rather than the task. `due` is strict.
 - Virtual labels are never stored: `overdue` would be a commit per task at midnight.
@@ -151,18 +168,26 @@ Todo / Doing / Done, with one swim lane per folder.
 
 ## Code
 
-- `packages/shared/src/task-file.ts`, `completion.ts`, `dates.ts`, `calendar.ts`, `labels.ts`,
-  `recurrence.ts`, `reminder.ts`, `rank.ts`: the format and all the pure rules.
-- `apps/desktop/src/main/router.ts`: `tasks.*` and `patched`, which applies completion.
-- `apps/desktop/src/main/vault/task-capabilities.ts`: `tasks.list`, `tasks.complete`, and
-  `tasks.create` (the UI door), which the board and the Google views create tasks through.
-- `apps/desktop/src/main/reminders/`, `main/tray.ts`: the sweep, tick, watermark, notifications.
-- `apps/desktop/src/renderer/src/state/tasks.ts`: task set, filter, drops, writes.
-- `apps/desktop/src/renderer/src/state/clock.ts`: `nowAtom` and `todayAtom`, the minute the overdue labels and the daily note read.
-- `apps/desktop/src/renderer/src/features/tasks/`: the board (`BoardView`, `BoardCard`,
-  `BoardDock`), the completion sequence (`use-check-sequence.ts`) and the drag
-  (`use-board-drag.ts`), quick add (`QuickAdd`, `QuickAddHost`); `lib/board-order.ts`, `lib/date-presets.ts`,
-  `composites/DateTimePicker.tsx`, `composites/RecurrenceField.tsx`.
-- `apps/desktop/src/renderer/src/primitives/TaskCheck.tsx`, `StrikeText.tsx`, `ConfirmInPlace.tsx`,
-  `RollingCount.tsx`, `Choice.tsx`, and the board's springs in `springs.ts`.
-- `apps/desktop/src/plugins/agent/main/claude/vault/shipped/.claude/skills/using-tasks/SKILL.md`: the seeded agent skill.
+Everything is in `apps/desktop/src/plugins/tasks/`.
+
+- `info.ts`: what the plugin is, with the `archive-done` transform's toggle.
+- `shared/task-file.ts`, `completion.ts`, `labels.ts`, `recurrence.ts`, `reminder.ts`, `rank.ts`,
+  `types.ts`: the format and all the pure rules. Dates, the calendar grid and who is one person
+  (`logins.ts`) are core, in `packages/shared`.
+- `main/capabilities.ts`: `tasks.list`, `tasks.complete`, `tasks.create` (the UI and app doors,
+  which the board, the Google views and vault apps create tasks through), `tasks.update` (the
+  board's field edits and a vault app's), and the board's `tasks.move` and `tasks.delete`, which
+  apply completion.
+- `main/reminders/`: the sweep, tick, watermark and notifications, started as the plugin's work
+  across vaults (`start.ts`). The tray is core's (`main/tray.ts`).
+- `main/archive-done.ts`, `main/task-done.ts`, `main/seed.ts` and `main/vault/shipped/`: the commit
+  transform, completing one file, and the seeded `using-tasks` skill with its deny rules.
+- `renderer/state.ts`: task set, filter, drops, writes.
+- `renderer/`: the board (`BoardView`, `BoardCard`, `BoardDock`), the completion sequence
+  (`use-check-sequence.ts`) and the drag (`use-board-drag.ts`), quick add (`QuickAdd`,
+  `QuickAddHost`), the full create (`CreateTask`), the claim (`claim.tsx`), its frontmatter
+  controls (`fields.tsx`, `RecurrenceField.tsx`), `TaskIcon` and `board-order.ts`.
+- Core keeps what other features use too: `state/clock.ts` (`nowAtom`, `todayAtom`),
+  `lib/date-presets.ts`, `composites/DateTimePicker.tsx`, the primitives `TaskCheck`,
+  `StrikeText`, `ConfirmInPlace`, `RollingCount` and `Choice`, the board's springs in
+  `springs.ts`, and the `task-*` theme tokens.

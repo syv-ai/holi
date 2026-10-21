@@ -7,7 +7,7 @@
  */
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import type { VaultEntry } from '@holi/shared'
+import { isRemote, type VaultEntry } from '@holi/shared'
 import { jsonFileStore, type JsonFileStore } from '../json-file-store'
 
 /**
@@ -24,16 +24,6 @@ export function vaultRoot(): string {
   // An empty override is treated as absent. `join('', 'syv/notes')` is a
   // relative path, which would put vaults wherever the process happens to be.
   return process.env['HOLI_VAULT_ROOT'] || join(homedir(), 'Holi')
-}
-
-/** `owner/repo`, the form the GitHub API and `git clone` both speak. */
-const REMOTE_RE = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/
-
-export function isRemote(value: string): boolean {
-  // Guard the separator cases the regex would otherwise wave through: a leading,
-  // trailing or doubled slash still has two non-empty-looking sides to a lazy
-  // check, and the value ends up in a filesystem path.
-  return REMOTE_RE.test(value) && !value.includes('..')
 }
 
 export function repoName(remote: string): string {

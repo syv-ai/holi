@@ -16,7 +16,8 @@
 import { mkdir, readdir } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { cloneRepo, openRepo, remoteUrl, runGit, type GitDeps, type GitRepo } from '../git'
-import { clonePathFor, isRemote } from './registry'
+import { isRemote } from '@holi/shared'
+import { clonePathFor } from './registry'
 
 export type CloneOutcome = { kind: 'cloned' } | { kind: 'adopted' }
 

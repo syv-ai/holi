@@ -1,7 +1,13 @@
 #!/usr/bin/env node
 // Holi turn-signal hook: tells the running Holi app that a turn in one of
 // this vault's Claude Code background sessions started or ended, so it can pause
-// sync while the agent works. Usage: turn-signal.mjs start|end
+// sync while the agent works. Usage: turn-signal.mjs session|start|end
+//
+// At `session` (SessionStart) and `start` it also hands Holi where the session
+// takes messages: the inbox socket and token Claude Code exports to its hooks
+// as CLAUDE_CODE_MESSAGING_SOCKET and CLAUDE_CODE_MESSAGING_TOKEN, so Holi can
+// add a message to this session while it runs. Holi keeps them in memory only.
+// A session without them (`--bare`, an older Claude Code) sends none.
 //
 // Where Holi is: `.holi/state/bridge.local.env` at the vault's root, found by
 // walking up from the current directory to the folder holding `.holi/vault`.
@@ -26,6 +32,7 @@ import { basename, dirname, join } from 'node:path'
 
 const edge = process.argv[2]
 const jobDir = process.env.CLAUDE_JOB_DIR
+const ROUTES = { session: '/session', start: '/turn/start', end: '/turn/end' }
 
 /** The hook's input JSON, or null. Bounded: a stdin that never ends must not
  *  hold the turn. */
@@ -63,7 +70,7 @@ function vaultRoot() {
 }
 
 async function main() {
-  if ((edge !== 'start' && edge !== 'end') || !jobDir) return
+  if (!Object.hasOwn(ROUTES, edge ?? '') || !jobDir) return
   const root = vaultRoot()
   if (root === null) return
   const env = Object.create(null)
@@ -78,8 +85,16 @@ async function main() {
     const pending = pendingOf(await hookInput())
     if (pending !== null) query.set('pending', String(pending))
   }
-  await fetch(`http://127.0.0.1:${port}/turn/${edge}?${query}`, {
+  const { CLAUDE_CODE_MESSAGING_SOCKET: socket, CLAUDE_CODE_MESSAGING_TOKEN: inboxToken } =
+    process.env
+  const body =
+    edge !== 'end' && socket && inboxToken
+      ? JSON.stringify({ socket, token: inboxToken })
+      : undefined
+  if (edge === 'session' && body === undefined) return
+  await fetch(`http://127.0.0.1:${port}${ROUTES[edge]}?${query}`, {
     method: 'POST',
+    ...(body === undefined ? {} : { body, headers: { 'content-type': 'application/json' } }),
     signal: AbortSignal.timeout(2000),
   })
 }
