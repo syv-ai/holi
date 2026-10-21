@@ -26,6 +26,7 @@ import { inboxCapabilities } from './inbox/capabilities'
 import { createInbox } from './inbox/inbox'
 import { watchNeedsYou } from './inbox/needs-you'
 import { INBOX_FILE, parseInbox } from './inbox/rules'
+import { sweepAgentMemory, SWEEP_EVERY_MS } from './memory/sweep'
 import { scheduleCapabilities, SCHEDULE_NAMESPACES } from './schedules/capabilities'
 import { createScheduler, parseSchedulesFile } from './schedules/scheduler'
 
@@ -116,6 +117,14 @@ export const agentMain: MainPlugin = {
     void started.ensure(ctx)
     // The open vault's schedules run while it is open.
     schedules.attach({ remote: ctx.remote, root: ctx.root })
+    // Expired scratch notes and old work-log days go, now and hourly.
+    const sweep = (): void =>
+      void sweepAgentMemory(ctx.root, new Date()).catch((err: unknown) =>
+        console.error('[agent] memory sweep:', err),
+      )
+    sweep()
+    const sweepTimer = setInterval(sweep, SWEEP_EVERY_MS)
+    sweepTimer.unref?.()
     // The per-turn hook reads the focused note, and its selected lines, from a
     // file in this clone.
     const unreport = ctx.onReport((report) =>
@@ -129,6 +138,7 @@ export const agentMain: MainPlugin = {
     // was busy). They stay in the agents list and resume when opened.
     return async () => {
       schedules.dispose()
+      clearInterval(sweepTimer)
       unreport()
       unwatchNeedsYou()
       await started.leave().catch((err) => console.error('[agent] leave failed:', err))

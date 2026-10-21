@@ -22,6 +22,7 @@
 import { parse as parseYaml } from 'yaml'
 import { MEMORY_DIR, isLocalOnlyPath } from './path-safety'
 import { splitFrontmatter } from './frontmatter'
+import { parseDate, parseDateTime } from './dates'
 
 /** `MEMORY_DIR` itself lives in `path-safety.ts`, the lower of the two modules,
  *  because `isAgentSurfacePath` needs it too. */
@@ -226,4 +227,59 @@ export function renderMemoryIndex(entries: MemoryEntry[]): string {
   })
 
   return `${MEMORY_INDEX_HEADER}\n\n${MEMORY_INDEX_LOCAL_NOTE}\n\n${sections.join('\n')}`
+}
+
+// ───────────────────────────────────────────────────────────── scratch ──
+//
+// A scratch note is a personal memory that is true for a while: `type: scratch`
+// and an `expires` stamp. It is the one type Holi gives a meaning to; every
+// other type stays free-form. Holi deletes it once `expires` has passed, so it
+// has to be `.local.`: nothing unattended edits shared memory. The session
+// overview hook reads the same two keys on its own (it imports nothing), so a
+// change to the rule here is a change there too.
+
+/** The memory type Holi expires. */
+export const SCRATCH_TYPE = 'scratch'
+
+/**
+ * When an `expires` value stops being true, on this machine's clock, or null
+ * when it is missing or not a stamp. A date (`2026-10-22`) lasts through that
+ * day; a local time (`2026-10-22T15:00`) ends at that minute.
+ */
+export function scratchExpiry(value: unknown): Date | null {
+  const s = stringValue(value)
+  if (s === null) return null
+  const date = parseDate(s)
+  if (date !== null) {
+    const d = new Date(date)
+    return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1)
+  }
+  const at = parseDateTime(s)
+  if (at === null) return null
+  const d = new Date(at)
+  return new Date(
+    d.getUTCFullYear(),
+    d.getUTCMonth(),
+    d.getUTCDate(),
+    d.getUTCHours(),
+    d.getUTCMinutes(),
+    d.getUTCSeconds(),
+  )
+}
+
+/** A scratch memory's expiry (null when it has none Holi can read), or
+ *  undefined when the text is not a scratch memory at all. */
+export function scratchOf(text: string): { expires: Date | null } | undefined {
+  const frontmatter = frontmatterOf(text)
+  if (stringValue(frontmatter.type) !== SCRATCH_TYPE) return undefined
+  return { expires: scratchExpiry(frontmatter.expires) }
+}
+
+/** Whether Holi deletes this file at `now`: a personal memory, scratch, and
+ *  past an `expires` it can read. A shared scratch note is never deleted, nor
+ *  is one whose `expires` is missing or malformed. */
+export function isExpiredScratch(path: string, text: string, now: Date): boolean {
+  if (!isMemoryPath(path) || !isLocalOnlyPath(path)) return false
+  const expires = scratchOf(text)?.expires
+  return expires != null && now.getTime() >= expires.getTime()
 }
