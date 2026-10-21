@@ -80,7 +80,10 @@ Holi version that last wrote shipped files on this machine, at creation, on a pl
 enabling, or by an update that brought something in and left no conflict. It is never lowered.
 `skills.status` answers it with what is pending; the offer, Settings → Updates and
 `holi skills status` say it. It is machine-local like the bases beside it: a
-committed version would claim, on a teammate's machine, a write that never happened there.
+committed version would claim, on a teammate's machine, a write that never happened there. The
+cost is a clone with no seed record (a teammate's fresh clone): it cannot tell a shipped skill the
+team deleted from one the vault never had, so an update there writes the deleted skill back, as a
+change the team sees in the commit and can delete again.
 
 **Dev and installed are separate apps.** The packaged app is named Holi through
 `extraMetadata.productName`, so its `userData` is `Holi/`, while `pnpm dev` keeps `@holi/desktop/`.
