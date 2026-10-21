@@ -10,7 +10,7 @@ import { readFile, rm, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { initTRPC, TRPCError } from '@trpc/server'
 import {
-  completeTask,
+  applyTaskPatch,
   isAgentSurfacePath,
   parseTaskFile,
   parseTaskPatch,
@@ -983,16 +983,9 @@ export function createRouter(deps: RouterDeps) {
       }),
   })
 
-  /**
-   * A patch applied to a task. **Done is completion**, wherever it comes from
-   * (a field edit, a drop into Done, the card's checkbox): on a recurring task
-   * it is the next occurrence, not the end of the series (`completeTask`).
-   * The merge SPREADS rather than testing for undefined: a key
-   * present-and-undefined is how `parseTaskPatch` spells "clear this field".
-   */
+  /** A patch applied to a task, by the rule every writer shares (`applyTaskPatch`). */
   function patched(task: Task, patch: TaskPatch): Task {
-    const next = { ...task, ...patch }
-    return patch.status === 'done' ? { ...next, ...completeTask(next, today()) } : next
+    return applyTaskPatch(task, patch, today())
   }
 
   /**
