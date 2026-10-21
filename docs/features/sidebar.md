@@ -15,7 +15,8 @@ mode, the mode's own list, and who is signed in. Everywhere else is one keystrok
   lights, and main says so (`window:fullscreen`), so the toggle moves to the band's start.
 - **Mode toggle** (`features/nav/ModeToggle.tsx`): Documents and Agents as two wide `Tabs`
   segments, the active one raised in place, with no thumb travelling between them: it is pressed
-  all day, and a switch that moves is one that lags. Arrow keys move it. The Agents segment reports the
+  all day, and a switch that moves is one that lags. Arrow keys move it. The Agents segment wears a Holi's pixel face (idle it bobs, working it hops, waiting on
+  you it gets an idea) and reports the
   agents from either mode: an amber count while something needs you (`motion-pulse`), a turning
   ring (`motion-orbit`) and a count while
   agents work, both in its accessible name. The mode is `appModeAtom`, remembered across launches;

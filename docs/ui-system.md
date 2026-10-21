@@ -128,7 +128,8 @@ One place decides how an icon looks, so every icon in the app agrees.
     leaving reverses it.
   - **A, arrive**: entering or leaving the layout, leaving faster than arriving: a popup grows
     out of its trigger and shrinks back (`motion-in-origin`, `motion-out-origin`), anything else
-    fades in where it is (`motion-in-fade`). An animation, not a transition, because
+    fades in where it is (`motion-in-fade`), and a view's headline rises 6px into place as the
+    view opens (`motion-in-rise`, Home's title; its fade alone under reduced motion). An animation, not a transition, because
     Radix `Presence` waits for `animationend`. One exception is a transition, so a second press
     mid-way reverses from where it is: a drawer's width. A tree folder opens and closes at
     once (see Trees).
@@ -139,13 +140,20 @@ One place decides how an icon looks, so every icon in the app agrees.
 - **Shell** (after the knowledge bases that float their page). The sidebar sits on the window's
   ground (`--ground`, a step under the page) and the content floats beside it as one panel on the
   page colour (`[data-slot='content-panel']`: `rounded-xl`, a `--divider` hairline and the
-  faintest lift), its toggle beside the window's lights ([sidebar](features/sidebar.md)). No
-  light and no glass: two greys and an edge, quiet enough for all day.
+  faintest lift), its toggle beside the window's lights ([sidebar](features/sidebar.md)). **One product
+  from the door to the desk:** the ground carries the light of the screens before a vault, held
+  still (`[data-slot='window-ground']`: the same warm and cool from the top-left as a faint wash,
+  and the grain at a third, under the sidebar and the panel so no text is grainy). The page
+  stays plain, so nothing is ever written on a gradient. Home's title speaks in sign-in's display
+  voice (`text-4xl`, −0.03em); the warm-to-violet accent of sign-in's "own." is
+  `--brand-gradient`, carried by exactly two things in the shell, the focused tab's line and the
+  open vault's tile, so it stays a signature; the Agents segment wears a Holi's pixel face; an
+  empty state's icon stands on a small lit plate (an error's does not). No glass.
 - **Before a vault**, sign-in and the onboarding ritual stand in the light: shafts of warm light
   falling from the top-left corner and shifting slowly (`composites/AmbientBackdrop.tsx`, drawn by
   the `SideRays` shader), with film grain over them (`AmbientGrain`). It is the one decorative
-  loop the app allows, held still under reduced motion, and it never enters the shell, where it
-  would nag all day. Sign-in's GitHub button is the GitHub mark that opens into "Continue with
+  loop the app allows, held still under reduced motion. The shell takes its light but not its
+  motion: there it is a still wash, because a moving light looked at all day would nag. Sign-in's GitHub button is the GitHub mark that opens into "Continue with
   GitHub" (`primitives/RevealButton.tsx`, the `reveal` spring). The ritual's acts crossfade in its
   own stylesheet (`onboarding-ritual.css`). The loading screen stays the plain page.
 - **Tokens** live in `index.css`: `--ease-settle`, `--ease-loop`, `--motion-respond` 150ms,
@@ -368,7 +376,8 @@ DOM: they copy width, motion, header and edge through the injected stylesheet an
   target `[0.08]`; `rounded-lg`, `h-7`, `px-2`. A fill mixed from the foreground keeps the
   page's own hue on any theme, where `accent` is a fixed step.
 - Hue identifies, it does not decorate: a brand mark, a file type, a status, the destructive red.
-  Everything else is the grey ramp.
+  Everything else is the grey ramp. The two exceptions are the brand's own: the still light on the
+  ground and `--brand-gradient` on its two carriers; neither is spent on anything else.
 - The sidebar sits on the window's `--ground`; the content floats beside it as one panel on the
   page. The panel is the shell's frame, not a card: nothing inside it is a card around a screen.
 - Only floating things (dialogs, menus, popovers, tooltips, toasts) get `--popover` and a shadow,

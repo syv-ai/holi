@@ -413,11 +413,12 @@ html {
  * keeps an exiting node mounted by waiting for `animationend`. An exit
  * written as a transition unmounts immediately and is never seen.
  *
- * Two shapes, and only the ones in use. `-origin` scales from
+ * Three shapes, and only the ones in use. `-origin` scales from
  * `transform-origin`, for a popup that grows out of its trigger (menus,
  * selects, popovers); pair it with Radix's `origin-(--radix-*-transform-origin)`.
  * It goes 0.96 → 1 and never above 1: no overshoot. `-fade` is for a thing
- * that appears where it already is. */
+ * that appears where it already is; `-rise`, for a view's headline settling
+ * as the view opens. */
 @utility motion-in-origin {
   animation: motion-in-origin var(--motion-pop) var(--ease-settle) both;
 }
