@@ -17,6 +17,21 @@ chips work on them. `AGENTS.md` suggests a starting set of types (`convention`, 
 **Personal memory is `.holi/memory/<name>.local.md`.** The `.local.` marker makes it gitignored, so it
 never leaves the clone and needs no other machinery. Anything about one individual goes there.
 
+**Three layers.** Facts are the files above. A **scratch note** is true for a while: a personal
+memory with `type: scratch` and an `expires` stamp, a date (it lasts through that day) or a local
+`YYYY-MM-DDTHH:MM` (it ends at that minute). `scratch` is the one type Holi gives a meaning to; the
+rest stay free-form. The **work log** is what the agent did, when:
+`.holi/state/log/<YYYY-MM-DD>.local.md`, one file per local day, one line per piece of work,
+written by `holi agent log "<line>"` (and by `holi agent notify`, [agent-inbox](agent-inbox.md)).
+It sits under `.holi/state/`, not `.holi/memory/`, so nothing that walks memory reads it as a
+memory, and it is personal: a day's lines are what ran on this machine. "What did we do last
+week?" is a grep.
+
+**Holi expires them, in code.** The agent plugin sweeps when a vault opens and hourly while it is
+open: it deletes a personal scratch note whose `expires` has passed and a log day older than 30
+days. Both are `.local.`, so the deletion is this machine's alone. A shared `type: scratch` file,
+or one with no readable `expires`, is never deleted.
+
 **`.holi/memory/index.md` is generated** by the `memory-index` pre-commit transform, so the index lands in
 the same commit as the memory it describes, and a burst of writes in one turn is one commit. It is
 grouped by type, one `[[path|Title]]` line per memory with its description, sorted by path, under
@@ -32,7 +47,9 @@ wiki-link and the grammar has no escape.
 **A `SessionStart` hook prints an overview** (`.claude/hooks/memory-overview.mjs`), on startup,
 resume and compact. Compact matters most: it is when the agent forgets it has memory. Capped at 3,000
 characters, it prints the types in use with counts, the index lines, the personal memories (read
-directly, since the index cannot carry them), and the last three commits touching `.holi/memory/`. Over
+directly, since the index cannot carry them), the scratch notes apart with their expiry (an expired
+one is left out before the sweep reaches it), the names of today's and the previous work log
+(never their content), and the last three commits touching `.holi/memory/`. Over
 the cap it drops descriptions first and keeps every title, then truncates with a pointer to the
 index. With memory files but no index yet, it says so and points at the directory. It needs no Holi
 port: local reads and one `git log` with a 2 s timeout. Its files are read in sorted order and it
@@ -85,7 +102,9 @@ only when the user asks.
 - Duplicating `x.local.md` yields `x copy.local.md`, keeping the marker. A copy name that breaks the
   marker publishes the file.
 - No unattended edits to shared memory: consolidation or splitting is agent work the user asks for.
-  Lint findings are proposals under the same rule.
+  The sweep deletes personal files only. Lint findings are proposals under the same rule.
+- The overview and the sweep read `expires` by the same rule, written twice because the hook
+  imports nothing.
 
 ## Rejected
 
@@ -100,7 +119,11 @@ only when the user asks.
 - OKF's markdown links inside `.holi/memory/`: a second link grammar that relink and backlinks do not
   understand. Holi takes the OKF shape and does not claim conformance.
 - A `log.md` of memory changes: git already is one, and a newest-first file conflicts on every
-  concurrent write.
+  concurrent write. The work log is per day and personal for the same reason.
+- A shared work log for a shared routine: a run happens on one machine, and its results belong in
+  the vault's content, where the person looks.
+- Expiring scratch in the memory-index transform or a hook: the transform returns at once when no
+  memory is staged and a hook runs only when a session starts, so neither runs on time alone.
 - An `index.local.md` for personal memories: never staged, so the transform cannot maintain it, and
   one ignore edit from leaking.
 - A closed registry of types: the overview's "types in use" converges the vocabulary without one.
@@ -109,7 +132,10 @@ only when the user asks.
 
 ## Code
 
-- `packages/shared/src/memory-index.ts`: the pure indexer, header and empty stub
+- `packages/shared/src/memory-index.ts`: the pure indexer, header and empty stub, and the scratch
+  expiry rule (`isExpiredScratch`)
+- `apps/desktop/src/plugins/agent/main/memory/sweep.ts`: the sweep; `main/inbox/work-log.ts`: the
+  log's path, line and keep window
 - `apps/desktop/src/main/vault/hooks/memory-index.ts`: the pre-commit transform
 - `apps/desktop/src/plugins/agent/main/claude/vault/shipped/.claude/hooks/memory-overview.mjs`: the `SessionStart` overview
 - `apps/desktop/src/plugins/agent/main/claude/vault/shipped/.claude/skills/memory/SKILL.md`: the memory contract given to the agent
