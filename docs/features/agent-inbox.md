@@ -18,7 +18,7 @@ fills `--session` from `$CLAUDE_JOB_DIR` itself, as the status line does, so the
 passes its own id; a `--path` is still what the entry opens first. It answers `notified`,
 `added to the inbox`, or `already in the inbox, not repeated`. It needs Holi to have the vault
 open: the `holi` command finds Holi through the vault's bridge file, which Holi deletes when it
-leaves the vault, and a notice for a vault that is not the open one is refused (`UNAVAILABLE`), so
+leaves the vault, and a notice for a vault that is not the open one is refused (`UNAVAILABLE: vault-not-open`), so
 a run's results have to wait in the vault itself. The seed allows it without a prompt ([agent-config](agent-config.md)):
 asking would stop an unattended run at a prompt nobody sees.
 

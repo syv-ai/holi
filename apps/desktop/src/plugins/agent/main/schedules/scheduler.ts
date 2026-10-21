@@ -66,7 +66,7 @@ import {
   type VaultEvent,
   type VaultSnapshot,
 } from '@holi/shared'
-import { CapabilityError, type JsonFileStore } from '../../../../main/plugin-api'
+import { CapabilityError, vaultNotOpen, type JsonFileStore } from '../../../../main/plugin-api'
 import type { SessionSummary } from '../claude/listing'
 import { appendWorkLog } from '../inbox/work-log'
 import {
@@ -799,7 +799,7 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
 
     async run(vault, ref) {
       if (attached?.remote !== vault.remote) {
-        throw new CapabilityError('UNAVAILABLE', 'That vault is not open.')
+        throw vaultNotOpen()
       }
       const entries = await readSchedules(vault.root)
       const entry = find(entries, ref)

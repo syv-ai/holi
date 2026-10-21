@@ -21,6 +21,7 @@ import {
   noParams,
   optionalStringParam,
   paramsObject,
+  requireOpen,
   shownPath,
   stringParam,
   type CapabilityContext,
@@ -55,10 +56,6 @@ const NOTIFY_TEXT: Record<RaiseResult, string> = {
 
 export const inboxCapabilities = (deps: InboxCapabilitiesDeps) => {
   const now = deps.now ?? (() => new Date())
-  const isLive = (ctx: CapabilityContext): boolean => deps.liveRemote() === ctx.remote
-  const live = (ctx: CapabilityContext): void => {
-    if (!isLive(ctx)) throw new CapabilityError('UNAVAILABLE', 'That vault is not open in Holi.')
-  }
   /** Best-effort where a notice is the point: the person has been told. */
   const logQuietly = (root: string, text: string): Promise<void> =>
     appendWorkLog(root, now(), text).catch((err: unknown) =>
@@ -92,7 +89,7 @@ export const inboxCapabilities = (deps: InboxCapabilitiesDeps) => {
         }
       },
       run: async (ctx, notice): Promise<RaiseResult> => {
-        live(ctx)
+        requireOpen(ctx)
         const link = notice.path === undefined ? '' : ` [[${notice.path}]]`
         const line = `${notice.title}: ${notice.line}${link}`
         const result = await deps.inbox.raise(notice)
@@ -130,7 +127,7 @@ export const inboxCapabilities = (deps: InboxCapabilitiesDeps) => {
       doors: ['ui'],
       params: (raw) => ({ id: stringParam(paramsObject(raw), 'id') }),
       run: async (ctx, { id }): Promise<InboxView> => {
-        live(ctx)
+        requireOpen(ctx)
         return deps.inbox.dismiss(id)
       },
     }),
@@ -139,7 +136,7 @@ export const inboxCapabilities = (deps: InboxCapabilitiesDeps) => {
       doors: ['ui'],
       params: noParams,
       run: async (ctx): Promise<InboxView> => {
-        live(ctx)
+        requireOpen(ctx)
         return deps.inbox.seen()
       },
     }),

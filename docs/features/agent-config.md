@@ -81,8 +81,8 @@ other way something asks Holi to show a path is held to it too: an app's `holi.o
 command's `{open}` result, `holi agent notify --path`, and a click on an inbox entry. It is the CLI door only (an app has `holi.open`), it opens only into the vault Holi has open (an agent
 session outlives a vault switch, and its open must not switch the person away), and it brings the
 window forward. Outside that vault it is refused as `UNAVAILABLE: vault-not-open`, the one refusal
-every command that shows or writes the open vault gives (`requireOpen` in
-`capabilities/fences.ts`). Main asks the renderer over one push, `vault:open`, the same one a clicked
+every command that shows or writes the open vault gives, core's and the plugins' alike (`requireOpen`
+in `capabilities/fences.ts`, through `plugin-api.ts`). Main asks the renderer over one push, `vault:open`, the same one a clicked
 reminder uses; the renderer switches vault when the path lives elsewhere and opens it through
 `openPathAtom`.
 

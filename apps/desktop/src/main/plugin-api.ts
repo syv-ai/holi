@@ -268,7 +268,10 @@ export { CapabilityError } from './capabilities/error'
 export {
   knownPath,
   readableOrNull,
+  requireOpen,
   shownPath,
+  VAULT_NOT_OPEN,
+  vaultNotOpen,
   writableFile,
   writablePath,
 } from './capabilities/fences'

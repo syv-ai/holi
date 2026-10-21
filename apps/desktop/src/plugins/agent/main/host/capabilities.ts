@@ -23,7 +23,9 @@ import {
   noParams,
   optionalStringParam,
   paramsObject,
+  requireOpen,
   stringParam,
+  VAULT_NOT_OPEN,
   writeAtomic,
   type CapabilityContext,
   type RangeFile,
@@ -48,7 +50,7 @@ export interface AgentCapabilitiesDeps {
   commitNow(): Promise<unknown>
 }
 
-const notOpen = { ok: false as const, message: 'That vault is not open.' }
+const notOpen = { ok: false as const, message: VAULT_NOT_OPEN }
 
 /** An optional whole number, such as a terminal's columns. */
 function countParam(raw: Record<string, unknown>, key: string): number | undefined {
@@ -248,7 +250,7 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
         return { path, text }
       },
       run: async (ctx, { path, text }): Promise<{ ok: true }> => {
-        if (!live(ctx)) throw new CapabilityError('UNAVAILABLE', 'That vault is not open.')
+        requireOpen(ctx)
         await writeAtomic(ctx.root, relPath(path), text)
         await deps.commitNow()
         return { ok: true }

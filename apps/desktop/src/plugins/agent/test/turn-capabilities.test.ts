@@ -33,7 +33,7 @@ async function rig() {
     remote: REMOTE,
     root,
     bundle: null,
-    core: { repo: () => openRepo(root) },
+    core: { repo: () => openRepo(root), syncState: () => ({}) },
   } as unknown as CapabilityContext
   /** Run an entry as dispatch does: params read first, then the entry. */
   const run = async <K extends keyof typeof table>(name: K, params: unknown = {}) => {
