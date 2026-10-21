@@ -28,6 +28,7 @@ import {
   type LineRange,
   type RecentEntry,
   VAULT_MARKER_FILE,
+  isRemote,
 } from '@holi/shared'
 import type { SeedResult } from './vault/seed/types'
 import { searchBodies, type SearchHit } from './vault/search'
@@ -58,7 +59,7 @@ import { knownTransforms, parsePluginSettingsPatch, parseSettingsPatch } from '@
 import { installedInfos } from './plugin-host/installed'
 import type { PreCommitStatus, ResolvedTheme, ResolvedVaultSettings } from '@holi/shared'
 import type { VaultPreCommit } from './vault/hooks/pre-commit'
-import { isRemote, repoName, type VaultRegistry } from './vault/registry'
+import { repoName, type VaultRegistry } from './vault/registry'
 import type { UpdateStatus } from './updates/state'
 import type { Updater } from './updates/updater'
 

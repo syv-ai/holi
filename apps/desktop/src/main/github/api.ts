@@ -8,8 +8,7 @@
  * different: re-authenticate, authorize the token for the org, wait for the
  * rate limit, or accept that this repo is not yours.
  */
-import { sameLogin, type Collaborator } from '@holi/shared'
-import { isRemote } from '../vault/registry'
+import { isRemote, sameLogin, type Collaborator } from '@holi/shared'
 
 /**
  * The GitHub repo topic that marks a repo as a Holi vault.

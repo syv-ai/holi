@@ -42,6 +42,17 @@ export function vaultRelPath(raw: string): VaultRelPath {
   return segments.join('/') as VaultRelPath
 }
 
+/** A vault's identity, `owner/repo`: the form the GitHub API and `git clone`
+ *  both speak, and what a Holi link names a vault by. */
+const REMOTE_RE = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/
+
+export function isRemote(value: string): boolean {
+  // Guard the separator cases the regex would otherwise wave through: a leading,
+  // trailing or doubled slash still has two non-empty-looking sides to a lazy
+  // check, and the value ends up in a filesystem path.
+  return REMOTE_RE.test(value) && !value.includes('..')
+}
+
 /** A secret file's name, in any folder: `.env`, `.env.local`, `.env.<x>`,
  *  `.secrets`, `.secrets.<x>`. The names people already keep secrets under,
  *  and nothing a note could be called (`env.md`, `secrets.md`). */
