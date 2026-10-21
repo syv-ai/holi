@@ -101,9 +101,10 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   app, whether it is a plain link (main's `will-frame-navigate` stops the frame leaving its bundle)
   or `target=_blank`/`window.open` (the sandbox's `allow-popups` lets it reach
   `setWindowOpenHandler`, which never makes a window). Any other scheme opens nothing.
-- **The log.** `log.local.txt` at the bundle's root is what went wrong while the app ran here: the
-  bridge shim reports `console.error`/`warn`, uncaught errors, unhandled rejections and refused
-  bridge calls, plus `holi.log(...)`, capped at 50 a second, and main appends them
+- **The log.** `log.local.txt` at the bundle's root is the app's console on this machine: the
+  bridge shim reports a `load` line when the document starts, `console.log`/`info` (as `info`),
+  `console.warn`/`error`, uncaught errors, unhandled rejections and refused bridge calls, plus
+  `holi.log(...)`, capped at 50 a second, and main appends them
   (`log.ts`, one write at a time, never through a link, never into a deleted bundle).
   Each line is timed; a stack continues indented. It keeps the last day and at most 500 entries,
   trimmed as it is written (`appendAppLog`). It is for the agent: `.local.`, so it never syncs;
@@ -111,7 +112,8 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   watched, so it never triggers a rescan. The pane header's log button, beside reload, opens it in a
   new pane; it is disabled until a rescan has seen one.
 - **Showing.** The frame is hidden until its document has loaded, then fades in
-  (`motion-in-fade`), so a half-styled first paint is never seen; a reload or a mode change starts
+  (`motion-in-fade`), so a half-styled first paint is never seen; the pane is `aria-busy` until
+  then, which is what `holi docs screenshot` waits out; a reload or a mode change starts
   it over.
 - **One registry, two doors.** What main answers is the capability registry
   (`main/capabilities/`, see [architecture](../architecture.md)); the apps feature registers
@@ -146,8 +148,11 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   that posts the three versions to Holi (`/merge/record`), and fails to a conflict when Holi does
   not answer.
 - **The authoring loop.** A seeded skill (`.claude/skills/vault-apps/SKILL.md`) documents the
-  contract. The `holi` CLI gives the agent `holi apps open <path>` and `holi apps init <path>`
-  (never overwrites). A `PostToolUse` hook (`vault-app-check.mjs`) reports, on every write inside
+  contract. The `holi` CLI gives the agent `holi apps open <path>`, `holi apps init <path>`
+  (never overwrites), `holi apps console <path>` (the log from its last `load` line on, or the
+  whole of it with `--all`) and core's `holi docs screenshot <path>` (a PNG of the tab as the
+  person sees it, [agent config](agent-config.md)), so edit, reload, look and read the console is
+  a loop the agent runs on its own. A `PostToolUse` hook (`vault-app-check.mjs`) reports, on every write inside
   a `<name>.app` folder below the session's cwd, a syntax error and its line, a `.ts`/`.tsx`/`.jsx` file nothing will build, a
   `localStorage` call, a missing manifest, and a hard-coded colour. It is advisory, exits 0, and is
   silent when nothing is wrong. See [agent config](agent-config.md) for the CLI and hooks.

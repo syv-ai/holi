@@ -297,12 +297,14 @@ holi store delete <app> <collection> <id>
 
 ## Seeing whether it works
 
-You have three things: a check that runs on every file you write, a command
-that opens the app, and the app's log.
+You have a check that runs on every file you write, a command that opens the
+app, a screenshot of its tab, and its console.
 
 ```sh
-holi apps open <path>       # opens the app's tab in Holi, or reloads it if open
-holi apps init <path>       # scaffolds <path>, a folder ending in .app
+holi apps open <path>        # opens the app's tab in Holi, or reloads it if open
+holi docs screenshot <path>  # a PNG of the tab as the user sees it; prints its path
+holi apps console <path>     # its console and errors since it last loaded
+holi apps init <path>        # scaffolds <path>, a folder ending in .app
 ```
 
 **The check speaks on its own.** Every time you write a file inside a `.app`
@@ -318,22 +320,32 @@ run. So the loop is:
 
 1. Write the files, manifest last.
 2. Read what the check says, if it says anything.
-3. `holi apps open <path>`, e.g. `holi apps open Projects/Q2/Burndown.app`.
-4. **Ask the user what they see.** You have no screenshot and no way to read
-   the rendered page: opening the tab puts it in front of them, not you.
-5. **Read the log**, `log.local.txt` at the app's root, when they say something
-   is wrong. Holi writes into it what went wrong while the app ran on this
-   machine: `console.error` and `console.warn`, uncaught errors and rejected
-   promises (with their stacks), and every bridge call Holi refused, each line
-   timed. `holi.log(...)` adds a line of your own, so log what you would want to
-   know next time. It keeps the last day, never syncs, and the app cannot read
-   it. No file means nothing has gone wrong here yet.
+3. `holi apps open <path>`, e.g. `holi apps open Projects/Q2/Burndown.app`. On an
+   app that is already open this reloads it, which is how your edit reaches the
+   tab.
+4. **Look at it.** `holi docs screenshot <path>` opens the tab if it is not
+   open, waits for it to finish drawing, and prints the path of a PNG of it,
+   in this vault's theme and the light or dark mode the user has. Read that
+   file. It is what the user sees, at the size their pane has now, so a narrow
+   pane shows a narrow app.
+5. **Read its console**: `holi apps console <path>` prints what the app logged
+   since it last loaded: `console.log`, `info`, `warn` and `error`, uncaught
+   errors and rejected promises (with their stacks), and every bridge call Holi
+   refused, each line timed. `holi.log(...)` adds a line of your own.
+   `--all` prints the whole of the last day. The same lines are in
+   `log.local.txt` at the app's root, which never syncs and the app cannot
+   read.
+6. Fix what you saw, and go round again from 3.
 
-The log is your console, but only the user sees the page, so build so that a
-failure is legible in the page itself too:
+The screenshot brings Holi's window to the front, so take one when you mean to
+look, not after every write. When Holi is showing another vault it refuses;
+then ask the user.
+
+Build so that a failure is legible in the page itself too, where a screenshot
+and the user both see it:
 
 - **Wrap the startup in a try/catch and render the error into the page.** A
-  visible message is the only diagnostic the user can read back to you.
+  visible message is a diagnostic anyone looking at the tab can read.
 - **Put something on screen before the first `await`**, so a failing call
   leaves a page with something on it rather than a blank one.
 - Prefer plain DOM over anything clever: no build step, no bundler, no source
@@ -555,9 +567,9 @@ instead.
 ## Before you say it is done
 
 - **Write `app.yaml`**, if you have not. Without it the app does not open.
-- **Open it: `holi apps open <path>`.** Then say what it should show, so the
-  user can tell you when it does not — you have still never seen it render, so
-  do not claim to have looked at it.
+- **Open it and look: `holi apps open <path>`, then `holi docs screenshot
+  <path>` and `holi apps console <path>`.** Say what it shows, and what it
+  should show, so the user can tell you when it does not.
 - **Check it fits the pane** (above): nothing with a pixel width, grids that
   wrap, long text that breaks, and one scrolling region rather than a page that
   scrolls. Ask the user to narrow the pane and say whether anything scrolls
