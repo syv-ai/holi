@@ -24,7 +24,8 @@ export interface HoliLink {
   remote: string
   /** The file, vault-relative and normalized. */
   path: string
-  /** A heading to scroll to: its slug, or its words (`findHeadingLine`). */
+  /** A heading to scroll to: its GitHub anchor (`next-steps-q3`, `notes-1` for
+   *  the second `Notes`), or its words (`findHeadingLine`). */
   heading?: string
 }
 

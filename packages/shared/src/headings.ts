@@ -77,40 +77,97 @@ export function setFirstHeading(body: string, title: string): string {
   return rest === '' ? `# ${title}\n` : `# ${title}\n\n${rest}\n`
 }
 
-/**
- * A heading's anchor, close to GitHub's: lower case, punctuation dropped,
- * spaces as hyphens. `Next steps (Q3)` is `next-steps-q3`. What a Holi link to
- * a heading carries, so the link reads like the heading it points at. Not
- * GitHub's to the letter: a second heading with the same words gets no `-1`,
- * and a run of spaces is one hyphen. NFC first, so a letter typed as one code
- * point or as a base and an accent slugs the same.
- */
-export function headingSlug(text: string): string {
-  return text
-    .normalize('NFC')
-    .trim()
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N}\s_-]/gu, '')
-    .replace(/\s+/g, '-')
+/** Code spans: their contents are literal text, as GitHub renders them. */
+const CODE_SPAN = /(`+)([^`]|[^`][\s\S]*?[^`])\1(?!`)/g
+/** What GitHub's anchor generator drops: punctuation and symbols except `-`
+ *  and `_`, control and format characters, and every separator but a space. */
+const NOT_IN_SLUG = /[^\p{L}\p{M}\p{N}\p{Pc} -]/gu
+
+/** A heading's inline markdown as the text GitHub renders and slugs: an image
+ *  as its alt text, a link as its words, HTML tags and emphasis markers gone. */
+function renderedText(text: string): string {
+  const parts: string[] = []
+  let at = 0
+  const inline = (raw: string): string =>
+    raw
+      .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
+      .replace(/<(?:https?:|mailto:)[^>\s]*>/gi, (url) => url.slice(1, -1))
+      .replace(/<\/?[A-Za-z][^>]*>/g, '')
+      // `*` is dropped as punctuation anyway; `_` is kept unless it is emphasis.
+      .replace(/(^|[^\p{L}\p{N}\\])(_{1,3})(?=\S)([\s\S]*?\S)\2(?![\p{L}\p{N}])/gu, '$1$3')
+      .replace(/\\([!-/:-@[-`{-~])/g, '$1')
+  for (const span of text.matchAll(CODE_SPAN)) {
+    parts.push(inline(text.slice(at, span.index)), span[2]!.replace(/^ (.*) $/s, '$1'))
+    at = span.index + span[0].length
+  }
+  parts.push(inline(text.slice(at)))
+  return parts.join('')
 }
 
 /**
- * The 1-based line of the first heading in `text` (a whole file, frontmatter
- * and all) whose slug is `heading`'s, or null. `heading` may be the slug or the
- * heading's own words. A frontmatter block is skipped: a `# comment` in YAML is
- * not a heading. Two headings with the same words: the first wins.
+ * A heading's base anchor, as GitHub makes it: the rendered text in lower
+ * case, punctuation and symbols dropped, and each space a hyphen (a run of
+ * spaces is a run of hyphens). `Next steps (Q3)` is `next-steps-q3`. NFC first,
+ * so a letter typed as one code point or as a base and an accent slugs the
+ * same. A repeated heading's `-1`, `-2` comes from `headingAnchors`, which
+ * sees the whole document.
  */
-export function findHeadingLine(text: string, heading: string): number | null {
-  const want = headingSlug(heading)
-  if (want === '') return null
+export function headingSlug(text: string): string {
+  return renderedText(text.normalize('NFC').trim())
+    .toLowerCase()
+    .replace(NOT_IN_SLUG, '')
+    .replace(/ /g, '-')
+}
+
+/** One heading of a document and the anchor GitHub gives it. */
+export interface HeadingAnchor {
+  /** 1-based line. */
+  line: number
+  slug: string
+}
+
+/**
+ * Every ATX heading in `text` (a whole file, frontmatter and all) with its
+ * GitHub anchor, top to bottom. A repeated slug gets `-1`, `-2` in document
+ * order, and a suffixed slug is itself taken, as GitHub's slugger does: `A`,
+ * `A`, `A-1` are `a`, `a-1`, `a-1-1`. Frontmatter is skipped, since a `# comment`
+ * in YAML is not a heading, and so is fenced code.
+ */
+export function headingAnchors(text: string): HeadingAnchor[] {
   const lines = text.replace(/\r\n/g, '\n').split('\n')
   let from = 0
   if (lines[0] === '---') {
     const close = lines.findIndex((line, i) => i > 0 && line.startsWith('---'))
     if (close !== -1) from = close + 1
   }
+  const seen = new Map<string, number>()
+  const anchors: HeadingAnchor[] = []
   for (const { index, text: words } of atxHeadings(lines, from)) {
-    if (words !== '' && headingSlug(words) === want) return index + 1
+    const base = headingSlug(words)
+    let slug = base
+    while (seen.has(slug)) {
+      const n = seen.get(base)! + 1
+      seen.set(base, n)
+      slug = `${base}-${n}`
+    }
+    seen.set(slug, 0)
+    anchors.push({ line: index + 1, slug })
   }
-  return null
+  return anchors
+}
+
+/**
+ * The 1-based line of the heading in `text` whose GitHub anchor is `heading`,
+ * or null. `heading` may also be the heading's own words, which find the first
+ * heading with those words.
+ */
+export function findHeadingLine(text: string, heading: string): number | null {
+  const anchors = headingAnchors(text)
+  const exact = heading.normalize('NFC').trim()
+  const words = headingSlug(heading)
+  if (exact === '') return null
+  const found =
+    anchors.find((anchor) => anchor.slug === exact) ??
+    anchors.find((anchor) => words !== '' && anchor.slug === words)
+  return found?.line ?? null
 }
