@@ -584,26 +584,39 @@ describe('hook scripts', () => {
     await writeFile(join(root, 'mine.md'), 'user changed it after')
     await writeFile(join(root, 'new.md'), 'fresh')
     await writeFile(join(root, 'USER.local.md'), 'machine-local')
+    await writeFile(join(root, '.env'), 'TOKEN=secret')
+    await writeFile(join(root, 'odd`name.md'), 'a backtick would end the code span')
     await mkdir(join(root, '.holi/state'), { recursive: true })
-    await writeFile(
-      join(root, '.holi/state/turns.local.json'),
-      JSON.stringify([
-        {
-          base: 'f'.repeat(40),
-          end: 'e'.repeat(40),
-          at: '2026-09-09T02:00:00Z',
-          sessionId: 'other',
-        },
-        { base: end, end, at: '2026-09-09T01:00:00Z', sessionId: 'job1' },
-      ]),
-    )
+    const recordEnd = (jobEnd: string) =>
+      writeFile(
+        join(root, '.holi/state/turns.local.json'),
+        JSON.stringify([
+          {
+            base: 'f'.repeat(40),
+            end: 'e'.repeat(40),
+            at: '2026-09-09T02:00:00Z',
+            sessionId: 'other',
+          },
+          { base: end, end: jobEnd, at: '2026-09-09T01:00:00Z', sessionId: 'job1' },
+        ]),
+      )
+    await recordEnd(end)
     const run = (env: Record<string, string>) =>
       runHook('user-prompt-submit', { cwd: root, env: { CLAUDE_PROJECT_DIR: root, ...env } })
 
     expect((await run({ CLAUDE_JOB_DIR: '/jobs/job1' })).stdout).toBe(
-      'Changed since your last turn, not by you: `edited.md`, `mine.md`, `new.md` ' +
+      'Changed since your last turn, not by you: `edited.md`, `mine.md`, `new.md`, "odd`name.md" ' +
         `(\`git diff ${end.slice(0, 12)}\` shows how)`,
     )
+    // A turn that ended while another session's was running ends at a tree of
+    // the working tree, uncommitted edits and all: those are its own.
+    const index = join(root, '.git/scratch-index')
+    await git('read-tree', '--index-output', index, 'HEAD')
+    const scratch = { cwd: root, env: { ...process.env, GIT_INDEX_FILE: index } }
+    await promisify(execFile)('git', ['add', '--all'], scratch)
+    const tree = (await promisify(execFile)('git', ['write-tree'], scratch)).stdout.trim()
+    await recordEnd(tree)
+    expect((await run({ CLAUDE_JOB_DIR: '/jobs/job1' })).stdout).toBe('')
     // A session with no turn of its own recorded, and one that is not a
     // background session at all, get nothing.
     expect((await run({ CLAUDE_JOB_DIR: '/jobs/job2' })).stdout).toBe('')

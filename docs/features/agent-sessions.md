@@ -98,12 +98,14 @@ its process goes, on two consecutive `idle` readings (escaping a permission prom
 or on a 10 minute cap. Sessions keep running while Holi is closed, so the first read after a vault
 opens puts any session already busy into the set.
 
-**Turn review.** A turn is a commit range, `base` at start to the settle commit. Records go to
-`.holi/state/turns.local.json` (50, newest first), keyed by job id; files and diffs come from git
-when shown. A turn that changed nothing is recorded too, since the prompt hook counts "changed since
-your last turn" from it ([agent-config.md](agent-config.md)); the chip skips it. A chip under a session's window says `Claude changed N files` and opens a review with
-per-hunk accept and reject, saved as one new commit per file. An overlapped turn says so; an
-unreachable range says its history is gone.
+**Turn review.** A turn is a commit range, `base` at start to the settle commit, or, for a turn
+that ended while another session's was still running, to a tree object of the working tree as it
+ended. Records go to `.holi/state/turns.local.json` (50, newest first), keyed by job id; files and
+diffs come from git when shown. A turn that changed nothing is recorded too, since the prompt hook
+counts "changed since your last turn" from it ([agent-config.md](agent-config.md)), but only the
+session's latest such one is kept, and the chip skips it. A chip under a session's window says
+`Claude changed N files` and opens a review with per-hunk accept and reject, saved as one new
+commit per file. An overlapped turn says so; an unreachable range says its history is gone.
 
 **Merge resolver.** "Ask Claude to reconcile" re-runs the merge without aborting and starts a
 session whose first turn names the conflicted paths. The agent resolves and commits the merge in

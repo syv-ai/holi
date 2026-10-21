@@ -72,6 +72,8 @@ export interface AgentSessionsDeps {
   /** Holi's generated commands, first on every session's `PATH`. */
   binDir(): string | null
   turnLogFor?: (vaultRoot: string) => TurnLog
+  /** See `TurnCoordinatorDeps.snapshot`. */
+  snapshot?: (vaultRoot: string) => Promise<string | null>
   turnSafetyMs?: number
   idleRecheckMs?: number
   /** Forwarded to the turn coordinator. */
@@ -180,6 +182,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
   const coordinator: TurnCoordinator = createTurnCoordinator({
     vault: () => current?.vault ?? null,
     ...(deps.turnLogFor === undefined ? {} : { turnLogFor: deps.turnLogFor }),
+    ...(deps.snapshot === undefined ? {} : { snapshot: deps.snapshot }),
     ...(deps.turnSafetyMs === undefined ? {} : { turnSafetyMs: deps.turnSafetyMs }),
     ...(deps.idleConfirmMs === undefined ? {} : { idleConfirmMs: deps.idleConfirmMs }),
     onChange: () => push(),

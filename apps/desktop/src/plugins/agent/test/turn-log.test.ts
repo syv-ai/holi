@@ -107,6 +107,21 @@ describe('appending', () => {
     expect(await log.list()).toEqual([same])
   })
 
+  it('keeps one changed-nothing turn per session, so they cannot push real turns out', async () => {
+    const log = openTurnLog(root)
+    const idle = (sessionId: string, n: number) => ({
+      base: 'same',
+      end: 'same',
+      at: `2026-09-09T0${n}:00:00Z`,
+      sessionId,
+    })
+    await log.append({ ...record(1), sessionId: 'a' })
+    await log.append(idle('a', 2))
+    await log.append(idle('b', 3))
+    await log.append(idle('a', 4))
+    expect(await log.list()).toEqual([idle('a', 4), idle('b', 3), { ...record(1), sessionId: 'a' }])
+  })
+
   it('never syncs, because the name says so', () => {
     // `.local.` is the whole mechanism: the seeded ignore covers it, and a
     // teammate pulling your turn boundaries would be reading your session.

@@ -56,12 +56,18 @@ focus and selection print the same bytes and do not break the prompt cache.
 The second line is what changed since the session's last turn that the session did not change:
 `Changed since your last turn, not by you: <paths> (git diff <sha> shows how)`. The hook finds the
 session's newest record in `.holi/state/turns.local.json` by its job id (the name of
-`$CLAUDE_JOB_DIR`, as the turn hooks send it) and lists `git diff --name-only <end> HEAD` plus
-`git status`: commits since the settle commit (autosave makes most edits commits) and work not yet
-committed. That is the user's edits, a pull, or another session's turn, which is why it says "not
-by you" rather than naming who. Ten paths at most, then `and N more`; `.holi/state/` and `.local.`
-files are left out. A session with no recorded turn, an unreachable `end`, or a vault opened
-outside Holi prints nothing.
+`$CLAUDE_JOB_DIR`, as the turn hooks send it) and diffs that record's `end` against the working
+tree as it stands, written as a tree object through a scratch index so the real one is untouched:
+commits since then (autosave makes most edits commits) and work not yet committed alike. That is
+the user's edits, a pull, or another session's turn, which is why it says "not by you" rather than
+naming who. A turn that ends while another session's is still running cannot have a settle commit
+yet, so its record ends at the same kind of tree, taken as it ends; its own uncommitted edits are
+then never reported back to it. What the user edits during the session's own turn lands in that
+turn's settle commit and is not reported either. Ten paths at most, then `and N more`;
+`.holi/state/`, `.local.` and secret files are left out, and a name a code span cannot hold is
+quoted instead. A session with no recorded turn, an unreachable `end`, or a vault opened outside
+Holi prints nothing. The hook is a shipped one, so a vault created before it gets it with
+`holi skills update`.
 
 **Showing a file.** `holi docs open <path>` opens a note, task, PDF, vault app or any file the
 vault's snapshot holds in a pinned tab, so the agent can say "here it is" rather than "go to X".

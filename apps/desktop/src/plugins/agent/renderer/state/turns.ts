@@ -70,9 +70,9 @@ export const turnDiffAtom = atom<TurnDiff | null>(null)
 
 // ------------------------------------------------------------------- write atoms
 
-/** The newest record for each session that changed something. The log is already newest-first and is
- *  never re-sorted here, so the first record naming a session is that session's
- *  latest. */
+/** The newest record for each session that changed something. The log is
+ *  already newest-first and is never re-sorted here, so the first record naming
+ *  a session is that session's latest. */
 export const loadLatestTurnsAtom = atom(null, async (get, set) => {
   const remote = get(activeRemoteAtom)
   if (remote === null) return
