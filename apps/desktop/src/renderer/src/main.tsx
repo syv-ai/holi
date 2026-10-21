@@ -5,8 +5,7 @@ import { createRoot } from 'react-dom/client'
 import { App } from './App'
 import { TooltipProvider } from './primitives'
 import { flushAllBuffers } from './lib/buffer-registry'
-import { CORE_CONTRIBUTION } from './components/core-surfaces'
-import { coreContributionAtom, hostPluginVaults, installedPluginsAtom } from './state/plugins'
+import { hostPluginVaults, installedPluginsAtom } from './state/plugins'
 import { reportUiToMain } from './state/ui-report'
 import { watchPendingSkills } from './state/skills'
 import { subscribeToUpdates } from './state/updates'
@@ -28,11 +27,9 @@ window.holi.window.onFullScreen((on) => {
   if (on) document.documentElement.dataset.fullscreen = ''
   else delete document.documentElement.dataset.fullscreen
 })
-// The plugins this build has: the one place the renderer imports them. Core's
-// own surfaces go in beside them.
+// The plugins this build has: the one place the renderer imports them.
 checkPluginCatalogue(RENDERER_PLUGINS.map((p) => p.info))
 store.set(installedPluginsAtom, RENDERER_PLUGINS)
-store.set(coreContributionAtom, CORE_CONTRIBUTION)
 subscribeToVault(store, RENDERER_PLUGINS)
 subscribeToUpdates(store)
 watchPendingSkills(store)
