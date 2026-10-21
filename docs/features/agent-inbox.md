@@ -46,7 +46,7 @@ and opens the entry the same way.
 
 **The work log.** `.holi/state/log/<YYYY-MM-DD>.local.md`, one per local day, one line per thing
 done (`- 14:05 Offer drafted: Check the prices. [[tilbud/a.md]]`), so "what did you do this week?"
-is a grep. Personal and never synced. `holi agent notify` and `holi agent log` write lines there,
+is a grep. Personal and never synced, and kept 30 days ([agent-memory](agent-memory.md)). `holi agent notify` and `holi agent log` write lines there,
 and the scheduler writes one when a scheduled run is done or fails to start
 ([scheduled-agents](scheduled-agents.md)), so a run that notified nobody still shows. A routine's
 own results go in the vault, where the person will look.
