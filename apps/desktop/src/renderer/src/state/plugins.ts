@@ -47,11 +47,10 @@ export const settingDescriptorsAtom = atom((get) =>
 )
 
 /** What core contributes the way a plugin does: its own surfaces, rail items
- *  and claims, and what core parts not yet a plugin add. Always on. */
-export type CoreContribution = Pick<Required<RendererPlugin>, 'surfaces' | 'rail'> &
-  Pick<RendererPlugin, 'overlays' | 'pathMarks'> & {
-    claims: readonly PathClaim[]
-  }
+ *  and claims. Always on. */
+export type CoreContribution = Pick<Required<RendererPlugin>, 'surfaces' | 'rail'> & {
+  claims: readonly PathClaim[]
+}
 
 export const coreContributionAtom = atom<CoreContribution>({ surfaces: [], rail: [], claims: [] })
 
@@ -159,15 +158,15 @@ const contributionsAtom = atom(
   ],
 )
 
-/** What core and the running plugins lay over the panes, each with a key. */
+/** What the running plugins lay over the panes, each with a key. */
 export const overlaysAtom = atom((get): readonly { key: string; Overlay: ComponentType }[] =>
   get(contributionsAtom).flatMap(({ id, overlays = [] }) =>
     overlays.map((Overlay, i) => ({ key: `${id}:${i}`, Overlay })),
   ),
 )
 
-/** How every vault path is marked in the tree and the tabs: what core and
- *  the running plugins say, the first to mark a path winning. */
+/** How every vault path is marked in the tree and the tabs: what the
+ *  running plugins say, the first to mark a path winning. */
 export const pathMarksAtom = atom((get): ReadonlyMap<string, PathMark> => {
   const marks = new Map<string, PathMark>()
   for (const { pathMarks } of get(contributionsAtom)) {

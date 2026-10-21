@@ -12,7 +12,7 @@ import { render, screen } from '@/test/render'
 import { FileText } from 'lucide-react'
 import type { PathMark, Surface } from '@/plugin-api/types'
 import type { Tab } from '@/state/panes'
-import { coreContributionAtom } from '@/state/plugins'
+import { coreContributionAtom, installedPluginsAtom } from '@/state/plugins'
 import { snapshotAtom } from '@/state/vaults'
 import { TabStrip } from '../TabStrip'
 
@@ -44,12 +44,10 @@ function strip(tab: Tab, name: string, over: { icons?: Record<string, string> } 
 
 beforeEach(() => {
   store.set(snapshotAtom, EMPTY)
-  store.set(coreContributionAtom, {
-    surfaces: [APP_SURFACE],
-    rail: [],
-    claims: [],
-    pathMarks: MARKS,
-  })
+  store.set(coreContributionAtom, { surfaces: [APP_SURFACE], rail: [], claims: [] })
+  store.set(installedPluginsAtom, [
+    { info: { id: 'marks', label: 'Marks', default: true }, pathMarks: MARKS },
+  ])
 })
 
 test('a note is named without .md and leads with nothing', () => {
