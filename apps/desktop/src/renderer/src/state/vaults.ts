@@ -289,15 +289,25 @@ export const abandonReconcileAtom = atom(null, async () => {
  * restore point *before* the multi-file edit, so every step after is
  * recoverable (there is no transaction, `docs/features/wiki-links.md`). Then the
  * rename, then a second commit so it lands as one commit on safe ground.
+ * `localLinksOnly` rewrites only links in local files (`renameNote`).
  */
 export const renameNoteAtom = atom(
   null,
-  async (get, set, { from, to }: { from: string; to: string }) => {
+  async (
+    get,
+    set,
+    { from, to, localLinksOnly }: { from: string; to: string; localLinksOnly?: boolean },
+  ) => {
     const remote = get(activeRemoteAtom)
     if (!remote) return
     await flushAllBuffers()
     await trpc.sync.commitNow.mutate()
-    await trpc.notes.rename.mutate({ remote, from, to })
+    await trpc.notes.rename.mutate({
+      remote,
+      from,
+      to,
+      ...(localLinksOnly === true ? { localLinksOnly } : {}),
+    })
     set(workspaceAtom, retargetTab(get(workspaceAtom), from, to))
     const wasActive = get(activeDocAtom)?.path === from
     await set(loadSnapshotAtom)
