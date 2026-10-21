@@ -9,7 +9,9 @@
  * the active segment raised in place.
  */
 import { atom, useAtom, useAtomValue } from 'jotai'
-import { Bot, FileText } from 'lucide-react'
+import { FileText } from 'lucide-react'
+import { HOLI_COLOURS } from '@holi/shared'
+import { PixelMascot, type MascotStatus } from '@/composites'
 import { Icon, Tabs, TabsList, TabsTrigger } from '@/primitives'
 import type { AgentsStatus } from '@/plugin-api/types'
 import { appModeAtom, type AppMode } from '@/state/app-mode'
@@ -54,7 +56,14 @@ export function ModeToggle(): React.JSX.Element | null {
           aria-label={`Agents${said}`}
           className="text-nav data-[state=active]:shadow-none"
         >
-          <Icon icon={Bot} size="sm" />
+          {/* The agents have a face, as each Holi does: idle it bobs,
+              working it hops, waiting on you it gets an idea. */}
+          <PixelMascot
+            name="invader"
+            color={HOLI_COLOURS[0]}
+            status={agentsFace(status)}
+            className="size-3.5"
+          />
           <span className="truncate">Agents</span>
           {status.needsYou > 0 ? (
             <span className="flex items-center gap-1 text-xs text-amber-600 tabular-nums dark:text-amber-400">
@@ -73,4 +82,12 @@ export function ModeToggle(): React.JSX.Element | null {
       </TabsList>
     </Tabs>
   )
+}
+
+/** What the Agents face is doing: what the agents report, the most urgent
+ *  first. */
+function agentsFace(status: AgentsStatus): MascotStatus {
+  if (status.needsYou > 0) return 'needs-you'
+  if (status.working > 0) return 'working'
+  return 'idle'
 }
