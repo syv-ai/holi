@@ -314,6 +314,116 @@ describe('the client credentials', () => {
   })
 })
 
+describe('a grant that lands after it was let go', () => {
+  const TOKEN_URL = 'https://oauth2.googleapis.com/token'
+  const REVOKE = 'https://oauth2.googleapis.com/revoke'
+
+  /**
+   * A connect whose code exchange hangs until `release`, the moment a cancel
+   * or a client change cannot stop: the request is already at Google.
+   */
+  async function hangingExchange() {
+    let state = ''
+    let release = () => {}
+    let exchanging = () => {}
+    const atGoogle = new Promise<void>((resolve) => (exchanging = resolve))
+    const revoked: string[] = []
+    const accounts = await createGoogleAccounts({
+      store,
+      vaults: createVaultAccounts(join(dir, 'google-vault-accounts.json')),
+      clients: memoryClients(null),
+      env: {},
+      listen: async () => ({
+        port: 45123,
+        waitForRedirect: async () => ({ code: 'auth-code', state }),
+        close: () => {},
+      }),
+      openBrowser: async (url) => {
+        state = new URL(url).searchParams.get('state') ?? ''
+      },
+      fetch: (async (url: string, init: RequestInit) => {
+        const body = new URLSearchParams(String(init.body))
+        if (url === REVOKE) {
+          revoked.push(body.get('token') ?? '')
+          return new Response('{}', { status: 200 })
+        }
+        expect(url).toBe(TOKEN_URL)
+        exchanging()
+        await new Promise<void>((resolve) => (release = resolve))
+        return new Response(
+          JSON.stringify({
+            access_token: 'at-new',
+            refresh_token: 'rt-new',
+            expires_in: 3600,
+            scope: 'openid email',
+            id_token: `header.${Buffer.from(
+              JSON.stringify({ sub: 'sub-9', email: 'ada@syv.ai' }),
+            ).toString('base64url')}.signature`,
+          }),
+          { status: 200 },
+        )
+      }) as unknown as typeof globalThis.fetch,
+      now: () => NOW,
+    })
+    return { accounts, revoked, atGoogle, release: () => release() }
+  }
+
+  it('revokes the grant of a connect cancelled during the exchange, and keeps nothing', async () => {
+    const rig = await hangingExchange()
+    const flow = await rig.accounts.connect(VAULT)
+    const outcome = flow.wait()
+    await rig.atGoogle
+
+    rig.accounts.cancelConnect()
+    rig.release()
+
+    expect(await outcome).toEqual({ kind: 'cancelled' })
+    expect(rig.revoked).toEqual(['rt-new'])
+    expect(rig.accounts.list()).toEqual([])
+    expect(await rig.accounts.sessionFor(VAULT)).toBeNull()
+  })
+
+  it('revokes the grant of a connect overtaken by a client change', async () => {
+    const rig = await hangingExchange()
+    const flow = await rig.accounts.connect(VAULT)
+    const outcome = flow.wait()
+    await rig.atGoogle
+
+    await rig.accounts.setClient({ id: 'own.apps.googleusercontent.com', secret: 's' })
+    rig.release()
+
+    expect(await outcome).toEqual({ kind: 'cancelled' })
+    expect(rig.revoked).toEqual(['rt-new'])
+    expect(rig.accounts.list()).toEqual([])
+  })
+
+  it('does not bring back an account removed while it was refreshing', async () => {
+    let release = () => {}
+    let refreshing = () => {}
+    const atGoogle = new Promise<void>((resolve) => (refreshing = resolve))
+    const fetchImpl = (async (url: string) => {
+      if (url === REVOKE) return new Response('{}', { status: 200 })
+      refreshing()
+      await new Promise<void>((resolve) => (release = resolve))
+      return new Response(JSON.stringify({ access_token: 'at-2', expires_in: 3600 }), {
+        status: 200,
+      })
+    }) as unknown as typeof globalThis.fetch
+    const accounts = await manager([auth({ expiresAt: NOW - 1 })], fetchImpl)
+    await accounts.link(VAULT, 'sub-1')
+
+    const token = accounts.sessionForSub('sub-1')!.getAccessToken()
+    await atGoogle
+    await accounts.removeAccount('sub-1')
+    release()
+    await token
+
+    expect(accounts.list()).toEqual([])
+    expect(await store.read()).toEqual({})
+    expect(await accounts.sessionFor(VAULT)).toBeNull()
+  })
+})
+
 describe('resolveClient', () => {
   const OWN = { id: 'own.apps.googleusercontent.com', secret: 'own-secret' }
   const ENV = { HOLI_GOOGLE_CLIENT_ID: 'env.apps.googleusercontent.com' }

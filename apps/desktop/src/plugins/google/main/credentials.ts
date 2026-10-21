@@ -79,9 +79,10 @@ export function resolveClient(
 }
 
 /** Whether Google would see two clients as one: a grant made under one
- *  refreshes under the other. */
+ *  refreshes under the other. **The id alone decides it**: a grant belongs to
+ *  the client id, and a client keeps it across a new or rotated secret. */
 export function sameClient(a: GoogleClient, b: GoogleClient): boolean {
-  return a.id === b.id && (a.secret ?? '') === (b.secret ?? '')
+  return a.id === b.id
 }
 
 /** The suffix every Google OAuth client id carries. Checked so a secret pasted
@@ -106,7 +107,9 @@ export interface GoogleClientStore {
  * none, which falls back to the next source.
  */
 export function createClientStore(path: string): GoogleClientStore {
-  const store = jsonFileStore(path, parseClient)
+  // Owner-only, as the tokens beside it are: not confidential, but nobody
+  // else's to read either.
+  const store = jsonFileStore(path, parseClient, { mode: 0o600 })
   return {
     read: store.read,
     async write(client) {

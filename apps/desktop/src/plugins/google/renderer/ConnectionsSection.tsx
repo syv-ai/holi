@@ -18,19 +18,16 @@
  * (`refreshGoogle`) rather than assuming what it produced.
  */
 import { useAtomValue } from 'jotai'
+import { Unplug } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { FormField, SettingsHeading, SettingsLink, SettingsNote } from '@/composites'
 import { activeRemoteAtom } from '@/plugin-api'
-import { Button, Input } from '@/primitives'
-import type { GoogleClientSource } from '../main/credentials'
+import { Button, ConfirmInPlace, Input } from '@/primitives'
 import { googleCap, useGoogleAccount } from './account'
 import { useAlwaysAllowedSenders, useForgetImageSenders } from './mail-images'
 
 /** The OAuth client in use, as main reports it: never its secret. */
-interface GoogleClientInfo {
-  id: string
-  source: GoogleClientSource
-}
+type GoogleClientInfo = Awaited<ReturnType<typeof googleCap.client>>
 
 /** The flow's transient state. "Connected" is deliberately absent: that is the
  *  shared atom's to know. */
@@ -271,8 +268,8 @@ function clientLabel(client: GoogleClientInfo): string {
  *
  * **Machine-wide, unlike the rest of the section**, because the accounts it
  * connects are. Saving a different client disconnects every account here
- * (their grants belong to the old one), so the form says so before the press,
- * on the button itself.
+ * (their grants belong to the old one), so the button names the cost and
+ * asks once more before it acts.
  */
 function OAuthClient({
   client,
@@ -316,6 +313,10 @@ function OAuthClient({
     accountCount === 0
       ? ''
       : ` and disconnect ${accountCount} ${accountCount === 1 ? 'account' : 'accounts'}`
+  /** The same id is the same client (a new secret keeps every grant), so
+   *  saving it costs nothing. */
+  const saveCost = id.trim() === client.id ? '' : cost
+  const canSave = !busy && id.trim() !== '' && secret.trim() !== ''
 
   if (!editing) {
     return (
@@ -358,27 +359,70 @@ function OAuthClient({
       {error !== undefined && <p className="text-[11px] text-destructive">{error}</p>}
       <div className="flex flex-wrap items-center justify-end gap-2">
         {client.source === 'own' && (
-          <Button
-            variant="ghost"
-            size="xs"
+          <CostlyButton
+            label={`Use the default client${cost}`}
+            costly={cost !== ''}
             disabled={busy}
-            onClick={() => void save({ id: '', secret: '' })}
-          >
-            {`Use Holi’s client${cost}`}
-          </Button>
+            variant="ghost"
+            onPress={() => void save({ id: '', secret: '' })}
+          />
         )}
         <Button variant="ghost" size="xs" disabled={busy} onClick={close}>
           Cancel
         </Button>
-        <Button
-          size="xs"
-          disabled={busy || id.trim() === '' || secret.trim() === ''}
-          onClick={() => void save({ id, secret })}
-        >
-          {`Save${cost}`}
-        </Button>
+        <CostlyButton
+          label={`Save${saveCost}`}
+          costly={saveCost !== ''}
+          disabled={!canSave}
+          onPress={() => void save({ id, secret })}
+        />
       </div>
     </div>
+  )
+}
+
+/**
+ * A button whose press may disconnect accounts. With nothing to lose it is a
+ * plain button; with accounts at stake the first press only asks, turning the
+ * same pill solid, and the second acts (`ConfirmInPlace`). Left unanswered, the
+ * question folds away and nothing happens.
+ */
+function CostlyButton({
+  label,
+  costly,
+  disabled,
+  variant,
+  onPress,
+}: {
+  label: string
+  costly: boolean
+  disabled: boolean
+  variant?: 'ghost'
+  onPress: () => void
+}): React.JSX.Element {
+  if (!costly || disabled) {
+    return (
+      <Button variant={variant} size="xs" disabled={disabled} onClick={onPress}>
+        {label}
+      </Button>
+    )
+  }
+  return (
+    <ConfirmInPlace
+      size="row"
+      role="button"
+      tabIndex={0}
+      label={label}
+      confirmLabel={label}
+      icon={Unplug}
+      onConfirm={onPress}
+      onKeyDown={(event) => {
+        if (event.key !== 'Enter' && event.key !== ' ') return
+        event.preventDefault()
+        event.currentTarget.click()
+      }}
+      className="flex h-8 cursor-pointer items-center gap-1.5 rounded-full bg-muted pr-3.5 pl-5 text-xs outline-none motion-respond hover:bg-accent focus-visible:ring-1 focus-visible:ring-ring"
+    />
   )
 }
 

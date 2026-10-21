@@ -85,6 +85,12 @@ export async function createGoogleAccounts(
   const sessions = new Map<string, GoogleSession>()
   const listeners = new Set<(sub: string | null) => void>()
   let connecting: LoopbackFlow | null = null
+  /** Bumped by every client change, so a consent that began under the old
+   *  client knows its grant is not this machine's to keep. */
+  let clientEpoch = 0
+  /** A client change in progress: a connect waits it out rather than starting
+   *  under a client about to be replaced. Never rejects. */
+  let switching: Promise<void> | null = null
   /** The person's own client, loaded once: main is its only writer. */
   let own: GoogleClient | null = (await deps.clients?.read()) ?? null
   const currentClient = () => resolveClient(own, deps.env)
@@ -103,6 +109,9 @@ export async function createGoogleAccounts(
   const refFor = (sub: string): AccountRef => ({
     read: () => accounts[sub] ?? null,
     async write(auth) {
+      // A refresh that was in flight when the account was removed must not
+      // bring it back: the grant is revoked and the vaults unlinked.
+      if (accounts[sub] === undefined) return
       await persist({ ...accounts, [sub]: auth })
     },
     async remove() {
@@ -146,7 +155,10 @@ export async function createGoogleAccounts(
     },
 
     async connect(remote) {
+      await switching
+      const epoch = clientEpoch
       const { id, secret } = currentClient()
+      let cancelled = false
       const flow = await startLoopbackFlow({
         clientId: id,
         clientSecret: secret,
@@ -156,11 +168,10 @@ export async function createGoogleAccounts(
         fetch: deps.fetch,
         now: deps.now,
       })
-      connecting = flow
-
-      return {
+      const wrapped: LoopbackFlow = {
         authUrl: flow.authUrl,
         cancel: () => {
+          cancelled = true
           connecting = null
           flow.cancel()
         },
@@ -169,10 +180,18 @@ export async function createGoogleAccounts(
         // write and show "not connected" for a tick.
         wait: async () => {
           const result = await flow.wait()
-          connecting = null
+          if (connecting === wrapped) connecting = null
           if (result.kind !== 'granted') return result
 
           const { tokens } = result
+          // A cancel or a client change that arrived while the code was being
+          // exchanged: the flow cannot stop a request already sent, so the
+          // grant comes back anyway. Keeping it would save an account the
+          // person let go of, or one made under a client no longer in use.
+          if (cancelled || epoch !== clientEpoch) {
+            await revoke(tokens.refreshToken)
+            return { kind: 'cancelled' } as const
+          }
           // Additive: another vault may be using an account already in the store.
           await persist({
             ...accounts,
@@ -193,11 +212,12 @@ export async function createGoogleAccounts(
           return result
         },
       }
+      connecting = wrapped
+      return wrapped
     },
 
     cancelConnect() {
-      connecting?.cancel()
-      connecting = null
+      cancelFlow()
     },
 
     async link(remote, sub) {
@@ -226,33 +246,71 @@ export async function createGoogleAccounts(
     },
 
     async setClient(next) {
-      if (deps.clients === undefined) throw new Error('no store for an own Google client')
-      const before = currentClient()
-      await deps.clients.write(next)
-      own = next
-      if (sameClient(before, currentClient())) return
-      // Every grant here was made under the client just replaced: none of them
-      // can refresh now, and a consent in flight would land one more.
-      connecting?.cancel()
-      connecting = null
-      for (const sub of Object.keys(accounts)) await removeAccount(sub)
+      const clients = deps.clients
+      if (clients === undefined) throw new Error('no store for an own Google client')
+      await switching
+      const change = (async () => {
+        if (!sameClient(currentClient(), resolveClient(next, deps.env))) {
+          // Every grant here was made under the client being replaced, and a
+          // consent in flight would land one more. They go BEFORE the switch:
+          // a refresh meanwhile still presents the client its grant belongs
+          // to, rather than meeting a 400 under the new one and dropping the
+          // account unrevoked.
+          clientEpoch += 1
+          cancelFlow()
+          const subs = Object.keys(accounts)
+          await Promise.all(subs.map((sub) => revokeAccount(sub)))
+          // One at a time: each write is the whole store.
+          for (const sub of subs) await dropAccount(sub)
+        }
+        await clients.write(next)
+        own = next
+      })()
+      const latch = change.then(
+        () => undefined,
+        () => undefined,
+      )
+      switching = latch
+      try {
+        await change
+      } finally {
+        if (switching === latch) switching = null
+      }
     },
   }
 
-  async function removeAccount(sub: string): Promise<void> {
-    const auth = accounts[sub]
-    if (auth === undefined) return
-    // Revoking server-side is the point: dropping only the local copy leaves a
-    // live grant on someone's Google account with nothing in Holi to show for
-    // it. A failed revoke still clears locally: the user asked for this, and
-    // refusing because Google is unreachable would trap them. Revoking needs
-    // only the token, so it works after the client has changed.
+  function cancelFlow(): void {
+    connecting?.cancel()
+    connecting = null
+  }
+
+  /** Revoking needs only the token, so it works whatever the client. A failed
+   *  revoke is swallowed: see `removeAccount`. */
+  async function revoke(refreshToken: string): Promise<void> {
     await (deps.fetch ?? globalThis.fetch)(REVOKE_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({ token: auth.refreshToken }).toString(),
+      body: new URLSearchParams({ token: refreshToken }).toString(),
     }).catch(() => undefined)
+  }
 
+  async function revokeAccount(sub: string): Promise<void> {
+    const auth = accounts[sub]
+    if (auth !== undefined) await revoke(auth.refreshToken)
+  }
+
+  async function removeAccount(sub: string): Promise<void> {
+    if (accounts[sub] === undefined) return
+    // Revoking server-side is the point: dropping only the local copy leaves a
+    // live grant on someone's Google account with nothing in Holi to show for
+    // it. A failed revoke still clears locally: the user asked for this, and
+    // refusing because Google is unreachable would trap them.
+    await revokeAccount(sub)
+    await dropAccount(sub)
+  }
+
+  async function dropAccount(sub: string): Promise<void> {
+    if (accounts[sub] === undefined) return
     const next = { ...accounts }
     delete next[sub]
     await persist(next)
