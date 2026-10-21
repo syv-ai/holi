@@ -217,6 +217,38 @@ describe('memory-overview', () => {
     expect(out).not.toContain('padding')
   })
 
+  it('lists live scratch notes apart, with their expiry, and leaves expired ones out', async () => {
+    const note = (title: string, expires: string) =>
+      `---\ntype: scratch\nexpires: ${expires}\ndescription: ${title} for now\n---\n\n# ${title}\n`
+    const { out, code } = await run(
+      await vault({
+        '.holi/memory/index.md': INDEX,
+        '.holi/memory/live.local.md': note('Build is broken', '2999-01-01'),
+        '.holi/memory/old.local.md': note('Deploy frozen', '2000-01-01'),
+        '.holi/memory/ada.local.md': '---\ntype: person\n---\n\n# Ada\n',
+      }),
+    )
+    expect(code).toBe(0)
+    expect(out).toContain('1 personal, 1 scratch')
+    expect(out).toContain(
+      '- [[.holi/memory/live.local.md|Build is broken]] (expires 2999-01-01) — Build is broken for now',
+    )
+    expect(out).not.toContain('Deploy frozen')
+  })
+
+  it('points at the work log by name, without reading it', async () => {
+    const { out } = await run(
+      await vault({
+        '.holi/memory/index.md': INDEX,
+        '.holi/state/log/2000-01-02.local.md': '- 09:00 the secret line\n',
+        '.holi/state/log/2000-01-01.local.md': '- 09:00 older\n',
+      }),
+    )
+    expect(out).toContain('`.holi/state/log/2000-01-02.local.md` (previous)')
+    expect(out).not.toContain('2000-01-01')
+    expect(out).not.toContain('the secret line')
+  })
+
   it('exits 0 and prints nothing when CLAUDE_PROJECT_DIR points nowhere', async () => {
     const real = await vault({})
     const { out, code } = await run(join(tmpdir(), 'holi-does-not-exist-at-all'), real)

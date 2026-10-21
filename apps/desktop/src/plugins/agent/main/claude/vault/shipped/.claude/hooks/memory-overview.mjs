@@ -9,12 +9,13 @@
 //
 // Reads only. The shared memories' titles come from `.holi/memory/index.md`,
 // which the memory-index transform already generated; personal `*.local.md`
-// memories, which no index lists, are read here. Every memory file is also
-// parsed once per session by the memory lint (`.claude/skills/memory/lint.mjs`),
-// of which only the count is printed, plus one `git log`. It never calls Holi's
-// bridge: Claude Code spawns this, not Holi, so it must work with no server
-// anywhere. Absent `.holi/memory/`, it prints nothing and exits 0, exactly as
-// the focused-note hook does outside Holi.
+// memories, which no index lists, are read here, and so are the names in the
+// work log's folder. Every memory file is also parsed once per session by the
+// memory lint (`.claude/skills/memory/lint.mjs`), of which only the count is
+// printed, plus one `git log`. It never calls Holi's bridge: Claude Code spawns
+// this, not Holi, so it must work with no server anywhere. Absent
+// `.holi/memory/`, it prints nothing and exits 0, exactly as the focused-note
+// hook does outside Holi.
 //
 // Dependency-free (`node:` builtins only), like the three hooks beside it.
 
@@ -81,8 +82,8 @@ function memoryFiles(dir, prefix = '.holi/memory') {
   return out
 }
 
-/** Frontmatter title/description, without a YAML parser: these are the two keys
- *  the seed asks for and both are one-line scalars. A file whose frontmatter is
+/** Frontmatter title/description (and a scratch note's type/expires), without a
+ *  YAML parser: all are one-line scalars. A file whose frontmatter is
  *  malformed simply yields nothing, which is this whole design's house style. */
 function titleAndDescription(text, path) {
   const fence = /^---\n([\s\S]*?)\n---/.exec(text ?? '')
@@ -93,15 +94,80 @@ function titleAndDescription(text, path) {
   }
   const h1 = /^\s*#\s+(.+?)\s*$/m.exec((text ?? '').replace(/^---\n[\s\S]*?\n---\n/, ''))
   const name = (path.split('/').at(-1) ?? path).replace(/\.md$/i, '')
-  return { title: value('title') ?? h1?.[1] ?? name, description: value('description') }
+  return {
+    title: value('title') ?? h1?.[1] ?? name,
+    description: value('description'),
+    type: value('type'),
+    expires: value('expires'),
+  }
+}
+
+/** When a scratch note's `expires` passes, on this machine's clock, or null when
+ *  it is no stamp. A date lasts through that day; `YYYY-MM-DDTHH:MM` ends at
+ *  that minute. The same rule as `scratchExpiry` in `@holi/shared`, which Holi's
+ *  sweep deletes by; this hook imports nothing, so it is written twice. */
+function expiry(value) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2})(?::(\d{2}))?)?$/.exec(value ?? '')
+  if (!m) return null
+  const [y, mo, d] = [Number(m[1]), Number(m[2]) - 1, Number(m[3])]
+  const day = new Date(y, mo, d)
+  if (day.getMonth() !== mo || day.getDate() !== d) return null
+  if (m[4] === undefined) return new Date(y, mo, d + 1)
+  const [h, min, sec] = [Number(m[4]), Number(m[5]), Number(m[6] ?? 0)]
+  if (h > 23 || min > 59 || sec > 59) return null
+  return new Date(y, mo, d, h, min, sec)
 }
 
 const index = readOr(join(MEMORY_DIR, 'index.md'))
-const { personal, shared } = memoryFiles(MEMORY_DIR)
+const { personal: personalFiles, shared } = memoryFiles(MEMORY_DIR)
+
+// Personal memories, read once, with scratch notes apart. An expired scratch
+// note is already gone as far as the agent is concerned: Holi deletes it on
+// its next sweep, and outside Holi nothing does, so it is left out here.
+const now = new Date()
+const personal = []
+const scratch = []
+for (const file of personalFiles) {
+  const meta = { ...file, ...titleAndDescription(readOr(file.abs), file.path) }
+  if (meta.type !== 'scratch') personal.push(meta)
+  else {
+    const ends = expiry(meta.expires)
+    if (ends === null || now < ends) scratch.push({ ...meta, ends })
+  }
+}
+
+/** Today's work log and the newest one before it, as vault paths, when they
+ *  exist. Only the names: the log is read when someone asks what was done. */
+function workLogs() {
+  let names
+  try {
+    names = readdirSync(join(root, '.holi/state/log'))
+  } catch {
+    return []
+  }
+  const pad = (n) => String(n).padStart(2, '0')
+  const today = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
+  const days = names
+    .map((n) => /^(\d{4}-\d{2}-\d{2})\.local\.md$/.exec(n)?.[1])
+    .filter((d) => d !== undefined && d <= today)
+    .sort()
+  const out = []
+  if (days.at(-1) === today) out.push({ day: days.pop(), label: 'today' })
+  if (days.length > 0) out.push({ day: days.at(-1), label: 'previous' })
+  return out.map(({ day, label }) => `\`.holi/state/log/${day}.local.md\` (${label})`)
+}
+const logs = workLogs()
 
 // Nothing to say. A vault with no memory directory at all is the ordinary case
 // for a repo somebody opened `claude` in by hand.
-if (index === null && personal.length === 0 && shared.length === 0) process.exit(0)
+if (
+  index === null &&
+  personal.length === 0 &&
+  scratch.length === 0 &&
+  shared.length === 0 &&
+  logs.length === 0
+)
+  process.exit(0)
 
 /** The index's own entry lines, with their `## type` headings, and the counts. */
 function indexSections(text) {
@@ -161,11 +227,13 @@ function render({ descriptions }) {
   // Anchored past the `]]` on purpose: a bare `/\s+—\s+.*$/` would cut at the
   // FIRST em dash, and a title containing one would lose its tail along with
   // the description it was meant to drop.
-  const strip = (line) => (descriptions ? line : line.replace(/^(- \[\[.*?\]\])\s+—\s+.*$/, '$1'))
+  // A scratch line's `(expires …)` sits between the link and the description.
+  const strip = (line) =>
+    descriptions ? line : line.replace(/^(- \[\[.*?\]\](?: \([^)]*\))?)\s+—\s+.*$/, '$1')
   // With no index, `total` is 0 and the shared count is the only honest number.
   const count = index === null ? shared.length : total
   const out = [
-    `# This vault's memory (${count} shared${personal.length > 0 ? `, ${personal.length} personal` : ''})`,
+    `# This vault's memory (${count} shared${personal.length > 0 ? `, ${personal.length} personal` : ''}${scratch.length > 0 ? `, ${scratch.length} scratch` : ''})`,
   ]
 
   // Next to the heading, so the cap's truncation can never cut it.
@@ -185,9 +253,18 @@ function render({ descriptions }) {
 
   if (personal.length > 0) {
     out.push('', '## personal (this machine only, never committed)', '')
-    for (const file of personal) {
-      const { title, description } = titleAndDescription(readOr(file.abs), file.path)
-      const line = `- [[${file.path}|${title}]]${description ? ` — ${description}` : ''}`
+    for (const { path, title, description } of personal) {
+      const line = `- [[${path}|${title}]]${description ? ` — ${description}` : ''}`
+      out.push(strip(line))
+    }
+  }
+
+  // After the expiry, so dropping descriptions over the cap keeps it.
+  if (scratch.length > 0) {
+    out.push('', '## scratch (this machine only, deleted once expired)', '')
+    for (const { path, title, description, expires, ends } of scratch) {
+      const until = ends === null ? 'no valid `expires`, never deleted' : `expires ${expires}`
+      const line = `- [[${path}|${title}]] (${until})${description ? ` — ${description}` : ''}`
       out.push(strip(line))
     }
   }
@@ -202,6 +279,10 @@ function render({ descriptions }) {
       '',
       `${shared.length} shared memory file(s) are present but \`.holi/memory/index.md\` has not been generated yet. Read \`.holi/memory/\` directly; Holi will write the index on the next commit that touches one.`,
     )
+  }
+
+  if (logs.length > 0) {
+    out.push('', `Work log (this machine): ${logs.join(', ')}. Read it when asked what was done.`)
   }
 
   const log = recent()
