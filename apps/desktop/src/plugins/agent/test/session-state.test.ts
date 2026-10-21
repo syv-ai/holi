@@ -95,6 +95,46 @@ describe('session state', () => {
     expect(t.state.nameOf('nobody00')).toBeUndefined()
   })
 
+  describe('a blocked session', () => {
+    const blocked = { status: 'idle', state: 'blocked' }
+    const phase = (t: ReturnType<typeof setup>, id: string) =>
+      t.state.sessions().find((s) => s.id === id)?.phase
+
+    it('is new while it has had no prompt', async () => {
+      const t = setup([row('aaaaaaaa', blocked)])
+      t.state.startedEmpty('aaaaaaaa')
+      await t.state.refresh()
+      expect(phase(t, 'aaaaaaaa')).toBe('new')
+    })
+
+    it('started with a prompt, its turn finished and handed back to you', async () => {
+      const t = setup([row('aaaaaaaa', blocked)])
+      t.state.startedWithPrompt('aaaaaaaa')
+      await t.state.refresh()
+      expect(phase(t, 'aaaaaaaa')).toBe('done')
+    })
+
+    it('seen working, then blocked, has finished a turn', async () => {
+      const t = setup([row('aaaaaaaa', BUSY)])
+      await t.state.refresh()
+      t.list([row('aaaaaaaa', blocked)])
+      // A turn ends on two consecutive idle readings.
+      await t.state.refresh()
+      await new Promise((r) => setTimeout(r, 20))
+      await t.state.refresh()
+      expect(t.states()).toEqual([['aaaaaaaa', 'idle']])
+      expect(phase(t, 'aaaaaaaa')).toBe('done')
+    })
+
+    it('said something to, then blocked, has finished a turn', async () => {
+      const t = setup([row('aaaaaaaa', blocked)])
+      t.state.startedEmpty('aaaaaaaa')
+      t.state.spoke('aaaaaaaa')
+      await t.state.refresh()
+      expect(phase(t, 'aaaaaaaa')).toBe('done')
+    })
+  })
+
   describe('a read that failed', () => {
     it.each([
       ['a call that failed', null],
