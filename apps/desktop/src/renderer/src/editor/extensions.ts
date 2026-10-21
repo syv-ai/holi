@@ -87,17 +87,42 @@ export interface EditorDeps {
  *  compartment, so a plugin turned on or off reaches a view already open. */
 const claimLayer = new Compartment()
 
-type ClaimLayer = Pick<EditorDeps, 'frontmatterAlwaysOpen' | 'claimExtensions'>
+/** The note's comment threads and the selection's Comment button. Whether a
+ *  note takes threads follows its claim too (`isCommentableNote`), so this is
+ *  a compartment for the same reason. */
+const commentLayer = new Compartment()
+
+type ClaimLayer = Pick<
+  EditorDeps,
+  'frontmatterAlwaysOpen' | 'claimExtensions' | 'notePath' | 'askAgent' | 'comment'
+>
 
 function claimLayerOf(deps: ClaimLayer): Extension {
-  return [claimLayer.of(claimLayerOf(deps))]
+  return [
+    frontmatterAlwaysOpenFacet.of(deps.frontmatterAlwaysOpen === true),
+    deps.claimExtensions ?? [],
+  ]
 }
 
-/** Swap an open view's claim layer for the file's claim now. A view with no
- *  claim layer (a plain-text file) is left alone. */
+function commentLayerOf(deps: ClaimLayer): Extension {
+  return [
+    askAgentTooltip(deps.notePath, deps.askAgent, deps.comment),
+    // The passages the note's comment threads are about.
+    deps.comment === undefined ? [] : commentThreads,
+  ]
+}
+
+/** Swap an open view's claim and comment layers for the file's claim now,
+ *  caret and undo kept. A view without them (a plain-text file) is left
+ *  alone. */
 export function reconfigureClaimLayer(view: EditorView, deps: ClaimLayer): void {
   if (claimLayer.get(view.state) === undefined) return
-  view.dispatch({ effects: claimLayer.reconfigure(claimLayerOf(deps)) })
+  view.dispatch({
+    effects: [
+      claimLayer.reconfigure(claimLayerOf(deps)),
+      commentLayer.reconfigure(commentLayerOf(deps)),
+    ],
+  })
 }
 
 /**
@@ -137,10 +162,7 @@ export function baseEditorExtensions(deps: EditorDeps): Extension[] {
     docExistsFacet.of(deps.docExists),
     linkChipFacet.of(deps.linkChip ?? (() => null)),
     notePathFacet.of(deps.notePath),
-    frontmatterAlwaysOpenFacet.of(deps.frontmatterAlwaysOpen === true),
-    askAgentTooltip(deps.notePath, deps.askAgent, deps.comment),
-    // The passages the note's comment threads are about.
-    deps.comment === undefined ? [] : commentThreads,
+    commentLayer.of(commentLayerOf(deps)),
     livePreview,
     // The caret's half of a mark's slide: the transition is CSS, and the
     // drawn caret has to be moved along while it runs.
@@ -204,7 +226,7 @@ export function baseEditorExtensions(deps: EditorDeps): Extension[] {
     // Notes only; the other stacks stay mono (see `notesFontTheme`).
     notesFontTheme,
     noteColumn,
-    deps.claimExtensions ?? [],
+    claimLayer.of(claimLayerOf(deps)),
   ]
 }
 

@@ -23,7 +23,6 @@ import {
   type Extension,
 } from '@codemirror/state'
 import type { EditorView } from '@codemirror/view'
-import { isAppFencedPath, isAppWritablePath } from '@holi/shared'
 import { hasAskAgent, openAskAgent } from './askAgent'
 import type { HoliCompletion } from './completion'
 
@@ -132,6 +131,11 @@ export interface SlashCommand {
   detail?: string
   /** At the row's end: where the command comes from. */
   meta?: string
+  /** Whether the menu offers it in the note at `path`; absent, everywhere.
+   *  The command's plugin decides: an app's command is given the note's text
+   *  and may write into it, so the apps plugin offers one only where an app
+   *  may read and write. */
+  offeredIn?(path: string): boolean
   /** Rejects when it failed; the plugin says where (an app's log). */
   run(input: SlashInput): Promise<SlashResult>
 }
@@ -266,14 +270,9 @@ export function slashCommandsWith(
   commands: () => readonly SlashCommand[],
   path: string,
 ): { source: CompletionSource; extension: Extension } {
-  // A plugin's command is given the note's text and may write into it, so it
-  // is offered only in a note an app may both read and write: not the apps'
-  // read fence, and not where the one app write rule refuses
-  // (docs/features/vault-apps.md).
-  const fenced = isAppFencedPath(path) || !isAppWritablePath(path)
   const source: CompletionSource = (context) => {
-    const added = (fenced ? [] : commands())
-      .filter((c) => !BUILT_IN.has(c.name))
+    const added = commands()
+      .filter((c) => !BUILT_IN.has(c.name) && (c.offeredIn?.(path) ?? true))
       .map((command): HoliCompletion => ({
         label: `/${command.name}`,
         ...(command.detail === undefined ? {} : { detail: command.detail }),
