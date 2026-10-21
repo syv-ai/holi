@@ -2,7 +2,7 @@
  * The app, once someone is signed in: a vault, its tree, and whatever tabs are
  * open over it. The snapshot push is subscribed once at the root, so this reads
  * atoms. An agent session is an ordinary tab. What plugins add to the frame
- * (rail and sidebar sections, drawers) comes from the running plugins.
+ * (rail and sidebar sections, overlays) comes from the running plugins.
  */
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import {
@@ -63,7 +63,6 @@ import type { ConflictResolvers } from '@/lib/editor-reload'
 import { ConflictBanner } from '@/composites/ConflictBanner'
 import { LeaveConfirm } from './LeaveConfirm'
 import { CommandPalette } from '@/features/palette/CommandPalette'
-import { QuickAddHost } from '@/features/tasks/QuickAddHost'
 import { runCommandAtom, useCommandHotkeys } from '../state/commands'
 import { recentOfTab, touchRecentAtom } from '../state/recents'
 import { closePaneWithExitAtom, closeTabWithExitAtom, leavingPaneAtom } from '../state/pane-exit'
@@ -73,6 +72,7 @@ import { openPathAtom, useSurfaceTabs } from '@/state/surfaces'
 import {
   folderClaimsAtom,
   leaveReasonsAtom,
+  overlaysAtom,
   runningPluginsAtom,
   surfacesAtom,
 } from '@/state/plugins'
@@ -124,6 +124,7 @@ export function Shell() {
   const folderClaims = useAtomValue(folderClaimsAtom)
   const surfaces = useAtomValue(surfacesAtom)
   const running = useAtomValue(runningPluginsAtom)
+  const overlays = useAtomValue(overlaysAtom)
   const [navOpen, setNavOpen] = useAtom(navOpenAtom)
   const historyTarget = useAtomValue(historyTargetPathAtom)
   const commentsTarget = useAtomValue(commentsTargetPathAtom)
@@ -473,17 +474,17 @@ export function Shell() {
           </ResizablePanelGroup>
         </div>
 
-        {/* The right-hand drawers; each decides whether it is open. */}
+        {/* The right-hand drawers and what plugins lay over the panes; each
+            decides whether it shows. */}
         <LinksPanel />
         <HistoryPanel />
         <CommentsPanel />
-        {running.flatMap(({ info, drawers = [] }) =>
-          drawers.map((Drawer, i) => <Drawer key={`${info.id}:${i}`} />),
-        )}
+        {overlays.map(({ key, Overlay }) => (
+          <Overlay key={key} />
+        ))}
 
         <DialogHost />
         <CommandPalette />
-        <QuickAddHost />
 
         {/* Every frontmatter block's controls, portalled into their CodeMirror
             widgets. Here, not in EditorPane: a widget does not know its pane,

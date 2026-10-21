@@ -52,7 +52,7 @@ import { Button, ContextMenu, ContextMenuTrigger, Icon, Input, Tooltip } from '@
 import { todayDailyPathAtom } from '@/state/daily'
 import { claimsAtom, folderClaimsAtom, surfacesAtom } from '@/state/plugins'
 import { revealRequestAtom } from '@/state/reveal'
-import { createTaskAtom, todayLinkCountAtom } from '@/state/tasks'
+import { createTaskAtom } from '@/state/tasks'
 import {
   activeRemoteAtom,
   createFolderAtom,
@@ -166,7 +166,7 @@ export function FileTree({
   expansion?: TreeExpansion
 }) {
   const projection = useTreeProjection()
-  const { visible, taskByPath, iconByPath, ignored } = projection
+  const { visible, marks, iconByPath, ignored } = projection
   const actions = useExplorerActions(projection.docPaths)
   const folderClaims = useAtomValue(folderClaimsAtom)
   const surfaces = useAtomValue(surfacesAtom)
@@ -200,7 +200,6 @@ export function FileTree({
   const importFiles = useSetAtom(importFilesAtom)
   const revealRequest = useAtomValue(revealRequestAtom)
   const todayDailyPath = useAtomValue(todayDailyPathAtom)
-  const todayLinkCount = useAtomValue(todayLinkCountAtom)
   const activeRemote = useAtomValue(activeRemoteAtom)
   const vault = useAtomValue(vaultsAtom).find((v) => v.remote === activeRemote)
   const vaultPrefix = vault ? `${vault.path}/` : null
@@ -555,7 +554,7 @@ export function FileTree({
     if (!node.isFolder) {
       return (
         <span data-slot="row-icon" className={slot}>
-          {pathGlyph(id, { emoji, task: taskByPath.get(id)?.status })}
+          {pathGlyph(id, { emoji, mark: marks.get(id)?.glyph })}
         </span>
       )
     }
@@ -642,15 +641,16 @@ export function FileTree({
               data-slot="row-name"
               className={cn(
                 TREE_LABEL,
-                taskByPath.get(id)?.status === 'done' && 'line-through',
+                marks.get(id)?.struck === true && 'line-through',
                 (ignored.has(id) || (node.isDocument && isDraft(id))) && 'opacity-50',
               )}
             >
               {label(id, node)}
             </span>
-            {/* Today's daily, marked where it lives (docs/features/daily-notes.md):
-                at the row's right end, boxed to its x-height like the name so
-                the row's centring lines the two up. */}
+            {/* Today's daily, marked where it lives (docs/features/daily-notes.md),
+                and a plugin's badge (how many open tasks link to it): at the
+                row's right end, boxed to its x-height like the name so the
+                row's centring lines the two up. */}
             {/* A document's files are behind it: this is the way in that a
                 newcomer can see, on hover or focus. Not a button: it sits in
                 the row's, and the keyboard's way is → as for any folder. */}
@@ -670,9 +670,11 @@ export function FileTree({
                 </span>
               </Tooltip>
             )}
-            {id === todayDailyPath && (
+            {(id === todayDailyPath || marks.get(id)?.badge !== undefined) && (
               <span className="ml-auto shrink-0 text-[11px] text-brand [text-box:trim-both_ex_alphabetic]">
-                today{todayLinkCount > 0 && ` · ${todayLinkCount}`}
+                {[id === todayDailyPath ? 'today' : null, marks.get(id)?.badge ?? null]
+                  .filter((part) => part !== null)
+                  .join(' · ')}
               </span>
             )}
           </Button>

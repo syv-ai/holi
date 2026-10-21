@@ -23,9 +23,8 @@ function mount(doc: string): EditorView {
       doc,
       extensions: baseEditorExtensions({
         docExists: () => true,
-        taskByPath: () => null,
         readNote: async () => null,
-        mentionData: () => ({ notes: [], tasks: [] }),
+        mentionData: () => ({ notes: [], groups: [] }),
         nav: () => ({ openNote: () => {}, openExternal: () => {} }),
         notePath: 'note.md',
         askAgent: {

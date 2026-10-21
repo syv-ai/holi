@@ -13,7 +13,7 @@
  * The mapping is by extension and independent of `fileKind` (which is coarser,
  * for choosing an editor). Unmapped extensions fall back to a neutral file.
  */
-import type { JSX } from 'react'
+import type { JSX, ReactNode } from 'react'
 import { fileKind, type TaskStatus } from '@holi/shared'
 import {
   Braces,
@@ -187,15 +187,16 @@ export function pathLabel(path: string): string {
 
 /**
  * What a file leads with, by the same rule: the vault icon map's emoji first,
- * then a task's status, nothing for a note, and the type glyph for anything
- * else. `null` is a note's empty slot.
+ * then the glyph a plugin marks it with (a task's status, `PathMark`),
+ * nothing for a note, and the type glyph for anything else. `null` is a
+ * note's empty slot.
  */
 export function pathGlyph(
   path: string,
-  { emoji, task }: { emoji?: string; task?: TaskStatus } = {},
-): JSX.Element | null {
+  { emoji, mark }: { emoji?: string; mark?: ReactNode } = {},
+): ReactNode {
   if (emoji) return fileIconFor(path, emoji)
-  if (task) return <TaskIcon status={task} />
+  if (mark !== undefined && mark !== null) return mark
   if (fileKind(path) === 'markdown') return null
   return fileIconFor(path)
 }

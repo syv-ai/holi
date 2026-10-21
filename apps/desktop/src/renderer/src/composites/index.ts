@@ -1,5 +1,6 @@
 export { DeleteConfirm } from './DeleteConfirm'
 export { DateTimePicker } from './DateTimePicker'
+export { EnumField } from './EnumField'
 export { Churn } from './Churn'
 export { DiffView } from './DiffView'
 export { FormField } from './FormField'

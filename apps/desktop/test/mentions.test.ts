@@ -7,9 +7,15 @@ function ctx(doc: string, pos = doc.length, explicit = false) {
   return new CompletionContext(EditorState.create({ doc }), pos, explicit)
 }
 
+/** A claim's group, as the tasks claim offers its open tasks. */
+const group = (...items: { path: string; label: string; meta?: string }[]) => ({
+  name: 'Tasks',
+  items,
+})
+
 const DATA = {
   notes: [{ path: 'notes/reading.md' }, { path: 'projects/plan.md' }],
-  tasks: [{ path: 'projects/task.ship-it.md', title: 'Ship it', status: 'todo' as const }],
+  groups: [group({ path: 'projects/task.ship-it.md', label: 'Ship it' })],
 }
 
 describe('mentionCompletions', () => {
@@ -26,7 +32,7 @@ describe('mentionCompletions', () => {
     expect(opt?.apply).toBe('[[notes/reading.md]]')
   })
 
-  it('offers task completions that insert a path wiki-link labelled by title', () => {
+  it("offers a claim's items as a path wiki-link labelled by its label", () => {
     const result = mentionCompletions(ctx('ping @'), DATA)
     const opt = result!.options.find((o) => o.apply === '[[projects/task.ship-it.md]]')
     expect(opt).toBeDefined()
@@ -41,7 +47,7 @@ describe('mentionCompletions', () => {
     expect(mentionCompletions(ctx('plain text'), DATA)).toBeNull()
   })
 
-  it('filters candidates by the query after the @ (notes by path, tasks by title)', () => {
+  it('filters candidates by the query after the @ (notes by path, the rest by label)', () => {
     const result = mentionCompletions(ctx('see @read'), DATA)
     const labels = result!.options.map((o) => o.label)
     expect(labels).toContain('notes/reading.md')
@@ -59,28 +65,21 @@ describe('mentionCompletions', () => {
 // `DATA` is already taken at module scope in this file; this is the richer one.
 const RICH = {
   notes: [{ path: 'work/retro.md', icon: '📓' }, { path: 'work/plan.md' }],
-  tasks: [
-    { path: 'task.a.md', title: 'Write the retro', status: 'doing' as const, due: '2026-09-18' },
-    { path: 'task.b.md', title: 'Book the room', status: 'todo' as const },
+  groups: [
+    group(
+      { path: 'task.a.md', label: 'Write the retro', meta: 'due 18 Sep' },
+      { path: 'task.b.md', label: 'Book the room' },
+    ),
   ],
 }
 
-test('notes and tasks are two sections, notes first', () => {
+test("notes and a claim's group are two sections, notes first", () => {
   const options = mentionCompletions(ctx('@'), RICH)!.options
   const sections = options.map((o) => (typeof o.section === 'string' ? o.section : o.section?.name))
-  expect(sections.filter((s) => s === 'Notes')).toHaveLength(2)
-  expect(sections.filter((s) => s === 'Tasks')).toHaveLength(2)
+  expect(sections).toEqual(['Notes', 'Notes', 'Tasks', 'Tasks'])
 })
 
-test("a task's glyph carries its status, so the row does not say it twice", () => {
-  const options = mentionCompletions(ctx('@'), RICH)!.options
-  expect(options.find((o) => o.label === 'Write the retro')?.type).toBe('holi-task-doing')
-  expect(options.find((o) => o.label === 'Book the room')?.type).toBe('holi-task-todo')
-  // The status used to be repeated in `detail`. The glyph says it now.
-  expect(options.find((o) => o.label === 'Write the retro')?.detail).toBeUndefined()
-})
-
-test('a due date is the trailing pill, humanised the way the board writes it', () => {
+test("an item's meta is the trailing pill", () => {
   const options = mentionCompletions(ctx('@'), RICH)!.options
   const withDue = options.find((o) => o.label === 'Write the retro')
   expect((withDue as { meta?: string }).meta).toBe('due 18 Sep')
@@ -103,7 +102,7 @@ test("a note wears the vault's own emoji when it has one", () => {
 test('a mention survives letters outside ASCII', () => {
   const data = {
     notes: [{ path: 'møder/ørred.md' }, { path: 'work/plan.md' }],
-    tasks: [{ path: 'task.a.md', title: 'Købe blæk', status: 'todo' as const }],
+    groups: [group({ path: 'task.a.md', label: 'Købe blæk' })],
   }
   expect(mentionCompletions(ctx('@mø'), data)).not.toBeNull()
   expect(mentionCompletions(ctx('@mø'), data)!.options.map((o) => o.label)).toEqual([
@@ -112,19 +111,6 @@ test('a mention survives letters outside ASCII', () => {
   expect(mentionCompletions(ctx('@kø'), data)!.options.map((o) => o.label)).toEqual(['Købe blæk'])
   // The anchor still sits at the `@`, whatever the query is made of.
   expect(mentionCompletions(ctx('see @å'), data)!.from).toBe(4)
-})
-
-test('a finished task is not offered', () => {
-  const data = {
-    notes: [],
-    tasks: [
-      { path: 'task.a.md', title: 'Ship it', status: 'done' as const },
-      { path: 'task.b.md', title: 'Ship the other', status: 'doing' as const },
-    ],
-  }
-  expect(mentionCompletions(ctx('@ship'), data)!.options.map((o) => o.label)).toEqual([
-    'Ship the other',
-  ])
 })
 
 // The tree hides dot-prefixed paths and the mention list never did, so `@c`
@@ -136,7 +122,7 @@ test('a hidden path is not offered, the way the tree hides it', () => {
       { path: '.holi/theme.css' },
       { path: 'work/claude-notes.md' },
     ],
-    tasks: [],
+    groups: [],
   }
   expect(mentionCompletions(ctx('@'), data)!.options.map((o) => o.label)).toEqual([
     'work/claude-notes.md',

@@ -3,7 +3,9 @@ import userEvent from '@testing-library/user-event'
 import { expect, test, vi } from 'vitest'
 import { Provider, createStore } from 'jotai'
 import { readYamlMapping } from '@holi/shared'
+import { CORE_CONTRIBUTION } from '@/components/core-surfaces'
 import { nowAtom } from '@/state/clock'
+import { coreContributionAtom } from '@/state/plugins'
 import { FrontmatterFields } from '../FrontmatterFields'
 
 const TASK = 'projects/task.fix-the-tap.md'
@@ -12,6 +14,8 @@ function fields(yaml: string, path = TASK) {
   const onWrite = vi.fn()
   const store = createStore()
   store.set(nowAtom, '2026-09-12T10:00')
+  // The task-file claim, which gives a task its rows.
+  store.set(coreContributionAtom, CORE_CONTRIBUTION)
   render(
     <Provider store={store}>
       <FrontmatterFields path={path} yaml={yaml} onWrite={onWrite} />

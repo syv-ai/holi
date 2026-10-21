@@ -53,12 +53,12 @@ import {
   type IconGlyph,
 } from '@/primitives'
 import { nowAtom } from '@/state/clock'
-import { memberLoginsAtom } from '@/state/members'
 import {
   ROOT_LANE,
   createTaskAtom,
   quickAddFolderAtom,
   taskCreateFolders,
+  taskPeopleAtom,
   taskTagsAtom,
   tasksAtom,
 } from '@/state/tasks'
@@ -183,7 +183,7 @@ export function QuickAdd({
   const activeDoc = useAtomValue(activeDocAtom)
   const tasks = useAtomValue(tasksAtom)
   const allTags = useAtomValue(taskTagsAtom)
-  const members = useAtomValue(memberLoginsAtom)
+  const members = useAtomValue(taskPeopleAtom)
   const now = useAtomValue(nowAtom)
   const create = useSetAtom(createTaskAtom)
   const reduced = useReducedMotion() ?? false

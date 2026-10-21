@@ -24,7 +24,8 @@
 import { formatRecord } from './app-store'
 import { fileKind } from './file-kind'
 import { isAgentSurfacePath } from './path-safety'
-import { isTaskFilePath, sameLogin } from './task-file'
+import { sameLogin } from './logins'
+import { isTaskFilePath } from './task-file'
 
 /** Where every note's threads live. */
 export const COMMENTS_DIR = '.holi/comments'

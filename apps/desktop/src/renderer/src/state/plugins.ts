@@ -11,6 +11,7 @@
  * which state does not import.
  */
 import { atom, type Atom, type createStore } from 'jotai'
+import type { ComponentType } from 'react'
 import {
   resolvePlugins,
   type PluginResolution,
@@ -23,6 +24,7 @@ import type {
   AgentServiceSource,
   PaletteItem,
   PathClaim,
+  PathMark,
   RailItem,
   RendererPlugin,
   SettingsSection,
@@ -45,10 +47,11 @@ export const settingDescriptorsAtom = atom((get) =>
 )
 
 /** What core contributes the way a plugin does: its own surfaces, rail items
- *  and claims. Always on. */
-export type CoreContribution = Pick<Required<RendererPlugin>, 'surfaces' | 'rail'> & {
-  claims: readonly PathClaim[]
-}
+ *  and claims, and what core parts not yet a plugin add. Always on. */
+export type CoreContribution = Pick<Required<RendererPlugin>, 'surfaces' | 'rail'> &
+  Pick<RendererPlugin, 'overlays' | 'pathMarks'> & {
+    claims: readonly PathClaim[]
+  }
 
 export const coreContributionAtom = atom<CoreContribution>({ surfaces: [], rail: [], claims: [] })
 
@@ -145,10 +148,52 @@ export const openPaletteItemAtom = atom(
 )
 
 /** Core's contribution, then every running plugin's, in list order. */
-const contributionsAtom = atom((get): readonly Pick<RendererPlugin, 'surfaces' | 'rail'>[] => [
-  get(coreContributionAtom),
-  ...get(runningPluginsAtom),
-])
+const contributionsAtom = atom(
+  (
+    get,
+  ): readonly (Pick<RendererPlugin, 'surfaces' | 'rail' | 'overlays' | 'pathMarks'> & {
+    id: string
+  })[] => [
+    { ...get(coreContributionAtom), id: 'core' },
+    ...get(runningPluginsAtom).map((p) => ({ ...p, id: p.info.id })),
+  ],
+)
+
+/** What core and the running plugins lay over the panes, each with a key. */
+export const overlaysAtom = atom((get): readonly { key: string; Overlay: ComponentType }[] =>
+  get(contributionsAtom).flatMap(({ id, overlays = [] }) =>
+    overlays.map((Overlay, i) => ({ key: `${id}:${i}`, Overlay })),
+  ),
+)
+
+/** How every vault path is marked in the tree and the tabs: what core and
+ *  the running plugins say, the first to mark a path winning. */
+export const pathMarksAtom = atom((get): ReadonlyMap<string, PathMark> => {
+  const marks = new Map<string, PathMark>()
+  for (const { pathMarks } of get(contributionsAtom)) {
+    if (pathMarks === undefined) continue
+    for (const [path, mark] of get(pathMarks)) if (!marks.has(path)) marks.set(path, mark)
+  }
+  return marks
+})
+
+/** What a list field offers in any file's frontmatter, by key: every
+ *  enabled claim's suggestions, each value once, sorted. */
+export const frontmatterSuggestionsAtom = atom((get): ReadonlyMap<string, readonly string[]> => {
+  const byKey = new Map<string, Set<string>>()
+  for (const claim of get(claimsAtom)) {
+    const suggest = claim.frontmatter?.suggest
+    if (suggest === undefined) continue
+    for (const [key, values] of Object.entries(get(suggest))) {
+      const into = byKey.get(key) ?? new Set<string>()
+      values.forEach((v) => into.add(v))
+      byKey.set(key, into)
+    }
+  }
+  return new Map(
+    [...byKey].map(([key, values]) => [key, [...values].sort((a, b) => a.localeCompare(b))]),
+  )
+})
 
 /** What stopping each running plugin would cost now, by id: its
  *  `leaveGuard` sentence, for one that says something. */
@@ -264,11 +309,11 @@ export const instancesAtom = atom(
 export const railAtom = atom(
   (
     get,
-  ): readonly (RailItem & {
+  ): readonly (Omit<RailItem, 'badge'> & {
     of: Surface
     instances?: readonly string[]
     running: boolean
-    count?: number
+    badge: { count: number; tone?: 'alert' } | null
   })[] => {
     const surfaces = get(surfacesAtom)
     return get(contributionsAtom)
@@ -277,10 +322,10 @@ export const railAtom = atom(
         const of = surfaces.get(item.surface)
         if (of === undefined || (item.visible !== undefined && !get(item.visible))) return []
         const running = item.live !== undefined && get(item.live)
-        const count = item.badge === undefined ? {} : { count: get(item.badge) }
-        if (of.instances === undefined) return [{ ...item, of, running, ...count }]
+        const badge = item.badge === undefined ? null : get(item.badge)
+        if (of.instances === undefined) return [{ ...item, of, running, badge }]
         const instances = get(of.instances)
-        return instances.length === 0 ? [] : [{ ...item, of, instances, running, ...count }]
+        return instances.length === 0 ? [] : [{ ...item, of, instances, running, badge }]
       })
       .sort((a, b) => a.order - b.order)
   },

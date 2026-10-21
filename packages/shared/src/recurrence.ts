@@ -251,3 +251,13 @@ function nextWeeklyWeekday(
   }
   return null
 }
+
+/** A recurrence rule as a frontmatter value reads, or undefined when it is
+ *  not a map with a `frequency`. A missing `interval` is 1. Lenient, like
+ *  every control's reading: the file is hand-editable. */
+export function fieldRecurrence(value: unknown): Recurrence | undefined {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const raw = value as Partial<Recurrence>
+  if (typeof raw.frequency !== 'string') return undefined
+  return { ...raw, frequency: raw.frequency, interval: raw.interval ?? 1 }
+}

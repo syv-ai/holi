@@ -24,6 +24,8 @@ import type { taskCapabilities } from '../../../main/vault/task-capabilities'
 import { capClient } from '../lib/cap-client'
 import { trpc } from '../lib/trpc'
 import { nowAtom, todayAtom } from './clock'
+import { memberLoginsAtom, peopleList } from './members'
+import { sessionAtom } from './session'
 import { activeTab, closeTabsForPaths, workspaceAtom, type Tab } from './panes'
 import { activeRemoteAtom, loadSnapshotAtom, snapshotAtom } from './vaults'
 
@@ -50,6 +52,30 @@ export const taskTagsAtom = atom((get) =>
 )
 
 export const brokenTasksAtom = atom((get) => get(snapshotTasksAtom).broken)
+
+/** Everyone a task can be assigned to: the vault's members, and every login
+ *  a task already names, so the list works offline. The signed-in person
+ *  first. */
+export const taskPeopleAtom = atom((get): string[] =>
+  peopleList(
+    [...get(memberLoginsAtom), ...get(snapshotTasksAtom).items.flatMap((task) => task.assignees)],
+    get(sessionAtom)?.login ?? null,
+  ),
+)
+
+/** What a list field offers in any file's frontmatter: the tags tasks use,
+ *  and the people they name. */
+export const taskSuggestionsAtom = atom((get): Readonly<Record<string, readonly string[]>> => ({
+  tags: get(taskTagsAtom),
+  assignees: get(snapshotTasksAtom).items.flatMap((task) => task.assignees),
+}))
+
+/** The board's place in the nav menu shows how many tasks are open, and
+ *  turns alert while any is overdue. */
+export const boardBadgeAtom = atom((get) => ({
+  count: get(openTaskCountAtom),
+  ...(get(overdueTaskCountAtom) > 0 ? { tone: 'alert' as const } : {}),
+}))
 
 /** How many tasks are still open (not done): the badge on the board button. */
 export const openTaskCountAtom = atom(

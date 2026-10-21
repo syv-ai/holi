@@ -537,9 +537,8 @@ describe('the selection tooltip', () => {
 describe('which stacks get it', () => {
   const deps = {
     docExists: () => true,
-    taskByPath: () => null,
     readNote: async () => null,
-    mentionData: () => ({ notes: [], tasks: [] }),
+    mentionData: () => ({ notes: [], groups: [] }),
     nav: () => ({ openNote: () => {}, openExternal: () => {} }),
     notePath: 'note.md',
     askAgent: seam(),

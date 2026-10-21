@@ -2,18 +2,21 @@ import { describe, expect, it } from 'vitest'
 import { WikiLinkChip } from './wikiLinkChips'
 
 describe('WikiLinkChip', () => {
-  it('a task chip carries the path, an orb, and strikes when done', () => {
-    const el = new WikiLinkChip('p/task.a.md', 'Fix login', true, { status: 'done' }).toDOM()
-    expect(el.dataset['wikiTarget']).toBe('p/task.a.md')
-    expect(el.classList.contains('cm-wikilink-task')).toBe(true)
+  it('a claimed chip carries the path, its orb, and strikes when its claim says', () => {
+    const el = new WikiLinkChip('p/a.md', 'Fix login', true, {
+      orb: 'red',
+      struck: true,
+    }).toDOM()
+    expect(el.dataset['wikiTarget']).toBe('p/a.md')
+    expect(el.classList.contains('cm-wikilink-claimed')).toBe(true)
     expect(el.classList.contains('cm-wikilink-done')).toBe(true)
-    expect(el.querySelector('.cm-task-orb-done')).not.toBeNull()
+    expect(el.querySelector<HTMLElement>('.cm-link-orb')?.style.background).toBe('red')
     expect(el.textContent).toBe('Fix login')
   })
 
-  it('a doing task chip has an orb but no strike', () => {
-    const el = new WikiLinkChip('p/task.a.md', 'Fix login', true, { status: 'doing' }).toDOM()
-    expect(el.querySelector('.cm-task-orb-doing')).not.toBeNull()
+  it('a claimed chip that is not struck has its orb and no strike', () => {
+    const el = new WikiLinkChip('p/a.md', 'Fix login', true, { orb: 'red' }).toDOM()
+    expect(el.querySelector('.cm-link-orb')).not.toBeNull()
     expect(el.classList.contains('cm-wikilink-done')).toBe(false)
   })
 
@@ -21,6 +24,6 @@ describe('WikiLinkChip', () => {
     const el = new WikiLinkChip('notes/gone.md', 'notes/gone.md', false).toDOM()
     expect(el.dataset['wikiTarget']).toBe('notes/gone.md')
     expect(el.classList.contains('cm-wikilink-missing')).toBe(true)
-    expect(el.querySelector('.cm-task-orb')).toBeNull()
+    expect(el.querySelector('.cm-link-orb')).toBeNull()
   })
 })

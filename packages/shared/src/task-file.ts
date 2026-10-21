@@ -30,6 +30,7 @@ import { parseStamp } from './dates'
 import { firstHeading } from './headings'
 import { cleanLogins, hasLogin, sameLogin } from './logins'
 import { FrontmatterError, splitFrontmatter } from './frontmatter'
+import type { FieldSpec } from './frontmatter-schema'
 import { claimedFiles, type ClaimedFiles, type SnapshotClaim, type VaultSnapshot } from './types'
 import type {
   Priority,
@@ -408,6 +409,28 @@ function compactRecurrence(rec: Recurrence): Record<string, unknown> {
   if (rec.endDate !== undefined) out.endDate = rec.endDate
   return out
 }
+
+/**
+ * A task's frontmatter rows (docs/features/frontmatter.md): `todo | doing |
+ * done` and the rest of the vocabulary this module validates, in the shape a
+ * control needs. DISPLAY order only: `serializeTaskFile` builds its own
+ * object, so changing it here rewrites no task file. `recurrence` is a nested
+ * map with a control of its own.
+ */
+export const TASK_FIELDS: readonly FieldSpec[] = [
+  {
+    key: 'status',
+    kind: { kind: 'enum', options: ['todo', 'doing', 'done'] },
+    required: true,
+  },
+  { key: 'priority', kind: { kind: 'enum', options: ['low', 'medium', 'high'] } },
+  { key: 'due', kind: { kind: 'stamp' } },
+  { key: 'reminder', kind: { kind: 'stamp' } },
+  { key: 'recurrence', kind: { kind: 'text' } },
+  { key: 'tags', kind: { kind: 'list' } },
+  { key: 'assignees', kind: { kind: 'people' } },
+  { key: 'order', kind: { kind: 'text' }, hidden: true },
+]
 
 /** The plugin id task files are claimed under in the snapshot. */
 export const TASKS_CLAIM = 'tasks'

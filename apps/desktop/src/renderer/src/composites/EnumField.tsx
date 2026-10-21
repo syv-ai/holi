@@ -10,7 +10,7 @@
  */
 import { useRef, useState } from 'react'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/primitives'
-import { useFieldControlId } from '@/composites'
+import { useFieldControlId } from './FieldRow'
 
 /** The item VALUE for the empty choice: Radix forbids '' on an item. */
 const EMPTY = '—'

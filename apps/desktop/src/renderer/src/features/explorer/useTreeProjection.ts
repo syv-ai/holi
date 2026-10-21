@@ -1,6 +1,7 @@
 import { useMemo } from 'react'
 import { useAtom, useAtomValue } from 'jotai'
-import { isHiddenPath, snapshotTasks, TASKS_CLAIM } from '@holi/shared'
+import { isHiddenPath, TASKS_CLAIM } from '@holi/shared'
+import { pathMarksAtom } from '@/state/plugins'
 import { revealRequestAtom } from '@/state/reveal'
 import {
   activeRemoteAtom,
@@ -11,7 +12,8 @@ import {
 
 /**
  * The snapshot as the explorer shows it: hidden and task files filtered by the
- * per-vault toggles, plus the per-path facts a row paints (icon, task, ignored).
+ * per-vault toggles, plus the per-path facts a row paints (icon, what plugins
+ * mark it with, ignored).
  * Claimed files show as the files they are, a broken one too, so it can be
  * opened and fixed; the tasks toggle hides task files.
  * The tree data itself is built by the caller, which adds the folders still
@@ -49,17 +51,14 @@ export function useTreeProjection() {
     return { paths, dirs }
   }, [docPaths, snapshot.dirs, showHidden, revealPath])
 
-  const taskByPath = useMemo(
-    () => new Map(snapshotTasks(snapshot).items.map((t) => [t.path, t])),
-    [snapshot],
-  )
+  const marks = useAtomValue(pathMarksAtom)
   const iconByPath = useMemo(() => new Map(Object.entries(snapshot.icons)), [snapshot.icons])
   const ignored = useMemo(() => new Set(snapshot.ignored), [snapshot.ignored])
 
   return {
     docPaths,
     visible,
-    taskByPath,
+    marks,
     iconByPath,
     ignored,
     showHidden,

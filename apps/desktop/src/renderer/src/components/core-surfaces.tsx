@@ -2,10 +2,9 @@
  * Core's own surfaces, nav items and claims (docs/features/tabs-panes.md),
  * installed into the registry by `main.tsx` beside the plugins' list.
  *
- * The board, and the task-file claim, are still core's until the tasks
- * plugin takes them.
+ * The board, quick add, the task-file claim and the marks it puts on the
+ * tree are still core's until the tasks plugin takes them.
  */
-import { taskClaim } from '@holi/shared'
 import { useAtomValue } from 'jotai'
 import { History, House, Settings, SquareKanban, Waypoints } from 'lucide-react'
 import type { RailItem, Surface } from '@/plugin-api/types'
@@ -14,8 +13,11 @@ import { HistoryView } from '@/features/history/HistoryView'
 import { HomeView } from '@/features/home/HomeView'
 import { SettingsView } from '@/features/settings/SettingsView'
 import { BoardView } from '@/features/tasks/BoardView'
+import { QuickAddHost } from '@/features/tasks/QuickAddHost'
+import { TASK_PATH_CLAIM, taskMarksAtom } from '@/features/tasks/task-claim'
 import { homeDocumentAtom, homeTargetAtom } from '@/state/home'
 import { surfacesAtom, type CoreContribution } from '@/state/plugins'
+import { boardBadgeAtom } from '@/state/tasks'
 
 /**
  * The Home tab: the folder document Home names (a vault app), in its own surface,
@@ -43,7 +45,7 @@ const SURFACES: readonly Surface[] = [
 
 const RAIL: readonly RailItem[] = [
   { surface: 'home', order: 0 },
-  { surface: 'board', order: 30 },
+  { surface: 'board', order: 30, badge: boardBadgeAtom },
   { surface: 'graph', order: 35 },
   // Last, so it ends the dock.
   { surface: 'settings', order: 100 },
@@ -52,5 +54,7 @@ const RAIL: readonly RailItem[] = [
 export const CORE_CONTRIBUTION: CoreContribution = {
   surfaces: SURFACES,
   rail: RAIL,
-  claims: [{ match: taskClaim.match, normalize: taskClaim.normalize }],
+  claims: [TASK_PATH_CLAIM],
+  overlays: [QuickAddHost],
+  pathMarks: taskMarksAtom,
 }

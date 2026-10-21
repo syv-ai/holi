@@ -15,6 +15,7 @@ import {
   Annotation,
   EditorSelection,
   EditorState,
+  Facet,
   StateEffect,
   StateField,
   Transaction,
@@ -32,7 +33,7 @@ import {
   type DecorationSet,
   type ViewUpdate,
 } from '@codemirror/view'
-import { frontmatterSchema, isTaskFilePath, readYamlMapping, splitFrontmatter } from '@holi/shared'
+import { frontmatterSchema, readYamlMapping, splitFrontmatter } from '@holi/shared'
 import {
   frontmatterBlockRange,
   frontmatterRegion,
@@ -161,31 +162,32 @@ function playResize(view: EditorView, wrap: HTMLElement, opening: boolean): void
 const frontmatterEdit = Annotation.define<boolean>()
 
 /**
- * Whether a file's frontmatter block has a collapsed state at all. A task's
- * does not: its fields are the point, and the collapsed summary would describe
- * the other half.
+ * Whether the file's frontmatter block has no collapsed state at all: its
+ * claim says so (a task's fields are the point, and the collapsed summary
+ * would describe the other half). Static: the view is rebuilt per document.
  */
-export function frontmatterAlwaysOpen(path: string): boolean {
-  return isTaskFilePath(path)
-}
+export const frontmatterAlwaysOpenFacet = Facet.define<boolean, boolean>({
+  combine: (values) => values.some(Boolean),
+})
 
 /**
  * Whether a file opens with its frontmatter revealed. A note's frontmatter is
  * metadata over prose and starts collapsed. Under `.claude/` a skill's `name`
- * and `description` are what the agent matches on, and a task's frontmatter is
- * half of what it is, so both start revealed.
+ * and `description` are what the agent matches on, and a block that is always
+ * open (a task's) is half of what the file is, so both start revealed.
  */
-export function frontmatterStartsRevealed(path: string): boolean {
-  return path.startsWith('.claude/') || isTaskFilePath(path)
+export function frontmatterStartsRevealed(path: string, alwaysOpen = false): boolean {
+  return path.startsWith('.claude/') || alwaysOpen
 }
 
 /** Revealed or collapsed. The default is per-file, read off `notePathFacet` in
  *  `create`. */
 export const frontmatterExpandedField = StateField.define<boolean>({
-  create: (state) => frontmatterStartsRevealed(state.facet(notePathFacet)),
+  create: (state) =>
+    frontmatterStartsRevealed(state.facet(notePathFacet), state.facet(frontmatterAlwaysOpenFacet)),
   update(value, tr) {
     // Enforced here, not only by hiding the chevron: the rule is about the file.
-    if (frontmatterAlwaysOpen(tr.state.facet(notePathFacet))) return true
+    if (tr.state.facet(frontmatterAlwaysOpenFacet)) return true
     for (const e of tr.effects) if (e.is(toggleFrontmatter)) return e.value
     return value
   },
@@ -371,12 +373,12 @@ class FrontmatterWidget extends WidgetType {
 
   /**
    * The summary line, the same open or closed. A block with a collapsed state
-   * leads it with the toggling chevron; a task, and a file with neither
+   * leads it with the toggling chevron; one always open, and a file with neither
    * frontmatter nor a schema to fill one, get the line bare.
    */
   private header(view: EditorView, wrap: HTMLElement, live: LiveBlock): HTMLElement {
     const nothingToOpen = this.body === null && frontmatterSchema(this.path) === null
-    if (nothingToOpen || frontmatterAlwaysOpen(this.path)) {
+    if (nothingToOpen || view.state.facet(frontmatterAlwaysOpenFacet)) {
       live.mark = null
       const bare = document.createElement('span')
       bare.className = 'cm-fm-bare'

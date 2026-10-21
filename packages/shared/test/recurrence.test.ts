@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { nextDue, nextDueCatchup } from '../src/recurrence'
+import { fieldRecurrence, nextDue, nextDueCatchup } from '../src/recurrence'
 import type { Recurrence, RecurrenceFrequency } from '../src/types'
 
 const rule = (frequency: RecurrenceFrequency, interval: number): Recurrence => ({
@@ -146,5 +146,18 @@ describe('nextDueCatchup — a due date that names an hour', () => {
 
   it('keeps a timeless due timeless across catch-up', () => {
     expect(nextDueCatchup('2026-04-10', rule('daily', 3), '2026-04-14')).toBe('2026-04-16')
+  })
+})
+
+describe('fieldRecurrence', () => {
+  it('a recurrence needs a frequency, and its interval defaults to 1', () => {
+    expect(fieldRecurrence({ frequency: 'weekly' })).toEqual({ frequency: 'weekly', interval: 1 })
+    expect(fieldRecurrence({ frequency: 'daily', interval: 3 })).toEqual({
+      frequency: 'daily',
+      interval: 3,
+    })
+    expect(fieldRecurrence({ interval: 2 })).toBeUndefined()
+    expect(fieldRecurrence(['weekly'])).toBeUndefined()
+    expect(fieldRecurrence('weekly')).toBeUndefined()
   })
 })
