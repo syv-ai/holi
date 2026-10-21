@@ -1,6 +1,6 @@
 ---
 name: vault-apps
-description: Build a small web app that opens as a tab inside Holi, over this vault's own notes and tasks. Use when asked for a dashboard, a chart or graph, a table or overview, a report, a viewer or explorer, a board, a tracker, a calculator, a widget, or any custom screen or small tool — including "visualise this", "show me", and "build me something to track X" phrasings.
+description: Build a small web app that opens as a tab inside Holi, over this vault's own notes and tasks, or a slash command for the notes editor. Use when asked for a dashboard, a chart or graph, a table or overview, a report, a viewer or explorer, a board, a tracker, a calculator, a widget, or any custom screen or small tool — including "visualise this", "show me", and "build me something to track X" phrasings, and when asked for a `/` command in notes (`/date`, `/uppercase`, "a command that…").
 ---
 
 # Build an app for this vault
@@ -53,10 +53,10 @@ Projects/Q2/Burndown.app/app.yaml     ← required: write this LAST
   ```yaml
   description: Sprint retros # shown where the app is listed
   collections: # the records it keeps: see Keeping data
-  dangerously-allow: # one person's data it reads: mail, calendar, location
   env: # the secrets it needs, by name: see Secrets
   dangerously-allow: # one person's data it reads: mail, calendar; or recording, network
   hosts: # with network: the exact hosts holi.fetch may reach
+  commands: # what it adds to the notes' slash menu: see Slash commands
   ```
 
   A blank key is unused, and an empty file is still a valid manifest. There is
@@ -77,6 +77,9 @@ const text = await holi.docs.read(path) // that note's markdown, as a string
 const html = await holi.docs.render(path) // that note as HTML (or use <holi-note>)
 const tasks = await holi.tasks.list() // every task.*.md
 await holi.tasks.complete(path) // done; a recurring task rolls forward instead
+await holi.tasks.update(path, { due: '2026-08-24', priority: null }) // set fields; null clears
+const created = await holi.tasks.create({ title: 'Call the vendor', folder: 'ops' }) // { path }
+await holi.docs.write(path, newText, text) // over the text you read; see Changing the vault
 await holi.open('projects/q2.md') // opens that note in a Holi tab
 await holi.open('board') // or a view: home, board, agenda, mail, settings, history
 const recents = await holi.recents() // [{ kind: 'path'|'surface'|'session', key, id? }], newest first; an app is { kind: 'surface', key: 'app', id: bundle }
@@ -92,6 +95,10 @@ const off = holi.on('docs', () => redraw()) // see Hearing about changes
 
 Plus `holi.google.agenda({ from, to })` and `holi.google.search(query)`, which
 need an opt-in (see Reading someone's mail or calendar). That is the whole API.
+
+`holi.tasks` answers only while the Tasks plugin is on; with it off, each call
+rejects with `no such method`. An app that shows tasks says so rather than
+showing an empty board.
 
 `<holi-note path="projects/q2.md"></holi-note>` shows a note, rendered and themed,
 with its `[[links]]` opening in Holi. It renders again when the note changes.
@@ -128,14 +135,58 @@ list (they are `holi.tasks.list()`), and neither are the agent's own files.
 and **rejects** for a missing file or a refused one (below). `holi.open(path)`
 takes the same kind of path.
 
+## Changing the vault
+
+An app changes the vault the way a person in Holi does, under the same rules,
+and the change syncs like theirs. There is no approval step: the vault's members
+trust each other's apps as they trust each other's edits.
+
+- `holi.tasks.complete(path)` is the board's checkbox: a recurring task rolls
+  forward to its next occurrence instead of ending.
+- `holi.tasks.update(path, patch)` sets fields, as the board does: `status`,
+  `due`, `priority`, `tags`, `assignees`, `reminder`, `recurrence`, `order`.
+  `null` clears `due`, `priority`, `reminder` or `recurrence`. A bad value or
+  an unknown field rejects, naming it. Setting `status: 'done'` is completion,
+  so it rolls a recurring task forward too. It resolves to the task as written.
+- `holi.tasks.create({ title, folder?, status?, description?, extra? })` makes
+  `task.<slug>.md` in `folder` (the vault root by default), `todo` unless
+  given; `extra` holds `due`, `priority`, `tags`, `assignees`, `reminder` and
+  `recurrence`. A repeated title gets a numbered name. It resolves to `{ path }`.
+- `holi.docs.write(path, text, base)` writes a whole `.md` note. `base` is the
+  text you read with `holi.docs.read`, or `null` for a note that must not exist
+  yet. If the note changed since you read it (a teammate's sync, the agent, the
+  person typing in it) the write rejects with `err.code === 'CONFLICT'` and
+  nothing is written: read it again, apply your change to the new text, and
+  write once more. Never retry with a stale base.
+- A task file (`task.*.md`) takes `holi.docs.write` for its body only: keep its
+  frontmatter exactly as you read it, or the write rejects and names
+  `holi.tasks.update`, which is how its fields change. A new task is
+  `holi.tasks.create`, never a note write.
+- A refusal is an `Error` with a `code`: `CONFLICT`, `FORBIDDEN`, `NOT_FOUND`
+  or `BAD_REQUEST`. Match on the code, not the message.
+
+```js
+async function appendLine(path, line) {
+  for (let i = 0; i < 3; i++) {
+    const text = await holi.docs.read(path)
+    try {
+      return await holi.docs.write(path, text.trimEnd() + '\n' + line + '\n', text)
+    } catch (err) {
+      if (err.code !== 'CONFLICT') throw err
+    }
+  }
+}
+```
+
 ## What an app cannot do
 
 These are not oversights — build within them rather than around them.
 
-- **It cannot write the vault.** No file writing, no task editing, no note
-  creation. An app shows; the agent changes. It writes two things only: its own
-  records, through `holi.store` (below), and a task's completion, through
-  `holi.tasks.complete`, which applies the board's rule.
+- **It cannot delete, move or rename anything**, and it writes only the vault's
+  shared notes and tasks (see Changing the vault). Nothing hidden (`.holi/`,
+  `.claude/`, `.github/`), nothing `.local.`, no `AGENTS.md` or `CLAUDE.md` in
+  any folder, nothing inside an app's folder, its own included: its data goes
+  in `holi.store`.
 - **It has no browser storage.** `localStorage` and `sessionStorage` _throw_ (the
   page has an opaque origin) and cookies do nothing. Anything that must survive
   a reload goes in `holi.store`; in-memory state within one session (a selected
@@ -324,14 +375,77 @@ holi store put <app> <collection> '<json>' [<id>]
 holi store delete <app> <collection> <id>
 ```
 
+## Slash commands
+
+An app can add commands to the notes editor's `/` menu: `/date` that writes
+today's date, `/uppercase` that shouts the selection, `/ticket` that fetches a
+ticket's title. A command is a script in the app's folder, declared in
+`app.yaml`:
+
+```yaml
+commands:
+  uppercase:
+    script: commands/uppercase.js # a .js file in this app's folder
+    description: Uppercase the selection # shown beside /uppercase in the menu
+```
+
+A name is lower case letters, digits, `-` and `_`. `/todo` and `/table` are
+Holi's own and stay Holi's. A command needs no app page of its own, but the app
+still needs `index.html` and `app.yaml` to exist, so a commands-only app's page
+can say what its commands do.
+
+The script calls `holi.command(fn)` once, at the top level. It runs when the
+person picks the command, in a hidden page with the same `window.holi` as the
+app, so it can read notes, use the app's store, read a declared secret and
+`fetch`:
+
+```js
+// commands/uppercase.js
+holi.command(({ text, line, path }) => {
+  // text: what the person had selected when they typed `/`, or ''
+  // line: the line the caret is on; path: the note's path
+  return (text || line).toUpperCase()
+})
+```
+
+What `fn` returns, or resolves to (it may be `async`), is what happens:
+
+| Return                  | What happens                                                          |
+| ----------------------- | --------------------------------------------------------------------- |
+| `'text'`                | the selection becomes this text (with no selection, it is inserted)   |
+| `{ replace: 'text' }`   | the same                                                              |
+| `{ insert: 'text' }`    | the selection stays and the text goes after it                        |
+| `{ open: 'a/note.md' }` | opens a note, an app or a view, as `holi.open` does                   |
+| `{ agent: 'Do this' }`  | the ask-the-agent box opens with this written in; the person sends it |
+| nothing                 | the note stays as it was                                              |
+
+- It gets the selection and the line, never the rest of the note. To read the
+  note, `holi.docs.read(path)`.
+- It has 10 seconds. A command that throws, returns anything else, or runs out
+  of time leaves the note as it was and writes why to the app's
+  `log.local.txt`, so read the log when the person says a command did nothing.
+- A command asks no one for approval. If its app declares `dangerously-allow`
+  (mail, calendar), its Google calls fail until the person has opened the
+  app's tab once and approved it there, and again after that approval lapses
+  (30 days, or a change to the app's code). Tell them so when you write one.
+- It is not offered in the agent's own files (`AGENTS.md`, `CLAUDE.md`,
+  `.claude/`, `.holi/memory/` and the rest no app may read).
+- It is a plain script, not a module: no `import`/`export`. One script is one
+  command, so code two commands share is written into each.
+- After writing one, tell the person to type `/` and its name in a note. Holi
+  picks up a changed `app.yaml` on its own; a changed script runs fresh every
+  time.
+
 ## Seeing whether it works
 
-You have three things: a check that runs on every file you write, a command
-that opens the app, and the app's log.
+You have a check that runs on every file you write, a command that opens the
+app, a screenshot of its tab, and its console.
 
 ```sh
-holi apps open <path>       # opens the app's tab in Holi, or reloads it if open
-holi apps init <path>       # scaffolds <path>, a folder ending in .app
+holi apps open <path>        # opens the app's tab in Holi, or reloads it if open
+holi docs screenshot <path>  # a PNG of the tab as the user sees it; prints its absolute path
+holi apps console <path>     # its console and errors since it last loaded
+holi apps init <path>        # scaffolds <path>, a folder ending in .app
 ```
 
 **The check speaks on its own.** Every time you write a file inside a `.app`
@@ -347,22 +461,34 @@ run. So the loop is:
 
 1. Write the files, manifest last.
 2. Read what the check says, if it says anything.
-3. `holi apps open <path>`, e.g. `holi apps open Projects/Q2/Burndown.app`.
-4. **Ask the user what they see.** You have no screenshot and no way to read
-   the rendered page: opening the tab puts it in front of them, not you.
-5. **Read the log**, `log.local.txt` at the app's root, when they say something
-   is wrong. Holi writes into it what went wrong while the app ran on this
-   machine: `console.error` and `console.warn`, uncaught errors and rejected
-   promises (with their stacks), and every bridge call Holi refused, each line
-   timed. `holi.log(...)` adds a line of your own, so log what you would want to
-   know next time. It keeps the last day, never syncs, and the app cannot read
-   it. No file means nothing has gone wrong here yet.
+3. `holi apps open <path>`, e.g. `holi apps open Projects/Q2/Burndown.app`. On an
+   app that is already open this reloads it, which is how your edit reaches the
+   tab.
+4. **Look at it.** `holi docs screenshot <path>` opens the tab if it is not
+   open, waits for it to finish drawing, and prints the absolute path of a PNG
+   of it (in the OS temp directory, not the vault), in this vault's theme and the light or dark mode the user has. Read that
+   file. It is what the user sees, at the size their pane has now, so a narrow
+   pane shows a narrow app.
+5. **Read its console**: `holi apps console <path>` prints what the app logged
+   since it last loaded: `console.log`, `info`, `warn` and `error`, uncaught
+   errors and rejected promises (with their stacks), and every bridge call Holi
+   refused, each line timed. `holi.log(...)` adds a line of your own.
+   `--all` prints the whole of the last day. The same lines are in
+   `log.local.txt` at the app's root, which never syncs and the app cannot
+   read. Whatever the app logs stays on this machine for a day, so never log
+   a secret, a token or an environment value.
+6. Fix what you saw, and go round again from 3.
 
-The log is your console, but only the user sees the page, so build so that a
-failure is legible in the page itself too:
+The screenshot brings Holi's window to the front (without taking the user's
+keyboard), so take one when you mean to look, not after every write. When Holi
+is showing another vault it refuses, and so it does while a dialog or menu is
+open over the window; then ask the user.
+
+Build so that a failure is legible in the page itself too, where a screenshot
+and the user both see it:
 
 - **Wrap the startup in a try/catch and render the error into the page.** A
-  visible message is the only diagnostic the user can read back to you.
+  visible message is a diagnostic anyone looking at the tab can read.
 - **Put something on screen before the first `await`**, so a failing call
   leaves a page with something on it rather than a blank one.
 - Prefer plain DOM over anything clever: no build step, no bundler, no source
@@ -584,9 +710,9 @@ instead.
 ## Before you say it is done
 
 - **Write `app.yaml`**, if you have not. Without it the app does not open.
-- **Open it: `holi apps open <path>`.** Then say what it should show, so the
-  user can tell you when it does not — you have still never seen it render, so
-  do not claim to have looked at it.
+- **Open it and look: `holi apps open <path>`, then `holi docs screenshot
+  <path>` and `holi apps console <path>`.** Say what it shows, and what it
+  should show, so the user can tell you when it does not.
 - **Check it fits the pane** (above): nothing with a pixel width, grids that
   wrap, long text that breaks, and one scrolling region rather than a page that
   scrolls. Ask the user to narrow the pane and say whether anything scrolls

@@ -181,9 +181,9 @@ describe('the boundaries the skill states', () => {
     expect(text).toMatch(/holi\.data/)
   })
 
-  it('reports a write through the bridge — an app shows, the agent changes', async () => {
-    const text = said(await wrote('retro.app/app.js', 'await holi.docs.write("a.md", "x")\n'))
-    expect(text).toMatch(/cannot write/)
+  it('reports a write the bridge does not have', async () => {
+    const text = said(await wrote('retro.app/app.js', 'await holi.docs.delete("a.md")\n'))
+    expect(text).toMatch(/no such write/)
   })
 
   it('reports a hand-added bridge script tag', async () => {

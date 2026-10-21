@@ -61,7 +61,7 @@ describe('parseScheduleFile', () => {
     expect(d.model).toBe('sonnet')
     expect(d.allow).toEqual(['Bash(holi google search:*)', 'Edit'])
     expect(d.prompt).toBe('Look through my unread mail.\n\nDraft replies.')
-    expect(describeScheduleWhen(d.when)).toBe('Every 30 minutes, 07:00–18:59, weekdays')
+    expect(describeScheduleWhen(d.when!)).toBe('Every 30 minutes, 07:00–18:59, weekdays')
   })
 
   it('falls back to the file for a name, and to no rules', () => {
@@ -74,7 +74,7 @@ describe('parseScheduleFile', () => {
   it('reads a one-off as a local minute', () => {
     const d = def(file('at: "2026-10-09T15:00"'))
     expect(d.when).toEqual({ kind: 'at', stamp: '2026-10-09T15:00', local: at(2026, 10, 9, 15) })
-    expect(describeScheduleWhen(d.when)).toBe('Once, at 2026-10-09 15:00')
+    expect(describeScheduleWhen(d.when!)).toBe('Once, at 2026-10-09 15:00')
   })
 
   it('refuses what it cannot run, and says why', () => {
@@ -109,7 +109,7 @@ describe('scheduleApprovalText', () => {
 })
 
 describe('dueRun and nextRun', () => {
-  const every30 = def(file('cron: "*/30 * * * *"')).when
+  const every30 = def(file('cron: "*/30 * * * *"')).when!
 
   it('is nothing until a moment passes', () => {
     expect(dueRun(every30, at(2026, 10, 8, 10, 0), at(2026, 10, 8, 10, 29))).toBeNull()
@@ -123,7 +123,7 @@ describe('dueRun and nextRun', () => {
   })
 
   it('runs a one-off once', () => {
-    const once = def(file('at: "2026-10-09T15:00"')).when
+    const once = def(file('at: "2026-10-09T15:00"')).when!
     expect(dueRun(once, at(2026, 10, 9, 14), at(2026, 10, 9, 15))).toEqual(at(2026, 10, 9, 15))
     expect(dueRun(once, at(2026, 10, 9, 15), at(2026, 10, 9, 16))).toBeNull()
     expect(nextRun(once, at(2026, 10, 9, 16))).toBeNull()

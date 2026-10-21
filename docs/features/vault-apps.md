@@ -12,8 +12,8 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   another bundle. Like a note it is identified by its vault-relative path (`Finance/Budget.app`);
   its name is the folder name without `.app`, as a note drops `.md`. `app.yaml` is the "finished"
   marker: an agent writes an app file by file, so the manifest is written last. Its keys are
-  `description`, `collections` and `dangerously-allow`, all optional; `holi apps init` writes
-  all three with the unused ones blank (`appManifestText`), so the file shows what
+  `description`, `collections`, `dangerously-allow`, `env` and `commands`, all optional; `holi apps init` writes
+  every one with the unused ones blank (`appManifestText`), so the file shows what
   an app can say, and an empty file still finishes the app. The icon is the vault icon map's,
   as for any row. The parser never throws; a typo costs a field, never the app.
 - **A personal app is `<name>.local.app`.** The `.local.` marker on the folder makes every file
@@ -50,24 +50,76 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   rewritten: Holi injects a `<style>` of theme tokens
   (Holi's own theme for the mode, with the vault's resolved theme laid over it, plus the Tailwind
   palette colours either refers to, since a frame has no Tailwind build) and the
-  `window.holi` bridge script. Every other file is served byte for byte.
+  `window.holi` bridge script. Every other file is served byte for byte. The one document not
+  read from the bundle is a slash command's runner (below), made from the manifest.
 - **The bridge** is `postMessage` from the frame to `AppFrame`, which answers `holi.open` itself
   (the shim sends `{target}`: a view registered in this vault by name wins, such as home, board,
   agenda, mail, settings or history; else a vault file, or an app's bundle as that app; a bare
-  name that is neither answers "no such view") and
+  name that is neither answers "no such view"; a file is held to what `holi docs open` may show,
+  `shownPathOrNull`, so never `.holi/state/` or a secret file) and
   forwards every other method to `apps.call` in main with the bundle it mounted. Reads:
   `docs.list`, `docs.read`, `docs.render` (a note as HTML, inline HTML escaped and only web links
-  kept, so a note cannot run script as the app), `tasks.list`, `vault.recents`, `docs.search` (names, then
+  kept, so a note cannot run script as the app), `tasks.list` (only the tasks the app may read, as
+  `docs.list` lists only the notes), `vault.recents`, `docs.search` (names, then
   bodies), `vault.settings`, `vault.members`, `vault.history`, `sync.status`, `agent.sessions`, and, opted into,
   `google.agenda` and `google.search` (`holi.google.agenda({ from, to })`,
-  `holi.google.search(query)`, a page: `{ threads, nextPageToken }`). Writes: `holi.store(collection)` and `tasks.complete`,
-  which applies the board's rule. `<holi-note path>` is a custom element the shim defines: the
+  `holi.google.search(query)`, a page: `{ threads, nextPageToken }`). Writes: its own records
+  (`holi.store(collection)`), and the vault's shared notes and tasks, each as Holi's own views
+  write them (see Writing the vault). `<holi-note path>` is a custom element the shim defines: the
   note rendered, themed and live. The theme is ambient CSS variables, not a call.
+- **Writing the vault.** An app changes shared content directly, with no approval step: trust
+  is vault membership, as for an edit by hand, and the change syncs like one. Each write is
+  the same change made elsewhere. `tasks.complete` is the board's checkbox. `tasks.update`
+  (`holi.tasks.update(path, patch)`) is the board's field edit: the patch is read by
+  `parseTaskPatch`, so an app cannot write a task the board would refuse, and `done` is
+  completion, as on the board. It sets fields only; a task's body is a note write.
+  `tasks.create` is the board's quick add. `docs.write` (`holi.docs.write(path, text, base)`)
+  writes a whole `.md` note over `base`, the text the app read, or `null` for a note that
+  must not exist yet; a note that has changed since (a pull, the agent, the person typing)
+  is refused as a conflict and nothing is written, so an app never overwrites what it did not
+  see. The text is the revision because the app already holds it and nothing else about a file
+  says for certain it is unchanged. The check and the write run under the file's lock in main
+  (`withFileLock`), so two app writes over one base give one write and one conflict. The
+  editor's save and a pull do not take that lock: one landing between the check and the
+  rename is overwritten, a window of one file write, and history keeps what it wrote. A file a
+  running plugin claims is written as its claim allows (`SnapshotClaim.checkNoteWrite`), so core
+  names no plugin's format: on a task file `docs.write` changes the body only, its frontmatter
+  must parse to the fields the file has, so a field change goes through `tasks.update`'s rules,
+  and a new task through `tasks.create`. With the tasks plugin off, a task file is a note. A refusal reaches the app as an `Error` whose `code` is main's verdict
+  (`CONFLICT`, `FORBIDDEN`, `NOT_FOUND`, `BAD_REQUEST`, and `PRECONDITION_FAILED` with
+  `vault-not-open` when Holi no longer has the app's vault open), so an app matches the code,
+  not the words. None of these is open to the agent, which writes files with
+  its own tools (`holi tasks complete` aside, for the recurrence rule).
 - **Push.** `holi.on(topic, fn)` hears `docs`, `tasks`, `sync`, `agent`, `recents`, `history` and
   `store:<collection>`. `AppFrame` posts a topic when its signature changes (`renderer/app-push.ts`),
   never on mount. A push carries no data: the app reads again through main, so every refusal
   still applies, and the signatures leave the agent surface out, so an app is not told a memory
   was written.
+- **Slash commands.** An app may add commands to the notes editor's slash menu ([editor](editor.md)):
+  `commands:` in `app.yaml` maps each name (lower case, digits, `-`, `_`) to a `script`, a `.js`
+  file in the bundle, and an optional `description` the menu shows beside it, with the app's name
+  at the row's end. The script calls `holi.command(fn)`. The menu lists every finished app's
+  commands while the apps plugin runs, read by main from the manifests (`apps.commands`) and read
+  again when one changes in the snapshot, and when main's `commands-changed` event says
+  `apps.commands` answers (the vault's plugins start in main alongside the renderer, so the first
+  read can come before it is registered). Picked, a command runs in a hidden frame on its app's own
+  origin, sandboxed as the tab is but without popups: `holi-app://<host>/?command=<name>` is a
+  document main makes, the theme, the bridge, the runner (`COMMAND_JS`) and the script by its path,
+  so the script is served and refused exactly as the app's files are. The frame's bridge calls are
+  answered as the tab's are (`renderer/bridge-host.ts`), so a command reads what its app can,
+  under its app's approvals, and may `fetch`. `fn` gets `{ text, line, path }`: the text the
+  command was typed over, the caret's line, the note; nothing more of the buffer. It answers with
+  text, which replaces that text, or one of `{ replace }`, `{ insert }` (after the text),
+  `{ open }` (as `holi.open`, under the same rule) and `{ agent }` (the ask-the-agent popover, the instruction written
+  in), or nothing. The answer is checked (`commandActionOf`) because it came out of the app's code.
+  A command that throws, answers something else, or takes more than 10 seconds leaves the note as
+  it was and writes why to its app's log, where the agent that wrote it looks. A command shows no
+  approval dialog: in an app that declares `dangerously-allow`, its Google calls fail until the
+  person opens the app's tab once and approves it there. Leaving the vault removes the frames of
+  commands still running. The script is
+  classic, not a module: the frame's origin is opaque, so a module's fetch is cross-origin and
+  would need a CORS header, and a header one opaque origin passes, every app passes, letting each
+  read every other's code.
 - **One person's data is opt-in, twice.** `google.agenda` and `google.search` read the Google
   account of whoever has the app open, not the vault's; an app can keep what it reads in records
   that sync to every member, or send it over the network. So the app declares
@@ -114,17 +166,23 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   app, whether it is a plain link (main's `will-frame-navigate` stops the frame leaving its bundle)
   or `target=_blank`/`window.open` (the sandbox's `allow-popups` lets it reach
   `setWindowOpenHandler`, which never makes a window). Any other scheme opens nothing.
-- **The log.** `log.local.txt` at the bundle's root is what went wrong while the app ran here: the
-  bridge shim reports `console.error`/`warn`, uncaught errors, unhandled rejections and refused
-  bridge calls, plus `holi.log(...)`, capped at 50 a second, and main appends them
-  (`log.ts`, one write at a time, never through a link, never into a deleted bundle).
-  Each line is timed; a stack continues indented. It keeps the last day and at most 500 entries,
-  trimmed as it is written (`appendAppLog`). It is for the agent: `.local.`, so it never syncs;
-  not served to the app, not readable through the bridge, not in the approval hash, and not
-  watched, so it never triggers a rescan. The pane header's log button, beside reload, opens it in a
+- **The log.** `log.local.txt` at the bundle's root is the app's console on this machine. The
+  bridge shim reports `console.log`/`info` (as `info`), `console.warn`/`error`, uncaught errors,
+  unhandled rejections and refused bridge calls, plus `holi.log(...)`: each entry cut to 4000
+  characters before it is sent, at most 20 `info` and 50 others a second. `AppFrame` adds a
+  `load` line itself as the frame starts each document and refuses one from the frame, so an
+  app cannot move where `holi apps console` starts. Main gathers the reports for a second and
+  appends them in one write (`log.ts`, one write at a time, never through a link, never into a
+  deleted bundle). Each line is timed; a stack continues indented. It keeps the last day and at
+  most 500 entries, of which at most 200 are `info`, so a chatty app never pushes its errors out
+  (`appendAppLog`). It is for the agent: `.local.`, so it never syncs; not served to the app, not
+  readable through the bridge, not in the approval hash, and not watched, so it never triggers
+  a rescan. Whatever an app logs is kept on disk for a day where the vault's agent reads it, so
+  an app must never log a secret, a token or an environment value. The pane header's log button, beside reload, opens it in a
   new pane; it is disabled until a rescan has seen one.
 - **Showing.** The frame is hidden until its document has loaded, then fades in
-  (`motion-in-fade`), so a half-styled first paint is never seen; a reload or a mode change starts
+  (`motion-in-fade`), so a half-styled first paint is never seen; the pane is `aria-busy` until
+  then, which is what `holi docs screenshot` waits out; a reload or a mode change starts
   it over.
 - **One registry, two doors.** What main answers is the capability registry
   (`main/capabilities/`, see [architecture](../architecture.md)); the apps feature registers
@@ -159,8 +217,11 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   that posts the three versions to Holi (`/merge/record`), and fails to a conflict when Holi does
   not answer.
 - **The authoring loop.** A seeded skill (`.claude/skills/vault-apps/SKILL.md`) documents the
-  contract. The `holi` CLI gives the agent `holi apps open <path>` and `holi apps init <path>`
-  (never overwrites). A `PostToolUse` hook (`vault-app-check.mjs`) reports, on every write inside
+  contract. The `holi` CLI gives the agent `holi apps open <path>`, `holi apps init <path>`
+  (never overwrites), `holi apps console <path>` (the log from its last `load` line on, or the
+  whole of it with `--all`) and core's `holi docs screenshot <path>` (a PNG of the tab as the
+  person sees it, [agent config](agent-config.md)), so edit, reload, look and read the console is
+  a loop the agent runs on its own. A `PostToolUse` hook (`vault-app-check.mjs`) reports, on every write inside
   a `<name>.app` folder below the session's cwd, a syntax error and its line, a `.ts`/`.tsx`/`.jsx` file nothing will build, a
   `localStorage` call, a missing manifest, and a hard-coded colour. It is advisory, exits 0, and is
   silent when nothing is wrong. See [agent config](agent-config.md) for the CLI and hooks.
@@ -172,12 +233,32 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
 ## Rules
 
 - An app is a web app the user wrote: it may reach all vault content except the agent surface
-  (`AGENTS.md`, `CLAUDE.md`, `MEMORY.md`, `USER.local.md`, `.claude/`, `.holi/memory/`; see the
+  (`AGENTS.md`, `CLAUDE.md`, `MEMORY.md`, `USER.local.md`, `.claude/`, `.holi/memory/`,
+  `.holi/schedules/`; see the
   [glossary](../glossary.md)). The reason is escalation, not privacy: an app that could write
   `.claude/hooks/google-send-gate.mjs` could make the agent send mail unprompted.
+- An app's slash command is not offered, and refuses to run, in a note no app may read
+  (`isAppFencedPath`: the agent surface, `.holi/state/`, secret files, any app's records and log)
+  or write (`isAppWritablePath`, below). It is given the note's text and may write into it, so
+  offering it in `AGENTS.md` or `.holi/memory/` would hand an app the agent surface the bridge
+  refuses, and offering it in a `.local.` note or `notes/AGENTS.md` would let its answer land
+  where the bridge's writes may not. The bridge's reads and writes use the same predicates. The
+  apps plugin supplies the fence to the menu as its commands' `SlashCommand.offeredIn(path)`, so
+  core's slash menu knows nothing of apps.
 - The agent-surface refusal lives in main (the capability registry), not the renderer. The process rendering
   untrusted code must not be the one deciding what it may read. `read` answers `FORBIDDEN`,
   distinct from `NOT_FOUND`.
+- What an app writes is narrower than what it reads (`isAppWritablePath` in `@holi/shared`,
+  the one app write rule, behind main's `writablePath`): besides everything a
+  read refuses, nothing hidden (`.holi/`, `.claude/`, `.github/`: configuration and machinery,
+  each with its own writer), nothing `.local.` (one person's, which a shared app's code must
+  not change for them, and which never syncs to show anyone it did), and nothing inside an
+  app's bundle (another app's code, or records, which have the store), and no `AGENTS.md` or
+  `CLAUDE.md` in any folder or any case, nor a root agent-surface name in another case: Claude
+  Code reads a subfolder's instructions when it works there, so an app that wrote one would be
+  instructing the agent. A read of `notes/AGENTS.md` stays allowed. The file must be the
+  path as named (`exactPath`): no symlink on the way, the case it has on disk. Nothing deletes,
+  moves or renames. None of it asks for consent: the one prompt is for one person's own data.
 - This machine's state under `.holi/state/` (`isMachineStatePath`) is refused the same way and left
   out of every listing: it holds the loopback bridge's tokens, and an app holding one could drive
   Holi as the agent does.
@@ -257,9 +338,19 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
 - A Deno or Bun sidecar for backends: Electron's `utilityProcess` already ships Node.
 - A CSP with `connect-src 'none'`: rules out any app that calls an API.
 - Note-embedded app widgets: keeps the editor lean.
+- Slash commands as their own kind of file (`.holi/commands/`), or as `.claude/commands/`: a
+  command is code arriving with a pull like an app is, so it is part of an app, under the app's
+  origin, bridge, approvals, check hook and log, rather than a second sandbox with its own rules.
+- Handing a command the whole buffer: it gets the selection and the line, which is what a
+  transform needs, and an app's code is not told more of a note than it asked to change.
 - An app store, versioning, or permission prompts for what the vault shares: trust is vault
   membership; reuse is copying the directory. The one prompt is for one person's own Google data,
   which vault membership does not cover.
+- An app proposing a change that the person or the agent approves before it lands: a tick in a
+  tracker is the person's own act, as on the board, and an approval for each would be a second
+  click for every one. Vault membership is the trust, and history keeps every write reversible.
+- A revision token beside `docs.read`'s text: the text is already a revision the app holds, and
+  a second read shape would break every app that reads a note as a string.
 - npm dependency trees in the vault: an app ships its libraries bundled to files.
 
 ## Code
@@ -270,17 +361,23 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   (`grants.ts`), and its seed: the vault-apps skill and the `vault-app-check.mjs` hook under
   `main/vault/shipped/.claude/`. It opens the app door once it starts, and with it off a vault
   serves no app, while what the vault holds (records, `.local.app`) is still core's. Its
-  `renderer/` holds `AppFrame` with the approval dialog, the push signatures (`app-push.ts`),
-  the app lists and reload counts (`apps.ts`), and the surface, claim, rail item and pane-header
-  actions (`surface.tsx`); its `open` event is the agent's `holi apps open`. Its `shared/` holds
-  the bridge vocabulary (`bridge.ts`: `APP_METHODS`, the topics), the manifest (`manifest.ts`),
-  an app's name and `holi-app:` host (`bundle.ts`), and the store's schema subset, ids and log
+  `renderer/` holds `AppFrame` with the approval dialog, the bridge's answering
+  (`bridge-host.ts`), the slash commands' list and hidden frame (`commands.ts`), the push
+  signatures (`app-push.ts`), the app lists and reload counts (`apps.ts`), and the surface, claim,
+  rail item and pane-header actions (`surface.tsx`); its `open` event is the agent's
+  `holi apps open`. Its `shared/` holds the bridge vocabulary (`bridge.ts`: `APP_METHODS`, the
+  topics), the manifest (`manifest.ts`), a command's answer and its check (`commands.ts`), an
+  app's name and `holi-app:` host (`bundle.ts`), and the store's schema subset, ids and log
   (`store.ts`).
-- `apps/desktop/src/main/capabilities/`: the registry, its dispatch and services, the read
-  fences and core's entries, with note rendering (`render-note.ts`).
+- `apps/desktop/src/renderer/src/editor/slash.ts`: the slash menu, and the `SlashCommand` seam a
+  plugin adds commands through.
+- `apps/desktop/src/main/capabilities/`: the registry, its dispatch and services, the read and
+  write fences (`fences.ts`) and core's entries, among them `docs.write`, with note rendering
+  (`render-note.ts`).
+- `apps/desktop/src/main/vault/task-capabilities.ts`: the task entries an app reaches.
 - `apps/desktop/src/main/vault/search.ts`: the vault search behind `holi.search`, shared with
   Holi's own search.
-- `apps/desktop/src/main/vault/record-merge.ts`: the record merge driver's install;
+- `apps/desktop/src/main/vault/merge-drivers.ts`: the record merge driver's install;
   `apps/desktop/src/main/vault/git-routes.ts`: `/merge/record`;
   `apps/desktop/src/main/bridge/server.ts`: `/cli`.
 - `apps/desktop/src/main/index.ts`: scheme registration, every plugin's included.

@@ -19,6 +19,11 @@
  * refuses any word before the verb, so that pattern cannot be stepped around.
  * A person pressing Send in the UI has already decided.
  *
+ * **What other people wrote reaches the agent fenced** (`untrusted.ts`): each
+ * read the CLI door opens fences it in `cliValue`, so the agent reads a mail's
+ * "ignore previous instructions" as a quote, while the UI and an app get the
+ * same values as they are.
+ *
  * No `electron` import: this loads under plain Node in the tests.
  */
 import {
@@ -56,11 +61,13 @@ import {
   type MailboxName,
   type MailCategory,
 } from './gmail'
+import { CLIENT_ID_SUFFIX } from './credentials'
 import { resolveThreadMeeting } from './invite'
 import type { LoopbackFlow } from './loopback-flow'
 import type { OutgoingMail } from './mime'
 import { listContacts } from './people'
 import { GoogleReconnectRequiredError } from './session'
+import { fenceEvents, fenceThread, fenceThreads } from './untrusted'
 
 /** Longest calendar window one call may ask for. */
 const MAX_AGENDA_DAYS = 92
@@ -89,6 +96,10 @@ export interface GoogleSettingsStore {
 }
 
 const NOT_CONNECTED = 'this vault has no Google account connected'
+/** What the agent does about either: the tokens are main's alone, so the
+ *  person is the only way back to Google. */
+const CONNECT = "ask the person to connect Google in Holi's vault settings"
+const RECONNECT = "ask the person to press Reconnect for Google in Holi's vault settings"
 
 /**
  * Google's verdict as a refusal each door can render. The code is the point:
@@ -100,7 +111,7 @@ async function google<T>(work: () => Promise<T>): Promise<T> {
     return await work()
   } catch (error) {
     if (error instanceof GoogleReconnectRequiredError) {
-      throw new CapabilityError('UNAUTHORIZED', error.message)
+      throw new CapabilityError('UNAUTHORIZED', error.message, RECONNECT)
     }
     if (!(error instanceof GoogleApiError) || error.code === 'unknown') throw error
     const codes: Record<Exclude<GoogleErrorCode, 'unknown'>, CapabilityError['code']> = {
@@ -109,7 +120,10 @@ async function google<T>(work: () => Promise<T>): Promise<T> {
       'rate-limit': 'RATE_LIMITED',
       'not-found': 'NOT_FOUND',
     }
-    throw new CapabilityError(codes[error.code], error.message)
+    // A missing scope is fixed the same way as a lapsed grant: connecting
+    // again asks Google for every scope Holi needs.
+    const next = error.code === 'reconnect' || error.code === 'scope' ? RECONNECT : undefined
+    throw new CapabilityError(codes[error.code], error.message, next)
   }
 }
 
@@ -302,7 +316,7 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
   /** The vault's data layer, or the refusal that says there is none. */
   const dataOf = async (remote: string): Promise<GoogleData> => {
     const data = await deps.dataFor(remote)
-    if (data === null) throw new CapabilityError('UNAVAILABLE', NOT_CONNECTED)
+    if (data === null) throw new CapabilityError('UNAVAILABLE', NOT_CONNECTED, CONNECT)
     return data
   }
 
@@ -314,7 +328,7 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
     new GoogleApi({
       accessToken: async () => {
         const session = await deps.accounts.sessionFor(remote)
-        if (session === null) throw new CapabilityError('UNAVAILABLE', NOT_CONNECTED)
+        if (session === null) throw new CapabilityError('UNAVAILABLE', NOT_CONNECTED, CONNECT)
         return session.getAccessToken()
       },
     })
@@ -365,7 +379,7 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
         if (connectFlow === flow) connectFlow = null
         if (result.kind !== 'granted') return { kind: result.kind }
         const session = await deps.accounts.sessionFor(ctx.remote)
-        if (session === null) throw new CapabilityError('UNAVAILABLE', NOT_CONNECTED)
+        if (session === null) throw new CapabilityError('UNAVAILABLE', NOT_CONNECTED, CONNECT)
         return { kind: 'granted' as const, account: session.account }
       },
     }),
@@ -411,6 +425,44 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
       },
     }),
 
+    /** The OAuth client this machine connects with, and whose it is. The
+     *  secret never leaves main. */
+    'google.client': cap({
+      doors: ['ui'],
+      params: noParams,
+      run: async () => deps.accounts.client(),
+    }),
+
+    /**
+     * Set this machine's own OAuth client, or clear it with an empty `id` to
+     * go back to the next source. A different client disconnects every
+     * account here: their grants belong to the old one.
+     */
+    'google.setClient': cap({
+      doors: ['ui'],
+      params: (raw) => {
+        const p = paramsObject(raw)
+        return {
+          id: (optionalStringParam(p, 'id') ?? '').trim(),
+          secret: (optionalStringParam(p, 'secret') ?? '').trim(),
+        }
+      },
+      run: async (_ctx, { id, secret }) => {
+        if (id === '') {
+          await deps.accounts.setClient(null)
+          return ok
+        }
+        if (!id.endsWith(CLIENT_ID_SUFFIX)) {
+          throw new CapabilityError('BAD_REQUEST', `a client id ends in ${CLIENT_ID_SUFFIX}`)
+        }
+        if (secret === '') {
+          throw new CapabilityError('BAD_REQUEST', 'a Desktop app client needs its secret')
+        }
+        await deps.accounts.setClient({ id, secret })
+        return ok
+      },
+    }),
+
     /** Unlink this vault. The account and any other vault using it stay. */
     'google.disconnectVault': cap({
       doors: ['ui'],
@@ -438,6 +490,7 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
         const data = await dataOf(ctx.remote)
         return google(async () => data.agenda(agendaWindow(window), await overrides(ctx.root)))
       },
+      cliValue: fenceEvents,
     }),
 
     /** The last agenda for this exact window and calendar set, or null. Never
@@ -490,6 +543,7 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
         const data = await dataOf(ctx.remote)
         return google(() => data.threads(options))
       },
+      cliValue: (page) => ({ ...page, threads: fenceThreads(page.threads) }),
       text: (page) => json(page.threads),
     }),
 
@@ -530,6 +584,7 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
       params: idParams,
       run: async (ctx, { id }) =>
         google(async () => textOnly(await readThread(apiOf(ctx.remote), id))),
+      cliValue: fenceThread,
     }),
 
     /**

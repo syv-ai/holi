@@ -8,6 +8,7 @@ import {
 } from '@/primitives'
 import { parentOf } from '@/lib/tree-paths'
 import { openDialogAtom } from '@/state/dialogs'
+import { copyHoliLinkAtom, linkable } from '@/state/holi-link'
 import { claimsAtom } from '@/state/plugins'
 import { activeRemoteAtom, snapshotAtom, vaultsAtom } from '@/state/vaults'
 import type { ExplorerActions } from './useExplorerActions'
@@ -51,6 +52,7 @@ export function RowMenu({
   const snapshot = useAtomValue(snapshotAtom)
   const icons = snapshot.icons
   const openDialog = useSetAtom(openDialogAtom)
+  const copyHoliLink = useSetAtom(copyHoliLinkAtom)
   // What enabled claims add for this path, in claim order: those whose
   // condition holds.
   const claimItems = useAtomValue(claimsAtom).flatMap((c) =>
@@ -182,6 +184,11 @@ export function RowMenu({
           <ContextMenuItem onSelect={() => void navigator.clipboard.writeText(path)}>
             Copy Relative Path
           </ContextMenuItem>
+          {!isFolder && linkable(path) && (
+            <ContextMenuItem onSelect={() => void copyHoliLink(path)}>
+              Copy Holi Link
+            </ContextMenuItem>
+          )}
           <ContextMenuItem onSelect={() => void window.holi.openPath(absPathFor(path))}>
             Reveal in Finder
           </ContextMenuItem>

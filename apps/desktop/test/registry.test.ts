@@ -2,7 +2,8 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, afterEach, describe, expect, it } from 'vitest'
-import { VaultRegistry, clonePathFor, isRemote, repoName, vaultRoot } from '../src/main/vault/registry'
+import { isRemote } from '@holi/shared'
+import { VaultRegistry, clonePathFor, repoName, vaultRoot } from '../src/main/vault/registry'
 
 const dirs: string[] = []
 afterAll(async () => {

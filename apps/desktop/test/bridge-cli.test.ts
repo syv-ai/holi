@@ -6,7 +6,7 @@
  * a quoting bug in it does not fail loudly, it sends a different argument.
  */
 import { execFile } from 'node:child_process'
-import { mkdir, mkdtemp, rm, stat } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
@@ -15,6 +15,9 @@ import { agentCapabilities } from '../src/plugins/agent/main/host/capabilities'
 import { appsCapabilities, storeCapabilities } from '../src/plugins/apps/main/capabilities'
 import { installHoliCli } from '../src/main/bridge/cli'
 import { createBridgeServer, type BridgeServer } from '../src/main/bridge/server'
+import { SPILL_BYTES } from '../src/main/bridge/spill'
+import { OUT_DIR } from '../src/main/vault/out-files'
+import { CapabilityError, NEXT_STEP } from '../src/main/capabilities/error'
 import { createCapabilityHost } from '../src/main/capabilities/dispatch'
 import {
   cap,
@@ -24,7 +27,7 @@ import {
 import { noCoreServices } from '../src/main/capabilities/services'
 import { vaultCapabilities } from '../src/main/capabilities/vault-caps'
 import { pdfCapabilities } from '../src/plugins/pdf/main/capabilities'
-import { taskCapabilities } from '../src/main/vault/task-capabilities'
+import { taskCapabilities } from '../src/plugins/tasks/main/capabilities'
 import { bridgeLines, writeVaultEnv } from './helpers/bridge-env'
 
 const execFileAsync = promisify(execFile)
@@ -58,6 +61,8 @@ function recording(called: Called): Record<string, AnyCapability> {
     ...vaultCapabilities({
       updateSkills: async () => ({ summary: '', conflicts: null }),
       pendingSkills: async () => [],
+      open: () => {},
+      screenshot: async () => new Uint8Array(),
     }),
     ...appsCapabilities({
       events: { emit: () => {} },
@@ -71,6 +76,7 @@ function recording(called: Called): Record<string, AnyCapability> {
     ...pdfCapabilities({
       signatures: { read: async () => '[]', write: async () => {} },
       typst: async () => null,
+      diagrams: async () => [],
     }),
     ...agentCapabilities({
       sessions: {} as never,
@@ -113,6 +119,7 @@ function bridge(table: Record<string, AnyCapability>, namespaces: string[]): Bri
         claims: async () => [],
       }).dispatch,
       commands: () => registry.commands(),
+      rootFor: async () => dir,
     },
   })
 }
@@ -282,6 +289,57 @@ describe('a command', () => {
     expect(res.code).toBe(1)
     expect(res.stdout).toBe('')
     expect(res.stderr).toBe('holi store delete: no such record\n')
+  })
+
+  it('names a refusal code and the next step, the thrower one when it gave one', async () => {
+    capability.mockRejectedValueOnce(new CapabilityError('UNAUTHORIZED', 'expired', 'reconnect X'))
+    const own = await run(bin, ['store', 'get', 'T.app', 'items', 'a'], env)
+    expect(own.code).toBe(1)
+    expect(own.stderr).toBe('holi store get: UNAUTHORIZED: expired\nnext: reconnect X\n')
+
+    capability.mockRejectedValueOnce(new CapabilityError('BAD_REQUEST', 'bad id'))
+    const generic = await run(bin, ['store', 'get', 'T.app', 'items', 'a'], env)
+    expect(generic.stderr).toBe(
+      `holi store get: BAD_REQUEST: bad id\nnext: ${NEXT_STEP.BAD_REQUEST}\n` +
+        'usage: holi store get <bundle> <collection> <id>\n',
+    )
+  })
+})
+
+describe('an answer too long to print', () => {
+  const rows = Array.from({ length: 400 }, (_, i) => ({ id: `t${i}`, subject: 'x'.repeat(40) }))
+
+  it('is written to a local file under machine state, and the path printed', async () => {
+    const text = JSON.stringify(rows)
+    expect(Buffer.byteLength(text)).toBeGreaterThan(SPILL_BYTES)
+    capability.mockResolvedValueOnce({ text })
+    const res = await run(bin, ['store', 'list', 'T.app', 'items'], env)
+    expect(res.code).toBe(0)
+    const path = /\n {2}(\S+)\n/.exec(res.stdout)?.[1]
+    expect(path).toMatch(new RegExp(`^${OUT_DIR}/.*store-list.*\\.local\\.json$`))
+    expect(res.stdout).toContain('a JSON array of 400 items, each with keys id, subject')
+    expect(await readFile(join(dir, path!), 'utf8')).toBe(text)
+  })
+
+  it('stays JSON when asked for --json, so it still parses', async () => {
+    capability.mockResolvedValueOnce({ text: JSON.stringify(rows) })
+    const res = await run(bin, ['store', 'list', 'T.app', 'items', '--json'], env)
+    expect(res.code).toBe(0)
+    const notice = JSON.parse(res.stdout) as { spilled: string; bytes: number; shape: string }
+    expect(notice.spilled).toMatch(new RegExp(`^${OUT_DIR}/.*store-list.*\\.local\\.json$`))
+    const written = await readFile(join(dir, notice.spilled), 'utf8')
+    expect(notice.bytes).toBe(Buffer.byteLength(written))
+    expect(notice.shape).toMatch(/^a JSON object with keys /)
+  })
+
+  it('keeps only the newest spills', async () => {
+    const text = JSON.stringify(rows)
+    for (let i = 0; i < 52; i++) {
+      capability.mockResolvedValueOnce({ text })
+      await run(bin, ['store', 'list', 'T.app', 'items'], env)
+    }
+    const names = await readdir(join(dir, OUT_DIR))
+    expect(names.filter((n) => n.startsWith('spill-')).length).toBe(50)
   })
 })
 

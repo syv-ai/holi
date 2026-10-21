@@ -1,6 +1,5 @@
 import { useAtomValue, useSetAtom } from 'jotai'
 import { EditIcon } from '@/features/explorer/EditIcon'
-import { CreateTask } from '@/features/tasks/CreateTask'
 import { RemoveVault } from '@/features/vault/RemoveVault'
 import { Dialog } from '@/primitives'
 import { activeDialogAtom, closeDialogAtom } from '@/state/dialogs'
@@ -16,7 +15,6 @@ export function DialogHost(): React.JSX.Element | null {
   if (active === null) return null
   return (
     <Dialog open size={active.size} closable={active.closable} onClose={() => close()}>
-      {active.id === 'create-task' && <CreateTask onClose={() => close()} />}
       {active.id === 'edit-icon' && (
         <EditIcon
           remote={active.remote}
