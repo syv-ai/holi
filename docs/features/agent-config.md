@@ -169,7 +169,7 @@ additions are commands in a directory prepended to `PATH`, plus skills that docu
   body from stdin and was not given one is answered 428 without running, and the script sends
   stdin once (`send --draft <id>` reads none). Today: `apps open|init|console`, `skills update`,
   `pdf comments|typst`, `google agenda|search|read|mark-read|star|archive|trash|draft|send|reply|schedule|reschedule|unschedule`, `tasks list|complete`,
-  `store list|get|put|delete|check`, `docs list|read|render|open|screenshot`, `sync status`, `agent sessions`,
+  `store list|get|put|delete|check`, `docs list|read|render|open|screenshot`, `sync status`, `agent sessions|notify`,
   `schedules list|enable|disable|run`,
   `vault members|recents`. The registry's reads the agent already has as Grep, Read and git
   (search, history, settings) stay app-only rather than grow a second way in. The script finds
@@ -177,7 +177,7 @@ additions are commands in a directory prepended to `PATH`, plus skills that docu
   change in git history) except `google send` and `google reply`, which the send gate asks about.
 - `holi google <verb>`: mail and calendar through main, which holds the tokens ([google.md](google.md)).
 - `holi pdf typst` for PDF export, which prints the Typst binary's path ([pdf.md](pdf.md)).
-- Shipped skills: `memory`, `using-tasks`, `scheduled-agents`, `vault-apps`, `theme`,
+- Shipped skills: `memory`, `using-tasks`, `scheduled-agents`, `notify`, `vault-apps`, `theme`,
   `gmail-calendar`, `md-to-pdf`, `pdf-comments`, `holi-feedback` (a GitHub issue on syv-ai/holi, labelled `vault-assistant`,
   through `.github/ISSUE_TEMPLATE/vault-assistant.yml`).
 
@@ -194,8 +194,9 @@ outranks an allow in every scope, so getting a tool back means removing it from 
 
 **Permissions.** Claude Code's native prompts are the permission UX. The seeded rules ask for
 `curl`, `wget`, `holi schedules run` and `holi google archive|trash|unschedule|send|reply` (one
-rule per verb), and allow `holi pdf comments`, `holi schedules list` and the read-only memory
-lint (`node .claude/skills/memory/lint.mjs`). Turning a schedule on is
+rule per verb), and allow `holi pdf comments`, `holi schedules list`, the read-only memory
+lint (`node .claude/skills/memory/lint.mjs`) and `holi agent notify` (asking would stop an
+unattended run at a prompt nobody sees, [agent-inbox](agent-inbox.md)). Turning a schedule on is
 no command at all ([scheduled-agents](scheduled-agents.md)). Sending mail is
 behind a seeded `PreToolUse` hook that always asks ([google.md](google.md)). The agent's commits pass
 the vault's pre-commit transforms like anyone's ([vaults-sync.md](vaults-sync.md)).

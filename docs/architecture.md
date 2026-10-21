@@ -148,7 +148,8 @@ and `plugins.local.yaml` can only turn one off on this machine ([settings](featu
 The same pair holds each plugin's own settings under its id (`PluginInfo.settings`).
 Each vault is its own world: a plugin starts in the open vault (`MainPlugin.activate`, with one
 context bound to that vault: register capabilities, emit, hold sync, commit, read the head, hear the
-renderer's focus report, serve a bridge route, ask before quit) and nothing it starts outlives the
+renderer's focus report, serve a bridge route, ask before quit, raise a native notification while
+no Holi window has focus) and nothing it starts outlives the
 vault, so nothing carries from one vault to the next. The plugin host (`src/main/plugin-host/`)
 keeps what is started in step with the vault's resolution (`reconcile`): at the open, on a settings
 write and on any change to the files, so a hand edit to `plugins.yaml` takes effect at once. It

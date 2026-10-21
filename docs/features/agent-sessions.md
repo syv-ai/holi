@@ -69,6 +69,8 @@ and is idle. The read is triggered by a watch of `<configDir>/sessions/` and `jo
 never parsed), by each turn hook, and by a vault opening. The one timer is a second read about a second
 after an `idle` one, because a quiet session makes no watcher edge: a turn ends only when two
 consecutive reads say idle. A failed read answers nothing, and the bracket still reports `working`.
+A session going into `needs-you` puts one entry in the [agent inbox](agent-inbox.md), and a banner
+while Holi is out of sight, which opens it: on the edge into the state, read off this listing.
 
 **Context is the status line's.** `claude agents --json` carries no context figure and `/context`
 is interactive, so the reading comes from the documented `statusLine` command: one inline shell
@@ -147,7 +149,8 @@ showing it busy, crosses it off), so a session resumed from the list is never re
 - Recording touched paths from `PostToolUse`: misses edits made through `Bash`.
 - A worktree per session: edits invisible until merged, `.local.` files absent. Hence the seeded
   `worktree.bgIsolation: "none"`.
-- A `Notification` or `PermissionRequest` hook for needs-you: late or partial.
+- A `Notification` or `PermissionRequest` hook for needs-you: late or partial. The listing's
+  `waiting` is what the inbox's needs-you notice reads.
 - Reading context use from transcripts or the PTY: Claude Code's files and screen are not an
   interface; its status-line JSON is.
 - A three-pane merge editor: resolves positionally, wrong for prose.
