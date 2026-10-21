@@ -82,6 +82,22 @@ from HTML otherwise. Do not expect markup, and do not ask for it: Holi's own
 mail reader renders sanitized HTML, but this command strips it deliberately,
 because a table layout would cost you context and tell you nothing.
 
+## Long answers and heavy reading
+
+A `search` over a busy inbox or a long thread's `read` can be too long to print.
+Then the command prints, instead of the answer, where it wrote it
+(`.holi/state/out/<name>.local.json`) and its shape. Read the part you need from
+that file with `jq` or `Read`, not the whole of it.
+
+When a job means reading a lot of mail (triaging a full inbox, summarising
+several long threads, finding one fact across a month of messages), hand it to a
+sub-agent with the Agent tool: say what to find and ask for the answer in a few
+lines, then keep only that answer here. Every thread you read yourself stays in
+this conversation for the rest of it.
+
+A refused command prints a `next:` line saying what to do about it. Do that
+rather than retrying.
+
 ## Acting on mail
 
 ```sh

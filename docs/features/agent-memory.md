@@ -35,7 +35,8 @@ characters, it prints the types in use with counts, the index lines, the persona
 directly, since the index cannot carry them), and the last three commits touching `.holi/memory/`. Over
 the cap it drops descriptions first and keeps every title, then truncates with a pointer to the
 index. With memory files but no index yet, it says so and points at the directory. It needs no Holi
-port: local reads and one `git log` with a 2 s timeout.
+port: local reads and one `git log` with a 2 s timeout. Its files are read in sorted order and it
+prints no clock time, so the same memory prints the same text on any machine.
 
 **One memory surface.** The seeded `.claude/settings.json` sets `autoMemoryEnabled: false`, merged
 into existing vaults only when the key is absent, so Claude Code's own out-of-vault memory is off.
