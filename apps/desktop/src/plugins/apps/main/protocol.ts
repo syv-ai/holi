@@ -24,6 +24,7 @@ import {
 import { bundleFromAppHost } from '../shared/bundle'
 import { mimeFor, readVaultTheme, type PluginScheme } from '../../../main/plugin-api'
 import { COMMAND_PARAM } from '../shared/commands'
+import { COMMAND_NAME } from '../shared/manifest'
 import { BRIDGE_JS, COMMAND_JS } from './bridge-script'
 import { manifestOf } from './grants'
 import { appBaseTokens, paletteFor } from './tokens'
@@ -218,10 +219,14 @@ export const appScheme: PluginScheme = {
     if (parsed === null) return new Response(null, { status: 400 })
 
     // A command's runner is made here, not read: only the app's manifest says
-    // which script it is.
+    // which script it is. Its own entries only: `constructor` is a name too.
     if (parsed.command !== null) {
-      const spec = (await manifestOf(vault.root, parsed.bundle))?.commands?.[parsed.command]
-      if (spec === undefined) return new Response(null, { status: 404 })
+      const commands = (await manifestOf(vault.root, parsed.bundle))?.commands
+      const name = parsed.command
+      if (commands === undefined || !COMMAND_NAME.test(name) || !Object.hasOwn(commands, name)) {
+        return new Response(null, { status: 404 })
+      }
+      const spec = commands[name]!
       const theme = await readVaultTheme(vault.root)
       const head = appHeadHtml(theme[parsed.mode], parsed.mode)
       return new Response(commandRunnerHtml(head, spec.script), {

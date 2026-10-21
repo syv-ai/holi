@@ -49,6 +49,11 @@ its files change (today reload is a button).
 
 ## Notes & editor
 
+**The rest of slash commands as small programs.** A vault app's commands are built
+([vault apps](features/vault-apps.md)). Not built from that design: a mail compose call a command
+can make (to start a reply), and embedding an app in the note, where it is still open whether that
+is a widget in the note or a link that opens its tab.
+
 **Standard markdown links instead of wiki-links.** In-vault links are `[[path]]`. Plain
 `[text](path.md)` would render on GitHub and is what every tool and agent already knows. The cost:
 the editor's link chips, `@` completion, the relink transform and backrefs all move grammar,

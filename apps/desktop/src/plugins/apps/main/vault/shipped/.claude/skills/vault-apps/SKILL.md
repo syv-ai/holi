@@ -1,6 +1,6 @@
 ---
 name: vault-apps
-description: Build a small web app that opens as a tab inside Holi, over this vault's own notes and tasks, or a slash command for the notes editor. Use when asked for a dashboard, a chart or graph, a table or overview, a report, a viewer or explorer, a board, a tracker, a calculator, a widget, or any custom screen or small tool — including "visualise this", "show me", and "build me something to track X" phrasings — and when asked for a `/` command in notes (`/date`, `/uppercase`, "a command that…").
+description: Build a small web app that opens as a tab inside Holi, over this vault's own notes and tasks, or a slash command for the notes editor. Use when asked for a dashboard, a chart or graph, a table or overview, a report, a viewer or explorer, a board, a tracker, a calculator, a widget, or any custom screen or small tool — including "visualise this", "show me", and "build me something to track X" phrasings, and when asked for a `/` command in notes (`/date`, `/uppercase`, "a command that…").
 ---
 
 # Build an app for this vault
@@ -392,6 +392,12 @@ What `fn` returns, or resolves to (it may be `async`), is what happens:
 - It has 10 seconds. A command that throws, returns anything else, or runs out
   of time leaves the note as it was and writes why to the app's
   `log.local.txt`, so read the log when the person says a command did nothing.
+- A command asks no one for approval. If its app declares `dangerously-allow`
+  (mail, calendar), its Google calls fail until the person has opened the
+  app's tab once and approved it there, and again after that approval lapses
+  (30 days, or a change to the app's code). Tell them so when you write one.
+- It is not offered in the agent's own files (`AGENTS.md`, `CLAUDE.md`,
+  `.claude/`, `.holi/memory/` and the rest no app may read).
 - It is a plain script, not a module: no `import`/`export`. One script is one
   command, so code two commands share is written into each.
 - After writing one, tell the person to type `/` and its name in a note. Holi

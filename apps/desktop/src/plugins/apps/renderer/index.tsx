@@ -6,7 +6,7 @@
 import { activeRemoteAtom, openSurfaceAtom, type RendererPlugin } from '@/plugin-api'
 import { APPS_INFO } from '../info'
 import { appOpensAtom } from './apps'
-import { appSlashCommandsAtom, followAppCommands } from './commands'
+import { appSlashCommandsAtom, commandsChangedAtom, followAppCommands } from './commands'
 import { APP_CLAIM, APP_RAIL, APP_SURFACE } from './surface'
 
 export const appsRenderer: RendererPlugin = {
@@ -28,6 +28,11 @@ export const appsRenderer: RendererPlugin = {
       const { bundle } = payload as { bundle: string }
       store.set(openSurfaceAtom, 'app', bundle)
       store.set(appOpensAtom, (n) => ({ ...n, [bundle]: (n[bundle] ?? 0) + 1 }))
+    },
+    /** Main's `apps.commands` answers in this vault: read the commands again. */
+    'commands-changed': ({ remote }, store) => {
+      if (remote !== store.get(activeRemoteAtom)) return
+      store.set(commandsChangedAtom, (n) => n + 1)
     },
   },
 }
