@@ -70,9 +70,10 @@ export interface VaultCapabilitiesDeps {
 
 /** A path the agent may show, by its normalised name (`shownPath`): a file
  *  the vault's snapshot holds, or a vault app (a directory, which the snapshot
- *  lists among `dirs`). */
+ *  lists among `dirs`). A trailing slash is dropped: a shell completes a folder
+ *  with one, and an app's bundle is a folder. */
 async function shownFile(ctx: CapabilityContext, path: string): Promise<VaultRelPath> {
-  const rel = shownPath(path)
+  const rel = shownPath(path.replace(/\/+$/, ''))
   if (isAppBundlePath(rel) && (await ctx.snapshot()).dirs.includes(rel)) return rel
   return inSnapshot(ctx, rel, path)
 }
