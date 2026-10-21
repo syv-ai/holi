@@ -349,8 +349,12 @@ export const taskCapabilities = (deps: TaskCapabilitiesDeps) => {
           throw new CapabilityError('CONFLICT', `already exists: ${to}`)
         }
         if (hasPatch) {
-          const next = patched(await readTask(ctx.root, from), patchOf(fieldPatch))
-          await writeAtomic(ctx.root, from, serializeTaskFile(next))
+          // Under the file's lock, as `tasks.update` writes: a field change
+          // made meanwhile is read here rather than written over.
+          await withFileLock(absPathFor(ctx.root, from), async () => {
+            const next = patched(await readTask(ctx.root, from), patchOf(fieldPatch))
+            await writeAtomic(ctx.root, from, serializeTaskFile(next))
+          })
         }
         if (to !== from) await renameNote(ctx.root, from, to)
         return readTask(ctx.root, to)

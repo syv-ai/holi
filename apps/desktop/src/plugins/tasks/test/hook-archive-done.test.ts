@@ -77,6 +77,18 @@ describe('archive-done', () => {
     expect(await exists('projects/task.doing.md')).toBe(true)
   })
 
+  it('never writes over a task already archived at that path', async () => {
+    // Finished, archived, recreated with the same title and finished again:
+    // the archive is the first one's only copy outside history.
+    await commitFile('archive/projects/task.fix-login.md', task('done', 'First'))
+    await commitFile('projects/task.fix-login.md', task('done', 'Second'))
+
+    const result = await archiveDone(repo, NOTHING, { now: daysFromNow(30) })
+    expect(await read('archive/projects/task.fix-login.md')).toContain('title: First')
+    expect(await read('archive/projects/task.fix-login-2.md')).toContain('title: Second')
+    expect(result.changed).toContain('archive/projects/task.fix-login-2.md')
+  })
+
   it('rewrites inbound links to a task it moved', async () => {
     // The harm sweepDaily's backref guard exists to prevent: a moved file and a
     // stranded [[link]].

@@ -52,6 +52,8 @@ export async function archiveDone(
 
   const moves: { from: string; to: string }[] = []
   const notes: string[] = []
+  /** Destinations this run has already handed out. */
+  const taken = new Set<string>()
 
   for (const path of await listFiles(root)) {
     if (!isTaskFilePath(path)) continue
@@ -78,14 +80,14 @@ export async function archiveDone(
     // working tree and has never been saved. Not old, by definition.
     if (finishedAt === null || finishedAt.getTime() > cutoff) continue
 
-    moves.push({ from: path, to: `${ARCHIVE_DIR}/${path}` })
+    moves.push({ from: path, to: await freeArchivePath(root, path, taken) })
   }
 
   if (moves.length === 0) return { changed: [], notes: [] }
 
   // `moveNotes` moves the files AND rewrites every inbound `[[link]]` in one
   // read-all-then-write pass.
-  const { rewritten } = await moveNotes(root, moves)
+  const { rewritten, comments } = await moveNotes(root, moves)
 
   notes.push(
     `archive-done: moved ${moves.length} task(s) finished more than ${thresholdDays} days ago ` +
@@ -102,9 +104,28 @@ export async function archiveDone(
       ...moves.map((m) => m.from),
       ...moves.map((m) => m.to),
       ...rewritten.map((r) => r.path),
+      ...comments,
     ]),
   ].sort()
   return { changed, notes }
+}
+
+/**
+ * Where `path` goes under `archive/`: its own path there, or with a numeric
+ * suffix when that is taken. A task finished, archived, recreated and finished
+ * again would otherwise be written over the archived one, and the archive is
+ * the only copy of it outside history.
+ */
+async function freeArchivePath(root: string, path: string, taken: Set<string>): Promise<string> {
+  const stem = `${ARCHIVE_DIR}/${path.slice(0, -'.md'.length)}`
+  for (let n = 1; ; n++) {
+    const to = n === 1 ? `${stem}.md` : `${stem}-${n}.md`
+    if (taken.has(to)) continue
+    const there = await readFile(absPathFor(root, vaultRelPath(to))).catch(() => null)
+    if (there !== null) continue
+    taken.add(to)
+    return to
+  }
 }
 
 /** ISO time of the last commit touching `path`, or null if git has never seen

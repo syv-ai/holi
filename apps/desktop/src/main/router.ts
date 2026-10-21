@@ -9,6 +9,7 @@
 import { readFile, rm, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { initTRPC, TRPCError } from '@trpc/server'
+import { exactPath } from '@holi/shared/path-safety-node'
 import {
   commentThreads,
   isCommentableNote,
@@ -51,7 +52,13 @@ import { createMembersCache, type MembersCache } from './github/members-cache'
 import type { GitHubSession } from './github/session'
 import type { ActiveVault, SyncState, VaultHost } from './vault/active-vault'
 import { ensureClone } from './vault/clone'
-import { pruneEmptiedFolder, removeDocFile, writeAtomic, absPathFor } from './vault/vault-files'
+import {
+  absPathFor,
+  pruneEmptiedFolder,
+  removeDocFile,
+  withFileLock,
+  writeAtomic,
+} from './vault/vault-files'
 import { renameNote } from './vault/rename'
 import {
   addReply,
@@ -1023,7 +1030,13 @@ export function createRouter(deps: RouterDeps) {
     write: vaultMutation
       .input(fields({ remote: 'string', path: 'string', text: 'string' }))
       .mutation(async ({ input }) => {
-        await writeAtomic(await rootFor(input.remote), safe(input.path), input.text)
+        const root = await rootFor(input.remote)
+        const rel = safe(input.path)
+        // Under the file's lock, keyed as an app's `docs.write` keys it (the
+        // canonical path), so an app's check of the text it read and its
+        // write are never split by this save.
+        const abs = (await exactPath(root, rel)) ?? absPathFor(root, rel)
+        await withFileLock(abs, () => writeAtomic(root, rel, input.text))
         return { ok: true as const }
       }),
 
