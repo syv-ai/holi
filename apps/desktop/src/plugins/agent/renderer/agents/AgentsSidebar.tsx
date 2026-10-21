@@ -136,7 +136,7 @@ function Sessions(): React.JSX.Element {
       </div>
       {all.length === 0 ? (
         <EmptyState
-          className="flex-none px-2 py-6"
+          className="h-auto flex-none px-2 py-6"
           title="No sessions running"
           description="Start one and it runs in the background, here, while you work on your notes."
           action={{ label: 'New session', icon: Plus, onClick: () => void newSession() }}
