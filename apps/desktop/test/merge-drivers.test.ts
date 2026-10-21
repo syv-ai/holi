@@ -24,7 +24,7 @@ afterEach(async () => {
 })
 
 describe('installMergeDrivers', () => {
-  it('registers the driver for records only, and is idempotent', async () => {
+  it('registers each driver for its own paths only, and is idempotent', async () => {
     await mkdir(join(root, '.git/info'), { recursive: true })
     await writeFile(join(root, '.git/info/attributes'), '*.psd binary\n')
     await installMergeDrivers(root)
@@ -43,6 +43,7 @@ describe('installMergeDrivers', () => {
       (await runGit(root, ['check-attr', 'merge', '--', path])).split(': ').at(-1)
     expect(await attr('Budget.app/data/items/a.json')).toBe('holi-record')
     expect(await attr('A/B.app/data/x/y.json')).toBe('holi-record')
+    expect(await attr('.holi/comments/notes/a.md.json')).toBe('holi-comments')
     expect(await attr('notes/a.json')).toBe('unspecified')
     expect(await attr('Budget.app/app.json')).toBe('unspecified')
   })

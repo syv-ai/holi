@@ -1,8 +1,8 @@
 /**
  * The merge drivers for Holi's JSON files (docs/features/vaults-sync.md).
  *
- * A vault app's record is one JSON object in one file, so two people editing
- * one record would otherwise be a text conflict, and any conflict pauses the
+ * A vault app's record is one JSON object in one file, and so is a note's
+ * comment threads, so two people editing one would otherwise be a text conflict, and any conflict pauses the
  * vault's sync until someone reconciles. Git lets a repository name its own
  * merge program per path: each driver here claims a path pattern and merges
  * what it understands, so edits that do not collide both land and only a real
@@ -43,6 +43,13 @@ export const MERGE_DRIVERS: readonly MergeDriver[] = [
     // The leading `**/` matches a bundle at the root as well as a nested one.
     pattern: '**/*.app/data/**/*.json',
     route: '/merge/record',
+  },
+  {
+    // A note's comment threads, unioned by id (docs/features/note-comments.md).
+    name: 'holi-comments',
+    label: 'Holi note comments',
+    pattern: '.holi/comments/**/*.json',
+    route: '/merge/comments',
   },
 ]
 
