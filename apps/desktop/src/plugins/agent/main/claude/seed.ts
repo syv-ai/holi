@@ -152,8 +152,16 @@ const AGENT_SETTINGS: SettingsFragment = {
     // A schedule's run starts an unattended session: the person says yes to
     // each one. Turning a schedule on is no command at all (Settings only).
     ask: ['Bash(curl:*)', 'Bash(wget:*)', 'Bash(holi schedules run:*)'],
-    // The memory lint only reads, so it runs unasked.
-    allow: ['Bash(holi schedules list:*)', 'Bash(node .claude/skills/memory/lint.mjs:*)'],
+    // The memory lint only reads, so it runs unasked. `holi agent notify` is
+    // an inbox entry, a banner and a log line on this machine, `holi agent
+    // log` the line alone. Asking first would stop an unattended run at a
+    // prompt nobody sees, which is the opposite of telling them.
+    allow: [
+      'Bash(holi schedules list:*)',
+      'Bash(node .claude/skills/memory/lint.mjs:*)',
+      'Bash(holi agent notify:*)',
+      'Bash(holi agent log:*)',
+    ],
     // Claude Code tools with no job in a vault: notebooks, plan mode,
     // worktrees (one working tree is what sync assumes), code-review
     // reporting, and SendFeedback, which reaches Anthropic rather than Holi

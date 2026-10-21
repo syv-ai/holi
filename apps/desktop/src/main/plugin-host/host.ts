@@ -27,6 +27,7 @@ import type {
   Disposer,
   LiveVault,
   MainPlugin,
+  Notice,
   PluginCtx,
   QuitQuestion,
   UiReport,
@@ -76,6 +77,11 @@ export interface PluginHostDeps {
   githubToken(): string | null
   /** Confine frames on `origin` to it (`window-guard.ts`). Returns the undo. */
   frameOrigin(origin: string): () => void
+  /** A native notification, raised only while no Holi window has focus
+   *  (`PluginCtx.notify`). */
+  notify(notice: Notice): boolean
+  /** Whether a Holi window has focus. */
+  focused(): boolean
   readSettings?: (root: string) => Promise<ResolvedVaultSettings>
 }
 
@@ -313,6 +319,8 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
         reportListeners.add(entry)
         return keep(() => void reportListeners.delete(entry))
       },
+      notify: deps.notify,
+      focused: deps.focused,
     }
     if (plugin.activate === undefined) return { id, dispose: () => {}, undos }
     try {

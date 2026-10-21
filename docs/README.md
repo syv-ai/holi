@@ -33,6 +33,7 @@ other rather than repeating each other.
 | [agent-config](features/agent-config.md)           | Config layering, the per-vault silo, seeded files, tools, permissions    |
 | [agent-memory](features/agent-memory.md)           | The vault's `.holi/memory/` directory                                    |
 | [scheduled-agents](features/scheduled-agents.md)   | Prompts Holi runs as agent sessions on a cron schedule, on this machine  |
+| [agent-inbox](features/agent-inbox.md)             | `holi agent notify`, the inbox, needs-you notifications, the work log    |
 | [google](features/google.md)                       | Gmail and Calendar per vault                                             |
 | [pdf](features/pdf.md)                             | Typst export, templates, the PDF viewer                                  |
 | [vault-apps](features/vault-apps.md)               | Agent-written apps in their own origin                                   |

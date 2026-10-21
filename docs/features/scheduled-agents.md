@@ -103,7 +103,9 @@ session idle, looking every 2 s for 30 s, since the hook fires a moment before C
 settles, and stops it (`claude stop`): it leaves the sidebar and its conversation stays in the
 agents list. A run waiting on the person (a permission prompt) is not done either. A run someone
 has a window on was taken over: it is left open, recorded as such, and not asked about again. The
-run's record gets `finishedAt` (and `kept` when left open), which the settings section shows. A
+run's record gets `finishedAt` (and `kept` when left open), which the settings section shows, and
+the day's work log gets a line naming the schedule and how it ended, as it does for a run that
+fails to start ([agent-inbox](agent-inbox.md)), so a run that notified nobody still shows. A
 vault whose `turn-signal.mjs` predates `pending` (it reaches a vault through Update skills) sends
 none, and the listing's idle is the whole test, as it is for a confirmed idle.
 

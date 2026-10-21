@@ -16,6 +16,7 @@
  * NOTE: no runtime `electron` import: this loads under vitest.
  */
 import type { RouteServer } from '../provider'
+import { JOB_ID } from './listing'
 
 export interface AgentRoutesDeps {
   /** A turn began or ended in one of this vault's background sessions, named
@@ -29,9 +30,6 @@ export interface AgentRoutesDeps {
   onStatus?(remote: string, jobId: string, status: unknown): void
   log?: (msg: string) => void
 }
-
-/** A Claude Code job id: eight hex characters, the name of its `jobs/` dir. */
-const JOB_ID = /^[0-9a-f]{8}$/
 
 const EMPTY = { status: 204 } as const
 

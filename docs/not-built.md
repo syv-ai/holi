@@ -18,6 +18,13 @@ asked. Also absent: surfacing a hook failure in the sync status bar when no sess
 
 **A cap on concurrent sessions.** A vault can run any number.
 
+**The rest of the inbox.** A banner clicked while Holi had no window open opens Holi, but not the
+entry: the renderer is not listening yet when the click lands, so the entry waits in the inbox. A
+needs-you entry stays after the session is answered, until dismissed. `holi agent notify` for a
+vault Holi does not have open writes the work-log line but no inbox entry: there is no inbox to
+add to until the vault is open, and nothing queues the notice for then. See
+[agent-inbox](features/agent-inbox.md).
+
 **Memory tooling.** A graph view and per-directory indexes. See
 [agent-memory](features/agent-memory.md).
 

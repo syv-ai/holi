@@ -67,6 +67,10 @@ export interface CliSpec {
    *  bridge never asks for stdin and the script never waits on it
    *  (`holi google send --draft <id>`). */
   stdinUnless?: string
+  /** A param that, left out, is the calling session's Claude Code job id:
+   *  the script sends it from `$CLAUDE_JOB_DIR` when that is set, as a
+   *  background session's status line does. */
+  job?: string
 }
 
 export interface Capability<P = unknown, R = unknown> {

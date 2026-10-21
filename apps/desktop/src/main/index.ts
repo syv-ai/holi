@@ -65,6 +65,7 @@ import { VaultRegistry, vaultRoot } from './vault/registry'
 import { scanVault } from './vault/vault-store'
 import { createDeliveredLog, createReminderRuntime } from './reminders/runtime'
 import { createNotifier } from './reminders/notify'
+import { showNotification } from './notifications'
 import type { VaultTasks } from './reminders/sweep'
 import { createTray } from './tray'
 import { createUpdater, type Updater } from './updates/updater'
@@ -278,6 +279,21 @@ async function main(): Promise<void> {
     frameOrigin: (origin) => {
       FRAME_ORIGINS.add(origin)
       return () => void FRAME_ORIGINS.delete(origin)
+    },
+    // A plugin's notification is the reminders' kind, kept off a Holi that
+    // has focus. A click brings the window forward before the plugin acts.
+    focused: () => BrowserWindow.getFocusedWindow() !== null,
+    notify: ({ title, body, onClick }) => {
+      if (BrowserWindow.getFocusedWindow() !== null) return false
+      showNotification({
+        title,
+        body,
+        onClick: () => {
+          openWindow()
+          onClick?.()
+        },
+      })
+      return true
     },
   })
 

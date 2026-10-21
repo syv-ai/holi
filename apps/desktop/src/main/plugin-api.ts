@@ -124,6 +124,22 @@ export interface PluginCtx extends LiveVault, SchemeContext {
   head(): Promise<string | null>
   /** Hear what the renderer reports the person is looking at in this vault. */
   onReport(cb: (report: UiReport) => void): () => void
+  /**
+   * A native notification, the one the reminders use. Raised only while no
+   * Holi window has focus: Holi's banners never cover Holi. True when it was
+   * raised. Clicking it brings Holi's window forward, opening one if none is
+   * open, then runs `onClick`.
+   */
+  notify(notice: Notice): boolean
+  /** Whether a Holi window has focus now. */
+  focused(): boolean
+}
+
+/** A native notification (`PluginCtx.notify`). */
+export interface Notice {
+  title: string
+  body: string
+  onClick?: () => void
 }
 
 /** What a quit guard asks. */

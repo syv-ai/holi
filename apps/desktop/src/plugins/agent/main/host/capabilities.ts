@@ -30,7 +30,7 @@ import {
 } from '../../../../main/plugin-api'
 import type { ActionResult, AgentSessions, Geometry, OpenResult, StartResult } from './sessions'
 import type { AgentTerminals, TerminalSummary } from './terminals'
-import type { SessionSummary } from '../claude/listing'
+import { JOB_ID, type SessionSummary } from '../claude/listing'
 import { openTurnLog, type TurnRecord } from './turn-log'
 
 export const AGENT_NAMESPACES = ['agent'] as const
@@ -117,6 +117,9 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
       params: (raw) => {
         const p = paramsObject(raw)
         const attach = optionalStringParam(p, 'attach')
+        if (attach !== undefined && !JOB_ID.test(attach)) {
+          throw new CapabilityError('BAD_REQUEST', `not a session id: ${attach}`)
+        }
         return { ...geometry(p), ...(attach === undefined ? {} : { attach }) }
       },
       run: async (ctx, args): Promise<OpenResult> =>
