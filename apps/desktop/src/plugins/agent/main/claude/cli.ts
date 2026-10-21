@@ -189,7 +189,7 @@ export function sessionName(raw: string | undefined): string | null {
   return clean === '' ? null : clean
 }
 
-// eslint-disable-next-line no-control-regex -- stripping the terminal's own colour codes
+// The terminal's own colour codes.
 const ANSI = /\x1b\[[0-9;]*m/g
 
 /** The id out of `backgrounded · <id> · <name>`, or null. */
