@@ -17,6 +17,8 @@
  */
 import { execFile } from 'node:child_process'
 import { accessSync, constants } from 'node:fs'
+import { join } from 'node:path'
+import { PLUGIN_COMMANDS_DIR } from '@holi/shared'
 import { nodeFallbackDir, resolveBin, toolPath } from '../../../../main/plugin-api'
 import type { TerminalCommand } from '../provider'
 
@@ -35,6 +37,13 @@ export interface AgentEnvOpts {
    * *text*: with `holi` on `PATH` the agent types the bare name.
    */
   binDir?: string | null
+  /**
+   * The vault's community plugin commands (`PLUGIN_COMMANDS_DIR`), **appended
+   * to `PATH`**: last, so a plugin adds a command but never stands in for one
+   * the machine has. Linking refuses a name already on `PATH`, so nothing
+   * there goes unreached.
+   */
+  commandsDir?: string | null
   /**
    * Holi's own Claude Code config directory, as `$CLAUDE_CONFIG_DIR`.
    *
@@ -99,7 +108,14 @@ export function buildAgentEnv(
   // inherited PATH is what a Dock-launched Holi lacks and every hook needs:
   // the usual tool directories, then Holi's own `node` as the last resort, so
   // a `node` the machine has always wins (`main/bridge/node-fallback.ts`).
-  env.PATH = [opts.binDir, toolPath(env), opts.binDir ? nodeFallbackDir(opts.binDir) : undefined]
+  // The plugin commands come last of all, so a plugin adds a command but
+  // never stands in for one the machine or Holi has.
+  env.PATH = [
+    opts.binDir,
+    toolPath(env),
+    opts.binDir ? nodeFallbackDir(opts.binDir) : undefined,
+    opts.commandsDir,
+  ]
     .filter((dir): dir is string => !!dir)
     .join(':')
   return env
@@ -164,7 +180,8 @@ export interface ClaudeCli {
   /** A new background session in the vault. With no prompt it waits for its
    *  first one; with a prompt, that prompt is its first turn. `model` and
    *  `allow` (Claude Code permission rules it may use without asking) are a
-   *  scheduled run's. */
+   *  scheduled run's; the permission mode, system prompt and settings are a
+   *  quick agent's (`quick.ts`). */
   startBg(target: VaultCliTarget, opts: StartBgOptions): Promise<StartResult>
   /** A background copy of a conversation, by Claude Code's full session id. */
   forkBg(target: VaultCliTarget, sessionId: string, name?: string): Promise<StartResult>
@@ -175,6 +192,12 @@ export interface StartBgOptions {
   prompt?: string
   model?: string
   allow?: readonly string[]
+  /** Claude Code's permission mode, instead of the vault's. */
+  permissionMode?: 'auto'
+  /** Lines after Claude Code's own system prompt. */
+  appendSystemPrompt?: string
+  /** A settings JSON layered over the vault's for this session alone. */
+  settings?: string
 }
 
 /** The longest a session name is worth being: a row is narrow, and the source
@@ -202,9 +225,22 @@ export function parseBackgrounded(stdout: string): string | null {
   return match?.[1] ?? null
 }
 
-/** The environment every `claude` Holi runs for a vault gets. */
+/**
+ * A prompt as the last arguments: after `--`, so one that starts with a dash
+ * (`- tidy the list`) is the prompt and not an unknown option.
+ */
+export function promptArgs(prompt: string | undefined): string[] {
+  return prompt ? ['--', prompt] : []
+}
+
+/** The environment every `claude` Holi runs for a vault gets. It is also the
+ *  vault's supervisor's, which its background sessions inherit. */
 export function cliEnv(base: NodeJS.ProcessEnv, target: VaultCliTarget): Record<string, string> {
-  return buildAgentEnv(base, { configDir: target.configDir, binDir: target.binDir })
+  return buildAgentEnv(base, {
+    configDir: target.configDir,
+    binDir: target.binDir,
+    commandsDir: join(target.root, PLUGIN_COMMANDS_DIR),
+  })
 }
 
 /** Claude Code refuses `--bg` in a directory it has not been told to trust, and
@@ -320,7 +356,10 @@ export function createClaudeCli(deps: ClaudeCliDeps = {}): ClaudeCli {
     stop: (target, id) => action(target, ['stop', id]),
     respawn: (target, id) => action(target, ['respawn', id]),
     rm: (target, id) => action(target, ['rm', id]),
-    startBg(target, { name, prompt, model, allow = [] }) {
+    startBg(
+      target,
+      { name, prompt, model, allow = [], permissionMode, appendSystemPrompt, settings },
+    ) {
       const label = sessionName(name)
       return start(target, [
         '--bg',
@@ -334,7 +373,10 @@ export function createClaudeCli(deps: ClaudeCliDeps = {}): ClaudeCli {
             ? ['--name', 'Scheduled run']
             : []
           : ['--name', label]),
-        ...(prompt ? [prompt] : []),
+        ...(permissionMode === undefined ? [] : ['--permission-mode', permissionMode]),
+        ...(appendSystemPrompt === undefined ? [] : ['--append-system-prompt', appendSystemPrompt]),
+        ...(settings === undefined ? [] : ['--settings', settings]),
+        ...promptArgs(prompt),
       ])
     },
     forkBg(target, sessionId, name) {

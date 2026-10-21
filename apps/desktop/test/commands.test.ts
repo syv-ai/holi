@@ -60,11 +60,11 @@ describe('the static rows', () => {
     }
   })
 
-  it('⌘T and ⌘⇧T are two rows, so shift is not a flag on one', () => {
-    const t = STATIC_COMMANDS.find((c) => c.hotkey === '⌘T')
-    const shiftT = STATIC_COMMANDS.find((c) => c.hotkey === '⌘⇧T')
-    expect(t?.id).toBe('task.new')
-    expect(shiftT?.id).toBe('task.new.full')
+  it('⌘P and ⌘⇧P are two rows, so shift is not a flag on one', () => {
+    const p = STATIC_COMMANDS.find((c) => c.hotkey === '⌘P')
+    const shiftP = STATIC_COMMANDS.find((c) => c.hotkey === '⌘⇧P')
+    expect(p?.id).toBe('palette.open')
+    expect(shiftP?.id).toBe('palette.commands')
   })
 })
 

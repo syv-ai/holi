@@ -142,7 +142,7 @@ test('a notice is plain text in its tone, its detail behind a disclosure', () =>
   })
   const notice = rowOf('notice')!
   expect(notice).toHaveAttribute('data-tone', 'warn')
-  expect(notice).toHaveClass('text-[var(--context-warm)]')
+  expect(notice).toHaveClass('text-[var(--fill-warm)]')
   expect(screen.queryByText(/The summary/)).toBeNull()
   fireEvent.click(screen.getByRole('button', { name: 'Details' }))
   expect(screen.getByText(/The summary/)).toBeInTheDocument()

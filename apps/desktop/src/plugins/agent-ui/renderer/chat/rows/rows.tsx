@@ -129,7 +129,7 @@ export function InterruptRow({ item }: { item: Of<'interrupt'> }): React.JSX.Ele
 
 const TONES: Record<string, { icon: LucideIcon; text: string }> = {
   info: { icon: Info, text: 'text-muted-foreground' },
-  warn: { icon: TriangleAlert, text: 'text-[var(--context-warm)]' },
+  warn: { icon: TriangleAlert, text: 'text-[var(--fill-warm)]' },
   error: { icon: CircleAlert, text: 'text-destructive' },
 }
 

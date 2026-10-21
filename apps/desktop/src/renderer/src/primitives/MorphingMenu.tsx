@@ -32,7 +32,13 @@
  * it at the top and opens it downward from that corner instead, as a toolbar
  * over a list does. When growing leftward from that corner would cross the
  * window's edge (the toolbar of a narrow sidebar), it grows rightward from the
- * dock's left edge instead.
+ * dock's left edge instead. `anchor="top-left"` opens downward from the top-left
+ * corner, as the vault picker at the head of the sidebar does.
+ *
+ * **A trigger may stand in for the dock.** Given `trigger`, the dock is that
+ * one labelled control across the menu's width, and pressing it grows the
+ * menu into the first item's panel: a picker whose closed state is a name,
+ * not a row of icons.
  *
  * **A panel may rise.** Centred at the foot, a panel item marked `rise` grows
  * out of the dock and travels up to just under the middle of the view it
@@ -101,7 +107,7 @@ export type MorphingMenuProps = {
   /** The corner the menu grows from. `bottom-center` sits centred at the
    *  foot of its box and grows up and out from the middle, as a board's
    *  floating dock does. */
-  anchor?: 'bottom-left' | 'top-right' | 'bottom-center'
+  anchor?: 'bottom-left' | 'top-right' | 'top-left' | 'bottom-center'
   label: string
   moreLabel?: string
   backLabel?: string
@@ -110,6 +116,9 @@ export type MorphingMenuProps = {
    *  with its shadow, for a dock that floats over content (the board's). */
   surface?: boolean | 'float'
   className?: string
+  /** A labelled control in place of the dock, opening the first item's panel
+   *  (which must have one): the vault picker's name. */
+  trigger?: ReactNode
   /** For opening a panel item from outside (a hotkey). */
   ref?: React.Ref<MorphingMenuHandle>
 }
@@ -179,13 +188,15 @@ export function MorphingMenu({
   backLabel = 'Back',
   surface = false,
   className,
+  trigger,
   ref,
 }: MorphingMenuProps): React.JSX.Element {
   const id = useId()
   const vertical = orientation === 'vertical'
   const top = anchor === 'top-right'
+  const topLeft = anchor === 'top-left'
   const center = anchor === 'bottom-center'
-  const tooltipSide = vertical ? 'right' : top ? 'bottom' : 'top'
+  const tooltipSide = vertical ? 'right' : top || topLeft ? 'bottom' : 'top'
   const [view, setView] = useState<View>({ kind: 'collapsed' })
   const [room, setRoom] = useState(0)
   const rootRef = useRef<HTMLElement>(null)
@@ -207,10 +218,12 @@ export function MorphingMenu({
   const panelItems = items.filter((item) => item.panel)
   const count = barItems.length + (overflow.length > 0 ? 1 : 0)
   const grid = vertical ? { columns: 1, rows: count } : dockGrid(count, room)
-  const barSize = {
-    width: grid.columns * BUTTON + 2 * INSET,
-    height: grid.rows * BUTTON + 2 * INSET,
-  }
+  const barSize = trigger
+    ? { width: room, height: BUTTON }
+    : {
+        width: grid.columns * BUTTON + 2 * INSET,
+        height: grid.rows * BUTTON + 2 * INSET,
+      }
 
   // The room along the main axis is what decides the dock, so it is watched.
   useLayoutEffect(() => {
@@ -332,11 +345,17 @@ export function MorphingMenu({
                   right: `${window.innerWidth - box.right}px`,
                   top: `${box.top}px`,
                 }
-              : {
-                  position: 'fixed',
-                  left: `${box.left}px`,
-                  bottom: `${window.innerHeight - box.bottom}px`,
-                },
+              : topLeft
+                ? {
+                    position: 'fixed',
+                    left: `${box.left}px`,
+                    top: `${box.top}px`,
+                  }
+                : {
+                    position: 'fixed',
+                    left: `${box.left}px`,
+                    bottom: `${window.innerHeight - box.bottom}px`,
+                  },
         { zIndex: '50' },
       )
       shell.dataset.pinned = ''
@@ -498,7 +517,7 @@ export function MorphingMenu({
     // `barSize` is derived from `count` and the grid; listing the object would
     // re-run every render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [view, reducedMotion, items, count, grid.columns, vertical, top, center])
+  }, [view, reducedMotion, items, count, grid.columns, vertical, top, topLeft, center, trigger])
 
   useEffect(() => {
     if (!expanded) return
@@ -646,7 +665,13 @@ export function MorphingMenu({
         ref={shellRef}
         className={cn(
           'group/morph absolute overflow-hidden rounded-[1.25rem]',
-          top ? 'top-0 right-0' : center ? 'bottom-0 left-1/2 -translate-x-1/2' : 'bottom-0 left-0',
+          top
+            ? 'top-0 right-0'
+            : topLeft
+              ? 'top-0 left-0'
+              : center
+                ? 'bottom-0 left-1/2 -translate-x-1/2'
+                : 'bottom-0 left-0',
           'motion-respond text-muted-foreground',
           surface === 'float'
             ? 'bg-popover text-popover-foreground shadow-popover'
@@ -661,14 +686,38 @@ export function MorphingMenu({
           aria-hidden={expanded}
           inert={expanded}
           className={cn(
-            'absolute grid p-1',
-            top ? `top-0 ${FROM_RIGHT}` : center ? `bottom-0 ${FROM_CENTER}` : 'bottom-0 left-0',
+            'absolute',
+            trigger ? 'flex' : 'grid p-1',
+            top
+              ? `top-0 ${FROM_RIGHT}`
+              : topLeft
+                ? 'top-0 left-0'
+                : center
+                  ? `bottom-0 ${FROM_CENTER}`
+                  : 'bottom-0 left-0',
             expanded && 'pointer-events-none',
           )}
-          style={{ ...barSize, gridTemplateColumns: `repeat(${grid.columns}, ${BUTTON}px)` }}
+          style={
+            trigger
+              ? barSize
+              : { ...barSize, gridTemplateColumns: `repeat(${grid.columns}, ${BUTTON}px)` }
+          }
         >
-          {barItems.map(shortcut)}
-          {overflow.length > 0 && (
+          {trigger && items[0] !== undefined && (
+            <button
+              type="button"
+              data-menu-item={items[0].id}
+              aria-expanded={expanded}
+              className="flex size-full min-w-0 items-center gap-1 rounded-xl px-2 text-left text-sm font-bold text-foreground outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              onClick={(event) =>
+                open({ kind: 'panel', id: items[0]!.id }, items[0]!.id, event.detail === 0)
+              }
+            >
+              {trigger}
+            </button>
+          )}
+          {!trigger && barItems.map(shortcut)}
+          {!trigger && overflow.length > 0 && (
             <Cell still={reducedMotion}>
               <IconButton
                 icon={ChevronsUpDown}

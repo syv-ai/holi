@@ -11,7 +11,7 @@ import { ArrowDown, MessagesSquare, SquareTerminal } from 'lucide-react'
 import { useReducedMotion } from 'motion/react'
 import { useCallback, useEffect, useLayoutEffect, useReducer, useRef, useState } from 'react'
 import { Button, Icon, IconButton } from '@/primitives'
-import { SessionTerminal } from '../SessionTerminal'
+import { SessionTerminal } from '../../../agent/renderer/SessionTerminal'
 import {
   archiveSessionAtom,
   ensureTerminalAtom,
@@ -475,7 +475,7 @@ export function ChatView({
                     {[0, 1, 2].map((dot) => (
                       <span
                         key={dot}
-                        className="size-1.5 motion-pulse rounded-full bg-[var(--context-warm)]"
+                        className="size-1.5 motion-pulse rounded-full bg-[var(--fill-warm)]"
                       />
                     ))}
                     <span className="ml-1">Working…</span>

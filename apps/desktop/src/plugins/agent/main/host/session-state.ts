@@ -58,7 +58,14 @@ export interface SessionStateDeps {
   >
   /** The sessions or the history may have changed: tell whoever shows them. */
   onChange(): void
+  /** A listing was read: the job ids of the sessions it has live. */
+  onRead?(liveIds: ReadonlySet<string>): void
+  /** Whether Holi holds a question this session is waiting on (the question
+   *  desk). Such a session needs you, whatever the listing says. */
+  heldQuestion?(jobId: string): boolean
   turnLogFor?: (vaultRoot: string) => TurnLog
+  /** See `TurnCoordinatorDeps.snapshot`. */
+  snapshot?: (vaultRoot: string) => Promise<string | null>
   turnSafetyMs?: number
   /** Forwarded to the turn coordinator. */
   idleConfirmMs?: number
@@ -80,6 +87,9 @@ export interface SessionState {
   isLive(id: string): boolean
   /** The session's listing row, live or past. */
   row(id: string): ClaudeRow | undefined
+  /** The turn coordinator holds it in a turn (what makes a row working in
+   *  the session list). */
+  inTurn(id: string): boolean
   /** The name the session is shown under, or undefined for one not listed. */
   nameOf(id: string): string | undefined
   /** A turn edge from the hook: begun, or ended with how much the Stop said
@@ -93,6 +103,9 @@ export interface SessionState {
    *  reading of the listing, which cannot say whether a session ever had a
    *  turn. */
   startedEmpty(jobId: string): void
+  /** Holi started the session with a prompt: it has had a turn, so a
+   *  `blocked` reading is one waiting on you after an answer, not a new one. */
+  startedWithPrompt(jobId: string): void
   spoke(jobId: string): void
   hasHadNoTurn(jobId: string): boolean
   /** Hear each session's turn end, by job id, with how much its Stop said was
@@ -114,6 +127,14 @@ export function createSessionState(deps: SessionStateDeps): SessionState {
   let idleRecheck: ReturnType<typeof setTimeout> | null = null
   const unprompted = new Set<string>()
   /**
+   * Sessions known to have had a turn: started with a prompt, said something
+   * to, or seen busy or waiting. Claude Code reads `state: blocked` both for a
+   * session that never had a prompt and for one whose answer handed back to
+   * you, and only this tells them apart. In memory only: a session not seen
+   * having a turn since Holi started reads new, as the listing says.
+   */
+  const prompted = new Set<string>()
+  /**
    * Each live session's context use, by job id, from its status line. Claude
    * Code's listing does not carry it. The status line runs on Claude Code's
    * own events, a background session with no client attached included, and a
@@ -128,6 +149,7 @@ export function createSessionState(deps: SessionStateDeps): SessionState {
   const coordinator = createTurnCoordinator({
     vault: deps.vault,
     ...(deps.turnLogFor === undefined ? {} : { turnLogFor: deps.turnLogFor }),
+    ...(deps.snapshot === undefined ? {} : { snapshot: deps.snapshot }),
     ...(deps.turnSafetyMs === undefined ? {} : { turnSafetyMs: deps.turnSafetyMs }),
     ...(deps.idleConfirmMs === undefined ? {} : { idleConfirmMs: deps.idleConfirmMs }),
     onChange: () => deps.onChange(),
@@ -174,7 +196,10 @@ export function createSessionState(deps: SessionStateDeps): SessionState {
     let wantsRecheck = false
     for (const row of liveRows) {
       // Busy, or waiting on an answer, means a turn: the hook's floor.
-      if (row.status !== undefined && row.status !== 'idle') unprompted.delete(row.id)
+      if (row.status !== undefined && row.status !== 'idle') {
+        unprompted.delete(row.id)
+        prompted.add(row.id)
+      }
       if (row.status !== 'idle') {
         // Whatever it is doing, it is not between turns. That cancels any idle
         // candidacy, which makes the confirmation two CONSECUTIVE readings.
@@ -192,6 +217,7 @@ export function createSessionState(deps: SessionStateDeps): SessionState {
       }, deps.idleRecheckMs ?? IDLE_RECHECK_MS)
     }
     deps.onChange()
+    deps.onRead?.(liveIds)
   }
 
   async function refresh(): Promise<void> {
@@ -215,12 +241,22 @@ export function createSessionState(deps: SessionStateDeps): SessionState {
   return {
     refresh,
     sessions: () =>
-      live().map((row) => provider.summarise(row, coordinator.working, contextPercent.get(row.id))),
+      live().map((row) => {
+        const s = provider.summarise(row, coordinator.working, contextPercent.get(row.id))
+        // A question Holi holds: the hook keeps the listing at `busy`, so the
+        // listing alone would call it working.
+        if (deps.heldQuestion?.(row.id) === true) {
+          return { ...s, state: 'needs-you' as const, waitingFor: 'input needed' }
+        }
+        // `blocked` after a turn is an answer waiting for you: a turn finished.
+        return s.phase === 'new' && prompted.has(row.id) ? { ...s, phase: 'done' as const } : s
+      }),
     history: () =>
       rows.filter((row) => !provider.isLive(row)).map((row) => provider.summarisePast(row)),
     liveIds: () => live().map((row) => row.id),
     isLive: (id) => live().some((row) => row.id === id),
     row: (id) => rows.find((row) => row.id === id),
+    inTurn: (id) => coordinator.working.has(id),
     nameOf(id) {
       const row = rows.find((r) => r.id === id)
       return row === undefined ? undefined : provider.summarise(row, coordinator.working).name
@@ -229,6 +265,7 @@ export function createSessionState(deps: SessionStateDeps): SessionState {
     noteTurn(jobId, active, pending = null) {
       if (active) {
         unprompted.delete(jobId)
+        prompted.add(jobId)
         coordinator.begin(jobId)
       } else {
         if (pending !== null) stopPending.set(jobId, pending)
@@ -246,7 +283,11 @@ export function createSessionState(deps: SessionStateDeps): SessionState {
     },
 
     startedEmpty: (jobId) => void unprompted.add(jobId),
-    spoke: (jobId) => void unprompted.delete(jobId),
+    startedWithPrompt: (jobId) => void prompted.add(jobId),
+    spoke: (jobId) => {
+      unprompted.delete(jobId)
+      prompted.add(jobId)
+    },
     hasHadNoTurn: (jobId) => unprompted.has(jobId),
 
     onTurnEnd(listener) {
@@ -257,6 +298,7 @@ export function createSessionState(deps: SessionStateDeps): SessionState {
     reset() {
       for (const id of [...coordinator.working]) coordinator.forget(id)
       unprompted.clear()
+      prompted.clear()
       contextPercent.clear()
       if (idleRecheck !== null) {
         clearTimeout(idleRecheck)

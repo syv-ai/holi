@@ -24,7 +24,7 @@ vi.mock('motion/react', async (original) => ({
   ...(await original<typeof import('motion/react')>()),
   useReducedMotion: () => motion.reduced,
 }))
-vi.mock('../renderer/SessionTerminal', () => ({ SessionTerminal: () => <div /> }))
+vi.mock('../../agent/renderer/SessionTerminal', () => ({ SessionTerminal: () => <div /> }))
 vi.mock('../renderer/chat/rows/ToolCard', () => ({
   ToolCard: ({ item }: { item: { name: string } }) => <div>{`tool:${item.name}`}</div>,
 }))

@@ -1,7 +1,7 @@
 /**
  * The agent's interface (docs/features/agent-sessions.md): its page is the
  * surface `agent`, kept mounted, the chat of one session; the stack of
- * bubbles for all of them floats over every tab as its overlay, with the
+ * bubbles for all of them floats over every tab, with the
  * smaller chat and the notices beside it; its nav item runs `agent.show`; its
  * turn review is a drawer; and the palette lists its live sessions. What the
  * sessions are (lists, events, the agent service, the leave guard) is the
@@ -25,6 +25,7 @@ const COMMANDS: readonly Command[] = [
     id: 'agent.show',
     label: 'Go to the agents',
     hotkey: '⌘J',
+    firstKey: 3,
     run: (_get, set) => void set(showAgentsAtom),
   },
   {
@@ -55,8 +56,8 @@ export const agentUiRenderer: RendererPlugin = {
       live: atom((get) => get(agentSessionsAtom).length > 0),
     },
   ],
-  overlay: AgentBubbles,
-  drawers: [TurnReview],
+  floating: AgentBubbles,
+  overlays: [TurnReview],
   commands: COMMANDS,
   palette: {
     items: atom((get) =>

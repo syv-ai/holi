@@ -5,7 +5,7 @@
  */
 import { autocompletion, type Completion, type CompletionSource } from '@codemirror/autocomplete'
 import type { Extension } from '@codemirror/state'
-import { createElement } from 'lucide'
+import { createElement, type IconNode } from 'lucide'
 import { GLYPHS } from './completion-icons'
 
 /**
@@ -31,6 +31,11 @@ export interface HoliCompletion extends Completion {
   meta?: string
   /** Drawn instead of the type glyph, for a note whose vault gave it one. */
   emoji?: string
+  /** Drawn instead of the type glyph, for what a claim offers (a task), in
+   *  `color` when given: a status colour is information, so it survives the
+   *  row's selection. */
+  glyph?: IconNode
+  color?: string
 }
 
 export function holiOptionClass(completion: Completion): string {
@@ -50,13 +55,15 @@ export function holiIcon(completion: Completion): Node | null {
     span.textContent = emoji
     return span
   }
-  const glyph = completion.type === undefined ? undefined : GLYPHS[completion.type]
+  const own = completion as HoliCompletion
+  const glyph = own.glyph ?? (completion.type === undefined ? undefined : GLYPHS[completion.type])
   if (glyph === undefined) return null
-  // The type rides on the element so the chrome can colour a task by status.
-  return createElement(glyph, {
+  const el = createElement(glyph, {
     class: `cm-holi-icon cm-holi-icon-${completion.type}`,
     'aria-hidden': 'true',
   })
+  if (own.color !== undefined) el.style.color = own.color
+  return el
 }
 
 /** The trailing meta text, when there is one. */

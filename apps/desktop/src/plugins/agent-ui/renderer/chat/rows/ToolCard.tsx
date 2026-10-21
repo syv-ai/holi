@@ -78,7 +78,7 @@ function Status({
   return (
     <span className="grid size-4 shrink-0 place-items-center" data-chat-status={state}>
       {busy ? (
-        <span className="size-1.5 motion-pulse rounded-full bg-[var(--context-warm)]" />
+        <span className="size-1.5 motion-pulse rounded-full bg-[var(--fill-warm)]" />
       ) : state === 'error' ? (
         <Icon icon={CircleAlert} size="sm" className="text-destructive" />
       ) : state === 'rejected' ? (

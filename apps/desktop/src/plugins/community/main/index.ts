@@ -5,13 +5,16 @@
  * start. No plugin's code loads here: each runs as its own process.
  */
 import { join } from 'node:path'
+import { communityPluginsSignature } from '@holi/shared'
 import { installedInfos, remoteUrl, type MainPlugin } from '../../../main/plugin-api'
 import { COMMUNITY_INFO } from '../info'
 import {
   COMMUNITY_NAMESPACES,
   communityCapabilities,
+  linkRunningCommands,
   parseServerKey,
   seedRunningApps,
+  unlinkWhenOff,
 } from './capabilities'
 import { createConsentStore } from './consent'
 import { createInstallStore, pluginsDir } from './store'
@@ -56,12 +59,32 @@ export const communityMain: MainPlugin = {
         scratch: join(pluginsDir(ctx.userData), '.staging'),
       }),
     )
-    // A running plugin's apps that this vault (or, for a `.local.app`, this
-    // machine) does not have yet.
-    void seedRunningApps(ctx.root, { store, consent }).catch((err) =>
-      console.error('[community] apps:', err),
-    )
-    // Stopping stops its servers: the tabs on them are gone too.
-    return () => servers.stopAll()
+    // What runs here follows the vault: at the start, and whenever a pin or
+    // the plugins settings change on disk (the settings tab's write, a pull,
+    // a hand edit). A running plugin's apps that this vault (or, for a
+    // `.local.app`, this machine) does not have yet, and its commands; the
+    // renderer reads the rows again once they are linked.
+    const follow = () => {
+      void seedRunningApps(ctx.root, { store, consent }).catch((err) =>
+        console.error('[community] apps:', err),
+      )
+      void linkRunningCommands(ctx.root, { store, consent }).then(() =>
+        ctx.emit(ctx.remote, 'commands', null),
+      )
+    }
+    follow()
+    let signature: string | null = null
+    ctx.onSnapshot((snapshot) => {
+      const next = communityPluginsSignature(snapshot.files)
+      if (next === signature) return
+      const first = signature === null
+      signature = next
+      if (!first) follow()
+    })
+    return async () => {
+      // Stopping stops its servers: the tabs on them are gone too.
+      await servers.stopAll()
+      await unlinkWhenOff(ctx.root, installedInfos())
+    }
   },
 }

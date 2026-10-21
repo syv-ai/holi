@@ -1,22 +1,23 @@
 /**
- * Updating Holi itself (docs/features/updates.md): the version you run, where
- * the updater has got to, a "Check now", and whether Holi checks on its own.
- * Beside it, whether Holi opens at login, the other property of this machine's
- * app.
- *
- * A property of this machine's app, not of the open vault, so it sits with
- * Account at the end of the rail and writes nothing into the vault.
+ * Settings → Updates (docs/features/updates.md): updating Holi on this
+ * machine, with each release's notes, then where the open vault's skills
+ * stand against this release.
  */
 import { useAtomValue, useSetAtom } from 'jotai'
 import { useEffect, useState } from 'react'
 import { trpc } from '@/lib/trpc'
 import { Button, Checkbox } from '@/primitives'
-import { SettingsList, SettingsNote, SettingsRow } from '@/composites'
+import { ExternalLink, SettingsList, SettingsNote, SettingsRow } from '@/composites'
+import { openSkillsStatusAtom, updateSkillsAtom } from '@/state/skills'
+import type { ReleaseNotesAnswer } from '../../../../main/updates/release-notes'
+import { DescriptorSection } from './DescriptorSection'
+import { ReleaseNotesText } from './ReleaseNotesText'
 import {
   checkForUpdateAtom,
   installUpdateAtom,
   retryUpdateDownloadAtom,
   setAutoUpdateAtom,
+  setUpdateChannelAtom,
   updateHeadline,
   updateStatusAtom,
 } from '@/state/updates'
@@ -38,27 +39,27 @@ export function UpdatesSection(): React.JSX.Element {
   const retry = useSetAtom(retryUpdateDownloadAtom)
   const install = useSetAtom(installUpdateAtom)
   const setEnabled = useSetAtom(setAutoUpdateAtom)
+  const setChannel = useSetAtom(setUpdateChannelAtom)
   const supported = status?.supported === true
 
-  const action =
-    status === null || !supported ? null : status.state === 'ready' ? (
-      <Button size="xs" onClick={() => void install()}>
-        Restart to update
-      </Button>
-    ) : status.state === 'available' && status.lastError !== null ? (
-      <Button variant="secondary" size="xs" onClick={() => void retry()}>
-        Try again
-      </Button>
-    ) : (
-      <Button
-        variant="secondary"
-        size="xs"
-        disabled={status.state !== 'idle'}
-        onClick={() => void check()}
-      >
-        Check now
-      </Button>
-    )
+  const action = !supported ? null : status.state === 'ready' ? (
+    <Button size="xs" onClick={() => void install()}>
+      Restart to update
+    </Button>
+  ) : status.state === 'available' && status.lastError !== null ? (
+    <Button variant="secondary" size="xs" onClick={() => void retry()}>
+      Try again
+    </Button>
+  ) : (
+    <Button
+      variant="secondary"
+      size="xs"
+      disabled={status.state !== 'idle'}
+      onClick={() => void check()}
+    >
+      Check now
+    </Button>
+  )
 
   return (
     <SettingsList>
@@ -82,6 +83,32 @@ export function UpdatesSection(): React.JSX.Element {
           <SettingsNote className="break-words">{status.lastError}</SettingsNote>
         )}
       </SettingsRow>
+      {status?.availableVersion != null && status.availableVersion !== status.version && (
+        <ReleaseNotesRow
+          key={status.availableVersion}
+          version={status.availableVersion}
+          label={`What’s new in Holi ${status.availableVersion}`}
+        />
+      )}
+      {status !== null && status.version !== '' && (
+        <ReleaseNotesRow
+          key={status.version}
+          version={status.version}
+          label={`Holi ${status.version}, the version you have`}
+        />
+      )}
+      <SettingsRow
+        label="Dev prereleases"
+        description="Opt in to development releases. Turning this off checks for and downloads the latest stable release, even if it is older than the version you have; restart to install it."
+        control={
+          <Checkbox
+            aria-label="Dev prereleases"
+            disabled={!supported}
+            checked={status?.channel === 'dev'}
+            onCheckedChange={(v) => void setChannel(v === true ? 'dev' : 'stable')}
+          />
+        }
+      />
       <SettingsRow
         label="Update automatically"
         description="Check every few hours and download new versions in the background. An update installs when you quit Holi or choose Restart to update."
@@ -99,10 +126,6 @@ export function UpdatesSection(): React.JSX.Element {
   )
 }
 
-/**
- * Whether Holi opens at login, in the menu bar with its window out of sight:
- * reminders fire and the vault syncs only while Holi runs.
- */
 function OpenAtLoginRow(): React.JSX.Element {
   const [open, setOpen] = useState<boolean | null>(null)
   useEffect(() => {
@@ -111,7 +134,7 @@ function OpenAtLoginRow(): React.JSX.Element {
   return (
     <SettingsRow
       label="Open at login"
-      description="Start Holi in the menu bar when you log in, its window out of sight, so reminders and sync work from the start."
+      description="Start Holi out of sight when you log in, so reminders and sync work from the start."
       control={
         <Checkbox
           aria-label="Open at login"
@@ -125,5 +148,102 @@ function OpenAtLoginRow(): React.JSX.Element {
         />
       }
     />
+  )
+}
+
+/**
+ * One release's notes, fetched from its GitHub release when first shown.
+ * GitHub writes them as Markdown; they are shown formatted, links included,
+ * but never as HTML (`ReleaseNotesText`).
+ */
+function ReleaseNotesRow({ version, label }: { version: string; label: string }) {
+  const [open, setOpen] = useState(false)
+  // undefined: not asked yet. GitHub not answering is asked again on the
+  // next opening, so hiding and showing the notes is the retry.
+  const [answer, setAnswer] = useState<ReleaseNotesAnswer | undefined>(undefined)
+  const toggle = () => {
+    if (open && answer?.kind === 'unreachable') setAnswer(undefined)
+    setOpen((o) => !o)
+  }
+  useEffect(() => {
+    if (!open || answer !== undefined) return
+    let live = true
+    trpc.updates.notes
+      .query({ version })
+      .then((a) => live && setAnswer(a))
+      .catch(() => live && setAnswer({ kind: 'unreachable' }))
+    return () => {
+      live = false
+    }
+  }, [open, answer, version])
+
+  return (
+    <SettingsRow
+      label={label}
+      control={
+        <Button variant="secondary" size="xs" onClick={toggle}>
+          {open ? 'Hide notes' : 'Release notes'}
+        </Button>
+      }
+    >
+      {open &&
+        (answer === undefined ? (
+          <SettingsNote>Loading…</SettingsNote>
+        ) : answer.kind === 'unreachable' ? (
+          <SettingsNote>Could not reach GitHub, try again.</SettingsNote>
+        ) : answer.kind === 'none' ? (
+          <SettingsNote>GitHub has no notes for this version.</SettingsNote>
+        ) : (
+          <div className="space-y-2">
+            <ReleaseNotesText body={answer.notes.body} />
+            <ExternalLink
+              url={answer.notes.url}
+              onOpen={() => void window.holi.openExternal(answer.notes.url)}
+            >
+              {answer.notes.name} on GitHub
+            </ExternalLink>
+          </div>
+        ))}
+    </SettingsRow>
+  )
+}
+
+/**
+ * Where the open vault's skills and hooks stand against this release, and
+ * whether the vault takes them on open (`autoUpdateSkills`).
+ */
+export function VaultSkillsSection(): React.JSX.Element {
+  const status = useAtomValue(openSkillsStatusAtom)
+  const update = useSetAtom(updateSkillsAtom)
+  const pending = status?.pending.length ?? 0
+  return (
+    <>
+      <SettingsList>
+        <SettingsRow
+          label={
+            status === null
+              ? 'Loading…'
+              : pending === 0
+                ? 'Skills and hooks are up to date'
+                : `This version of Holi has ${pending} newer ${pending === 1 ? 'file' : 'files'} for this vault`
+          }
+          description={
+            status === null
+              ? undefined
+              : status.release === null
+                ? 'Holi has not written this vault’s skills on this machine.'
+                : `Last brought in by Holi ${status.release}.`
+          }
+          control={
+            pending > 0 ? (
+              <Button size="xs" onClick={() => void update()}>
+                Update skills
+              </Button>
+            ) : undefined
+          }
+        />
+      </SettingsList>
+      <DescriptorSection section="updates" />
+    </>
   )
 }

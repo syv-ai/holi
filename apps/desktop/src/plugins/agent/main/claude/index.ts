@@ -25,6 +25,7 @@ import {
   summarisePast,
   watchConfigDir,
 } from './listing'
+import { postToSession } from './messaging'
 import { registerAgentRoutes } from './routes'
 import { claudeSeed } from './seed'
 
@@ -76,6 +77,7 @@ export function claudeProvider(deps: ClaudeProviderDeps): AgentProvider {
     takeFirstSpawn,
     signInNotice: SIGN_IN_NOTICE,
     terminal: (target, attach) => terminalCommand(target, attach),
+    message: postToSession,
     routes: registerAgentRoutes,
     seed: claudeSeed,
   }

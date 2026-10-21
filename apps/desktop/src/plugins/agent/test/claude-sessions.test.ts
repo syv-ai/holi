@@ -143,7 +143,7 @@ describe('claude-cli', () => {
     expect(calls.map((c) => c.args)).toEqual([
       ['agents', '--json', '--all'],
       ['stop', '1234abcd'],
-      ['--bg', '--name', 'Tidy', 'go'],
+      ['--bg', '--name', 'Tidy', '--', 'go'],
       ['--bg', '--resume', 'uuid-1', '--fork-session', '--name', 'Copy'],
     ])
     for (const { opts } of calls) {
@@ -181,9 +181,10 @@ describe('claude-cli', () => {
         '--allowedTools=Edit',
         '--name',
         'Inbox · 10:30',
+        '--',
         'Check mail.',
       ],
-      ['--bg', '--allowedTools=Edit', '--name', 'Scheduled run', 'Check mail.'],
+      ['--bg', '--allowedTools=Edit', '--name', 'Scheduled run', '--', 'Check mail.'],
     ])
   })
 

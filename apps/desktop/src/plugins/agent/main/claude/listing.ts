@@ -18,6 +18,10 @@
 import { watch, type FSWatcher } from 'node:fs'
 import { join } from 'node:path'
 
+/** A Claude Code job id: eight hex characters, the name of its `jobs/` dir.
+ *  Never a flag, so it is safe as `claude attach`'s argument. */
+export const JOB_ID = /^[0-9a-f]{8}$/
+
 /** Claude Code's live statuses. `waiting` is the one Holi shows as needs-you;
  *  `shell` is a shell command running, which is working. */
 const STATUSES = ['busy', 'waiting', 'idle', 'shell'] as const

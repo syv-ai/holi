@@ -16,7 +16,9 @@ import {
   parsePluginPin,
   PLUGIN_PINS_DIR,
   pluginPinPath,
+  resolvePlugins,
   vaultRelPath,
+  type PluginInfo,
   type PluginManifest,
   type PluginPin,
 } from '@holi/shared'
@@ -29,6 +31,7 @@ import {
   paramsObject,
   readVaultSettings,
   stringParam,
+  toolPath,
   writeAtomic,
   type CapabilityTable,
 } from '../../../main/plugin-api'
@@ -44,6 +47,8 @@ import {
 } from './fetch'
 import { searchPlugins } from './search'
 import { seedApps, writeSkills } from './skills'
+import { COMMUNITY_INFO } from '../info'
+import { linkCommands, linkedIn, unlinkCommands, type LinkedCommands } from './commands'
 import { expandCommand, pluginEnv, runSetup } from './setup'
 import type { Install, InstallStore } from './store'
 import type { ServerState, Supervisor } from './supervisor'
@@ -87,6 +92,11 @@ export interface PluginRow {
   serve: string[] | null
   /** The vault apps it ships. */
   apps: string[]
+  /** The commands it adds to the agent's `PATH`, for the consent dialog. */
+  bin: string[]
+  /** Running, which of its commands the agent did not get and why, as the
+   *  vault's last rebuild left them; null when it has them all. */
+  commandsNote: string | null
 }
 
 export interface CommunityDeps {
@@ -103,6 +113,11 @@ export interface CommunityDeps {
   bridgeScript(): string | null
   /** Staging for fetches. */
   scratch: string
+  /** The `PATH` the vault's agent inherits, before Holi's own folders: a
+   *  plugin's command may not take a name already on it. By default
+   *  `toolPath()`: a Dock-launched Holi's own `PATH` lacks the folders the
+   *  person's shell, and so the agent's commands, have. */
+  searchPath?(): string
 }
 
 /** The vault's pins, by id; an unreadable one is left out. */
@@ -148,6 +163,7 @@ function rowOf(
   pin: PluginPin | null,
   status: PluginStatus,
   on: boolean,
+  linked: LinkedCommands | null,
 ): PluginRow {
   const manifest: PluginManifest = (install?.manifest ?? pin)!
   return {
@@ -178,7 +194,17 @@ function rowOf(
     setup: manifest.setup ?? null,
     serve: manifest.serve ?? null,
     apps: manifest.apps ?? [],
+    bin: Object.keys(manifest.bin ?? {}),
+    commandsNote: on && status === 'ready' ? commandsNote(id, linked) : null,
   }
+}
+
+function commandsNote(id: string, linked: LinkedCommands | null): string | null {
+  if (linked === null) return null
+  if (linked.error !== undefined) return `Its commands could not be linked: ${linked.error}.`
+  const mine = linked.refused.filter((r) => r.id === id)
+  if (mine.length === 0) return null
+  return mine.map((r) => `${r.name} is not on the agent's PATH: ${r.reason}.`).join(' ')
 }
 
 /** Every plugin this vault pins or this machine has, as the settings tab
@@ -195,7 +221,8 @@ export async function listPlugins(root: string, deps: Pick<CommunityDeps, 'store
       const install = installs.find((i) => i.id === id) ?? null
       const pin = pins.get(id) ?? null
       const status = await statusOf(install, pin, deps.consent)
-      return rowOf(id, install, pin, status, settings.plugins.vault[id] === true)
+      const on = settings.plugins.vault[id] === true
+      return rowOf(id, install, pin, status, on, linkedIn(root))
     }),
   )
 }
@@ -346,6 +373,9 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
           manifest: fetched.manifest,
           setup: 'none',
         })
+        // A new release of a running plugin waits for consent: its commands go
+        // until then.
+        await linkRunningCommands(ctx.root, deps)
         const rows = await listPlugins(ctx.root, deps)
         return rows.find((r) => r.id === fetched.manifest.id)!
       },
@@ -365,6 +395,7 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
           manifest,
           setup: 'none',
         })
+        await linkRunningCommands(ctx.root, deps)
         const rows = await listPlugins(ctx.root, deps)
         return rows.find((r) => r.id === manifest.id)!
       },
@@ -397,6 +428,7 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
         if (install.manifest.setup === undefined) {
           await deps.store.setSetup(id, 'ok')
           await seedRunningApps(ctx.root, deps)
+          await linkRunningCommands(ctx.root, deps)
           return true
         }
         deps.emit(ctx.remote, 'setup-log', { id, line: null })
@@ -407,8 +439,12 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
           onLine: (line) => deps.emit(ctx.remote, 'setup-log', { id, line }),
         })
         await deps.store.setSetup(id, ok ? 'ok' : 'failed')
-        // Set up in a vault that runs it: its apps arrive now, not at the next open.
-        if (ok) await seedRunningApps(ctx.root, deps)
+        // Set up in a vault that runs it: its apps and commands arrive now, not
+        // at the next open.
+        if (ok) {
+          await seedRunningApps(ctx.root, deps)
+          await linkRunningCommands(ctx.root, deps)
+        }
         return ok
       },
     }),
@@ -446,6 +482,7 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
         )
         await writeSkills(install.manifest, deps.store.codeDir(install), ctx.root)
         await seedApps(install.manifest, deps.store.codeDir(install), ctx.root)
+        await linkRunningCommands(ctx.root, deps)
         const lines = install.manifest.ignore ?? []
         if (lines.length > 0) {
           const existing = await readFile(join(ctx.root, '.gitignore'), 'utf8').catch(() => null)
@@ -494,6 +531,7 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
           recursive: true,
           force: true,
         })
+        await linkRunningCommands(ctx.root, deps)
       },
     }),
 
@@ -502,11 +540,12 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
     'community.remove': cap({
       doors: ['ui'],
       params: idParams,
-      run: async (_ctx, { id }) => {
+      run: async (ctx, { id }) => {
         // Its servers first: their code is about to go.
         await deps.supervisor.stopAll((key) => parseServerKey(key).id === id)
         const install = await deps.store.remove(id)
         await deps.consent.forget(id)
+        await linkRunningCommands(ctx.root, deps)
         if (install?.source.kind === 'release')
           await rm(join(deps.store.releaseDir(id, install.source.commit), '..'), {
             recursive: true,
@@ -595,4 +634,45 @@ export async function seedRunningApps(
     written.push(...(await seedApps(install.manifest, deps.store.codeDir(install), root)))
   }
   return written
+}
+
+/**
+ * Link the commands of every plugin that runs in the vault at `root`
+ * (`commands.ts`): at the vault's open, and whenever what runs in it may have
+ * changed. Never throws: the pin, setup or removal that asked for it has
+ * happened either way, so a failure is logged and returned.
+ */
+export async function linkRunningCommands(
+  root: string,
+  deps: Pick<CommunityDeps, 'store' | 'consent' | 'searchPath'>,
+): Promise<LinkedCommands> {
+  const running = async () => {
+    const plugins = []
+    for (const row of await listPlugins(root, deps)) {
+      if (!row.running || row.bin.length === 0) continue
+      const install = await deps.store.get(row.id)
+      if (install?.manifest.bin === undefined) continue
+      plugins.push({ id: row.id, bin: install.manifest.bin, codeDir: deps.store.codeDir(install) })
+    }
+    return plugins
+  }
+  try {
+    return await linkCommands(root, running, deps.searchPath?.() ?? toolPath())
+  } catch (err) {
+    console.error('[community] commands:', err)
+    return { linked: [], refused: [], error: err instanceof Error ? err.message : String(err) }
+  }
+}
+
+/**
+ * As the community plugin stops: when it no longer runs in the vault at
+ * `root` (turned off, or a plugin it needs is), its plugins' commands go too.
+ * Not when the vault is left or Holi quits, which leave the settings on: the
+ * vault's background sessions still run, and its next open links them again.
+ */
+export async function unlinkWhenOff(root: string, infos: readonly PluginInfo[]): Promise<void> {
+  const settings = await readVaultSettings(root).catch(() => null)
+  if (settings === null) return
+  if (resolvePlugins(settings.plugins, infos).running.has(COMMUNITY_INFO.id)) return
+  await unlinkCommands(root).catch((err) => console.error('[community] commands:', err))
 }

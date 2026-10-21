@@ -4,6 +4,8 @@ import type { Attachment } from '../chat/attachments'
 import { sessionsWorthAsking } from '../lib/notices'
 import { receivePtyData } from '../lib/session-terminals'
 import { activeRemoteAtom, type PluginEventHandler, type PluginStore } from '@/plugin-api'
+import type { PendingQuestion } from '../../shared/questions'
+import { agentQuestionsAtom, pendingOpenAtom } from './questions'
 import { resetTurnReviewAtom, turnReviewOpenAtom } from './turns'
 
 /**
@@ -244,6 +246,17 @@ export const agentEvents: Readonly<Record<string, PluginEventHandler>> = {
       store.set(agentTerminalsAtom, payload as AgentTerminal[])
     }
   },
+  questions: ({ remote, payload }, store) => {
+    if (remote === store.get(activeRemoteAtom)) {
+      store.set(agentQuestionsAtom, payload as PendingQuestion[])
+    }
+  },
+  // The quick panel's ⏎ on a finished agent: its session, in the main window.
+  // Opened by `agentVault` once its vault is the one showing.
+  'open-session': ({ remote, payload }, store) => {
+    const id = (payload as { id?: unknown } | null)?.id
+    if (typeof id === 'string') store.set(pendingOpenAtom, { remote, id })
+  },
 }
 
 /**
@@ -279,8 +292,13 @@ export function agentVault(remote: string, store: PluginStore): () => void {
   void agentCap.terminals(remote).then((list) => {
     if (store.get(agentTerminalsAtom) === terminalsAsked) store.set(agentTerminalsAtom, list)
   })
+  const questionsAsked = store.get(agentQuestionsAtom)
+  void agentCap.questions(remote).then((list) => {
+    if (store.get(agentQuestionsAtom) === questionsAsked) store.set(agentQuestionsAtom, list)
+  })
 
   return () => {
+    store.set(agentQuestionsAtom, [])
     // The lists, the open chat and the turn record are per vault: left as they
     // are, the next vault would show this one's sessions until its own answer
     // came, and the review would ask its git for a range it has never heard of.

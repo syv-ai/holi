@@ -99,11 +99,16 @@
   --diff-added-foreground: var(--color-green-400);
   --diff-removed-foreground: var(--color-red-400);
 
-  /* The two ends of a session row's context reading, as TEXT: amber where it
-     starts to matter (60%), full red at 99%. The row mixes between them
-     (`contextColour`). Not in the theme whitelist, like `--diff-*`. */
-  --context-warm: var(--color-amber-400);
-  --context-full: var(--color-red-500);
+  /* The two ends of a percent-full reading (a session's context, a repo's
+     size), as TEXT: amber where it starts to matter (60%), full red at 99%.
+     The reading mixes between them (`fillColour`). Not in the theme
+     whitelist, like `--diff-*`. */
+  --fill-warm: var(--color-amber-400);
+  --fill-full: var(--color-red-500);
+
+  /* A memory's dot in the graph view, told apart from notes and tasks by hue
+     alone. Not in the theme whitelist, like `--diff-*`. */
+  --graph-memory: var(--color-violet-400);
 
   /* ── Rendered-table tokens (per-vault themeable) ───────────────────
    * `codemirror-markdown-tables` paints from its own `--tbl-theme-*`
@@ -159,8 +164,9 @@
   /* Text, so a light arm; the diff tints deliberately have none. */
   --diff-added-foreground: var(--color-green-700);
   --diff-removed-foreground: var(--color-red-700);
-  --context-warm: var(--color-amber-600);
-  --context-full: var(--color-red-600);
+  --fill-warm: var(--color-amber-600);
+  --fill-full: var(--color-red-600);
+  --graph-memory: var(--color-violet-600);
 }
 
 /* Expose the semantics as utilities. @theme inline so the generated utility holds
@@ -201,6 +207,10 @@
   --color-task-todo: var(--task-todo);
   --color-task-doing: var(--task-doing);
   --color-task-done: var(--task-done);
+  --color-agent-working: var(--agent-working);
+  --color-agent-needs-you: var(--agent-needs-you);
+  --color-agent-done: var(--agent-done);
+  --color-agent-failed: var(--agent-failed);
   --color-file-blue: var(--file-blue);
   --color-file-sky: var(--file-sky);
   --color-file-teal: var(--file-teal);
@@ -212,6 +222,7 @@
   --color-file-green: var(--file-green);
   --color-file-tan: var(--file-tan);
   --color-file-grey: var(--file-grey);
+  --color-graph-memory: var(--graph-memory);
 
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);

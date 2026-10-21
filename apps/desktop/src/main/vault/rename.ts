@@ -11,11 +11,13 @@
 import { readFile } from 'node:fs/promises'
 import { rewriteWikiLinks, vaultRelPath } from '@holi/shared'
 import { scanBackrefs } from './backrefs'
+import { moveNoteComments } from './note-comments'
 import { absPathFor, moveDocFile, writeAtomic } from './vault-files'
 
 /** Move `from`→`to`, rewriting every inbound `[[link]]` in one pass. The rewrite
  *  runs before the move, so a mid-run failure leaves the source in place and
- *  visible in `git status` (there is no transaction). */
+ *  visible in `git status` (there is no transaction). The note's comment
+ *  threads move with it (`moveNoteComments`). */
 export async function renameNote(
   root: string,
   from: string,
@@ -29,5 +31,6 @@ export async function renameNote(
     await writeAtomic(root, rel, rewritten)
   }
   await moveDocFile(root, vaultRelPath(from), vaultRelPath(to))
+  await moveNoteComments(root, [{ from, to }])
   return { rewritten: referrers }
 }

@@ -14,6 +14,7 @@
 import type { BridgeRoute, SeedContribution } from '../../../main/plugin-api'
 import type { ClaudeCli, VaultCliTarget } from './claude/cli'
 import type { ClaudeRow, PastSession, SessionSummary } from './claude/listing'
+import type { SessionChannel } from './claude/messaging'
 import type { AgentRoutesDeps } from './claude/routes'
 import type { EarlierChunk, TranscriptChunk } from './claude/transcript'
 
@@ -94,6 +95,9 @@ export interface AgentProvider {
   /** What a terminal on the list (no `attach`) or on one session runs. Null
    *  when the agent is not installed on this machine. */
   terminal(target: VaultCliTarget, attach?: string): TerminalCommand | null
+  /** Add a message to a running session's conversation through the channel
+   *  its hooks reported. Throws a `CapabilityError` when it is not taken. */
+  message(channel: SessionChannel, text: string): Promise<void>
   /** Serve the hook routes that report turns and status. Returns the undo. */
   routes(server: RouteServer, deps: AgentRoutesDeps): () => void
   /** What the provider writes into a vault. */

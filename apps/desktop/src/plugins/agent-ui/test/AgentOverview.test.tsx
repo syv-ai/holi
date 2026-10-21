@@ -54,7 +54,7 @@ vi.mock('../../agent/renderer/agent-cap', () => ({
   },
 }))
 // xterm needs a canvas; no test here is about what a terminal draws.
-vi.mock('../renderer/SessionTerminal', () => ({
+vi.mock('../../agent/renderer/SessionTerminal', () => ({
   SessionTerminal: ({ terminalId }: { terminalId: string }) => (
     <div data-testid={`terminal-${terminalId}`} />
   ),

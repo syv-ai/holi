@@ -38,6 +38,7 @@ const google: Record<string, (params: unknown) => unknown> = {
   'google.removeAccount': (p) => removeAccount(p),
   'google.disconnectVault': () => disconnectVault(),
   'google.imageSenders': async () => [],
+  'google.client': async () => ({ id: 'holi.apps.googleusercontent.com', source: 'shipped' }),
 }
 
 vi.mock('@/lib/trpc', () => ({

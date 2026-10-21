@@ -6,7 +6,7 @@
 import { render, screen } from '@/test/render'
 import userEvent from '@testing-library/user-event'
 import { expect, test, vi } from 'vitest'
-import { AppWindow } from 'lucide-react'
+import { AppWindow, ListTodo } from 'lucide-react'
 import type { ClaimCreate } from '@/plugin-api/types'
 import { ExplorerHeader } from '../ExplorerHeader'
 
@@ -26,18 +26,17 @@ function setup(over: Partial<Parameters<typeof ExplorerHeader>[0]> = {}) {
     onCollapseAll: vi.fn(),
     hiddenShown: false,
     onToggleHidden: vi.fn(),
-    tasksShown: false,
-    onToggleTasks: vi.fn(),
+    claimToggles: [{ id: 'tasks', label: 'task files', icon: ListTodo, shown: false }],
+    onToggleClaimed: vi.fn(),
     ...over,
   }
   render(<ExplorerHeader {...props} />)
   return props
 }
 
-test('"+" unfolds into task, file, folder and what claims make, each asking for its kind', async () => {
+test('"+" unfolds into file, folder and what claims make, each asking for its kind', async () => {
   const p = setup()
   for (const [label, kind] of [
-    ['New Task', 'task'],
     ['New File', 'file'],
     ['New Folder', 'folder'],
     ['New App', APP],
@@ -46,7 +45,7 @@ test('"+" unfolds into task, file, folder and what claims make, each asking for 
     await userEvent.click(screen.getByRole('button', { name: label }))
     expect(p.onNew).toHaveBeenLastCalledWith(kind)
   }
-  expect(p.onNew).toHaveBeenCalledTimes(4)
+  expect(p.onNew).toHaveBeenCalledTimes(3)
 })
 
 test('Collapse All is a shortcut', async () => {
@@ -63,10 +62,10 @@ test('the hidden-files toggle reflects state via aria-pressed and label', async 
   expect(p.onToggleHidden).toHaveBeenCalledOnce()
 })
 
-test('the task-files toggle reflects state via aria-pressed and label', async () => {
-  const p = setup({ tasksShown: false })
+test("a hideable claim's toggle reflects state via aria-pressed and label", async () => {
+  const p = setup()
   const toggle = screen.getByRole('button', { name: 'Show task files' })
   expect(toggle).toHaveAttribute('aria-pressed', 'false')
   await userEvent.click(toggle)
-  expect(p.onToggleTasks).toHaveBeenCalledOnce()
+  expect(p.onToggleClaimed).toHaveBeenCalledWith('tasks')
 })

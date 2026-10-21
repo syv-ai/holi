@@ -8,7 +8,7 @@ import { APP_METHODS, RENDERER_METHODS } from './apps/shared/bridge'
 import { agentCapabilities, AGENT_NAMESPACES } from './agent/main/host/capabilities'
 import { createCapabilityRegistry } from '../main/capabilities/registry'
 import { vaultCapabilities, VAULT_NAMESPACES } from '../main/capabilities/vault-caps'
-import { taskCapabilities, TASK_NAMESPACES } from '../main/vault/task-capabilities'
+import { taskCapabilities, TASKS_NAMESPACES } from './tasks/main/capabilities'
 import type { GoogleAccountsManager } from './google/main/accounts'
 import { googleCapabilities, GOOGLE_NAMESPACES } from './google/main/capabilities'
 import { PDF_NAMESPACES, pdfCapabilities } from './pdf/main/capabilities'
@@ -20,11 +20,13 @@ it('answers every bridge method that is not the renderer’s at the app door', (
   registry.register(
     VAULT_NAMESPACES,
     vaultCapabilities({
-      updateSkills: async () => ({ summary: '', conflicts: null }),
-      pendingSkills: async () => [],
+      updateSkills: async () => ({ summary: '', changed: [], conflicts: null }),
+      skillsStatus: async () => ({ pending: [], release: null, autoUpdate: false }),
+      open: () => {},
+      screenshot: async () => new Uint8Array(),
     }),
   )
-  registry.register(TASK_NAMESPACES, taskCapabilities({ today: () => '2026-10-01' }))
+  registry.register(TASKS_NAMESPACES, taskCapabilities({ today: () => '2026-10-01' }))
   registry.register(
     AGENT_NAMESPACES,
     agentCapabilities({
@@ -47,6 +49,7 @@ it('answers every bridge method that is not the renderer’s at the app door', (
     pdfCapabilities({
       signatures: { read: async () => '[]', write: async () => {} },
       typst: async () => null,
+      diagrams: async () => [],
     }),
   )
   registry.register(

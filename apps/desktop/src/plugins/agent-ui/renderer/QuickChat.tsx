@@ -188,7 +188,7 @@ export function QuickChat({ sessionId }: { sessionId: string }): React.JSX.Eleme
             className="flex items-center gap-1.5 text-xs text-muted-foreground"
             data-quick-chat-working=""
           >
-            <span className="size-1.5 motion-pulse rounded-full bg-amber-400" />
+            <span className="size-1.5 motion-pulse rounded-full bg-agent-working" />
             Working…
           </p>
         ) : lastAnswer !== null ? (
