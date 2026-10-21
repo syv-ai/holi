@@ -21,15 +21,21 @@ Todo / Doing / Done, with one swim lane per folder.
   the full create, `holi tasks create`, a vault app's `holi.tasks.create` and the using-tasks
   skill alike, and each takes an explicit shared option (`shared: true`, `--shared`, Quick
   add's Sharing step, the full create's Share with vault switch). Google's Link to task
-  creates private tasks too. `isPrivateTask`, `sharedTaskPath` and `privateTaskPath` in
-  `shared/task-file.ts` are the rule.
+  creates private tasks too. Only the file's own name makes a task private: a task file inside
+  a `.local.` folder is no task, but a plain local file, as before. `isPrivateTask`,
+  `isBoardTaskPath`, `sharedTaskPath` and `privateTaskPath` in `shared/task-file.ts` are the
+  rule. A new task's name is free only when neither its shared nor its private file exists, so
+  either can later be renamed into the other.
 - **Sharing is a rename.** The card's ⋯ menu and its context menu offer Share with vault on a
   private task, which renames the file to drop `.local.` at once, and Make private… on a shared
   one, which renames it to add `.local.`. Making private asks first, in a dialog, before
-  anything moves: the task leaves every teammate's board on their next sync, and git history
-  keeps the shared version. Both go through the rename every file takes (`notes.rename`), so
-  inbound links and open tabs follow and a commit lands on either side. A task in a `.local.`
-  folder is private whatever its name, and offers no Share.
+  anything moves: the task leaves every teammate's board on their next sync, git history keeps
+  the shared version, and links to it from shared notes stop resolving. Both go through the
+  rename every file takes (`notes.rename`), so open tabs follow and a commit lands on either
+  side. Sharing rewrites inbound links; making private rewrites only the links in this
+  machine's local files (`localLinksOnly`), since a teammate's notes rewritten to point at a
+  file they will never have would be a commit of dangling links for everyone. A refused rename
+  (the other name exists already) is said in a strip at the top of the board.
 - **A plugin.** Tasks is the plugin `src/plugins/tasks/`, on by default. In a vault with it off
   (`tasks: false` under `plugins` in `.holi/settings/plugins.yaml`, or this machine's `.local`
   twin), a task file is a plain note: there is no board, quick add, New Task, task chip, task

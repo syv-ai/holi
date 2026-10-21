@@ -40,7 +40,8 @@ and the filename prefix is what makes it a task. See [tasks](features/tasks.md).
 
 A task named `task.<name>.local.md`: a [local file](#local-file), on the board of the machine that
 holds it and no one else's. New tasks are private by default; sharing one renames it to
-`task.<name>.md`, a **shared task**, which syncs. See [tasks](features/tasks.md).
+`task.<name>.md`, a **shared task**, which syncs. Only the file's own name makes a task private: a
+task file inside a `.local.` folder is a plain local file. See [tasks](features/tasks.md).
 
 ### Lane
 

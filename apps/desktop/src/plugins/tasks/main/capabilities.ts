@@ -152,11 +152,19 @@ async function createTaskFile(
 ): Promise<VaultRelPath> {
   const slug = taskSlug(title)
   for (let n = 1; n <= 1000; n++) {
-    const rel = safe(taskFilePath(folder, n === 1 ? slug : `${slug}-${n}`, shared))
+    const name = n === 1 ? slug : `${slug}-${n}`
+    const rel = safe(taskFilePath(folder, name, shared))
+    // The other variant's name is taken too: a shared and a private task with
+    // one name could never be shared or made private, as each rename would
+    // land on the other.
+    const twin = safe(taskFilePath(folder, name, !shared))
     const abs =
       ctx.bundle !== null ? await writableFile(ctx, appTaskPath(rel)) : absPathFor(ctx.root, rel)
     const created = await withFileLock(abs, async () => {
       if ((await readFile(abs, 'utf8').catch(() => null)) !== null) return false
+      if ((await readFile(absPathFor(ctx.root, twin), 'utf8').catch(() => null)) !== null) {
+        return false
+      }
       await writeAtomic(ctx.root, rel, text)
       return true
     })

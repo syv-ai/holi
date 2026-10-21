@@ -660,7 +660,8 @@ describe('tasks.create at the app door', () => {
       folder: 'ops',
       shared: true,
     })
-    expect(shared.value).toEqual({ path: 'ops/task.call-the-vendor.md' })
+    // The private one holds the name, so the shared one takes the next.
+    expect(shared.value).toEqual({ path: 'ops/task.call-the-vendor-2.md' })
     await mkdir(join(root, 'elsewhere'))
     await symlink(join(root, 'elsewhere'), join(root, 'link'))
     for (const folder of ['.claude', 'Budget.app', 'mine.local.d', 'link', 'CLAUDE.md']) {

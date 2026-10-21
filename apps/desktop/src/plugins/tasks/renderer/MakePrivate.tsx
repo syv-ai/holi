@@ -1,8 +1,9 @@
 /**
  * The question "Make private" asks before it renames anything
  * (docs/features/tasks.md). A shared task made private leaves every
- * teammate's board on their next sync, and git history keeps the shared
- * version, so the person hears both before the file moves.
+ * teammate's board on their next sync, git history keeps the shared version,
+ * and shared notes' links to it are left pointing at the shared path, so the
+ * person hears all three before the file moves.
  */
 import { Button, Dialog } from '@/primitives'
 
@@ -27,6 +28,7 @@ export function MakePrivate({
           <p>
             Git history keeps the shared version, so anyone with the vault can still find it there.
           </p>
+          <p>Links to it from shared notes stop resolving.</p>
         </div>
       </Dialog.Body>
       <Dialog.Footer>

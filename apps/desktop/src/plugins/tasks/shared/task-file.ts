@@ -126,24 +126,33 @@ export function isTaskFilePath(rel: string): boolean {
 }
 
 /**
- * Is this task private, a file that stays on this machine? The path is the
- * whole rule, the same one that keeps any local file out of git, so a task in
- * a `.local.` folder is private too.
- */
-export function isPrivateTask(rel: string): boolean {
-  return isLocalOnlyPath(rel)
-}
-
-/**
  * Where a private task goes to be shared with the vault: its name without the
- * marker (`task.fix-login.local.md` to `task.fix-login.md`). Null when renaming
- * the file cannot share it: it is shared already, it sits in a local folder,
- * or its marker is somewhere other than the end of its name.
+ * marker (`task.fix-login.local.md` to `task.fix-login.md`). Null for anything
+ * that is not a private task: a shared one, or a task file in a local folder,
+ * or one whose marker is somewhere other than the end of its name.
  */
 export function sharedTaskPath(rel: string): string | null {
   if (!rel.endsWith(PRIVATE_SUFFIX)) return null
   const shared = `${rel.slice(0, -PRIVATE_SUFFIX.length)}.md`
   return isTaskFilePath(shared) && !isLocalOnlyPath(shared) ? shared : null
+}
+
+/**
+ * Is this a private task: `task.<name>.local.md`, in a folder that syncs? Only
+ * the file's own name makes a task private, and a rename of it shares it. A
+ * task file inside a `.local.` folder is no task at all (`isBoardTaskPath`).
+ */
+export function isPrivateTask(rel: string): boolean {
+  return sharedTaskPath(rel) !== null
+}
+
+/**
+ * Is this a file the board takes: a shared task, or a private one. Any other
+ * local file named like a task (one in a `.local.` folder, a personal space the
+ * watcher does not walk) stays a plain local file, as every local file is.
+ */
+export function isBoardTaskPath(rel: string): boolean {
+  return isTaskFilePath(rel) && (!isLocalOnlyPath(rel) || isPrivateTask(rel))
 }
 
 /** Where a shared task goes to be made private: its name with the marker
@@ -492,7 +501,7 @@ export const TASKS_CLAIM = 'tasks'
  * wrong is a thing to surface, not to rewrite.
  */
 export const taskClaim: SnapshotClaim = {
-  match: isTaskFilePath,
+  match: isBoardTaskPath,
   parse: (text, path) => parseTaskFile(text, path),
   normalize(text) {
     try {

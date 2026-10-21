@@ -259,10 +259,13 @@ export function QuickAdd({
     const folder = cleanFolder(draft.folder)
     // The path the new file will have (main's `freeTaskPath`), so the card can
     // take over the preview's layoutId. A guess that misses costs the flight.
+    // A name is taken when either its shared or its private file exists.
     const taken = new Set([...tasks.keys(), ...snapshotTasks(snapshot).broken.map((b) => b.path)])
-    let predicted = taskFilePath(folder, taskSlug(title), draft.shared)
-    for (let n = 2; taken.has(predicted); n++)
-      predicted = taskFilePath(folder, `${taskSlug(title)}-${n}`, draft.shared)
+    const free = (name: string) =>
+      !taken.has(taskFilePath(folder, name, true)) && !taken.has(taskFilePath(folder, name, false))
+    let name = taskSlug(title)
+    for (let n = 2; !free(name); n++) name = `${taskSlug(title)}-${n}`
+    const predicted = taskFilePath(folder, name, draft.shared)
     if (flight) setFlightId(predicted)
     const sent = draft
     setText('')

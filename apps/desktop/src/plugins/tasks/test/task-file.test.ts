@@ -11,6 +11,7 @@ import {
   parseTaskPatch,
   serializeTaskFile,
   sharedTaskPath,
+  taskClaim,
   taskFileName,
   taskFilePath,
   taskSlug,
@@ -64,10 +65,18 @@ describe('sharing a task is a rename', () => {
   it('offers neither where a rename of the file cannot do it', () => {
     expect(sharedTaskPath('ops/task.fix-login.md')).toBeNull()
     expect(privateTaskPath('ops/task.fix-login.local.md')).toBeNull()
-    // In a local folder the task stays local whatever its name says.
-    expect(isPrivateTask('mine.local.d/task.a.md')).toBe(true)
     expect(sharedTaskPath('mine.local.d/task.a.local.md')).toBeNull()
     expect(privateTaskPath('mine.local.d/task.a.md')).toBeNull()
+  })
+
+  it('takes a private task onto the board, but no task file in a local folder', () => {
+    expect(taskClaim.match('ops/task.a.local.md')).toBe(true)
+    expect(taskClaim.match('ops/task.a.md')).toBe(true)
+    // Only the file's own name makes a task private; a local folder is a
+    // personal space of plain files.
+    expect(isPrivateTask('mine.local.d/task.a.local.md')).toBe(false)
+    expect(taskClaim.match('mine.local.d/task.a.md')).toBe(false)
+    expect(taskClaim.match('mine.local.d/task.a.local.md')).toBe(false)
   })
 
   it('keeps the marker out of the fallback title', () => {

@@ -28,8 +28,13 @@ A shared task is `task.<slug>.md`. It is committed and syncs to everyone in the 
 - **Sharing a task is renaming its file** to drop `.local.`, and making it private is
   renaming it to add `.local.`. Ask for the rename (or use the card's Share with vault
   and Make private) rather than `mv`, so the links to it follow. Making a shared task
-  private takes it off every teammate's board on their next sync, and git history
-  still holds the shared version: say both before doing it.
+  private takes it off every teammate's board on their next sync, git history still
+  holds the shared version, and links to it from shared notes stop resolving (they are
+  left at the shared path, not rewritten): say all three before doing it.
+- Only the file's own name makes a task private. A task file inside a `.local.` folder
+  is not a task at all, just a local file.
+- Never give a private and a shared task the same name (`task.x.local.md` beside
+  `task.x.md`): neither could then be renamed into the other.
 - `holi tasks list` ends a private task's line with `private`.
 
 ## The file

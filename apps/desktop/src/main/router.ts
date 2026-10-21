@@ -1117,8 +1117,9 @@ export function createRouter(deps: RouterDeps) {
     // rewrite runs before the move, so a mid-run failure leaves the source in
     // place and visible in `git status` (there is no transaction).
     // Commits are the renderer's job (it flushes and commits around this call).
+    // `localLinksOnly` leaves committed notes' links alone (`renameNote`).
     rename: vaultMutation
-      .input(fields({ remote: 'string', from: 'string', to: 'string' }))
+      .input(fields({ remote: 'string', from: 'string', to: 'string', localLinksOnly: 'boolean?' }))
       .mutation(async ({ input }): Promise<{ rewritten: { path: string; count: number }[] }> => {
         const root = await rootFor(input.remote)
         const from = safe(input.from)
@@ -1126,7 +1127,7 @@ export function createRouter(deps: RouterDeps) {
         if (await exists(root, to)) {
           throw new TRPCError({ code: 'CONFLICT', message: `already exists: ${to}` })
         }
-        return renameNote(root, from, to)
+        return renameNote(root, from, to, { localLinksOnly: input.localLinksOnly === true })
       }),
 
     // Batch move: one commit-pair from the renderer, one single-pass link
