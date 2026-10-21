@@ -23,6 +23,7 @@ it('answers every bridge method that is not the renderer’s at the app door', (
       updateSkills: async () => ({ summary: '', conflicts: null }),
       pendingSkills: async () => [],
       open: () => {},
+      screenshot: async () => new Uint8Array(),
     }),
   )
   registry.register(TASK_NAMESPACES, taskCapabilities({ today: () => '2026-10-01' }))

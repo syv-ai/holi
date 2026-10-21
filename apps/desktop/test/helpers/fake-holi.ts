@@ -78,6 +78,8 @@ export function installFakeHoli(handle: (op: TrpcOpWire) => unknown = () => unde
       flushDone: () => onFlushed?.(),
       onOpen: subscribe(openSubs),
       openReady: () => {},
+      onLocate: subscribe(new Set<(r: { id: string; path: string }) => void>()),
+      located: () => {},
     },
     plugin: {
       on: (id: string, cb: (e: unknown) => void) => {

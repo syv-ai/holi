@@ -49,6 +49,7 @@ async function rig() {
       updateSkills: async () => ({ summary: '', conflicts: null }),
       pendingSkills: async () => [],
       open: () => {},
+      screenshot: async () => new Uint8Array(),
     }),
   )
   registry.register(TASK_NAMESPACES, taskCapabilities({ today: () => '2026-09-30' }))

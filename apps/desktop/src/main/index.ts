@@ -26,6 +26,7 @@ import { HOLI_LINK_SCHEME, holiLinkInArgv, parseHoliLink, snapshotTasks } from '
 import { exactPath } from '@holi/shared/path-safety-node'
 import { requestFlush, type FlushChannel } from './flush'
 import { guardNavigation } from './window-guard'
+import { captureTab } from './tab-capture'
 import { vaultScheme } from './vault/asset-protocol'
 import { createSession } from './github/electron'
 import { createMembersCache } from './github/members-cache'
@@ -370,24 +371,50 @@ async function main(): Promise<void> {
    * window may be gone entirely (tray-resident), so recreate it; either way the
    * open waits until a renderer has landed its vault (`openTarget`), or the
    * push arrives before anything can hear it, or under the vault's Home.
+   * Returns the window it was shown in.
    */
-  const showPath = (remote: string, path: string, heading?: string): void => {
+  const showPath = (
+    remote: string,
+    path: string,
+    { heading }: { heading?: string } = {},
+  ): BrowserWindow => {
     const request: OpenRequest =
       heading === undefined ? { remote, path } : { remote, path, heading }
-    const win = mainWindow
+    let win = mainWindow
     if (win === null || win.isDestroyed()) {
-      const fresh = createWindow()
-      fresh.on('focus', () => host.active()?.onFocus())
+      win = createWindow()
+      win.on('focus', () => host.active()?.onFocus())
     } else {
       bringForward(win)
     }
     if (openTarget !== null && !openTarget.isDestroyed()) openTarget.send('vault:open', request)
     else heldOpens.push(request)
+    return win
   }
+  /** Who waits for a window's renderer to take opens (`openReadyIn`). */
+  const readyWaiters: { contents: Electron.WebContents; resolve: () => void }[] = []
   ipcMain.on('vault:open-ready', (event) => {
     openTarget = event.sender
     for (const request of heldOpens.splice(0)) event.sender.send('vault:open', request)
+    for (const w of readyWaiters.filter((w) => w.contents === event.sender)) {
+      readyWaiters.splice(readyWaiters.indexOf(w), 1)
+      w.resolve()
+    }
   })
+  /** Settles once `win`'s renderer has taken the opens main held for it, so
+   *  what is asked of it next (`vault:locate`) comes after them. */
+  const openReadyIn = (win: BrowserWindow): Promise<void> =>
+    openTarget === win.webContents
+      ? Promise.resolve()
+      : new Promise((resolve) => {
+          readyWaiters.push({ contents: win.webContents, resolve })
+          // A window closed first never sends it; the ask is then refused.
+          win.webContents.once('destroyed', () => {
+            const i = readyWaiters.findIndex((w) => w.resolve === resolve)
+            if (i >= 0) readyWaiters.splice(i, 1)
+            resolve()
+          })
+        })
 
   /**
    * A Holi link from outside, untrusted: its shape is checked by
@@ -435,21 +462,28 @@ async function main(): Promise<void> {
         'It may have been moved or deleted, or it has not synced to this computer yet.',
       )
     }
-    showPath(entry.remote, path, heading)
+    showPath(entry.remote, path, { heading })
+  }
+
+  /** `holi docs open` and `holi docs screenshot` show a path only in the vault
+   *  Holi is showing. An agent session outlives a vault switch, and its open
+   *  must not switch the person away from what they are working in. */
+  const showInActive = (remote: string, path: string): BrowserWindow => {
+    if (host.active()?.remote !== remote) {
+      throw new CapabilityError('UNAVAILABLE', 'Holi is showing another vault.')
+    }
+    return showPath(remote, path)
   }
 
   // What a vault app and the agent can ask for: core's capabilities, then
   // each feature's, under the namespaces each owns. A feature's table closes
   // over what it needs from the running app.
   const vaultCaps = vaultCapabilities({
-    // `holi docs open`: only into the vault Holi is showing. An agent session
-    // outlives a vault switch, and its open must not switch the person away
-    // from what they are working in.
-    open: (remote, path) => {
-      if (host.active()?.remote !== remote) {
-        throw new CapabilityError('UNAVAILABLE', 'Holi is showing another vault.')
-      }
-      showPath(remote, path)
+    open: (remote, path) => void showInActive(remote, path),
+    // Opened the same way first, so what is captured is what the person sees.
+    screenshot: (remote, path) => {
+      const win = showInActive(remote, path)
+      return captureTab(win, path, openReadyIn(win))
     },
     // `holi skills update` and the palette's Update skills: bring this
     // release's skills and hooks to a vault. A conflict is answered with the

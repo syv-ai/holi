@@ -38,6 +38,15 @@ declare global {
         ): () => void
         /** This window has landed its vault: main may send the opens it held. */
         openReady(): void
+        /** Main asks where a path's tab is drawn, for `holi docs screenshot`,
+         *  once it has settled. Answer with `located`, by the same id: the
+         *  tab's rect in CSS pixels, or why there is none. */
+        onLocate(cb: (request: { id: string; path: string }) => void): () => void
+        located(
+          answer:
+            | { id: string; rect: { x: number; y: number; width: number; height: number } }
+            | { id: string; error: string },
+        ): void
       }
       /** Plugin events (docs/architecture.md, Plugins). Main sends on
        *  `plugin:<id>` only for a vault that runs the plugin; the renderer's

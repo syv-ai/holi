@@ -11,12 +11,15 @@ import type { SyncState } from '../../../main/vault/active-vault'
 import type { HeldBackFile } from '../../../main/vault/large-files'
 import type { RendererPlugin } from '@/plugin-api/types'
 import { flushAllBuffers } from '../lib/buffer-registry'
+import { settledRect } from '../lib/settled-rect'
 import { trpc } from '../lib/trpc'
-import { closeTabsForPaths, retargetTab, retargetTabs, workspaceAtom } from './panes'
-// Cycles (`plugins` and `arrival` read `activeRemoteAtom`), safe because
-// neither module reads the other's atoms until a store does.
+import { closeTabsForPaths, retargetTab, retargetTabs, tabKey, workspaceAtom } from './panes'
+// Cycles (`plugins` and `arrival` read `activeRemoteAtom`, `surfaces` reads
+// `snapshotAtom`), safe because neither module reads the other's atoms until a
+// store does.
 import { folderSurfacesAtom } from './plugins'
 import { requestArrivalAtom } from './arrival'
+import { tabForPathAtom } from './surfaces'
 
 type JotaiStore = ReturnType<typeof createStore>
 
@@ -196,6 +199,14 @@ export function subscribeToVault(
   // Holi link). Cross-vault, the switch runs here, not in main, so
   // `activeRemoteAtom` stays truthful (`state/arrival.ts`).
   const offOpen = window.holi.vault.onOpen((arrival) => store.set(requestArrivalAtom, arrival))
+  // Main asks where a path's tab is drawn, for `holi docs screenshot`. It
+  // opened the tab first, over `onOpen`, which arrives before this.
+  const offLocate = window.holi.vault.onLocate(({ id, path }) => {
+    settledRect(tabKey(store.get(tabForPathAtom)(path))).then(
+      (rect) => window.holi.vault.located({ id, rect }),
+      (err: unknown) => window.holi.vault.located({ id, error: (err as Error).message }),
+    )
+  })
   const tables = plugins.flatMap((p) =>
     p.events === undefined ? [] : [[p.info.id, p.events] as const],
   )
@@ -210,6 +221,7 @@ export function subscribeToVault(
     offHeldBack()
     offCommitted()
     offOpen()
+    offLocate()
     offEvents.forEach((off) => off())
   }
 }

@@ -27,6 +27,7 @@ registry.register(
     updateSkills: async () => ({ summary: '', conflicts: null }),
     pendingSkills: async () => [],
     open: (_remote, path) => void opened.push(path),
+    screenshot: async () => new Uint8Array([0x89, 0x50, 0x4e, 0x47]),
   }),
 )
 registry.register(TASK_NAMESPACES, taskCapabilities({ today: () => '2026-09-30' }))
@@ -385,6 +386,17 @@ describe('docs.open', () => {
     expect(
       await refusal(runCapability('docs.open', 'cli', withApp, { path: 'Finance' })),
     ).toMatchObject({ code: 'NOT_FOUND' })
+  })
+})
+
+describe('docs.screenshot', () => {
+  it("writes the tab's PNG as machine-local state and prints its path", async () => {
+    await put('notes/a.md', '# A\n')
+    const { text } = await runCapability('docs.screenshot', 'cli', ctx({}, null), {
+      path: 'notes/a.md',
+    })
+    expect(text).toMatch(/^\.holi\/state\/out\/.+\.local\.png$/)
+    expect([...(await readText(join(root, text)))]).toEqual([0x89, 0x50, 0x4e, 0x47])
   })
 })
 

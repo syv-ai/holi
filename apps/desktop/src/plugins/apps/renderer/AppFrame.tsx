@@ -258,7 +258,14 @@ export function AppFrame({ path }: { path: string }): React.JSX.Element {
   const reads = (ask?.affordances ?? []).map((a) => AFFORDANCE_TEXT[a]).join(' and ')
 
   return (
-    <div ref={setPane} className="relative flex h-full min-h-0 flex-col">
+    <div
+      ref={setPane}
+      // Busy while the approval is being looked up and while the frame's
+      // document loads: what `holi docs screenshot` waits out. An open
+      // approval dialog is not busy; it is what the person sees.
+      aria-busy={ask === null && (!gateOpen || loaded !== documentKey)}
+      className="relative flex h-full min-h-0 flex-col"
+    >
       {ask !== null && (
         // The app as its markup and styles draw it, blurred behind the question:
         // what is being approved, seen. No scripts (`sandbox=""`), so nothing

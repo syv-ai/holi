@@ -61,6 +61,7 @@ function recording(called: Called): Record<string, AnyCapability> {
       updateSkills: async () => ({ summary: '', conflicts: null }),
       pendingSkills: async () => [],
       open: () => {},
+      screenshot: async () => new Uint8Array(),
     }),
     ...appsCapabilities({
       events: { emit: () => {} },

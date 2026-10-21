@@ -54,6 +54,11 @@ const onFlushRequest = pushChannel<void>('vault:flush')
  * not). Main holds them until `openReady`. */
 const onOpen = pushChannel<{ remote: string; path: string; heading?: string }>('vault:open')
 
+/** Main's other question, for `holi docs screenshot`: where on the page a
+ * path's tab is, once it has finished drawing. Answered with `located`, by
+ * the request's id; main gives up after a few seconds. */
+const onLocate = pushChannel<{ id: string; path: string }>('vault:locate')
+
 /** Each plugin's events (`plugin:<id>`), one fan-out per plugin, made the
  *  first time that plugin is subscribed. */
 const pluginChannels = new Map<string, ReturnType<typeof pushChannel<unknown>>>()
@@ -90,6 +95,8 @@ contextBridge.exposeInMainWorld('holi', {
     flushDone: () => ipcRenderer.send('vault:flush-done'),
     onOpen,
     openReady: () => ipcRenderer.send('vault:open-ready'),
+    onLocate,
+    located: (answer: unknown) => ipcRenderer.send('vault:located', answer),
   },
   /** Plugin events: main pushes `{remote, name, payload}` on `plugin:<id>`,
    *  and the renderer sends the same shape back, in order and unanswered. */

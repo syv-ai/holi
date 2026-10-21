@@ -20,6 +20,7 @@ registry.register(
     updateSkills: async () => ({ summary: '', conflicts: null }),
     pendingSkills: async () => [],
     open: () => {},
+    screenshot: async () => new Uint8Array(),
   }),
 )
 
