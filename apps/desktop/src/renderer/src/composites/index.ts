@@ -1,12 +1,12 @@
 export { DeleteConfirm } from './DeleteConfirm'
 export { RepoMeter, RepoUsage } from './RepoMeter'
 export { DateTimePicker } from './DateTimePicker'
+export { EnumField } from './EnumField'
 export { Churn } from './Churn'
 export { DiffView } from './DiffView'
 export { FormField } from './FormField'
 export { FieldRow, useFieldControlId } from './FieldRow'
 export { PanelHeader, type HeaderAction } from './PanelHeader'
-export { RecurrenceField } from './RecurrenceField'
 export { DrawerShell, DrawerTitle, drawerWidthsAtom } from './DrawerShell'
 export {
   TREE_ELBOW,

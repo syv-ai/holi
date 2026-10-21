@@ -10,22 +10,18 @@ import {
   SETTINGS_LOCAL_FILE,
   PLUGINS_LOCAL_FILE,
   THEME_LOCAL_FILE,
+  IGNORED_DIRS,
   appBundleOf,
   isAppBundlePath,
+  isInIgnoredDir,
   isLocalOnlyPath,
+  OS_JUNK_FILES,
   vaultRelPath,
   type VaultRelPath,
 } from '@holi/shared'
 
 export const TMP_MARKER = '.holi-tmp-'
-const JUNK = new Set(['.DS_Store', 'Thumbs.db'])
-
-/** Directories that are never vault content, matched on any path segment.
- *
- * `.git` is the load-bearing one: left unignored it would fire the
- * watcher on every commit Holi itself makes (an autosave loop), and a stray
- * `.md` under `.git/` would surface as a note. */
-const IGNORED_DIRS = new Set(['.git', 'node_modules'])
+const JUNK = new Set(OS_JUNK_FILES)
 
 export function absPathFor(root: string, rel: VaultRelPath): string {
   return join(root, rel)
@@ -51,9 +47,8 @@ export function toVaultRel(root: string, absPath: string): VaultRelPath | null {
  * reach the snapshot; git is what keeps them out of a commit.
  */
 export function isNonContentPath(rel: string): boolean {
-  const segments = rel.split('/')
-  const base = segments.at(-1)!
-  if (segments.some((s) => IGNORED_DIRS.has(s))) return true
+  const base = rel.slice(rel.lastIndexOf('/') + 1)
+  if (isInIgnoredDir(rel)) return true
   return base.startsWith(TMP_MARKER) || JUNK.has(base)
 }
 
@@ -109,6 +104,29 @@ export async function writeAtomic(
   // the branded templates seed binary fonts + logo through this same writer.
   await writeFile(tmp, data)
   await rename(tmp, abs)
+}
+
+/** abs → the tail of the work queued on that file; gone once it drains. */
+const fileQueues = new Map<string, Promise<void>>()
+
+/**
+ * Run `work` after every earlier `withFileLock` on the same file has settled,
+ * so a check of a file and the write that depends on it are not split by
+ * another caller doing the same (two app writes over one base). It orders
+ * only the writers that take it: the editor's save does, a pull does not, so
+ * it narrows the race with a pull rather than closing it.
+ */
+export function withFileLock<T>(abs: string, work: () => Promise<T>): Promise<T> {
+  const run = (fileQueues.get(abs) ?? Promise.resolve()).then(work)
+  const tail = run.then(
+    () => {},
+    () => {},
+  )
+  fileQueues.set(abs, tail)
+  void tail.then(() => {
+    if (fileQueues.get(abs) === tail) fileQueues.delete(abs)
+  })
+  return run
 }
 
 export async function removeDocFile(root: string, rel: VaultRelPath): Promise<void> {

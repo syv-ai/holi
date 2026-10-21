@@ -10,6 +10,7 @@ import type { AgentProvider } from '../provider'
 import { createClaudeCli, terminalCommand } from './cli'
 import { resolveVaultAgentConfig, SIGN_IN_NOTICE, takeFirstSpawn } from './config-dir'
 import { isLive, parseListing, readContextPercent, summarise, watchConfigDir } from './listing'
+import { postToSession } from './messaging'
 import { registerAgentRoutes } from './routes'
 import { claudeSeed } from './seed'
 
@@ -45,6 +46,7 @@ export function claudeProvider(deps: ClaudeProviderDeps): AgentProvider {
     takeFirstSpawn,
     signInNotice: SIGN_IN_NOTICE,
     terminal: (target, attach) => terminalCommand(target, attach),
+    message: postToSession,
     routes: registerAgentRoutes,
     seed: claudeSeed,
   }

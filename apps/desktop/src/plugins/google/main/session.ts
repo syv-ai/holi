@@ -13,7 +13,7 @@
  * refresh, not ten. `account` is a getter with no tokens in it.
  */
 import { post, startLoopbackFlow, TOKEN_URL, type Listen, type LoopbackFlow } from './loopback-flow'
-import { resolveClientId, resolveClientSecret } from './credentials'
+import { resolveClient, type GoogleClient } from './credentials'
 import { GoogleTokenStore, type GoogleAccounts, type StoredGoogleAuth } from './token-store'
 
 /**
@@ -111,8 +111,10 @@ export interface AccountRef {
 
 export interface GoogleSessionDeps {
   account: AccountRef
-  clientId?: string
-  clientSecret?: string
+  /** The client this account's grant was made under, asked per refresh. A
+   *  refresh token only refreshes with the client it was issued to. Defaults
+   *  to `resolveClient(null)`. */
+  client?: () => GoogleClient
   fetch?: typeof globalThis.fetch
   now?: () => number
 }
@@ -227,10 +229,11 @@ export class GoogleSession {
 
   async #refresh(auth: StoredGoogleAuth): Promise<string> {
     let body: Record<string, unknown>
+    const client = this.#client()
     try {
       body = await post(this.#fetch(), TOKEN_URL, {
-        client_id: this.#clientId(),
-        ...(this.#clientSecret() === undefined ? {} : { client_secret: this.#clientSecret()! }),
+        client_id: client.id,
+        ...(client.secret === undefined ? {} : { client_secret: client.secret }),
         refresh_token: auth.refreshToken,
         grant_type: 'refresh_token',
       })
@@ -278,11 +281,7 @@ export class GoogleSession {
     return this.#deps.fetch ?? globalThis.fetch
   }
 
-  #clientId(): string {
-    return resolveClientId(this.#deps.clientId)
-  }
-
-  #clientSecret(): string | undefined {
-    return resolveClientSecret(this.#deps.clientSecret)
+  #client(): GoogleClient {
+    return this.#deps.client?.() ?? resolveClient(null)
   }
 }

@@ -9,7 +9,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { taskClaim } from '@holi/shared'
+import { taskClaim } from '../src/plugins/tasks/shared/task-file'
 import { normalizeMd as run } from '../src/main/vault/hooks/normalize-md'
 import type { StagedChanges } from '../src/main/vault/hooks/staged'
 

@@ -2,10 +2,17 @@
  * The app, once someone is signed in: a vault, its tree, and whatever tabs are
  * open over it. The snapshot push is subscribed once at the root, so this reads
  * atoms. An agent session is an ordinary tab. What plugins add to the frame
- * (rail and sidebar sections, drawers) comes from the running plugins.
+ * (rail and sidebar sections, overlays) comes from the running plugins.
  */
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
-import { History, PanelLeftClose, PanelLeftOpen, PanelRight } from 'lucide-react'
+import {
+  History,
+  Link2,
+  MessageSquare,
+  PanelLeftClose,
+  PanelLeftOpen,
+  PanelRight,
+} from 'lucide-react'
 import { Fragment, useEffect, useRef, useState } from 'react'
 import { isVaultConfigPath } from '@holi/shared'
 import {
@@ -19,6 +26,8 @@ import {
 } from '@/primitives'
 import { OnboardingRitual } from '@/features/onboarding/OnboardingRitual'
 import { HistoryPanel } from '@/features/history/HistoryPanel'
+import { CommentsPanel } from '@/features/comments/CommentsPanel'
+import { LinksPanel } from '@/features/links/LinksPanel'
 import { DialogHost } from './DialogHost'
 import { FrontmatterFieldsHost } from '@/features/frontmatter/FrontmatterFieldsHost'
 import { PaneView } from './PaneView'
@@ -28,6 +37,7 @@ import { NavMenu } from '@/features/nav/NavMenu'
 import { VaultPicker } from '@/features/vault/VaultPicker'
 import { trpc } from '../lib/trpc'
 import { sweepDailyAtom } from '../state/daily'
+import { dropArrivalAtom, landArrivalAtom } from '../state/arrival'
 import { openHomeAtom, openLandingAtom } from '../state/home'
 import { useSettingsFollowDisk } from '../state/settings'
 import { useVaultMembers } from '../state/members'
@@ -44,6 +54,8 @@ import {
 } from '../state/panes'
 import { pathOfTab } from '@/lib/folder-documents'
 import { historyOpenAtom, historyTargetPathAtom } from '../state/history'
+import { commentsTargetPathAtom, toggleCommentsAtom } from '../state/comments'
+import { toggleLinksAtom } from '../state/links'
 import { tickNowAtom } from '../state/clock'
 import type { PaneDropZone } from '@/lib/tab-drop'
 import type { Surface } from '@/plugin-api/types'
@@ -51,7 +63,6 @@ import type { ConflictResolvers } from '@/lib/editor-reload'
 import { ConflictBanner } from '@/composites/ConflictBanner'
 import { LeaveConfirm } from './LeaveConfirm'
 import { CommandPalette } from '@/features/palette/CommandPalette'
-import { QuickAddHost } from '@/features/tasks/QuickAddHost'
 import { runCommandAtom, useCommandHotkeys } from '../state/commands'
 import { recentOfTab, touchRecentAtom } from '../state/recents'
 import { closePaneWithExitAtom, closeTabWithExitAtom, leavingPaneAtom } from '../state/pane-exit'
@@ -61,6 +72,7 @@ import { openPathAtom, useSurfaceTabs } from '@/state/surfaces'
 import {
   folderClaimsAtom,
   leaveReasonsAtom,
+  overlaysAtom,
   runningPluginsAtom,
   surfacesAtom,
 } from '@/state/plugins'
@@ -102,16 +114,22 @@ export function Shell() {
   const openVault = useSetAtom(openVaultAtom)
   const openLanding = useSetAtom(openLandingAtom)
   const openHome = useSetAtom(openHomeAtom)
+  const landArrival = useSetAtom(landArrivalAtom)
+  const dropArrival = useSetAtom(dropArrivalAtom)
   const sweepDaily = useSetAtom(sweepDailyAtom)
   const startPendingPrompt = useSetAtom(startPendingVaultPromptAtom)
   const setPendingPrompt = useSetAtom(pendingVaultPromptAtom)
   const setHistoryOpen = useSetAtom(historyOpenAtom)
+  const toggleLinks = useSetAtom(toggleLinksAtom)
   const openPath = useSetAtom(openPathAtom)
   const folderClaims = useAtomValue(folderClaimsAtom)
   const surfaces = useAtomValue(surfacesAtom)
   const running = useAtomValue(runningPluginsAtom)
+  const overlays = useAtomValue(overlaysAtom)
   const [navOpen, setNavOpen] = useAtom(navOpenAtom)
   const historyTarget = useAtomValue(historyTargetPathAtom)
+  const commentsTarget = useAtomValue(commentsTargetPathAtom)
+  const toggleComments = useSetAtom(toggleCommentsAtom)
   const reconcile = useSetAtom(reconcileAtom)
   const agent = useAgentService()
   const retrySync = useSetAtom(retrySyncAtom)
@@ -185,12 +203,16 @@ export function Shell() {
       await openVault(activeRemote)
       await openLanding()
       setLandedRemote(activeRemote)
+      // Landed: a reminder or link that switched here opens now, on top, and
+      // main may send the opens it held for a window that had not landed.
+      landArrival()
+      window.holi.vault.openReady()
       // A session asked for before this vault was open: the stuck push a
       // leave or delete was blocked on.
       await startPendingPrompt(activeRemote)
       await sweepDaily()
     })()
-  }, [activeRemote, openVault, openLanding, startPendingPrompt, sweepDaily])
+  }, [activeRemote, openVault, openLanding, landArrival, startPendingPrompt, sweepDaily])
 
   // Never an empty window: once the vault has landed, closing the last tab
   // opens Home in its place, so the editor's blank "select or create a note"
@@ -327,6 +349,7 @@ export function Shell() {
                 onCancel={() => {
                   setLeaving(null)
                   setPendingPrompt(null)
+                  dropArrival()
                 }}
               />
             )}
@@ -415,6 +438,16 @@ export function Shell() {
                         {/* The active surface's own controls (an app's reload
                             and log, an agent tab's new session). */}
                         <SurfaceActions tab={p.tabs[p.active]} surfaces={surfaces} />
+                        {/* The focused note's links, both ways. Same
+                              predicate as history's, beside it. */}
+                        {i === workspace.active && historyTarget !== null && (
+                          <IconButton
+                            icon={Link2}
+                            label="links"
+                            className="ml-1"
+                            onClick={() => toggleLinks()}
+                          />
+                        )}
                         {/* Version history for the focused note. Only on the
                               active pane: `historyTargetPathAtom` reads its tab,
                               the drawer's own predicate. */}
@@ -424,6 +457,15 @@ export function Shell() {
                             label="version history"
                             className="ml-1"
                             onClick={() => setHistoryOpen((v) => !v)}
+                          />
+                        )}
+                        {/* The focused note's comment threads, beside History. */}
+                        {i === workspace.active && commentsTarget !== null && (
+                          <IconButton
+                            icon={MessageSquare}
+                            label="comments"
+                            className="ml-1"
+                            onClick={() => toggleComments()}
                           />
                         )}
                         {/* Closing a pane's last tab unsplits; this does it in
@@ -445,15 +487,17 @@ export function Shell() {
           </ResizablePanelGroup>
         </div>
 
-        {/* The right-hand drawers; each decides whether it is open. */}
+        {/* The right-hand drawers and what plugins lay over the panes; each
+            decides whether it shows. */}
+        <LinksPanel />
         <HistoryPanel />
-        {running.flatMap(({ info, drawers = [] }) =>
-          drawers.map((Drawer, i) => <Drawer key={`${info.id}:${i}`} />),
-        )}
+        <CommentsPanel />
+        {overlays.map(({ key, Overlay }) => (
+          <Overlay key={key} />
+        ))}
 
         <DialogHost />
         <CommandPalette />
-        <QuickAddHost />
 
         {/* Every frontmatter block's controls, portalled into their CodeMirror
             widgets. Here, not in EditorPane: a widget does not know its pane,

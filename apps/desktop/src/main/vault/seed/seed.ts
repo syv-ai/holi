@@ -16,7 +16,7 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { vaultRelPath, VAULT_MARKER_FILE } from '@holi/shared'
 import { writeAtomic } from '../vault-files'
-import { readSeedState, recordPlugins, recordSeeded } from './state'
+import { readSeedState, recordPlugins, recordRelease, recordSeeded } from './state'
 import type { SeedContribution, SeedResult } from './types'
 
 const exists = async (root: string, rel: string): Promise<boolean> =>
@@ -144,11 +144,15 @@ export async function runMerges(
  * Another contribution's files under an owned prefix (`owns`) count as
  * their own entry, `<id>@<owner>`, so they are written once when the owner
  * is turned on.
+ *
+ * `release` is the running Holi's version, recorded when this writes a
+ * shipped file (`SeedState.release`).
  */
 export async function ensureSeeded(
   root: string,
   contributions: readonly SeedContribution[],
   plugins: readonly string[] = [],
+  release?: string,
 ): Promise<SeedResult> {
   const { once, shipped } = tables(contributions)
   // Read before the once files below write it.
@@ -169,12 +173,15 @@ export async function ensureSeeded(
     written.push(rel)
   }
 
+  let shippedAny = false
   for (const [rel, content] of toShip) {
     if (await exists(root, rel)) continue
     await writeAtomic(root, vaultRelPath(rel), content)
     await recordSeeded(root, rel, content)
     written.push(rel)
+    shippedAny = true
   }
+  if (shippedAny && release !== undefined) await recordRelease(root, release)
 
   // Only ever grows: a plugin turned off and on again is not new here.
   const seen = [...new Set([...(baseline ?? []), ...ids])]
