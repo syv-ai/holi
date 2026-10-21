@@ -9,7 +9,7 @@
  */
 import { lstat, readFile, realpath, stat } from 'node:fs/promises'
 import { isAbsolute, join, relative, sep } from 'node:path'
-import { localDate, vaultRelPath } from '@holi/shared'
+import { isMachineStatePath, isSecretPath, localDate, vaultRelPath } from '@holi/shared'
 import { resolveRelative } from '@holi/shared/path-safety-node'
 import {
   cap,
@@ -112,6 +112,18 @@ async function inVault(root: string, rel: string): Promise<string> {
   }
 }
 
+/** Refuse a secret or machine-state vault path: a PDF must neither carry a
+ *  secret out into a file that gets committed, nor land among this machine's
+ *  state. Checked on the path as given and as resolved, so a symlink cannot
+ *  dress one up as the other. */
+function refusePrivate(rels: (string | null)[]): void {
+  for (const rel of rels) {
+    if (rel !== null && (isSecretPath(rel) || isMachineStatePath(rel))) {
+      throw new CapabilityError('BAD_REQUEST', `${rel} is a secret or machine-state path`)
+    }
+  }
+}
+
 /** Whether `abs` itself is a symlink (absent is not). */
 async function isSymlink(abs: string): Promise<boolean> {
   return lstat(abs).then(
@@ -190,6 +202,8 @@ export function pdfCapabilities(deps: PdfCapabilityDeps) {
         // Canonicalised, so a symlink inside the vault cannot lead the read
         // out of it.
         const noteAbs = await inVault(ctx.root, path)
+        const realRoot = await realpath(ctx.root)
+        refusePrivate([vaultRelPath(path), vaultPathOf(realRoot, noteAbs)])
         const templates = await listTemplates(ctx.root)
         const tpl = templates.find((t) => t.slug === template)
         if (tpl === undefined) {
@@ -215,6 +229,10 @@ export function pdfCapabilities(deps: PdfCapabilityDeps) {
         const outside = out !== undefined && isAbsolute(out)
         const pdfRel = out ?? path.replace(/\.(md|markdown)$/i, '') + '.pdf'
         const pdfPath = outside ? pdfRel : await inVault(ctx.root, pdfRel)
+        refusePrivate([
+          outside ? vaultPathOf(ctx.root, pdfPath) : vaultRelPath(pdfRel),
+          vaultPathOf(realRoot, pdfPath),
+        ])
         if (await isSymlink(outside ? pdfRel : join(ctx.root, vaultRelPath(pdfRel)))) {
           throw new CapabilityError('BAD_REQUEST', `${pdfRel} is a symlink`)
         }
@@ -244,8 +262,7 @@ export function pdfCapabilities(deps: PdfCapabilityDeps) {
         const { size } = await stat(pdfPath)
         // The vault's path as given or as resolved: an absolute `out` may name
         // either.
-        const vaultPath =
-          vaultPathOf(ctx.root, pdfPath) ?? vaultPathOf(await realpath(ctx.root), pdfPath)
+        const vaultPath = vaultPathOf(ctx.root, pdfPath) ?? vaultPathOf(realRoot, pdfPath)
         return { pdfPath, vaultPath, bytes: size, warnings }
       },
       text: ({ pdfPath, vaultPath, bytes, warnings }) =>

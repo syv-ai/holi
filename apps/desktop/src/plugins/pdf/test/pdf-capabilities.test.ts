@@ -166,4 +166,28 @@ describe('pdf capabilities', () => {
       run('pdf.render', { path: 'note.md', out: '../x.pdf', meta: { recipient: 'A' } }),
     ).rejects.toThrow()
   })
+
+  it('render will not read a secret or machine-state note, nor write a PDF into one', async () => {
+    const { root, run } = await rig({
+      ...TEMPLATE_FILES,
+      'note.md': '# Hi\n',
+      '.secrets/x.md': '# Secret\n',
+      '.holi/state/x.md': '# State\n',
+    })
+    const meta = { recipient: 'A' }
+    for (const path of ['.secrets/x.md', '.holi/state/x.md']) {
+      await expect(run('pdf.render', { path, out: 'notes/x.pdf', meta })).rejects.toThrow(
+        /secret or machine-state/,
+      )
+    }
+    await symlink(join(root, '.secrets/x.md'), join(root, 'alias.md'))
+    await expect(run('pdf.render', { path: 'alias.md', meta })).rejects.toThrow(
+      /secret or machine-state/,
+    )
+    for (const out of ['.env/x.pdf', '.holi/state/x.pdf', join(root, '.holi/state/x.pdf')]) {
+      await expect(run('pdf.render', { path: 'note.md', out, meta })).rejects.toThrow(
+        /secret or machine-state/,
+      )
+    }
+  })
 })
