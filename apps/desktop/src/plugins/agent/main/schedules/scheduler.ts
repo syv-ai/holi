@@ -769,6 +769,9 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
         lastRun: at.toISOString(),
       }))
       changed(vault.remote)
+      // A check now, so its triggers listen from this moment rather than
+      // from the next check: a file dropped in between would go unheard.
+      if (attached?.remote === vault.remote) await this.tick()
       return one(vault, entry.path)
     },
 

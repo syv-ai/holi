@@ -235,7 +235,6 @@ describe('running on events', () => {
   it('runs on a batch of events, names them, and follows a working run once', async () => {
     await writeSchedule('inbox.md', 'on:\n  - file: inbox/**')
     await scheduler.enable(vault(), 'inbox')
-    await scheduler.tick() // learns which schedules listen
     scheduler.snapshot(scan()) // the baseline: nothing is new
     scheduler.snapshot(scan('inbox/a.pdf'))
     clock = at(10, 2)
