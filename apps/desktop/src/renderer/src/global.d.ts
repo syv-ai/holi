@@ -29,10 +29,15 @@ declare global {
          */
         onFlushRequest(cb: () => void): () => void
         flushDone(): void
-        /** Main asks for a vault path in a tab: a clicked reminder's task, or
-         *  `holi docs open`. Fans to a vault switch (if the path lives
-         *  elsewhere) + `openPathAtom`. Returns its unsubscribe. */
-        onOpen(cb: (payload: { remote: string; path: string }) => void): () => void
+        /** Main asks for a vault path in a tab: a clicked reminder's task,
+         *  `holi docs open`, a Holi link (with a heading to scroll to). Fans to
+         *  a vault switch (if the path lives elsewhere) + `openPathAtom`.
+         *  Returns its unsubscribe. */
+        onOpen(
+          cb: (payload: { remote: string; path: string; heading?: string }) => void,
+        ): () => void
+        /** This window has landed its vault: main may send the opens it held. */
+        openReady(): void
       }
       /** Plugin events (docs/architecture.md, Plugins). Main sends on
        *  `plugin:<id>` only for a vault that runs the plugin; the renderer's

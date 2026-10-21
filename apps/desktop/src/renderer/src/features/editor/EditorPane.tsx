@@ -12,7 +12,7 @@
  */
 import { EditorSelection, EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
-import { snapshotTasks, type Task } from '@holi/shared'
+import { findHeadingLine, snapshotTasks, type Task } from '@holi/shared'
 import { useAtomValue, useSetAtom, useStore } from 'jotai'
 import { useEffect, useRef } from 'react'
 import { baseEditorExtensions, plainTextExtensions } from '@/editor/extensions'
@@ -25,6 +25,9 @@ import { applyReload } from '@/lib/apply-reload'
 import { registerBuffer } from '@/lib/buffer-registry'
 import { decideReload, hasNewText, type ConflictResolvers } from '@/lib/editor-reload'
 import { selectedLines } from '@/editor/askAgent'
+import { caretHeading } from '@/editor/caret-heading'
+import { headingRequestAtom } from '@/state/arrival'
+import { caretHeadingAtom } from '@/state/holi-link'
 import { NO_AGENT, useAskAgentSeam } from '@/state/agent-service'
 import { historyOpenAtom } from '@/state/history'
 import { normalizersAtom } from '@/state/plugins'
@@ -196,6 +199,38 @@ export function EditorPane({
       if (!same) store.set(editorSelectionAtom, lines === null ? null : { path, lines })
     }
 
+    /** The heading the caret is on, for the palette's "Copy Holi link to this
+     *  heading". Set only when it changes. */
+    const reportCaretHeading = (state: EditorState): void => {
+      const heading = caretHeading(state)
+      const current = store.get(caretHeadingAtom)
+      // Off a heading, clear only this note's: another editor's still stands.
+      const same =
+        heading === null
+          ? current === null || current.path !== path
+          : current?.path === path && current.heading === heading
+      if (!same) store.set(caretHeadingAtom, heading === null ? null : { path, heading })
+    }
+
+    /** A Holi link's heading (`headingRequestAtom`), when it is for this note:
+     *  the caret to its line, scrolled to the top. Taken once; a heading that
+     *  is not there leaves the note where it opened. */
+    const goToRequestedHeading = (): void => {
+      const view = viewRef.current
+      const request = store.get(headingRequestAtom)
+      if (view === null || disposed || request === null || request.path !== path) return
+      store.set(headingRequestAtom, null)
+      const line = findHeadingLine(view.state.doc.toString(), request.heading)
+      if (line === null) return
+      const at = view.state.doc.line(line).from
+      view.dispatch({
+        selection: EditorSelection.cursor(at),
+        effects: EditorView.scrollIntoView(at, { y: 'start', yMargin: 24 }),
+      })
+      view.focus()
+    }
+    const offHeadingRequest = store.sub(headingRequestAtom, goToRequestedHeading)
+
     const scheduleSave = () => {
       if (saveTimer.current !== null) clearTimeout(saveTimer.current)
       saveTimer.current = setTimeout(() => void save(), SAVE_QUIET_MS)
@@ -240,7 +275,10 @@ export function EditorPane({
                   readOnly,
                 })),
             EditorView.updateListener.of((update) => {
-              if (update.selectionSet || update.docChanged) reportSelection(update.state)
+              if (update.selectionSet || update.docChanged) {
+                reportSelection(update.state)
+                reportCaretHeading(update.state)
+              }
               if (!update.docChanged) return
               scheduleSave()
               if (!editedRef.current) {
@@ -256,6 +294,7 @@ export function EditorPane({
       // A fresh editor opens on a caret: whatever this path had selected before
       // is gone.
       reportSelection(view.state)
+      reportCaretHeading(view.state)
       // Fade in when the document arrives, after the IPC read, not when the
       // tab changed. Opacity only: anything that changes the layout box drags
       // CodeMirror's measure loop into every frame.
@@ -263,6 +302,7 @@ export function EditorPane({
       view.focus()
 
       if (!plain) unfollow = followCommit(view, path, store)
+      goToRequestedHeading()
     })
 
     // Window blur is a flush point, as is the unmount below (tab close, vault
@@ -277,6 +317,8 @@ export function EditorPane({
     return () => {
       disposed = true
       unfollow()
+      offHeadingRequest()
+      if (store.get(caretHeadingAtom)?.path === path) store.set(caretHeadingAtom, null)
       window.removeEventListener('blur', onBlur)
       unregister()
       if (saveTimer.current !== null) clearTimeout(saveTimer.current)

@@ -8,7 +8,7 @@
  * `electron-vite` resolves imports without typechecking, so an unresolvable
  * import anywhere on this path stops the window opening at all.
  */
-import { readFile, writeFile } from 'node:fs/promises'
+import { readFile, stat, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import {
@@ -22,7 +22,8 @@ import {
   shell,
   type Tray,
 } from 'electron'
-import { snapshotTasks } from '@holi/shared'
+import { HOLI_LINK_SCHEME, holiLinkInArgv, parseHoliLink, snapshotTasks } from '@holi/shared'
+import { exactPath } from '@holi/shared/path-safety-node'
 import { requestFlush, type FlushChannel } from './flush'
 import { guardNavigation } from './window-guard'
 import { vaultScheme } from './vault/asset-protocol'
@@ -91,6 +92,40 @@ protocol.registerSchemesAsPrivileged(
 )
 const FRAME_SCHEMES = frameSchemes(SCHEMES)
 
+/** A path main asks the renderer to show in a tab (`vault:open`). */
+interface OpenRequest {
+  remote: string
+  path: string
+  heading?: string
+}
+
+/**
+ * The renderer that said it can take an open (`vault:open-ready`, sent once its
+ * vault has landed), or null while none has: a fresh window's page has not
+ * loaded, or is still opening its vault, whose landing would bury the tab.
+ * Opens asked for meanwhile wait in `heldOpens`.
+ */
+let openTarget: Electron.WebContents | null = null
+const heldOpens: OpenRequest[] = []
+
+/**
+ * Holi links (docs/features/holi-links.md), clicked anywhere on this machine.
+ * macOS hands them to `open-url`, which can fire before the app is ready, so
+ * the listener goes on at once and a link waits in `heldLinks` until `main()`
+ * can answer it (`openLink`). Windows and Linux pass a link in argv instead:
+ * at launch, and to the running Holi through `second-instance`.
+ */
+const heldLinks: string[] = []
+let openLink: ((url: string) => void) | null = null
+const takeLink = (url: string): void => {
+  if (openLink === null) heldLinks.push(url)
+  else openLink(url)
+}
+app.on('open-url', (event, url) => {
+  event.preventDefault()
+  takeLink(url)
+})
+
 // A second launch must not happen at all: one Holi process owns every vault,
 // so excluding a second app excludes a second writer on every clone, without a
 // per-clone lockfile's stale-lock handling. Must be claimed BEFORE `whenReady`.
@@ -117,6 +152,10 @@ function createWindow({ show = true }: { show?: boolean } = {}): BrowserWindow {
   win.on('closed', () => {
     if (mainWindow === win) mainWindow = null
   })
+  // A reload is a new page, which has not landed its vault yet.
+  win.webContents.on('did-navigate', () => {
+    if (openTarget === win.webContents) openTarget = null
+  })
 
   const devUrl = process.env['ELECTRON_RENDERER_URL']
   if (devUrl) {
@@ -140,7 +179,11 @@ function createWindow({ show = true }: { show?: boolean } = {}): BrowserWindow {
 }
 
 async function main(): Promise<void> {
-  app.on('second-instance', () => {
+  app.on('second-instance', (_event, argv) => {
+    // A link clicked on Windows or Linux launches Holi again with the link in
+    // argv; `openLink` brings the window forward itself.
+    const link = holiLinkInArgv(argv)
+    if (link !== null) return takeLink(link)
     // Someone tried to launch Holi again: show them the one they have.
     if (mainWindow === null) return
     if (mainWindow.isMinimized()) mainWindow.restore()
@@ -314,25 +357,73 @@ async function main(): Promise<void> {
   }
 
   /**
-   * Show a vault path in a tab: a clicked reminder's task, `holi docs open`.
-   * Brings the window forward and hands the path to the renderer, which owns
-   * the vault switch (so `activeRemoteAtom` stays truthful). The window may be
-   * gone entirely (tray-resident), so recreate it and deliver on
-   * `did-finish-load`, or the push arrives before any renderer can hear it.
+   * Show a vault path in a tab: a clicked reminder's task, `holi docs open`, a
+   * Holi link. Brings the window forward and hands the path to the renderer,
+   * which owns the vault switch (so `activeRemoteAtom` stays truthful). The
+   * window may be gone entirely (tray-resident), so recreate it; either way the
+   * open waits until a renderer has landed its vault (`openTarget`), or the
+   * push arrives before anything can hear it, or under the vault's Home.
    */
-  const showPath = (remote: string, path: string): void => {
-    const payload = { remote, path }
+  const showPath = (remote: string, path: string, heading?: string): void => {
+    const request: OpenRequest =
+      heading === undefined ? { remote, path } : { remote, path, heading }
     const win = mainWindow
     if (win === null || win.isDestroyed()) {
       const fresh = createWindow()
       fresh.on('focus', () => host.active()?.onFocus())
-      fresh.webContents.once('did-finish-load', () => fresh.webContents.send('vault:open', payload))
-      return
+    } else {
+      if (win.isMinimized()) win.restore()
+      win.show()
+      win.focus()
     }
-    if (win.isMinimized()) win.restore()
-    win.show()
-    win.focus()
-    win.webContents.send('vault:open', payload)
+    if (openTarget !== null && !openTarget.isDestroyed()) openTarget.send('vault:open', request)
+    else heldOpens.push(request)
+  }
+  ipcMain.on('vault:open-ready', (event) => {
+    openTarget = event.sender
+    for (const request of heldOpens.splice(0)) event.sender.send('vault:open', request)
+  })
+
+  /**
+   * A Holi link from outside, untrusted: its shape is checked by
+   * `parseHoliLink`, then the vault must be one this machine has cloned and the
+   * file one that is in it. Anything else is said in a dialog and opens
+   * nothing. A link only ever opens a tab: it runs nothing.
+   */
+  const openHoliLink = async (url: string): Promise<void> => {
+    const tell = (message: string, detail: string): void => {
+      const options = { type: 'info' as const, message, detail, buttons: ['OK'] }
+      const win = mainWindow
+      void (win === null || win.isDestroyed()
+        ? dialog.showMessageBox(options)
+        : dialog.showMessageBox(win, options))
+    }
+    const parsed = parseHoliLink(url)
+    if (!parsed.ok) return tell('This link cannot be opened.', parsed.reason)
+    const { remote, path, heading } = parsed.link
+    const root = (await registry.list()).find((e) => e.remote === remote)?.path
+    if (root === undefined) {
+      return tell(
+        `${remote} is not on this computer.`,
+        'Add the vault with Add vault… in the vault menu, then open the link again.',
+      )
+    }
+    // `exactPath` refuses a name that reaches outside the clone through a link
+    // or a case alias, so what is shown is what was named.
+    const abs = await exactPath(root, path)
+    const isFile =
+      abs !== null &&
+      (await stat(abs).then(
+        (s) => s.isFile(),
+        () => false,
+      ))
+    if (!isFile) {
+      return tell(
+        `${path} is not in ${remote}.`,
+        'It may have been moved or deleted, or it has not synced to this computer yet.',
+      )
+    }
+    showPath(remote, path, heading)
   }
 
   // What a vault app and the agent can ask for: core's capabilities, then
@@ -500,6 +591,16 @@ async function main(): Promise<void> {
   // Pull on focus. The interval exists for the case where the window never
   // loses focus at all.
   win.on('focus', () => host.active()?.onFocus())
+
+  // Holi links, from now on and those that came before the window did. Only a
+  // packaged app claims the scheme: a dev build would take every `holi:` link
+  // on the machine from an installed Holi, and on macOS it is the bare
+  // Electron.app that would be registered, not this app.
+  if (app.isPackaged) app.setAsDefaultProtocolClient(HOLI_LINK_SCHEME)
+  openLink = (url) => void openHoliLink(url)
+  const launchLink = holiLinkInArgv(process.argv)
+  if (launchLink !== null) heldLinks.push(launchLink)
+  for (const url of heldLinks.splice(0)) openLink(url)
 
   // Create-or-focus the one window: the dock/`activate` path and the tray's
   // Open Holi both funnel through here.

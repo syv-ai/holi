@@ -28,6 +28,7 @@ import { NavMenu } from '@/features/nav/NavMenu'
 import { VaultPicker } from '@/features/vault/VaultPicker'
 import { trpc } from '../lib/trpc'
 import { sweepDailyAtom } from '../state/daily'
+import { landArrivalAtom } from '../state/arrival'
 import { openLandingAtom } from '../state/home'
 import { useSettingsFollowDisk } from '../state/settings'
 import { useVaultMembers } from '../state/members'
@@ -101,6 +102,7 @@ export function Shell() {
   const [workspace, setWorkspace] = useAtom(workspaceAtom)
   const openVault = useSetAtom(openVaultAtom)
   const openLanding = useSetAtom(openLandingAtom)
+  const landArrival = useSetAtom(landArrivalAtom)
   const sweepDaily = useSetAtom(sweepDailyAtom)
   const startPendingPrompt = useSetAtom(startPendingVaultPromptAtom)
   const setPendingPrompt = useSetAtom(pendingVaultPromptAtom)
@@ -180,12 +182,16 @@ export function Shell() {
     void (async () => {
       await openVault(activeRemote)
       await openLanding()
+      // Landed: a reminder or link that switched here opens now, on top, and
+      // main may send the opens it held for a window that had not landed.
+      landArrival()
+      window.holi.vault.openReady()
       // A session asked for before this vault was open: the stuck push a
       // leave or delete was blocked on.
       await startPendingPrompt(activeRemote)
       await sweepDaily()
     })()
-  }, [activeRemote, openVault, openLanding, startPendingPrompt, sweepDaily])
+  }, [activeRemote, openVault, openLanding, landArrival, startPendingPrompt, sweepDaily])
 
   // Every app-level key, from the one table (`state/commands.ts`).
   useCommandHotkeys()
