@@ -77,11 +77,13 @@ export function usageText(commands: readonly CliCommand[]): string {
  * stays sound only if no option can sit in front of it.
  *
  * `stdin` is what the script sent on its second leg, or null on the first.
+ * `job` is the calling session's job id, or null outside a background one.
  */
 export function resolveArgv(
   argv: readonly string[],
   commands: readonly CliCommand[],
   stdin: string | null,
+  job: string | null = null,
 ): CliRequest {
   const usage = (why: string): CliRequest => ({
     kind: 'usage',
@@ -144,6 +146,9 @@ export function resolveArgv(
     }
   }
   if (positionals.length > 0) return wrong(`unexpected argument: ${positionals[0]}`)
+  if (cli.job !== undefined && job !== null && job !== '' && !Object.hasOwn(params, cli.job)) {
+    params[cli.job] = job
+  }
 
   const bodyless = cli.stdinUnless !== undefined && Object.hasOwn(params, cli.stdinUnless)
   if (cli.stdin !== undefined && !bodyless && !Object.hasOwn(params, cli.stdin)) {
@@ -208,6 +213,12 @@ for a in "\$@"; do
   shift
   set -- "\$@" --data-urlencode "argv=\$a"
 done
+
+# Inside a background Claude Code session, its job id: a command that
+# points back at the session (holi agent notify) needs no flag for it.
+if [ -n "\${CLAUDE_JOB_DIR:-}" ]; then
+  set -- "\$@" --data-urlencode "job=\${CLAUDE_JOB_DIR##*/}"
+fi
 
 send() {
   curl -sS -X POST -o "\$out" -w '%{http_code}' \\

@@ -99,16 +99,21 @@ export function createBridgeServer(deps: BridgeServerDeps = {}): BridgeServer {
 
   /**
    * `holi <namespace> <verb> ...`: argv arrives as repeated `argv` fields, in
-   * order. The output is the answer itself, so it answers text: 200 with it
-   * (or, past `SPILL_BYTES`, with where it was written, as JSON when
-   * the answer was asked for as JSON), 422 with a refusal
-   * and its next step, 400 with usage, or 428, having run nothing, when the
-   * command reads a param from stdin that was not given.
+   * order, and a background session's job id as `job`. The output is the
+   * answer itself, so it answers text: 200 with it (or, past `SPILL_BYTES`,
+   * with where it was written, as JSON when the answer was asked for as JSON),
+   * 422 with a refusal and its next step, 400 with usage, or 428, having run
+   * nothing, when the command reads a param from stdin that was not given.
    */
   async function runCli(remote: string, body: string): Promise<Reply> {
     const cli = deps.cli!
     const form = new URLSearchParams(body)
-    const request = resolveArgv(form.getAll('argv'), cli.commands(), form.get('stdin'))
+    const request = resolveArgv(
+      form.getAll('argv'),
+      cli.commands(),
+      form.get('stdin'),
+      form.get('job'),
+    )
     if (request.kind === 'usage') return { status: 400, body: request.text }
     if (request.kind === 'stdin') return { status: 428 }
     let output: string
