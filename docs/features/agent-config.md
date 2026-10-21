@@ -182,7 +182,7 @@ additions are commands in a directory prepended to `PATH`, plus skills that docu
   body from stdin and was not given one is answered 428 without running, and the script sends
   stdin once (`send --draft <id>` reads none). Today: `apps open|init|console`, `skills update|status`,
   `comments list|add|reply|resolve|reopen`, `community path`, `pdf comments|typst`, `google agenda|search|read|mark-read|star|archive|trash|draft|send|reply|schedule|reschedule|unschedule`, `tasks list|complete`,
-  `store list|get|put|delete|check`, `docs list|read|render|open|screenshot`, `sync status`, `agent sessions|notify|log`,
+  `store list|get|put|delete|check`, `docs list|read|render|open|screenshot`, `sync status`, `agent sessions|notify|log|message`,
   `schedules list|disable|run` (turning one on is Settings only),
   `vault members|recents`. The registry's reads the agent already has as Grep, Read and git
   (search, history, settings) stay app-only rather than grow a second way in. The script finds
