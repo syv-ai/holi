@@ -105,6 +105,10 @@
   --context-warm: var(--color-amber-400);
   --context-full: var(--color-red-500);
 
+  /* A memory's dot in the graph view, told apart from notes and tasks by hue
+     alone. Not in the theme whitelist, like `--diff-*`. */
+  --graph-memory: var(--color-violet-400);
+
   /* ── Rendered-table tokens (per-vault themeable) ───────────────────
    * `codemirror-markdown-tables` paints from its own `--tbl-theme-*`
    * properties and picks light or dark from `EditorView.darkTheme`, which Holi
@@ -161,6 +165,7 @@
   --diff-removed-foreground: var(--color-red-700);
   --context-warm: var(--color-amber-600);
   --context-full: var(--color-red-600);
+  --graph-memory: var(--color-violet-600);
 }
 
 /* Expose the semantics as utilities. @theme inline so the generated utility holds
@@ -212,6 +217,7 @@
   --color-file-green: var(--file-green);
   --color-file-tan: var(--file-tan);
   --color-file-grey: var(--file-grey);
+  --color-graph-memory: var(--graph-memory);
 
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);

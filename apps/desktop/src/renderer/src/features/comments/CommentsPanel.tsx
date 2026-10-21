@@ -32,6 +32,7 @@ import {
   toggleCommentsAtom,
 } from '@/state/comments'
 import { historyOpenAtom } from '@/state/history'
+import { linksOpenAtom } from '@/state/links'
 
 /** `at` is an ISO string. */
 const when = (iso: string) =>
@@ -224,6 +225,7 @@ function Thread({
 export function CommentsPanel() {
   const open = useAtomValue(commentsOpenAtom)
   const historyOpen = useAtomValue(historyOpenAtom)
+  const linksOpen = useAtomValue(linksOpenAtom)
   const path = useAtomValue(commentsTargetPathAtom)
   const threads = useAtomValue(targetThreadsAtom)
   const lines = useAtomValue(threadLinesAtom)
@@ -243,7 +245,7 @@ export function CommentsPanel() {
     <DrawerShell
       id="comments"
       side="right"
-      open={open && !historyOpen && path !== null}
+      open={open && !historyOpen && !linksOpen && path !== null}
       label="Comments"
       header={<DrawerTitle title="Comments" subtitle={path ?? undefined} />}
       aside={threads.length === 0 ? undefined : `${openCount} open`}

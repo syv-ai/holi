@@ -33,6 +33,9 @@ import {
   isRemote,
   type CommentAnchor,
   type CommentThread,
+  MEMORY_DIR,
+  MEMORY_INDEX,
+  isHiddenPath,
 } from '@holi/shared'
 import type { SeedResult } from './vault/seed/types'
 import { searchBodies, type SearchHit } from './vault/search'
@@ -40,7 +43,7 @@ import { CapabilityError, trpcCodeOf } from './capabilities/error'
 import { createCapabilityHost, type CapabilityHost } from './capabilities/dispatch'
 import { createCapabilityRegistry } from './capabilities/registry'
 import { noCoreServices, type UiReport } from './capabilities/services'
-import { scanBackrefs, scanBackrefsMany } from './vault/backrefs'
+import { buildLinkGraph, scanBackrefs, scanBackrefsMany, scanLinks } from './vault/backrefs'
 import { fileHistory, type FileHistory } from './vault/file-facts'
 import { copyNotes } from './vault/copy'
 import { importFiles } from './vault/import-files'
@@ -1165,6 +1168,27 @@ export function createRouter(deps: RouterDeps) {
       .query(async ({ input }): Promise<{ path: string; count: number }[]> => {
         return scanBackrefs(await rootFor(input.remote), safe(input.path))
       }),
+
+    // Both directions of one note's links, for the links drawer: what it links
+    // to (resolved or not) and each line elsewhere that links to it. A grep per
+    // call, like `backrefs`: there is no link index.
+    links: t.procedure
+      .input(fields({ remote: 'string', path: 'string' }))
+      .query(async ({ input }) => scanLinks(await rootFor(input.remote), safe(input.path))),
+
+    // The vault's notes and the links between them, for the graph view. Hidden
+    // files only when the tree shows them; memory always, and never its
+    // generated index, which links every memory and would only draw a hub.
+    graph: t.procedure
+      .input(fields({ remote: 'string', hidden: 'boolean' }))
+      .query(async ({ input }) =>
+        buildLinkGraph(
+          await rootFor(input.remote),
+          (p) =>
+            p !== MEMORY_INDEX &&
+            (input.hidden || !isHiddenPath(p) || p.startsWith(`${MEMORY_DIR}/`)),
+        ),
+      ),
 
     // Move the file AND rewrite every inbound [[link]] in one pass. The
     // move-half alone silently breaks links, so the two are one procedure. The

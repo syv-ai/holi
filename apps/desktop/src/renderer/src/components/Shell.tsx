@@ -5,7 +5,14 @@
  * (rail and sidebar sections, drawers) comes from the running plugins.
  */
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
-import { History, MessageSquare, PanelLeftClose, PanelLeftOpen, PanelRight } from 'lucide-react'
+import {
+  History,
+  Link2,
+  MessageSquare,
+  PanelLeftClose,
+  PanelLeftOpen,
+  PanelRight,
+} from 'lucide-react'
 import { Fragment, useEffect, useRef, useState } from 'react'
 import { isVaultConfigPath } from '@holi/shared'
 import {
@@ -20,6 +27,7 @@ import {
 import { OnboardingRitual } from '@/features/onboarding/OnboardingRitual'
 import { HistoryPanel } from '@/features/history/HistoryPanel'
 import { CommentsPanel } from '@/features/comments/CommentsPanel'
+import { LinksPanel } from '@/features/links/LinksPanel'
 import { DialogHost } from './DialogHost'
 import { FrontmatterFieldsHost } from '@/features/frontmatter/FrontmatterFieldsHost'
 import { PaneView } from './PaneView'
@@ -47,6 +55,7 @@ import {
 import { pathOfTab } from '@/lib/folder-documents'
 import { historyOpenAtom, historyTargetPathAtom } from '../state/history'
 import { commentsTargetPathAtom, toggleCommentsAtom } from '../state/comments'
+import { toggleLinksAtom } from '../state/links'
 import { tickNowAtom } from '../state/clock'
 import type { PaneDropZone } from '@/lib/tab-drop'
 import type { Surface } from '@/plugin-api/types'
@@ -110,6 +119,7 @@ export function Shell() {
   const startPendingPrompt = useSetAtom(startPendingVaultPromptAtom)
   const setPendingPrompt = useSetAtom(pendingVaultPromptAtom)
   const setHistoryOpen = useSetAtom(historyOpenAtom)
+  const toggleLinks = useSetAtom(toggleLinksAtom)
   const openPath = useSetAtom(openPathAtom)
   const folderClaims = useAtomValue(folderClaimsAtom)
   const surfaces = useAtomValue(surfacesAtom)
@@ -414,6 +424,16 @@ export function Shell() {
                         {/* The active surface's own controls (an app's reload
                             and log, an agent tab's new session). */}
                         <SurfaceActions tab={p.tabs[p.active]} surfaces={surfaces} />
+                        {/* The focused note's links, both ways. Same
+                              predicate as history's, beside it. */}
+                        {i === workspace.active && historyTarget !== null && (
+                          <IconButton
+                            icon={Link2}
+                            label="links"
+                            className="ml-1"
+                            onClick={() => toggleLinks()}
+                          />
+                        )}
                         {/* Version history for the focused note. Only on the
                               active pane: `historyTargetPathAtom` reads its tab,
                               the drawer's own predicate. */}
@@ -454,6 +474,7 @@ export function Shell() {
         </div>
 
         {/* The right-hand drawers; each decides whether it is open. */}
+        <LinksPanel />
         <HistoryPanel />
         <CommentsPanel />
         {running.flatMap(({ info, drawers = [] }) =>

@@ -1,6 +1,6 @@
 # Wiki-links
 
-Notes link to each other with path-based `[[folder/note.md]]` links. They render as chips in the editor, survive renames and moves because the links are rewritten, and tell you what will dangle before a delete.
+Notes link to each other with path-based `[[folder/note.md]]` links. They render as chips in the editor, survive renames and moves because the links are rewritten, show both ways in a drawer beside the note, and tell you what will dangle before a delete.
 
 ## How it works
 
@@ -14,9 +14,11 @@ Notes link to each other with path-based `[[folder/note.md]]` links. They render
 
 **Backrefs and delete.** `scanBackrefs` greps the vault's markdown for links to a path, excluding the file itself. The delete confirm names each linking file and its count; a folder or multi-select delete ignores links internal to the set. There is no cascade: dangling links stay and render as missing chips.
 
+**The links drawer.** A right-hand drawer, opened by the links button beside history in the active pane's tab strip, following the same focused markdown tab. The right edge shows one drawer at a time: opening Links closes History and hides Comments, and History opening hides Links. "Links to" lists each note the file links to once, by its label or name with its folder beneath; a link to a note that does not exist is listed dimmed with "doesn't exist yet" and opens nothing, like its chip. "Linked from" lists each file that links here, with every linking line as a snippet (links read as their text). A row opens its note as a preview tab, as a chip does. One main call, `notes.links` (`scanLinks`), answers both directions in the same walk the backref scans make. The drawer asks again 800ms after the vault's notes last changed (`useVaultScan`, keyed on `linkFingerprintAtom`: each note's path and mtime, the claimed files, the other files' paths), so an edit shows once autosave has written it, and a snapshot push that changed nothing asks nothing. One scan runs at a time. A failed scan says so rather than showing empty lists. Links to images, PDFs and office documents are not listed: they are not links between notes. Any other target is, `[[note]]` without an extension included, and is dimmed when no such file exists. Its header opens the [graph](graph.md).
+
 ## Rules
 
-- One parser for editor, rename, backrefs and export. Two parsers drift on greedy vs lazy matching.
+- One parser for editor, rename, backrefs, the links drawer and export. Two parsers drift on greedy vs lazy matching.
 - Rewrite by exact parsed ranges, never by substring replace.
 - Check the destination before moving anything. Renaming onto an existing folder merges silently, and a mid-move collision leaves a half-moved folder.
 - Rewrite links before moving the file, so a crash leaves links pointing at a file that still exists.
@@ -37,3 +39,5 @@ Notes link to each other with path-based `[[folder/note.md]]` links. They render
 - `apps/desktop/src/renderer/src/editor/wikiLinkChips.ts`, `wikiHover.ts`, `livePreview.ts`, `links.ts`
 - `apps/desktop/src/main/vault/rename.ts`, `move.ts`, `backrefs.ts`, `hooks/relink.ts`
 - `apps/desktop/src/renderer/src/composites/DeleteConfirm.tsx`
+- `apps/desktop/src/renderer/src/features/links/LinksPanel.tsx`: the links drawer
+- `apps/desktop/src/renderer/src/lib/use-vault-scan.ts`, `state/links.ts`: when the drawer and the graph ask again

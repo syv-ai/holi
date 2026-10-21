@@ -7,13 +7,13 @@ hidden, the same menu runs down the rail.
 
 ## How it works
 
-- **Items, in order:** Home, Search, Apps, Board, Mail, Agenda, Agents, Inbox, Sync, Update, Settings, so
+- **Items, in order:** Home, Search, Apps, Board, Graph, Mail, Agenda, Agents, Inbox, Sync, Update, Settings, so
   Settings always ends the dock. The surface items are rail items from the surface registry
   (`{surface, order, visible?, badge?}`, label and icon from the surface; see [tabs and panes](tabs-panes.md)),
   sorted by `order` among core's own Search (10) and Sync (70), with Apps (20) the apps plugin's rail item
   and Agents (60) and Inbox (65) the agent's; `visible` and `badge` (a count on the glyph, none at 0) are atoms, read by one derived atom. Home goes Home (below); Search opens quick open
   ([command palette](command-palette.md)); Board opens the board and carries the open-task count,
-  red while any task is overdue (the board's own `overdue` label); Mail, Agenda and Settings open
+  red while any task is overdue (the board's own `overdue` label); Graph, Mail, Agenda and Settings open
   their tabs. Agents goes to Claude Code's agent list, the tab ⌘J goes to, and is green while any
   of the vault's sessions is running ([agent sessions](agent-sessions.md)). Inbox is there only while
   the [agent inbox](agent-inbox.md) holds something, counts what is unread, and opens its tab. Sync is the vault's sync state as a glyph whose colour and turning carry it, and opens

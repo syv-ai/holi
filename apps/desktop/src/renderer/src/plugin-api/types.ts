@@ -145,7 +145,7 @@ export interface PaletteItem {
 
 /**
  * A surface's place in the nav menu. `order` sorts the menu, core's own
- * items included (Home 0, Search 10, Apps 20, Board 30, Agents 60, Sync 70,
+ * items included (Home 0, Search 10, Apps 20, Board 30, Graph 35, Agents 60, Sync 70,
  * Settings 100). `visible` is an atom so a plugin can show or hide its item
  * without the menu calling a hook per item.
  */

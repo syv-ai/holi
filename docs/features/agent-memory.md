@@ -10,8 +10,8 @@ are shown.
 
 **A memory is one file.** Frontmatter carries `type` (short and free-form), a one-line
 `description`, and an optional `title`. Anything else is kept and ignored. The body is the fact.
-Memories link with ordinary `[[.holi/memory/other.md]]` wiki-links, so rename rewriting, backlinks and
-chips work on them. `AGENTS.md` suggests a starting set of types (`convention`, `environment`,
+Memories link with ordinary `[[.holi/memory/other.md]]` wiki-links, so rename rewriting, backlinks, chips and the
+[graph](graph.md) work on them. `AGENTS.md` suggests a starting set of types (`convention`, `environment`,
 `person`, `project`, `reference`, `preference`); nothing enforces it.
 
 **Personal memory is `.holi/memory/<name>.local.md`.** The `.local.` marker makes it gitignored, so it
