@@ -72,11 +72,22 @@ export {
   type MorphingMenuHandle,
   type MorphingMenuItem,
 } from './MorphingMenu'
-export { check, instant, rowFromMotion, settle, spring } from './springs'
+export {
+  check,
+  instant,
+  pop,
+  popAt,
+  popFrom,
+  popLeave,
+  rowFromMotion,
+  settle,
+  spring,
+} from './springs'
 export { ConfirmInPlace } from './ConfirmInPlace'
 export { RollingCount } from './RollingCount'
 export { StrikeText } from './StrikeText'
 export { TaskCheck } from './TaskCheck'
+export { HoverCard } from './HoverCard'
 export { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from './Popover'
 export { ResizableHandle, ResizablePanel, ResizablePanelGroup } from './Resizable'
 export type { PanelImperativeHandle } from './Resizable'

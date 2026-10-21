@@ -9,6 +9,7 @@ import { communityRenderer } from './community/renderer'
 import { googleRenderer } from './google/renderer'
 import { pdfRenderer } from './pdf/renderer'
 import { tasksRenderer } from './tasks/renderer'
+import { workspaceRenderer } from './workspace-ui/renderer'
 
 export const RENDERER_PLUGINS: readonly RendererPlugin[] = [
   agentRenderer,
@@ -17,4 +18,5 @@ export const RENDERER_PLUGINS: readonly RendererPlugin[] = [
   googleRenderer,
   appsRenderer,
   communityRenderer,
+  workspaceRenderer,
 ]

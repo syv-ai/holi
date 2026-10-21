@@ -29,6 +29,12 @@ hidden, the same menu runs down the rail.
   recents), then the rest by name ([vault apps](vault-apps.md)); from the dock it opens straight into them, from the list it
   drills in. Back goes to where it was opened from: from the dock it closes the menu, from the list
   it returns to the list. It is absent when the vault has no finished apps.
+- **With the workspace plugin, Apps is a page.** Its Apps item stands in for the apps plugin's
+  (`RailItem.replaces`) and opens the `apps` surface: a tile per finished app, in the same order,
+  with the folder it lives in; a tile opens that app in a tab of its own. A page has room to read
+  what a list of bare names in a drill-down does not. It is on the menu even with no apps, when the
+  page says what one is and how to get one, but only while the apps plugin runs: a stand-in shows
+  only beside the item it stands in for, so with the apps plugin off there is no Apps at all.
 - **Mail and Agenda** appear only while a Google account is connected. `undefined` (not asked
   main yet) hides them too, so they never flash in.
 - **The dock wraps.** Every item has a 32px shortcut, in rows as wide as the
@@ -40,6 +46,44 @@ hidden, the same menu runs down the rail.
 - **On the rail** the dock is one column and takes the shortcuts that fit along the rail's height
   under the session orbs. Only when some do not fit does More take the last slot, and its list
   holds just those, so nothing is offered twice.
+- **As the window's dock.** With the workspace plugin on (`plugins: workspace-ui: true`, off by default),
+  the menu leaves the sidebar and the rail and sits centred at the foot of the window, in a row of
+  its own under the sidebar and the panes, on the popover surface (`anchor="bottom-center"`,
+  `surface="float"`, as the board's dock is). It is one row and opens upward from its middle. The
+  rail is then empty. The plugin only says so (`RendererPlugin.layout`,
+  `{hub: 'dock'}`); `Shell` places the menu, from `hubPlacementAtom`.
+- **The open tabs, its second section.** The workspace plugin also takes the tabs out of the panes
+  (`{tabs: 'hub'}`, [tabs and panes](tabs-panes.md)) and they become a **second section of the same
+  bar**, after the shortcuts and a thin vertical line that sets the two apart
+  (`features/nav/OpenTabs`, in `MorphingMenu`'s `trailing`, which draws the line); in the sidebar
+  and the rail they wrap above the menu instead. One icon per tab, the one its pane is showing
+  marked, its name its tooltip; a note, which has no mark of its own, wears the file's. Pressing an
+  icon goes to its tab. **Resting the pointer on a tab opens a small label above the bar** (`primitives/HoverCard`):
+  the tab's name (its path, for a file) and a close button. It floats over the pane, so the bar
+  never changes size and nothing covers the icon; the pointer can move up into it to press close.
+  A middle press closes too, and the keyboard closes the focused tab with ⌘W. The section lists
+  every file, every tab of a surface that is one per thing (an app, an agent's terminal), and a
+  page no menu item goes to (Settings, History), so each can be closed. A surface that is a menu item's one page (Home, the board, mail) is not listed: its item
+  is the way to it. With nothing to list there is no section and no line. **A tab that opens pops up** into its place (up from a little
+  below, small and clear, with a bounce: `pop`), while the bar springs wider to make room
+  (`dockResize`): the bar inside the shell springs with it and the section takes what is left, so
+  the shortcuts stay put and the room opens at the end. A tab that closes shrinks away, the rest
+  close up, and the bar springs back. Reduced motion snaps. Apps reads as current
+  while an app is showing (`RailItem.tabs`).
+- **A preview tab is marked and can be kept.** The one tab a browse replaces (a single click in the
+  tree) has a quieter glyph, its name is italic in its label, and its accessible name ends
+  ", preview". Pressing it twice keeps it open, as a double click on a strip's tab does, and its
+  label has a Keep open button beside Close.
+- **The section is never left out.** It asks for room for up to twelve tabs; short of that it is
+  narrower, down to three tabs' worth, and scrolls (`trailingLayout` decides). Where the shortcuts
+  wrap, or less than that is left beside them, it moves to a row of its own under them, the
+  line giving way to the row. Scrolling, the current tab is kept in view, and a count at each edge
+  says how many tabs are off that side and lists them, as a strip's does (`TabOverflowMenu`).
+- **Settings and sync in the sidebar's header.** The workspace plugin moves the two that are rarely
+  pressed out of the menu (`{utilities: 'header'}`, `features/nav/Utilities`): two icons beside the
+  vault's name, and at the head of the rail while the sidebar is hidden, so they are at the window's
+  top left either way. The sync icon is the menu's glyph, with its colour and turning, and opens the
+  same panel in a popover (`SyncButton`); the gear opens Settings.
 - **One surface.** The collapsed bar and the open list are one element that resizes between them
   with a spring (a squeeze, then the grow), with the rows cascading in. Open, it is pinned
   `position: fixed` at the dock's corner so it can grow out of the drawer and the 44px rail over
@@ -87,8 +131,32 @@ hidden, the same menu runs down the rail.
 
 ## Rejected
 
+- The dock floating over the panes: it covers a note's last lines and lands on the board's and
+  the history's own centred docks. A row of its own costs 48px and covers nothing.
+- One dock item per open file: twenty files are twenty items with no icon to tell them apart (a
+  note has no glyph). They are the bar's second section instead, which scrolls and takes nothing
+  from the menu.
+- The open tabs in a bar of their own beside the dock: two pills read as two things, and the gap
+  between them as a mistake. One bar with a line reads as one dock in two parts.
+- Settings and sync at the foot of the Home page: only there while Home shows, and floating over
+  nothing in particular. The sidebar's header is always there and is where the vault is named.
+- A card of previews over an item, opened by resting the pointer on it (bubbles of pictures of each
+  tab, taken with `capturePage`): it opened when you only passed over the dock, hid the tabs behind
+  a hover, needed an Open files item to hold the files, and photographed the window every few
+  seconds. The section shows what is open at a glance.
+- A close button on a tab's corner: on a 32px icon it covers the icon it closes.
+- A close button that opens beside the tab's icon, inside the bar: the bar grows under the
+  pointer and the dock shifts, even held at one edge. The label above the bar costs no room, and
+  names the tab, which an app's icon alone does not (every app wears the same glyph).
+- A plugin rendering the menu itself: the items, the sync panel and the hotkeys are core's, and a
+  second copy would drift. A plugin says where; core draws.
 - A separate Radix dropdown for the apps: two popup styles side by side, when the menu already
   has a one-level drill-down.
+- Dropping the open tabs when the dock wraps: the tabs are the panes' only strip then, so a narrow
+  window would leave no way to see or close them. A row of its own keeps them.
+- The workspace plugin requiring the apps plugin: the dock, the tabs in it and the header icons
+  have nothing to do with apps, and turning apps off would take them all away. Its Apps item goes
+  instead, with the item it stands in for.
 - The sidebar's Apps section: Finish this app is on the tree's app row, and Show App Files there
   replaces its Edit Source.
 - Home as closing all tabs or emptying the pane: the first destroys the working set, and neither
@@ -105,4 +173,9 @@ hidden, the same menu runs down the rail.
 - `apps/desktop/src/renderer/src/features/nav/NavMenu.tsx`: the items.
 - `apps/desktop/src/renderer/src/components/core-surfaces.tsx` (whose Home surface picks Home's
   folder document or `HomeView`), `features/home/HomeView.tsx` (the recents, or why Home is not there).
-- `apps/desktop/src/renderer/src/components/Shell.tsx`: the sidebar and rail placement.
+- `apps/desktop/src/renderer/src/components/Shell.tsx`: the sidebar, rail and dock placement.
+- `apps/desktop/src/renderer/src/features/nav/OpenTabs.tsx`: the section of open tabs;
+  `composites/tab-look.tsx` names and marks a tab there and in the strip.
+- `apps/desktop/src/renderer/src/features/nav/SyncItem.tsx`: the sync item, and the header's
+  `SyncButton`; `features/nav/Utilities.tsx` is it and Settings, placed by `Shell`.
+- `apps/desktop/src/plugins/workspace-ui/`: the plugin that docks it, puts the tabs in it and adds the Apps page.

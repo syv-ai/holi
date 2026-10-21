@@ -28,6 +28,7 @@ import type {
   RailItem,
   RendererPlugin,
   SettingsSection,
+  ShellLayout,
   Surface,
   SurfaceTabLook,
 } from '@/plugin-api/types'
@@ -227,6 +228,28 @@ const agentProviderAtom = atom(
     get(runningPluginsAtom).find((p) => p.agent !== undefined) ?? null,
 )
 
+/** Where the nav menu sits: the first running plugin's answer, else the
+ *  sidebar. */
+export const hubPlacementAtom = atom(
+  (get): NonNullable<ShellLayout['hub']> =>
+    get(runningPluginsAtom).find((p) => p.layout?.hub !== undefined)?.layout?.hub ?? 'sidebar',
+)
+
+/** Where the open tabs are listed: the first running plugin's answer, else
+ *  each pane's strip. */
+export const tabsPlacementAtom = atom(
+  (get): NonNullable<ShellLayout['tabs']> =>
+    get(runningPluginsAtom).find((p) => p.layout?.tabs !== undefined)?.layout?.tabs ?? 'strip',
+)
+
+/** Where Settings and sync are reached: the first running plugin's answer,
+ *  else the nav menu. */
+export const utilitiesPlacementAtom = atom(
+  (get): NonNullable<ShellLayout['utilities']> =>
+    get(runningPluginsAtom).find((p) => p.layout?.utilities !== undefined)?.layout?.utilities ??
+    'hub',
+)
+
 /** The first running plugin's agent, or null with none. */
 export const agentSourceAtom = atom(
   (get): AgentServiceSource | null => get(agentProviderAtom)?.agent ?? null,
@@ -325,8 +348,19 @@ export const railAtom = atom(
     badge: { count: number; tone?: 'alert' } | null
   })[] => {
     const surfaces = get(surfacesAtom)
-    return get(contributionsAtom)
-      .flatMap((c) => c.rail ?? [])
+    const all = get(contributionsAtom).flatMap((c) => c.rail ?? [])
+    // A stand-in shows only while the item it stands in for is contributed:
+    // with that item's plugin off there is nothing to stand in for, so the
+    // two come and go together (Workspace's Apps with the apps plugin).
+    const contributed = new Set(all.map((item) => item.surface))
+    const items = all.filter(
+      (item) => item.replaces === undefined || contributed.has(item.replaces),
+    )
+    const replaced = new Set(
+      items.flatMap((item) => (item.replaces === undefined ? [] : [item.replaces])),
+    )
+    return items
+      .filter((item) => !replaced.has(item.surface))
       .flatMap((item) => {
         const of = surfaces.get(item.surface)
         if (of === undefined || (item.visible !== undefined && !get(item.visible))) return []

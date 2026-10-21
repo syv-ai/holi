@@ -61,7 +61,17 @@ import {
   type ReactNode,
 } from 'react'
 import { cn } from '@/lib/cn'
-import { compress, PILL, rowAt, rowArrive, rowFrom, rowGone, rowLeave, spring } from './springs'
+import {
+  compress,
+  dockResize,
+  PILL,
+  rowAt,
+  rowArrive,
+  rowFrom,
+  rowGone,
+  rowLeave,
+  spring,
+} from './springs'
 import { Icon, type IconGlyph } from './Icon'
 import { ICON_MOTION, ICON_TONE, IconButton, type IconMotion, type IconTone } from './IconButton'
 
@@ -119,6 +129,12 @@ export type MorphingMenuProps = {
   /** A labelled control in place of the dock, opening the first item's panel
    *  (which must have one): the vault picker's name. */
   trigger?: ReactNode
+  /** A second section in the same bar, after the shortcuts and a thin line:
+   *  what the host draws there, and how wide it would like to be, in px.
+   *  Horizontal only, and not with `trigger`. Short of room it is narrower (the
+   *  host's content scrolls); where the shortcuts wrap, or too little is left
+   *  beside them, it is a row of its own under them. It is never left out. */
+  trailing?: { content: ReactNode; width: number }
   /** For opening a panel item from outside (a hotkey). */
   ref?: React.Ref<MorphingMenuHandle>
 }
@@ -178,6 +194,30 @@ export function dockGrid(cells: number, room: number): { columns: number; rows: 
   return { columns, rows: Math.ceil(cells / columns) }
 }
 
+/** The line before an inline second section, with its margins, in px. */
+const LINE = 9
+
+/** The least an inline second section is given before it moves to a row of
+ *  its own: room for three of its icons. */
+const TAIL_MIN = 3 * BUTTON
+
+/** Where the second section goes, and how wide it is (its line included,
+ *  inline), for `cells` shortcuts in a `room` px wide box. Unmeasured (`room`
+ *  0) is taken as wide enough for it all on one row. */
+export function trailingLayout(
+  trailing: { content: ReactNode; width: number } | undefined,
+  cells: number,
+  room: number,
+): { content: ReactNode; width: number; row: 'inline' | 'own' } | null {
+  if (trailing === undefined || trailing.width <= 0) return null
+  const lane = cells * BUTTON + 2 * INSET
+  const wanted = trailing.width + LINE
+  if (room === 0 || lane + wanted <= room) return { ...trailing, width: wanted, row: 'inline' }
+  if (lane + LINE + TAIL_MIN <= room) return { ...trailing, width: room - lane, row: 'inline' }
+  const { columns } = dockGrid(cells, room)
+  return { ...trailing, width: Math.min(trailing.width, columns * BUTTON), row: 'own' }
+}
+
 export function MorphingMenu({
   items,
   activeId = null,
@@ -189,6 +229,7 @@ export function MorphingMenu({
   surface = false,
   className,
   trigger,
+  trailing,
   ref,
 }: MorphingMenuProps): React.JSX.Element {
   const id = useId()
@@ -203,6 +244,8 @@ export function MorphingMenu({
   const shellRef = useRef<HTMLDivElement>(null)
   const barRef = useRef<HTMLDivElement>(null)
   const previousView = useRef<View>(view)
+  /** The bar's width last laid out, so a change of it at rest can spring. */
+  const previousWidth = useRef<number | null>(null)
   const returnTarget = useRef('more')
   /** A group opened straight from its dock shortcut: Back closes the menu
    *  rather than showing a list that was never open. */
@@ -218,11 +261,12 @@ export function MorphingMenu({
   const panelItems = items.filter((item) => item.panel)
   const count = barItems.length + (overflow.length > 0 ? 1 : 0)
   const grid = vertical ? { columns: 1, rows: count } : dockGrid(count, room)
+  const tail = trigger || vertical ? null : trailingLayout(trailing, count, room)
   const barSize = trigger
     ? { width: room, height: BUTTON }
     : {
-        width: grid.columns * BUTTON + 2 * INSET,
-        height: grid.rows * BUTTON + 2 * INSET,
+        width: grid.columns * BUTTON + 2 * INSET + (tail?.row === 'inline' ? tail.width : 0),
+        height: grid.rows * BUTTON + 2 * INSET + (tail?.row === 'own' ? BUTTON : 0),
       }
 
   // The room along the main axis is what decides the dock, so it is watched.
@@ -416,11 +460,27 @@ export function MorphingMenu({
           ),
         )
     }
-    if (snap) {
+    const from = previousWidth.current
+    previousWidth.current = barSize.width
+    // At rest, a bar that changes width (its second section gaining or losing
+    // a tab) springs to it, the bar inside with it, so the shortcuts stay put
+    // and the section opens or closes at the end.
+    const resizing =
+      !expanded && !changed && !reducedMotion && from !== null && from !== barSize.width
+    if (resizing) {
+      const width = `${barSize.width}px`
+      Object.assign(shell.style, { width: `${from}px`, height: `${barSize.height}px` })
+      bar.style.width = `${from}px`
+      track(animate(bar, { width }, dockResize))
+      void track(animate(shell, { width }, dockResize))
+        .finished.then(() => !cancelled && settle())
+        .catch(() => {})
+    } else if (snap) {
       Object.assign(shell.style, {
         width: `${targetSize().width}px`,
         height: `${targetSize().height}px`,
       })
+      if (!expanded) bar.style.width = `${barSize.width}px`
       settle()
     } else if (crossingBar) {
       const squeezed = vertical
@@ -517,7 +577,20 @@ export function MorphingMenu({
     // `barSize` is derived from `count` and the grid; listing the object would
     // re-run every render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [view, reducedMotion, items, count, grid.columns, vertical, top, topLeft, center, trigger])
+  }, [
+    view,
+    reducedMotion,
+    items,
+    count,
+    grid.columns,
+    tail?.row,
+    tail?.width,
+    vertical,
+    top,
+    topLeft,
+    center,
+    trigger,
+  ])
 
   useEffect(() => {
     if (!expanded) return
@@ -539,45 +612,48 @@ export function MorphingMenu({
   function shortcut(item: MorphingMenuItem) {
     const hasChildren = Boolean(item.children?.length)
     const active = isActive(item)
+    const button = (
+      <IconButton
+        icon={active && item.activeIcon ? item.activeIcon : item.icon}
+        label={item.label}
+        size="md"
+        shape="round"
+        tooltipSide={tooltipSide}
+        data-menu-item={item.id}
+        aria-current={active ? (hasChildren ? 'true' : 'page') : undefined}
+        pressed={item.pressed}
+        active={active}
+        tone={item.tone}
+        motion={item.motion}
+        aria-expanded={hasChildren ? false : undefined}
+        aria-controls={hasChildren ? `${id}-group-${item.id}` : undefined}
+        onClick={(event) =>
+          hasChildren
+            ? open({ kind: 'group', id: item.id }, item.id, event.detail === 0)
+            : item.panel
+              ? open({ kind: 'panel', id: item.id }, item.id, event.detail === 0)
+              : select(item)
+        }
+      >
+        {item.badge !== undefined && item.badge > 0 && (
+          <span
+            aria-hidden="true"
+            data-tone={item.badgeTone}
+            className={cn(
+              'absolute -top-0.5 -right-0.5 min-w-3.5 rounded-full px-1 text-[10px] leading-3.5',
+              item.badgeTone === 'alert'
+                ? 'bg-destructive text-destructive-foreground'
+                : 'bg-foreground/15 text-foreground',
+            )}
+          >
+            {item.badge}
+          </span>
+        )}
+      </IconButton>
+    )
     return (
       <Cell key={item.id} still={reducedMotion}>
-        <IconButton
-          icon={active && item.activeIcon ? item.activeIcon : item.icon}
-          label={item.label}
-          size="md"
-          shape="round"
-          tooltipSide={tooltipSide}
-          data-menu-item={item.id}
-          aria-current={active ? (hasChildren ? 'true' : 'page') : undefined}
-          pressed={item.pressed}
-          active={active}
-          tone={item.tone}
-          motion={item.motion}
-          aria-expanded={hasChildren ? false : undefined}
-          aria-controls={hasChildren ? `${id}-group-${item.id}` : undefined}
-          onClick={(event) =>
-            hasChildren
-              ? open({ kind: 'group', id: item.id }, item.id, event.detail === 0)
-              : item.panel
-                ? open({ kind: 'panel', id: item.id }, item.id, event.detail === 0)
-                : select(item)
-          }
-        >
-          {item.badge !== undefined && item.badge > 0 && (
-            <span
-              aria-hidden="true"
-              data-tone={item.badgeTone}
-              className={cn(
-                'absolute -top-0.5 -right-0.5 min-w-3.5 rounded-full px-1 text-[10px] leading-3.5',
-                item.badgeTone === 'alert'
-                  ? 'bg-destructive text-destructive-foreground'
-                  : 'bg-foreground/15 text-foreground',
-              )}
-            >
-              {item.badge}
-            </span>
-          )}
-        </IconButton>
+        {button}
       </Cell>
     )
   }
@@ -700,7 +776,12 @@ export function MorphingMenu({
           style={
             trigger
               ? barSize
-              : { ...barSize, gridTemplateColumns: `repeat(${grid.columns}, ${BUTTON}px)` }
+              : {
+                  ...barSize,
+                  // Inline, the section takes what is left, so it opens and
+                  // closes as the bar's width springs.
+                  gridTemplateColumns: `repeat(${grid.columns}, ${BUTTON}px)${tail?.row === 'inline' ? ' minmax(0, 1fr)' : ''}`,
+                }
           }
         >
           {trigger && items[0] !== undefined && (
@@ -731,6 +812,26 @@ export function MorphingMenu({
                 onClick={(event) => open({ kind: 'main' }, 'more', event.detail === 0)}
               />
             </Cell>
+          )}
+          {tail !== null && (
+            <div
+              data-menu-trailing={tail.row}
+              className={cn(
+                'flex h-8 min-w-0 items-center overflow-hidden',
+                tail.row === 'own' && 'col-span-full',
+              )}
+            >
+              {/* The line sets the section apart beside the shortcuts; under
+                  them, the row does. */}
+              {tail.row === 'inline' && (
+                <span
+                  aria-hidden="true"
+                  data-menu-trailing-line=""
+                  className="mx-1 h-5 w-px shrink-0 bg-border"
+                />
+              )}
+              {tail.content}
+            </div>
           )}
         </div>
         <div

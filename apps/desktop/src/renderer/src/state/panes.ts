@@ -27,6 +27,17 @@ export const openNoteTabAtom = atom(null, (_get, set, path: string) => {
   set(workspaceAtom, (w) => openPreview(w, path))
 })
 
+/** Go to a tab, where it is open. */
+export const focusTabAtom = atom(null, (_get, set, tab: Tab) => {
+  set(workspaceAtom, (w) => openTab(w, tab))
+})
+
+/** Keep a preview tab open, where it sits: the double press on a tab, from
+ *  wherever the tabs are listed (`pinTab`). */
+export const pinTabAtom = atom(null, (_get, set, at: { pane: number; index: number }) => {
+  set(workspaceAtom, (w) => pinTab(focusPane(w, at.pane), at.index))
+})
+
 /** Open a note beside the active pane — the board's card click (`openBeside`). */
 export const openBesideAtom = atom(null, (_get, set, path: string) => {
   set(workspaceAtom, (w) => openBeside(w, w.active, path))
@@ -112,6 +123,22 @@ function focusExisting(workspace: Workspace, at: { pane: number; tab: number }):
     panes: workspace.panes.map((pane, i) => (i === at.pane ? { ...pane, active: at.tab } : pane)),
     active: at.pane,
   }
+}
+
+/** A tab where it sits: its pane, its place in that pane's tabs, and whether
+ *  it is the one its pane is showing. */
+export interface PlacedTab {
+  tab: Tab
+  pane: number
+  index: number
+  showing: boolean
+}
+
+/** Every open tab, pane by pane, in strip order. */
+export function placedTabs(workspace: Workspace): PlacedTab[] {
+  return workspace.panes.flatMap((pane, p) =>
+    pane.tabs.map((tab, index) => ({ tab, pane: p, index, showing: index === pane.active })),
+  )
 }
 
 /** Open a tab in the active pane, or focus it if it is already open anywhere

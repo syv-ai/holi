@@ -229,6 +229,14 @@ export interface RailItem {
    *  surface with instances is listed as a group of them, such as "Apps". */
   label?: string
   visible?: Atom<boolean>
+  /** A surface whose tabs are this item's too, when that is not `surface` itself:
+   *  Apps is the page of apps, and each open app is a tab of the `app` surface,
+   *  so Apps reads as current while an app is showing. */
+  tabs?: string
+  /** A surface whose item this one stands in for: the nav menu lists this
+   *  item and leaves that one out. Only while that one is contributed (its
+   *  plugin runs); otherwise this item is left out too. */
+  replaces?: string
   /** Run this command (`state/commands.ts`) instead of opening the surface. */
   command?: string
   /** While true, the item shows that something of the surface's is running. */
@@ -320,6 +328,23 @@ export interface AgentServiceSource {
   start: WritableAtom<null, [{ name?: string; prompt: string }], Promise<AskResult>>
 }
 
+/**
+ * Where the frame puts core's own parts, as a plugin may move them. Each field
+ * a plugin leaves out stays where core has it.
+ */
+export interface ShellLayout {
+  /** The nav menu: at the sidebar's foot and down the rail (`sidebar`, core's
+   *  own), or centred at the foot of the window (`dock`). */
+  hub?: 'sidebar' | 'dock'
+  /** The open tabs: a strip at the head of each pane (`strip`, core's own), or
+   *  one section of them all beside the nav menu (`hub`). */
+  tabs?: 'strip' | 'hub'
+  /** Settings and the vault's sync state: items of the nav menu (`hub`, core's
+   *  own), or two icons in the sidebar's header and at the head of its rail
+   *  (`header`). */
+  utilities?: 'hub' | 'header'
+}
+
 export interface RendererPlugin {
   info: PluginInfo
   /** Handlers for the plugin's events, by name. Subscribed at boot for every
@@ -340,6 +365,8 @@ export interface RendererPlugin {
   overlays?: readonly ComponentType[]
   /** How it marks vault paths in the tree and the tabs, by path. */
   pathMarks?: Atom<ReadonlyMap<string, PathMark>>
+  /** Where core's own parts of the frame sit while the plugin runs. */
+  layout?: ShellLayout
   /**
    * Why leaving the open vault (switching, or adding one) costs something
    * now, as a sentence, or null when it costs nothing. Core asks before

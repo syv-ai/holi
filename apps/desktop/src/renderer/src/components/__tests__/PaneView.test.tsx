@@ -87,6 +87,14 @@ test('the pane still renders its strip and its body', () => {
   expect(screen.getByText('select or create a note')).toBeInTheDocument()
 })
 
+test('without its strip the pane keeps its body and its controls', () => {
+  pane({ strip: false, allowed: [], trailing: <span>pane controls</span> })
+
+  expect(screen.queryByTestId('tab-strip')).toBeNull()
+  expect(screen.getByText('pane controls')).toBeInTheDocument()
+  expect(screen.getByText('select or create a note')).toBeInTheDocument()
+})
+
 test('a dragover carrying something other than a tab is refused', () => {
   // Shell only reports tab drags, but the overlay checks the type anyway before
   // making itself a drop target.
