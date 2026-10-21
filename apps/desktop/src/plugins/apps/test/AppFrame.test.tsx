@@ -149,7 +149,7 @@ test('a refusal comes back as a value, not as a thrown error', async () => {
 test('an unknown method is refused rather than ignored', async () => {
   await renderApp()
   const post = vi.spyOn(frameOf().contentWindow!, 'postMessage')
-  fromFrame({ id: 'x', method: 'docs.write', params: { path: 'a.md', text: 'no' } })
+  fromFrame({ id: 'x', method: 'docs.delete', params: { path: 'a.md' } })
   await waitFor(() => expect(post).toHaveBeenCalled())
   expect(post.mock.calls[0]![0]).toMatchObject({ id: 'x', ok: false })
   // Refused here, before main: a name that is not a bridge method never crosses.
