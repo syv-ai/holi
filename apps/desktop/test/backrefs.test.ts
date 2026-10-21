@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
-import { scanBackrefs, scanBackrefsMany } from '../src/main/vault/backrefs'
+import { scanBackrefs, scanBackrefsMany, scanLinks } from '../src/main/vault/backrefs'
 
 const dirs: string[] = []
 afterAll(async () => {
@@ -57,5 +57,26 @@ describe('scanBackrefsMany', () => {
   it('returns an empty array when nothing outside the set links in', async () => {
     const root = await vault({ 'p/a.md': 'lonely', 'q.md': 'unrelated' })
     expect(await scanBackrefsMany(root, ['p/a.md'])).toEqual([])
+  })
+})
+
+describe('scanLinks', () => {
+  it("lists a note's outgoing links once each, resolved or not, and every line linking in", async () => {
+    const root = await vault({
+      'n.md': '[[a.md|A]] and [[a.md]], [[gone.md]], an image [[logo.png]]',
+      'a.md': 'back to [[n.md]]\nplain\nagain [[n.md|the note]] here',
+      'b.md': 'mentions n.md without linking',
+      'logo.png': 'x',
+    })
+    expect(await scanLinks(root, 'n.md')).toEqual({
+      outgoing: [
+        { target: 'a.md', label: 'A', count: 2, exists: true },
+        { target: 'gone.md', count: 1, exists: false },
+      ],
+      backlinks: [
+        { path: 'a.md', line: 1, snippet: 'back to n' },
+        { path: 'a.md', line: 3, snippet: 'again the note here' },
+      ],
+    })
   })
 })
