@@ -160,6 +160,35 @@ export const appsCapabilities = (deps: AppCapabilitiesDeps) => ({
     },
   }),
 
+  /**
+   * The slash commands of `bundles` (the finished apps the renderer knows),
+   * from each manifest: what the notes editor's slash menu lists. A bundle
+   * with no manifest, or none it can read, adds nothing.
+   */
+  'apps.commands': cap({
+    doors: ['ui'],
+    params: (raw) => {
+      const bundles = paramsObject(raw).bundles
+      if (!Array.isArray(bundles) || !bundles.every((b) => typeof b === 'string')) {
+        throw new CapabilityError('BAD_REQUEST', 'bundles must be strings')
+      }
+      return { bundles: (bundles as string[]).filter(isAppBundlePath) }
+    },
+    run: async (ctx, { bundles }) => {
+      const each = await Promise.all(
+        bundles.map(async (bundle) => {
+          const commands = (await manifestOf(ctx.root, bundle))?.commands ?? {}
+          return Object.entries(commands).map(([name, spec]) => ({
+            bundle,
+            name,
+            ...(spec.description === undefined ? {} : { description: spec.description }),
+          }))
+        }),
+      )
+      return each.flat()
+    },
+  }),
+
   /** Open a finished app's tab, or reload it. Reversible: the tab closes. */
   'apps.open': cap({
     doors: ['cli'],

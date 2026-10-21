@@ -144,3 +144,36 @@ describe('parseAppManifest env', () => {
     expect(parseAppManifest('env: OPENAI_API_KEY\n')).toEqual({})
   })
 })
+
+describe('parseAppManifest commands', () => {
+  it('reads each command with its script and description', () => {
+    const yaml = [
+      'commands:',
+      '  uppercase: { script: commands/upper.js, description: " Shout it " }',
+      '  today: { script: ./today.js }',
+    ].join('\n')
+    expect(parseAppManifest(yaml)?.commands).toEqual({
+      uppercase: { script: 'commands/upper.js', description: 'Shout it' },
+      today: { script: 'today.js' },
+    })
+  })
+
+  it('drops a command whose name or script is unusable, and keeps the rest', () => {
+    const yaml = [
+      'commands:',
+      '  Upper: { script: a.js }',
+      '  "has space": { script: a.js }',
+      '  escape: { script: ../other.app/a.js }',
+      '  absolute: { script: /etc/a.js }',
+      '  records: { script: data/items/a.js }',
+      '  page: { script: index.html }',
+      '  bare: a.js',
+      '  ok: { script: ok.js }',
+    ].join('\n')
+    expect(parseAppManifest(yaml)?.commands).toEqual({ ok: { script: 'ok.js' } })
+  })
+
+  it('ignores a value that is not a map', () => {
+    expect(parseAppManifest('commands: [a, b]\n')).toEqual({})
+  })
+})

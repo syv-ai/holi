@@ -23,7 +23,9 @@ import {
 } from '@holi/shared'
 import { bundleFromAppHost } from '../shared/bundle'
 import { mimeFor, readVaultTheme, type PluginScheme } from '../../../main/plugin-api'
-import { BRIDGE_JS } from './bridge-script'
+import { COMMAND_PARAM } from '../shared/commands'
+import { BRIDGE_JS, COMMAND_JS } from './bridge-script'
+import { manifestOf } from './grants'
 import { appBaseTokens, paletteFor } from './tokens'
 
 /**
@@ -35,7 +37,7 @@ import { appBaseTokens, paletteFor } from './tokens'
  */
 export function parseAppUrl(
   url: string,
-): { bundle: string; rel: string; mode: 'light' | 'dark' } | null {
+): { bundle: string; rel: string; mode: 'light' | 'dark'; command: string | null } | null {
   let parsed: URL
   try {
     parsed = new URL(url)
@@ -53,7 +55,9 @@ export function parseAppUrl(
   }
   // The renderer's mode in force, which main cannot know: the frame's URL says it.
   const mode = parsed.searchParams.get('mode') === 'light' ? 'light' : 'dark'
-  return { bundle, rel: rel === '' ? 'index.html' : rel, mode }
+  // `?command=` on the bare host is the runner for one of its slash commands.
+  const command = rel === '' ? parsed.searchParams.get(COMMAND_PARAM) : null
+  return { bundle, rel: rel === '' ? 'index.html' : rel, mode, command }
 }
 
 /**
@@ -172,6 +176,20 @@ export function injectAppHead(html: string, head: string): string {
 }
 
 /**
+ * The document a slash command runs in: the theme, the bridge, the runner
+ * (`COMMAND_JS`) and the command's own script, by its path in the bundle, so it
+ * is fetched through this scheme like any file of the app. A classic script,
+ * not a module: the frame's origin is opaque, so a module would be a
+ * cross-origin fetch this scheme could allow only with a CORS header, and a
+ * header that lets one opaque origin read lets every app read every other's
+ * code.
+ */
+export function commandRunnerHtml(head: string, script: string): string {
+  const src = script.split('/').map(encodeURIComponent).join('/')
+  return `<!doctype html><html><head><meta charset="utf-8">${head}<script>${COMMAND_JS}</script><script src="${src}"></script></head></html>`
+}
+
+/**
  * A vault app, served from its own directory and its own origin.
  *
  * The privileges match `holi-vault:`'s, and `standard` is load-bearing for a
@@ -198,6 +216,18 @@ export const appScheme: PluginScheme = {
     if (vault === null) return new Response(null, { status: 404 })
     const parsed = parseAppUrl(request.url)
     if (parsed === null) return new Response(null, { status: 400 })
+
+    // A command's runner is made here, not read: only the app's manifest says
+    // which script it is.
+    if (parsed.command !== null) {
+      const spec = (await manifestOf(vault.root, parsed.bundle))?.commands?.[parsed.command]
+      if (spec === undefined) return new Response(null, { status: 404 })
+      const theme = await readVaultTheme(vault.root)
+      const head = appHeadHtml(theme[parsed.mode], parsed.mode)
+      return new Response(commandRunnerHtml(head, spec.script), {
+        headers: { 'content-type': appMimeFor('runner.html') },
+      })
+    }
     const abs = await servableAppFile(vault.root, parsed.bundle, parsed.rel)
     if (abs === null) return new Response(null, { status: 403 })
 

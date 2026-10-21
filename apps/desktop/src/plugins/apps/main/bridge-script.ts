@@ -223,3 +223,28 @@ export const BRIDGE_JS = `(() => {
     'table{border-collapse:collapse}td,th{padding:4px 8px}'
   if (!customElements.get('holi-note')) customElements.define('holi-note', HoliNote)
 })()`
+
+/**
+ * The runner document's own script, after the bridge: `holi.command(fn)`
+ * registers the command, and the renderer's one `{ run: input }` runs it. The
+ * answer goes back once, as `{ command: outcome }`; the renderer checks it
+ * (`commandActionOf`), since it came out of the app's code.
+ */
+export const COMMAND_JS = `(() => {
+  let run = null
+  window.holi.command = (fn) => { run = fn }
+  const finish = (outcome) => parent.postMessage({ command: outcome }, '*')
+  addEventListener('message', async (e) => {
+    if (e.source !== parent || !e.data || typeof e.data.run !== 'object') return
+    if (typeof run !== 'function') {
+      finish({ ok: false, error: 'the script never called holi.command(fn)' })
+      return
+    }
+    try {
+      finish({ ok: true, value: await run(e.data.run) })
+    } catch (err) {
+      console.error(err)
+      finish({ ok: false, error: String((err && err.message) || err) })
+    }
+  })
+})()`

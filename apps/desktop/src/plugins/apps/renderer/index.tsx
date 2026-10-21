@@ -6,6 +6,7 @@
 import { activeRemoteAtom, openSurfaceAtom, type RendererPlugin } from '@/plugin-api'
 import { APPS_INFO } from '../info'
 import { appOpensAtom } from './apps'
+import { appSlashCommandsAtom, followAppCommands } from './commands'
 import { APP_CLAIM, APP_RAIL, APP_SURFACE } from './surface'
 
 export const appsRenderer: RendererPlugin = {
@@ -13,6 +14,8 @@ export const appsRenderer: RendererPlugin = {
   surfaces: [APP_SURFACE],
   claims: [APP_CLAIM],
   rail: [APP_RAIL],
+  slashCommands: appSlashCommandsAtom,
+  vault: followAppCommands,
   events: {
     /**
      * The agent's `holi apps open`: open the app, or reload it when it is
