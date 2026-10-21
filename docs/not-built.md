@@ -137,9 +137,14 @@ nothing calls it.
 
 ## PDF
 
-**Note-relative images in a PDF.** cmarker resolves a markdown image's path inside its own
-package, absolute paths included, so no image file exports. Mermaid diagrams do, as raw Typst
-([pdf.md](features/pdf.md)).
+**Mermaid in a PDF.** A mermaid fence draws in the editor and exports as a code block. The export
+paths differ in DOM: `ConvertToPdf` runs in the renderer, the agent's `md-to-pdf` skill shells
+`typst` with no DOM. Pre-rendering in the renderer fixes one path only; an offscreen window in main
+behind the `holi` CLI fixes both and costs the most; not rendering mermaid in PDFs at all keeps one
+story. Undecided.
+
+**Note-relative images in a PDF.** cmarker resolves them against its own package directory, so
+only absolute image paths export.
 
 **Template distribution across vaults.** Templates are per-vault; a shared brand repo is the
 obvious answer and is not designed.

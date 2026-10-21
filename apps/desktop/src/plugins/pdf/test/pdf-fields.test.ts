@@ -5,7 +5,7 @@ import {
   missingRequired,
   parseFrontmatter,
   prefillValues,
-} from '../shared/pdf-fields'
+} from '../renderer/pdf-fields'
 
 const field = (over: Partial<TemplateField>): TemplateField => ({
   key: 'k',

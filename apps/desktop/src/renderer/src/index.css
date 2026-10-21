@@ -99,11 +99,12 @@
   --diff-added-foreground: var(--color-green-400);
   --diff-removed-foreground: var(--color-red-400);
 
-  /* The two ends of a session row's context reading, as TEXT: amber where it
-     starts to matter (60%), full red at 99%. The row mixes between them
-     (`contextColour`). Not in the theme whitelist, like `--diff-*`. */
-  --context-warm: var(--color-amber-400);
-  --context-full: var(--color-red-500);
+  /* The two ends of a percent-full reading (a session's context, a repo's
+     size), as TEXT: amber where it starts to matter (60%), full red at 99%.
+     The reading mixes between them (`fillColour`). Not in the theme
+     whitelist, like `--diff-*`. */
+  --fill-warm: var(--color-amber-400);
+  --fill-full: var(--color-red-500);
 
   /* A memory's dot in the graph view, told apart from notes and tasks by hue
      alone. Not in the theme whitelist, like `--diff-*`. */
@@ -163,8 +164,8 @@
   /* Text, so a light arm; the diff tints deliberately have none. */
   --diff-added-foreground: var(--color-green-700);
   --diff-removed-foreground: var(--color-red-700);
-  --context-warm: var(--color-amber-600);
-  --context-full: var(--color-red-600);
+  --fill-warm: var(--color-amber-600);
+  --fill-full: var(--color-red-600);
   --graph-memory: var(--color-violet-600);
 }
 

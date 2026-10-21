@@ -63,6 +63,7 @@ describe('planPaste', () => {
     expect(planPaste(DOCS, { mode: 'cut', paths: ['a.md'] }, 'notes')).toEqual({
       mode: 'move',
       moves: [{ from: 'a.md', to: 'notes/a.md' }],
+      folders: [],
     })
   })
   it('a copy into a folder that already holds the name takes the free copy name', () => {

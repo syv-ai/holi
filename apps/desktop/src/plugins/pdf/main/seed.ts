@@ -28,8 +28,7 @@ export const pdfSeed: SeedContribution = {
   once: folder.once,
   shipped: folder.shipped,
   // `holi pdf comments` only reads and `holi pdf typst` only finds the
-  // engine, so neither asks. `holi pdf render` does: `--out` can replace a
-  // PDF outside the vault, where git holds no earlier version.
+  // engine, so neither asks.
   fragments: {
     '.claude/settings.json': [
       { permissions: { allow: ['Bash(holi pdf comments:*)', 'Bash(holi pdf typst:*)'] } },
