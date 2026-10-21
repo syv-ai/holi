@@ -15,7 +15,8 @@
  * Look through my unread mail since the previous run…
  * ```
  *
- * `cron` (repeating) or `at` (once, a local `YYYY-MM-DDTHH:MM`), never both.
+ * `cron` (repeating) or `at` (once, a local `YYYY-MM-DDTHH:MM`), never both;
+ * and/or `on`, the events that start a run (`triggers.ts`).
  * `allow` is Claude Code permission rules the run may use without asking;
  * every other permission prompt still asks. Times are this machine's local
  * time.
@@ -36,6 +37,7 @@ import { parseDateTime } from './dates'
 import { splitFrontmatter } from './frontmatter'
 import { normalizeText } from './normalize-md'
 import { SCHEDULES_SURFACE_DIR } from './path-safety'
+import { describeTriggers, parseTriggers, type Trigger } from './triggers'
 
 /** Where schedule files live. Root-anchored, one level: a schedule is a file
  *  directly inside. */
@@ -52,7 +54,10 @@ export type ScheduleWhen =
 
 export interface ScheduleDef {
   name: string
-  when: ScheduleWhen
+  /** Absent for a schedule only events start. */
+  when?: ScheduleWhen
+  /** The events that start a run, besides `when`. */
+  on: Trigger[]
   /** A Claude Code model alias or id, for `--model`. */
   model?: string
   /** Claude Code permission rules, each one `--allowedTools` value. */
@@ -107,7 +112,8 @@ export function parseScheduleFile(text: string, path: string): ScheduleParse {
   } catch (err) {
     return { ok: false, error: (err as Error).message }
   }
-  if (yaml === null) return { ok: false, error: 'no frontmatter: it needs a `cron` or an `at`' }
+  if (yaml === null)
+    return { ok: false, error: 'no frontmatter: it needs a `cron`, an `at` or an `on`' }
   let fm: unknown
   try {
     fm = parseYaml(yaml)
@@ -130,7 +136,7 @@ export function parseScheduleFile(text: string, path: string): ScheduleParse {
   if (cronText !== undefined && atText !== undefined) {
     return { ok: false, error: 'give a `cron` or an `at`, not both' }
   }
-  let when: ScheduleWhen
+  let when: ScheduleWhen | undefined
   if (cronText !== undefined) {
     if (typeof cronText !== 'string') return { ok: false, error: '`cron` must be quoted text' }
     let cron: Cron
@@ -156,8 +162,12 @@ export function parseScheduleFile(text: string, path: string): ScheduleParse {
       return { ok: false, error: '`at` must be a quoted local time, "YYYY-MM-DDTHH:MM"' }
     }
     when = { kind: 'at', stamp, local }
-  } else {
-    return { ok: false, error: 'it needs a `cron` or an `at`' }
+  }
+
+  const on = parseTriggers(f['on'])
+  if (!on.ok) return on
+  if (when === undefined && on.triggers.length === 0) {
+    return { ok: false, error: 'it needs a `cron`, an `at` or an `on`' }
   }
 
   const rawModel = f['model']
@@ -181,7 +191,8 @@ export function parseScheduleFile(text: string, path: string): ScheduleParse {
     ok: true,
     def: {
       name,
-      when,
+      ...(when === undefined ? {} : { when }),
+      on: on.triggers,
       ...(typeof rawModel === 'string' ? { model: rawModel } : {}),
       allow,
       prompt: body,
@@ -190,9 +201,11 @@ export function parseScheduleFile(text: string, path: string): ScheduleParse {
 }
 
 /**
- * What turning a schedule on approves: the prompt, the model and the rules it
- * may run without asking. A change to any of them is a schedule nobody has
- * approved yet. When it runs is not here: moving a time grants nothing. Nor is
+ * What turning a schedule on approves: the prompt, the model, the rules it
+ * may run without asking and the events that start it. A change to any of
+ * them is a schedule nobody has approved yet: a trigger decides who can make
+ * it run (whoever can send a mail, drop a file), which is more than a time
+ * does. When it runs is not here: moving a time grants nothing. Nor is
  * the `name`, which labels the run's session and the settings row and is
  * never part of what the run reads, so renaming grants nothing either.
  *
@@ -201,12 +214,29 @@ export function parseScheduleFile(text: string, path: string): ScheduleParse {
  */
 export function scheduleApprovalText(def: ScheduleDef): string {
   const prompt = normalizeText(def.prompt, '', []).trim()
-  return JSON.stringify({ prompt, model: def.model ?? null, allow: def.allow })
+  return JSON.stringify({
+    prompt,
+    model: def.model ?? null,
+    allow: def.allow,
+    // Only when there are some, so a schedule without triggers keeps the
+    // approval it had.
+    ...(def.on.length === 0 ? {} : { on: def.on }),
+  })
 }
 
 /** When it runs, in words. */
 export function describeScheduleWhen(when: ScheduleWhen): string {
   return when.kind === 'cron' ? describeCron(when.cron) : `Once, at ${when.stamp.replace('T', ' ')}`
+}
+
+/** When it runs and what starts it, in words. */
+export function describeSchedule(def: Pick<ScheduleDef, 'when' | 'on'>): string {
+  const parts = def.when === undefined ? [] : [describeScheduleWhen(def.when)]
+  if (def.on.length > 0) {
+    const on = describeTriggers(def.on)
+    parts.push(parts.length === 0 ? on : on.charAt(0).toLowerCase() + on.slice(1))
+  }
+  return parts.join('; ')
 }
 
 /**
