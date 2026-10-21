@@ -17,7 +17,9 @@
  * recents, sync, search, settings, members, history, agent sessions, and, when
  * the app opts in with `dangerously-allow` and the user approves, calendar and
  * mail), "open this in Holi", its own store (records in its bundle's `data/`),
- * and completing a task. No other writes (docs/features/vault-apps.md), and no theme
+ * and the vault's shared content as a member's editor writes it: a note over
+ * the text it read, a task's fields, a new task, a task completed. Main fences
+ * each write (docs/features/vault-apps.md). No theme
  * getter: the theme is injected as CSS custom properties when the entry document
  * is served, so an app reads it with `var(--primary)`.
  */
@@ -42,6 +44,9 @@ export const APP_METHODS = [
   'google.search',
   'tasks.complete',
   'env.get',
+  'docs.write',
+  'tasks.update',
+  'tasks.create',
 ] as const
 
 export type AppMethod = (typeof APP_METHODS)[number]

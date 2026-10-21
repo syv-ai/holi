@@ -8,6 +8,8 @@ import {
   appBundleOf,
   isAgentSurfacePath,
   isAppPrivatePath,
+  isHiddenPath,
+  isLocalOnlyPath,
   isMachineStatePath,
   isSecretPath,
   vaultRelPath,
@@ -100,4 +102,32 @@ export async function readNote(ctx: CapabilityContext, path: string): Promise<st
   const text = await readFile(abs, 'utf8').catch(() => null)
   if (text === null) throw new CapabilityError('NOT_FOUND', path)
   return text
+}
+
+/**
+ * What an app may write, or a refusal: whatever a read refuses, and also
+ * anything hidden (`.holi/`, `.claude/`, `.github/`: configuration and
+ * machinery, each with its own writer), anything local (`.local.`: one
+ * person's, which an app's code must not change for them, and which never
+ * syncs to show anyone it did) and anything inside an app's bundle (another
+ * app's code, or records, which have the store). What is left is the vault's
+ * shared content, which an app writes as any member's editor would.
+ */
+export function writablePath(path: string): VaultRelPath {
+  const rel = readablePath(path)
+  if (isHiddenPath(rel) || isLocalOnlyPath(rel) || appBundleOf(rel) !== null) {
+    throw new CapabilityError('FORBIDDEN', path)
+  }
+  return rel
+}
+
+/**
+ * The file a write opens, only when it is `rel` as named: no symlink on the
+ * way and the case it has on disk (`exactPath`), so the name the fences
+ * checked is the file that changes. The file need not exist.
+ */
+export async function writableFile(ctx: CapabilityContext, rel: VaultRelPath): Promise<string> {
+  const abs = await exactPath(ctx.root, rel)
+  if (abs === null) throw new CapabilityError('FORBIDDEN', rel)
+  return abs
 }

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { mkdir, mkdtemp, readFile as readText, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile as readText, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { emptyVaultSnapshot } from '@holi/shared'
@@ -440,6 +440,126 @@ describe('tasks.complete', () => {
         runCapability('tasks.complete', 'app', ctx({}), { path: '.holi/memory/task.x.md' }),
       ),
     ).toMatchObject({ code: 'FORBIDDEN' })
+  })
+})
+
+describe('docs.write', () => {
+  const write = (path: string, text: string, base: string | null) =>
+    runCapability('docs.write', 'app', ctx({}), { path, text, base })
+
+  it('writes a note over the text the app read, and creates one that is not there', async () => {
+    await put('a.md', 'one\n')
+    expect((await write('a.md', 'two\n', 'one\n')).writes).toBe(true)
+    expect(await readText(join(root, 'a.md'), 'utf8')).toBe('two\n')
+    await write('notes/b.md', 'new\n', null)
+    expect(await readText(join(root, 'notes/b.md'), 'utf8')).toBe('new\n')
+  })
+
+  it('refuses a note that changed since it was read, and writes nothing', async () => {
+    await put('a.md', 'theirs\n')
+    expect(await refusal(write('a.md', 'mine\n', 'old\n'))).toMatchObject({ code: 'CONFLICT' })
+    expect(await refusal(write('a.md', 'mine\n', null))).toMatchObject({ code: 'CONFLICT' })
+    expect(await refusal(write('gone.md', 'mine\n', 'old\n'))).toMatchObject({
+      code: 'CONFLICT',
+    })
+    expect(await readText(join(root, 'a.md'), 'utf8')).toBe('theirs\n')
+  })
+
+  it('writes only shared notes: nothing hidden, local, in a bundle or on the agent surface', async () => {
+    for (const path of [
+      '.holi/settings/app.md',
+      '.claude/skills/x.md',
+      'AGENTS.md',
+      'me.local.md',
+      'notes/mine.local.d/x.md',
+      'Budget.app/README.md',
+      'Budget.app/data/items/x.md',
+    ]) {
+      expect(await refusal(write(path, 'x', null))).toMatchObject({ code: 'FORBIDDEN' })
+    }
+    expect(await refusal(write('a.txt', 'x', null))).toMatchObject({ code: 'BAD_REQUEST' })
+  })
+
+  it('never writes through a symlink', async () => {
+    await mkdir(join(root, 'elsewhere'))
+    await symlink(join(root, 'elsewhere'), join(root, 'link'))
+    expect(await refusal(write('link/x.md', 'x', null))).toMatchObject({ code: 'FORBIDDEN' })
+  })
+
+  it('needs the base, so no write is blind', async () => {
+    expect(
+      await refusal(runCapability('docs.write', 'app', ctx({}), { path: 'a.md', text: 'x' })),
+    ).toMatchObject({ code: 'BAD_REQUEST' })
+  })
+})
+
+describe('tasks.update', () => {
+  const task =
+    '---\nstatus: todo\ndue: 2026-09-30\npriority: high\nrecurrence:\n  frequency: monthly\n  interval: 1\n---\n\n# Rent\n'
+
+  it('sets and clears fields as the board does', async () => {
+    await put('task.rent.md', task)
+    const { value } = await runCapability('tasks.update', 'app', ctx({}), {
+      path: 'task.rent.md',
+      patch: { due: '2026-10-02', priority: null, tags: ['home'] },
+    })
+    expect(value).toMatchObject({ due: '2026-10-02', tags: ['home'] })
+    expect(value).not.toHaveProperty('priority', 'high')
+    const text = await readText(join(root, 'task.rent.md'), 'utf8')
+    expect(text).toContain('2026-10-02')
+    expect(text).not.toContain('priority')
+  })
+
+  it('makes done completion, so a recurring task rolls forward', async () => {
+    await put('task.rent.md', task)
+    const { value } = await runCapability('tasks.update', 'app', ctx({}), {
+      path: 'task.rent.md',
+      patch: { status: 'done' },
+    })
+    expect(value).toMatchObject({ status: 'todo', due: '2026-10-30' })
+  })
+
+  it("refuses what the board's field edit refuses, and the task's text", async () => {
+    await put('task.rent.md', task)
+    for (const patch of [{ status: 'finished' }, { colour: 'red' }, { description: '# Rent' }]) {
+      expect(
+        await refusal(
+          runCapability('tasks.update', 'app', ctx({}), { path: 'task.rent.md', patch }),
+        ),
+      ).toMatchObject({ code: 'BAD_REQUEST' })
+    }
+    expect(await readText(join(root, 'task.rent.md'), 'utf8')).toBe(task)
+  })
+
+  it('writes only where an app may write', async () => {
+    await put('.holi/x/task.a.md', task)
+    expect(
+      await refusal(
+        runCapability('tasks.update', 'app', ctx({}), {
+          path: '.holi/x/task.a.md',
+          patch: { status: 'doing' },
+        }),
+      ),
+    ).toMatchObject({ code: 'FORBIDDEN' })
+  })
+})
+
+describe('tasks.create at the app door', () => {
+  it('creates a task where an app may write, and nowhere else', async () => {
+    const { value } = await runCapability('tasks.create', 'app', ctx({}), {
+      title: 'Call the vendor',
+      folder: 'ops',
+      extra: { due: '2026-10-01' },
+    })
+    expect(value).toEqual({ path: 'ops/task.call-the-vendor.md' })
+    expect(await readText(join(root, 'ops/task.call-the-vendor.md'), 'utf8')).toContain(
+      '2026-10-01',
+    )
+    for (const folder of ['.claude', 'Budget.app', 'mine.local.d']) {
+      expect(
+        await refusal(runCapability('tasks.create', 'app', ctx({}), { title: 'X', folder })),
+      ).toMatchObject({ code: 'FORBIDDEN' })
+    }
   })
 })
 

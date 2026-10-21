@@ -161,15 +161,18 @@ function boundaries(source, ext) {
   if (/\bholi\s*\.\s*data\b/.test(code)) {
     found.push([
       ERROR,
-      'there is no holi.data — an app stores nothing. The whole API is ' +
-        'holi.docs.list, holi.docs.read, holi.tasks.list and holi.open.',
+      'there is no holi.data: an app keeps its records with holi.store(collection).',
     ])
   }
-  if (/\bholi\s*\.\s*(?:docs|tasks)\s*\.\s*(?:write|create|update|delete|save)\b/.test(code)) {
+  if (
+    /\bholi\s*\.\s*docs\s*\.\s*(?:create|update|delete|save)\b/.test(code) ||
+    /\bholi\s*\.\s*tasks\s*\.\s*(?:write|delete|save)\b/.test(code)
+  ) {
     found.push([
       ERROR,
-      'an app cannot write anything — an app shows, the agent changes. The whole ' +
-        'API is holi.docs.list, holi.docs.read, holi.tasks.list and holi.open.',
+      'no such write. An app writes a note with holi.docs.write(path, text, base), ' +
+        'a task with holi.tasks.create, holi.tasks.update and holi.tasks.complete, ' +
+        'and its own records with holi.store. It deletes and moves nothing.',
     ])
   }
   if (/<form\b/i.test(code) || /createElement\(\s*["']form["']/.test(code)) {

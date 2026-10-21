@@ -1,12 +1,16 @@
 /**
  * Tasks' capabilities: list the vault's tasks, complete one the way the board
- * does, and create one, which is how the board and other plugins add a task.
+ * does, set its fields as the board does, and create one, which is how the
+ * board, other plugins and vault apps add a task.
  *
  * No `electron` import: this loads under plain Node in the tests.
  */
 import { readFile } from 'node:fs/promises'
 import { isAbsolute, relative } from 'node:path'
 import {
+  applyTaskPatch,
+  isTaskFilePath,
+  parseTaskFile,
   parseTaskPatch,
   serializeTaskFile,
   setFirstHeading,
@@ -21,7 +25,7 @@ import {
   type VaultRelPath,
 } from '@holi/shared'
 import { CapabilityError } from '../capabilities/error'
-import { knownPath } from '../capabilities/fences'
+import { knownPath, writableFile, writablePath } from '../capabilities/fences'
 import { noParams, paramsObject, pathParams, stringParam } from '../capabilities/params'
 import { cap } from '../capabilities/registry'
 import type { MainPlugin } from '../plugin-api'
@@ -114,9 +118,10 @@ export const taskCapabilities = (deps: TaskCapabilitiesDeps) => ({
    * one file, one write, through the validator a field edit uses, so nothing
    * can create a file the board would refuse to parse. `description` seeds
    * the body (the agenda's link to an event), under the title as its heading.
+   * An app creates one where it may write a note (`writablePath`).
    */
   'tasks.create': cap({
-    doors: ['ui'],
+    doors: ['ui', 'app'],
     writes: true,
     params: (raw): CreateTaskInput => {
       const p = paramsObject(raw)
@@ -144,6 +149,7 @@ export const taskCapabilities = (deps: TaskCapabilitiesDeps) => ({
         status: input.status ?? 'todo',
       })
       const rel = await freeTaskPath(ctx.root, input.folder ?? '', input.title)
+      if (ctx.bundle !== null) await writableFile(ctx, writablePath(rel))
       await writeAtomic(
         ctx.root,
         rel,
@@ -183,10 +189,55 @@ export const taskCapabilities = (deps: TaskCapabilitiesDeps) => ({
         ctx,
         isAbsolute(path) ? relative(ctx.root, path) : path.replace(/^\.\//, ''),
       )
+      // An app writes only where it may write a note; the agent writes anywhere.
+      if (ctx.bundle !== null) writablePath(rel)
       const result = await taskDoneOp(ctx.root, rel, deps.today())
       if (!result.ok) throw new CapabilityError('BAD_REQUEST', result.error)
       return result
     },
     text: (r) => (r.status === 'done' ? `done: ${r.path}` : `next: ${r.path} due ${r.due}`),
+  }),
+
+  /**
+   * A task's fields set by an app, by the rule the board's field edits follow:
+   * validated by the module that owns the format (`parseTaskPatch`), so an app
+   * cannot write a task the board would refuse, and done is completion
+   * (`applyTaskPatch`), so a recurring task rolls forward. `null` clears a
+   * field that has an empty state. Not the text: a task's body is a note write
+   * (`docs.write`), which checks it is writing over what the app read. The app
+   * door only: the agent edits the frontmatter itself, and completes through
+   * `holi tasks complete`.
+   */
+  'tasks.update': cap({
+    doors: ['app'],
+    writes: true,
+    params: (raw) => {
+      const p = paramsObject(raw)
+      const fields = p.patch
+      if (typeof fields === 'object' && fields !== null && 'description' in fields) {
+        throw new CapabilityError(
+          'BAD_REQUEST',
+          "a task's text is not a field: write it as a note (docs.write)",
+        )
+      }
+      return { path: stringParam(p, 'path'), patch: patchOf(fields) }
+    },
+    run: async (ctx, { path, patch }): Promise<Task> => {
+      const rel = writablePath(path)
+      if (!isTaskFilePath(rel)) {
+        throw new CapabilityError('BAD_REQUEST', `${rel} is not a task file`)
+      }
+      const text = await readFile(await writableFile(ctx, rel), 'utf8').catch(() => null)
+      if (text === null) throw new CapabilityError('NOT_FOUND', path)
+      let task: Task
+      try {
+        task = parseTaskFile(text, rel)
+      } catch (err) {
+        throw new CapabilityError('BAD_REQUEST', `${rel}: ${(err as Error).message}`)
+      }
+      const next = applyTaskPatch(task, patch, deps.today())
+      await writeAtomic(ctx.root, rel, serializeTaskFile(next))
+      return next
+    },
   }),
 })

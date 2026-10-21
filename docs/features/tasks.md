@@ -115,9 +115,10 @@ Todo / Doing / Done, with one swim lane per folder.
 ## Rules
 
 - The marker is in the filename, never frontmatter. A pasted `type: task` must not make tasks.
-- Done is completion wherever the app writes it: `tasks.update` and `tasks.move` apply
-  `completeTask`, and the frontmatter widget writes its result into the buffer, as does the
-  agent's `holi tasks complete <path>`. Only a hand edit of the file can write a bare
+- Done is completion wherever the app writes it: `tasks.update`, `tasks.move` and a vault
+  app's `holi.tasks.update` apply `completeTask` (through `applyTaskPatch`), and the
+  frontmatter widget writes its result into the buffer, as does the agent's
+  `holi tasks complete <path>`. Only a hand edit of the file can write a bare
   `status: done`, and that ends a recurring series.
 - A reminder is an absolute moment. A non-stamp reminder is inert, never an error, so a legacy
   `1d` costs a notification rather than the task. `due` is strict.
@@ -153,9 +154,11 @@ Todo / Doing / Done, with one swim lane per folder.
 
 - `packages/shared/src/task-file.ts`, `completion.ts`, `dates.ts`, `calendar.ts`, `labels.ts`,
   `recurrence.ts`, `reminder.ts`, `rank.ts`: the format and all the pure rules.
-- `apps/desktop/src/main/router.ts`: `tasks.*` and `patched`, which applies completion.
-- `apps/desktop/src/main/vault/task-capabilities.ts`: `tasks.list`, `tasks.complete`, and
-  `tasks.create` (the UI door), which the board and the Google views create tasks through.
+- `apps/desktop/src/main/router.ts`: `tasks.*`, whose field edits apply completion through
+  `applyTaskPatch` (`packages/shared/src/completion.ts`).
+- `apps/desktop/src/main/vault/task-capabilities.ts`: `tasks.list`, `tasks.complete`,
+  `tasks.update` (a vault app's field edit) and `tasks.create` (the UI and app doors), which the
+  board, the Google views and vault apps create tasks through.
 - `apps/desktop/src/main/reminders/`, `main/tray.ts`: the sweep, tick, watermark, notifications.
 - `apps/desktop/src/renderer/src/state/tasks.ts`: task set, filter, drops, writes.
 - `apps/desktop/src/renderer/src/state/clock.ts`: `nowAtom` and `todayAtom`, the minute the overdue labels and the daily note read.

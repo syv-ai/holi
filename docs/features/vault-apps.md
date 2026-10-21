@@ -60,9 +60,23 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   kept, so a note cannot run script as the app), `tasks.list`, `vault.recents`, `docs.search` (names, then
   bodies), `vault.settings`, `vault.members`, `vault.history`, `sync.status`, `agent.sessions`, and, opted into,
   `google.agenda` and `google.search` (`holi.google.agenda({ from, to })`,
-  `holi.google.search(query)`, a page: `{ threads, nextPageToken }`). Writes: `holi.store(collection)` and `tasks.complete`,
-  which applies the board's rule. `<holi-note path>` is a custom element the shim defines: the
+  `holi.google.search(query)`, a page: `{ threads, nextPageToken }`). Writes: its own records
+  (`holi.store(collection)`), and the vault's shared notes and tasks, each as Holi's own views
+  write them (see Writing the vault). `<holi-note path>` is a custom element the shim defines: the
   note rendered, themed and live. The theme is ambient CSS variables, not a call.
+- **Writing the vault.** An app changes shared content directly, with no approval step: trust
+  is vault membership, as for an edit by hand, and the change syncs like one. Each write is
+  the same change made elsewhere. `tasks.complete` is the board's checkbox. `tasks.update`
+  (`holi.tasks.update(path, patch)`) is the board's field edit: the patch is read by
+  `parseTaskPatch`, so an app cannot write a task the board would refuse, and `done` is
+  completion (`applyTaskPatch`). It sets fields only; a task's body is a note write.
+  `tasks.create` is the board's quick add. `docs.write` (`holi.docs.write(path, text, base)`)
+  writes a whole `.md` note over `base`, the text the app read, or `null` for a note that
+  must not exist yet; a note that has changed since (a pull, the agent, the person typing)
+  is refused as a conflict and nothing is written, so an app never overwrites what it did not
+  see. The text is the revision because the app already holds it and nothing else about a file
+  says for certain it is unchanged. None of these is open to the agent, which writes files with
+  its own tools (`holi tasks complete` aside, for the recurrence rule).
 - **Push.** `holi.on(topic, fn)` hears `docs`, `tasks`, `sync`, `agent`, `recents`, `history` and
   `store:<collection>`. `AppFrame` posts a topic when its signature changes (`renderer/app-push.ts`),
   never on mount. A push carries no data: the app reads again through main, so every refusal
@@ -174,6 +188,13 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
 - The agent-surface refusal lives in main (the capability registry), not the renderer. The process rendering
   untrusted code must not be the one deciding what it may read. `read` answers `FORBIDDEN`,
   distinct from `NOT_FOUND`.
+- What an app writes is narrower than what it reads (`writablePath`): besides everything a
+  read refuses, nothing hidden (`.holi/`, `.claude/`, `.github/`: configuration and machinery,
+  each with its own writer), nothing `.local.` (one person's, which a shared app's code must
+  not change for them, and which never syncs to show anyone it did), and nothing inside an
+  app's bundle (another app's code, or records, which have the store). The file must be the
+  path as named (`exactPath`): no symlink on the way, the case it has on disk. Nothing deletes,
+  moves or renames. None of it asks for consent: the one prompt is for one person's own data.
 - This machine's state under `.holi/state/` (`isMachineStatePath`) is refused the same way and left
   out of every listing: it holds the loopback bridge's tokens, and an app holding one could drive
   Holi as the agent does.
@@ -256,6 +277,11 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
 - An app store, versioning, or permission prompts for what the vault shares: trust is vault
   membership; reuse is copying the directory. The one prompt is for one person's own Google data,
   which vault membership does not cover.
+- An app proposing a change that the person or the agent approves before it lands: a tick in a
+  tracker is the person's own act, as on the board, and an approval for each would be a second
+  click for every one. Vault membership is the trust, and history keeps every write reversible.
+- A revision token beside `docs.read`'s text: the text is already a revision the app holds, and
+  a second read shape would break every app that reads a note as a string.
 - npm dependency trees in the vault: an app ships its libraries bundled to files.
 
 ## Code
@@ -272,8 +298,10 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   the bridge vocabulary (`bridge.ts`: `APP_METHODS`, the topics), the manifest (`manifest.ts`),
   an app's name and `holi-app:` host (`bundle.ts`), and the store's schema subset, ids and log
   (`store.ts`).
-- `apps/desktop/src/main/capabilities/`: the registry, its dispatch and services, the read
-  fences and core's entries, with note rendering (`render-note.ts`).
+- `apps/desktop/src/main/capabilities/`: the registry, its dispatch and services, the read and
+  write fences (`fences.ts`) and core's entries, among them `docs.write`, with note rendering
+  (`render-note.ts`).
+- `apps/desktop/src/main/vault/task-capabilities.ts`: the task entries an app reaches.
 - `apps/desktop/src/main/vault/search.ts`: the vault search behind `holi.search`, shared with
   Holi's own search.
 - `apps/desktop/src/main/vault/record-merge.ts`: the record merge driver's install;

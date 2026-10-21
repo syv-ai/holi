@@ -1,10 +1,11 @@
 /**
- * Core's capabilities: the vault's notes, search, recents, settings, members,
+ * Core's capabilities: the vault's notes (and an app's write of one), search, recents, settings, members,
  * history and sync, and bringing this release's skills to it. They run
  * whatever features are on.
  *
  * No `electron` import: this loads under plain Node in the tests.
  */
+import { readFile } from 'node:fs/promises'
 import {
   isAppBundlePath,
   syncLabel,
@@ -15,9 +16,18 @@ import {
 } from '@holi/shared'
 import { writeOut } from '../vault/out-files'
 import { readVaultSettings } from '../vault/settings'
+import { writeAtomic } from '../vault/vault-files'
 import { isSearchable, searchVault, type SearchHit } from '../vault/search'
 import { CapabilityError, unavailable } from './error'
-import { inSnapshot, readableOrNull, readablePath, readNote, shownPath } from './fences'
+import {
+  inSnapshot,
+  readableOrNull,
+  readablePath,
+  readNote,
+  shownPath,
+  writableFile,
+  writablePath,
+} from './fences'
 import { limitParam, noParams, paramsObject, pathParams, stringParam } from './params'
 import { cap, type CapabilityContext } from './registry'
 import { renderNote } from './render-note'
@@ -145,6 +155,52 @@ export const vaultCapabilities = (deps: VaultCapabilitiesDeps) => ({
       return { png: await writeOut(ctx.root, 'screenshot', png, { ext: 'png' }) }
     },
     text: ({ png }) => png,
+  }),
+
+  /**
+   * A note written by an app, as a member's editor would write it: the whole
+   * text, under `writablePath`'s fences, and only over the text the app read.
+   * `base` is that text, or null for a note that must not exist yet; a file
+   * that changed since (a teammate's pull, the agent, the person typing) is a
+   * CONFLICT, so the app reads again rather than overwrite what it never saw.
+   * The text is the revision: an app already holds it, and nothing else about
+   * a file says for certain that it is unchanged. The app door only: the
+   * agent writes files with its own tools.
+   */
+  'docs.write': cap({
+    doors: ['app'],
+    writes: true,
+    params: (raw) => {
+      const p = paramsObject(raw)
+      const { text, base } = p
+      if (typeof text !== 'string') throw new CapabilityError('BAD_REQUEST', 'text must be text')
+      if (base !== null && typeof base !== 'string') {
+        throw new CapabilityError(
+          'BAD_REQUEST',
+          'base is required: the text you read, or null for a new note',
+        )
+      }
+      return { path: stringParam(p, 'path'), text, base }
+    },
+    run: async (ctx, { path, text, base }): Promise<{ path: string }> => {
+      const rel = writablePath(path)
+      if (!rel.endsWith('.md')) {
+        throw new CapabilityError('BAD_REQUEST', `only a note (.md) can be written: ${rel}`)
+      }
+      const current = await readFile(await writableFile(ctx, rel), 'utf8').catch(() => null)
+      if (current !== base) {
+        throw new CapabilityError(
+          'CONFLICT',
+          base === null
+            ? `already exists: ${rel}`
+            : current === null
+              ? `no longer exists: ${rel}`
+              : `changed since it was read: ${rel}`,
+        )
+      }
+      await writeAtomic(ctx.root, rel, text)
+      return { path: rel }
+    },
   }),
 
   'docs.search': cap({
