@@ -101,4 +101,11 @@ describe('findHeadingLine', () => {
     expect(headingSlug('  Next steps (Q3)! ')).toBe('next-steps-q3')
     expect(headingSlug('Hvad så?')).toBe('hvad-så')
   })
+
+  test('a heading is found whichever Unicode form it and the link use', () => {
+    const nfd = 'Caf\u0065\u0301'
+    expect(headingSlug(nfd)).toBe(headingSlug('Caf\u00e9'))
+    expect(findHeadingLine(`# ${nfd}`, 'caf\u00e9')).toBe(1)
+    expect(findHeadingLine('# Caf\u00e9', nfd)).toBe(1)
+  })
 })

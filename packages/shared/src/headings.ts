@@ -78,12 +78,16 @@ export function setFirstHeading(body: string, title: string): string {
 }
 
 /**
- * A heading's anchor, as GitHub makes it: lower case, punctuation dropped,
+ * A heading's anchor, close to GitHub's: lower case, punctuation dropped,
  * spaces as hyphens. `Next steps (Q3)` is `next-steps-q3`. What a Holi link to
- * a heading carries, so the link reads like the heading it points at.
+ * a heading carries, so the link reads like the heading it points at. Not
+ * GitHub's to the letter: a second heading with the same words gets no `-1`,
+ * and a run of spaces is one hyphen. NFC first, so a letter typed as one code
+ * point or as a base and an accent slugs the same.
  */
 export function headingSlug(text: string): string {
   return text
+    .normalize('NFC')
     .trim()
     .toLowerCase()
     .replace(/[^\p{L}\p{N}\s_-]/gu, '')

@@ -9,7 +9,13 @@
  * untrusted: it checks the shape and nothing else. Whether this machine has
  * the vault, and the file, is main's question.
  */
-import { isLocalOnlyPath, isMachineStatePath, isRemote, vaultRelPath } from './path-safety'
+import {
+  isInIgnoredDir,
+  isLocalOnlyPath,
+  isMachineStatePath,
+  isRemote,
+  vaultRelPath,
+} from './path-safety'
 
 export const HOLI_LINK_SCHEME = 'holi'
 
@@ -29,10 +35,15 @@ const MAX_HEADING = 200
  *  path that reads as a path is a link a person can check by eye. */
 const encode = (value: string): string => encodeURIComponent(value).replace(/%2F/g, '/')
 
+/** One spelling of a name: `é` typed as one code point or as `e` and an
+ *  accent are the same letter, and a link must not depend on which a keyboard,
+ *  a filesystem or a chat app chose. NFC, the form git on macOS writes. */
+const nfc = (value: string): string => value.normalize('NFC')
+
 /** The link to `path` in `remote`, and to `heading` in it when given. */
 export function holiLink({ remote, path, heading }: HoliLink): string {
-  const query = [`vault=${encode(remote)}`, `path=${encode(path)}`]
-  if (heading !== undefined && heading !== '') query.push(`heading=${encode(heading)}`)
+  const query = [`vault=${encode(remote)}`, `path=${encode(nfc(path))}`]
+  if (heading !== undefined && heading !== '') query.push(`heading=${encode(nfc(heading))}`)
   return `${HOLI_LINK_SCHEME}://open?${query.join('&')}`
 }
 
@@ -58,7 +69,7 @@ export function parseHoliLink(raw: string): ParsedHoliLink {
   if (!isRemote(remote)) return refuse('The link does not name a vault.')
   let path: string
   try {
-    path = vaultRelPath(url.searchParams.get('path') ?? '')
+    path = vaultRelPath(nfc(url.searchParams.get('path') ?? ''))
   } catch {
     return refuse('The link does not name a file in the vault.')
   }
@@ -67,7 +78,9 @@ export function parseHoliLink(raw: string): ParsedHoliLink {
   if (isLocalOnlyPath(path) || isMachineStatePath(path)) {
     return refuse('The link points at a file that stays on one machine, so it cannot be shared.')
   }
-  const heading = (url.searchParams.get('heading') ?? '').trim()
+  // Git's own files and installed packages are not vault content at all.
+  if (isInIgnoredDir(path)) return refuse('The link does not name a file in the vault.')
+  const heading = nfc(url.searchParams.get('heading') ?? '').trim()
   if (heading.length > MAX_HEADING) return refuse('The link names a heading Holi cannot read.')
   return { ok: true, link: heading === '' ? { remote, path } : { remote, path, heading } }
 }
@@ -75,5 +88,7 @@ export function parseHoliLink(raw: string): ParsedHoliLink {
 /** The first Holi link among a process's arguments: how Windows and Linux
  *  hand a clicked link to the app, at launch and to the running instance. */
 export function holiLinkInArgv(argv: readonly string[]): string | null {
-  return argv.find((arg) => arg.startsWith(`${HOLI_LINK_SCHEME}://`)) ?? null
+  // A scheme is case-insensitive: `HOLI://open?…` is the same link.
+  const prefix = `${HOLI_LINK_SCHEME}://`
+  return argv.find((arg) => arg.slice(0, prefix.length).toLowerCase() === prefix) ?? null
 }
