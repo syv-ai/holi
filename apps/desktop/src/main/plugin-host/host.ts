@@ -27,6 +27,7 @@ import type {
   Disposer,
   LiveVault,
   MainPlugin,
+  NoteMention,
   Notice,
   PluginCtx,
   QuitQuestion,
@@ -116,6 +117,8 @@ export interface PluginHost {
   failures(remote: string): Record<string, string>
   /** What the renderer reports about the vault `remote`. */
   report(remote: string, report: UiReport): void
+  /** A pull brought comments into the vault `remote` that mention the person. */
+  mentioned(remote: string, mentions: readonly NoteMention[]): void
   /** The questions the started plugins' quit guards ask right now. */
   quitQuestions(): QuitQuestion[]
   /** The open vault's settings files may have changed on disk. */
@@ -149,6 +152,7 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
    *  change landing while Holi leaves it must not restart anything. */
   let parked: string | null = null
   const reportListeners = new Set<{ remote: string; cb: (report: UiReport) => void }>()
+  const mentionListeners = new Set<{ remote: string; cb: (mention: NoteMention) => void }>()
   /** The open vault's sync holds, and the vault they hold. */
   let holds: { remote: string; reasons: Map<symbol, string> } | null = null
 
@@ -319,6 +323,11 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
         reportListeners.add(entry)
         return keep(() => void reportListeners.delete(entry))
       },
+      onMention: (cb) => {
+        const entry = { remote, cb }
+        mentionListeners.add(entry)
+        return keep(() => void mentionListeners.delete(entry))
+      },
       notify: deps.notify,
       focused: deps.focused,
     }
@@ -358,6 +367,7 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
     lastWant = ''
     for (const s of [...(was?.started ?? [])].reverse()) await stopOne(s)
     reportListeners.clear()
+    mentionListeners.clear()
     holds = null
   }
 
@@ -463,6 +473,19 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
           cb(report)
         } catch (err) {
           console.error('[plugins] report listener failed:', err)
+        }
+      }
+    },
+
+    mentioned(remote, mentions) {
+      for (const { remote: at, cb } of [...mentionListeners]) {
+        if (at !== remote) continue
+        for (const mention of mentions) {
+          try {
+            cb(mention)
+          } catch (err) {
+            console.error('[plugins] mention listener failed:', err)
+          }
         }
       }
     },

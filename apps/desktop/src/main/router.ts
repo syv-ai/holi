@@ -11,6 +11,8 @@ import { join } from 'node:path'
 import { initTRPC, TRPCError } from '@trpc/server'
 import {
   applyTaskPatch,
+  commentThreads,
+  isCommentableNote,
   isAgentSurfacePath,
   parseTaskFile,
   parseTaskPatch,
@@ -29,6 +31,8 @@ import {
   type RecentEntry,
   VAULT_MARKER_FILE,
   isRemote,
+  type CommentAnchor,
+  type CommentThread,
 } from '@holi/shared'
 import type { SeedResult } from './vault/seed/types'
 import { searchBodies, type SearchHit } from './vault/search'
@@ -52,6 +56,14 @@ import type { ActiveVault, SyncState, VaultHost } from './vault/active-vault'
 import { ensureClone } from './vault/clone'
 import { pruneEmptiedFolder, removeDocFile, writeAtomic, absPathFor } from './vault/vault-files'
 import { renameNote } from './vault/rename'
+import {
+  addReply,
+  addThread,
+  commentBody,
+  readNoteComments,
+  setResolved,
+  UnreadableComments,
+} from './vault/note-comments'
 import { scanVault, type ScanClaim, type VaultSnapshot } from './vault/vault-store'
 import { holiTheme, readVaultTheme, resetVaultTheme, writeVaultTheme } from './vault/theme'
 import { readVaultSettings, writeVaultSettings } from './vault/settings'
@@ -264,6 +276,21 @@ function pairsOf(raw: unknown, key: 'moves' | 'copies'): { from: string; to: str
     }
     return { from, to }
   })
+}
+
+/** A comment's anchor as the panel sends it: the passage and its context. */
+function anchorInput(raw: unknown): CommentAnchor {
+  if (raw === null || typeof raw !== 'object') throw new Error('anchor must be an object')
+  const a = raw as Record<string, unknown>
+  const { quote, prefix, suffix, line } = a
+  if (typeof quote !== 'string' || quote === '') throw new Error('anchor.quote is required')
+  if (typeof prefix !== 'string' || typeof suffix !== 'string') {
+    throw new Error('anchor.prefix and anchor.suffix must be strings')
+  }
+  if (typeof line !== 'number' || !Number.isInteger(line) || line < 1) {
+    throw new Error('anchor.line must be a positive integer')
+  }
+  return { quote, prefix, suffix, line }
 }
 
 function movesInput(raw: unknown): { remote: string; moves: { from: string; to: string }[] } {
@@ -1308,6 +1335,75 @@ export function createRouter(deps: RouterDeps) {
   // store, git's object store is the timeline. `--follow` (in `repo.log`) tracks a
   // file through renames; `HISTORY_LIMIT` caps a long-lived file's timeline.
   const HISTORY_LIMIT = 200
+  /** A note's comment threads, for its comments panel. Written as the
+   *  signed-in person; the agent's door is `holi comments`. */
+  async function commentNote(remote: string, path: string): Promise<{ root: string; rel: string }> {
+    const rel = safe(path)
+    if (!isCommentableNote(rel)) {
+      throw new TRPCError({ code: 'BAD_REQUEST', message: `${rel} takes no comments` })
+    }
+    return { root: await rootFor(remote), rel }
+  }
+
+  function commentText(raw: string): string {
+    const body = commentBody(raw)
+    if (typeof body !== 'string')
+      throw new TRPCError({ code: 'BAD_REQUEST', message: body.refused })
+    return body
+  }
+
+  const noThread = (thread: string) =>
+    new TRPCError({ code: 'NOT_FOUND', message: `no thread ${thread}` })
+
+  const comments = t.router({
+    /** The note's threads as stored; the panel places them in its buffer. */
+    list: t.procedure
+      .input(fields({ remote: 'string', path: 'string' }))
+      .query(async ({ input }): Promise<CommentThread[]> => {
+        const { root, rel } = await commentNote(input.remote, input.path)
+        try {
+          return commentThreads(await readNoteComments(root, rel))
+        } catch (err) {
+          if (!(err instanceof UnreadableComments)) throw err
+          throw new TRPCError({ code: 'UNPROCESSABLE_CONTENT', message: err.message })
+        }
+      }),
+
+    add: vaultMutation
+      .input((raw) => ({
+        ...fields({ remote: 'string', path: 'string', body: 'string' })(raw),
+        anchor: anchorInput((raw as Record<string, unknown>).anchor),
+      }))
+      .mutation(async ({ input }) => {
+        const { root, rel } = await commentNote(input.remote, input.path)
+        const author = { login: viewerLogin(), agent: false }
+        const thread = await addThread(root, rel, input.anchor, author, commentText(input.body))
+        return { thread }
+      }),
+
+    reply: vaultMutation
+      .input(fields({ remote: 'string', path: 'string', thread: 'string', body: 'string' }))
+      .mutation(async ({ input }) => {
+        const { root, rel } = await commentNote(input.remote, input.path)
+        const author = { login: viewerLogin(), agent: false }
+        if (!(await addReply(root, rel, input.thread, author, commentText(input.body)))) {
+          throw noThread(input.thread)
+        }
+        return { ok: true as const }
+      }),
+
+    /** Resolve, or reopen with `resolved: false`. */
+    setResolved: vaultMutation
+      .input(fields({ remote: 'string', path: 'string', thread: 'string', resolved: 'boolean' }))
+      .mutation(async ({ input }) => {
+        const { root, rel } = await commentNote(input.remote, input.path)
+        if (!(await setResolved(root, rel, input.thread, input.resolved, viewerLogin()))) {
+          throw noThread(input.thread)
+        }
+        return { ok: true as const }
+      }),
+  })
+
   const history = t.router({
     /** The open file's commits, newest-first, following renames. Empty for a
      *  file with no commits yet (new/untracked). */
@@ -1668,6 +1764,7 @@ export function createRouter(deps: RouterDeps) {
     github,
     vaults,
     notes,
+    comments,
     files,
     tasks,
     sync,

@@ -26,7 +26,7 @@ Every note is a `.md` file, edited in CodeMirror 6 with live preview: markdown r
 
 **Quotes** are a flat translucent surface, centred and narrower than the column, holding what the quote holds (lists hang inside it as outside). The `> ` shows only on the caret's line.
 
-**Comments.** An HTML comment on lines of its own draws as a small floating banner, centred, in the `--comment` and `--comment-background` tokens, and shows its source when touched. One inside a paragraph stays text in the comment colour. The banner is exactly as tall as its source, whose first and last lines take the banner's padding while they show, so opening a comment does not move the note.
+**Comments.** Comment threads with authors, replies and resolve are not in the note at all: they live in a sidecar, mark their passages with a fill, and are listed in a drawer beside History ([note-comments](note-comments.md)). An HTML comment on lines of its own draws as a small floating banner, centred, in the `--comment` and `--comment-background` tokens, and shows its source when touched. One inside a paragraph stays text in the comment colour. The banner is exactly as tall as its source, whose first and last lines take the banner's padding while they show, so opening a comment does not move the note.
 
 **Fenced code** hides its backticks while the caret is outside the block, leaving the language as a small label. The fence lines stay, so the block keeps its height when the caret enters and the fences show.
 
@@ -34,7 +34,7 @@ Every note is a `.md` file, edited in CodeMirror 6 with live preview: markdown r
 
 **Completion.** Every popup in the app comes from `holiCompletion`. `@` lists notes, then open tasks, and inserts a `[[path]]`. `/todo` inserts a checkbox; `/table` reopens on sizes (columns by body rows). A running plugin adds commands of its own after these (`RendererPlugin.slashCommands`), read each time the menu opens; a built-in's name stays the built-in's. Vault apps add theirs this way ([vault apps](vault-apps.md)). Typing `/` over a selection replaces it as any typing does, but the command still gets it: picking a command puts the text back, selected, and runs the command on `{ text, line, path }` (that text, the line as it was, the note). Its answer replaces the text, inserts after it, or opens the ask-the-agent popover with an instruction written in, over the text or at the caret, where the person still picks the session and sends. A command that fails leaves the text as it was put back. Nothing more of the buffer is handed over.
 
-**Ask the agent.** A selection shows a button that opens a field and a session picker. The message is your instruction, then `[From <path>, lines 12-18]` and the passage quoted with `> `; line numbers come from CodeMirror's range, so they are exact.
+**Ask the agent.** A selection shows a button that opens a field and a session picker, beside **Comment**, which starts a comment thread on the passage. The message is your instruction, then `[From <path>, lines 12-18]` and the passage quoted with `> `; line numbers come from CodeMirror's range, so they are exact.
 
 **Saving.** Written after 600 ms of quiet and on blur, flushed on tab close, vault switch and quit. ⌘S saves every buffer, commits and pushes. Invalid frontmatter YAML holds the save; a flush writes anyway.
 
@@ -69,7 +69,7 @@ Every note is a `.md` file, edited in CodeMirror 6 with live preview: markdown r
 
 ## Code
 
-- `apps/desktop/src/renderer/src/editor/`: `extensions.ts` (stacks), `livePreview.ts` (`revealedSpans`), `mark-slide.ts`, `mermaid.ts`, `comments.ts`, `arrows.ts`, `bare-links.ts`, `completion.ts`, `slash.ts`, `mentions.ts`, `askAgent.ts`, `theme.ts`
+- `apps/desktop/src/renderer/src/editor/`: `extensions.ts` (stacks), `livePreview.ts` (`revealedSpans`), `mark-slide.ts`, `mermaid.ts`, `comments.ts`, `arrows.ts`, `bare-links.ts`, `completion.ts`, `slash.ts`, `mentions.ts`, `askAgent.ts`, `comment-threads.ts`, `theme.ts`
 - `apps/desktop/src/renderer/src/features/editor/EditorPane.tsx`: load, save, flush, reload
 - `apps/desktop/src/renderer/src/lib/editor-reload.ts`, `apply-reload.ts`
 - `packages/shared/src/merge3.ts`, `normalize-md.ts`, `file-kind.ts`, `image-ref.ts`

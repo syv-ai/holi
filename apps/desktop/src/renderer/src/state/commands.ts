@@ -25,6 +25,7 @@ import { matchHotkey } from '../lib/hotkey'
 import { trpc } from '../lib/trpc'
 import { openHomeAtom } from './home'
 import { openTodaysDailyAtom } from './daily'
+import { commentOnSelectionAtom, commentsTargetPathAtom, toggleCommentsAtom } from './comments'
 import { openDialogAtom } from './dialogs'
 import { copyHoliLinkAtom, linkableHeadingAtom, linkableNoteAtom } from './holi-link'
 import { closeActiveTabWithExitAtom } from './pane-exit'
@@ -108,6 +109,22 @@ export const STATIC_COMMANDS: readonly Command[] = [
     label: 'Toggle sidebar',
     hotkey: '⌘B',
     run: (_get, set) => set(navOpenAtom, (open) => !open),
+  },
+  // A note's comment threads (docs/features/note-comments.md). ⌘⌥M, as in
+  // the document editors people already know; the selection's own Comment
+  // button is the other way in.
+  {
+    id: 'comments.add',
+    label: 'Comment on selection',
+    hotkey: '⌘⌥M',
+    when: (get) => get(commentsTargetPathAtom) !== null,
+    run: (_get, set) => set(commentOnSelectionAtom),
+  },
+  {
+    id: 'comments.toggle',
+    label: 'Toggle comments',
+    when: (get) => get(commentsTargetPathAtom) !== null,
+    run: (_get, set) => set(toggleCommentsAtom),
   },
   // The skills and hooks a vault was seeded with are its own; a newer
   // release's reach it only when asked for, here or with `holi skills update`.

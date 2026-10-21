@@ -1,6 +1,6 @@
 /**
  * Git's routes on the bridge (`bridge/server.ts`): the clone's pre-commit hook
- * and its app-record merge driver call back into Holi here. Git is the caller,
+ * and its merge drivers (`merge-drivers.ts`) call back into Holi here. Git is the caller,
  * not the agent, which is why these are routes rather than capabilities.
  *
  * Resolved from the caller's token rather than from the active vault, so a
@@ -9,7 +9,7 @@
  *
  * NOTE: no runtime `electron` import: this loads under vitest.
  */
-import { mergeRecordText, type SnapshotClaim } from '@holi/shared'
+import { mergeCommentsText, mergeRecordText, type SnapshotClaim } from '@holi/shared'
 import type { BridgeServer } from '../bridge/server'
 import { PRE_COMMIT_TRANSFORM, type VaultPreCommit } from './hooks/pre-commit'
 import { runPreCommit, type Transform } from './hooks/runner'
@@ -87,6 +87,23 @@ export function registerGitRoutes(
         const fields = new URLSearchParams(body)
         const base = fields.get('base') ?? ''
         const out = mergeRecordText(
+          base === '' ? null : base,
+          fields.get('ours') ?? '',
+          fields.get('theirs') ?? '',
+        )
+        return out.ok ? { status: 200, body: out.text } : { status: 409, body: out.reason }
+      },
+    }),
+    /**
+     * The comments driver: one note's threads, three ways. Comments are
+     * unioned by id, so it refuses only text that is not a comments file.
+     */
+    server.route('/merge/comments', {
+      body: 'text',
+      handle(_remote, _query, body) {
+        const fields = new URLSearchParams(body)
+        const base = fields.get('base') ?? ''
+        const out = mergeCommentsText(
           base === '' ? null : base,
           fields.get('ours') ?? '',
           fields.get('theirs') ?? '',

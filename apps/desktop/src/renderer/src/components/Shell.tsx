@@ -5,7 +5,7 @@
  * (rail and sidebar sections, drawers) comes from the running plugins.
  */
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
-import { History, PanelLeftClose, PanelLeftOpen, PanelRight } from 'lucide-react'
+import { History, MessageSquare, PanelLeftClose, PanelLeftOpen, PanelRight } from 'lucide-react'
 import { Fragment, useEffect, useRef, useState } from 'react'
 import { isVaultConfigPath } from '@holi/shared'
 import {
@@ -19,6 +19,7 @@ import {
 } from '@/primitives'
 import { OnboardingRitual } from '@/features/onboarding/OnboardingRitual'
 import { HistoryPanel } from '@/features/history/HistoryPanel'
+import { CommentsPanel } from '@/features/comments/CommentsPanel'
 import { DialogHost } from './DialogHost'
 import { FrontmatterFieldsHost } from '@/features/frontmatter/FrontmatterFieldsHost'
 import { PaneView } from './PaneView'
@@ -45,6 +46,7 @@ import {
 } from '../state/panes'
 import { pathOfTab } from '@/lib/folder-documents'
 import { historyOpenAtom, historyTargetPathAtom } from '../state/history'
+import { commentsTargetPathAtom, toggleCommentsAtom } from '../state/comments'
 import { tickNowAtom } from '../state/clock'
 import type { PaneDropZone } from '@/lib/tab-drop'
 import type { Surface } from '@/plugin-api/types'
@@ -114,6 +116,8 @@ export function Shell() {
   const running = useAtomValue(runningPluginsAtom)
   const [navOpen, setNavOpen] = useAtom(navOpenAtom)
   const historyTarget = useAtomValue(historyTargetPathAtom)
+  const commentsTarget = useAtomValue(commentsTargetPathAtom)
+  const toggleComments = useSetAtom(toggleCommentsAtom)
   const reconcile = useSetAtom(reconcileAtom)
   const agent = useAgentService()
   const retrySync = useSetAtom(retrySyncAtom)
@@ -421,6 +425,15 @@ export function Shell() {
                             onClick={() => setHistoryOpen((v) => !v)}
                           />
                         )}
+                        {/* The focused note's comment threads, beside History. */}
+                        {i === workspace.active && commentsTarget !== null && (
+                          <IconButton
+                            icon={MessageSquare}
+                            label="comments"
+                            className="ml-1"
+                            onClick={() => toggleComments()}
+                          />
+                        )}
                         {/* Closing a pane's last tab unsplits; this does it in
                               one gesture. */}
                         {workspace.panes.length > 1 && (
@@ -442,6 +455,7 @@ export function Shell() {
 
         {/* The right-hand drawers; each decides whether it is open. */}
         <HistoryPanel />
+        <CommentsPanel />
         {running.flatMap(({ info, drawers = [] }) =>
           drawers.map((Drawer, i) => <Drawer key={`${info.id}:${i}`} />),
         )}

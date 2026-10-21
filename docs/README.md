@@ -23,6 +23,7 @@ other rather than repeating each other.
 | [file-tree](features/file-tree.md)                 | The tree, folders, hidden and local files, icons                         |
 | [auth](features/auth.md)                           | GitHub sign-in, the token, collaborators, access                         |
 | [editor](features/editor.md)                       | CodeMirror live preview, tables, images, external writes, completion     |
+| [note-comments](features/note-comments.md)         | Comment threads on a note's passages, the panel, mentions, the agent     |
 | [tabs-panes](features/tabs-panes.md)               | Panes, preview and pinned tabs, moving tabs                              |
 | [frontmatter](features/frontmatter.md)             | The frontmatter block, typed rows, schemas                               |
 | [wiki-links](features/wiki-links.md)               | Link grammar, rename, backrefs                                           |

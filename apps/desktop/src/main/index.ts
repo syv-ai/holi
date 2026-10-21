@@ -37,6 +37,8 @@ import { CapabilityError } from './capabilities/error'
 import { createCapabilityRegistry } from './capabilities/registry'
 import { vaultCapabilities, VAULT_NAMESPACES, type SkillsUpdated } from './capabilities/vault-caps'
 import { taskCapabilities, TASK_NAMESPACES, TASKS_PART } from './vault/task-capabilities'
+import { commentCapabilities, COMMENT_NAMESPACES } from './vault/comment-capabilities'
+import { pulledMentions } from './vault/note-comments'
 import { coreSeed } from './vault/seed/core'
 import { MAIN_PLUGINS } from '../plugins/main'
 import { install } from './plugin-host/installed'
@@ -341,6 +343,22 @@ async function main(): Promise<void> {
     // every commit tick and once at open, so a vault switch resets it.
     onHeldBack: (files) => send('vault:heldback', files),
     onCommitted: (paths) => send('vault:committed', paths),
+    // A merge (a pull, or a reconcile landing) is the only way a teammate's
+    // comment arrives, so it is where a mention of the person signed in is
+    // found and handed to the plugins
+    // (the agent's inbox). Best-effort: a mention missed is still in the panel.
+    onPulled: ({ remote, root }, { from, to }) => {
+      const login = session.viewer?.login
+      if (!login) return
+      void pulledMentions(root, from, to, login)
+        .then((found) =>
+          plugins.mentioned(
+            remote,
+            found.map(({ notePath, mention }) => ({ notePath, ...mention })),
+          ),
+        )
+        .catch((err) => console.error('[comments] mentions after pull:', err))
+    },
     // What plugins run in the vault stops here, the only place that still
     // holds the vault they ran in.
     onLeave: () => plugins.stop(),
@@ -604,6 +622,11 @@ async function main(): Promise<void> {
   const taskCaps = taskCapabilities({ today: localToday })
   capabilities.register(VAULT_NAMESPACES, vaultCaps)
   capabilities.register(TASK_NAMESPACES, taskCaps)
+  // Comment threads on notes, for the agent: written as the signed-in person.
+  capabilities.register(
+    COMMENT_NAMESPACES,
+    commentCapabilities({ login: () => session.viewer?.login ?? null }),
+  )
   // The one way every door runs a capability: the renderer's UI door (the
   // router) and the agent's `holi` CLI (the bridge server, below).
   const capabilityHost = createCapabilityHost({

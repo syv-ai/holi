@@ -32,6 +32,10 @@ restarting Holi or reopening the vault does not tell about a session still waiti
 person is plainly looking, which is a session Holi has a terminal open on with Holi's window
 focused.
 
+**Mentions.** A teammate's comment that mentions the person, arriving with a pull, becomes
+"_login_ mentioned you" with the passage and the comment, opening the note
+([note-comments](note-comments.md)).
+
 **Quiet rules.** A notice equal to an entry the inbox got in the last five minutes (same title,
 line, path and session) is a repeat and raises nothing. Banners are at least 30 seconds apart: a
 burst lands in the inbox with only its first on screen. A banner never shows over a focused Holi;

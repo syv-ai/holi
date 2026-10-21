@@ -357,7 +357,7 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
 - `apps/desktop/src/main/vault/task-capabilities.ts`: the task entries an app reaches.
 - `apps/desktop/src/main/vault/search.ts`: the vault search behind `holi.search`, shared with
   Holi's own search.
-- `apps/desktop/src/main/vault/record-merge.ts`: the record merge driver's install;
+- `apps/desktop/src/main/vault/merge-drivers.ts`: the record merge driver's install;
   `apps/desktop/src/main/vault/git-routes.ts`: `/merge/record`;
   `apps/desktop/src/main/bridge/server.ts`: `/cli`.
 - `apps/desktop/src/main/index.ts`: scheme registration, every plugin's included.

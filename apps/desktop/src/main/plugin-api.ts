@@ -12,7 +12,7 @@
  * the tests.
  */
 import type { Privileges } from 'electron'
-import type { PluginInfo, SnapshotClaim } from '@holi/shared'
+import type { CommentMention, PluginInfo, SnapshotClaim } from '@holi/shared'
 import type { AppDoor, AppDoorOpener } from './capabilities/dispatch'
 import type { CapabilityTable } from './capabilities/registry'
 import type { SeedContribution } from './vault/seed/types'
@@ -125,6 +125,12 @@ export interface PluginCtx extends LiveVault, SchemeContext {
   /** Hear what the renderer reports the person is looking at in this vault. */
   onReport(cb: (report: UiReport) => void): () => void
   /**
+   * Hear about a comment a pull brought into this vault that mentions the
+   * person signed in, written by someone else (docs/features/note-comments.md).
+   * Only on a pull: there is no server to say so sooner. Returns the undo.
+   */
+  onMention(cb: (mention: NoteMention) => void): () => void
+  /**
    * A native notification, the one the reminders use. Raised only while no
    * Holi window has focus: Holi's banners never cover Holi. True when it was
    * raised. Clicking it brings Holi's window forward, opening one if none is
@@ -133,6 +139,11 @@ export interface PluginCtx extends LiveVault, SchemeContext {
   notify(notice: Notice): boolean
   /** Whether a Holi window has focus now. */
   focused(): boolean
+}
+
+/** A comment on the note `notePath` that mentions the person (`PluginCtx.onMention`). */
+export interface NoteMention extends CommentMention {
+  notePath: string
 }
 
 /** A native notification (`PluginCtx.notify`). */

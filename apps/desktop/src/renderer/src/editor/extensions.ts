@@ -12,7 +12,8 @@ import { holiCompletion } from './completion'
 import { fenceLanguage } from './fence-languages'
 import { formattingKeymap } from './formatting'
 import { linkClickHandler, type LinkNav } from './links'
-import { askAgentTooltip, type AskAgentSeam } from './askAgent'
+import { askAgentTooltip, type AskAgentSeam, type CommentSeam } from './askAgent'
+import { commentThreads } from './comment-threads'
 import { frontmatterExtension } from './frontmatter'
 import { mermaidExtension } from './mermaid'
 import { commentExtension } from './comments'
@@ -71,6 +72,10 @@ export interface EditorDeps {
   /** The slash commands the running plugins add, read each time the menu
    *  opens. */
   slashCommands?: () => readonly SlashCommand[]
+  /** Open a comment thread on the selection. Absent where a note's threads
+   *  are not shown (a task's description), and then there is no button and
+   *  no marks. */
+  comment?: CommentSeam
   /** The open note's vault path, for note-relative image resolution. */
   notePath: string
   /** The document is locked while a reconcile resolves this file
@@ -120,7 +125,9 @@ export function baseEditorExtensions(deps: EditorDeps): Extension[] {
     docExistsFacet.of(deps.docExists),
     taskByPathFacet.of(deps.taskByPath),
     notePathFacet.of(deps.notePath),
-    deps.askAgent === undefined ? [] : askAgentTooltip(deps.notePath, deps.askAgent),
+    askAgentTooltip(deps.notePath, deps.askAgent, deps.comment),
+    // The passages the note's comment threads are about.
+    deps.comment === undefined ? [] : commentThreads,
     livePreview,
     // The caret's half of a mark's slide: the transition is CSS, and the
     // drawn caret has to be moved along while it runs.
