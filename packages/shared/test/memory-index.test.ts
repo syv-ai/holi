@@ -12,6 +12,7 @@ import {
   MEMORY_INDEX_EMPTY,
   MEMORY_INDEX_HEADER,
   MEMORY_INDEX_LOCAL_NOTE,
+  isExpiredScratch,
   isMemoryPath,
   isSharedMemoryPath,
   readMemoryEntry,
@@ -216,5 +217,32 @@ describe('renderMemoryIndex', () => {
       expect(out.endsWith('\n\n')).toBe(false)
       expect(out).not.toMatch(/[ \t]+$/m)
     }
+  })
+})
+
+describe('scratch notes', () => {
+  const scratch = (expires: string) => withFrontmatter(`type: scratch\nexpires: ${expires}`)
+  const PATH = '.holi/memory/build-broken.local.md'
+  const at = (y: number, m: number, d: number, h: number, min: number) => new Date(y, m, d, h, min)
+
+  it("a date lasts through that day, on this machine's clock", () => {
+    expect(isExpiredScratch(PATH, scratch('2026-10-22'), at(2026, 9, 22, 23, 59))).toBe(false)
+    expect(isExpiredScratch(PATH, scratch('2026-10-22'), at(2026, 9, 23, 0, 0))).toBe(true)
+  })
+
+  it('a local time ends at that minute', () => {
+    expect(isExpiredScratch(PATH, scratch('2026-10-22T15:00'), at(2026, 9, 22, 14, 59))).toBe(false)
+    expect(isExpiredScratch(PATH, scratch('2026-10-22T15:00'), at(2026, 9, 22, 15, 0))).toBe(true)
+  })
+
+  it('never deletes a shared note, another type, or one with no readable expires', () => {
+    const later = at(2030, 0, 1, 0, 0)
+    const shared = '.holi/memory/build-broken.md'
+    expect(isExpiredScratch(shared, scratch('2026-10-22'), later)).toBe(false)
+    const project = withFrontmatter('type: project\nexpires: 2026-10-22')
+    expect(isExpiredScratch(PATH, project, later)).toBe(false)
+    expect(isExpiredScratch(PATH, scratch('next week'), later)).toBe(false)
+    expect(isExpiredScratch(PATH, scratch('2026-02-30'), later)).toBe(false)
+    expect(isExpiredScratch('notes/x.local.md', scratch('2026-10-22'), later)).toBe(false)
   })
 })
