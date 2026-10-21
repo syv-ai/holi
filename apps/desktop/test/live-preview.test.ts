@@ -1,6 +1,6 @@
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
 import { ensureSyntaxTree } from '@codemirror/language'
-import { EditorSelection, EditorState } from '@codemirror/state'
+import { EditorSelection, EditorState, RangeSet } from '@codemirror/state'
 import type { DecorationSet } from '@codemirror/view'
 import type { Extension } from '@codemirror/state'
 import { describe, expect, it } from 'vitest'
@@ -607,5 +607,23 @@ describe('buildDecorations — inline only (a table cell)', () => {
     expect(inline(doc, doc.indexOf('bold')).some((d) => d.from === at && d.to === at + 2)).toBe(
       false,
     )
+  })
+})
+
+describe('decorating a split viewport', () => {
+  // A block widget (a mermaid diagram) splits the visible area in two, and a
+  // fenced block spanning the split is decorated from both sides. Joining the
+  // two sets used to add their ranges out of order, which crashed the live
+  // preview plugin and left the rest of the note raw.
+  it('joins overlapping sets without throwing', () => {
+    const doc = '# Code\n\n```ts\nconst a = 1\nconst b = 2\n```\n\n## After\n'
+    const state = stateFor(doc, 0)
+    const split = doc.indexOf('const b')
+    const sets = [buildDecorations(state, 0, split), buildDecorations(state, split, doc.length)]
+    expect(() => RangeSet.join(sets)).not.toThrow()
+    const heading = specs(RangeSet.join(sets)).find((d) =>
+      String(d.spec['class']).includes('cm-heading-2'),
+    )
+    expect(heading).toBeDefined()
   })
 })

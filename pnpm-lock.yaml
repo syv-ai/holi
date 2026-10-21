@@ -4,6 +4,11 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+patchedDependencies:
+  codemirror-markdown-tables@1.0.0:
+    hash: 523f0b81ff5752a6e3a8e46891bc5868d731068af7bdd7b8b41e9a3ef5b6a2fb
+    path: patches/codemirror-markdown-tables@1.0.0.patch
+
 importers:
 
   .:
@@ -178,7 +183,7 @@ importers:
         version: 6.0.2
       codemirror-markdown-tables:
         specifier: ^1.0.0
-        version: 1.0.0(@codemirror/autocomplete@6.20.3)(@codemirror/commands@6.10.4)(@codemirror/lang-markdown@6.5.0)(@codemirror/language@6.12.4)(@codemirror/state@6.7.1)(@codemirror/view@6.43.6)(@lezer/common@1.5.2)(@lezer/highlight@1.2.3)(@lezer/markdown@1.7.1)
+        version: 1.0.0(patch_hash=523f0b81ff5752a6e3a8e46891bc5868d731068af7bdd7b8b41e9a3ef5b6a2fb)(@codemirror/autocomplete@6.20.3)(@codemirror/commands@6.10.4)(@codemirror/lang-markdown@6.5.0)(@codemirror/language@6.12.4)(@codemirror/state@6.7.1)(@codemirror/view@6.43.6)(@lezer/common@1.5.2)(@lezer/highlight@1.2.3)(@lezer/markdown@1.7.1)
       command-score:
         specifier: 0.1.2
         version: 0.1.2
@@ -9752,7 +9757,7 @@ snapshots:
       - '@types/react'
       - '@types/react-dom'
 
-  codemirror-markdown-tables@1.0.0(@codemirror/autocomplete@6.20.3)(@codemirror/commands@6.10.4)(@codemirror/lang-markdown@6.5.0)(@codemirror/language@6.12.4)(@codemirror/state@6.7.1)(@codemirror/view@6.43.6)(@lezer/common@1.5.2)(@lezer/highlight@1.2.3)(@lezer/markdown@1.7.1):
+  codemirror-markdown-tables@1.0.0(patch_hash=523f0b81ff5752a6e3a8e46891bc5868d731068af7bdd7b8b41e9a3ef5b6a2fb)(@codemirror/autocomplete@6.20.3)(@codemirror/commands@6.10.4)(@codemirror/lang-markdown@6.5.0)(@codemirror/language@6.12.4)(@codemirror/state@6.7.1)(@codemirror/view@6.43.6)(@lezer/common@1.5.2)(@lezer/highlight@1.2.3)(@lezer/markdown@1.7.1):
     dependencies:
       '@codemirror/autocomplete': 6.20.3
       '@codemirror/commands': 6.10.4

@@ -7,7 +7,7 @@
 import { syntaxTree } from '@codemirror/language'
 import { Check, createElement } from 'lucide'
 import type { SyntaxNode, SyntaxNodeRef } from '@lezer/common'
-import { Facet, RangeSetBuilder, type EditorState } from '@codemirror/state'
+import { Facet, RangeSet, type EditorState } from '@codemirror/state'
 import {
   Decoration,
   EditorView,
@@ -737,11 +737,12 @@ export function buildDecorations(state: EditorState, from: number, to: number): 
     ranges.push({ from: start, to: end, deco: Decoration.replace({ widget: chip }) })
   }
 
-  const kept = ranges.filter((r) => r.from >= fmEnd)
-  kept.sort((a, b) => a.from - b.from || a.to - b.to || (a.deco.spec.widget ? 1 : -1))
-  const builder = new RangeSetBuilder<Decoration>()
-  for (const r of kept) builder.add(r.from, r.to, r.deco)
-  return builder.finish()
+  // `Decoration.set(…, true)` sorts by position AND side (a line decoration
+  // before a mark at the same spot), which a hand-written comparator missed.
+  return Decoration.set(
+    ranges.filter((r) => r.from >= fmEnd).map((r) => r.deco.range(r.from, r.to)),
+    true,
+  )
 }
 
 export const livePreview = ViewPlugin.fromClass(
@@ -771,20 +772,11 @@ export const livePreview = ViewPlugin.fromClass(
       for (const range of this.view.visibleRanges) {
         sets.push(buildDecorations(this.view.state, range.from, range.to))
       }
-      return sets.length === 1 ? sets[0]! : joinSets(sets)
+      // Joined, not concatenated: a block widget (a mermaid diagram) splits
+      // the visible area, and a fenced block that spans the split is
+      // decorated from both sides, so the sets overlap.
+      return sets.length === 1 ? sets[0]! : RangeSet.join(sets)
     }
   },
   { decorations: (v) => v.decorations },
 )
-
-function joinSets(sets: DecorationSet[]): DecorationSet {
-  const builder = new RangeSetBuilder<Decoration>()
-  for (const set of sets) {
-    const iter = set.iter()
-    while (iter.value) {
-      builder.add(iter.from, iter.to, iter.value)
-      iter.next()
-    }
-  }
-  return builder.finish()
-}
