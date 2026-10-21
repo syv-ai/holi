@@ -39,18 +39,8 @@ export function taskMoments(tasks: readonly Task[]): Moment[] {
     const due = stamp.timed ? stamp.epoch : stamp.epoch + ANCHOR_HOUR * 3_600_000
     const overdue = stamp.timed ? due : due + DAY_MS
     out.push(
-      {
-        id: t.path,
-        kind: 'due',
-        at: local(due).toISOString(),
-        label: `task ${t.path} due ${t.due}`,
-      },
-      {
-        id: t.path,
-        kind: 'overdue',
-        at: local(overdue).toISOString(),
-        label: `task ${t.path} overdue, due ${t.due}`,
-      },
+      { id: t.path, kind: 'due', at: local(due).toISOString() },
+      { id: t.path, kind: 'overdue', at: local(overdue).toISOString() },
     )
   }
   return out
@@ -69,16 +59,18 @@ export function startTaskTriggers(ctx: PluginCtx): Disposer {
   }
   const unhear = ctx.events.on((event) => {
     if (event.type !== 'interest') return
-    const was = wanted
     wanted = event.interest.task
-    // Told again at every check, so a list the agent missed is repaired.
-    if (wanted && !was) tell()
+    // Told again at every check: a list the agent missed is repaired, and a
+    // list not told again is one the router stops trusting.
+    tell()
   })
   const unscan = ctx.onSnapshot((snapshot) => {
     latest = snapshot
     tell()
   })
   return () => {
+    // What it told goes with it.
+    if (wanted) ctx.events.emit({ type: 'upcoming', source: 'task', moments: [] })
     unhear()
     unscan()
   }

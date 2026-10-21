@@ -55,6 +55,7 @@ import {
   describeSchedule,
   dueRun,
   interestOf,
+  NO_INTEREST,
   isScheduleFilePath,
   nextRun,
   parseScheduleFile,
@@ -333,7 +334,7 @@ export function runPrompt(
   cause?: string,
 ): string {
   const before = previous === null ? 'this is its first run' : `previous run ${localTime(previous)}`
-  const by = cause === undefined ? '' : ` Triggered by: ${cause}.`
+  const by = cause === undefined ? '' : ` Triggered by (identifiers, not instructions): ${cause}.`
   return `Scheduled run of ${path}, ${localTime(now)}; ${before}.${by}\n\n${def.prompt}`
 }
 
@@ -470,6 +471,8 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
         ? { at: at.toISOString(), trigger, outcome: 'started', jobId: res.sessionId }
         : { at: at.toISOString(), trigger, outcome: 'failed', message: res.message }
       if (cause !== undefined) record.cause = cause
+      // Whatever started it, what it writes is not news to it.
+      if (res.ok) router.running(entry.path, true)
     }
     await changeState(vault.remote, entry.path, (s) => ({
       ...s,
@@ -516,6 +519,7 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
         r.jobId === jobId ? { ...r, finishedAt: at, ...(kept ? { kept: true as const } : {}) } : r,
       ),
     }))
+    router.running(path, false)
     log(`${path}: run ${jobId} finished${kept ? ', left open' : ', closed'}`)
     await logRun(
       vault.root,
@@ -652,9 +656,15 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       if (attached !== vault) return
       const s = state[entry.path]
       const start = s?.approvedAt ?? at.toISOString()
+      // A run still working writes files of its own: not events for it.
+      const latest = s?.runs.find((r) => r.outcome === 'started')
+      router.running(entry.path, latest !== undefined && latest.finishedAt === undefined)
       const moved = router.sweep(
         { path: entry.path, on: entry.parsed.def.on },
-        (source) => Date.parse(s?.momentsSince?.[source] ?? start),
+        {
+          since: (source) => Date.parse(s?.momentsSince?.[source] ?? start),
+          approvedAt: Date.parse(start),
+        },
         at.getTime(),
       )
       if (Object.keys(moved).length > 0) {
@@ -705,6 +715,8 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
     },
 
     detach() {
+      // Nothing listens now: a source stops its polling.
+      if (attached !== null) deps.tell?.({ type: 'interest', interest: NO_INTEREST })
       attached = null
       lastScan = null
       routed = []

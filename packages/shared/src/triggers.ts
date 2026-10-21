@@ -16,9 +16,9 @@
  * ```
  *
  * **An event never carries third-party text.** What reaches a run is the one
- * line Holi adds, and an event contributes only its kind and identifiers to
- * it: a path, a thread id, an address, a time. The run reads the content
- * itself, through `holi` commands.
+ * line Holi adds, which the trigger router builds from an event's structured
+ * fields (source, kind, identifiers), each quoted; no source writes any of it
+ * as text. The run reads the content itself, through `holi` commands.
  *
  * Pure and browser-safe: the settings tab reads `on:` the way main runs it.
  */
@@ -184,27 +184,30 @@ export type VaultEvent =
       type: 'happened'
       source: 'file' | 'mail'
       /** `added`/`changed` for a file, `new` for mail. */
-      kind: string
+      kind: 'added' | 'changed' | 'new'
       /** The file's path; the thread's id. */
       id: string
       version: string
       /** A mail's query, which is what a trigger matches on. */
       query?: string
-      /** Identifiers only, for the run's one line: "file inbox/x.pdf added". */
-      label: string
+      /** A mail's sender address. The router names it only when it passes a
+       *  strict address check. */
+      from?: string
     }
   | { type: 'upcoming'; source: 'task' | 'calendar'; moments: Moment[] }
   | { type: 'interest'; interest: TriggerInterest }
 
+/**
+ * A timed source's moment. Structured fields only: the run's line is built
+ * from them by the trigger router, never from text a source wrote.
+ */
 export interface Moment {
   /** The task's path, the event's id. */
   id: string
   /** `due`/`overdue` for a task, `starts` for an event. */
-  kind: string
+  kind: 'due' | 'overdue' | 'starts'
   /** ISO instant. */
   at: string
-  /** Identifiers only: "task inbox/task.call.md due 2026-10-21". */
-  label: string
 }
 
 /** What the approved schedules listen for, so a source does only that work. */

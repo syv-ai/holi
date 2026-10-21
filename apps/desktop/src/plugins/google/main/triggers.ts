@@ -16,9 +16,15 @@
  * that message is yours (`answered`): a reply sent from a run must not start
  * the next one.
  *
- * Only identifiers leave here: a thread id and the sender's address, an
- * event id and its start. Subjects, snippets and titles are third-party text,
- * and a run fetches them itself through `holi google`.
+ * Only identifiers leave here, as structured fields: a thread id and the
+ * sender's address, an event id and its start. Subjects, snippets and titles
+ * are third-party text, and a run fetches them itself through `holi google`;
+ * the trigger router builds the run's line and checks the address again.
+ *
+ * **Its calendar list never outlives what it knows.** No account, or this
+ * plugin stopping, tells an empty list; and interest not told again for
+ * `INTEREST_MS` (the agent stopped without saying so) is no interest, so the
+ * polling stops with it.
  */
 import type { CalendarOverrides } from './calendar'
 import type { GoogleData } from './data'
@@ -33,8 +39,9 @@ const AHEAD_MS = 25 * 3_600_000
 const BEHIND_MS = 3_600_000
 /** Threads read per query: the newest. */
 const THREADS = 25
-/** An address fit for the run's line: no spaces, nothing to quote. */
-const ADDRESS = /^[^\s<>"'`;]+@[^\s<>"'`;]+$/
+/** The agent tells its interest every half minute; this long without it,
+ *  nothing listens any more. */
+const INTEREST_MS = 3 * 60_000
 
 export interface GoogleTriggerDeps {
   /** The open vault's Google data, or null when it has no account. */
@@ -45,12 +52,11 @@ export interface GoogleTriggerDeps {
   log?: (msg: string) => void
 }
 
-const pad = (n: number): string => String(n).padStart(2, '0')
-
 export function startGoogleTriggers(ctx: PluginCtx, deps: GoogleTriggerDeps): Disposer {
   const now = deps.now ?? (() => new Date())
   const log = deps.log ?? ((msg: string) => console.log(`[google triggers] ${msg}`))
   let interest: TriggerInterest = NO_INTEREST
+  let toldAt = 0
   let timer: ReturnType<typeof setInterval> | null = null
   let polling = false
   let stopped = false
@@ -68,15 +74,7 @@ export function startGoogleTriggers(ctx: PluginCtx, deps: GoogleTriggerDeps): Di
     )
     const moments: Moment[] = events
       .filter((e) => !e.allDay)
-      .map((e) => {
-        const start = new Date(e.start)
-        return {
-          id: e.id,
-          kind: 'starts',
-          at: start.toISOString(),
-          label: `calendar event ${e.id} at ${pad(start.getHours())}:${pad(start.getMinutes())}`,
-        }
-      })
+      .map((e) => ({ id: e.id, kind: 'starts', at: new Date(e.start).toISOString() }))
     if (!stopped) ctx.events.emit({ type: 'upcoming', source: 'calendar', moments })
   }
 
@@ -88,7 +86,6 @@ export function startGoogleTriggers(ctx: PluginCtx, deps: GoogleTriggerDeps): Di
       const version = `${t.messageCount}:${t.date}`
       after.set(t.id, version)
       if (before === undefined || before.get(t.id) === version || t.answered || stopped) continue
-      const from = ADDRESS.test(t.from.email) ? `mail from ${t.from.email}` : 'mail'
       ctx.events.emit({
         type: 'happened',
         source: 'mail',
@@ -96,7 +93,7 @@ export function startGoogleTriggers(ctx: PluginCtx, deps: GoogleTriggerDeps): Di
         id: t.id,
         version,
         query,
-        label: `${from}, thread ${t.id}`,
+        from: t.from.email,
       })
     }
     seen.set(query, after)
@@ -104,10 +101,19 @@ export function startGoogleTriggers(ctx: PluginCtx, deps: GoogleTriggerDeps): Di
 
   async function poll(): Promise<void> {
     if (polling || stopped) return
+    if (now().getTime() - toldAt > INTEREST_MS) {
+      quiet()
+      return
+    }
     polling = true
     try {
       const data = await deps.data()
-      if (data === null) return
+      if (data === null) {
+        if (interest.calendar && !stopped) {
+          ctx.events.emit({ type: 'upcoming', source: 'calendar', moments: [] })
+        }
+        return
+      }
       if (interest.calendar) {
         await calendar(data).catch((err: unknown) => log(`agenda: ${String(err)}`))
       }
@@ -119,15 +125,23 @@ export function startGoogleTriggers(ctx: PluginCtx, deps: GoogleTriggerDeps): Di
     }
   }
 
+  /** Nothing listens: no timer, no baselines. */
+  function quiet(): void {
+    interest = NO_INTEREST
+    seen.clear()
+    if (timer !== null) clearInterval(timer)
+    timer = null
+  }
+
   const unhear = ctx.events.on((event) => {
     if (event.type !== 'interest') return
     const was = interest
     interest = event.interest
+    toldAt = now().getTime()
     for (const query of seen.keys()) if (!interest.mail.includes(query)) seen.delete(query)
     const wants = interest.calendar || interest.mail.length > 0
     if (!wants) {
-      if (timer !== null) clearInterval(timer)
-      timer = null
+      quiet()
       return
     }
     const fresh =
@@ -139,6 +153,8 @@ export function startGoogleTriggers(ctx: PluginCtx, deps: GoogleTriggerDeps): Di
   })
 
   return () => {
+    // What it told of the calendar goes with it.
+    if (interest.calendar) ctx.events.emit({ type: 'upcoming', source: 'calendar', moments: [] })
     stopped = true
     unhear()
     if (timer !== null) clearInterval(timer)

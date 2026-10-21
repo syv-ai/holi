@@ -8,17 +8,28 @@
  *   and version (a file's path and mtime, a thread and its latest message)
  *   within `DEDUPE_MS`, however often it is told.
  * - **Moments fire once.** A timed source's moment fires when its time minus
- *   the trigger's lead falls after the schedule's watermark and not after
- *   now; the watermark then moves to now and is kept with the schedule's
- *   state, so a restart does not fire it again, and moments that passed while
- *   Holi was closed collapse into the next run, like missed cron moments.
+ *   the trigger's lead is not after now and falls after the schedule's floor:
+ *   its watermark as this session first read it (kept with the schedule's
+ *   state, so a restart does not fire a moment again), its approval, and
+ *   `LATE_MS` back. Each fired moment is remembered for the session, so one
+ *   a source tells late (a task made already overdue, a calendar list that
+ *   came in after its time) still fires, once.
+ * - **A stale list is no list.** A timed source repeats its list; one not
+ *   repeated for `STALE_MS` (its plugin stopped, its account went) fires
+ *   nothing and keeps the watermark where it was.
+ * - **A run does not trigger itself.** While a schedule's run works, file
+ *   events for it are dropped: what the run writes is not news to it.
  * - **Batch.** What one schedule hears is held from its first event for
  *   `BATCH_MS`, and goes to one run together, keyed by source and id so a
- *   file saved five times is one line.
+ *   file saved five times is one cause.
  * - **Spacing.** A batch waits until `MIN_SCHEDULE_GAP_MINUTES` after the
  *   schedule's previous run started, the floor cron schedules have.
  * - **A follow-up, not a pile.** While the previous run works, the batch keeps
  *   growing and is the one run that follows (the scheduler leaves it here).
+ * - **Identifiers, not text.** The run's line is built here from each cause's
+ *   source, kind and identifiers, each one stripped of control and line
+ *   characters, cut short and quoted; a mail's sender only when it is a plain
+ *   address. Nothing a source wrote as prose reaches a prompt.
  *
  * Not durable: a held batch and the dedupe memory live in memory, so a
  * restart loses events heard and not yet run (moments excepted, by the
@@ -38,38 +49,65 @@ import {
 export const BATCH_MS = 60_000
 /** How long an occurrence's id and version are remembered. */
 export const DEDUPE_MS = 60 * 60_000
+/** How far back a moment told late may still fire. */
+export const LATE_MS = 24 * 60 * 60_000
+/** A timed source's list not told again for this long is ignored: two of the
+ *  slowest source's (Google's) five-minute looks, and some. */
+export const STALE_MS = 12 * 60_000
 /** At most this many causes are named in a run's line; the rest are counted. */
 const NAMED = 5
-const LABEL_MAX = 160
+/** The longest an identifier is in the line, and the whole line. */
+const ID_MAX = 100
+const LINE_MAX = 800
+/** Fired moments remembered per schedule, newest kept. */
+const FIRED_MAX = 2_000
+/** A sender address fit to name: nothing but an address's plain characters. */
+const ADDRESS = /^[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,190}\.[A-Za-z]{2,24}$/
 
 export interface RoutedSchedule {
   path: string
   on: readonly Trigger[]
 }
 
+/** One thing that started a run, as structured fields. */
+export type Cause =
+  | { source: 'file'; kind: 'added' | 'changed'; id: string }
+  | { source: 'mail'; id: string; from?: string }
+  | { source: 'task'; kind: 'due' | 'overdue'; id: string }
+  | { source: 'calendar'; id: string; at: number }
+
 export interface Batch {
-  /** One label per source and id, in the order first heard. */
-  labels: string[]
+  /** One per source and id, in the order first heard. */
+  causes: Cause[]
 }
 
 export type MomentSource = 'task' | 'calendar'
+
+export interface MomentFloor {
+  /** The persisted watermark per source. */
+  since(source: MomentSource): number
+  /** When the schedule was turned on. */
+  approvedAt: number
+}
 
 export interface TriggerRouter {
   /** Hear an event: an occurrence is held for each schedule that listens for
    *  it; a timed source's list replaces the last one. */
   hear(event: VaultEvent, schedules: readonly RoutedSchedule[], now: number): void
   /**
-   * Hold the moments that came due for `schedule` after each source's
-   * watermark `since(source)`. Returns the watermarks that move to now: only
-   * those of the timed sources that have spoken since the router started.
-   * One that has not (Google not connected, a source not started yet) keeps
-   * its watermark, so its moments are not lost by moving past them unknown.
+   * Hold the moments that came due for `schedule` and have not fired. Returns
+   * the watermarks that move to now: only those of the timed sources with a
+   * fresh list. One that has none (Google not connected, a source not started
+   * yet, one gone quiet) keeps its watermark, so its moments are not lost by
+   * moving past them unknown.
    */
   sweep(
     schedule: RoutedSchedule,
-    since: (source: MomentSource) => number,
+    floor: MomentFloor,
     now: number,
   ): Partial<Record<MomentSource, number>>
+  /** Whether `path`'s run is working: its file events are its own. */
+  running(path: string, working: boolean): void
   /** The batch due for `path` now, if any, left held; `take` removes it. */
   due(path: string, now: number, lastStarted: number | null): Batch | null
   take(path: string): void
@@ -77,59 +115,92 @@ export interface TriggerRouter {
   keep(paths: ReadonlySet<string>): void
 }
 
-/** One line, bounded: a label never carries a line break into a prompt. */
-const clean = (label: string): string => {
-  const one = label.replace(/[\r\n\t]+/g, ' ').trim()
-  return one.length > LABEL_MAX ? `${one.slice(0, LABEL_MAX - 1)}…` : one
-}
-
 export function createTriggerRouter(): TriggerRouter {
-  const held = new Map<string, { first: number; labels: Map<string, string> }>()
+  const held = new Map<string, { first: number; causes: Map<string, Cause> }>()
   const seen = new Map<string, number>()
-  const moments = new Map<MomentSource, Moment[]>()
+  const moments = new Map<MomentSource, { heard: number; list: Moment[] }>()
+  /** Per schedule and source, the watermark this session first read. */
+  const floors = new Map<string, number>()
+  /** Per schedule, each fired moment's key and fire time. */
+  const fired = new Map<string, Map<string, number>>()
+  const working = new Set<string>()
 
-  function hold(path: string, key: string, label: string, now: number): void {
+  function hold(path: string, key: string, cause: Cause, now: number): void {
     let batch = held.get(path)
     if (batch === undefined) {
-      batch = { first: now, labels: new Map() }
+      batch = { first: now, causes: new Map() }
       held.set(path, batch)
     }
-    batch.labels.set(key, clean(label))
+    batch.causes.set(key, cause)
   }
 
   return {
     hear(event, schedules, now) {
       if (event.type === 'upcoming') {
-        moments.set(event.source, event.moments)
+        moments.set(event.source, { heard: now, list: event.moments })
         return
       }
       if (event.type !== 'happened') return
       for (const [key, until] of seen) if (until <= now) seen.delete(key)
       for (const s of schedules) {
+        if (event.source === 'file' && working.has(s.path)) continue
         if (!s.on.some((t) => triggerHears(t, event))) continue
         const key = `${s.path}\u0000${event.source}\u0000${event.id}\u0000${event.version}`
         if (seen.has(key)) continue
         seen.set(key, now + DEDUPE_MS)
-        hold(s.path, `${event.source}\u0000${event.id}`, event.label, now)
+        const cause: Cause | null =
+          event.source === 'mail'
+            ? { source: 'mail', id: event.id, ...(event.from ? { from: event.from } : {}) }
+            : event.kind === 'added' || event.kind === 'changed'
+              ? { source: 'file', kind: event.kind, id: event.id }
+              : null
+        if (cause !== null) hold(s.path, `${event.source}\u0000${event.id}`, cause, now)
       }
     },
 
-    sweep(schedule, since, now) {
+    sweep(schedule, floor, now) {
       const moved: Partial<Record<MomentSource, number>> = {}
+      let done = fired.get(schedule.path)
+      if (done === undefined) {
+        done = new Map()
+        fired.set(schedule.path, done)
+      }
       for (const source of ['task', 'calendar'] as const) {
-        const list = moments.get(source)
-        if (list === undefined || !schedule.on.some((t) => t.source === source)) continue
-        const from = since(source)
-        for (const m of list) {
+        if (!schedule.on.some((t) => t.source === source)) continue
+        const fkey = `${schedule.path}\u0000${source}`
+        let first = floors.get(fkey)
+        if (first === undefined) {
+          first = floor.since(source)
+          floors.set(fkey, first)
+        }
+        const from = Math.max(first, floor.approvedAt, now - LATE_MS)
+        for (const [key, at] of done) if (at <= from) done.delete(key)
+        const told = moments.get(source)
+        if (told === undefined || now - told.heard > STALE_MS) continue
+        for (const m of told.list) {
           for (const t of schedule.on) {
             const at = momentFireAt(t, source, m)
             if (at === null || at <= from || at > now) continue
-            hold(schedule.path, `${source}\u0000${m.id}\u0000${m.kind}`, m.label, now)
+            const key = `${source}\u0000${m.id}\u0000${m.kind}\u0000${at}`
+            if (done.has(key)) continue
+            done.set(key, at)
+            const cause: Cause =
+              source === 'task'
+                ? { source, kind: m.kind === 'due' ? 'due' : 'overdue', id: m.id }
+                : { source, id: m.id, at: Date.parse(m.at) }
+            hold(schedule.path, `${source}\u0000${m.id}\u0000${m.kind}`, cause, now)
           }
         }
         moved[source] = now
       }
+      // Bounded: the oldest go first.
+      while (done.size > FIRED_MAX) done.delete(done.keys().next().value!)
       return moved
+    },
+
+    running(path, w) {
+      if (w) working.add(path)
+      else working.delete(path)
     },
 
     due(path, now, lastStarted) {
@@ -138,7 +209,7 @@ export function createTriggerRouter(): TriggerRouter {
       if (lastStarted !== null && now - lastStarted < MIN_SCHEDULE_GAP_MINUTES * 60_000) {
         return null
       }
-      return { labels: [...batch.labels.values()] }
+      return { causes: [...batch.causes.values()] }
     },
 
     take(path) {
@@ -146,26 +217,69 @@ export function createTriggerRouter(): TriggerRouter {
     },
 
     keep(paths) {
+      const keeps = (key: string): boolean => paths.has(key.slice(0, key.indexOf('\u0000')))
       for (const path of held.keys()) if (!paths.has(path)) held.delete(path)
-      for (const key of seen.keys()) {
-        if (!paths.has(key.slice(0, key.indexOf('\u0000')))) seen.delete(key)
-      }
+      for (const path of fired.keys()) if (!paths.has(path)) fired.delete(path)
+      for (const path of working) if (!paths.has(path)) working.delete(path)
+      for (const key of seen.keys()) if (!keeps(key)) seen.delete(key)
+      for (const key of floors.keys()) if (!keeps(key)) floors.delete(key)
     },
   }
 }
 
-/** What a batch says in the run's one line: "file inbox/a.pdf added; task
- *  t.md overdue; and 3 more". */
-export function describeBatch(batch: Batch): string {
-  const named = batch.labels.slice(0, NAMED).join('; ')
-  const more = batch.labels.length - NAMED
-  return more > 0 ? `${named}; and ${more} more` : named
+/** An identifier, fit for the line: no control, format or line characters,
+ *  cut short, and quoted so it reads as a value and nothing more. */
+function quote(id: string): string {
+  const bare = id.replace(/[\p{C}\p{Zl}\p{Zp}]/gu, '').trim()
+  return JSON.stringify(bare.length > ID_MAX ? `${bare.slice(0, ID_MAX - 1)}…` : bare)
 }
+
+const pad = (n: number): string => String(n).padStart(2, '0')
+
+function describeCause(c: Cause): string {
+  switch (c.source) {
+    case 'file':
+      return `file ${quote(c.id)} ${c.kind}`
+    case 'mail':
+      return c.from !== undefined && ADDRESS.test(c.from)
+        ? `mail thread ${quote(c.id)} from ${quote(c.from)}`
+        : `mail thread ${quote(c.id)}`
+    case 'task':
+      return `task ${quote(c.id)} ${c.kind}`
+    case 'calendar': {
+      const at = new Date(c.at)
+      const time = Number.isNaN(at.getTime())
+        ? ''
+        : ` at ${pad(at.getHours())}:${pad(at.getMinutes())}`
+      return `calendar event ${quote(c.id)} starts${time}`
+    }
+  }
+}
+
+/** What a batch says in the run's line: `file "inbox/a.pdf" added; task
+ *  "t.md" overdue; and 3 more`, never longer than `LINE_MAX`. */
+export function describeBatch(batch: Batch): string {
+  const parts: string[] = []
+  let length = 0
+  for (const c of batch.causes.slice(0, NAMED)) {
+    const part = describeCause(c)
+    if (length + part.length + 2 > LINE_MAX - 20) break
+    parts.push(part)
+    length += part.length + 2
+  }
+  const more = batch.causes.length - parts.length
+  return more > 0 ? `${parts.join('; ')}; and ${more} more` : parts.join('; ')
+}
+
+/** Folders whose files are Holi's and the agent's own, never a trigger's:
+ *  a run writes there (memory, schedules, settings) as a matter of course. */
+const QUIET = ['.holi/', '.claude/']
 
 /**
  * The file events between two scans of the vault: a note or file whose path
  * is new is `added`, one whose mtime moved is `changed`. Files a plugin
- * claims (tasks) are not in either list, and have their own source. The
+ * claims (tasks) are not in either list, and have their own source; nor are
+ * files under `.holi/` and `.claude/`, which are Holi's and the agent's. The
  * first scan after a start has nothing to compare with and says nothing:
  * a file added while Holi was closed is not an event.
  */
@@ -177,6 +291,7 @@ export function fileEvents(
   for (const f of [...before.docs, ...before.files]) was.set(f.path, f.updatedAt)
   const out: (VaultEvent & { type: 'happened' })[] = []
   for (const f of [...after.docs, ...after.files]) {
+    if (QUIET.some((dir) => f.path.startsWith(dir))) continue
     const prior = was.get(f.path)
     if (prior === f.updatedAt) continue
     const kind = prior === undefined ? 'added' : 'changed'
@@ -186,7 +301,6 @@ export function fileEvents(
       kind,
       id: f.path,
       version: f.updatedAt,
-      label: `file ${f.path} ${kind}`,
     })
   }
   return out
