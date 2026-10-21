@@ -75,7 +75,9 @@ export interface NoteComment {
   id: string
   /** The GitHub login of the person who wrote it. */
   author: string
-  /** Written by that person's agent, on their behalf. */
+  /** Written by that person's agent, through `holi comments`, on their
+   *  behalf. Set by that CLI and nothing else: what the person types in the
+   *  panel is theirs, and has no `agent`. */
   agent?: true
   /** ISO 8601. */
   at: string
@@ -542,9 +544,10 @@ function minute(iso: string, timeZone: string | undefined): string {
   return `${get('year')}-${get('month')}-${get('day')} ${get('hour')}:${get('minute')}`
 }
 
-/** Who wrote a comment, as the panel says it. */
+/** Who wrote a comment, as the panel, the inbox and `holi comments list` say
+ *  it: the login, and "via agent" when their agent wrote it. */
 export const commentByline = (c: Pick<NoteComment, 'author' | 'agent'>): string =>
-  c.agent === true ? `${c.author}'s agent` : c.author
+  c.agent === true ? `${c.author} via agent` : c.author
 
 /** A thread as `holi comments list` prints it, with where it is now. Every
  *  part of it comes from a sidecar a teammate may have written: the bodies

@@ -1,6 +1,7 @@
 import { CompletionContext } from '@codemirror/autocomplete'
 import { EditorState } from '@codemirror/state'
 import { describe, expect, it, test } from 'vitest'
+import { memberCompletions } from '../src/renderer/src/editor/member-mentions'
 import { mentionCompletions } from '../src/renderer/src/editor/mentions'
 
 function ctx(doc: string, pos = doc.length, explicit = false) {
@@ -127,4 +128,20 @@ test('a hidden path is not offered, the way the tree hides it', () => {
   expect(mentionCompletions(ctx('@'), data)!.options.map((o) => o.label)).toEqual([
     'work/claude-notes.md',
   ])
+})
+
+describe('memberCompletions', () => {
+  const PEOPLE = ['ada-holm', 'bo']
+
+  it('offers the people whose login holds the query, inserting @login', () => {
+    const result = memberCompletions(ctx('ping @ad'), PEOPLE)
+    expect(result!.from).toBe(5)
+    expect(result!.options.map((o) => [o.label, o.apply])).toEqual([['@ada-holm', '@ada-holm ']])
+  })
+
+  // The same rule `mentionedLogins` reads a comment by, so what is offered is
+  // what will mention.
+  it('stays out of an email address', () => {
+    expect(memberCompletions(ctx('mail ada@'), PEOPLE)).toBeNull()
+  })
 })

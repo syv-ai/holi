@@ -77,9 +77,9 @@ its files change (today reload is a button).
 ## Notes & editor
 
 **More of note comments.** Editing or deleting a comment, a list of open threads across the
-vault in the app (the agent has `holi comments list`), `@login` completion in the composer, and a
-comment's body drawn as markdown (it shows as plain text). A mention reaches only the agent's inbox,
-so with the agent plugin off it is seen only in the panel. See
+vault in the app (the agent has `holi comments list`), and a comment's body drawn as markdown (it
+shows as plain text). A mention reaches only the agent's inbox, so with the agent plugin off it is
+seen only in the panel. See
 [note-comments](features/note-comments.md).
 
 **The rest of slash commands as small programs.** A vault app's commands are built

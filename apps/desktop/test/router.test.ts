@@ -1756,3 +1756,27 @@ describe('cap.run', () => {
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' })
   })
 })
+
+describe('comments', () => {
+  // Only `holi comments` marks a comment as the agent's. What the panel sends
+  // is the person's own, whoever's agent is running beside it.
+  it('signs what the panel writes as the person, never as their agent', async () => {
+    const { caller, root } = await rig({ 'a.md': 'One passage here.\n' }, seeded())
+    await caller.vaults.open({ remote: REMOTE })
+    const anchor = { quote: 'passage', prefix: 'One ', suffix: ' here.', line: 1 }
+    const { thread } = await caller.comments.add({
+      remote: REMOTE,
+      path: 'a.md',
+      body: 'Is this right?',
+      anchor,
+    })
+    await caller.comments.reply({ remote: REMOTE, path: 'a.md', thread, body: 'Yes.' })
+
+    const [listed] = await caller.comments.list({ remote: REMOTE, path: 'a.md' })
+    expect(listed!.comments.map((c) => [c.author, c.agent])).toEqual([
+      ['nthomsencph', undefined],
+      ['nthomsencph', undefined],
+    ])
+    expect(await readFile(join(root, '.holi/comments/a.md.json'), 'utf8')).not.toContain('agent')
+  })
+})

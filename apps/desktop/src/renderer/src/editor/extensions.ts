@@ -4,7 +4,14 @@ import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
 import { emptyTaskMarker } from './empty-task'
 import { bracketMatching, indentOnInput, indentUnit } from '@codemirror/language'
 import { selectNextOccurrence } from '@codemirror/search'
-import { drawSelection, dropCursor, EditorView, keymap } from '@codemirror/view'
+import {
+  drawSelection,
+  dropCursor,
+  EditorView,
+  keymap,
+  placeholder,
+  tooltips,
+} from '@codemirror/view'
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
 import { Compartment, EditorState, type Extension } from '@codemirror/state'
 import { holiCompletion } from './completion'
@@ -28,6 +35,7 @@ import {
   type LinkChip,
 } from './livePreview'
 import { mentionSource, type MentionData } from './mentions'
+import { memberMentionSource } from './member-mentions'
 import { alphaListKeymap, alphaLists, listKindByTyping, renumberOrderedLists } from './lists'
 import { arrowsByTyping } from './arrows'
 import { slashCommandsWith, tableSizes, type SlashCommand } from './slash'
@@ -307,3 +315,69 @@ export function plainTextExtensions(path: string, readOnly = false): Extension[]
     colorModeAware(),
   ]
 }
+
+/** What a comment field is told to do: its people, and its two keys. */
+export interface CommentFieldDeps {
+  /** Who `@` offers, read on each `@`. */
+  logins: () => readonly string[]
+  placeholder: string
+  /** ⌘↵. */
+  submit: () => void
+  /** Escape, once the popup (if any) is closed. */
+  cancel?: () => void
+}
+
+/**
+ * A comment's text field (the comments panel's composer and reply): plain
+ * text in the app's own face, with `@login` completion of the vault's people
+ * through the one completion popup. No markdown layers: a comment's body is
+ * shown as it was typed.
+ */
+export function commentFieldExtensions(deps: CommentFieldDeps): Extension[] {
+  return [
+    history(),
+    drawSelection(),
+    EditorView.lineWrapping,
+    placeholder(deps.placeholder),
+    holiCompletion([memberMentionSource(deps.logins)]),
+    // On the body, not in the panel: the drawer scrolls and clips, and the
+    // popup must not be cut off at its edge.
+    tooltips({ parent: document.body }),
+    keymap.of([
+      // First, so Enter and Escape act on an open popup before the field.
+      ...completionKeymap,
+      {
+        key: 'Mod-Enter',
+        run: () => {
+          deps.submit()
+          return true
+        },
+      },
+      {
+        key: 'Escape',
+        run: () => {
+          if (deps.cancel === undefined) return false
+          deps.cancel()
+          return true
+        },
+      },
+      ...historyKeymap,
+      ...defaultKeymap,
+    ]),
+    editorTheme,
+    colorModeAware(),
+    commentFieldTheme,
+  ]
+}
+
+/** The field sits in a panel, not a pane: the panel's face and size, and
+ *  none of the notes column's inset. */
+const commentFieldTheme = EditorView.theme({
+  '&': { height: 'auto', fontSize: '13px' },
+  '&.cm-focused': { outline: 'none' },
+  '.cm-scroller': { fontFamily: 'inherit', lineHeight: '1.5' },
+  '.cm-content': { padding: '0', caretColor: 'var(--foreground)' },
+  '.cm-line': { padding: '0' },
+  '.cm-cursor, .cm-cursor-primary': { borderLeftColor: 'var(--foreground)' },
+  '.cm-placeholder': { color: 'var(--muted-foreground)' },
+})

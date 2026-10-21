@@ -230,7 +230,7 @@ describe('formatNoteComments', () => {
         'Thread t1 on "one" (detached, the passage is gone)',
         '  ada, 2026-10-21 10:00',
         '  > Check this',
-        "  Reply, ada's agent, 2026-10-21 11:00",
+        '  Reply, ada via agent, 2026-10-21 11:00',
         '  > Done',
         '  Resolved by ada, 2026-10-21 12:00',
       ].join('\n'),
