@@ -39,7 +39,7 @@ instructions, which Claude Code reads natively, so no `CLAUDE.md` is seeded), an
 `CLAUDE.md` and `AGENTS.md` when its process starts, so a change reaches it on Restart; hooks and
 skills are re-read per use.
 
-**Per-turn context is one line.** The `UserPromptSubmit` hook prints `Focused note: <path>` from
+**Per-turn context is a line or two.** The `UserPromptSubmit` hook prints `Focused note: <path>` from
 `.holi/state/context.local.json`, with `(selected lines 12-18; ...)` when text is selected in it,
 which main keeps current from the renderer's one report of what the person is looking at
 (`ui.report`: the focused note and its selected lines, the open ones, the recents), the same report
@@ -52,6 +52,16 @@ last changed its selection owns it, and it outlives that editor's unmount, so a 
 counts while the person types to the agent in the same pane; a vault switch clears it. Tasks, backlinks and sync state the
 agent finds itself with `Glob`, `grep` and `git`. The line carries no time or count, so the same
 focus and selection print the same bytes and do not break the prompt cache.
+
+The second line is what changed since the session's last turn that the session did not change:
+`Changed since your last turn, not by you: <paths> (git diff <sha> shows how)`. The hook finds the
+session's newest record in `.holi/state/turns.local.json` by its job id (the name of
+`$CLAUDE_JOB_DIR`, as the turn hooks send it) and lists `git diff --name-only <end> HEAD` plus
+`git status`: commits since the settle commit (autosave makes most edits commits) and work not yet
+committed. That is the user's edits, a pull, or another session's turn, which is why it says "not
+by you" rather than naming who. Ten paths at most, then `and N more`; `.holi/state/` and `.local.`
+files are left out. A session with no recorded turn, an unreachable `end`, or a vault opened
+outside Holi prints nothing.
 
 **Showing a file.** `holi docs open <path>` opens a note, task, PDF, vault app or any file the
 vault's snapshot holds in a pinned tab, so the agent can say "here it is" rather than "go to X".
