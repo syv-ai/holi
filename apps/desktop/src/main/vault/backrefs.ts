@@ -1,7 +1,8 @@
 /**
- * The single inbound-link scan, used by the delete preview and by rename.
- * There is no link index: a grep across the vault's markdown is enough for an
- * interactive one-shot, and it cannot drift out of sync the way an index can.
+ * The vault's link scans: what links to a path, for the delete preview and
+ * rename. There is no link index: a grep across the vault's markdown is enough
+ * for an interactive one-shot, and it cannot drift out of sync the way an
+ * index can (docs/features/wiki-links.md).
  *
  * A note linking to *itself* is not a backref, so the target file is excluded.
  */
@@ -9,23 +10,27 @@ import { readFile } from 'node:fs/promises'
 import { parseWikiLinks } from '@holi/shared'
 import { listFiles } from './vault-files'
 
-/** Files that reference `target`, with how many times each does — sorted by
+/** Every markdown file in the vault with its text, in walk order, skipping the
+ *  paths `skip` names and any file that cannot be read. The one walk every
+ *  scan here makes. */
+export async function* markdownFiles(
+  root: string,
+  skip: (path: string) => boolean = () => false,
+): AsyncGenerator<{ path: string; text: string }> {
+  for (const path of await listFiles(root)) {
+    if (!path.endsWith('.md') || skip(path)) continue
+    const text = await readFile(`${root}/${path}`, 'utf8').catch(() => null)
+    if (text !== null) yield { path, text }
+  }
+}
+
+/** Files that reference `target`, with how many times each does, sorted by
  *  path so the result is stable and testable. */
 export async function scanBackrefs(
   root: string,
   target: string,
 ): Promise<{ path: string; count: number }[]> {
-  const out: { path: string; count: number }[] = []
-  for (const path of await listFiles(root)) {
-    if (!path.endsWith('.md') || path === target) continue
-    const text = await readFile(`${root}/${path}`, 'utf8').catch(() => null)
-    if (text === null) continue
-    const count = parseWikiLinks(text).filter(
-      (link) => link.target === target,
-    ).length
-    if (count > 0) out.push({ path, count })
-  }
-  return out.sort((a, b) => a.path.localeCompare(b.path))
+  return scanBackrefsMany(root, [target])
 }
 
 /**
@@ -42,13 +47,8 @@ export async function scanBackrefsMany(
 ): Promise<{ path: string; count: number }[]> {
   const set = new Set(targets)
   const out: { path: string; count: number }[] = []
-  for (const path of await listFiles(root)) {
-    if (!path.endsWith('.md') || set.has(path)) continue
-    const text = await readFile(`${root}/${path}`, 'utf8').catch(() => null)
-    if (text === null) continue
-    const count = parseWikiLinks(text).filter(
-      (link) => set.has(link.target),
-    ).length
+  for await (const { path, text } of markdownFiles(root, (p) => set.has(p))) {
+    const count = parseWikiLinks(text).filter((link) => set.has(link.target)).length
     if (count > 0) out.push({ path, count })
   }
   return out.sort((a, b) => a.path.localeCompare(b.path))
