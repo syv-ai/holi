@@ -86,8 +86,9 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   names no plugin's format: on a task file `docs.write` changes the body only, its frontmatter
   must parse to the fields the file has, so a field change goes through `tasks.update`'s rules,
   and a new task through `tasks.create`. With the tasks plugin off, a task file is a note. A refusal reaches the app as an `Error` whose `code` is main's verdict
-  (`CONFLICT`, `FORBIDDEN`, `NOT_FOUND`, `BAD_REQUEST`), so an app matches the code, not the
-  words. None of these is open to the agent, which writes files with
+  (`CONFLICT`, `FORBIDDEN`, `NOT_FOUND`, `BAD_REQUEST`, and `PRECONDITION_FAILED` with
+  `vault-not-open` when Holi no longer has the app's vault open), so an app matches the code,
+  not the words. None of these is open to the agent, which writes files with
   its own tools (`holi tasks complete` aside, for the recurrence rule).
 - **Push.** `holi.on(topic, fn)` hears `docs`, `tasks`, `sync`, `agent`, `recents`, `history` and
   `store:<collection>`. `AppFrame` posts a topic when its signature changes (`renderer/app-push.ts`),

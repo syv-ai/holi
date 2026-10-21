@@ -34,6 +34,7 @@ import { createMembersCache } from './github/members-cache'
 import { installHoliCli } from './bridge/cli'
 import { createCapabilityHost } from './capabilities/dispatch'
 import { CapabilityError } from './capabilities/error'
+import { vaultNotOpen } from './capabilities/fences'
 import { createCapabilityRegistry } from './capabilities/registry'
 import { vaultCapabilities, VAULT_NAMESPACES, type SkillsUpdated } from './capabilities/vault-caps'
 import { commentCapabilities, COMMENT_NAMESPACES } from './vault/comment-capabilities'
@@ -545,12 +546,10 @@ async function main(): Promise<void> {
   }
 
   /** `holi docs open` and `holi docs screenshot` show a path only in the vault
-   *  Holi is showing. An agent session outlives a vault switch, and its open
-   *  must not switch the person away from what they are working in. */
+   *  Holi has open (`requireOpen`), asked again here since a switch can land
+   *  between the check and the show. */
   const showInActive = (remote: string, path: string, focus: boolean): BrowserWindow => {
-    if (host.active()?.remote !== remote) {
-      throw new CapabilityError('UNAVAILABLE', 'Holi is showing another vault.')
-    }
+    if (host.active()?.remote !== remote) throw vaultNotOpen()
     return showPath(remote, path, { focus })
   }
   /** One screenshot at a time, open and capture together: a second one's tab

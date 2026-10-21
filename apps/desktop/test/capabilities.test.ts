@@ -172,7 +172,8 @@ function ctx(core: Partial<CoreServices>, bundle: string | null = 'A.app'): Capa
     }),
     // The tasks plugin runs: a note write to a task file asks its claim.
     claims: async () => [taskClaim],
-    core: { ...noCoreServices(), ...core },
+    // Holi has this vault open unless a test says otherwise (`requireOpen`).
+    core: { ...noCoreServices(), syncState: () => ({ kind: 'up-to-date' }), ...core },
   }
 }
 
@@ -210,7 +211,12 @@ describe('vault.recents', () => {
 
 describe('sync.status', () => {
   it('says "not open" for a vault main does not track', async () => {
-    const { value, text } = await runCapability('sync.status', 'cli', ctx({}, null), {})
+    const { value, text } = await runCapability(
+      'sync.status',
+      'cli',
+      ctx({ syncState: () => null }, null),
+      {},
+    )
     expect(value).toBeNull()
     expect(text).toBe('not open')
   })
@@ -354,6 +360,19 @@ describe('docs.open', () => {
     })
     expect(opened).toEqual(['notes/a.md'])
     expect(text).toBe('opened notes/a.md')
+  })
+
+  it('refuses while Holi does not have the vault open', async () => {
+    await put('notes/a.md', '# A\n')
+    opened.length = 0
+    expect(
+      await refusal(
+        runCapability('docs.open', 'cli', ctx({ syncState: () => null }, null), {
+          path: 'notes/a.md',
+        }),
+      ),
+    ).toMatchObject({ code: 'UNAVAILABLE', message: 'vault-not-open' })
+    expect(opened).toEqual([])
   })
 
   it('refuses a path outside the vault, or one it does not hold', async () => {

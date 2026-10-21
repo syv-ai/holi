@@ -78,9 +78,11 @@ agent stays in view. It refuses a secret file and `.holi/state/` (checked lower-
 since macOS opens `.holi/State/x` as `.holi/state/x`), so a prompt-injected agent cannot put a
 token on screen. The rule is one shared predicate, `shownPathOrNull` in `@holi/shared`, and every
 other way something asks Holi to show a path is held to it too: an app's `holi.open`, an app
-command's `{open}` result, `holi agent notify --path`, and a click on an inbox entry. It is the CLI door only (an app has `holi.open`), it opens only into the vault Holi is showing (an agent
+command's `{open}` result, `holi agent notify --path`, and a click on an inbox entry. It is the CLI door only (an app has `holi.open`), it opens only into the vault Holi has open (an agent
 session outlives a vault switch, and its open must not switch the person away), and it brings the
-window forward. Main asks the renderer over one push, `vault:open`, the same one a clicked
+window forward. Outside that vault it is refused as `UNAVAILABLE: vault-not-open`, the one refusal
+every command that shows or writes the open vault gives (`requireOpen` in
+`capabilities/fences.ts`). Main asks the renderer over one push, `vault:open`, the same one a clicked
 reminder uses; the renderer switches vault when the path lives elsewhere and opens it through
 `openPathAtom`.
 

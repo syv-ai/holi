@@ -17,6 +17,29 @@ import { CapabilityError } from './error'
 import type { CapabilityContext } from './registry'
 
 /**
+ * The one refusal for "Holi does not have this vault open": a command that acts
+ * on what the person sees (`docs.open`, `docs.screenshot`) or writes the vault
+ * (`docs.write`, and the CLI's note writes) needs this clone to be the vault
+ * Holi has open. An agent session outlives a vault switch, and its open must
+ * not switch the person away from what they are working in. The message is a
+ * stable reason, `vault-not-open`, which a write's receipt also carries.
+ */
+export const VAULT_NOT_OPEN = 'vault-not-open'
+
+export function vaultNotOpen(): CapabilityError {
+  return new CapabilityError(
+    'UNAVAILABLE',
+    VAULT_NOT_OPEN,
+    'Holi does not have this vault open; tell the person, do not retry',
+  )
+}
+
+/** Refuse unless Holi has `ctx`'s vault open (`vaultNotOpen`). */
+export function requireOpen(ctx: CapabilityContext): void {
+  if (ctx.core.syncState() === null) throw vaultNotOpen()
+}
+
+/**
  * The vault path a person may be shown, or a refusal: a real vault path, not
  * this machine's state under `.holi/state/` (it holds the bridge's tokens) and
  * not a secret file. Every read starts here; `docs.open` stops here, since the
