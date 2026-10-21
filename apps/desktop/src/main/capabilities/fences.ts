@@ -5,12 +5,10 @@
  */
 import { readFile } from 'node:fs/promises'
 import {
-  AGENT_SURFACE_FILES,
   appBundleOf,
   isAgentSurfacePath,
   isAppPrivatePath,
-  isHiddenPath,
-  isLocalOnlyPath,
+  isAppWritablePath,
   isMachineStatePath,
   isSecretPath,
   vaultRelPath,
@@ -106,44 +104,13 @@ export async function readNote(ctx: CapabilityContext, path: string): Promise<st
 }
 
 /**
- * What an app may write, or a refusal: whatever a read refuses, and also
- * anything hidden (`.holi/`, `.claude/`, `.github/`: configuration and
- * machinery, each with its own writer), anything local (`.local.`: one
- * person's, which an app's code must not change for them, and which never
- * syncs to show anyone it did) and anything inside an app's bundle (another
- * app's code, or records, which have the store). What is left is the vault's
- * shared content, which an app writes as any member's editor would.
+ * What an app may write, or a refusal: whatever a read refuses, and then the
+ * one app write rule (`isAppWritablePath`).
  */
 export function writablePath(path: string): VaultRelPath {
   const rel = readablePath(path)
-  if (
-    isHiddenPath(rel) ||
-    isLocalOnlyPath(rel) ||
-    appBundleOf(rel) !== null ||
-    isAgentInstructionPath(rel)
-  ) {
-    throw new CapabilityError('FORBIDDEN', path)
-  }
+  if (!isAppWritablePath(rel)) throw new CapabilityError('FORBIDDEN', path)
   return rel
-}
-
-/** The names Claude Code reads instructions from, in any folder it works in. */
-const AGENT_INSTRUCTION_NAMES = new Set(['agents.md', 'claude.md'])
-const AGENT_SURFACE_NAMES = new Set(AGENT_SURFACE_FILES.map((f) => f.toLowerCase()))
-
-/**
- * A path an app must not write, though it may read it: an `AGENTS.md` or
- * `CLAUDE.md` anywhere (Claude Code loads the one in a subfolder it works in,
- * so an app that planted one would be instructing the agent), and the root
- * agent-surface files in any case (`claude.md` opens `CLAUDE.md` on macOS).
- * A read is matched exactly, since `notes/AGENTS.md` is a note someone may
- * read; a write is the one that has to be stopped.
- */
-function isAgentInstructionPath(rel: VaultRelPath): boolean {
-  return (
-    AGENT_SURFACE_NAMES.has(rel.toLowerCase()) ||
-    rel.split('/').some((seg) => AGENT_INSTRUCTION_NAMES.has(seg.toLowerCase()))
-  )
 }
 
 /**

@@ -196,7 +196,8 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
 - The agent-surface refusal lives in main (the capability registry), not the renderer. The process rendering
   untrusted code must not be the one deciding what it may read. `read` answers `FORBIDDEN`,
   distinct from `NOT_FOUND`.
-- What an app writes is narrower than what it reads (`writablePath`): besides everything a
+- What an app writes is narrower than what it reads (`isAppWritablePath` in `@holi/shared`,
+  the one app write rule, behind main's `writablePath`): besides everything a
   read refuses, nothing hidden (`.holi/`, `.claude/`, `.github/`: configuration and machinery,
   each with its own writer), nothing `.local.` (one person's, which a shared app's code must
   not change for them, and which never syncs to show anyone it did), and nothing inside an
