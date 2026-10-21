@@ -6,7 +6,7 @@
  * a quoting bug in it does not fail loudly, it sends a different argument.
  */
 import { execFile } from 'node:child_process'
-import { mkdir, mkdtemp, readdir, readFile, rm, stat } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
@@ -15,7 +15,8 @@ import { agentCapabilities } from '../src/plugins/agent/main/host/capabilities'
 import { appsCapabilities, storeCapabilities } from '../src/plugins/apps/main/capabilities'
 import { installHoliCli } from '../src/main/bridge/cli'
 import { createBridgeServer, type BridgeServer } from '../src/main/bridge/server'
-import { SPILL_BYTES, SPILL_DIR } from '../src/main/bridge/spill'
+import { SPILL_BYTES } from '../src/main/bridge/spill'
+import { OUT_DIR } from '../src/main/vault/out-files'
 import { CapabilityError, NEXT_STEP } from '../src/main/capabilities/error'
 import { createCapabilityHost } from '../src/main/capabilities/dispatch'
 import {
@@ -314,7 +315,7 @@ describe('an answer too long to print', () => {
     const res = await run(bin, ['store', 'list', 'T.app', 'items'], env)
     expect(res.code).toBe(0)
     const path = /\n {2}(\S+)\n/.exec(res.stdout)?.[1]
-    expect(path).toMatch(new RegExp(`^${SPILL_DIR}/.*store-list.*\\.local\\.json$`))
+    expect(path).toMatch(new RegExp(`^${OUT_DIR}/.*store-list.*\\.local\\.json$`))
     expect(res.stdout).toContain('a JSON array of 400 items, each with keys id, subject')
     expect(await readFile(join(dir, path!), 'utf8')).toBe(text)
   })
@@ -324,19 +325,24 @@ describe('an answer too long to print', () => {
     const res = await run(bin, ['store', 'list', 'T.app', 'items', '--json'], env)
     expect(res.code).toBe(0)
     const notice = JSON.parse(res.stdout) as { spilled: string; bytes: number; shape: string }
-    expect(notice.spilled).toMatch(new RegExp(`^${SPILL_DIR}/.*store-list.*\\.local\\.json$`))
+    expect(notice.spilled).toMatch(new RegExp(`^${OUT_DIR}/.*store-list.*\\.local\\.json$`))
     const written = await readFile(join(dir, notice.spilled), 'utf8')
     expect(notice.bytes).toBe(Buffer.byteLength(written))
     expect(notice.shape).toMatch(/^a JSON object with keys /)
   })
 
-  it('keeps only the newest spills', async () => {
+  it('keeps only the newest spills, and leaves screenshots alone', async () => {
+    const shot = 'screenshot-2000-01-01T00-00-00-000Z-abcdef.local.png'
+    await mkdir(join(dir, OUT_DIR), { recursive: true })
+    await writeFile(join(dir, OUT_DIR, shot), '')
     const text = JSON.stringify(rows)
     for (let i = 0; i < 52; i++) {
       capability.mockResolvedValueOnce({ text })
       await run(bin, ['store', 'list', 'T.app', 'items'], env)
     }
-    expect((await readdir(join(dir, SPILL_DIR))).length).toBe(50)
+    const names = await readdir(join(dir, OUT_DIR))
+    expect(names.filter((n) => n.startsWith('spill-')).length).toBe(50)
+    expect(names).toContain(shot)
   })
 })
 

@@ -13,6 +13,7 @@ import {
   type VaultRelPath,
   type VaultSnapshot,
 } from '@holi/shared'
+import { writeOut } from '../vault/out-files'
 import { readVaultSettings } from '../vault/settings'
 import { isSearchable, searchVault, type SearchHit } from '../vault/search'
 import { CapabilityError, unavailable } from './error'
@@ -20,7 +21,6 @@ import { inSnapshot, readableOrNull, readablePath, readNote, shownPath } from '.
 import { limitParam, noParams, paramsObject, pathParams, stringParam } from './params'
 import { cap, type CapabilityContext } from './registry'
 import { renderNote } from './render-note'
-import { writeScreenshot } from './screenshot-file'
 
 /** Recents an app may see: things it can name or open. The renderer leaves
  *  out the tabs `holi.open` cannot open (a terminal). */
@@ -142,7 +142,7 @@ export const vaultCapabilities = (deps: VaultCapabilitiesDeps) => ({
     params: pathParams,
     run: async (ctx, { path }) => {
       const png = await deps.screenshot(ctx.remote, await shownFile(ctx, path))
-      return { png: await writeScreenshot(ctx.root, png) }
+      return { png: await writeOut(ctx.root, 'screenshot', png, { ext: 'png' }) }
     },
     text: ({ png }) => png,
   }),
