@@ -47,7 +47,9 @@ export const BRIDGE_JS = `(() => {
     if (msg.ok) entry.resolve(msg.value)
     else {
       report('warn', ['holi ' + entry.method + ' refused: ' + String(msg.error)])
-      entry.reject(new Error(String(msg.error)))
+      const err = new Error(String(msg.error))
+      if (typeof msg.code === 'string') err.code = msg.code
+      entry.reject(err)
     }
   })
   const call = (method, params) =>
@@ -104,10 +106,17 @@ export const BRIDGE_JS = `(() => {
       list: () => call('docs.list'),
       read: (path) => call('docs.read', { path }),
       render: (path) => call('docs.render', { path }),
+      // The whole text, over base: the text you read, or null for a new note.
+      // Refused when the note changed since; read it again and retry.
+      write: (path, text, base) => call('docs.write', { path, text, base }),
     },
     tasks: {
       list: () => call('tasks.list'),
       complete: (path) => call('tasks.complete', { path }),
+      // Fields as the board sets them; null clears one. Done is completion.
+      update: (path, patch) => call('tasks.update', { path, patch }),
+      // { title, folder?, status?, description?, extra?: { due, priority, ... } }
+      create: (task) => call('tasks.create', task),
     },
     // A note's path, or one of Holi's views by name (home, board, settings).
     // Holi decides which: a view this vault has wins over a file.

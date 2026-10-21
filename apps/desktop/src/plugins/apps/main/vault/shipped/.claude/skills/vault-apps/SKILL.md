@@ -75,6 +75,9 @@ const text = await holi.docs.read(path) // that note's markdown, as a string
 const html = await holi.docs.render(path) // that note as HTML (or use <holi-note>)
 const tasks = await holi.tasks.list() // every task.*.md
 await holi.tasks.complete(path) // done; a recurring task rolls forward instead
+await holi.tasks.update(path, { due: '2026-08-24', priority: null }) // set fields; null clears
+const created = await holi.tasks.create({ title: 'Call the vendor', folder: 'ops' }) // { path }
+await holi.docs.write(path, newText, text) // over the text you read; see Changing the vault
 await holi.open('projects/q2.md') // opens that note in a Holi tab
 await holi.open('board') // or a view: home, board, agenda, mail, settings, history
 const recents = await holi.recents() // [{ kind: 'path'|'surface'|'session', key, id? }], newest first; an app is { kind: 'surface', key: 'app', id: bundle }
@@ -126,14 +129,58 @@ list (they are `holi.tasks.list()`), and neither are the agent's own files.
 and **rejects** for a missing file or a refused one (below). `holi.open(path)`
 takes the same kind of path.
 
+## Changing the vault
+
+An app changes the vault the way a person in Holi does, under the same rules,
+and the change syncs like theirs. There is no approval step: the vault's members
+trust each other's apps as they trust each other's edits.
+
+- `holi.tasks.complete(path)` is the board's checkbox: a recurring task rolls
+  forward to its next occurrence instead of ending.
+- `holi.tasks.update(path, patch)` sets fields, as the board does: `status`,
+  `due`, `priority`, `tags`, `assignees`, `reminder`, `recurrence`, `order`.
+  `null` clears `due`, `priority`, `reminder` or `recurrence`. A bad value or
+  an unknown field rejects, naming it. Setting `status: 'done'` is completion,
+  so it rolls a recurring task forward too. It resolves to the task as written.
+- `holi.tasks.create({ title, folder?, status?, description?, extra? })` makes
+  `task.<slug>.md` in `folder` (the vault root by default), `todo` unless
+  given; `extra` holds `due`, `priority`, `tags`, `assignees`, `reminder` and
+  `recurrence`. A repeated title gets a numbered name. It resolves to `{ path }`.
+- `holi.docs.write(path, text, base)` writes a whole `.md` note. `base` is the
+  text you read with `holi.docs.read`, or `null` for a note that must not exist
+  yet. If the note changed since you read it (a teammate's sync, the agent, the
+  person typing in it) the write rejects with `err.code === 'CONFLICT'` and
+  nothing is written: read it again, apply your change to the new text, and
+  write once more. Never retry with a stale base.
+- A task file (`task.*.md`) takes `holi.docs.write` for its body only: keep its
+  frontmatter exactly as you read it, or the write rejects and names
+  `holi.tasks.update`, which is how its fields change. A new task is
+  `holi.tasks.create`, never a note write.
+- A refusal is an `Error` with a `code`: `CONFLICT`, `FORBIDDEN`, `NOT_FOUND`
+  or `BAD_REQUEST`. Match on the code, not the message.
+
+```js
+async function appendLine(path, line) {
+  for (let i = 0; i < 3; i++) {
+    const text = await holi.docs.read(path)
+    try {
+      return await holi.docs.write(path, text.trimEnd() + '\n' + line + '\n', text)
+    } catch (err) {
+      if (err.code !== 'CONFLICT') throw err
+    }
+  }
+}
+```
+
 ## What an app cannot do
 
 These are not oversights — build within them rather than around them.
 
-- **It cannot write the vault.** No file writing, no task editing, no note
-  creation. An app shows; the agent changes. It writes two things only: its own
-  records, through `holi.store` (below), and a task's completion, through
-  `holi.tasks.complete`, which applies the board's rule.
+- **It cannot delete, move or rename anything**, and it writes only the vault's
+  shared notes and tasks (see Changing the vault). Nothing hidden (`.holi/`,
+  `.claude/`, `.github/`), nothing `.local.`, no `AGENTS.md` or `CLAUDE.md` in
+  any folder, nothing inside an app's folder, its own included: its data goes
+  in `holi.store`.
 - **It has no browser storage.** `localStorage` and `sessionStorage` _throw_ (the
   page has an opaque origin) and cookies do nothing. Anything that must survive
   a reload goes in `holi.store`; in-memory state within one session (a selected

@@ -36,3 +36,15 @@ export function completeTask(
   const reminder = shiftForRollover(task.reminder, task.due!, rolled) ?? task.reminder
   return { status: 'todo', due: rolled, reminder }
 }
+
+/**
+ * A field edit applied to a task. **Done is completion**, wherever it comes
+ * from (a field edit, a drop into Done, the card's checkbox, an app): on a
+ * recurring task it is the next occurrence, not the end of the series. The
+ * merge SPREADS rather than testing for undefined: a key present-and-undefined
+ * is how `parseTaskPatch` spells "clear this field".
+ */
+export function applyTaskPatch<T extends Task>(task: T, patch: Partial<Task>, today: string): T {
+  const next = { ...task, ...patch }
+  return patch.status === 'done' ? { ...next, ...completeTask(next, today) } : next
+}

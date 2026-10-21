@@ -8,6 +8,7 @@ import {
   appBundleOf,
   isAgentSurfacePath,
   isAppPrivatePath,
+  isAppWritablePath,
   isMachineStatePath,
   isSecretPath,
   vaultRelPath,
@@ -100,4 +101,25 @@ export async function readNote(ctx: CapabilityContext, path: string): Promise<st
   const text = await readFile(abs, 'utf8').catch(() => null)
   if (text === null) throw new CapabilityError('NOT_FOUND', path)
   return text
+}
+
+/**
+ * What an app may write, or a refusal: whatever a read refuses, and then the
+ * one app write rule (`isAppWritablePath`).
+ */
+export function writablePath(path: string): VaultRelPath {
+  const rel = readablePath(path)
+  if (!isAppWritablePath(rel)) throw new CapabilityError('FORBIDDEN', path)
+  return rel
+}
+
+/**
+ * The file a write opens, only when it is `rel` as named: no symlink on the
+ * way and the case it has on disk (`exactPath`), so the name the fences
+ * checked is the file that changes. The file need not exist.
+ */
+export async function writableFile(ctx: CapabilityContext, rel: VaultRelPath): Promise<string> {
+  const abs = await exactPath(ctx.root, rel)
+  if (abs === null) throw new CapabilityError('FORBIDDEN', rel)
+  return abs
 }
