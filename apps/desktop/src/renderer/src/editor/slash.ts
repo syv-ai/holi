@@ -247,12 +247,15 @@ async function runCommand(
     })
     return
   }
-  const change: ChangeSpec =
-    'replace' in result
-      ? { from: range.from, to: range.to, insert: result.replace }
-      : { from: range.to, insert: result.insert }
+  // A replace takes the place of the text the command was given, and only
+  // that: what was typed into it while the command ran is the person's, so
+  // the answer then goes after it instead.
+  const replace = 'replace' in result && view.state.sliceDoc(range.from, range.to) === text
   const inserted = 'replace' in result ? result.replace : result.insert
-  const end = ('replace' in result ? range.from : range.to) + inserted.length
+  const change: ChangeSpec = replace
+    ? { from: range.from, to: range.to, insert: inserted }
+    : { from: range.to, insert: inserted }
+  const end = (replace ? range.from : range.to) + inserted.length
   view.dispatch({
     changes: change,
     selection: EditorSelection.cursor(end),
