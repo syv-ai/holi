@@ -11,26 +11,26 @@
  */
 import { taskClaim, MEMORY_DIR } from '@holi/shared'
 import { useAtomValue, useSetAtom } from 'jotai'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { pathLabel } from '@/composites/file-icons'
 import { cn } from '@/lib/cn'
 import { boundsOf, type Point } from '@/lib/graph-layout'
-import type { LayoutRequest } from '@/lib/graph-layout.worker'
+import type { LayoutRequest, LayoutResponse } from '@/lib/graph-layout.worker'
 import { trpc } from '@/lib/trpc'
+import { useVaultScan } from '@/lib/use-vault-scan'
+import { linkFingerprintAtom } from '@/state/links'
 import { openBesideAtom, workspaceAtom } from '@/state/panes'
-import { activeRemoteAtom, showHiddenByVaultAtom, snapshotAtom } from '@/state/vaults'
+import { activeRemoteAtom, showHiddenByVaultAtom } from '@/state/vaults'
 
 type Graph = Awaited<ReturnType<typeof trpc.notes.graph.query>>
 
-/** How long the vault stays still before the graph is asked for again: a
- *  burst of autosaves is one rebuild. */
-const REFRESH_MS = 800
 /** Zoom past which every note is named, not just the lit ones. */
 const LABELS_AT = 1.6
 const ZOOM = { min: 0.1, max: 6 }
 /** Room round the fitted graph, in px. */
 const FIT_PAD = 48
 const NO_POINTS: Point[] = []
+const NO_NEIGHBOURS = new Set<number>()
 
 const kindOf = (path: string): 'memory' | 'task' | 'note' =>
   path.startsWith(`${MEMORY_DIR}/`) ? 'memory' : taskClaim.match(path) ? 'task' : 'note'
@@ -38,7 +38,7 @@ const kindOf = (path: string): 'memory' | 'task' | 'note' =>
 const FILL = {
   note: 'fill-muted-foreground',
   task: 'fill-task-todo',
-  memory: 'fill-file-purple',
+  memory: 'fill-graph-memory',
 } as const
 
 /** The note being read: the focused pane's, else the one open beside the
@@ -62,51 +62,50 @@ function useReadingNote(): string | null {
 export function GraphView({ visible }: { id?: string; visible: boolean }): React.JSX.Element {
   const remote = useAtomValue(activeRemoteAtom)
   const hidden = useAtomValue(showHiddenByVaultAtom)[remote ?? ''] ?? false
-  const snapshot = useAtomValue(snapshotAtom)
+  const fingerprint = useAtomValue(linkFingerprintAtom)
   const openBeside = useSetAtom(openBesideAtom)
   const reading = useReadingNote()
-  const [graph, setGraph] = useState<Graph | null>(null)
 
-  // Asked once on open, then again once the vault has been still a moment.
-  const asked = useRef(false)
-  useEffect(() => {
-    if (!visible || remote === null) return
-    let live = true
-    const ask = () =>
-      void trpc.notes.graph
-        .query({ remote, hidden })
-        .then((g) => live && setGraph(g))
-        .catch(() => live && setGraph({ nodes: [], edges: [], total: 0 }))
-    const timer = setTimeout(ask, asked.current ? REFRESH_MS : 0)
-    asked.current = true
-    return () => {
-      live = false
-      clearTimeout(timer)
-    }
-  }, [visible, remote, hidden, snapshot])
+  // Asked once on open, then again once the vault has been still a moment
+  // after a change.
+  const scan = useVaultScan(
+    visible && remote !== null ? `${remote}\n${hidden}` : null,
+    fingerprint,
+    () => trpc.notes.graph.query({ remote: remote!, hidden }),
+  )
+  const graph = scan?.ok ? scan.data : null
 
   // Laid out in a worker, so a big vault never freezes the window, and only
   // when the graph itself changed (`shape`), seeded from the last layout. What
   // is drawn is a graph with ITS layout: the previous pair stays up meanwhile.
   const [laid, setLaid] = useState<{ graph: Graph; points: Point[] } | null>(null)
+  const [layoutFailed, setLayoutFailed] = useState(false)
   const positions = useRef(new Map<string, Point>())
   const worker = useRef<Worker | null>(null)
   useEffect(() => {
     const w = new Worker(new URL('../../lib/graph-layout.worker.ts', import.meta.url), {
       type: 'module',
     })
+    // A worker that fails to load or throws answers nothing: say so rather
+    // than read the vault forever.
+    w.onerror = () => setLayoutFailed(true)
     worker.current = w
     return () => {
       w.terminate()
       worker.current = null
     }
   }, [])
-  const shape = graph === null ? '' : JSON.stringify([graph.nodes, graph.edges])
+  // Once per answer from main, not per render: the answer is a new object
+  // even when nothing in it changed.
+  const shape = useMemo(
+    () => (graph === null ? '' : JSON.stringify([graph.nodes, graph.edges])),
+    [graph],
+  )
   useEffect(() => {
     const w = worker.current
     if (graph === null || w === null) return
     const id = Math.random()
-    const onMessage = (e: MessageEvent<{ id: number; points: Point[] }>) => {
+    const onMessage = (e: MessageEvent<LayoutResponse>) => {
       if (e.data.id !== id) return
       positions.current = new Map(graph.nodes.map((n, i) => [n, e.data.points[i]!]))
       setLaid({ graph, points: e.data.points })
@@ -211,22 +210,73 @@ export function GraphView({ visible }: { id?: string; visible: boolean }): React
   }
 
   const [hover, setHover] = useState<number | null>(null)
+  const leave = useCallback((i: number) => setHover((h) => (h === i ? null : h)), [])
   const nodes = drawn?.nodes ?? []
   const readingIndex = reading === null ? -1 : nodes.indexOf(reading)
   // What is lit: the hovered note and its neighbours, else the read one's.
   const centre = hover ?? (readingIndex >= 0 ? readingIndex : null)
-  const lit = centre === null ? null : new Set([centre, ...(neighbours.get(centre) ?? [])])
-
-  const radius = (i: number) => 3 + Math.min(5, Math.sqrt(neighbours.get(i)?.size ?? 0))
+  const lit = useMemo(
+    () =>
+      centre === null ? null : new Set([centre, ...(neighbours.get(centre) ?? NO_NEIGHBOURS)]),
+    [centre, neighbours],
+  )
+  const allNamed = view.k >= LABELS_AT
   const linkCount = drawn?.edges.length ?? 0
+
+  // The layers depend on the graph, its layout and what is lit, never on the
+  // view: a pan or zoom changes only the outer transform and `--graph-k`, which
+  // keeps strokes and labels their size on screen. Each node is memoised too,
+  // so a hover redraws only the nodes whose light changed.
+  const edgeLayer = useMemo(
+    () =>
+      drawn?.edges.map(([a, b]) => (
+        <GraphEdge
+          key={`${a}-${b}`}
+          from={points[a]!}
+          to={points[b]!}
+          on={a === centre || b === centre}
+        />
+      )),
+    [drawn, points, centre],
+  )
+  const nodeLayer = useMemo(
+    () =>
+      drawn?.nodes.map((path, i) => (
+        <GraphNode
+          key={path}
+          path={path}
+          index={i}
+          at={points[i]!}
+          radius={3 + Math.min(5, Math.sqrt(neighbours.get(i)?.size ?? 0))}
+          reading={i === readingIndex}
+          dim={lit !== null && !lit.has(i)}
+          named={allNamed || (lit !== null && lit.has(i))}
+          centre={i === centre}
+          onEnter={setHover}
+          onLeave={leave}
+          onOpen={openBeside}
+        />
+      )),
+    [drawn, points, neighbours, readingIndex, lit, allNamed, centre, leave, openBeside],
+  )
+
+  const error = layoutFailed
+    ? 'Couldn’t lay out the graph.'
+    : scan !== null && !scan.ok
+      ? 'Couldn’t read the vault’s links.'
+      : null
 
   return (
     <div className="relative flex h-full min-h-0 flex-col bg-background" data-graph-view="">
-      <p className="pointer-events-none absolute top-3 left-4 z-10 text-[11px] text-muted-foreground">
-        {drawn === null
-          ? 'Reading the vault…'
-          : `${nodes.length} note${nodes.length === 1 ? '' : 's'} · ${linkCount} link${linkCount === 1 ? '' : 's'}`}
-        {drawn !== null && drawn.total > nodes.length && (
+      <p
+        className="pointer-events-none absolute top-3 left-4 z-10 text-[11px] text-muted-foreground"
+        data-graph-error={error === null ? undefined : ''}
+      >
+        {error ??
+          (drawn === null
+            ? 'Reading the vault…'
+            : `${nodes.length} note${nodes.length === 1 ? '' : 's'} · ${linkCount} link${linkCount === 1 ? '' : 's'}`)}
+        {error === null && drawn !== null && drawn.total > nodes.length && (
           <>
             {' '}
             · the {nodes.length} best-linked of {drawn.total}
@@ -254,57 +304,10 @@ export function GraphView({ visible }: { id?: string; visible: boolean }): React
           <svg width={size.w} height={size.h} className="block select-none">
             <g
               transform={`translate(${size.w / 2 + view.x} ${size.h / 2 + view.y}) scale(${view.k})`}
+              style={{ '--graph-k': view.k } as React.CSSProperties}
             >
-              <g strokeWidth={1 / view.k}>
-                {drawn?.edges.map(([a, b]) => {
-                  const on = a === centre || b === centre
-                  return (
-                    <line
-                      key={`${a}-${b}`}
-                      x1={points[a]!.x}
-                      y1={points[a]!.y}
-                      x2={points[b]!.x}
-                      y2={points[b]!.y}
-                      className={on ? 'stroke-foreground' : 'stroke-muted-foreground/40'}
-                    />
-                  )
-                })}
-              </g>
-              {nodes.map((path, i) => {
-                const p = points[i]!
-                const dim = lit !== null && !lit.has(i)
-                const named = view.k >= LABELS_AT || (lit !== null && lit.has(i))
-                return (
-                  <g
-                    key={path}
-                    data-graph-node={path}
-                    role="link"
-                    aria-label={path}
-                    className={cn('cursor-pointer', dim && 'opacity-40')}
-                    onPointerEnter={() => setHover(i)}
-                    onPointerLeave={() => setHover((h) => (h === i ? null : h))}
-                    onClick={() => openBeside(path)}
-                  >
-                    <circle
-                      cx={p.x}
-                      cy={p.y}
-                      r={radius(i) + (i === readingIndex ? 2 : 0)}
-                      className={i === readingIndex ? 'fill-primary' : FILL[kindOf(path)]}
-                    />
-                    {named && (
-                      <text
-                        x={p.x}
-                        y={p.y + radius(i) + 12 / view.k}
-                        textAnchor="middle"
-                        fontSize={11 / view.k}
-                        className={i === centre ? 'fill-foreground' : 'fill-muted-foreground'}
-                      >
-                        {pathLabel(path)}
-                      </text>
-                    )}
-                  </g>
-                )
-              })}
+              <g>{edgeLayer}</g>
+              {nodeLayer}
             </g>
           </svg>
         )}
@@ -312,3 +315,97 @@ export function GraphView({ visible }: { id?: string; visible: boolean }): React
     </div>
   )
 }
+
+/** A line between two notes, a hairline at any zoom. */
+const GraphEdge = memo(function GraphEdge({
+  from,
+  to,
+  on,
+}: {
+  from: Point
+  to: Point
+  on: boolean
+}) {
+  return (
+    <line
+      x1={from.x}
+      y1={from.y}
+      x2={to.x}
+      y2={to.y}
+      vectorEffect="non-scaling-stroke"
+      className={cn('motion-respond', on ? 'stroke-foreground' : 'stroke-muted-foreground/40')}
+    />
+  )
+})
+
+/** Undo the zoom, so a label reads at the same size at any zoom. */
+const LABEL_STYLE = {
+  fontSize: 'calc(11px / var(--graph-k))',
+  transform: 'translateY(calc(12px / var(--graph-k)))',
+} as const
+
+/** A note: a dot sized by its links, a link to open it beside the graph. */
+const GraphNode = memo(function GraphNode({
+  path,
+  index,
+  at,
+  radius,
+  reading,
+  dim,
+  named,
+  centre,
+  onEnter,
+  onLeave,
+  onOpen,
+}: {
+  path: string
+  index: number
+  at: Point
+  radius: number
+  reading: boolean
+  dim: boolean
+  named: boolean
+  centre: boolean
+  onEnter: (i: number) => void
+  onLeave: (i: number) => void
+  onOpen: (path: string) => void
+}) {
+  return (
+    <g
+      data-graph-node={path}
+      role="link"
+      tabIndex={0}
+      aria-label={path}
+      className={cn('motion-respond cursor-pointer outline-none', dim && 'opacity-40')}
+      onPointerEnter={() => onEnter(index)}
+      onPointerLeave={() => onLeave(index)}
+      // Focus lights a note as hover does: that is its focus treatment.
+      onFocus={() => onEnter(index)}
+      onBlur={() => onLeave(index)}
+      onClick={() => onOpen(path)}
+      onKeyDown={(e) => {
+        if (e.key !== 'Enter' && e.key !== ' ') return
+        e.preventDefault()
+        onOpen(path)
+      }}
+    >
+      <circle
+        cx={at.x}
+        cy={at.y}
+        r={radius + (reading ? 2 : 0)}
+        className={reading ? 'fill-primary' : FILL[kindOf(path)]}
+      />
+      {named && (
+        <text
+          x={at.x}
+          y={at.y + radius}
+          textAnchor="middle"
+          style={LABEL_STYLE}
+          className={centre ? 'fill-foreground' : 'fill-muted-foreground'}
+        >
+          {pathLabel(path)}
+        </text>
+      )}
+    </g>
+  )
+})

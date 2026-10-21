@@ -11,7 +11,13 @@ export interface LayoutRequest {
   previous: [string, Point][]
 }
 
+export interface LayoutResponse {
+  id: number
+  points: Point[]
+}
+
 self.onmessage = (e: MessageEvent<LayoutRequest>) => {
   const { id, nodes, edges, previous } = e.data
-  self.postMessage({ id, points: layoutGraph(nodes, edges, new Map(previous)) })
+  const response: LayoutResponse = { id, points: layoutGraph(nodes, edges, new Map(previous)) }
+  self.postMessage(response)
 }

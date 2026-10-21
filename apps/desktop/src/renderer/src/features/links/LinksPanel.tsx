@@ -4,20 +4,21 @@
  * that links to it. Each opens its note the way a chip does.
  *
  * A link to a note that does not exist is listed, dimmed, and opens nothing,
- * like the chip it is in the editor. The lists are asked of main whenever the
- * vault changes on disk, so an edit shows once autosave has written it.
+ * like the chip it is in the editor. The lists are asked of main again a moment
+ * after the vault changes on disk, so an edit shows once autosave has written
+ * it.
  */
 import { useAtomValue, useSetAtom } from 'jotai'
 import { Waypoints } from 'lucide-react'
-import { useEffect, useState } from 'react'
 import { DrawerShell, DrawerTitle } from '@/composites'
 import { pathLabel } from '@/composites/file-icons'
 import { Button } from '@/primitives'
 import { trpc } from '@/lib/trpc'
+import { useVaultScan } from '@/lib/use-vault-scan'
 import { historyTargetPathAtom } from '@/state/history'
-import { linksOpenAtom, type NoteLinks } from '@/state/links'
+import { linkFingerprintAtom, linksOpenAtom, type NoteLinks } from '@/state/links'
 import { openPathAtom, openSurfaceAtom } from '@/state/surfaces'
-import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
+import { activeRemoteAtom } from '@/state/vaults'
 
 /** The folder a path sits in, or nothing at the vault root. */
 const folderOf = (path: string) => path.slice(0, Math.max(0, path.lastIndexOf('/')))
@@ -29,27 +30,18 @@ export function LinksPanel() {
   const open = useAtomValue(linksOpenAtom)
   const path = useAtomValue(historyTargetPathAtom)
   const remote = useAtomValue(activeRemoteAtom)
-  const snapshot = useAtomValue(snapshotAtom)
+  const fingerprint = useAtomValue(linkFingerprintAtom)
   const openPath = useSetAtom(openPathAtom)
   const openSurface = useSetAtom(openSurfaceAtom)
-  const [links, setLinks] = useState<{ path: string; links: NoteLinks } | null>(null)
 
-  // Per note, and again on every snapshot push: a link written anywhere in the
-  // vault lands here once it is on disk. Not while closed.
-  useEffect(() => {
-    if (!open || path === null || remote === null) return
-    let live = true
-    void trpc.notes.links
-      .query({ remote, path })
-      .then((result) => live && setLinks({ path, links: result }))
-      .catch(() => live && setLinks({ path, links: { outgoing: [], backlinks: [] } }))
-    return () => {
-      live = false
-    }
-  }, [open, path, remote, snapshot])
-
-  // Another note's lists are not shown under this one's name while they load.
-  const shown = links !== null && links.path === path ? links.links : null
+  // Per note, and again once the vault has been still a moment after a change:
+  // a link written anywhere lands here once it is on disk. Not while closed.
+  const scan = useVaultScan(
+    open && path !== null && remote !== null ? `${remote}\n${path}` : null,
+    fingerprint,
+    () => trpc.notes.links.query({ remote: remote!, path: path! }),
+  )
+  const shown = scan?.ok ? scan.data : null
   const sources = shown === null ? [] : groupBySource(shown.backlinks)
 
   const heading = (title: string, count: number) => (
@@ -69,8 +61,12 @@ export function LinksPanel() {
       actions={[{ icon: Waypoints, label: 'Open the graph', onSelect: () => openSurface('graph') }]}
     >
       <div className="min-h-0 flex-1 overflow-y-auto p-2 pt-0" data-links-panel="">
-        {shown === null ? (
+        {scan === null ? (
           <p className="px-3 py-3 text-[13px] text-muted-foreground">Loading…</p>
+        ) : shown === null ? (
+          <p className="px-3 py-3 text-[13px] text-muted-foreground" data-links-error="">
+            Couldn&rsquo;t read this note&rsquo;s links.
+          </p>
         ) : (
           <>
             <section data-links-section="outgoing">
