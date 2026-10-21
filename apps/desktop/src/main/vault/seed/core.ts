@@ -51,7 +51,7 @@ const THEME_LOCAL_SEED = applyThemePatch(null, {})
 
 export const GITIGNORE = '.gitignore'
 
-const LOCAL_ONLY_HEADER = '# Machine-local — never committed. Managed by Holi.'
+const LOCAL_ONLY_HEADER = '# Machine-local, never committed. Managed by Holi.'
 const OS_JUNK_HEADER = '# OS junk, never committed. Managed by Holi.'
 
 /**
