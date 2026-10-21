@@ -2,7 +2,7 @@
  * The capabilities PDF's renderer calls through the UI door: templates,
  * render and the viewer's signatures.
  */
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -26,6 +26,11 @@ const TEMPLATE_FILES = {
   '.holi/document-templates/plain/template.typ': '#let doc(p, meta: (:), assets: "") = []',
 }
 
+/** A drawing with every character the comment and the string must survive. */
+const SVG =
+  '<svg xmlns="http://www.w3.org/2000/svg" width="80" height="40"><style>.a > text { fill: #333 }</style>' +
+  '<rect width="80" height="40" fill="#eef"/><text class="a" x="4" y="24">A --> "B" \\</text></svg>'
+
 let base: string
 
 afterEach(async () => {
@@ -47,6 +52,7 @@ async function rig(files: Record<string, string> = {}) {
     pdfCapabilities({
       signatures: createSignatureStore(join(base, 'pdf-signatures.json')),
       typst: () => resolveTypstBin(),
+      diagrams: async (sources) => sources.map(() => ({ svg: SVG })),
     }),
   )
   const ctx = {
@@ -103,25 +109,86 @@ describe('pdf capabilities', () => {
     ).rejects.toThrow(/meta/)
   })
 
-  it('render writes to the given outPath and threads meta through (needs typst)', async () => {
+  it('render writes to the given out, fills fields and threads meta through (needs typst)', async () => {
     if ((await resolveTypstBin()) === null) return // no typst: skip, don't fail
     const { run } = await rig({
       '.holi/document-templates/plain/template.json': JSON.stringify({
         name: 'Plain',
-        fields: [{ key: 'date', label: 'Date', type: 'date', required: false }],
+        fields: [
+          { key: 'date', label: 'Date', type: 'date', required: false },
+          { key: 'recipient', label: 'Recipient', required: true },
+        ],
       }),
       '.holi/document-templates/plain/template.typ': plainTemplateTyp,
-      'note.md': '---\ntitle: T\n---\n\n## Heading\n\nBody.\n',
+      'note.md':
+        '---\nrecipient: ACME\n---\n\n## Heading\n\n```mermaid\nflowchart LR\n  A --> B\n```\n',
     })
-    const outPath = join(base, 'chosen.pdf')
-    const result = await run('pdf.render', {
-      path: 'note.md',
-      template: 'plain',
-      outPath,
-      meta: { date: '2026-07-26', recipient: 'ACME' },
+    const out = join(base, 'chosen.pdf')
+    const result = await run('pdf.render', { path: 'note.md', out, meta: { date: '2026-07-26' } })
+    expect(result).toEqual({
+      pdfPath: out,
+      vaultPath: null,
+      bytes: expect.any(Number),
+      warnings: [],
     })
-    expect(result).toEqual({ pdfPath: outPath, vaultPath: null })
-    const bytes = await readFile(outPath)
+    const bytes = await readFile(out)
     expect(bytes.subarray(0, 5).toString('latin1')).toBe('%PDF-')
   }, 30_000)
+
+  it('render refuses a field the template does not have, and a missing required one', async () => {
+    const { run } = await rig({ ...TEMPLATE_FILES, 'note.md': '# Hi\n' })
+    await expect(
+      run('pdf.render', { path: 'note.md', meta: { recipient: 'A', colour: 'red' } }),
+    ).rejects.toThrow(/colour/)
+    await expect(run('pdf.render', { path: 'note.md' })).rejects.toThrow(/recipient/)
+  })
+
+  it('render will not read a note through a symlink that leaves the vault', async () => {
+    const { root, run } = await rig({ ...TEMPLATE_FILES })
+    await writeFile(join(base, 'secret.md'), '# Secret\n')
+    await symlink(join(base, 'secret.md'), join(root, 'note.md'))
+    await expect(run('pdf.render', { path: 'note.md', meta: { recipient: 'A' } })).rejects.toThrow(
+      /escapes vault/,
+    )
+  })
+
+  it('render will not write through a symlink, or to a relative out outside the vault', async () => {
+    const { root, run } = await rig({ ...TEMPLATE_FILES, 'note.md': '# Hi\n', 'other.pdf': '' })
+    await symlink(join(root, 'other.pdf'), join(root, 'note.pdf'))
+    await expect(run('pdf.render', { path: 'note.md', meta: { recipient: 'A' } })).rejects.toThrow(
+      /symlink/,
+    )
+    await mkdir(join(base, 'outside'))
+    await symlink(join(base, 'outside'), join(root, 'out'))
+    await expect(
+      run('pdf.render', { path: 'note.md', out: 'out/x.pdf', meta: { recipient: 'A' } }),
+    ).rejects.toThrow(/escapes vault/)
+    await expect(
+      run('pdf.render', { path: 'note.md', out: '../x.pdf', meta: { recipient: 'A' } }),
+    ).rejects.toThrow()
+  })
+
+  it('render will not read a secret or machine-state note, nor write a PDF into one', async () => {
+    const { root, run } = await rig({
+      ...TEMPLATE_FILES,
+      'note.md': '# Hi\n',
+      '.secrets/x.md': '# Secret\n',
+      '.holi/state/x.md': '# State\n',
+    })
+    const meta = { recipient: 'A' }
+    for (const path of ['.secrets/x.md', '.holi/state/x.md']) {
+      await expect(run('pdf.render', { path, out: 'notes/x.pdf', meta })).rejects.toThrow(
+        /secret or machine-state/,
+      )
+    }
+    await symlink(join(root, '.secrets/x.md'), join(root, 'alias.md'))
+    await expect(run('pdf.render', { path: 'alias.md', meta })).rejects.toThrow(
+      /secret or machine-state/,
+    )
+    for (const out of ['.env/x.pdf', '.holi/state/x.pdf', join(root, '.holi/state/x.pdf')]) {
+      await expect(run('pdf.render', { path: 'note.md', out, meta })).rejects.toThrow(
+        /secret or machine-state/,
+      )
+    }
+  })
 })

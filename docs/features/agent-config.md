@@ -193,7 +193,7 @@ additions are commands in a directory prepended to `PATH`, plus skills that docu
   the bridge through the vault's `bridge.local.env`. All reversible or read-only (a record write is a file
   change in git history) except `google send` and `google reply`, which the send gate asks about.
 - `holi google <verb>`: mail and calendar through main, which holds the tokens ([google.md](google.md)).
-- `holi pdf typst` for PDF export, which prints the Typst binary's path ([pdf.md](pdf.md)).
+- `holi pdf render` for PDF export, the same render as Convert to PDF, and `holi pdf typst`, which prints the Typst binary's path ([pdf.md](pdf.md)).
 - Shipped skills: the agent's `memory`, `scheduled-agents`, `notify`, `note-comments`,
   `show-the-user` (`holi docs open` and `holi docs screenshot`), `theme` and `holi-feedback` (a
   GitHub issue on syv-ai/holi, labelled `vault-assistant`, through
