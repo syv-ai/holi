@@ -27,7 +27,7 @@
  *
  * No `electron` import: this loads under plain Node in the tests.
  */
-import type { VaultSnapshot } from '@holi/shared'
+import type { SnapshotClaim, VaultSnapshot } from '@holi/shared'
 import { CapabilityError } from './error'
 import type { CoreServices } from './services'
 
@@ -40,6 +40,10 @@ export interface CapabilityContext {
   /** The calling app's bundle at the app door; null at every other door. */
   bundle: string | null
   snapshot(): Promise<VaultSnapshot>
+  /** The path claims of the plugins the vault runs (`MainPlugin.claims`): a
+   *  core entry asks a claimed file's plugin about it rather than naming the
+   *  plugin. */
+  claims(): Promise<readonly SnapshotClaim[]>
   /** What the running app knows beyond the files, for core's entries: one
    *  factory builds these for every door (`services.ts`). A feature's entries
    *  close over their own dependencies instead. */

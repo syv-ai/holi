@@ -1252,10 +1252,11 @@ export function createRouter(deps: RouterDeps) {
    *  signed-in person; the agent's door is `holi comments`. */
   async function commentNote(remote: string, path: string): Promise<{ root: string; rel: string }> {
     const rel = safe(path)
-    if (!isCommentableNote(rel)) {
+    const root = await rootFor(remote)
+    if (!isCommentableNote(rel, await deps.plugins.scanClaimsFor(root))) {
       throw new TRPCError({ code: 'BAD_REQUEST', message: `${rel} takes no comments` })
     }
-    return { root: await rootFor(remote), rel }
+    return { root, rel }
   }
 
   function commentText(raw: string): string {

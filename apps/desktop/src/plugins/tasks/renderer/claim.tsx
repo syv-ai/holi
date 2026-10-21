@@ -56,6 +56,7 @@ export const TASK_PATH_CLAIM: PathClaim = {
   },
   // The board owns tasks, so the tree leaves them out until asked.
   hideable: { id: 'tasks', label: 'task files', icon: ListTodo },
+  graph: { label: 'Task', fill: 'fill-task-todo' },
   editor: {
     chips: (snapshot) =>
       new Map(

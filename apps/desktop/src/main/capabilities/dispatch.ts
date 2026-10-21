@@ -35,8 +35,8 @@ export interface CapabilityHostDeps {
   core(remote: string, root: string): CoreServices
   /** Whether the vault cloned at `root` runs this plugin. */
   pluginEnabled(plugin: string, root: string): Promise<boolean>
-  /** What the scanner claims in the vault cloned at `root`, for a vault that
-   *  is not open. */
+  /** What the scanner claims in the vault cloned at `root`: the claims of
+   *  the plugins it runs. */
   claims(root: string): Promise<readonly ScanClaim[]>
 }
 
@@ -109,6 +109,7 @@ export function createCapabilityHost(deps: CapabilityHostDeps): CapabilityHost {
             ? active.snapshot()
             : scanVault(root, await deps.claims(root))
         },
+        claims: () => deps.claims(root),
         core: deps.core(remote, root),
       },
       params,

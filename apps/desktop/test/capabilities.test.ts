@@ -16,6 +16,7 @@ import { vaultCapabilities, VAULT_NAMESPACES } from '../src/main/capabilities/va
 import type { GoogleAccountsManager } from '../src/plugins/google/main/accounts'
 import { googleCapabilities, GOOGLE_NAMESPACES } from '../src/plugins/google/main/capabilities'
 import { taskCapabilities, TASKS_NAMESPACES } from '../src/plugins/tasks/main/capabilities'
+import { taskClaim } from '../src/plugins/tasks/shared/task-file'
 import { MEMBERS_TTL_MS, createMembersCache } from '../src/main/github/members-cache'
 
 const registry = createCapabilityRegistry()
@@ -169,6 +170,8 @@ function ctx(core: Partial<CoreServices>, bundle: string | null = 'A.app'): Capa
       files: written.map((path) => ({ path, updatedAt: '' })),
       dirs: written.filter((p) => p.includes('/')).map((p) => p.slice(0, p.lastIndexOf('/'))),
     }),
+    // The tasks plugin runs: a note write to a task file asks its claim.
+    claims: async () => [taskClaim],
     core: { ...noCoreServices(), ...core },
   }
 }

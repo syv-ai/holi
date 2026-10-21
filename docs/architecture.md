@@ -109,10 +109,15 @@ and its `rowMenu` items join the file tree's menu. A claim can say more about it
 the explorer's New makes (`create`), that they stay out of the tree until shown (`hideable`), what
 it adds to the notes editor (`editor`: how a link to one is drawn, what the `@` menu offers, a
 layer for its own files) and how their frontmatter is drawn (`frontmatter`: fields, controls by
-key, an always-open block, suggestions). One `useEditorDeps` wires every notes editor from them. On the main side a claim
-(`MainPlugin.claims`, `{match, parse, normalize?}`) owns markdown files in the snapshot: the scanner
-(`scanVault(root, claims)`, the claims from `PluginHost.scanClaimsFor`) parses them into
-`snapshot.claimed[id]` instead of `docs`, and a settings write that changes `plugins` rescans.
+key, an always-open block, suggestions), and how the graph draws them (`graph`). One
+`useEditorDeps` wires every notes editor from them. On the main side a claim
+(`MainPlugin.claims`, `{match, parse, normalize?, checkNoteWrite?}`) owns markdown files in the
+snapshot: the scanner (`scanVault(root, claims)`, the claims from `PluginHost.scanClaimsFor`)
+parses them into `snapshot.claimed[id]` instead of `docs`, and a settings write that changes
+`plugins` rescans. Core asks a claimed file's plugin about it through the claims rather than
+naming the plugin: a capability reads the vault's (`ctx.claims()`), so a vault app's note write
+(`docs.write`) is checked by `checkNoteWrite` (a task's body only), and a file a running plugin
+claims takes no comments.
 A plugin adds `surfaces` (tab kinds) and `rail`
 items to the nav menu ([tabs and panes](features/tabs-panes.md)), each with a badge if it likes,
 registered beside core's own, `settingsSections` to the settings tab

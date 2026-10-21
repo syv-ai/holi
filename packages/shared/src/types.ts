@@ -101,6 +101,13 @@ export interface SnapshotClaim {
   match(path: string): boolean
   parse(text: string, path: string): ClaimedItem
   normalize?(text: string): string
+  /**
+   * A whole-text write to one of its files from outside the plugin (a vault
+   * app's `docs.write`), checked before it lands: throws, saying why, when
+   * the write would change what only the plugin's own capabilities may (a
+   * task's fields). `current` is the file's text, null for one not there yet.
+   */
+  checkNoteWrite?(path: string, current: string | null, next: string): void
 }
 
 /**

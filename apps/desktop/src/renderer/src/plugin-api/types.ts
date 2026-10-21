@@ -141,6 +141,9 @@ export interface PathClaim {
    * is remembered under, stable whatever `label` says; `label` names the files.
    */
   hideable?: { id: string; label: string; icon: IconGlyph }
+  /** How its files are drawn in the graph, in place of a note's dot: what the
+   *  legend calls them, and a `fill-*` class from the theme's tokens. */
+  graph?: { label: string; fill: string }
   /**
    * The file's canonical form: the same function as the main side's claim,
    * which the `normalize-md` commit transform applies. The editor treats a

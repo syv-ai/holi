@@ -132,6 +132,7 @@ describe('pdfCommentsInVault', () => {
       root,
       bundle: null,
       snapshot: async () => emptyVaultSnapshot(),
+      claims: async () => [],
       core: noCoreServices(),
     }
     const registry = createCapabilityRegistry()

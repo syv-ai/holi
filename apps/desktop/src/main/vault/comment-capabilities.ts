@@ -38,14 +38,15 @@ export interface CommentCapabilitiesDeps {
 }
 
 /** A note's vault path and text, refusing what takes no comments
- *  (`isCommentableNote`, on the normalised path) or what a read may not reach
+ *  (`isCommentableNote`, on the normalised path, with the vault's claims) or
+ *  what a read may not reach
  *  (the shared fences, through `readNote`). */
 async function noteText(
   ctx: CapabilityContext,
   path: string,
 ): Promise<{ rel: string; text: string }> {
   const rel = shownPath(path)
-  if (!isCommentableNote(rel)) {
+  if (!isCommentableNote(rel, await ctx.claims())) {
     throw new CapabilityError('BAD_REQUEST', `${path} takes no comments`)
   }
   return { rel, text: await readNote(ctx, rel) }

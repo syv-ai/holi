@@ -18,6 +18,7 @@ export const tasksMain: MainPlugin = {
   seed: tasksSeed,
   claims: [taskClaim],
   transforms: [{ name: 'archive-done', run: (root, staged) => archiveDone(root, staged) }],
-  activate: (ctx) => ctx.register(TASKS_NAMESPACES, taskCapabilities({ today: () => localDate(new Date()) })),
+  activate: (ctx) =>
+    ctx.register(TASKS_NAMESPACES, taskCapabilities({ today: () => localDate(new Date()) })),
   background: { why: 'Holi stays open for reminders', start: startReminders },
 }

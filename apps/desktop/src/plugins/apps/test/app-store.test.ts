@@ -59,6 +59,7 @@ function call(method: string, params: Record<string, unknown>, door: Door = 'app
     root,
     bundle: door === 'app' ? 'Work/Tracker.app' : null,
     snapshot: async () => emptyVaultSnapshot(),
+    claims: async () => [],
     core: noCoreServices(),
   }
   return registry.run(method, door, ctx, params).then((r) => r.value)

@@ -46,7 +46,7 @@ import {
   threadLinesAtom,
   threadsByPathAtom,
 } from '@/state/comments'
-import { normalizersAtom } from '@/state/plugins'
+import { claimsAtom, normalizersAtom } from '@/state/plugins'
 import { trpc } from '@/lib/trpc'
 import { fileHistoryAtom } from '@/state/file-history'
 import { editorSelectionAtom } from '@/state/ui-report'
@@ -180,7 +180,8 @@ export function EditorPane({
   const draftCommentRef = useRef(draftComment)
   draftCommentRef.current = draftComment
   /** A note that takes threads (`isCommentableNote`), not a plain text file. */
-  const commentable = path !== null && !plain && isCommentableNote(path)
+  const claims = useAtomValue(claimsAtom)
+  const commentable = path !== null && !plain && isCommentableNote(path, claims)
   /** Read on demand by the editor's pull-based seams, so a snapshot arriving
    *  mid-edit does not rebuild the EditorView and drop the caret. Whether
    *  there is an agent at all does rebuild it, below. */

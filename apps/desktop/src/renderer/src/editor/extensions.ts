@@ -90,9 +90,7 @@ const claimLayer = new Compartment()
 type ClaimLayer = Pick<EditorDeps, 'frontmatterAlwaysOpen' | 'claimExtensions'>
 
 function claimLayerOf(deps: ClaimLayer): Extension {
-  return [
-    claimLayer.of(claimLayerOf(deps)),
-  ]
+  return [claimLayer.of(claimLayerOf(deps))]
 }
 
 /** Swap an open view's claim layer for the file's claim now. A view with no

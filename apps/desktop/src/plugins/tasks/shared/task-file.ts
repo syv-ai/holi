@@ -459,6 +459,34 @@ export const taskClaim: SnapshotClaim = {
       return text
     }
   },
+  checkNoteWrite: sameTaskFields,
+}
+
+/** A task's frontmatter, as the task parser reads it, to compare two texts by. */
+function taskFields(path: string, text: string): string {
+  try {
+    return serializeTaskFile({ ...parseTaskFile(text, path), description: '' })
+  } catch (err) {
+    throw new TaskFileError(`${path}: ${(err as Error).message}`)
+  }
+}
+
+/**
+ * A note write to a task file (a vault app's `docs.write`) changes its body
+ * only. Its fields go through `tasks.update`, where done is completion and
+ * every value is checked; a whole-file write could set a bare `status: done`
+ * and end a recurring series, or a value the board cannot read. A new task is
+ * `tasks.create`'s.
+ */
+function sameTaskFields(path: string, current: string | null, text: string): void {
+  if (current === null) {
+    throw new TaskFileError(`a task is created with tasks.create: ${path}`)
+  }
+  if (taskFields(path, text) !== taskFields(path, current)) {
+    throw new TaskFileError(
+      `a task's fields change with tasks.update; docs.write keeps its frontmatter as it is: ${path}`,
+    )
+  }
 }
 
 /** The tasks and broken task files in `snapshot`. */
