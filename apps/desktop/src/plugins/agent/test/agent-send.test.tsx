@@ -7,6 +7,7 @@ import { createStore } from 'jotai'
 import { beforeEach, expect, test, vi } from 'vitest'
 import {
   agentHistoryAtom,
+  agentPageAtom,
   agentSessionsAtom,
   agentTerminalsAtom,
   askTargetsAtom,
@@ -67,6 +68,8 @@ beforeEach(() => {
 function storeWith(sessions: AgentSession[] = [], terminals: AgentTerminal[] = []) {
   const store = createStore()
   store.set(activeRemoteAtom, 'o/vault')
+  // agent-ui runs: the agents page is there to land on.
+  store.set(agentPageAtom, true)
   store.set(agentSessionsAtom, sessions)
   store.set(agentTerminalsAtom, terminals)
   return store
@@ -173,4 +176,23 @@ test('the default target is a new session when there is none, it needs you, or i
   const finished = storeWith()
   finished.set(agentHistoryAtom, [{ id: 'p', name: 'Old', phase: 'done' }])
   expect(finished.get(defaultAgentTargetAtom)).toBe('new')
+})
+
+test('with the agents page off, an ask starts nothing and says why', async () => {
+  // agent-ui off: there is no chat for the draft, so no session is started
+  // for it and no page is asked for.
+  const store = storeWith([session({ id: 'aaaa0001' })])
+  store.set(agentPageAtom, false)
+  for (const res of [
+    await store.set(sendToAgentAtom, { text: 'fix it', target: 'new' }),
+    await store.set(sendToAgentAtom, { text: 'fix it', target: 'aaaa0001' }),
+    await store.set(startSessionAtom, { prompt: 'fix it' }),
+    await store.set(openSessionAtom, 'aaaa0001'),
+    await store.set(showAgentsAtom),
+  ]) {
+    expect(res).toEqual({ ok: false, message: expect.stringContaining('interface is off') })
+  }
+  expect(start).not.toHaveBeenCalled()
+  expect(store.get(chatDraftsAtom)).toEqual({})
+  expect(store.get(surfaceTabIdsAtom('agent'))).toEqual([])
 })

@@ -11,10 +11,11 @@
  */
 import { atom, type Getter, type Setter } from 'jotai'
 import { agentCap } from '../agent-cap'
-import { typeIntoTerminal } from '../lib/session-terminals'
+import type { AskAnswers } from '../../shared/questions'
 import {
   AGENT_SURFACE,
   agentGeometryAtom,
+  agentPageAtom,
   agentSessionsAtom,
   agentTerminalsAtom,
   chatDraftsAtom,
@@ -43,6 +44,13 @@ const geometry = (get: Getter) => get(agentGeometryAtom)
 
 const NO_VAULT = { ok: false as const, message: 'No vault is open.' }
 
+/** The agents page is off (`agentPageAtom`): a chat has nowhere to show. */
+export const NO_AGENTS_PAGE = {
+  ok: false as const,
+  message:
+    "The agent's interface is off in this vault. Turn on Agent interface under Plugins in settings to open its chats.",
+}
+
 /** Run `call` against the open vault, or answer that there is none. */
 function inVault<R>(
   get: Getter,
@@ -55,7 +63,8 @@ function inVault<R>(
 /**
  * ⌘J and the agent icon: the agents page, as it was left.
  */
-export const showAgentsAtom = atom(null, (_get, set): Promise<AgentResult> => {
+export const showAgentsAtom = atom(null, (get, set): Promise<AgentResult> => {
+  if (!get(agentPageAtom)) return Promise.resolve(NO_AGENTS_PAGE)
   set(openSurfaceAtom, AGENT_SURFACE)
   return Promise.resolve({ ok: true })
 })
@@ -90,7 +99,8 @@ export const removeSessionAtom = atom(null, (get, _set, id: string): Promise<Age
  * on the agents page. A chat is read from the transcript and needs no
  * terminal, so neither a live session nor a finished one opens anything here.
  */
-export const openSessionAtom = atom(null, (_get, set, id: string): Promise<AgentResult> => {
+export const openSessionAtom = atom(null, (get, set, id: string): Promise<AgentResult> => {
+  if (!get(agentPageAtom)) return Promise.resolve(NO_AGENTS_PAGE)
   land(set, id)
   return Promise.resolve({ ok: true })
 })
@@ -111,6 +121,7 @@ export const startSessionAtom = atom(
     set,
     { quick = false, ...opts }: { name?: string; prompt?: string; quick?: boolean } = {},
   ): Promise<AgentResult> => {
+    if (!get(agentPageAtom)) return NO_AGENTS_PAGE
     set(startErrorAtom, null)
     const res = await inVault(get, (remote) =>
       agentCap.start(remote, { ...opts, ...geometry(get) }),
@@ -142,6 +153,9 @@ export const startSessionAtom = atom(
 export const sendToAgentAtom = atom(
   null,
   async (get, set, args: { text: string; target: AgentTarget }): Promise<AgentResult> => {
+    // Refused before anything starts: a session started for a draft nobody
+    // can see would only be a blank row in Claude Code's list.
+    if (!get(agentPageAtom)) return NO_AGENTS_PAGE
     let id = args.target
     if (id === 'new') {
       // The CLI makes a name of the text's first line.
@@ -180,6 +194,7 @@ export const respawnSessionAtom = atom(null, (get, _set, id: string) =>
 export const duplicateSessionAtom = atom(
   null,
   async (get, set, id: string): Promise<AgentResult> => {
+    if (!get(agentPageAtom)) return NO_AGENTS_PAGE
     const res = await inVault(get, (remote) => agentCap.duplicate(remote, { id, ...geometry(get) }))
     if (!res.ok) return res
     land(set, res.sessionId)
@@ -217,12 +232,8 @@ export function failure(err: unknown): string {
   return message
 }
 
-/** How long a terminal just opened gets to draw its dialog before a key
- *  meant for that dialog goes in. */
-const KEY_SETTLE_MS = 700
-
-/** The terminal on a session, opening one when there is none: what a key for
- *  its dialog is typed into, and what "show the terminal" shows. */
+/** The terminal on a session, opening one when there is none: what "show
+ *  the terminal" shows. */
 export const ensureTerminalAtom = atom(
   null,
   async (get, _set, id: string): Promise<{ terminalId: string; fresh: boolean } | null> => {
@@ -237,21 +248,46 @@ export const ensureTerminalAtom = atom(
 
 /**
  * Press keys in a session's terminal: Enter to allow what it asks, Escape to
- * refuse it or to interrupt a turn. The chat cannot draw Claude Code's
- * dialogs, so it answers the ones it can name with the key that answers them.
+ * refuse it or to interrupt a turn, the runs that answer a question. The chat
+ * cannot draw Claude Code's dialogs, so it answers the ones it can name with
+ * the keys that answer them. Main opens a terminal when there is none, holds
+ * the keys until it reads input and spaces the runs, so nothing here waits on
+ * a clock. A refusal (the session ended, its terminal closed) comes back as
+ * one; ok says the keys went to the terminal, and the session's own state
+ * says whether they answered it.
  */
 export const pressAtom = atom(
   null,
-  async (get, set, args: { id: string; keys: string }): Promise<AgentResult> => {
-    const remote = get(activeRemoteAtom)
-    const terminal = await set(ensureTerminalAtom, args.id).catch(() => null)
-    if (remote === null || terminal === null) {
-      return { ok: false, message: 'No terminal could be opened on that session.' }
-    }
-    if (terminal.fresh) await new Promise((done) => setTimeout(done, KEY_SETTLE_MS))
-    typeIntoTerminal(remote, terminal.terminalId, args.keys)
-    return { ok: true }
-  },
+  (get, _set, args: { id: string; keys: string | readonly string[] }): Promise<AgentResult> =>
+    inVault(get, (remote) =>
+      agentCap.press(remote, {
+        id: args.id,
+        keys: typeof args.keys === 'string' ? [args.keys] : [...args.keys],
+        ...geometry(get),
+      }),
+    ).then(
+      (res) => (res.ok ? { ok: true } : res),
+      (err: unknown) => ({ ok: false, message: failure(err) }),
+    ),
+)
+
+/**
+ * Answer a question Holi holds for a session (a quick agent's, whose hook
+ * keeps Claude Code from drawing its own box: docs/features/quick-agent.md).
+ * Through the question desk, never as keys: there is no dialog to type into.
+ */
+export const answerHeldAtom = atom(
+  null,
+  (get, _set, args: { id: string; answers: AskAnswers }): Promise<AgentResult> =>
+    inVault(get, (remote) => agentCap.answer(remote, args)).then(
+      (res) =>
+        res === true
+          ? { ok: true }
+          : typeof res === 'object'
+            ? res
+            : { ok: false, message: 'That question was answered or withdrawn already.' },
+      (err: unknown) => ({ ok: false, message: failure(err) }),
+    ),
 )
 
 /**

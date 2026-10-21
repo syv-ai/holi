@@ -16,6 +16,13 @@ import { resetTurnReviewAtom, turnReviewOpenAtom } from './turns'
  */
 export const AGENT_SURFACE = 'agent'
 
+/**
+ * Whether the agents page is there to land on: true while the `agent-ui`
+ * plugin runs in the open vault, which sets it. Without it a chat has nowhere
+ * to show, so nothing here starts a session or writes a draft for one.
+ */
+export const agentPageAtom = atom(false)
+
 /** What a session is doing. Claude Code's own answer, read by main. */
 export type SessionState = 'needs-you' | 'working' | 'idle'
 

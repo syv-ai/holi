@@ -3,7 +3,9 @@
  * the terminal for it: a permission prompt (the call, with Allow and Deny) or
  * a question (`AskUserQuestion`: its options one question at a time, single or
  * multiple choice, or the person's own words), the answers sent together as
- * the key presses that answer Claude Code's dialog (`lib/ask`).
+ * the key presses that answer Claude Code's dialog (`lib/ask`). A question
+ * Holi holds (`held`, a quick agent's) has no dialog to press keys into: it is
+ * the quick panel's card, answered through the question desk.
  *
  * Used by the smaller chat and the full chat alike. Only a dialog this cannot
  * read at all is handed over (`onFallback`), and a question whose call has not
@@ -12,6 +14,8 @@
 import { ArrowLeft, HelpCircle, ShieldCheck } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { Button, Icon, Input } from '@/primitives'
+import type { PendingQuestion } from '../../../agent/shared/questions'
+import { HeldQuestion } from './HeldQuestion'
 import {
   EMPTY_ANSWER,
   isAnswered,
@@ -22,15 +26,11 @@ import {
 
 const ENTER = '\r'
 const ESCAPE = '\x1b'
-/** The dialog redraws between one key run and the next; a key sent into the
- *  redraw is lost. */
-const STEP_MS = 120
 /** How long a question that is not readable yet is waited for before the
  *  terminal is offered: it may never come. */
 const READ_MS = 4000
 
-const PILL =
-  'shrink-0 text-[11px] font-medium text-amber-600 dark:text-amber-400'
+const PILL = 'shrink-0 text-[11px] font-medium text-amber-600 dark:text-amber-400'
 const CARD = 'rounded-2xl bg-muted/40 p-3 text-sm'
 
 type Pressed = Promise<{ ok: true } | { ok: false; message: string }>
@@ -39,6 +39,7 @@ export function QuickAsk({
   waitingFor,
   tool,
   questions,
+  held = null,
   press,
   fallbackLabel,
   onFallback,
@@ -48,8 +49,10 @@ export function QuickAsk({
   tool: string
   /** Its open question, when the transcript has it. */
   questions: AskQuestion[] | null
-  /** Press keys in the session's terminal. */
-  press: (keys: string) => Pressed
+  /** The question Holi holds for it, which wins: no dialog to press into. */
+  held?: PendingQuestion | null
+  /** Press runs of keys in the session's terminal; main spaces them. */
+  press: (keys: readonly string[]) => Pressed
   /** What a dialog this cannot draw offers, and where it goes. */
   fallbackLabel: string
   onFallback: () => void
@@ -63,17 +66,11 @@ export function QuickAsk({
   const run = async (keys: string[]): Promise<void> => {
     setSending(true)
     setError(null)
-    for (const [i, k] of keys.entries()) {
-      if (i > 0) await new Promise((done) => setTimeout(done, STEP_MS))
-      const res = await press(k)
-      if (!res.ok) {
-        setSending(false)
-        return setError(res.message)
-      }
-    }
-    // Answered: the session leaves needs-you and this card goes with it. If it
-    // did not (a key did not take), the card is usable again.
+    const res = await press(keys)
     setSending(false)
+    // Refused: said, and the card is usable again. Taken: the session leaves
+    // needs-you and this card goes with it; if a key did not take, it stays.
+    if (!res.ok) setError(res.message)
   }
 
   const permission = waitingFor === 'permission prompt'
@@ -85,6 +82,8 @@ export function QuickAsk({
     const timer = setTimeout(() => setGaveUp(true), READ_MS)
     return () => clearTimeout(timer)
   }, [unreadable])
+
+  if (held !== null) return <HeldQuestion question={held} />
 
   if (!permission && questions !== null) {
     const q = questions[Math.min(step, questions.length - 1)]!

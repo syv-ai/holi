@@ -56,6 +56,8 @@ export interface AgentCapabilitiesDeps {
     | 'start'
     | 'send'
     | 'say'
+    | 'press'
+    | 'watching'
     | 'message'
     | 'transcript'
     | 'transcriptEarlier'
@@ -78,6 +80,9 @@ const notOpen = { ok: false as const, message: VAULT_NOT_OPEN }
 /** Far under Claude Code's own cap of about a million characters: a message
  *  is a note to a session, not a document. */
 const MAX_MESSAGE = 100_000
+/** The most key runs one press sends: a dialog of four questions, each a run
+ *  or a few, and its review page. */
+const MAX_KEY_RUNS = 32
 
 /** An optional whole number, such as a terminal's columns. */
 function countParam(raw: Record<string, unknown>, key: string): number | undefined {
@@ -259,6 +264,48 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
       },
       run: async (ctx, args): Promise<OpenResult> =>
         live(ctx) ? deps.sessions.say(args) : notOpen,
+    }),
+
+    /** Keys pressed in a session's terminal, run by run: the chat's answer to
+     *  a dialog Claude Code draws (a permission prompt, a question). */
+    'agent.press': cap({
+      doors: ['ui'],
+      params: (raw) => {
+        const p = paramsObject(raw)
+        const id = stringParam(p, 'id')
+        if (!JOB_ID.test(id)) throw new CapabilityError('BAD_REQUEST', `not a session id: ${id}`)
+        const keys = p['keys']
+        if (
+          !Array.isArray(keys) ||
+          keys.length === 0 ||
+          keys.length > MAX_KEY_RUNS ||
+          !keys.every((k) => typeof k === 'string' && k !== '' && k.length <= MAX_MESSAGE)
+        ) {
+          throw new CapabilityError('BAD_REQUEST', 'keys must be a short list of key runs')
+        }
+        return { ...geometry(p), id, keys: keys as string[] }
+      },
+      run: async (ctx, args): Promise<OpenResult> =>
+        live(ctx) ? deps.sessions.press(args) : notOpen,
+    }),
+
+    /** Whose chat the renderer is showing, or null: what makes a session
+     *  watched (no needs-you banner while Holi has the focus, a scheduled run
+     *  left open), and lets go of the terminal the last one typed into. */
+    'agent.watching': cap({
+      doors: ['ui'],
+      params: (raw) => {
+        const id = paramsObject(raw)['id']
+        if (id === null) return { id: null }
+        if (typeof id !== 'string' || !JOB_ID.test(id)) {
+          throw new CapabilityError('BAD_REQUEST', 'id must be a session id or null')
+        }
+        return { id }
+      },
+      run: async (ctx, { id }): Promise<null> => {
+        if (live(ctx)) deps.sessions.watching(id)
+        return null
+      },
     }),
 
     /** An image attached in the chat, written into the vault so the session

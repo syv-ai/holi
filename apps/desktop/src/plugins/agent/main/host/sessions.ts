@@ -125,8 +125,13 @@ export interface AgentSessions {
   /** Push the list again: something Holi holds about a session changed (a
    *  question arrived or was answered). */
   touch(): void
-  /** Whether Holi has a terminal open on the session. */
+  /** Whether the person is looking at the session: its chat is the one the
+   *  renderer says is showing (`watching`). A terminal Holi keeps open behind
+   *  a chat to type into is not someone looking. */
   watched(id: string): boolean
+  /** The renderer says whose chat is showing, or null for none. The chat
+   *  left behind lets go of the terminal it typed into. */
+  watching(id: string | null): void
   /** Hear each session's turn end, by job id, with how much its Stop said
    *  was still pending (null when no Stop said: a confirmed idle, the safety
    *  cap, an older hook script). Returns the undo. */
@@ -139,6 +144,10 @@ export interface AgentSessions {
   send(args: Geometry & { text: string; target: string | 'new' }): Promise<OpenResult>
   /** Send `text` to a live session as a turn, through a terminal on it. */
   say(args: Geometry & { id: string; text: string }): Promise<OpenResult>
+  /** Press keys in a live session's terminal, run by run, opening one when
+   *  Holi has none: the chat's answer to a dialog Claude Code draws. Held
+   *  until the terminal reads input, so a terminal just opened takes them. */
+  press(args: Geometry & { id: string; keys: readonly string[] }): Promise<OpenResult>
   /** The archived chats' job ids. */
   archived(): string[]
   /** Archive a chat, or bring it back. Never stops a session: the caller
@@ -229,6 +238,8 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     for (const cb of [...rowListeners]) cb()
   }
   const sessionListeners = new Set<(sessions: SessionSummary[]) => void>()
+  /** The session whose chat the renderer says is showing (`watching`). */
+  let watchingId: string | null = null
 
   const state = createSessionState({
     source: () => current?.source ?? null,
@@ -338,6 +349,18 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     return current
   }
 
+  /**
+   * Stamp the config directory again before a session process starts: what
+   * it carries (the theme, the agent's `bypassPermissions` setting) follows
+   * settings a person can change while the vault is open, and only a new
+   * process reads it. Never fails the start: the last stamp stands.
+   */
+  async function restamp(c: Current): Promise<void> {
+    await provider
+      .configure({ remote: c.remote, root: c.root })
+      .catch((err: unknown) => log(`config directory not restamped: ${String(err)}`))
+  }
+
   async function release(c: Current): Promise<void> {
     c.unwatch()
   }
@@ -413,6 +436,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     async start({ name, prompt, cols, rows: r }) {
       const c = await ensureCurrent()
       if (c === null) return noVault
+      await restamp(c)
       const res = await provider.cli.startBg(targetOf(c), {
         ...(name === undefined ? {} : { name }),
         ...(prompt === undefined ? {} : { prompt }),
@@ -428,6 +452,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     async launch(args) {
       const c = await ensureCurrent()
       if (c === null) return noVault
+      await restamp(c)
       const res = await provider.cli.startBg(targetOf(c), args)
       if (!res.ok) return res
       if (current !== c) {
@@ -453,7 +478,15 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
 
     touch: () => push(),
 
-    watched: (id) => deps.terminals.launchedFor(id) !== null,
+    watched: (id) => watchingId === id,
+
+    watching(id) {
+      const left = watchingId
+      watchingId = id
+      if (left === null || left === id) return
+      const terminal = deps.terminals.launchedFor(left)
+      if (terminal !== null) deps.terminals.release(terminal)
+    },
 
     onTurnEnd: state.onTurnEnd,
     onSessions(listener) {
@@ -500,6 +533,28 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
       }
       deps.terminals.paste(terminalId, text, true)
       state.spoke(id)
+      // Nobody is looking at it (a smaller chat that closed, a notice): the
+      // terminal goes once the message is in.
+      if (watchingId !== id) deps.terminals.release(terminalId)
+      return { ok: true, terminalId }
+    },
+
+    async press({ id, keys, cols, rows: r }) {
+      const c = await ensureCurrent()
+      if (c === null) return noVault
+      if (!state.isLive(id)) {
+        return { ok: false, message: 'That session has ended.' }
+      }
+      let terminalId = deps.terminals.launchedFor(id)
+      if (terminalId === null) {
+        const opened = await openOn(c, { attach: id, cols, rows: r })
+        if (!opened.ok) return opened
+        terminalId = opened.terminalId
+      }
+      if (!deps.terminals.press(terminalId, keys)) {
+        return { ok: false, message: 'The terminal on that session closed. Try again.' }
+      }
+      if (watchingId !== id) deps.terminals.release(terminalId)
       return { ok: true, terminalId }
     },
 
@@ -548,6 +603,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     async respawn(id) {
       const c = await ensureCurrent()
       if (c === null) return noVault
+      await restamp(c)
       const res = await provider.cli.respawn(targetOf(c), id)
       await refresh()
       return res
@@ -560,6 +616,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
       if (row?.sessionId === undefined) {
         return { ok: false, message: 'Claude Code has not said which conversation this is yet.' }
       }
+      await restamp(c)
       const label = state.nameOf(id) ?? ''
       const name = label === 'New session' ? undefined : `${label} (copy)`
       const res = await provider.cli.forkBg(targetOf(c), row.sessionId, name)
@@ -653,6 +710,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     }
     await deps.terminals.closeAll()
     state.reset()
+    watchingId = null
     channels.clear()
     listedLive = new Set()
     focusWriter?.snapshot.stop()

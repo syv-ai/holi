@@ -18,6 +18,7 @@ import {
   watchNotices,
 } from '../../agent/renderer/state/notices'
 import {
+  agentPageAtom,
   agentHistoryAtom,
   agentSessionsAtom,
   agentViewAtom,
@@ -26,6 +27,7 @@ import {
 } from '../../agent/renderer/state/sessions'
 
 const cap = vi.hoisted(() => ({
+  press: vi.fn(),
   open: vi.fn(),
   say: vi.fn(),
   transcript: vi.fn(),
@@ -34,6 +36,7 @@ const cap = vi.hoisted(() => ({
 }))
 vi.mock('../../agent/renderer/agent-cap', () => ({
   agentCap: {
+    press: (_remote: string, args: unknown) => cap.press(args),
     open: (_remote: string, args: unknown) => cap.open(args),
     say: (_remote: string, args: unknown) => cap.say(args),
     transcript: (_remote: string, args: unknown) => cap.transcript(args),
@@ -41,11 +44,8 @@ vi.mock('../../agent/renderer/agent-cap', () => ({
     upload: (_remote: string, args: unknown) => cap.upload(args),
   },
 }))
-const typed = vi.hoisted(() => ({ fn: vi.fn() }))
-vi.mock('../../agent/renderer/lib/session-terminals', async (original) => ({
-  ...(await original<typeof import('../../agent/renderer/lib/session-terminals')>()),
-  typeIntoTerminal: (_remote: string, id: string, data: string) => typed.fn(id, data),
-}))
+/** The key runs pressed in sessions' terminals, one list per press. */
+const pressed = (): string[][] => cap.press.mock.calls.map(([a]) => (a as { keys: string[] }).keys)
 
 const ANSWER = {
   sessionId: 'conv',
@@ -62,8 +62,8 @@ const ANSWER = {
 
 beforeEach(() => {
   for (const fn of Object.values(cap)) fn.mockReset()
-  typed.fn.mockReset()
   cap.open.mockResolvedValue({ ok: true, terminalId: 't-a' })
+  cap.press.mockResolvedValue({ ok: true, terminalId: 't-a' })
   cap.say.mockResolvedValue({ ok: true, terminalId: 't-a' })
   cap.transcript.mockResolvedValue(ANSWER)
   cap.question.mockResolvedValue(null)
@@ -116,6 +116,8 @@ previewTests()
 function watching(sessions: AgentSession[]) {
   const store = createStore()
   store.set(activeRemoteAtom, 'o/vault')
+  // agent-ui runs: the agents page is there to land on.
+  store.set(agentPageAtom, true)
   store.set(agentSessionsAtom, sessions)
   const stop = watchNotices('o/vault', store)
   return { store, stop }
@@ -177,6 +179,8 @@ test('nothing is announced about the chat you are looking at, or one whose small
 function ui(sessions: AgentSession[], opts: { history?: boolean } = {}) {
   const store = createStore()
   store.set(activeRemoteAtom, 'o/vault')
+  // agent-ui runs: the agents page is there to land on.
+  store.set(agentPageAtom, true)
   store.set(agentSessionsAtom, sessions)
   if (opts.history)
     store.set(agentHistoryAtom, [{ id: 'p', name: 'Old one', phase: 'done', startedAt: 0 }])
@@ -302,9 +306,9 @@ test('a permission prompt is answered in the small chat, on the call it asks abo
   })
   expect(await within(card).findByText('Bash: ls -la')).toBeInTheDocument()
   await user.click(within(card).getByRole('button', { name: 'Allow' }))
-  await waitFor(() => expect(typed.fn).toHaveBeenCalledWith('t-a', '\r'))
+  await waitFor(() => expect(pressed()).toContainEqual(['\r']))
   await user.click(within(card).getByRole('button', { name: 'Deny' }))
-  await waitFor(() => expect(typed.fn).toHaveBeenCalledWith('t-a', '\x1b'), { timeout: 3000 })
+  await waitFor(() => expect(pressed()).toContainEqual(['\x1b']), { timeout: 3000 })
 })
 
 test('a question is drawn with its options, and a choice presses the keys that pick it', async () => {
@@ -315,7 +319,7 @@ test('a question is drawn with its options, and a choice presses the keys that p
   expect(screen.getByText('Fixed layout')).toBeInTheDocument()
   await user.click(screen.getByRole('radio', { name: /Word/ }))
   // Second option: one step down, then Enter.
-  await waitFor(() => expect(typed.fn).toHaveBeenCalledWith('t-a', '\x1b[B\r'))
+  await waitFor(() => expect(pressed()).toContainEqual(['\x1b[B\r']))
 })
 
 test('several questions are walked one at a time, then sent together', async () => {
@@ -328,11 +332,11 @@ test('several questions are walked one at a time, then sent together', async () 
   const { user } = ui([session({ id: 'a', state: 'needs-you', waitingFor: 'input needed' })])
   await user.click(bubble('a'))
   await user.click(await screen.findByRole('radio', { name: /Word/ }))
-  expect(typed.fn).not.toHaveBeenCalled()
+  expect(cap.press).not.toHaveBeenCalled()
   await user.click(await screen.findByRole('radio', { name: /Daily/ }))
   // (Each press opens a terminal here: the mock never registers one.)
-  await waitFor(() => expect(typed.fn).toHaveBeenCalledTimes(3), { timeout: 5000 })
-  expect(typed.fn.mock.calls.map((c) => c[1])).toEqual(['\x1b[B\r', '\r', '\r'])
+  await waitFor(() => expect(cap.press).toHaveBeenCalledTimes(1), { timeout: 5000 })
+  expect(pressed()).toEqual([['\x1b[B\r', '\r', '\r']])
 })
 
 test('a multiple-choice question toggles its options with Space, then Enter', async () => {
@@ -354,11 +358,11 @@ test('a multiple-choice question toggles its options with Space, then Enter', as
   await user.click(bubble('a'))
   await user.click(await screen.findByRole('checkbox', { name: 'A' }))
   await user.click(screen.getByRole('checkbox', { name: 'C' }))
-  expect(typed.fn).not.toHaveBeenCalled()
+  expect(cap.press).not.toHaveBeenCalled()
   await user.click(screen.getByRole('button', { name: 'Send answer' }))
-  await waitFor(() => expect(typed.fn).toHaveBeenCalledTimes(3), { timeout: 5000 })
+  await waitFor(() => expect(cap.press).toHaveBeenCalledTimes(1), { timeout: 5000 })
   // A (already under the cursor), two down to C, then confirm.
-  expect(typed.fn.mock.calls.map((c) => c[1])).toEqual([' ', '\x1b[B\x1b[B ', '\r'])
+  expect(pressed()).toEqual([[' ', '\x1b[B\x1b[B ', '\r']])
 })
 
 test('the person’s own words go through the dialog’s Other row', async () => {
@@ -367,9 +371,9 @@ test('the person’s own words go through the dialog’s Other row', async () =>
   await user.click(bubble('a'))
   await user.click(await screen.findByRole('button', { name: 'Write another answer' }))
   await user.type(screen.getByRole('textbox', { name: 'Which format?' }), 'Markdown{Enter}')
-  await waitFor(() => expect(typed.fn).toHaveBeenCalledTimes(3), { timeout: 5000 })
+  await waitFor(() => expect(cap.press).toHaveBeenCalledTimes(1), { timeout: 5000 })
   // Past the two options to Other, the words, Enter.
-  expect(typed.fn.mock.calls.map((c) => c[1])).toEqual(['\x1b[B\x1b[B', 'Markdown', '\r'])
+  expect(pressed()).toEqual([['\x1b[B\x1b[B', 'Markdown', '\r']])
 })
 
 test('a question not yet in the transcript is waited for, not handed over', async () => {
@@ -388,7 +392,7 @@ test('a question only the job record has is drawn, and can be cancelled', async 
   await user.click(bubble('a'))
   expect(await screen.findByText('Which format?')).toBeInTheDocument()
   await user.click(screen.getByRole('button', { name: 'Cancel' }))
-  await waitFor(() => expect(typed.fn).toHaveBeenCalledWith('t-a', '\x1b'))
+  await waitFor(() => expect(pressed()).toContainEqual(['\x1b']))
 })
 
 test('a question nobody can read is waited for a while, then the terminal is offered', async () => {
@@ -400,7 +404,7 @@ test('a question nobody can read is waited for a while, then the terminal is off
     await screen.findByRole('button', { name: 'Open the full chat' }, { timeout: 6000 }),
   ).toBeInTheDocument()
   await user.click(screen.getByRole('button', { name: 'Cancel' }))
-  await waitFor(() => expect(typed.fn).toHaveBeenCalledWith('t-a', '\x1b'))
+  await waitFor(() => expect(pressed()).toContainEqual(['\x1b']))
 }, 10000)
 
 test('a dialog it cannot read at all is offered the full chat, only when pressed', async () => {
@@ -495,7 +499,7 @@ test('a permission prompt is answered on its notification, without leaving the p
   expect(within(card()).getByText('Approval required')).toBeInTheDocument()
   expect(within(card()).getByText('Bash: ls flights')).toBeInTheDocument()
   await user.click(within(card()).getByRole('button', { name: 'Allow' }))
-  await waitFor(() => expect(typed.fn).toHaveBeenCalledWith('t-a', '\r'))
+  await waitFor(() => expect(pressed()).toContainEqual(['\r']))
   await waitFor(() => expect(store.get(agentNoticesAtom)).toEqual([]))
   // Still where it was.
   expect(store.get(overviewSelectionAtom)).toBeNull()
@@ -510,7 +514,7 @@ test('it can be denied there too, and a question of any other kind is answered i
     preview: '',
   })
   await user.click(within(card()).getByRole('button', { name: 'Deny' }))
-  await waitFor(() => expect(typed.fn).toHaveBeenCalledWith('t-a', '\x1b'))
+  await waitFor(() => expect(pressed()).toContainEqual(['\x1b']))
   act(() =>
     store.set(agentNoticesAtom, [
       {

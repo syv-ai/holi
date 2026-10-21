@@ -105,8 +105,8 @@ The hook sends their count as `pending`; a run whose Stop names any is paused, a
 wakes it ends in another Stop, which asks again. Then Holi waits for the listing to read the
 session idle, looking every 2 s for 30 s, since the hook fires a moment before Claude Code's state
 settles, and stops it (`claude stop`): it leaves the sidebar and its conversation stays in the
-agents list. A run waiting on the person (a permission prompt) is not done either. A run someone
-has a window on was taken over: it is left open, recorded as such, and not asked about again. The
+agents list. A run waiting on the person (a permission prompt) is not done either. A run whose chat
+someone has open was taken over ([agent-sessions](agent-sessions.md): `watched`): it is left open, recorded as such, and not asked about again. The
 run's record gets `finishedAt` (and `kept` when left open), which the settings section shows, and
 the day's work log gets a line naming the schedule and how it ended, as it does for a run that
 fails to start ([agent-inbox](agent-inbox.md)), so a run that notified nobody still shows. A
@@ -124,7 +124,7 @@ Not the signal: `SessionEnd` fires when a session ends, which is what Holi is do
 Claude Code's task list.
 
 A run does not start while the previous one is working or waiting on the person (recorded as
-skipped). An idle previous run left open with nobody's window on it is stopped first, so a schedule
+skipped). An idle previous run left open with nobody's chat on it is stopped first, so a schedule
 holds at most one live session. Each schedule keeps its last 20 runs: started (with the job id and,
 once done, when), skipped or failed.
 

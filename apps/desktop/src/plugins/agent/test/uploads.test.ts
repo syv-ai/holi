@@ -111,16 +111,16 @@ describe('the message', () => {
     expect(withPaths('Broken: [Image 1] and it should be [Image 2].', paths)).toBe(
       'Broken: @.holi/state/chat.local.uploads/a-ab12cd-one.png and it should be @.holi/state/chat.local.uploads/b-ab12cd-two.png .',
     )
-    expect(withPaths('[Image 1]', paths)).toBe(
-      '@.holi/state/chat.local.uploads/a-ab12cd-one.png',
-    )
+    expect(withPaths('[Image 1]', paths)).toBe('@.holi/state/chat.local.uploads/a-ab12cd-one.png')
     // The same marker twice is the same file twice.
     expect(withPaths('[Image 1] [Image 1]', paths).match(/@\./g)).toHaveLength(2)
   })
 
   it('quotes a path with a space, and reads it back', () => {
     const path = '.holi/state/chat.local.uploads/lq3x9-ab12cd-my notes.pdf'
-    expect(withPaths('Read [my notes.pdf]', new Map([['[my notes.pdf]', path]]))).toBe(`Read @"${path}"`)
+    expect(withPaths('Read [my notes.pdf]', new Map([['[my notes.pdf]', path]]))).toBe(
+      `Read @"${path}"`,
+    )
     expect(splitUserText(`Read\n\n@"${path}"`)).toEqual([
       { kind: 'text', text: 'Read' },
       { kind: 'file', path, label: 'my notes.pdf', image: false },

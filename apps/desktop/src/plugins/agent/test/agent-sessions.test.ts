@@ -66,6 +66,9 @@ function setup(initial: Row[] = [], root = ROOT, held: ReadonlySet<string> = new
   } satisfies ClaudeCli
   const opened: OpenArgs[] = []
   const pastes: Array<[string, string]> = []
+  const presses: Array<[string, string[]]> = []
+  /** The terminals let go of (`release`). */
+  const releasedTerminals: string[] = []
   const launched = new Map<string, string>()
   const terminals: AgentTerminals = {
     open: (args) => {
@@ -81,6 +84,11 @@ function setup(initial: Row[] = [], root = ROOT, held: ReadonlySet<string> = new
       pastes.push([id, text])
       return true
     },
+    press: (id, runs) => {
+      presses.push([id, [...runs]])
+      return launched.size > 0 && [...launched.values()].includes(id)
+    },
+    release: (id) => void releasedTerminals.push(id),
     close: async () => {},
     closeAll: vi.fn(async () => {}),
     list: () => [],
@@ -88,6 +96,7 @@ function setup(initial: Row[] = [], root = ROOT, held: ReadonlySet<string> = new
     listTerminal: () => null,
   }
   const sent: Array<[string, unknown]> = []
+  const configure = vi.fn(async () => ({ dir: '/cfg/vault' }))
   const message = vi.fn(async (_channel: SessionChannel, _text: string) => {})
   const pauses: string[] = []
   const released: string[] = []
@@ -113,7 +122,7 @@ function setup(initial: Row[] = [], root = ROOT, held: ReadonlySet<string> = new
       summarisePast,
       readContextPercent,
       watch: () => () => {},
-      configure: async () => ({ dir: '/cfg/vault' }),
+      configure,
       transcript: async () => null,
       blockedQuestion: async () => null,
       takeFirstSpawn: async () => true,
@@ -133,8 +142,11 @@ function setup(initial: Row[] = [], root = ROOT, held: ReadonlySet<string> = new
     cli,
     opened,
     pastes,
+    presses,
+    releasedTerminals,
     sent,
     message,
+    configure,
     terminals,
     setListing: (rows: Row[]) => {
       listing = rows
@@ -156,6 +168,67 @@ function setup(initial: Row[] = [], root = ROOT, held: ReadonlySet<string> = new
 }
 
 describe('agent sessions', () => {
+  describe('the chat and its terminals', () => {
+    it('is watched only while its chat is the one showing, not for a terminal behind it', async () => {
+      const t = setup([row('aaaaaaaa')])
+      await t.attach()
+      await t.sessions.say({ id: 'aaaaaaaa', text: 'hello' })
+      // A terminal was opened to type into; nobody is looking at it.
+      expect(t.sessions.watched('aaaaaaaa')).toBe(false)
+      t.sessions.watching('aaaaaaaa')
+      expect(t.sessions.watched('aaaaaaaa')).toBe(true)
+      t.sessions.watching(null)
+      expect(t.sessions.watched('aaaaaaaa')).toBe(false)
+    })
+
+    it('lets go of the terminal a message went through when nobody watches', async () => {
+      const t = setup([row('aaaaaaaa')])
+      await t.attach()
+      const res = await t.sessions.say({ id: 'aaaaaaaa', text: 'hello' })
+      expect(res).toEqual({ ok: true, terminalId: 'term-1' })
+      expect(t.releasedTerminals).toEqual(['term-1'])
+    })
+
+    it('keeps the terminal of the chat showing, and lets it go when the chat is left', async () => {
+      const t = setup([row('aaaaaaaa'), row('bbbbbbbb')])
+      await t.attach()
+      t.sessions.watching('aaaaaaaa')
+      await t.sessions.say({ id: 'aaaaaaaa', text: 'hello' })
+      expect(t.releasedTerminals).toEqual([])
+      t.sessions.watching('bbbbbbbb')
+      expect(t.releasedTerminals).toEqual(['term-1'])
+    })
+
+    it('presses keys in the session’s terminal, opening one, and says when it cannot', async () => {
+      const t = setup([row('aaaaaaaa')])
+      await t.attach()
+      t.sessions.watching('aaaaaaaa')
+      expect(await t.sessions.press({ id: 'aaaaaaaa', keys: ['\x1b[B', '\r'] })).toEqual({
+        ok: true,
+        terminalId: 'term-1',
+      })
+      expect(t.opened.map((o) => o.attach)).toEqual(['aaaaaaaa'])
+      expect(t.presses).toEqual([['term-1', ['\x1b[B', '\r']]])
+      expect(await t.sessions.press({ id: 'zzzzzzzz', keys: ['\r'] })).toEqual({
+        ok: false,
+        message: 'That session has ended.',
+      })
+    })
+  })
+
+  it('stamps the config directory again before each session process starts', async () => {
+    // What it carries follows settings a person can change while the vault is
+    // open (the theme, bypass permissions), and only a new process reads it.
+    const t = setup([row('aaaaaaaa')])
+    await t.attach()
+    expect(t.configure).toHaveBeenCalledTimes(1)
+    await t.sessions.start({})
+    await t.sessions.launch({ prompt: 'go' })
+    await t.sessions.respawn('aaaaaaaa')
+    await t.sessions.duplicate('aaaaaaaa')
+    expect(t.configure).toHaveBeenCalledTimes(5)
+  })
+
   it('lists only live sessions', async () => {
     const t = setup([row('aaaaaaaa'), row('bbbbbbbb', { pid: undefined, status: undefined })])
     await t.attach()

@@ -49,6 +49,7 @@ function setup() {
     killBackstopMs: 10,
     pasteSettleMs: 20,
     pasteBackstopMs: 200,
+    releaseGraceMs: 30,
     log: () => {},
   })
   return { terminals, spawns, sent }
@@ -104,6 +105,49 @@ describe('agent terminals', () => {
     terminals.paste(id, 'again')
     expect(spawns[0]!.pty.writes.at(-1)).toBe('\x1b[200~again\x1b[201~')
     expect(spawns[0]!.pty.writes.join('')).not.toContain('\r')
+  })
+
+  it('holds key presses until the TUI reads input, then sends them a step apart', async () => {
+    // A dialog redraws between runs, and a key sent into the redraw is lost;
+    // a terminal just opened is not reading yet.
+    const { terminals, spawns } = setup()
+    const res = terminals.open({ remote: 'syv/vault', target: TARGET, attach: '1234abcd' })
+    const id = res.ok ? res.id : ''
+    expect(terminals.press(id, ['\x1b[B\x1b[B', '\r'])).toBe(true)
+    expect(spawns[0]!.pty.writes).toEqual([])
+
+    spawns[0]!.pty.emit('dialog')
+    await vi.waitFor(() => expect(spawns[0]!.pty.writes).toEqual(['\x1b[B\x1b[B']))
+    await vi.waitFor(() => expect(spawns[0]!.pty.writes).toEqual(['\x1b[B\x1b[B', '\r']))
+    expect(terminals.press('gone', ['\r'])).toBe(false)
+  })
+
+  it('closes a released terminal once its input is in, and not before', async () => {
+    const { terminals, spawns, sent } = setup()
+    const res = terminals.open({ remote: 'syv/vault', target: TARGET, attach: '1234abcd' })
+    const id = res.ok ? res.id : ''
+    terminals.paste(id, 'hello', true)
+    terminals.release(id)
+    // The paste is still held for a TUI that has not printed.
+    await new Promise((r) => setTimeout(r, 60))
+    expect(terminals.list()).toHaveLength(1)
+
+    spawns[0]!.pty.emit('ready')
+    await vi.waitFor(() =>
+      expect(sent).toContainEqual(['pty-exit', expect.objectContaining({ id })]),
+    )
+    expect(spawns[0]!.pty.writes[0]).toBe('\x1b[200~hello\x1b[201~')
+  })
+
+  it('keeps a released terminal that is given more input', async () => {
+    const { terminals, spawns } = setup()
+    const res = terminals.open({ remote: 'syv/vault', target: TARGET, attach: '1234abcd' })
+    const id = res.ok ? res.id : ''
+    spawns[0]!.pty.emit('ready')
+    terminals.release(id)
+    terminals.paste(id, 'more')
+    await new Promise((r) => setTimeout(r, 80))
+    expect(terminals.list()).toHaveLength(1)
   })
 
   it('gives up waiting on a terminal that never prints', async () => {

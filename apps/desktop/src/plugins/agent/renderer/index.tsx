@@ -1,9 +1,10 @@
 /**
  * The agent's renderer side (docs/features/agent-sessions.md): the lists of
  * sessions and what the agents have to say while the vault is open, leaving a
- * vault asks while a session is busy, the schedules in settings, and it
- * provides the agent service every "Ask" goes through. What is drawn of the
- * sessions is the `agent-ui` plugin's. The inbox
+ * vault asks while a session is busy, and the schedules in settings. What is
+ * drawn of the sessions is the `agent-ui` plugin's, and so is the agent
+ * service every "Ask" goes through: an ask lands in a chat, which only it can
+ * show. The inbox
  * (docs/features/agent-inbox.md) is the surface `inbox`, with a nav item that
  * counts what is unread.
  *
@@ -17,10 +18,8 @@ import { activeRemoteAtom, type RendererPlugin } from '@/plugin-api'
 import { AGENT_INFO } from '../info'
 import { InboxView } from './InboxView'
 import { SchedulesSection, schedulesEpochAtom } from './SchedulesSection'
-import { AGENT_SERVICE } from './service'
 import { agentEvents, agentLeaveGuardAtom, agentVault } from './state/sessions'
-import { watchNotices } from './state/notices'
-import { followPendingOpen } from './state/send'
+import { reportWatching, watchNotices } from './state/notices'
 import { answerDockKey } from './quick/keys'
 import { QuickDock } from './quick/QuickDock'
 import { QuickPanel } from './quick/QuickPanel'
@@ -83,12 +82,11 @@ export const agentRenderer: RendererPlugin = {
     const off = [
       agentVault(remote, store),
       watchNotices(remote, store),
+      reportWatching(remote, store),
       inboxVault(remote, store),
-      followPendingOpen(remote, store),
       answerDockKey(remote, store),
     ]
     return () => off.forEach((undo) => undo())
   },
-  agent: AGENT_SERVICE,
   pages: { quick: QuickPanel, dock: QuickDock },
 }

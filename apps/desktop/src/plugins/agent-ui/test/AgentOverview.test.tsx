@@ -10,6 +10,7 @@ import { act } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { Provider, createStore } from 'jotai'
 import { beforeEach, expect, test, vi } from 'vitest'
+import { agentQuestionsAtom } from '../../agent/renderer/state/questions'
 import { activeRemoteAtom, openSurfaceAtom, surfaceTabIdsAtom } from '@/plugin-api'
 import { AgentBubbles } from '../renderer/AgentBubbles'
 import { AgentOverview } from '../renderer/AgentOverview'
@@ -17,6 +18,7 @@ import { headOf } from '../renderer/AgentFace'
 import { toChatItems } from '../../agent/renderer/chat/use-transcript'
 import { openSessionAtom, sendToAgentAtom, showAgentsAtom } from '../../agent/renderer/state/send'
 import {
+  agentPageAtom,
   activeSessionAtom,
   agentSessionsAtom,
   agentArchivedAtom,
@@ -30,6 +32,8 @@ import {
 } from '../../agent/renderer/state/sessions'
 
 const cap = vi.hoisted(() => ({
+  press: vi.fn(),
+  answer: vi.fn(),
   open: vi.fn(),
   say: vi.fn(),
   start: vi.fn(),
@@ -42,6 +46,8 @@ const cap = vi.hoisted(() => ({
 }))
 vi.mock('../../agent/renderer/agent-cap', () => ({
   agentCap: {
+    press: (_remote: string, args: unknown) => cap.press(args),
+    answer: (_remote: string, args: unknown) => cap.answer(args),
     open: (_remote: string, args: unknown) => cap.open(args),
     start: (_remote: string, args: unknown) => cap.start(args),
     stop: (_remote: string, args: unknown) => cap.stop(args),
@@ -60,12 +66,8 @@ vi.mock('../../agent/renderer/SessionTerminal', () => ({
   ),
 }))
 vi.mock('../renderer/TurnChip', () => ({ TurnChip: () => null }))
-// What is typed into a session's terminal, as the chat's key presses are.
-const typed = vi.hoisted(() => ({ fn: vi.fn() }))
-vi.mock('../../agent/renderer/lib/session-terminals', async (original) => ({
-  ...(await original<typeof import('../../agent/renderer/lib/session-terminals')>()),
-  typeIntoTerminal: (_remote: string, id: string, data: string) => typed.fn(id, data),
-}))
+/** The key runs pressed in sessions' terminals, one list per press. */
+const pressed = (): string[][] => cap.press.mock.calls.map(([a]) => (a as { keys: string[] }).keys)
 
 const TRANSCRIPT = {
   sessionId: 'conversation-a',
@@ -84,8 +86,8 @@ beforeEach(() => {
   cap.remove.mockResolvedValue({ ok: true })
   cap.stop.mockResolvedValue({ ok: true })
   cap.question.mockResolvedValue(null)
-  typed.fn.mockReset()
   cap.open.mockResolvedValue({ ok: true, terminalId: 't-new' })
+  cap.press.mockResolvedValue({ ok: true, terminalId: 't-new' })
   cap.say.mockResolvedValue({ ok: true, terminalId: 't-a' })
   cap.transcript.mockImplementation(({ offset }: { offset?: number }) =>
     Promise.resolve(offset === undefined ? TRANSCRIPT : { ...TRANSCRIPT, entries: [] }),
@@ -119,6 +121,8 @@ function setup(
   const store = createStore()
   current = store
   store.set(activeRemoteAtom, 'o/vault')
+  // agent-ui runs: the agents page is there to land on.
+  store.set(agentPageAtom, true)
   store.set(agentSessionsAtom, sessions)
   store.set(agentHistoryAtom, history)
   store.set(agentArchivedAtom, archived)
@@ -653,8 +657,53 @@ test('a question is answered in the full chat too, with no trip to the terminal'
     [],
   )
   await user.click(await screen.findByRole('radio', { name: /Word/ }))
-  await waitFor(() => expect(typed.fn).toHaveBeenCalledWith(expect.any(String), '\x1b[B\r'))
+  await waitFor(() => expect(pressed()).toContainEqual(['\x1b[B\r']))
   expect(screen.queryByRole('button', { name: 'Answer in the terminal' })).toBeNull()
+})
+
+test('a question Holi holds is answered through it, never as keys', async () => {
+  // A quick agent's hook holds its AskUserQuestion: Claude Code draws no box
+  // of its own, so there is nothing for keys to answer.
+  cap.answer.mockResolvedValue(true)
+  const { store, user } = setup(
+    [
+      {
+        id: 'b',
+        name: 'Chief of staff',
+        state: 'needs-you',
+        waitingFor: 'input needed',
+        startedAt: 1,
+      },
+    ],
+    [],
+  )
+  store.set(agentQuestionsAtom, [
+    {
+      id: 'toolu_1',
+      job: 'b',
+      askedAt: 1,
+      questions: [
+        {
+          question: 'Which format?',
+          multiSelect: false,
+          options: [{ label: 'PDF' }, { label: 'Word' }],
+        },
+      ],
+    },
+  ])
+  const card = await waitFor(() => {
+    const el = document.querySelector<HTMLElement>('[data-held-question="toolu_1"]')
+    expect(el).not.toBeNull()
+    return el!
+  })
+  await user.click(within(card).getByRole('option', { name: /Word/ }))
+  await waitFor(() =>
+    expect(cap.answer).toHaveBeenCalledWith({
+      id: 'toolu_1',
+      answers: { 'Which format?': 'Word' },
+    }),
+  )
+  expect(cap.press).not.toHaveBeenCalled()
 })
 
 test('a screenshot in a message is drawn from the vault, not as a filename', async () => {

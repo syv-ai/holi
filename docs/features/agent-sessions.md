@@ -40,21 +40,30 @@ already running one picks this up only after it has exited (it does when idle).
 a headless-xterm `TerminalMirror` as its record. The chat types into it and presses keys in it
 (below), and shows it only for a dialog the chat cannot draw. Closing one detaches: the session
 keeps running. What a terminal shows can change under it, so a terminal is never taken to be a
-session, and when its client exits (a detach, `/exit`, its session stopped) it goes. The agent is
-the plugin `agent` (`src/plugins/agent/`, on by default), and its renderer side
-(`renderer/index.tsx`) holds the session lists and notices, the leave question, the schedules
-section in settings, and the agent service every "Ask" goes through (`useAgentService`). With the
-agent off there is no service, so no "Ask" is offered. Its main side starts with the vault and
+session, and when its client exits (a detach, `/exit`, its session stopped) it goes. **A terminal
+is not someone looking.** The renderer tells main whose chat is showing (`agent.watching`: the
+agents page on a live session's chat, or its smaller chat open), and that alone makes a session
+`watched`, which keeps a needs-you banner away while Holi has the focus and leaves a finished
+scheduled run open. The chat that is left lets go of the terminal it typed into, and so does a
+message or a key sent to a session nobody is looking at: main closes it once what it holds has
+gone in and a few seconds have passed (`terminals.release`), and the next message opens another.
+The agent is the plugin `agent` (`src/plugins/agent/`, on by default), and its renderer side
+(`renderer/index.tsx`) holds the session lists and notices, the leave question and the schedules
+section in settings. The agent service every "Ask" goes through (`useAgentService`) is
+`agent-ui`'s, because an ask lands as a draft in a chat that only it can show: with either plugin
+off there is no service, so no "Ask" is offered, and what would land on the agents page (opening a
+session from the inbox, the quick panel's "open in Holi") is refused with the reason rather than
+starting anything (`agentPageAtom`, set while `agent-ui` runs). Its main side starts with the vault and
 attaches to it (`activate`), and its disposer stops the vault's sessions and terminals. What is
 drawn of the sessions is a second plugin, `agent-ui` (`src/plugins/agent-ui/`, on by default,
 `requires: ['agent']`, so it never runs without the agent): its renderer registers the page (the
 surface `agent`, kept mounted, one page, no `tabs`), the nav item (which runs `agent.show`), the
-commands (`agent.show` on ⌘J, `agent.new`), the overlay and turn review, and the palette's session
+commands (`agent.show` on ⌘J, `agent.new`), the floating stack (`floating`), the turn review (one of its `overlays`), the agent service, and the palette's session
 rows. It has no main side of its own beyond its name. It reads the agent's state by import, the one
 place a plugin imports another; turned off, the agent still runs and its sessions are reachable
 from `claude` itself. The
 renderer reaches it through the `agent.*` capabilities (sessions, terminals, open, start, send,
-message, stop, respawn, duplicate, attach, detach, and the turn review's turns, turnFiles, turnDiff and
+say, press, watching, message, stop, respawn, duplicate, attach, detach, and the turn review's turns, turnFiles, turnDiff and
 revert). Main tells it the session and terminal lists and each terminal's bytes as the events
 `sessions`, `terminals`, `pty-data` and `pty-exit`; keystrokes and resizes go back as the events
 `pty-write` and `pty-resize`, which keep their order. A terminal's bytes go straight to its xterm
@@ -63,7 +72,7 @@ revert). Main tells it the session and terminal lists and each terminal's bytes 
 events are not sent and nothing under `.claude/` is seeded.
 
 **Where you meet it.** ⌘J and the nav menu's agent item open the agents page, and the stack of
-bubbles floats over the top right of every tab (the plugin's `overlay`, `AgentBubbles`), so any
+bubbles floats over the top right of every tab (the plugin's `floating`, `AgentBubbles`), so any
 session is one hover away from a note or a board. The agent item is green while any session is live.
 Statuses live only in the bubbles: there are no rows under the file tree, no orbs on the rail and
 no header on the page. A live bubble's context menu is **Restart** (`claude respawn`, a fresh
@@ -155,7 +164,14 @@ pressing Enter on the dialog's highlighted Yes and Deny pressing Escape; a quest
 multiple choice, one question at a time, with "Write another answer" for the person's own words.
 The answers go in as the keys that answer the dialog: arrows down from the first option and Enter,
 Space to toggle each choice of a multiple-choice, the last row ("Other") for typed words, and one
-more Enter to confirm when there were several questions. A question not yet in the transcript is
+more Enter to confirm when there were several questions. They go to main as one press
+(`agent.press`, a list of key runs), which opens a terminal on the session when there is none,
+holds the keys until its TUI reads input, as a paste is held, and writes the runs a step apart, so
+the dialog redraws between them; a session that has ended or a terminal that has closed is a
+refusal the card says. A question Holi **holds** (a [quick agent](quick-agent.md)'s, whose hook
+keeps Claude Code from drawing its own box) has no dialog to press keys into: the chat and the
+smaller chat show the quick panel's own card in the question's place, and over the terminal when
+that is showing, and the answer goes back through the question desk (`agent.answer`). A question not yet in the transcript is
 waited for, and where the transcript does not have it (Claude Code can hold a question in the
 job's `state.json`, `block.questions`, alone) main reads it from there (`agent.question`,
 `claude/blocked.ts`). A question that stays unreadable for a few seconds offers the terminal, and
@@ -207,7 +223,11 @@ opens the chat, where the terminal can be shown for it.
 
 **Idle is said as what it is.** A live session that is doing nothing reads `done` when Claude
 Code's listing says its last turn finished (`state: done`), `failed` when it ended badly, and
-`ready` before its first message (`SessionSummary.phase`), on its bubble. It is
+`ready` before its first message (`SessionSummary.phase`), on its bubble. Claude Code reads
+`state: blocked` both for a session never given a prompt and for one whose answer handed back to
+you, so Holi keeps its own record of the sessions it has seen have a turn (started with a prompt,
+said something to, or seen busy or waiting; `session-state.ts`), and for those `blocked` is `done`.
+The record is in memory: after a restart such a session reads `ready` until its next turn. It is
 never called running: its process being alive says nothing about a turn.
 
 **Stop, restart, duplicate.** A bubble's context menu has **Stop**, which runs `claude stop <id>`:

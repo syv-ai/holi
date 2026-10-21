@@ -3,16 +3,27 @@
  * surface `agent`, kept mounted, the chat of one session; the stack of
  * bubbles for all of them floats over every tab, with the
  * smaller chat and the notices beside it; its nav item runs `agent.show`; its
- * turn review is a drawer; and the palette lists its live sessions. What the
- * sessions are (lists, events, the agent service, the leave guard) is the
+ * turn review is an overlay; the palette lists its live sessions; and it
+ * provides the agent service every "Ask" goes through, since an ask lands in
+ * a chat. What the sessions are (lists, events, the leave guard) is the
  * `agent` plugin's, whose state this reads.
  */
 import { atom } from 'jotai'
 import { Bot } from 'lucide-react'
 import type { Command, RendererPlugin } from '@/plugin-api'
 import { agentIndicator } from '../../agent/renderer/lib/notices'
-import { openSessionAtom, showAgentsAtom, startSessionAtom } from '../../agent/renderer/state/send'
-import { AGENT_SURFACE, agentSessionsAtom } from '../../agent/renderer/state/sessions'
+import { AGENT_SERVICE } from '../../agent/renderer/service'
+import {
+  followPendingOpen,
+  openSessionAtom,
+  showAgentsAtom,
+  startSessionAtom,
+} from '../../agent/renderer/state/send'
+import {
+  AGENT_SURFACE,
+  agentPageAtom,
+  agentSessionsAtom,
+} from '../../agent/renderer/state/sessions'
 import { AGENT_UI_INFO } from '../info'
 import { AgentBubbles } from './AgentBubbles'
 import { AgentSurface } from './AgentSurface'
@@ -59,6 +70,18 @@ export const agentUiRenderer: RendererPlugin = {
   floating: AgentBubbles,
   overlays: [TurnReview],
   commands: COMMANDS,
+  // The page is there to land on while this runs; with it, a session the
+  // quick panel asked the main window to show opens in its chat.
+  vault: (remote, store) => {
+    store.set(agentPageAtom, true)
+    const offPending = followPendingOpen(remote, store)
+    return () => {
+      offPending()
+      store.set(agentPageAtom, false)
+    }
+  },
+  // Every "Ask" lands in a chat, so the service is the interface's.
+  agent: AGENT_SERVICE,
   palette: {
     items: atom((get) =>
       get(agentSessionsAtom).map((s) => ({ key: s.id, name: s.name, dot: agentIndicator(s).dot })),

@@ -55,15 +55,42 @@ export const clearSessionNoticesAtom = atom(null, (_get, set, sessionId: string)
   set(agentNoticesAtom, (all) => all.filter((n) => n.sessionId !== sessionId))
 })
 
-/** Whether this session's chat is what the person is looking at: the agents
- *  page showing it, or its quick chat open. Nothing to announce then. */
+/** The session whose chat the person is looking at: its quick chat open,
+ *  or the agents page showing it. Null for none. */
+export const watchedSessionAtom = atom((get): string | null => {
+  const quick = get(quickChatAtom)
+  if (quick !== null) return quick
+  if (!get(surfaceActiveAtom(AGENT_SURFACE)) || get(agentViewAtom) !== 'chat') return null
+  const shown = get(shownEntryAtom)
+  return shown?.kind === 'live' ? shown.id : null
+})
+
+/** Whether this session's chat is what the person is looking at. Nothing to
+ *  announce then. */
 function beingWatched(store: PluginStore, sessionId: string): boolean {
-  if (store.get(quickChatAtom) === sessionId) return true
-  return (
-    store.get(surfaceActiveAtom(AGENT_SURFACE)) &&
-    store.get(agentViewAtom) === 'chat' &&
-    store.get(shownEntryAtom)?.id === sessionId
-  )
+  return store.get(watchedSessionAtom) === sessionId
+}
+
+/**
+ * Tell main whose chat is showing, now and on every change, while `remote` is
+ * the open vault: a session being looked at gets no needs-you banner while
+ * Holi has the focus, and the chat left behind lets go of the terminal it
+ * typed into. Nothing showing on the way out.
+ */
+export function reportWatching(remote: string, store: PluginStore): () => void {
+  let told: string | null | undefined
+  const tell = (): void => {
+    const id = store.get(watchedSessionAtom)
+    if (id === told) return
+    told = id
+    void agentCap.watching(remote, { id }).catch(() => {})
+  }
+  tell()
+  const off = store.sub(watchedSessionAtom, tell)
+  return () => {
+    off()
+    if (told !== null) void agentCap.watching(remote, { id: null }).catch(() => {})
+  }
 }
 
 /**

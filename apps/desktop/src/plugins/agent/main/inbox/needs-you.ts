@@ -9,8 +9,8 @@
  * the inbox already holds an entry for, of any age, starts out as waiting,
  * so reopening the vault does not tell about it again.
  *
- * Not while the person is plainly looking: a session Holi has a terminal open
- * on, with Holi's window focused, already shows its prompt.
+ * Not while the person is plainly looking: a session whose chat Holi is
+ * showing (`watched`), with Holi's window focused, already shows its prompt.
  *
  * No Electron import: this loads under plain Node like the rest of the plugin.
  */

@@ -6,7 +6,7 @@
  * keeps the list: a window of the latest items, the follow of its end, and
  * the footer that says what could not be placed.
  */
-import { useAtom, useSetAtom } from 'jotai'
+import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { ArrowDown, MessagesSquare, SquareTerminal } from 'lucide-react'
 import { useReducedMotion } from 'motion/react'
 import { useCallback, useEffect, useLayoutEffect, useReducer, useRef, useState } from 'react'
@@ -20,6 +20,7 @@ import {
   uploadAtom,
 } from '../../../agent/renderer/state/send'
 import {
+  agentTerminalsAtom,
   chatAttachmentsAtom,
   chatDraftsAtom,
   type AgentSession,
@@ -36,6 +37,7 @@ import {
   type Attachment,
 } from '../../../agent/renderer/chat/attachments'
 import { Composer } from './Composer'
+import { HeldQuestion, useHeldQuestion } from './HeldQuestion'
 import { QuickAsk } from './QuickAsk'
 import { askFailed } from '../../../agent/renderer/lib/ask'
 import type { RichInputHandle } from './RichInput'
@@ -153,6 +155,13 @@ export function ChatView({
   const [error, setError] = useState<string | null>(null)
   /** The terminal on this session while it is the one showing, by id. */
   const [terminal, setTerminal] = useState<string | null>(null)
+  // Closed under it (the session stopped, or main let go of it once the chat
+  // was left): back to the chat rather than a terminal with nothing behind it.
+  const terminals = useAtomValue(agentTerminalsAtom)
+  useEffect(() => {
+    if (terminal !== null && !terminals.some((t) => t.id === terminal)) setTerminal(null)
+  }, [terminal, terminals])
+  const held = useHeldQuestion(session.id)
   const reduceMotion = useReducedMotion() ?? false
 
   const scroller = useRef<HTMLDivElement | null>(null)
@@ -402,8 +411,15 @@ export function ChatView({
         />
       )}
       {terminal !== null ? (
-        <div className="flex min-h-0 flex-1 flex-col pt-8">
+        <div className="relative flex min-h-0 flex-1 flex-col pt-8">
           <SessionTerminal terminalId={terminal} visible={visible} />
+          {/* A held question has no box of Claude Code's to answer in: the
+              terminal shows only that a hook is running. */}
+          {visible && held !== null && (
+            <div className="pointer-events-none absolute inset-x-6 bottom-4 flex justify-center">
+              <HeldQuestion question={held} className="w-full max-w-xl" />
+            </div>
+          )}
         </div>
       ) : (
         <>
@@ -490,6 +506,7 @@ export function ChatView({
                         : `${asked.name}${asked.summary === '' ? '' : `: ${asked.summary}`}`
                     }
                     questions={questions}
+                    held={held}
                     press={(keys) => press({ id: session.id, keys })}
                     fallbackLabel="Answer in the terminal"
                     onFallback={toggleTerminal}

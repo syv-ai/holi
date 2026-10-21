@@ -55,7 +55,8 @@ let pointer: { x: number; y: number } | null = null
 let frame = 0
 let counter = 0
 
-const reduced = (): boolean => globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true
+const reduced = (): boolean =>
+  globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true
 const clamp = (v: number, lo: number, hi: number): number => Math.max(lo, Math.min(hi, v))
 
 function onMove(event: PointerEvent): void {

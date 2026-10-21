@@ -144,13 +144,16 @@ export function AgentFace({
     }
     const next = (): void => {
       const [lo, hi] = BLINK_GAP_MS
-      later(() => {
-        if (!blinkingOff()) {
-          shut()
-          if (Math.random() < DOUBLE_BLINK_CHANCE) later(shut, DOUBLE_BLINK_AFTER_MS)
-        }
-        next()
-      }, lo + Math.random() * (hi - lo))
+      later(
+        () => {
+          if (!blinkingOff()) {
+            shut()
+            if (Math.random() < DOUBLE_BLINK_CHANCE) later(shut, DOUBLE_BLINK_AFTER_MS)
+          }
+          next()
+        },
+        lo + Math.random() * (hi - lo),
+      )
     }
     next()
 

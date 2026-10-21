@@ -29,6 +29,7 @@ import {
   toBase64,
   uploadName,
 } from '../../agent/renderer/chat/attachments'
+import { useHeldQuestion } from './chat/HeldQuestion'
 import { QuickAsk } from './chat/QuickAsk'
 import { useQuestions, useTranscript } from '../../agent/renderer/chat/use-transcript'
 import { askFailed } from '../../agent/renderer/lib/ask'
@@ -44,6 +45,7 @@ export function QuickChat({ sessionId }: { sessionId: string }): React.JSX.Eleme
   const openFull = useSetAtom(openSessionAtom)
   const say = useSetAtom(sayAtom)
   const press = useSetAtom(pressAtom)
+  const held = useHeldQuestion(sessionId)
   const upload = useSetAtom(uploadAtom)
   const { items, loaded } = useTranscript(sessionId, session?.state !== 'idle')
   const questions = useQuestions(
@@ -178,6 +180,7 @@ export function QuickChat({ sessionId }: { sessionId: string }): React.JSX.Eleme
                 : `${asked.name}${asked.summary === '' ? '' : `: ${asked.summary}`}`
             }
             questions={questions}
+            held={held}
             press={(keys) => press({ id: sessionId, keys })}
             fallbackLabel="Open the full chat"
             onFallback={() => void openFull(sessionId)}
