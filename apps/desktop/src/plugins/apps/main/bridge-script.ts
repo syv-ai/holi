@@ -51,8 +51,9 @@ export const BRIDGE_JS = `(() => {
       parent.postMessage({ id, method, params }, '*')
     })
   // The app's log (log.local.txt beside its code, for the vault's agent):
-  // console errors and warnings, uncaught errors, refused calls, and
-  // holi.log(). A burst is capped, so a loop that logs cannot flood Holi.
+  // a line when the document loads, the console, uncaught errors, refused
+  // calls, and holi.log(). A burst is capped, so a loop that logs cannot
+  // flood Holi.
   let budget = 50
   setInterval(() => { budget = 50 }, 1000)
   const describe = (part) => {
@@ -65,10 +66,13 @@ export const BRIDGE_JS = `(() => {
     budget -= 1
     parent.postMessage({ log: { level, text: parts.map(describe).join(' ') } }, '*')
   }
-  for (const level of ['error', 'warn']) {
-    const original = console[level].bind(console)
-    console[level] = (...args) => { report(level, args); original(...args) }
+  // console.log and console.info are both info: the log has no level below it.
+  for (const [method, level] of [['error', 'error'], ['warn', 'warn'], ['info', 'info'], ['log', 'info']]) {
+    const original = console[method].bind(console)
+    console[method] = (...args) => { report(level, args); original(...args) }
   }
+  // Where holi apps console starts reading.
+  report('load', [location.pathname + location.search])
   addEventListener('error', (e) => report('error', [e.error || e.message]))
   addEventListener('unhandledrejection', (e) => report('error', ['unhandled rejection:', e.reason]))
   // Listen for a topic: docs, tasks, sync, agent, recents, history, or store:<collection>.

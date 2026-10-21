@@ -33,6 +33,7 @@ import { isSurfaceName } from '@holi/shared'
 import { APP_METHODS, type AppMethod, type AppPush, type AppResponse } from '../shared/bridge'
 import { appHost, appName } from '../shared/bundle'
 import { type AppAffordance } from '../shared/manifest'
+import { APP_LOG_LEVELS } from '../shared/store'
 import {
   activeModeAtom,
   activeRemoteAtom,
@@ -52,8 +53,6 @@ import { appsCap } from './apps-cap'
 function isAppMethod(value: unknown): value is AppMethod {
   return typeof value === 'string' && (APP_METHODS as readonly string[]).includes(value)
 }
-
-const LOG_LEVELS = ['error', 'warn', 'info'] as const
 
 /** A string field out of a call's params, or null when there isn't one. */
 function fieldOf(params: unknown, key: 'target'): string | null {
@@ -136,7 +135,7 @@ export function AppFrame({ path }: { path: string }): React.JSX.Element {
       // the app's to hear about. Main checks it again, with the bundle.
       if (typeof msg.log === 'object' && msg.log !== null && remote !== null) {
         const { text } = msg.log
-        const level = LOG_LEVELS.find((l) => l === msg.log?.level)
+        const level = APP_LOG_LEVELS.find((l) => l === msg.log?.level)
         if (level !== undefined && typeof text === 'string') {
           appsCap.log(remote, { bundle: path, level, text }).catch(() => {})
         }

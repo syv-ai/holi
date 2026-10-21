@@ -3,10 +3,12 @@ import { parseAppManifest } from '../shared/manifest'
 import {
   APP_LOG_MAX_ENTRIES,
   appendAppLog,
+  appLogSinceLoad,
   isRecordId,
   newRecordId,
   recordRel,
   validateRecord,
+  type AppLogLevel,
   type CollectionSchema,
 } from '../shared/store'
 
@@ -139,5 +141,33 @@ describe('appendAppLog', () => {
     const lines = log!.trimEnd().split('\n')
     expect(lines).toHaveLength(APP_LOG_MAX_ENTRIES)
     expect(lines.at(-1)).toContain(`n${APP_LOG_MAX_ENTRIES + 4}`)
+  })
+})
+
+describe('appLogSinceLoad', () => {
+  const at = (iso: string) => new Date(iso)
+  const log = (entries: [AppLogLevel, string][]) =>
+    entries.reduce<string | null>(
+      (text, [level, line], i) =>
+        appendAppLog(text, { level, text: line }, at(`2026-10-01T10:00:0${i}Z`)),
+      null,
+    )
+
+  it('starts at the last load, a stack staying with its entry', () => {
+    const text = log([
+      ['load', '/index.html'],
+      ['error', 'old'],
+      ['load', '/index.html?mode=dark'],
+      ['error', 'boom\n  at f()'],
+    ])
+    expect(appLogSinceLoad(text)).toEqual([
+      '2026-10-01T10:00:02.000Z load /index.html?mode=dark',
+      '2026-10-01T10:00:03.000Z error boom\n    at f()',
+    ])
+  })
+
+  it('is the whole log when no load is in it, and nothing for no log', () => {
+    expect(appLogSinceLoad(log([['warn', 'w']]))).toHaveLength(1)
+    expect(appLogSinceLoad(null)).toEqual([])
   })
 })

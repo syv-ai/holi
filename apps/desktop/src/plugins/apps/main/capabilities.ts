@@ -15,7 +15,7 @@
  * No `electron` import: this loads under plain Node in the tests.
  */
 import { appBundleOf, isAppBundlePath } from '@holi/shared'
-import { type AppLogLevel } from '../shared/store'
+import { APP_LOG_LEVELS, appLogEntries, appLogSinceLoad } from '../shared/store'
 import {
   cap,
   CapabilityError,
@@ -33,7 +33,7 @@ import {
   type AppGrants,
   type BundleCommit,
 } from './grants'
-import { writeAppLog } from './log'
+import { readAppLog, writeAppLog } from './log'
 import { initAppOp, openAppOp } from './ops'
 import { storeCheck, storeDelete, storeGet, storeList, storePut } from './store'
 
@@ -72,8 +72,6 @@ function valueParam(value: unknown): unknown {
 }
 
 const compact = (value: unknown) => JSON.stringify(value)
-
-const LOG_LEVELS: readonly AppLogLevel[] = ['error', 'warn', 'info']
 
 export interface AppCapabilitiesDeps {
   /** The apps' events: `open` asks the renderer to open (or reload) a
@@ -152,7 +150,7 @@ export const appsCapabilities = (deps: AppCapabilitiesDeps) => ({
     doors: ['ui'],
     params: (raw) => {
       const p = paramsObject(raw)
-      const level = LOG_LEVELS.find((l) => l === p.level)
+      const level = APP_LOG_LEVELS.find((l) => l === p.level)
       if (level === undefined) throw new CapabilityError('BAD_REQUEST', 'not a log entry')
       return { bundle: bundleParam(p), level, text: typeof p.text === 'string' ? p.text : '' }
     },
@@ -180,6 +178,32 @@ export const appsCapabilities = (deps: AppCapabilitiesDeps) => ({
       return { bundle: result.bundle }
     },
     text: ({ bundle }) => `opened ${bundle}`,
+  }),
+
+  /**
+   * The app's log (`log.local.txt`), from its last load on: what its console
+   * said, what went wrong and what Holi refused, since `holi apps open` last
+   * (re)loaded it. `--all` prints the whole day the log keeps.
+   */
+  'apps.console': cap({
+    doors: ['cli'],
+    cli: {
+      args: ['path'],
+      flags: ['all'],
+      summary: "an app's console and errors since it last loaded (--all: the last day)",
+    },
+    params: (raw) => {
+      const p = paramsObject(raw)
+      const path = stringParam(p, 'path').replace(/\/+$/, '')
+      if (!isAppBundlePath(path)) throw new CapabilityError('BAD_REQUEST', `not an app: ${path}`)
+      return { bundle: path, all: p.all === true || p.all === 'true' }
+    },
+    run: async (ctx, { bundle, all }) => {
+      const log = await readAppLog(ctx.root, bundle)
+      return { bundle, entries: all ? appLogEntries(log) : appLogSinceLoad(log) }
+    },
+    text: ({ bundle, entries }) =>
+      entries.length === 0 ? `nothing in ${bundle}'s log` : entries.join('\n'),
   }),
 
   /** Scaffold a bundle, or finish one by writing its manifest: the agent's

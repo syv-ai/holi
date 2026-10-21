@@ -16,7 +16,30 @@ export const APP_LOG_MAX_ENTRIES = 500
 /** One entry's text past this is cut: a log line, not a dump. */
 export const APP_LOG_MAX_TEXT = 4000
 
-export type AppLogLevel = 'error' | 'warn' | 'info'
+/** `load` is the frame starting a document: where `holi apps console` starts
+ *  reading. */
+export const APP_LOG_LEVELS = ['error', 'warn', 'info', 'load'] as const
+export type AppLogLevel = (typeof APP_LOG_LEVELS)[number]
+
+/** The log's entries, oldest first: a line starting with its ISO time and
+ *  level, and a multi-line text's indented continuation lines with it. */
+export function appLogEntries(log: string | null): string[] {
+  const entries: string[] = []
+  for (const line of (log ?? '').split('\n')) {
+    if (line === '') continue
+    if (/^\d{4}-\d\d-\d\dT/.test(line) || entries.length === 0) entries.push(line)
+    else entries[entries.length - 1] += `\n${line}`
+  }
+  return entries
+}
+
+/** The entries since the app last loaded, its load line first; the whole log
+ *  when no load is in it. */
+export function appLogSinceLoad(log: string | null): string[] {
+  const entries = appLogEntries(log)
+  const last = entries.findLastIndex((e) => e.split(' ', 2)[1] === 'load')
+  return last < 0 ? entries : entries.slice(last)
+}
 
 /**
  * The log with one entry added and what is past its day (or over the cap)
@@ -29,12 +52,7 @@ export function appendAppLog(
   entry: { level: AppLogLevel; text: string },
   now: Date,
 ): string {
-  const entries: string[] = []
-  for (const line of (existing ?? '').split('\n')) {
-    if (line === '') continue
-    if (/^\d{4}-\d\d-\d\dT/.test(line) || entries.length === 0) entries.push(line)
-    else entries[entries.length - 1] += `\n${line}`
-  }
+  const entries = appLogEntries(existing)
   const cutoff = now.getTime() - APP_LOG_TTL_MS
   const kept = entries.filter((e) => {
     const at = Date.parse(e.slice(0, e.indexOf(' ')))

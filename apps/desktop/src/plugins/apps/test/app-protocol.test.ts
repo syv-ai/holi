@@ -228,6 +228,9 @@ describe('BRIDGE_JS', () => {
       parent,
       window: win,
       crypto: { randomUUID: () => `id${sent.length}` },
+      // The frame's own, which the shim wraps; never the test runner's.
+      console: { error: () => {}, warn: () => {}, info: () => {}, log: () => {} },
+      location: { pathname: '/index.html', search: '?mode=dark' },
       HTMLElement: class {},
       customElements: { get: () => undefined, define: () => {} },
     }

@@ -13,7 +13,7 @@ import { join } from 'node:path'
 import { APP_LOG_FILE, isAppBundlePath, vaultRelPath } from '@holi/shared'
 import { appendAppLog, type AppLogLevel } from '../shared/store'
 import { exactPath } from '@holi/shared/path-safety-node'
-import { writeAtomic } from '../../../main/plugin-api'
+import { CapabilityError, writeAtomic } from '../../../main/plugin-api'
 
 const queues = new Map<string, Promise<unknown>>()
 
@@ -41,4 +41,15 @@ export async function writeAppLog(
     if (queues.get(key) === settled) queues.delete(key)
   })
   return done
+}
+
+/** The app's log as it is on disk, or null when nothing has been logged yet.
+ *  Never through a symlink; an app that is not there is a NOT_FOUND. */
+export async function readAppLog(root: string, bundle: string): Promise<string | null> {
+  const dir = await exactPath(root, vaultRelPath(bundle))
+  if (dir === null || (await stat(dir).catch(() => null))?.isDirectory() !== true) {
+    throw new CapabilityError('NOT_FOUND', bundle)
+  }
+  const abs = await exactPath(root, vaultRelPath(`${bundle}/${APP_LOG_FILE}`))
+  return abs === null ? null : await readFile(abs, 'utf8').catch(() => null)
 }
