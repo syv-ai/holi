@@ -419,10 +419,15 @@ function mergeKeyed(
   return out
 }
 
-/** Both sides changed one value Holi has no rule for: a hand edit, and ours is
- *  as good an answer as theirs. A comment is written once, so this is also
- *  both sides holding one comment id differently. */
-const keepOurs = (ours: unknown): unknown => ours
+/** Both sides changed one value Holi has no rule for (a comment's text, a
+ *  thread's anchor, a key it does not know): a hand edit on each side, and
+ *  keeping either would drop the other. A comment is written once, so this is
+ *  also both sides holding one comment id differently. */
+class BothChanged extends Error {}
+
+const conflict = (): never => {
+  throw new BothChanged()
+}
 
 /** Resolved on one machine, reopened on another: the later one stands. */
 function laterStatus(ours: unknown, theirs: unknown): unknown {
@@ -433,13 +438,13 @@ function laterStatus(ours: unknown, theirs: unknown): unknown {
 }
 
 function mergeThread(ours: unknown, theirs: unknown, base: unknown): unknown {
-  if (!isObject(ours) || !isObject(theirs)) return ours
+  if (!isObject(ours) || !isObject(theirs)) return conflict()
   return mergeKeyed(objectOr(base), ours, theirs, (o, t, b, key) =>
     key === 'comments' && isObject(o) && isObject(t)
-      ? mergeKeyed(objectOr(b), o, t, keepOurs)
+      ? mergeKeyed(objectOr(b), o, t, conflict)
       : key === 'status'
         ? laterStatus(o, t)
-        : o,
+        : conflict(),
   )
 }
 
@@ -447,9 +452,11 @@ function mergeThread(ours: unknown, theirs: unknown, base: unknown): unknown {
  * Three-way merge of one sidecar: the git merge driver's body. Threads and
  * comments are unioned by id, so concurrent comments never conflict; a resolve
  * against a reopen keeps the later. Keys it does not know merge the same way,
- * one side's change winning, so nothing in the file is dropped. It refuses
- * only text that is not a sidecar, which git then records as an ordinary
- * conflict. `base` is null when both sides created the file.
+ * one side's change winning. It refuses text that is not a sidecar, and one
+ * value both sides changed with no rule to settle it (a comment's text, an
+ * anchor, an unknown key): git then records an ordinary conflict, rather than
+ * the merge keeping one side and dropping the other. `base` is null when both
+ * sides created the file.
  */
 export function mergeCommentsText(
   base: string | null,
@@ -460,10 +467,18 @@ export function mergeCommentsText(
   const o = parseCommentsFile(ours)
   const t = parseCommentsFile(theirs)
   if (b === null || o === null || t === null) return { ok: false, reason: 'not a comments file' }
-  const merged = mergeKeyed(b, o, t, (oo, tt, bb, key) =>
-    key === 'threads' ? mergeKeyed(objectOr(bb), objectOr(oo), objectOr(tt), mergeThread) : oo,
-  )
-  return { ok: true, text: formatCommentsFile({ ...merged, threads: objectOr(merged.threads) }) }
+  try {
+    const merged = mergeKeyed(b, o, t, (oo, tt, bb, key) =>
+      key === 'threads'
+        ? mergeKeyed(objectOr(bb), objectOr(oo), objectOr(tt), mergeThread)
+        : conflict(),
+    )
+    return { ok: true, text: formatCommentsFile({ ...merged, threads: objectOr(merged.threads) }) }
+  } catch (err) {
+    if (err instanceof BothChanged)
+      return { ok: false, reason: 'both sides changed the same value' }
+    throw err
+  }
 }
 
 // ------------------------------------------------------------------- mentions

@@ -52,14 +52,40 @@ async function noteText(
   return { rel, text: await readNote(ctx, rel) }
 }
 
-async function threadsOf(ctx: CapabilityContext, path: string): Promise<LocatedThread[]> {
-  const { rel, text } = await noteText(ctx, path)
+/**
+ * `path`'s threads, placed in its text. A note that is gone but whose sidecar
+ * is still here (it was deleted, and its threads stay) has them all detached,
+ * with `gone` set; a note with neither is NOT_FOUND.
+ */
+async function threadsOf(
+  ctx: CapabilityContext,
+  path: string,
+): Promise<{ threads: LocatedThread[]; gone: boolean }> {
+  const rel = shownPath(path)
+  if (!isCommentableNote(rel, await ctx.claims())) {
+    throw new CapabilityError('BAD_REQUEST', `${path} takes no comments`)
+  }
+  const text = await readNote(ctx, rel).catch((err: unknown) => {
+    if (err instanceof CapabilityError && err.code === 'NOT_FOUND') return null
+    throw err
+  })
   try {
-    return locate(text, await readNoteComments(ctx.root, rel))
+    const file = await readNoteComments(ctx.root, rel)
+    if (text === null && Object.keys(file.threads).length === 0) {
+      throw new CapabilityError('NOT_FOUND', path)
+    }
+    return { threads: locate(text ?? '', file), gone: text === null }
   } catch (err) {
     if (err instanceof UnreadableComments) throw new CapabilityError('BAD_REQUEST', err.message)
     throw err
   }
+}
+
+/** The note a reply or a resolve is about: one with threads, even when the
+ *  note itself is gone, so a deleted note's threads can still be closed. */
+async function threadNote(ctx: CapabilityContext, path: string): Promise<string> {
+  await threadsOf(ctx, path)
+  return shownPath(path)
 }
 
 function body(raw: Record<string, unknown>): string {
@@ -74,9 +100,10 @@ const threadParams = (raw: unknown) => {
 }
 
 /** What a list says about one note in the vault-wide listing. */
-function summary(path: string, threads: LocatedThread[]): string | null {
+function summary(path: string, threads: LocatedThread[], gone: boolean): string | null {
   const open = threads.filter((t) => !isResolved(t))
   if (open.length === 0) return null
+  if (gone) return `${path}\t${open.length} open, the note is gone`
   const detached = open.filter((t) => t.line === null).length
   return `${path}\t${open.length} open${detached > 0 ? `, ${detached} detached` : ''}`
 }
@@ -104,21 +131,21 @@ export const commentCapabilities = (deps: CommentCapabilitiesDeps) => {
         { path },
       ): Promise<
         | { path: string; threads: LocatedThread[] }
-        | { notes: { path: string; threads: LocatedThread[] }[] }
+        | { notes: { path: string; threads: LocatedThread[]; gone: boolean }[] }
       > => {
-        if (path !== undefined) return { path, threads: await threadsOf(ctx, path) }
-        const notes: { path: string; threads: LocatedThread[] }[] = []
+        if (path !== undefined) return { path, threads: (await threadsOf(ctx, path)).threads }
+        const notes: { path: string; threads: LocatedThread[]; gone: boolean }[] = []
         for (const note of await commentedNotes(ctx.root)) {
-          // A sidecar whose note is gone, or one that cannot be read, is
-          // nothing to review.
-          const threads = await threadsOf(ctx, note).catch(() => null)
-          if (threads !== null) notes.push({ path: note, threads })
+          // A sidecar that cannot be read is nothing to review. One whose note
+          // was deleted is listed: its threads stay until someone acts on them.
+          const found = await threadsOf(ctx, note).catch(() => null)
+          if (found !== null) notes.push({ path: note, ...found })
         }
         return { notes }
       },
       text: (result) => {
         if ('threads' in result) return formatNoteComments(result.path, result.threads)
-        const lines = result.notes.flatMap((n) => summary(n.path, n.threads) ?? [])
+        const lines = result.notes.flatMap((n) => summary(n.path, n.threads, n.gone) ?? [])
         return lines.length === 0 ? 'No open comments in this vault.' : lines.join('\n')
       },
     }),
@@ -178,7 +205,7 @@ export const commentCapabilities = (deps: CommentCapabilitiesDeps) => {
       params: (raw) => ({ ...threadParams(raw), body: body(paramsObject(raw)) }),
       run: async (ctx, { path, thread, body }) => {
         const author = agent()
-        const { rel } = await noteText(ctx, path)
+        const rel = await threadNote(ctx, path)
         if (!(await addReply(ctx.root, rel, thread, author, body))) throw missing(thread, path)
         return { thread }
       },
@@ -192,7 +219,7 @@ export const commentCapabilities = (deps: CommentCapabilitiesDeps) => {
       params: threadParams,
       run: async (ctx, { path, thread }) => {
         const { login } = agent()
-        const { rel } = await noteText(ctx, path)
+        const rel = await threadNote(ctx, path)
         if (!(await setResolved(ctx.root, rel, thread, true, login))) throw missing(thread, path)
         return { thread }
       },
@@ -206,7 +233,7 @@ export const commentCapabilities = (deps: CommentCapabilitiesDeps) => {
       params: threadParams,
       run: async (ctx, { path, thread }) => {
         const { login } = agent()
-        const { rel } = await noteText(ctx, path)
+        const rel = await threadNote(ctx, path)
         if (!(await setResolved(ctx.root, rel, thread, false, login))) throw missing(thread, path)
         return { thread }
       },

@@ -14,10 +14,13 @@ const registry = createCapabilityRegistry()
 registry.register(COMMENT_NAMESPACES, commentCapabilities({ login: () => login }))
 
 const NOTE = 'plan.md'
+/** What the vault's snapshot lists: the note, until a test deletes it. */
+let snapshotFiles = [{ path: NOTE, updatedAt: '' }]
 
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), 'holi-comment-caps-'))
   login = 'ada'
+  snapshotFiles = [{ path: NOTE, updatedAt: '' }]
   await writeFile(join(root, NOTE), '# Plan\n\nThe budget is 40k.\n\nAgain: the budget.\n')
 })
 
@@ -27,7 +30,7 @@ const ctx = (): CapabilityContext => ({
   remote: 'o/r',
   root,
   bundle: null,
-  snapshot: async () => ({ ...emptyVaultSnapshot(), files: [{ path: NOTE, updatedAt: '' }] }),
+  snapshot: async () => ({ ...emptyVaultSnapshot(), files: snapshotFiles }),
   claims: async () => [],
   core: noCoreServices(),
 })
@@ -82,6 +85,23 @@ describe('holi comments', () => {
     expect(await refusal(run('comments.reply', { path: NOTE, thread: 'missing', body: 'x' }))).toBe(
       'NOT_FOUND',
     )
+  })
+
+  it("keeps a deleted note's threads listed, and lets them be resolved", async () => {
+    const { value } = await run('comments.add', {
+      path: NOTE,
+      quote: '40k',
+      body: 'Is this final?',
+    })
+    const { thread } = value as { thread: string }
+    await rm(join(root, NOTE))
+    snapshotFiles = []
+
+    expect((await run('comments.list', {})).text).toBe(`${NOTE}\t1 open, the note is gone`)
+    expect((await run('comments.list', { path: NOTE })).text).toContain('detached')
+    await run('comments.resolve', { path: NOTE, thread })
+    expect((await stored())[0]!.status).toMatchObject({ resolved: true })
+    expect(await refusal(run('comments.list', { path: 'never.md' }))).toBe('NOT_FOUND')
   })
 
   it("refuses the agent's own instructions", async () => {

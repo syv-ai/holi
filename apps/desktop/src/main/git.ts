@@ -440,7 +440,7 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
       // hook. Its changes were committed on both sides already, and the
       // hook would hold this merge alone to a gate (large files) the clean
       // ones skip. The transforms would keep the sidecar anyway: relink
-      // deletes none in a merge (`followNoteComments`).
+      // deletes none (`followNoteComments`).
       await runGit(root, [...(await identityArgs()), 'commit', '--no-verify', '--no-edit'], opts)
     }
 

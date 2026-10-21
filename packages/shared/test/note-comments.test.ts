@@ -190,6 +190,16 @@ describe('mergeCommentsText', () => {
     expect(Object.keys(merged.threads.t.comments).sort()).toEqual(['a', 'b', 'c'])
   })
 
+  it('conflicts rather than keep one side of a value both changed', () => {
+    const edited = (body: string): CommentsFile => ({
+      ...base,
+      threads: { t: { ...(base.threads.t as object), comments: { a: comment('a', body) } } },
+    })
+    expect(mergeCommentsText(f(base), f(edited('ours')), f(edited('theirs'))).ok).toBe(false)
+    const tagged = (v: string): CommentsFile => ({ ...base, tag: v })
+    expect(mergeCommentsText(f(base), f(tagged('ours')), f(tagged('theirs'))).ok).toBe(false)
+  })
+
   it('refuses what is not a comments file', () => {
     expect(mergeCommentsText(null, 'nope', f(base)).ok).toBe(false)
   })

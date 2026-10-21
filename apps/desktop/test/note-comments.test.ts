@@ -11,8 +11,10 @@ import {
   type CommentsFile,
 } from '@holi/shared'
 import { runGit } from '../src/main/git'
+import { writeFileSync } from 'node:fs'
 import {
   addThread,
+  changeNoteComments,
   pulledMentions,
   readNoteComments,
   UnreadableComments,
@@ -107,5 +109,22 @@ describe('a sidecar that is a symlink', () => {
     await addThread(root, 'a.md', anchorAt(doc, 0, 10), author, 'hello')
     const file = await readNoteComments(root, 'a.md')
     expect(Object.keys(file.threads)).toHaveLength(1)
+  })
+})
+
+describe('a comment written while a pull lands', () => {
+  it('keeps the pulled comment rather than writing over it', async () => {
+    const sidecar = join(root, '.holi/comments/a.md.json')
+    const base = withThread(emptyCommentsFile(), 't', anchorAt(doc, 0, 10), comment('a', 'first'))
+    await mkdir(dirname(sidecar), { recursive: true })
+    await writeFile(sidecar, formatCommentsFile(base))
+
+    await changeNoteComments(root, 'a.md', (file) => {
+      // The pull's write, between this change's read and its write.
+      writeFileSync(sidecar, formatCommentsFile(withReply(base, 't', comment('bb', 'pulled'))!))
+      return withReply(file, 't', comment('ccc', 'mine'))
+    })
+    const ids = Object.keys((await readNoteComments(root, 'a.md')).threads.t!.comments).sort()
+    expect(ids).toEqual(['a', 'bb', 'ccc'])
   })
 })

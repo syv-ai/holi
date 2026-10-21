@@ -1113,7 +1113,8 @@ export function createRouter(deps: RouterDeps) {
             throw new TRPCError({ code: 'CONFLICT', message: `already exists: ${m.to}` })
           }
         }
-        return moveNotes(root, input.moves)
+        const { rewritten } = await moveNotes(root, input.moves)
+        return { rewritten }
       }),
 
     // Batch copy: verbatim, no link rewrite. Refuses to clobber
