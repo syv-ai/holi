@@ -60,6 +60,7 @@ function recording(called: Called): Record<string, AnyCapability> {
     ...vaultCapabilities({
       updateSkills: async () => ({ summary: '', conflicts: null }),
       pendingSkills: async () => [],
+      open: () => {},
     }),
     ...appsCapabilities({
       events: { emit: () => {} },

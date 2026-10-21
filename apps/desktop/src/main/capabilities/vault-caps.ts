@@ -5,11 +5,18 @@
  *
  * No `electron` import: this loads under plain Node in the tests.
  */
-import { syncLabel, type RecentEntry, type SyncState, type VaultSnapshot } from '@holi/shared'
+import {
+  isAppBundlePath,
+  syncLabel,
+  type RecentEntry,
+  type SyncState,
+  type VaultRelPath,
+  type VaultSnapshot,
+} from '@holi/shared'
 import { readVaultSettings } from '../vault/settings'
 import { isSearchable, searchVault, type SearchHit } from '../vault/search'
 import { CapabilityError, unavailable } from './error'
-import { readableOrNull, readablePath, readNote } from './fences'
+import { inSnapshot, readableOrNull, readablePath, readNote, shownPath } from './fences'
 import { limitParam, noParams, paramsObject, pathParams, stringParam } from './params'
 import { cap } from './registry'
 import { renderNote } from './render-note'
@@ -52,6 +59,9 @@ export interface VaultCapabilitiesDeps {
   /** The shipped files an update would bring the vault, by vault path;
    *  writes nothing. */
   pendingSkills(remote: string): Promise<string[]>
+  /** Show `path` to the person in a tab of `remote`'s window. Throws the
+   *  refusal. */
+  open(remote: string, path: VaultRelPath): void
 }
 
 export const vaultCapabilities = (deps: VaultCapabilitiesDeps) => ({
@@ -80,6 +90,29 @@ export const vaultCapabilities = (deps: VaultCapabilitiesDeps) => ({
     params: pathParams,
     run: async (ctx, { path }): Promise<string> => renderNote(await readNote(ctx, path)),
     text: (html) => html,
+  }),
+
+  /**
+   * Show a note, task, PDF, vault app or any vault file in a tab, so the
+   * agent can say "here it is" rather than "go to X". The CLI door only: the
+   * agent may show the person its own surface, and an app has `holi.open`.
+   * Never a secret file or this machine's state (`.holi/state/` holds the
+   * bridge's tokens): a prompt-injected agent must not put either on screen.
+   * Reversible: the tab closes.
+   */
+  'docs.open': cap({
+    doors: ['cli'],
+    cli: { args: ['path'], summary: 'show a note, task or other vault file in a tab' },
+    params: pathParams,
+    run: async (ctx, { path }) => {
+      let rel = shownPath(path)
+      // A vault app is a directory, which the snapshot lists among `dirs`.
+      const bundle = isAppBundlePath(rel) && (await ctx.snapshot()).dirs.includes(rel)
+      if (!bundle) rel = await inSnapshot(ctx, rel, path)
+      deps.open(ctx.remote, rel)
+      return { path: rel }
+    },
+    text: ({ path }) => `opened ${path}`,
   }),
 
   'docs.search': cap({

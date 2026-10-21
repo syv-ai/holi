@@ -19,11 +19,14 @@ import { taskCapabilities, TASK_NAMESPACES } from '../src/main/vault/task-capabi
 import { MEMBERS_TTL_MS, createMembersCache } from '../src/main/github/members-cache'
 
 const registry = createCapabilityRegistry()
+/** What `docs.open` asked to show, by vault path. */
+const opened: string[] = []
 registry.register(
   VAULT_NAMESPACES,
   vaultCapabilities({
     updateSkills: async () => ({ summary: '', conflicts: null }),
     pendingSkills: async () => [],
+    open: (_remote, path) => void opened.push(path),
   }),
 )
 registry.register(TASK_NAMESPACES, taskCapabilities({ today: () => '2026-09-30' }))
@@ -334,6 +337,54 @@ describe('docs.render', () => {
     await put('a.md', '# Hi\n')
     const { value } = await runCapability('docs.render', 'app', ctx({}), { path: 'a.md' })
     expect(value).toContain('<h1')
+  })
+})
+
+describe('docs.open', () => {
+  it('shows a file the vault holds, by its normalised path', async () => {
+    await put('notes/a.md', '# A\n')
+    opened.length = 0
+    const { text } = await runCapability('docs.open', 'cli', ctx({}, null), {
+      path: './notes/a.md',
+    })
+    expect(opened).toEqual(['notes/a.md'])
+    expect(text).toBe('opened notes/a.md')
+  })
+
+  it('refuses a path outside the vault, or one it does not hold', async () => {
+    opened.length = 0
+    expect(
+      await refusal(runCapability('docs.open', 'cli', ctx({}, null), { path: '../x.md' })),
+    ).toMatchObject({ code: 'BAD_REQUEST' })
+    expect(
+      await refusal(runCapability('docs.open', 'cli', ctx({}, null), { path: 'missing.md' })),
+    ).toMatchObject({ code: 'NOT_FOUND' })
+    expect(opened).toEqual([])
+  })
+
+  it('refuses a secret file and this machine state, even when the vault holds them', async () => {
+    await put('.env', 'TOKEN=x\n')
+    await put('.holi/state/bridge.json', '{}\n')
+    opened.length = 0
+    for (const path of ['.env', '.holi/state/bridge.json']) {
+      expect(
+        await refusal(runCapability('docs.open', 'cli', ctx({}, null), { path })),
+      ).toMatchObject({ code: 'FORBIDDEN' })
+    }
+    expect(opened).toEqual([])
+  })
+
+  it('shows a vault app, which is a directory', async () => {
+    opened.length = 0
+    const withApp: CapabilityContext = {
+      ...ctx({}, null),
+      snapshot: async () => ({ ...emptyVaultSnapshot(), dirs: ['Finance', 'Finance/Budget.app'] }),
+    }
+    await runCapability('docs.open', 'cli', withApp, { path: 'Finance/Budget.app' })
+    expect(opened).toEqual(['Finance/Budget.app'])
+    expect(
+      await refusal(runCapability('docs.open', 'cli', withApp, { path: 'Finance' })),
+    ).toMatchObject({ code: 'NOT_FOUND' })
   })
 })
 

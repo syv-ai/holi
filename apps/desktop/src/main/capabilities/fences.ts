@@ -18,25 +18,35 @@ import { CapabilityError } from './error'
 import type { CapabilityContext } from './registry'
 
 /**
- * The note a read may reach, or a refusal: not the agent surface, a real
- * vault path, not this machine's state under `.holi/state/` (it holds the
- * bridge's tokens), not a secret file (`.env`: an app gets only the keys it
- * declares, through `holi.env`), and not any app's records, its own included
- * (the store is the only way in, so one app cannot read another's data, a
- * personal app's least of all). `docs.read`, `docs.render` and `tasks.complete` share it.
+ * The vault path a person may be shown, or a refusal: a real vault path, not
+ * this machine's state under `.holi/state/` (it holds the bridge's tokens) and
+ * not a secret file. Every read starts here; `docs.open` stops here, since the
+ * agent may show the person its own surface.
  */
-export function readablePath(path: string): VaultRelPath {
-  if (isAgentSurfacePath(path)) throw new CapabilityError('FORBIDDEN', path)
+export function shownPath(path: string): VaultRelPath {
   let rel
   try {
     rel = vaultRelPath(path)
   } catch (err) {
     throw new CapabilityError('BAD_REQUEST', (err as Error).message)
   }
+  if (isMachineStatePath(rel) || isSecretPath(rel)) throw new CapabilityError('FORBIDDEN', path)
+  return rel
+}
+
+/**
+ * The note a read may reach, or a refusal: `shownPath`, and not the agent
+ * surface, and not any app's records, its own included (the store is the only
+ * way in, so one app cannot read another's data, a personal app's least of
+ * all). A secret file is refused because an app gets only the keys it
+ * declares, through `holi.env`. `docs.read`, `docs.render` and
+ * `tasks.complete` share it.
+ */
+export function readablePath(path: string): VaultRelPath {
+  if (isAgentSurfacePath(path)) throw new CapabilityError('FORBIDDEN', path)
+  const rel = shownPath(path)
   // Checked again on the normalised path: `./.holi/memory/x.md` is `.holi/memory/x.md`.
-  if (isAgentSurfacePath(rel) || isMachineStatePath(rel) || isSecretPath(rel)) {
-    throw new CapabilityError('FORBIDDEN', path)
-  }
+  if (isAgentSurfacePath(rel)) throw new CapabilityError('FORBIDDEN', path)
   const bundle = appBundleOf(rel)
   if (bundle !== null && isAppPrivatePath(rel.slice(bundle.length + 1))) {
     throw new CapabilityError('FORBIDDEN', path)
@@ -61,7 +71,16 @@ export function readableOrNull(path: string): VaultRelPath | null {
  * the refusals see the real name.
  */
 export async function knownPath(ctx: CapabilityContext, path: string): Promise<VaultRelPath> {
-  const rel = readablePath(path)
+  return inSnapshot(ctx, readablePath(path), path)
+}
+
+/** `rel` if the vault's snapshot holds it exactly (see `knownPath`), else a
+ *  NOT_FOUND naming `path` as the caller gave it. */
+export async function inSnapshot(
+  ctx: CapabilityContext,
+  rel: VaultRelPath,
+  path: string,
+): Promise<VaultRelPath> {
   const snapshot = await ctx.snapshot()
   const known =
     snapshot.docs.some((d) => d.path === rel) ||

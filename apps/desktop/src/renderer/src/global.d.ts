@@ -29,11 +29,9 @@ declare global {
          */
         onFlushRequest(cb: () => void): () => void
         flushDone(): void
-      }
-      /** A fired reminder's notification was clicked. Fans to a vault switch
-       *  (if the task lives elsewhere) + `openTaskAtom`. Returns its
-       *  unsubscribe. */
-      reminders: {
+        /** Main asks for a vault path in a tab: a clicked reminder's task, or
+         *  `holi docs open`. Fans to a vault switch (if the path lives
+         *  elsewhere) + `openPathAtom`. Returns its unsubscribe. */
         onOpen(cb: (payload: { remote: string; path: string }) => void): () => void
       }
       /** Plugin events (docs/architecture.md, Plugins). Main sends on

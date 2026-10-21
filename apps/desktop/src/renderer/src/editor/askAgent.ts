@@ -10,6 +10,7 @@
  */
 import { EditorSelection, StateField, type EditorState, type Extension } from '@codemirror/state'
 import { showTooltip, type EditorView, type Tooltip, type TooltipView } from '@codemirror/view'
+import type { LineRange } from '@holi/shared'
 import { motionDurationMs, prefersReducedMotion } from '@/lib/motion'
 
 /**
@@ -33,15 +34,30 @@ export function askPrompt(instruction: string, quote: string): string {
   return said === '' ? quote : `${said}\n\n${quote}`
 }
 
-/** The prompt for the primary selection, or null when it is empty. */
-export function promptForSelection(state: EditorState, notePath: string): string | null {
+/** The primary selection's lines, 1-based and inclusive, or null when it is
+ *  empty (a caret). A selection that ends at the very start of a later line
+ *  (a triple-click, Mod-L, shift+down) holds nothing of that line, so it does
+ *  not count. Also what the agent's per-turn focus line names
+ *  (`state/ui-report.ts`). */
+export function selectedLines(state: EditorState): LineRange | null {
   const range = state.selection.main
   if (range.empty) return null
+  const startLine = state.doc.lineAt(range.from).number
+  const end = state.doc.lineAt(range.to)
+  const endLine = range.to === end.from && end.number > startLine ? end.number - 1 : end.number
+  return { startLine, endLine }
+}
+
+/** The prompt for the primary selection, or null when it is empty. */
+export function promptForSelection(state: EditorState, notePath: string): string | null {
+  const lines = selectedLines(state)
+  if (lines === null) return null
+  const range = state.selection.main
   return selectionPrompt(
     notePath,
-    state.doc.lineAt(range.from).number,
-    state.doc.lineAt(range.to).number,
-    state.sliceDoc(range.from, range.to),
+    lines.startLine,
+    lines.endLine,
+    state.sliceDoc(range.from, Math.min(range.to, state.doc.line(lines.endLine).to)),
   )
 }
 

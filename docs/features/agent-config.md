@@ -40,11 +40,28 @@ instructions, which Claude Code reads natively, so no `CLAUDE.md` is seeded), an
 skills are re-read per use.
 
 **Per-turn context is one line.** The `UserPromptSubmit` hook prints `Focused note: <path>` from
-`.holi/state/context.local.json`, which main keeps current from the renderer's one report of what
-the person is looking at (`ui.report`: the focused note, the open ones, the recents), the same
-report `holi vault recents` answers from. Tasks, backlinks and sync state the agent
-finds itself with `Glob`, `grep` and `git`. The line carries no time or count, so the same focus
-prints the same bytes and does not break the prompt cache.
+`.holi/state/context.local.json`, with `(selected lines 12-18; ...)` when text is selected in it,
+which main keeps current from the renderer's one report of what the person is looking at
+(`ui.report`: the focused note and its selected lines, the open ones, the recents), the same report
+`holi vault recents` answers from. A selection is the primary selection's line numbers only, 1-based
+and inclusive as `Read` numbers them, never its text: the agent reads the lines from the file, and
+nothing a person selected is written to disk. A caret is no selection, and a selection that ends at
+the start of a line (a triple-click, `Mod-L`) does not count that line. The renderer reports a selection once it has
+held still for a moment, and only when its lines change, so typing reports nothing. The editor that
+last changed its selection owns it, and it outlives that editor's unmount, so a selection still
+counts while the person types to the agent in the same pane; a vault switch clears it. Tasks, backlinks and sync state the
+agent finds itself with `Glob`, `grep` and `git`. The line carries no time or count, so the same
+focus and selection print the same bytes and do not break the prompt cache.
+
+**Showing a file.** `holi docs open <path>` opens a note, task, PDF, vault app or any file the
+vault's snapshot holds in a pinned tab, so the agent can say "here it is" rather than "go to X".
+When the agent's tab is the active one, the file opens in the pane beside it, or a new pane, so the
+agent stays in view. It refuses a secret file and `.holi/state/`, so a prompt-injected agent cannot
+put a token on screen. It is the CLI door only (an app has `holi.open`), it opens only into the vault Holi is showing (an agent
+session outlives a vault switch, and its open must not switch the person away), and it brings the
+window forward. Main asks the renderer over one push, `vault:open`, the same one a clicked
+reminder uses; the renderer switches vault when the path lives elsewhere and opens it through
+`openPathAtom`.
 
 **Seeding.** `ensureSeeded` runs on create, adopt and every open, over a list of seed
 contributions: core (`main/vault/seed/core.ts`), and each plugin the vault
@@ -120,7 +137,7 @@ additions are commands in a directory prepended to `PATH`, plus skills that docu
   body from stdin and was not given one is answered 428 without running, and the script sends
   stdin once (`send --draft <id>` reads none). Today: `apps open|init`, `skills update`,
   `pdf comments|typst`, `google agenda|search|read|mark-read|star|archive|trash|draft|send|reply|schedule|reschedule|unschedule`, `tasks list|complete`,
-  `store list|get|put|delete|check`, `docs list|read|render`, `sync status`, `agent sessions`,
+  `store list|get|put|delete|check`, `docs list|read|render|open`, `sync status`, `agent sessions`,
   `schedules list|enable|disable|run`,
   `vault members|recents`. The registry's reads the agent already has as Grep, Read and git
   (search, history, settings) stay app-only rather than grow a second way in. The script finds

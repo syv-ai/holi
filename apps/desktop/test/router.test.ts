@@ -102,6 +102,7 @@ async function rig(files: Record<string, string> = {}, auth?: StoredAuth) {
     vaultCapabilities({
       updateSkills: async () => ({ summary: '', conflicts: null }),
       pendingSkills: async () => [],
+      open: () => {},
     }),
   )
   capabilities.register(TASK_NAMESPACES, taskCapabilities({ today: () => TODAY }))

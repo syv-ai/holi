@@ -94,9 +94,14 @@ export const agentMain: MainPlugin = {
     void started.ensure(ctx)
     // The open vault's schedules run while it is open.
     schedules.attach({ remote: ctx.remote, root: ctx.root })
-    // The per-turn hook reads the focused note from a file in this clone.
+    // The per-turn hook reads the focused note, and its selected lines, from a
+    // file in this clone.
     const unreport = ctx.onReport((report) =>
-      started.setFocus({ focusedPath: report.focusedPath, openPaths: report.openPaths }),
+      started.setFocus({
+        focusedPath: report.focusedPath,
+        selection: report.selection,
+        openPaths: report.openPaths,
+      }),
     )
     // Stopping stops the vault's sessions (the renderer asked first if one
     // was busy). They stay in the agents list and resume when opened.
