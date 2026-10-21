@@ -36,6 +36,7 @@ other rather than repeating each other.
 | [agent-memory](features/agent-memory.md)           | `.holi/memory/`, expiring memory, the session overview, the memory lint  |
 | [scheduled-agents](features/scheduled-agents.md)   | Prompts Holi runs as agent sessions on a schedule or on a trigger        |
 | [agent-inbox](features/agent-inbox.md)             | `holi agent notify`, the inbox, needs-you notifications, the work log    |
+| [quick-agent](features/quick-agent.md)             | The global keys, the quick panel and its dock, question cards            |
 | [google](features/google.md)                       | Gmail and Calendar per vault                                             |
 | [pdf](features/pdf.md)                             | Typst export, templates, the PDF viewer                                  |
 | [vault-apps](features/vault-apps.md)               | Agent-written apps in their own origin, their records, slash commands    |

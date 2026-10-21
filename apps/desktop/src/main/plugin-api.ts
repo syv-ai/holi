@@ -25,6 +25,9 @@ import type { SeedContribution } from './vault/seed/types'
 import type { Route } from './bridge/server'
 import type { UiReport } from './capabilities/services'
 import type { Transform } from './vault/hooks/runner'
+import type { PageWindow, PageWindowOptions } from './page-windows'
+
+export type { PageWindow, PageWindowOptions } from './page-windows'
 
 /** Undoes what an activation started, when the plugin stops: turned off,
  *  the vault left, or Holi quitting. */
@@ -108,6 +111,15 @@ export interface PluginCtx extends LiveVault, SchemeContext {
   route(path: string, route: BridgeRoute): () => void
   /** The directory holding the `holi` command, for a process a plugin starts. */
   binDir(): string
+  /**
+   * A window of the plugin's own, showing one of its renderer side's pages
+   * (`RendererPlugin.pages`), such as the agent's quick panel. Core makes it;
+   * the plugin sizes, places, shows and closes it. Every one is closed when the plugin stops.
+   */
+  openPage(options: PageWindowOptions): PageWindow
+  /** Bring the main window forward, opening it if it was closed. Resolves
+   *  once its page has loaded, so an event sent after it is heard. */
+  showMainWindow(): Promise<void>
   /** The signed-in GitHub token, or null: for a plugin that fetches from a
    *  repository the person can read, as vault clones do. */
   githubToken(): string | null

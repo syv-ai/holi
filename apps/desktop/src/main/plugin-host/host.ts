@@ -31,6 +31,8 @@ import type {
   MainPlugin,
   NoteMention,
   Notice,
+  PageWindow,
+  PageWindowOptions,
   PluginCtx,
   QuitQuestion,
   UiReport,
@@ -70,6 +72,12 @@ export interface PluginHostDeps {
   route(path: string, route: BridgeRoute): () => void
   /** Where the `holi` command lives. */
   binDir(): string
+  /** Windows beyond the main one. Absent in the tests: a plugin asking for
+   *  one there is told it cannot have one. */
+  windows?: {
+    openPage(plugin: string, options: PageWindowOptions): PageWindow
+    showMain(): Promise<void>
+  }
   /** The signed-in GitHub token, or null. */
   githubToken(): string | null
   /** Confine frames on `origin` to it (`window-guard.ts`). Returns the undo. */
@@ -389,6 +397,15 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
       binDir: deps.binDir,
       githubToken: deps.githubToken,
       frameOrigin: (origin) => keep(deps.frameOrigin(origin)),
+      openPage: (options) => {
+        if (deps.windows === undefined) throw new Error('this host opens no windows')
+        const page = deps.windows.openPage(id, options)
+        keep(() => {
+          if (!page.window.isDestroyed()) page.window.destroy()
+        })
+        return page
+      },
+      showMainWindow: () => deps.windows?.showMain() ?? Promise.resolve(),
       pauseSync: (reason) => keep(pauseSync(remote, reason)),
       commitNow: async () => open().commitNow(),
       head: async () => open().repo.head(),

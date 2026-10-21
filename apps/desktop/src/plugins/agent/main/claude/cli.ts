@@ -173,7 +173,8 @@ export interface ClaudeCli {
   /** A new background session in the vault. With no prompt it waits for its
    *  first one; with a prompt, that prompt is its first turn. `model` and
    *  `allow` (Claude Code permission rules it may use without asking) are a
-   *  scheduled run's. */
+   *  scheduled run's; the permission mode, system prompt and settings are a
+   *  quick agent's (`quick.ts`). */
   startBg(target: VaultCliTarget, opts: StartBgOptions): Promise<StartResult>
   /** A background copy of a conversation, by Claude Code's full session id. */
   forkBg(target: VaultCliTarget, sessionId: string, name?: string): Promise<StartResult>
@@ -184,6 +185,12 @@ export interface StartBgOptions {
   prompt?: string
   model?: string
   allow?: readonly string[]
+  /** Claude Code's permission mode, instead of the vault's. */
+  permissionMode?: 'auto'
+  /** Lines after Claude Code's own system prompt. */
+  appendSystemPrompt?: string
+  /** A settings JSON layered over the vault's for this session alone. */
+  settings?: string
 }
 
 /** The longest a session name is worth being: a row is narrow, and the source
@@ -209,6 +216,14 @@ export function parseBackgrounded(stdout: string): string | null {
   const plain = stdout.replace(ANSI, '')
   const match = /^backgrounded\s+·\s+([0-9a-f]{8})\b/m.exec(plain)
   return match?.[1] ?? null
+}
+
+/**
+ * A prompt as the last arguments: after `--`, so one that starts with a dash
+ * (`- tidy the list`) is the prompt and not an unknown option.
+ */
+export function promptArgs(prompt: string | undefined): string[] {
+  return prompt ? ['--', prompt] : []
 }
 
 /** The environment every `claude` Holi runs for a vault gets. It is also the
@@ -311,7 +326,10 @@ export function createClaudeCli(deps: ClaudeCliDeps = {}): ClaudeCli {
     stop: (target, id) => action(target, ['stop', id]),
     respawn: (target, id) => action(target, ['respawn', id]),
     rm: (target, id) => action(target, ['rm', id]),
-    startBg(target, { name, prompt, model, allow = [] }) {
+    startBg(
+      target,
+      { name, prompt, model, allow = [], permissionMode, appendSystemPrompt, settings },
+    ) {
       const label = sessionName(name)
       return start(target, [
         '--bg',
@@ -325,7 +343,10 @@ export function createClaudeCli(deps: ClaudeCliDeps = {}): ClaudeCli {
             ? ['--name', 'Scheduled run']
             : []
           : ['--name', label]),
-        ...(prompt ? [prompt] : []),
+        ...(permissionMode === undefined ? [] : ['--permission-mode', permissionMode]),
+        ...(appendSystemPrompt === undefined ? [] : ['--append-system-prompt', appendSystemPrompt]),
+        ...(settings === undefined ? [] : ['--settings', settings]),
+        ...promptArgs(prompt),
       ])
     },
     forkBg(target, sessionId, name) {

@@ -44,6 +44,7 @@ export { capClient, type CapClient, type UiCapability } from '@/lib/cap-client'
 export { useHasCapability } from '@/state/capabilities'
 export { cn } from '@/lib/cn'
 export { useAck } from '@/lib/use-ack'
+export { useArrivals } from '@/lib/use-arrivals'
 export { DRAWER_WIDTH } from '@/lib/drawer'
 export {
   activeDocAtom,
@@ -56,6 +57,7 @@ export {
 export { sessionAtom } from '@/state/session'
 export { usePluginSetting } from '@/state/settings'
 export { activeModeAtom } from '@/state/color-scheme'
+export { useVaultTheme } from '@/state/theme'
 export {
   activeTab,
   closeTabsForPaths,
@@ -67,7 +69,6 @@ export { nowAtom, todayAtom } from '@/state/clock'
 export { memberLoginsAtom, peopleList } from '@/state/members'
 export { useEditorDeps } from '@/state/editor-deps'
 export { duePresets, reminderPresets, shortStamp } from '@/lib/date-presets'
-export { useArrivals } from '@/lib/use-arrivals'
 export { requestArrivalAtom, type Arrival } from '@/state/arrival'
 export {
   activeSurfaceIdAtom,

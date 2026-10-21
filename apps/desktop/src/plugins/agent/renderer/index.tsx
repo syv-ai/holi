@@ -6,6 +6,10 @@
  * provides the agent service; and the palette lists its live sessions. The
  * inbox (docs/features/agent-inbox.md) is the surface `inbox`, with a nav
  * item that counts what is unread.
+ *
+ * The quick agent (docs/features/quick-agent.md) is its page `quick`, the
+ * window main opens at the pointer, its page `dock`, the dots at the edge of
+ * the screen, its settings section, and the dock's key in the main window.
  */
 import { atom } from 'jotai'
 import { Bot, Inbox } from 'lucide-react'
@@ -33,7 +37,11 @@ import {
   agentVault,
   terminalLabel,
 } from './state/sessions'
-import { openSessionAtom, showAgentsAtom, startSessionAtom } from './state/send'
+import { followPendingOpen, openSessionAtom, showAgentsAtom, startSessionAtom } from './state/send'
+import { answerDockKey } from './quick/keys'
+import { QuickDock } from './quick/QuickDock'
+import { QuickPanel } from './quick/QuickPanel'
+import { QuickSettings } from './quick/QuickSettings'
 import { inboxAtom, inboxEvents, inboxVault, INBOX_SURFACE } from './state/inbox'
 import { TurnReview } from './TurnReview'
 
@@ -142,15 +150,25 @@ export const agentRenderer: RendererPlugin = {
       files: [],
       Component: ({ remote }) => <SchedulesSection remote={remote} />,
     },
+    {
+      id: 'quick-agent',
+      label: 'Quick agent',
+      headings: [],
+      // This machine's: the settings live in Holi's data directory, not in
+      // the vault.
+      files: [],
+      Component: () => <QuickSettings />,
+    },
   ],
   leaveGuard: agentLeaveGuardAtom,
   vault: (remote, store) => {
-    const offSessions = agentVault(remote, store)
-    const offInbox = inboxVault(remote, store)
-    return () => {
-      offSessions()
-      offInbox()
-    }
+    const off = [
+      agentVault(remote, store),
+      inboxVault(remote, store),
+      followPendingOpen(remote, store),
+      answerDockKey(remote, store),
+    ]
+    return () => off.forEach((undo) => undo())
   },
   agent: AGENT_SERVICE,
   commands: COMMANDS,
@@ -160,4 +178,5 @@ export const agentRenderer: RendererPlugin = {
     ),
     open: atom(null, (_get, set, id: string) => void set(openSessionAtom, id)),
   },
+  pages: { quick: QuickPanel, dock: QuickDock },
 }
