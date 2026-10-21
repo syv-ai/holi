@@ -49,12 +49,12 @@ resume and compact. Compact matters most: it is when the agent forgets it has me
 characters, it prints the types in use with counts, the index lines, the personal memories (read
 directly, since the index cannot carry them), the scratch notes apart with their expiry (an expired
 one is left out before the sweep reaches it), the names of today's and the previous work log
-(never their content), and the last three commits touching `.holi/memory/`. Its text changes only
-when memory changes, a scratch note expires, or the day turns. Over
+(never their content), and the last three commits touching `.holi/memory/`. Over
 the cap it drops descriptions first and keeps every title, then truncates with a pointer to the
 index. With memory files but no index yet, it says so and points at the directory. It needs no Holi
 port: local reads and one `git log` with a 2 s timeout. Its files are read in sorted order and it
-prints no clock time, so the same memory prints the same text on any machine.
+prints no clock time, so its text changes only when memory changes, a scratch note expires, or the
+day turns.
 
 **A lint lists what looks wrong, as proposals.** `.claude/skills/memory/lint.mjs` reads every
 memory file, personal ones included, and prints findings of four kinds: `frontmatter` (none, no

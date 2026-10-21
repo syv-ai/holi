@@ -55,7 +55,8 @@ function memoryFiles(dir, prefix = '.holi/memory') {
   let entries
   try {
     // Sorted: `readdir`'s order is the filesystem's, and this text opens the
-    // session, so the same memory has to print the same bytes on any machine.
+    // session, so it may change only when memory changes, a scratch note
+    // expires, or the day turns, never with the machine it runs on.
     entries = readdirSync(dir).sort()
   } catch {
     return out
@@ -232,8 +233,8 @@ const sections = indexSections(index)
 /** How many lint findings there are, or 0 when the lint is missing or throws:
  *  the overview never fails a session start. Imported rather than copied, so the
  *  count and the list the agent runs are the same code. Only the count is
- *  printed, and it depends on nothing but the files, so the overview stays the
- *  same from session to session until memory changes. */
+ *  printed, and it depends on nothing but the files, so it changes only when
+ *  memory does. */
 async function lintCount() {
   try {
     const { lintVault } = await import(new URL('../skills/memory/lint.mjs', import.meta.url).href)
