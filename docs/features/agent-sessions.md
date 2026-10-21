@@ -88,6 +88,31 @@ holds the paste until its TUI has printed and settled, with a 5 s backstop. **Re
 push and a scheduled run are the exception**: their first turn is the command's prompt. A scheduled
 run opens no window at all ([scheduled-agents](scheduled-agents.md)).
 
+**Nothing reaches a live session but its window.** Every trigger, hook and pre-commit note
+therefore starts a session of its own, as reconcile and a scheduled run do, or waits to be asked.
+Claude Code offers three ways in from outside, and none holds for a live session today:
+
+- `claude --bg --resume <session id> "<prompt>"` adds a turn to a **stopped** session named by its
+  full conversation id (the listing's `sessionId`): it wakes under the same job id with its saved
+  options (settings, name, model) and the prompt is its next turn. Given a short job id, or a
+  session whose process is alive, idle included, it starts a copy under a new id instead and only
+  says so in its output. Holi does not stop a live session to resume it: a stop ends a turn in
+  flight and drops whatever a person was typing.
+- Cross-session messaging gives every session an inbox socket. Its delivery is the right shape (a
+  message is read between tool calls mid-turn, starts a turn when the session is idle, is marked as
+  not from the person, and never touches the composer), but the socket's path is exported only
+  inside the session (to its hooks and `Bash`), and the format of a message line is not documented,
+  only the optional auth line before it. A turn hook could hand Holi the path; Holi would then be
+  writing an undocumented protocol. This is the channel to adopt once its message format is
+  published.
+- Channels push events into a session through an MCP server the session loads. They are a research
+  preview, need a claude.ai or Console login, are not documented for background sessions, and an
+  MCP server is what the vault agent does without.
+
+A session Holi has stopped could take a resumed turn, and nothing does that yet: a standing session
+grows its conversation on every turn ([scheduled-agents](scheduled-agents.md)). The person resumes a
+stopped session from the agent list, where Enter picks it up under its own id.
+
 **Git coexistence.** The seeded `UserPromptSubmit` and `Stop` hooks run `turn-signal.mjs`, which
 reads the vault's `bridge.local.env` ([agent-config](agent-config.md)) for the port and the vault's token, and posts
 the job id from `$CLAUDE_JOB_DIR`; at a Stop, also `pending`, how many background tasks and
@@ -148,6 +173,12 @@ showing it busy, crosses it off), so a session resumed from the list is never re
 - Reading context use from transcripts or the PTY: Claude Code's files and screen are not an
   interface; its status-line JSON is.
 - A three-pane merge editor: resolves positionally, wrong for prose.
+- Writing into a live session's window from outside (a trigger, a pre-commit note): the window is
+  a person's composer, and Holi cannot see whether someone is typing in it.
+- Stopping a live session to resume it with a prompt: a stop ends a turn in flight and drops a
+  half-typed message.
+- `--bg --resume` on a live session: it forks a copy, so the steering lands in a conversation
+  nobody is following.
 
 ## Code
 
