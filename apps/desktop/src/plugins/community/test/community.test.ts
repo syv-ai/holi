@@ -531,6 +531,43 @@ describe('commands', () => {
     expect(await call('community.commands')).toEqual({ linked: [], refused: [] })
     expect(existsSync(link)).toBe(false)
   })
+
+  test('a rebuild that fails never fails the pin or removal that asked for it', async () => {
+    repoDir = join(dir, 'dash')
+    await mkdir(join(repoDir, 'bin'), { recursive: true })
+    await writeFile(join(repoDir, 'bin/dashctl'), '#!/bin/sh\n')
+    await chmod(join(repoDir, 'bin/dashctl'), 0o755)
+    await writeFile(
+      join(repoDir, 'holi-plugin.json'),
+      JSON.stringify({
+        id: 'dash',
+        name: 'Dash',
+        version: '0.1.0',
+        bin: { dashctl: 'bin/dashctl' },
+      }),
+    )
+    git(repoDir, 'init', '-q', '-b', 'main')
+    commitAll('dash')
+    git(repoDir, 'tag', 'v0.1.0')
+    const { call } = setup()
+    await mkdir(join(vault, '.holi/settings'), { recursive: true })
+    await writeFile(
+      join(vault, '.holi/settings/plugins.yaml'),
+      'plugins:\n  community: true\n  dash: true\n',
+    )
+    const row = await call('community.install', { repo: 'syv-ai/dash', path: '', version: '0.1.0' })
+    await call('community.consent', {
+      id: 'dash',
+      commit: (row.install as { commit: string }).commit,
+    })
+    expect(await call('community.setup', { id: 'dash' })).toBe(true)
+    // Where the commands folder goes is a file: no rebuild can work.
+    await rm(join(vault, '.holi/state'), { recursive: true, force: true })
+    await writeFile(join(vault, '.holi/state'), '')
+    await expect(call('community.pin', { id: 'dash' })).resolves.toBeUndefined()
+    expect((await call('community.commands')).error).toBeTruthy()
+    await expect(call('community.remove', { id: 'dash' })).resolves.not.toThrow()
+  })
 })
 
 describe('serving', () => {

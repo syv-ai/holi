@@ -10,7 +10,13 @@
  * A command is refused, not shadowed, when its name is taken: by a command the
  * machine already has on the agent's `PATH` (the folder comes last, so it
  * would never be reached), or by another running plugin (the first by id
- * keeps it). Refusals come back, for the settings tab to say.
+ * keeps it). Refusals come back, for the settings tab to say. So does a
+ * plugin whose folder can't be read: one broken plugin never keeps the
+ * others' commands from linking.
+ *
+ * Rebuilds of one vault run one at a time, each reading what runs once its
+ * turn comes: two at once would share the staging folder, and the slower
+ * could link what ran before the faster one's change.
  *
  * No `electron` import: this loads under plain Node in the tests.
  */
@@ -36,6 +42,8 @@ export interface LinkedCommands {
   /** Command names now on the agent's `PATH`. */
   linked: string[]
   refused: RefusedCommand[]
+  /** Why the folder could not be rebuilt at all; what was linked stays. */
+  error?: string
 }
 
 const inside = (root: string, path: string) => {
@@ -62,22 +70,46 @@ async function targetOf(
   codeDir: string,
   file: string,
 ): Promise<{ ok: true; path: string } | { ok: false; reason: string }> {
-  const root = await realpath(codeDir)
+  const root = await realpath(codeDir).catch(() => null)
+  if (root === null) return { ok: false, reason: `the plugin's folder ${codeDir} can't be read` }
   const path = await realpath(join(root, file)).catch(() => null)
   if (path === null) return { ok: false, reason: `${file} is not in the plugin` }
   if (!inside(root, path)) return { ok: false, reason: `${file} points outside the plugin` }
-  const s = await stat(path)
-  if (!s.isFile() || (s.mode & 0o111) === 0)
+  const s = await stat(path).catch(() => null)
+  if (s === null || !s.isFile() || (s.mode & 0o111) === 0)
     return { ok: false, reason: `${file} is not an executable file` }
   return { ok: true, path }
 }
 
+/** Each vault's rebuild under way, by root. */
+const rebuilding = new Map<string, Promise<unknown>>()
+
 /**
  * Link `plugins`' commands into the vault at `root`, replacing whatever was
- * linked before. `searchPath` is the `PATH` the agent inherits, before Holi's
- * folders.
+ * linked before, after any rebuild of it under way. `plugins` is read when
+ * this rebuild's turn comes. `searchPath` is the `PATH` the agent inherits,
+ * before Holi's folders.
  */
-export async function linkCommands(
+export function linkCommands(
+  root: string,
+  plugins: readonly PluginCommands[] | (() => Promise<readonly PluginCommands[]>),
+  searchPath: string,
+): Promise<LinkedCommands> {
+  const run = (rebuilding.get(root) ?? Promise.resolve())
+    .catch(() => {})
+    .then(async () =>
+      rebuild(root, typeof plugins === 'function' ? await plugins() : plugins, searchPath),
+    )
+  rebuilding.set(root, run)
+  void run
+    .catch(() => {})
+    .finally(() => {
+      if (rebuilding.get(root) === run) rebuilding.delete(root)
+    })
+  return run
+}
+
+async function rebuild(
   root: string,
   plugins: readonly PluginCommands[],
   searchPath: string,
@@ -113,4 +145,9 @@ export async function linkCommands(
   await rm(dir, { recursive: true, force: true })
   await rename(staging, dir)
   return { linked: [...owner.keys()].sort(), refused }
+}
+
+/** Take every command away: the community plugin itself is off in the vault. */
+export function unlinkCommands(root: string): Promise<LinkedCommands> {
+  return linkCommands(root, [], '')
 }

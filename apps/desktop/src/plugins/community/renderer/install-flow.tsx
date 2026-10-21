@@ -9,14 +9,25 @@ import { useEffect, useRef, useState } from 'react'
 import { releaseTag } from '@holi/shared'
 import { activeRemoteAtom, type PluginStore } from '@/plugin-api'
 import { Button, Dialog } from '@/primitives'
-import { communityCap, refreshRows, refreshUpdates, setupLogsAtom, type PluginRow } from './state'
+import {
+  communityCap,
+  linkCommandsFor,
+  refreshRows,
+  refreshUpdates,
+  setupLogsAtom,
+  type PluginRow,
+} from './state'
 
 /** The command as a person would type it. */
 const shown = (argv: readonly string[]) =>
   argv.map((a) => (/[\s"'$]/.test(a) ? JSON.stringify(a) : a)).join(' ')
 
 type Step =
-  { kind: 'ask' } | { kind: 'setup' } | { kind: 'done' } | { kind: 'failed'; message: string }
+  | { kind: 'ask' }
+  | { kind: 'setup' }
+  /** `note`: which of its commands the agent did not get, and why. */
+  | { kind: 'done'; note: string | null }
+  | { kind: 'failed'; message: string }
 
 /**
  * The dialog for one fetched release: what it is, from where, at which commit,
@@ -54,8 +65,13 @@ export function ConsentDialog({
         await communityCap.consent(remote, { id: row.id, commit: install.commit })
       setStep({ kind: 'setup' })
       const ok = await communityCap.setup(remote, { id: row.id })
-      if (ok) await onReady?.()
-      setStep(ok ? { kind: 'done' } : { kind: 'failed', message: 'Setup did not finish.' })
+      if (!ok) {
+        setStep({ kind: 'failed', message: 'Setup did not finish.' })
+        return
+      }
+      await onReady?.()
+      const note = row.bin.length > 0 ? await linkCommandsFor(remote, row.id) : null
+      setStep({ kind: 'done', note })
     } catch (err) {
       setStep({ kind: 'failed', message: err instanceof Error ? err.message : String(err) })
     } finally {
@@ -134,6 +150,7 @@ export function ConsentDialog({
             <p className="text-xs text-muted-foreground">
               {step.kind === 'setup' && 'Running setup…'}
               {step.kind === 'done' && `${row.name} is ready.`}
+              {step.kind === 'done' && step.note !== null && ` ${step.note}`}
               {step.kind === 'failed' && step.message}
             </p>
             {log.length > 0 && (

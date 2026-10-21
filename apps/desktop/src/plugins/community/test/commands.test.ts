@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
 import { PLUGIN_COMMANDS_DIR } from '@holi/shared'
-import { linkCommands } from '../main/commands'
+import { linkCommands, unlinkCommands, type PluginCommands } from '../main/commands'
 
 let dir: string
 let vault: string
@@ -118,5 +118,61 @@ describe('linkCommands', () => {
       'bin/plain is not an executable file',
       'bin/escape points outside the plugin',
     ])
+  })
+
+  test("refuses a plugin whose folder can't be read, and links the others", async () => {
+    const gh = await plugin('gh', { 'tool.sh': 0o755 })
+    const gone = join(dir, 'plugins', 'gone')
+    const result = await linkCommands(
+      vault,
+      [
+        { id: 'gone', bin: { dashctl: 'bin/dashctl' }, codeDir: gone },
+        { id: 'gh', bin: { ghx: 'tool.sh' }, codeDir: gh },
+      ],
+      '',
+    )
+    expect(result).toEqual({
+      linked: ['ghx'],
+      refused: [
+        { id: 'gone', name: 'dashctl', reason: `the plugin's folder ${gone} can't be read` },
+      ],
+    })
+  })
+
+  test('runs rebuilds of a vault one at a time, the last one winning', async () => {
+    const a = await plugin('alpha', { x: 0o755 })
+    const b = await plugin('beta', { x: 0o755 })
+    const sets: PluginCommands[][] = [
+      [{ id: 'alpha', bin: { one: 'x' }, codeDir: a }],
+      [{ id: 'beta', bin: { two: 'x' }, codeDir: b }],
+      [],
+      [
+        { id: 'alpha', bin: { one: 'x' }, codeDir: a },
+        { id: 'beta', bin: { two: 'x' }, codeDir: b },
+      ],
+    ]
+    const results = await Promise.all(
+      [...sets, ...sets].map((plugins) => linkCommands(vault, plugins, '')),
+    )
+    expect(results.at(-1)).toEqual({ linked: ['one', 'two'], refused: [] })
+    expect(await linked()).toEqual(['one', 'two'])
+    expect(existsSync(join(vault, `${PLUGIN_COMMANDS_DIR}.next`))).toBe(false)
+  })
+
+  test('reads what runs when its turn comes', async () => {
+    const a = await plugin('alpha', { x: 0o755 })
+    let running = [{ id: 'alpha', bin: { one: 'x' }, codeDir: a }]
+    const first = linkCommands(vault, running, '')
+    const second = linkCommands(vault, async () => running, '')
+    running = []
+    await first
+    expect(await second).toEqual({ linked: [], refused: [] })
+  })
+
+  test('takes every command away when the community plugin is off', async () => {
+    const a = await plugin('alpha', { x: 0o755 })
+    await linkCommands(vault, [{ id: 'alpha', bin: { one: 'x' }, codeDir: a }], '')
+    await unlinkCommands(vault)
+    expect(await linked()).toEqual([])
   })
 })

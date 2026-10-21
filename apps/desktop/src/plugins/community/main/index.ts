@@ -5,7 +5,13 @@
  * start. No plugin's code loads here: each runs as its own process.
  */
 import { join } from 'node:path'
-import { installedInfos, remoteUrl, type MainPlugin } from '../../../main/plugin-api'
+import { resolvePlugins } from '@holi/shared'
+import {
+  installedInfos,
+  readVaultSettings,
+  remoteUrl,
+  type MainPlugin,
+} from '../../../main/plugin-api'
 import { COMMUNITY_INFO } from '../info'
 import {
   COMMUNITY_NAMESPACES,
@@ -14,6 +20,7 @@ import {
   parseServerKey,
   seedRunningApps,
 } from './capabilities'
+import { unlinkCommands } from './commands'
 import { createConsentStore } from './consent'
 import { createInstallStore, pluginsDir } from './store'
 import { createSupervisor } from './supervisor'
@@ -63,10 +70,17 @@ export const communityMain: MainPlugin = {
       console.error('[community] apps:', err),
     )
     // Its running plugins' commands, as this machine has them now.
-    void linkRunningCommands(ctx.root, { store, consent }).catch((err) =>
-      console.error('[community] commands:', err),
-    )
-    // Stopping stops its servers: the tabs on them are gone too.
-    return () => servers.stopAll()
+    void linkRunningCommands(ctx.root, { store, consent })
+    return async () => {
+      // Stopping stops its servers: the tabs on them are gone too.
+      await servers.stopAll()
+      // Turned off in the vault, its plugins' commands go too. Not when the
+      // vault is left or Holi quits: the vault's background sessions still
+      // run, and its next open links them again anyway.
+      const settings = await readVaultSettings(ctx.root).catch(() => null)
+      if (settings === null) return
+      if (resolvePlugins(settings.plugins, installedInfos()).running.has(COMMUNITY_INFO.id)) return
+      await unlinkCommands(ctx.root).catch((err) => console.error('[community] commands:', err))
+    }
   },
 }

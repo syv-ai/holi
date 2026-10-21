@@ -4,8 +4,9 @@
  * each setup's output while it runs.
  *
  * The rows are read when the vault opens and again whenever a pin or the
- * plugins settings change on disk (a teammate's pull, the settings tab's own
- * write), so the claim follows what the vault says.
+ * plugins settings change on disk (a teammate's pull, a hand edit, the
+ * settings tab's own write), so the claim follows what the vault says. So do
+ * the agent's commands: main links them again then.
  */
 import { atom } from 'jotai'
 import { PLUGIN_PINS_DIR, PLUGINS_FILE, PLUGINS_LOCAL_FILE, servedFile } from '@holi/shared'
@@ -58,6 +59,18 @@ export async function refreshRows(remote: string, store: PluginStore): Promise<v
   }
 }
 
+/**
+ * Link the agent's commands for what runs in `remote` now, and say what of
+ * plugin `id`'s it could not add, or null when nothing.
+ */
+export async function linkCommandsFor(remote: string, id: string): Promise<string | null> {
+  const { refused, error } = await communityCap.commands(remote)
+  if (error !== undefined) return `The agent's commands could not be updated: ${error}`
+  const mine = refused.filter((r) => r.id === id)
+  if (mine.length === 0) return null
+  return mine.map((r) => `${r.name} is not on the agent's PATH: ${r.reason}.`).join(' ')
+}
+
 /** What on disk decides the rows: the pins and the two plugins files. */
 const signatureAtom = atom((get) =>
   get(snapshotAtom)
@@ -82,6 +95,9 @@ export function followRows(remote: string, store: PluginStore): () => void {
     const next = store.get(signatureAtom)
     if (next === last) return
     last = next
+    void communityCap
+      .commands(remote)
+      .catch((err: unknown) => console.error('[community] commands:', err))
     void refreshRows(remote, store)
   })
   return () => {

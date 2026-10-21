@@ -29,6 +29,7 @@ import {
   paramsObject,
   readVaultSettings,
   stringParam,
+  toolPath,
   writeAtomic,
   type CapabilityTable,
 } from '../../../main/plugin-api'
@@ -107,7 +108,9 @@ export interface CommunityDeps {
   /** Staging for fetches. */
   scratch: string
   /** The `PATH` the vault's agent inherits, before Holi's own folders: a
-   *  plugin's command may not take a name already on it. */
+   *  plugin's command may not take a name already on it. By default
+   *  `toolPath()`: a Dock-launched Holi's own `PATH` lacks the folders the
+   *  person's shell, and so the agent's commands, have. */
   searchPath?(): string
 }
 
@@ -353,6 +356,9 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
           manifest: fetched.manifest,
           setup: 'none',
         })
+        // A new release of a running plugin waits for consent: its commands go
+        // until then.
+        await linkRunningCommands(ctx.root, deps)
         const rows = await listPlugins(ctx.root, deps)
         return rows.find((r) => r.id === fetched.manifest.id)!
       },
@@ -372,6 +378,7 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
           manifest,
           setup: 'none',
         })
+        await linkRunningCommands(ctx.root, deps)
         const rows = await listPlugins(ctx.root, deps)
         return rows.find((r) => r.id === manifest.id)!
       },
@@ -484,8 +491,9 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
     }),
 
     // Link the commands of every plugin that runs in the vault now, after its
-    // `plugins.<id>` switch moved: the settings tab's own write, which no
-    // capability sees. Returns what it refused, for the tab to say.
+    // `plugins.<id>` switch or a pin moved: the settings tab's own write, or
+    // a pull or hand edit the renderer sees in the snapshot, which no
+    // capability does. Returns what it refused, for the tab to say.
     'community.commands': cap({
       doors: ['ui'],
       params: () => ({}),
@@ -516,6 +524,7 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
           recursive: true,
           force: true,
         })
+        await linkRunningCommands(ctx.root, deps)
       },
     }),
 
@@ -623,18 +632,27 @@ export async function seedRunningApps(
 /**
  * Link the commands of every plugin that runs in the vault at `root`
  * (`commands.ts`): at the vault's open, and whenever what runs in it may have
- * changed.
+ * changed. Never throws: the pin, setup or removal that asked for it has
+ * happened either way, so a failure is logged and returned.
  */
 export async function linkRunningCommands(
   root: string,
   deps: Pick<CommunityDeps, 'store' | 'consent' | 'searchPath'>,
 ): Promise<LinkedCommands> {
-  const plugins = []
-  for (const row of await listPlugins(root, deps)) {
-    if (!row.running || row.bin.length === 0) continue
-    const install = await deps.store.get(row.id)
-    if (install?.manifest.bin === undefined) continue
-    plugins.push({ id: row.id, bin: install.manifest.bin, codeDir: deps.store.codeDir(install) })
+  const running = async () => {
+    const plugins = []
+    for (const row of await listPlugins(root, deps)) {
+      if (!row.running || row.bin.length === 0) continue
+      const install = await deps.store.get(row.id)
+      if (install?.manifest.bin === undefined) continue
+      plugins.push({ id: row.id, bin: install.manifest.bin, codeDir: deps.store.codeDir(install) })
+    }
+    return plugins
   }
-  return linkCommands(root, plugins, deps.searchPath?.() ?? process.env.PATH ?? '')
+  try {
+    return await linkCommands(root, running, deps.searchPath?.() ?? toolPath())
+  } catch (err) {
+    console.error('[community] commands:', err)
+    return { linked: [], refused: [], error: err instanceof Error ? err.message : String(err) }
+  }
 }
