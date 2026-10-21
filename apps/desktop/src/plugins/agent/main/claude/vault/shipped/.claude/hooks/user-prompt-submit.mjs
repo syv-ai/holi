@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Holi UserPromptSubmit hook — injects the ONE piece of per-turn state the agent
-// cannot discover itself: the note the user has focused in the editor. Tasks,
+// cannot discover itself: the note the user has focused in the editor, and the
+// lines selected in it (numbers only; the agent reads the text). Tasks,
 // backreferences and sync state the agent finds with its own native tools
 // (Glob/grep/git); vault conventions and memory guidance live in AGENTS.md.
 // See docs/features/agent-config.md.
@@ -22,6 +23,14 @@ try {
 }
 
 if (context?.focusedPath) {
-  process.stdout.write(`Focused note: \`${context.focusedPath}\` (use \`Read\` to view its contents)`)
+  const { startLine, endLine } = context.selection ?? {}
+  const selected = !Number.isInteger(startLine)
+    ? ''
+    : startLine === endLine
+      ? `selected line ${startLine}; `
+      : `selected lines ${startLine}-${endLine}; `
+  process.stdout.write(
+    `Focused note: \`${context.focusedPath}\` (${selected}use \`Read\` to view its contents)`,
+  )
 }
 process.exit(0)

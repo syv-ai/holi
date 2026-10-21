@@ -528,6 +528,25 @@ describe('hook scripts', () => {
     expect(run.stdout).not.toContain('# Related') // no tasks/backrefs
   })
 
+  it('user-prompt-submit names the selected lines, never their text', async () => {
+    const root = await tempDir()
+    await mkdir(join(root, '.holi/state'), { recursive: true })
+    const context = (selection: unknown) =>
+      writeFile(
+        join(root, '.holi/state/context.local.json'),
+        JSON.stringify({ focusedPath: 'notes/plan.md', selection, openPaths: ['notes/plan.md'] }),
+      )
+    const run = () =>
+      runHook('user-prompt-submit', { cwd: root, env: { CLAUDE_PROJECT_DIR: root } })
+
+    await context({ startLine: 12, endLine: 18 })
+    expect((await run()).stdout).toBe(
+      'Focused note: `notes/plan.md` (selected lines 12-18; use `Read` to view its contents)',
+    )
+    await context({ startLine: 4, endLine: 4 })
+    expect((await run()).stdout).toContain('(selected line 4; ')
+  })
+
   it('user-prompt-submit prints nothing when nothing is focused', async () => {
     const root = await tempDir()
     await writeFile(join(root, 'MEMORY.md'), 'Vault uses British English.')

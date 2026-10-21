@@ -24,11 +24,13 @@ import { playOnce } from '@/lib/motion'
 import { applyReload } from '@/lib/apply-reload'
 import { registerBuffer } from '@/lib/buffer-registry'
 import { decideReload, hasNewText, type ConflictResolvers } from '@/lib/editor-reload'
+import { selectedLines } from '@/editor/askAgent'
 import { NO_AGENT, useAskAgentSeam } from '@/state/agent-service'
 import { historyOpenAtom } from '@/state/history'
 import { normalizersAtom } from '@/state/plugins'
 import { trpc } from '@/lib/trpc'
 import { fileHistoryAtom } from '@/state/file-history'
+import { editorSelectionAtom } from '@/state/ui-report'
 import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
 
 /** Quiet before the buffer reaches disk. Shorter than main's commit debounce on
@@ -180,6 +182,20 @@ export function EditorPane({
       return true
     }
 
+    /** The selected lines, for the agent's per-turn focus line. Set only when
+     *  they change, so typing on one line reports nothing. */
+    const reportSelection = (state: EditorState): void => {
+      const lines = selectedLines(state)
+      const current = store.get(editorSelectionAtom)
+      const same =
+        lines === null
+          ? current === null || current.path !== path
+          : current?.path === path &&
+            current.lines.startLine === lines.startLine &&
+            current.lines.endLine === lines.endLine
+      if (!same) store.set(editorSelectionAtom, lines === null ? null : { path, lines })
+    }
+
     const scheduleSave = () => {
       if (saveTimer.current !== null) clearTimeout(saveTimer.current)
       saveTimer.current = setTimeout(() => void save(), SAVE_QUIET_MS)
@@ -224,6 +240,7 @@ export function EditorPane({
                   readOnly,
                 })),
             EditorView.updateListener.of((update) => {
+              if (update.selectionSet || update.docChanged) reportSelection(update.state)
               if (!update.docChanged) return
               scheduleSave()
               if (!editedRef.current) {
@@ -236,6 +253,9 @@ export function EditorPane({
         parent: host,
       })
       viewRef.current = view
+      // A fresh editor opens on a caret: whatever this path had selected before
+      // is gone.
+      reportSelection(view.state)
       // Fade in when the document arrives, after the IPC read, not when the
       // tab changed. Opacity only: anything that changes the layout box drags
       // CodeMirror's measure loop into every frame.

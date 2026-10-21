@@ -10,6 +10,7 @@
  */
 import { EditorSelection, StateField, type EditorState, type Extension } from '@codemirror/state'
 import { showTooltip, type EditorView, type Tooltip, type TooltipView } from '@codemirror/view'
+import type { LineRange } from '@holi/shared'
 import { motionDurationMs, prefersReducedMotion } from '@/lib/motion'
 
 /**
@@ -33,14 +34,27 @@ export function askPrompt(instruction: string, quote: string): string {
   return said === '' ? quote : `${said}\n\n${quote}`
 }
 
-/** The prompt for the primary selection, or null when it is empty. */
-export function promptForSelection(state: EditorState, notePath: string): string | null {
+/** The primary selection's lines, 1-based and inclusive, or null when it is
+ *  empty (a caret). Also what the agent's per-turn focus line names
+ *  (`state/ui-report.ts`). */
+export function selectedLines(state: EditorState): LineRange | null {
   const range = state.selection.main
   if (range.empty) return null
+  return {
+    startLine: state.doc.lineAt(range.from).number,
+    endLine: state.doc.lineAt(range.to).number,
+  }
+}
+
+/** The prompt for the primary selection, or null when it is empty. */
+export function promptForSelection(state: EditorState, notePath: string): string | null {
+  const lines = selectedLines(state)
+  if (lines === null) return null
+  const range = state.selection.main
   return selectionPrompt(
     notePath,
-    state.doc.lineAt(range.from).number,
-    state.doc.lineAt(range.to).number,
+    lines.startLine,
+    lines.endLine,
     state.sliceDoc(range.from, range.to),
   )
 }

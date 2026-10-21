@@ -25,6 +25,7 @@ import {
   type VaultRelPath,
   parseThemePatch,
   RECENTS_CAP,
+  type LineRange,
   type RecentEntry,
   VAULT_MARKER_FILE,
 } from '@holi/shared'
@@ -265,6 +266,15 @@ function copiesInput(raw: unknown): { remote: string; copies: { from: string; to
 /** A list of strings from an untrusted input. Shared by the drop-import, whose
  *  sources are absolute OS paths rather than vault paths and so cannot ride
  *  `pathsInput`'s vault-relative contract. */
+/** A selection's lines, 1-based and inclusive, or null for anything else. */
+function lineRange(raw: unknown): LineRange | null {
+  if (raw === null || typeof raw !== 'object') return null
+  const { startLine, endLine } = raw as Record<string, unknown>
+  const line = (n: unknown): n is number => Number.isInteger(n) && (n as number) >= 1
+  if (!line(startLine) || !line(endLine) || endLine < startLine) return null
+  return { startLine, endLine }
+}
+
 function stringsOrThrow(value: unknown): string[] {
   if (!Array.isArray(value) || value.some((v) => typeof v !== 'string')) {
     throw new Error('sources must be an array of strings')
@@ -1489,15 +1499,20 @@ export function createRouter(deps: RouterDeps) {
   /** What the renderer, and only it, knows about the person's attention. */
   const ui = t.router({
     /**
-     * The focused note, the open notes and the recents, for one vault: main
-     * writes the agent's per-turn focus file from it and answers
-     * `holi vault recents` / `holi.recents()` with it. One report, sent whenever any
-     * of it changes; main keeps only the last, in memory.
+     * The focused note and its selected lines, the open notes and the recents,
+     * for one vault: main writes the agent's per-turn focus file from it and
+     * answers `holi vault recents` / `holi.recents()` with it. One report, sent
+     * whenever any of it changes; main keeps only the last, in memory.
      */
     report: t.procedure
       .input((raw: unknown): UiReport & { remote: string } => {
         const { remote } = fields({ remote: 'string' })(raw)
-        const r = raw as { focusedPath?: unknown; openPaths?: unknown; recents?: unknown }
+        const r = raw as {
+          focusedPath?: unknown
+          selection?: unknown
+          openPaths?: unknown
+          recents?: unknown
+        }
         const strings = (v: unknown) =>
           Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []
         const recents = (Array.isArray(r.recents) ? r.recents : [])
@@ -1510,9 +1525,11 @@ export function createRouter(deps: RouterDeps) {
           )
           .slice(0, RECENTS_CAP)
           .map(({ kind, key, id }) => (typeof id === 'string' ? { kind, key, id } : { kind, key }))
+        const focusedPath = typeof r.focusedPath === 'string' ? r.focusedPath : null
         return {
           remote,
-          focusedPath: typeof r.focusedPath === 'string' ? r.focusedPath : null,
+          focusedPath,
+          selection: focusedPath === null ? null : lineRange(r.selection),
           openPaths: strings(r.openPaths),
           recents,
         }

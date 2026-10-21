@@ -7,6 +7,13 @@ export type TaskStatus = 'todo' | 'doing' | 'done'
 export type Priority = 'low' | 'medium' | 'high'
 export type DocKind = 'note' | 'daily'
 
+/** Lines of a note, 1-based and inclusive: a selection, as the agent is told it
+ *  and as `Read` numbers them. */
+export interface LineRange {
+  startLine: number
+  endLine: number
+}
+
 /**
  * A vault: a GitHub repo cloned under the Holi-managed root.
  *
