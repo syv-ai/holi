@@ -340,7 +340,7 @@ export const taskCapabilities = (deps: TaskCapabilitiesDeps) => {
           to !== from &&
           (await readFile(absPathFor(ctx.root, to), 'utf8').catch(() => null)) !== null
         ) {
-          throw new CapabilityError('BAD_REQUEST', `already exists: ${to}`)
+          throw new CapabilityError('CONFLICT', `already exists: ${to}`)
         }
         if (hasPatch) {
           const next = patched(await readTask(ctx.root, from), patchOf(fieldPatch))
