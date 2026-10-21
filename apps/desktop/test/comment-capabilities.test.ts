@@ -83,6 +83,14 @@ describe('holi comments', () => {
     )
   })
 
+  it("refuses the agent's own instructions", async () => {
+    for (const path of ['AGENTS.md', '.claude/skills/x/SKILL.md', '.holi/memory/fact.md']) {
+      expect(await refusal(run('comments.add', { path, quote: 'x', body: 'x' }))).toBe(
+        'BAD_REQUEST',
+      )
+    }
+  })
+
   it('writes nothing while nobody is signed in', async () => {
     login = null
     expect(await refusal(run('comments.add', { path: NOTE, quote: '40k', body: 'x' }))).toBe(

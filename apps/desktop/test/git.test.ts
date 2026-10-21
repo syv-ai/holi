@@ -434,6 +434,28 @@ describe('pull', () => {
     expect((await openRepo(ours).remerge()).kind).toBe('merged')
     expect((await openRepo(ours).status()).merging).toBe(false)
   })
+
+  it('keeps a comment sidecar one side changed and the other deleted, and merges', async () => {
+    // A modify/delete never reaches the comments merge driver: the note was
+    // deleted on one side and commented on on the other. The comment is kept.
+    const { ours, theirs } = await pair()
+    const sidecar = '.holi/comments/a.md.json'
+    for (const repo of [ours, theirs]) {
+      await mkdir(join(repo, '.holi/comments'), { recursive: true })
+    }
+    await publish(theirs, sidecar, '{"threads":{}}\n')
+    await openRepo(ours).pull()
+
+    await plainGit(theirs, ['rm', '-q', sidecar])
+    await plainGit(theirs, ['commit', '-qm', 'delete'])
+    await plainGit(theirs, ['push', 'origin', 'main'])
+    await commitFile(ours, sidecar, '{"threads":{"t":{}}}\n')
+
+    const repo = openRepo(ours)
+    expect((await repo.pull()).kind).toBe('merged')
+    expect((await repo.status()).merging).toBe(false)
+    expect(await readFile(join(ours, sidecar), 'utf8')).toBe('{"threads":{"t":{}}}\n')
+  })
 })
 
 describe('push', () => {

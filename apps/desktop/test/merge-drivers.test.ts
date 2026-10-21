@@ -3,7 +3,18 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { formatRecord, mergeRecordText } from '@holi/shared'
+import {
+  anchorAt,
+  commentThreads,
+  emptyCommentsFile,
+  formatCommentsFile,
+  formatRecord,
+  mergeCommentsText,
+  mergeRecordText,
+  parseCommentsFile,
+  withReply,
+  withThread,
+} from '@holi/shared'
 import { runGit, tryGit } from '../src/main/git'
 import { bridgeLines, writeVaultEnv } from './helpers/bridge-env'
 import { attributesLine, installMergeDrivers, MERGE_DRIVERS } from '../src/main/vault/merge-drivers'
@@ -51,16 +62,23 @@ describe('installMergeDrivers', () => {
 
 describe('the driver, end to end through git', () => {
   let server: Server
+  /** The routes git's driver asked, in order. */
+  let asked: string[]
 
-  /** Holi's side, answering as the `/merge/record` op does. */
+  /** Holi's side, answering as the `/merge/record` and `/merge/comments`
+   *  routes do. */
   async function listen(): Promise<number> {
+    asked = []
     server = createServer((req, res) => {
+      const route = new URL(req.url ?? '/', 'http://x').pathname
+      asked.push(route)
+      const merge = route === '/merge/comments' ? mergeCommentsText : mergeRecordText
       let body = ''
       req.on('data', (c: Buffer) => (body += c.toString()))
       req.on('end', () => {
         const p = new URLSearchParams(body)
         const base = p.get('base') ?? ''
-        const out = mergeRecordText(base === '' ? null : base, p.get('ours')!, p.get('theirs')!)
+        const out = merge(base === '' ? null : base, p.get('ours')!, p.get('theirs')!)
         res.writeHead(out.ok ? 200 : 409, { 'content-type': 'text/plain' })
         res.end(out.ok ? out.text : out.reason)
       })
@@ -108,6 +126,44 @@ describe('the driver, end to end through git', () => {
 
     expect((await tryGit(root, ['merge', '--no-edit', 'theirs'])).ok).toBe(false)
     expect(await runGit(root, ['diff', '--name-only', '--diff-filter=U'])).toBe(REC)
+  })
+
+  it("routes a note's comments to their own driver, keeping both sides' replies", async () => {
+    await writeVaultEnv(root, bridgeLines(await listen(), 'ab'))
+    await installMergeDrivers(root)
+    const SIDECAR = '.holi/comments/plan.md.json'
+    const doc = 'The budget is 40k.\n'
+    const reply = (id: string, author: string) => ({
+      id,
+      author,
+      at: '2026-10-21T11:00:00.000Z',
+      body: `${author} replies`,
+    })
+    const base = withThread(emptyCommentsFile(), 't', anchorAt(doc, 14, 17), {
+      ...reply('a', 'ada'),
+      at: '2026-10-21T10:00:00.000Z',
+    })
+    await mkdir(join(root, '.holi/comments'), { recursive: true })
+    await writeFile(join(root, SIDECAR), formatCommentsFile(base))
+    await runGit(root, ['add', '-A'])
+    await runGit(root, ['commit', '-qm', 'base'])
+    await runGit(root, ['checkout', '-qb', 'theirs'])
+    await writeFile(
+      join(root, SIDECAR),
+      formatCommentsFile(withReply(base, 't', reply('b', 'bob'))!),
+    )
+    await runGit(root, ['commit', '-qam', 'theirs'])
+    await runGit(root, ['checkout', '-q', 'main'])
+    await writeFile(
+      join(root, SIDECAR),
+      formatCommentsFile(withReply(base, 't', reply('c', 'cy'))!),
+    )
+    await runGit(root, ['commit', '-qam', 'ours'])
+
+    expect((await tryGit(root, ['merge', '--no-edit', 'theirs'])).ok).toBe(true)
+    expect(asked).toEqual(['/merge/comments'])
+    const [thread] = commentThreads(parseCommentsFile(await readFile(join(root, SIDECAR), 'utf8'))!)
+    expect(thread!.comments.map((c) => c.id).sort()).toEqual(['a', 'b', 'c'])
   })
 
   it('conflicts safely when Holi is not there to ask', async () => {

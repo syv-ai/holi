@@ -12,7 +12,7 @@
  */
 import { EditorSelection, EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
-import { anchorAt, findHeadingLine, isResolved, isTaskFilePath, snapshotTasks, type Task } from '@holi/shared'
+import { anchorAt, findHeadingLine, isCommentableNote, isResolved, snapshotTasks, type Task } from '@holi/shared'
 import { useAtomValue, useSetAtom, useStore } from 'jotai'
 import { useEffect, useRef } from 'react'
 import { baseEditorExtensions, plainTextExtensions } from '@/editor/extensions'
@@ -196,9 +196,8 @@ export function EditorPane({
   const draftComment = useSetAtom(draftCommentAtom)
   const draftCommentRef = useRef(draftComment)
   draftCommentRef.current = draftComment
-  /** A note's own threads: not a plain text file, and not a task, whose body
-   *  is the task's. */
-  const commentable = path !== null && !plain && !isTaskFilePath(path)
+  /** A note that takes threads (`isCommentableNote`), not a plain text file. */
+  const commentable = path !== null && !plain && isCommentableNote(path)
   /** In a ref, like `nav`: the extensions must not rebuild on every render.
    *  Whether there is an agent at all does rebuild them, below. */
   const askAgent = useAskAgentSeam()

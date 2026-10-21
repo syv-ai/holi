@@ -7,19 +7,39 @@
  * thread is now (`threadLinesAtom`). The comments drawer shows the focused
  * note's (`commentsTargetPathAtom`).
  */
-import { isTaskFilePath, type CommentAnchor, type CommentThread } from '@holi/shared'
-import { atom } from 'jotai'
+import { isCommentableNote, type CommentAnchor, type CommentThread } from '@holi/shared'
+import { atom, type SetStateAction, type WritableAtom } from 'jotai'
 import { trpc } from '../lib/trpc'
 import { historyOpenAtom, historyTargetPathAtom } from './history'
 import { activeRemoteAtom } from './vaults'
 
+/**
+ * State that belongs to the vault it was set in: read in another vault it is
+ * `initial` again, so a note at the same path in the next vault never shows
+ * the last one's threads: nothing carries from one vault to the next.
+ */
+function vaultScoped<T>(initial: T): WritableAtom<T, [SetStateAction<T>], void> {
+  const held = atom<{ remote: string | null; value: T }>({ remote: null, value: initial })
+  const read = atom((get) => {
+    const { remote, value } = get(held)
+    return remote === get(activeRemoteAtom) ? value : initial
+  })
+  return atom(
+    (get) => get(read),
+    (get, set, next: SetStateAction<T>) => {
+      const value = typeof next === 'function' ? (next as (prev: T) => T)(get(read)) : next
+      set(held, { remote: get(activeRemoteAtom), value })
+    },
+  )
+}
+
 export const commentsOpenAtom = atom(false)
 
-/** The note the drawer is about: the focused markdown note, as History's, but
- *  not a task, whose body is the task's own editor. */
+/** The note the drawer is about: the focused note, as History's, when it
+ *  takes comments (`isCommentableNote`). */
 export const commentsTargetPathAtom = atom<string | null>((get) => {
   const path = get(historyTargetPathAtom)
-  return path === null || isTaskFilePath(path) ? null : path
+  return path === null || !isCommentableNote(path) ? null : path
 })
 
 /** Open or close the drawer. It and History share the right edge, so opening
@@ -31,11 +51,11 @@ export const toggleCommentsAtom = atom(null, (get, set, open?: boolean) => {
 })
 
 /** Every loaded note's threads, by path. */
-export const threadsByPathAtom = atom<Record<string, CommentThread[]>>({})
+export const threadsByPathAtom = vaultScoped<Record<string, CommentThread[]>>({})
 
 /** Where each of a note's threads is in its open buffer: a 1-based line, or
  *  null while detached. By path, then thread id. */
-export const threadLinesAtom = atom<Record<string, Record<string, number | null>>>({})
+export const threadLinesAtom = vaultScoped<Record<string, Record<string, number | null>>>({})
 
 /** A thread being written: the passage the selection was on. */
 export interface CommentDraft {
@@ -43,11 +63,11 @@ export interface CommentDraft {
   anchor: CommentAnchor
 }
 
-export const commentDraftAtom = atom<CommentDraft | null>(null)
+export const commentDraftAtom = vaultScoped<CommentDraft | null>(null)
 
 /** The thread the drawer is on, which the editor marks and scrolls to.
  *  `seq` makes a second click on the same thread scroll again. */
-export const activeThreadAtom = atom<{ path: string; id: string; seq: number } | null>(null)
+export const activeThreadAtom = vaultScoped<{ path: string; id: string; seq: number } | null>(null)
 
 export const focusThreadAtom = atom(null, (get, set, target: { path: string; id: string }) => {
   set(activeThreadAtom, { ...target, seq: (get(activeThreadAtom)?.seq ?? 0) + 1 })
@@ -73,7 +93,8 @@ export const commentOnSelectionAtom = atom(null, (_get, set) => {
   if (selectionCommenter?.() !== true) set(toggleCommentsAtom, true)
 })
 
-/** Read `path`'s threads again. */
+/** Read `path`'s threads again. Unchanged threads leave the atom alone, so
+ *  the editor does not place every thread again after each save. */
 export const refreshThreadsAtom = atom(null, async (get, set, path: string) => {
   const remote = get(activeRemoteAtom)
   if (remote === null) return
@@ -82,6 +103,8 @@ export const refreshThreadsAtom = atom(null, async (get, set, path: string) => {
     return null
   })
   if (threads === null || get(activeRemoteAtom) !== remote) return
+  const was = get(threadsByPathAtom)[path]
+  if (was !== undefined && JSON.stringify(was) === JSON.stringify(threads)) return
   set(threadsByPathAtom, (prev) => ({ ...prev, [path]: threads }))
 })
 

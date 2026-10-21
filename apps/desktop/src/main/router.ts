@@ -12,7 +12,7 @@ import { initTRPC, TRPCError } from '@trpc/server'
 import {
   applyTaskPatch,
   commentThreads,
-  fileKind,
+  isCommentableNote,
   isAgentSurfacePath,
   parseTaskFile,
   parseTaskPatch,
@@ -1339,8 +1339,8 @@ export function createRouter(deps: RouterDeps) {
    *  signed-in person; the agent's door is `holi comments`. */
   async function commentNote(remote: string, path: string): Promise<{ root: string; rel: string }> {
     const rel = safe(path)
-    if (fileKind(rel) !== 'markdown') {
-      throw new TRPCError({ code: 'BAD_REQUEST', message: `${rel} is not a note` })
+    if (!isCommentableNote(rel)) {
+      throw new TRPCError({ code: 'BAD_REQUEST', message: `${rel} takes no comments` })
     }
     return { root: await rootFor(remote), rel }
   }

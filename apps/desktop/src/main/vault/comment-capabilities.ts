@@ -8,8 +8,8 @@
  */
 import {
   anchorAt,
-  fileKind,
   formatNoteComments,
+  isCommentableNote,
   isResolved,
   locateAnchor,
   type LocatedThread,
@@ -37,10 +37,11 @@ export interface CommentCapabilitiesDeps {
   login(): string | null
 }
 
-/** A note's text, refusing what is not a markdown note a read may reach. */
+/** A note's text, refusing what takes no comments (`isCommentableNote`) or a
+ *  read may not reach. */
 async function noteText(ctx: CapabilityContext, path: string): Promise<string> {
-  if (fileKind(path) !== 'markdown') {
-    throw new CapabilityError('BAD_REQUEST', `${path} is not a note`)
+  if (!isCommentableNote(path)) {
+    throw new CapabilityError('BAD_REQUEST', `${path} takes no comments`)
   }
   return readNote(ctx, path)
 }

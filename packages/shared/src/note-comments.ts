@@ -22,7 +22,9 @@
  * Browser-safe: no `node:` imports.
  */
 import { formatRecord } from './app-store'
-import { sameLogin } from './task-file'
+import { fileKind } from './file-kind'
+import { isAgentSurfacePath } from './path-safety'
+import { isTaskFilePath, sameLogin } from './task-file'
 
 /** Where every note's threads live. */
 export const COMMENTS_DIR = '.holi/comments'
@@ -30,6 +32,17 @@ export const COMMENTS_DIR = '.holi/comments'
 /** The sidecar holding `notePath`'s threads. */
 export function commentsPathFor(notePath: string): string {
   return `${COMMENTS_DIR}/${notePath}.json`
+}
+
+/**
+ * Whether `path` may have comment threads: a markdown note, not a task (whose
+ * body is the task's own editor) and not on the agent surface (`AGENTS.md`,
+ * `.claude/`, the vault's memory), which is the agent's instructions rather
+ * than a document people review. The panel, the router and `holi comments`
+ * all ask this.
+ */
+export function isCommentableNote(path: string): boolean {
+  return fileKind(path) === 'markdown' && !isTaskFilePath(path) && !isAgentSurfacePath(path)
 }
 
 /** The note a sidecar belongs to, or null for a path that is not one. */
@@ -79,19 +92,23 @@ export interface CommentThread {
   status: CommentStatus | null
 }
 
-/** The sidecar as it is on disk, by id. */
+/**
+ * The sidecar as it is on disk: its JSON object, kept whole. Holi checks only
+ * the fields it uses, when it uses them, so a key it does not know (a newer
+ * Holi's, a hand edit's) and a thread or comment it cannot read are written
+ * back as they came. No edit and no merge loses them.
+ */
 export interface CommentsFile {
-  threads: Record<string, StoredThread>
+  /** By thread id. What `commentThreads` cannot read stays here unread. */
+  threads: Record<string, unknown>
+  [key: string]: unknown
 }
 
-interface StoredThread {
-  anchor: CommentAnchor
-  comments: Record<string, Omit<NoteComment, 'id'>>
-  status?: CommentStatus
-}
+type Json = Record<string, unknown>
 
-const isObject = (v: unknown): v is Record<string, unknown> =>
-  v !== null && typeof v === 'object' && !Array.isArray(v)
+const isObject = (v: unknown): v is Json => v !== null && typeof v === 'object' && !Array.isArray(v)
+
+const objectOr = (v: unknown): Json => (isObject(v) ? v : {})
 
 const str = (v: unknown): v is string => typeof v === 'string'
 
@@ -116,10 +133,26 @@ function readStatus(v: unknown): CommentStatus | null {
   return { resolved: v.resolved, by: v.by, at: v.at }
 }
 
+/** A thread as Holi reads it, or null when it has no quote or no comment it
+ *  can read. Comments it cannot read are left out of the view, not the file. */
+function readThread(id: string, v: unknown): CommentThread | null {
+  if (!isObject(v)) return null
+  const anchor = readAnchor(v.anchor)
+  if (anchor === null) return null
+  const comments: NoteComment[] = []
+  for (const [cid, c] of Object.entries(objectOr(v.comments))) {
+    const comment = readComment(c)
+    if (comment !== null) comments.push({ id: cid, ...comment })
+  }
+  if (comments.length === 0) return null
+  return { id, anchor, comments: comments.sort(byTime), status: readStatus(v.status) }
+}
+
 /**
- * A sidecar's text as threads. Lenient: a thread without a quote, or a comment
- * missing its author, time or body, is left out rather than failing the file,
- * which a person may have edited by hand. Null when it is not a JSON object.
+ * A sidecar's text. Lenient, since a person may have edited it by hand: what
+ * cannot be read is kept, not refused (see `CommentsFile`). Null only when it
+ * is not a JSON object, or its `threads` is not one, which Holi will not write
+ * over.
  */
 export function parseCommentsFile(text: string): CommentsFile | null {
   let raw: unknown
@@ -129,21 +162,8 @@ export function parseCommentsFile(text: string): CommentsFile | null {
     return null
   }
   if (!isObject(raw)) return null
-  const threads: Record<string, StoredThread> = {}
-  for (const [id, t] of Object.entries(isObject(raw.threads) ? raw.threads : {})) {
-    if (!isObject(t)) continue
-    const anchor = readAnchor(t.anchor)
-    if (anchor === null) continue
-    const comments: StoredThread['comments'] = {}
-    for (const [cid, c] of Object.entries(isObject(t.comments) ? t.comments : {})) {
-      const comment = readComment(c)
-      if (comment !== null) comments[cid] = comment
-    }
-    if (Object.keys(comments).length === 0) continue
-    const status = readStatus(t.status)
-    threads[id] = { anchor, comments, ...(status === null ? {} : { status }) }
-  }
-  return { threads }
+  if (raw.threads !== undefined && !isObject(raw.threads)) return null
+  return { ...raw, threads: objectOr(raw.threads) }
 }
 
 export const emptyCommentsFile = (): CommentsFile => ({ threads: {} })
@@ -156,16 +176,10 @@ export function formatCommentsFile(file: CommentsFile): string {
 const byTime = (a: { at: string; id: string }, b: { at: string; id: string }): number =>
   a.at < b.at ? -1 : a.at > b.at ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0
 
-/** The threads in reading order: by line, then by when each was opened. */
+/** The threads Holi can read, in reading order: by line, then by when each
+ *  was opened. */
 export function commentThreads(file: CommentsFile): CommentThread[] {
-  const threads = Object.entries(file.threads).map(([id, t]) => ({
-    id,
-    anchor: t.anchor,
-    comments: Object.entries(t.comments)
-      .map(([cid, c]) => ({ id: cid, ...c }))
-      .sort(byTime),
-    status: t.status ?? null,
-  }))
+  const threads = Object.entries(file.threads).flatMap(([id, t]) => readThread(id, t) ?? [])
   const opened = (t: CommentThread) => t.comments[0]?.at ?? ''
   return threads.sort(
     (a, b) =>
@@ -186,7 +200,19 @@ export function withThread(
   comment: NoteComment,
 ): CommentsFile {
   const { id: cid, ...rest } = comment
-  return { threads: { ...file.threads, [id]: { anchor, comments: { [cid]: rest } } } }
+  return { ...file, threads: { ...file.threads, [id]: { anchor, comments: { [cid]: rest } } } }
+}
+
+/** Thread `threadId` changed by `edit`, its other keys kept; null when there
+ *  is no thread by that id Holi can read. */
+function withThreadEdit(
+  file: CommentsFile,
+  threadId: string,
+  edit: (thread: Json) => Json,
+): CommentsFile | null {
+  const thread = file.threads[threadId]
+  if (!isObject(thread) || readThread(threadId, thread) === null) return null
+  return { ...file, threads: { ...file.threads, [threadId]: edit(thread) } }
 }
 
 /** `file` with `comment` added to thread `threadId`, or null when there is no
@@ -196,15 +222,11 @@ export function withReply(
   threadId: string,
   comment: NoteComment,
 ): CommentsFile | null {
-  const thread = file.threads[threadId]
-  if (thread === undefined) return null
   const { id: cid, ...rest } = comment
-  return {
-    threads: {
-      ...file.threads,
-      [threadId]: { ...thread, comments: { ...thread.comments, [cid]: rest } },
-    },
-  }
+  return withThreadEdit(file, threadId, (t) => ({
+    ...t,
+    comments: { ...objectOr(t.comments), [cid]: rest },
+  }))
 }
 
 /** `file` with thread `threadId` resolved or reopened, or null when there is
@@ -214,18 +236,28 @@ export function withStatus(
   threadId: string,
   status: CommentStatus,
 ): CommentsFile | null {
-  const thread = file.threads[threadId]
-  if (thread === undefined) return null
-  return { threads: { ...file.threads, [threadId]: { ...thread, status } } }
+  return withThreadEdit(file, threadId, (t) => ({ ...t, status }))
 }
 
 // ------------------------------------------------------------------ anchoring
 
-/** 1-based line of offset `pos`. */
-function lineOf(doc: string, pos: number): number {
-  let line = 1
-  for (let i = doc.indexOf('\n'); i !== -1 && i < pos; i = doc.indexOf('\n', i + 1)) line++
-  return line
+/** Where each line of `doc` starts, the first at 0. */
+function lineStarts(doc: string): number[] {
+  const out = [0]
+  for (let i = doc.indexOf('\n'); i !== -1; i = doc.indexOf('\n', i + 1)) out.push(i + 1)
+  return out
+}
+
+/** 1-based line of offset `pos`, given `doc`'s `lineStarts`. */
+function lineAt(starts: readonly number[], pos: number): number {
+  let lo = 0
+  let hi = starts.length - 1
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1
+    if (starts[mid]! <= pos) lo = mid
+    else hi = mid - 1
+  }
+  return lo + 1
 }
 
 /** The anchor for `doc.slice(from, to)`. */
@@ -234,7 +266,7 @@ export function anchorAt(doc: string, from: number, to: number): CommentAnchor {
     quote: doc.slice(from, to),
     prefix: doc.slice(Math.max(0, from - ANCHOR_CONTEXT), from),
     suffix: doc.slice(to, to + ANCHOR_CONTEXT),
-    line: lineOf(doc, from),
+    line: lineAt(lineStarts(doc), from),
   }
 }
 
@@ -266,14 +298,20 @@ export interface AnchorRange {
   to: number
 }
 
-/** The best of `candidates`: most context matching, then nearest the line. */
-function best(doc: string, a: CommentAnchor, candidates: AnchorRange[]): AnchorRange | null {
+/** The best of `candidates`: most context matching, then nearest the line.
+ *  `lines` is `doc`'s `lineStarts`, worked out once per placement. */
+function best(
+  doc: string,
+  lines: () => readonly number[],
+  a: CommentAnchor,
+  candidates: AnchorRange[],
+): AnchorRange | null {
   let pick: AnchorRange | null = null
   let pickScore = -1
   let pickDistance = Infinity
   for (const c of candidates) {
     const score = contextScore(doc, c.from, c.to, a)
-    const distance = Math.abs(lineOf(doc, c.from) - a.line)
+    const distance = Math.abs(lineAt(lines(), c.from) - a.line)
     if (score > pickScore || (score === pickScore && distance < pickDistance)) {
       pick = c
       pickScore = score
@@ -301,8 +339,10 @@ const MIN_PIECE = 6
  */
 export function locateAnchor(doc: string, anchor: CommentAnchor): AnchorRange | null {
   const q = anchor.quote
+  let starts: number[] | null = null
+  const lines = () => (starts ??= lineStarts(doc))
   const exact = occurrences(doc, q).map((from) => ({ from, to: from + q.length }))
-  if (exact.length > 0) return best(doc, anchor, exact)
+  if (exact.length > 0) return best(doc, lines, anchor, exact)
 
   const longest = Math.max(q.length * 2, q.length + 64)
   const bracketed: AnchorRange[] = []
@@ -313,7 +353,7 @@ export function locateAnchor(doc: string, anchor: CommentAnchor): AnchorRange | 
       if (s > from && s - from <= longest) bracketed.push({ from, to: s })
     }
   }
-  if (bracketed.length > 0) return best(doc, anchor, bracketed)
+  if (bracketed.length > 0) return best(doc, lines, anchor, bracketed)
 
   const piece = Math.floor(q.length / 3)
   if (piece < MIN_PIECE) return null
@@ -326,23 +366,24 @@ export function locateAnchor(doc: string, anchor: CommentAnchor): AnchorRange | 
     const to = t + tail.length
     if (to - h >= q.length / 2 && to - h <= q.length * 1.5 + 16) ends.push({ from: h, to })
   }
-  return best(doc, anchor, ends)
+  return best(doc, lines, anchor, ends)
 }
 
 // ---------------------------------------------------------------------- merge
 
-const same = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b)
+const same = (a: unknown, b: unknown): boolean =>
+  a === b || (a !== undefined && b !== undefined && formatRecord(a) === formatRecord(b))
 
 /**
  * One key's three-way choice: what changed on one side wins, an absent value
  * counts as a change (a deletion), and `both` settles a change on both sides.
  */
-function pick<T>(
-  base: T | undefined,
-  ours: T | undefined,
-  theirs: T | undefined,
-  both: (ours: T, theirs: T) => T,
-): T | undefined {
+function pick(
+  base: unknown,
+  ours: unknown,
+  theirs: unknown,
+  both: (ours: unknown, theirs: unknown) => unknown,
+): unknown {
   if (same(ours, theirs) || same(theirs, base)) return ours
   if (same(ours, base)) return theirs
   // Changed on both sides. A deletion against an edit keeps the edit: a
@@ -352,47 +393,55 @@ function pick<T>(
   return both(ours, theirs)
 }
 
-function mergeKeyed<T>(
-  base: Record<string, T>,
-  ours: Record<string, T>,
-  theirs: Record<string, T>,
-  both: (ours: T, theirs: T, base: T | undefined) => T,
-): Record<string, T> {
-  const out: Record<string, T> = {}
+/** Every key of three objects merged with `pick`; `both` is told the key. */
+function mergeKeyed(
+  base: Json,
+  ours: Json,
+  theirs: Json,
+  both: (ours: unknown, theirs: unknown, base: unknown, key: string) => unknown,
+): Json {
+  const out: Json = {}
   const keys = new Set([...Object.keys(base), ...Object.keys(ours), ...Object.keys(theirs)])
+  const at = (o: Json, key: string) => (Object.hasOwn(o, key) ? o[key] : undefined)
   for (const key of keys) {
-    const b = Object.hasOwn(base, key) ? base[key] : undefined
-    const value = pick(
-      b,
-      Object.hasOwn(ours, key) ? ours[key] : undefined,
-      Object.hasOwn(theirs, key) ? theirs[key] : undefined,
-      (o, t) => both(o, t, b),
-    )
+    const b = at(base, key)
+    const value = pick(b, at(ours, key), at(theirs, key), (o, t) => both(o, t, b, key))
     if (value !== undefined) out[key] = value
   }
   return out
 }
 
-function mergeThread(
-  ours: StoredThread,
-  theirs: StoredThread,
-  base: StoredThread | undefined,
-): StoredThread {
-  const anchor = pick(base?.anchor, ours.anchor, theirs.anchor, (o) => o) ?? ours.anchor
-  // A comment is written once; both sides holding one id differently is a hand
-  // edit, and ours is as good an answer as theirs.
-  const comments = mergeKeyed(base?.comments ?? {}, ours.comments, theirs.comments, (o) => o)
-  // Resolved on one machine, reopened on another: the later one stands.
-  const status = pick(base?.status, ours.status, theirs.status, (o, t) => (t.at > o.at ? t : o))
-  return { anchor, comments, ...(status === undefined ? {} : { status }) }
+/** Both sides changed one value Holi has no rule for: a hand edit, and ours is
+ *  as good an answer as theirs. A comment is written once, so this is also
+ *  both sides holding one comment id differently. */
+const keepOurs = (ours: unknown): unknown => ours
+
+/** Resolved on one machine, reopened on another: the later one stands. */
+function laterStatus(ours: unknown, theirs: unknown): unknown {
+  const o = readStatus(ours)
+  const t = readStatus(theirs)
+  if (o === null) return t === null ? ours : theirs
+  return t !== null && t.at > o.at ? theirs : ours
+}
+
+function mergeThread(ours: unknown, theirs: unknown, base: unknown): unknown {
+  if (!isObject(ours) || !isObject(theirs)) return ours
+  return mergeKeyed(objectOr(base), ours, theirs, (o, t, b, key) =>
+    key === 'comments' && isObject(o) && isObject(t)
+      ? mergeKeyed(objectOr(b), o, t, keepOurs)
+      : key === 'status'
+        ? laterStatus(o, t)
+        : o,
+  )
 }
 
 /**
  * Three-way merge of one sidecar: the git merge driver's body. Threads and
  * comments are unioned by id, so concurrent comments never conflict; a resolve
- * against a reopen keeps the later. It refuses only text that is not a
- * sidecar, which git then records as an ordinary conflict. `base` is null when
- * both sides created the file.
+ * against a reopen keeps the later. Keys it does not know merge the same way,
+ * one side's change winning, so nothing in the file is dropped. It refuses
+ * only text that is not a sidecar, which git then records as an ordinary
+ * conflict. `base` is null when both sides created the file.
  */
 export function mergeCommentsText(
   base: string | null,
@@ -403,10 +452,10 @@ export function mergeCommentsText(
   const o = parseCommentsFile(ours)
   const t = parseCommentsFile(theirs)
   if (b === null || o === null || t === null) return { ok: false, reason: 'not a comments file' }
-  return {
-    ok: true,
-    text: formatCommentsFile({ threads: mergeKeyed(b.threads, o.threads, t.threads, mergeThread) }),
-  }
+  const merged = mergeKeyed(b, o, t, (oo, tt, bb, key) =>
+    key === 'threads' ? mergeKeyed(objectOr(bb), objectOr(oo), objectOr(tt), mergeThread) : oo,
+  )
+  return { ok: true, text: formatCommentsFile({ ...merged, threads: objectOr(merged.threads) }) }
 }
 
 // ------------------------------------------------------------------- mentions
@@ -443,7 +492,7 @@ export function newMentions(
   const me = login.toLowerCase()
   const out: CommentMention[] = []
   for (const thread of commentThreads(after)) {
-    const had = before?.threads[thread.id]?.comments ?? {}
+    const had = objectOr(objectOr(before?.threads[thread.id]).comments)
     for (const comment of thread.comments) {
       if (Object.hasOwn(had, comment.id)) continue
       if (sameLogin(comment.author, login)) continue

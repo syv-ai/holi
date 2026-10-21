@@ -219,6 +219,10 @@ export async function followNoteComments(
 /**
  * The comments that came in between two commits (a pull's before and after)
  * which mention `login` and were written by someone else, by note.
+ *
+ * With rename detection: a sidecar moved along with its note is compared with
+ * itself at its old path, so moving a note does not announce every mention it
+ * already had again.
  */
 export async function pulledMentions(
   root: string,
@@ -228,26 +232,39 @@ export async function pulledMentions(
 ): Promise<{ notePath: string; mention: CommentMention }[]> {
   const raw = await runGit(root, [
     'diff',
-    '--name-only',
-    '--no-renames',
-    '--diff-filter=AM',
+    '--name-status',
+    '-M',
+    '--diff-filter=AMR',
     '-z',
     from,
     to,
     '--',
     COMMENTS_DIR,
   ])
+  // `-z` name-status: a status, then one path, or two (old, new) for a rename.
+  const fields = raw.split('\0').filter((p) => p !== '')
+  const changes: { was: string; path: string }[] = []
+  for (let i = 0; i < fields.length;) {
+    const status = fields[i++]!
+    if (status.startsWith('R')) {
+      changes.push({ was: fields[i]!, path: fields[i + 1]! })
+      i += 2
+    } else {
+      changes.push({ was: fields[i]!, path: fields[i]! })
+      i += 1
+    }
+  }
+  const show = async (rev: string, path: string) => {
+    const r = await tryGit(root, ['show', `${rev}:${path}`])
+    return r.ok ? parseCommentsFile(r.stdout) : null
+  }
   const out: { notePath: string; mention: CommentMention }[] = []
-  for (const path of raw.split('\0').filter((p) => p !== '')) {
+  for (const { was, path } of changes) {
     const notePath = notePathOfComments(path)
     if (notePath === null) continue
-    const show = async (rev: string) => {
-      const r = await tryGit(root, ['show', `${rev}:${path}`])
-      return r.ok ? parseCommentsFile(r.stdout) : null
-    }
-    const after = await show(to)
+    const after = await show(to, path)
     if (after === null) continue
-    for (const mention of newMentions(await show(from), after, login)) {
+    for (const mention of newMentions(await show(from, was), after, login)) {
       out.push({ notePath, mention })
     }
   }

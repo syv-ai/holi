@@ -101,16 +101,33 @@ describe('threads', () => {
     expect(withReply(file, 'nope', comment('x', 'y'))).toBeNull()
   })
 
-  it('leaves out what it cannot read rather than failing the file', () => {
+  it('lists only what it can read, and keeps the rest in the file', () => {
+    const c = { author: 'a', at: 't', body: 'b' }
     const text = JSON.stringify({
+      version: 2,
       threads: {
-        good: { anchor: { quote: 'q' }, comments: { c: { author: 'a', at: 't', body: 'b' } } },
-        noQuote: { anchor: {}, comments: { c: { author: 'a', at: 't', body: 'b' } } },
+        good: {
+          anchor: { quote: 'q', color: 'red' },
+          comments: { c, odd: { author: 'a' } },
+          tag: 1,
+        },
+        noQuote: { anchor: {}, comments: { c } },
         noComments: { anchor: { quote: 'q' }, comments: { c: { author: 'a' } } },
       },
     })
-    expect(Object.keys(parseCommentsFile(text)!.threads)).toEqual(['good'])
+    const file = parseCommentsFile(text)!
+    expect(commentThreads(file).map((t) => t.id)).toEqual(['good'])
+    const written = JSON.parse(
+      formatCommentsFile(withReply(file, 'good', comment('r', 'reply'))!),
+    ) as Record<string, any>
+    expect(written.version).toBe(2)
+    expect(Object.keys(written.threads).sort()).toEqual(['good', 'noComments', 'noQuote'])
+    expect(written.threads.good.tag).toBe(1)
+    expect(written.threads.good.anchor.color).toBe('red')
+    expect(Object.keys(written.threads.good.comments).sort()).toEqual(['c', 'odd', 'r'])
+    expect(withReply(file, 'noQuote', comment('r', 'reply'))).toBeNull()
     expect(parseCommentsFile('[1]')).toBeNull()
+    expect(parseCommentsFile('{"threads":[]}')).toBeNull()
   })
 })
 
@@ -147,13 +164,30 @@ describe('mergeCommentsText', () => {
       at: '2026-10-21T11:00:00Z',
     })!
     const out = mergeCommentsText(f(base), f(ours), f(theirs))
-    expect(out.ok && parseCommentsFile(out.text)!.threads.t!.status?.by).toBe('bob')
+    expect(out.ok && commentThreads(parseCommentsFile(out.text)!)[0]!.status?.by).toBe('bob')
   })
 
   it('merges two files both sides created', () => {
     const theirs = withThread(emptyCommentsFile(), 'u', at(doc, 'two'), comment('d', 'x'))
     const out = mergeCommentsText(null, f(base), f(theirs))
-    expect(out.ok && Object.keys(parseCommentsFile(out.text)!.threads).sort()).toEqual(['t', 'u'])
+    const ids = out.ok ? commentThreads(parseCommentsFile(out.text)!).map((t) => t.id) : []
+    expect(ids.sort()).toEqual(['t', 'u'])
+  })
+
+  it('carries keys and threads it does not know through a merge', () => {
+    const extra = (file: CommentsFile, tag: string): CommentsFile => ({
+      ...file,
+      [tag]: true,
+      threads: { ...file.threads, [`raw-${tag}`]: { anchor: {} } },
+    })
+    const ours = extra(withReply(base, 't', comment('b', 'mine'))!, 'oursKey')
+    const theirs = extra(withReply(base, 't', comment('c', 'yours'))!, 'theirsKey')
+    const out = mergeCommentsText(f(base), f(ours), f(theirs))
+    const merged = JSON.parse(out.ok ? out.text : '{}') as Record<string, any>
+    expect(merged.oursKey).toBe(true)
+    expect(merged.theirsKey).toBe(true)
+    expect(Object.keys(merged.threads).sort()).toEqual(['raw-oursKey', 'raw-theirsKey', 't'])
+    expect(Object.keys(merged.threads.t.comments).sort()).toEqual(['a', 'b', 'c'])
   })
 
   it('refuses what is not a comments file', () => {

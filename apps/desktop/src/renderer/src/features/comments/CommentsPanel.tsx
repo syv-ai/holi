@@ -144,7 +144,17 @@ function Thread({
   const reply = useSetAtom(replyCommentAtom)
   const resolve = useSetAtom(resolveThreadAtom)
   const [replying, setReplying] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const resolved = isResolved(thread)
+
+  const toggleResolved = async () => {
+    setError(null)
+    try {
+      await resolve({ path, thread: thread.id, resolved: !resolved })
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    }
+  }
 
   return (
     <li
@@ -201,15 +211,12 @@ function Thread({
               Reply
             </Button>
           )}
-          <Button
-            variant="ghost"
-            size="xs"
-            onClick={() => void resolve({ path, thread: thread.id, resolved: !resolved })}
-          >
+          <Button variant="ghost" size="xs" onClick={() => void toggleResolved()}>
             {resolved ? 'Reopen' : 'Resolve'}
           </Button>
         </div>
       )}
+      {error !== null && <p className="text-[12px] text-destructive">{error}</p>}
     </li>
   )
 }

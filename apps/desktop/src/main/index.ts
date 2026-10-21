@@ -343,8 +343,9 @@ async function main(): Promise<void> {
     // every commit tick and once at open, so a vault switch resets it.
     onHeldBack: (files) => send('vault:heldback', files),
     onCommitted: (paths) => send('vault:committed', paths),
-    // A pull is the only way a teammate's comment arrives, so it is where a
-    // mention of the person signed in is found and handed to the plugins
+    // A merge (a pull, or a reconcile landing) is the only way a teammate's
+    // comment arrives, so it is where a mention of the person signed in is
+    // found and handed to the plugins
     // (the agent's inbox). Best-effort: a mention missed is still in the panel.
     onPulled: ({ remote, root }, { from, to }) => {
       const login = session.viewer?.login

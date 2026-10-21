@@ -166,8 +166,9 @@ export async function openActiveVault(args: {
    * is committed, so the snapshot says nothing.
    */
   onCommitted?: (paths: string[] | null) => void
-  /** A pull merged teammates' commits in: HEAD before and after it. What
-   *  came in is the difference (a new comment that mentions you, say). */
+  /** A pull or a reconcile merged teammates' commits in: HEAD before and
+   *  after it. What came in is the difference (a new comment that mentions
+   *  you, say). A merge someone runs in a terminal is not seen. */
   onPulled?: (range: { from: string; to: string }) => void
   /** Where this vault finds the running Holi: its `bridge.local.env`. */
   bridgeEnv?: VaultBridgeEnv
@@ -261,6 +262,9 @@ export async function openActiveVault(args: {
       resolve(ok)
     }
   })
+  /** HEAD when that reconcile began: what its merge brought in is the
+   *  difference once it lands (`onPulled`). */
+  let reconcileFrom: string | null = null
 
   function setState(next: SyncState): void {
     // Only on a real change: the panel would otherwise re-render on every tick.
@@ -302,6 +306,18 @@ export async function openActiveVault(args: {
     if (!reconciling || status.merging) return
     reconciling = false
     conflictPaths = null
+    // The merge landed (or was given up, and HEAD did not move): either way
+    // what came in is the difference, as after a clean pull.
+    const from = reconcileFrom
+    reconcileFrom = null
+    if (from !== null) {
+      void args.repo
+        .head()
+        .then((to) => {
+          if (to !== null && to !== from && !closed) args.onPulled?.({ from, to })
+        })
+        .catch((err) => console.error('[vault] head after reconcile:', err))
+    }
     // The merge commit is work the remote does not have. Coalesced, not
     // immediate: the reconcile's last write may still be settling.
     schedulePush()
@@ -708,11 +724,13 @@ export async function openActiveVault(args: {
     },
     async reconcile() {
       if (closed) return { paths: [] }
+      const from = await args.repo.head().catch(() => null)
       const result = await args.repo.remerge()
       if (result.kind === 'conflict') {
         // Markers + MERGE_HEAD are now in the tree; refresh the (fresh) paths.
         conflictPaths = result.paths
         reconciling = true
+        reconcileFrom = from
         await refreshState()
         return { paths: result.paths }
       }
@@ -720,6 +738,9 @@ export async function openActiveVault(args: {
       // return to normal. A merge commit, if any, still needs pushing.
       conflictPaths = null
       await rescan()
+      if (result.kind === 'merged' && !closed) {
+        args.onPulled?.({ from: result.from, to: result.to })
+      }
       schedulePush()
       await refreshState()
       return { paths: [] }
@@ -736,6 +757,7 @@ export async function openActiveVault(args: {
       if (closed || !reconciling) return
       await args.repo.abortMerge()
       reconciling = false
+      reconcileFrom = null
       await refreshState()
     },
 
