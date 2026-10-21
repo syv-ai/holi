@@ -185,7 +185,7 @@ export function SidebarSearch(): React.JSX.Element {
   return (
     <Button
       variant="ghost"
-      className={cn(ROW, 'h-8 bg-foreground/[0.04] font-normal hover:bg-foreground/[0.07]')}
+      className={cn(ROW, 'h-8 border border-divider font-normal')}
       onClick={() => openPalette('open')}
     >
       <Icon icon={Search} size="sm" />
@@ -325,7 +325,7 @@ export function SidebarProfile({
         aria-label={`${name}, account and app${wants ? ', needs attention' : ''}`}
         className={cn(
           'flex h-9 min-w-0 items-center gap-2 rounded-lg text-start outline-none motion-respond hover:bg-foreground/[0.04] active:bg-foreground/[0.07] focus-visible:ring-1 focus-visible:ring-ring data-[state=open]:bg-foreground/[0.06]',
-          compact ? 'w-9 justify-center' : 'w-full px-2',
+          compact ? 'w-8 justify-center' : 'w-full px-2',
         )}
       >
         <span className="relative shrink-0">

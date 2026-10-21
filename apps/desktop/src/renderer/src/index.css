@@ -803,6 +803,30 @@ html {
 :root:not([data-platform='mac']) [data-window-band='rail'] {
   display: none;
 }
+/* The rail (48px) is narrower than the lights, so with it showing the window
+   draws a title band across the top, as the lights' own, and the panel starts
+   under it. The band is only there then: over the open sidebar it would take
+   the toggle's clicks. */
+[data-window-band='title'] {
+  display: none;
+}
+[data-platform='mac']:not([data-fullscreen]) [data-nav='rail'] [data-window-band='title'] {
+  display: block;
+}
+[data-platform='mac']:not([data-fullscreen]) [data-nav='rail'] [data-slot='content-panel'] {
+  margin-top: 2.5rem;
+}
+
+/* A status dot on a 32px icon button's top-end corner (6px, centred 9px in):
+   the glyph is cut 2px around it, so the dot reads on any ground, the glass
+   window's too. The icon is 16px and centred, so the dot sits at (15px, 1px)
+   in its box, (1px, 1px) mirrored. */
+[data-slot='icon-button'][data-dot] > svg {
+  mask-image: radial-gradient(circle at 15px 1px, transparent 5px, black 5.5px);
+}
+[dir='rtl'] [data-slot='icon-button'][data-dot] > svg {
+  mask-image: radial-gradient(circle at 1px 1px, transparent 5px, black 5.5px);
+}
 
 /* ── Ambient · the light before a vault ──────────────────────────────
  * The one decorative loop, and it lives only behind the screens shown before

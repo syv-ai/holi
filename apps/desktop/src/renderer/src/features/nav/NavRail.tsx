@@ -1,9 +1,9 @@
 /**
- * The sidebar, collapsed (docs/features/sidebar.md): a rail of the places it
- * holds, one icon each, so hiding the sidebar gives the page room without
- * taking the way around away. Top to bottom: the window's lights and the
- * toggle that opens the sidebar again, the two modes, Home, the board and
- * Search, and at the foot who is signed in.
+ * The sidebar, collapsed (docs/features/sidebar.md): a slim rail of the places
+ * it holds, one icon each, so hiding the sidebar gives the page room without
+ * taking the way around away. Top to bottom, under the window's title band:
+ * the toggle that opens the sidebar again, the two modes, a hairline, Home,
+ * the board and Search, and at the foot who is signed in.
  *
  * The same destinations as the open sidebar's rows, not new ones: Home and
  * the board open their surfaces, Search the command menu, and a mode button
@@ -20,10 +20,11 @@ import { useAgentsMode, useAgentsStatus } from './ModeToggle'
 import { useNavItems } from './NavMenu'
 import { SidebarProfile } from './Sidebar'
 
-/** The rail's width: the window's lights (14px in, ending near 73px) and the
- *  panel's own 8px margin after them, so they never sit over the panel. Its
- *  CSS twin is the window band's inset (index.css, Window). */
-export const RAIL_WIDTH = 80
+/** The rail's width: a 32px button and 8px either side, the second 8px being
+ *  the panel's own gap. The window's lights are wider than this, so with the
+ *  rail showing they get a title band of their own above the panel
+ *  (index.css, Window). */
+export const RAIL_WIDTH = 48
 
 /** Opens or hides the sidebar, beside the window's lights (or, on the rail,
  *  under them). ⌘B does the same. */
@@ -56,11 +57,13 @@ export function NavRail(): React.JSX.Element {
   const board = items.find((i) => i.id === 'board')
   const documents = agents === undefined || mode === 'documents'
   return (
-    <div className="flex h-full w-full flex-col items-center gap-4 pb-2">
+    <div className="flex h-full w-full flex-col items-center gap-1.5 pb-1.5">
       <div data-window-band="rail" className="app-drag h-10 w-full shrink-0" />
-      <SidebarToggle />
+      <div className="mt-1.5 flex">
+        <SidebarToggle />
+      </div>
       {agents !== undefined && (
-        <nav aria-label="Mode" className="flex flex-col items-center gap-1">
+        <nav aria-label="Mode" className="flex flex-col items-center gap-1.5">
           <IconButton
             icon={FileText}
             label="Documents"
@@ -81,18 +84,20 @@ export function NavRail(): React.JSX.Element {
             tooltipSide="right"
             active={mode === 'agents'}
             aria-current={mode === 'agents' ? 'page' : undefined}
+            data-dot={status.needsYou > 0 ? '' : undefined}
             onClick={() => setMode('agents')}
           >
             {status.needsYou > 0 && (
               <span
                 aria-hidden="true"
-                className="absolute end-1 top-1 size-2 rounded-full bg-amber-600 ring-2 ring-ground dark:bg-amber-400"
+                className="absolute end-1.5 top-1.5 size-1.5 rounded-full bg-amber-600 dark:bg-amber-400"
               />
             )}
           </IconButton>
         </nav>
       )}
-      <nav aria-label="Go to" className="flex flex-col items-center gap-1">
+      {agents !== undefined && <span aria-hidden="true" className="h-px w-6 shrink-0 bg-divider" />}
+      <nav aria-label="Go to" className="flex flex-col items-center gap-1.5">
         <IconButton
           icon={House}
           label="Home"

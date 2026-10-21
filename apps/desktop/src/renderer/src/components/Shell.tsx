@@ -275,8 +275,15 @@ export function Shell() {
   }
 
   return (
-    <div data-slot="window-ground" className="relative flex h-screen flex-col text-foreground">
+    <div
+      data-slot="window-ground"
+      data-nav={navOpen ? 'open' : 'rail'}
+      className="relative flex h-screen flex-col text-foreground"
+    >
       <AmbientGrain />
+      {/* With the rail showing, the window's lights get a title band of their
+          own above the panel, wider than the rail (index.css, Window). */}
+      <div data-window-band="title" className="app-drag absolute inset-x-0 top-0 h-10" />
       <div className="flex min-h-0 flex-1">
         {/* The nav is a DrawerShell; its content stays mounted while hidden, so
             the tree's expansion survives. Hidden, the rail stands in for it. */}
