@@ -7,7 +7,7 @@
  * conflict per card for one person's tidying.
  */
 import { describe, expect, it } from 'vitest'
-import { needsRenumber, rankBetween } from '../src/rank'
+import { needsRenumber, rankBetween } from '../shared/rank'
 
 describe('rankBetween', () => {
   it('lands strictly between its neighbours', () => {

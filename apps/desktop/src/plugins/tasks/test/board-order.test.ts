@@ -1,12 +1,20 @@
 /**
- * The order of cards inside one board cell (`features/tasks.md`).
+ * The order of cards inside one board cell (docs/features/tasks.md).
  */
 import { describe, expect, it } from 'vitest'
-import type { Task } from '@holi/shared'
-import { rankAt, sortCell } from '../src/renderer/src/lib/board-order'
+import type { Task } from '../shared/types'
+import { rankAt, sortCell } from '../renderer/board-order'
 
 const task = (title: string, order?: number): Task =>
-  ({ path: `task.${title}.md`, title, status: 'todo', tags: [], description: '', order }) as Task
+  ({
+    path: `task.${title}.md`,
+    title,
+    status: 'todo',
+    tags: [],
+    assignees: [],
+    description: '',
+    order,
+  }) as Task
 
 describe('sortCell', () => {
   it('puts a ranked card where its rank says', () => {

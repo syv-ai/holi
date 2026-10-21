@@ -52,7 +52,6 @@ import { Button, ContextMenu, ContextMenuTrigger, Icon, Input, Tooltip } from '@
 import { todayDailyPathAtom } from '@/state/daily'
 import { claimsAtom, folderClaimsAtom, surfacesAtom } from '@/state/plugins'
 import { revealRequestAtom } from '@/state/reveal'
-import { createTaskAtom } from '@/state/tasks'
 import {
   activeRemoteAtom,
   createFolderAtom,
@@ -93,8 +92,7 @@ const SPRING_OPEN_MS = 600
 const TYPEAHEAD_MS = 700
 
 /** The new item's field says what it is naming. */
-const PLACEHOLDERS: Record<'task' | 'file' | 'folder', string> = {
-  task: 'task title',
+const PLACEHOLDERS: Record<'file' | 'folder', string> = {
   file: 'note name',
   folder: 'folder name',
 }
@@ -173,6 +171,11 @@ export function FileTree({
   /** What enabled claims add to the New menu (an app). */
   const claims = useAtomValue(claimsAtom)
   const creates = useMemo(() => claims.flatMap((c) => (c.create ? [c.create] : [])), [claims])
+  /** What enabled claims hide until shown (task files), as the menu's filters. */
+  const claimToggles = useMemo(
+    () => projection.hideables.map(({ label, icon, shown }) => ({ label, icon, shown })),
+    [projection.hideables],
+  )
   const present = useMemo(() => new Set(projection.docPaths), [projection.docPaths])
   /** The folder at `id` as a document (an app), or null. */
   const documentAt = (id: string) => folderDocumentAt(folderClaims, id, (p) => present.has(p))
@@ -195,7 +198,6 @@ export function FileTree({
   const renameNote = useSetAtom(renameNoteAtom)
   const createNote = useSetAtom(createNoteAtom)
   const createFolder = useSetAtom(createFolderAtom)
-  const createTask = useSetAtom(createTaskAtom)
   const loadSnapshot = useSetAtom(loadSnapshotAtom)
   const importFiles = useSetAtom(importFilesAtom)
   const revealRequest = useAtomValue(revealRequestAtom)
@@ -337,16 +339,9 @@ export function FileTree({
         void createNote(path).then(() => onOpenPreview(path))
         return
       }
-      case 'task':
-        // The name is the title; main names the file. It opens to be filled
-        // in, as ⌘⇧T's does, whether or not the tree shows task files.
-        void createTask({ title: name, status: 'todo', folder: parent }).then(
-          (path) => path !== null && onOpenPinned(path),
-        )
-        return
       default: {
-        // A claim's own kind (an app). It opens what it made, once the
-        // snapshot holds it.
+        // A claim's own kind (a task, an app). It opens what it made, once
+        // the snapshot holds it.
         if (activeRemote === null) return
         void kind.run({ remote: activeRemote, parent, name }).then(async (path) => {
           await loadSnapshot()
@@ -774,8 +769,8 @@ export function FileTree({
         onCollapseAll={() => setOpen(new Set())}
         hiddenShown={projection.showHidden}
         onToggleHidden={projection.toggleHidden}
-        tasksShown={projection.showTasks}
-        onToggleTasks={projection.toggleTasks}
+        claimToggles={claimToggles}
+        onToggleClaimed={projection.toggleClaimed}
       />
       <div
         className={cn(

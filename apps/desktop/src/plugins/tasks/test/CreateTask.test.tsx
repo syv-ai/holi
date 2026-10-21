@@ -2,11 +2,11 @@ import { render, screen } from '@/test/render'
 import userEvent from '@testing-library/user-event'
 import { expect, test, vi } from 'vitest'
 import { Dialog } from '@/primitives'
-import { CreateTask } from '../CreateTask'
+import { CreateTask } from '../renderer/CreateTask'
 
 // The body editor pulls the whole CodeMirror chain at import time, and this
 // unit test asserts only the footer contract.
-vi.mock('@/features/tasks/TaskBodyEditor', () => ({
+vi.mock('../renderer/TaskBodyEditor', () => ({
   TaskDescriptionEditor: () => null,
 }))
 

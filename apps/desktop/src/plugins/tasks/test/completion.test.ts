@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest'
-import { completeTask } from '../src/completion'
+import { completeTask } from '../shared/completion'
 
 const TODAY = '2026-09-27'
 

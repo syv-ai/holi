@@ -135,6 +135,13 @@ export interface PathClaim {
    *  matches the file. */
   frontmatter?: ClaimFrontmatter
   /**
+   * Its files leave the file tree until someone shows them, with a toggle in
+   * the explorer's menu ("Show task files"), remembered per vault on this
+   * machine: the files have a view of their own (the board). `label` names
+   * them, and is the toggle's key.
+   */
+  hideable?: { label: string; icon: IconGlyph }
+  /**
    * The file's canonical form: the same function as the main side's claim,
    * which the `normalize-md` commit transform applies. The editor treats a
    * file rewritten into it as Holi's own tidy, not a foreign edit.

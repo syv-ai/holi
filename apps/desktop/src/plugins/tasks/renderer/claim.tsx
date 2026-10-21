@@ -1,24 +1,21 @@
 /**
- * Task files as a path claim (docs/features/tasks.md): how a link to one is
+ * Task files as a path claim (docs/features/tasks.md): New Task in the
+ * explorer, their place out of the tree until shown, how a link to one is
  * drawn, what `@` offers of them, the narrower column their body has, their
  * frontmatter rows, and how the tree and the tabs mark them.
  */
 import { EditorView } from '@codemirror/view'
-import {
-  dailyNoteFilename,
-  snapshotTasks,
-  TASK_FIELDS,
-  taskClaim,
-  type TaskStatus,
-} from '@holi/shared'
+import { dailyNoteFilename } from '@holi/shared'
+import { snapshotTasks, TASK_FIELDS, taskClaim } from '../shared/task-file'
+import { type TaskStatus } from '../shared/types'
 import { atom } from 'jotai'
 import { Circle, CircleCheck, CircleDot, type IconNode } from 'lucide'
-import type { LinkChip, PathClaim, PathMark } from '@/plugin-api/types'
-import { TaskIcon } from '@/composites/file-icons'
-import { shortStamp } from '@/lib/date-presets'
-import { todayAtom } from '@/state/clock'
-import { snapshotTasksAtom, taskSuggestionsAtom, todayLinkCountAtom } from '@/state/tasks'
-import { TASK_CONTROLS } from './task-fields'
+import { CircleCheck as CircleCheckIcon, ListTodo } from 'lucide-react'
+import type { LinkChip, PathClaim, PathMark } from '@/plugin-api'
+import { TaskIcon } from './TaskIcon'
+import { shortStamp, todayAtom } from '@/plugin-api'
+import { snapshotTasksAtom, tasksCap, taskSuggestionsAtom, todayLinkCountAtom } from './state'
+import { TASK_CONTROLS } from './fields'
 
 /** A status's colour: the `--task-*` tokens a vault theme sets, the same
  *  ones the tree's `TaskIcon` wears. */
@@ -47,6 +44,18 @@ const taskColumn = EditorView.theme({
 export const TASK_PATH_CLAIM: PathClaim = {
   match: taskClaim.match,
   normalize: taskClaim.normalize,
+  // The name is the title; the plugin names the file, in any folder, whether
+  // or not the tree shows task files.
+  create: {
+    id: 'task',
+    label: 'New Task',
+    icon: CircleCheckIcon,
+    placeholder: 'task title',
+    run: async ({ remote, parent, name }) =>
+      (await tasksCap.create(remote, { title: name, status: 'todo', folder: parent })).path,
+  },
+  // The board owns tasks, so the tree leaves them out until asked.
+  hideable: { label: 'task files', icon: ListTodo },
   editor: {
     chips: (snapshot) =>
       new Map(

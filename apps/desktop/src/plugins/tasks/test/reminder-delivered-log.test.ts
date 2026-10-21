@@ -1,4 +1,4 @@
-import { SETTINGS_LOCAL_FILE, parseSettingsText, seedSettingsText } from '@holi/shared'
+import { parseSettingsText, seedSettingsText, SETTINGS_LOCAL_FILE } from '@holi/shared'
 import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'

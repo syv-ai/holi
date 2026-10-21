@@ -1,10 +1,19 @@
-import type { Priority, Recurrence, Task, TaskStatus } from '@holi/shared'
-import { cleanLogins, snapshotTasks } from '@holi/shared'
+import type { Priority, Recurrence, Task, TaskStatus } from '../shared/types'
+import { cleanLogins } from '@holi/shared'
+import { snapshotTasks } from '../shared/task-file'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { useMemo, useRef, useState } from 'react'
-import { DateTimePicker, FormField, RecurrenceField } from '@/composites'
-import { duePresets, reminderPresets } from '@/lib/date-presets'
-import { TaskDescriptionEditor } from '@/features/tasks/TaskBodyEditor'
+import { DateTimePicker, FormField } from '@/composites'
+import { RecurrenceField } from './RecurrenceField'
+import {
+  activeDocAtom,
+  duePresets,
+  nowAtom,
+  openPathAtom,
+  reminderPresets,
+  snapshotAtom,
+} from '@/plugin-api'
+import { TaskDescriptionEditor } from './TaskBodyEditor'
 import {
   Button,
   Dialog,
@@ -16,16 +25,7 @@ import {
   SelectValue,
   Tooltip,
 } from '@/primitives'
-import {
-  ROOT_LANE,
-  createTaskAtom,
-  laneLabel,
-  patchTaskAtom,
-  taskCreateFolders,
-} from '@/state/tasks'
-import { nowAtom } from '@/state/clock'
-import { openTaskAtom } from '@/state/view'
-import { activeDocAtom, snapshotAtom } from '@/state/vaults'
+import { createTaskAtom, laneLabel, patchTaskAtom, ROOT_LANE, taskCreateFolders } from './state'
 
 /** The folder a path sits in ('' for the vault root). */
 function folderOf(path: string): string {
@@ -57,7 +57,7 @@ export function CreateTask({ onClose }: { onClose: () => void }): React.JSX.Elem
   const activeDoc = useAtomValue(activeDocAtom)
   const create = useSetAtom(createTaskAtom)
   const patch = useSetAtom(patchTaskAtom)
-  const openTask = useSetAtom(openTaskAtom)
+  const openPath = useSetAtom(openPathAtom)
 
   const [title, setTitle] = useState('')
   const [folder, setFolder] = useState(() => (activeDoc ? folderOf(activeDoc.path) : ROOT_LANE))
@@ -126,7 +126,7 @@ export function CreateTask({ onClose }: { onClose: () => void }): React.JSX.Elem
         ...(draft.recurrence ? { recurrence: draft.recurrence } : {}),
       },
     })
-    if (path) openTask(path)
+    if (path) openPath(path, 'pinned')
     onClose()
   }
 

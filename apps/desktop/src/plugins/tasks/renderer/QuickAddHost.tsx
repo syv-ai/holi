@@ -5,7 +5,7 @@
  */
 import { useAtom } from 'jotai'
 import { MorphDialog } from '@/primitives'
-import { quickAddAtom } from '@/state/tasks'
+import { quickAddAtom } from './state'
 import { QuickAdd } from './QuickAdd'
 
 export function QuickAddHost(): React.JSX.Element {

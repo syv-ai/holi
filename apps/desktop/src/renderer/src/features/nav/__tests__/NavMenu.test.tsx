@@ -85,7 +85,7 @@ test("the items are in their order, without apps or a plugin's hidden item", asy
     within(list)
       .getAllByRole('button')
       .map((b) => b.textContent),
-  ).toEqual(['Home', 'Search', 'Board', 'Graph', 'Sync: up to date', 'Settings'])
+  ).toEqual(['Home', 'Search', 'Graph', 'Sync: up to date', 'Settings'])
 })
 
 test("Settings comes last, after a plugin's items, so it sits beside More", async () => {
@@ -95,7 +95,7 @@ test("Settings comes last, after a plugin's items, so it sits beside More", asyn
     within(list)
       .getAllByRole('button')
       .map((b) => b.textContent),
-  ).toEqual(['Home', 'Search', 'Apps', 'Board', 'Graph', 'Inbox', 'Sync: up to date', 'Settings'])
+  ).toEqual(['Home', 'Search', 'Apps', 'Graph', 'Inbox', 'Sync: up to date', 'Settings'])
 })
 
 test("an item's count turns to an alert when its badge says so", async () => {
@@ -134,11 +134,11 @@ test('Search opens the palette', async () => {
   expect(store.get(paletteAtom).open).toBe(true)
 })
 
-test('Board opens the board', async () => {
-  const { store, user } = setup()
+test("a plugin's item opens its surface", async () => {
+  const { store, user } = setup({ shown: true })
   await openList(user)
-  await user.click(screen.getByRole('button', { name: /Board/ }))
-  expect(activeTab(store.get(workspaceAtom))).toEqual({ kind: 'surface', surface: 'board' })
+  await user.click(screen.getByRole('button', { name: /Inbox/ }))
+  expect(activeTab(store.get(workspaceAtom))).toEqual({ kind: 'surface', surface: 'inbox' })
 })
 
 test('Settings opens settings', async () => {

@@ -4,7 +4,7 @@
  * archive-done commit transform, the skill it seeds, and reminders, which
  * fire across every registered vault that runs it while Holi runs.
  */
-import { taskClaim } from '@holi/shared'
+import { taskClaim } from '../shared/task-file'
 import { localToday, type MainPlugin } from '../../../main/plugin-api'
 import { TASKS_INFO } from '../info'
 import { archiveDone } from './archive-done'

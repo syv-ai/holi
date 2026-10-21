@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { fieldRecurrence, nextDue, nextDueCatchup } from '../src/recurrence'
-import type { Recurrence, RecurrenceFrequency } from '../src/types'
+import { fieldRecurrence, nextDue, nextDueCatchup } from '../shared/recurrence'
+import type { Recurrence, RecurrenceFrequency } from '../shared/types'
 
 const rule = (frequency: RecurrenceFrequency, interval: number): Recurrence => ({
   frequency,

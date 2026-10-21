@@ -3,7 +3,8 @@
  * `(column, lane)`; a card's place is its `order`, a sparse rank in its own
  * frontmatter.
  */
-import { rankBetween, type Task } from '@holi/shared'
+import { rankBetween } from '../shared/rank'
+import { type Task } from '../shared/types'
 
 /**
  * Cards in the order the column shows them.

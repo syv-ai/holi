@@ -12,7 +12,8 @@ import {
   taskFilePath,
   taskSlug,
   titleFromTaskPath,
-} from '../src/task-file'
+} from '../shared/task-file'
+import { taskArea } from '../shared/types'
 
 const parse = (text: string, path = 'task.a.md') => parseTaskFile(text, path)
 
@@ -446,5 +447,15 @@ describe('assigneesInTitle', () => {
   it('leaves an @ that is no member, and an address, as written', () => {
     expect(assigneesInTitle('Work @home', members)).toEqual({ title: 'Work @home', assignees: [] })
     expect(assigneesInTitle('Mail ada@syv.ai', members).assignees).toEqual([])
+  })
+})
+
+describe('taskArea', () => {
+  it('is the containing folder — the lane', () => {
+    expect(taskArea({ path: 'projects/q2/task.a.md' })).toBe('projects/q2')
+  })
+
+  it('is the empty root lane for a task at the vault root', () => {
+    expect(taskArea({ path: 'task.a.md' })).toBe('')
   })
 })

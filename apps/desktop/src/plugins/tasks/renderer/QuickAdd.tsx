@@ -21,17 +21,9 @@
  *   since the next task usually goes to the same place. On the board, the card flies from the dock to its
  *   cell (a shared `layoutId`, the path it will have).
  */
-import type { Priority } from '@holi/shared'
-import {
-  assigneesInTitle,
-  cleanLogins,
-  hasLogin,
-  normalizeLogin,
-  snapshotTasks,
-  taskFilePath,
-  taskSlug,
-  toggleLogin,
-} from '@holi/shared'
+import type { Priority } from '../shared/types'
+import { assigneesInTitle, snapshotTasks, taskFilePath, taskSlug } from '../shared/task-file'
+import { cleanLogins, hasLogin, normalizeLogin, toggleLogin } from '@holi/shared'
 import { completionStatus } from '@codemirror/autocomplete'
 import { insertNewlineAndIndent } from '@codemirror/commands'
 import { insertNewlineContinueMarkup } from '@codemirror/lang-markdown'
@@ -41,7 +33,7 @@ import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { AtSign, CalendarDays, Check, Flag, Folder, Hash, PenLine } from 'lucide-react'
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { duePresets, shortStamp } from '@/lib/date-presets'
+import { activeDocAtom, duePresets, nowAtom, shortStamp, snapshotAtom } from '@/plugin-api'
 import {
   Icon,
   MORPH_OWNED,
@@ -52,17 +44,15 @@ import {
   settle,
   type IconGlyph,
 } from '@/primitives'
-import { nowAtom } from '@/state/clock'
 import {
-  ROOT_LANE,
   createTaskAtom,
   quickAddFolderAtom,
+  ROOT_LANE,
   taskCreateFolders,
   taskPeopleAtom,
-  taskTagsAtom,
   tasksAtom,
-} from '@/state/tasks'
-import { activeDocAtom, snapshotAtom } from '@/state/vaults'
+  taskTagsAtom,
+} from './state'
 import { TaskDescriptionEditor } from './TaskBodyEditor'
 
 const PRIORITIES: { value: Priority; label: string }[] = [

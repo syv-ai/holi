@@ -14,12 +14,9 @@
  * for choosing an editor). Unmapped extensions fall back to a neutral file.
  */
 import type { JSX, ReactNode } from 'react'
-import { fileKind, type TaskStatus } from '@holi/shared'
+import { fileKind } from '@holi/shared'
 import {
   Braces,
-  Circle,
-  CircleCheck,
-  CircleDot,
   File,
   FileArchive,
   FileSpreadsheet,
@@ -161,17 +158,6 @@ export function fileIconFor(path: string, icon?: string): JSX.Element {
   const ext = dot > 0 ? base.slice(dot + 1).toLowerCase() : ''
   const [glyph, colour] = BY_NAME[base] ?? BY_EXT[ext] ?? [File, 'text-file-grey']
   return <Icon icon={glyph} size="sm" className={colour} />
-}
-
-/** A task file's glyph, keyed to its status: an empty circle for todo, a
- *  dotted one for doing, a checked one for done.
- *
- *  **The colours are the `--task-*` tokens, not hex**, the same ones the
- *  editor's task orbs use, so a vault theme recolours both at once. */
-export function TaskIcon({ status }: { status: TaskStatus }) {
-  if (status === 'done') return <Icon icon={CircleCheck} size="sm" className="text-task-done" />
-  if (status === 'doing') return <Icon icon={CircleDot} size="sm" className="text-task-doing" />
-  return <Icon icon={Circle} size="sm" className="text-task-todo" />
 }
 
 /**

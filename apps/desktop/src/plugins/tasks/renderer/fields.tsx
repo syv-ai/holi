@@ -3,12 +3,13 @@
  * fields whose edit is more than a value. Done is completion, the dates offer
  * the task presets, and a recurrence is its nested rule.
  */
-import { completeTask, fieldRecurrence } from '@holi/shared'
+import { completeTask } from '../shared/completion'
+import { fieldRecurrence } from '../shared/recurrence'
 import { useAtomValue } from 'jotai'
-import type { FieldControlProps } from '@/plugin-api/types'
-import { DateTimePicker, EnumField, RecurrenceField } from '@/composites'
-import { duePresets, reminderPresets } from '@/lib/date-presets'
-import { nowAtom, todayAtom } from '@/state/clock'
+import type { FieldControlProps } from '@/plugin-api'
+import { DateTimePicker, EnumField } from '@/composites'
+import { RecurrenceField } from './RecurrenceField'
+import { duePresets, nowAtom, reminderPresets, todayAtom } from '@/plugin-api'
 
 const text = (value: unknown): string | undefined => (typeof value === 'string' ? value : undefined)
 

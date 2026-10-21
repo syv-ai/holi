@@ -17,8 +17,8 @@
  * The glyph follows the stage, never `task.status`: the re-read lands in the
  * middle of the sequence and flips the status under it.
  */
-import type { Task, TaskStatus } from '@holi/shared'
-import { completeTask } from '@holi/shared'
+import type { Task, TaskStatus } from '../shared/types'
+import { completeTask } from '../shared/completion'
 import { useReducedMotion } from 'motion/react'
 import { useRef, useState } from 'react'
 import { check, instant } from '@/primitives'

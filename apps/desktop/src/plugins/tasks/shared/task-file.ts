@@ -26,12 +26,20 @@
  */
 
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml'
-import { parseStamp } from './dates'
-import { firstHeading } from './headings'
-import { cleanLogins, hasLogin, sameLogin } from './logins'
-import { FrontmatterError, splitFrontmatter } from './frontmatter'
-import type { FieldSpec } from './frontmatter-schema'
-import { claimedFiles, type ClaimedFiles, type SnapshotClaim, type VaultSnapshot } from './types'
+import {
+  claimedFiles,
+  cleanLogins,
+  firstHeading,
+  FrontmatterError,
+  hasLogin,
+  parseStamp,
+  sameLogin,
+  splitFrontmatter,
+  type ClaimedFiles,
+  type FieldSpec,
+  type SnapshotClaim,
+  type VaultSnapshot,
+} from '@holi/shared'
 import type {
   Priority,
   Recurrence,

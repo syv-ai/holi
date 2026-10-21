@@ -27,19 +27,17 @@ import {
   instant,
   settle,
 } from '@/primitives'
-import { nowAtom } from '@/state/clock'
-import { peopleList } from '@/state/members'
-import { sessionAtom } from '@/state/session'
+import { nowAtom, peopleList, sessionAtom } from '@/plugin-api'
 import {
-  ROOT_LANE,
   availableLabels,
   filterAtom,
   laneOf,
   laneOrder,
   quickAddAtom,
+  ROOT_LANE,
   tasksAtom,
   togglePerson,
-} from '@/state/tasks'
+} from './state'
 import { QuickAdd } from './QuickAdd'
 
 /** Labels are drawn bare, as on a card; a real tag carries its `#`. */

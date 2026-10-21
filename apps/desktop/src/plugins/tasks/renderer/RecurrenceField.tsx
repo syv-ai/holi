@@ -9,12 +9,8 @@
  * Roll-forward happens on complete (`nextDueCatchup`, in the router); nothing
  * here computes a date.
  */
-import {
-  type Recurrence,
-  type RecurrenceFrequency,
-  type RecurrenceWeekday,
-  describeRecurrence,
-} from '@holi/shared'
+import { type Recurrence, type RecurrenceFrequency, type RecurrenceWeekday } from '../shared/types'
+import { describeRecurrence } from '../shared/recurrence'
 import {
   Button,
   Input,
@@ -27,9 +23,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/primitives'
-import { DateTimePicker } from './DateTimePicker'
-import { FieldRow, useFieldControlId } from './FieldRow'
-import { cn } from '@/lib/cn'
+import { DateTimePicker, FieldRow, useFieldControlId } from '@/composites'
+import { cn } from '@/plugin-api'
 
 const WEEKDAYS: RecurrenceWeekday[] = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']
 

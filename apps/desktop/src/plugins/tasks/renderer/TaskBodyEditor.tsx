@@ -9,9 +9,7 @@ import { EditorState, type Extension } from '@codemirror/state'
 import { EditorView, placeholder } from '@codemirror/view'
 import { useSetAtom } from 'jotai'
 import { useEffect, useRef } from 'react'
-import { baseEditorExtensions } from '@/editor/extensions'
-import { useEditorDeps } from '@/state/editor-deps'
-import { openNoteTabAtom } from '@/state/panes'
+import { baseEditorExtensions, openNoteTabAtom, useEditorDeps } from '@/plugin-api'
 
 /**
  * The task description as a full note editor rather than a plain textarea.

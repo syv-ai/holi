@@ -4,10 +4,10 @@
  */
 import { createStore } from 'jotai'
 import { expect, test } from 'vitest'
-import type { Task, VaultSnapshot } from '@holi/shared'
-import { nowAtom } from '../src/renderer/src/state/clock'
-import { overdueTaskCountAtom } from '../src/renderer/src/state/tasks'
-import { snapshotAtom } from '../src/renderer/src/state/vaults'
+import type { Task } from '../shared/types'
+import { emptyVaultSnapshot, type VaultSnapshot } from '@holi/shared'
+import { nowAtom, snapshotAtom } from '@/plugin-api'
+import { overdueTaskCountAtom } from '../renderer/state'
 
 const task = (path: string, over: Partial<Task> = {}): Task => ({
   path,
@@ -21,9 +21,8 @@ const task = (path: string, over: Partial<Task> = {}): Task => ({
 
 function storeWith(tasks: Task[], now: string) {
   const snapshot: VaultSnapshot = {
-    docs: [],
+    ...emptyVaultSnapshot(),
     claimed: { tasks: { items: tasks, broken: [] } },
-    files: [],
   }
   const store = createStore()
   store.set(snapshotAtom, snapshot)

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { allLabels, virtualLabels } from '../src/labels'
-import type { Task } from '../src/types'
+import { allLabels, virtualLabels } from '../shared/labels'
+import type { Task } from '../shared/types'
 
 // `now` is a TIMED stamp — the overdue rule reads the clock, not just
 // the calendar. Mid-afternoon, so both sides of the day boundary are reachable.

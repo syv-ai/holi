@@ -265,9 +265,7 @@ export function OnboardingRitual({ mode, onDismiss, dryRun = false }: Props) {
             'obrit-settings-act',
             <>
               <div className="obrit-eyebrow">WHAT THIS VAULT RUNS</div>
-              <p className="obrit-lede">
-                Notes, tasks and sync are always there. These come on top.
-              </p>
+              <p className="obrit-lede">Notes and sync are always there. These come on top.</p>
               <PluginsAct
                 plugins={plugins}
                 onChange={(info, on) =>

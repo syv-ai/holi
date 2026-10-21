@@ -8,21 +8,19 @@
  */
 import { readFile } from 'node:fs/promises'
 import { isAbsolute, relative } from 'node:path'
+import { completeTask } from '../shared/completion'
 import {
-  completeTask,
   isTaskFilePath,
   parseTaskFile,
   parseTaskPatch,
   serializeTaskFile,
-  setFirstHeading,
   snapshotTasks,
   taskFilePath,
-  taskSlug,
-  vaultRelPath,
-  type Task,
   type TaskPatch,
-  type VaultRelPath,
-} from '@holi/shared'
+  taskSlug,
+} from '../shared/task-file'
+import { setFirstHeading, type VaultRelPath, vaultRelPath } from '@holi/shared'
+import { type Task } from '../shared/types'
 import {
   absPathFor,
   cap,

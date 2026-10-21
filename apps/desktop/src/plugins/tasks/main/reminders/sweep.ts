@@ -11,8 +11,9 @@
  * fire-once watermark comparison; `sweep` composes it across all vaults and
  * decides coalescing.
  */
-import { pendingFireTime, remindsViewer } from '@holi/shared'
-import type { Task } from '@holi/shared'
+import { pendingFireTime } from '../../shared/reminder'
+import { remindsViewer } from '../../shared/task-file'
+import type { Task } from '../../shared/types'
 import type { ReminderFire, RemindersEvent } from './types'
 
 export interface VaultTasks {

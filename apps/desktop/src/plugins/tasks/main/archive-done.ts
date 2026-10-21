@@ -13,7 +13,8 @@
 import { execFile } from 'node:child_process'
 import { readFile } from 'node:fs/promises'
 import { promisify } from 'node:util'
-import { isTaskFilePath, parseTaskFile, vaultRelPath } from '@holi/shared'
+import { isTaskFilePath, parseTaskFile } from '../shared/task-file'
+import { vaultRelPath } from '@holi/shared'
 import {
   absPathFor,
   listFiles,

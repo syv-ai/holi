@@ -8,7 +8,7 @@
  * idle vault. It would also make `tags` half machine-owned, so an agent deleting
  * `overdue` would have it silently re-added.
  */
-import { stampDate, stampEpoch, stampTime } from './dates'
+import { stampDate, stampEpoch, stampTime } from '@holi/shared'
 import type { Task } from './types'
 
 export type VirtualLabel = 'overdue' | 'p1' | 'p2' | 'p3'

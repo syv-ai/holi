@@ -12,7 +12,7 @@ import {
   stampDate,
   stampTime,
   withTime,
-} from './dates'
+} from '@holi/shared'
 import type { Recurrence, RecurrenceFrequency, RecurrenceWeekday } from './types'
 
 /** Weekday order, so a summary reads Mon-first however the list was written. */

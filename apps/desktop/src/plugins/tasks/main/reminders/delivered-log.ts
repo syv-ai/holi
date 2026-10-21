@@ -1,4 +1,4 @@
-import { SETTINGS_LOCAL_FILE, parseSettingsText, writeSettingsText } from '@holi/shared'
+import { parseSettingsText, SETTINGS_LOCAL_FILE, writeSettingsText } from '@holi/shared'
 import { installedInfos } from '../../../../main/plugin-api'
 /**
  * The delivery watermark, named. Two verbs over the per-task last-fired map:

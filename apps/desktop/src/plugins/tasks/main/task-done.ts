@@ -10,15 +10,10 @@
  */
 import { readFile } from 'node:fs/promises'
 import { isAbsolute, relative } from 'node:path'
-import {
-  completeTask,
-  isTaskFilePath,
-  parseTaskFile,
-  serializeTaskFile,
-  vaultRelPath,
-  type Task,
-  type VaultRelPath,
-} from '@holi/shared'
+import { completeTask } from '../shared/completion'
+import { isTaskFilePath, parseTaskFile, serializeTaskFile } from '../shared/task-file'
+import { type VaultRelPath, vaultRelPath } from '@holi/shared'
+import { type Task } from '../shared/types'
 import { resolveRelative } from '@holi/shared/path-safety-node'
 import { absPathFor, writeAtomic } from '../../../main/plugin-api'
 

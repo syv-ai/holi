@@ -16,7 +16,7 @@
  * unselected buckets. The empty state distinguishes "no tasks" from "nothing
  * matches".
  */
-import type { Task, TaskStatus } from '@holi/shared'
+import type { Task, TaskStatus } from '../shared/types'
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import {
   AnimatePresence,
@@ -38,26 +38,23 @@ import {
   instant,
   settle,
 } from '@/primitives'
-import { cn } from '@/lib/cn'
-import { useArrivals } from '@/lib/use-arrivals'
-import { rankAt, sortCell } from '@/lib/board-order'
+import { cn, nowAtom, useAgentService, useArrivals } from '@/plugin-api'
+import { rankAt, sortCell } from './board-order'
 import {
-  ROOT_LANE,
   brokenTasksAtom,
   collapsedLanesAtom,
-  openQuickAddInAtom,
   deleteTasksAtom,
   filterAtom,
   laneOf,
   laneOrder,
   matchesFilter,
   moveTaskAtom,
+  openQuickAddInAtom,
   patchTaskAtom,
   rankTasksAtom,
+  ROOT_LANE,
   tasksAtom,
-} from '@/state/tasks'
-import { useAgentService } from '@/state/agent-service'
-import { nowAtom } from '@/state/clock'
+} from './state'
 import { BoardCard } from './BoardCard'
 import { BoardDock, FilterChips } from './BoardDock'
 import type { Parking } from './use-check-sequence'

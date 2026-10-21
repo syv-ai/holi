@@ -9,14 +9,13 @@
  * (`useBoardDrag`), springs to a new place when its neighbours change, and
  * flies to its new column when its check releases it (`layoutId`, the path).
  */
-import type { Task, TaskStatus } from '@holi/shared'
-import { virtualLabels } from '@holi/shared'
+import type { Task, TaskStatus } from '../shared/types'
+import { virtualLabels } from '../shared/labels'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { motion, useReducedMotion } from 'motion/react'
 import { Ellipsis } from 'lucide-react'
 import { useRef } from 'react'
-import { cn } from '@/lib/cn'
-import { shortStamp } from '@/lib/date-presets'
+import { cn, nowAtom, openBesideAtom, shortStamp, todayAtom } from '@/plugin-api'
 import {
   Button,
   ConfirmInPlace,
@@ -35,9 +34,7 @@ import {
   instant,
   settle,
 } from '@/primitives'
-import { nowAtom, todayAtom } from '@/state/clock'
-import { openBesideAtom } from '@/state/panes'
-import { deleteTaskAtom, filterAtom, setTaskStatusAtom, togglePerson } from '@/state/tasks'
+import { deleteTaskAtom, filterAtom, setTaskStatusAtom, togglePerson } from './state'
 import { useCheckSequence, type Parking } from './use-check-sequence'
 import type { useBoardDrag } from './use-board-drag'
 

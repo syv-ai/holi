@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { ANCHOR_HOUR } from '../src/dates'
-import { pendingFireTime, shiftForRollover } from '../src/reminder'
+import { ANCHOR_HOUR } from '@holi/shared'
+import { pendingFireTime, shiftForRollover } from '../shared/reminder'
 
 describe('pendingFireTime', () => {
   it('pends at the reminder itself when it names a time', () => {

@@ -1,4 +1,4 @@
-import type { Task } from '@holi/shared'
+import type { Task } from '../shared/types'
 import { hasLogin } from '@holi/shared'
 import { describe, expect, it } from 'vitest'
 import {
@@ -11,7 +11,7 @@ import {
   matchesFilter,
   taskCreateFolders,
   togglePerson,
-} from '../src/renderer/src/state/tasks'
+} from '../renderer/state'
 
 const TODAY = '2026-07-14'
 

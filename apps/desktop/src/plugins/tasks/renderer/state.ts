@@ -8,24 +8,28 @@
  * git conflict) and **`related[]`** (a task links by writing wiki-links in its
  * body; backrefs are a grep).
  */
-import type { Task, TaskStatus } from '@holi/shared'
-import {
-  allLabels,
-  dailyNoteFilename,
-  isAssignedTo,
-  parseWikiLinks,
-  snapshotTasks,
-  taskArea,
-  toggleLogin,
-  virtualLabels,
-} from '@holi/shared'
+import type { Task, TaskStatus } from '../shared/types'
+import { allLabels, virtualLabels } from '../shared/labels'
+import { dailyNoteFilename, parseWikiLinks, toggleLogin } from '@holi/shared'
+import { isAssignedTo, snapshotTasks } from '../shared/task-file'
+import { taskArea } from '../shared/types'
 import { atom } from 'jotai'
-import { capClient, type UiCapability } from '../lib/cap-client'
-import { nowAtom, todayAtom } from './clock'
-import { memberLoginsAtom, peopleList } from './members'
-import { sessionAtom } from './session'
-import { activeTab, closeTabsForPaths, workspaceAtom, type Tab } from './panes'
-import { activeRemoteAtom, loadSnapshotAtom, snapshotAtom } from './vaults'
+import {
+  activeRemoteAtom,
+  activeTab,
+  capClient,
+  closeTabsForPaths,
+  loadSnapshotAtom,
+  memberLoginsAtom,
+  nowAtom,
+  peopleList,
+  sessionAtom,
+  snapshotAtom,
+  type Tab,
+  todayAtom,
+  workspaceAtom,
+} from '@/plugin-api'
+import type { taskCapabilities } from '../main/capabilities'
 
 /** The vault root's lane. The lane IS the containing folder, and the root
  * folder's path is the empty string. */
@@ -262,28 +266,8 @@ export function dropIntent(task: Task, targetLane: string, targetStatus: TaskSta
 // Every write re-reads the vault. No optimistic patching and no
 // mutation-result-as-truth: the file on disk is the only truth.
 
-/** The tasks plugin's capabilities the board calls, typed here as the slice
- *  it calls while the board is still core's. */
-export const tasksCap = capClient<{
-  'tasks.create': UiCapability<
-    {
-      title: string
-      status: TaskStatus
-      folder: string
-      description?: string
-      extra?: Partial<
-        Pick<Task, 'due' | 'priority' | 'tags' | 'assignees' | 'reminder' | 'recurrence'>
-      >
-    },
-    { path: string }
-  >
-  'tasks.update': UiCapability<{ path: string; patch: Record<string, unknown> }, Task>
-  'tasks.move': UiCapability<
-    { path: string; folder: string; status?: TaskStatus; order?: number },
-    Task
-  >
-  'tasks.delete': UiCapability<{ path: string }, { ok: true }>
-}>('tasks')
+/** The capabilities the board calls, typed from the plugin's own table. */
+export const tasksCap = capClient<ReturnType<typeof taskCapabilities>>('tasks')
 
 export const createTaskAtom = atom(
   null,

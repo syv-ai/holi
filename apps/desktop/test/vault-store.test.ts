@@ -1,4 +1,5 @@
-import { emptyVaultSnapshot, snapshotTasks, taskClaim } from '@holi/shared'
+import { emptyVaultSnapshot } from '@holi/shared'
+import { snapshotTasks, taskClaim } from '../src/plugins/tasks/shared/task-file'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'

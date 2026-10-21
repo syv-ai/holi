@@ -18,7 +18,7 @@
  * The payload is the path as `text/plain`: the drop reads it from the drag
  * itself, and the tab strip reads it to refuse a card.
  */
-import type { Task, TaskStatus } from '@holi/shared'
+import type { Task, TaskStatus } from '../shared/types'
 import { useState } from 'react'
 
 type Slot = { cell: string; index: number }

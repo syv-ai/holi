@@ -13,7 +13,7 @@
  * Callers pass `now`/timestamps in; timezone conversion happens at the
  * scheduler's edge, never here.
  */
-import { ANCHOR_HOUR, DAY_MS, formatStamp, parseStamp, stampDate, stampEpoch } from './dates'
+import { ANCHOR_HOUR, DAY_MS, formatStamp, parseStamp, stampDate, stampEpoch } from '@holi/shared'
 import type { TaskStatus } from './types'
 
 /**
