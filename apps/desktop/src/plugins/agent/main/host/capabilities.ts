@@ -16,7 +16,8 @@
  *
  * No `electron` import: this loads under plain Node in the tests.
  */
-import { vaultRelPath, type VaultRelPath } from '@holi/shared'
+import { readFile } from 'node:fs/promises'
+import { merge3, vaultRelPath, type VaultRelPath } from '@holi/shared'
 import {
   cap,
   CapabilityError,
@@ -26,6 +27,8 @@ import {
   requireOpen,
   stringParam,
   VAULT_NOT_OPEN,
+  withFileLock,
+  writableFile,
   writeAtomic,
   type CapabilityContext,
   type RangeFile,
@@ -238,20 +241,47 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
       },
     }),
 
-    /** Write the text the reviewer resolved to, and commit it. */
+    /**
+     * Write the text the reviewer resolved to, and commit it. `base` is the
+     * text the review was built from (the file at the turn's end). The file
+     * may have changed since (the person typing, a teammate's pull, the
+     * agent's next turn): those changes are kept by a three-way merge, and
+     * when they overlap what the reviewer kept nothing is written (CONFLICT),
+     * so a revert never takes back work the review never showed.
+     */
     'agent.revert': cap({
       doors: ['ui'],
       writes: true,
       params: (raw) => {
         const p = paramsObject(raw)
-        const text = p['text']
+        const { text, base } = p
         if (typeof text !== 'string') throw new CapabilityError('BAD_REQUEST', 'text is required')
+        if (typeof base !== 'string') {
+          throw new CapabilityError('BAD_REQUEST', 'base is required: the text the review showed')
+        }
         const path: string = relPath(stringParam(p, 'path'))
-        return { path, text }
+        return { path, text, base }
       },
-      run: async (ctx, { path, text }): Promise<{ ok: true }> => {
+      run: async (ctx, { path, text, base }): Promise<{ ok: true }> => {
         requireOpen(ctx)
-        await writeAtomic(ctx.root, relPath(path), text)
+        const rel = relPath(path)
+        const abs = await writableFile(ctx, rel)
+        await withFileLock(abs, async () => {
+          // A file the turn deleted is absent on disk and empty in the review.
+          const current = (await readFile(abs, 'utf8').catch(() => null)) ?? ''
+          let next = text
+          if (current !== base) {
+            const merged = merge3(base, text, current)
+            if (merged.kind === 'conflict') {
+              throw new CapabilityError(
+                'CONFLICT',
+                `${rel} has changed since this turn, where you are changing it. Nothing was written: open the file to see what changed.`,
+              )
+            }
+            next = merged.text
+          }
+          await writeAtomic(ctx.root, rel, next)
+        })
         await deps.commitNow()
         return { ok: true }
       },

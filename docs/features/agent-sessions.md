@@ -135,7 +135,9 @@ showing it busy, crosses it off), so a session resumed from the list is never re
 - Only reconcile, a stuck push, a skills update's conflicts and a scheduled run submit a turn, each
   as the first turn of a session of its own. Holi cannot see the composer.
 - Record a turn after the vault resumes, fire-and-forget: a lost record beats a stuck pause.
-- A turn revert does not flush open buffers first; a dirty buffer 3-way merges.
+- A turn revert does not flush open buffers first; a dirty buffer 3-way merges. It is written over
+  the text the review showed: a file changed since is merged with what the reviewer kept, and one
+  whose change overlaps it is refused with a message in the panel, nothing written.
 - Turn-hook and status-line responses are empty: a turn hook's body would be injected into
   Claude's context, and the status line prints its own footer.
 

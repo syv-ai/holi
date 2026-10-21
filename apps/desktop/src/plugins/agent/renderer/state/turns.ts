@@ -138,15 +138,18 @@ export const loadTurnDiffAtom = atom(null, async (get, set, path: string) => {
  * `decideReload` runs (clean buffer reloads, dirty one 3-way merges, an overlap
  * routes to reconcile).
  *
+ * `base` is the text the diff showed: main merges in whatever changed since,
+ * or refuses with a message the panel shows.
+ *
  * The file list is then re-asked: the revert has just minted a commit inside the
  * range being looked at.
  */
 export const revertFileAtom = atom(
   null,
-  async (get, set, { path, text }: { path: string; text: string }) => {
+  async (get, set, { path, text, base }: { path: string; text: string; base: string }) => {
     const remote = get(activeRemoteAtom)
     if (remote === null) return
-    await agentCap.revert(remote, { path, text })
+    await agentCap.revert(remote, { path, text, base })
     await set(loadTurnFilesAtom)
   },
 )
