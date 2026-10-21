@@ -28,38 +28,23 @@
  * to approve that (`dangerously-allow`; the approval is kept in main).
  */
 import { useAtomValue, useSetAtom, useStore } from 'jotai'
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { isSurfaceName } from '@holi/shared'
-import { APP_METHODS, type AppMethod, type AppPush, type AppResponse } from '../shared/bridge'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { type AppPush, type AppResponse } from '../shared/bridge'
 import { appHost, appName } from '../shared/bundle'
 import { type AppAffordance } from '../shared/manifest'
-import { APP_LOG_LEVELS } from '../shared/store'
 import {
   activeModeAtom,
   activeRemoteAtom,
   closeSurfaceTabAtom,
   cn,
   openCommitInHistoryAtom,
-  openPathAtom,
-  openSurfaceAtom,
   snapshotAtom,
-  surfacesAtom,
 } from '@/plugin-api'
 import { Button, Dialog } from '@/primitives'
 import { appPushSignaturesAtom, storeSignatures } from './app-push'
 import { appOpensAtom, appPathsAtom } from './apps'
 import { appsCap } from './apps-cap'
-
-function isAppMethod(value: unknown): value is AppMethod {
-  return typeof value === 'string' && (APP_METHODS as readonly string[]).includes(value)
-}
-
-/** A string field out of a call's params, or null when there isn't one. */
-function fieldOf(params: unknown, key: 'target'): string | null {
-  if (params === null || typeof params !== 'object') return null
-  const value = (params as Record<string, unknown>)[key]
-  return typeof value === 'string' ? value : null
-}
+import { hostBridgeMessage } from './bridge-host'
 
 /** What each affordance reads, for the approval dialog. */
 const AFFORDANCE_TEXT: Record<AppAffordance, string> = {
@@ -81,9 +66,7 @@ export function AppFrame({ path }: { path: string }): React.JSX.Element {
   const appPaths = useAtomValue(appPathsAtom)
   const remote = useAtomValue(activeRemoteAtom)
   const mode = useAtomValue(activeModeAtom)
-  const openPath = useSetAtom(openPathAtom)
   const closeTab = useSetAtom(closeSurfaceTabAtom)
-  const openSurface = useSetAtom(openSurfaceAtom)
   // Read when an app calls, not on every render: the registry and the
   // snapshot change far more often than an app opens anything.
   const store = useStore()
@@ -92,79 +75,20 @@ export function AppFrame({ path }: { path: string }): React.JSX.Element {
   const exists = appPaths.includes(path)
   const name = appName(path)
 
-  const answer = useCallback(
-    async (method: AppMethod, params: unknown): Promise<unknown> => {
-      if (remote === null) throw new Error('no vault is open')
-      // `open` is the one thing only this process can do. Everything else goes
-      // to main with the bundle this frame was mounted with, where the registry
-      // decides what an app may reach.
-      if (method === 'open') {
-        const target = fieldOf(params, 'target')
-        if (target === null) throw new Error('open needs a path or a view')
-        // A registered view wins over a file of the same name.
-        if (store.get(surfacesAtom).has(target)) {
-          openSurface(target)
-          return { ok: true }
-        }
-        // A bare name that is no view and no file at the vault's root is a
-        // view this vault does not have, such as one whose plugin is off.
-        const snapshot = store.get(snapshotAtom)
-        const isFile = [...snapshot.docs, ...snapshot.files].some((f) => f.path === target)
-        if (isSurfaceName(target) && !isFile) throw new Error(`no such view: ${target}`)
-        // An app's bundle is a folder: it opens as the app, not as a file.
-        openPath(target, 'preview')
-        return { ok: true }
-      }
-      return await appsCap.call(remote, { bundle: path, method, params })
-    },
-    [remote, path, openPath, openSurface, store],
-  )
-
   useEffect(() => {
     const onMessage = (event: MessageEvent): void => {
       const frame = frameRef.current
       if (frame === null || event.source !== frame.contentWindow) return
-      const msg = event.data as {
-        id?: unknown
-        method?: unknown
-        params?: unknown
-        log?: { level?: unknown; text?: unknown }
-      }
-      if (msg === null || typeof msg !== 'object') return
-      // A line for the app's log: no answer, and a failure to write it is not
-      // the app's to hear about. Main checks it again, with the bundle. Never
-      // a `load` line, which is this frame's own (below), so an app cannot
-      // move where `holi apps console` starts reading.
-      if (typeof msg.log === 'object' && msg.log !== null && remote !== null) {
-        const { text } = msg.log
-        const level = APP_LOG_LEVELS.find((l) => l !== 'load' && l === msg.log?.level)
-        if (level !== undefined && typeof text === 'string') {
-          appsCap.log(remote, { bundle: path, level, text }).catch(() => {})
-        }
-        return
-      }
-      if (typeof msg.id !== 'string') return
-      const id = msg.id
-      const reply = (response: AppResponse): void => frame.contentWindow?.postMessage(response, '*')
-
-      if (!isAppMethod(msg.method)) {
-        // Refused as a value rather than dropped: an app that asked for
-        // something that does not exist should be able to say so, and a call
-        // that never answers is indistinguishable from Holi having hung.
-        reply({ id, ok: false, error: `no such method: ${String(msg.method)}` })
-        return
-      }
-      answer(msg.method, msg.params).then(
-        (value) => reply({ id, ok: true, value }),
-        (err: unknown) => {
-          const code = refusalCodeOf(err)
-          reply({ id, ok: false, error: (err as Error).message, ...(code ? { code } : {}) })
-        },
-      )
+      hostBridgeMessage(event.data, {
+        store,
+        remote,
+        bundle: path,
+        reply: (response: AppResponse) => frame.contentWindow?.postMessage(response, '*'),
+      })
     }
     window.addEventListener('message', onMessage)
     return () => window.removeEventListener('message', onMessage)
-  }, [answer, remote, path])
+  }, [store, remote, path])
 
   // Push: post a topic whenever its signature changes, never on mount (the
   // app reads what it needs when it starts). Sent to whatever document the
@@ -441,10 +365,4 @@ function CommitLine({ lead, commit }: { lead: string; commit: AppCommit }): Reac
       , {day(commit.date)}
     </span>
   )
-}
-
-/** tRPC's verdict, as `ipcLink` rebuilt it onto `err.data.code`. */
-function refusalCodeOf(err: unknown): string | null {
-  const data = (err as { data?: { code?: unknown } } | null)?.data
-  return typeof data?.code === 'string' ? data.code : null
 }

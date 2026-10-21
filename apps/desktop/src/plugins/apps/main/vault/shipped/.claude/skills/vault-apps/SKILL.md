@@ -1,6 +1,6 @@
 ---
 name: vault-apps
-description: Build a small web app that opens as a tab inside Holi, over this vault's own notes and tasks. Use when asked for a dashboard, a chart or graph, a table or overview, a report, a viewer or explorer, a board, a tracker, a calculator, a widget, or any custom screen or small tool — including "visualise this", "show me", and "build me something to track X" phrasings.
+description: Build a small web app that opens as a tab inside Holi, over this vault's own notes and tasks, or a slash command for the notes editor. Use when asked for a dashboard, a chart or graph, a table or overview, a report, a viewer or explorer, a board, a tracker, a calculator, a widget, or any custom screen or small tool — including "visualise this", "show me", and "build me something to track X" phrasings, and when asked for a `/` command in notes (`/date`, `/uppercase`, "a command that…").
 ---
 
 # Build an app for this vault
@@ -55,6 +55,7 @@ Projects/Q2/Burndown.app/app.yaml     ← required: write this LAST
   collections: # the records it keeps: see Keeping data
   dangerously-allow: # one person's data it reads: mail, calendar, location
   env: # the secrets it needs, by name: see Secrets
+  commands: # what it adds to the notes' slash menu: see Slash commands
   ```
 
   A blank key is unused, and an empty file is still a valid manifest. There is
@@ -341,6 +342,67 @@ holi store get <app> <collection> <id>
 holi store put <app> <collection> '<json>' [<id>]
 holi store delete <app> <collection> <id>
 ```
+
+## Slash commands
+
+An app can add commands to the notes editor's `/` menu: `/date` that writes
+today's date, `/uppercase` that shouts the selection, `/ticket` that fetches a
+ticket's title. A command is a script in the app's folder, declared in
+`app.yaml`:
+
+```yaml
+commands:
+  uppercase:
+    script: commands/uppercase.js # a .js file in this app's folder
+    description: Uppercase the selection # shown beside /uppercase in the menu
+```
+
+A name is lower case letters, digits, `-` and `_`. `/todo` and `/table` are
+Holi's own and stay Holi's. A command needs no app page of its own, but the app
+still needs `index.html` and `app.yaml` to exist, so a commands-only app's page
+can say what its commands do.
+
+The script calls `holi.command(fn)` once, at the top level. It runs when the
+person picks the command, in a hidden page with the same `window.holi` as the
+app, so it can read notes, use the app's store, read a declared secret and
+`fetch`:
+
+```js
+// commands/uppercase.js
+holi.command(({ text, line, path }) => {
+  // text: what the person had selected when they typed `/`, or ''
+  // line: the line the caret is on; path: the note's path
+  return (text || line).toUpperCase()
+})
+```
+
+What `fn` returns, or resolves to (it may be `async`), is what happens:
+
+| Return                  | What happens                                                          |
+| ----------------------- | --------------------------------------------------------------------- |
+| `'text'`                | the selection becomes this text (with no selection, it is inserted)   |
+| `{ replace: 'text' }`   | the same                                                              |
+| `{ insert: 'text' }`    | the selection stays and the text goes after it                        |
+| `{ open: 'a/note.md' }` | opens a note, an app or a view, as `holi.open` does                   |
+| `{ agent: 'Do this' }`  | the ask-the-agent box opens with this written in; the person sends it |
+| nothing                 | the note stays as it was                                              |
+
+- It gets the selection and the line, never the rest of the note. To read the
+  note, `holi.docs.read(path)`.
+- It has 10 seconds. A command that throws, returns anything else, or runs out
+  of time leaves the note as it was and writes why to the app's
+  `log.local.txt`, so read the log when the person says a command did nothing.
+- A command asks no one for approval. If its app declares `dangerously-allow`
+  (mail, calendar), its Google calls fail until the person has opened the
+  app's tab once and approved it there, and again after that approval lapses
+  (30 days, or a change to the app's code). Tell them so when you write one.
+- It is not offered in the agent's own files (`AGENTS.md`, `CLAUDE.md`,
+  `.claude/`, `.holi/memory/` and the rest no app may read).
+- It is a plain script, not a module: no `import`/`export`. One script is one
+  command, so code two commands share is written into each.
+- After writing one, tell the person to type `/` and its name in a note. Holi
+  picks up a changed `app.yaml` on its own; a changed script runs fresh every
+  time.
 
 ## Seeing whether it works
 

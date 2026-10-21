@@ -9,6 +9,7 @@ import type { PluginInfo, VaultSnapshot } from '@holi/shared'
 import type { IconGlyph } from '@/primitives'
 import type { Command } from '@/state/commands'
 import type { PluginDialog } from '@/state/dialogs'
+import type { SlashCommand } from '@/editor/slash'
 
 /** One item a claim adds to a file's row menu. */
 export interface ClaimMenuItem {
@@ -272,6 +273,9 @@ export interface RendererPlugin {
   agent?: AgentServiceSource
   /** Commands, run by id like core's (`state/commands.ts`), while it runs. */
   commands?: readonly Command[]
+  /** What it adds to the notes editor's slash menu while it runs, after the
+   *  built-in commands (docs/features/editor.md). */
+  slashCommands?: Atom<readonly SlashCommand[]>
   /**
    * What the palette lists beside the vault's files that is not a tab, and
    * how one is opened: `open` gets its key, and focuses what it opens.

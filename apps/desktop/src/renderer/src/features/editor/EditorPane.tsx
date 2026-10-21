@@ -30,7 +30,7 @@ import { headingRequestAtom, quietOpenAtom } from '@/state/arrival'
 import { caretHeadingAtom } from '@/state/holi-link'
 import { NO_AGENT, useAskAgentSeam } from '@/state/agent-service'
 import { historyOpenAtom } from '@/state/history'
-import { normalizersAtom } from '@/state/plugins'
+import { normalizersAtom, slashCommandsAtom } from '@/state/plugins'
 import { trpc } from '@/lib/trpc'
 import { fileHistoryAtom } from '@/state/file-history'
 import { editorSelectionAtom } from '@/state/ui-report'
@@ -272,6 +272,7 @@ export function EditorPane({
                     ),
                   mentionData: () => mentionRef.current,
                   nav: () => navRef.current,
+                  slashCommands: () => store.get(slashCommandsAtom),
                   ...(hasAgent
                     ? {
                         askAgent: {

@@ -5,9 +5,8 @@
  */
 import { readFile } from 'node:fs/promises'
 import {
-  appBundleOf,
   isAgentSurfacePath,
-  isAppPrivatePath,
+  isAppFencedPath,
   isAppWritablePath,
   isMachineStatePath,
   isSecretPath,
@@ -47,11 +46,7 @@ export function readablePath(path: string): VaultRelPath {
   if (isAgentSurfacePath(path)) throw new CapabilityError('FORBIDDEN', path)
   const rel = shownPath(path)
   // Checked again on the normalised path: `./.holi/memory/x.md` is `.holi/memory/x.md`.
-  if (isAgentSurfacePath(rel)) throw new CapabilityError('FORBIDDEN', path)
-  const bundle = appBundleOf(rel)
-  if (bundle !== null && isAppPrivatePath(rel.slice(bundle.length + 1))) {
-    throw new CapabilityError('FORBIDDEN', path)
-  }
+  if (isAppFencedPath(rel)) throw new CapabilityError('FORBIDDEN', path)
   return rel
 }
 

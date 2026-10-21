@@ -8,7 +8,7 @@
 import { snapshotTasks, type Task } from '@holi/shared'
 import { EditorState, type Extension } from '@codemirror/state'
 import { EditorView, placeholder } from '@codemirror/view'
-import { useAtomValue, useSetAtom } from 'jotai'
+import { useAtomValue, useSetAtom, useStore } from 'jotai'
 import { useEffect, useRef } from 'react'
 import { trpc } from '@/lib/trpc'
 import { baseEditorExtensions } from '@/editor/extensions'
@@ -16,6 +16,7 @@ import type { LinkNav } from '@/editor/links'
 import type { MentionData } from '@/editor/mentions'
 import { NO_AGENT, useAskAgentSeam } from '@/state/agent-service'
 import { openNoteTabAtom } from '@/state/panes'
+import { slashCommandsAtom } from '@/state/plugins'
 import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
 
 /**
@@ -84,6 +85,7 @@ export function TaskDescriptionEditor({
   }
   const onChangeRef = useRef(onChange)
   onChangeRef.current = onChange
+  const store = useStore()
 
   useEffect(() => {
     if (hostRef.current === null) return
@@ -106,6 +108,7 @@ export function TaskDescriptionEditor({
                   ),
             mentionData: () => mentionRef.current,
             nav: () => navRef.current,
+            slashCommands: () => store.get(slashCommandsAtom),
             ...(askAgentRef.current === null
               ? {}
               : {

@@ -29,6 +29,7 @@ import type {
   Surface,
   SurfaceTabLook,
 } from '@/plugin-api/types'
+import type { SlashCommand } from '@/editor/slash'
 import type { Command } from './commands'
 import type { FolderSurface } from './panes'
 import { vaultSettingsAtom } from './settings'
@@ -112,6 +113,13 @@ export const runningPluginsAtom = atom((get): readonly RendererPlugin[] => {
   const enabled = get(enabledPluginsAtom)
   return get(installedPluginsAtom).filter((p) => enabled.has(p.info.id))
 })
+
+/** Every running plugin's slash commands, in list order. */
+export const slashCommandsAtom = atom((get): readonly SlashCommand[] =>
+  get(runningPluginsAtom).flatMap((p) =>
+    p.slashCommands === undefined ? [] : get(p.slashCommands),
+  ),
+)
 
 /** Every running plugin's commands, in list order. */
 export const pluginCommandsAtom = atom((get): readonly Command[] =>

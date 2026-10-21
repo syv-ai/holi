@@ -49,12 +49,10 @@ its files change (today reload is a button).
 
 ## Notes & editor
 
-**Slash commands as small programs.** Agreed design: a command is a small JS module the vault
-commits, run in the same isolated origin vault apps use, handed the buffer and selection and
-returning text or an action. It gets `fetch`, the vault actions apps have, an agent query and a mail
-compose call; no filesystem, shell or Node. Real scripts were rejected because a committed command
-is code that arrives on a teammate's laptop with a pull. Machine-local-only commands were rejected
-because the agent could not write one for the team. Today the menu is a fixed `/todo` and `/table`.
+**The rest of slash commands as small programs.** A vault app's commands are built
+([vault apps](features/vault-apps.md)). Not built from that design: a mail compose call a command
+can make (to start a reply), and embedding an app in the note, where it is still open whether that
+is a widget in the note or a link that opens its tab.
 
 **Standard markdown links instead of wiki-links.** In-vault links are `[[path]]`. Plain
 `[text](path.md)` would render on GitHub and is what every tool and agent already knows. The cost:
