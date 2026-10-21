@@ -15,13 +15,13 @@
  *
  * No `electron` import: this loads under plain Node in the tests.
  */
-import { vaultRelPath } from '@holi/shared'
 import {
   cap,
   CapabilityError,
   noParams,
   optionalStringParam,
   paramsObject,
+  shownPath,
   stringParam,
   type CapabilityContext,
 } from '../../../../main/plugin-api'
@@ -84,14 +84,9 @@ export const inboxCapabilities = (deps: InboxCapabilitiesDeps) => {
         if (session !== undefined && !JOB_ID.test(session)) {
           throw new CapabilityError('BAD_REQUEST', `not a session id: ${session}`)
         }
-        let rel: string | undefined
-        if (path !== undefined) {
-          try {
-            rel = vaultRelPath(path)
-          } catch (err) {
-            throw new CapabilityError('BAD_REQUEST', (err as Error).message)
-          }
-        }
+        // What the entry opens is shown to the person, so it is held to what
+        // `holi docs open` may show: never machine state or a secret file.
+        const rel = path === undefined ? undefined : shownPath(path)
         return {
           title: bounded(p, 'title', MAX_TITLE),
           line: bounded(p, 'line', MAX_LINE),

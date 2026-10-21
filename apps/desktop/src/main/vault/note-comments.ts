@@ -29,6 +29,7 @@ import {
   type LocatedThread,
   type NoteComment,
 } from '@holi/shared'
+import { exactPath } from '@holi/shared/path-safety-node'
 import { runGit, tryGit } from '../git'
 import type { StagedChanges } from './hooks/staged'
 import type { TransformResult } from './hooks/relink'
@@ -45,9 +46,22 @@ async function readText(root: string, rel: string): Promise<string | null> {
   return readFile(absPathFor(root, vaultRelPath(rel)), 'utf8').catch(() => null)
 }
 
+/**
+ * The sidecar's file, only when it is the path as named: no symlink on the way
+ * and the case it has on disk (`exactPath`). A sidecar arrives with a pull, so
+ * a link committed in its place must not let a read or a write reach a file
+ * outside it. The file need not exist.
+ */
+async function sidecarFile(root: string, rel: string): Promise<string> {
+  const abs = await exactPath(root, rel)
+  if (abs === null) throw new UnreadableComments(`${rel} is not a plain file in the vault`)
+  return abs
+}
+
 /** `notePath`'s threads, as stored. A note nobody commented on has none. */
 export async function readNoteComments(root: string, notePath: string): Promise<CommentsFile> {
-  const text = await readText(root, commentsPathFor(notePath))
+  const abs = await sidecarFile(root, commentsPathFor(notePath))
+  const text = await readFile(abs, 'utf8').catch(() => null)
   if (text === null) return emptyCommentsFile()
   const file = parseCommentsFile(text)
   if (file === null) {
@@ -71,6 +85,9 @@ export function changeNoteComments(
   return withFileLock(absPathFor(root, rel), async () => {
     const next = edit(await readNoteComments(root, notePath))
     if (next === null) return null
+    // Checked again right before the write: the read's check is a lock-wait
+    // and a parse behind.
+    await sidecarFile(root, rel)
     await writeAtomic(root, rel, formatCommentsFile(next))
     return next
   })

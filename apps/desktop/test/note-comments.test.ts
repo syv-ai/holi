@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import {
@@ -11,7 +11,12 @@ import {
   type CommentsFile,
 } from '@holi/shared'
 import { runGit } from '../src/main/git'
-import { pulledMentions } from '../src/main/vault/note-comments'
+import {
+  addThread,
+  pulledMentions,
+  readNoteComments,
+  UnreadableComments,
+} from '../src/main/vault/note-comments'
 
 let root: string
 
@@ -70,5 +75,37 @@ describe('pulledMentions', () => {
     expect(found.map((f) => [f.notePath, f.mention.comment.id])).toEqual([
       ['drafts/plan.md', 'ccc'],
     ])
+  })
+})
+
+describe('a sidecar that is a symlink', () => {
+  const author = { login: 'ada', agent: false }
+
+  it('is neither read nor written through, whether the link is the file or a folder', async () => {
+    const outside = await mkdtemp(join(tmpdir(), 'holi-outside-'))
+    try {
+      const target = join(outside, 'theirs.json')
+      const theirs = formatCommentsFile(emptyCommentsFile())
+      await writeFile(target, theirs)
+      await mkdir(join(root, '.holi/comments'), { recursive: true })
+      await symlink(target, join(root, '.holi/comments/a.md.json'))
+      await symlink(outside, join(root, '.holi/comments/linked'))
+
+      for (const note of ['a.md', 'linked/theirs']) {
+        await expect(readNoteComments(root, note)).rejects.toBeInstanceOf(UnreadableComments)
+        await expect(
+          addThread(root, note, anchorAt(doc, 0, 10), author, 'hello'),
+        ).rejects.toBeInstanceOf(UnreadableComments)
+      }
+      expect(await readFile(target, 'utf8')).toBe(theirs)
+    } finally {
+      await rm(outside, { recursive: true, force: true })
+    }
+  })
+
+  it('leaves an ordinary sidecar readable and writable', async () => {
+    await addThread(root, 'a.md', anchorAt(doc, 0, 10), author, 'hello')
+    const file = await readNoteComments(root, 'a.md')
+    expect(Object.keys(file.threads)).toHaveLength(1)
   })
 })

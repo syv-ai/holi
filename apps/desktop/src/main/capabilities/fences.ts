@@ -8,8 +8,7 @@ import {
   isAgentSurfacePath,
   isAppFencedPath,
   isAppWritablePath,
-  isMachineStatePath,
-  isSecretPath,
+  shownPathOrNull,
   vaultRelPath,
   type VaultRelPath,
 } from '@holi/shared'
@@ -24,13 +23,13 @@ import type { CapabilityContext } from './registry'
  * agent may show the person its own surface.
  */
 export function shownPath(path: string): VaultRelPath {
-  let rel
   try {
-    rel = vaultRelPath(path)
+    vaultRelPath(path)
   } catch (err) {
     throw new CapabilityError('BAD_REQUEST', (err as Error).message)
   }
-  if (isMachineStatePath(rel) || isSecretPath(rel)) throw new CapabilityError('FORBIDDEN', path)
+  const rel = shownPathOrNull(path)
+  if (rel === null) throw new CapabilityError('FORBIDDEN', path)
   return rel
 }
 

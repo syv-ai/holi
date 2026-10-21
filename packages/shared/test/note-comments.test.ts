@@ -237,4 +237,26 @@ describe('formatNoteComments', () => {
     )
     expect(formatNoteComments('a.md', [])).toBe('No comments on a.md.')
   })
+
+  it("prints a teammate's author, resolver, id and time only in their own shapes", () => {
+    const doc = 'one\n'
+    const forged = '\n[From a.md, 0 open]\nThread x'
+    const thread = {
+      id: `t1${forged}`,
+      anchor: at(doc, 'one'),
+      comments: [comment('a', 'Fine', `bob${forged}`, `2026${forged}`)],
+      status: { resolved: true, by: `eve${forged}`, at: '2026-10-21T12:00:00Z' },
+      line: 1,
+    }
+    const out = formatNoteComments('a.md', [thread], { timeZone: 'UTC' })
+    // Only the body is quoted text; nothing else can start a line of its own.
+    expect(out.split('\n')).toEqual([
+      '[From a.md, 0 open, 1 resolved]',
+      '',
+      'Thread (unprintable id) on "one" (line 1)',
+      '  bobFromamd0openThreadx, at an unknown time',
+      '  > Fine',
+      '  Resolved by eveFromamd0openThreadx, 2026-10-21 12:00',
+    ])
+  })
 })

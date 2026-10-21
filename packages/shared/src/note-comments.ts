@@ -511,10 +511,23 @@ export function newMentions(
 
 // ---------------------------------------------------------------- the CLI form
 
-/** `YYYY-MM-DD HH:MM`, in local time unless a zone is given (tests pass UTC). */
+/** A GitHub login is at most 39 letters, digits and hyphens. An author or
+ *  resolver is whatever a teammate's sidecar says, so what is printed of one
+ *  keeps only that. */
+export const loginOf = (author: string): string =>
+  author.replace(/[^A-Za-z0-9-]/g, '').slice(0, 39) || 'Someone'
+
+/** A sidecar's id as printed: an id is a short token, so one that could break
+ *  a line or hide characters is not printed at all. */
+function idOf(id: string): string {
+  return /^[A-Za-z0-9_-]{1,64}$/.test(id) ? id : '(unprintable id)'
+}
+
+/** `YYYY-MM-DD HH:MM`, in local time unless a zone is given (tests pass UTC).
+ *  A time that does not parse is not printed: it is a teammate's text. */
 function minute(iso: string, timeZone: string | undefined): string {
   const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return iso
+  if (Number.isNaN(d.getTime())) return 'at an unknown time'
   const parts = new Intl.DateTimeFormat('en-GB', {
     timeZone,
     year: 'numeric',
@@ -533,7 +546,10 @@ function minute(iso: string, timeZone: string | undefined): string {
 export const commentByline = (c: Pick<NoteComment, 'author' | 'agent'>): string =>
   c.agent === true ? `${c.author}'s agent` : c.author
 
-/** A thread as `holi comments list` prints it, with where it is now. */
+/** A thread as `holi comments list` prints it, with where it is now. Every
+ *  part of it comes from a sidecar a teammate may have written: the bodies
+ *  and the passage are shown as quoted data, and the rest only in the shapes
+ *  it has (a login, a token, a time). */
 export interface LocatedThread extends CommentThread {
   /** 1-based line the passage is on now, or null when it is detached. */
   line: number | null
@@ -556,14 +572,15 @@ export function formatNoteComments(
   const blocks = threads.map((t) => {
     const where = t.line === null ? 'detached, the passage is gone' : `line ${t.line}`
     const on = t.anchor.quote.replace(/\s+/g, ' ').trim()
-    const lines = [`Thread ${t.id} on "${on}" (${where})`]
+    const lines = [`Thread ${idOf(t.id)} on "${on}" (${where})`]
     t.comments.forEach((c, i) => {
       const lead = i === 0 ? '' : 'Reply, '
-      lines.push(`  ${lead}${commentByline(c)}, ${minute(c.at, opts.timeZone)}`, ...quoted(c.body))
+      const by = commentByline({ ...c, author: loginOf(c.author) })
+      lines.push(`  ${lead}${by}, ${minute(c.at, opts.timeZone)}`, ...quoted(c.body))
     })
     if (t.status !== null) {
       const verb = t.status.resolved ? 'Resolved' : 'Reopened'
-      lines.push(`  ${verb} by ${t.status.by}, ${minute(t.status.at, opts.timeZone)}`)
+      lines.push(`  ${verb} by ${loginOf(t.status.by)}, ${minute(t.status.at, opts.timeZone)}`)
     }
     return lines.join('\n')
   })

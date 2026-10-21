@@ -199,4 +199,20 @@ describe('fileEvents', () => {
     }
     expect(fileEvents(emptyVaultSnapshot(), after).map((e) => e.id)).toEqual(['inbox/a.pdf'])
   })
+
+  it("leaves out machine-local files, secrets, and an app's records and log", () => {
+    const after = {
+      ...emptyVaultSnapshot(),
+      files: [
+        'inbox/notes.local.md',
+        'inbox/.env',
+        'Tracker.app/data/rows.json',
+        'Tracker.app/log.local.txt',
+        'Tracker.app/index.html',
+      ].map((path) => ({ path, updatedAt: 't1' })),
+    }
+    expect(fileEvents(emptyVaultSnapshot(), after).map((e) => e.id)).toEqual([
+      'Tracker.app/index.html',
+    ])
+  })
 })

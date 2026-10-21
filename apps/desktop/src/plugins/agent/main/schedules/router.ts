@@ -36,6 +36,8 @@
  * watermark). docs/not-built.md.
  */
 import {
+  isAppFencedPath,
+  isLocalOnlyPath,
   MIN_SCHEDULE_GAP_MINUTES,
   momentFireAt,
   triggerHears,
@@ -275,11 +277,21 @@ export function describeBatch(batch: Batch): string {
  *  a run writes there (memory, schedules, settings) as a matter of course. */
 const QUIET = ['.holi/', '.claude/']
 
+/** Whether a file's change may be a trigger's event, and so be named in a
+ *  run's line: not Holi's or the agent's own folders, not this machine's
+ *  files (`.local.`) or a secret file, and not an app's records or log, which
+ *  an app rewrites as it runs. The per-turn changes line holds back the same. */
+function heardFile(path: string): boolean {
+  return (
+    !QUIET.some((dir) => path.startsWith(dir)) && !isLocalOnlyPath(path) && !isAppFencedPath(path)
+  )
+}
+
 /**
  * The file events between two scans of the vault: a note or file whose path
  * is new is `added`, one whose mtime moved is `changed`. Files a plugin
- * claims (tasks) are not in either list, and have their own source; nor are
- * files under `.holi/` and `.claude/`, which are Holi's and the agent's. The
+ * claims (tasks) are not in either list, and have their own source; nor is
+ * any file `heardFile` holds back. The
  * first scan after a start has nothing to compare with and says nothing:
  * a file added while Holi was closed is not an event.
  */
@@ -291,7 +303,7 @@ export function fileEvents(
   for (const f of [...before.docs, ...before.files]) was.set(f.path, f.updatedAt)
   const out: (VaultEvent & { type: 'happened' })[] = []
   for (const f of [...after.docs, ...after.files]) {
-    if (QUIET.some((dir) => f.path.startsWith(dir))) continue
+    if (!heardFile(f.path)) continue
     const prior = was.get(f.path)
     if (prior === f.updatedAt) continue
     const kind = prior === undefined ? 'added' : 'changed'

@@ -214,6 +214,16 @@ describe('holi agent notify', () => {
     expect(ok.raised).toEqual([{ title: 'T', line: 'L', session: '0a1b2c3d' }])
   })
 
+  it('opens only a path a person may be shown: no machine state, no secret file', async () => {
+    for (const path of ['.holi/state/bridge.local.json', '.HOLI/State/x.json', 'deploy/.env']) {
+      await expect(notify({ title: 'T', line: 'L', path }, true)).rejects.toMatchObject({
+        code: 'FORBIDDEN',
+      })
+    }
+    const ok = await notify({ title: 'T', line: 'L', path: './notes/a.md' }, true)
+    expect(ok.raised).toEqual([{ title: 'T', line: 'L', path: 'notes/a.md' }])
+  })
+
   it('still logs the line when Holi does not have the vault open', async () => {
     const r = await notify({ title: 'Offer drafted', line: 'Check it.' }, false)
     expect(r.result).toBe('logged')

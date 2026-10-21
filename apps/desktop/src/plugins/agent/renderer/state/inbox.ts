@@ -3,6 +3,7 @@
  * main's list, pushed as the agent's `inbox` event on every change, and the
  * one place an entry is opened, from its row or from its clicked banner.
  */
+import { shownPathOrNull } from '@holi/shared'
 import { atom } from 'jotai'
 import {
   activeRemoteAtom,
@@ -28,7 +29,10 @@ export const inboxAtom = atom<InboxView>(EMPTY)
 export const openInboxEntryAtom = atom(null, (get, set, entry: InboxEntry): void => {
   const remote = get(activeRemoteAtom)
   if (entry.path !== undefined) {
-    if (remote !== null) set(requestArrivalAtom, { remote, path: entry.path })
+    // Main refused such a path when the notice was raised; the inbox file is
+    // only this machine's, but it is a file on disk all the same.
+    const path = shownPathOrNull(entry.path)
+    if (remote !== null && path !== null) set(requestArrivalAtom, { remote, path })
   } else if (entry.session !== undefined) {
     void set(openSessionAtom, entry.session).then((res) => {
       if (!res.ok) console.warn(`[agent] open ${entry.session} failed: ${res.message}`)

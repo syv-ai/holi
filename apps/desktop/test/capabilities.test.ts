@@ -590,6 +590,26 @@ describe('tasks.update', () => {
   })
 })
 
+describe('tasks.list', () => {
+  it('tells an app only the tasks it may read, and the agent every one', async () => {
+    const task = (path: string) => ({ path, title: path, status: 'todo', tags: [], assignees: [] })
+    const items = ['ops/task.a.md', '.holi/memory/task.b.md', 'Budget.app/data/task.c.md'].map(task)
+    const withTasks = (bundle: string | null): CapabilityContext => ({
+      ...ctx({}, bundle),
+      snapshot: async () => ({
+        ...emptyVaultSnapshot(),
+        claimed: { tasks: { items, broken: [] } },
+      }),
+    })
+    const paths = async (door: 'app' | 'cli', bundle: string | null) =>
+      (
+        (await runCapability('tasks.list', door, withTasks(bundle), {})).value as { path: string }[]
+      ).map((t) => t.path)
+    expect(await paths('app', 'A.app')).toEqual(['ops/task.a.md'])
+    expect(await paths('cli', null)).toHaveLength(3)
+  })
+})
+
 describe('tasks.create at the app door', () => {
   it('creates a task where an app may write, and nowhere else', async () => {
     const { value } = await runCapability('tasks.create', 'app', ctx({}), {

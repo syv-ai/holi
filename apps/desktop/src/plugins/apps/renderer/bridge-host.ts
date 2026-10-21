@@ -8,7 +8,7 @@
  * `event.source` is the frame it mounted, and it names the bundle it mounted.
  * What a call may reach is decided in main (`apps.call`).
  */
-import { isSurfaceName } from '@holi/shared'
+import { isSurfaceName, shownPathOrNull } from '@holi/shared'
 import { APP_METHODS, type AppMethod, type AppResponse } from '../shared/bridge'
 import {
   openPathAtom,
@@ -34,7 +34,9 @@ function fieldOf(params: unknown, key: 'target'): string | null {
 /**
  * `holi.open(target)`: a registered view by name wins over a file of the same
  * name; else a vault file, or an app's bundle as that app. `open` is the one
- * call only this process can answer.
+ * call only this process can answer. A file is one a person may be shown
+ * (`shownPathOrNull`), as `holi docs open` is held to: never this machine's
+ * state or a secret file, whose tab would put them on screen for the app.
  */
 export function openTarget(store: PluginStore, params: unknown): { ok: true } {
   const target = fieldOf(params, 'target')
@@ -48,8 +50,10 @@ export function openTarget(store: PluginStore, params: unknown): { ok: true } {
   const snapshot = store.get(snapshotAtom)
   const isFile = [...snapshot.docs, ...snapshot.files].some((f) => f.path === target)
   if (isSurfaceName(target) && !isFile) throw new Error(`no such view: ${target}`)
+  const path = shownPathOrNull(target)
+  if (path === null) throw new Error(`may not open ${target}`)
   // An app's bundle is a folder: it opens as the app, not as a file.
-  store.set(openPathAtom, target, 'preview')
+  store.set(openPathAtom, path, 'preview')
   return { ok: true }
 }
 
