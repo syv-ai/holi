@@ -336,6 +336,9 @@ async function main(): Promise<void> {
       void plugins.reconcile('snapshot')
       const active = host.active()
       if (active === null) return
+      // What the started plugins read off the files: file triggers, tasks'
+      // due moments.
+      plugins.snapshot(active.remote, snapshot)
       void plugins.scanClaimsFor(active.root).then((claims) => {
         const now = new Set(claims.map((c) => c.plugin))
         const was = Object.keys(snapshot.claimed)

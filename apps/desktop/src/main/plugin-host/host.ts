@@ -18,6 +18,8 @@ import {
   resolvePlugins,
   type PluginResolution,
   type ResolvedVaultSettings,
+  type VaultEvent,
+  type VaultSnapshot,
 } from '@holi/shared'
 import type { AppDoor, AppDoorOpener } from '../capabilities/dispatch'
 import type { CapabilityRegistry } from '../capabilities/registry'
@@ -123,6 +125,8 @@ export interface PluginHost {
   report(remote: string, report: UiReport): void
   /** A pull brought comments into the vault `remote` that mention the person. */
   mentioned(remote: string, mentions: readonly NoteMention[]): void
+  /** A fresh scan of the vault `remote`, for the plugins started in it. */
+  snapshot(remote: string, snapshot: VaultSnapshot): void
   /** The questions the started plugins' quit guards ask right now. */
   quitQuestions(): QuitQuestion[]
   /** The open vault's settings files may have changed on disk. */
@@ -165,6 +169,11 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
   let parked: string | null = null
   const reportListeners = new Set<{ remote: string; cb: (report: UiReport) => void }>()
   const mentionListeners = new Set<{ remote: string; cb: (mention: NoteMention) => void }>()
+  const snapshotListeners = new Set<{ remote: string; cb: (s: VaultSnapshot) => void }>()
+  /** The open vault's latest scan, which a plugin hears at once when it
+   *  starts listening. */
+  let lastSnapshot: { remote: string; snapshot: VaultSnapshot } | null = null
+  const eventListeners = new Set<{ remote: string; cb: (e: VaultEvent) => void }>()
   /** The open vault's sync holds, and the vault they hold. */
   let holds: { remote: string; reasons: Map<symbol, string> } | null = null
 
@@ -395,6 +404,32 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
       },
       notify: deps.notify,
       focused: deps.focused,
+      onSnapshot: (cb) => {
+        const entry = { remote, cb }
+        snapshotListeners.add(entry)
+        const held = lastSnapshot
+        if (held !== null && held.remote === remote) {
+          queueMicrotask(() => {
+            if (snapshotListeners.has(entry)) tell(entry.cb, held.snapshot, 'snapshot')
+          })
+        }
+        return keep(() => void snapshotListeners.delete(entry))
+      },
+      events: {
+        // Heard after the emitter's own step, never inside it: a listener that
+        // emits back must not re-enter.
+        emit: (event) =>
+          queueMicrotask(() => {
+            for (const l of [...eventListeners]) {
+              if (l.remote === remote) tell(l.cb, event, 'event')
+            }
+          }),
+        on: (cb) => {
+          const entry = { remote, cb }
+          eventListeners.add(entry)
+          return keep(() => void eventListeners.delete(entry))
+        },
+      },
     }
     if (plugin.activate === undefined) return { id, dispose: () => {}, undos }
     try {
@@ -404,6 +439,15 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
       failed.set(id, err instanceof Error ? err.message : String(err))
       undoAll(id, undos)
       return null
+    }
+  }
+
+  /** Call one listener; its throw is logged, never the caller's. */
+  function tell<T>(cb: (value: T) => void, value: T, what: string): void {
+    try {
+      cb(value)
+    } catch (err) {
+      console.error(`[plugins] ${what} listener failed:`, err)
     }
   }
 
@@ -433,6 +477,9 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
     for (const s of [...(was?.started ?? [])].reverse()) await stopOne(s)
     reportListeners.clear()
     mentionListeners.clear()
+    snapshotListeners.clear()
+    eventListeners.clear()
+    lastSnapshot = null
     holds = null
   }
 
@@ -550,6 +597,13 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
         }
         deps.background?.onChange([])
       }),
+
+    snapshot(remote, snapshot) {
+      lastSnapshot = { remote, snapshot }
+      for (const { remote: at, cb } of [...snapshotListeners]) {
+        if (at === remote) tell(cb, snapshot, 'snapshot')
+      }
+    },
 
     report(remote, report) {
       for (const { remote: at, cb } of [...reportListeners]) {
