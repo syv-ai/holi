@@ -13,7 +13,13 @@
  */
 import { GoogleSession, type AccountRef, type GoogleAccount, GOOGLE_SCOPES } from './session'
 import { startLoopbackFlow, type Listen, type LoopbackFlow } from './loopback-flow'
-import { resolveClientId, resolveClientSecret } from './credentials'
+import {
+  resolveClient,
+  sameClient,
+  type GoogleClient,
+  type GoogleClientSource,
+  type GoogleClientStore,
+} from './credentials'
 import type { GoogleAccounts, GoogleTokenStore, StoredGoogleAuth } from './token-store'
 import type { VaultAccountsStore } from './vault-accounts'
 
@@ -45,6 +51,16 @@ export interface GoogleAccountsManager {
   /** Fires for a connect, a removal, and a dead grant, naming the account that
    *  changed so a cache can be scoped to it. Null when nothing is connected. */
   onChange(cb: (sub: string | null) => void): () => void
+  /** The client in use and where it came from. The secret stays in main. */
+  client(): { id: string; source: GoogleClientSource }
+  /**
+   * Set this machine's own client, or `null` to go back to the environment's
+   * or the shipped one. **A grant belongs to the client that made it**, so a
+   * change that reaches Google as a different client removes every account,
+   * revoking each, exactly as `removeAccount` does. Saving the client in use
+   * again changes nothing.
+   */
+  setClient(own: GoogleClient | null): Promise<void>
 }
 
 export interface GoogleAccountsDeps {
@@ -52,8 +68,11 @@ export interface GoogleAccountsDeps {
   vaults: VaultAccountsStore
   listen: Listen
   openBrowser: (url: string) => Promise<void>
-  clientId?: string
-  clientSecret?: string
+  /** This machine's own client, if the person set one. Without a store
+   *  there is no own client and `setClient` refuses. */
+  clients?: GoogleClientStore
+  /** The environment `resolveClient` reads. Defaults to `process.env`. */
+  env?: NodeJS.ProcessEnv
   fetch?: typeof globalThis.fetch
   now?: () => number
 }
@@ -66,6 +85,9 @@ export async function createGoogleAccounts(
   const sessions = new Map<string, GoogleSession>()
   const listeners = new Set<(sub: string | null) => void>()
   let connecting: LoopbackFlow | null = null
+  /** The person's own client, loaded once: main is its only writer. */
+  let own: GoogleClient | null = (await deps.clients?.read()) ?? null
+  const currentClient = () => resolveClient(own, deps.env)
 
   const emit = (sub: string | null) => {
     for (const cb of listeners) cb(sub)
@@ -103,8 +125,7 @@ export async function createGoogleAccounts(
     if (session === undefined) {
       session = new GoogleSession({
         account: refFor(sub),
-        clientId: deps.clientId,
-        clientSecret: deps.clientSecret,
+        client: currentClient,
         fetch: deps.fetch,
         now: deps.now,
       })
@@ -125,9 +146,10 @@ export async function createGoogleAccounts(
     },
 
     async connect(remote) {
+      const { id, secret } = currentClient()
       const flow = await startLoopbackFlow({
-        clientId: resolveClientId(deps.clientId),
-        clientSecret: resolveClientSecret(deps.clientSecret),
+        clientId: id,
+        clientSecret: secret,
         scopes: GOOGLE_SCOPES,
         listen: deps.listen,
         openBrowser: deps.openBrowser,
@@ -191,30 +213,51 @@ export async function createGoogleAccounts(
       emit(null)
     },
 
-    async removeAccount(sub) {
-      const auth = accounts[sub]
-      if (auth === undefined) return
-      // Revoking server-side is the point: dropping only the local copy leaves a
-      // live grant on someone's Google account with nothing in Holi to show for
-      // it. A failed revoke still clears locally: the user asked for this, and
-      // refusing because Google is unreachable would trap them.
-      await (deps.fetch ?? globalThis.fetch)(REVOKE_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({ token: auth.refreshToken }).toString(),
-      }).catch(() => undefined)
-
-      const next = { ...accounts }
-      delete next[sub]
-      await persist(next)
-      sessions.delete(sub)
-      await deps.vaults.unlinkAccount(sub)
-      emit(sub)
-    },
+    removeAccount,
 
     onChange(cb) {
       listeners.add(cb)
       return () => listeners.delete(cb)
     },
+
+    client() {
+      const { id, source } = currentClient()
+      return { id, source }
+    },
+
+    async setClient(next) {
+      if (deps.clients === undefined) throw new Error('no store for an own Google client')
+      const before = currentClient()
+      await deps.clients.write(next)
+      own = next
+      if (sameClient(before, currentClient())) return
+      // Every grant here was made under the client just replaced: none of them
+      // can refresh now, and a consent in flight would land one more.
+      connecting?.cancel()
+      connecting = null
+      for (const sub of Object.keys(accounts)) await removeAccount(sub)
+    },
+  }
+
+  async function removeAccount(sub: string): Promise<void> {
+    const auth = accounts[sub]
+    if (auth === undefined) return
+    // Revoking server-side is the point: dropping only the local copy leaves a
+    // live grant on someone's Google account with nothing in Holi to show for
+    // it. A failed revoke still clears locally: the user asked for this, and
+    // refusing because Google is unreachable would trap them. Revoking needs
+    // only the token, so it works after the client has changed.
+    await (deps.fetch ?? globalThis.fetch)(REVOKE_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ token: auth.refreshToken }).toString(),
+    }).catch(() => undefined)
+
+    const next = { ...accounts }
+    delete next[sub]
+    await persist(next)
+    sessions.delete(sub)
+    await deps.vaults.unlinkAccount(sub)
+    emit(sub)
   }
 }

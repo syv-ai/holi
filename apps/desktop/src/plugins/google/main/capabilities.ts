@@ -56,6 +56,7 @@ import {
   type MailboxName,
   type MailCategory,
 } from './gmail'
+import { CLIENT_ID_SUFFIX } from './credentials'
 import { resolveThreadMeeting } from './invite'
 import type { LoopbackFlow } from './loopback-flow'
 import type { OutgoingMail } from './mime'
@@ -407,6 +408,44 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
       params: (raw) => ({ sub: stringParam(paramsObject(raw), 'sub') }),
       run: async (_ctx, { sub }) => {
         await deps.accounts.removeAccount(sub)
+        return ok
+      },
+    }),
+
+    /** The OAuth client this machine connects with, and whose it is. The
+     *  secret never leaves main. */
+    'google.client': cap({
+      doors: ['ui'],
+      params: noParams,
+      run: async () => deps.accounts.client(),
+    }),
+
+    /**
+     * Set this machine's own OAuth client, or clear it with an empty `id` to
+     * go back to the next source. A different client disconnects every
+     * account here: their grants belong to the old one.
+     */
+    'google.setClient': cap({
+      doors: ['ui'],
+      params: (raw) => {
+        const p = paramsObject(raw)
+        return {
+          id: (optionalStringParam(p, 'id') ?? '').trim(),
+          secret: (optionalStringParam(p, 'secret') ?? '').trim(),
+        }
+      },
+      run: async (_ctx, { id, secret }) => {
+        if (id === '') {
+          await deps.accounts.setClient(null)
+          return ok
+        }
+        if (!id.endsWith(CLIENT_ID_SUFFIX)) {
+          throw new CapabilityError('BAD_REQUEST', `a client id ends in ${CLIENT_ID_SUFFIX}`)
+        }
+        if (secret === '') {
+          throw new CapabilityError('BAD_REQUEST', 'a Desktop app client needs its secret')
+        }
+        await deps.accounts.setClient({ id, secret })
         return ok
       },
     }),

@@ -76,7 +76,7 @@ function refFor(sub: string, seeded: StoredGoogleAuth | null = null): AccountRef
 function sessionOver(account: AccountRef, fetchImpl?: typeof globalThis.fetch): GoogleSession {
   return new GoogleSession({
     account,
-    clientId: 'client-1',
+    client: () => ({ id: 'client-1' }),
     fetch: fetchImpl,
     now: () => NOW,
   })

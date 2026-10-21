@@ -1,12 +1,19 @@
 /**
  * The OAuth client Holi presents to Google, and **the one rule for resolving
- * it**: an explicit override, else the environment, else the embedded pair.
+ * it**: the person's own client, else the environment, else the shipped pair.
  *
  * Its own file because it has two callers that must never drift: `GoogleSession`
  * refreshes with it and `accounts.ts` runs a consent with it. A stray
  * `?? ''` in one of them makes consent die at Google with `Missing required
  * parameter: client_id`.
+ *
+ * **The shipped client takes syv.ai accounts only.** Its consent screen is
+ * Internal, so Google refuses any other account with `Error 403:
+ * org_internal` before it draws a consent screen. Anyone else brings their own
+ * Desktop app client, set in Settings, Google and kept in this machine's
+ * `userData` (docs/features/google.md).
  */
+import { jsonFileStore } from '../../../main/plugin-api'
 
 /**
  * The OAuth client id for Holi's Google app.
@@ -15,8 +22,9 @@
  * Google issues alongside it: for an installed app both ship in the binary and
  * **PKCE** is what actually protects the grant.
  *
- * `HOLI_GOOGLE_CLIENT_ID` / `HOLI_GOOGLE_CLIENT_SECRET` in the environment
- * override both, to point a dev build at a different app.
+ * A person's own client, then `HOLI_GOOGLE_CLIENT_ID` /
+ * `HOLI_GOOGLE_CLIENT_SECRET` in the environment, take its place
+ * (`resolveClient`).
  */
 export const GOOGLE_CLIENT_ID =
   '132910330015-4ror8qtmhh69d1ms1s3s99tot5gm551q.apps.googleusercontent.com'
@@ -36,14 +44,80 @@ export const GOOGLE_CLIENT_ID =
  */
 export const GOOGLE_CLIENT_SECRET = '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'
 
-/** The client id to present: an override, else the environment, else the
- *  embedded registration. Never empty. */
-export function resolveClientId(override?: string): string {
-  return override ?? process.env.HOLI_GOOGLE_CLIENT_ID ?? GOOGLE_CLIENT_ID
+/** A Google OAuth client: a Desktop app client's id and the secret Google
+ *  issued with it. */
+export interface GoogleClient {
+  id: string
+  secret?: string
 }
 
-/** The client secret to present. `undefined` is a legitimate answer only if
- *  both the override and the embedded constant are gone. */
-export function resolveClientSecret(override?: string): string | undefined {
-  return override ?? process.env.HOLI_GOOGLE_CLIENT_SECRET ?? GOOGLE_CLIENT_SECRET
+/** Where the client in use came from, so settings can say whose it is. */
+export type GoogleClientSource = 'own' | 'environment' | 'shipped'
+
+/**
+ * The client to present: the person's own, else `HOLI_GOOGLE_CLIENT_ID` (with
+ * `HOLI_GOOGLE_CLIENT_SECRET`), else the shipped pair. Never empty.
+ *
+ * Each source is taken whole. A secret belongs to one client id, so an id from
+ * one source with a secret from another is a pair Google refuses.
+ */
+export function resolveClient(
+  own: GoogleClient | null,
+  env: NodeJS.ProcessEnv = process.env,
+): GoogleClient & { source: GoogleClientSource } {
+  if (own !== null) return { ...own, source: 'own' }
+  const envId = env.HOLI_GOOGLE_CLIENT_ID
+  if (envId !== undefined && envId !== '') {
+    const secret = env.HOLI_GOOGLE_CLIENT_SECRET
+    return {
+      id: envId,
+      ...(secret !== undefined && secret !== '' ? { secret } : {}),
+      source: 'environment',
+    }
+  }
+  return { id: GOOGLE_CLIENT_ID, secret: GOOGLE_CLIENT_SECRET, source: 'shipped' }
+}
+
+/** Whether Google would see two clients as one: a grant made under one
+ *  refreshes under the other. */
+export function sameClient(a: GoogleClient, b: GoogleClient): boolean {
+  return a.id === b.id && (a.secret ?? '') === (b.secret ?? '')
+}
+
+/** The suffix every Google OAuth client id carries. Checked so a secret pasted
+ *  into the id field is refused here, not by Google after a consent. */
+export const CLIENT_ID_SUFFIX = '.apps.googleusercontent.com'
+
+/** The person's own client on this machine. */
+export interface GoogleClientStore {
+  read(): Promise<GoogleClient | null>
+  /** `null` goes back to the environment's or the shipped client. */
+  write(client: GoogleClient | null): Promise<void>
+}
+
+/**
+ * The person's own client, as JSON in `userData` beside the tokens.
+ *
+ * **Machine-local and never in a vault**: the accounts it connects are this
+ * machine's, and a vault is a shared repo. Plain JSON rather than the
+ * keychain, because Google's own guidance is that an installed app's secret is
+ * not confidential (Holi's own ships in its source): PKCE and the person's
+ * consent protect a grant. A file that is missing or not a client reads as
+ * none, which falls back to the next source.
+ */
+export function createClientStore(path: string): GoogleClientStore {
+  const store = jsonFileStore(path, parseClient)
+  return {
+    read: store.read,
+    async write(client) {
+      await store.update(() => client)
+    },
+  }
+}
+
+function parseClient(raw: unknown): GoogleClient | null {
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return null
+  const { id, secret } = raw as Record<string, unknown>
+  if (typeof id !== 'string' || id === '') return null
+  return typeof secret === 'string' && secret !== '' ? { id, secret } : { id }
 }
