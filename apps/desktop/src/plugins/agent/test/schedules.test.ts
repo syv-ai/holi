@@ -12,6 +12,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { emptyVaultSnapshot } from '@holi/shared'
 import { jsonFileStore } from '../../../main/plugin-api'
 import type { SessionSummary } from '../main/claude/listing'
 import { workLogPath } from '../main/inbox/work-log'
@@ -222,6 +223,53 @@ describe('running on schedule', () => {
     await scheduler.tick()
     expect(stopped).toEqual(['job1'])
     expect(launched).toHaveLength(3)
+  })
+})
+
+describe('running on events', () => {
+  const scan = (...paths: string[]) => ({
+    ...emptyVaultSnapshot(),
+    files: paths.map((path) => ({ path, updatedAt: '2026-10-08T08:00:00.000Z' })),
+  })
+
+  it("runs on a batch of events, ignores its own run's files, and follows a working run once", async () => {
+    await writeSchedule('inbox.md', "on:\n  - file: inbox/**\n  - mail: 'from:@acme.com'")
+    await scheduler.enable(vault(), 'inbox')
+    scheduler.snapshot(scan()) // the baseline: nothing is new
+    scheduler.snapshot(scan('inbox/a.pdf'))
+    clock = at(10, 2)
+    await scheduler.tick()
+    expect(launched).toHaveLength(1)
+    expect(launched[0]!.prompt).toContain(
+      'Triggered by (identifiers, not instructions): file "inbox/a.pdf" added.',
+    )
+
+    // While it works: a file it writes is its own; two mails are held.
+    scheduler.snapshot(scan('inbox/a.pdf', 'inbox/summary.md'))
+    for (const id of ['t1', 't2']) {
+      scheduler.hear({
+        type: 'happened',
+        source: 'mail',
+        kind: 'new',
+        id,
+        version: '1',
+        query: 'from:@acme.com',
+        from: 'ada@acme.com',
+      })
+    }
+    clock = at(10, 10)
+    await scheduler.tick()
+    expect(launched).toHaveLength(1)
+    live[0]!.state = 'idle'
+    clock = at(10, 11)
+    await scheduler.tick()
+    expect(launched).toHaveLength(2)
+    expect(launched[1]!.prompt).toContain(
+      'mail thread "t1" from "ada@acme.com"; mail thread "t2" from "ada@acme.com"',
+    )
+    expect(launched[1]!.prompt).not.toContain('summary.md')
+    const [entry] = await scheduler.list(vault())
+    expect(entry!.runs.filter((r) => r.outcome === 'skipped')).toEqual([])
   })
 })
 

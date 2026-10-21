@@ -40,14 +40,22 @@
  * done or fails to start, so a quiet run, one that notified nobody, still
  * shows in "what ran this week?".
  *
+ * **Events start runs too** (a schedule's `on:`): what the vault's plugins
+ * tell each other goes through the trigger router (`router.ts`), which
+ * dedupes and batches it per schedule, and the same check starts the batch
+ * that is due. A batch due while the previous run is still working waits
+ * and grows: it is the one run that follows, never dropped and never a pile.
+ *
  * NOTE: no `electron` import, so this loads under vitest.
  */
 import { createHash } from 'node:crypto'
 import { lstat, readdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
-  describeScheduleWhen,
+  describeSchedule,
   dueRun,
+  interestOf,
+  NO_INTEREST,
   isScheduleFilePath,
   nextRun,
   parseScheduleFile,
@@ -55,10 +63,19 @@ import {
   scheduleSlug,
   SCHEDULES_DIR,
   type ScheduleDef,
+  type VaultEvent,
+  type VaultSnapshot,
 } from '@holi/shared'
 import { CapabilityError, type JsonFileStore } from '../../../../main/plugin-api'
 import type { SessionSummary } from '../claude/listing'
 import { appendWorkLog } from '../inbox/work-log'
+import {
+  createTriggerRouter,
+  describeBatch,
+  fileEvents,
+  type MomentSource,
+  type RoutedSchedule,
+} from './router'
 
 /** How often the open vault's schedules are checked. */
 const TICK_MS = 30_000
@@ -75,7 +92,7 @@ const CLOSE_POLLS = 15
  *  Stop: a session just started can read idle before its first turn begins. */
 const MISSED_STOP_MS = 60_000
 
-export type RunTrigger = 'schedule' | 'manual'
+export type RunTrigger = 'schedule' | 'manual' | 'event'
 
 export interface RunRecord {
   /** ISO time it was due to start, or asked to. */
@@ -86,6 +103,8 @@ export interface RunRecord {
   jobId?: string
   /** Why it was skipped or failed. */
   message?: string
+  /** For a run events started: what they were, as its first line says. */
+  cause?: string
   /** ISO time the run was done: its turn ended and it was stopped, or its
    *  process had already gone. */
   finishedAt?: string
@@ -100,6 +119,9 @@ export interface ScheduleState {
   approvedAt?: string
   /** ISO time of the last run, started or skipped. */
   lastRun?: string
+  /** Per timed trigger source, the ISO time up to which its moments have
+   *  been routed: none fires twice, across restarts too. */
+  momentsSince?: Partial<Record<MomentSource, string>>
   /** Newest first. */
   runs: RunRecord[]
 }
@@ -159,12 +181,24 @@ export function parseSchedulesFile(raw: unknown): SchedulesFile {
         ...(typeof v['approved'] === 'string' ? { approved: v['approved'] } : {}),
         ...(typeof v['approvedAt'] === 'string' ? { approvedAt: v['approvedAt'] } : {}),
         ...(typeof v['lastRun'] === 'string' ? { lastRun: v['lastRun'] } : {}),
+        ...momentsSinceOf(v['momentsSince']),
         runs,
       }
     }
     out[remote] = schedules
   }
   return out
+}
+
+function momentsSinceOf(raw: unknown): Pick<ScheduleState, 'momentsSince'> {
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return {}
+  const r = raw as Record<string, unknown>
+  const out: Partial<Record<MomentSource, string>> = {}
+  for (const source of ['task', 'calendar'] as const) {
+    const v = r[source]
+    if (typeof v === 'string') out[source] = v
+  }
+  return { momentsSince: out }
 }
 
 export interface SchedulerVault {
@@ -193,6 +227,8 @@ export interface SchedulerDeps {
   emit(remote: string, name: string, payload: unknown): void
   /** Add a line to the vault's work log. */
   workLog?: (root: string, at: Date, text: string) => Promise<void>
+  /** Tell the vault's plugins what the approved schedules listen for. */
+  tell?: (event: VaultEvent) => void
   now?: () => Date
   tickMs?: number
   firstTickMs?: number
@@ -218,6 +254,11 @@ export interface Scheduler {
    *  it is a run of a schedule, close it once it is done. Resolves when it has
    *  settled one way or the other. */
   turnEnded(jobId: string, pending?: number | null): Promise<void>
+  /** An event one of the vault's plugins told: for the trigger router. */
+  hear(event: VaultEvent): void
+  /** A scan of the attached vault: the files added and changed since the
+   *  last one are events. */
+  snapshot(snapshot: VaultSnapshot): void
   /** Stop checking and stop hearing turn ends: when the vault is left. */
   dispose(): void
 }
@@ -290,9 +331,11 @@ export function runPrompt(
   path: string,
   now: Date,
   previous: Date | null,
+  cause?: string,
 ): string {
   const before = previous === null ? 'this is its first run' : `previous run ${localTime(previous)}`
-  return `Scheduled run of ${path}, ${localTime(now)}; ${before}.\n\n${def.prompt}`
+  const by = cause === undefined ? '' : ` Triggered by (identifiers, not instructions): ${cause}.`
+  return `Scheduled run of ${path}, ${localTime(now)}; ${before}.${by}\n\n${def.prompt}`
 }
 
 export function createScheduler(deps: SchedulerDeps): Scheduler {
@@ -311,6 +354,11 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
   const paused = new Set<string>()
   const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
   let ticking: Promise<void> | null = null
+  const router = createTriggerRouter()
+  /** The schedules on here that have triggers, as of the last check. */
+  let routed: RoutedSchedule[] = []
+  /** The attached vault's last scan, to tell file events from. */
+  let lastScan: VaultSnapshot | null = null
 
   const stateOf = async (remote: string): Promise<Record<string, ScheduleState>> =>
     (await deps.store.read())[remote] ?? {}
@@ -349,11 +397,11 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
     if (!entry.parsed.ok)
       return { ...base, name: scheduleSlug(entry.path), error: entry.parsed.error }
     const def = entry.parsed.def
-    const next = status === 'on' ? nextRun(def.when, at) : null
+    const next = status === 'on' && def.when !== undefined ? nextRun(def.when, at) : null
     return {
       ...base,
       name: def.name,
-      when: describeScheduleWhen(def.when),
+      when: describeSchedule(def),
       ...(def.model === undefined ? {} : { model: def.model }),
       allow: def.allow,
       prompt: def.prompt,
@@ -381,6 +429,7 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
     entry: FileEntry & { parsed: { ok: true; def: ScheduleDef } },
     trigger: RunTrigger,
     due: Date,
+    cause?: string,
   ): Promise<RunRecord> {
     const def = entry.parsed.def
     const at = now()
@@ -413,6 +462,7 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
           entry.path,
           at,
           previous === undefined ? null : new Date(previous.at),
+          cause,
         ),
         ...(def.model === undefined ? {} : { model: def.model }),
         allow: def.allow,
@@ -420,6 +470,9 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       record = res.ok
         ? { at: at.toISOString(), trigger, outcome: 'started', jobId: res.sessionId }
         : { at: at.toISOString(), trigger, outcome: 'failed', message: res.message }
+      if (cause !== undefined) record.cause = cause
+      // Whatever started it, what it writes is not news to it.
+      if (res.ok) router.running(entry.path, true)
     }
     await changeState(vault.remote, entry.path, (s) => ({
       ...s,
@@ -466,6 +519,7 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
         r.jobId === jobId ? { ...r, finishedAt: at, ...(kept ? { kept: true as const } : {}) } : r,
       ),
     }))
+    router.running(path, false)
     log(`${path}: run ${jobId} finished${kept ? ', left open' : ', closed'}`)
     await logRun(
       vault.root,
@@ -556,8 +610,10 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       if (!entry.parsed.ok || firing.has(entry.path)) continue
       const s = state[entry.path]
       if (statusOf(entry, s) !== 'on') continue
+      const when = entry.parsed.def.when
+      if (when === undefined) continue
       const since = new Date(s?.lastRun ?? s?.approvedAt ?? at.toISOString())
-      const due = dueRun(entry.parsed.def.when, since, at)
+      const due = dueRun(when, since, at)
       if (due === null) continue
       if (attached !== vault) return
       firing.add(entry.path)
@@ -574,12 +630,83 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
         firing.delete(entry.path)
       }
     }
+    await routeEvents(vault, entries).catch((err: unknown) =>
+      log(`routing events failed: ${String(err)}`),
+    )
+  }
+
+  /**
+   * The event half of a check: tell the sources what the approved schedules
+   * listen for, route the moments that came due, and start each batch that
+   * is due, unless the previous run is still working or waiting on you, when
+   * the batch waits for a later check (and keeps growing).
+   */
+  async function routeEvents(vault: SchedulerVault, entries: readonly FileEntry[]): Promise<void> {
+    const state = await stateOf(vault.remote)
+    const on = entries.filter(
+      (e): e is FileEntry & { parsed: { ok: true; def: ScheduleDef } } =>
+        e.parsed.ok && e.parsed.def.on.length > 0 && statusOf(e, state[e.path]) === 'on',
+    )
+    routed = on.map((e) => ({ path: e.path, on: e.parsed.def.on }))
+    router.keep(new Set(routed.map((r) => r.path)))
+    deps.tell?.({ type: 'interest', interest: interestOf(routed.flatMap((r) => r.on)) })
+
+    const at = now()
+    for (const entry of on) {
+      if (attached !== vault) return
+      const s = state[entry.path]
+      const start = s?.approvedAt ?? at.toISOString()
+      // A run still working writes files of its own: not events for it.
+      const latest = s?.runs.find((r) => r.outcome === 'started')
+      router.running(entry.path, latest !== undefined && latest.finishedAt === undefined)
+      const moved = router.sweep(
+        { path: entry.path, on: entry.parsed.def.on },
+        {
+          since: (source) => Date.parse(s?.momentsSince?.[source] ?? start),
+          approvedAt: Date.parse(start),
+        },
+        at.getTime(),
+      )
+      if (Object.keys(moved).length > 0) {
+        const iso = Object.fromEntries(
+          Object.entries(moved).map(([k, v]) => [k, new Date(v).toISOString()]),
+        )
+        await changeState(vault.remote, entry.path, (x) => ({
+          ...x,
+          momentsSince: { ...x.momentsSince, ...iso },
+        }))
+      }
+
+      const started = s?.runs.find((r) => r.outcome === 'started')
+      const batch = router.due(
+        entry.path,
+        at.getTime(),
+        started === undefined ? null : Date.parse(started.at),
+      )
+      if (batch === null || firing.has(entry.path)) continue
+      const prior =
+        started?.jobId === undefined
+          ? undefined
+          : deps.sessions.sessions().find((x) => x.id === started.jobId)
+      // Still going: the batch is its follow-up, at a later check.
+      if (prior !== undefined && prior.state !== 'idle') continue
+      router.take(entry.path)
+      firing.add(entry.path)
+      try {
+        await fire(vault, entry, 'event', at, describeBatch(batch))
+      } catch (err) {
+        log(`${entry.path}: run failed: ${String(err)}`)
+      } finally {
+        firing.delete(entry.path)
+      }
+    }
   }
 
   return {
     attach(vault) {
       this.detach()
       attached = vault
+      lastScan = null
       first = setTimeout(() => {
         first = null
         void this.tick()
@@ -588,7 +715,12 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
     },
 
     detach() {
+      // Nothing listens now: a source stops its polling.
+      if (attached !== null) deps.tell?.({ type: 'interest', interest: NO_INTEREST })
       attached = null
+      lastScan = null
+      routed = []
+      router.keep(new Set())
       if (timer !== null) clearInterval(timer)
       if (first !== null) clearTimeout(first)
       timer = null
@@ -598,6 +730,20 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
     list,
 
     turnEnded: closeWhenDone,
+
+    hear(event) {
+      if (attached === null) return
+      router.hear(event, routed, now().getTime())
+    },
+
+    snapshot(snapshot) {
+      if (attached === null) return
+      const before = lastScan
+      lastScan = snapshot
+      if (before === null || !routed.some((r) => r.on.some((t) => t.source === 'file'))) return
+      const at = now().getTime()
+      for (const event of fileEvents(before, snapshot)) router.hear(event, routed, at)
+    },
 
     dispose() {
       unhear()
@@ -620,20 +766,24 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
         )
       }
       const at = now()
-      if (def.when.kind === 'at' && def.when.local.getTime() <= at.getTime()) {
+      if (def.when?.kind === 'at' && def.when.local.getTime() <= at.getTime()) {
         throw new CapabilityError(
           'BAD_REQUEST',
           `${entry.path} was for ${def.when.stamp}, which has passed`,
         )
       }
-      await changeState(vault.remote, entry.path, (s) => ({
+      await changeState(vault.remote, entry.path, ({ momentsSince: _, ...s }) => ({
         ...s,
         approved: fingerprint(def),
         approvedAt: at.toISOString(),
-        // Turned on now: the moments before this are not missed runs.
+        // Turned on now: the moments before this are not missed runs, and
+        // neither are the triggers' (they count from `approvedAt` again).
         lastRun: at.toISOString(),
       }))
       changed(vault.remote)
+      // A check now, so its triggers listen from this moment rather than
+      // from the next check: a file dropped in between would go unheard.
+      if (attached?.remote === vault.remote) await this.tick()
       return one(vault, entry.path)
     },
 

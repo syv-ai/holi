@@ -12,7 +12,13 @@
  * the tests.
  */
 import type { Privileges } from 'electron'
-import type { CommentMention, PluginInfo, SnapshotClaim, VaultSnapshot } from '@holi/shared'
+import type {
+  CommentMention,
+  PluginInfo,
+  SnapshotClaim,
+  VaultEvent,
+  VaultSnapshot,
+} from '@holi/shared'
 import type { AppDoor, AppDoorOpener } from './capabilities/dispatch'
 import type { CapabilityTable } from './capabilities/registry'
 import type { SeedContribution } from './vault/seed/types'
@@ -139,6 +145,21 @@ export interface PluginCtx extends LiveVault, SchemeContext {
   notify(notice: Notice): boolean
   /** Whether a Holi window has focus now. */
   focused(): boolean
+  /** Hear each scan of this vault, the latest one first, at once. Returns
+   *  the undo. */
+  onSnapshot(cb: (snapshot: VaultSnapshot) => void): () => void
+  /**
+   * What the plugins started in this vault tell each other: the events that
+   * start scheduled agents (`VaultEvent`, `packages/shared/src/triggers.ts`).
+   * `emit` reaches every listener in the vault, the emitter's own included,
+   * after the emitter's step; `on` returns the undo. Nothing is kept: a
+   * plugin that starts later hears only what is said after, which is why the
+   * sources and the agent say theirs again on every check.
+   */
+  events: {
+    emit(event: VaultEvent): void
+    on(cb: (event: VaultEvent) => void): () => void
+  }
 }
 
 /** A comment on the note `notePath` that mentions the person (`PluginCtx.onMention`). */

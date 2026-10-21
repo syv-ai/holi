@@ -131,6 +131,11 @@ Main tells a plugin's renderer something through events: `ctx.emit(remote, name,
 subscribes every installed plugin's `events` handlers at boot, and a handler drops an event about a
 vault it does not care about. The other way, `window.holi.plugin.send(id, event)` is ordered and
 unanswered, and `ctx.on(name, handler)` hears only messages about the open vault.
+Main-side plugins started in a vault tell each other one kind of thing, the events that start
+[scheduled agents](features/scheduled-agents.md): `ctx.events.emit` and `ctx.events.on` carry a
+typed `VaultEvent` (`packages/shared/src/triggers.ts`) to every plugin started in that vault, and
+keep nothing, so a speaker says its piece again rather than relying on a listener having started
+first. `ctx.onSnapshot` hears each scan of the vault, the latest one at once.
 A plugin may serve URL schemes (`MainPlugin.schemes`). Electron takes schemes only before the app
 is ready, so every scheme in the build (vault apps' `holi-app:`) is registered at boot beside
 core's `holi-vault:`, and a plugin's handler answers 404 while the open vault has the plugin off. A scheme
