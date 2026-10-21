@@ -5,13 +5,30 @@
  */
 import { execFileSync, spawnSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises'
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readlink,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
 import net from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
 import type { CapabilityContext } from '../../../main/plugin-api'
-import { communityCapabilities, listPlugins } from '../main/capabilities'
+import { PLUGIN_COMMANDS_DIR } from '@holi/shared'
+import {
+  communityCapabilities,
+  linkRunningCommands,
+  listPlugins,
+  unlinkWhenOff,
+} from '../main/capabilities'
+import { COMMUNITY_INFO } from '../info'
 import { createConsentStore } from '../main/consent'
 import { listVersions } from '../main/fetch'
 import { describeRepo } from '../main/search'
@@ -94,6 +111,8 @@ function setup(firstPort = 3940) {
     emit: (_remote: string, name: string, payload: unknown) => events.push({ name, payload }),
     bridgeScript: () => null,
     scratch: join(userData, 'plugins', '.staging'),
+    // Not this machine's PATH: what a test's commands may be called is its own.
+    searchPath: () => '',
   }
   const table = communityCapabilities(deps)
   const ctx = { remote: 'syv-ai/decks', root: vault, bundle: null } as unknown as CapabilityContext
@@ -466,6 +485,113 @@ describe('apps', () => {
     await writeFile(join(vault, 'Notes.app/index.html'), '<p>mine</p>')
     await call('community.pin', { id: 'notes' })
     expect(await readFile(join(vault, 'Notes.app/index.html'), 'utf8')).toBe('<p>mine</p>')
+  })
+})
+
+describe('commands', () => {
+  test("a running plugin's commands are linked for the agent, and go when it stops running", async () => {
+    repoDir = join(dir, 'dash')
+    await mkdir(join(repoDir, 'bin'), { recursive: true })
+    await writeFile(join(repoDir, 'bin/dashctl'), '#!/bin/sh\necho "dash $*"\n')
+    await chmod(join(repoDir, 'bin/dashctl'), 0o755)
+    await mkdir(join(repoDir, 'skills/dash'), { recursive: true })
+    await writeFile(join(repoDir, 'skills/dash/SKILL.md'), '---\nname: dash\n---\n')
+    await writeFile(
+      join(repoDir, 'holi-plugin.json'),
+      JSON.stringify({
+        id: 'dash',
+        name: 'Dash',
+        version: '0.1.0',
+        skills: ['skills/dash'],
+        bin: { dashctl: 'bin/dashctl' },
+      }),
+    )
+    git(repoDir, 'init', '-q', '-b', 'main')
+    commitAll('dash')
+    git(repoDir, 'tag', 'v0.1.0')
+    const { call, deps } = setup()
+    const plugins = (on: boolean) =>
+      writeFile(
+        join(vault, '.holi/settings/plugins.yaml'),
+        `plugins:\n  community: true\n  dash: ${on}\n`,
+      )
+    await mkdir(join(vault, '.holi/settings'), { recursive: true })
+    await plugins(true)
+    const row = await call('community.install', { repo: 'syv-ai/dash', path: '', version: '0.1.0' })
+    expect(row).toMatchObject({ bin: ['dashctl'], serve: null })
+    const link = join(vault, PLUGIN_COMMANDS_DIR, 'dashctl')
+
+    // Not before someone allowed this commit and it was set up.
+    expect(await linkRunningCommands(vault, deps)).toEqual({ linked: [], refused: [] })
+    expect(existsSync(link)).toBe(false)
+    await call('community.consent', {
+      id: 'dash',
+      commit: (row.install as { commit: string }).commit,
+    })
+    expect(await call('community.setup', { id: 'dash' })).toBe(true)
+    await call('community.pin', { id: 'dash' })
+    expect(await readlink(link)).toContain(join('plugins', 'dash'))
+    expect(execFileSync(link, ['tasks', 'list'], { encoding: 'utf8' })).toBe('dash tasks list\n')
+
+    await plugins(false)
+    expect(await linkRunningCommands(vault, deps)).toEqual({ linked: [], refused: [] })
+    expect(existsSync(link)).toBe(false)
+  })
+
+  test('the community plugin stopping takes the commands away only when it is off', async () => {
+    const folder = join(vault, PLUGIN_COMMANDS_DIR)
+    await mkdir(folder, { recursive: true })
+    await writeFile(join(folder, 'dashctl'), '')
+    await mkdir(join(vault, '.holi/settings'), { recursive: true })
+    const settings = (on: boolean) =>
+      writeFile(join(vault, '.holi/settings/plugins.yaml'), `plugins:\n  community: ${on}\n`)
+    // Still on: the vault was left, or Holi quits. Background sessions keep them.
+    await settings(true)
+    await unlinkWhenOff(vault, [COMMUNITY_INFO])
+    expect(existsSync(join(folder, 'dashctl'))).toBe(true)
+    await settings(false)
+    await unlinkWhenOff(vault, [COMMUNITY_INFO])
+    expect(existsSync(join(folder, 'dashctl'))).toBe(false)
+  })
+
+  test('a rebuild that fails never fails the pin or removal that asked for it', async () => {
+    repoDir = join(dir, 'dash')
+    await mkdir(join(repoDir, 'bin'), { recursive: true })
+    await writeFile(join(repoDir, 'bin/dashctl'), '#!/bin/sh\n')
+    await chmod(join(repoDir, 'bin/dashctl'), 0o755)
+    await writeFile(
+      join(repoDir, 'holi-plugin.json'),
+      JSON.stringify({
+        id: 'dash',
+        name: 'Dash',
+        version: '0.1.0',
+        bin: { dashctl: 'bin/dashctl' },
+      }),
+    )
+    git(repoDir, 'init', '-q', '-b', 'main')
+    commitAll('dash')
+    git(repoDir, 'tag', 'v0.1.0')
+    const { call, deps } = setup()
+    await mkdir(join(vault, '.holi/settings'), { recursive: true })
+    await writeFile(
+      join(vault, '.holi/settings/plugins.yaml'),
+      'plugins:\n  community: true\n  dash: true\n',
+    )
+    const row = await call('community.install', { repo: 'syv-ai/dash', path: '', version: '0.1.0' })
+    await call('community.consent', {
+      id: 'dash',
+      commit: (row.install as { commit: string }).commit,
+    })
+    expect(await call('community.setup', { id: 'dash' })).toBe(true)
+    // Where the commands folder goes is a file: no rebuild can work.
+    await rm(join(vault, '.holi/state'), { recursive: true, force: true })
+    await writeFile(join(vault, '.holi/state'), '')
+    await expect(call('community.pin', { id: 'dash' })).resolves.toBeUndefined()
+    expect((await linkRunningCommands(vault, deps)).error).toBeTruthy()
+    // The settings tab's row says so.
+    const [listed] = await call('community.list')
+    expect(listed!.commandsNote).toMatch(/^Its commands could not be linked/)
+    await expect(call('community.remove', { id: 'dash' })).resolves.not.toThrow()
   })
 })
 

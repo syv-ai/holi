@@ -4,11 +4,12 @@
  * each setup's output while it runs.
  *
  * The rows are read when the vault opens and again whenever a pin or the
- * plugins settings change on disk (a teammate's pull, the settings tab's own
- * write), so the claim follows what the vault says.
+ * plugins settings change on disk (a teammate's pull, a hand edit, the
+ * settings tab's own write), so the claim follows what the vault says, and
+ * once more when main has linked the agent's commands after such a change.
  */
 import { atom } from 'jotai'
-import { PLUGIN_PINS_DIR, PLUGINS_FILE, PLUGINS_LOCAL_FILE, servedFile } from '@holi/shared'
+import { communityPluginsSignature, servedFile } from '@holi/shared'
 import { capClient, snapshotAtom, type PluginStore } from '@/plugin-api'
 import type { communityCapabilities, PluginRow } from '../main/capabilities'
 import type { ServerState } from '../main/supervisor'
@@ -59,17 +60,7 @@ export async function refreshRows(remote: string, store: PluginStore): Promise<v
 }
 
 /** What on disk decides the rows: the pins and the two plugins files. */
-const signatureAtom = atom((get) =>
-  get(snapshotAtom)
-    .files.filter(
-      (f) =>
-        f.path.startsWith(`${PLUGIN_PINS_DIR}/`) ||
-        f.path === PLUGINS_FILE ||
-        f.path === PLUGINS_LOCAL_FILE,
-    )
-    .map((f) => `${f.path}@${f.updatedAt}`)
-    .join('|'),
-)
+const signatureAtom = atom((get) => communityPluginsSignature(get(snapshotAtom).files))
 
 /** Keep the rows of `remote` current while it is open. */
 export function followRows(remote: string, store: PluginStore): () => void {

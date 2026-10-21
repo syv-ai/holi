@@ -52,7 +52,6 @@ import { Button, ContextMenu, ContextMenuTrigger, Icon, Input, Tooltip } from '@
 import { todayDailyPathAtom } from '@/state/daily'
 import { claimsAtom, folderClaimsAtom, surfacesAtom } from '@/state/plugins'
 import { revealRequestAtom } from '@/state/reveal'
-import { createTaskAtom, todayLinkCountAtom } from '@/state/tasks'
 import {
   activeRemoteAtom,
   createFolderAtom,
@@ -93,8 +92,7 @@ const SPRING_OPEN_MS = 600
 const TYPEAHEAD_MS = 700
 
 /** The new item's field says what it is naming. */
-const PLACEHOLDERS: Record<'task' | 'file' | 'folder', string> = {
-  task: 'task title',
+const PLACEHOLDERS: Record<'file' | 'folder', string> = {
   file: 'note name',
   folder: 'folder name',
 }
@@ -166,13 +164,18 @@ export function FileTree({
   expansion?: TreeExpansion
 }) {
   const projection = useTreeProjection()
-  const { visible, taskByPath, iconByPath, ignored } = projection
+  const { visible, marks, iconByPath, ignored } = projection
   const actions = useExplorerActions(projection.docPaths)
   const folderClaims = useAtomValue(folderClaimsAtom)
   const surfaces = useAtomValue(surfacesAtom)
   /** What enabled claims add to the New menu (an app). */
   const claims = useAtomValue(claimsAtom)
   const creates = useMemo(() => claims.flatMap((c) => (c.create ? [c.create] : [])), [claims])
+  /** What enabled claims hide until shown, as the menu's filters. */
+  const claimToggles = useMemo(
+    () => projection.hideables.map(({ id, label, icon, shown }) => ({ id, label, icon, shown })),
+    [projection.hideables],
+  )
   const present = useMemo(() => new Set(projection.docPaths), [projection.docPaths])
   /** The folder at `id` as a document (an app), or null. */
   const documentAt = (id: string) => folderDocumentAt(folderClaims, id, (p) => present.has(p))
@@ -195,12 +198,10 @@ export function FileTree({
   const renameNote = useSetAtom(renameNoteAtom)
   const createNote = useSetAtom(createNoteAtom)
   const createFolder = useSetAtom(createFolderAtom)
-  const createTask = useSetAtom(createTaskAtom)
   const loadSnapshot = useSetAtom(loadSnapshotAtom)
   const importFiles = useSetAtom(importFilesAtom)
   const revealRequest = useAtomValue(revealRequestAtom)
   const todayDailyPath = useAtomValue(todayDailyPathAtom)
-  const todayLinkCount = useAtomValue(todayLinkCountAtom)
   const activeRemote = useAtomValue(activeRemoteAtom)
   const vault = useAtomValue(vaultsAtom).find((v) => v.remote === activeRemote)
   const vaultPrefix = vault ? `${vault.path}/` : null
@@ -338,16 +339,9 @@ export function FileTree({
         void createNote(path).then(() => onOpenPreview(path))
         return
       }
-      case 'task':
-        // The name is the title; main names the file. It opens to be filled
-        // in, as ⌘⇧T's does, whether or not the tree shows task files.
-        void createTask({ title: name, status: 'todo', folder: parent }).then(
-          (path) => path !== null && onOpenPinned(path),
-        )
-        return
       default: {
-        // A claim's own kind (an app). It opens what it made, once the
-        // snapshot holds it.
+        // A claim's own kind (a task, an app). It opens what it made, once
+        // the snapshot holds it.
         if (activeRemote === null) return
         void kind.run({ remote: activeRemote, parent, name }).then(async (path) => {
           await loadSnapshot()
@@ -555,7 +549,7 @@ export function FileTree({
     if (!node.isFolder) {
       return (
         <span data-slot="row-icon" className={slot}>
-          {pathGlyph(id, { emoji, task: taskByPath.get(id)?.status })}
+          {pathGlyph(id, { emoji, mark: marks.get(id)?.glyph })}
         </span>
       )
     }
@@ -642,15 +636,16 @@ export function FileTree({
               data-slot="row-name"
               className={cn(
                 TREE_LABEL,
-                taskByPath.get(id)?.status === 'done' && 'line-through',
+                marks.get(id)?.struck === true && 'line-through',
                 (ignored.has(id) || (node.isDocument && isDraft(id))) && 'opacity-50',
               )}
             >
               {label(id, node)}
             </span>
-            {/* Today's daily, marked where it lives (docs/features/daily-notes.md):
-                at the row's right end, boxed to its x-height like the name so
-                the row's centring lines the two up. */}
+            {/* Today's daily, marked where it lives (docs/features/daily-notes.md),
+                and a plugin's badge (how many open tasks link to it): at the
+                row's right end, boxed to its x-height like the name so the
+                row's centring lines the two up. */}
             {/* A document's files are behind it: this is the way in that a
                 newcomer can see, on hover or focus. Not a button: it sits in
                 the row's, and the keyboard's way is → as for any folder. */}
@@ -670,9 +665,11 @@ export function FileTree({
                 </span>
               </Tooltip>
             )}
-            {id === todayDailyPath && (
+            {(id === todayDailyPath || marks.get(id)?.badge !== undefined) && (
               <span className="ml-auto shrink-0 text-[11px] text-brand [text-box:trim-both_ex_alphabetic]">
-                today{todayLinkCount > 0 && ` · ${todayLinkCount}`}
+                {[id === todayDailyPath ? 'today' : null, marks.get(id)?.badge ?? null]
+                  .filter((part) => part !== null)
+                  .join(' · ')}
               </span>
             )}
           </Button>
@@ -772,8 +769,8 @@ export function FileTree({
         onCollapseAll={() => setOpen(new Set())}
         hiddenShown={projection.showHidden}
         onToggleHidden={projection.toggleHidden}
-        tasksShown={projection.showTasks}
-        onToggleTasks={projection.toggleTasks}
+        claimToggles={claimToggles}
+        onToggleClaimed={projection.toggleClaimed}
       />
       <div
         className={cn(

@@ -12,6 +12,7 @@ import {
   MEMORY_INDEX_EMPTY,
   MEMORY_INDEX_HEADER,
   MEMORY_INDEX_LOCAL_NOTE,
+  isExpiredMemory,
   isMemoryPath,
   isSharedMemoryPath,
   readMemoryEntry,
@@ -65,6 +66,7 @@ describe('readMemoryEntry fills gaps rather than refusing them', () => {
       type: 'environment',
       title: 'Shell quirks',
       description: 'bare node is broken',
+      expires: null,
     })
   })
 
@@ -108,6 +110,7 @@ describe('readMemoryEntry fills gaps rather than refusing them', () => {
       type: 'note',
       title: 'loose',
       description: 'Just a fact someone typed.',
+      expires: null,
     })
   })
 
@@ -168,6 +171,7 @@ describe('renderMemoryIndex', () => {
     type,
     title,
     description,
+    expires: null,
   })
 
   it('groups by type, sorts the types, and sorts entries by path within one', () => {
@@ -216,5 +220,42 @@ describe('renderMemoryIndex', () => {
       expect(out.endsWith('\n\n')).toBe(false)
       expect(out).not.toMatch(/[ \t]+$/m)
     }
+  })
+})
+
+describe('expires', () => {
+  const expiring = (expires: string) => withFrontmatter(`type: project\nexpires: ${expires}`)
+  const PATH = '.holi/memory/build-broken.md'
+  const at = (y: number, m: number, d: number, h: number, min: number) => new Date(y, m, d, h, min)
+
+  it("a date lasts through that day, on this machine's clock", () => {
+    expect(isExpiredMemory(PATH, expiring('2026-10-22'), at(2026, 9, 22, 23, 59))).toBe(false)
+    expect(isExpiredMemory(PATH, expiring('2026-10-22'), at(2026, 9, 23, 0, 0))).toBe(true)
+  })
+
+  it('a local time ends at that minute', () => {
+    expect(isExpiredMemory(PATH, expiring('2026-10-22T15:00'), at(2026, 9, 22, 14, 59))).toBe(false)
+    expect(isExpiredMemory(PATH, expiring('2026-10-22T15:00'), at(2026, 9, 22, 15, 0))).toBe(true)
+  })
+
+  it('applies to personal and shared memories alike, and to nothing outside memory', () => {
+    const later = at(2030, 0, 1, 0, 0)
+    expect(isExpiredMemory('.holi/memory/x.local.md', expiring('2026-10-22'), later)).toBe(true)
+    expect(isExpiredMemory('notes/x.md', expiring('2026-10-22'), later)).toBe(false)
+  })
+
+  it('never expires a memory with no readable stamp', () => {
+    const later = at(2030, 0, 1, 0, 0)
+    expect(isExpiredMemory(PATH, withFrontmatter('type: project'), later)).toBe(false)
+    expect(isExpiredMemory(PATH, expiring('next week'), later)).toBe(false)
+    expect(isExpiredMemory(PATH, expiring('2026-02-30'), later)).toBe(false)
+  })
+
+  it('prints a readable stamp in the index, and drops one it cannot read', () => {
+    const live = readMemoryEntry(PATH, expiring('2026-10-22'))
+    expect(renderMemoryIndex([live])).toContain(
+      '[[.holi/memory/build-broken.md|build-broken]] (expires 2026-10-22)',
+    )
+    expect(readMemoryEntry(PATH, expiring('next week')).expires).toBeNull()
   })
 })

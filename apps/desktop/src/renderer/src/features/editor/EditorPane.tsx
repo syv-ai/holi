@@ -7,28 +7,56 @@
  * makes the editor's own write a non-event: by the time the watcher reports
  * it, `disk === base`. The decision lives in `lib/editor-reload.ts`.
  *
- * `@` completes notes and open tasks; either inserts an ordinary path
- * wiki-link.
+ * `@` completes notes and what claims offer (open tasks); each inserts an
+ * ordinary path wiki-link.
  */
 import { EditorSelection, EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
-import { snapshotTasks, type Task } from '@holi/shared'
+import {
+  anchorAt,
+  commentsPathFor,
+  findHeadingLine,
+  isCommentableNote,
+  isResolved,
+} from '@holi/shared'
 import { useAtomValue, useSetAtom, useStore } from 'jotai'
-import { useEffect, useRef } from 'react'
-import { baseEditorExtensions, plainTextExtensions } from '@/editor/extensions'
+import { useEffect, useMemo, useRef } from 'react'
+import {
+  baseEditorExtensions,
+  plainTextExtensions,
+  reconfigureClaimLayer,
+} from '@/editor/extensions'
+import {
+  setActiveThread,
+  setCommentThreads,
+  threadLines,
+  threadRange,
+} from '@/editor/comment-threads'
 import { bodyStart, frontmatterValid, setFrontmatterCommit } from '@/editor/frontmatter'
 import { syntaxValid } from '@/editor/languages'
-import type { LinkNav } from '@/editor/links'
-import type { MentionData } from '@/editor/mentions'
 import { playOnce } from '@/lib/motion'
 import { applyReload } from '@/lib/apply-reload'
 import { registerBuffer } from '@/lib/buffer-registry'
 import { decideReload, hasNewText, type ConflictResolvers } from '@/lib/editor-reload'
-import { NO_AGENT, useAskAgentSeam } from '@/state/agent-service'
+import { selectedLines } from '@/editor/askAgent'
+import { caretHeading } from '@/editor/caret-heading'
+import { headingRequestAtom, quietOpenAtom } from '@/state/arrival'
+import { caretHeadingAtom } from '@/state/holi-link'
+import { useEditorDeps } from '@/state/editor-deps'
 import { historyOpenAtom } from '@/state/history'
-import { normalizersAtom } from '@/state/plugins'
+import {
+  activeThreadAtom,
+  draftCommentAtom,
+  refreshThreadsAtom,
+  claimSelectionCommenter,
+  type CommentDraft,
+  threadLinesAtom,
+  threadsByPathAtom,
+} from '@/state/comments'
+import { normalizersAtom, owningClaimsAtom } from '@/state/plugins'
 import { trpc } from '@/lib/trpc'
 import { fileHistoryAtom } from '@/state/file-history'
+import { editorSelectionAtom } from '@/state/ui-report'
 import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
 
 /** Quiet before the buffer reaches disk. Shorter than main's commit debounce on
@@ -60,15 +88,95 @@ function followCommit(view: EditorView, path: string, store: JotaiStore): () => 
   return off
 }
 
+/**
+ * The note's comment threads, into `view`, now and whenever they are read
+ * again; the thread the drawer is on, marked and scrolled to; and where each
+ * thread is in the buffer, back out to the drawer whenever that moves.
+ * Returns the unsubscribe.
+ */
+function followThreads(view: EditorView, path: string, store: JotaiStore): () => void {
+  const push = () => {
+    const threads = store.get(threadsByPathAtom)[path] ?? []
+    view.dispatch({
+      effects: setCommentThreads.of(
+        threads.map((t) => ({ id: t.id, anchor: t.anchor, resolved: isResolved(t) })),
+      ),
+    })
+  }
+  const focus = () => {
+    const active = store.get(activeThreadAtom)
+    const id = active?.path === path ? active.id : null
+    const range = id === null ? null : threadRange(view.state, id)
+    view.dispatch({
+      effects: [
+        setActiveThread.of(id),
+        ...(range === null ? [] : [EditorView.scrollIntoView(range.from, { y: 'center' })]),
+      ],
+    })
+  }
+  const offThreads = store.sub(threadsByPathAtom, push)
+  const offActive = store.sub(activeThreadAtom, focus)
+  push()
+  return () => {
+    offThreads()
+    offActive()
+  }
+}
+
+/**
+ * A commentable note's threads in `view` (`followThreads`), and the palette's
+ * Comment on selection, which reaches the editor last focused. `claimNow`
+ * takes the palette's command at once rather than on the next focus. Returns
+ * the release.
+ */
+function followComments(
+  view: EditorView,
+  path: string,
+  store: JotaiStore,
+  draft: (draft: CommentDraft) => void,
+  claimNow: boolean,
+): () => void {
+  const offThreads = followThreads(view, path, store)
+  const commenter = () => {
+    const { from, to, empty } = view.state.selection.main
+    if (empty || view.state.readOnly) return false
+    draft({ path, anchor: anchorAt(view.state.doc.toString(), from, to) })
+    return true
+  }
+  let release = () => {}
+  const claim = () => {
+    release = claimSelectionCommenter(commenter)
+  }
+  view.contentDOM.addEventListener('focus', claim)
+  if (claimNow) claim()
+  return () => {
+    offThreads()
+    view.contentDOM.removeEventListener('focus', claim)
+    release()
+  }
+}
+
+/** Tell the drawer where each thread is, when that changed. */
+function reportLines(view: EditorView, path: string, store: JotaiStore): void {
+  const lines = threadLines(view.state)
+  const was = store.get(threadLinesAtom)[path]
+  if (was !== undefined && JSON.stringify(was) === JSON.stringify(lines)) return
+  store.set(threadLinesAtom, (prev) => ({ ...prev, [path]: lines }))
+}
+
 export function EditorPane({
   path,
   onOpenNote,
   onConflict,
   onEdit,
+  focused = false,
   plain = false,
   readOnly = false,
 }: {
   path: string | null
+  /** Whether this editor's pane is the focused one: the pane an arrival opens
+   *  in, so the one that takes its heading (`headingRequestAtom`). */
+  focused?: boolean
   onOpenNote: (path: string) => void
   onConflict: (path: string, resolve: ConflictResolvers) => void
   /** Fired the first time the buffer changes for this open note: editing
@@ -100,39 +208,31 @@ export function EditorPane({
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   /** Whether `onEdit` has fired for this open note; reset per open. */
   const editedRef = useRef(false)
+  /** Read when a heading request arrives (`goToRequestedHeading`). */
+  const focusedRef = useRef(focused)
+  focusedRef.current = focused
+  /** The open editor's `goToRequestedHeading`, for the pane gaining focus. */
+  const goToHeadingRef = useRef<() => void>(() => {})
 
-  // Read on demand by the editor's pull-based seams, so a snapshot arriving
-  // mid-edit does not rebuild the EditorView and drop the caret.
-  const docPaths = useRef(new Set<string>())
-  docPaths.current = new Set(snapshot.docs.map((d) => d.path))
-  const tasksByPath = useRef(new Map<string, Task>())
-  tasksByPath.current = new Map(snapshotTasks(snapshot).items.map((t) => [t.path, t]))
-  const mentionRef = useRef<MentionData>({ notes: [], tasks: [] })
-  mentionRef.current = {
-    notes: snapshot.docs.map((d) => ({
-      path: d.path,
-      ...(snapshot.icons[d.path] === undefined ? {} : { icon: snapshot.icons[d.path] }),
-    })),
-    tasks: snapshotTasks(snapshot).items.map((t) => ({
-      path: t.path,
-      title: t.title,
-      status: t.status,
-      ...(t.due === undefined ? {} : { due: t.due }),
-    })),
-  }
   const setHistoryOpen = useSetAtom(historyOpenAtom)
-  /** In a ref, like `nav`: the extensions must not rebuild on every render.
-   *  Whether there is an agent at all does rebuild them, below. */
-  const askAgent = useAskAgentSeam()
-  const askAgentRef = useRef(askAgent)
-  askAgentRef.current = askAgent
-  const hasAgent = askAgent !== null
-  const navRef = useRef<LinkNav>({ openNote: () => {}, openExternal: () => {} })
-  navRef.current = {
-    // A link to a missing note or task no-ops rather than inventing a file.
-    openNote: (target) =>
-      (docPaths.current.has(target) || tasksByPath.current.has(target)) && onOpenNote(target),
-    openExternal: (url) => void window.holi.openExternal(url),
+  const refreshThreads = useSetAtom(refreshThreadsAtom)
+  const draftComment = useSetAtom(draftCommentAtom)
+  const draftCommentRef = useRef(draftComment)
+  draftCommentRef.current = draftComment
+  /** A note that takes threads (`isCommentableNote`), not a plain text file. */
+  const owning = useAtomValue(owningClaimsAtom)
+  const commentable = path !== null && !plain && isCommentableNote(path, owning)
+  /** Read by the open view, which takes a change in place rather than
+   *  rebuilding (the claim effect below). */
+  const commentableRef = useRef(commentable)
+  commentableRef.current = commentable
+  /** The open view's comment following, while the note takes threads. */
+  const unfollowCommentsRef = useRef<(() => void) | null>(null)
+  /** Read on demand by the editor's pull-based seams, so a snapshot arriving
+   *  mid-edit does not rebuild the EditorView and drop the caret. Whether
+   *  there is an agent at all does rebuild it, below. */
+  const deps = useEditorDeps(path ?? '', {
+    openNote: onOpenNote,
     // Open, never toggle. Focus first: the sidebar follows the active pane, a
     // pane activates on focus, and the link's mousedown is prevented, so in a
     // split the press alone would open the other pane's history.
@@ -140,7 +240,27 @@ export function EditorPane({
       viewRef.current?.focus()
       setHistoryOpen(true)
     },
-  }
+  })
+  const depsRef = useRef(deps)
+  depsRef.current = deps
+  const hasAgent = deps.askAgent !== undefined
+  /** The selection's Comment button. Stable per note: it reads the view and
+   *  the draft setter through refs. */
+  const commentSeam = useMemo(
+    () =>
+      path === null
+        ? undefined
+        : {
+            comment: (from: number, to: number) => {
+              const doc = viewRef.current?.state.doc.toString()
+              if (doc === undefined) return
+              draftCommentRef.current({ path, anchor: anchorAt(doc, from, to) })
+            },
+          },
+    [path],
+  )
+  const commentSeamRef = useRef(commentSeam)
+  commentSeamRef.current = commentSeam
 
   useEffect(() => {
     if (path === null || remote === null || hostRef.current === null) return
@@ -180,6 +300,54 @@ export function EditorPane({
       return true
     }
 
+    /** The selected lines, for the agent's per-turn focus line. Set only when
+     *  they change, so typing on one line reports nothing. */
+    const reportSelection = (state: EditorState): void => {
+      const lines = selectedLines(state)
+      const current = store.get(editorSelectionAtom)
+      const same =
+        lines === null
+          ? current === null || current.path !== path
+          : current?.path === path &&
+            current.lines.startLine === lines.startLine &&
+            current.lines.endLine === lines.endLine
+      if (!same) store.set(editorSelectionAtom, lines === null ? null : { path, lines })
+    }
+
+    /** The heading the caret is on, for the palette's "Copy Holi link to this
+     *  heading". Set only when it changes. */
+    const reportCaretHeading = (state: EditorState): void => {
+      const heading = caretHeading(state)
+      const current = store.get(caretHeadingAtom)
+      // Off a heading, clear only this note's: another editor's still stands.
+      const same =
+        heading === null
+          ? current === null || current.path !== path
+          : current?.path === path && current.heading === heading
+      if (!same) store.set(caretHeadingAtom, heading === null ? null : { path, heading })
+    }
+
+    /** A Holi link's heading (`headingRequestAtom`), when it is for this note
+     *  in the focused pane: the caret to its line, scrolled to the top. Taken
+     *  once; a heading that is not there leaves the note where it opened. */
+    const goToRequestedHeading = (): void => {
+      const view = viewRef.current
+      const request = store.get(headingRequestAtom)
+      if (view === null || disposed || !focusedRef.current) return
+      if (request === null || request.path !== path) return
+      store.set(headingRequestAtom, null)
+      const line = findHeadingLine(view.state.doc.toString(), request.heading)
+      if (line === null) return
+      const at = view.state.doc.line(line).from
+      view.dispatch({
+        selection: EditorSelection.cursor(at),
+        effects: EditorView.scrollIntoView(at, { y: 'start', yMargin: 24 }),
+      })
+      view.focus()
+    }
+    goToHeadingRef.current = goToRequestedHeading
+    const offHeadingRequest = store.sub(headingRequestAtom, goToRequestedHeading)
+
     const scheduleSave = () => {
       if (saveTimer.current !== null) clearTimeout(saveTimer.current)
       saveTimer.current = setTimeout(() => void save(), SAVE_QUIET_MS)
@@ -198,32 +366,21 @@ export function EditorPane({
             ...(plain
               ? plainTextExtensions(path, readOnly)
               : baseEditorExtensions({
-                  docExists: (p) => docPaths.current.has(p),
-                  taskByPath: (p) => {
-                    const t = tasksByPath.current.get(p)
-                    return t ? { title: t.title, status: t.status, due: t.due } : null
-                  },
-                  readNote: (p) =>
-                    trpc.notes.read.query({ remote, path: p }).then(
-                      (text) => text,
-                      () => null,
-                    ),
-                  mentionData: () => mentionRef.current,
-                  nav: () => navRef.current,
-                  ...(hasAgent
-                    ? {
-                        askAgent: {
-                          targets: () =>
-                            askAgentRef.current?.targets() ?? { sessions: [], initial: 'new' },
-                          onAsk: (prompt, target) =>
-                            askAgentRef.current?.onAsk(prompt, target) ?? Promise.resolve(NO_AGENT),
-                        },
-                      }
-                    : {}),
-                  notePath: path,
+                  ...depsRef.current,
+                  ...(commentableRef.current ? { comment: commentSeamRef.current } : {}),
                   readOnly,
                 })),
             EditorView.updateListener.of((update) => {
+              if (update.selectionSet || update.docChanged) {
+                reportSelection(update.state)
+                reportCaretHeading(update.state)
+              }
+              if (commentableRef.current) {
+                const moved =
+                  update.docChanged ||
+                  update.transactions.some((tr) => tr.effects.some((e) => e.is(setCommentThreads)))
+                if (moved) reportLines(update.view, path, store)
+              }
               if (!update.docChanged) return
               scheduleSave()
               if (!editedRef.current) {
@@ -236,13 +393,35 @@ export function EditorPane({
         parent: host,
       })
       viewRef.current = view
+      // A fresh editor opens on a caret: whatever this path had selected before
+      // is gone.
+      reportSelection(view.state)
+      reportCaretHeading(view.state)
       // Fade in when the document arrives, after the IPC read, not when the
       // tab changed. Opacity only: anything that changes the layout box drags
       // CodeMirror's measure loop into every frame.
       playOnce(host, 'motion-in-fade')
-      view.focus()
+      // Not when a screenshot opened it: the caret stays where the person is.
+      if (store.get(quietOpenAtom) !== path) view.focus()
 
-      if (!plain) unfollow = followCommit(view, path, store)
+      if (!plain) {
+        const offCommit = followCommit(view, path, store)
+        if (commentableRef.current) {
+          unfollowCommentsRef.current = followComments(
+            view,
+            path,
+            store,
+            (draft) => draftCommentRef.current(draft),
+            store.get(quietOpenAtom) !== path,
+          )
+        }
+        unfollow = () => {
+          offCommit()
+          unfollowCommentsRef.current?.()
+          unfollowCommentsRef.current = null
+        }
+      }
+      goToRequestedHeading()
     })
 
     // Window blur is a flush point, as is the unmount below (tab close, vault
@@ -257,6 +436,8 @@ export function EditorPane({
     return () => {
       disposed = true
       unfollow()
+      offHeadingRequest()
+      if (store.get(caretHeadingAtom)?.path === path) store.set(caretHeadingAtom, null)
       window.removeEventListener('blur', onBlur)
       unregister()
       if (saveTimer.current !== null) clearTimeout(saveTimer.current)
@@ -274,7 +455,54 @@ export function EditorPane({
     // `readOnly` rebuilds the view: entering a reconcile re-reads the file, so
     // you see the markers the agent is working on. So does an agent coming or
     // going, which adds or drops the Ask button. The teardown flushes first.
+    // Whether the note takes threads does not: the claim effect below swaps
+    // it in place.
   }, [path, remote, plain, readOnly, store, hasAgent])
+
+  /**
+   * The note's comment threads, read again whenever its sidecar changes on
+   * disk: a pull or the agent may have written it. The snapshot carries the
+   * sidecar's mtime, so a save of the note itself asks nothing.
+   */
+  const sidecarStamp =
+    path === null
+      ? null
+      : (snapshot.files.find((f) => f.path === commentsPathFor(path))?.updatedAt ?? null)
+  useEffect(() => {
+    if (path === null || !commentable) return
+    void refreshThreads(path)
+  }, [sidecarStamp, path, commentable, refreshThreads])
+
+  // An arrival into the pane beside the agent focuses that pane after asking
+  // for the heading, so an editor already showing the note takes it now.
+  useEffect(() => {
+    if (focused) goToHeadingRef.current()
+  }, [focused])
+
+  // The file's claim came or went (its plugin turned on or off): the open
+  // view takes the new claim layer, and starts or stops taking comment
+  // threads, in place, caret and undo kept.
+  const { frontmatterAlwaysOpen, claimExtensions } = deps
+  useEffect(() => {
+    const view = viewRef.current
+    if (view === null || path === null || plain) return
+    reconfigureClaimLayer(view, {
+      ...depsRef.current,
+      ...(commentable ? { comment: commentSeamRef.current } : {}),
+    })
+    if (commentable && unfollowCommentsRef.current === null) {
+      unfollowCommentsRef.current = followComments(
+        view,
+        path,
+        store,
+        (draft) => draftCommentRef.current(draft),
+        view.hasFocus,
+      )
+    } else if (!commentable && unfollowCommentsRef.current !== null) {
+      unfollowCommentsRef.current()
+      unfollowCommentsRef.current = null
+    }
+  }, [frontmatterAlwaysOpen, claimExtensions, commentable, path, plain, store])
 
   /**
    * The vault changed somewhere: re-read our own file and decide. The snapshot

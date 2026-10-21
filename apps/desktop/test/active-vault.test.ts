@@ -1,4 +1,5 @@
-import { SETTINGS_FILE, taskClaim } from '@holi/shared'
+import { SETTINGS_FILE } from '@holi/shared'
+import { taskClaim } from '../src/plugins/tasks/shared/task-file'
 /**
  * The open vault: what it sees, when it commits, and when it syncs.
  *

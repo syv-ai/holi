@@ -92,6 +92,8 @@ function rig(
     binDir: () => '/holi/bin',
     githubToken: () => null,
     frameOrigin: () => () => {},
+    notify: () => false,
+    focused: () => false,
   })
   let root = ''
   const capabilities = createCapabilityHost({
@@ -266,6 +268,26 @@ describe('the lifecycle', () => {
     await host.stop()
     expect(log.slice(-3)).toEqual(['pause held', 'stop base', 'resume'])
   })
+
+  it("tells a started plugin of its vault's snapshots, until it stops", async () => {
+    const root = await tempDir()
+    const heard: string[] = []
+    const plugins = [
+      logged([], 'base', {}, (c) => {
+        c.onSnapshot((snapshot) => heard.push(snapshot.files.map((f) => f.path).join()))
+        return () => {}
+      }),
+    ]
+    const { host, enter } = rig({ plugins })
+    await enter(openVault('o/r', root))
+    const snapshot = (path: string) =>
+      ({ files: [{ path, updatedAt: '' }] }) as unknown as Parameters<typeof host.snapshot>[1]
+    host.snapshot('o/r', snapshot('a.txt'))
+    host.snapshot('o/other', snapshot('b.txt'))
+    await host.stop()
+    host.snapshot('o/r', snapshot('c.txt'))
+    expect(heard).toEqual(['a.txt'])
+  })
 })
 
 describe('plugin events', () => {
@@ -400,6 +422,8 @@ describe('an owned prefix', () => {
       binDir: () => '/holi/bin',
       githubToken: () => null,
       frameOrigin: () => () => {},
+      notify: () => false,
+      focused: () => false,
     })
     const root = await tempDir()
     const set = (on: boolean) => writeVaultSettings(root, { committed: { plugins: { owner: on } } })
@@ -419,5 +443,65 @@ describe('an owned prefix', () => {
     await unlink(join(root, SKILL))
     await host.seed(root)
     await expect(readFile(join(root, SKILL), 'utf8')).rejects.toThrow()
+  })
+})
+
+describe('work across vaults', () => {
+  it('runs while some registered vault runs the plugin, and says why', async () => {
+    const [a, b] = [await tempDir(), await tempDir()]
+    const log: string[] = []
+    const whys: (readonly string[])[] = []
+    const across: MainPlugin = {
+      info: { id: 'fake', label: 'Fake', default: false },
+      background: {
+        why: 'reminders',
+        start: async (ctx) => {
+          log.push(`start ${(await ctx.vaults()).map((v) => v.remote).join(' ')}`)
+          return () => void log.push('stop')
+        },
+      },
+    }
+    const host = createPluginHost({
+      plugins: [across],
+      registry: createCapabilityRegistry(),
+      userData: '/nowhere',
+      coreSeeds: [],
+      active: () => null,
+      rootFor: async () => null,
+      events: { send: () => {}, listen: () => () => {}, liveRemote: () => null },
+      openAppDoor: () => {
+        throw new Error('unused')
+      },
+      route: () => () => {},
+      binDir: () => '/holi/bin',
+      githubToken: () => null,
+      frameOrigin: () => () => {},
+      background: {
+        registered: async () => [
+          { remote: 'o/a', root: a },
+          { remote: 'o/b', root: b },
+        ],
+        scan: async () => {
+          throw new Error('unused')
+        },
+        open: () => {},
+        viewerLogin: () => null,
+        onChange: (now) => void whys.push(now),
+      },
+    })
+
+    await host.syncBackground()
+    expect(log).toEqual([])
+    expect(whys.at(-1)).toEqual([])
+
+    await turn(b, true)
+    await host.syncBackground()
+    expect(log).toEqual(['start o/b'])
+    expect(whys.at(-1)).toEqual(['reminders'])
+
+    await turn(b, false)
+    await host.syncBackground()
+    expect(log).toEqual(['start o/b', 'stop'])
+    expect(whys.at(-1)).toEqual([])
   })
 })

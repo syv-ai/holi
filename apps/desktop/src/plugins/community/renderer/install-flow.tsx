@@ -9,7 +9,14 @@ import { useEffect, useRef, useState } from 'react'
 import { releaseTag } from '@holi/shared'
 import { activeRemoteAtom, type PluginStore } from '@/plugin-api'
 import { Button, Dialog } from '@/primitives'
-import { communityCap, refreshRows, refreshUpdates, setupLogsAtom, type PluginRow } from './state'
+import {
+  communityCap,
+  refreshRows,
+  refreshUpdates,
+  rowsAtom,
+  setupLogsAtom,
+  type PluginRow,
+} from './state'
 
 /** The command as a person would type it. */
 const shown = (argv: readonly string[]) =>
@@ -37,6 +44,9 @@ export function ConsentDialog({
 }): React.JSX.Element {
   const remote = useAtomValue(activeRemoteAtom)
   const log = useAtomValue(setupLogsAtom)[row.id] ?? []
+  // Which of its commands the agent did not get, once the rows are read again.
+  const commandsNote =
+    useAtomValue(rowsAtom)?.rows.find((r) => r.id === row.id)?.commandsNote ?? null
   const [step, setStep] = useState<Step>({ kind: 'ask' })
   const logEnd = useRef<HTMLDivElement>(null)
   const install = row.install
@@ -54,8 +64,12 @@ export function ConsentDialog({
         await communityCap.consent(remote, { id: row.id, commit: install.commit })
       setStep({ kind: 'setup' })
       const ok = await communityCap.setup(remote, { id: row.id })
-      if (ok) await onReady?.()
-      setStep(ok ? { kind: 'done' } : { kind: 'failed', message: 'Setup did not finish.' })
+      if (!ok) {
+        setStep({ kind: 'failed', message: 'Setup did not finish.' })
+        return
+      }
+      await onReady?.()
+      setStep({ kind: 'done' })
     } catch (err) {
       setStep({ kind: 'failed', message: err instanceof Error ? err.message : String(err) })
     } finally {
@@ -119,6 +133,14 @@ export function ConsentDialog({
                 sensitive.
               </p>
             )}
+            {row.bin.length > 0 && (
+              <p>
+                It gives the vault&rsquo;s agent{' '}
+                {row.bin.length === 1 ? 'the command' : 'the commands'}{' '}
+                <span className="font-mono text-foreground">{row.bin.join(', ')}</span>, which run
+                as programs on this machine like the commands above.
+              </p>
+            )}
             <p>Holi asks again when the vault moves to another version.</p>
           </div>
         ) : (
@@ -126,6 +148,7 @@ export function ConsentDialog({
             <p className="text-xs text-muted-foreground">
               {step.kind === 'setup' && 'Running setup…'}
               {step.kind === 'done' && `${row.name} is ready.`}
+              {step.kind === 'done' && commandsNote !== null && ` ${commandsNote}`}
               {step.kind === 'failed' && step.message}
             </p>
             {log.length > 0 && (
