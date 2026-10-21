@@ -9,7 +9,7 @@
  * No Electron import: this loads under plain Node like the rest of the plugin.
  */
 import type { Dirent } from 'node:fs'
-import { readdir, readFile, unlink } from 'node:fs/promises'
+import { lstat, readdir, readFile, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import { MEMORY_DIR, isExpiredScratch, isLocalOnlyPath, localDate } from '@holi/shared'
 import { staleWorkLogs, WORK_LOG_DIR, WORK_LOG_KEEP_DAYS } from '../inbox/work-log'
@@ -19,9 +19,11 @@ import { staleWorkLogs, WORK_LOG_DIR, WORK_LOG_KEEP_DAYS } from '../inbox/work-l
 export const SWEEP_EVERY_MS = 60 * 60 * 1000
 
 /** A directory's entries, or none when it is missing (a vault with no memory
- *  yet, a machine with no log yet). */
+ *  yet, a machine with no log yet) or is a symlink, which could point out of
+ *  the vault. */
 async function entries(abs: string): Promise<Dirent[]> {
   try {
+    if ((await lstat(abs)).isSymbolicLink()) return []
     return await readdir(abs, { withFileTypes: true })
   } catch {
     return []
@@ -40,26 +42,36 @@ async function personalMemories(root: string, rel = MEMORY_DIR): Promise<string[
   return out
 }
 
+/** Delete one file; the vault path when it went, else null and a log line. A
+ *  file that cannot be deleted is left for the next sweep. */
+async function remove(root: string, path: string): Promise<string | null> {
+  return unlink(join(root, path)).then(
+    () => path,
+    (err: unknown) => {
+      console.error(`[agent] sweep ${path}:`, err)
+      return null
+    },
+  )
+}
+
 /** Delete what has expired in the vault at `root`; the vault paths deleted. A
- *  file that cannot be read or deleted is left for the next sweep. */
+ *  file that cannot be read or deleted is left for the next sweep. Each scratch
+ *  note is read and judged right before it is deleted, so one rewritten with a
+ *  later `expires` a moment ago survives. */
 export async function sweepAgentMemory(root: string, now: Date): Promise<string[]> {
-  const doomed: string[] = []
+  const deleted: string[] = []
   for (const path of await personalMemories(root)) {
     const text = await readFile(join(root, path), 'utf8').catch(() => null)
-    if (text !== null && isExpiredScratch(path, text, now)) doomed.push(path)
+    if (text === null || !isExpiredScratch(path, text, now)) continue
+    const gone = await remove(root, path)
+    if (gone !== null) deleted.push(gone)
   }
   const logs = (await entries(join(root, WORK_LOG_DIR)))
     .filter((e) => e.isFile())
     .map((e) => e.name)
   for (const name of staleWorkLogs(logs, localDate(now), WORK_LOG_KEEP_DAYS)) {
-    doomed.push(`${WORK_LOG_DIR}/${name}`)
-  }
-  const deleted: string[] = []
-  for (const path of doomed) {
-    await unlink(join(root, path)).then(
-      () => deleted.push(path),
-      (err: unknown) => console.error(`[agent] sweep ${path}:`, err),
-    )
+    const gone = await remove(root, `${WORK_LOG_DIR}/${name}`)
+    if (gone !== null) deleted.push(gone)
   }
   return deleted
 }

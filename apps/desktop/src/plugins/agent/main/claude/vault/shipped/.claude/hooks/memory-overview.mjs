@@ -82,23 +82,63 @@ function memoryFiles(dir, prefix = '.holi/memory') {
   return out
 }
 
-/** Frontmatter title/description (and a scratch note's type/expires), without a
- *  YAML parser: all are one-line scalars. A file whose frontmatter is
- *  malformed simply yields nothing, which is this whole design's house style. */
-function titleAndDescription(text, path) {
-  const fence = /^---\n([\s\S]*?)\n---/.exec(text ?? '')
-  const block = fence?.[1] ?? ''
-  const value = (key) => {
-    const m = new RegExp(`^${key}:\\s*(.+?)\\s*$`, 'm').exec(block)
-    return m?.[1]?.replace(/^["']|["']$/g, '').trim() || null
+/** One frontmatter value, or null for an empty one, or undefined when it is
+ *  not a scalar this reader is sure of: escapes, flow and block syntax, a
+ *  leading indicator, or an unquoted `: ` (which YAML rejects outright). A
+ *  trailing ` # comment` is dropped, as YAML drops it. */
+function scalar(raw) {
+  const quoted = /^(?:"([^"\\]*)"|'([^']*)')(?:[ \t]+#.*)?$/.exec(raw)
+  if (quoted) return (quoted[1] ?? quoted[2]).trim() || null
+  const plain = raw.replace(/(?:^|[ \t]+)#.*$/, '').trim()
+  if (plain === '') return null
+  if (/^[-?:,[\]{}#&*!|>'"%@`]/.test(plain) || /:(?:[ \t]|$)/.test(plain)) return undefined
+  return plain
+}
+
+/**
+ * Frontmatter title/description (and a scratch note's type/expires), without a
+ * YAML parser: all are one-line scalars. The fence is found as `@holi/shared`'s
+ * `splitFrontmatter` finds it, CRLF included.
+ *
+ * `complete` says whether every line was one this reader is sure YAML reads the
+ * same way. Holi's sweep parses real YAML and reads invalid YAML as no
+ * frontmatter, so a scratch note may be hidden as expired only when `complete`:
+ * anything less is a note the sweep might never delete. Values from lines it
+ * could not read are still used for display, best effort.
+ */
+function frontmatter(text, path) {
+  const normalized = (text ?? '').replace(/\r\n/g, '\n')
+  const fields = new Map()
+  let complete = true
+  let body = normalized
+  if (normalized.startsWith('---\n')) {
+    const end = normalized.indexOf('\n---', 3)
+    if (end === -1) complete = false
+    else {
+      const after = normalized.indexOf('\n', end + 1)
+      body = after === -1 ? '' : normalized.slice(after + 1)
+      for (const line of normalized.slice(4, end).split('\n')) {
+        if (/^[ \t]*(?:#.*)?$/.test(line)) continue
+        const m = /^([A-Za-z_][\w-]*):(?:[ \t]+(.*))?$/.exec(line)
+        if (!m || fields.has(m[1])) {
+          complete = false
+          continue
+        }
+        const value = scalar(m[2] ?? '')
+        if (value === undefined) complete = false
+        fields.set(m[1], value === undefined ? m[2].trim() : value)
+      }
+    }
   }
-  const h1 = /^\s*#\s+(.+?)\s*$/m.exec((text ?? '').replace(/^---\n[\s\S]*?\n---\n/, ''))
+  const value = (key) => fields.get(key) ?? null
+  const h1 = /^\s*#\s+(.+?)\s*$/m.exec(body)
   const name = (path.split('/').at(-1) ?? path).replace(/\.md$/i, '')
   return {
     title: value('title') ?? h1?.[1] ?? name,
     description: value('description'),
     type: value('type'),
     expires: value('expires'),
+    complete,
   }
 }
 
@@ -123,16 +163,18 @@ const { personal: personalFiles, shared } = memoryFiles(MEMORY_DIR)
 
 // Personal memories, read once, with scratch notes apart. An expired scratch
 // note is already gone as far as the agent is concerned: Holi deletes it on
-// its next sweep, and outside Holi nothing does, so it is left out here.
+// its next sweep, and outside Holi nothing does, so it is left out here. Only
+// when the sweep would delete it, though: one whose frontmatter this hook
+// cannot fully read stays listed, since the sweep may never take it.
 const now = new Date()
 const personal = []
 const scratch = []
 for (const file of personalFiles) {
-  const meta = { ...file, ...titleAndDescription(readOr(file.abs), file.path) }
+  const meta = { ...file, ...frontmatter(readOr(file.abs), file.path) }
   if (meta.type !== 'scratch') personal.push(meta)
   else {
     const ends = expiry(meta.expires)
-    if (ends === null || now < ends) scratch.push({ ...meta, ends })
+    if (ends === null || now < ends || !meta.complete) scratch.push({ ...meta, ends })
   }
 }
 

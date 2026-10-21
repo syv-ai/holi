@@ -16,6 +16,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { isExpiredScratch } from '@holi/shared'
 import { afterEach, describe, expect, it } from 'vitest'
 
 const HOOK = join(
@@ -234,6 +235,46 @@ describe('memory-overview', () => {
       '- [[.holi/memory/live.local.md|Build is broken]] (expires 2999-01-01) — Build is broken for now',
     )
     expect(out).not.toContain('Deploy frozen')
+  })
+
+  it('hides a scratch note exactly when the sweep would delete it', async () => {
+    // The hook reads frontmatter without a YAML parser and the sweep parses
+    // YAML, so they can disagree. Hiding a note the sweep never deletes would
+    // hide it forever; one table runs through both.
+    const past = '2000-01-01'
+    const cases: Record<string, string> = {
+      plain: `---\ntype: scratch\nexpires: ${past}\n---\n`,
+      crlf: `---\r\ntype: scratch\r\nexpires: ${past}\r\n---\r\n`,
+      comment: `---\ntype: scratch # temp\nexpires: ${past} # the day after\n---\n`,
+      quoted: `---\ntype: "scratch"\nexpires: '${past}'\n---\n`,
+      minute: `---\ntype: scratch\nexpires: ${past}T15:00\n---\n`,
+      tab: `---\ntype:\tscratch\nexpires:\t${past}\n---\n`,
+      live: '---\ntype: scratch\nexpires: 2999-01-01\n---\n',
+      'no-expiry': '---\ntype: scratch\n---\n',
+      'bad-date': `---\ntype: scratch\nexpires: 2000-02-30\n---\n`,
+      'not-scratch': `---\ntype: person\nexpires: ${past}\n---\n`,
+      'colon-in-value': `---\ntype: scratch\nexpires: ${past}\ndescription: a: b\n---\n`,
+      'duplicate-key': `---\ntype: scratch\nexpires: ${past}\nexpires: ${past}\n---\n`,
+      unterminated: `---\ntype: scratch\nexpires: ${past}\n`,
+      'block-list': `---\ntype: scratch\nexpires: ${past}\ntags:\n  - a\n---\n`,
+      'flow-value': `---\ntype: scratch\nexpires: ${past}\ntags: [a, b]\n---\n`,
+    }
+    const files = Object.fromEntries(
+      Object.entries(cases).map(([name, text]) => [`.holi/memory/${name}.local.md`, text]),
+    )
+    const { out, code } = await run(await vault({ '.holi/memory/index.md': INDEX, ...files }))
+    expect(code).toBe(0)
+    const now = new Date()
+    for (const [path, text] of Object.entries(files)) {
+      // A note the hook may show while the sweep deletes it is harmless (the
+      // next sweep takes it); the reverse is not. Only a block it reads in
+      // full may hide.
+      if (!out.includes(`[[${path}|`)) expect(isExpiredScratch(path, text, now), path).toBe(true)
+    }
+    // The ordinary shapes really are hidden, not merely shown everywhere.
+    for (const name of ['plain', 'crlf', 'comment', 'quoted', 'minute', 'tab']) {
+      expect(out, name).not.toContain(`.holi/memory/${name}.local.md`)
+    }
   })
 
   it('points at the work log by name, without reading it', async () => {

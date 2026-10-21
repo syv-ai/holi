@@ -49,7 +49,8 @@ resume and compact. Compact matters most: it is when the agent forgets it has me
 characters, it prints the types in use with counts, the index lines, the personal memories (read
 directly, since the index cannot carry them), the scratch notes apart with their expiry (an expired
 one is left out before the sweep reaches it), the names of today's and the previous work log
-(never their content), and the last three commits touching `.holi/memory/`. Over
+(never their content), and the last three commits touching `.holi/memory/`. Its text changes only
+when memory changes, a scratch note expires, or the day turns. Over
 the cap it drops descriptions first and keeps every title, then truncates with a pointer to the
 index. With memory files but no index yet, it says so and points at the directory. It needs no Holi
 port: local reads and one `git log` with a 2 s timeout. Its files are read in sorted order and it
@@ -103,8 +104,11 @@ only when the user asks.
   marker publishes the file.
 - No unattended edits to shared memory: consolidation or splitting is agent work the user asks for.
   The sweep deletes personal files only. Lint findings are proposals under the same rule.
-- The overview and the sweep read `expires` by the same rule, written twice because the hook
-  imports nothing.
+- The overview hides a scratch note only when the sweep would delete it. The hook imports nothing,
+  so it reads frontmatter without a YAML parser and writes the `expires` rule a second time; any
+  frontmatter it cannot read in full (no closing fence, a duplicate key, a value YAML would reject
+  or that it is unsure of) counts as never deleted, and the note stays listed. A test runs one
+  table of frontmatter through both.
 
 ## Rejected
 
