@@ -653,7 +653,7 @@ export function buildDecorations(state: EditorState, from: number, to: number): 
           ranges.push({
             from: node.from,
             to: node.to,
-            deco: Decoration.replace({ widget: new ImageWidget(src, alt) }),
+            deco: Decoration.replace({ widget: new ImageWidget(src, alt, inlineOnly) }),
           })
           break
         }
@@ -683,7 +683,11 @@ export function buildDecorations(state: EditorState, from: number, to: number): 
         from: start,
         to: end,
         deco: Decoration.replace({
-          widget: new ImageWidget(vaultAssetUrl(link.target), link.label ?? link.target),
+          widget: new ImageWidget(
+            vaultAssetUrl(link.target),
+            link.label ?? link.target,
+            inlineOnly,
+          ),
         }),
       })
       continue
