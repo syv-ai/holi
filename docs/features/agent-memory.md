@@ -41,11 +41,14 @@ prints no clock time, so the same memory prints the same text on any machine.
 **A lint lists what looks wrong, as proposals.** `.claude/skills/memory/lint.mjs` reads every
 memory file, personal ones included, and prints findings of four kinds: `frontmatter` (none, no
 `type` or `description`, an unclosed fence, or a value with an unquoted `: `, which is invalid YAML
-and makes the indexer drop every key), `broken-link` (a wiki-link to a memory that does not exist,
+and, in a shared memory, makes the indexer drop every key), `broken-link` (a wiki-link to a memory that does not exist,
 or a shared memory linking a personal one, which no other clone has), `stale` (a wiki-link to a vault
 file that is not there) and `duplicate` (two memories with the same description or title, after
-case and punctuation are folded). Links inside code are examples and are skipped. It is
-deterministic and writes nothing: the agent fixes what it wrote, and proposes changes to shared
+case and punctuation are folded; a shared memory is never paired with a personal one, since merging
+them would publish the personal one). Links inside code are examples and are skipped, a rule of the
+lint's own: the wiki-link grammar itself is copied from `packages/shared`, and a test holds the copy
+in step. Symlinks under `.holi/memory/` are skipped, not followed. It is
+deterministic and writes nothing, so the seeded settings allow running it unasked: the agent fixes what it wrote, and proposes changes to shared
 memory someone else recorded. Staleness has no other deterministic signal, so a dead link is the
 only one used. The overview prints only the count, next to its heading so the cap never cuts it,
 with the command to run; the count depends only on the files, so the overview stays the same from

@@ -2,9 +2,12 @@
  * The memory lint at its pure seam. It is a shipped vault file (plain node, no
  * Holi), so it is imported from where it ships.
  */
+import { parseWikiLinks } from '@holi/shared'
 import { describe, expect, it } from 'vitest'
 // @ts-expect-error: a plain .mjs vault file with no type declarations
-import { lintMemory } from '../src/plugins/agent/main/claude/vault/shipped/.claude/skills/memory/lint.mjs'
+import * as memoryLint from '../src/plugins/agent/main/claude/vault/shipped/.claude/skills/memory/lint.mjs'
+
+const { linkTargets, lintMemory } = memoryLint
 
 interface Finding {
   path: string
@@ -101,6 +104,23 @@ describe('memory lint', () => {
     expect(kinds(findings)).toEqual(['.holi/memory/a.md duplicate', '.holi/memory/c.md duplicate'])
     expect(findings[0]!.message).toContain('.holi/memory/b.md')
     expect(findings[1]!.message).toContain('.holi/memory/d.md')
+  })
+
+  it('never pairs a shared memory with a personal one as duplicates', () => {
+    const findings = lint({
+      '.holi/memory/ada.md': memory('type: person\ndescription: Ada'),
+      '.holi/memory/ada.local.md': memory('type: person\ndescription: Ada'),
+    })
+    expect(findings).toEqual([])
+  })
+
+  it('reads wiki-links as the shared grammar does, outside code', () => {
+    const text = [
+      '[[a.md]] [[ b/c.md | Label ]] [[d.md|]] [[|e]] [[ ]] [[f.md|x|y]]',
+      '[[g.md]][[h.md]] [[i.md]]] [[[j.md]] [[k',
+      'l.md]] [[m.md|[n]]]',
+    ].join('\n')
+    expect(linkTargets(text)).toEqual(parseWikiLinks(text).map((l) => l.target))
   })
 
   it('is deterministic: the same files give the same findings in any order', () => {

@@ -12,7 +12,7 @@
 // also why it reads frontmatter without a YAML parser, the way the overview
 // does: it only needs to know whether three one-line keys are there.
 
-import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs'
+import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -22,6 +22,7 @@ const MEMORY_INDEX = `${MEMORY_DIR}/index.md`
 /**
  * Every memory file, `{ path, text }` with a vault-relative path: each `.md`
  * under `.holi/memory/`, personal ones included, the generated index excluded.
+ * Symlinks are skipped, not followed: one could point outside the vault or loop.
  * Sorted, so the findings come out in the same order every time.
  */
 export function readMemoryFiles(root) {
@@ -37,10 +38,11 @@ export function readMemoryFiles(root) {
       const path = `${rel}/${name}`
       let stat
       try {
-        stat = statSync(join(root, path))
+        stat = lstatSync(join(root, path))
       } catch {
         continue
       }
+      if (stat.isSymbolicLink()) continue
       if (stat.isDirectory()) walk(path)
       else if (name.endsWith('.md') && path !== MEMORY_INDEX) {
         try {
@@ -108,8 +110,14 @@ function prose(text) {
   return kept.join('\n')
 }
 
-/** Wiki-link targets, the grammar of `packages/shared/src/wiki-links.ts`. */
-function linkTargets(text) {
+/**
+ * Wiki-link targets, the grammar of `parseWikiLinks` in
+ * `packages/shared/src/wiki-links.ts`, copied because a vault script cannot
+ * import Holi's code; a test holds the two in step. Skipping links inside code
+ * is the lint's own rule, not the shared grammar's: the editor still renders
+ * those as links.
+ */
+export function linkTargets(text) {
   const out = []
   for (const m of prose(text).matchAll(/\[\[([^\]\n]+)\]\]/g)) {
     const body = m[1].trim()
@@ -120,10 +128,11 @@ function linkTargets(text) {
   return out
 }
 
-/** The title the indexer would show: `title`, else the H1, else the filename. */
+/** The title the indexer would show: `title`, else the H1, else the filename
+ *  less `.md` (the indexer's `titleFromPath`). */
 function titleOf(block, body, path) {
   const h1 = /^\s*#\s+(.+?)\s*$/m.exec(body)?.[1]
-  const name = (path.split('/').at(-1) ?? path).replace(/\.md$/i, '').replace(/\.local$/, '')
+  const name = (path.split('/').at(-1) ?? path).replace(/\.md$/i, '')
   return value(block, 'title') ?? h1 ?? name
 }
 
@@ -150,8 +159,12 @@ export function lintMemory(files, exists) {
   const add = (path, kind, message) => findings.push({ path, kind, message })
   const byDescription = new Map()
   const byTitle = new Map()
-  const group = (map, key, path) => {
-    if (key === '') return
+  // Shared and personal memories are grouped apart: a personal file repeating a
+  // shared one is often deliberate (a private note on a shared fact), and
+  // merging them would publish the personal one.
+  const group = (map, text, path) => {
+    if (text === '') return
+    const key = `${isLocal(path) ? 'personal' : 'shared'}\n${text}`
     const list = map.get(key)
     if (list) list.push(path)
     else map.set(key, [path])
@@ -167,12 +180,14 @@ export function lintMemory(files, exists) {
       for (const key of ['type', 'description']) {
         if (value(fm.block, key) === null) add(path, 'frontmatter', `no \`${key}\`: add one`)
       }
+      // Only a shared memory is indexed, so only there does it cost every key.
+      const effect = isLocal(path) ? '' : ' and hides every key from the index'
       for (const key of ['type', 'description', 'title']) {
         if (breaksYaml(rawValue(fm.block, key))) {
           add(
             path,
             'frontmatter',
-            `\`${key}\` contains ": " unquoted, which is invalid YAML and hides every key: quote the value`,
+            `\`${key}\` contains ": " unquoted, which is invalid YAML${effect}: quote the value`,
           )
         }
       }

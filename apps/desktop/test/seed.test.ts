@@ -676,6 +676,7 @@ describe('mergedSettings', () => {
     expect(after.permissions.allow).toEqual([
       'Bash(ls:*)',
       'Bash(holi schedules list:*)',
+      'Bash(node .claude/skills/memory/lint.mjs:*)',
       'Bash(holi pdf comments:*)',
       'Bash(holi pdf typst:*)',
       'Bash(holi apps:*)',
@@ -695,6 +696,7 @@ describe('mergedSettings', () => {
     const after = parse(mergedSettings(JSON.stringify(before)))
     expect(after.permissions.allow).toEqual([
       'Bash(holi schedules list:*)',
+      'Bash(node .claude/skills/memory/lint.mjs:*)',
       'Bash(holi pdf comments:*)',
       'Bash(holi pdf typst:*)',
       'Bash(holi apps:*)',
