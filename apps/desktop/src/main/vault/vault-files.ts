@@ -13,12 +13,13 @@ import {
   appBundleOf,
   isAppBundlePath,
   isLocalOnlyPath,
+  OS_JUNK_FILES,
   vaultRelPath,
   type VaultRelPath,
 } from '@holi/shared'
 
 export const TMP_MARKER = '.holi-tmp-'
-const JUNK = new Set(['.DS_Store', 'Thumbs.db'])
+const JUNK = new Set(OS_JUNK_FILES)
 
 /** Directories that are never vault content, matched on any path segment.
  *

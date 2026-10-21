@@ -67,7 +67,10 @@ core's `.gitignore` gets its `*.local.*` line, line-wise, before anything else i
   reach cloud sessions or a machine it was never installed on.
 - **Merged files** have one owner, which merges what the vault has with what Holi needs; any
   contribution adds to one with a fragment. `.gitignore` is core's: its `*.local.*` lines plus
-  any fragment's, appended line-wise. `.claude/settings.json` is the agent's, merged key-wise
+  any fragment's, appended line-wise, then the OS junk files (`.DS_Store`, `Thumbs.db`,
+  `OS_JUNK_FILES` in shared) under a header of their own: they are nobody's files rather than
+  machine-local ones. An open merges it, so an existing vault gains a new line on its next open;
+  a junk file a vault already tracks stays tracked until someone removes it. `.claude/settings.json` is the agent's, merged key-wise
   (`src/plugins/agent/main/claude/settings.ts`). Fragments add hooks, each only where its script is (a hook a
   later release adds is wired when its script arrives), and `permissions.ask`, `allow` and `deny`
   rules: the agent's own (the turn bracket's `turn-signal.mjs` among them), Google's send gate

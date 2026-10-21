@@ -6,7 +6,12 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
-import { LOCAL_ONLY_IGNORE_LINES, MEMORY_INDEX_EMPTY, VAULT_MARKER_FILE } from '@holi/shared'
+import {
+  LOCAL_ONLY_IGNORE_LINES,
+  MEMORY_INDEX_EMPTY,
+  OS_JUNK_FILES,
+  VAULT_MARKER_FILE,
+} from '@holi/shared'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { SettingsFragment } from '../src/main/vault/seed/types'
 import { claudeSeed, agentSettings } from '../src/plugins/agent/main/claude/seed'
@@ -421,6 +426,14 @@ describe('ensureSeeded — the .gitignore', () => {
     for (const line of LOCAL_ONLY_IGNORE_LINES) expect(await lines(root)).toContain(line)
   })
 
+  it('carries the OS junk files too, once each', async () => {
+    const root = await tempDir()
+    await ensureSeeded(root)
+    await ensureSeeded(root)
+    const all = await lines(root)
+    for (const name of OS_JUNK_FILES) expect(all.filter((l) => l === name)).toHaveLength(1)
+  })
+
   it('APPENDS to a .gitignore that already exists, keeping what was there', async () => {
     // The reason .gitignore is not create-if-missing
     // like the rest. An adopted repo usually already has one, so ours would
@@ -450,7 +463,10 @@ describe('ensureSeeded — the .gitignore', () => {
 
   it('reports nothing to write when the lines are already present', async () => {
     const root = await tempDir()
-    await writeFile(join(root, '.gitignore'), `${LOCAL_ONLY_IGNORE_LINES.join('\n')}\n`)
+    await writeFile(
+      join(root, '.gitignore'),
+      `${[...LOCAL_ONLY_IGNORE_LINES, ...OS_JUNK_FILES].join('\n')}\n`,
+    )
     expect((await ensureSeeded(root)).written).not.toContain('.gitignore')
   })
 
