@@ -10,10 +10,12 @@ import { readFile } from 'node:fs/promises'
 import { isAbsolute, relative } from 'node:path'
 import { completeTask } from '../shared/completion'
 import {
+  isPrivateTask,
   isTaskFilePath,
   parseTaskFile,
   parseTaskPatch,
   serializeTaskFile,
+  sharedTaskPath,
   snapshotTasks,
   taskFilePath,
   type TaskPatch,
@@ -26,6 +28,7 @@ import {
   cap,
   type CapabilityContext,
   CapabilityError,
+  flagParam,
   knownPath,
   noParams,
   paramsObject,
@@ -53,6 +56,9 @@ export interface CreateTaskInput {
   title: string
   /** The lane, a folder; the vault root by default. */
   folder?: string
+  /** Shared with the vault, a file that syncs. Private by default: a new task
+   *  is `task.<slug>.local.md`, on this machine only. */
+  shared?: boolean
   /** `todo` by default. */
   status?: string
   /** Seeds the body, under the title. */
@@ -104,7 +110,30 @@ async function readTask(root: string, rel: VaultRelPath): Promise<Task> {
 }
 
 /**
- * `text` written to the first free `task.<slug>.md` in `folder`.
+ * Where an app may write a task file: where it may write a note, and the
+ * private twin of such a place. `isAppWritablePath` refuses every local file
+ * because a local file is mostly someone's own configuration
+ * (`USER.local.md`, the settings' `.local` twins); a private task is the
+ * person's own task, which an app on their board may make and keep. Its
+ * shared name is what the fences judge, so a task in a local folder, or in
+ * any place a note could not be written, stays out of reach.
+ */
+function appTaskPath(path: string): VaultRelPath {
+  const rel = safe(path)
+  const judged = isPrivateTask(rel) ? sharedTaskPath(rel) : rel
+  if (judged === null) throw new CapabilityError('FORBIDDEN', path)
+  try {
+    writablePath(judged)
+  } catch {
+    throw new CapabilityError('FORBIDDEN', path)
+  }
+  if (!isTaskFilePath(rel)) throw new CapabilityError('BAD_REQUEST', `${rel} is not a task file`)
+  return rel
+}
+
+/**
+ * `text` written to the first free `task.<slug>.md` (or, private,
+ * `task.<slug>.local.md`) in `folder`.
  *
  * Two tasks may honestly share a title ("Call the vendor" twice is a normal
  * week), so a colliding slug takes a numeric suffix. Refusing would make a
@@ -118,13 +147,14 @@ async function createTaskFile(
   ctx: CapabilityContext,
   folder: string,
   title: string,
+  shared: boolean,
   text: string,
 ): Promise<VaultRelPath> {
   const slug = taskSlug(title)
   for (let n = 1; n <= 1000; n++) {
-    const rel = safe(taskFilePath(folder, n === 1 ? slug : `${slug}-${n}`))
+    const rel = safe(taskFilePath(folder, n === 1 ? slug : `${slug}-${n}`, shared))
     const abs =
-      ctx.bundle !== null ? await writableFile(ctx, writablePath(rel)) : absPathFor(ctx.root, rel)
+      ctx.bundle !== null ? await writableFile(ctx, appTaskPath(rel)) : absPathFor(ctx.root, rel)
     const created = await withFileLock(abs, async () => {
       if ((await readFile(abs, 'utf8').catch(() => null)) !== null) return false
       await writeAtomic(ctx.root, rel, text)
@@ -167,10 +197,18 @@ export const taskCapabilities = (deps: TaskCapabilitiesDeps) => {
      * one file, one write, through the validator a field edit uses, so nothing
      * can create a file the board would refuse to parse. `description` seeds
      * the body (the agenda's link to an event), under the title as its heading.
-     * An app creates one where it may write a note (`writablePath`).
+     * An app creates one where it may write a note (`appTaskPath`).
+     *
+     * **Private unless `shared`**: a new task is `task.<slug>.local.md`, on
+     * this machine and no one else's board, until the person shares it.
      */
     'tasks.create': cap({
-      doors: ['ui', 'app'],
+      doors: ['ui', 'app', 'cli'],
+      cli: {
+        args: ['title', 'folder?'],
+        flags: ['shared'],
+        summary: 'add a task in a folder (the vault root); private to this machine unless --shared',
+      },
       writes: true,
       params: (raw): CreateTaskInput => {
         const p = paramsObject(raw)
@@ -180,6 +218,7 @@ export const taskCapabilities = (deps: TaskCapabilitiesDeps) => {
         }
         const input: CreateTaskInput = {
           title: stringParam(p, 'title'),
+          shared: flagParam(p, 'shared'),
           extra: extra as Record<string, unknown>,
         }
         const folder = optionalString(p, 'folder')
@@ -206,14 +245,21 @@ export const taskCapabilities = (deps: TaskCapabilitiesDeps) => {
           // format keeps it.
           description: setFirstHeading(input.description ?? '', input.title),
         })
-        const rel = await createTaskFile(ctx, input.folder ?? '', input.title, text)
+        const rel = await createTaskFile(
+          ctx,
+          input.folder ?? '',
+          input.title,
+          input.shared === true,
+          text,
+        )
         return { path: rel }
       },
+      text: (r) => (isPrivateTask(r.path) ? `private: ${r.path}` : `shared: ${r.path}`),
     }),
 
     'tasks.list': cap({
       doors: ['app', 'cli'],
-      cli: { args: [], summary: 'every task: status, title and path' },
+      cli: { args: [], summary: 'every task: status, title, path, and private for a private one' },
       params: noParams,
       // An app is told only the tasks it may read, as `docs.list` tells it
       // only the notes: a task's path and title are its content too.
@@ -221,7 +267,14 @@ export const taskCapabilities = (deps: TaskCapabilitiesDeps) => {
         const tasks = snapshotTasks(await ctx.snapshot()).items
         return ctx.bundle === null ? tasks : tasks.filter((t) => readableOrNull(t.path) !== null)
       },
-      text: (tasks) => tasks.map((t) => `${t.status}\t${t.title}\t${t.path}`).join('\n'),
+      // A private task says so: it is on this machine only, and an agent
+      // reporting tasks to a teammate should know which ones they cannot see.
+      text: (tasks) =>
+        tasks
+          .map(
+            (t) => `${t.status}\t${t.title}\t${t.path}${isPrivateTask(t.path) ? '\tprivate' : ''}`,
+          )
+          .join('\n'),
     }),
 
     'tasks.complete': cap({
@@ -241,7 +294,7 @@ export const taskCapabilities = (deps: TaskCapabilitiesDeps) => {
         // An app writes only where it may write a note; the agent writes anywhere.
         const abs =
           ctx.bundle !== null
-            ? await writableFile(ctx, writablePath(rel))
+            ? await writableFile(ctx, appTaskPath(rel))
             : absPathFor(ctx.root, rel)
         const result = await withFileLock(abs, () => taskDoneOp(ctx.root, rel, deps.today()))
         if (!result.ok) throw new CapabilityError('BAD_REQUEST', result.error)
@@ -281,10 +334,7 @@ export const taskCapabilities = (deps: TaskCapabilitiesDeps) => {
               "a task's text is not a field: write it as a note (docs.write)",
             )
           }
-          rel = writablePath(path)
-          if (!isTaskFilePath(rel)) {
-            throw new CapabilityError('BAD_REQUEST', `${rel} is not a task file`)
-          }
+          rel = appTaskPath(path)
           abs = await writableFile(ctx, rel)
         } else {
           rel = safe(path)

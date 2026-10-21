@@ -7,7 +7,8 @@
  *   `@`-mentions, `[[wiki-links]]`, live preview): the first line is the
  *   title, set larger, and any further lines are the description.
  * - **Tab is a wizard.** Tab swaps the whole panel for the next field's step
- *   (Lane, Due, Priority, Tags) and wraps back to the text; Shift+Tab goes
+ *   (Lane, Due, Priority, Assignees, Tags, Sharing) and wraps back to the
+ *   text; Sharing is private until picked otherwise. Shift+Tab goes
  *   back. On a step ↑/↓ choose and the value follows; Space toggles a tag;
  *   Backspace clears Due or Priority; on Lane, typing finds a folder or names
  *   a new one. Escape on a step returns to the text. The bar at the foot names
@@ -31,7 +32,7 @@ import { Prec } from '@codemirror/state'
 import { Decoration, EditorView, keymap, tooltips } from '@codemirror/view'
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
-import { AtSign, CalendarDays, Check, Flag, Folder, Hash, PenLine } from 'lucide-react'
+import { AtSign, CalendarDays, Check, Flag, Folder, Hash, Lock, PenLine, Users } from 'lucide-react'
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { activeDocAtom, duePresets, nowAtom, shortStamp, snapshotAtom } from '@/plugin-api'
 import {
@@ -71,8 +72,8 @@ const FULL = 240
 const STEP_HEADING = 38
 const ROW = 34
 
-type Step = 'text' | 'lane' | 'due' | 'priority' | 'people' | 'tags'
-const STEPS: readonly Step[] = ['text', 'lane', 'due', 'priority', 'people', 'tags']
+type Step = 'text' | 'lane' | 'due' | 'priority' | 'people' | 'tags' | 'share'
+const STEPS: readonly Step[] = ['text', 'lane', 'due', 'priority', 'people', 'tags', 'share']
 const STEP_NAMES: Record<Step, string> = {
   text: 'Task',
   lane: 'Lane',
@@ -80,6 +81,7 @@ const STEP_NAMES: Record<Step, string> = {
   priority: 'Priority',
   people: 'Assignees',
   tags: 'Tags',
+  share: 'Sharing',
 }
 
 type Draft = {
@@ -90,6 +92,8 @@ type Draft = {
   /** GitHub logins, from the Assignees step. `@login` in the title adds more. */
   assignees: string[]
   tags: string[]
+  /** Shared with the vault. A new task is private until Sharing says so. */
+  shared: boolean
 }
 
 /** First line → title, the rest → description. */
@@ -183,6 +187,7 @@ export function QuickAdd({
     folder: activeDoc ? folderOf(activeDoc.path) : ROOT_LANE,
     assignees: [],
     tags: [],
+    shared: false,
   }))
   const set = (patch: Partial<Draft>) => setDraft((d) => ({ ...d, ...patch }))
   // Opened from a lane's +: that folder is the lane, taken once.
@@ -255,13 +260,14 @@ export function QuickAdd({
     // The path the new file will have (main's `freeTaskPath`), so the card can
     // take over the preview's layoutId. A guess that misses costs the flight.
     const taken = new Set([...tasks.keys(), ...snapshotTasks(snapshot).broken.map((b) => b.path)])
-    let predicted = taskFilePath(folder, taskSlug(title))
+    let predicted = taskFilePath(folder, taskSlug(title), draft.shared)
     for (let n = 2; taken.has(predicted); n++)
-      predicted = taskFilePath(folder, `${taskSlug(title)}-${n}`)
+      predicted = taskFilePath(folder, `${taskSlug(title)}-${n}`, draft.shared)
     if (flight) setFlightId(predicted)
     const sent = draft
     setText('')
-    set({ due: undefined, priority: undefined, assignees: [], tags: [] })
+    // Sharing clears with the fields: each task is shared on purpose.
+    set({ due: undefined, priority: undefined, assignees: [], tags: [], shared: false })
     go('text')
     onAdded?.()
     try {
@@ -269,6 +275,7 @@ export function QuickAdd({
         title,
         status: 'todo',
         folder,
+        shared: sent.shared,
         ...(description ? { description } : {}),
         extra: {
           ...(sent.due ? { due: sent.due } : {}),
@@ -409,7 +416,26 @@ export function QuickAdd({
             ? personChoices()
             : step === 'tags'
               ? tagChoices()
-              : []
+              : step === 'share'
+                ? [
+                    {
+                      key: 'private',
+                      icon: Lock,
+                      label: 'Private',
+                      value: 'Only on this machine',
+                      on: !draft.shared,
+                      pick: () => single({ shared: false }),
+                    },
+                    {
+                      key: 'shared',
+                      icon: Users,
+                      label: 'Shared with vault',
+                      value: 'Syncs to everyone',
+                      on: draft.shared,
+                      pick: () => single({ shared: true }),
+                    },
+                  ]
+                : []
   const at = Math.min(cursor, Math.max(0, choices.length - 1))
   /** One line until Shift+Enter starts a description; a step as tall as its
    *  rows, to a point. */
@@ -684,6 +710,7 @@ export function QuickAdd({
           Hash,
           draft.tags.length ? draft.tags.map((t) => `#${t}`).join(' ') : undefined,
         )}
+        {stepToken('share', draft.shared ? Users : Lock, draft.shared ? 'Shared' : undefined)}
       </div>
     </div>
   )

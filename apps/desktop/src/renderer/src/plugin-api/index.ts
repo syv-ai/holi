@@ -51,6 +51,7 @@ export {
   activeRemoteAtom,
   historyEpochsAtom,
   loadSnapshotAtom,
+  renameNoteAtom,
   snapshotAtom,
   syncStateAtom,
 } from '@/state/vaults'

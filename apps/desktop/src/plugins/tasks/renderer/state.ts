@@ -11,7 +11,7 @@
 import type { Task, TaskStatus } from '../shared/types'
 import { allLabels, virtualLabels } from '../shared/labels'
 import { dailyNoteFilename, parseWikiLinks, toggleLogin } from '@holi/shared'
-import { isAssignedTo, snapshotTasks } from '../shared/task-file'
+import { isAssignedTo, privateTaskPath, sharedTaskPath, snapshotTasks } from '../shared/task-file'
 import { taskArea } from '../shared/types'
 import { atom } from 'jotai'
 import {
@@ -23,6 +23,7 @@ import {
   memberLoginsAtom,
   nowAtom,
   peopleList,
+  renameNoteAtom,
   sessionAtom,
   snapshotAtom,
   type Tab,
@@ -278,6 +279,8 @@ export const createTaskAtom = atom(
       title: string
       status: TaskStatus
       folder: string
+      /** Shared with the vault; private to this machine when not. */
+      shared: boolean
       description?: string
       /** Set before the task exists (quick add, full create): written with
        *  the create, one file, one write. */
@@ -360,6 +363,16 @@ export const deleteTasksAtom = atom(null, async (get, set, paths: string[]) => {
   await Promise.all(paths.map((path) => tasksCap.delete(remote, { path })))
   set(workspaceAtom, closeTabsForPaths(get(workspaceAtom), paths))
   await set(loadSnapshotAtom)
+})
+
+/** Shares a private task with the vault, or makes a shared one private: the
+ *  file renamed to drop or add the `.local.` marker, through the rename every
+ *  file takes, so inbound links and open tabs follow and a commit lands either
+ *  side of it. A task the rename cannot change is left alone. */
+export const setTaskSharedAtom = atom(null, async (_get, set, path: string, shared: boolean) => {
+  const to = shared ? sharedTaskPath(path) : privateTaskPath(path)
+  if (to === null) return
+  await set(renameNoteAtom, { from: path, to })
 })
 
 export const deleteTaskAtom = atom(null, async (get, set, path: string) => {

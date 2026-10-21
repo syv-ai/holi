@@ -36,6 +36,12 @@ A file named `task.<name>.md` in the folder it is about. Frontmatter carries `st
 description. The path is its identity
 and the filename prefix is what makes it a task. See [tasks](features/tasks.md).
 
+### Private task
+
+A task named `task.<name>.local.md`: a [local file](#local-file), on the board of the machine that
+holds it and no one else's. New tasks are private by default; sharing one renames it to
+`task.<name>.md`, a **shared task**, which syncs. See [tasks](features/tasks.md).
+
 ### Lane
 
 A task's containing folder, derived and never stored. The board groups by it; moving a task between

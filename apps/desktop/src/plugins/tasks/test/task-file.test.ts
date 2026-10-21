@@ -3,11 +3,14 @@ import {
   TaskFileError,
   assigneesInTitle,
   isAssignedTo,
+  isPrivateTask,
   isTaskFilePath,
+  privateTaskPath,
   remindsViewer,
   parseTaskFile,
   parseTaskPatch,
   serializeTaskFile,
+  sharedTaskPath,
   taskFileName,
   taskFilePath,
   taskSlug,
@@ -37,11 +40,38 @@ describe('taskSlug', () => {
 
 describe('taskFilePath', () => {
   it('is `task.<slug>.md` inside the folder the task belongs to', () => {
-    expect(taskFilePath('projects/q2', 'Fix login')).toBe('projects/q2/task.fix-login.md')
+    expect(taskFilePath('projects/q2', 'Fix login', true)).toBe('projects/q2/task.fix-login.md')
   })
 
   it('drops the folder segment at the vault root', () => {
-    expect(taskFilePath('', 'Fix login')).toBe('task.fix-login.md')
+    expect(taskFilePath('', 'Fix login', true)).toBe('task.fix-login.md')
+  })
+
+  it('names a private task `task.<slug>.local.md`, which git keeps on this machine', () => {
+    const path = taskFilePath('projects/q2', 'Fix login', false)
+    expect(path).toBe('projects/q2/task.fix-login.local.md')
+    expect(isTaskFilePath(path)).toBe(true)
+    expect(isPrivateTask(path)).toBe(true)
+  })
+})
+
+describe('sharing a task is a rename', () => {
+  it('drops the marker to share and adds it to make private', () => {
+    expect(sharedTaskPath('ops/task.fix-login.local.md')).toBe('ops/task.fix-login.md')
+    expect(privateTaskPath('ops/task.fix-login.md')).toBe('ops/task.fix-login.local.md')
+  })
+
+  it('offers neither where a rename of the file cannot do it', () => {
+    expect(sharedTaskPath('ops/task.fix-login.md')).toBeNull()
+    expect(privateTaskPath('ops/task.fix-login.local.md')).toBeNull()
+    // In a local folder the task stays local whatever its name says.
+    expect(isPrivateTask('mine.local.d/task.a.md')).toBe(true)
+    expect(sharedTaskPath('mine.local.d/task.a.local.md')).toBeNull()
+    expect(privateTaskPath('mine.local.d/task.a.md')).toBeNull()
+  })
+
+  it('keeps the marker out of the fallback title', () => {
+    expect(titleFromTaskPath('task.fix-login.local.md')).toBe('Fix login')
   })
 })
 
@@ -304,7 +334,7 @@ describe('parseTaskPatch', () => {
 
 describe('taskFileName', () => {
   it('is the filename half of taskFilePath', () => {
-    expect(taskFileName('Fix login')).toBe('task.fix-login.md')
+    expect(taskFileName('Fix login', true)).toBe('task.fix-login.md')
   })
 })
 

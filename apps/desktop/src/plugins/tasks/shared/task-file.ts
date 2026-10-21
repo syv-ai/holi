@@ -32,6 +32,7 @@ import {
   firstHeading,
   FrontmatterError,
   hasLogin,
+  isLocalOnlyPath,
   parseStamp,
   sameLogin,
   splitFrontmatter,
@@ -100,13 +101,21 @@ export function taskSlug(title: string): string {
   return slug === '' ? SLUG_FALLBACK : slug
 }
 
-export function taskFileName(title: string): string {
-  return `${TASK_PREFIX}${taskSlug(title)}.md`
+/** The end of a private task's name, `task.<name>.local.md`: the `.local.`
+ * marker keeps the file on this machine (`isLocalOnlyPath`), so it is never
+ * committed and never reaches anyone else's board. */
+const PRIVATE_SUFFIX = '.local.md'
+
+/** A new task's filename. `shared` says whether it syncs: a private task
+ * carries the `.local.` marker. Every caller names it, because private is a
+ * default of the ways a task is created, not of the format. */
+export function taskFileName(title: string, shared: boolean): string {
+  return `${TASK_PREFIX}${taskSlug(title)}${shared ? '.md' : PRIVATE_SUFFIX}`
 }
 
 /** The canonical path for a new task in `folder` ('' = the vault root). */
-export function taskFilePath(folder: string, title: string): string {
-  const name = taskFileName(title)
+export function taskFilePath(folder: string, title: string, shared: boolean): string {
+  const name = taskFileName(title, shared)
   return folder === '' ? name : `${folder}/${name}`
 }
 
@@ -114,6 +123,35 @@ export function taskFilePath(folder: string, title: string): string {
 export function isTaskFilePath(rel: string): boolean {
   const base = rel.split('/').at(-1) ?? ''
   return base.startsWith(TASK_PREFIX) && base.endsWith('.md')
+}
+
+/**
+ * Is this task private, a file that stays on this machine? The path is the
+ * whole rule, the same one that keeps any local file out of git, so a task in
+ * a `.local.` folder is private too.
+ */
+export function isPrivateTask(rel: string): boolean {
+  return isLocalOnlyPath(rel)
+}
+
+/**
+ * Where a private task goes to be shared with the vault: its name without the
+ * marker (`task.fix-login.local.md` to `task.fix-login.md`). Null when renaming
+ * the file cannot share it: it is shared already, it sits in a local folder,
+ * or its marker is somewhere other than the end of its name.
+ */
+export function sharedTaskPath(rel: string): string | null {
+  if (!rel.endsWith(PRIVATE_SUFFIX)) return null
+  const shared = `${rel.slice(0, -PRIVATE_SUFFIX.length)}.md`
+  return isTaskFilePath(shared) && !isLocalOnlyPath(shared) ? shared : null
+}
+
+/** Where a shared task goes to be made private: its name with the marker
+ * (`task.fix-login.md` to `task.fix-login.local.md`). Null for a task that is
+ * private already. */
+export function privateTaskPath(rel: string): string | null {
+  if (!isTaskFilePath(rel) || isLocalOnlyPath(rel)) return null
+  return `${rel.slice(0, -'.md'.length)}${PRIVATE_SUFFIX}`
 }
 
 /**
@@ -125,7 +163,11 @@ export function isTaskFilePath(rel: string): boolean {
  */
 export function titleFromTaskPath(rel: string): string {
   const base = rel.split('/').at(-1) ?? ''
-  const stem = base.slice(TASK_PREFIX.length).replace(/\.md$/, '')
+  // The privacy marker is not part of the name.
+  const stem = base
+    .slice(TASK_PREFIX.length)
+    .replace(/\.md$/, '')
+    .replace(/\.local$/, '')
   const words = stem.replace(/-+/g, ' ').trim()
   return words === '' ? SLUG_FALLBACK : words.charAt(0).toUpperCase() + words.slice(1)
 }
