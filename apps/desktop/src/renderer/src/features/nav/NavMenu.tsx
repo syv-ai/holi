@@ -58,17 +58,19 @@ export function NavMenu({
   // restarts its morph when its items change.
   const items = useMemo((): MorphingMenuItem[] => {
     const placed: { order: number; item: MorphingMenuItem }[] = [
-      ...rail.map(({ surface, order, of, label, instances, command, running }) => ({
+      ...rail.map(({ surface, order, of, label, instances, command, running, count }) => ({
         order,
         item: {
           id: surface,
           label: `${label ?? surfaceLabel(of)}${running ? ': running' : ''}`,
           icon: of.icon,
           ...(running ? { tone: 'live' as const } : {}),
-          // The board's count stays core's until rail items carry badges.
+          // The board's count is core's own; a plugin's item brings its own.
           ...(surface === 'board'
             ? { badge: openTaskCount, badgeTone: overdueCount > 0 ? ('alert' as const) : undefined }
-            : {}),
+            : count === undefined
+              ? {}
+              : { badge: count }),
           // Instances, most recently used first, drill down; the rest open.
           ...(command !== undefined
             ? { onSelect: () => void runCommand(command) }

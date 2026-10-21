@@ -110,6 +110,9 @@ export interface AgentSessions {
    *  was still pending (null when no Stop said: a confirmed idle, the safety
    *  cap, an older hook script). Returns the undo. */
   onTurnEnd(listener: (id: string, pending: number | null) => void): () => void
+  /** Hear the live sessions each time the list told to the renderer
+   *  changes. Returns the undo. */
+  onSessions(listener: (sessions: SessionSummary[]) => void): () => void
   /** Put text in a session's input, unsent: a live one by id, or a new one
    *  named from the text. Opens a terminal on it when Holi has none. */
   send(args: Geometry & { text: string; target: string | 'new' }): Promise<OpenResult>
@@ -175,6 +178,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
   const contextPercent = new Map<string, number>()
 
   const turnEnds = new Set<(id: string, pending: number | null) => void>()
+  const sessionListeners = new Set<(sessions: SessionSummary[]) => void>()
   /** What the Stop that is ending a turn said was pending, until the end is
    *  told. */
   const stopPending = new Map<string, number>()
@@ -207,6 +211,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     if (encoded === lastPushed) return
     lastPushed = encoded
     deps.emit(remote, 'sessions', next)
+    for (const listener of sessionListeners) listener(next)
   }
 
   const targetOf = (c: Current): VaultCliTarget => ({
@@ -402,6 +407,10 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     onTurnEnd(listener) {
       turnEnds.add(listener)
       return () => turnEnds.delete(listener)
+    },
+    onSessions(listener) {
+      sessionListeners.add(listener)
+      return () => void sessionListeners.delete(listener)
     },
 
     async send({ text, target, cols, rows: r }) {

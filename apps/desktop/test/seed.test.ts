@@ -138,6 +138,7 @@ describe('the seed tables', () => {
       '.claude/skills/holi-feedback/SKILL.md',
       '.claude/skills/memory/SKILL.md',
       '.claude/skills/memory/lint.mjs',
+      '.claude/skills/notify/SKILL.md',
       '.claude/skills/scheduled-agents/SKILL.md',
       '.claude/skills/theme/SKILL.md',
       '.claude/skills/using-tasks/SKILL.md',
@@ -677,6 +678,7 @@ describe('mergedSettings', () => {
       'Bash(ls:*)',
       'Bash(holi schedules list:*)',
       'Bash(node .claude/skills/memory/lint.mjs:*)',
+      'Bash(holi agent notify:*)',
       'Bash(holi pdf comments:*)',
       'Bash(holi pdf typst:*)',
       'Bash(holi apps:*)',
@@ -697,6 +699,7 @@ describe('mergedSettings', () => {
     expect(after.permissions.allow).toEqual([
       'Bash(holi schedules list:*)',
       'Bash(node .claude/skills/memory/lint.mjs:*)',
+      'Bash(holi agent notify:*)',
       'Bash(holi pdf comments:*)',
       'Bash(holi pdf typst:*)',
       'Bash(holi apps:*)',

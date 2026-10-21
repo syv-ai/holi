@@ -4,5 +4,8 @@
  */
 import { capClient } from '@/plugin-api'
 import type { agentCapabilities } from '../main/host/capabilities'
+import type { inboxCapabilities } from '../main/inbox/capabilities'
 
-export const agentCap = capClient<ReturnType<typeof agentCapabilities>>('agent')
+export const agentCap = capClient<
+  ReturnType<typeof agentCapabilities> & ReturnType<typeof inboxCapabilities>
+>('agent')

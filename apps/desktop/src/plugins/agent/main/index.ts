@@ -22,6 +22,10 @@ import { createAgentSessions } from './host/sessions'
 import { createAgentTerminals } from './host/terminals'
 import { openTurnLog } from './host/turn-log'
 import { worktreeEnd } from './host/worktree-end'
+import { inboxCapabilities } from './inbox/capabilities'
+import { createInbox } from './inbox/inbox'
+import { watchNeedsYou } from './inbox/needs-you'
+import { INBOX_FILE, parseInbox } from './inbox/rules'
 import { scheduleCapabilities, SCHEDULE_NAMESPACES } from './schedules/capabilities'
 import { createScheduler, parseSchedulesFile } from './schedules/scheduler'
 
@@ -45,15 +49,30 @@ export const agentMain: MainPlugin = {
       turnLogFor: openTurnLog,
       snapshot: worktreeEnd,
     })
-    ctx.register(
-      AGENT_NAMESPACES,
-      agentCapabilities({
+    // What the agent and Holi want the person to see: an entry in the
+    // vault's inbox, and a banner while Holi is out of sight.
+    const inbox = createInbox({
+      store: jsonFileStore(join(ctx.root, INBOX_FILE), parseInbox),
+      notify: (notice) => ctx.notify(notice),
+      changed: (view) => ctx.emit(ctx.remote, 'inbox', view),
+      open: (entry) => ctx.emit(ctx.remote, 'inbox-open', entry),
+    })
+    const liveRemote = (): string | null => ctx.active()?.remote ?? null
+    ctx.register(AGENT_NAMESPACES, {
+      ...agentCapabilities({
         sessions: started,
         terminals,
-        liveRemote: () => ctx.active()?.remote ?? null,
+        liveRemote,
         commitNow: () => ctx.commitNow(),
       }),
-    )
+      ...inboxCapabilities({ inbox, liveRemote }),
+    })
+    const unwatchNeedsYou = watchNeedsYou({
+      sessions: started,
+      focused: () => ctx.focused(),
+      raise: (notice) => inbox.raise(notice),
+      log: (msg) => console.error(`[agent] ${msg}`),
+    })
     // Which schedules this machine runs, and what they did: outside the
     // vault, where the agent cannot approve its own (`schedules/scheduler.ts`).
     const schedules = createScheduler({
@@ -110,6 +129,7 @@ export const agentMain: MainPlugin = {
     return async () => {
       schedules.dispose()
       unreport()
+      unwatchNeedsYou()
       await started.leave().catch((err) => console.error('[agent] leave failed:', err))
       await terminals.closeAll().catch((err) => console.error('[agent] terminals:', err))
     }

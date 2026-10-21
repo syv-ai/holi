@@ -92,6 +92,8 @@ function rig(
     binDir: () => '/holi/bin',
     githubToken: () => null,
     frameOrigin: () => () => {},
+    notify: () => false,
+    focused: () => false,
   })
   let root = ''
   const capabilities = createCapabilityHost({
@@ -400,6 +402,8 @@ describe('an owned prefix', () => {
       binDir: () => '/holi/bin',
       githubToken: () => null,
       frameOrigin: () => () => {},
+      notify: () => false,
+      focused: () => false,
     })
     const root = await tempDir()
     const set = (on: boolean) => writeVaultSettings(root, { committed: { plugins: { owner: on } } })

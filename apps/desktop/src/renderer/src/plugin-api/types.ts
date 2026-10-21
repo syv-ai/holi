@@ -160,6 +160,8 @@ export interface RailItem {
   command?: string
   /** While true, the item shows that something of the surface's is running. */
   live?: Atom<boolean>
+  /** A count on the item's glyph, such as what is unread; none at 0. */
+  badge?: Atom<number>
 }
 
 export interface SettingsSectionHeading {

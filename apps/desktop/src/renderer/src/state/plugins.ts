@@ -264,7 +264,12 @@ export const instancesAtom = atom(
 export const railAtom = atom(
   (
     get,
-  ): readonly (RailItem & { of: Surface; instances?: readonly string[]; running: boolean })[] => {
+  ): readonly (RailItem & {
+    of: Surface
+    instances?: readonly string[]
+    running: boolean
+    count?: number
+  })[] => {
     const surfaces = get(surfacesAtom)
     return get(contributionsAtom)
       .flatMap((c) => c.rail ?? [])
@@ -272,9 +277,10 @@ export const railAtom = atom(
         const of = surfaces.get(item.surface)
         if (of === undefined || (item.visible !== undefined && !get(item.visible))) return []
         const running = item.live !== undefined && get(item.live)
-        if (of.instances === undefined) return [{ ...item, of, running }]
+        const count = item.badge === undefined ? {} : { count: get(item.badge) }
+        if (of.instances === undefined) return [{ ...item, of, running, ...count }]
         const instances = get(of.instances)
-        return instances.length === 0 ? [] : [{ ...item, of, instances, running }]
+        return instances.length === 0 ? [] : [{ ...item, of, instances, running, ...count }]
       })
       .sort((a, b) => a.order - b.order)
   },
