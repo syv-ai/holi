@@ -1,5 +1,5 @@
 /**
- * Core's capabilities: the vault's notes, search, recents, settings, members,
+ * Core's capabilities: the vault's notes (and an app's write of one), search, recents, settings, members,
  * history and sync, and bringing this release's skills to it. They run
  * whatever features are on.
  *
@@ -11,19 +11,31 @@ import { lstat, readFile, writeFile, unlink, mkdir, open, readdir } from 'node:f
 import { dirname, join } from 'node:path'
 import {
   appBundleOf,
-  isTaskFilePath,
+  isAppBundlePath,
   isLocalOnlyPath,
   syncLabel,
   type RecentEntry,
   type SyncState,
+  type VaultRelPath,
   type VaultSnapshot,
 } from '@holi/shared'
 import { exactPath } from '@holi/shared/path-safety-node'
 import { tryGit } from '../git'
+import { writeScreenshot } from '../screenshot-files'
 import { readVaultSettings } from '../vault/settings'
+import { withFileLock, writeAtomic } from '../vault/vault-files'
 import { isSearchable, searchVault, type SearchHit } from '../vault/search'
 import { CapabilityError, unavailable } from './error'
-import { readableOrNull, readablePath, readNote } from './fences'
+import {
+  inSnapshot,
+  readableOrNull,
+  readablePath,
+  readNote,
+  requireOpen,
+  shownPath,
+  writableFile,
+  writablePath,
+} from './fences'
 import { flagParam, limitParam, noParams, paramsObject, pathParams, stringParam } from './params'
 import { cap, type CapabilityContext } from './registry'
 import { renderNote } from './render-note'
@@ -54,7 +66,21 @@ export const VAULT_NAMESPACES = ['docs', 'vault', 'sync', 'skills'] as const
  */
 export interface SkillsUpdated {
   summary: string
+  /** The vault files it replaced, added or merged, by path. */
+  changed: string[]
   conflicts: { prompt: string; summary: string } | null
+}
+
+/** Where the vault's skills stand against this release. */
+export interface SkillsStatus {
+  /** The shipped files an update would bring, by vault path. */
+  pending: string[]
+  /** The Holi version that last wrote shipped files on this machine, or null
+   *  when none has (a clone this machine never seeded or updated). */
+  release: string | null
+  /** Whether the vault asks for the update to run on open
+   *  (`autoUpdateSkills` in `.holi/settings/app.yaml`). */
+  autoUpdate: boolean
 }
 
 export interface VaultCapabilitiesDeps {
@@ -63,25 +89,38 @@ export interface VaultCapabilitiesDeps {
    * changes. Throws the refusal.
    */
   updateSkills(remote: string): Promise<SkillsUpdated>
-  /** The shipped files an update would bring the vault, by vault path;
-   *  writes nothing. */
-  pendingSkills(remote: string): Promise<string[]>
+  /** Whether an update would bring the vault anything, and what it said
+   *  last; writes nothing. */
+  skillsStatus(remote: string): Promise<SkillsStatus>
+  /** Show `path` to the person in a tab of `remote`'s window. Throws the
+   *  refusal. */
+  open(remote: string, path: VaultRelPath): void
+  /** Show `path` the same way, then a PNG of its tab once it has drawn.
+   *  Throws the refusal. */
+  screenshot(remote: string, path: VaultRelPath): Promise<Uint8Array>
+}
+
+/** A path the agent may show, by its normalised name (`shownPath`): a file
+ *  the vault's snapshot holds, or a vault app (a directory, which the snapshot
+ *  lists among `dirs`). A trailing slash is dropped: a shell completes a folder
+ *  with one, and an app's bundle is a folder. */
+async function shownFile(ctx: CapabilityContext, path: string): Promise<VaultRelPath> {
+  const rel = shownPath(path.replace(/\/+$/, ''))
+  if (isAppBundlePath(rel) && (await ctx.snapshot()).dirs.includes(rel)) return rel
+  return inSnapshot(ctx, rel, path)
 }
 
 const revision = (bytes: Buffer): string => createHash('sha256').update(bytes).digest('hex')
 
-function requireOpen(ctx: CapabilityContext): void {
-  if (ctx.core.syncState() === null) throw new CapabilityError('UNAVAILABLE', 'vault-not-open')
-}
-
-function writePath(path: string): string {
+async function writePath(ctx: CapabilityContext, path: string): Promise<string> {
   const rel = readablePath(path)
   if (
     !rel.endsWith('.md') ||
     appBundleOf(rel) !== null ||
-    isTaskFilePath(rel) ||
     isLocalOnlyPath(rel) ||
-    rel.split('/').some((part) => part.startsWith('.'))
+    rel.split('/').some((part) => part.startsWith('.')) ||
+    // A file a plugin claims, such as a task, is that plugin's to write.
+    (await ctx.claims()).some((claim) => claim.match(rel))
   ) {
     throw new CapabilityError('FORBIDDEN', path)
   }
@@ -183,7 +222,7 @@ export const vaultCapabilities = (deps: VaultCapabilitiesDeps) => ({
     params: (raw) => writeParams(raw, false, true),
     run: async (ctx, { path, body }) => {
       requireOpen(ctx)
-      const rel = writePath(path)
+      const rel = await writePath(ctx, path)
       const snapshot = await ctx.snapshot()
       if (
         (await ctx.core.claimed(rel)) ||
@@ -222,7 +261,7 @@ export const vaultCapabilities = (deps: VaultCapabilitiesDeps) => ({
     params: (raw) => writeParams(raw, true, true),
     run: async (ctx, { path, body, revision: expected }) => {
       requireOpen(ctx)
-      const rel = writePath(path)
+      const rel = await writePath(ctx, path)
       const snapshot = await ctx.snapshot()
       if (!snapshot.docs.some((d) => d.path === rel)) throw new CapabilityError('FORBIDDEN', path)
       const abs = await writableAbs(ctx, rel)
@@ -274,7 +313,7 @@ export const vaultCapabilities = (deps: VaultCapabilitiesDeps) => ({
     params: (raw) => writeParams(raw, true, false),
     run: async (ctx, { path, revision: expected }) => {
       requireOpen(ctx)
-      const rel = writePath(path)
+      const rel = await writePath(ctx, path)
       const snapshot = await ctx.snapshot()
       if (!snapshot.docs.some((d) => d.path === rel)) throw new CapabilityError('FORBIDDEN', path)
       const abs = await writableAbs(ctx, rel)
@@ -315,7 +354,7 @@ export const vaultCapabilities = (deps: VaultCapabilitiesDeps) => ({
     },
     run: async (ctx, { path, expected }) => {
       requireOpen(ctx)
-      const rel = writePath(path)
+      const rel = await writePath(ctx, path)
       const abs = await writableAbs(ctx, rel)
       if (expected === null) {
         if (
@@ -343,7 +382,7 @@ export const vaultCapabilities = (deps: VaultCapabilitiesDeps) => ({
     cli: { args: ['path'], summary: "a note's body and SHA256 revision from the same read" },
     params: pathParams,
     run: async (ctx, { path }): Promise<{ body: string; revision: string }> => {
-      const rel = writePath(path)
+      const rel = await writePath(ctx, path)
       if (!(await ctx.snapshot()).docs.some((d) => d.path === rel)) {
         throw new CapabilityError('FORBIDDEN', path)
       }
@@ -365,6 +404,110 @@ export const vaultCapabilities = (deps: VaultCapabilitiesDeps) => ({
     params: pathParams,
     run: async (ctx, { path }): Promise<string> => renderNote(await readNote(ctx, path)),
     text: (html) => html,
+  }),
+
+  /**
+   * Show a note, task, PDF, vault app or any vault file in a tab, so the
+   * agent can say "here it is" rather than "go to X". The CLI door only: the
+   * agent may show the person its own surface, and an app has `holi.open`.
+   * Never a secret file or this machine's state (`.holi/state/` holds the
+   * bridge's tokens): a prompt-injected agent must not put either on screen.
+   * Reversible: the tab closes.
+   */
+  'docs.open': cap({
+    doors: ['cli'],
+    cli: { args: ['path'], summary: 'show a note, task or other vault file in a tab' },
+    params: pathParams,
+    run: async (ctx, { path }) => {
+      requireOpen(ctx)
+      const rel = await shownFile(ctx, path)
+      deps.open(ctx.remote, rel)
+      return { path: rel }
+    },
+    text: ({ path }) => `opened ${path}`,
+  }),
+
+  /**
+   * A PNG of a file's tab as the person sees it, in this vault's theme and
+   * mode, so the agent can look at what it made: a vault app, a note's
+   * diagram. Opens the tab first, as `docs.open` does (it brings the window
+   * forward), and waits for it to finish drawing. Prints the PNG's absolute
+   * path, an owner-only file in the OS temp directory the agent reads back.
+   */
+  'docs.screenshot': cap({
+    doors: ['cli'],
+    cli: {
+      args: ['path'],
+      summary: "a PNG of a file's tab as the user sees it (opens it); prints the PNG's path",
+    },
+    params: pathParams,
+    run: async (ctx, { path }) => {
+      requireOpen(ctx)
+      const rel = await shownFile(ctx, path)
+      const png = await deps.screenshot(ctx.remote, rel)
+      return { path: rel, png: await writeScreenshot(png) }
+    },
+    text: ({ png }) => png,
+  }),
+
+  /**
+   * A note written by an app, as a member's editor would write it: the whole
+   * text, under `writablePath`'s fences, and only over the text the app read.
+   * `base` is that text, or null for a note that must not exist yet; a file
+   * that changed since (a teammate's pull, the agent, the person typing) is a
+   * CONFLICT, so the app reads again rather than overwrite what it never saw.
+   * The text is the revision: an app already holds it, and nothing else about
+   * a file says for certain that it is unchanged. A file a running plugin
+   * claims is written as that plugin allows (`SnapshotClaim.checkNoteWrite`:
+   * a task's body only). The app door only: the agent writes files with its
+   * own tools.
+   */
+  'docs.write': cap({
+    doors: ['app'],
+    writes: true,
+    params: (raw) => {
+      const p = paramsObject(raw)
+      const { text, base } = p
+      if (typeof text !== 'string') throw new CapabilityError('BAD_REQUEST', 'text must be text')
+      if (base !== null && typeof base !== 'string') {
+        throw new CapabilityError(
+          'BAD_REQUEST',
+          'base is required: the text you read, or null for a new note',
+        )
+      }
+      return { path: stringParam(p, 'path'), text, base }
+    },
+    run: async (ctx, { path, text, base }): Promise<{ path: string }> => {
+      requireOpen(ctx)
+      const rel = writablePath(path)
+      if (!rel.endsWith('.md')) {
+        throw new CapabilityError('BAD_REQUEST', `only a note (.md) can be written: ${rel}`)
+      }
+      const abs = await writableFile(ctx, rel)
+      // One app write to a file at a time, so two over the same base cannot
+      // both pass the check below.
+      await withFileLock(abs, async () => {
+        const current = await readFile(abs, 'utf8').catch(() => null)
+        if (current !== base) {
+          throw new CapabilityError(
+            'CONFLICT',
+            base === null
+              ? `already exists: ${rel}`
+              : current === null
+                ? `no longer exists: ${rel}`
+                : `changed since it was read: ${rel}`,
+          )
+        }
+        const claim = (await ctx.claims()).find((c) => c.match(rel))
+        try {
+          claim?.checkNoteWrite?.(rel, current, text)
+        } catch (err) {
+          throw new CapabilityError('BAD_REQUEST', (err as Error).message)
+        }
+        await writeAtomic(ctx.root, rel, text)
+      })
+      return { path: rel }
+    },
   }),
 
   'docs.search': cap({
@@ -487,13 +630,18 @@ export const vaultCapabilities = (deps: VaultCapabilitiesDeps) => ({
     doors: ['ui', 'cli'],
     cli: {
       args: [],
-      summary: 'the skills and hooks this release would bring the vault, one path per line',
+      summary:
+        'the skills and hooks this release would bring the vault, one path per line, and the release they came from',
     },
     params: noParams,
-    run: async (ctx): Promise<{ pending: string[] }> => ({
-      pending: await deps.pendingSkills(ctx.remote),
-    }),
-    text: ({ pending }) => (pending.length === 0 ? 'Skills are up to date.' : pending.join('\n')),
+    run: (ctx): Promise<SkillsStatus> => deps.skillsStatus(ctx.remote),
+    text: ({ pending, release }) =>
+      [
+        release === null ? null : `From Holi ${release}.`,
+        pending.length === 0 ? 'Skills are up to date.' : pending.join('\n'),
+      ]
+        .filter((line) => line !== null)
+        .join('\n'),
   }),
 
   /** `holi skills update`, and the palette's Update skills. */

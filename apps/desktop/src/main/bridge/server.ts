@@ -23,7 +23,8 @@ import { createServer, type RequestListener, type Server } from 'node:http'
 import { randomBytes } from 'node:crypto'
 import type { Dispatch } from '../capabilities/dispatch'
 import type { CliCommand } from '../capabilities/registry'
-import { resolveArgv } from './cli'
+import { refusalText, resolveArgv } from './cli'
+import { SPILL_BYTES, spillNotice, spillOutput } from './spill'
 
 /** What a route answers. No body is an empty one. */
 export interface Reply {
@@ -37,8 +38,16 @@ export interface Route {
   /** `discard` drains the body unread (a turn signal sends nothing worth
    *  reading); `text` hands it over as UTF-8. */
   body: 'discard' | 'text'
-  /** For the vault the token names. `query` is the URL's, token included. */
-  handle(remote: string, query: URLSearchParams, body: string): Reply | Promise<Reply>
+  /** For the vault the token names. `query` is the URL's, token included.
+   *  `signal` aborts when the caller hangs up before the answer: a route that
+   *  holds its answer (the agent's question hook waits for a person) lets go
+   *  of what it was holding. */
+  handle(
+    remote: string,
+    query: URLSearchParams,
+    body: string,
+    signal: AbortSignal,
+  ): Reply | Promise<Reply>
 }
 
 export interface BridgeServerDeps {
@@ -47,6 +56,9 @@ export interface BridgeServerDeps {
     dispatch: Dispatch
     /** The capabilities open at the CLI door, read per call. */
     commands(): readonly CliCommand[]
+    /** The vault's clone, where an answer too long to print is spilled
+     *  (`spill.ts`). Null prints it whole. */
+    rootFor(remote: string): Promise<string | null>
   }
   log?: (msg: string) => void
 }
@@ -100,16 +112,24 @@ export function createBridgeServer(deps: BridgeServerDeps = {}): BridgeServer {
 
   /**
    * `holi <namespace> <verb> ...`: argv arrives as repeated `argv` fields, in
-   * order. The output is the answer itself, so it answers text: 200 with it,
-   * 422 with a refusal's one line, 400 with usage, or 428, having run
+   * order, and a background session's job id as `job`. The output is the
+   * answer itself, so it answers text: 200 with it (or, past `SPILL_BYTES`,
+   * with where it was written, as JSON when the answer was asked for as JSON),
+   * 422 with a refusal and its next step, 400 with usage, or 428, having run
    * nothing, when the command reads a param from stdin that was not given.
    */
   async function runCli(remote: string, body: string): Promise<Reply> {
     const cli = deps.cli!
     const form = new URLSearchParams(body)
-    const request = resolveArgv(form.getAll('argv'), cli.commands(), form.get('stdin'))
+    const request = resolveArgv(
+      form.getAll('argv'),
+      cli.commands(),
+      form.get('stdin'),
+      form.get('job'),
+    )
     if (request.kind === 'usage') return { status: 400, body: request.text }
     if (request.kind === 'stdin') return { status: 428 }
+    let output: string
     try {
       const result = await cli.dispatch({
         door: 'cli',
@@ -118,12 +138,26 @@ export function createBridgeServer(deps: BridgeServerDeps = {}): BridgeServer {
         params: request.params,
       })
       const succeeded = commandSucceeded(cli.commands(), request.name, result.value)
-      return {
-        status: succeeded ? 200 : 422,
-        body: request.json || !succeeded ? JSON.stringify(result.value, null, 2) : result.text,
-      }
+      // A command that answered with its own failure: 422, the answer whole.
+      if (!succeeded) return { status: 422, body: JSON.stringify(result.value, null, 2) }
+      output = request.json ? JSON.stringify(result.value, null, 2) : result.text
     } catch (error) {
-      return { status: 422, body: `${request.label}: ${message(error)}` }
+      return { status: 422, body: refusalText(request, error) }
+    }
+    if (Buffer.byteLength(output) <= SPILL_BYTES) return { status: 200, body: output }
+    const root = await cli.rootFor(remote)
+    // The command has already run, and may have written: a failed spill
+    // prints the answer whole rather than turning a success into an error.
+    const spilled =
+      root === null
+        ? null
+        : await spillOutput(root, request.label, output).catch((error: unknown) => {
+            log(`spill failed: ${message(error)}`)
+            return null
+          })
+    return {
+      status: 200,
+      body: spilled === null ? output : spillNotice(request.label, spilled, request.json),
     }
   }
 
@@ -159,6 +193,13 @@ export function createBridgeServer(deps: BridgeServerDeps = {}): BridgeServer {
       return
     }
 
+    // A response that closes before it was finished is a caller that went
+    // away: its process ended, or its `curl` timed out.
+    const hungUp = new AbortController()
+    res.on('close', () => {
+      if (!res.writableFinished) hungUp.abort()
+    })
+
     let body = ''
     let received = 0
     req.on('data', (chunk: Buffer) => {
@@ -172,8 +213,9 @@ export function createBridgeServer(deps: BridgeServerDeps = {}): BridgeServer {
 
     req.on('end', () => {
       void Promise.resolve()
-        .then(() => route.handle(remote, new URLSearchParams(url.search), body))
+        .then(() => route.handle(remote, new URLSearchParams(url.search), body, hungUp.signal))
         .then((reply) => {
+          if (hungUp.signal.aborted) return
           if (reply.body === undefined || reply.body === '') {
             res.writeHead(reply.status).end()
             return

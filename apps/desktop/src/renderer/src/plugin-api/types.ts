@@ -3,12 +3,19 @@
  * surfaces it adds. Declared here, beside the surface plugins import, so
  * core's state and the plugins read one definition.
  */
+import type { Extension } from '@codemirror/state'
 import type { Atom, createStore, WritableAtom } from 'jotai'
-import type { ComponentType } from 'react'
-import type { PluginInfo, VaultSnapshot } from '@holi/shared'
+import type { ComponentType, ReactNode } from 'react'
+import type { FieldSpec, PluginInfo, VaultSnapshot } from '@holi/shared'
+import type { LinkChip } from '@/editor/livePreview'
+import type { MentionGroup } from '@/editor/mentions'
 import type { IconGlyph } from '@/primitives'
 import type { Command } from '@/state/commands'
 import type { PluginDialog } from '@/state/dialogs'
+import type { SlashCommand } from '@/editor/slash'
+
+export type { LinkChip } from '@/editor/livePreview'
+export type { MentionGroup, MentionItem } from '@/editor/mentions'
 
 /** One item a claim adds to a file's row menu. */
 export interface ClaimMenuItem {
@@ -58,6 +65,57 @@ export interface ClaimCreate {
 }
 
 /**
+ * What a claim adds to the notes editor. `chips` and `mentions` are asked
+ * once per snapshot and read from as the editor draws, so a new snapshot
+ * never rebuilds a view.
+ */
+export interface ClaimEditor {
+  /** How a link to each of its files is drawn, by path. A link to a path
+   *  not in it is a note's chip. */
+  chips?(snapshot: VaultSnapshot): ReadonlyMap<string, LinkChip>
+  /** What the `@` menu offers of its files. */
+  mentions?(snapshot: VaultSnapshot): MentionGroup
+  /** More of the editor, for a file it claims (a narrower column). */
+  extensions?(path: string): Extension
+}
+
+/** What a frontmatter control gets: its field, the block as read, and the
+ *  way to write it back. */
+export interface FieldControlProps {
+  field: FieldSpec
+  /** Every key the block holds, as parsed from its YAML. */
+  values: Readonly<Record<string, unknown>>
+  /** Write these keys into the block; `undefined` removes one. */
+  write(patch: Record<string, unknown>): void
+}
+
+/** How a claimed file's frontmatter block is drawn
+ *  (docs/features/frontmatter.md). */
+export interface ClaimFrontmatter {
+  /** Its rows, in place of a note's. */
+  fields: readonly FieldSpec[]
+  /** A control of its own for a field, by key, in place of the one its kind
+   *  gets: one that writes several keys at once (a task's status). */
+  controls?: Readonly<Record<string, ComponentType<FieldControlProps>>>
+  /** The block is always open: it has no collapsed state, and the file opens
+   *  with it revealed. */
+  alwaysOpen?: true
+  /** Values a list field offers, by key, in every file's block, not only its
+   *  own: the tags the vault already uses. */
+  suggest?: Atom<Readonly<Record<string, readonly string[]>>>
+}
+
+/** How a vault path is marked wherever it is listed: the tree and the tabs. */
+export interface PathMark {
+  /** Leads the row in place of its file glyph. */
+  glyph?: ReactNode
+  /** Its name is struck through. */
+  struck?: boolean
+  /** Short text at the row's end. */
+  badge?: string
+}
+
+/**
  * A plugin owning the vault paths `match` accepts: how one opens in a pane,
  * and what its row menu offers. The first enabled claim with a `view` wins.
  * `match` runs for every folder in the tree, so keep it a cheap test of the
@@ -70,6 +128,22 @@ export interface PathClaim {
   decorate?: ClaimDecoration
   rowMenu?: readonly ClaimMenuItem[]
   create?: ClaimCreate
+  /** What it adds to the notes editor: the first enabled claim with one,
+   *  for a file it matches; every one's chips and mentions, for links. */
+  editor?: ClaimEditor
+  /** Its files' frontmatter rows: the first enabled claim with one that
+   *  matches the file. */
+  frontmatter?: ClaimFrontmatter
+  /**
+   * Its files leave the file tree until someone shows them, with a toggle in
+   * the explorer's menu ("Show <label>"), remembered per vault on this
+   * machine: for files with a view of their own. `id` is the key the choice
+   * is remembered under, stable whatever `label` says; `label` names the files.
+   */
+  hideable?: { id: string; label: string; icon: IconGlyph }
+  /** How its files are drawn in the graph, in place of a note's dot: what the
+   *  legend calls them, and a `fill-*` class from the theme's tokens. */
+  graph?: { label: string; fill: string }
   /**
    * The file's canonical form: the same function as the main side's claim,
    * which the `normalize-md` commit transform applies. The editor treats a
@@ -144,8 +218,8 @@ export interface PaletteItem {
 
 /**
  * A surface's place in the nav menu. `order` sorts the menu, core's own
- * items included (Home 0, Search 10, Apps 20, Board 30, Agents 60, Sync 70,
- * Settings 100). `visible` is an atom so a plugin can show or hide its item
+ * items included (Home 0, Apps 20, Board 30, Graph 35, Mail 40, Agenda 50,
+ * Agents 60, Inbox 65, Settings 100). `visible` is an atom so a plugin can show or hide its item
  * without the menu calling a hook per item.
  */
 export interface RailItem {
@@ -159,6 +233,9 @@ export interface RailItem {
   command?: string
   /** While true, the item shows that something of the surface's is running. */
   live?: Atom<boolean>
+  /** A count on the item, null for none; `alert` when it needs attention
+   *  (something overdue). */
+  badge?: Atom<{ count: number; tone?: 'alert' } | null>
 }
 
 export interface SettingsSectionHeading {
@@ -258,8 +335,11 @@ export interface RendererPlugin {
   railSection?: ComponentType
   /** Shown in the sidebar, under the file tree. */
   sidebarSection?: ComponentType
-  /** Right-hand drawers; each decides whether it is open. */
-  drawers?: readonly ComponentType[]
+  /** Mounted in the shell above the panes while it runs; each decides
+   *  whether it shows (a right-hand drawer, a dialog of its own making). */
+  overlays?: readonly ComponentType[]
+  /** How it marks vault paths in the tree and the tabs, by path. */
+  pathMarks?: Atom<ReadonlyMap<string, PathMark>>
   /**
    * Why leaving the open vault (switching, or adding one) costs something
    * now, as a sentence, or null when it costs nothing. Core asks before
@@ -272,6 +352,9 @@ export interface RendererPlugin {
   agent?: AgentServiceSource
   /** Commands, run by id like core's (`state/commands.ts`), while it runs. */
   commands?: readonly Command[]
+  /** What it adds to the notes editor's slash menu while it runs, after the
+   *  built-in commands (docs/features/editor.md). */
+  slashCommands?: Atom<readonly SlashCommand[]>
   /**
    * What the palette lists beside the vault's files that is not a tab, and
    * how one is opened: `open` gets its key, and focuses what it opens.
@@ -280,4 +363,12 @@ export interface RendererPlugin {
     items: Atom<readonly PaletteItem[]>
     open: WritableAtom<null, [key: string], unknown>
   }
+  /**
+   * Pages for the plugin's own windows, by name (`PluginCtx.openPage` on its
+   * main side), such as the agent's quick panel. A page window boots only its
+   * page: no vault subscription, no Shell, no editor. It hears main on
+   * `window.holi.page`, sets `activeRemoteAtom` itself when it is about a
+   * vault, and reaches capabilities like any renderer code.
+   */
+  pages?: Readonly<Record<string, ComponentType>>
 }

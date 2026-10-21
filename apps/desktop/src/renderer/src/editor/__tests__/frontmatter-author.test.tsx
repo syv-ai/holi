@@ -35,9 +35,8 @@ function mount(
       doc,
       extensions: baseEditorExtensions({
         docExists: () => true,
-        taskByPath: () => null,
         readNote: async () => null,
-        mentionData: () => ({ notes: [], tasks: [] }),
+        mentionData: () => ({ notes: [], groups: [] }),
         nav: () => ({ openNote: () => {}, openExternal, openHistory }),
         notePath,
         askAgent: {

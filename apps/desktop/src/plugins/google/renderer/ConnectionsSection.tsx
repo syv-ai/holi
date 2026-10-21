@@ -18,12 +18,16 @@
  * (`refreshGoogle`) rather than assuming what it produced.
  */
 import { useAtomValue } from 'jotai'
+import { Unplug } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
-import { SettingsHeading, SettingsNote } from '@/composites'
+import { FormField, SettingsHeading, SettingsLink, SettingsNote } from '@/composites'
 import { activeRemoteAtom } from '@/plugin-api'
-import { Button } from '@/primitives'
+import { Button, ConfirmInPlace, Input } from '@/primitives'
 import { googleCap, useGoogleAccount } from './account'
 import { useAlwaysAllowedSenders, useForgetImageSenders } from './mail-images'
+
+/** The OAuth client in use, as main reports it: never its secret. */
+type GoogleClientInfo = Awaited<ReturnType<typeof googleCap.client>>
 
 /** The flow's transient state. "Connected" is deliberately absent: that is the
  *  shared atom's to know. */
@@ -50,12 +54,29 @@ export function ConnectionsSection(): React.JSX.Element {
   /** The vault a connect in flight is for, so unmounting cancels it rather
    *  than leaving a listener holding a port for the life of the app. */
   const connecting = useRef<string | null>(null)
+  /** The OAuth client this machine connects with; null until main answers. */
+  const [client, setClient] = useState<GoogleClientInfo | null>(null)
+  const [clientVersion, setClientVersion] = useState(0)
 
   useEffect(() => {
     return () => {
       if (connecting.current !== null) void googleCap.cancelConnect(connecting.current)
     }
   }, [])
+
+  useEffect(() => {
+    if (remote === null) return
+    let live = true
+    googleCap
+      .client(remote)
+      .then((next) => {
+        if (live) setClient(next)
+      })
+      .catch(() => undefined)
+    return () => {
+      live = false
+    }
+  }, [remote, clientVersion])
 
   const connect = async () => {
     if (remote === null) return
@@ -145,6 +166,17 @@ export function ConnectionsSection(): React.JSX.Element {
           {!connected && phase.kind === 'idle' && phase.error !== undefined && (
             <p className="mt-0.5 truncate text-[11px] text-amber-400">{phase.error}</p>
           )}
+          {/* Google refuses an outside account in the browser and never
+              redirects back, so Holi cannot see it happen: say it while the
+              browser is open and after a connect that came to nothing. */}
+          {!connected &&
+            client?.source === 'shipped' &&
+            (phase.kind === 'connecting' || phase.error !== undefined) && (
+              <p className="mt-0.5 text-[11px] text-muted-foreground">
+                If Google answers Error 403: org_internal, your account is outside syv.ai: use your
+                own OAuth client below.
+              </p>
+            )}
         </div>
 
         {connected ? (
@@ -206,7 +238,191 @@ export function ConnectionsSection(): React.JSX.Element {
           </SettingsNote>
         ))}
       {connected && <ImageSenders />}
+      {client !== null && (
+        <OAuthClient
+          client={client}
+          accountCount={accounts.length}
+          onChanged={() => {
+            setClientVersion((v) => v + 1)
+            refreshGoogle()
+          }}
+        />
+      )}
     </section>
+  )
+}
+
+/** Where Google's Desktop app clients are made. */
+const CREDENTIALS_URL = 'https://console.cloud.google.com/apis/credentials'
+
+/** Who the client in use is, in a sentence. */
+function clientLabel(client: GoogleClientInfo): string {
+  if (client.source === 'own') return `Your own client, ${client.id}.`
+  if (client.source === 'environment') return 'The client in HOLI_GOOGLE_CLIENT_ID.'
+  return 'Holi’s client, which accepts syv.ai accounts only.'
+}
+
+/**
+ * The OAuth client this machine connects with: Holi's, or one the person
+ * brings because Holi's is Internal to syv.ai.
+ *
+ * **Machine-wide, unlike the rest of the section**, because the accounts it
+ * connects are. Saving a different client disconnects every account here
+ * (their grants belong to the old one), so the button names the cost and
+ * asks once more before it acts.
+ */
+function OAuthClient({
+  client,
+  accountCount,
+  onChanged,
+}: {
+  client: GoogleClientInfo
+  accountCount: number
+  onChanged: () => void
+}): React.JSX.Element {
+  const remote = useAtomValue(activeRemoteAtom)
+  const [editing, setEditing] = useState(false)
+  const [id, setId] = useState('')
+  const [secret, setSecret] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | undefined>()
+
+  const close = () => {
+    setEditing(false)
+    setId('')
+    setSecret('')
+    setError(undefined)
+  }
+
+  const save = async (next: { id: string; secret: string }) => {
+    if (remote === null) return
+    setBusy(true)
+    try {
+      await googleCap.setClient(remote, next)
+      close()
+      onChanged()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not save the client.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  /** "and disconnect 2 accounts": the cost, named on the button that pays it. */
+  const cost =
+    accountCount === 0
+      ? ''
+      : ` and disconnect ${accountCount} ${accountCount === 1 ? 'account' : 'accounts'}`
+  /** The same id is the same client (a new secret keeps every grant), so
+   *  saving it costs nothing. */
+  const saveCost = id.trim() === client.id ? '' : cost
+  const canSave = !busy && id.trim() !== '' && secret.trim() !== ''
+
+  if (!editing) {
+    return (
+      <div className="mt-3 flex items-baseline gap-2">
+        <SettingsNote className="min-w-0 flex-1">
+          <span className="text-foreground">OAuth client:</span> {clientLabel(client)}
+        </SettingsNote>
+        <Button variant="ghost" size="xs" className="shrink-0" onClick={() => setEditing(true)}>
+          {client.source === 'own' ? 'Change client…' : 'Use your own client…'}
+        </Button>
+      </div>
+    )
+  }
+
+  return (
+    <div className="mt-3 space-y-2 rounded-md bg-muted/40 p-3">
+      <SettingsNote>
+        Make an OAuth client of type Desktop app in{' '}
+        <SettingsLink onClick={() => void window.holi.openExternal(CREDENTIALS_URL)}>
+          Google Cloud
+        </SettingsLink>
+        , with the Gmail, Google Calendar and People APIs enabled. Kept on this machine only.
+      </SettingsNote>
+      <FormField label="Client ID">
+        <Input
+          value={id}
+          placeholder="123-abc.apps.googleusercontent.com"
+          spellCheck={false}
+          onChange={(e) => setId(e.target.value)}
+        />
+      </FormField>
+      <FormField label="Client secret">
+        <Input
+          type="password"
+          value={secret}
+          spellCheck={false}
+          onChange={(e) => setSecret(e.target.value)}
+        />
+      </FormField>
+      {error !== undefined && <p className="text-[11px] text-destructive">{error}</p>}
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        {client.source === 'own' && (
+          <CostlyButton
+            label={`Use the default client${cost}`}
+            costly={cost !== ''}
+            disabled={busy}
+            variant="ghost"
+            onPress={() => void save({ id: '', secret: '' })}
+          />
+        )}
+        <Button variant="ghost" size="xs" disabled={busy} onClick={close}>
+          Cancel
+        </Button>
+        <CostlyButton
+          label={`Save${saveCost}`}
+          costly={saveCost !== ''}
+          disabled={!canSave}
+          onPress={() => void save({ id, secret })}
+        />
+      </div>
+    </div>
+  )
+}
+
+/**
+ * A button whose press may disconnect accounts. With nothing to lose it is a
+ * plain button; with accounts at stake the first press only asks, turning the
+ * same pill solid, and the second acts (`ConfirmInPlace`). Left unanswered, the
+ * question folds away and nothing happens.
+ */
+function CostlyButton({
+  label,
+  costly,
+  disabled,
+  variant,
+  onPress,
+}: {
+  label: string
+  costly: boolean
+  disabled: boolean
+  variant?: 'ghost'
+  onPress: () => void
+}): React.JSX.Element {
+  if (!costly || disabled) {
+    return (
+      <Button variant={variant} size="xs" disabled={disabled} onClick={onPress}>
+        {label}
+      </Button>
+    )
+  }
+  return (
+    <ConfirmInPlace
+      size="row"
+      role="button"
+      tabIndex={0}
+      label={label}
+      confirmLabel={label}
+      icon={Unplug}
+      onConfirm={onPress}
+      onKeyDown={(event) => {
+        if (event.key !== 'Enter' && event.key !== ' ') return
+        event.preventDefault()
+        event.currentTarget.click()
+      }}
+      className="flex h-8 cursor-pointer items-center gap-1.5 rounded-full bg-muted pr-3.5 pl-5 text-xs outline-none motion-respond hover:bg-accent focus-visible:ring-1 focus-visible:ring-ring"
+    />
   )
 }
 

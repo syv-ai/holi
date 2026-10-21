@@ -3,10 +3,12 @@ import { parseAppManifest } from '../shared/manifest'
 import {
   APP_LOG_MAX_ENTRIES,
   appendAppLog,
+  appLogSinceLoad,
   isRecordId,
   newRecordId,
   recordRel,
   validateRecord,
+  type AppLogLevel,
   type CollectionSchema,
 } from '../shared/store'
 
@@ -109,35 +111,70 @@ describe('keys that are also Object.prototype names', () => {
 
 describe('appendAppLog', () => {
   const at = (iso: string) => new Date(iso)
+  const append = (log: string | null, level: AppLogLevel, text: string, iso: string) =>
+    appendAppLog(log, [{ level, text, at: at(iso) }], at(iso))
 
   it('appends one entry per line, a stack continuing indented', () => {
-    const one = appendAppLog(
-      null,
-      { level: 'error', text: 'boom\n  at f()' },
-      at('2026-10-01T10:00:00Z'),
-    )
+    const one = append(null, 'error', 'boom\n  at f()', '2026-10-01T10:00:00Z')
     expect(one).toBe('2026-10-01T10:00:00.000Z error boom\n    at f()\n')
-    const two = appendAppLog(one, { level: 'info', text: 'ok' }, at('2026-10-01T10:01:00Z'))
+    const two = append(one, 'info', 'ok', '2026-10-01T10:01:00Z')
     expect(two.split('\n').filter((l) => /^\d{4}/.test(l))).toHaveLength(2)
   })
 
   it('drops what is past its day, stack and all', () => {
-    const old = appendAppLog(
-      null,
-      { level: 'error', text: 'old\nstack' },
-      at('2026-09-29T10:00:00Z'),
-    )
-    const next = appendAppLog(old, { level: 'warn', text: 'new' }, at('2026-10-01T10:00:00Z'))
+    const old = append(null, 'error', 'old\nstack', '2026-09-29T10:00:00Z')
+    const next = append(old, 'warn', 'new', '2026-10-01T10:00:00Z')
     expect(next).toBe('2026-10-01T10:00:00.000Z warn new\n')
   })
 
   it('keeps at most the cap, newest last', () => {
     let log: string | null = null
     for (let i = 0; i < APP_LOG_MAX_ENTRIES + 5; i++) {
-      log = appendAppLog(log, { level: 'info', text: `n${i}` }, at('2026-10-01T10:00:00Z'))
+      log = append(log, 'warn', `n${i}`, '2026-10-01T10:00:00Z')
     }
     const lines = log!.trimEnd().split('\n')
     expect(lines).toHaveLength(APP_LOG_MAX_ENTRIES)
     expect(lines.at(-1)).toContain(`n${APP_LOG_MAX_ENTRIES + 4}`)
+  })
+
+  it('never lets info push an error out', () => {
+    const now = at('2026-10-01T10:00:00Z')
+    const chatter = Array.from({ length: APP_LOG_MAX_ENTRIES }, (_, i) => ({
+      level: 'info' as const,
+      text: `n${i}`,
+      at: now,
+    }))
+    const log = appendAppLog(append(null, 'error', 'boom', now.toISOString()), chatter, now)
+    const lines = log.trimEnd().split('\n')
+    expect(lines[0]).toContain('error boom')
+    expect(lines.at(-1)).toContain(`n${APP_LOG_MAX_ENTRIES - 1}`)
+  })
+})
+
+describe('appLogSinceLoad', () => {
+  const at = (iso: string) => new Date(iso)
+  const log = (entries: [AppLogLevel, string][]) =>
+    appendAppLog(
+      null,
+      entries.map(([level, text], i) => ({ level, text, at: at(`2026-10-01T10:00:0${i}Z`) })),
+      at('2026-10-01T10:00:09Z'),
+    )
+
+  it('starts at the last load, a stack staying with its entry', () => {
+    const text = log([
+      ['load', '/index.html'],
+      ['error', 'old'],
+      ['load', '/index.html?mode=dark'],
+      ['error', 'boom\n  at f()'],
+    ])
+    expect(appLogSinceLoad(text)).toEqual([
+      '2026-10-01T10:00:02.000Z load /index.html?mode=dark',
+      '2026-10-01T10:00:03.000Z error boom\n    at f()',
+    ])
+  })
+
+  it('is the whole log when no load is in it, and nothing for no log', () => {
+    expect(appLogSinceLoad(log([['warn', 'w']]))).toHaveLength(1)
+    expect(appLogSinceLoad(null)).toEqual([])
   })
 })

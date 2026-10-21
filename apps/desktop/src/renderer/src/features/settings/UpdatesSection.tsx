@@ -1,9 +1,17 @@
-/** App-scoped update and login settings (docs/features/updates.md). */
+/**
+ * Settings → Updates (docs/features/updates.md): updating Holi on this
+ * machine, with each release's notes, then where the open vault's skills
+ * stand against this release.
+ */
 import { useAtomValue, useSetAtom } from 'jotai'
 import { useEffect, useState } from 'react'
 import { trpc } from '@/lib/trpc'
 import { Button, Checkbox } from '@/primitives'
-import { SettingsList, SettingsNote, SettingsRow } from '@/composites'
+import { ExternalLink, SettingsList, SettingsNote, SettingsRow } from '@/composites'
+import { openSkillsStatusAtom, updateSkillsAtom } from '@/state/skills'
+import type { ReleaseNotesAnswer } from '../../../../main/updates/release-notes'
+import { DescriptorSection } from './DescriptorSection'
+import { ReleaseNotesText } from './ReleaseNotesText'
 import {
   checkForUpdateAtom,
   installUpdateAtom,
@@ -75,6 +83,20 @@ export function UpdatesSection(): React.JSX.Element {
           <SettingsNote className="break-words">{status.lastError}</SettingsNote>
         )}
       </SettingsRow>
+      {status?.availableVersion != null && status.availableVersion !== status.version && (
+        <ReleaseNotesRow
+          key={status.availableVersion}
+          version={status.availableVersion}
+          label={`What’s new in Holi ${status.availableVersion}`}
+        />
+      )}
+      {status !== null && status.version !== '' && (
+        <ReleaseNotesRow
+          key={status.version}
+          version={status.version}
+          label={`Holi ${status.version}, the version you have`}
+        />
+      )}
       <SettingsRow
         label="Dev prereleases"
         description="Opt in to development releases. Turning this off checks for and downloads the latest stable release, even if it is older than the version you have; restart to install it."
@@ -112,7 +134,7 @@ function OpenAtLoginRow(): React.JSX.Element {
   return (
     <SettingsRow
       label="Open at login"
-      description="Start Holi in the menu bar when you log in, its window out of sight, so reminders and sync work from the start."
+      description="Start Holi out of sight when you log in, so reminders and sync work from the start."
       control={
         <Checkbox
           aria-label="Open at login"
@@ -126,5 +148,102 @@ function OpenAtLoginRow(): React.JSX.Element {
         />
       }
     />
+  )
+}
+
+/**
+ * One release's notes, fetched from its GitHub release when first shown.
+ * GitHub writes them as Markdown; they are shown formatted, links included,
+ * but never as HTML (`ReleaseNotesText`).
+ */
+function ReleaseNotesRow({ version, label }: { version: string; label: string }) {
+  const [open, setOpen] = useState(false)
+  // undefined: not asked yet. GitHub not answering is asked again on the
+  // next opening, so hiding and showing the notes is the retry.
+  const [answer, setAnswer] = useState<ReleaseNotesAnswer | undefined>(undefined)
+  const toggle = () => {
+    if (open && answer?.kind === 'unreachable') setAnswer(undefined)
+    setOpen((o) => !o)
+  }
+  useEffect(() => {
+    if (!open || answer !== undefined) return
+    let live = true
+    trpc.updates.notes
+      .query({ version })
+      .then((a) => live && setAnswer(a))
+      .catch(() => live && setAnswer({ kind: 'unreachable' }))
+    return () => {
+      live = false
+    }
+  }, [open, answer, version])
+
+  return (
+    <SettingsRow
+      label={label}
+      control={
+        <Button variant="secondary" size="xs" onClick={toggle}>
+          {open ? 'Hide notes' : 'Release notes'}
+        </Button>
+      }
+    >
+      {open &&
+        (answer === undefined ? (
+          <SettingsNote>Loading…</SettingsNote>
+        ) : answer.kind === 'unreachable' ? (
+          <SettingsNote>Could not reach GitHub, try again.</SettingsNote>
+        ) : answer.kind === 'none' ? (
+          <SettingsNote>GitHub has no notes for this version.</SettingsNote>
+        ) : (
+          <div className="space-y-2">
+            <ReleaseNotesText body={answer.notes.body} />
+            <ExternalLink
+              url={answer.notes.url}
+              onOpen={() => void window.holi.openExternal(answer.notes.url)}
+            >
+              {answer.notes.name} on GitHub
+            </ExternalLink>
+          </div>
+        ))}
+    </SettingsRow>
+  )
+}
+
+/**
+ * Where the open vault's skills and hooks stand against this release, and
+ * whether the vault takes them on open (`autoUpdateSkills`).
+ */
+export function VaultSkillsSection(): React.JSX.Element {
+  const status = useAtomValue(openSkillsStatusAtom)
+  const update = useSetAtom(updateSkillsAtom)
+  const pending = status?.pending.length ?? 0
+  return (
+    <>
+      <SettingsList>
+        <SettingsRow
+          label={
+            status === null
+              ? 'Loading…'
+              : pending === 0
+                ? 'Skills and hooks are up to date'
+                : `This version of Holi has ${pending} newer ${pending === 1 ? 'file' : 'files'} for this vault`
+          }
+          description={
+            status === null
+              ? undefined
+              : status.release === null
+                ? 'Holi has not written this vault’s skills on this machine.'
+                : `Last brought in by Holi ${status.release}.`
+          }
+          control={
+            pending > 0 ? (
+              <Button size="xs" onClick={() => void update()}>
+                Update skills
+              </Button>
+            ) : undefined
+          }
+        />
+      </SettingsList>
+      <DescriptorSection section="updates" />
+    </>
   )
 }

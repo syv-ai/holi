@@ -22,6 +22,7 @@
 import { parse as parseYaml } from 'yaml'
 import { MEMORY_DIR, isLocalOnlyPath } from './path-safety'
 import { splitFrontmatter } from './frontmatter'
+import { parseDate, parseDateTime } from './dates'
 
 /** `MEMORY_DIR` itself lives in `path-safety.ts`, the lower of the two modules,
  *  because `isAgentSurfacePath` needs it too. */
@@ -73,6 +74,10 @@ export interface MemoryEntry {
   title: string
   /** Frontmatter `description`, else the body's first sentence, else empty. */
   description: string
+  /** Frontmatter `expires` as written, when it is a stamp Holi can read, else
+   *  null. The index prints it, so the session overview can hide the memory
+   *  once it passes, between the commits that regenerate the index. */
+  expires: string | null
 }
 
 /** Longest description the index will print. */
@@ -182,12 +187,14 @@ function linkSafe(title: string): string {
 export function readMemoryEntry(path: string, text: string): MemoryEntry {
   const frontmatter = frontmatterOf(text)
   const description = stringValue(frontmatter.description)
+  const expires = stringValue(frontmatter.expires)
   return {
     path,
     type: stringValue(frontmatter.type) ?? DEFAULT_MEMORY_TYPE,
     title: stringValue(frontmatter.title) ?? h1Of(text) ?? titleFromPath(path),
     description:
       description !== null ? truncate(oneLine(description)) : firstSentence(bodyOf(text)),
+    expires: memoryExpiry(expires) === null ? null : expires,
   }
 }
 
@@ -202,6 +209,10 @@ export function readMemoryEntry(path: string, text: string): MemoryEntry {
  * Wiki-links rather than OKF's markdown links: one link grammar in the vault, so
  * `relink`, backlinks and the editor's chips all understand these. The bundle is
  * OKF-shaped and never claims the label.
+ *
+ * A memory with an `expires` carries `(expires <stamp>)` after its link. Leaving
+ * an expired one out is the caller's choice, made with its clock
+ * (`isExpiredMemory`), so this stays a function of its input.
  */
 export function renderMemoryIndex(entries: MemoryEntry[]): string {
   if (entries.length === 0) return MEMORY_INDEX_EMPTY
@@ -219,11 +230,58 @@ export function renderMemoryIndex(entries: MemoryEntry[]): string {
       .slice()
       .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
       .map((entry) => {
-        const link = `[[${entry.path}|${linkSafe(entry.title)}]]`
+        const until = entry.expires === null ? '' : ` (expires ${entry.expires})`
+        const link = `[[${entry.path}|${linkSafe(entry.title)}]]${until}`
         return entry.description === '' ? `- ${link}` : `- ${link} — ${oneLine(entry.description)}`
       })
     return `## ${type}\n\n${lines.join('\n')}\n`
   })
 
   return `${MEMORY_INDEX_HEADER}\n\n${MEMORY_INDEX_LOCAL_NOTE}\n\n${sections.join('\n')}`
+}
+
+// ──────────────────────────────────────────────────────────── expires ──
+//
+// Any memory may say when it stops being true: `expires: 2026-10-22` (through
+// that day) or `expires: 2026-10-22T15:00` (until that minute), on this
+// machine's clock. Past it, the memory is hidden from the index and the session
+// overview. A personal one is then deleted by Holi's sweep; a shared one is
+// never deleted unattended, since that would take content from under every
+// other member: the memory lint reports it and the agent proposes the deletion.
+// The overview hook and the lint read the stamp on their own (they import
+// nothing), so a change to the rule here is a change there too.
+
+/**
+ * When an `expires` value stops being true, on this machine's clock, or null
+ * when it is missing or not a stamp. A date (`2026-10-22`) lasts through that
+ * day; a local time (`2026-10-22T15:00`) ends at that minute.
+ */
+export function memoryExpiry(value: unknown): Date | null {
+  const s = stringValue(value)
+  if (s === null) return null
+  const date = parseDate(s)
+  if (date !== null) {
+    const d = new Date(date)
+    return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1)
+  }
+  const at = parseDateTime(s)
+  if (at === null) return null
+  const d = new Date(at)
+  return new Date(
+    d.getUTCFullYear(),
+    d.getUTCMonth(),
+    d.getUTCDate(),
+    d.getUTCHours(),
+    d.getUTCMinutes(),
+    d.getUTCSeconds(),
+  )
+}
+
+/** Whether this memory is past an `expires` Holi can read, at `now`. One whose
+ *  `expires` is missing or malformed never expires. Says nothing about deleting
+ *  it: only a personal one is deleted, by the sweep. */
+export function isExpiredMemory(path: string, text: string, now: Date): boolean {
+  if (!isMemoryPath(path)) return false
+  const expires = memoryExpiry(frontmatterOf(text).expires)
+  return expires !== null && now.getTime() >= expires.getTime()
 }

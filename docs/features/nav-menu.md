@@ -7,15 +7,17 @@ hidden, the same menu runs down the rail.
 
 ## How it works
 
-- **Items, in order:** Home, Search, Apps, Board, Mail, Agenda, Agents, Sync, Update, Settings, so
+- **Items, in order:** Home, Search, Apps, Board, Graph, Mail, Agenda, Agents, Inbox, Sync, Update, Settings, so
   Settings always ends the dock. The surface items are rail items from the surface registry
-  (`{surface, order, visible?}`, label and icon from the surface; see [tabs and panes](tabs-panes.md)),
-  sorted by `order` among core's own Search (10), Agents (60) and Sync (70), with Apps (20) the apps plugin's rail item; `visible`
-  is an atom, read by one derived atom. Home goes Home (below); Search opens quick open
-  ([command palette](command-palette.md)); Board opens the board and carries the open-task count,
-  red while any task is overdue (the board's own `overdue` label); Mail, Agenda and Settings open
+  (`{surface, order, visible?, badge?}`, label and icon from the surface; see [tabs and panes](tabs-panes.md)),
+  sorted by `order` among core's own Search (10), Graph (35) and Sync (70), with Apps (20) the apps plugin's rail item,
+  Board (30) the tasks plugin's, and Agents (60) and Inbox (65) the agent's; `visible` and `badge` (a count and a tone,
+  or null for none) are atoms, read by one derived atom. Home goes Home (below); Search opens quick open
+  ([command palette](command-palette.md)); Board opens the board and carries its badge, the open-task count,
+  red while any task is overdue (the board's own `overdue` label); Inbox carries its unread count; Graph, Mail, Agenda and Settings open
   their tabs. Agents goes to Claude Code's agent list, the tab ⌘J goes to, and is green while any
-  of the vault's sessions is running ([agent sessions](agent-sessions.md)). Sync is the vault's sync state as a glyph whose colour and turning carry it, and opens
+  of the vault's sessions is running ([agent sessions](agent-sessions.md)). Inbox is there only while
+  the [agent inbox](agent-inbox.md) holds something, counts what is unread, and opens its tab. Sync is the vault's sync state as a glyph whose colour and turning carry it, and opens
   a panel with the state in words, its action and the history ([vaults and sync](vaults-sync.md)).
   Update (75) is there only while an update to Holi is ready or failed to download, or this release
   has newer skills for the open vault, and opens a panel with Restart to update, Try again, or
@@ -65,7 +67,7 @@ hidden, the same menu runs down the rail.
   and knows nothing of Holi. It also serves the [file tree](file-tree.md)'s toolbar, anchored
   `top-right` so it opens downward, with `pressed` toggles, and the [board](tasks.md)'s dock,
   anchored `bottom-center` with `surface="float"`; `features/nav/NavMenu` builds the items from
-  shared state only (`appPathsAtom`, `openTaskCountAtom`, `googleAccountAtom`, the workspace, the
+  shared state only (the rail's items with their badges, `googleAccountAtom`, the workspace, the
   palette).
 - **An item can carry a panel** instead of an action or children: selecting it grows the menu into
   that panel exactly as a group grows into its rows (squeeze, spring, cascade of the panel's

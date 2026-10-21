@@ -93,10 +93,14 @@ fi
 # at the top of the clone.
 ${shellReadBridgeEnv(['HOLI_BRIDGE_PORT', 'HOLI_BRIDGE_TOKEN']).join('\n')}
 if [ -n "$HOLI_BRIDGE_PORT" ] && [ -n "$HOLI_BRIDGE_TOKEN" ]; then
+  # A commit an agent session made names the session (its job id), so what
+  # the transforms say goes back to it.
+  job=
+  [ -n "\${CLAUDE_JOB_DIR:-}" ] && job="&job=\${CLAUDE_JOB_DIR##*/}"
   # --max-time is not optional: a commit that blocks for thirty seconds has
   # failed, as far as the person waiting on it is concerned.
   curl -sS --max-time 10 -X POST \\
-    "http://127.0.0.1:$HOLI_BRIDGE_PORT/hooks/pre-commit?t=$HOLI_BRIDGE_TOKEN" >/dev/null 2>&1 || true
+    "http://127.0.0.1:$HOLI_BRIDGE_PORT/hooks/pre-commit?t=$HOLI_BRIDGE_TOKEN$job" >/dev/null 2>&1 || true
 fi
 exit 0
 `

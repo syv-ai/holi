@@ -12,7 +12,7 @@
 import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import type { Collaborator, RecentEntry } from '@holi/shared'
+import type { Collaborator, LineRange, RecentEntry } from '@holi/shared'
 import { tryGit } from '../git'
 import { openRepo, type GitRepo } from '../git'
 import type { MembersCache } from '../github/members-cache'
@@ -66,6 +66,9 @@ export interface CoreServicesDeps {
  */
 export interface UiReport {
   focusedPath: string | null
+  /** The lines selected in the focused note, or null for a caret or no note.
+   *  Never the text: the agent reads it from the file. */
+  selection: LineRange | null
   openPaths: string[]
   recents: RecentEntry[]
 }
@@ -79,7 +82,8 @@ export function createUiReports(): UiReports {
   const byRemote = new Map<string, UiReport>()
   return {
     set: (remote, report) => void byRemote.set(remote, report),
-    get: (remote) => byRemote.get(remote) ?? { focusedPath: null, openPaths: [], recents: [] },
+    get: (remote) =>
+      byRemote.get(remote) ?? { focusedPath: null, selection: null, openPaths: [], recents: [] },
   }
 }
 
