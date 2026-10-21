@@ -76,6 +76,7 @@ function recording(called: Called): Record<string, AnyCapability> {
     ...pdfCapabilities({
       signatures: { read: async () => '[]', write: async () => {} },
       typst: async () => null,
+      diagrams: async () => [],
     }),
     ...agentCapabilities({
       sessions: {} as never,

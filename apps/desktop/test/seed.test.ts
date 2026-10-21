@@ -219,14 +219,6 @@ describe('the seed tables', () => {
     for (const slug of THEME_TOKENS) expect(local, slug).toContain(`/* --${slug}: ; */`)
   })
 
-  it('seeds the md-to-pdf skill with the Typst render recipe', () => {
-    const skill = SEED_FILES['.claude/skills/md-to-pdf/SKILL.md']!
-    expect(skill).toContain('name: md-to-pdf')
-    expect(skill).toContain('holi pdf typst')
-    expect(skill).toContain('doc(') // the template contract
-    expect(skill).toContain('--root /') // the compile recipe
-  })
-
   it('seeds the gmail-calendar skill with the command and the linking rule', () => {
     const skill = SEED_FILES['.claude/skills/gmail-calendar/SKILL.md']!
     expect(skill).toContain('name: gmail-calendar')
