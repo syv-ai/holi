@@ -7,16 +7,19 @@
 // `startup`, `resume` AND `compact`: after a compaction the agent has forgotten
 // it has memory at all.
 //
-// Reads only: `.holi/memory/index.md` (which the memory-index transform already
-// generated, so nothing is parsed twice), a scan for personal `*.local.md`
-// memories, and one `git log`. It never calls Holi's bridge: Claude Code spawns
-// this, not Holi, so it must work with no server anywhere. Absent `.holi/memory/`, it prints
-// nothing and exits 0, exactly as the focused-note hook does outside Holi.
+// Reads only. The shared memories' titles come from `.holi/memory/index.md`,
+// which the memory-index transform already generated; personal `*.local.md`
+// memories, which no index lists, are read here. Every memory file is also
+// parsed once per session by the memory lint (`.claude/skills/memory/lint.mjs`),
+// of which only the count is printed, plus one `git log`. It never calls Holi's
+// bridge: Claude Code spawns this, not Holi, so it must work with no server
+// anywhere. Absent `.holi/memory/`, it prints nothing and exits 0, exactly as
+// the focused-note hook does outside Holi.
 //
 // Dependency-free (`node:` builtins only), like the three hooks beside it.
 
 import { execFileSync } from 'node:child_process'
-import { readFileSync, readdirSync, statSync } from 'node:fs'
+import { lstatSync, readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 
 const root = process.env.CLAUDE_PROJECT_DIR || process.cwd()
@@ -43,7 +46,8 @@ function readOr(path) {
  * The personal half is the point — a `*.local.md` appears in no committed file,
  * so this hook is the only reader it has. The shared half is counted rather
  * than read: it exists solely to notice the case below where memory files are
- * present but `index.md` is not.
+ * present but `index.md` is not. Symlinks are skipped, not followed, as the lint
+ * skips them: one could point outside the vault or loop.
  */
 function memoryFiles(dir, prefix = '.holi/memory') {
   const out = { personal: [], shared: [] }
@@ -59,10 +63,11 @@ function memoryFiles(dir, prefix = '.holi/memory') {
     const abs = join(dir, name)
     let stat
     try {
-      stat = statSync(abs)
+      stat = lstatSync(abs)
     } catch {
       continue
     }
+    if (stat.isSymbolicLink()) continue
     if (stat.isDirectory()) {
       const inner = memoryFiles(abs, `${prefix}/${name}`)
       out.personal = out.personal.concat(inner.personal)
@@ -115,6 +120,22 @@ function indexSections(text) {
 }
 
 const sections = indexSections(index)
+
+/** How many lint findings there are, or 0 when the lint is missing or throws:
+ *  the overview never fails a session start. Imported rather than copied, so the
+ *  count and the list the agent runs are the same code. Only the count is
+ *  printed, and it depends on nothing but the files, so the overview stays the
+ *  same from session to session until memory changes. */
+async function lintCount() {
+  try {
+    const { lintVault } = await import(new URL('../skills/memory/lint.mjs', import.meta.url).href)
+    return lintVault(root).length
+  } catch {
+    return 0
+  }
+}
+
+const findings = await lintCount()
 const total = sections.reduce((n, s) => n + s.lines.length, 0)
 
 /** `Recent: <date> <subject>` × 3. One subprocess, once per session — a looser
@@ -146,6 +167,14 @@ function render({ descriptions }) {
   const out = [
     `# This vault's memory (${count} shared${personal.length > 0 ? `, ${personal.length} personal` : ''})`,
   ]
+
+  // Next to the heading, so the cap's truncation can never cut it.
+  if (findings > 0) {
+    out.push(
+      '',
+      `${findings} memory lint finding(s): run \`node .claude/skills/memory/lint.mjs\` to list them, as proposals.`,
+    )
+  }
 
   if (sections.length > 0) {
     out.push('', `Types in use: ${sections.map((s) => `${s.type} (${s.lines.length})`).join(', ')}`)
