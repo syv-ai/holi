@@ -7,10 +7,7 @@
  */
 import {
   isAppBundlePath,
-  isMachineStatePath,
-  isSecretPath,
   syncLabel,
-  vaultRelPath,
   type RecentEntry,
   type SyncState,
   type VaultRelPath,
@@ -19,7 +16,7 @@ import {
 import { readVaultSettings } from '../vault/settings'
 import { isSearchable, searchVault, type SearchHit } from '../vault/search'
 import { CapabilityError, unavailable } from './error'
-import { inSnapshot, readableOrNull, readablePath, readNote } from './fences'
+import { inSnapshot, readableOrNull, readablePath, readNote, shownPath } from './fences'
 import { limitParam, noParams, paramsObject, pathParams, stringParam } from './params'
 import { cap } from './registry'
 import { renderNote } from './render-note'
@@ -108,13 +105,7 @@ export const vaultCapabilities = (deps: VaultCapabilitiesDeps) => ({
     cli: { args: ['path'], summary: 'show a note, task or other vault file in a tab' },
     params: pathParams,
     run: async (ctx, { path }) => {
-      let rel
-      try {
-        rel = vaultRelPath(path)
-      } catch (err) {
-        throw new CapabilityError('BAD_REQUEST', (err as Error).message)
-      }
-      if (isSecretPath(rel) || isMachineStatePath(rel)) throw new CapabilityError('FORBIDDEN', path)
+      let rel = shownPath(path)
       // A vault app is a directory, which the snapshot lists among `dirs`.
       const bundle = isAppBundlePath(rel) && (await ctx.snapshot()).dirs.includes(rel)
       if (!bundle) rel = await inSnapshot(ctx, rel, path)
