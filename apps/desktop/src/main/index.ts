@@ -137,6 +137,13 @@ if (!app.requestSingleInstanceLock()) {
 
 /** The main window. `show: false` for a launch at login: its page still loads
  *  and opens the vault, out of sight until the tray's Open Holi or the dock. */
+/** Restore, show and focus `win`: out of the dock, the tray or behind others. */
+function bringForward(win: BrowserWindow): void {
+  if (win.isMinimized()) win.restore()
+  win.show()
+  win.focus()
+}
+
 function createWindow({ show = true }: { show?: boolean } = {}): BrowserWindow {
   const win = new BrowserWindow({
     width: 1200,
@@ -372,9 +379,7 @@ async function main(): Promise<void> {
       const fresh = createWindow()
       fresh.on('focus', () => host.active()?.onFocus())
     } else {
-      if (win.isMinimized()) win.restore()
-      win.show()
-      win.focus()
+      bringForward(win)
     }
     if (openTarget !== null && !openTarget.isDestroyed()) openTarget.send('vault:open', request)
     else heldOpens.push(request)
@@ -391,18 +396,25 @@ async function main(): Promise<void> {
    * nothing. A link only ever opens a tab: it runs nothing.
    */
   const openHoliLink = async (url: string): Promise<void> => {
+    // A sheet on a minimised or tray-hidden window is a dialog nobody sees, so
+    // the window comes forward first, as it does for a link that opens; with
+    // no window at all the dialog stands alone.
     const tell = (message: string, detail: string): void => {
       const options = { type: 'info' as const, message, detail, buttons: ['OK'] }
       const win = mainWindow
-      void (win === null || win.isDestroyed()
-        ? dialog.showMessageBox(options)
-        : dialog.showMessageBox(win, options))
+      if (win === null || win.isDestroyed()) return void dialog.showMessageBox(options)
+      bringForward(win)
+      void dialog.showMessageBox(win, options)
     }
     const parsed = parseHoliLink(url)
     if (!parsed.ok) return tell('This link cannot be opened.', parsed.reason)
     const { remote, path, heading } = parsed.link
-    const root = (await registry.list()).find((e) => e.remote === remote)?.path
-    if (root === undefined) {
+    // GitHub names are case-insensitive, so a link typed or pasted with
+    // another case still names the vault.
+    const entry = (await registry.list()).find(
+      (e) => e.remote.toLowerCase() === remote.toLowerCase(),
+    )
+    if (entry === undefined) {
       return tell(
         `${remote} is not on this computer.`,
         'Add the vault with Add vault… in the vault menu, then open the link again.',
@@ -410,7 +422,7 @@ async function main(): Promise<void> {
     }
     // `exactPath` refuses a name that reaches outside the clone through a link
     // or a case alias, so what is shown is what was named.
-    const abs = await exactPath(root, path)
+    const abs = await exactPath(entry.path, path)
     const isFile =
       abs !== null &&
       (await stat(abs).then(
@@ -423,7 +435,7 @@ async function main(): Promise<void> {
         'It may have been moved or deleted, or it has not synced to this computer yet.',
       )
     }
-    showPath(remote, path, heading)
+    showPath(entry.remote, path, heading)
   }
 
   // What a vault app and the agent can ask for: core's capabilities, then
@@ -607,9 +619,7 @@ async function main(): Promise<void> {
   const openWindow = (): void => {
     const existing = mainWindow
     if (existing !== null && !existing.isDestroyed()) {
-      if (existing.isMinimized()) existing.restore()
-      existing.show()
-      existing.focus()
+      bringForward(existing)
       return
     }
     const fresh = createWindow()
