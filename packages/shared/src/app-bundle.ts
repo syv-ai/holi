@@ -108,7 +108,8 @@ export function isAppWritablePath(path: string): boolean {
  * secret file (an app gets only the keys it declares, through `holi.env`), or
  * any app's records and log. The bridge's reads refuse these, and an app's
  * slash command is not offered in a note that is one, since it would be given
- * the note's text and could write into it.
+ * the note's text (nor where `isAppWritablePath` refuses, since its answer is
+ * written into the note).
  */
 export function isAppFencedPath(path: string): boolean {
   if (isAgentSurfacePath(path) || isMachineStatePath(path) || isSecretPath(path)) return true

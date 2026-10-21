@@ -220,10 +220,11 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   [glossary](../glossary.md)). The reason is escalation, not privacy: an app that could write
   `.claude/hooks/google-send-gate.mjs` could make the agent send mail unprompted.
 - An app's slash command is not offered, and refuses to run, in a note no app may read
-  (`isAppFencedPath`: the agent surface, `.holi/state/`, secret files, any app's records and log).
-  It is given the note's text and may write into it, so offering it in `AGENTS.md` or
-  `.holi/memory/` would hand an app the agent surface the bridge refuses. The bridge's reads use
-  the same predicate.
+  (`isAppFencedPath`: the agent surface, `.holi/state/`, secret files, any app's records and log)
+  or write (`isAppWritablePath`, below). It is given the note's text and may write into it, so
+  offering it in `AGENTS.md` or `.holi/memory/` would hand an app the agent surface the bridge
+  refuses, and offering it in a `.local.` note or `notes/AGENTS.md` would let its answer land
+  where the bridge's writes may not. The bridge's reads and writes use the same predicates.
 - The agent-surface refusal lives in main (the capability registry), not the renderer. The process rendering
   untrusted code must not be the one deciding what it may read. `read` answers `FORBIDDEN`,
   distinct from `NOT_FOUND`.

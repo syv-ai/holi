@@ -7,11 +7,12 @@
  * app's tab (`allow-scripts`, never `allow-same-origin`), answering its bridge
  * calls as the tab does (`bridge-host.ts`), and removed once it answers,
  * times out, or its vault is left. Never in a note no app may read
- * (`isAppFencedPath`). What went wrong goes to the app's log, which is where the agent
- * that wrote the command looks; the note is left as it was.
+ * (`isAppFencedPath`) or write (`isAppWritablePath`). What went wrong goes to
+ * the app's log, which is where the agent that wrote the command looks; the
+ * note is left as it was.
  */
 import { atom } from 'jotai'
-import { appBundleOf, isAppFencedPath } from '@holi/shared'
+import { appBundleOf, isAppFencedPath, isAppWritablePath } from '@holi/shared'
 import {
   COMMAND_PARAM,
   COMMAND_TIMEOUT_MS,
@@ -132,8 +133,10 @@ async function runAppCommand(
 ): Promise<SlashResult> {
   try {
     // The editor does not offer it there; refused here as well, because what
-    // the frame is given is the note's text.
+    // the frame is given is the note's text, and what it answers is written
+    // into the note.
     if (isAppFencedPath(input.path)) throw new Error(`no app may read ${input.path}`)
+    if (!isAppWritablePath(input.path)) throw new Error(`no app may write ${input.path}`)
     const action = commandActionOf(
       await runInFrame(store, remote, command.bundle, command.name, input, inFlight),
     )
