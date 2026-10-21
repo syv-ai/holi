@@ -11,10 +11,12 @@
  * update, and the nav's update item offers it while it does
  * (docs/features/updates.md). Asking writes nothing.
  *
- * A vault that turned on `autoUpdateSkills` is not offered the update: when it
- * opens with one pending, the same update runs unasked, and the nav's update
- * item says what changed until it is seen. Its conflicts wait for a person to
- * hand them to the agent; a session is never started on an open.
+ * A vault that turned on `autoUpdateSkills` is not offered the update: main
+ * runs it once the vault has opened and caught up with its remote
+ * (`main/vault/seed/update-on-open.ts`), and pushes what changed, which the
+ * nav's update item says until it is seen. This side only shows it. Its
+ * conflicts wait for a person to hand them to the agent; a session is never
+ * started on an open.
  */
 import { atom, type createStore } from 'jotai'
 import { atomWithStorage } from 'jotai/utils'
@@ -39,7 +41,7 @@ export const openSkillsStatusAtom = atom((get): SkillsStatus | null => {
   return status !== null && status.remote === get(activeRemoteAtom) ? status : null
 })
 
-/** What an update run on open did, until it is seen. Per vault, in memory. */
+/** What the update run on open did, until it is seen or the vault is left. */
 const skillsNoticeStateAtom = atom<(SkillsUpdated & { remote: string }) | null>(null)
 
 /**
@@ -57,6 +59,8 @@ export const skillsOfferAtom = atom((get): readonly string[] | null => {
   const remote = get(activeRemoteAtom)
   const status = get(openSkillsStatusAtom)
   if (remote === null || status === null || status.pending.length === 0) return null
+  // Main runs it on open: offering it too would race that run.
+  if (status.autoUpdate) return null
   if (get(skillsDismissedAtom)[remote] === signature(status.pending)) return null
   return status.pending
 })
@@ -84,11 +88,8 @@ export const mergeSkillsConflictsAtom = atom(null, async (get, set): Promise<voi
   if (started.ok) set(skillsNoticeStateAtom, null)
 })
 
-/**
- * Ask where the open vault's skills stand. `onOpen`, as when a vault opens,
- * runs the update itself if the vault asks for that and one is pending.
- */
-const refreshSkillsAtom = atom(null, async (get, set, onOpen: boolean): Promise<void> => {
+/** Ask where the open vault's skills stand. */
+const refreshSkillsAtom = atom(null, async (get, set): Promise<void> => {
   const remote = get(activeRemoteAtom)
   if (remote === null) return
   let status: SkillsStatus
@@ -101,18 +102,31 @@ const refreshSkillsAtom = atom(null, async (get, set, onOpen: boolean): Promise<
   // A switch that landed meanwhile asks for itself.
   if (get(activeRemoteAtom) !== remote) return
   set(skillsStatusAtom, { ...status, remote })
-  if (onOpen && status.autoUpdate && status.pending.length > 0) {
-    await set(runSkillsUpdateAtom, 'open')
-  }
 })
 
 type JotaiStore = ReturnType<typeof createStore>
 
-/** Ask again whenever the open vault changes, for the app's lifetime. */
+/**
+ * Ask again whenever the open vault changes, and take main's notice of an
+ * update it ran on open, for the app's lifetime. A switch drops the notice:
+ * it was about the vault being left.
+ */
 export function watchPendingSkills(store: JotaiStore): () => void {
-  const ask = () => void store.set(refreshSkillsAtom, true)
+  const ask = () => {
+    store.set(skillsNoticeStateAtom, null)
+    void store.set(refreshSkillsAtom)
+  }
   ask()
-  return store.sub(activeRemoteAtom, ask)
+  const offRemote = store.sub(activeRemoteAtom, ask)
+  const offNotice = window.holi.vault.onSkillsUpdated((notice) => {
+    if (notice.remote !== store.get(activeRemoteAtom)) return
+    store.set(skillsNoticeStateAtom, notice)
+    void store.set(refreshSkillsAtom)
+  })
+  return () => {
+    offRemote()
+    offNotice()
+  }
 }
 
 function notify(body: string): void {
@@ -124,40 +138,28 @@ function notify(body: string): void {
 }
 
 /**
- * Run the update. Asked for, its conflicts go straight to an agent session
- * and the outcome is a notification. Run on open, nothing is started and
- * nothing pops up: what changed waits in the nav's update item.
+ * Run the update, asked for: its conflicts go straight to an agent session and
+ * the outcome is a notification.
  */
-const runSkillsUpdateAtom = atom(null, async (get, set, why: 'asked' | 'open'): Promise<void> => {
+export const updateSkillsAtom = atom(null, async (get, set): Promise<void> => {
   const remote = get(activeRemoteAtom)
   if (remote === null) return
   let body: string
   try {
     const result = await skills.update(remote)
+    set(skillsNoticeStateAtom, null)
     body = result.summary
-    if (why === 'open') {
-      body = ''
-      if (result.changed.length > 0 || result.conflicts !== null) {
-        set(skillsNoticeStateAtom, { ...result, remote })
-      }
-    } else {
-      set(skillsNoticeStateAtom, null)
-      const agent = get(agentSourceAtom)
-      if (result.conflicts !== null && agent !== null) {
-        const started = await set(agent.start, {
-          name: 'Update skills',
-          prompt: result.conflicts.prompt,
-        })
-        if (started.ok) body = result.conflicts.summary
-      }
+    const agent = get(agentSourceAtom)
+    if (result.conflicts !== null && agent !== null) {
+      const started = await set(agent.start, {
+        name: 'Update skills',
+        prompt: result.conflicts.prompt,
+      })
+      if (started.ok) body = result.conflicts.summary
     }
   } catch (err) {
     body = err instanceof Error ? err.message : String(err)
-    // Unasked, a failure is not worth an interruption: the offer stays.
-    if (why === 'open') body = ''
   }
-  if (body !== '') notify(body)
-  await set(refreshSkillsAtom, false)
+  notify(body)
+  await set(refreshSkillsAtom)
 })
-
-export const updateSkillsAtom = atom(null, (_get, set) => set(runSkillsUpdateAtom, 'asked'))

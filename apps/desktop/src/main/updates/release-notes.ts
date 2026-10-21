@@ -23,52 +23,58 @@ export interface ReleaseNotes {
   url: string
 }
 
+/** What asking for a release's notes found: them, no release by that tag (a
+ *  local build), or no answer from GitHub (offline, rate-limited, down). */
+export type ReleaseNotesAnswer =
+  { kind: 'found'; notes: ReleaseNotes } | { kind: 'none' } | { kind: 'unreachable' }
+
 /** A version as it can appear in a tag: semver, prerelease included. */
 const VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/
 
 export const isReleaseVersion = (version: string): boolean => VERSION.test(version)
 
+/** A release's page, from the tag CI publishes rather than from the answer. */
+export const releaseUrl = (version: string): string =>
+  `https://github.com/${RELEASES_REPO}/releases/tag/v${version}`
+
 /**
- * Notes per version, fetched once each. A version with no release (a local
- * build) or a failed request answers null, and a failure is asked again next
- * time rather than remembered.
+ * Notes per version, fetched once each. A version with no release answers
+ * `none`, remembered; a request that failed answers `unreachable` and is asked
+ * again next time.
  */
 export function createReleaseNotes(deps: {
   fetch: (url: string, init: { headers: Record<string, string> }) => Promise<Response>
-}): (version: string) => Promise<ReleaseNotes | null> {
-  const known = new Map<string, ReleaseNotes | null>()
+}): (version: string) => Promise<ReleaseNotesAnswer> {
+  const known = new Map<string, ReleaseNotesAnswer>()
   return async (version) => {
-    if (!isReleaseVersion(version)) return null
-    if (known.has(version)) return known.get(version) ?? null
-    let response: Response
+    if (!isReleaseVersion(version)) return { kind: 'none' }
+    const was = known.get(version)
+    if (was !== undefined) return was
+    let raw: { name?: unknown; body?: unknown } | null
     try {
-      response = await deps.fetch(
+      const response = await deps.fetch(
         `https://api.github.com/repos/${RELEASES_REPO}/releases/tags/v${version}`,
         { headers: { Accept: 'application/vnd.github+json' } },
       )
+      if (response.status === 404) {
+        known.set(version, { kind: 'none' })
+        return { kind: 'none' }
+      }
+      if (!response.ok) return { kind: 'unreachable' }
+      raw = (await response.json()) as { name?: unknown; body?: unknown } | null
     } catch {
-      return null
+      return { kind: 'unreachable' }
     }
-    if (response.status === 404) {
-      known.set(version, null)
-      return null
+    const answer: ReleaseNotesAnswer = {
+      kind: 'found',
+      notes: {
+        version,
+        name: typeof raw?.name === 'string' && raw.name !== '' ? raw.name : `Holi ${version}`,
+        body: typeof raw?.body === 'string' ? raw.body.trim() : '',
+        url: releaseUrl(version),
+      },
     }
-    if (!response.ok) return null
-    const raw = (await response.json().catch(() => null)) as {
-      name?: unknown
-      body?: unknown
-      html_url?: unknown
-    } | null
-    const notes: ReleaseNotes = {
-      version,
-      name: typeof raw?.name === 'string' && raw.name !== '' ? raw.name : `Holi ${version}`,
-      body: typeof raw?.body === 'string' ? raw.body.trim() : '',
-      url:
-        typeof raw?.html_url === 'string'
-          ? raw.html_url
-          : `https://github.com/${RELEASES_REPO}/releases/tag/v${version}`,
-    }
-    known.set(version, notes)
-    return notes
+    known.set(version, answer)
+    return answer
   }
 }

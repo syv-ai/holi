@@ -76,6 +76,8 @@ export function installFakeHoli(handle: (op: TrpcOpWire) => unknown = () => unde
       onSyncState: subscribe(syncSubs),
       onHeldBack: subscribe(heldBackSubs),
       onCommitted: subscribe(committedSubs),
+      // Never fires here: present for the skills watch, which subscribes.
+      onSkillsUpdated: subscribe(new Set<(n: unknown) => void>()),
       onFlushRequest: subscribe(flushSubs),
       flushDone: () => onFlushed?.(),
       onOpen: subscribe(openSubs),

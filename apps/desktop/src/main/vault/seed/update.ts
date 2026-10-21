@@ -77,13 +77,18 @@ async function removeStaged(root: string, rel: string): Promise<void> {
  * quietly keep it and drop Holi's changes. Merged files are merged again at
  * the end: a hook script this added is wired in the same run.
  *
- * `release` is the running Holi's version: once the run is through, the
- * vault's shipped files are this release's (`SeedState.release`).
+ * `release` is the running Holi's version, recorded (`SeedState.release`)
+ * when the run brought something in and left no conflict: only then are the
+ * vault's shipped files this release's.
+ *
+ * `only` limits the run to those paths, as the update on open does with what
+ * `pendingShipped` found: a file that differs with no base on this machine is
+ * a conflict when someone asks, but nothing to stage unasked.
  */
 export async function updateShipped(
   root: string,
   contributions: readonly SeedContribution[],
-  release?: string,
+  opts: { release?: string; only?: readonly string[] } = {},
 ): Promise<UpdateReport> {
   const report: UpdateReport = {
     updated: [],
@@ -94,8 +99,10 @@ export async function updateShipped(
     deleted: [],
   }
   const state = await readSeedState(root)
+  const only = opts.only === undefined ? null : new Set(opts.only)
 
   for (const [rel, shipped] of shippedFiles(contributions)) {
+    if (only !== null && !only.has(rel)) continue
     const onDisk = await readFile(join(root, rel), 'utf8').catch(() => null)
     const record = state.files[rel]
     let write: string | null = null
@@ -152,7 +159,9 @@ export async function updateShipped(
   }
 
   await runMerges(root, contributions)
-  if (release !== undefined) await recordRelease(root, release)
+  if (opts.release !== undefined && changedBy(report).length > 0 && report.conflicts.length === 0) {
+    await recordRelease(root, opts.release)
+  }
   return report
 }
 

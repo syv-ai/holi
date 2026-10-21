@@ -35,7 +35,7 @@ import { installHoliCli } from './bridge/cli'
 import { createCapabilityHost } from './capabilities/dispatch'
 import { CapabilityError } from './capabilities/error'
 import { createCapabilityRegistry } from './capabilities/registry'
-import { vaultCapabilities, VAULT_NAMESPACES } from './capabilities/vault-caps'
+import { vaultCapabilities, VAULT_NAMESPACES, type SkillsUpdated } from './capabilities/vault-caps'
 import { taskCapabilities, TASK_NAMESPACES, TASKS_PART } from './vault/task-capabilities'
 import { coreSeed } from './vault/seed/core'
 import { MAIN_PLUGINS } from '../plugins/main'
@@ -49,7 +49,9 @@ import {
   pendingShipped,
   updateConflictPrompt,
   updateShipped,
+  type UpdateReport,
 } from './vault/seed/update'
+import { updateOnOpen } from './vault/seed/update-on-open'
 import { readSeedState } from './vault/seed/state'
 import { readVaultSettings } from './vault/settings'
 import { createReleaseNotes } from './updates/release-notes'
@@ -497,6 +499,53 @@ async function main(): Promise<void> {
    *  would take the screen from the first while it waits to settle. */
   let screenshots: Promise<unknown> = Promise.resolve()
 
+  /** One skills update at a time, asked for or run on open: both write the
+   *  vault's skills and its seed state. */
+  let skillsQueue: Promise<unknown> = Promise.resolve()
+  const skillsExclusive = <T>(job: () => Promise<T>): Promise<T> => {
+    const run = skillsQueue.then(job, job)
+    skillsQueue = run.catch(() => {})
+    return run
+  }
+  /** An update's report as the renderer and the CLI are told it. */
+  const skillsUpdated = async (root: string, report: UpdateReport): Promise<SkillsUpdated> => ({
+    summary: describeUpdate(report, false),
+    changed: changedBy(report),
+    conflicts:
+      report.conflicts.length === 0
+        ? null
+        : {
+            prompt: await updateConflictPrompt(root, report.conflicts),
+            summary: describeUpdate(report, true),
+          },
+  })
+  /**
+   * A vault that asks for its skills to update on open gets that once the open
+   * is through and its first pull has caught up; what it changed is pushed to
+   * the renderer, which only shows it.
+   */
+  const updateSkillsOnOpen = (remote: string): void => {
+    const vault = host.active()
+    if (vault === null || vault.remote !== remote) return
+    const stillOpen = (): boolean => host.active() === vault
+    void updateOnOpen({
+      root: vault.root,
+      release: app.getVersion(),
+      caughtUp: () => vault.caughtUp(),
+      stillOpen,
+      wanted: async () => (await readVaultSettings(vault.root)).autoUpdateSkills,
+      contributions: () => plugins.contributions(vault.root),
+      exclusive: skillsExclusive,
+    })
+      .then(async (report) => {
+        if (report === null || !stillOpen()) return
+        const updated = await skillsUpdated(vault.root, report)
+        if (updated.changed.length === 0 && updated.conflicts === null) return
+        send('vault:skills', { remote, ...updated })
+      })
+      .catch((err) => console.error('[skills] update on open failed:', err))
+  }
+
   // What a vault app and the agent can ask for: core's capabilities, then
   // each feature's, under the namespaces each owns. A feature's table closes
   // over what it needs from the running app.
@@ -530,18 +579,10 @@ async function main(): Promise<void> {
     updateSkills: async (remote) => {
       const root = await rootFor(remote)
       if (root === null) throw new CapabilityError('UNAVAILABLE', 'No vault is open.')
-      const report = await updateShipped(root, await plugins.contributions(root), app.getVersion())
-      return {
-        summary: describeUpdate(report, false),
-        changed: changedBy(report),
-        conflicts:
-          report.conflicts.length === 0
-            ? null
-            : {
-                prompt: await updateConflictPrompt(root, report.conflicts),
-                summary: describeUpdate(report, true),
-              },
-      }
+      const report = await skillsExclusive(async () =>
+        updateShipped(root, await plugins.contributions(root), { release: app.getVersion() }),
+      )
+      return skillsUpdated(root, report)
     },
   })
   const taskCaps = taskCapabilities({ today: localToday })
@@ -589,6 +630,7 @@ async function main(): Promise<void> {
     preCommit,
     seed: (root) => plugins.seed(root),
     plugins,
+    opened: updateSkillsOnOpen,
     members,
     reportUi: (remote, report) => {
       uiReports.set(remote, report)

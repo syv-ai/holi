@@ -44,8 +44,9 @@ version is older than the installed one; **Restart to update** installs the down
 version. **Release notes** are each release's GitHub notes, for the version found and the one
 running, fetched from GitHub's releases API by tag (`v<version>`) when first shown
 (`src/main/updates/release-notes.ts`, `trpc.updates.notes`). They are Markdown, shown as text with
-headings and list items picked out, never as HTML; a version with no release, such as a local build,
-has none. Beside them, **Open at login**, this machine's login item: Holi starts in the menu bar
+headings and list items picked out, never as HTML, with a link to the release built from the tag; a
+version with no release, such as a local build, has none. GitHub not answering (offline, rate
+limited, down) is said as such and asked again on the next showing. Beside them, **Open at login**, this machine's login item: Holi starts in the menu bar
 with its window loaded but out of sight, so the vault opens, syncs and fires its reminders from the
 start.
 
@@ -58,18 +59,24 @@ until a later release changes what is pending (`localStorage`, never the vault).
 then reaches a vault's skills on the next open, with one click.
 
 **A vault can take them on open.** `autoUpdateSkills` in `.holi/settings/app.yaml` (Settings →
-Updates, **Update skills automatically**) is committed, so a team answers it once. When it is on
-and `skills.status` finds something pending as the vault opens, Holi runs the same
-`skills.update` the button does, with the same rules for a file the vault edited, and offers
-nothing. The nav's update item then says what changed, naming the files, until **Done**. Unasked,
-it starts no session: a conflict stays staged beside its file and the item offers **Merge with the
-agent**, which starts the session Update skills would have. A failure is quiet, and the offer
-stands.
+Updates, **Update skills automatically**) is committed, so a team answers it once. When it is on,
+main runs the update itself, in sequence: after the open is through (seeded, opened, its plugins
+started) and after the vault's first pull has caught up with its remote, which the open asks for
+then rather than waiting for a focus or the pull timer. A teammate may already have brought the
+release in, and an update ahead of the pull would write it twice. It writes only what
+`pendingShipped` reports, with the same rules for a file the vault edited; a file that differs
+with no base on this machine is left alone rather than staged as a conflict nobody asked about. A
+vault left before then is not touched, and one skills update runs at a time, asked for or not.
+Main pushes what changed (`vault:skills`), and the nav's update item says it, naming the files,
+until **Done** or the vault is left; the vault is not offered the update meanwhile. Unasked, it
+starts no session: a conflict stays staged beside its file and the item offers **Merge with the
+agent**, which starts the session Update skills would have. A failure is quiet.
 
 **Which release a vault's skills are from.** The seed state (`seed-state.local.json`) records the
 Holi version that last wrote shipped files on this machine, at creation, on a plugin's first
-enabling, or by an update. `skills.status` answers it with what is pending; the offer, Settings →
-Updates and `holi skills status` say it. It is machine-local like the bases beside it: a
+enabling, or by an update that brought something in and left no conflict. It is never lowered.
+`skills.status` answers it with what is pending; the offer, Settings → Updates and
+`holi skills status` say it. It is machine-local like the bases beside it: a
 committed version would claim, on a teammate's machine, a write that never happened there.
 
 **Dev and installed are separate apps.** The packaged app is named Holi through
@@ -112,6 +119,6 @@ A dev build reports updates as unsupported.
 - `apps/desktop/src/renderer/src/features/nav/UpdateItem.tsx`: the nav item, for the app and the
   vault's skills
 - `apps/desktop/src/main/vault/seed/update.ts` (`pendingShipped`), `seed/state.ts` (`release`),
-  `state/skills.ts`: the skills offer, the update on open and its notice
+  `seed/update-on-open.ts`, `state/skills.ts`: the skills offer, the update on open and its notice
 - `apps/desktop/src/renderer/src/features/settings/UpdatesSection.tsx`: Settings → Updates
 - `apps/desktop/electron-builder.yml`, `.github/workflows/release.yml`: packaging and release

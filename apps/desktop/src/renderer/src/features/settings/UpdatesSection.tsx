@@ -9,7 +9,7 @@ import { trpc } from '@/lib/trpc'
 import { Button, Checkbox } from '@/primitives'
 import { ExternalLink, SettingsList, SettingsNote, SettingsRow } from '@/composites'
 import { openSkillsStatusAtom, updateSkillsAtom } from '@/state/skills'
-import type { ReleaseNotes } from '../../../../main/updates/release-notes'
+import type { ReleaseNotesAnswer } from '../../../../main/updates/release-notes'
 import { DescriptorSection } from './DescriptorSection'
 import {
   checkForUpdateAtom,
@@ -157,39 +157,49 @@ function OpenAtLoginRow(): React.JSX.Element {
  */
 function ReleaseNotesRow({ version, label }: { version: string; label: string }) {
   const [open, setOpen] = useState(false)
-  // undefined: not asked yet; null: no notes to show.
-  const [notes, setNotes] = useState<ReleaseNotes | null | undefined>(undefined)
+  // undefined: not asked yet. GitHub not answering is asked again on the
+  // next opening, so hiding and showing the notes is the retry.
+  const [answer, setAnswer] = useState<ReleaseNotesAnswer | undefined>(undefined)
+  const toggle = () => {
+    if (open && answer?.kind === 'unreachable') setAnswer(undefined)
+    setOpen((o) => !o)
+  }
   useEffect(() => {
-    if (!open || notes !== undefined) return
+    if (!open || answer !== undefined) return
     let live = true
     trpc.updates.notes
       .query({ version })
-      .then((n) => live && setNotes(n))
-      .catch(() => live && setNotes(null))
+      .then((a) => live && setAnswer(a))
+      .catch(() => live && setAnswer({ kind: 'unreachable' }))
     return () => {
       live = false
     }
-  }, [open, notes, version])
+  }, [open, answer, version])
 
   return (
     <SettingsRow
       label={label}
       control={
-        <Button variant="secondary" size="xs" onClick={() => setOpen((o) => !o)}>
+        <Button variant="secondary" size="xs" onClick={toggle}>
           {open ? 'Hide notes' : 'Release notes'}
         </Button>
       }
     >
       {open &&
-        (notes === undefined ? (
+        (answer === undefined ? (
           <SettingsNote>Loading…</SettingsNote>
-        ) : notes === null ? (
+        ) : answer.kind === 'unreachable' ? (
+          <SettingsNote>Could not reach GitHub, try again.</SettingsNote>
+        ) : answer.kind === 'none' ? (
           <SettingsNote>GitHub has no notes for this version.</SettingsNote>
         ) : (
           <div className="space-y-2">
-            <NotesText body={notes.body} />
-            <ExternalLink url={notes.url} onOpen={() => void window.holi.openExternal(notes.url)}>
-              {notes.name} on GitHub
+            <NotesText body={answer.notes.body} />
+            <ExternalLink
+              url={answer.notes.url}
+              onOpen={() => void window.holi.openExternal(answer.notes.url)}
+            >
+              {answer.notes.name} on GitHub
             </ExternalLink>
           </div>
         ))}

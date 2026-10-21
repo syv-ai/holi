@@ -90,6 +90,13 @@ export interface ActiveVault {
   pushNow(): Promise<void>
   /** Window focus. Throttled internally. */
   onFocus(): void
+  /**
+   * Resolves true once a pull has merged or found nothing new, the first time,
+   * and false if the vault closes first; never rejects. Asking starts a pull
+   * when none has caught up yet. What has to see the remote's state before it
+   * writes waits on this, such as the skills update on open.
+   */
+  caughtUp(): Promise<boolean>
   /** Stops both loops while an agent turn holds the vault. */
   pause(reason: string): void
   /** Lift the pause, then `retry`. */
@@ -241,6 +248,16 @@ export async function openActiveVault(args: {
    *  from `conflictPaths` alone, which is also the sticky banner over a clean
    *  tree, and from a merge someone started in a terminal, which is neither. */
   let reconciling = false
+  /** Settles `caughtUp()`: true on the first pull that is not a conflict,
+   *  false on close. */
+  let settleCaughtUp: (ok: boolean) => void = () => {}
+  let isCaughtUp = false
+  const caughtUp = new Promise<boolean>((resolve) => {
+    settleCaughtUp = (ok) => {
+      isCaughtUp = true
+      resolve(ok)
+    }
+  })
 
   function setState(next: SyncState): void {
     // Only on a real change: the panel would otherwise re-render on every tick.
@@ -448,6 +465,7 @@ export async function openActiveVault(args: {
       await refreshState()
       const result = await args.repo.pull()
       offline = false
+      if (result.kind !== 'conflict') settleCaughtUp(true)
       if (result.kind === 'conflict') {
         /**
          * **A conflict naming no paths is not a conflict.**
@@ -651,6 +669,11 @@ export async function openActiveVault(args: {
       // while the pull is in flight, hence the chain.
       void maybePull().then(() => pushNow())
     },
+    caughtUp() {
+      // A declined pull leaves it waiting: the next tick or focus tries again.
+      if (!isCaughtUp && !closed) void maybePull().then(() => pushNow())
+      return caughtUp
+    },
     pause(reason) {
       manualPause = reason
       setState({ kind: 'paused', reason, manual: true })
@@ -712,6 +735,7 @@ export async function openActiveVault(args: {
 
     async close() {
       closed = true
+      settleCaughtUp(false)
       clearInterval(heal)
       clearInterval(pullTimer)
       if (commitTimer !== null) clearTimeout(commitTimer)
