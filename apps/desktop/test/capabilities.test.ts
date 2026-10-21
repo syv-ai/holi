@@ -434,6 +434,16 @@ describe('tasks.complete', () => {
     ).toMatchObject({ code: 'NOT_FOUND' })
   })
 
+  it('never completes a task through a symlink at the app door', async () => {
+    await put('elsewhere/task.x.md', '---\nstatus: todo\n---\n\n# X\n')
+    await symlink(join(root, 'elsewhere'), join(root, 'link'))
+    written.push('link/task.x.md')
+    expect(
+      await refusal(runCapability('tasks.complete', 'app', ctx({}), { path: 'link/task.x.md' })),
+    ).toMatchObject({ code: 'FORBIDDEN' })
+    expect(await readText(join(root, 'elsewhere/task.x.md'), 'utf8')).toContain('status: todo')
+  })
+
   it('refuses a task on the agent surface', async () => {
     expect(
       await refusal(
@@ -474,6 +484,11 @@ describe('docs.write', () => {
       'notes/mine.local.d/x.md',
       'Budget.app/README.md',
       'Budget.app/data/items/x.md',
+      'notes/AGENTS.md',
+      'notes/claude.md',
+      'notes/Claude.MD/x.md',
+      'claude.md',
+      'Memory.md',
     ]) {
       expect(await refusal(write(path, 'x', null))).toMatchObject({ code: 'FORBIDDEN' })
     }
@@ -484,6 +499,34 @@ describe('docs.write', () => {
     await mkdir(join(root, 'elsewhere'))
     await symlink(join(root, 'elsewhere'), join(root, 'link'))
     expect(await refusal(write('link/x.md', 'x', null))).toMatchObject({ code: 'FORBIDDEN' })
+  })
+
+  it('lets one of two writes over the same base land, and refuses the other', async () => {
+    await put('a.md', 'one\n')
+    const results = await Promise.all([
+      refusal(write('a.md', 'mine\n', 'one\n')),
+      refusal(write('a.md', 'theirs\n', 'one\n')),
+    ])
+    expect(results.filter((r) => r === null)).toHaveLength(1)
+    expect(results.filter((r) => r?.code === 'CONFLICT')).toHaveLength(1)
+  })
+
+  it("changes a task file's body only: its fields are tasks.update's", async () => {
+    const task = '---\nstatus: todo\ndue: 2026-09-30\n---\n\n# Rent\n'
+    await put('task.rent.md', task)
+    const body = '---\nstatus: todo\ndue: 2026-09-30\n---\n\n# Rent\n\nPaid by transfer.\n'
+    expect((await write('task.rent.md', body, task)).writes).toBe(true)
+    for (const text of [
+      '---\nstatus: done\ndue: 2026-09-30\n---\n\n# Rent\n\nPaid by transfer.\n',
+      '---\nstatus: todo\n---\n\n# Rent\n\nPaid by transfer.\n',
+      '# Rent\n',
+    ]) {
+      expect(await refusal(write('task.rent.md', text, body))).toMatchObject({
+        code: 'BAD_REQUEST',
+      })
+    }
+    expect(await refusal(write('task.new.md', task, null))).toMatchObject({ code: 'BAD_REQUEST' })
+    expect(await readText(join(root, 'task.rent.md'), 'utf8')).toBe(body)
   })
 
   it('needs the base, so no write is blind', async () => {
@@ -555,11 +598,23 @@ describe('tasks.create at the app door', () => {
     expect(await readText(join(root, 'ops/task.call-the-vendor.md'), 'utf8')).toContain(
       '2026-10-01',
     )
-    for (const folder of ['.claude', 'Budget.app', 'mine.local.d']) {
+    await mkdir(join(root, 'elsewhere'))
+    await symlink(join(root, 'elsewhere'), join(root, 'link'))
+    for (const folder of ['.claude', 'Budget.app', 'mine.local.d', 'link', 'CLAUDE.md']) {
       expect(
         await refusal(runCapability('tasks.create', 'app', ctx({}), { title: 'X', folder })),
       ).toMatchObject({ code: 'FORBIDDEN' })
     }
+  })
+})
+
+describe('tasks.create, twice at once', () => {
+  it('gives two creates with one title two files', async () => {
+    const create = () => runCapability('tasks.create', 'app', ctx({}), { title: 'Call' })
+    const [a, b] = await Promise.all([create(), create()])
+    expect(new Set([a.value, b.value].map((v) => (v as { path: string }).path))).toEqual(
+      new Set(['task.call.md', 'task.call-2.md']),
+    )
   })
 })
 

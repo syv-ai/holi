@@ -156,7 +156,10 @@ export function AppFrame({ path }: { path: string }): React.JSX.Element {
       }
       answer(msg.method, msg.params).then(
         (value) => reply({ id, ok: true, value }),
-        (err: unknown) => reply({ id, ok: false, error: (err as Error).message }),
+        (err: unknown) => {
+          const code = refusalCodeOf(err)
+          reply({ id, ok: false, error: (err as Error).message, ...(code ? { code } : {}) })
+        },
       )
     }
     window.addEventListener('message', onMessage)
@@ -438,4 +441,10 @@ function CommitLine({ lead, commit }: { lead: string; commit: AppCommit }): Reac
       , {day(commit.date)}
     </span>
   )
+}
+
+/** tRPC's verdict, as `ipcLink` rebuilt it onto `err.data.code`. */
+function refusalCodeOf(err: unknown): string | null {
+  const data = (err as { data?: { code?: unknown } } | null)?.data
+  return typeof data?.code === 'string' ? data.code : null
 }

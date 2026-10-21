@@ -5,6 +5,7 @@
  */
 import { readFile } from 'node:fs/promises'
 import {
+  AGENT_SURFACE_FILES,
   appBundleOf,
   isAgentSurfacePath,
   isAppPrivatePath,
@@ -115,10 +116,34 @@ export async function readNote(ctx: CapabilityContext, path: string): Promise<st
  */
 export function writablePath(path: string): VaultRelPath {
   const rel = readablePath(path)
-  if (isHiddenPath(rel) || isLocalOnlyPath(rel) || appBundleOf(rel) !== null) {
+  if (
+    isHiddenPath(rel) ||
+    isLocalOnlyPath(rel) ||
+    appBundleOf(rel) !== null ||
+    isAgentInstructionPath(rel)
+  ) {
     throw new CapabilityError('FORBIDDEN', path)
   }
   return rel
+}
+
+/** The names Claude Code reads instructions from, in any folder it works in. */
+const AGENT_INSTRUCTION_NAMES = new Set(['agents.md', 'claude.md'])
+const AGENT_SURFACE_NAMES = new Set(AGENT_SURFACE_FILES.map((f) => f.toLowerCase()))
+
+/**
+ * A path an app must not write, though it may read it: an `AGENTS.md` or
+ * `CLAUDE.md` anywhere (Claude Code loads the one in a subfolder it works in,
+ * so an app that planted one would be instructing the agent), and the root
+ * agent-surface files in any case (`claude.md` opens `CLAUDE.md` on macOS).
+ * A read is matched exactly, since `notes/AGENTS.md` is a note someone may
+ * read; a write is the one that has to be stopped.
+ */
+function isAgentInstructionPath(rel: VaultRelPath): boolean {
+  return (
+    AGENT_SURFACE_NAMES.has(rel.toLowerCase()) ||
+    rel.split('/').some((seg) => AGENT_INSTRUCTION_NAMES.has(seg.toLowerCase()))
+  )
 }
 
 /**

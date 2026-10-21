@@ -27,11 +27,11 @@ import {
 import { CapabilityError } from '../capabilities/error'
 import { knownPath, writableFile, writablePath } from '../capabilities/fences'
 import { noParams, paramsObject, pathParams, stringParam } from '../capabilities/params'
-import { cap } from '../capabilities/registry'
+import { cap, type CapabilityContext } from '../capabilities/registry'
 import type { MainPlugin } from '../plugin-api'
 import { archiveDone } from './hooks/archive-done'
 import { taskDoneOp } from './task-done'
-import { absPathFor, writeAtomic } from './vault-files'
+import { absPathFor, withFileLock, writeAtomic } from './vault-files'
 
 export const TASK_NAMESPACES = ['tasks'] as const
 
@@ -94,19 +94,33 @@ function optionalString(p: Record<string, unknown>, key: string): string | undef
 }
 
 /**
- * The first free `task.<slug>.md` in `folder`.
+ * `text` written to the first free `task.<slug>.md` in `folder`.
  *
  * Two tasks may honestly share a title ("Call the vendor" twice is a normal
  * week), so a colliding slug takes a numeric suffix. Refusing would make a
  * board quick-add fail on a repeated title, which reads as a bug; overwriting
- * would silently destroy the earlier task.
+ * would silently destroy the earlier task. Each name is checked and written
+ * under its file's lock, so two creates with one title take two names. An
+ * app's fences come before the disk is looked at, so a refused folder learns
+ * nothing about what is in it.
  */
-async function freeTaskPath(root: string, folder: string, title: string): Promise<VaultRelPath> {
+async function createTaskFile(
+  ctx: CapabilityContext,
+  folder: string,
+  title: string,
+  text: string,
+): Promise<VaultRelPath> {
   const slug = taskSlug(title)
   for (let n = 1; n <= 1000; n++) {
     const rel = safe(taskFilePath(folder, n === 1 ? slug : `${slug}-${n}`))
-    const taken = (await readFile(absPathFor(root, rel), 'utf8').catch(() => null)) !== null
-    if (!taken) return rel
+    const abs =
+      ctx.bundle !== null ? await writableFile(ctx, writablePath(rel)) : absPathFor(ctx.root, rel)
+    const created = await withFileLock(abs, async () => {
+      if ((await readFile(abs, 'utf8').catch(() => null)) !== null) return false
+      await writeAtomic(ctx.root, rel, text)
+      return true
+    })
+    if (created) return rel
   }
   throw new CapabilityError('BAD_REQUEST', `too many tasks named like: ${title}`)
 }
@@ -148,21 +162,16 @@ export const taskCapabilities = (deps: TaskCapabilitiesDeps) => ({
         ),
         status: input.status ?? 'todo',
       })
-      const rel = await freeTaskPath(ctx.root, input.folder ?? '', input.title)
-      if (ctx.bundle !== null) await writableFile(ctx, writablePath(rel))
-      await writeAtomic(
-        ctx.root,
-        rel,
-        serializeTaskFile({
-          ...patch,
-          status: patch.status ?? 'todo',
-          tags: patch.tags ?? [],
-          assignees: patch.assignees ?? [],
-          // The title is the body's first heading, because that is where the
-          // format keeps it.
-          description: setFirstHeading(input.description ?? '', input.title),
-        }),
-      )
+      const text = serializeTaskFile({
+        ...patch,
+        status: patch.status ?? 'todo',
+        tags: patch.tags ?? [],
+        assignees: patch.assignees ?? [],
+        // The title is the body's first heading, because that is where the
+        // format keeps it.
+        description: setFirstHeading(input.description ?? '', input.title),
+      })
+      const rel = await createTaskFile(ctx, input.folder ?? '', input.title, text)
       return { path: rel }
     },
   }),
@@ -190,8 +199,9 @@ export const taskCapabilities = (deps: TaskCapabilitiesDeps) => ({
         isAbsolute(path) ? relative(ctx.root, path) : path.replace(/^\.\//, ''),
       )
       // An app writes only where it may write a note; the agent writes anywhere.
-      if (ctx.bundle !== null) writablePath(rel)
-      const result = await taskDoneOp(ctx.root, rel, deps.today())
+      const abs =
+        ctx.bundle !== null ? await writableFile(ctx, writablePath(rel)) : absPathFor(ctx.root, rel)
+      const result = await withFileLock(abs, () => taskDoneOp(ctx.root, rel, deps.today()))
       if (!result.ok) throw new CapabilityError('BAD_REQUEST', result.error)
       return result
     },
@@ -227,17 +237,20 @@ export const taskCapabilities = (deps: TaskCapabilitiesDeps) => ({
       if (!isTaskFilePath(rel)) {
         throw new CapabilityError('BAD_REQUEST', `${rel} is not a task file`)
       }
-      const text = await readFile(await writableFile(ctx, rel), 'utf8').catch(() => null)
-      if (text === null) throw new CapabilityError('NOT_FOUND', path)
-      let task: Task
-      try {
-        task = parseTaskFile(text, rel)
-      } catch (err) {
-        throw new CapabilityError('BAD_REQUEST', `${rel}: ${(err as Error).message}`)
-      }
-      const next = applyTaskPatch(task, patch, deps.today())
-      await writeAtomic(ctx.root, rel, serializeTaskFile(next))
-      return next
+      const abs = await writableFile(ctx, rel)
+      return withFileLock(abs, async () => {
+        const text = await readFile(abs, 'utf8').catch(() => null)
+        if (text === null) throw new CapabilityError('NOT_FOUND', path)
+        let task: Task
+        try {
+          task = parseTaskFile(text, rel)
+        } catch (err) {
+          throw new CapabilityError('BAD_REQUEST', `${rel}: ${(err as Error).message}`)
+        }
+        const next = applyTaskPatch(task, patch, deps.today())
+        await writeAtomic(ctx.root, rel, serializeTaskFile(next))
+        return next
+      })
     },
   }),
 })

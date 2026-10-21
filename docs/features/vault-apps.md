@@ -75,7 +75,15 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   must not exist yet; a note that has changed since (a pull, the agent, the person typing)
   is refused as a conflict and nothing is written, so an app never overwrites what it did not
   see. The text is the revision because the app already holds it and nothing else about a file
-  says for certain it is unchanged. None of these is open to the agent, which writes files with
+  says for certain it is unchanged. The check and the write run under the file's lock in main
+  (`withFileLock`), so two app writes over one base give one write and one conflict. The
+  editor's save and a pull do not take that lock: one landing between the check and the
+  rename is overwritten, a window of one file write, and history keeps what it wrote. On a
+  task file `docs.write` changes the body only: its frontmatter must parse to the fields the
+  file has, so a field change goes through `tasks.update`'s rules, and a new task through
+  `tasks.create`. A refusal reaches the app as an `Error` whose `code` is main's verdict
+  (`CONFLICT`, `FORBIDDEN`, `NOT_FOUND`, `BAD_REQUEST`), so an app matches the code, not the
+  words. None of these is open to the agent, which writes files with
   its own tools (`holi tasks complete` aside, for the recurrence rule).
 - **Push.** `holi.on(topic, fn)` hears `docs`, `tasks`, `sync`, `agent`, `recents`, `history` and
   `store:<collection>`. `AppFrame` posts a topic when its signature changes (`renderer/app-push.ts`),
@@ -192,7 +200,10 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   read refuses, nothing hidden (`.holi/`, `.claude/`, `.github/`: configuration and machinery,
   each with its own writer), nothing `.local.` (one person's, which a shared app's code must
   not change for them, and which never syncs to show anyone it did), and nothing inside an
-  app's bundle (another app's code, or records, which have the store). The file must be the
+  app's bundle (another app's code, or records, which have the store), and no `AGENTS.md` or
+  `CLAUDE.md` in any folder or any case, nor a root agent-surface name in another case: Claude
+  Code reads a subfolder's instructions when it works there, so an app that wrote one would be
+  instructing the agent. A read of `notes/AGENTS.md` stays allowed. The file must be the
   path as named (`exactPath`): no symlink on the way, the case it has on disk. Nothing deletes,
   moves or renames. None of it asks for consent: the one prompt is for one person's own data.
 - This machine's state under `.holi/state/` (`isMachineStatePath`) is refused the same way and left

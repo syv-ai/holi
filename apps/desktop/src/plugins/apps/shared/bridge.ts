@@ -66,9 +66,11 @@ export interface AppRequest {
 }
 
 /** The answer, back to the frame. A refusal is a value, not a thrown error:
- *  the app must be able to render "this is not available" rather than break. */
+ *  the app must be able to render "this is not available" rather than break.
+ *  `code` is the refusal's kind when main gave one (`CONFLICT`, `FORBIDDEN`,
+ *  `NOT_FOUND`...), so an app matches on it rather than on the words. */
 export type AppResponse =
-  { id: string; ok: true; value: unknown } | { id: string; ok: false; error: string }
+  { id: string; ok: true; value: unknown } | { id: string; ok: false; error: string; code?: string }
 
 /**
  * What `holi.on(topic, fn)` can hear, besides `store:<collection>`. A push

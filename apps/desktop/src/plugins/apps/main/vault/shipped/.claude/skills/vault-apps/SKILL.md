@@ -149,10 +149,15 @@ trust each other's apps as they trust each other's edits.
 - `holi.docs.write(path, text, base)` writes a whole `.md` note. `base` is the
   text you read with `holi.docs.read`, or `null` for a note that must not exist
   yet. If the note changed since you read it (a teammate's sync, the agent, the
-  person typing in it) the write rejects with "changed since it was read" and
+  person typing in it) the write rejects with `err.code === 'CONFLICT'` and
   nothing is written: read it again, apply your change to the new text, and
-  write once more. Never retry with a stale base. A task's text is a note
-  write too; its fields go through `holi.tasks.update`.
+  write once more. Never retry with a stale base.
+- A task file (`task.*.md`) takes `holi.docs.write` for its body only: keep its
+  frontmatter exactly as you read it, or the write rejects and names
+  `holi.tasks.update`, which is how its fields change. A new task is
+  `holi.tasks.create`, never a note write.
+- A refusal is an `Error` with a `code`: `CONFLICT`, `FORBIDDEN`, `NOT_FOUND`
+  or `BAD_REQUEST`. Match on the code, not the message.
 
 ```js
 async function appendLine(path, line) {
@@ -161,7 +166,7 @@ async function appendLine(path, line) {
     try {
       return await holi.docs.write(path, text.trimEnd() + '\n' + line + '\n', text)
     } catch (err) {
-      if (!/changed since/.test(err.message)) throw err
+      if (err.code !== 'CONFLICT') throw err
     }
   }
 }
@@ -173,8 +178,9 @@ These are not oversights — build within them rather than around them.
 
 - **It cannot delete, move or rename anything**, and it writes only the vault's
   shared notes and tasks (see Changing the vault). Nothing hidden (`.holi/`,
-  `.claude/`, `.github/`), nothing `.local.`, nothing inside an app's folder,
-  its own included: its data goes in `holi.store`.
+  `.claude/`, `.github/`), nothing `.local.`, no `AGENTS.md` or `CLAUDE.md` in
+  any folder, nothing inside an app's folder, its own included: its data goes
+  in `holi.store`.
 - **It has no browser storage.** `localStorage` and `sessionStorage` _throw_ (the
   page has an opaque origin) and cookies do nothing. Anything that must survive
   a reload goes in `holi.store`; in-memory state within one session (a selected

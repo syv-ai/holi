@@ -119,7 +119,12 @@ Todo / Doing / Done, with one swim lane per folder.
   app's `holi.tasks.update` apply `completeTask` (through `applyTaskPatch`), and the
   frontmatter widget writes its result into the buffer, as does the agent's
   `holi tasks complete <path>`. Only a hand edit of the file can write a bare
-  `status: done`, and that ends a recurring series.
+  `status: done`, and that ends a recurring series. A vault app's note write
+  (`docs.write`) to a task file changes its body only: the frontmatter must parse to the
+  same fields as the file's, or it is refused and names `tasks.update`.
+- An app's task writes (`tasks.create`, `tasks.update`, `tasks.complete`) each check and
+  write a file under that file's lock in main (`withFileLock`), so two at once cannot both
+  read the same text, and two creates with one title take two names.
 - A reminder is an absolute moment. A non-stamp reminder is inert, never an error, so a legacy
   `1d` costs a notification rather than the task. `due` is strict.
 - Virtual labels are never stored: `overdue` would be a commit per task at midnight.

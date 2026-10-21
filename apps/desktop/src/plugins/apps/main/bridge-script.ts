@@ -47,7 +47,9 @@ export const BRIDGE_JS = `(() => {
     if (msg.ok) entry.resolve(msg.value)
     else {
       report('warn', ['holi ' + entry.method + ' refused: ' + String(msg.error)])
-      entry.reject(new Error(String(msg.error)))
+      const err = new Error(String(msg.error))
+      if (typeof msg.code === 'string') err.code = msg.code
+      entry.reject(err)
     }
   })
   const call = (method, params) =>

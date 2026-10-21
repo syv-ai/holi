@@ -8,6 +8,9 @@
 import { readFile } from 'node:fs/promises'
 import {
   isAppBundlePath,
+  isTaskFilePath,
+  parseTaskFile,
+  serializeTaskFile,
   syncLabel,
   type RecentEntry,
   type SyncState,
@@ -16,7 +19,7 @@ import {
 } from '@holi/shared'
 import { writeOut } from '../vault/out-files'
 import { readVaultSettings } from '../vault/settings'
-import { writeAtomic } from '../vault/vault-files'
+import { withFileLock, writeAtomic } from '../vault/vault-files'
 import { isSearchable, searchVault, type SearchHit } from '../vault/search'
 import { CapabilityError, unavailable } from './error'
 import {
@@ -44,6 +47,33 @@ function syncText(state: SyncState | null): string {
   return state.kind === 'conflict' || state.kind === 'reconciling'
     ? [text, ...state.paths].join('\n')
     : text
+}
+
+/** A task's frontmatter, as the task parser reads it, to compare two texts by. */
+function taskFields(rel: VaultRelPath, text: string): string {
+  try {
+    return serializeTaskFile({ ...parseTaskFile(text, rel), description: '' })
+  } catch (err) {
+    throw new CapabilityError('BAD_REQUEST', `${rel}: ${(err as Error).message}`)
+  }
+}
+
+/**
+ * A note write to a task file changes its body only. Its fields go through
+ * `tasks.update`, where done is completion and every value is checked; a
+ * whole-file write could set a bare `status: done` and end a recurring series,
+ * or a value the board cannot read. A new task is `tasks.create`'s.
+ */
+function sameTaskFields(rel: VaultRelPath, current: string | null, text: string): void {
+  if (current === null) {
+    throw new CapabilityError('BAD_REQUEST', `a task is created with tasks.create: ${rel}`)
+  }
+  if (taskFields(rel, text) !== taskFields(rel, current)) {
+    throw new CapabilityError(
+      'BAD_REQUEST',
+      `a task's fields change with tasks.update; docs.write keeps its frontmatter as it is: ${rel}`,
+    )
+  }
 }
 
 /** The namespaces core owns. */
@@ -164,8 +194,9 @@ export const vaultCapabilities = (deps: VaultCapabilitiesDeps) => ({
    * that changed since (a teammate's pull, the agent, the person typing) is a
    * CONFLICT, so the app reads again rather than overwrite what it never saw.
    * The text is the revision: an app already holds it, and nothing else about
-   * a file says for certain that it is unchanged. The app door only: the
-   * agent writes files with its own tools.
+   * a file says for certain that it is unchanged. A task file's body only
+   * (`sameTaskFields`). The app door only: the agent writes files with its
+   * own tools.
    */
   'docs.write': cap({
     doors: ['app'],
@@ -187,18 +218,24 @@ export const vaultCapabilities = (deps: VaultCapabilitiesDeps) => ({
       if (!rel.endsWith('.md')) {
         throw new CapabilityError('BAD_REQUEST', `only a note (.md) can be written: ${rel}`)
       }
-      const current = await readFile(await writableFile(ctx, rel), 'utf8').catch(() => null)
-      if (current !== base) {
-        throw new CapabilityError(
-          'CONFLICT',
-          base === null
-            ? `already exists: ${rel}`
-            : current === null
-              ? `no longer exists: ${rel}`
-              : `changed since it was read: ${rel}`,
-        )
-      }
-      await writeAtomic(ctx.root, rel, text)
+      const abs = await writableFile(ctx, rel)
+      // One app write to a file at a time, so two over the same base cannot
+      // both pass the check below.
+      await withFileLock(abs, async () => {
+        const current = await readFile(abs, 'utf8').catch(() => null)
+        if (current !== base) {
+          throw new CapabilityError(
+            'CONFLICT',
+            base === null
+              ? `already exists: ${rel}`
+              : current === null
+                ? `no longer exists: ${rel}`
+                : `changed since it was read: ${rel}`,
+          )
+        }
+        if (isTaskFilePath(rel)) sameTaskFields(rel, current, text)
+        await writeAtomic(ctx.root, rel, text)
+      })
       return { path: rel }
     },
   }),
