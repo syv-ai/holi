@@ -6,11 +6,21 @@
  */
 import { atom } from 'jotai'
 import { trpc } from '../lib/trpc'
+import { historyOpenAtom } from './history'
 import { snapshotAtom } from './vaults'
 
 export type NoteLinks = Awaited<ReturnType<typeof trpc.notes.links.query>>
 
 export const linksOpenAtom = atom(false)
+
+/** Open or close the drawer. The right edge holds one drawer at a time:
+ *  opening this closes History, and Comments stays hidden behind it
+ *  (`toggleCommentsAtom` closes this one in turn). */
+export const toggleLinksAtom = atom(null, (get, set, open?: boolean) => {
+  const next = open ?? !get(linksOpenAtom)
+  set(linksOpenAtom, next)
+  if (next) set(historyOpenAtom, false)
+})
 
 /**
  * What the link scans read, as one string: every markdown note with its mtime,

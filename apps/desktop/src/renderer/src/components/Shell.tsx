@@ -55,7 +55,7 @@ import {
 import { pathOfTab } from '@/lib/folder-documents'
 import { historyOpenAtom, historyTargetPathAtom } from '../state/history'
 import { commentsTargetPathAtom, toggleCommentsAtom } from '../state/comments'
-import { linksOpenAtom } from '../state/links'
+import { toggleLinksAtom } from '../state/links'
 import { tickNowAtom } from '../state/clock'
 import type { PaneDropZone } from '@/lib/tab-drop'
 import type { Surface } from '@/plugin-api/types'
@@ -119,7 +119,7 @@ export function Shell() {
   const startPendingPrompt = useSetAtom(startPendingVaultPromptAtom)
   const setPendingPrompt = useSetAtom(pendingVaultPromptAtom)
   const setHistoryOpen = useSetAtom(historyOpenAtom)
-  const setLinksOpen = useSetAtom(linksOpenAtom)
+  const toggleLinks = useSetAtom(toggleLinksAtom)
   const openPath = useSetAtom(openPathAtom)
   const folderClaims = useAtomValue(folderClaimsAtom)
   const surfaces = useAtomValue(surfacesAtom)
@@ -431,7 +431,7 @@ export function Shell() {
                             icon={Link2}
                             label="links"
                             className="ml-1"
-                            onClick={() => setLinksOpen((v) => !v)}
+                            onClick={() => toggleLinks()}
                           />
                         )}
                         {/* Version history for the focused note. Only on the

@@ -11,6 +11,7 @@ import { isCommentableNote, type CommentAnchor, type CommentThread } from '@holi
 import { atom, type SetStateAction, type WritableAtom } from 'jotai'
 import { trpc } from '../lib/trpc'
 import { historyOpenAtom, historyTargetPathAtom } from './history'
+import { linksOpenAtom } from './links'
 import { activeRemoteAtom } from './vaults'
 
 /**
@@ -42,12 +43,15 @@ export const commentsTargetPathAtom = atom<string | null>((get) => {
   return path === null || !isCommentableNote(path) ? null : path
 })
 
-/** Open or close the drawer. It and History share the right edge, so opening
- *  one closes the other. */
+/** Open or close the drawer. It, Links and History share the right edge, so
+ *  opening it closes the other two. */
 export const toggleCommentsAtom = atom(null, (get, set, open?: boolean) => {
   const next = open ?? !get(commentsOpenAtom)
   set(commentsOpenAtom, next)
-  if (next) set(historyOpenAtom, false)
+  if (next) {
+    set(historyOpenAtom, false)
+    set(linksOpenAtom, false)
+  }
 })
 
 /** Every loaded note's threads, by path. */
