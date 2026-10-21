@@ -104,6 +104,12 @@ describe('parseAppManifest dangerously-allow', () => {
     ).toEqual({ dangerouslyAllow: ['network'], hosts: ['platform.syv.ai'] })
   })
 
+  it('drops an address or this machine from hosts: holi.fetch reaches neither', () => {
+    expect(
+      parseAppManifest('hosts: [127.0.0.1, 10.0.0.1, localhost, a.localhost, api.example.com]\n'),
+    ).toEqual({ hosts: ['api.example.com'] })
+  })
+
   it('reads the list of opted-in affordances', () => {
     expect(parseAppManifest('dangerously-allow: [mail, calendar]\n')).toEqual({
       dangerouslyAllow: ['mail', 'calendar'],

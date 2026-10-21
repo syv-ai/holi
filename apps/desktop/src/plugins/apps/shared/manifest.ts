@@ -49,7 +49,8 @@ export interface AppManifest {
   /**
    * The hosts `holi.fetch` may reach (`network`), exactly: `api.example.com`
    * does not cover `example.com` or `x.api.example.com`. Keyed `hosts` in the
-   * YAML. Anything that is not a plain hostname is dropped.
+   * YAML. Anything that is not a plain hostname is dropped, and so are IP
+   * addresses and `localhost`.
    */
   hosts?: string[]
   /**
@@ -119,12 +120,21 @@ function parseEnv(raw: unknown): string[] | undefined {
 /** A plain hostname: letters, digits, dots and dashes, no port or path. */
 const HOST = /^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*$/
 
+/** A name, not an address (no top-level domain is all digits), and not this
+ *  machine: `holi.fetch` refuses both (`main/net.ts`), so they are dropped here
+ *  too. */
+const isReachableName = (host: string): boolean =>
+  HOST.test(host) &&
+  !/(^|\.)\d+$/.test(host) &&
+  host !== 'localhost' &&
+  !host.endsWith('.localhost')
+
 function parseHosts(raw: unknown): string[] | undefined {
   if (!Array.isArray(raw)) return undefined
   const hosts = raw
     .filter((h): h is string => typeof h === 'string')
     .map((h) => h.trim().toLowerCase())
-    .filter((h) => HOST.test(h))
+    .filter(isReachableName)
   return hosts.length > 0 ? [...new Set(hosts)] : undefined
 }
 

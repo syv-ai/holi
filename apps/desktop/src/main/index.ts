@@ -110,8 +110,12 @@ const FRAME_SCHEMES = frameSchemes(SCHEMES)
 
 // A screen share's system audio on macOS (`getDisplayMedia` with
 // `audio: 'loopback'` below): Chromium's Core Audio tap, behind a feature flag.
-// Switches are read at startup, so this is set at module top level too.
-app.commandLine.appendSwitch('enable-features', 'MacCatapLoopbackAudioForScreenShare')
+// Switches are read at startup, so this is set at module top level too. Only
+// macOS reads the flag; Windows has loopback audio without one.
+if (process.platform === 'darwin') {
+  app.commandLine.appendSwitch('enable-features', 'MacCatapLoopbackAudioForScreenShare')
+}
+
 /** A path main asks the renderer to show in a tab (`vault:open`). */
 interface OpenRequest {
   remote: string

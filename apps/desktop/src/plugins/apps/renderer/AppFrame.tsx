@@ -24,8 +24,9 @@
  *
  * It also **tells** the frame when something it can read has changed (a push:
  * a topic name and nothing else, so the app reads it again through main), and
- * before mounting an app that opts into reading Google data it asks the person
- * to approve that (`dangerously-allow`; the approval is kept in main).
+ * before mounting an app that opts into reading Google data, recording or the
+ * network it asks the person to approve that (`dangerously-allow`; the
+ * approval is kept in main).
  */
 import { useAtomValue, useSetAtom, useStore } from 'jotai'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
@@ -51,8 +52,8 @@ import { startRecording, type Recording } from './recorder'
 const AFFORDANCE_TEXT: Record<AppAffordance, string> = {
   mail: 'read your mail',
   calendar: 'read your calendar',
-  recording: 'record your microphone and a screen share with its sound',
-  network: 'send requests to the sites its app.yaml lists',
+  recording: 'record your microphone and your computer’s sound',
+  network: 'send requests to other sites',
 }
 
 /** The topics this frame is told about: the vault's, and its own collections'. */
@@ -82,6 +83,13 @@ export function AppFrame({ path }: { path: string }): React.JSX.Element {
   const grantedRef = useRef<ReadonlySet<AppAffordance>>(new Set())
   // The app's recording, while one runs. Let go with the document that asked.
   const recordingRef = useRef<Recording | null>(null)
+  // Which document is in the frame, bumped as one goes (a reload, a mode
+  // change, the app deleted): a start still waiting on the microphone or the
+  // screen when its document goes lets go of what it got.
+  const documentRef = useRef(0)
+  // The document whose start is waiting, so a second start is refused while
+  // the first one is still asking.
+  const startingRef = useRef<number | null>(null)
   // While recording, the loudness goes to the frame about 20 times a second,
   // so an app can draw a live waveform. A number only, never any audio.
   const levelTimer = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -91,43 +99,58 @@ export function AppFrame({ path }: { path: string }): React.JSX.Element {
   }
   useEffect(
     () => () => {
+      documentRef.current += 1
       stopLevels()
       recordingRef.current?.discard()
       recordingRef.current = null
     },
-    [path, reloads],
+    [path, reloads, mode, exists],
   )
 
   // Recording is the call only this frame answers: the microphone and the
   // screen share are this process's, and the levels go to this frame. A slash
   // command's hidden frame has no recording (`bridge-host.ts` refuses it).
-  const record = useCallback(
-    async (method: AppMethod, params: unknown): Promise<unknown> => {
-      if (!grantedRef.current.has('recording')) {
-        throw new Error('recording is not allowed: add "dangerously-allow: [recording]" to app.yaml')
+  const record = useCallback(async (method: AppMethod, params: unknown): Promise<unknown> => {
+    if (!grantedRef.current.has('recording')) {
+      throw new Error('recording is not allowed: add "dangerously-allow: [recording]" to app.yaml')
+    }
+    if (method === 'record.start') {
+      const asking = documentRef.current
+      if (recordingRef.current !== null || startingRef.current === asking) {
+        throw new Error('already recording')
       }
-      if (method === 'record.start') {
-        if (recordingRef.current !== null) throw new Error('already recording')
-        const recording = await startRecording(params)
-        recordingRef.current = recording
-        stopLevels()
-        levelTimer.current = setInterval(() => {
-          const target = frameRef.current?.contentWindow
-          const level: AppPush = { push: 'record:level', value: recording.level() }
-          const spectrum: AppPush = { push: 'record:spectrum', value: recording.spectrum(32) }
-          target?.postMessage(level, '*')
-          target?.postMessage(spectrum, '*')
-        }, 50)
-        return { ok: true }
+      startingRef.current = asking
+      let recording: Recording
+      try {
+        recording = await startRecording(params)
+      } finally {
+        if (startingRef.current === asking) startingRef.current = null
       }
-      const recording = recordingRef.current
-      if (recording === null) throw new Error('not recording')
-      recordingRef.current = null
+      if (documentRef.current !== asking) {
+        recording.discard()
+        throw new Error('the app was closed or reloaded before recording started')
+      }
+      recordingRef.current = recording
       stopLevels()
-      return await recording.stop()
-    },
-    [],
-  )
+      levelTimer.current = setInterval(() => {
+        const target = frameRef.current?.contentWindow
+        const level: AppPush = { push: 'record:level', value: recording.level() }
+        const spectrum: AppPush = { push: 'record:spectrum', value: recording.spectrum(32) }
+        target?.postMessage(level, '*')
+        target?.postMessage(spectrum, '*')
+      }, 50)
+      return { ok: true }
+    }
+    const recording = recordingRef.current
+    if (recording === null) {
+      throw new Error(
+        startingRef.current !== null ? 'recording is still starting' : 'not recording',
+      )
+    }
+    recordingRef.current = null
+    stopLevels()
+    return await recording.stop()
+  }, [])
 
   useEffect(() => {
     const onMessage = (event: MessageEvent): void => {
@@ -173,6 +196,8 @@ export function AppFrame({ path }: { path: string }): React.JSX.Element {
   const [authorship, setAuthorship] = useState<Authorship>({ added: null, last: null })
   // The app's own words for why it asks, from its manifest.
   const [reasons, setReasons] = useState<Partial<Record<AppAffordance, string>>>({})
+  // The hosts `network` would let it reach, from its manifest.
+  const [hosts, setHosts] = useState<readonly string[]>([])
   const [gateOpen, setGateOpen] = useState(false)
   // What is approved for this code: `holi.record` asks it.
   const [granted, setGranted] = useState<ReadonlySet<AppAffordance>>(new Set())
@@ -194,6 +219,7 @@ export function AppFrame({ path }: { path: string }): React.JSX.Element {
         setAsk(ungranted.length > 0 ? { affordances: ungranted, codeHash: status.codeHash } : null)
         setAuthorship({ added: status.added ?? null, last: status.lastChange ?? null })
         setReasons(status.reasons ?? {})
+        setHosts(status.hosts ?? [])
         setGateOpen(ungranted.length === 0)
       })
       .catch(() => live && setGateOpen(true))
@@ -288,11 +314,7 @@ export function AppFrame({ path }: { path: string }): React.JSX.Element {
           </Dialog.Header>
           <Dialog.Body>
             <div className="grid gap-3 text-xs leading-relaxed text-muted-foreground">
-              <p>
-                What it reads, it can store, which may sync to others in this vault or over the
-                network. Sounds scary, but it doesn&rsquo;t mean it does these things, just that it
-                requests a permission that can potentially be used like that.
-              </p>
+              <WhatItCouldDo asked={ask.affordances} hosts={hosts} />
               <AppsWords asked={ask.affordances} reasons={reasons} />
               <p>
                 Allow it if you trust them. Holi will ask again in 30 days, or if the app changes.
@@ -342,6 +364,51 @@ export function AppFrame({ path }: { path: string }): React.JSX.Element {
         />
       )}
     </div>
+  )
+}
+
+/**
+ * What the affordances asked for would let the app do, said once each: what
+ * it reads or records it can keep, which may sync; and with `network`, the
+ * hosts it could send that to, listed, since they are the whole of what
+ * `network` allows.
+ */
+function WhatItCouldDo({
+  asked,
+  hosts,
+}: {
+  asked: readonly AppAffordance[]
+  hosts: readonly string[]
+}): React.JSX.Element {
+  const reads = asked.includes('mail') || asked.includes('calendar')
+  const records = asked.includes('recording')
+  const kept = reads && records ? 'reads or records' : records ? 'records' : 'reads'
+  return (
+    <>
+      {(reads || records) && (
+        <p>
+          What it {kept}, it can store, which may sync to others in this vault
+          {asked.includes('network') ? '' : ' or over the network'}.
+        </p>
+      )}
+      {asked.includes('network') &&
+        (hosts.length === 0 ? (
+          <p>It lists no sites in its app.yaml, so it cannot reach any yet.</p>
+        ) : (
+          <div className="grid gap-1">
+            <p>It can send what it can read in this vault to:</p>
+            <ul className="grid gap-0.5 pl-3 font-mono text-foreground">
+              {hosts.map((host) => (
+                <li key={host}>{host}</li>
+              ))}
+            </ul>
+          </div>
+        ))}
+      <p>
+        Sounds scary, but it doesn&rsquo;t mean it does these things, just that it requests a
+        permission that can potentially be used like that.
+      </p>
+    </>
   )
 }
 

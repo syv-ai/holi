@@ -16,8 +16,10 @@
  * mounted and therefore which app is speaking.
  *
  * A message with `push` and no `id` is the renderer saying something changed;
- * it carries no data (but record:level's loudness), so the app reads it again through the bridge and every
- * refusal still applies.
+ * it carries no data, so the app reads it again through the bridge and every
+ * refusal still applies. The `record:` topics are the exception: each carries
+ * a number or a list of numbers (how loud a recording is, and its spectrum),
+ * never audio.
  */
 import { APP_LOG_MAX_TEXT } from '../shared/store'
 

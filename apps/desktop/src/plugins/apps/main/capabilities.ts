@@ -108,15 +108,18 @@ export const appsCapabilities = (deps: AppCapabilitiesDeps) => ({
       const status = await deps.grants.status(ctx.remote, ctx.root, bundle)
       // Only asked when there is something to approve: it names the code.
       if (!status.affordances.some((a) => !a.granted)) {
-        return { ...status, reasons: {}, added: null, lastChange: null }
+        return { ...status, reasons: {}, hosts: [], added: null, lastChange: null }
       }
-      // The app's own words for why, shown quoted beside the ask.
-      const reasons = (await manifestOf(ctx.root, bundle))?.allowReasons ?? {}
+      const manifest = await manifestOf(ctx.root, bundle)
+      // The app's own words for why, shown quoted beside the ask, and the
+      // hosts `network` would let it reach, listed in the ask.
+      const reasons = manifest?.allowReasons ?? {}
+      const hosts = manifest?.hosts ?? []
       const { added, last } = await bundleAuthorship(ctx.root, bundle)
       const logins = (await ctx.core.members().catch(() => [])).map((m) => m.login)
       const withLogin = (c: BundleCommit | null) =>
         c === null ? null : { ...c, login: commitLogin(c, logins) }
-      return { ...status, reasons, added: withLogin(added), lastChange: withLogin(last) }
+      return { ...status, reasons, hosts, added: withLogin(added), lastChange: withLogin(last) }
     },
   }),
 

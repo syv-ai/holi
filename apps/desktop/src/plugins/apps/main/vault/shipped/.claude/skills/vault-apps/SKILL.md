@@ -269,13 +269,17 @@ const audio = await holi.record.stop() // a Blob, audio/webm
 audio stream, but there is a level to draw: `holi.record.onLevel((x) => …)` is
 called about 20 times a second while recording, with the mix's loudness, 0 to 1
 (it returns a function that stops listening). For a spectrum-style waveform use
-`holi.record.onSpectrum((bands) => …)`: 32 values, 0 to 1, lowest pitch first. On macOS the person is asked once by
-the system for the microphone and for screen and audio recording.
+`holi.record.onSpectrum((bands) => …)`: 32 values, 0 to 1, lowest pitch first.
+One recording at a time: a second `start` before `stop` is refused. On macOS the
+person is asked once by the system for the microphone and for screen and audio
+recording.
 
 **Calling a web API is `network`, through `holi.fetch`.** An app's own `fetch`
 reaches only servers that allow any origin by CORS, which most APIs do not. Declare
 `network` and list the exact hosts, and `holi.fetch` (same arguments, resolves a
-`Response`) is made by Holi, to those hosts only, over https:
+`Response`) is made by Holi, to those hosts only, over https. A host is a name:
+an IP address, `localhost` or a name that resolves into the local network is
+refused, a redirect is not followed, and each body is at most 100 MB.
 
 ```yaml
 dangerously-allow:
