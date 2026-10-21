@@ -8,6 +8,9 @@ import { COMPLETION_CLASS, OPTION_CLASS } from './completion'
  *  notes editor goes proportional cannot drift from the base they restore. */
 const MONO = 'ui-monospace, SF Mono, monospace'
 
+/** The widest an editor's text column gets (`.cm-content`); inline images size against it. */
+export const COLUMN_MAX_WIDTH = '48rem'
+
 /** Every rule in `completionChrome` is prefixed with this, and it is three
  *  classes on purpose. See `COMPLETION_CLASS`. */
 const POPUP = `.cm-tooltip.cm-tooltip-autocomplete.${COMPLETION_CLASS}`
@@ -188,7 +191,7 @@ export const editorTheme = EditorView.baseTheme({
    * `DiffView` share. The notes stack centres its column in its pane
    * (`noteColumn` in `extensions.ts`).
    */
-  '.cm-content': { padding: '16px 0', maxWidth: '48rem', caretColor: '#e5e5e5' },
+  '.cm-content': { padding: '16px 0', maxWidth: COLUMN_MAX_WIDTH, caretColor: '#e5e5e5' },
   /**
    * The side margins live on the LINE, not on `.cm-content`.
    *
