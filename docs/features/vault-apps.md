@@ -96,7 +96,9 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   file in the bundle, and an optional `description` the menu shows beside it, with the app's name
   at the row's end. The script calls `holi.command(fn)`. The menu lists every finished app's
   commands while the apps plugin runs, read by main from the manifests (`apps.commands`) and read
-  again when one changes in the snapshot. Picked, a command runs in a hidden frame on its app's own
+  again when one changes in the snapshot, and when main's `commands-changed` event says
+  `apps.commands` answers (the vault's plugins start in main alongside the renderer, so the first
+  read can come before it is registered). Picked, a command runs in a hidden frame on its app's own
   origin, sandboxed as the tab is but without popups: `holi-app://<host>/?command=<name>` is a
   document main makes, the theme, the bridge, the runner (`COMMAND_JS`) and the script by its path,
   so the script is served and refused exactly as the app's files are. The frame's bridge calls are
@@ -107,7 +109,10 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   `{ open }` (as `holi.open`) and `{ agent }` (the ask-the-agent popover, the instruction written
   in), or nothing. The answer is checked (`commandActionOf`) because it came out of the app's code.
   A command that throws, answers something else, or takes more than 10 seconds leaves the note as
-  it was and writes why to its app's log, where the agent that wrote it looks. The script is
+  it was and writes why to its app's log, where the agent that wrote it looks. A command shows no
+  approval dialog: in an app that declares `dangerously-allow`, its Google calls fail until the
+  person opens the app's tab once and approves it there. Leaving the vault removes the frames of
+  commands still running. The script is
   classic, not a module: the frame's origin is opaque, so a module's fetch is cross-origin and
   would need a CORS header, and a header one opaque origin passes, every app passes, letting each
   read every other's code.
@@ -214,6 +219,11 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   (`AGENTS.md`, `CLAUDE.md`, `MEMORY.md`, `USER.local.md`, `.claude/`, `.holi/memory/`; see the
   [glossary](../glossary.md)). The reason is escalation, not privacy: an app that could write
   `.claude/hooks/google-send-gate.mjs` could make the agent send mail unprompted.
+- An app's slash command is not offered, and refuses to run, in a note no app may read
+  (`isAppFencedPath`: the agent surface, `.holi/state/`, secret files, any app's records and log).
+  It is given the note's text and may write into it, so offering it in `AGENTS.md` or
+  `.holi/memory/` would hand an app the agent surface the bridge refuses. The bridge's reads use
+  the same predicate.
 - The agent-surface refusal lives in main (the capability registry), not the renderer. The process rendering
   untrusted code must not be the one deciding what it may read. `read` answers `FORBIDDEN`,
   distinct from `NOT_FOUND`.

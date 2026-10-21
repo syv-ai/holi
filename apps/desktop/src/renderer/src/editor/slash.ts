@@ -23,6 +23,7 @@ import {
   type Extension,
 } from '@codemirror/state'
 import type { EditorView } from '@codemirror/view'
+import { isAppFencedPath } from '@holi/shared'
 import { hasAskAgent, openAskAgent } from './askAgent'
 import type { HoliCompletion } from './completion'
 
@@ -222,7 +223,8 @@ async function runCommand(
     // The plugin has said where; the note stays as it was put back.
   }
   const range = view.state.field(running, false)?.get(id)
-  // The editor may be gone (the tab closed) while the command ran.
+  // Gone when the editor's state was replaced while the command ran. A
+  // closed editor still has its state, and a dispatch to it shows nothing.
   if (range === undefined) return
   const done = trackRun.of({ id, range: null })
   if (result === null || view.state.readOnly) {
@@ -264,8 +266,12 @@ export function slashCommandsWith(
   commands: () => readonly SlashCommand[],
   path: string,
 ): { source: CompletionSource; extension: Extension } {
+  // A plugin's command is given the note's text and may write into it, so it
+  // is not offered where no app may read: the agent surface and the rest of
+  // the apps' fence (docs/features/vault-apps.md).
+  const fenced = isAppFencedPath(path)
   const source: CompletionSource = (context) => {
-    const added = commands()
+    const added = (fenced ? [] : commands())
       .filter((c) => !BUILT_IN.has(c.name))
       .map((command): HoliCompletion => ({
         label: `/${command.name}`,
