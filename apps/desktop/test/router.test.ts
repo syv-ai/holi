@@ -119,7 +119,12 @@ async function rig(files: Record<string, string> = {}, auth?: StoredAuth) {
   })
   const caller = createRouter({
     seed: seedVault,
-    plugins: { reconcile: async () => {}, failures: () => ({}), scanClaimsFor: TASKS },
+    plugins: {
+      reconcile: async () => {},
+      syncBackground: async () => {},
+      failures: () => ({}),
+      scanClaimsFor: TASKS,
+    },
     capabilities: capabilityHost,
     registry,
     session,
@@ -1137,7 +1142,12 @@ async function authRig(routes: Record<string, Scripted[]>, seed?: StoredAuth) {
   hosts.push(host)
   const caller = createRouter({
     seed: seedVault,
-    plugins: { reconcile: async () => {}, failures: () => ({}), scanClaimsFor: TASKS },
+    plugins: {
+      reconcile: async () => {},
+      syncBackground: async () => {},
+      failures: () => ({}),
+      scanClaimsFor: TASKS,
+    },
     registry,
     session,
     host,

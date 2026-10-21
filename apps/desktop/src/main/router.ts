@@ -115,10 +115,12 @@ export interface RouterDeps {
    * Start the plugins the vault at `root` enables (`plugin-host/host.ts`).
    * Run after the seed on add and open, and after a write to its plugins.
    * `opened` activates them in the vault once it is open. `scanClaimsFor`
-   * is what the scanner claims in the vault at `root`.
+   * is what the scanner claims in the vault at `root`. `syncBackground`
+   * looks again at what runs across vaults, after a vault leaves the registry.
    */
   plugins: {
     reconcile(why: 'open' | 'settings' | 'snapshot'): Promise<void>
+    syncBackground(): Promise<void>
     failures(remote: string): Record<string, string>
     scanClaimsFor(root: string): Promise<readonly ScanClaim[]>
   }
@@ -577,6 +579,7 @@ export function createRouter(deps: RouterDeps) {
     if (deps.host.active()?.remote === remote) await deps.host.close()
     await deps.trashItem(root)
     await deps.registry.remove(remote)
+    await deps.plugins.syncBackground()
   }
 
   /** The remote is interpolated into a URL, so it is validated before it is. */
@@ -743,7 +746,10 @@ export function createRouter(deps: RouterDeps) {
       .input(fields({ remote: 'string' }))
       // Deregisters the vault; the clone stays on disk. Deleting someone's files
       // — which may hold unpushed commits — is never a side effect here.
-      .mutation(({ input }) => deps.registry.remove(input.remote)),
+      .mutation(async ({ input }) => {
+        await deps.registry.remove(input.remote)
+        await deps.plugins.syncBackground()
+      }),
 
     // What "also delete local clones" would throw away. One
     // entry per registered clone with commits that never reached the remote, so
@@ -784,6 +790,7 @@ export function createRouter(deps: RouterDeps) {
           console.error(`[vaults] could not trash clone ${e.remote}:`, err)
         }
       }
+      await deps.plugins.syncBackground()
       return { ok: true as const }
     }),
 

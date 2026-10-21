@@ -131,7 +131,8 @@ export interface PluginHost {
    * Start each plugin's work across vaults that some registered vault runs
    * and stop the rest, then tell `background.onChange` what runs. At launch,
    * and again after anything that may change it: a settings write, an open,
-   * or a change to what the open vault runs. Runs one at a time.
+   * a change to what the open vault runs, no vault open, or a vault leaving
+   * the registry. Runs one at a time.
    */
   syncBackground(): Promise<void>
   /** Stop every plugin's work across vaults: at quit. */
@@ -437,7 +438,13 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
 
   async function reconcileNow(why: 'open' | 'settings' | 'snapshot'): Promise<void> {
     const vault = deps.active()
-    if (vault === null) return stopAll()
+    if (vault === null) {
+      await stopAll()
+      // No vault open is no write to follow, so what runs across vaults is
+      // looked at here: the one that left may have been the last to run it.
+      void queuedBackground(syncBackgroundNow)
+      return
+    }
     if (why === 'open') parked = null
     else if (vault.remote === parked) return
     if (live !== null && live.remote !== vault.remote) await stopAll()

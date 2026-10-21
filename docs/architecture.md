@@ -167,7 +167,8 @@ disposer, then what it registered. A plugin that throws as it starts is reported
 One kind of work outlives the open vault: a plugin's work across every registered vault that runs
 it (`MainPlugin.background`), such as reminders, which fire for a vault that is not open. It
 starts at launch while some registered vault runs its plugin, so a launch's catch-up runs whichever
-vault opens, and is looked at again on a settings write. Its context reads those vaults' files and
+vault opens, and is looked at again whenever that may change: a change to what the open vault
+runs, a vault leaving the registry, or no vault being open. Its context reads those vaults' files and
 can show a path, and holds no vault open. While any runs, Holi stays in the tray with its window
 closed; with none, closing the last window quits (except on macOS).
 Turning off a plugin whose renderer side says stopping it costs something (`leaveGuard`, the
