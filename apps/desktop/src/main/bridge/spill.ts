@@ -1,6 +1,6 @@
 /**
  * A `holi` answer too long to print goes to a file, and the command prints
- * where it is and what is in it. The agent then reads only the part it needs
+ * where it is and what is in it (`spillNotice`). The agent then reads only the part it needs
  * (jq, grep, Read with a range) instead of carrying a whole page of mail in its
  * context for the rest of the session.
  *
@@ -73,11 +73,19 @@ function describe(text: string, value: unknown): string {
   return 'a JSON value'
 }
 
+/** Where an answer was spilled: its vault-relative path, its size in bytes
+ *  and its shape in a line. */
+export interface Spill {
+  path: string
+  bytes: number
+  shape: string
+}
+
 /**
- * Write `text` to a new spill file under the vault at `root` and answer what
- * the command prints instead. `label` is the command (`holi google search`).
+ * Write `text` to a new spill file under the vault at `root`. `label` is the
+ * command (`holi google search`), which names the file.
  */
-export async function spillOutput(root: string, label: string, text: string): Promise<string> {
+export async function spillOutput(root: string, label: string, text: string): Promise<Spill> {
   const value = parsed(text)
   const json = value !== NOT_JSON
   // An ISO stamp first, so names sort oldest first; the random tail keeps two
@@ -89,10 +97,24 @@ export async function spillOutput(root: string, label: string, text: string): Pr
   await mkdir(dir, { recursive: true })
   await writeFile(join(dir, name), text, 'utf8')
   await prune(dir)
+  return {
+    path: `${SPILL_DIR}/${name}`,
+    bytes: Buffer.byteLength(text),
+    shape: describe(text, value),
+  }
+}
+
+/**
+ * What the command prints instead of a spilled answer. Asked for `--json`, it
+ * stays JSON (`{"spilled", "bytes", "shape"}`), so `holi ... --json | jq` still
+ * parses; otherwise it is the same in prose, with how to read the file.
+ */
+export function spillNotice(label: string, spill: Spill, json: boolean): string {
+  if (json) return JSON.stringify({ spilled: spill.path, bytes: spill.bytes, shape: spill.shape })
   return [
-    `${label}: ${kb(Buffer.byteLength(text))}, too long to print, written to`,
-    `  ${SPILL_DIR}/${name}`,
-    `It is ${describe(text, value)}.`,
+    `${label}: ${kb(spill.bytes)}, too long to print, written to`,
+    `  ${spill.path}`,
+    `It is ${spill.shape}.`,
     'Read only the part you need from it (jq, grep, or Read with an offset and limit).',
   ].join('\n')
 }

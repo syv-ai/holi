@@ -317,6 +317,17 @@ describe('an answer too long to print', () => {
     expect(await readFile(join(dir, path!), 'utf8')).toBe(text)
   })
 
+  it('stays JSON when asked for --json, so it still parses', async () => {
+    capability.mockResolvedValueOnce({ text: JSON.stringify(rows) })
+    const res = await run(bin, ['store', 'list', 'T.app', 'items', '--json'], env)
+    expect(res.code).toBe(0)
+    const notice = JSON.parse(res.stdout) as { spilled: string; bytes: number; shape: string }
+    expect(notice.spilled).toMatch(new RegExp(`^${SPILL_DIR}/.*store-list.*\\.local\\.json$`))
+    const written = await readFile(join(dir, notice.spilled), 'utf8')
+    expect(notice.bytes).toBe(Buffer.byteLength(written))
+    expect(notice.shape).toMatch(/^a JSON object with keys /)
+  })
+
   it('keeps only the newest spills', async () => {
     const text = JSON.stringify(rows)
     for (let i = 0; i < 52; i++) {

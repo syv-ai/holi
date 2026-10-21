@@ -24,7 +24,7 @@ import { randomBytes } from 'node:crypto'
 import type { Dispatch } from '../capabilities/dispatch'
 import type { CliCommand } from '../capabilities/registry'
 import { refusalText, resolveArgv } from './cli'
-import { SPILL_BYTES, spillOutput } from './spill'
+import { SPILL_BYTES, spillNotice, spillOutput } from './spill'
 
 /** What a route answers. No body is an empty one. */
 export interface Reply {
@@ -100,7 +100,8 @@ export function createBridgeServer(deps: BridgeServerDeps = {}): BridgeServer {
   /**
    * `holi <namespace> <verb> ...`: argv arrives as repeated `argv` fields, in
    * order. The output is the answer itself, so it answers text: 200 with it
-   * (or, past `SPILL_BYTES`, with where it was written), 422 with a refusal
+   * (or, past `SPILL_BYTES`, with where it was written, as JSON when
+   * the answer was asked for as JSON), 422 with a refusal
    * and its next step, 400 with usage, or 428, having run nothing, when the
    * command reads a param from stdin that was not given.
    */
@@ -133,7 +134,10 @@ export function createBridgeServer(deps: BridgeServerDeps = {}): BridgeServer {
             log(`spill failed: ${message(error)}`)
             return null
           })
-    return { status: 200, body: spilled ?? output }
+    return {
+      status: 200,
+      body: spilled === null ? output : spillNotice(request.label, spilled, request.json),
+    }
   }
 
   /** The route for a path: a registered one, or the built-in CLI door. */

@@ -136,7 +136,9 @@ holi schedules disable inbox-triage # off on this machine; the file stays
 
 `list` prints one line per schedule: `on|off|changed|invalid`, the slug, the
 name, when it runs (or why the file is invalid), the next and last run.
-`--json` gives everything, including each schedule's recent runs.
+`--json` gives everything, including each schedule's recent runs. When that is
+too long to print it is written to a file, and the command prints
+`{"spilled": "<path>", "bytes": <n>, "shape": "..."}`; read the file with `jq`.
 
 To delete a schedule, delete its file. To change one, edit the file, then ask
 the user to switch it on again if the prompt, model or `allow` changed.

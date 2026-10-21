@@ -86,8 +86,11 @@ because a table layout would cost you context and tell you nothing.
 
 A `search` over a busy inbox or a long thread's `read` can be too long to print.
 Then the command prints, instead of the answer, where it wrote it
-(`.holi/state/out/<name>.local.json`) and its shape. Read the part you need from
-that file with `jq` or `Read`, not the whole of it.
+(`.holi/state/out/<name>.local.json`, or `.local.txt` for a text answer) and its
+shape. With `--json` that notice is itself JSON:
+`{"spilled": "<path>", "bytes": <n>, "shape": "..."}`. Read the part you need
+from the file, with `jq` for JSON and `grep` or `Read` for text, not the whole
+of it.
 
 When a job means reading a lot of mail (triaging a full inbox, summarising
 several long threads, finding one fact across a month of messages), hand it to a
