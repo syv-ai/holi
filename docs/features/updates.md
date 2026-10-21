@@ -46,9 +46,9 @@ running, fetched from GitHub's releases API by tag (`v<version>`) when first sho
 (`src/main/updates/release-notes.ts`, `trpc.updates.notes`). They are Markdown, shown as text with
 headings and list items picked out, never as HTML, with a link to the release built from the tag; a
 version with no release, such as a local build, has none. GitHub not answering (offline, rate
-limited, down) is said as such and asked again on the next showing. Beside them, **Open at login**, this machine's login item: Holi starts in the menu bar
-with its window loaded but out of sight, so the vault opens, syncs and fires its reminders from the
-start.
+limited, down) is said as such and asked again on the next showing. Beside them, **Open at login**,
+this machine's login item and the one place it is asked: Holi starts with its window loaded but out
+of sight, so the vault opens, syncs and fires its reminders from the start.
 
 **A release's skills reach a vault by asking.** Skills and hooks are the vault's once written, so an
 app update leaves every vault's copies where they were ([agent config](agent-config.md)). Whenever a

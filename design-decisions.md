@@ -211,12 +211,12 @@ and activation.
   no caller can silently forget it.
 - **Frontmatter controls are keyed by field, not by kind.** The tasks plugin's `status` control
   completes the task itself, so core needs no write interceptor.
-- **Staying alive in the background belongs to core, switched on by a plugin flag**
-  (`runsInBackground`). The tray, the launch-at-login prompt and the keep-alive are active only
-  while such a plugin is enabled in some vault. Without tasks, closing the last window quits.
-- **Plugins that work across vaults activate at boot** for any vault that enables them, so the
-  reminder catch-up sweep still runs at launch. The renderer listens to every installed plugin's
-  events, and main gates when it emits.
+- **Staying alive in the background belongs to core, switched on by a plugin's work across
+  vaults** (`MainPlugin.background`). The tray and the keep-alive are active only while such work
+  runs, which is while some registered vault runs its plugin. Without tasks, closing the last
+  window quits (except on macOS, as usual).
+- **Work across vaults starts at launch** while some registered vault runs its plugin, so the
+  reminder catch-up sweep still runs at launch, whichever vault opens.
 - **The seeded `AGENTS.md` loses its Tasks section; the `using-tasks` skill carries it.** A
   once-only file cannot follow a plugin being toggled. A skill's description is always in
   Claude's context while the plugin has seeded it.
@@ -375,16 +375,18 @@ and activation.
 
 ### Phase 4 (started)
 
-- **The snapshot carries `claimed[pluginId]`, not typed task fields.** Tasks is still a core part
-  contributing the `task.*.md` claim. With the claim absent, task files are plain notes. Any
+- **The snapshot carries `claimed[pluginId]`, not typed task fields.** The tasks plugin
+  contributes the `task.*.md` claim. With the claim absent, task files are plain notes. Any
   error thrown by a claim's `parse` marks the file broken.
 - **A transform's settings toggle lives on `PluginInfo`,** because the settings tab (renderer)
   needs it and `info.ts` is the one file both halves read. `MainPlugin.transforms` is just
   `{name, run}`.
 - **Unknown transform names are kept on read and refused on write,** so a hand-written key
   survives, but the settings tab can never write an arbitrary one.
-- **The tree keeps its existing task-files toggle** rather than a per-claim `hideable`, which
-  would need new header UI. Broken task files now show under it so they can be fixed.
+- **Hiding task files in the tree is a claim option (`hideable`),** a label and an icon: the
+  explorer's menu gets a "Show task files" toggle per hideable claim, remembered per vault on this
+  machine by label. The tree cannot otherwise follow tasks out of core. Broken task files show
+  under it so they can be fixed. (Provisional.)
 
 - **The Claude config dir is watched through one recursive `fs.watch`,** filtered to `sessions/`
   and `jobs/`. On macOS a process's directory watches share one FSEvents stream, and adding a
@@ -410,25 +412,52 @@ and activation.
   outside the editor's reload rule, to hold an empty list. A note with no frontmatter now opens
   its bar to empty rows, and the first value written makes the block.
 
-## Remaining work: tasks becomes a plugin
+### Phase 4 (executed)
 
-Tasks runs as a core part on the plugin contract (`TASKS_PART`) with its claim and transform.
-What is left, in order, each one commit:
-
-1. **Editor and frontmatter claims.** A claim's `editor` (link chips, mention groups, extensions,
-   one `useEditorDeps`) and `frontmatter` (fields, controls keyed by field, `alwaysOpen`,
-   `suggest`). `RendererPlugin.pathMarks` (glyph, strike, badge) is read by one atom in the tree
-   and tab strip. `RailItem.badge`. A plugin dialog that brings its own chrome, for quick add.
-2. **Background plugins.** `MainPlugin.runsInBackground`, with the tray, the login prompt and the
-   keep-alive owned by the host. Boot activation for plugins enabled in any registered vault.
-   `ctx.vaults/scan/reveal`.
-3. **The tasks tRPC router becomes `tasks.*` capabilities.**
-4. **Tasks main and shared move into `src/plugins/tasks`:** the shared task modules, reminders
-   via `activateApp`, `archive-done` with its toggle on `PluginInfo`, and the seed (the
-   `using-tasks` skill, the deny fragment, and the removal of the Tasks section from `AGENTS.md`).
-5. **Tasks renderer moves into the plugin:** the board surface (homeable), the rail item with its
-   badge, the `task.new` commands and the claim's create, editor, frontmatter and marks. Then the
-   core leftovers are deleted.
-
-Each step's file-level detail was written against the code as of the claimed-snapshot commit.
-Re-derive it from the code rather than trusting line numbers.
+- **Tasks is a plugin (`src/plugins/tasks/`), on by default.** With it off a `task.*.md` file is a
+  plain note: no board, quick add, reminders, task chips, task frontmatter rows or New Task, and
+  `holi tasks` answers "no such method". The tray and the keep-alive go with it.
+- **A claim says what it adds to the notes editor** (`editor`: the chips of its files by path,
+  the group it adds to the `@` menu, and a layer for its own files) **and how its files'
+  frontmatter is drawn** (`frontmatter`: its fields, controls keyed by field, an always-open
+  block, and values list fields suggest in every file). Chips and mentions are asked once per
+  snapshot and read as the editor draws, so a snapshot never rebuilds a view. A chip's orb and a
+  mention's glyph colour are CSS values the plugin picks, so core names no task status.
+- **One `useEditorDeps(path, nav)` wires every notes editor**, a pane's and a task description's,
+  so the two cannot drift. A link opens any path in `docs` or in a claimed set.
+- **A plugin marks paths (`RendererPlugin.pathMarks`: glyph, strike, badge), read by one atom**
+  for the tree and the tab strip; the first to mark a path wins. Today's daily note shows the
+  badge after its own `today`.
+- **A rail item carries a badge (`RailItem.badge`),** an atom of a count and a tone, read by the
+  rail's one derived atom: the board's open count, red while anything is overdue.
+- **Drawers became `overlays`**, components mounted over the panes while their plugin runs, each
+  deciding whether it shows. Quick add is one, rather than a new dialog option that brings its own
+  chrome: the existing slot fitted. The full create (⌘⇧T) is the generic plugin dialog.
+- **Work across vaults is `MainPlugin.background: {why, start(ctx)}`,** the smallest hook that
+  says what a per-vault activation cannot: reminders fire for a vault that is not open. Its
+  context lists the registered vaults that run the plugin, scans one, shows a path and names the
+  signed-in login; it holds no vault open, so vaults stay isolated. The host starts it at launch
+  and looks again on a settings write, an open or a change to what the open vault runs; `why` is
+  the tray's tooltip. (Provisional.)
+- **A reminder click uses the general `vault:open` path** (`AppCtx.open`), not a plugin event:
+  that path already brings the window forward or makes it, and the renderer switches vault before
+  it opens the task.
+- **The first-run "Launch Holi at login?" prompt is gone.** It set what Settings > Updates > Open
+  at login sets, so that row is the one place it is asked.
+- **The tasks tRPC router became `tasks.update`, `tasks.move` and `tasks.delete` at the UI door,**
+  beside `tasks.create`, so the board reaches its main side the way any plugin does.
+- **The core-part machinery left the plugin host** with tasks, its last user.
+- **The task modules moved from `packages/shared` into the plugin's `shared/` with the
+  renderer,** one commit after main, because core's renderer used them until then. Who is one
+  person (`logins.ts`) and the anchor hour (`dates.ts`) stay core: the member list, vault app
+  grants and the date picker use them.
+- **`archive-done`'s toggle is on the plugin's info**, out of core's transform list.
+- **The member list no longer folds in task assignees.** The claim suggests them for any
+  `people` field, and the plugin's pickers add them to the members themselves.
+- **`TaskCheck` stays a primitive:** it is a native button, which only primitives may hold.
+  `EnumField` became a composite, so the plugin's status control and core's enum rows share it.
+- **New Task is the claim's `create`,** in the explorer's New menu after core's own, and opens as
+  a preview like every claim's.
+- **The plugin seeds the `using-tasks` skill and the deny rules for Claude Code's own todo
+  tools,** adding to the agent's `.claude/`; the seeded `AGENTS.md` lost its Tasks section.
+  Existing vaults reach both only through `holi skills update` and a hand edit.
