@@ -84,6 +84,14 @@ async function targetOf(
 /** Each vault's rebuild under way, by root. */
 const rebuilding = new Map<string, Promise<unknown>>()
 
+/** Each vault's last rebuild, by root, for the settings tab's rows. */
+const lastLinked = new Map<string, LinkedCommands>()
+
+/** What the vault at `root` linked last, or null before its first rebuild. */
+export function linkedIn(root: string): LinkedCommands | null {
+  return lastLinked.get(root) ?? null
+}
+
 /**
  * Link `plugins`' commands into the vault at `root`, replacing whatever was
  * linked before, after any rebuild of it under way. `plugins` is read when
@@ -97,9 +105,24 @@ export function linkCommands(
 ): Promise<LinkedCommands> {
   const run = (rebuilding.get(root) ?? Promise.resolve())
     .catch(() => {})
-    .then(async () =>
-      rebuild(root, typeof plugins === 'function' ? await plugins() : plugins, searchPath),
-    )
+    .then(async () => {
+      try {
+        const result = await rebuild(
+          root,
+          typeof plugins === 'function' ? await plugins() : plugins,
+          searchPath,
+        )
+        lastLinked.set(root, result)
+        return result
+      } catch (err) {
+        lastLinked.set(root, {
+          linked: [],
+          refused: [],
+          error: err instanceof Error ? err.message : String(err),
+        })
+        throw err
+      }
+    })
   rebuilding.set(root, run)
   void run
     .catch(() => {})

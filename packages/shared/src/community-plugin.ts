@@ -15,7 +15,9 @@
  * Main reads this grammar when it installs and pins; the renderer reads it to
  * know which files a plugin opens. Pure and browser-safe.
  */
+import { PLUGINS_FILE, PLUGINS_LOCAL_FILE } from './plugin-settings'
 import { isPluginId } from './plugins'
+import type { FileMeta } from './types'
 
 /** The manifest's name, in the plugin's folder. */
 export const PLUGIN_MANIFEST_FILE = 'holi-plugin.json'
@@ -53,6 +55,22 @@ export function parseReleaseTag(tag: string): { path: string; version: string } 
 
 /** Where a vault keeps its pins. */
 export const PLUGIN_PINS_DIR = '.holi/plugins'
+
+/**
+ * What on disk decides which community plugins run in a vault, as one string
+ * that changes when it does: the pins and the two plugins settings files.
+ */
+export function communityPluginsSignature(files: readonly FileMeta[]): string {
+  return files
+    .filter(
+      (f) =>
+        f.path.startsWith(`${PLUGIN_PINS_DIR}/`) ||
+        f.path === PLUGINS_FILE ||
+        f.path === PLUGINS_LOCAL_FILE,
+    )
+    .map((f) => `${f.path}@${f.updatedAt}`)
+    .join('|')
+}
 
 /** A pin's path in the vault. */
 export function pluginPinPath(id: string): string {

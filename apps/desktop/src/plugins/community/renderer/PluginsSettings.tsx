@@ -14,7 +14,6 @@ import { askToRun, installAndAsk, updatePlugin, type InstallFlow } from './insta
 import { PluginSearch } from './PluginSearch'
 import {
   communityCap,
-  linkCommandsFor,
   refreshRows,
   refreshUpdates,
   rowsAtom,
@@ -35,9 +34,8 @@ const STATUS: Record<PluginRow['status'], string> = {
 const versionOf = (row: PluginRow) => row.install?.version ?? row.pin?.version ?? ''
 
 /** Turn a plugin on or off for the vault: its `plugins.<id>` switch, beside
- *  the vault's other plugins, and its pin when it is a release. Then the
- *  agent's commands follow; says which of its own it could not add. */
-async function setOn(remote: string, row: PluginRow, on: boolean): Promise<string | null> {
+ *  the vault's other plugins, and its pin when it is a release. */
+async function setOn(remote: string, row: PluginRow, on: boolean): Promise<void> {
   if (on && row.install?.kind === 'release' && row.pin?.commit !== row.install.commit)
     await communityCap.pin(remote, { id: row.id })
   if (on && row.install?.kind === 'dev') await communityCap.skills(remote, { id: row.id })
@@ -46,7 +44,6 @@ async function setOn(remote: string, row: PluginRow, on: boolean): Promise<strin
     remote,
     committedJson: JSON.stringify({ plugins: { ...settings.plugins.vault, [row.id]: on } }),
   })
-  return linkCommandsFor(remote, row.id)
 }
 
 export function PluginsSettings({ remote }: { remote: string }): React.JSX.Element {
@@ -157,6 +154,9 @@ export function PluginsSettings({ remote }: { remote: string }): React.JSX.Eleme
                   {row.description !== '' && <>{row.description} </>}
                   {STATUS[row.status]}
                   {row.install?.kind === 'dev' && <> · from {row.install.folder}</>}
+                  {row.commandsNote !== null && (
+                    <span className="text-amber-400"> {row.commandsNote}</span>
+                  )}
                 </>
               }
               control={

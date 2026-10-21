@@ -83,16 +83,19 @@ where the plugin lives. While the plugin runs in a vault, each is linked into
 machine's own, so a plugin adds a command but never stands in for one the machine has, and never
 for `holi`, which no plugin may name. A name already on the agent's `PATH`, or already taken by
 another running plugin (the first by id keeps it), is refused rather than linked unreached; the
-settings tab says so when the plugin is switched on, and the consent dialog when its setup finishes.
+plugin's row in the settings tab says so, as the last rebuild left it, and so does the consent
+dialog when its setup finishes.
 The agent's `PATH` is judged as Holi's own with the usual install folders after it (`toolPath`), since
 a Dock-launched Holi's own lacks them; a folder only the person's shell profile adds can still hold
 a name that then leaves the plugin's command unreached. A plugin whose folder can't be read has its
 commands refused, never the others'. The folder is rebuilt whole, one rebuild at a time, when the
 vault opens, when setup finishes, on install, pin, unpin and remove, and whenever a pin or the
-plugins settings change on disk (the settings tab's own write, a pull, a hand edit); turning the
+plugins settings change on disk (the settings tab's own write, a pull, a hand edit), which main
+hears through the vault's snapshots (`onSnapshot` on a plugin's context), window or not; turning the
 community plugin itself off empties it. A rebuild that fails is logged and never fails the step that
-asked for it. So nothing stale stays callable while the vault is open; while it is closed, the
-folder stays as Holi left it. Its path never changes, so a running session sees the change at once. It reaches a
+asked for it, and the row says so. So nothing stale stays callable while the vault is open; while it
+is closed, the folder stays as Holi left it. Its path never changes, so a running session sees the
+change at once. It reaches a
 session through its supervisor's environment, as `holi` does, so a supervisor started before this
 Holi learns it at its next start. The consent dialog lists the commands; a call to one still asks
 for permission like any other command, until the person allows it.

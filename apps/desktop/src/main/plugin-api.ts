@@ -12,7 +12,7 @@
  * the tests.
  */
 import type { Privileges } from 'electron'
-import type { PluginInfo, SnapshotClaim } from '@holi/shared'
+import type { PluginInfo, SnapshotClaim, VaultSnapshot } from '@holi/shared'
 import type { AppDoor, AppDoorOpener } from './capabilities/dispatch'
 import type { CapabilityTable } from './capabilities/registry'
 import type { SeedContribution } from './vault/seed/types'
@@ -124,6 +124,11 @@ export interface PluginCtx extends LiveVault, SchemeContext {
   head(): Promise<string | null>
   /** Hear what the renderer reports the person is looking at in this vault. */
   onReport(cb: (report: UiReport) => void): () => void
+  /**
+   * Hear each new snapshot of this vault: any change to its files, a pull or
+   * a hand edit among them, after what runs has followed it. Returns the undo.
+   */
+  onSnapshot(cb: (snapshot: VaultSnapshot) => void): () => void
 }
 
 /** What a quit guard asks. */

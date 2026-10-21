@@ -16,7 +16,9 @@ import {
   parsePluginPin,
   PLUGIN_PINS_DIR,
   pluginPinPath,
+  resolvePlugins,
   vaultRelPath,
+  type PluginInfo,
   type PluginManifest,
   type PluginPin,
 } from '@holi/shared'
@@ -45,7 +47,8 @@ import {
 } from './fetch'
 import { searchPlugins } from './search'
 import { seedApps, writeSkills } from './skills'
-import { linkCommands, type LinkedCommands } from './commands'
+import { COMMUNITY_INFO } from '../info'
+import { linkCommands, linkedIn, unlinkCommands, type LinkedCommands } from './commands'
 import { expandCommand, pluginEnv, runSetup } from './setup'
 import type { Install, InstallStore } from './store'
 import type { ServerState, Supervisor } from './supervisor'
@@ -91,6 +94,9 @@ export interface PluginRow {
   apps: string[]
   /** The commands it adds to the agent's `PATH`, for the consent dialog. */
   bin: string[]
+  /** Running, which of its commands the agent did not get and why, as the
+   *  vault's last rebuild left them; null when it has them all. */
+  commandsNote: string | null
 }
 
 export interface CommunityDeps {
@@ -157,6 +163,7 @@ function rowOf(
   pin: PluginPin | null,
   status: PluginStatus,
   on: boolean,
+  linked: LinkedCommands | null,
 ): PluginRow {
   const manifest: PluginManifest = (install?.manifest ?? pin)!
   return {
@@ -188,7 +195,16 @@ function rowOf(
     serve: manifest.serve ?? null,
     apps: manifest.apps ?? [],
     bin: Object.keys(manifest.bin ?? {}),
+    commandsNote: on && status === 'ready' ? commandsNote(id, linked) : null,
   }
+}
+
+function commandsNote(id: string, linked: LinkedCommands | null): string | null {
+  if (linked === null) return null
+  if (linked.error !== undefined) return `Its commands could not be linked: ${linked.error}.`
+  const mine = linked.refused.filter((r) => r.id === id)
+  if (mine.length === 0) return null
+  return mine.map((r) => `${r.name} is not on the agent's PATH: ${r.reason}.`).join(' ')
 }
 
 /** Every plugin this vault pins or this machine has, as the settings tab
@@ -205,7 +221,8 @@ export async function listPlugins(root: string, deps: Pick<CommunityDeps, 'store
       const install = installs.find((i) => i.id === id) ?? null
       const pin = pins.get(id) ?? null
       const status = await statusOf(install, pin, deps.consent)
-      return rowOf(id, install, pin, status, settings.plugins.vault[id] === true)
+      const on = settings.plugins.vault[id] === true
+      return rowOf(id, install, pin, status, on, linkedIn(root))
     }),
   )
 }
@@ -490,16 +507,6 @@ export function communityCapabilities(deps: CommunityDeps, now = () => Date.now(
       },
     }),
 
-    // Link the commands of every plugin that runs in the vault now, after its
-    // `plugins.<id>` switch or a pin moved: the settings tab's own write, or
-    // a pull or hand edit the renderer sees in the snapshot, which no
-    // capability does. Returns what it refused, for the tab to say.
-    'community.commands': cap({
-      doors: ['ui'],
-      params: () => ({}),
-      run: async (ctx) => linkRunningCommands(ctx.root, deps),
-    }),
-
     // Where a plugin's code is on this machine, for the vault's agent to run
     // its tools (Prezzi's skill renders slides with it). Only a plugin that
     // runs here: the commit someone allowed, set up.
@@ -655,4 +662,17 @@ export async function linkRunningCommands(
     console.error('[community] commands:', err)
     return { linked: [], refused: [], error: err instanceof Error ? err.message : String(err) }
   }
+}
+
+/**
+ * As the community plugin stops: when it no longer runs in the vault at
+ * `root` (turned off, or a plugin it needs is), its plugins' commands go too.
+ * Not when the vault is left or Holi quits, which leave the settings on: the
+ * vault's background sessions still run, and its next open links them again.
+ */
+export async function unlinkWhenOff(root: string, infos: readonly PluginInfo[]): Promise<void> {
+  const settings = await readVaultSettings(root).catch(() => null)
+  if (settings === null) return
+  if (resolvePlugins(settings.plugins, infos).running.has(COMMUNITY_INFO.id)) return
+  await unlinkCommands(root).catch((err) => console.error('[community] commands:', err))
 }

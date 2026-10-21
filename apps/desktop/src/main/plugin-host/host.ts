@@ -19,6 +19,7 @@ import {
   resolvePlugins,
   type PluginResolution,
   type ResolvedVaultSettings,
+  type VaultSnapshot,
 } from '@holi/shared'
 import type { AppDoor, AppDoorOpener } from '../capabilities/dispatch'
 import type { CapabilityRegistry } from '../capabilities/registry'
@@ -108,6 +109,8 @@ export interface PluginHost {
   failures(remote: string): Record<string, string>
   /** What the renderer reports about the vault `remote`. */
   report(remote: string, report: UiReport): void
+  /** A new snapshot of the vault `remote`, for the plugins started in it. */
+  snapshot(remote: string, snapshot: VaultSnapshot): void
   /** The questions the started plugins' quit guards ask right now. */
   quitQuestions(): QuitQuestion[]
   /** The open vault's settings files may have changed on disk. */
@@ -141,6 +144,7 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
    *  change landing while Holi leaves it must not restart anything. */
   let parked: string | null = null
   const reportListeners = new Set<{ remote: string; cb: (report: UiReport) => void }>()
+  const snapshotListeners = new Set<{ remote: string; cb: (snapshot: VaultSnapshot) => void }>()
   /** The open vault's sync holds, and the vault they hold. */
   let holds: { remote: string; reasons: Map<symbol, string> } | null = null
 
@@ -307,6 +311,11 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
         reportListeners.add(entry)
         return keep(() => void reportListeners.delete(entry))
       },
+      onSnapshot: (cb) => {
+        const entry = { remote, cb }
+        snapshotListeners.add(entry)
+        return keep(() => void snapshotListeners.delete(entry))
+      },
     }
     if (plugin.activate === undefined) return { id, dispose: () => {}, undos }
     try {
@@ -344,6 +353,7 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
     lastWant = ''
     for (const s of [...(was?.started ?? [])].reverse()) await stopOne(s)
     reportListeners.clear()
+    snapshotListeners.clear()
     holds = null
   }
 
@@ -449,6 +459,17 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
           cb(report)
         } catch (err) {
           console.error('[plugins] report listener failed:', err)
+        }
+      }
+    },
+
+    snapshot(remote, snapshot) {
+      for (const { remote: at, cb } of [...snapshotListeners]) {
+        if (at !== remote) continue
+        try {
+          cb(snapshot)
+        } catch (err) {
+          console.error('[plugins] snapshot listener failed:', err)
         }
       }
     },

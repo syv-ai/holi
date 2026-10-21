@@ -266,6 +266,26 @@ describe('the lifecycle', () => {
     await host.stop()
     expect(log.slice(-3)).toEqual(['pause held', 'stop base', 'resume'])
   })
+
+  it("tells a started plugin of its vault's snapshots, until it stops", async () => {
+    const root = await tempDir()
+    const heard: string[] = []
+    const plugins = [
+      logged([], 'base', {}, (c) => {
+        c.onSnapshot((snapshot) => heard.push(snapshot.files.map((f) => f.path).join()))
+        return () => {}
+      }),
+    ]
+    const { host, enter } = rig({ plugins })
+    await enter(openVault('o/r', root))
+    const snapshot = (path: string) =>
+      ({ files: [{ path, updatedAt: '' }] }) as unknown as Parameters<typeof host.snapshot>[1]
+    host.snapshot('o/r', snapshot('a.txt'))
+    host.snapshot('o/other', snapshot('b.txt'))
+    await host.stop()
+    host.snapshot('o/r', snapshot('c.txt'))
+    expect(heard).toEqual(['a.txt'])
+  })
 })
 
 describe('plugin events', () => {

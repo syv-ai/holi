@@ -233,8 +233,12 @@ async function main(): Promise<void> {
       // claim files, that scan used the old claims: scan again with the new
       // ones.
       plugins.invalidate()
-      void plugins.reconcile('snapshot')
       const active = host.active()
+      // Plugins hear it once what runs has followed it.
+      const tell = () => {
+        if (active !== null) plugins.snapshot(active.remote, snapshot)
+      }
+      void plugins.reconcile('snapshot').then(tell, tell)
       if (active === null) return
       void plugins.scanClaimsFor(active.root).then((claims) => {
         const now = new Set(claims.map((c) => c.plugin))

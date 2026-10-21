@@ -5,13 +5,8 @@
  * start. No plugin's code loads here: each runs as its own process.
  */
 import { join } from 'node:path'
-import { resolvePlugins } from '@holi/shared'
-import {
-  installedInfos,
-  readVaultSettings,
-  remoteUrl,
-  type MainPlugin,
-} from '../../../main/plugin-api'
+import { communityPluginsSignature } from '@holi/shared'
+import { installedInfos, remoteUrl, type MainPlugin } from '../../../main/plugin-api'
 import { COMMUNITY_INFO } from '../info'
 import {
   COMMUNITY_NAMESPACES,
@@ -19,8 +14,8 @@ import {
   linkRunningCommands,
   parseServerKey,
   seedRunningApps,
+  unlinkWhenOff,
 } from './capabilities'
-import { unlinkCommands } from './commands'
 import { createConsentStore } from './consent'
 import { createInstallStore, pluginsDir } from './store'
 import { createSupervisor } from './supervisor'
@@ -64,23 +59,32 @@ export const communityMain: MainPlugin = {
         scratch: join(pluginsDir(ctx.userData), '.staging'),
       }),
     )
-    // A running plugin's apps that this vault (or, for a `.local.app`, this
-    // machine) does not have yet.
-    void seedRunningApps(ctx.root, { store, consent }).catch((err) =>
-      console.error('[community] apps:', err),
-    )
-    // Its running plugins' commands, as this machine has them now.
-    void linkRunningCommands(ctx.root, { store, consent })
+    // What runs here follows the vault: at the start, and whenever a pin or
+    // the plugins settings change on disk (the settings tab's write, a pull,
+    // a hand edit). A running plugin's apps that this vault (or, for a
+    // `.local.app`, this machine) does not have yet, and its commands; the
+    // renderer reads the rows again once they are linked.
+    const follow = () => {
+      void seedRunningApps(ctx.root, { store, consent }).catch((err) =>
+        console.error('[community] apps:', err),
+      )
+      void linkRunningCommands(ctx.root, { store, consent }).then(() =>
+        ctx.emit(ctx.remote, 'commands', null),
+      )
+    }
+    follow()
+    let signature: string | null = null
+    ctx.onSnapshot((snapshot) => {
+      const next = communityPluginsSignature(snapshot.files)
+      if (next === signature) return
+      const first = signature === null
+      signature = next
+      if (!first) follow()
+    })
     return async () => {
       // Stopping stops its servers: the tabs on them are gone too.
       await servers.stopAll()
-      // Turned off in the vault, its plugins' commands go too. Not when the
-      // vault is left or Holi quits: the vault's background sessions still
-      // run, and its next open links them again anyway.
-      const settings = await readVaultSettings(ctx.root).catch(() => null)
-      if (settings === null) return
-      if (resolvePlugins(settings.plugins, installedInfos()).running.has(COMMUNITY_INFO.id)) return
-      await unlinkCommands(ctx.root).catch((err) => console.error('[community] commands:', err))
+      await unlinkWhenOff(ctx.root, installedInfos())
     }
   },
 }
