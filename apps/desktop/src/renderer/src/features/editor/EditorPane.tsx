@@ -12,7 +12,14 @@
  */
 import { EditorSelection, EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
-import { anchorAt, findHeadingLine, isCommentableNote, isResolved, snapshotTasks, type Task } from '@holi/shared'
+import {
+  anchorAt,
+  findHeadingLine,
+  isCommentableNote,
+  isResolved,
+  snapshotTasks,
+  type Task,
+} from '@holi/shared'
 import { useAtomValue, useSetAtom, useStore } from 'jotai'
 import { useEffect, useRef } from 'react'
 import { baseEditorExtensions, plainTextExtensions } from '@/editor/extensions'

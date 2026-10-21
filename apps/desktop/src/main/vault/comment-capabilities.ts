@@ -15,7 +15,7 @@ import {
   type LocatedThread,
 } from '@holi/shared'
 import { CapabilityError } from '../capabilities/error'
-import { readNote } from '../capabilities/fences'
+import { readNote, shownPath } from '../capabilities/fences'
 import { optionalStringParam, paramsObject, stringParam } from '../capabilities/params'
 import { cap, type CapabilityContext } from '../capabilities/registry'
 import {
@@ -37,19 +37,24 @@ export interface CommentCapabilitiesDeps {
   login(): string | null
 }
 
-/** A note's text, refusing what takes no comments (`isCommentableNote`) or a
- *  read may not reach. */
-async function noteText(ctx: CapabilityContext, path: string): Promise<string> {
-  if (!isCommentableNote(path)) {
+/** A note's vault path and text, refusing what takes no comments
+ *  (`isCommentableNote`, on the normalised path) or what a read may not reach
+ *  (the shared fences, through `readNote`). */
+async function noteText(
+  ctx: CapabilityContext,
+  path: string,
+): Promise<{ rel: string; text: string }> {
+  const rel = shownPath(path)
+  if (!isCommentableNote(rel)) {
     throw new CapabilityError('BAD_REQUEST', `${path} takes no comments`)
   }
-  return readNote(ctx, path)
+  return { rel, text: await readNote(ctx, rel) }
 }
 
 async function threadsOf(ctx: CapabilityContext, path: string): Promise<LocatedThread[]> {
-  const text = await noteText(ctx, path)
+  const { rel, text } = await noteText(ctx, path)
   try {
-    return locate(text, await readNoteComments(ctx.root, path))
+    return locate(text, await readNoteComments(ctx.root, rel))
   } catch (err) {
     if (err instanceof UnreadableComments) throw new CapabilityError('BAD_REQUEST', err.message)
     throw err
@@ -142,7 +147,7 @@ export const commentCapabilities = (deps: CommentCapabilitiesDeps) => {
       },
       run: async (ctx, { path, quote, body, line }) => {
         const author = agent()
-        const text = await noteText(ctx, path)
+        const { rel, text } = await noteText(ctx, path)
         const range = locateAnchor(text, { quote, prefix: '', suffix: '', line: line ?? 1 })
         if (range === null || text.slice(range.from, range.to) !== quote) {
           throw new CapabilityError('BAD_REQUEST', `that text is not in ${path}; quote it exactly`)
@@ -155,7 +160,7 @@ export const commentCapabilities = (deps: CommentCapabilitiesDeps) => {
           )
         }
         const anchor = anchorAt(text, range.from, range.to)
-        const id = await addThread(ctx.root, path, anchor, author, body)
+        const id = await addThread(ctx.root, rel, anchor, author, body)
         return { thread: id, line: anchor.line }
       },
       text: ({ thread, line }) => `Opened thread ${thread} on line ${line}.`,
@@ -172,8 +177,8 @@ export const commentCapabilities = (deps: CommentCapabilitiesDeps) => {
       params: (raw) => ({ ...threadParams(raw), body: body(paramsObject(raw)) }),
       run: async (ctx, { path, thread, body }) => {
         const author = agent()
-        await noteText(ctx, path)
-        if (!(await addReply(ctx.root, path, thread, author, body))) throw missing(thread, path)
+        const { rel } = await noteText(ctx, path)
+        if (!(await addReply(ctx.root, rel, thread, author, body))) throw missing(thread, path)
         return { thread }
       },
       text: ({ thread }) => `Replied in thread ${thread}.`,
@@ -186,8 +191,8 @@ export const commentCapabilities = (deps: CommentCapabilitiesDeps) => {
       params: threadParams,
       run: async (ctx, { path, thread }) => {
         const { login } = agent()
-        await noteText(ctx, path)
-        if (!(await setResolved(ctx.root, path, thread, true, login))) throw missing(thread, path)
+        const { rel } = await noteText(ctx, path)
+        if (!(await setResolved(ctx.root, rel, thread, true, login))) throw missing(thread, path)
         return { thread }
       },
       text: ({ thread }) => `Resolved thread ${thread}.`,
@@ -200,8 +205,8 @@ export const commentCapabilities = (deps: CommentCapabilitiesDeps) => {
       params: threadParams,
       run: async (ctx, { path, thread }) => {
         const { login } = agent()
-        await noteText(ctx, path)
-        if (!(await setResolved(ctx.root, path, thread, false, login))) throw missing(thread, path)
+        const { rel } = await noteText(ctx, path)
+        if (!(await setResolved(ctx.root, rel, thread, false, login))) throw missing(thread, path)
         return { thread }
       },
       text: ({ thread }) => `Reopened thread ${thread}.`,
