@@ -166,6 +166,9 @@ export async function openActiveVault(args: {
    * is committed, so the snapshot says nothing.
    */
   onCommitted?: (paths: string[] | null) => void
+  /** A pull merged teammates' commits in: HEAD before and after it. What
+   *  came in is the difference (a new comment that mentions you, say). */
+  onPulled?: (range: { from: string; to: string }) => void
   /** Where this vault finds the running Holi: its `bridge.local.env`. */
   bridgeEnv?: VaultBridgeEnv
   timings?: Partial<SyncTimings>
@@ -488,7 +491,10 @@ export async function openActiveVault(args: {
       // land inside a coalescing window.
       if (result.kind === 'merged') {
         await rescan()
-        if (!closed) args.onCommitted?.(null)
+        if (!closed) {
+          args.onCommitted?.(null)
+          args.onPulled?.({ from: result.from, to: result.to })
+        }
         // A merge writes a merge commit, which the remote does not have. Push
         // it, coalesced rather than immediate because we are inside the pull's
         // `pullInFlight` guard here; `pushNow` would decline until it clears.
@@ -771,6 +777,8 @@ export function createVaultHost(args: {
   onSyncState: (state: SyncState) => void
   onHeldBack?: (files: HeldBackFile[]) => void
   onCommitted?: (paths: string[] | null) => void
+  /** A pull merged commits into the open vault `remote`, at `root`. */
+  onPulled?: (vault: { remote: string; root: string }, range: { from: string; to: string }) => void
   /** Writes each opened vault's `bridge.local.env`, and deletes it when the
    *  vault closes (`bridge/env-file.ts`). */
   bridgeEnv?: VaultBridgeEnv
@@ -854,6 +862,7 @@ export function createVaultHost(args: {
           onSyncState: args.onSyncState,
           onHeldBack: args.onHeldBack,
           onCommitted: args.onCommitted,
+          onPulled: (range) => args.onPulled?.({ remote, root: entry.path }, range),
           bridgeEnv: args.bridgeEnv,
           timings: args.timings,
         })

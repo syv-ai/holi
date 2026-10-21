@@ -321,7 +321,7 @@ describe('pull', () => {
     const { ours, theirs } = await pair()
     await publish(theirs, 'theirs.md', 'their note\n')
 
-    expect(await openRepo(ours).pull()).toEqual({ kind: 'merged', commits: 1 })
+    expect(await openRepo(ours).pull()).toMatchObject({ kind: 'merged', commits: 1 })
     expect(await readFile(join(ours, 'theirs.md'), 'utf8')).toBe('their note\n')
   })
 

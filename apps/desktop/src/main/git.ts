@@ -125,7 +125,9 @@ export interface RepoStatus {
 /** A conflict names its paths, because the reconcile prompt is built from them. */
 export type PullResult =
   | { kind: 'up-to-date' }
-  | { kind: 'merged'; commits: number }
+  /** `from` and `to` are HEAD before and after: what the merge brought in is
+   *  the difference between them. */
+  | { kind: 'merged'; commits: number; from: string; to: string }
   | { kind: 'conflict'; paths: string[] }
 
 export type PushResult =
@@ -422,6 +424,8 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
     return {
       kind: 'merged',
       commits: Number(await runGit(root, ['rev-list', '--count', `${before}..${after}`], opts)),
+      from: before,
+      to: after,
     }
   }
 
@@ -452,6 +456,8 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
     return {
       kind: 'merged',
       commits: Number(await runGit(root, ['rev-list', '--count', `${before}..${after}`], opts)),
+      from: before,
+      to: after,
     }
   }
 

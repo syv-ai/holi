@@ -24,6 +24,7 @@ import { openTurnLog } from './host/turn-log'
 import { worktreeEnd } from './host/worktree-end'
 import { inboxCapabilities } from './inbox/capabilities'
 import { createInbox } from './inbox/inbox'
+import { mentionNotice } from './inbox/mentions'
 import { watchNeedsYou } from './inbox/needs-you'
 import { INBOX_FILE, parseInbox } from './inbox/rules'
 import { sweepAgentMemory, SWEEP_EVERY_MS } from './memory/sweep'
@@ -74,6 +75,12 @@ export const agentMain: MainPlugin = {
       told: async () => (await inbox.view()).entries.flatMap((e) => e.session ?? []),
       raise: (notice) => inbox.raise(notice),
       log: (msg) => console.error(`[agent] ${msg}`),
+    })
+    // A teammate's comment that mentions the person, found after a pull.
+    const unmention = ctx.onMention((mention) => {
+      void inbox
+        .raise(mentionNotice(mention))
+        .catch((err: unknown) => console.error('[agent] mention:', err))
     })
     // Which schedules this machine runs, and what they did: outside the
     // vault, where the agent cannot approve its own (`schedules/scheduler.ts`).
@@ -146,6 +153,7 @@ export const agentMain: MainPlugin = {
       clearInterval(sweepTimer)
       await sweeping
       unreport()
+      unmention()
       unwatchNeedsYou()
       await started.leave().catch((err) => console.error('[agent] leave failed:', err))
       await terminals.closeAll().catch((err) => console.error('[agent] terminals:', err))

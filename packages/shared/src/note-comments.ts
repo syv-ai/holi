@@ -22,6 +22,7 @@
  * Browser-safe: no `node:` imports.
  */
 import { formatRecord } from './app-store'
+import { sameLogin } from './task-file'
 
 /** Where every note's threads live. */
 export const COMMENTS_DIR = '.holi/comments'
@@ -445,7 +446,7 @@ export function newMentions(
     const had = before?.threads[thread.id]?.comments ?? {}
     for (const comment of thread.comments) {
       if (Object.hasOwn(had, comment.id)) continue
-      if (comment.author.toLowerCase() === me) continue
+      if (sameLogin(comment.author, login)) continue
       if (!mentionedLogins(comment.body).includes(me)) continue
       out.push({ threadId: thread.id, comment, quote: thread.anchor.quote })
     }
