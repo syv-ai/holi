@@ -607,25 +607,14 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
 
     report(remote, report) {
       for (const { remote: at, cb } of [...reportListeners]) {
-        if (at !== remote) continue
-        try {
-          cb(report)
-        } catch (err) {
-          console.error('[plugins] report listener failed:', err)
-        }
+        if (at === remote) tell(cb, report, 'report')
       }
     },
 
     mentioned(remote, mentions) {
       for (const { remote: at, cb } of [...mentionListeners]) {
         if (at !== remote) continue
-        for (const mention of mentions) {
-          try {
-            cb(mention)
-          } catch (err) {
-            console.error('[plugins] mention listener failed:', err)
-          }
-        }
+        for (const mention of mentions) tell(cb, mention, 'mention')
       }
     },
 
