@@ -133,7 +133,7 @@ function OpenAtLoginRow(): React.JSX.Element {
   return (
     <SettingsRow
       label="Open at login"
-      description="Start Holi in the menu bar when you log in, its window out of sight, so reminders and sync work from the start."
+      description="Start Holi out of sight when you log in, so reminders and sync work from the start."
       control={
         <Checkbox
           aria-label="Open at login"

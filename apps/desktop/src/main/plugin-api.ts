@@ -12,7 +12,7 @@
  * the tests.
  */
 import type { Privileges } from 'electron'
-import type { CommentMention, PluginInfo, SnapshotClaim } from '@holi/shared'
+import type { CommentMention, PluginInfo, SnapshotClaim, VaultSnapshot } from '@holi/shared'
 import type { AppDoor, AppDoorOpener } from './capabilities/dispatch'
 import type { CapabilityTable } from './capabilities/registry'
 import type { SeedContribution } from './vault/seed/types'
@@ -153,6 +153,25 @@ export interface Notice {
   onClick?: () => void
 }
 
+/**
+ * What a plugin's work across vaults gets (`MainPlugin.background`), for as
+ * long as it runs: not bound to any one vault, and not to the open one.
+ */
+export interface AppCtx {
+  /** Holi's own data directory on this machine. */
+  userData: string
+  /** The registered vaults on this machine that run the plugin, read fresh. */
+  vaults(): Promise<LiveVault[]>
+  /** The vault at `root` as scanned, with the claims of what it runs. */
+  scan(root: string): Promise<VaultSnapshot>
+  /** Show `path` of the vault `remote` in a tab: the window brought forward,
+   *  or made when there is none, and the vault switched to when it is not
+   *  the open one. */
+  open(remote: string, path: string): void
+  /** The GitHub login this machine is signed in as, or null. */
+  viewerLogin(): string | null
+}
+
 /** What a quit guard asks. */
 export interface QuitQuestion {
   message: string
@@ -187,6 +206,18 @@ export interface MainPlugin {
    * before it and stops after it.
    */
   activate?(ctx: PluginCtx): Disposer | Promise<Disposer>
+  /**
+   * Work it does across every registered vault that runs it, whether or not
+   * that vault is open, for as long as Holi runs: reminders. It starts at
+   * launch while some registered vault runs the plugin, and stops when none
+   * does any more (looked at again on each settings write). While any
+   * plugin's runs, Holi stays in the menu bar with its window closed, and the
+   * tray says `why` it does.
+   */
+  background?: {
+    why: string
+    start(ctx: AppCtx): Disposer | Promise<Disposer>
+  }
 }
 
 export type BridgeRoute = Route

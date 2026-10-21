@@ -8,7 +8,7 @@
  * `electron-vite` resolves imports without typechecking, so an unresolvable
  * import anywhere on this path stops the window opening at all.
  */
-import { readFile, stat, writeFile } from 'node:fs/promises'
+import { stat } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import {
@@ -23,7 +23,7 @@ import {
   shell,
   type Tray,
 } from 'electron'
-import { HOLI_LINK_SCHEME, holiLinkInArgv, parseHoliLink, snapshotTasks } from '@holi/shared'
+import { HOLI_LINK_SCHEME, holiLinkInArgv, parseHoliLink } from '@holi/shared'
 import { exactPath } from '@holi/shared/path-safety-node'
 import { requestFlush, type FlushChannel } from './flush'
 import { guardNavigation } from './window-guard'
@@ -65,10 +65,7 @@ import { createCoreServices, createUiReports } from './capabilities/services'
 import { createVaultHost } from './vault/active-vault'
 import { VaultRegistry, vaultRoot } from './vault/registry'
 import { scanVault } from './vault/vault-store'
-import { createDeliveredLog, createReminderRuntime } from './reminders/runtime'
-import { createNotifier } from './reminders/notify'
 import { showNotification } from './notifications'
-import type { VaultTasks } from './reminders/sweep'
 import { createTray } from './tray'
 import { createUpdater, type Updater } from './updates/updater'
 import { installAppMenu } from './menu'
@@ -91,8 +88,13 @@ const CORE_SEEDS = [coreSeed(MAIN_PLUGINS.map((p) => p.info))]
 let mainWindow: BrowserWindow | null = null
 
 // Held at module scope, not inside `main()`: a `Tray` that gets garbage-collected
-// vanishes from the menu bar, so it must outlive the setup closure.
+// vanishes from the menu bar, so it must outlive the setup closure. It exists
+// only while some plugin works in the background (`MainPlugin.background`).
 let tray: Tray | null = null
+
+/** Why Holi stays open with its window closed: what each plugin working in
+ *  the background says. Empty, closing the last window quits, as in any app. */
+let inBackground: readonly string[] = []
 
 // Every scheme this build serves, core's then each plugin's: vault assets,
 // and whatever plugins add (vault apps' `holi-app:`). Electron takes them only before
@@ -296,6 +298,26 @@ async function main(): Promise<void> {
         },
       })
       return true
+    },
+    background: {
+      registered: async () =>
+        (await registry.list()).map((e) => ({ remote: e.remote, root: e.path })),
+      scan: async (root) => scanVault(root, await plugins.scanClaimsFor(root)),
+      open: (remote, path) => showPath(remote, path),
+      viewerLogin: () => session.viewer?.login ?? null,
+      // The tray is the way back in (Open Holi) and the way out (Quit, since
+      // ⌘W is not) for as long as something runs in the background.
+      onChange: (whys) => {
+        inBackground = whys
+        if (whys.length === 0) {
+          tray?.destroy()
+          tray = null
+        } else if (tray === null) {
+          tray = createTray({ openWindow: () => openWindow(), tooltip: whys.join('; ') })
+        } else {
+          tray.setToolTip(whys.join('; '))
+        }
+      },
     },
   })
 
@@ -707,47 +729,12 @@ async function main(): Promise<void> {
   await bridge.start()
   const binDir = dirname(holiCliPath)
 
-  /**
-   * Reminders: a tray-resident evaluator sweeps every registered vault each
-   * minute (and once at launch, the catch-up for fires missed while quit) and
-   * raises native notifications.
-   *
-   * `clonePaths` is refreshed at the head of every `corpus.all()`, before `sweep`
-   * reads or the runtime marks the watermark, so the sync `DeliveredLog` resolver
-   * always sees the same clones the sweep just scanned. A vault whose `scanVault`
-   * throws (a stale registry entry, a missing clone) is skipped, never a stall.
-   */
-  const clonePaths = new Map<string, string>()
-  const corpus = {
-    async all(): Promise<VaultTasks[]> {
-      const entries = await registry.list()
-      clonePaths.clear()
-      for (const e of entries) clonePaths.set(e.remote, e.path)
-      const scans = await Promise.all(
-        entries.map(async (e) => {
-          const snap = await plugins
-            .scanClaimsFor(e.path)
-            .then((claims) => scanVault(e.path, claims))
-            .catch(() => null)
-          return snap ? { remote: e.remote, tasks: snapshotTasks(snap).items } : null
-        }),
-      )
-      return scans.filter((v): v is VaultTasks => v !== null)
-    },
-  }
-  const delivered = createDeliveredLog((remote) => clonePaths.get(remote) ?? null)
-  const notifier = createNotifier((remote, path) => showPath(remote, path))
-  const reminders = createReminderRuntime({
-    corpus,
-    notifier,
-    delivered,
-    // An assigned task reminds only its assignees (docs/features/tasks.md).
-    viewerLogin: () => session.viewer?.login ?? null,
-  })
-  reminders.start()
+  // What works across vaults (reminders) starts now, its launch catch-up
+  // with it, whichever vault opens.
+  void plugins.syncBackground()
 
-  // Opened at login, Holi starts in the menu bar: the window loads (so the
-  // vault opens) without showing.
+  // Opened at login, Holi starts out of sight: the window loads (so the
+  // vault opens) without showing, until the dock or the tray's Open Holi.
   const atLogin = process.platform === 'darwin' && app.getLoginItemSettings().wasOpenedAtLogin
   const win = createWindow({ show: !atLogin })
   // Pull on focus. The interval exists for the case where the window never
@@ -782,48 +769,9 @@ async function main(): Promise<void> {
     if (mainWindow === null || mainWindow.isDestroyed() || !mainWindow.isVisible()) openWindow()
   })
 
-  // Tray-resident: the sweep keeps running with the window closed, and the tray
-  // is the way back in (Open Holi) and the way out (Quit, since ⌘W is not).
-  tray = createTray({ openWindow })
   // After the first window: the Developer menu sends to whatever window is
   // current, and there has to be one for the send to land.
   installAppMenu(() => mainWindow)
-
-  /**
-   * First-run only: ask once whether to launch Holi at login, since reminders
-   * fire only while it is running. The "asked" flag lives in userData (never a
-   * vault), so a later launch never re-asks. Fire-and-forget so the modal does
-   * not hold up startup.
-   */
-  const appSettingsFile = join(app.getPath('userData'), 'settings.json')
-  void (async () => {
-    let settings: Record<string, unknown> = {}
-    try {
-      const parsed = JSON.parse(await readFile(appSettingsFile, 'utf8'))
-      if (parsed && typeof parsed === 'object') settings = parsed as Record<string, unknown>
-    } catch {
-      settings = {}
-    }
-    if (settings['launchPrompted'] === true) return
-    const { response } = await dialog.showMessageBox({
-      type: 'question',
-      buttons: ['Enable', 'Not now'],
-      defaultId: 0,
-      cancelId: 1,
-      message: 'Launch Holi at login?',
-      detail: 'Reminders only fire while Holi is running. Launch it automatically when you log in?',
-    })
-    app.setLoginItemSettings({ openAtLogin: response === 0 })
-    try {
-      await writeFile(
-        appSettingsFile,
-        JSON.stringify({ ...settings, launchPrompted: true }, null, 2) + '\n',
-        'utf8',
-      )
-    } catch (err) {
-      console.error('[login-prompt] failed to persist the asked flag:', err)
-    }
-  })()
 
   /**
    * Quit has to WAIT for the flush.
@@ -886,9 +834,9 @@ async function main(): Promise<void> {
    *  update's restart. Never throws. */
   async function teardown(): Promise<void> {
     updater.dispose()
-    reminders.close() // stop the sweep timer at once: no tick into a teardown
-    tray?.destroy() // let go of the menu-bar item as we leave
-    tray = null
+    // Stop the work across vaults at once (the reminder sweep): no tick into
+    // a teardown. It lets go of the menu-bar item as we leave.
+    await plugins.stopBackground().catch((err) => console.error('[quit] background:', err))
     await (async () => {
       try {
         // Stop what runs in the vault (the agent's sessions and terminals)
@@ -943,10 +891,11 @@ function flushChannel(win: BrowserWindow | null): FlushChannel {
   }
 }
 
-// Keep-alive on every platform: closing the last window does not quit, so the
-// reminder sweep keeps running tray-resident. A real quit is the tray's Quit or
-// ⌘Q → `before-quit`. The handler must stay registered and empty: with none,
-// Electron's default quits on Windows/Linux.
+// Closing the last window quits, as in any app, except on macOS, where an app
+// stays in the dock. While a plugin works in the background (reminders) Holi
+// stays open everywhere, in the tray: a real quit is then the tray's Quit or
+// ⌘Q → `before-quit`. The handler must stay registered: with none, Electron's
+// default quits on Windows and Linux whatever runs.
 app.on('window-all-closed', () => {
-  // intentionally does not quit
+  if (inBackground.length === 0 && process.platform !== 'darwin') app.quit()
 })

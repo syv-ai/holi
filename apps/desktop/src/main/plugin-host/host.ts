@@ -23,6 +23,7 @@ import {
 import type { AppDoor, AppDoorOpener } from '../capabilities/dispatch'
 import type { CapabilityRegistry } from '../capabilities/registry'
 import type {
+  AppCtx,
   BridgeRoute,
   Disposer,
   LiveVault,
@@ -84,6 +85,16 @@ export interface PluginHostDeps {
   /** Whether a Holi window has focus. */
   focused(): boolean
   readSettings?: (root: string) => Promise<ResolvedVaultSettings>
+  /**
+   * Plugins' work across vaults (`MainPlugin.background`): the vaults this
+   * machine has registered, what a background context offers beyond them,
+   * and who hears which plugins run in the background now (the tray and the
+   * keep-alive). Absent, as in most tests, nothing runs in the background.
+   */
+  background?: Omit<AppCtx, 'userData' | 'vaults'> & {
+    registered(): Promise<LiveVault[]>
+    onChange(whys: readonly string[]): void
+  }
 }
 
 export interface PluginHost {
@@ -123,6 +134,15 @@ export interface PluginHost {
   quitQuestions(): QuitQuestion[]
   /** The open vault's settings files may have changed on disk. */
   invalidate(): void
+  /**
+   * Start each plugin's work across vaults that some registered vault runs
+   * and stop the rest, then tell `background.onChange` what runs. At launch,
+   * and again after anything that may change it: a settings write, an open,
+   * or a change to what the open vault runs. Runs one at a time.
+   */
+  syncBackground(): Promise<void>
+  /** Stop every plugin's work across vaults: at quit. */
+  stopBackground(): Promise<void>
 }
 
 /** One plugin started in the open vault. */
@@ -178,6 +198,64 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
   async function enabled(root: string): Promise<ReadonlySet<string>> {
     if (cache !== null && cache.root === root && root === deps.active()?.root) return cache.enabled
     return (await read(root)).running
+  }
+
+  /** The plugins working across vaults now, by id, in start order. */
+  const inBackground = new Map<string, { why: string; dispose: Disposer }>()
+  let backgroundQueue: Promise<void> = Promise.resolve()
+
+  /** The registered vaults that run `plugin`; every one for a core part. */
+  async function vaultsRunning(plugin: MainPlugin): Promise<LiveVault[]> {
+    const all = (await deps.background?.registered()) ?? []
+    if (coreIds.has(plugin.info.id)) return all
+    const runs = await Promise.all(
+      all.map(async (v) => {
+        const running = await read(v.root).then(
+          (r) => r.running.has(plugin.info.id),
+          () => false,
+        )
+        return running ? [v] : []
+      }),
+    )
+    return runs.flat()
+  }
+
+  async function syncBackgroundNow(): Promise<void> {
+    const bg = deps.background
+    if (bg === undefined) return
+    for (const plugin of [...core, ...deps.plugins]) {
+      const work = plugin.background
+      if (work === undefined) continue
+      const id = plugin.info.id
+      const wanted = (await vaultsRunning(plugin)).length > 0
+      const running = inBackground.get(id)
+      if (!wanted && running !== undefined) {
+        inBackground.delete(id)
+        await Promise.resolve()
+          .then(running.dispose)
+          .catch((err) => console.error(`[plugins] ${id} background stop failed:`, err))
+      } else if (wanted && running === undefined) {
+        const ctx: AppCtx = {
+          userData: deps.userData,
+          vaults: () => vaultsRunning(plugin),
+          scan: bg.scan,
+          open: bg.open,
+          viewerLogin: bg.viewerLogin,
+        }
+        try {
+          inBackground.set(id, { why: work.why, dispose: await work.start(ctx) })
+        } catch (err) {
+          console.error(`[plugins] ${id} did not start in the background:`, err)
+        }
+      }
+    }
+    bg.onChange([...inBackground.values()].map((b) => b.why))
+  }
+
+  function queuedBackground(job: () => Promise<void>): Promise<void> {
+    const run = backgroundQueue.then(job, job)
+    backgroundQueue = run.catch((err) => console.error('[plugins] background failed:', err))
+    return run
   }
 
   /** What runs in a vault with `enabled` on: core parts, then plugins. */
@@ -384,7 +462,11 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
     // Left while it read: the leave stops what is here.
     if (live !== here || deps.active()?.remote !== remote) return
     const wantKey = [...want].sort().join(' ')
-    if (why !== 'snapshot' || wantKey !== lastWant) failed.clear()
+    if (why !== 'snapshot' || wantKey !== lastWant) {
+      failed.clear()
+      // What runs across vaults follows the same writes.
+      void queuedBackground(syncBackgroundNow)
+    }
     lastWant = wantKey
 
     // What left, dependents first: the start order, backwards.
@@ -465,6 +547,19 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
     failures: (remote) => (live?.remote === remote ? Object.fromEntries(failed) : {}),
 
     invalidate: forget,
+
+    syncBackground: () => queuedBackground(syncBackgroundNow),
+
+    stopBackground: () =>
+      queuedBackground(async () => {
+        for (const [id, b] of [...inBackground].reverse()) {
+          inBackground.delete(id)
+          await Promise.resolve()
+            .then(b.dispose)
+            .catch((err) => console.error(`[plugins] ${id} background stop failed:`, err))
+        }
+        deps.background?.onChange([])
+      }),
 
     report(remote, report) {
       for (const { remote: at, cb } of [...reportListeners]) {

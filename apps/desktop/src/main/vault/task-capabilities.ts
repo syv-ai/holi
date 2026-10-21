@@ -29,6 +29,7 @@ import { knownPath, writableFile, writablePath } from '../capabilities/fences'
 import { noParams, paramsObject, pathParams, stringParam } from '../capabilities/params'
 import { cap, type CapabilityContext } from '../capabilities/registry'
 import type { MainPlugin } from '../plugin-api'
+import { startReminders } from '../reminders/start'
 import { archiveDone } from './hooks/archive-done'
 import { taskDoneOp } from './task-done'
 import { absPathFor, withFileLock, writeAtomic } from './vault-files'
@@ -37,13 +38,15 @@ export const TASK_NAMESPACES = ['tasks'] as const
 
 /**
  * Tasks as a core part on the plugin contract, in every vault: it claims task
- * files, so the scanner parses them into `snapshot.claimed.tasks`, and runs
- * the `archive-done` commit transform.
+ * files, so the scanner parses them into `snapshot.claimed.tasks`, runs the
+ * `archive-done` commit transform, and fires reminders across every
+ * registered vault while Holi runs.
  */
 export const TASKS_PART: MainPlugin = {
   info: { id: TASKS_CLAIM, label: 'Tasks', default: true },
   claims: [taskClaim],
   transforms: [{ name: 'archive-done', run: (root, staged) => archiveDone(root, staged) }],
+  background: { why: 'Holi stays open for reminders', start: startReminders },
 }
 
 export interface TaskCapabilitiesDeps {

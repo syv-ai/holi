@@ -1769,8 +1769,8 @@ export function createRouter(deps: RouterDeps) {
       }),
   })
 
-  /** This machine's app: whether it opens at login, so the reminders and
-   *  sync are there from the start. */
+  /** This machine's app: whether it opens at login, so reminders and sync
+   *  are there from the start. The one place this is asked. */
   const app = t.router({
     loginItem: t.procedure.query((): { openAtLogin: boolean } => ({
       openAtLogin: deps.loginItem?.get() ?? false,
