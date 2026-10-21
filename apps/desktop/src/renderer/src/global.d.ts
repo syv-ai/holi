@@ -32,9 +32,15 @@ declare global {
         /** Main asks for a vault path in a tab: a clicked reminder's task,
          *  `holi docs open`, a Holi link (with a heading to scroll to). Fans to
          *  a vault switch (if the path lives elsewhere) + `openPathAtom`.
-         *  Returns its unsubscribe. */
+         *  `focus: false` (`holi docs screenshot`) leaves the caret where it
+         *  is. Returns its unsubscribe. */
         onOpen(
-          cb: (payload: { remote: string; path: string; heading?: string }) => void,
+          cb: (payload: {
+            remote: string
+            path: string
+            heading?: string
+            focus?: boolean
+          }) => void,
         ): () => void
         /** This window has landed its vault: main may send the opens it held. */
         openReady(): void

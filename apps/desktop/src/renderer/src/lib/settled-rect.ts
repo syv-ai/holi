@@ -8,6 +8,11 @@
  * fonts are in and its arrival motion has run, and then a short settle more,
  * for whatever a view or an app draws after its first paint. Timers, never
  * `requestAnimationFrame`, which a hidden window never runs.
+ *
+ * A dialog, menu or popover open over the window (portaled to the body, out of
+ * the app's root) would be in the capture, so it is waited out briefly and
+ * then refused. One inside the tab, such as an app's approval question, is
+ * what the person sees there and is captured.
  */
 
 export interface Rect {
@@ -23,6 +28,16 @@ const TIMEOUT_MS = 8_000
  *  PDF's pages. */
 const SETTLE_MS = 400
 const POLL_MS = 50
+/** How long an overlay over the window may stay open before the screenshot is
+ *  refused: one closing has its exit motion to run. */
+const OVERLAY_WAIT_MS = 1_500
+
+/** What an overlay is: one of the roles Radix gives its dialogs, popovers,
+ *  menus and lists, portaled out of the app's root. A tooltip is left out: one
+ *  under a resting pointer never closes. */
+const OVERLAY = ['dialog', 'alertdialog', 'menu', 'listbox']
+  .map((role) => `body > :not(#root) [role="${role}"], body > [role="${role}"]`)
+  .join(', ')
 
 const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
 
@@ -36,6 +51,13 @@ function bodyOf(key: string): HTMLElement | null {
   }
   return null
 }
+
+/** An overlay drawn over the window. */
+const overlaid = (): boolean =>
+  [...document.querySelectorAll<HTMLElement>(OVERLAY)].some((o) => {
+    const r = o.getBoundingClientRect()
+    return r.width > 0 && r.height > 0
+  })
 
 const busy = (el: HTMLElement): boolean =>
   el.getAttribute('aria-busy') === 'true' || el.querySelector('[aria-busy="true"]') !== null
@@ -51,15 +73,22 @@ async function motionDone(el: HTMLElement): Promise<void> {
 
 export async function settledRect(key: string): Promise<Rect> {
   const deadline = Date.now() + TIMEOUT_MS
+  let overlaySince: number | null = null
   while (Date.now() < deadline) {
     const el = bodyOf(key)
-    if (el !== null && !busy(el)) {
+    if (el !== null && overlaid()) {
+      overlaySince ??= Date.now()
+      if (Date.now() - overlaySince > OVERLAY_WAIT_MS) {
+        throw new Error('a dialog or menu is open over Holi; close it and try again')
+      }
+    } else if (el !== null && !busy(el)) {
+      overlaySince = null
       // Bounded: a page the compositor is not drawing advances no animation.
       await Promise.race([Promise.all([document.fonts.ready, motionDone(el)]), wait(1_000)])
       await wait(SETTLE_MS)
       // Still the one on screen, and still drawn: a reload or a tab switch
       // during the settle starts the wait over.
-      if (bodyOf(key) === el && !busy(el)) {
+      if (bodyOf(key) === el && !busy(el) && !overlaid()) {
         const r = el.getBoundingClientRect()
         return { x: r.x, y: r.y, width: r.width, height: r.height }
       }

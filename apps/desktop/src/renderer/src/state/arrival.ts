@@ -23,7 +23,17 @@ export interface Arrival {
   path: string
   /** A heading to scroll to, by its slug or its words. */
   heading?: string
+  /** False (`holi docs screenshot`): open without moving the caret into it. */
+  focus?: boolean
 }
+
+/**
+ * The path main opened without focus (`holi docs screenshot`): its editor
+ * must not take the caret when it mounts, since the person may be typing to
+ * the agent that asked. Cleared once the screenshot's tab has settled, or by
+ * the next arrival.
+ */
+export const quietOpenAtom = atom<string | null>(null)
 
 /**
  * A heading for `path`'s editor to scroll to. The editor showing `path` in the
@@ -72,6 +82,7 @@ const arriveAtom = atom(null, (get, set, { path, heading }: Arrival): void => {
 /** Main asked for an arrival: here, or once its vault has landed, after a
  *  switch to it when it is another. */
 export const requestArrivalAtom = atom(null, (get, set, arrival: Arrival): void => {
+  set(quietOpenAtom, arrival.focus === false ? arrival.path : null)
   const active = get(activeRemoteAtom)
   const remote = arrival.remote === '' ? active : arrival.remote
   if (remote !== null && remote === active && remote === get(landedRemoteAtom)) {

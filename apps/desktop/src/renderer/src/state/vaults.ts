@@ -18,7 +18,7 @@ import { closeTabsForPaths, retargetTab, retargetTabs, tabKey, workspaceAtom } f
 // `snapshotAtom`), safe because neither module reads the other's atoms until a
 // store does.
 import { folderSurfacesAtom } from './plugins'
-import { requestArrivalAtom } from './arrival'
+import { quietOpenAtom, requestArrivalAtom } from './arrival'
 import { tabForPathAtom } from './surfaces'
 
 type JotaiStore = ReturnType<typeof createStore>
@@ -202,9 +202,13 @@ export function subscribeToVault(
   // Main asks where a path's tab is drawn, for `holi docs screenshot`. It
   // opened the tab first, over `onOpen`, which arrives before this.
   const offLocate = window.holi.vault.onLocate(({ id, path }) => {
+    const answer = (a: Parameters<typeof window.holi.vault.located>[0]): void => {
+      if (store.get(quietOpenAtom) === path) store.set(quietOpenAtom, null)
+      window.holi.vault.located(a)
+    }
     settledRect(tabKey(store.get(tabForPathAtom)(path))).then(
-      (rect) => window.holi.vault.located({ id, rect }),
-      (err: unknown) => window.holi.vault.located({ id, error: (err as Error).message }),
+      (rect) => answer({ id, rect }),
+      (err: unknown) => answer({ id, error: (err as Error).message }),
     )
   })
   const tables = plugins.flatMap((p) =>

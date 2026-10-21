@@ -98,6 +98,8 @@ interface OpenRequest {
   remote: string
   path: string
   heading?: string
+  /** False when the tab opens without the caret moving into it. */
+  focus?: false
 }
 
 /**
@@ -372,20 +374,31 @@ async function main(): Promise<void> {
    * open waits until a renderer has landed its vault (`openTarget`), or the
    * push arrives before anything can hear it, or under the vault's Home.
    * Returns the window it was shown in.
+   *
+   * `focus: false` (`holi docs screenshot`) shows the window without taking
+   * focus, and the renderer opens the tab without moving the caret into it:
+   * the person may be typing to the agent that asked. A minimised window is
+   * still restored, since there is no restoring one without focus and a
+   * minimised page does not draw.
    */
   const showPath = (
     remote: string,
     path: string,
-    { heading }: { heading?: string } = {},
+    { heading, focus = true }: { heading?: string; focus?: boolean } = {},
   ): BrowserWindow => {
-    const request: OpenRequest =
-      heading === undefined ? { remote, path } : { remote, path, heading }
+    const request: OpenRequest = { remote, path }
+    if (heading !== undefined) request.heading = heading
+    if (!focus) request.focus = false
     let win = mainWindow
     if (win === null || win.isDestroyed()) {
-      win = createWindow()
+      win = createWindow({ show: focus })
       win.on('focus', () => host.active()?.onFocus())
-    } else {
+      if (!focus) win.showInactive()
+    } else if (focus) {
       bringForward(win)
+    } else {
+      if (win.isMinimized()) win.restore()
+      win.showInactive()
     }
     if (openTarget !== null && !openTarget.isDestroyed()) openTarget.send('vault:open', request)
     else heldOpens.push(request)
@@ -468,22 +481,31 @@ async function main(): Promise<void> {
   /** `holi docs open` and `holi docs screenshot` show a path only in the vault
    *  Holi is showing. An agent session outlives a vault switch, and its open
    *  must not switch the person away from what they are working in. */
-  const showInActive = (remote: string, path: string): BrowserWindow => {
+  const showInActive = (remote: string, path: string, focus: boolean): BrowserWindow => {
     if (host.active()?.remote !== remote) {
       throw new CapabilityError('UNAVAILABLE', 'Holi is showing another vault.')
     }
-    return showPath(remote, path)
+    return showPath(remote, path, { focus })
   }
+  /** One screenshot at a time, open and capture together: a second one's tab
+   *  would take the screen from the first while it waits to settle. */
+  let screenshots: Promise<unknown> = Promise.resolve()
 
   // What a vault app and the agent can ask for: core's capabilities, then
   // each feature's, under the namespaces each owns. A feature's table closes
   // over what it needs from the running app.
   const vaultCaps = vaultCapabilities({
-    open: (remote, path) => void showInActive(remote, path),
-    // Opened the same way first, so what is captured is what the person sees.
+    open: (remote, path) => void showInActive(remote, path, true),
+    // Opened the same way first, so what is captured is what the person sees,
+    // but without taking focus from whatever they are doing.
     screenshot: (remote, path) => {
-      const win = showInActive(remote, path)
-      return captureTab(win, path, openReadyIn(win))
+      const run = () => {
+        const win = showInActive(remote, path, false)
+        return captureTab(win, path, openReadyIn(win))
+      }
+      const shot = screenshots.then(run, run)
+      screenshots = shot.catch(() => {})
+      return shot
     },
     // `holi skills update` and the palette's Update skills: bring this
     // release's skills and hooks to a vault. A conflict is answered with the

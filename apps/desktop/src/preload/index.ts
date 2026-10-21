@@ -51,8 +51,11 @@ const onFlushRequest = pushChannel<void>('vault:flush')
  * `holi docs open`, or a Holi link, which may name a heading to scroll to.
  * Carries `remote` so the renderer switches vaults first when the path lives
  * in another one, keeping `activeRemoteAtom` truthful (a main-side switch could
- * not). Main holds them until `openReady`. */
-const onOpen = pushChannel<{ remote: string; path: string; heading?: string }>('vault:open')
+ * not). Main holds them until `openReady`. `focus: false` (`holi docs
+ * screenshot`) opens it without moving the caret into it. */
+const onOpen = pushChannel<{ remote: string; path: string; heading?: string; focus?: boolean }>(
+  'vault:open',
+)
 
 /** Main's other question, for `holi docs screenshot`: where on the page a
  * path's tab is, once it has finished drawing. Answered with `located`, by

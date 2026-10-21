@@ -26,7 +26,7 @@ import { registerBuffer } from '@/lib/buffer-registry'
 import { decideReload, hasNewText, type ConflictResolvers } from '@/lib/editor-reload'
 import { selectedLines } from '@/editor/askAgent'
 import { caretHeading } from '@/editor/caret-heading'
-import { headingRequestAtom } from '@/state/arrival'
+import { headingRequestAtom, quietOpenAtom } from '@/state/arrival'
 import { caretHeadingAtom } from '@/state/holi-link'
 import { NO_AGENT, useAskAgentSeam } from '@/state/agent-service'
 import { historyOpenAtom } from '@/state/history'
@@ -310,7 +310,8 @@ export function EditorPane({
       // tab changed. Opacity only: anything that changes the layout box drags
       // CodeMirror's measure loop into every frame.
       playOnce(host, 'motion-in-fade')
-      view.focus()
+      // Not when a screenshot opened it: the caret stays where the person is.
+      if (store.get(quietOpenAtom) !== path) view.focus()
 
       if (!plain) unfollow = followCommit(view, path, store)
       goToRequestedHeading()
