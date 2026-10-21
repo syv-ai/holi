@@ -164,7 +164,8 @@ const frontmatterEdit = Annotation.define<boolean>()
 /**
  * Whether the file's frontmatter block has no collapsed state at all: its
  * claim says so (a task's fields are the point, and the collapsed summary
- * would describe the other half). Static: the view is rebuilt per document.
+ * would describe the other half). Reconfigured with the claim's layer when
+ * its plugin is turned on or off (`reconfigureClaimLayer`).
  */
 export const frontmatterAlwaysOpenFacet = Facet.define<boolean, boolean>({
   combine: (values) => values.some(Boolean),

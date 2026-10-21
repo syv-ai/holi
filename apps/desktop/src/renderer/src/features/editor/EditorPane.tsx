@@ -15,7 +15,11 @@ import { EditorView } from '@codemirror/view'
 import { anchorAt, findHeadingLine, isCommentableNote, isResolved } from '@holi/shared'
 import { useAtomValue, useSetAtom, useStore } from 'jotai'
 import { useEffect, useRef } from 'react'
-import { baseEditorExtensions, plainTextExtensions } from '@/editor/extensions'
+import {
+  baseEditorExtensions,
+  plainTextExtensions,
+  reconfigureClaimLayer,
+} from '@/editor/extensions'
 import {
   setActiveThread,
   setCommentThreads,
@@ -422,6 +426,14 @@ export function EditorPane({
   useEffect(() => {
     if (focused) goToHeadingRef.current()
   }, [focused])
+
+  // The file's claim came or went (its plugin turned on or off): the open
+  // view takes the new claim layer in place, caret and undo kept.
+  const { frontmatterAlwaysOpen, claimExtensions } = deps
+  useEffect(() => {
+    const view = viewRef.current
+    if (view !== null) reconfigureClaimLayer(view, depsRef.current)
+  }, [frontmatterAlwaysOpen, claimExtensions])
 
   /**
    * The vault changed somewhere: re-read our own file and decide. The snapshot

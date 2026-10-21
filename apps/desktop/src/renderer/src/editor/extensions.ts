@@ -6,7 +6,7 @@ import { bracketMatching, indentOnInput, indentUnit } from '@codemirror/language
 import { selectNextOccurrence } from '@codemirror/search'
 import { drawSelection, dropCursor, EditorView, keymap } from '@codemirror/view'
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
-import { EditorState, type Extension } from '@codemirror/state'
+import { Compartment, EditorState, type Extension } from '@codemirror/state'
 import { holiCompletion } from './completion'
 import { fenceLanguage } from './fence-languages'
 import { formattingKeymap } from './formatting'
@@ -81,6 +81,25 @@ export interface EditorDeps {
   frontmatterAlwaysOpen?: boolean
   /** What the file's claim adds to the editor (`ClaimEditor.extensions`). */
   claimExtensions?: Extension
+}
+
+/** What the file's claim brings: its frontmatter mode and its own layer. A
+ *  compartment, so a plugin turned on or off reaches a view already open. */
+const claimLayer = new Compartment()
+
+type ClaimLayer = Pick<EditorDeps, 'frontmatterAlwaysOpen' | 'claimExtensions'>
+
+function claimLayerOf(deps: ClaimLayer): Extension {
+  return [
+    claimLayer.of(claimLayerOf(deps)),
+  ]
+}
+
+/** Swap an open view's claim layer for the file's claim now. A view with no
+ *  claim layer (a plain-text file) is left alone. */
+export function reconfigureClaimLayer(view: EditorView, deps: ClaimLayer): void {
+  if (claimLayer.get(view.state) === undefined) return
+  view.dispatch({ effects: claimLayer.reconfigure(claimLayerOf(deps)) })
 }
 
 /**

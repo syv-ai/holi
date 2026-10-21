@@ -67,10 +67,15 @@ export function useEditorDeps(
   const hasAgent = askAgent !== null
 
   // The file's own claim: what it adds to the editor, and whether its
-  // properties bar is always open. Fixed for the view, like `notePath`.
+  // properties bar is always open. New only when the claim comes or goes, so
+  // an open view swaps its claim layer (`reconfigureClaimLayer`) then and
+  // never on a mere re-render.
   const ownEditor = claims.find((c) => c.editor?.extensions !== undefined && c.match(notePath))
   const ownFrontmatter = claims.find((c) => c.frontmatter !== undefined && c.match(notePath))
-  const claimExtensions = notePath === '' ? undefined : ownEditor?.editor?.extensions?.(notePath)
+  const claimExtensions = useMemo(
+    () => (notePath === '' ? undefined : ownEditor?.editor?.extensions?.(notePath)),
+    [notePath, ownEditor],
+  )
   const alwaysOpen = notePath !== '' && ownFrontmatter?.frontmatter?.alwaysOpen === true
 
   return useMemo(
@@ -104,8 +109,6 @@ export function useEditorDeps(
       ...(alwaysOpen ? { frontmatterAlwaysOpen: true } : {}),
       ...(claimExtensions === undefined ? {} : { claimExtensions }),
     }),
-    // The claim's layer is read at the view's build, like the path.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [notePath, remote, hasAgent, alwaysOpen, store],
+    [notePath, remote, hasAgent, alwaysOpen, claimExtensions, store],
   )
 }
