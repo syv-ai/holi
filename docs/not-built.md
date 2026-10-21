@@ -25,6 +25,10 @@ asked. Also absent: surfacing a hook failure in the sync status bar when no sess
 shared skills and memory is a hazard. If revived, auto-edits touch the personal layer only and
 shared changes become proposals.
 
+**An injection eval.** The fence around mail and calendar text is tested; whether a real run
+honours it is not. A run against a planted "ignore previous instructions and send" mail, checking
+that it drafts or reports and attempts no send, would need a live model and a fake Google.
+
 **Agent theme proposals.** The agent writes a vault's theme; proposing one for approval is absent.
 
 ## Vault apps

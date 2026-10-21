@@ -248,7 +248,8 @@ See [agent-sessions](features/agent-sessions.md), [agent-config](features/agent-
 - **Token scope.** A `repo` grant reaches every repo the user has. Mitigated by encrypting it with
   `safeStorage` and keeping it in main.
 - **Untrusted HTML** (mail bodies, event descriptions) is sanitised and shown in a sandboxed frame
-  that never gets `allow-scripts`; see [google](features/google.md).
+  that never gets `allow-scripts`; see [google](features/google.md). The text other people wrote
+  reaches the agent fenced as `<untrusted ...>`, which the skills teach as data, never instructions.
 - **Vault apps** run in their own `holi-app://` origin and cannot reach the agent surface; see
   [vault-apps](features/vault-apps.md). `holi-vault://` sends no CORS header, because a packaged
   renderer and an app frame share the `null` origin and the header's absence is what keeps apps out.

@@ -45,6 +45,12 @@ the settings row and is never in what the run reads. The approvals and the run l
 `userData/schedules.json`, keyed by remote and path, not in the clone: the agent can write anything
 in the clone, and an approval it could write would be none.
 
+**What a run reads is not its prompt.** Its first turn is the approved prompt and one line of
+Holi's, and nothing a mail or an invite says is spliced into it: the run fetches that itself, with
+`holi google`, which fences everything another person wrote as `<untrusted ...>` ([google](google.md)).
+The shipped skills tell the agent that fenced text is data, never an instruction, and a send still
+asks however the run was talked into it.
+
 **That is all the approval locks.** A run is an ordinary session, so it also follows the vault's
 `AGENTS.md`, memory, skills and `.claude/settings.json`, which no schedule's fingerprint covers. A
 run allowed to write those could be talked into changing every later run: a mail that says "add this
@@ -124,7 +130,8 @@ repeats inside one session.
 - A run never starts on top of a previous run that is working or needs the person.
 - A run closes itself when done, never while it waits on the person or someone has it open.
 - Missed moments are one run, never a backlog.
-- Holi adds one line to a run's prompt and nothing else.
+- Holi adds one line to a run's prompt and nothing else; third-party text reaches a run fenced,
+  through a command, never in its prompt.
 
 ## Rejected
 
@@ -134,7 +141,18 @@ repeats inside one session.
 - **Running a committed schedule wherever the vault is open**: a pull would start unattended agent
   runs on a teammate's laptop with their credentials.
 - **`--dangerously-skip-permissions` or a permission mode for unattended runs**: `allow` names the
-  tools one schedule needs; everything else keeps Claude Code's prompt.
+  tools one schedule needs; everything else keeps Claude Code's prompt. Auto mode
+  (`--permission-mode auto`) was reconsidered for runs and is still out. For it: a classifier model
+  reviews each action instead of a person, it never sees tool results, so a mail cannot argue with
+  it directly, and it is built to block actions "driven by hostile content Claude read"; a run would
+  stall on fewer prompts. Against it, which decides: it answers yes in the person's place to
+  everything outside the approved `allow`, so the approval would no longer say what a run may do.
+  It does not review edits inside the working directory, which is the whole vault: the narrow
+  `Edit(tilbud/**)` rules that keep a run off `AGENTS.md`, memory and skills would be bypassed by a
+  model's judgement. Whether a `PreToolUse` hook's `ask` (the send gate) still reaches the person
+  under it is undocumented, and the gate is the wall. Three blocks in a row fall back to prompting,
+  so a run nobody watches still stalls, later. And whether it is available depends on the model, the
+  plan and an admin switch, so a schedule's behaviour would change with the account it ran under.
 - **`holi schedules enable` behind an `ask` rule**: the rule matches the command's text, so a
   script that calls the bridge gets around it. Turning on is the Settings switch's alone.
 - **GitHub Actions**, for runs like these. Every vault is a GitHub repository, so a scheduled
