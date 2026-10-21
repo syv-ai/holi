@@ -25,7 +25,7 @@ vault Holi does not have open writes the work-log line but no inbox entry: there
 add to until the vault is open, and nothing queues the notice for then. See
 [agent-inbox](features/agent-inbox.md).
 
-**Memory tooling.** A graph view and per-directory indexes. See
+**Memory tooling.** Per-directory indexes. See
 [agent-memory](features/agent-memory.md).
 
 **Self-improvement loop.** Dropped from v1: unproven, and one person's background agent editing

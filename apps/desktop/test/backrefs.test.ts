@@ -2,7 +2,12 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
-import { scanBackrefs, scanBackrefsMany, scanLinks } from '../src/main/vault/backrefs'
+import {
+  buildLinkGraph,
+  scanBackrefs,
+  scanBackrefsMany,
+  scanLinks,
+} from '../src/main/vault/backrefs'
 
 const dirs: string[] = []
 afterAll(async () => {
@@ -77,6 +82,23 @@ describe('scanLinks', () => {
         { path: 'a.md', line: 1, snippet: 'back to n' },
         { path: 'a.md', line: 3, snippet: 'again the note here' },
       ],
+    })
+  })
+})
+
+describe('buildLinkGraph', () => {
+  it('draws one edge per linked pair of existing notes, and keeps orphans', async () => {
+    const root = await vault({
+      'a.md': '[[b.md]] [[b.md|again]] [[a.md]] [[gone.md]] [[pic.png]]',
+      'b.md': 'back [[a.md]]',
+      'c.md': 'alone',
+      'skip/x.md': '[[a.md]]',
+      'pic.png': 'x',
+    })
+    expect(await buildLinkGraph(root, (p) => !p.startsWith('skip/'))).toEqual({
+      nodes: ['a.md', 'b.md', 'c.md'],
+      edges: [[0, 1]],
+      total: 3,
     })
   })
 })

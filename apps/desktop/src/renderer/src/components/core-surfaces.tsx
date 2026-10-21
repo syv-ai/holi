@@ -7,8 +7,9 @@
  */
 import { taskClaim } from '@holi/shared'
 import { useAtomValue } from 'jotai'
-import { History, House, Settings, SquareKanban } from 'lucide-react'
+import { History, House, Settings, SquareKanban, Waypoints } from 'lucide-react'
 import type { RailItem, Surface } from '@/plugin-api/types'
+import { GraphView } from '@/features/graph/GraphView'
 import { HistoryView } from '@/features/history/HistoryView'
 import { HomeView } from '@/features/home/HomeView'
 import { SettingsView } from '@/features/settings/SettingsView'
@@ -37,11 +38,13 @@ const SURFACES: readonly Surface[] = [
   { kind: 'board', label: 'Board', icon: SquareKanban, render: BoardView, homeable: true },
   { kind: 'settings', label: 'Settings', icon: Settings, render: SettingsView },
   { kind: 'history', label: 'History', icon: History, render: HistoryView },
+  { kind: 'graph', label: 'Graph', icon: Waypoints, render: GraphView },
 ]
 
 const RAIL: readonly RailItem[] = [
   { surface: 'home', order: 0 },
   { surface: 'board', order: 30 },
+  { surface: 'graph', order: 35 },
   // Last, so it ends the dock.
   { surface: 'settings', order: 100 },
 ]

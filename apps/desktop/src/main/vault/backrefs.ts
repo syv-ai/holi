@@ -125,3 +125,66 @@ export async function scanLinks(
   backlinks.sort((a, b) => a.path.localeCompare(b.path) || a.line - b.line)
   return { outgoing: [...outgoing.values()], backlinks }
 }
+
+/** The most notes the graph view draws. A force layout over more is slow to
+ *  settle and unreadable as a picture; past it, the best-connected notes are
+ *  kept, since an orphan says the least. */
+export const GRAPH_NODE_CAP = 1500
+
+/** The vault's notes and the resolved links between them, undirected. */
+export interface LinkGraph {
+  /** Note paths, sorted. */
+  nodes: string[]
+  /** Pairs of indexes into `nodes`, each pair once whichever way it links. */
+  edges: [number, number][]
+  /** How many notes there were before the cap. */
+  total: number
+}
+
+/**
+ * The whole link graph in one walk: every markdown file `include` admits is a
+ * node, every wiki-link between two of them an edge. A link to a note that does
+ * not exist, to an asset, or to itself is not an edge. Built per ask and held
+ * by nobody: there is no link index to go stale.
+ */
+export async function buildLinkGraph(
+  root: string,
+  include: (path: string) => boolean = () => true,
+): Promise<LinkGraph> {
+  const targets = new Map<string, string[]>()
+  for await (const { path, text } of markdownFiles(root, (p) => !include(p))) {
+    targets.set(
+      path,
+      parseWikiLinks(text).map((link) => link.target),
+    )
+  }
+  const seen = new Set<string>()
+  const pairs: [string, string][] = []
+  const degree = new Map<string, number>()
+  for (const [from, tos] of targets) {
+    for (const to of tos) {
+      if (to === from || !targets.has(to)) continue
+      const key = from < to ? `${from}\n${to}` : `${to}\n${from}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      pairs.push([from, to])
+      degree.set(from, (degree.get(from) ?? 0) + 1)
+      degree.set(to, (degree.get(to) ?? 0) + 1)
+    }
+  }
+  let nodes = [...targets.keys()]
+  if (nodes.length > GRAPH_NODE_CAP) {
+    nodes = nodes
+      .sort((a, b) => (degree.get(b) ?? 0) - (degree.get(a) ?? 0) || a.localeCompare(b))
+      .slice(0, GRAPH_NODE_CAP)
+  }
+  nodes.sort((a, b) => a.localeCompare(b))
+  const index = new Map(nodes.map((n, i) => [n, i]))
+  const edges: [number, number][] = []
+  for (const [a, b] of pairs) {
+    const i = index.get(a)
+    const j = index.get(b)
+    if (i !== undefined && j !== undefined) edges.push([i, j])
+  }
+  return { nodes, edges, total: targets.size }
+}

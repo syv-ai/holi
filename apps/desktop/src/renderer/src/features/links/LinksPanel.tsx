@@ -8,6 +8,7 @@
  * vault changes on disk, so an edit shows once autosave has written it.
  */
 import { useAtomValue, useSetAtom } from 'jotai'
+import { Waypoints } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { DrawerShell, DrawerTitle } from '@/composites'
 import { pathLabel } from '@/composites/file-icons'
@@ -15,7 +16,7 @@ import { Button } from '@/primitives'
 import { trpc } from '@/lib/trpc'
 import { historyTargetPathAtom } from '@/state/history'
 import { linksOpenAtom, type NoteLinks } from '@/state/links'
-import { openPathAtom } from '@/state/surfaces'
+import { openPathAtom, openSurfaceAtom } from '@/state/surfaces'
 import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
 
 /** The folder a path sits in, or nothing at the vault root. */
@@ -30,6 +31,7 @@ export function LinksPanel() {
   const remote = useAtomValue(activeRemoteAtom)
   const snapshot = useAtomValue(snapshotAtom)
   const openPath = useSetAtom(openPathAtom)
+  const openSurface = useSetAtom(openSurfaceAtom)
   const [links, setLinks] = useState<{ path: string; links: NoteLinks } | null>(null)
 
   // Per note, and again on every snapshot push: a link written anywhere in the
@@ -64,6 +66,7 @@ export function LinksPanel() {
       open={open && path !== null}
       label="Links"
       header={<DrawerTitle title="Links" subtitle={path} />}
+      actions={[{ icon: Waypoints, label: 'Open the graph', onSelect: () => openSurface('graph') }]}
     >
       <div className="min-h-0 flex-1 overflow-y-auto p-2 pt-0" data-links-panel="">
         {shown === null ? (
