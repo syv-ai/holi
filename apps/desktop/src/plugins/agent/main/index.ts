@@ -21,6 +21,7 @@ import { agentCapabilities, AGENT_NAMESPACES } from './host/capabilities'
 import { createAgentSessions } from './host/sessions'
 import { createAgentTerminals } from './host/terminals'
 import { openTurnLog } from './host/turn-log'
+import { worktreeEnd } from './host/worktree-end'
 import { scheduleCapabilities, SCHEDULE_NAMESPACES } from './schedules/capabilities'
 import { createScheduler, parseSchedulesFile } from './schedules/scheduler'
 
@@ -42,6 +43,7 @@ export const agentMain: MainPlugin = {
       binDir: ctx.binDir,
       // What each turn changed, as a commit range, in the vault it ran in.
       turnLogFor: openTurnLog,
+      snapshot: worktreeEnd,
     })
     ctx.register(
       AGENT_NAMESPACES,

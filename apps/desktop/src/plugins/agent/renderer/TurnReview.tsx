@@ -125,8 +125,8 @@ export function TurnReview(): React.JSX.Element | null {
         <>
           <div className="max-h-56 shrink-0 overflow-y-auto border-b border-divider p-2">
             {files.length === 0 ? (
-              // Not "it changed nothing": a turn that changed nothing is never
-              // recorded, so an empty list against a real turn means the commits it
+              // Not "it changed nothing": the chip never opens a turn that changed
+              // nothing, so an empty list against a real turn means the commits it
               // names are no longer reachable (a reset, a re-clone).
               <p className="px-2 py-1 text-xs text-muted-foreground">
                 This turn&rsquo;s history is gone. The commits it recorded are no longer in the
