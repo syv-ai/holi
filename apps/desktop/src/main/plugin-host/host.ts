@@ -57,6 +57,8 @@ export interface PluginHostDeps {
   userData: string
   /** What core seeds into every vault, ahead of any plugin. */
   coreSeeds: readonly SeedContribution[]
+  /** The running Holi's version, recorded when seeding writes shipped files. */
+  release?: string
   /** The open vault, whose answer is cached; null with none open. */
   active(): OpenVault | null
   /** The clone of the vault `remote` names, open or not; null for none. */
@@ -213,7 +215,11 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
     ]
     return {
       contributions,
-      seedArgs: [contributions, [...enabled]] as [SeedContribution[], string[]],
+      seedArgs: [contributions, [...enabled], deps.release] as [
+        SeedContribution[],
+        string[],
+        string | undefined,
+      ],
     }
   }
 

@@ -1055,6 +1055,17 @@ describe('updateShipped: what `holi skills update` does', () => {
     await expect(readFile(join(root, SKILL), 'utf8')).rejects.toThrow()
   })
 
+  it('records the release that last wrote shipped files, at creation and on update', async () => {
+    const root = await tempDir()
+    await ensureSeededWith(root, SEED_CONTRIBUTIONS, [], '1.0.0')
+    expect((await readSeedState(root)).release).toBe('1.0.0')
+    // An open writes no shipped file, so it says nothing about the release.
+    await ensureSeededWith(root, SEED_CONTRIBUTIONS, [], '1.1.0')
+    expect((await readSeedState(root)).release).toBe('1.0.0')
+    await updateWith(root, SEED_CONTRIBUTIONS, '1.1.0')
+    expect((await readSeedState(root)).release).toBe('1.1.0')
+  })
+
   it('reports a settled vault as current', async () => {
     const root = await tempDir()
     await ensureSeeded(root)

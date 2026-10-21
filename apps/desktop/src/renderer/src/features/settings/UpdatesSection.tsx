@@ -1,9 +1,15 @@
-/** App-scoped update and login settings (docs/features/updates.md). */
+/**
+ * Settings → Updates (docs/features/updates.md): updating Holi on this
+ * machine, then where the open vault's skills
+ * stand against this release.
+ */
 import { useAtomValue, useSetAtom } from 'jotai'
 import { useEffect, useState } from 'react'
 import { trpc } from '@/lib/trpc'
 import { Button, Checkbox } from '@/primitives'
 import { SettingsList, SettingsNote, SettingsRow } from '@/composites'
+import { openSkillsStatusAtom, updateSkillsAtom } from '@/state/skills'
+import { DescriptorSection } from './DescriptorSection'
 import {
   checkForUpdateAtom,
   installUpdateAtom,
@@ -126,5 +132,45 @@ function OpenAtLoginRow(): React.JSX.Element {
         />
       }
     />
+  )
+}
+
+/**
+ * Where the open vault's skills and hooks stand against this release, and
+ * whether the vault takes them on open (`autoUpdateSkills`).
+ */
+export function VaultSkillsSection(): React.JSX.Element {
+  const status = useAtomValue(openSkillsStatusAtom)
+  const update = useSetAtom(updateSkillsAtom)
+  const pending = status?.pending.length ?? 0
+  return (
+    <>
+      <SettingsList>
+        <SettingsRow
+          label={
+            status === null
+              ? 'Loading…'
+              : pending === 0
+                ? 'Skills and hooks are up to date'
+                : `This version of Holi has ${pending} newer ${pending === 1 ? 'file' : 'files'} for this vault`
+          }
+          description={
+            status === null
+              ? undefined
+              : status.release === null
+                ? 'Holi has not written this vault’s skills on this machine.'
+                : `Last brought in by Holi ${status.release}.`
+          }
+          control={
+            pending > 0 ? (
+              <Button size="xs" onClick={() => void update()}>
+                Update skills
+              </Button>
+            ) : undefined
+          }
+        />
+      </SettingsList>
+      <DescriptorSection section="updates" />
+    </>
   )
 }

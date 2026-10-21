@@ -14,7 +14,7 @@ import { join } from 'node:path'
 import { merge3, vaultRelPath } from '@holi/shared'
 import { writeAtomic } from '../vault-files'
 import { runMerges, shippedFiles } from './seed'
-import { readSeedState, recordSeeded, untouched } from './state'
+import { readSeedState, recordRelease, recordSeeded, untouched } from './state'
 import type { SeedContribution } from './types'
 
 /** What `holi skills update` did, one list per outcome, by vault path. */
@@ -76,10 +76,14 @@ async function removeStaged(root: string, rel: string): Promise<void> {
  * conflict: merging the vault's unresolved text against that new base would
  * quietly keep it and drop Holi's changes. Merged files are merged again at
  * the end: a hook script this added is wired in the same run.
+ *
+ * `release` is the running Holi's version: once the run is through, the
+ * vault's shipped files are this release's (`SeedState.release`).
  */
 export async function updateShipped(
   root: string,
   contributions: readonly SeedContribution[],
+  release?: string,
 ): Promise<UpdateReport> {
   const report: UpdateReport = {
     updated: [],
@@ -148,8 +152,17 @@ export async function updateShipped(
   }
 
   await runMerges(root, contributions)
+  if (release !== undefined) await recordRelease(root, release)
   return report
 }
+
+/** What an update wrote into the vault's own files: replaced, added or
+ *  merged, by vault path. */
+export const changedBy = (report: UpdateReport): string[] => [
+  ...report.updated,
+  ...report.added,
+  ...report.merged,
+]
 
 /**
  * What this release would bring the vault, without writing anything: the

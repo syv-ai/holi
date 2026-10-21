@@ -88,7 +88,21 @@ export const VAULT_NAMESPACES = ['docs', 'vault', 'sync', 'skills'] as const
  */
 export interface SkillsUpdated {
   summary: string
+  /** The vault files it replaced, added or merged, by path. */
+  changed: string[]
   conflicts: { prompt: string; summary: string } | null
+}
+
+/** Where the vault's skills stand against this release. */
+export interface SkillsStatus {
+  /** The shipped files an update would bring, by vault path. */
+  pending: string[]
+  /** The Holi version that last wrote shipped files on this machine, or null
+   *  when none has (a clone this machine never seeded or updated). */
+  release: string | null
+  /** Whether the vault asks for the update to run on open
+   *  (`autoUpdateSkills` in `.holi/settings/app.yaml`). */
+  autoUpdate: boolean
 }
 
 export interface VaultCapabilitiesDeps {
@@ -97,9 +111,9 @@ export interface VaultCapabilitiesDeps {
    * changes. Throws the refusal.
    */
   updateSkills(remote: string): Promise<SkillsUpdated>
-  /** The shipped files an update would bring the vault, by vault path;
-   *  writes nothing. */
-  pendingSkills(remote: string): Promise<string[]>
+  /** Whether an update would bring the vault anything, and what it said
+   *  last; writes nothing. */
+  skillsStatus(remote: string): Promise<SkillsStatus>
   /** Show `path` to the person in a tab of `remote`'s window. Throws the
    *  refusal. */
   open(remote: string, path: VaultRelPath): void
@@ -360,13 +374,18 @@ export const vaultCapabilities = (deps: VaultCapabilitiesDeps) => ({
     doors: ['ui', 'cli'],
     cli: {
       args: [],
-      summary: 'the skills and hooks this release would bring the vault, one path per line',
+      summary:
+        'the skills and hooks this release would bring the vault, one path per line, and the release they came from',
     },
     params: noParams,
-    run: async (ctx): Promise<{ pending: string[] }> => ({
-      pending: await deps.pendingSkills(ctx.remote),
-    }),
-    text: ({ pending }) => (pending.length === 0 ? 'Skills are up to date.' : pending.join('\n')),
+    run: (ctx): Promise<SkillsStatus> => deps.skillsStatus(ctx.remote),
+    text: ({ pending, release }) =>
+      [
+        release === null ? null : `From Holi ${release}.`,
+        pending.length === 0 ? 'Skills are up to date.' : pending.join('\n'),
+      ]
+        .filter((line) => line !== null)
+        .join('\n'),
   }),
 
   /** `holi skills update`, and the palette's Update skills. */

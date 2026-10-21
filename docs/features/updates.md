@@ -3,7 +3,8 @@
 Holi updates itself. CI builds a signed, notarized macOS app from `main` and publishes it as a GitHub
 release of `syv-ai/holi`; the installed app finds it there, downloads it in the background, and
 installs it when Holi next quits. There is no update server: the release is the feed. A release's
-newer skills and hooks are offered to each vault, never written unasked.
+newer skills and hooks are offered to each vault, or brought in on open by a vault that asks for
+that.
 
 ## How it works
 
@@ -52,6 +53,21 @@ runs the ordinary update, conflicts and all, and **Not now** puts the offer off 
 until a later release changes what is pending (`localStorage`, never the vault). An app update
 then reaches a vault's skills on the next open, with one click.
 
+**A vault can take them on open.** `autoUpdateSkills` in `.holi/settings/app.yaml` (Settings →
+Updates, **Update skills automatically**) is committed, so a team answers it once. When it is on
+and `skills.status` finds something pending as the vault opens, Holi runs the same
+`skills.update` the button does, with the same rules for a file the vault edited, and offers
+nothing. The nav's update item then says what changed, naming the files, until **Done**. Unasked,
+it starts no session: a conflict stays staged beside its file and the item offers **Merge with the
+agent**, which starts the session Update skills would have. A failure is quiet, and the offer
+stands.
+
+**Which release a vault's skills are from.** The seed state (`seed-state.local.json`) records the
+Holi version that last wrote shipped files on this machine, at creation, on a plugin's first
+enabling, or by an update. `skills.status` answers it with what is pending; the offer, Settings →
+Updates and `holi skills status` say it. It is machine-local like the bases beside it: a
+committed version would claim, on a teammate's machine, a write that never happened there.
+
 **Dev and installed are separate apps.** The packaged app is named Holi through
 `extraMetadata.productName`, so its `userData` is `Holi/`, while `pnpm dev` keeps `@holi/desktop/`.
 A dev build reports updates as unsupported.
@@ -64,8 +80,9 @@ A dev build reports updates as unsupported.
 - An update is never installed behind someone's back mid-session; it waits for a quit or the button.
 - Stable is the default channel. Dev prereleases are an explicit per-app opt-in, and switching back to
   stable can install an older version on restart.
-- A vault's files change only when its user asks: the skills offer writes nothing until Update
-  skills is chosen, and is not an opt-in to update on open.
+- A vault's files change only when someone asks: by default the skills offer writes nothing until
+  Update skills is chosen. A vault can opt in to updating on open (`autoUpdateSkills`, committed);
+  it is off by default, runs exactly the asked-for update, and never starts an agent session.
 - Repository secrets the workflow needs: `CSC_LINK`, `CSC_KEY_PASSWORD`, `APPLE_ID`,
   `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID`. `GITHUB_TOKEN` publishes the release.
 
@@ -83,7 +100,7 @@ A dev build reports updates as unsupported.
 - `apps/desktop/src/renderer/src/state/updates.ts`: the status mirror and its actions
 - `apps/desktop/src/renderer/src/features/nav/UpdateItem.tsx`: the nav item, for the app and the
   vault's skills
-- `apps/desktop/src/main/vault/seed/update.ts` (`pendingShipped`), `state/skills.ts`: the skills
-  offer
+- `apps/desktop/src/main/vault/seed/update.ts` (`pendingShipped`), `seed/state.ts` (`release`),
+  `state/skills.ts`: the skills offer, the update on open and its notice
 - `apps/desktop/src/renderer/src/features/settings/UpdatesSection.tsx`: Settings → Updates
 - `apps/desktop/electron-builder.yml`, `.github/workflows/release.yml`: packaging and release

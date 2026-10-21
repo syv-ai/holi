@@ -43,11 +43,14 @@ import { createPluginHost } from './plugin-host/host'
 import type { PluginEventsDeps } from './plugin-host/events'
 import { frameSchemes, schemeEntries, serveScheme } from './plugin-host/schemes'
 import {
+  changedBy,
   describeUpdate,
   pendingShipped,
   updateConflictPrompt,
   updateShipped,
 } from './vault/seed/update'
+import { readSeedState } from './vault/seed/state'
+import { readVaultSettings } from './vault/settings'
 import { createVaultPreCommit } from './vault/hooks/pre-commit'
 import { registerGitRoutes } from './vault/git-routes'
 import { registerIpc } from './ipc'
@@ -258,6 +261,7 @@ async function main(): Promise<void> {
     registry: capabilities,
     userData: userDataDir,
     coreSeeds: CORE_SEEDS,
+    release: app.getVersion(),
     active: () => host.active(),
     rootFor: (remote) => rootFor(remote),
     events: eventsDeps,
@@ -511,17 +515,23 @@ async function main(): Promise<void> {
     // release's skills and hooks to a vault. A conflict is answered with the
     // first turn of a session that would resolve it, which the renderer
     // starts through the agent service.
-    pendingSkills: async (remote) => {
+    skillsStatus: async (remote) => {
       const root = await rootFor(remote)
       if (root === null) throw new CapabilityError('UNAVAILABLE', 'No vault is open.')
-      return pendingShipped(root, await plugins.contributions(root))
+      const [pending, state, settings] = await Promise.all([
+        pendingShipped(root, await plugins.contributions(root)),
+        readSeedState(root),
+        readVaultSettings(root),
+      ])
+      return { pending, release: state.release ?? null, autoUpdate: settings.autoUpdateSkills }
     },
     updateSkills: async (remote) => {
       const root = await rootFor(remote)
       if (root === null) throw new CapabilityError('UNAVAILABLE', 'No vault is open.')
-      const report = await updateShipped(root, await plugins.contributions(root))
+      const report = await updateShipped(root, await plugins.contributions(root), app.getVersion())
       return {
         summary: describeUpdate(report, false),
+        changed: changedBy(report),
         conflicts:
           report.conflicts.length === 0
             ? null

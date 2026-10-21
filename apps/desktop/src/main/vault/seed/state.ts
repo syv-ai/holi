@@ -7,8 +7,9 @@
  * Holi seeded there. With it, an untouched file is replaced, an edited one is
  * 3-way merged, and only a real conflict needs an agent.
  *
- * It also remembers which plugins this machine has seen enabled in the
- * vault, so a plugin's shipped files are written once when it is first turned
+ * It also remembers the Holi release that last wrote shipped files here, so
+ * `holi skills status` and Settings can say which release the vault's skills
+ * came from, and which plugins this machine has seen enabled in the vault, so a plugin's shipped files are written once when it is first turned
  * on here, and a skill the vault later deleted stays deleted.
  *
  * **Machine-local, and the `.local.` in the name is the whole enforcement**.
@@ -39,6 +40,11 @@ export interface SeedState {
    * seeded here.
    */
   plugins?: string[]
+  /**
+   * The Holi version that last wrote shipped files here: the one that seeded
+   * them, or the last `holi skills update`. Absent until one has.
+   */
+  release?: string
 }
 
 export const sha256 = (content: string): string =>
@@ -70,6 +76,7 @@ export async function readSeedState(root: string): Promise<SeedState> {
   if (Array.isArray(parsed.plugins)) {
     state.plugins = parsed.plugins.filter((id): id is string => typeof id === 'string')
   }
+  if (typeof parsed.release === 'string') state.release = parsed.release
   return state
 }
 
@@ -88,6 +95,13 @@ export async function recordSeeded(root: string, rel: string, content: string): 
 export async function recordPlugins(root: string, ids: readonly string[]): Promise<void> {
   const state = await readSeedState(root)
   state.plugins = [...new Set(ids)].sort()
+  await writeSeedState(root, state)
+}
+
+/** Remember the Holi version that just wrote shipped files here. */
+export async function recordRelease(root: string, release: string): Promise<void> {
+  const state = await readSeedState(root)
+  state.release = release
   await writeSeedState(root, state)
 }
 
