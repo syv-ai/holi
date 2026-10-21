@@ -47,13 +47,21 @@ export const APP_METHODS = [
   'docs.write',
   'tasks.update',
   'tasks.create',
+  'record.start',
+  'record.stop',
+  'net.fetch',
 ] as const
 
 export type AppMethod = (typeof APP_METHODS)[number]
 
 /** The methods the renderer answers itself, because only it can do them
- *  (open a tab). Every other method is a main-side capability. */
-export const RENDERER_METHODS = ['open'] as const satisfies readonly AppMethod[]
+ *  (open a tab; record, which an opaque-origin frame may not). Every other
+ *  method is a main-side capability. */
+export const RENDERER_METHODS = [
+  'open',
+  'record.start',
+  'record.stop',
+] as const satisfies readonly AppMethod[]
 
 export type MainAppMethod = Exclude<AppMethod, (typeof RENDERER_METHODS)[number]>
 
@@ -77,7 +85,16 @@ export type AppResponse =
  * says only that something changed: the app reads it again through the
  * bridge, so every refusal still applies, and there is no second read path.
  */
-export const APP_TOPICS = ['docs', 'tasks', 'sync', 'agent', 'recents', 'history'] as const
+export const APP_TOPICS = [
+  'docs',
+  'tasks',
+  'sync',
+  'agent',
+  'recents',
+  'history',
+  'record:level',
+  'record:spectrum',
+] as const
 
 export type AppTopic = (typeof APP_TOPICS)[number]
 
@@ -101,4 +118,6 @@ export function isAppTopic(value: unknown): value is string {
  *  shim tells it from a reply, and no payload. */
 export interface AppPush {
   push: string
+  /** Only the `record:` topics carry one: how loud the recording is (0..1), or its spectrum. */
+  value?: number | number[]
 }
