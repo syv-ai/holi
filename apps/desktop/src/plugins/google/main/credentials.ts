@@ -10,10 +10,12 @@
  * **The shipped client takes syv.ai accounts only.** Its consent screen is
  * Internal, so Google refuses any other account with `Error 403:
  * org_internal` before it draws a consent screen. Anyone else brings their own
- * Desktop app client, set in Settings, Google and kept in this machine's
- * `userData` (docs/features/google.md).
+ * Desktop app client, set in Settings, Google and kept, keychain-encrypted, in
+ * this machine's `userData` (docs/features/google.md).
  */
-import { jsonFileStore } from '../../../main/plugin-api'
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { dirname } from 'node:path'
+import { EncryptionUnavailableError, type SafeStorageLike } from './token-store'
 
 /**
  * The OAuth client id for Holi's Google app.
@@ -97,25 +99,60 @@ export interface GoogleClientStore {
 }
 
 /**
- * The person's own client, as JSON in `userData` beside the tokens.
+ * The person's own client, encrypted by the OS keychain in `userData` beside
+ * the tokens, exactly as they are (`token-store.ts`).
  *
  * **Machine-local and never in a vault**: the accounts it connects are this
- * machine's, and a vault is a shared repo. Plain JSON rather than the
- * keychain, because Google's own guidance is that an installed app's secret is
- * not confidential (Holi's own ships in its source): PKCE and the person's
- * consent protect a grant. A file that is missing or not a client reads as
- * none, which falls back to the next source.
+ * machine's, and a vault is a shared repo. Encrypted although Google's guidance
+ * is that an installed app's secret is not confidential: this one is the
+ * person's own, not Holi's published pair, and the keychain costs nothing.
+ *
+ * Same two rules as the tokens. **It never writes plaintext**: without the
+ * keychain, `write` throws rather than falling back (going back to the default
+ * client still works, since that only deletes the file). **A file it cannot
+ * read is no client**, which falls back to the next source.
  */
-export function createClientStore(path: string): GoogleClientStore {
-  // Owner-only, as the tokens beside it are: not confidential, but nobody
-  // else's to read either.
-  const store = jsonFileStore(path, parseClient, { mode: 0o600 })
+export function createClientStore(path: string, storage: SafeStorageLike): GoogleClientStore {
   return {
-    read: store.read,
+    async read() {
+      const text = await readFile(path, 'utf8').catch(() => null)
+      if (text === null) return null
+      try {
+        const envelope: unknown = JSON.parse(text)
+        if (!isEnvelope(envelope) || envelope.v !== CLIENT_VERSION) return null
+        return parseClient(JSON.parse(storage.decryptString(Buffer.from(envelope.data, 'base64'))))
+      } catch {
+        return null
+      }
+    },
     async write(client) {
-      await store.update(() => client)
+      if (client === null) {
+        await rm(path, { force: true })
+        return
+      }
+      // Checked before anything touches the filesystem, as the tokens are.
+      if (!storage.isEncryptionAvailable()) {
+        throw new EncryptionUnavailableError('your own Google client')
+      }
+      const envelope = {
+        v: CLIENT_VERSION,
+        data: storage.encryptString(JSON.stringify(client)).toString('base64'),
+      }
+      await mkdir(dirname(path), { recursive: true })
+      const tmp = `${path}.tmp`
+      await writeFile(tmp, JSON.stringify(envelope), { mode: 0o600 })
+      await rename(tmp, path)
     },
   }
+}
+
+/** Bump when the stored client's shape changes; another value reads as none. */
+const CLIENT_VERSION = 1
+
+function isEnvelope(value: unknown): value is { v: number; data: string } {
+  if (value === null || typeof value !== 'object') return false
+  const e = value as Record<string, unknown>
+  return typeof e.v === 'number' && typeof e.data === 'string'
 }
 
 function parseClient(raw: unknown): GoogleClient | null {

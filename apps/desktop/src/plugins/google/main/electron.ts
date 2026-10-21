@@ -26,7 +26,8 @@ export function createGoogleAccountsManager(
     // Which vault uses which account. Plain JSON beside the tokens.
     vaults: createVaultAccounts(join(userDataDir, 'google-vault-accounts.json')),
     // The person's own OAuth client, when the shipped one will not take them.
-    clients: createClientStore(join(userDataDir, 'google-client.json')),
+    // Keychain-encrypted, as the tokens are.
+    clients: createClientStore(join(userDataDir, 'google-client.enc'), safeStorage),
     listen: listenLoopback,
     // The **system** browser, so the consent reuses the user's existing Google
     // session and no credential ever enters the app's web context.

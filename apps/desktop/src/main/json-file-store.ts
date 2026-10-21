@@ -36,11 +36,7 @@ export interface JsonFileStore<T> {
 export function jsonFileStore<T>(
   path: string,
   parse: (raw: unknown) => T,
-  options: {
-    cache?: boolean
-    /** File permissions for a file only this user should read, e.g. `0o600`. */
-    mode?: number
-  } = {},
+  options: { cache?: boolean } = {},
 ): JsonFileStore<T> {
   let cached: { value: T } | null = null
   let queue: Promise<unknown> = Promise.resolve()
@@ -68,10 +64,7 @@ export function jsonFileStore<T>(
   const write = async (value: T): Promise<void> => {
     await mkdir(dirname(path), { recursive: true })
     const temporary = `${path}.tmp`
-    await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, {
-      encoding: 'utf8',
-      ...(options.mode === undefined ? {} : { mode: options.mode }),
-    })
+    await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, 'utf8')
     await rename(temporary, path)
     writes += 1
     if (options.cache === true) cached = { value }
