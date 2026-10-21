@@ -36,6 +36,10 @@
  * and an idle one left open is stopped first, unless someone has a window on
  * it. So each schedule holds at most one live session.
  *
+ * **A run leaves a line in the work log** (`inbox/work-log.ts`) when it is
+ * done or fails to start, so a quiet run, one that notified nobody, still
+ * shows in "what ran this week?".
+ *
  * NOTE: no `electron` import, so this loads under vitest.
  */
 import { createHash } from 'node:crypto'
@@ -54,6 +58,7 @@ import {
 } from '@holi/shared'
 import { CapabilityError, type JsonFileStore } from '../../../../main/plugin-api'
 import type { SessionSummary } from '../claude/listing'
+import { appendWorkLog } from '../inbox/work-log'
 
 /** How often the open vault's schedules are checked. */
 const TICK_MS = 30_000
@@ -186,6 +191,8 @@ export interface SchedulerDeps {
   }
   /** Tell the renderer the vault's schedules moved. */
   emit(remote: string, name: string, payload: unknown): void
+  /** Add a line to the vault's work log. */
+  workLog?: (root: string, at: Date, text: string) => Promise<void>
   now?: () => Date
   tickMs?: number
   firstTickMs?: number
@@ -290,6 +297,7 @@ export function runPrompt(
 
 export function createScheduler(deps: SchedulerDeps): Scheduler {
   const now = deps.now ?? (() => new Date())
+  const workLog = deps.workLog ?? appendWorkLog
   const log = deps.log ?? ((msg: string) => console.log(`[schedules] ${msg}`))
   let attached: SchedulerVault | null = null
   let timer: ReturnType<typeof setInterval> | null = null
@@ -419,6 +427,9 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       runs: [record, ...s.runs].slice(0, RUNS_KEPT),
     }))
     log(`${entry.path}: ${record.outcome}${record.message ? ` (${record.message})` : ''}`)
+    if (record.outcome === 'failed') {
+      await logRun(vault.root, def.name, entry.path, `did not start: ${record.message}`)
+    }
     changed(vault.remote)
     return record
   }
@@ -432,8 +443,22 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
     return null
   }
 
+  /** The run's line in the work log. Best-effort: the run is over either way. */
+  async function logRun(root: string, name: string, path: string, outcome: string) {
+    await workLog(root, now(), `Scheduled run of ${name}: ${outcome} [[${path}]]`).catch(
+      (err: unknown) => log(`${path}: work log: ${String(err)}`),
+    )
+  }
+
+  /** The schedule's name, as its file says now. */
+  async function nameOf(root: string, path: string): Promise<string> {
+    const entry = (await readSchedules(root)).find((e) => e.path === path)
+    return entry?.parsed.ok === true ? entry.parsed.def.name : scheduleSlug(path)
+  }
+
   /** Mark a run done, and how. */
-  async function finish(remote: string, path: string, jobId: string, kept: boolean) {
+  async function finish(vault: SchedulerVault, path: string, jobId: string, kept: boolean) {
+    const { remote } = vault
     const at = now().toISOString()
     await changeState(remote, path, (s) => ({
       ...s,
@@ -442,6 +467,12 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       ),
     }))
     log(`${path}: run ${jobId} finished${kept ? ', left open' : ', closed'}`)
+    await logRun(
+      vault.root,
+      await nameOf(vault.root, path),
+      path,
+      kept ? 'done, left open' : 'done',
+    )
     changed(remote)
   }
 
@@ -466,12 +497,12 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       for (let i = 0; i < CLOSE_POLLS; i++) {
         if (attached !== vault) return
         const session = deps.sessions.sessions().find((s) => s.id === jobId)
-        if (session === undefined) return await finish(vault.remote, path, jobId, false)
+        if (session === undefined) return await finish(vault, path, jobId, false)
         if (session.state === 'needs-you') return
         if (session.state === 'idle') {
-          if (deps.sessions.watched(jobId)) return await finish(vault.remote, path, jobId, true)
+          if (deps.sessions.watched(jobId)) return await finish(vault, path, jobId, true)
           const stopped = await deps.sessions.stop(jobId)
-          if (stopped.ok) return await finish(vault.remote, path, jobId, false)
+          if (stopped.ok) return await finish(vault, path, jobId, false)
           log(`${path}: could not close run ${jobId}: ${stopped.message}`)
           return
         }

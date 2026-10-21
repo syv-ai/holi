@@ -5,6 +5,10 @@
  * waiting. The listing is the source, never a `Notification` hook, which is
  * late or partial (docs/features/agent-sessions.md).
  *
+ * The inbox outlives Holi, the set of waiting sessions does not: a session
+ * the inbox already holds an entry for, of any age, starts out as waiting,
+ * so reopening the vault does not tell about it again.
+ *
  * Not while the person is plainly looking: a session Holi has a terminal open
  * on, with Holi's window focused, already shows its prompt.
  *
@@ -17,6 +21,8 @@ import { enteredNeedsYou, type InboxNotice } from './rules'
 export interface NeedsYouDeps {
   sessions: Pick<AgentSessions, 'onSessions' | 'watched'>
   focused(): boolean
+  /** The sessions the inbox already has an entry for. */
+  told(): Promise<Iterable<string>>
   raise(notice: InboxNotice): Promise<unknown>
   log?: (msg: string) => void
 }
@@ -33,15 +39,24 @@ export const needsYouNotice = (s: SessionSummary): InboxNotice => ({
 
 /** Watch the vault's sessions for needs-you. Returns the undo. */
 export function watchNeedsYou(deps: NeedsYouDeps): () => void {
-  let waiting = new Set<string>()
+  // One listing at a time, in order, after the inbox has been read.
+  let waiting: Promise<Set<string>> = deps.told().then(
+    (ids) => new Set(ids),
+    (err: unknown) => {
+      deps.log?.(`needs-you could not read the inbox: ${String(err)}`)
+      return new Set<string>()
+    },
+  )
   return deps.sessions.onSessions((sessions) => {
-    const step = enteredNeedsYou(waiting, sessions)
-    waiting = step.waiting
-    for (const s of step.entered) {
-      if (deps.sessions.watched(s.id) && deps.focused()) continue
-      void deps
-        .raise(needsYouNotice(s))
-        .catch((err: unknown) => deps.log?.(`needs-you notice failed: ${String(err)}`))
-    }
+    waiting = waiting.then((before) => {
+      const step = enteredNeedsYou(before, sessions)
+      for (const s of step.entered) {
+        if (deps.sessions.watched(s.id) && deps.focused()) continue
+        void deps
+          .raise(needsYouNotice(s))
+          .catch((err: unknown) => deps.log?.(`needs-you notice failed: ${String(err)}`))
+      }
+      return step.waiting
+    })
   })
 }

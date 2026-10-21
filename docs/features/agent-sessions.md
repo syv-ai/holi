@@ -71,6 +71,8 @@ after an `idle` one, because a quiet session makes no watcher edge: a turn ends 
 consecutive reads say idle. A failed read answers nothing, and the bracket still reports `working`.
 A session going into `needs-you` puts one entry in the [agent inbox](agent-inbox.md), and a banner
 while Holi is out of sight, which opens it: on the edge into the state, read off this listing.
+Banners are at least 30 seconds apart, so several sessions waiting at once show one banner and the
+rest only in the inbox.
 
 **Context is the status line's.** `claude agents --json` carries no context figure and `/context`
 is interactive, so the reading comes from the documented `statusLine` command: one inline shell

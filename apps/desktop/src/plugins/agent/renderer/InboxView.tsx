@@ -65,18 +65,21 @@ function Row({ entry, unread }: { entry: InboxEntry; unread: boolean }): React.J
 export function InboxView({ visible }: { visible: boolean }): React.JSX.Element {
   const { entries, unread } = useAtomValue(inboxAtom)
   const markSeen = useSetAtom(markInboxSeenAtom)
-  // How many of the newest were unread when they came into view: they stay
-  // marked while the tab is in front, though the count has gone.
-  const [fresh, setFresh] = useState(0)
+  // The entries that were unread when they came into view: they stay marked
+  // while the tab is in front, though the count has gone. By id, so a
+  // dismissed row does not pass its mark to the next.
+  const [fresh, setFresh] = useState<ReadonlySet<string>>(() => new Set())
 
-  // What arrives while the tab is in front is seen as it arrives.
+  // What arrives while the tab is in front is seen as it arrives. The unread
+  // ones are the newest: the list is newest first.
   useEffect(() => {
-    if (!visible) setFresh(0)
+    if (!visible) setFresh(new Set())
     else if (unread > 0) {
-      setFresh((n) => n + unread)
+      const arrived = entries.slice(0, unread).map((e) => e.id)
+      setFresh((before) => new Set([...before, ...arrived]))
       void markSeen()
     }
-  }, [visible, unread, markSeen])
+  }, [visible, unread, entries, markSeen])
 
   return (
     <div className="flex flex-1 justify-center overflow-y-auto px-4 py-8 text-sm">
@@ -88,8 +91,8 @@ export function InboxView({ visible }: { visible: boolean }): React.JSX.Element 
           </p>
         ) : (
           <ul className="-mx-2 flex flex-col gap-0.5">
-            {entries.map((entry, i) => (
-              <Row key={entry.id} entry={entry} unread={i < fresh} />
+            {entries.map((entry) => (
+              <Row key={entry.id} entry={entry} unread={fresh.has(entry.id)} />
             ))}
           </ul>
         )}

@@ -70,6 +70,7 @@ export const agentMain: MainPlugin = {
     const unwatchNeedsYou = watchNeedsYou({
       sessions: started,
       focused: () => ctx.focused(),
+      told: async () => (await inbox.view()).entries.flatMap((e) => e.session ?? []),
       raise: (notice) => inbox.raise(notice),
       log: (msg) => console.error(`[agent] ${msg}`),
     })

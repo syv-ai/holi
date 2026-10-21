@@ -8,12 +8,13 @@
  * run closes when it is done and not before. The timing rules and the file's
  * grammar are `packages/shared`'s tests.
  */
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { jsonFileStore } from '../../../main/plugin-api'
 import type { SessionSummary } from '../main/claude/listing'
+import { workLogPath } from '../main/inbox/work-log'
 import { scheduleCapabilities } from '../main/schedules/capabilities'
 import {
   createScheduler,
@@ -249,6 +250,9 @@ describe('closing a run when it is done', () => {
     await vi.waitFor(async () =>
       expect(await latest()).toMatchObject({ jobId: id, finishedAt: expect.any(String) }),
     )
+    // A run that notified nobody still leaves its line.
+    const log = await readFile(join(root, workLogPath(clock)), 'utf8')
+    expect(log).toContain('[[.holi/schedules/inbox.md]]')
   })
 
   it('leaves a run its Stop says is paused on background work, until a Stop with none', async () => {

@@ -16,9 +16,10 @@ It puts an entry in Holi's inbox (a nav item with an unread count), raises a
 desktop notification if Holi is not the focused window, and adds a line to
 today's work log, `.holi/state/log/<YYYY-MM-DD>.local.md`. Clicking the entry or
 the notification opens `--path` (a note, task or file you wrote) or `--session`
-(a conversation, by its job id). It prints `notified`, `added to the inbox`, or
-`already in the inbox, not repeated`. It only works while Holi has this vault
-open.
+(a conversation). In a background session `--session` is filled in for you,
+so the entry can always lead back here. It prints `notified`,
+`added to the inbox`, or `already in the inbox, not repeated`. If Holi does not
+have this vault open, it only writes the work-log line, and says so.
 
 ## When
 
@@ -32,7 +33,7 @@ Notify for:
 
 Do not notify for:
 
-- Progress, or a routine run that found nothing new. Say so in your summary.
+- Progress, or a routine run that found nothing new. Log it instead (below).
 - Something you are about to ask in this conversation while the user is in it.
 - A permission prompt or a question you are waiting on: Holi already tells the
   user when a session needs them.
@@ -43,17 +44,25 @@ Do not notify for:
 ## Writing it
 
 - **Title**: what happened, in a few words: `Offer for Mads & Co drafted`.
-- **Line**: what you need from them, in one sentence: `Check the prices before
-  it goes out.`
+- **Line**: what you need from them, in one sentence:
+  `Check the prices before it goes out.`
 - Plain text, no markdown. Nothing private beyond what the user would want on
   their lock screen.
 
-To have it open this conversation from a background session, pass
-`--session "${CLAUDE_JOB_DIR##*/}"` when `CLAUDE_JOB_DIR` is set. A file is
-usually the better target: it is what they need to look at.
+Pass `--path` when there is a file: it is what they need to look at, and the
+entry opens it before the conversation.
 
 ## Logging the rest
 
-Everything worth remembering but not worth an interruption goes in your final
-summary, and in a note or task where it belongs. The work log is personal to
-this machine and never synced.
+Everything worth remembering but not worth an interruption is one line in the
+work log:
+
+```sh
+holi agent log "<one line>"
+```
+
+For example `Checked mail: two drafts filed under [[drafts/]]` or
+`Board tidied, nothing due`. One line per piece of work, not per step. It never
+interrupts anyone and works whether or not Holi has the vault open. Results themselves still go in a
+note or task where they belong. The work log is personal to this machine and
+never synced.

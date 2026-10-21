@@ -11,14 +11,24 @@ runs that use this most are [scheduled agents](scheduled-agents.md).
 **`holi agent notify <title> <line> [--path p] [--session id]`** is how the agent asks for
 attention. It adds an entry to the inbox, raises a native notification (the one reminders use) when
 no Holi window has focus, and appends a line to the day's work log. `--path` is a vault path the
-entry opens, `--session` a session by job id. It answers `notified`, `added to the inbox`, or
-`already in the inbox, not repeated`, and works while Holi has the vault open, like every `holi`
-verb. The seed allows it without a prompt ([agent-config](agent-config.md)): asking would stop an
-unattended run at a prompt nobody sees.
+entry opens, `--session` a session by job id (eight hex characters; anything else is refused, so
+no value can reach `claude attach` as a flag). Run from a background session, the `holi` script
+fills `--session` from `$CLAUDE_JOB_DIR` itself, as the status line does, so the agent never
+passes its own id; a `--path` is still what the entry opens first. It answers `notified`,
+`added to the inbox`, or `already in the inbox, not repeated`. For a vault Holi does not have open
+it writes the work-log line alone and says so: the log needs only the vault's folder, the inbox
+needs the open vault. The seed allows it without a prompt ([agent-config](agent-config.md)):
+asking would stop an unattended run at a prompt nobody sees.
+
+**`holi agent log <line>`** appends one line to the day's work log and does nothing else: what is
+worth remembering but not an interruption, such as a quiet run's "checked mail, nothing new". It
+works whether or not Holi has the vault open, and the seed allows it too.
 
 **Needs-you notifies.** When a session's listing goes into Claude Code's `waiting` status, the
 inbox gets "_name_ needs you" with what it waits for, opening that session. It is an edge per
-session: once on the way in, and again only after the session has stopped waiting. Not while the
+session: once on the way in, and again only after the session has stopped waiting. A session the
+inbox already holds an entry for, of any age, counts as already told when Holi starts watching, so
+restarting Holi or reopening the vault does not tell about a session still waiting. Not while the
 person is plainly looking, which is a session Holi has a terminal open on with Holi's window
 focused.
 
@@ -36,11 +46,13 @@ and opens the entry the same way.
 
 **The work log.** `.holi/state/log/<YYYY-MM-DD>.local.md`, one per local day, one line per thing
 done (`- 14:05 Offer drafted: Check the prices. [[tilbud/a.md]]`), so "what did you do this week?"
-is a grep. Personal and never synced. `holi agent notify` writes a line there; a routine's own
-results go in the vault, where the person will look.
+is a grep. Personal and never synced. `holi agent notify` and `holi agent log` write lines there,
+and the scheduler writes one when a scheduled run is done or fails to start
+([scheduled-agents](scheduled-agents.md)), so a run that notified nobody still shows. A routine's
+own results go in the vault, where the person will look.
 
 **The heuristic is a skill.** The shipped `notify` skill tells the agent to notify on finished
-deliverables, decisions and blockers, to log progress instead, to leave needs-you to Holi, and never
+deliverables, decisions and blockers, to log the rest with `holi agent log`, to leave needs-you to Holi, and never
 to notify twice for the same thing. `scheduled-agents` points a run's prompt at it.
 
 ## Rules

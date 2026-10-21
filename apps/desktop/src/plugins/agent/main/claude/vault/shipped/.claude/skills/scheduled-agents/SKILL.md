@@ -95,9 +95,11 @@ with no conversation behind it. So:
   run reads anyone else's words.
 - **Notify only when it matters.** If the run leaves something to review or
   needs a decision, it ends with one `holi agent notify` pointing at it (the
-  notify skill); a run that found nothing says so in its summary and notifies
-  nobody. The vault's settings allow `holi agent notify` already. A run
-  stopped on a permission prompt is announced by Holi itself.
+  notify skill); a run that found nothing notifies nobody. Holi logs every
+  run's end in the work log; a line worth keeping about what this run did
+  goes there with `holi agent log "<line>"`. The vault's settings allow
+  `holi agent notify` and `holi agent log` already. A run stopped on a
+  permission prompt is announced by Holi itself.
 - End with a short summary.
 
 **`allow` is what makes it unattended.** Any tool call not covered stops the run

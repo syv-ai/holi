@@ -2,10 +2,16 @@
  * The agent inbox's rules: a repeat raises nothing, banners are spaced, the
  * file stays bounded, and needs-you is an edge per session, not a level.
  */
-import { describe, expect, it } from 'vitest'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { describe, expect, it, vi } from 'vitest'
+import type { CapabilityContext } from '../../../main/plugin-api'
 import type { SessionSummary } from '../main/claude/listing'
+import { inboxCapabilities } from '../main/inbox/capabilities'
 import { createInbox } from '../main/inbox/inbox'
 import { watchNeedsYou } from '../main/inbox/needs-you'
+import { workLogPath } from '../main/inbox/work-log'
 import {
   admit,
   BANNER_GAP_MS,
@@ -134,10 +140,10 @@ describe('needs-you', () => {
     expect(step.entered.map((s) => s.id)).toEqual(['b'])
   })
 
-  it('stays quiet about a session Holi shows while its window has focus', () => {
+  function watcher(told: string[] = []) {
     let listener: (s: SessionSummary[]) => void = () => {}
     const raised: string[] = []
-    let focused = true
+    const state = { focused: true }
     watchNeedsYou({
       sessions: {
         onSessions: (l) => {
@@ -146,14 +152,72 @@ describe('needs-you', () => {
         },
         watched: (id) => id === 'shown',
       },
-      focused: () => focused,
+      focused: () => state.focused,
+      told: async () => told,
       raise: async (n) => void raised.push(n.session!),
     })
-    listener([session('shown', 'needs-you'), session('other', 'needs-you')])
-    expect(raised).toEqual(['other'])
-    focused = false
-    listener([session('shown', 'working')])
-    listener([session('shown', 'needs-you')])
-    expect(raised).toEqual(['other', 'shown'])
+    return { list: (s: SessionSummary[]) => listener(s), raised, state }
+  }
+
+  it('stays quiet about a session Holi shows while its window has focus', async () => {
+    const w = watcher()
+    w.list([session('shown', 'needs-you'), session('other', 'needs-you')])
+    await vi.waitFor(() => expect(w.raised).toEqual(['other']))
+    w.state.focused = false
+    w.list([session('shown', 'working')])
+    w.list([session('shown', 'needs-you')])
+    await vi.waitFor(() => expect(w.raised).toEqual(['other', 'shown']))
+  })
+
+  it('does not tell again, after a restart, about a session the inbox already holds', async () => {
+    const w = watcher(['old'])
+    w.state.focused = false
+    w.list([session('old', 'needs-you'), session('new', 'needs-you')])
+    await vi.waitFor(() => expect(w.raised).toEqual(['new']))
+    // Answered, then waiting again: that is news.
+    w.list([session('old', 'working')])
+    w.list([session('old', 'needs-you')])
+    await vi.waitFor(() => expect(w.raised).toEqual(['new', 'old']))
+  })
+})
+
+describe('holi agent notify', () => {
+  const NOW = new Date(T0)
+
+  async function notify(raw: Record<string, unknown>, live: boolean) {
+    const root = await mkdtemp(join(tmpdir(), 'holi-inbox-'))
+    const raised: unknown[] = []
+    const caps = inboxCapabilities({
+      inbox: {
+        raise: async (n) => (raised.push(n), 'inbox'),
+        view: async () => ({ entries: [], unread: 0 }),
+        dismiss: async () => ({ entries: [], unread: 0 }),
+        seen: async () => ({ entries: [], unread: 0 }),
+      },
+      liveRemote: () => (live ? 'syv-ai/notes' : null),
+      now: () => NOW,
+    })
+    const ctx = { remote: 'syv-ai/notes', root } as CapabilityContext
+    const cap = caps['agent.notify']
+    try {
+      const result = await cap.run(ctx, cap.params(raw))
+      const log = await readFile(join(root, workLogPath(NOW)), 'utf8').catch(() => '')
+      return { result, raised, log }
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  }
+
+  it('takes only a job id as the session, never something a CLI reads as a flag', async () => {
+    await expect(notify({ title: 'T', line: 'L', session: '--help' }, true)).rejects.toThrow()
+    const ok = await notify({ title: 'T', line: 'L', session: '0a1b2c3d' }, true)
+    expect(ok.raised).toEqual([{ title: 'T', line: 'L', session: '0a1b2c3d' }])
+  })
+
+  it('still logs the line when Holi does not have the vault open', async () => {
+    const r = await notify({ title: 'Offer drafted', line: 'Check it.' }, false)
+    expect(r.result).toBe('logged')
+    expect(r.raised).toEqual([])
+    expect(r.log).toContain('Offer drafted: Check it.')
   })
 })
