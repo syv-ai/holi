@@ -64,16 +64,21 @@ naming who. A turn that ends while another session's is still running cannot hav
 yet, so its record ends at the same kind of tree, taken as it ends; its own uncommitted edits are
 then never reported back to it. What the user edits during the session's own turn lands in that
 turn's settle commit and is not reported either. Ten paths at most, then `and N more`;
-`.holi/state/`, `.local.` and secret files are left out, and a name a code span cannot hold is
-quoted instead. A session with no recorded turn, an unreachable `end`, or a vault opened outside
+`.holi/state/`, `.local.` and secret files are left out. Both lines name paths a teammate may have
+chosen, so a path is cut at 200 characters, and one a code span cannot safely hold (a backtick, or a
+control, format or line-breaking character, which could end the line or hide what it says) is
+quoted as JSON with those characters escaped. A session with no recorded turn, an unreachable `end`, or a vault opened outside
 Holi prints nothing. The hook is a shipped one, so a vault created before it gets it with
 `holi skills update`.
 
 **Showing a file.** `holi docs open <path>` opens a note, task, PDF, vault app or any file the
 vault's snapshot holds in a pinned tab, so the agent can say "here it is" rather than "go to X".
 When the agent's tab is the active one, the file opens in the pane beside it, or a new pane, so the
-agent stays in view. It refuses a secret file and `.holi/state/`, so a prompt-injected agent cannot
-put a token on screen. It is the CLI door only (an app has `holi.open`), it opens only into the vault Holi is showing (an agent
+agent stays in view. It refuses a secret file and `.holi/state/` (checked lower-cased as well,
+since macOS opens `.holi/State/x` as `.holi/state/x`), so a prompt-injected agent cannot put a
+token on screen. The rule is one shared predicate, `shownPathOrNull` in `@holi/shared`, and every
+other way something asks Holi to show a path is held to it too: an app's `holi.open`, an app
+command's `{open}` result, `holi agent notify --path`, and a click on an inbox entry. It is the CLI door only (an app has `holi.open`), it opens only into the vault Holi is showing (an agent
 session outlives a vault switch, and its open must not switch the person away), and it brings the
 window forward. Main asks the renderer over one push, `vault:open`, the same one a clicked
 reminder uses; the renderer switches vault when the path lives elsewhere and opens it through
@@ -110,7 +115,9 @@ core's `.gitignore` gets its `*.local.*` line, line-wise, before anything else i
 - **Once files**: `AGENTS.md`, `.holi/memory/index.md`, `.holi/vault`,
   `.holi/settings/app.yaml` and `app.local.yaml`, `theme.css`, `theme.local.css`, `icons.yaml`
   (core), `.holi/document-templates/**` (PDF). Created if absent, then the user's.
-- **Shipped files**: `.claude/hooks/**` and `.claude/skills/**` (the agent; PDF's two skills). Written only when the
+- **Shipped files**: `.claude/hooks/**` and `.claude/skills/**`: the agent's hooks and skills,
+  Google's send-gate hook and skill, the apps plugin's check hook and skill, the Tasks plugin's
+  skill and PDF's two skills. Written only when the
   vault is created (`.holi/vault` does not exist yet), and the vault's from then on: an open never
   writes one, so a deleted skill stays deleted. A plugin's are also written once when it is first
   enabled on a machine that has seeded the vault before; the seed state records which plugins
@@ -123,8 +130,9 @@ core's `.gitignore` gets its `*.local.*` line, line-wise, before anything else i
   (`src/plugins/agent/main/claude/settings.ts`). Fragments add hooks, each only where its script is (a hook a
   later release adds is wired when its script arrives), and `permissions.ask`, `allow` and `deny`
   rules: the agent's own (the turn bracket's `turn-signal.mjs` among them), Google's send gate
-  and ask rules, the vault-app check, the tasks deny of Claude Code's `Task*` tools, and PDF's
-  allow of `holi pdf comments`. The agent's own keys go in only when absent: each `skillOverrides`
+  and ask rules, the vault-app check and the apps plugin's allow of `holi apps` and `holi store`,
+  the tasks deny of Claude Code's `Task*` tools, PDF's allow of `holi pdf comments` and
+  `holi pdf typst`, and the community plugin's allow of `holi community path`. The agent's own keys go in only when absent: each `skillOverrides`
   entry, `disableClaudeAiConnectors`, `autoMemoryEnabled`, `awaySummaryEnabled` and
   `promptSuggestionEnabled` (all `false`: no session recap, no next-prompt suggestion),
   `worktree.bgIsolation: "none"` (so sessions edit the vault rather than a worktree of it) and the
@@ -167,19 +175,21 @@ additions are commands in a directory prepended to `PATH`, plus skills that docu
   error. An answer over 16 KiB is written to `.holi/state/out/` and the command prints its path and
   shape instead ([architecture](../architecture.md) §3). A command that reads a
   body from stdin and was not given one is answered 428 without running, and the script sends
-  stdin once (`send --draft <id>` reads none). Today: `apps open|init|console`, `skills update`,
-  `pdf comments|typst`, `google agenda|search|read|mark-read|star|archive|trash|draft|send|reply|schedule|reschedule|unschedule`, `tasks list|complete`,
+  stdin once (`send --draft <id>` reads none). Today: `apps open|init|console`, `skills update|status`,
+  `comments list|add|reply|resolve|reopen`, `community path`, `pdf comments|typst`, `google agenda|search|read|mark-read|star|archive|trash|draft|send|reply|schedule|reschedule|unschedule`, `tasks list|complete`,
   `store list|get|put|delete|check`, `docs list|read|render|open|screenshot`, `sync status`, `agent sessions|notify|log`,
-  `schedules list|enable|disable|run`,
+  `schedules list|disable|run` (turning one on is Settings only),
   `vault members|recents`. The registry's reads the agent already has as Grep, Read and git
   (search, history, settings) stay app-only rather than grow a second way in. The script finds
   the bridge through the vault's `bridge.local.env`. All reversible or read-only (a record write is a file
   change in git history) except `google send` and `google reply`, which the send gate asks about.
 - `holi google <verb>`: mail and calendar through main, which holds the tokens ([google.md](google.md)).
 - `holi pdf typst` for PDF export, which prints the Typst binary's path ([pdf.md](pdf.md)).
-- Shipped skills: `memory`, `using-tasks`, `scheduled-agents`, `notify`, `vault-apps`, `theme`,
-  `gmail-calendar`, `md-to-pdf`, `pdf-comments`, `holi-feedback` (a GitHub issue on syv-ai/holi, labelled `vault-assistant`,
-  through `.github/ISSUE_TEMPLATE/vault-assistant.yml`).
+- Shipped skills: the agent's `memory`, `scheduled-agents`, `notify`, `note-comments`,
+  `show-the-user` (`holi docs open` and `holi docs screenshot`), `theme` and `holi-feedback` (a
+  GitHub issue on syv-ai/holi, labelled `vault-assistant`, through
+  `.github/ISSUE_TEMPLATE/vault-assistant.yml`); the Tasks plugin's `using-tasks`, the apps
+  plugin's `vault-apps`, Google's `gmail-calendar`, and PDF's `md-to-pdf` and `pdf-comments`.
 
 **What is taken away.** Claude Code tools and bundled skills with no job in a vault are off, from
 `settings.json`: `permissions.deny` holds `NotebookEdit`, plan mode, worktrees, `ReportFindings`,
@@ -194,8 +204,8 @@ outranks an allow in every scope, so getting a tool back means removing it from 
 
 **Permissions.** Claude Code's native prompts are the permission UX. The seeded rules ask for
 `curl`, `wget`, `holi schedules run` and `holi google archive|trash|unschedule|send|reply` (one
-rule per verb), and allow `holi pdf comments`, `holi comments list`, `holi schedules list`, the
-read-only memory lint (`node .claude/skills/memory/lint.mjs`), `holi agent notify` and `holi agent
+rule per verb), and allow `holi apps`, `holi store`, `holi pdf comments`, `holi pdf typst`,
+`holi community path`, `holi comments list`, `holi schedules list`, the read-only memory lint (`node .claude/skills/memory/lint.mjs`), `holi agent notify` and `holi agent
 log` (asking would stop an unattended run at a prompt nobody sees, [agent-inbox](agent-inbox.md)).
 Turning a schedule on is
 no command at all ([scheduled-agents](scheduled-agents.md)). Sending mail is

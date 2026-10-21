@@ -55,10 +55,12 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
 - **The bridge** is `postMessage` from the frame to `AppFrame`, which answers `holi.open` itself
   (the shim sends `{target}`: a view registered in this vault by name wins, such as home, board,
   agenda, mail, settings or history; else a vault file, or an app's bundle as that app; a bare
-  name that is neither answers "no such view") and
+  name that is neither answers "no such view"; a file is held to what `holi docs open` may show,
+  `shownPathOrNull`, so never `.holi/state/` or a secret file) and
   forwards every other method to `apps.call` in main with the bundle it mounted. Reads:
   `docs.list`, `docs.read`, `docs.render` (a note as HTML, inline HTML escaped and only web links
-  kept, so a note cannot run script as the app), `tasks.list`, `vault.recents`, `docs.search` (names, then
+  kept, so a note cannot run script as the app), `tasks.list` (only the tasks the app may read, as
+  `docs.list` lists only the notes), `vault.recents`, `docs.search` (names, then
   bodies), `vault.settings`, `vault.members`, `vault.history`, `sync.status`, `agent.sessions`, and, opted into,
   `google.agenda` and `google.search` (`holi.google.agenda({ from, to })`,
   `holi.google.search(query)`, a page: `{ threads, nextPageToken }`). Writes: its own records
@@ -107,7 +109,7 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   under its app's approvals, and may `fetch`. `fn` gets `{ text, line, path }`: the text the
   command was typed over, the caret's line, the note; nothing more of the buffer. It answers with
   text, which replaces that text, or one of `{ replace }`, `{ insert }` (after the text),
-  `{ open }` (as `holi.open`) and `{ agent }` (the ask-the-agent popover, the instruction written
+  `{ open }` (as `holi.open`, under the same rule) and `{ agent }` (the ask-the-agent popover, the instruction written
   in), or nothing. The answer is checked (`commandActionOf`) because it came out of the app's code.
   A command that throws, answers something else, or takes more than 10 seconds leaves the note as
   it was and writes why to its app's log, where the agent that wrote it looks. A command shows no
@@ -217,7 +219,8 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
 ## Rules
 
 - An app is a web app the user wrote: it may reach all vault content except the agent surface
-  (`AGENTS.md`, `CLAUDE.md`, `MEMORY.md`, `USER.local.md`, `.claude/`, `.holi/memory/`; see the
+  (`AGENTS.md`, `CLAUDE.md`, `MEMORY.md`, `USER.local.md`, `.claude/`, `.holi/memory/`,
+  `.holi/schedules/`; see the
   [glossary](../glossary.md)). The reason is escalation, not privacy: an app that could write
   `.claude/hooks/google-send-gate.mjs` could make the agent send mail unprompted.
 - An app's slash command is not offered, and refuses to run, in a note no app may read
@@ -225,7 +228,9 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   or write (`isAppWritablePath`, below). It is given the note's text and may write into it, so
   offering it in `AGENTS.md` or `.holi/memory/` would hand an app the agent surface the bridge
   refuses, and offering it in a `.local.` note or `notes/AGENTS.md` would let its answer land
-  where the bridge's writes may not. The bridge's reads and writes use the same predicates.
+  where the bridge's writes may not. The bridge's reads and writes use the same predicates. The
+  apps plugin supplies the fence to the menu as its commands' `SlashCommand.offeredIn(path)`, so
+  core's slash menu knows nothing of apps.
 - The agent-surface refusal lives in main (the capability registry), not the renderer. The process rendering
   untrusted code must not be the one deciding what it may read. `read` answers `FORBIDDEN`,
   distinct from `NOT_FOUND`.

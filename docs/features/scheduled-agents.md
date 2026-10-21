@@ -150,20 +150,23 @@ says what the approved schedules listen for (`interest`), and a source does only
 - **`file`** is the agent plugin's own, read off the vault's scans (`ctx.onSnapshot`): a note or
   file whose path is new is added, one whose mtime moved is changed. Files under `.holi/` and
   `.claude/` are never file events: a run writes there (memory, settings, its own schedule) as a
-  matter of course. While a schedule's run works, file events for that schedule are dropped: Holi
+  matter of course. Nor are `.local.` files and secret files such as `.env`, which are this
+  machine's and never named in a run's line, nor a vault app's records and log, which an app
+  rewrites as it runs (the per-turn changes line holds back the same files). While a schedule's run works, file events for that schedule are dropped: Holi
   cannot tell the run's own writes from anyone else's, so a file someone drops in that window is
   not heard by it either. `changed` is opt-in, because a run that edits the files it watches would
   otherwise start the next run. `added` still loops when a run creates a file under its glob after
   it has finished, or when two schedules each write under the other's glob: keep a run's output out
   of what it watches. The first scan after a start is the baseline; what changed while Holi was
   closed is no event. Files a plugin claims (task files) are not files here; they have their own
-  source. A `.local.` file counts, but the watcher
-  ignores those, so it is seen at the next periodic rescan, within half a minute.
+  source.
 - **`task`** is the tasks plugin's: each open task's due moments, told again with every scan. Due at
   a time, it is due and overdue then. Due on a day, it is due at 09:00 that day (the hour a timeless
   reminder fires) and overdue at 09:00 the next: not late until its day is over, and never a
   midnight run. Only open tasks are in the list, so a task finished before its moment, including
-  while Holi was closed, never fires.
+  while Holi was closed, never fires. With the tasks plugin off nothing tells task moments (its
+  list is withdrawn as it stops), so a `task` trigger hears nothing, and a task file is an
+  ordinary note that a `file` trigger's glob can match.
 - **`calendar`** is Google's: the timed events from an hour ago to a day ahead on the vault's
   calendars, all-day events left out, read every 5 minutes. With no account the list is empty.
 - **`mail`** is Google's too: each query, every 5 minutes, through the mail cache's `history.list`

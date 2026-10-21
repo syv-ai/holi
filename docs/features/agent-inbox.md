@@ -11,18 +11,20 @@ runs that use this most are [scheduled agents](scheduled-agents.md).
 **`holi agent notify <title> <line> [--path p] [--session id]`** is how the agent asks for
 attention. It adds an entry to the inbox, raises a native notification (the one reminders use) when
 no Holi window has focus, and appends a line to the day's work log. `--path` is a vault path the
-entry opens, `--session` a session by job id (eight hex characters; anything else is refused, so
+entry opens, held to what `holi docs open` may show (never `.holi/state/` or a secret file, the
+shared `shownPathOrNull`), `--session` a session by job id (eight hex characters; anything else is refused, so
 no value can reach `claude attach` as a flag). Run from a background session, the `holi` script
 fills `--session` from `$CLAUDE_JOB_DIR` itself, as the status line does, so the agent never
 passes its own id; a `--path` is still what the entry opens first. It answers `notified`,
-`added to the inbox`, or `already in the inbox, not repeated`. For a vault Holi does not have open
-it writes the work-log line alone and says so: the log needs only the vault's folder, the inbox
-needs the open vault. The seed allows it without a prompt ([agent-config](agent-config.md)):
+`added to the inbox`, or `already in the inbox, not repeated`. It needs Holi to have the vault
+open: the `holi` command finds Holi through the vault's bridge file, which Holi deletes when it
+leaves the vault, and a notice for a vault that is not the open one is refused (`UNAVAILABLE`), so
+a run's results have to wait in the vault itself. The seed allows it without a prompt ([agent-config](agent-config.md)):
 asking would stop an unattended run at a prompt nobody sees.
 
 **`holi agent log <line>`** appends one line to the day's work log and does nothing else: what is
-worth remembering but not an interruption, such as a quiet run's "checked mail, nothing new". It
-works whether or not Holi has the vault open, and the seed allows it too.
+worth remembering but not an interruption, such as a quiet run's "checked mail, nothing new". Like `notify` it needs Holi to have the vault open, and
+the seed allows it too.
 
 **Needs-you notifies.** When a session's listing goes into Claude Code's `waiting` status, the
 inbox gets "_name_ needs you" with what it waits for, opening that session. It is an edge per
@@ -45,8 +47,9 @@ the entry is enough there.
 each has a time, a title, a line, and optionally a path or a session. It is the nav item Inbox
 ([nav-menu](nav-menu.md)), there only while the inbox holds something, with a count of what came
 after the person last looked. Its tab lists the entries; a row opens its note or session, its X
-dismisses it, and looking at the tab reads everything in it. A banner's click brings Holi forward
-and opens the entry the same way.
+dismisses it, and looking at the tab reads everything in it. A note opens as any arrival main asks for does,
+beside the agent when it has the focus, and only when it passes the same `shownPathOrNull` check.
+A banner's click brings Holi forward and opens the entry the same way.
 
 **The work log.** `.holi/state/log/<YYYY-MM-DD>.local.md`, one per local day, one line per thing
 done (`- 14:05 Offer drafted: Check the prices. [[tilbud/a.md]]`), so "what did you do this week?"

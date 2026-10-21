@@ -56,7 +56,8 @@ tell "not loaded" from "empty", and the failure looks like data loss.
 
 What a vault app or the agent's `holi` CLI may ask main for is one capability registry
 (`src/main/capabilities/`). Each entry is named `<namespace>.<verb>`, says which doors reach it (an
-app's bridge, the CLI) and holds its own refusals. Core registers its namespaces and each feature
+app's bridge, the CLI) and holds its own refusals, and, for the CLI, how its answer reads
+(`cliValue`, `text`). Core registers its namespaces and each feature
 registers its own from the composition root (`src/main/index.ts`); a namespace has one owner.
 
 The CLI door's output lands in an agent's context and stays there, so it is kept short and
@@ -64,7 +65,8 @@ actionable (`src/main/bridge/`):
 
 - **A refusal names its code and the next step**: `holi google search: UNAUTHORIZED: <cause>`, then
   `next: <what to do>`. The step is the thrower's own when it knows one (`CapabilityError`'s
-  `next`: "press Reconnect for Google in vault settings"), else the code's default (`NEXT_STEP`);
+  `next`: "ask the person to press Reconnect for Google in Holi's vault settings"), else the
+  code's default (`NEXT_STEP`);
   a bad request also prints the command's usage line. An error that is not a refusal is a failure
   inside Holi and prints its message alone.
 - **An answer over 16 KiB is spilled to a file** (`SPILL_BYTES`): written to
@@ -77,6 +79,10 @@ actionable (`src/main/bridge/`):
   truncated answer without knowing it. The files are machine state, never committed and out of a
   vault app's reach; the newest 50 spills are kept, each kind in `.holi/state/out/` pruned on its
   own (`main/vault/out-files.ts`).
+- **The agent's view of a result can differ from an app's.** An entry's `cliValue` turns its
+  result into what the CLI door answers, before `text` and for `--json` alike. Google's reads use
+  it to fence text other people wrote (`fenceUntrusted`), so a mail reaches the agent's context as
+  data, not instructions, while an app gets the result as it is.
 
 ### Plugins
 
@@ -178,8 +184,9 @@ One kind of work outlives the open vault: a plugin's work across every registere
 it (`MainPlugin.background`), such as reminders, which fire for a vault that is not open. It
 starts at launch while some registered vault runs its plugin, so a launch's catch-up runs whichever
 vault opens, and is looked at again whenever that may change: a change to what the open vault
-runs, a vault leaving the registry, or no vault being open. Its context reads those vaults' files and
-can show a path, and holds no vault open. While any runs, Holi stays in the tray with its window
+runs, a vault leaving the registry, or no vault being open. Its context (`AppCtx`) lists those
+vaults, scans their files, can show a path, knows the signed-in login and raises a notification
+whatever has focus, and holds no vault open. While any runs, Holi stays in the tray with its window
 closed; with none, closing the last window quits (except on macOS).
 Turning off a plugin whose renderer side says stopping it costs something (`leaveGuard`, the
 agent's busy sessions) asks before the write; a hand edit stops it without asking. Dispatch refuses
@@ -228,11 +235,18 @@ that talks to main. Holi pauses sync while a turn runs and reviews a turn as the
 range it produced.
 
 **Scheduled agents** are files in `.holi/schedules/` that the open vault's agent plugin starts as
-background sessions at their times, on machines that approved their content
-([scheduled-agents](features/scheduled-agents.md)).
+background sessions at their times, or when one of their triggers hears an event (a file added, a
+task due, a meeting about to start, a mail), on machines that approved their content. The events
+come from the plugins that own them over `ctx.events`, and the agent's trigger router dedupes and
+batches them into runs ([scheduled-agents](features/scheduled-agents.md)).
+
+**The inbox** is how the agent asks for attention while nobody is watching: `holi agent notify`
+adds an entry and, by quiet rules, a banner, and every run leaves a line in the day's work log
+([agent-inbox](features/agent-inbox.md)).
 
 See [agent-sessions](features/agent-sessions.md), [agent-config](features/agent-config.md),
-[agent-memory](features/agent-memory.md) and [scheduled-agents](features/scheduled-agents.md).
+[agent-memory](features/agent-memory.md), [scheduled-agents](features/scheduled-agents.md) and
+[agent-inbox](features/agent-inbox.md).
 
 ## 6. The pillars
 

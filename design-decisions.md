@@ -373,7 +373,7 @@ and activation.
 - **`RecentKind` is `path | surface | command`.** Agent tabs are surface recents, and
   unlisted surfaces' recents never reach vault apps.
 
-### Phase 4 (started)
+### Phase 4 (claims)
 
 - **The snapshot carries `claimed[pluginId]`, not typed task fields.** The tasks plugin
   contributes the `task.*.md` claim. With the claim absent, task files are plain notes. Any
