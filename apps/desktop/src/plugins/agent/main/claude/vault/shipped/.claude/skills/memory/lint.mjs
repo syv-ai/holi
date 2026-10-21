@@ -146,15 +146,38 @@ function normalize(text) {
 
 const isLocal = (path) => (path.split('/').at(-1) ?? '').includes('.local.')
 
+/** When a memory's `expires` passes, on this machine's clock, or null when it
+ *  is no stamp. A date lasts through that day; `YYYY-MM-DDTHH:MM` ends at that
+ *  minute. The overview's `expiry` and `memoryExpiry` in `@holi/shared`: a
+ *  vault script imports nothing, so it is written again here. */
+function expiry(value) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2})(?::(\d{2}))?)?$/.exec(value ?? '')
+  if (!m) return null
+  const [y, mo, d] = [Number(m[1]), Number(m[2]) - 1, Number(m[3])]
+  const day = new Date(y, mo, d)
+  if (day.getMonth() !== mo || day.getDate() !== d) return null
+  if (m[4] === undefined) return new Date(y, mo, d + 1)
+  const [h, min, sec] = [Number(m[4]), Number(m[5]), Number(m[6] ?? 0)]
+  if (h > 23 || min > 59 || sec > 59) return null
+  return new Date(y, mo, d, h, min, sec)
+}
+
 /**
  * The lint, pure: memory files in, findings out, in a stable order.
  *
  * `exists(path)` answers whether a vault-relative path exists; the caller owns
  * the disk. Each finding is `{ path, kind, message }`, where `kind` is one of
- * `frontmatter`, `broken-link`, `stale` and `duplicate`, and the message says
- * what to do. A finding is a proposal: nothing here is ever applied.
+ * `frontmatter`, `expires`, `expired`, `broken-link`, `stale` and
+ * `duplicate`, and the message says what to do. A finding is a proposal:
+ * nothing here is ever applied.
+ *
+ * A memory past its `expires` is hidden from the index and the overview. A
+ * personal one is left out here too: Holi deletes it on its next sweep. Unless
+ * its frontmatter is one YAML rejects, which the sweep cannot read and so never
+ * deletes. A shared one is the single `expired` finding it gets: nothing
+ * unattended deletes shared memory, so the agent proposes deleting it.
  */
-export function lintMemory(files, exists) {
+export function lintMemory(files, exists, now = new Date()) {
   const findings = []
   const add = (path, kind, message) => findings.push({ path, kind, message })
   const byDescription = new Map()
@@ -172,6 +195,25 @@ export function lintMemory(files, exists) {
 
   for (const { path, text } of files) {
     const fm = splitFrontmatter(text)
+    const stamp = value(fm.block, 'expires')
+    if (stamp !== null) {
+      const ends = expiry(stamp)
+      const readable = !['type', 'expires', 'description', 'title'].some((key) =>
+        breaksYaml(rawValue(fm.block, key)),
+      )
+      if (ends === null) {
+        add(
+          path,
+          'expires',
+          '`expires` is not `YYYY-MM-DD` or `YYYY-MM-DDTHH:MM`, so it never expires: fix the stamp',
+        )
+      } else if (now >= ends && readable) {
+        if (!isLocal(path)) {
+          add(path, 'expired', `expired (\`expires: ${stamp}\`): propose deleting it`)
+        }
+        continue
+      }
+    }
     if (fm.unclosed) {
       add(path, 'frontmatter', 'the frontmatter has no closing `---`, so none of it is read')
     } else if (fm.block === null) {

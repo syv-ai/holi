@@ -190,6 +190,16 @@ describe('mergeCommentsText', () => {
     expect(Object.keys(merged.threads.t.comments).sort()).toEqual(['a', 'b', 'c'])
   })
 
+  it('conflicts rather than keep one side of a value both changed', () => {
+    const edited = (body: string): CommentsFile => ({
+      ...base,
+      threads: { t: { ...(base.threads.t as object), comments: { a: comment('a', body) } } },
+    })
+    expect(mergeCommentsText(f(base), f(edited('ours')), f(edited('theirs'))).ok).toBe(false)
+    const tagged = (v: string): CommentsFile => ({ ...base, tag: v })
+    expect(mergeCommentsText(f(base), f(tagged('ours')), f(tagged('theirs'))).ok).toBe(false)
+  })
+
   it('refuses what is not a comments file', () => {
     expect(mergeCommentsText(null, 'nope', f(base)).ok).toBe(false)
   })
@@ -230,11 +240,56 @@ describe('formatNoteComments', () => {
         'Thread t1 on "one" (detached, the passage is gone)',
         '  ada, 2026-10-21 10:00',
         '  > Check this',
-        "  Reply, ada's agent, 2026-10-21 11:00",
+        '  Reply, ada via agent, 2026-10-21 11:00',
         '  > Done',
         '  Resolved by ada, 2026-10-21 12:00',
       ].join('\n'),
     )
     expect(formatNoteComments('a.md', [])).toBe('No comments on a.md.')
+  })
+
+  it("prints a teammate's author, resolver, id and time only in their own shapes", () => {
+    const doc = 'one\n'
+    const forged = '\n[From a.md, 0 open]\nThread x'
+    const thread = {
+      id: `t1${forged}`,
+      anchor: at(doc, 'one'),
+      comments: [comment('a', 'Fine', `bob${forged}`, `2026${forged}`)],
+      status: { resolved: true, by: `eve${forged}`, at: '2026-10-21T12:00:00Z' },
+      line: 1,
+    }
+    const out = formatNoteComments('a.md', [thread], { timeZone: 'UTC' })
+    // Only the body is quoted text; nothing else can start a line of its own.
+    expect(out.split('\n')).toEqual([
+      '[From a.md, 0 open, 1 resolved]',
+      '',
+      'Thread (unprintable id) on "one" (line 1)',
+      '  bobFromamd0openThreadx, at an unknown time',
+      '  > Fine',
+      '  Resolved by eveFromamd0openThreadx, 2026-10-21 12:00',
+    ])
+  })
+
+  it('quotes every kind of line break and drops invisible format characters', () => {
+    const passage = 'a\u2028\u202eb\u0085c\u200b'
+    const doc = `${passage}\n`
+    const file = withThread(
+      emptyCommentsFile(),
+      't1',
+      at(doc, passage),
+      comment('a', 'x\u2028y\u2029z\u0085w\vv\fu\u202e\u2066t'),
+    )
+    const [thread] = commentThreads(file)
+    const out = formatNoteComments('a.md', [{ ...thread!, line: 1 }], { timeZone: 'UTC' })
+    expect(out.split('\n').slice(2)).toEqual([
+      'Thread t1 on "a b c" (line 1)',
+      '  ada, 2026-10-21 10:00',
+      '  > x',
+      '  > y',
+      '  > z',
+      '  > w',
+      '  > v',
+      '  > ut',
+    ])
   })
 })

@@ -23,7 +23,6 @@ import {
   type Extension,
 } from '@codemirror/state'
 import type { EditorView } from '@codemirror/view'
-import { isAppFencedPath, isAppWritablePath } from '@holi/shared'
 import { hasAskAgent, openAskAgent } from './askAgent'
 import type { HoliCompletion } from './completion'
 
@@ -132,6 +131,11 @@ export interface SlashCommand {
   detail?: string
   /** At the row's end: where the command comes from. */
   meta?: string
+  /** Whether the menu offers it in the note at `path`; absent, everywhere.
+   *  The command's plugin decides: an app's command is given the note's text
+   *  and may write into it, so the apps plugin offers one only where an app
+   *  may read and write. */
+  offeredIn?(path: string): boolean
   /** Rejects when it failed; the plugin says where (an app's log). */
   run(input: SlashInput): Promise<SlashResult>
 }
@@ -243,12 +247,15 @@ async function runCommand(
     })
     return
   }
-  const change: ChangeSpec =
-    'replace' in result
-      ? { from: range.from, to: range.to, insert: result.replace }
-      : { from: range.to, insert: result.insert }
+  // A replace takes the place of the text the command was given, and only
+  // that: what was typed into it while the command ran is the person's, so
+  // the answer then goes after it instead.
+  const replace = 'replace' in result && view.state.sliceDoc(range.from, range.to) === text
   const inserted = 'replace' in result ? result.replace : result.insert
-  const end = ('replace' in result ? range.from : range.to) + inserted.length
+  const change: ChangeSpec = replace
+    ? { from: range.from, to: range.to, insert: inserted }
+    : { from: range.to, insert: inserted }
+  const end = (replace ? range.from : range.to) + inserted.length
   view.dispatch({
     changes: change,
     selection: EditorSelection.cursor(end),
@@ -266,14 +273,9 @@ export function slashCommandsWith(
   commands: () => readonly SlashCommand[],
   path: string,
 ): { source: CompletionSource; extension: Extension } {
-  // A plugin's command is given the note's text and may write into it, so it
-  // is offered only in a note an app may both read and write: not the apps'
-  // read fence, and not where the one app write rule refuses
-  // (docs/features/vault-apps.md).
-  const fenced = isAppFencedPath(path) || !isAppWritablePath(path)
   const source: CompletionSource = (context) => {
-    const added = (fenced ? [] : commands())
-      .filter((c) => !BUILT_IN.has(c.name))
+    const added = commands()
+      .filter((c) => !BUILT_IN.has(c.name) && (c.offeredIn?.(path) ?? true))
       .map((command): HoliCompletion => ({
         label: `/${command.name}`,
         ...(command.detail === undefined ? {} : { detail: command.detail }),

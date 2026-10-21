@@ -83,6 +83,16 @@ export const claimsAtom = atom((get): readonly PathClaim[] => {
   ]
 })
 
+/**
+ * The claims that own their files: open them in a view of their own (a
+ * plugin's frame) or in their own editor (a task). The renderer's mirror of
+ * main's scan claims, for `isCommentableNote`. A claim that only adds to a
+ * file (the PDF plugin's Convert to PDF on every note) leaves it a note.
+ */
+export const owningClaimsAtom = atom((get): readonly PathClaim[] =>
+  get(claimsAtom).filter((c) => c.view !== undefined || c.editor?.extensions !== undefined),
+)
+
 /** The claims whose files have a canonical form, for the editor's reload. */
 export const normalizersAtom = atom((get): readonly PathClaim[] =>
   get(claimsAtom).filter((c) => c.normalize !== undefined),

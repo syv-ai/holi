@@ -6,7 +6,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
-import type { CapabilityContext } from '../../../main/plugin-api'
+import { VAULT_NOT_OPEN, type CapabilityContext } from '../../../main/plugin-api'
 import type { SessionSummary } from '../main/claude/listing'
 import { inboxCapabilities } from '../main/inbox/capabilities'
 import { createInbox } from '../main/inbox/inbox'
@@ -197,7 +197,11 @@ describe('holi agent notify', () => {
       liveRemote: () => (live ? 'syv-ai/notes' : null),
       now: () => NOW,
     })
-    const ctx = { remote: 'syv-ai/notes', root } as CapabilityContext
+    const ctx = {
+      remote: 'syv-ai/notes',
+      root,
+      core: { syncState: () => (live ? {} : null) },
+    } as unknown as CapabilityContext
     const cap = caps['agent.notify']
     try {
       const result = await cap.run(ctx, cap.params(raw))
@@ -214,10 +218,19 @@ describe('holi agent notify', () => {
     expect(ok.raised).toEqual([{ title: 'T', line: 'L', session: '0a1b2c3d' }])
   })
 
-  it('still logs the line when Holi does not have the vault open', async () => {
-    const r = await notify({ title: 'Offer drafted', line: 'Check it.' }, false)
-    expect(r.result).toBe('logged')
-    expect(r.raised).toEqual([])
-    expect(r.log).toContain('Offer drafted: Check it.')
+  it('opens only a path a person may be shown: no machine state, no secret file', async () => {
+    for (const path of ['.holi/state/bridge.local.json', '.HOLI/State/x.json', 'deploy/.env']) {
+      await expect(notify({ title: 'T', line: 'L', path }, true)).rejects.toMatchObject({
+        code: 'FORBIDDEN',
+      })
+    }
+    const ok = await notify({ title: 'T', line: 'L', path: './notes/a.md' }, true)
+    expect(ok.raised).toEqual([{ title: 'T', line: 'L', path: 'notes/a.md' }])
+  })
+
+  it('refuses, raising nothing, when Holi does not have the vault open', async () => {
+    await expect(
+      notify({ title: 'Offer drafted', line: 'Check it.' }, false),
+    ).rejects.toMatchObject({ code: 'UNAVAILABLE', message: VAULT_NOT_OPEN })
   })
 })

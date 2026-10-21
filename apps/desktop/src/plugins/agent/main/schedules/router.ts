@@ -17,8 +17,14 @@
  * - **A stale list is no list.** A timed source repeats its list; one not
  *   repeated for `STALE_MS` (its plugin stopped, its account went) fires
  *   nothing and keeps the watermark where it was.
- * - **A run does not trigger itself.** While a schedule's run works, file
- *   events for it are dropped: what the run writes is not news to it.
+ * - **A run does not trigger itself.** While a schedule's run works, its file
+ *   events are set aside, not heard: what the run writes is not news to it.
+ *   When the run is done the scheduler settles them (`settle`) with the span
+ *   the run could have written in, from its start to the end of its last
+ *   recorded turn. A file last changed outside that span is someone else's
+ *   change and goes to a follow-up batch; one changed inside it cannot be told
+ *   from the run's own write and is dropped, as is everything set aside when
+ *   no span is known.
  * - **Batch.** What one schedule hears is held from its first event for
  *   `BATCH_MS`, and goes to one run together, keyed by source and id so a
  *   file saved five times is one cause.
@@ -36,6 +42,9 @@
  * watermark). docs/not-built.md.
  */
 import {
+  appBundleOf,
+  isAppPrivatePath,
+  isLocalOnlyPath,
   MIN_SCHEDULE_GAP_MINUTES,
   momentFireAt,
   triggerHears,
@@ -76,6 +85,8 @@ export type Cause =
   | { source: 'task'; kind: 'due' | 'overdue'; id: string }
   | { source: 'calendar'; id: string; at: number }
 
+type FileCause = Extract<Cause, { source: 'file' }>
+
 export interface Batch {
   /** One per source and id, in the order first heard. */
   causes: Cause[]
@@ -106,8 +117,14 @@ export interface TriggerRouter {
     floor: MomentFloor,
     now: number,
   ): Partial<Record<MomentSource, number>>
-  /** Whether `path`'s run is working: its file events are its own. */
+  /** Whether `path`'s run is working: its file events are set aside. */
   running(path: string, working: boolean): void
+  /**
+   * The file events set aside while `path`'s run worked: those last changed
+   * outside `span` (ms, inclusive bounds are the run's) are held as a batch,
+   * the rest dropped; a null span drops them all. Returns how many were held.
+   */
+  settle(path: string, span: { from: number; to: number } | null, now: number): number
   /** The batch due for `path` now, if any, left held; `take` removes it. */
   due(path: string, now: number, lastStarted: number | null): Batch | null
   take(path: string): void
@@ -124,6 +141,9 @@ export function createTriggerRouter(): TriggerRouter {
   /** Per schedule, each fired moment's key and fire time. */
   const fired = new Map<string, Map<string, number>>()
   const working = new Set<string>()
+  /** Per working schedule, its file events set aside by source and id: the
+   *  cause, the event's dedupe key, and when the file last changed. */
+  const aside = new Map<string, Map<string, { cause: FileCause; seenKey: string; at: number }>>()
 
   function hold(path: string, key: string, cause: Cause, now: number): void {
     let batch = held.get(path)
@@ -143,9 +163,30 @@ export function createTriggerRouter(): TriggerRouter {
       if (event.type !== 'happened') return
       for (const [key, until] of seen) if (until <= now) seen.delete(key)
       for (const s of schedules) {
-        if (event.source === 'file' && working.has(s.path)) continue
         if (!s.on.some((t) => triggerHears(t, event))) continue
         const key = `${s.path}\u0000${event.source}\u0000${event.id}\u0000${event.version}`
+        if (
+          event.source === 'file' &&
+          working.has(s.path) &&
+          (event.kind === 'added' || event.kind === 'changed')
+        ) {
+          // The newest version of each file wins: it is the last change that
+          // says whose it was.
+          let set = aside.get(s.path)
+          if (set === undefined) {
+            set = new Map()
+            aside.set(s.path, set)
+          }
+          // Added and then changed is still added.
+          const kind = set.get(event.id)?.cause.kind ?? event.kind
+          set.set(event.id, {
+            cause: { source: 'file', kind, id: event.id },
+            seenKey: key,
+            at: Date.parse(event.version),
+          })
+          continue
+        }
+        if (event.source === 'file' && working.has(s.path)) continue
         if (seen.has(key)) continue
         seen.set(key, now + DEDUPE_MS)
         const cause: Cause | null =
@@ -203,6 +244,22 @@ export function createTriggerRouter(): TriggerRouter {
       else working.delete(path)
     },
 
+    settle(path, span, now) {
+      const set = aside.get(path)
+      aside.delete(path)
+      if (set === undefined || span === null) return 0
+      let held = 0
+      for (const [id, { cause, seenKey, at }] of set) {
+        // An unreadable time is no proof it was someone else's.
+        if (Number.isNaN(at) || (at >= span.from && at <= span.to)) continue
+        if (seen.has(seenKey)) continue
+        seen.set(seenKey, now + DEDUPE_MS)
+        hold(path, `file\u0000${id}`, cause, now)
+        held++
+      }
+      return held
+    },
+
     due(path, now, lastStarted) {
       const batch = held.get(path)
       if (batch === undefined || now - batch.first < BATCH_MS) return null
@@ -221,6 +278,7 @@ export function createTriggerRouter(): TriggerRouter {
       for (const path of held.keys()) if (!paths.has(path)) held.delete(path)
       for (const path of fired.keys()) if (!paths.has(path)) fired.delete(path)
       for (const path of working) if (!paths.has(path)) working.delete(path)
+      for (const path of aside.keys()) if (!paths.has(path)) aside.delete(path)
       for (const key of seen.keys()) if (!keeps(key)) seen.delete(key)
       for (const key of floors.keys()) if (!keeps(key)) floors.delete(key)
     },
@@ -275,11 +333,22 @@ export function describeBatch(batch: Batch): string {
  *  a run writes there (memory, schedules, settings) as a matter of course. */
 const QUIET = ['.holi/', '.claude/']
 
+/** Whether a file's change may be a trigger's event, and so be named in a
+ *  run's line: not Holi's or the agent's own folders, not this machine's
+ *  files (`.local.`) or a secret file, and not an app's records or log, which
+ *  an app rewrites as it runs. A root `AGENTS.md`, `CLAUDE.md` or `MEMORY.md`
+ *  is heard: it is fenced from apps, not from triggers. */
+function heardFile(path: string): boolean {
+  if (QUIET.some((dir) => path.startsWith(dir)) || isLocalOnlyPath(path)) return false
+  const bundle = appBundleOf(path)
+  return bundle === null || !isAppPrivatePath(path.slice(bundle.length + 1))
+}
+
 /**
  * The file events between two scans of the vault: a note or file whose path
  * is new is `added`, one whose mtime moved is `changed`. Files a plugin
- * claims (tasks) are not in either list, and have their own source; nor are
- * files under `.holi/` and `.claude/`, which are Holi's and the agent's. The
+ * claims (tasks) are not in either list, and have their own source; nor is
+ * any file `heardFile` holds back. The
  * first scan after a start has nothing to compare with and says nothing:
  * a file added while Holi was closed is not an event.
  */
@@ -291,7 +360,7 @@ export function fileEvents(
   for (const f of [...before.docs, ...before.files]) was.set(f.path, f.updatedAt)
   const out: (VaultEvent & { type: 'happened' })[] = []
   for (const f of [...after.docs, ...after.files]) {
-    if (QUIET.some((dir) => f.path.startsWith(dir))) continue
+    if (!heardFile(f.path)) continue
     const prior = was.get(f.path)
     if (prior === f.updatedAt) continue
     const kind = prior === undefined ? 'added' : 'changed'

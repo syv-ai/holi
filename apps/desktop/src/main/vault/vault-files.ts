@@ -113,8 +113,8 @@ const fileQueues = new Map<string, Promise<void>>()
  * Run `work` after every earlier `withFileLock` on the same file has settled,
  * so a check of a file and the write that depends on it are not split by
  * another caller doing the same (two app writes over one base). It orders
- * only the writers that take it: the editor's save and a pull do not, so it
- * narrows the race with them rather than closing it.
+ * only the writers that take it: the editor's save does, a pull does not, so
+ * it narrows the race with a pull rather than closing it.
  */
 export function withFileLock<T>(abs: string, work: () => Promise<T>): Promise<T> {
   const run = (fileQueues.get(abs) ?? Promise.resolve()).then(work)

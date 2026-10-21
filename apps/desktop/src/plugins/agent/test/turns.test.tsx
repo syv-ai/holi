@@ -158,15 +158,20 @@ test('reverting writes the resolved text and re-asks what is left', async () => 
   s.set(reviewTurnAtom, TURN)
   await s.set(loadTurnFilesAtom)
   files.mockClear()
-  await s.set(revertFileAtom, { path: 'a.md', text: 'mine\n' })
-  expect(revert).toHaveBeenCalledWith({ remote: REMOTE, path: 'a.md', text: 'mine\n' })
+  await s.set(revertFileAtom, { path: 'a.md', text: 'mine\n', base: 'agent\n' })
+  expect(revert).toHaveBeenCalledWith({
+    remote: REMOTE,
+    path: 'a.md',
+    text: 'mine\n',
+    base: 'agent\n',
+  })
   // The revert just made a commit of its own, so the range's file list is stale.
   expect(files).toHaveBeenCalled()
 })
 
 test('reverting does nothing without a vault', async () => {
   const s = createStore()
-  await s.set(revertFileAtom, { path: 'a.md', text: 'mine\n' })
+  await s.set(revertFileAtom, { path: 'a.md', text: 'mine\n', base: 'agent\n' })
   expect(revert).not.toHaveBeenCalled()
 })
 

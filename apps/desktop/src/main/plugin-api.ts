@@ -265,7 +265,16 @@ export {
 } from './capabilities/registry'
 export type { AppDoor, AppDoorOpener } from './capabilities/dispatch'
 export { CapabilityError } from './capabilities/error'
-export { knownPath, writableFile, writablePath } from './capabilities/fences'
+export {
+  knownPath,
+  readableOrNull,
+  requireOpen,
+  shownPath,
+  VAULT_NOT_OPEN,
+  vaultNotOpen,
+  writableFile,
+  writablePath,
+} from './capabilities/fences'
 export {
   flagParam,
   limitParam,

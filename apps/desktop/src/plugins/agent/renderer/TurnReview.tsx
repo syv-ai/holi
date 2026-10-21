@@ -87,8 +87,8 @@ export function TurnReview(): React.JSX.Element | null {
   }
 
   const onKeep = guard(async () => {
-    if (selected === null || resolved === null) return
-    await revert({ path: selected, text: resolved })
+    if (selected === null || resolved === null || diff === null) return
+    await revert({ path: selected, text: resolved, base: diff.after })
     setResolved(null)
   })
 

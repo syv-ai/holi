@@ -241,3 +241,22 @@ export const MACHINE_STATE_DIR = '.holi/state'
 export function isMachineStatePath(path: string): boolean {
   return path.startsWith(`${MACHINE_STATE_DIR}/`)
 }
+
+/**
+ * `raw` as a vault path a person may be shown in a tab, or null: a real vault
+ * path, not this machine's state (`.holi/state/` holds the bridge's tokens)
+ * and not a secret file. Folded to lower case as well, since macOS opens
+ * `.holi/State/x` as `.holi/state/x`. Main's `shownPath` refuses on it, and
+ * the renderer checks it before opening what an app or a notice names.
+ */
+export function shownPathOrNull(raw: string): VaultRelPath | null {
+  let rel: VaultRelPath
+  try {
+    rel = vaultRelPath(raw)
+  } catch {
+    return null
+  }
+  const folded = rel.toLowerCase()
+  if (isMachineStatePath(rel) || isMachineStatePath(folded) || isSecretPath(rel)) return null
+  return rel
+}

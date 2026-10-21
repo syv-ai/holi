@@ -116,8 +116,11 @@ Things to know:
   minutes after the schedule's previous run. While the previous run is still
   working, events wait and become the next run; they are not lost.
 - `file` sees changes while Holi is open, not files that arrived while it was
-  closed. Files under `.holi/` and `.claude/` never trigger, and while a run
-  works its schedule hears no file events (a file dropped then is missed).
+  closed. Files under `.holi/` and `.claude/`, `.local.` files, secret files
+  such as `.env`, and a vault app's records and log never trigger. A file that
+  changes while the schedule's run works triggers a follow-up run only when Holi
+  can tell it was not the run's: changed after the run's last turn, or moved in
+  with an older time. One changed during the run is taken as its own and missed.
 - Keep a run's output out of the folder it watches. Use `changed: true` only
   when the run does not write under the same folder, or each run starts the
   next; and even with `added`, a run that creates files there after it has
@@ -177,6 +180,11 @@ path rules; a path rule on `Write` is never consulted. Never a bare `Write` or
 `.holi/memory/`, `.claude/` or a skill could be talked into changing every
 later run. Turning a schedule on approves its own file, not the rest of the
 vault it reads.
+
+**A run that finishes tasks** (a `task:` trigger, a board sweep) closes one with
+`holi tasks complete <path>`, which also rolls a recurring task forward: allow
+`Bash(holi tasks complete:*)`. The `holi tasks` commands exist only while the
+Tasks plugin is on.
 
 ## Turning it on
 

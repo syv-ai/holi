@@ -1,7 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { mkdir, mkdtemp, readFile as readText, symlink, writeFile } from 'node:fs/promises'
+import {
+  mkdir,
+  mkdtemp,
+  readFile as readText,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { emptyVaultSnapshot } from '@holi/shared'
 import type { CapabilityError } from '../src/main/capabilities/error'
 import {
@@ -13,6 +21,7 @@ import { admitApps, type AppGrants } from '../src/plugins/apps/main/grants'
 import { createCapabilityHost } from '../src/main/capabilities/dispatch'
 import { noCoreServices, type CoreServices } from '../src/main/capabilities/services'
 import { vaultCapabilities, VAULT_NAMESPACES } from '../src/main/capabilities/vault-caps'
+import { SCREENSHOT_DIR } from '../src/main/screenshot-files'
 import type { GoogleAccountsManager } from '../src/plugins/google/main/accounts'
 import { googleCapabilities, GOOGLE_NAMESPACES } from '../src/plugins/google/main/capabilities'
 import { taskCapabilities, TASKS_NAMESPACES } from '../src/plugins/tasks/main/capabilities'
@@ -172,7 +181,8 @@ function ctx(core: Partial<CoreServices>, bundle: string | null = 'A.app'): Capa
     }),
     // The tasks plugin runs: a note write to a task file asks its claim.
     claims: async () => [taskClaim],
-    core: { ...noCoreServices(), ...core },
+    // Holi has this vault open unless a test says otherwise (`requireOpen`).
+    core: { ...noCoreServices(), syncState: () => ({ kind: 'up-to-date' }), ...core },
   }
 }
 
@@ -210,7 +220,12 @@ describe('vault.recents', () => {
 
 describe('sync.status', () => {
   it('says "not open" for a vault main does not track', async () => {
-    const { value, text } = await runCapability('sync.status', 'cli', ctx({}, null), {})
+    const { value, text } = await runCapability(
+      'sync.status',
+      'cli',
+      ctx({ syncState: () => null }, null),
+      {},
+    )
     expect(value).toBeNull()
     expect(text).toBe('not open')
   })
@@ -356,6 +371,19 @@ describe('docs.open', () => {
     expect(text).toBe('opened notes/a.md')
   })
 
+  it('refuses while Holi does not have the vault open', async () => {
+    await put('notes/a.md', '# A\n')
+    opened.length = 0
+    expect(
+      await refusal(
+        runCapability('docs.open', 'cli', ctx({ syncState: () => null }, null), {
+          path: 'notes/a.md',
+        }),
+      ),
+    ).toMatchObject({ code: 'UNAVAILABLE', message: 'vault-not-open' })
+    expect(opened).toEqual([])
+  })
+
   it('refuses a path outside the vault, or one it does not hold', async () => {
     opened.length = 0
     expect(
@@ -404,13 +432,18 @@ describe('docs.open', () => {
 })
 
 describe('docs.screenshot', () => {
-  it("writes the tab's PNG as machine-local state and prints its path", async () => {
+  it("writes the tab's PNG outside the vault, owner-only, and prints its absolute path", async () => {
     await put('notes/a.md', '# A\n')
     const { text } = await runCapability('docs.screenshot', 'cli', ctx({}, null), {
       path: 'notes/a.md',
     })
-    expect(text).toMatch(/^\.holi\/state\/out\/.+\.local\.png$/)
-    expect([...(await readText(join(root, text)))]).toEqual([0x89, 0x50, 0x4e, 0x47])
+    try {
+      expect(dirname(text)).toBe(SCREENSHOT_DIR)
+      expect([...(await readText(text))]).toEqual([0x89, 0x50, 0x4e, 0x47])
+      if (process.platform !== 'win32') expect((await stat(text)).mode & 0o777).toBe(0o600)
+    } finally {
+      await rm(text, { force: true })
+    }
   })
 })
 
@@ -587,6 +620,26 @@ describe('tasks.update', () => {
         }),
       ),
     ).toMatchObject({ code: 'FORBIDDEN' })
+  })
+})
+
+describe('tasks.list', () => {
+  it('tells an app only the tasks it may read, and the agent every one', async () => {
+    const task = (path: string) => ({ path, title: path, status: 'todo', tags: [], assignees: [] })
+    const items = ['ops/task.a.md', '.holi/memory/task.b.md', 'Budget.app/data/task.c.md'].map(task)
+    const withTasks = (bundle: string | null): CapabilityContext => ({
+      ...ctx({}, bundle),
+      snapshot: async () => ({
+        ...emptyVaultSnapshot(),
+        claimed: { tasks: { items, broken: [] } },
+      }),
+    })
+    const paths = async (door: 'app' | 'cli', bundle: string | null) =>
+      (
+        (await runCapability('tasks.list', door, withTasks(bundle), {})).value as { path: string }[]
+      ).map((t) => t.path)
+    expect(await paths('app', 'A.app')).toEqual(['ops/task.a.md'])
+    expect(await paths('cli', null)).toHaveLength(3)
   })
 })
 

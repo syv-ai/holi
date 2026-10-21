@@ -24,7 +24,7 @@ export function TaskDescriptionEditor({
   initial,
   onChange,
   hostClassName,
-  placeholderText = 'description — @ to mention a note, [[wiki-links]] to link',
+  placeholderText = 'description: @ to mention a note, [[wiki-links]] to link',
   extensions = [],
   viewRef,
 }: {

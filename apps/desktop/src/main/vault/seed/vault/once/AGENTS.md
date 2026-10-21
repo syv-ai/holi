@@ -8,8 +8,7 @@ Holi, the app around this vault, is open source: https://github.com/syv-ai/holi.
 
 - Moving a file: links to it are rewritten on commit when git sees the rename. If you moved it another way, fix the links manually.
 - A `.local.` in a file or folder name keeps it, and everything in a folder, on this machine (gitignored). Anything personal goes in one.
-- To show the user a file (a note, a task, a PDF), open it in a Holi tab with `holi docs open <path>` rather than telling them where it is. Bare `holi` lists Holi's other commands.
-- To see how a file renders (a note's diagram, an app you built), `holi docs screenshot <path>` opens it and prints the path of a PNG of its tab as the user sees it; read that file.
+- Show the user a file with `holi docs open <path>` rather than telling them where it is, and see what they see with `holi docs screenshot <path>` (the show-the-user skill). Bare `holi` lists Holi's other commands.
 
 ## Sync
 

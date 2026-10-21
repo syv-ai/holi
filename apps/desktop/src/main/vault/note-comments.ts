@@ -1,6 +1,6 @@
 /**
  * A note's comment threads on disk (docs/features/note-comments.md): reading
- * and changing its sidecar, moving it with its note at the commit boundary,
+ * and changing its sidecar, moving it with its note,
  * and finding the comments a pull brought that mention the person signed in.
  * The rules are `@holi/shared`'s `note-comments.ts`; this is the file I/O.
  *
@@ -16,6 +16,7 @@ import {
   emptyCommentsFile,
   formatCommentsFile,
   locateAnchor,
+  mergeCommentsText,
   newMentions,
   notePathOfComments,
   parseCommentsFile,
@@ -29,6 +30,7 @@ import {
   type LocatedThread,
   type NoteComment,
 } from '@holi/shared'
+import { exactPath } from '@holi/shared/path-safety-node'
 import { runGit, tryGit } from '../git'
 import type { StagedChanges } from './hooks/staged'
 import type { TransformResult } from './hooks/relink'
@@ -45,15 +47,36 @@ async function readText(root: string, rel: string): Promise<string | null> {
   return readFile(absPathFor(root, vaultRelPath(rel)), 'utf8').catch(() => null)
 }
 
+/**
+ * The sidecar's file, only when it is the path as named: no symlink on the way
+ * and the case it has on disk (`exactPath`). A sidecar arrives with a pull, so
+ * a link committed in its place must not let a read or a write reach a file
+ * outside it. The file need not exist.
+ */
+async function sidecarFile(root: string, rel: string): Promise<string> {
+  const abs = await exactPath(root, rel)
+  if (abs === null) throw new UnreadableComments(`${rel} is not a plain file in the vault`)
+  return abs
+}
+
 /** `notePath`'s threads, as stored. A note nobody commented on has none. */
 export async function readNoteComments(root: string, notePath: string): Promise<CommentsFile> {
-  const text = await readText(root, commentsPathFor(notePath))
-  if (text === null) return emptyCommentsFile()
+  return (await readStored(root, notePath)).file
+}
+
+/** The sidecar's text as it is on disk (null when there is none) and its threads. */
+async function readStored(
+  root: string,
+  notePath: string,
+): Promise<{ text: string | null; file: CommentsFile }> {
+  const abs = await sidecarFile(root, commentsPathFor(notePath))
+  const text = await readFile(abs, 'utf8').catch(() => null)
+  if (text === null) return { text, file: emptyCommentsFile() }
   const file = parseCommentsFile(text)
   if (file === null) {
     throw new UnreadableComments(`${commentsPathFor(notePath)} is not a comments file`)
   }
-  return file
+  return { text, file }
 }
 
 /**
@@ -61,6 +84,11 @@ export async function readNoteComments(root: string, notePath: string): Promise<
  * the new one, or null to leave it. Returns what was written. One change at a
  * time per sidecar (`withFileLock`), so two quick writes never read the same
  * old file and drop each other's comment.
+ *
+ * A pull does not take the lock, so the file is read again just before the
+ * write: one that changed since the first read gets the change merged into
+ * it (`mergeCommentsText`, the merge driver's own rule) rather than written
+ * over, so a teammate's comment that landed meanwhile stays.
  */
 export function changeNoteComments(
   root: string,
@@ -69,10 +97,23 @@ export function changeNoteComments(
 ): Promise<CommentsFile | null> {
   const rel = vaultRelPath(commentsPathFor(notePath))
   return withFileLock(absPathFor(root, rel), async () => {
-    const next = edit(await readNoteComments(root, notePath))
+    const read = await readStored(root, notePath)
+    const next = edit(read.file)
     if (next === null) return null
-    await writeAtomic(root, rel, formatCommentsFile(next))
-    return next
+    // Checked again right before the write: the read's check is a lock-wait
+    // and a parse behind.
+    const abs = await sidecarFile(root, rel)
+    let text = formatCommentsFile(next)
+    const now = await readFile(abs, 'utf8').catch(() => null)
+    if (now !== read.text && now !== null) {
+      const merged = mergeCommentsText(read.text, text, now)
+      if (!merged.ok) {
+        throw new UnreadableComments(`${rel} changed while this comment was written: try again`)
+      }
+      text = merged.text
+    }
+    await writeAtomic(root, rel, text)
+    return parseCommentsFile(text) ?? next
   })
 }
 
@@ -168,20 +209,65 @@ export function locate(text: string, file: CommentsFile): LocatedThread[] {
 }
 
 /**
- * Comment threads follow their note: a note moved in this commit takes its
- * sidecar along, and a note deleted takes its sidecar with it. Run inside
- * `relink`, at the commit boundary, because that is where git has paired a
- * move's delete and add; a move Holi made and one made with `git mv` or by the
- * agent are the same rename there.
+ * Move the comment threads of notes Holi itself moves (`renameNote`,
+ * `moveNotes`) along with them, at the moment of the move. Done here rather
+ * than left to the commit's rename detection, because a note renamed and then
+ * edited before the commit no longer looks like a rename to git: its threads
+ * would stay behind at the old path.
  *
- * A sidecar that is already at the new path (moved along by someone else) is
- * left alone, and so is one whose note was deleted and re-added in the same
- * commit. History keeps a deleted note's threads, as it keeps the note.
+ * Read all, then write, so a chain (a to b, b to c) moves each sidecar once.
+ * A sidecar already at the destination (the threads of a note deleted there
+ * earlier) is merged with the one arriving, never written over; one that
+ * cannot be read or merged stays where it is, detached rather than lost.
+ * Returns every sidecar path it changed.
+ */
+export async function moveNoteComments(
+  root: string,
+  moves: readonly { from: string; to: string }[],
+): Promise<string[]> {
+  const planned: { was: string; now: string; text: string }[] = []
+  for (const { from, to } of moves) {
+    if (from === to || notePathOfComments(from) !== null || notePathOfComments(to) !== null) {
+      continue
+    }
+    const text = await readSidecarText(root, commentsPathFor(from))
+    if (text !== null) planned.push({ was: commentsPathFor(from), now: commentsPathFor(to), text })
+  }
+  const leaving = new Set(planned.map((p) => p.was))
+  const writes: { was: string; now: string; text: string }[] = []
+  for (const p of planned) {
+    const there = leaving.has(p.now) ? null : await readSidecarText(root, p.now)
+    if (there === null) {
+      writes.push(p)
+      continue
+    }
+    const merged = mergeCommentsText(null, there, p.text)
+    if (merged.ok) writes.push({ ...p, text: merged.text })
+  }
+  for (const w of writes) await rm(absPathFor(root, vaultRelPath(w.was)), { force: true })
+  for (const w of writes) await writeAtomic(root, vaultRelPath(w.now), w.text)
+  return writes.flatMap((w) => [w.was, w.now])
+}
+
+/** A sidecar's text, or null when there is none or it is not a plain file in
+ *  the vault (a link must not carry another file's text into the vault). */
+async function readSidecarText(root: string, rel: string): Promise<string | null> {
+  const abs = await exactPath(root, rel)
+  return abs === null ? null : readFile(abs, 'utf8').catch(() => null)
+}
+
+/**
+ * Comment threads follow a note moved outside Holi: a note git sees renamed in
+ * this commit (`git mv`, or the agent's own move) takes its sidecar along. Run
+ * inside `relink`, at the commit boundary, because that is where git has paired
+ * a move's delete and add. A sidecar already at the new path (Holi's own move
+ * took it, or someone else did) is left alone.
  *
- * A merge commit deletes no sidecar: a note it deletes was deleted on the
- * other side, whose own commit took the sidecar then. One still here is a
- * comment written on this side meanwhile, which sync keeps as a detached
- * thread (docs/features/note-comments.md).
+ * A note deleted takes nothing with it: its sidecar stays, its threads
+ * detached, listed by `holi comments list` until someone resolves or removes
+ * them. Git's rename detection is a guess (half the lines alike), and a note
+ * renamed and rewritten in one commit reads as a delete and an add; deleting
+ * the threads then would delete and push every comment on it.
  */
 export async function followNoteComments(
   root: string,
@@ -200,23 +286,7 @@ export async function followNoteComments(
     changed.push(was, now)
     notes.push(`relink: moved the comments of ${from} to ${to}`)
   }
-
-  if (await isMerging(root)) return { changed, notes }
-  const added = new Set(staged.added)
-  for (const path of staged.deleted) {
-    if (notePathOfComments(path) !== null || added.has(path)) continue
-    const sidecar = commentsPathFor(path)
-    if (!(await exists(sidecar)) || (await exists(path))) continue
-    await rm(absPathFor(root, vaultRelPath(sidecar)), { force: true })
-    changed.push(sidecar)
-    notes.push(`relink: deleted the comments of ${path} with it`)
-  }
   return { changed, notes }
-}
-
-async function isMerging(root: string): Promise<boolean> {
-  const out = await tryGit(root, ['rev-parse', '--verify', '--quiet', 'MERGE_HEAD'])
-  return out.ok
 }
 
 /**

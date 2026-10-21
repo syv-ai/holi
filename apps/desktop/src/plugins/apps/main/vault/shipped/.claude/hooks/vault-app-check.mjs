@@ -171,7 +171,8 @@ function boundaries(source, ext) {
     found.push([
       ERROR,
       'no such write. An app writes a note with holi.docs.write(path, text, base), ' +
-        'a task with holi.tasks.create, holi.tasks.update and holi.tasks.complete, ' +
+        'a task with holi.tasks.create, holi.tasks.update and holi.tasks.complete ' +
+        '(only while the Tasks plugin is on), ' +
         'and its own records with holi.store. It deletes and moves nothing.',
     ])
   }

@@ -3,7 +3,7 @@
  * and the palette's two commands for the focused note and the heading its
  * caret is on.
  */
-import { headingSlug, holiLink, isLocalOnlyPath, isMachineStatePath } from '@holi/shared'
+import { holiLink, isLocalOnlyPath, isMachineStatePath } from '@holi/shared'
 import { atom } from 'jotai'
 import { activeTab, workspaceAtom } from './panes'
 import { activeRemoteAtom } from './vaults'
@@ -14,8 +14,8 @@ export function linkable(path: string): boolean {
   return !isLocalOnlyPath(path) && !isMachineStatePath(path)
 }
 
-/** The heading the focused editor's caret is on, set by the editor
- *  (`caretHeading`), or null. */
+/** The anchor of the heading the focused editor's caret is on, set by the
+ *  editor (`caretHeading`), or null. */
 export const caretHeadingAtom = atom<{ path: string; heading: string } | null>(null)
 
 /** The active tab's note, when it can be linked to. */
@@ -31,16 +31,14 @@ export const linkableHeadingAtom = atom((get): string | null => {
   return path !== null && caret?.path === path ? caret.heading : null
 })
 
-/** Put the link to `path` in the open vault, at `heading` when given, on the
- *  clipboard. */
+/** Put the link to `path` in the open vault, at the heading anchor `heading`
+ *  when given, on the clipboard. */
 export const copyHoliLinkAtom = atom(
   null,
   async (get, _set, path: string, heading?: string): Promise<void> => {
     const remote = get(activeRemoteAtom)
     if (remote === null) return
-    const link = holiLink(
-      heading === undefined ? { remote, path } : { remote, path, heading: headingSlug(heading) },
-    )
+    const link = holiLink(heading === undefined ? { remote, path } : { remote, path, heading })
     await navigator.clipboard.writeText(link)
   },
 )

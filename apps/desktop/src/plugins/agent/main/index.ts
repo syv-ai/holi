@@ -90,6 +90,12 @@ export const agentMain: MainPlugin = {
       emit: ctx.emit,
       // What the schedules' triggers listen for, to the plugins that source it.
       tell: (event) => ctx.events.emit(event),
+      // Where a run's last turn ended, so a file someone else changed while
+      // it worked can start a follow-up.
+      lastTurnAt: async (jobId) => {
+        const turn = (await openTurnLog(ctx.root).list()).find((t) => t.sessionId === jobId)
+        return turn === undefined ? null : Date.parse(turn.at)
+      },
     })
     ctx.register(SCHEDULE_NAMESPACES, scheduleCapabilities({ scheduler: schedules }))
     // The events that start schedules' runs: what the vault's plugins tell,
@@ -130,7 +136,7 @@ export const agentMain: MainPlugin = {
     void started.ensure(ctx)
     // The open vault's schedules run while it is open.
     schedules.attach({ remote: ctx.remote, root: ctx.root })
-    // Expired scratch notes and old work-log days go, now and hourly. The
+    // Expired personal memories and old work-log days go, now and hourly. The
     // running sweep is kept so leaving the vault waits for it to finish.
     let sweeping: Promise<unknown> = Promise.resolve()
     const sweep = (): void => {

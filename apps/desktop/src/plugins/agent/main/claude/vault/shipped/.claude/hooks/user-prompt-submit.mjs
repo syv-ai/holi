@@ -72,16 +72,40 @@ function worktreeTree() {
   }
 }
 
+/** The longest path a line names. */
+const PATH_MAX = 200
+
+/** Each UTF-16 unit of `text` as a JSON escape. */
+const escaped = (text) =>
+  text
+    .split('')
+    .map((unit) => `\\u${unit.charCodeAt(0).toString(16).padStart(4, '0')}`)
+    .join('')
+
+/**
+ * A path as a code span, cut short. A teammate names files, so one with a
+ * backtick, or a control, format or line-breaking character (which could end
+ * the line, or hide or reorder what it says), is quoted as JSON instead, those
+ * characters escaped. The same rule as a scheduled run's line (`quote` in
+ * `schedules/router.ts`), except that those characters are escaped rather
+ * than dropped, so the name still says which file it is.
+ */
+const shown = (path) => {
+  const cut = path.length > PATH_MAX ? `${path.slice(0, PATH_MAX - 1)}…` : path
+  if (!/[`\p{C}\p{Zl}\p{Zp}]/u.test(cut)) return `\`${cut}\``
+  return JSON.stringify(cut).replace(/[\p{C}\p{Zl}\p{Zp}]/gu, escaped)
+}
+
 function focusLine() {
   const context = readJson('.holi/state/context.local.json')
-  if (!context?.focusedPath) return null
+  if (typeof context?.focusedPath !== 'string' || context.focusedPath === '') return null
   const { startLine, endLine } = context.selection ?? {}
   const selected = !Number.isInteger(startLine)
     ? ''
     : startLine === endLine
       ? `selected line ${startLine}; `
       : `selected lines ${startLine}-${endLine}; `
-  return `Focused note: \`${context.focusedPath}\` (${selected}use \`Read\` to view its contents)`
+  return `Focused note: ${shown(context.focusedPath)} (${selected}use \`Read\` to view its contents)`
 }
 
 /** A secret file's name, in any folder: `.env`, `.env.<x>`, `.secrets`,
@@ -95,10 +119,6 @@ const worthNaming = (path) =>
   !path.startsWith('.holi/state/') &&
   !path.includes('.local.') &&
   !path.split('/').some((segment) => SECRET_NAME.test(segment))
-
-/** A path as a code span, or quoted when a backtick or a control character in
- *  it would break one. */
-const shown = (path) => (/[`\u0000-\u001f\u007f]/.test(path) ? JSON.stringify(path) : `\`${path}\``)
 
 function changesLine() {
   if (!jobDir) return null

@@ -30,6 +30,7 @@ import {
   noParams,
   paramsObject,
   pathParams,
+  readableOrNull,
   removeDocFile,
   renameNote,
   stringParam,
@@ -214,7 +215,12 @@ export const taskCapabilities = (deps: TaskCapabilitiesDeps) => {
       doors: ['app', 'cli'],
       cli: { args: [], summary: 'every task: status, title and path' },
       params: noParams,
-      run: async (ctx): Promise<Task[]> => snapshotTasks(await ctx.snapshot()).items,
+      // An app is told only the tasks it may read, as `docs.list` tells it
+      // only the notes: a task's path and title are its content too.
+      run: async (ctx): Promise<Task[]> => {
+        const tasks = snapshotTasks(await ctx.snapshot()).items
+        return ctx.bundle === null ? tasks : tasks.filter((t) => readableOrNull(t.path) !== null)
+      },
       text: (tasks) => tasks.map((t) => `${t.status}\t${t.title}\t${t.path}`).join('\n'),
     }),
 
@@ -343,8 +349,12 @@ export const taskCapabilities = (deps: TaskCapabilitiesDeps) => {
           throw new CapabilityError('CONFLICT', `already exists: ${to}`)
         }
         if (hasPatch) {
-          const next = patched(await readTask(ctx.root, from), patchOf(fieldPatch))
-          await writeAtomic(ctx.root, from, serializeTaskFile(next))
+          // Under the file's lock, as `tasks.update` writes: a field change
+          // made meanwhile is read here rather than written over.
+          await withFileLock(absPathFor(ctx.root, from), async () => {
+            const next = patched(await readTask(ctx.root, from), patchOf(fieldPatch))
+            await writeAtomic(ctx.root, from, serializeTaskFile(next))
+          })
         }
         if (to !== from) await renameNote(ctx.root, from, to)
         return readTask(ctx.root, to)

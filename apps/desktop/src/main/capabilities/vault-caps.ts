@@ -14,7 +14,7 @@ import {
   type VaultRelPath,
   type VaultSnapshot,
 } from '@holi/shared'
-import { writeOut } from '../vault/out-files'
+import { writeScreenshot } from '../screenshot-files'
 import { readVaultSettings } from '../vault/settings'
 import { withFileLock, writeAtomic } from '../vault/vault-files'
 import { isSearchable, searchVault, type SearchHit } from '../vault/search'
@@ -24,6 +24,7 @@ import {
   readableOrNull,
   readablePath,
   readNote,
+  requireOpen,
   shownPath,
   writableFile,
   writablePath,
@@ -143,6 +144,7 @@ export const vaultCapabilities = (deps: VaultCapabilitiesDeps) => ({
     cli: { args: ['path'], summary: 'show a note, task or other vault file in a tab' },
     params: pathParams,
     run: async (ctx, { path }) => {
+      requireOpen(ctx)
       const rel = await shownFile(ctx, path)
       deps.open(ctx.remote, rel)
       return { path: rel }
@@ -154,8 +156,8 @@ export const vaultCapabilities = (deps: VaultCapabilitiesDeps) => ({
    * A PNG of a file's tab as the person sees it, in this vault's theme and
    * mode, so the agent can look at what it made: a vault app, a note's
    * diagram. Opens the tab first, as `docs.open` does (it brings the window
-   * forward), and waits for it to finish drawing. Prints the PNG's path, a
-   * machine-local file the agent reads back.
+   * forward), and waits for it to finish drawing. Prints the PNG's absolute
+   * path, an owner-only file in the OS temp directory the agent reads back.
    */
   'docs.screenshot': cap({
     doors: ['cli'],
@@ -165,8 +167,10 @@ export const vaultCapabilities = (deps: VaultCapabilitiesDeps) => ({
     },
     params: pathParams,
     run: async (ctx, { path }) => {
-      const png = await deps.screenshot(ctx.remote, await shownFile(ctx, path))
-      return { png: await writeOut(ctx.root, 'screenshot', png, { ext: 'png' }) }
+      requireOpen(ctx)
+      const rel = await shownFile(ctx, path)
+      const png = await deps.screenshot(ctx.remote, rel)
+      return { path: rel, png: await writeScreenshot(png) }
     },
     text: ({ png }) => png,
   }),
@@ -199,6 +203,7 @@ export const vaultCapabilities = (deps: VaultCapabilitiesDeps) => ({
       return { path: stringParam(p, 'path'), text, base }
     },
     run: async (ctx, { path, text, base }): Promise<{ path: string }> => {
+      requireOpen(ctx)
       const rel = writablePath(path)
       if (!rel.endsWith('.md')) {
         throw new CapabilityError('BAD_REQUEST', `only a note (.md) can be written: ${rel}`)

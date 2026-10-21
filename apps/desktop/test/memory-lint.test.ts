@@ -123,6 +123,37 @@ describe('memory lint', () => {
     expect(linkTargets(text)).toEqual(parseWikiLinks(text).map((l) => l.target))
   })
 
+  it('proposes deleting an expired shared memory, and leaves out an expired personal one', () => {
+    const now = new Date(2026, 9, 21, 12, 0)
+    const expiring = (expires: string, what: string) =>
+      memory(`type: project\ndescription: ${what}\nexpires: ${expires}`)
+    const files = {
+      '.holi/memory/shared-old.md': expiring('2026-10-20', 'shared, past'),
+      '.holi/memory/shared-live.md': expiring('2026-10-30', 'shared, live'),
+      '.holi/memory/bad-date.local.md': expiring('next week', 'badly dated'),
+      '.holi/memory/live.local.md': expiring('2026-10-21', 'live'),
+      // Past its expires and pointing nowhere: already gone as far as anyone is concerned.
+      '.holi/memory/gone.local.md': memory(
+        'type: project\ndescription: for yesterday\nexpires: 2026-10-20',
+        'See [[nowhere.md]].',
+      ),
+      // The same, but a description YAML rejects: the sweep cannot read it, so it stays.
+      '.holi/memory/stuck.local.md': memory(
+        'type: project\ndescription: broken: colon\nexpires: 2026-10-20',
+      ),
+    }
+    const findings: Finding[] = lintMemory(
+      Object.entries(files).map(([path, text]) => ({ path, text })),
+      () => false,
+      now,
+    )
+    expect(kinds(findings)).toEqual([
+      '.holi/memory/bad-date.local.md expires',
+      '.holi/memory/shared-old.md expired',
+      '.holi/memory/stuck.local.md frontmatter',
+    ])
+  })
+
   it('is deterministic: the same files give the same findings in any order', () => {
     const files = {
       '.holi/memory/b.md': 'no frontmatter\n',

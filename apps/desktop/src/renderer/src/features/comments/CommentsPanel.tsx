@@ -14,9 +14,9 @@
  */
 import { commentByline, isResolved, type CommentThread } from '@holi/shared'
 import { useAtomValue, useSetAtom } from 'jotai'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { DrawerShell, DrawerTitle } from '@/composites'
-import { Button, PillGroup, Textarea } from '@/primitives'
+import { Button, PillGroup } from '@/primitives'
 import { cn } from '@/lib/cn'
 import {
   activeThreadAtom,
@@ -31,8 +31,7 @@ import {
   threadLinesAtom,
   toggleCommentsAtom,
 } from '@/state/comments'
-import { historyOpenAtom } from '@/state/history'
-import { linksOpenAtom } from '@/state/links'
+import { CommentField, type CommentFieldHandle } from './CommentField'
 
 /** `at` is an ISO string. */
 const when = (iso: string) =>
@@ -50,7 +49,8 @@ const FILTERS = [
   { value: 'resolved', label: 'Resolved' },
 ] as const
 
-/** A comment field that sends on ⌘↵, and its send and cancel. */
+/** A comment field that sends on ⌘↵, and its send and cancel. `@` completes
+ *  the vault's people. */
 function Composer({
   label,
   placeholder,
@@ -69,6 +69,7 @@ function Composer({
   const [body, setBody] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const field = useRef<CommentFieldHandle>(null)
 
   const submit = async () => {
     if (body.trim() === '' || busy) return
@@ -76,7 +77,7 @@ function Composer({
     setError(null)
     try {
       await onSend(body)
-      setBody('')
+      field.current?.clear()
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -86,23 +87,14 @@ function Composer({
 
   return (
     <div className="grid gap-2">
-      <Textarea
-        aria-label={label}
+      <CommentField
+        ref={field}
+        label={label}
         placeholder={placeholder}
-        value={body}
         autoFocus={autoFocus}
-        onChange={(e) => setBody(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-            e.preventDefault()
-            void submit()
-          }
-          if (e.key === 'Escape' && onCancel) {
-            e.preventDefault()
-            onCancel()
-          }
-        }}
-        className="min-h-12 text-[13px]"
+        onChange={setBody}
+        onSubmit={() => void submit()}
+        {...(onCancel === undefined ? {} : { onCancel })}
       />
       {error !== null && <p className="text-[12px] text-destructive">{error}</p>}
       <div className="flex justify-end gap-1">
@@ -224,8 +216,6 @@ function Thread({
 
 export function CommentsPanel() {
   const open = useAtomValue(commentsOpenAtom)
-  const historyOpen = useAtomValue(historyOpenAtom)
-  const linksOpen = useAtomValue(linksOpenAtom)
   const path = useAtomValue(commentsTargetPathAtom)
   const threads = useAtomValue(targetThreadsAtom)
   const lines = useAtomValue(threadLinesAtom)
@@ -245,7 +235,7 @@ export function CommentsPanel() {
     <DrawerShell
       id="comments"
       side="right"
-      open={open && !historyOpen && !linksOpen && path !== null}
+      open={open && path !== null}
       label="Comments"
       header={<DrawerTitle title="Comments" subtitle={path ?? undefined} />}
       aside={threads.length === 0 ? undefined : `${openCount} open`}
@@ -268,7 +258,7 @@ export function CommentsPanel() {
               <Composer
                 key={`${draft.anchor.line}:${draft.anchor.quote}`}
                 label="New comment"
-                placeholder="Comment, ⌘↵ to send. @login mentions a teammate."
+                placeholder="Comment, ⌘↵ to send. Type @ to tag a teammate."
                 send="Comment"
                 autoFocus
                 onSend={async (body) => {

@@ -1,6 +1,6 @@
 ---
 name: memory
-description: Write and organise this vault's memory — one fact per file under .holi/memory/, typed and indexed. Use whenever you learn something the vault will want again, when asked to remember or note something, for a note that is true only for a while (a scratch note that expires), for logging what you did (the work log), or when splitting a legacy MEMORY.md or USER.local.md into the directory.
+description: Write and organise this vault's memory — one fact per file under .holi/memory/, typed and indexed. Use whenever you learn something the vault will want again, when asked to remember or note something, for a fact that is true only for a while (a memory that expires), for logging what you did (the work log), or when splitting a legacy MEMORY.md or USER.local.md into the directory.
 ---
 
 # Remember something in this vault
@@ -53,28 +53,29 @@ preferences, how they like to be written to, what they are working on. Not
 because it is secret, but because it is a model of a person and a shared vault
 should not carry one person's model of another.
 
-## Which layer: a fact, a scratch note, or the work log
+## Which layer: a fact, a memory that expires, or the work log
 
 Not everything worth writing down is a fact.
 
 - **A fact** stays true until someone changes it: the files above.
-- **A scratch note** is true for a while: "the build is broken until the fix
-  lands", "Ada is away this week". Write it as a personal memory with
-  `type: scratch` and an `expires` date:
+- **A memory that expires** is true for a while: "the build is broken until the
+  fix lands", "Ada is away this week". Write it as any memory, of whatever type
+  fits, and add an `expires` stamp:
 
   ```markdown
   ---
-  type: scratch
+  type: project
   expires: 2026-10-24
   description: staging deploys are frozen until the release on Friday
   ---
   ```
 
-  `expires` is a date (the note lasts through that day) or a local time
-  (`2026-10-24T15:00`). Holi deletes the file once it has passed, and the session
-  overview stops showing it at once. A scratch note is always a `.local.md`:
-  Holi never deletes shared memory, so a shared one would never go. Without a
-  readable `expires` it never goes either.
+  `expires` is a date (the memory lasts through that day) or a local time
+  (`2026-10-24T15:00`). Once it has passed, the index and the session overview
+  stop showing it. A personal (`.local.md`) one is then deleted by Holi. A shared
+  one is not: the lint reports it as `expired`, and you propose deleting it to
+  the user rather than deleting it yourself. Without a readable `expires` it
+  never expires.
 
 - **The work log** is what you did, when: `.holi/state/log/<YYYY-MM-DD>.local.md`,
   one file per day on this machine, never synced, kept 30 days. After a piece
@@ -87,7 +88,8 @@ Not everything worth writing down is a fact.
   Holi stamps the time. Do not log every step, and do not log what
   `holi agent notify` already logged. To answer "what did we do last week?",
   grep the log. The session overview names today's file, not its content.
-  Outside Holi, where `holi` is not available, skip the log.
+  When Holi does not have this vault open, `holi` cannot reach it: skip the
+  log.
 
 ## What you do not do
 
@@ -115,6 +117,10 @@ and what to do:
 
 - **frontmatter**: no frontmatter, no `type` or `description`, a fence that never
   closes, or a value with an unquoted `: ` (invalid YAML, which hides every key).
+- **expires**: an `expires` that is not `YYYY-MM-DD` or `YYYY-MM-DDTHH:MM`, so
+  the memory never expires. Fix the stamp.
+- **expired**: a shared memory past its `expires`. Propose deleting it; delete
+  it once the user agrees. A personal one is not listed: Holi deletes it.
 - **broken-link**: a link to a memory that does not exist, or a shared memory
   linking a personal one, which no other clone has.
 - **stale**: a link to a vault file that is not there any more. The fact may no

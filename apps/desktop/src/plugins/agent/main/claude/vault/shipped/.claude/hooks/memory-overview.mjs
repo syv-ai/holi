@@ -55,7 +55,7 @@ function memoryFiles(dir, prefix = '.holi/memory') {
   let entries
   try {
     // Sorted: `readdir`'s order is the filesystem's, and this text opens the
-    // session, so it may change only when memory changes, a scratch note
+    // session, so it may change only when memory changes, a memory
     // expires, or the day turns, never with the machine it runs on.
     entries = readdirSync(dir).sort()
   } catch {
@@ -97,14 +97,14 @@ function scalar(raw) {
 }
 
 /**
- * Frontmatter title/description (and a scratch note's type/expires), without a
- * YAML parser: all are one-line scalars. The fence is found as `@holi/shared`'s
+ * Frontmatter title/description/expires, without a YAML parser: all are
+ * one-line scalars. The fence is found as `@holi/shared`'s
  * `splitFrontmatter` finds it, CRLF included.
  *
  * `complete` says whether every line was one this reader is sure YAML reads the
  * same way. Holi's sweep parses real YAML and reads invalid YAML as no
- * frontmatter, so a scratch note may be hidden as expired only when `complete`:
- * anything less is a note the sweep might never delete. Values from lines it
+ * frontmatter, so a personal memory may be hidden as expired only when
+ * `complete`: anything less is one the sweep might never delete. Values from lines it
  * could not read are still used for display, best effort.
  */
 function frontmatter(text, path) {
@@ -137,16 +137,15 @@ function frontmatter(text, path) {
   return {
     title: value('title') ?? h1?.[1] ?? name,
     description: value('description'),
-    type: value('type'),
     expires: value('expires'),
     complete,
   }
 }
 
-/** When a scratch note's `expires` passes, on this machine's clock, or null when
- *  it is no stamp. A date lasts through that day; `YYYY-MM-DDTHH:MM` ends at
- *  that minute. The same rule as `scratchExpiry` in `@holi/shared`, which Holi's
- *  sweep deletes by; this hook imports nothing, so it is written twice. */
+/** When a memory's `expires` passes, on this machine's clock, or null when it
+ *  is no stamp. A date lasts through that day; `YYYY-MM-DDTHH:MM` ends at that
+ *  minute. The same rule as `memoryExpiry` in `@holi/shared`, which Holi's
+ *  index and sweep go by; this hook imports nothing, so it is written twice. */
 function expiry(value) {
   const m = /^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2})(?::(\d{2}))?)?$/.exec(value ?? '')
   if (!m) return null
@@ -162,21 +161,18 @@ function expiry(value) {
 const index = readOr(join(MEMORY_DIR, 'index.md'))
 const { personal: personalFiles, shared } = memoryFiles(MEMORY_DIR)
 
-// Personal memories, read once, with scratch notes apart. An expired scratch
-// note is already gone as far as the agent is concerned: Holi deletes it on
-// its next sweep, and outside Holi nothing does, so it is left out here. Only
-// when the sweep would delete it, though: one whose frontmatter this hook
-// cannot fully read stays listed, since the sweep may never take it.
+// Personal memories, read once. One past its `expires` is already gone as far
+// as the agent is concerned: Holi deletes it on its next sweep, and outside
+// Holi nothing does, so it is left out here. Only when the sweep would delete
+// it, though: one whose frontmatter this hook cannot fully read stays listed,
+// since the sweep may never take it.
 const now = new Date()
 const personal = []
-const scratch = []
 for (const file of personalFiles) {
   const meta = { ...file, ...frontmatter(readOr(file.abs), file.path) }
-  if (meta.type !== 'scratch') personal.push(meta)
-  else {
-    const ends = expiry(meta.expires)
-    if (ends === null || now < ends || !meta.complete) scratch.push({ ...meta, ends })
-  }
+  const ends = expiry(meta.expires)
+  if (ends !== null && now >= ends && meta.complete) continue
+  personal.push({ ...meta, expires: ends === null ? null : meta.expires })
 }
 
 /** Today's work log and the newest one before it, as vault paths, when they
@@ -203,16 +199,13 @@ const logs = workLogs()
 
 // Nothing to say. A vault with no memory directory at all is the ordinary case
 // for a repo somebody opened `claude` in by hand.
-if (
-  index === null &&
-  personal.length === 0 &&
-  scratch.length === 0 &&
-  shared.length === 0 &&
-  logs.length === 0
-)
+if (index === null && personal.length === 0 && shared.length === 0 && logs.length === 0)
   process.exit(0)
 
-/** The index's own entry lines, with their `## type` headings, and the counts. */
+/** The index's own entry lines, with their `## type` headings. A shared memory
+ *  with an `expires` carries `(expires <stamp>)` after its link; once that has
+ *  passed it is left out, as the next index the transform writes leaves it out.
+ *  The file stays: the lint reports it for the agent to propose deleting. */
 function indexSections(text) {
   const sections = []
   let current = null
@@ -222,10 +215,12 @@ function indexSections(text) {
       current = { type: heading[1], lines: [] }
       sections.push(current)
     } else if (line.startsWith('- ') && current) {
-      current.lines.push(line)
+      const stamp = /^- \[\[.*?\]\] \(expires ([^)]+)\)/.exec(line)?.[1]
+      const ends = stamp === undefined ? null : expiry(stamp)
+      if (ends === null || now < ends) current.lines.push(line)
     }
   }
-  return sections
+  return sections.filter((s) => s.lines.length > 0)
 }
 
 const sections = indexSections(index)
@@ -270,13 +265,13 @@ function render({ descriptions }) {
   // Anchored past the `]]` on purpose: a bare `/\s+—\s+.*$/` would cut at the
   // FIRST em dash, and a title containing one would lose its tail along with
   // the description it was meant to drop.
-  // A scratch line's `(expires …)` sits between the link and the description.
+  // An `(expires …)` sits between the link and the description.
   const strip = (line) =>
     descriptions ? line : line.replace(/^(- \[\[.*?\]\](?: \([^)]*\))?)\s+—\s+.*$/, '$1')
   // With no index, `total` is 0 and the shared count is the only honest number.
   const count = index === null ? shared.length : total
   const out = [
-    `# This vault's memory (${count} shared${personal.length > 0 ? `, ${personal.length} personal` : ''}${scratch.length > 0 ? `, ${scratch.length} scratch` : ''})`,
+    `# This vault's memory (${count} shared${personal.length > 0 ? `, ${personal.length} personal` : ''})`,
   ]
 
   // Next to the heading, so the cap's truncation can never cut it.
@@ -296,18 +291,9 @@ function render({ descriptions }) {
 
   if (personal.length > 0) {
     out.push('', '## personal (this machine only, never committed)', '')
-    for (const { path, title, description } of personal) {
-      const line = `- [[${path}|${title}]]${description ? ` — ${description}` : ''}`
-      out.push(strip(line))
-    }
-  }
-
-  // After the expiry, so dropping descriptions over the cap keeps it.
-  if (scratch.length > 0) {
-    out.push('', '## scratch (this machine only, deleted once expired)', '')
-    for (const { path, title, description, expires, ends } of scratch) {
-      const until = ends === null ? 'no valid `expires`, never deleted' : `expires ${expires}`
-      const line = `- [[${path}|${title}]] (${until})${description ? ` — ${description}` : ''}`
+    for (const { path, title, description, expires } of personal) {
+      const until = expires === null ? '' : ` (expires ${expires})`
+      const line = `- [[${path}|${title}]]${until}${description ? ` — ${description}` : ''}`
       out.push(strip(line))
     }
   }

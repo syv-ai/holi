@@ -20,9 +20,10 @@ asked. Also absent: surfacing a hook failure in the sync status bar when no sess
 
 **The rest of the inbox.** A banner clicked while Holi had no window open opens Holi, but not the
 entry: the renderer is not listening yet when the click lands, so the entry waits in the inbox. A
-needs-you entry stays after the session is answered, until dismissed. `holi agent notify` for a
-vault Holi does not have open writes the work-log line but no inbox entry: there is no inbox to
-add to until the vault is open, and nothing queues the notice for then. See
+needs-you entry stays after the session is answered, until dismissed. A session that outlives a
+switch away from its vault loses its notices: `holi agent notify` and `holi agent log` reach Holi
+only through the open vault's bridge, so they fail, and nothing queues the notice or the log line
+for when the vault is open again. See
 [agent-inbox](features/agent-inbox.md).
 
 **Memory tooling.** Per-directory indexes. See
@@ -48,10 +49,11 @@ their watermark; file and mail events are not, and nor is what changed while Hol
 issue's shape: the pending queue in `.holi/state/triggers.local.json`, written before a run starts,
 cleared when it has. See [scheduled agents](features/scheduled-agents.md).
 
-**Telling a run's own writes apart.** While a schedule's run works, every file event for that
-schedule is dropped, a stranger's file included, because Holi does not know which paths the run
-wrote. Knowing them (a hook on the run's file tools, or its commits) would drop only those. See
-[scheduled agents](features/scheduled-agents.md).
+**Telling a run's own writes apart.** A file changed while a schedule's run works starts a
+follow-up only when its change lies outside the run's span; one changed during the span is
+dropped, a stranger's included, because a turn's commit holds everyone's changes made while it ran.
+Knowing the run's own paths (a hook on its file tools, which a shell command escapes) would drop
+only those. See [scheduled agents](features/scheduled-agents.md).
 
 **Trigger priority.** A trigger run waits for the schedule's previous run, but not for the person:
 it does not hold back while they are in a session of their own or one waits on them (`needs-you`),
@@ -76,9 +78,9 @@ its files change (today reload is a button).
 ## Notes & editor
 
 **More of note comments.** Editing or deleting a comment, a list of open threads across the
-vault in the app (the agent has `holi comments list`), `@login` completion in the composer, and a
-comment's body drawn as markdown (it shows as plain text). A mention reaches only the agent's inbox,
-so with the agent plugin off it is seen only in the panel. See
+vault in the app (the agent has `holi comments list`), and a comment's body drawn as markdown (it
+shows as plain text). A mention reaches only the agent's inbox, so with the agent plugin off it is
+seen only in the panel. See
 [note-comments](features/note-comments.md).
 
 **The rest of slash commands as small programs.** A vault app's commands are built

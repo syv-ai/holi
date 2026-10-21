@@ -45,6 +45,10 @@
  * dedupes and batches it per schedule, and the same check starts the batch
  * that is due. A batch due while the previous run is still working waits
  * and grows: it is the one run that follows, never dropped and never a pile.
+ * A file that changed while the run worked is set aside rather than heard,
+ * and when the run is done it is weighed against the span the run could have
+ * written in (`settleRun`): one changed outside it is someone else's, and is
+ * the cause of a follow-up run.
  *
  * NOTE: no `electron` import, so this loads under vitest.
  */
@@ -66,7 +70,7 @@ import {
   type VaultEvent,
   type VaultSnapshot,
 } from '@holi/shared'
-import { CapabilityError, type JsonFileStore } from '../../../../main/plugin-api'
+import { CapabilityError, vaultNotOpen, type JsonFileStore } from '../../../../main/plugin-api'
 import type { SessionSummary } from '../claude/listing'
 import { appendWorkLog } from '../inbox/work-log'
 import {
@@ -91,6 +95,12 @@ const CLOSE_POLLS = 15
 /** How old a run must be before the check closes it without having heard its
  *  Stop: a session just started can read idle before its first turn begins. */
 const MISSED_STOP_MS = 60_000
+/** How many checks a finished run waits for its last turn's record before
+ *  its set-aside file events are dropped: the record is written a moment after
+ *  the turn ends, once its settle commit has landed. */
+const SETTLE_CHECKS = 4
+/** Turn ends remembered, newest kept. */
+const TURN_ENDS_KEPT = 200
 
 export type RunTrigger = 'schedule' | 'manual' | 'event'
 
@@ -223,6 +233,10 @@ export interface SchedulerDeps {
      *  pending (null when unsaid). Returns the undo. */
     onTurnEnd(listener: (id: string, pending: number | null) => void): () => void
   }
+  /** When the session's latest recorded turn ended (ms; the turn log's `at`,
+   *  written after its settle commit and the pre-commit transforms), or null
+   *  when none is recorded. Absent, a run's set-aside file events are dropped. */
+  lastTurnAt?: (jobId: string) => Promise<number | null>
   /** Tell the renderer the vault's schedules moved. */
   emit(remote: string, name: string, payload: unknown): void
   /** Add a line to the vault's work log. */
@@ -359,6 +373,14 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
   let routed: RoutedSchedule[] = []
   /** The attached vault's last scan, to tell file events from. */
   let lastScan: VaultSnapshot | null = null
+  /** Per run, by job id, when Holi last heard one of its turns end. */
+  const turnEnds = new Map<string, number>()
+  /** Finished runs whose set-aside file events wait on their last turn's
+   *  record, by schedule path. */
+  const settling = new Map<
+    string,
+    { jobId: string; from: number; turnEnd: number | undefined; checks: number }
+  >()
 
   const stateOf = async (remote: string): Promise<Record<string, ScheduleState>> =>
     (await deps.store.read())[remote] ?? {}
@@ -471,8 +493,13 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
         ? { at: at.toISOString(), trigger, outcome: 'started', jobId: res.sessionId }
         : { at: at.toISOString(), trigger, outcome: 'failed', message: res.message }
       if (cause !== undefined) record.cause = cause
-      // Whatever started it, what it writes is not news to it.
-      if (res.ok) router.running(entry.path, true)
+      // Whatever started it, what it writes is not news to it. A previous
+      // run's events still waiting to settle are dropped, not mixed into this
+      // one's.
+      if (res.ok) {
+        if (settling.delete(entry.path)) router.settle(entry.path, null, at.getTime())
+        router.running(entry.path, true)
+      }
     }
     await changeState(vault.remote, entry.path, (s) => ({
       ...s,
@@ -509,17 +536,56 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
     return entry?.parsed.ok === true ? entry.parsed.def.name : scheduleSlug(path)
   }
 
+  /**
+   * Weigh a finished run's set-aside file events, once its last turn's record
+   * is in: the span it could have written in runs from its start to that
+   * turn's end, and a file last changed outside it is a follow-up's cause. No
+   * turn end heard (it closed without one), no record after the last one
+   * heard within `SETTLE_CHECKS` checks, or no turn log: no span, and they are
+   * dropped, as they always were.
+   */
+  async function settleRun(path: string): Promise<void> {
+    const run = settling.get(path)
+    if (run === undefined) return
+    const end =
+      run.turnEnd === undefined || deps.lastTurnAt === undefined
+        ? null
+        : await deps.lastTurnAt(run.jobId).catch(() => null)
+    if (settling.get(path) !== run) return
+    if (end !== null && run.turnEnd !== undefined && end >= run.turnEnd) {
+      settling.delete(path)
+      const held = router.settle(path, { from: run.from, to: end }, now().getTime())
+      if (held > 0) log(`${path}: ${held} file(s) changed during run ${run.jobId} by someone else`)
+      return
+    }
+    // No record yet, or only an earlier turn's: the last one is still being
+    // written, so wait for a later check.
+    const waiting = run.turnEnd !== undefined && deps.lastTurnAt !== undefined
+    if (waiting && ++run.checks < SETTLE_CHECKS) return
+    settling.delete(path)
+    router.settle(path, null, now().getTime())
+  }
+
   /** Mark a run done, and how. */
   async function finish(vault: SchedulerVault, path: string, jobId: string, kept: boolean) {
     const { remote } = vault
     const at = now().toISOString()
-    await changeState(remote, path, (s) => ({
+    const file = await changeState(remote, path, (s) => ({
       ...s,
       runs: s.runs.map((r) =>
         r.jobId === jobId ? { ...r, finishedAt: at, ...(kept ? { kept: true as const } : {}) } : r,
       ),
     }))
     router.running(path, false)
+    const started = file[remote]?.[path]?.runs.find((r) => r.jobId === jobId)?.at
+    settling.set(path, {
+      jobId,
+      from: started === undefined ? Date.parse(at) : Date.parse(started),
+      turnEnd: turnEnds.get(jobId),
+      checks: 0,
+    })
+    turnEnds.delete(jobId)
+    await settleRun(path)
     log(`${path}: run ${jobId} finished${kept ? ', left open' : ', closed'}`)
     await logRun(
       vault.root,
@@ -568,6 +634,9 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
   }
 
   const unhear = deps.sessions.onTurnEnd((id, pending) => {
+    turnEnds.set(id, now().getTime())
+    // Every session's turns are heard, a run's or not: the oldest go first.
+    if (turnEnds.size > TURN_ENDS_KEPT) turnEnds.delete(turnEnds.keys().next().value!)
     void closeWhenDone(id, pending).catch((err: unknown) =>
       log(`closing ${id} failed: ${String(err)}`),
     )
@@ -649,6 +718,9 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
     )
     routed = on.map((e) => ({ path: e.path, on: e.parsed.def.on }))
     router.keep(new Set(routed.map((r) => r.path)))
+    for (const path of settling.keys())
+      if (!routed.some((r) => r.path === path)) settling.delete(path)
+    for (const path of [...settling.keys()]) await settleRun(path)
     deps.tell?.({ type: 'interest', interest: interestOf(routed.flatMap((r) => r.on)) })
 
     const at = now()
@@ -720,6 +792,7 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       attached = null
       lastScan = null
       routed = []
+      settling.clear()
       router.keep(new Set())
       if (timer !== null) clearInterval(timer)
       if (first !== null) clearTimeout(first)
@@ -799,7 +872,7 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
 
     async run(vault, ref) {
       if (attached?.remote !== vault.remote) {
-        throw new CapabilityError('UNAVAILABLE', 'That vault is not open.')
+        throw vaultNotOpen()
       }
       const entries = await readSchedules(vault.root)
       const entry = find(entries, ref)

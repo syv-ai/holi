@@ -11,6 +11,7 @@ import { ExternalLink, SettingsList, SettingsNote, SettingsRow } from '@/composi
 import { openSkillsStatusAtom, updateSkillsAtom } from '@/state/skills'
 import type { ReleaseNotesAnswer } from '../../../../main/updates/release-notes'
 import { DescriptorSection } from './DescriptorSection'
+import { ReleaseNotesText } from './ReleaseNotesText'
 import {
   checkForUpdateAtom,
   installUpdateAtom,
@@ -152,8 +153,8 @@ function OpenAtLoginRow(): React.JSX.Element {
 
 /**
  * One release's notes, fetched from its GitHub release when first shown.
- * GitHub writes them as Markdown; they are shown as text, headings and list
- * items picked out, never as HTML.
+ * GitHub writes them as Markdown; they are shown formatted, links included,
+ * but never as HTML (`ReleaseNotesText`).
  */
 function ReleaseNotesRow({ version, label }: { version: string; label: string }) {
   const [open, setOpen] = useState(false)
@@ -194,7 +195,7 @@ function ReleaseNotesRow({ version, label }: { version: string; label: string })
           <SettingsNote>GitHub has no notes for this version.</SettingsNote>
         ) : (
           <div className="space-y-2">
-            <NotesText body={answer.notes.body} />
+            <ReleaseNotesText body={answer.notes.body} />
             <ExternalLink
               url={answer.notes.url}
               onOpen={() => void window.holi.openExternal(answer.notes.url)}
@@ -204,36 +205,6 @@ function ReleaseNotesRow({ version, label }: { version: string; label: string })
           </div>
         ))}
     </SettingsRow>
-  )
-}
-
-/** Markdown notes as text: `#` lines as headings, `*` and `-` lines as items,
- *  emphasis markers dropped. */
-function NotesText({ body }: { body: string }): React.JSX.Element {
-  const lines = body
-    .split(/\r?\n/)
-    .map((line) => line.replace(/\*\*|__/g, '').trimEnd())
-    .filter((line) => line.trim() !== '')
-  if (lines.length === 0) return <SettingsNote>No notes for this version.</SettingsNote>
-  return (
-    <div className="max-h-64 space-y-1 overflow-auto text-[11px] text-muted-foreground">
-      {lines.map((line, i) => {
-        const heading = /^#{1,6}\s+(.*)$/.exec(line)
-        if (heading !== null) {
-          return (
-            <p key={i} className="pt-1 font-medium text-foreground">
-              {heading[1]}
-            </p>
-          )
-        }
-        const item = /^\s*[*-]\s+(.*)$/.exec(line)
-        return (
-          <p key={i} className={item !== null ? 'break-words pl-3 -indent-2' : 'break-words'}>
-            {item !== null ? `• ${item[1]}` : line}
-          </p>
-        )
-      })}
-    </div>
   )
 }
 

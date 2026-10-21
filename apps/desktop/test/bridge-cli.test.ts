@@ -331,10 +331,7 @@ describe('an answer too long to print', () => {
     expect(notice.shape).toMatch(/^a JSON object with keys /)
   })
 
-  it('keeps only the newest spills, and leaves screenshots alone', async () => {
-    const shot = 'screenshot-2000-01-01T00-00-00-000Z-abcdef.local.png'
-    await mkdir(join(dir, OUT_DIR), { recursive: true })
-    await writeFile(join(dir, OUT_DIR, shot), '')
+  it('keeps only the newest spills', async () => {
     const text = JSON.stringify(rows)
     for (let i = 0; i < 52; i++) {
       capability.mockResolvedValueOnce({ text })
@@ -342,7 +339,6 @@ describe('an answer too long to print', () => {
     }
     const names = await readdir(join(dir, OUT_DIR))
     expect(names.filter((n) => n.startsWith('spill-')).length).toBe(50)
-    expect(names).toContain(shot)
   })
 })
 

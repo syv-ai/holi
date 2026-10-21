@@ -12,9 +12,15 @@
  */
 import { EditorSelection, EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
-import { anchorAt, findHeadingLine, isCommentableNote, isResolved } from '@holi/shared'
+import {
+  anchorAt,
+  commentsPathFor,
+  findHeadingLine,
+  isCommentableNote,
+  isResolved,
+} from '@holi/shared'
 import { useAtomValue, useSetAtom, useStore } from 'jotai'
-import { useEffect, useRef } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import {
   baseEditorExtensions,
   plainTextExtensions,
@@ -43,10 +49,11 @@ import {
   draftCommentAtom,
   refreshThreadsAtom,
   claimSelectionCommenter,
+  type CommentDraft,
   threadLinesAtom,
   threadsByPathAtom,
 } from '@/state/comments'
-import { claimsAtom, normalizersAtom } from '@/state/plugins'
+import { normalizersAtom, owningClaimsAtom } from '@/state/plugins'
 import { trpc } from '@/lib/trpc'
 import { fileHistoryAtom } from '@/state/file-history'
 import { editorSelectionAtom } from '@/state/ui-report'
@@ -116,6 +123,39 @@ function followThreads(view: EditorView, path: string, store: JotaiStore): () =>
   }
 }
 
+/**
+ * A commentable note's threads in `view` (`followThreads`), and the palette's
+ * Comment on selection, which reaches the editor last focused. `claimNow`
+ * takes the palette's command at once rather than on the next focus. Returns
+ * the release.
+ */
+function followComments(
+  view: EditorView,
+  path: string,
+  store: JotaiStore,
+  draft: (draft: CommentDraft) => void,
+  claimNow: boolean,
+): () => void {
+  const offThreads = followThreads(view, path, store)
+  const commenter = () => {
+    const { from, to, empty } = view.state.selection.main
+    if (empty || view.state.readOnly) return false
+    draft({ path, anchor: anchorAt(view.state.doc.toString(), from, to) })
+    return true
+  }
+  let release = () => {}
+  const claim = () => {
+    release = claimSelectionCommenter(commenter)
+  }
+  view.contentDOM.addEventListener('focus', claim)
+  if (claimNow) claim()
+  return () => {
+    offThreads()
+    view.contentDOM.removeEventListener('focus', claim)
+    release()
+  }
+}
+
 /** Tell the drawer where each thread is, when that changed. */
 function reportLines(view: EditorView, path: string, store: JotaiStore): void {
   const lines = threadLines(view.state)
@@ -180,8 +220,14 @@ export function EditorPane({
   const draftCommentRef = useRef(draftComment)
   draftCommentRef.current = draftComment
   /** A note that takes threads (`isCommentableNote`), not a plain text file. */
-  const claims = useAtomValue(claimsAtom)
-  const commentable = path !== null && !plain && isCommentableNote(path, claims)
+  const owning = useAtomValue(owningClaimsAtom)
+  const commentable = path !== null && !plain && isCommentableNote(path, owning)
+  /** Read by the open view, which takes a change in place rather than
+   *  rebuilding (the claim effect below). */
+  const commentableRef = useRef(commentable)
+  commentableRef.current = commentable
+  /** The open view's comment following, while the note takes threads. */
+  const unfollowCommentsRef = useRef<(() => void) | null>(null)
   /** Read on demand by the editor's pull-based seams, so a snapshot arriving
    *  mid-edit does not rebuild the EditorView and drop the caret. Whether
    *  there is an agent at all does rebuild it, below. */
@@ -198,6 +244,23 @@ export function EditorPane({
   const depsRef = useRef(deps)
   depsRef.current = deps
   const hasAgent = deps.askAgent !== undefined
+  /** The selection's Comment button. Stable per note: it reads the view and
+   *  the draft setter through refs. */
+  const commentSeam = useMemo(
+    () =>
+      path === null
+        ? undefined
+        : {
+            comment: (from: number, to: number) => {
+              const doc = viewRef.current?.state.doc.toString()
+              if (doc === undefined) return
+              draftCommentRef.current({ path, anchor: anchorAt(doc, from, to) })
+            },
+          },
+    [path],
+  )
+  const commentSeamRef = useRef(commentSeam)
+  commentSeamRef.current = commentSeam
 
   useEffect(() => {
     if (path === null || remote === null || hostRef.current === null) return
@@ -304,17 +367,7 @@ export function EditorPane({
               ? plainTextExtensions(path, readOnly)
               : baseEditorExtensions({
                   ...depsRef.current,
-                  ...(commentable
-                    ? {
-                        comment: {
-                          comment: (from, to) => {
-                            const doc = viewRef.current?.state.doc.toString()
-                            if (doc === undefined) return
-                            draftCommentRef.current({ path, anchor: anchorAt(doc, from, to) })
-                          },
-                        },
-                      }
-                    : {}),
+                  ...(commentableRef.current ? { comment: commentSeamRef.current } : {}),
                   readOnly,
                 })),
             EditorView.updateListener.of((update) => {
@@ -322,7 +375,7 @@ export function EditorPane({
                 reportSelection(update.state)
                 reportCaretHeading(update.state)
               }
-              if (commentable) {
+              if (commentableRef.current) {
                 const moved =
                   update.docChanged ||
                   update.transactions.some((tr) => tr.effects.some((e) => e.is(setCommentThreads)))
@@ -353,27 +406,19 @@ export function EditorPane({
 
       if (!plain) {
         const offCommit = followCommit(view, path, store)
-        const offThreads = commentable ? followThreads(view, path, store) : () => {}
-        // The palette's Comment on selection reaches the editor last focused.
-        const commenter = () => {
-          const { from, to, empty } = view.state.selection.main
-          if (empty || view.state.readOnly) return false
-          draftCommentRef.current({ path, anchor: anchorAt(view.state.doc.toString(), from, to) })
-          return true
-        }
-        let release = () => {}
-        const claim = () => {
-          release = claimSelectionCommenter(commenter)
-        }
-        if (commentable) {
-          view.contentDOM.addEventListener('focus', claim)
-          if (store.get(quietOpenAtom) !== path) claim()
+        if (commentableRef.current) {
+          unfollowCommentsRef.current = followComments(
+            view,
+            path,
+            store,
+            (draft) => draftCommentRef.current(draft),
+            store.get(quietOpenAtom) !== path,
+          )
         }
         unfollow = () => {
           offCommit()
-          offThreads()
-          view.contentDOM.removeEventListener('focus', claim)
-          release()
+          unfollowCommentsRef.current?.()
+          unfollowCommentsRef.current = null
         }
       }
       goToRequestedHeading()
@@ -410,17 +455,23 @@ export function EditorPane({
     // `readOnly` rebuilds the view: entering a reconcile re-reads the file, so
     // you see the markers the agent is working on. So does an agent coming or
     // going, which adds or drops the Ask button. The teardown flushes first.
-  }, [path, remote, plain, readOnly, store, hasAgent, commentable])
+    // Whether the note takes threads does not: the claim effect below swaps
+    // it in place.
+  }, [path, remote, plain, readOnly, store, hasAgent])
 
   /**
-   * The note's comment threads, read again whenever the vault changes: a pull
-   * or the agent may have written them. The snapshot carries no path, so this
-   * runs on every change, like the reload below.
+   * The note's comment threads, read again whenever its sidecar changes on
+   * disk: a pull or the agent may have written it. The snapshot carries the
+   * sidecar's mtime, so a save of the note itself asks nothing.
    */
+  const sidecarStamp =
+    path === null
+      ? null
+      : (snapshot.files.find((f) => f.path === commentsPathFor(path))?.updatedAt ?? null)
   useEffect(() => {
     if (path === null || !commentable) return
     void refreshThreads(path)
-  }, [snapshot, path, commentable, refreshThreads])
+  }, [sidecarStamp, path, commentable, refreshThreads])
 
   // An arrival into the pane beside the agent focuses that pane after asking
   // for the heading, so an editor already showing the note takes it now.
@@ -429,12 +480,29 @@ export function EditorPane({
   }, [focused])
 
   // The file's claim came or went (its plugin turned on or off): the open
-  // view takes the new claim layer in place, caret and undo kept.
+  // view takes the new claim layer, and starts or stops taking comment
+  // threads, in place, caret and undo kept.
   const { frontmatterAlwaysOpen, claimExtensions } = deps
   useEffect(() => {
     const view = viewRef.current
-    if (view !== null) reconfigureClaimLayer(view, depsRef.current)
-  }, [frontmatterAlwaysOpen, claimExtensions])
+    if (view === null || path === null || plain) return
+    reconfigureClaimLayer(view, {
+      ...depsRef.current,
+      ...(commentable ? { comment: commentSeamRef.current } : {}),
+    })
+    if (commentable && unfollowCommentsRef.current === null) {
+      unfollowCommentsRef.current = followComments(
+        view,
+        path,
+        store,
+        (draft) => draftCommentRef.current(draft),
+        view.hasFocus,
+      )
+    } else if (!commentable && unfollowCommentsRef.current !== null) {
+      unfollowCommentsRef.current()
+      unfollowCommentsRef.current = null
+    }
+  }, [frontmatterAlwaysOpen, claimExtensions, commentable, path, plain, store])
 
   /**
    * The vault changed somewhere: re-read our own file and decide. The snapshot

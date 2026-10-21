@@ -75,7 +75,9 @@ export interface NoteComment {
   id: string
   /** The GitHub login of the person who wrote it. */
   author: string
-  /** Written by that person's agent, on their behalf. */
+  /** Written by that person's agent, through `holi comments`, on their
+   *  behalf. Set by that CLI and nothing else: what the person types in the
+   *  panel is theirs, and has no `agent`. */
   agent?: true
   /** ISO 8601. */
   at: string
@@ -417,10 +419,15 @@ function mergeKeyed(
   return out
 }
 
-/** Both sides changed one value Holi has no rule for: a hand edit, and ours is
- *  as good an answer as theirs. A comment is written once, so this is also
- *  both sides holding one comment id differently. */
-const keepOurs = (ours: unknown): unknown => ours
+/** Both sides changed one value Holi has no rule for (a comment's text, a
+ *  thread's anchor, a key it does not know): a hand edit on each side, and
+ *  keeping either would drop the other. A comment is written once, so this is
+ *  also both sides holding one comment id differently. */
+class BothChanged extends Error {}
+
+const conflict = (): never => {
+  throw new BothChanged()
+}
 
 /** Resolved on one machine, reopened on another: the later one stands. */
 function laterStatus(ours: unknown, theirs: unknown): unknown {
@@ -431,13 +438,13 @@ function laterStatus(ours: unknown, theirs: unknown): unknown {
 }
 
 function mergeThread(ours: unknown, theirs: unknown, base: unknown): unknown {
-  if (!isObject(ours) || !isObject(theirs)) return ours
+  if (!isObject(ours) || !isObject(theirs)) return conflict()
   return mergeKeyed(objectOr(base), ours, theirs, (o, t, b, key) =>
     key === 'comments' && isObject(o) && isObject(t)
-      ? mergeKeyed(objectOr(b), o, t, keepOurs)
+      ? mergeKeyed(objectOr(b), o, t, conflict)
       : key === 'status'
         ? laterStatus(o, t)
-        : o,
+        : conflict(),
   )
 }
 
@@ -445,9 +452,11 @@ function mergeThread(ours: unknown, theirs: unknown, base: unknown): unknown {
  * Three-way merge of one sidecar: the git merge driver's body. Threads and
  * comments are unioned by id, so concurrent comments never conflict; a resolve
  * against a reopen keeps the later. Keys it does not know merge the same way,
- * one side's change winning, so nothing in the file is dropped. It refuses
- * only text that is not a sidecar, which git then records as an ordinary
- * conflict. `base` is null when both sides created the file.
+ * one side's change winning. It refuses text that is not a sidecar, and one
+ * value both sides changed with no rule to settle it (a comment's text, an
+ * anchor, an unknown key): git then records an ordinary conflict, rather than
+ * the merge keeping one side and dropping the other. `base` is null when both
+ * sides created the file.
  */
 export function mergeCommentsText(
   base: string | null,
@@ -458,10 +467,18 @@ export function mergeCommentsText(
   const o = parseCommentsFile(ours)
   const t = parseCommentsFile(theirs)
   if (b === null || o === null || t === null) return { ok: false, reason: 'not a comments file' }
-  const merged = mergeKeyed(b, o, t, (oo, tt, bb, key) =>
-    key === 'threads' ? mergeKeyed(objectOr(bb), objectOr(oo), objectOr(tt), mergeThread) : oo,
-  )
-  return { ok: true, text: formatCommentsFile({ ...merged, threads: objectOr(merged.threads) }) }
+  try {
+    const merged = mergeKeyed(b, o, t, (oo, tt, bb, key) =>
+      key === 'threads'
+        ? mergeKeyed(objectOr(bb), objectOr(oo), objectOr(tt), mergeThread)
+        : conflict(),
+    )
+    return { ok: true, text: formatCommentsFile({ ...merged, threads: objectOr(merged.threads) }) }
+  } catch (err) {
+    if (err instanceof BothChanged)
+      return { ok: false, reason: 'both sides changed the same value' }
+    throw err
+  }
 }
 
 // ------------------------------------------------------------------- mentions
@@ -511,10 +528,23 @@ export function newMentions(
 
 // ---------------------------------------------------------------- the CLI form
 
-/** `YYYY-MM-DD HH:MM`, in local time unless a zone is given (tests pass UTC). */
+/** A GitHub login is at most 39 letters, digits and hyphens. An author or
+ *  resolver is whatever a teammate's sidecar says, so what is printed of one
+ *  keeps only that. */
+export const loginOf = (author: string): string =>
+  author.replace(/[^A-Za-z0-9-]/g, '').slice(0, 39) || 'Someone'
+
+/** A sidecar's id as printed: an id is a short token, so one that could break
+ *  a line or hide characters is not printed at all. */
+function idOf(id: string): string {
+  return /^[A-Za-z0-9_-]{1,64}$/.test(id) ? id : '(unprintable id)'
+}
+
+/** `YYYY-MM-DD HH:MM`, in local time unless a zone is given (tests pass UTC).
+ *  A time that does not parse is not printed: it is a teammate's text. */
 function minute(iso: string, timeZone: string | undefined): string {
   const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return iso
+  if (Number.isNaN(d.getTime())) return 'at an unknown time'
   const parts = new Intl.DateTimeFormat('en-GB', {
     timeZone,
     year: 'numeric',
@@ -529,18 +559,31 @@ function minute(iso: string, timeZone: string | undefined): string {
   return `${get('year')}-${get('month')}-${get('day')} ${get('hour')}:${get('minute')}`
 }
 
-/** Who wrote a comment, as the panel says it. */
+/** Who wrote a comment, as the panel, the inbox and `holi comments list` say
+ *  it: the login, and "via agent" when their agent wrote it. */
 export const commentByline = (c: Pick<NoteComment, 'author' | 'agent'>): string =>
-  c.agent === true ? `${c.author}'s agent` : c.author
+  c.agent === true ? `${c.author} via agent` : c.author
 
-/** A thread as `holi comments list` prints it, with where it is now. */
+/** A thread as `holi comments list` prints it, with where it is now. Every
+ *  part of it comes from a sidecar a teammate may have written: the bodies
+ *  and the passage are shown as quoted data, and the rest only in the shapes
+ *  it has (a login, a token, a time). */
 export interface LocatedThread extends CommentThread {
   /** 1-based line the passage is on now, or null when it is detached. */
   line: number | null
 }
 
+/** A teammate's text with its invisible format characters (`\p{Cf}`: bidi
+ *  overrides, zero-width joiners) removed, so what prints is what is there. */
+const visible = (text: string): string => text.replace(/\p{Cf}/gu, '')
+
+/** A body as quoted lines. Every character a terminal or a model may take as
+ *  a line break starts a new quoted line, so no line of a body can pass for
+ *  one of ours. */
 const quoted = (text: string): string[] =>
-  text.split(/\r\n|\r|\n/).map((line) => `  > ${line}`.trimEnd())
+  visible(text)
+    .split(/\r\n|[\r\n\u2028\u2029\u0085\v\f]/)
+    .map((line) => `  > ${line}`.trimEnd())
 
 export function formatNoteComments(
   path: string,
@@ -555,15 +598,18 @@ export function formatNoteComments(
   ].join(', ')
   const blocks = threads.map((t) => {
     const where = t.line === null ? 'detached, the passage is gone' : `line ${t.line}`
-    const on = t.anchor.quote.replace(/\s+/g, ' ').trim()
-    const lines = [`Thread ${t.id} on "${on}" (${where})`]
+    const on = visible(t.anchor.quote)
+      .replace(/[\s\u0085]+/g, ' ')
+      .trim()
+    const lines = [`Thread ${idOf(t.id)} on "${on}" (${where})`]
     t.comments.forEach((c, i) => {
       const lead = i === 0 ? '' : 'Reply, '
-      lines.push(`  ${lead}${commentByline(c)}, ${minute(c.at, opts.timeZone)}`, ...quoted(c.body))
+      const by = commentByline({ ...c, author: loginOf(c.author) })
+      lines.push(`  ${lead}${by}, ${minute(c.at, opts.timeZone)}`, ...quoted(c.body))
     })
     if (t.status !== null) {
       const verb = t.status.resolved ? 'Resolved' : 'Reopened'
-      lines.push(`  ${verb} by ${t.status.by}, ${minute(t.status.at, opts.timeZone)}`)
+      lines.push(`  ${verb} by ${loginOf(t.status.by)}, ${minute(t.status.at, opts.timeZone)}`)
     }
     return lines.join('\n')
   })

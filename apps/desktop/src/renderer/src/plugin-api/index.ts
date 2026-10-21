@@ -68,6 +68,7 @@ export { memberLoginsAtom, peopleList } from '@/state/members'
 export { useEditorDeps } from '@/state/editor-deps'
 export { duePresets, reminderPresets, shortStamp } from '@/lib/date-presets'
 export { useArrivals } from '@/lib/use-arrivals'
+export { requestArrivalAtom, type Arrival } from '@/state/arrival'
 export {
   activeSurfaceIdAtom,
   closeSurfaceTabAtom,

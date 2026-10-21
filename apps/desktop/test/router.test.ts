@@ -16,6 +16,8 @@ import { noCoreServices } from '../src/main/capabilities/services'
 import { vaultCapabilities, VAULT_NAMESPACES } from '../src/main/capabilities/vault-caps'
 import { taskCapabilities, TASKS_NAMESPACES } from '../src/plugins/tasks/main/capabilities'
 import { createRouter } from '../src/main/router'
+import { withFileLock } from '../src/main/vault/vault-files'
+import { exactPath } from '@holi/shared/path-safety-node'
 
 const exec = promisify(execFile)
 import { GitHubSession } from '../src/main/github/session'
@@ -375,6 +377,23 @@ describe('notes', () => {
     expect(await caller.notes.read({ remote: REMOTE, path: 'a.md' })).toBe('# A\n')
 
     await caller.notes.write({ remote: REMOTE, path: 'a.md', text: '# B\n' })
+    expect(await readFile(join(root, 'a.md'), 'utf8')).toBe('# B\n')
+  })
+
+  it("waits for an app's write to the same note before saving", async () => {
+    // An app's `docs.write` checks the text it read and writes under the
+    // file's lock; a save landing between the two would be written over.
+    const { caller, root } = await rig({ 'a.md': '# A\n' })
+    let release!: () => void
+    const held = withFileLock((await exactPath(root, 'a.md'))!, async () => {
+      await new Promise<void>((r) => (release = r))
+      await writeFile(join(root, 'a.md'), '# app\n', 'utf8')
+    })
+    const save = caller.notes.write({ remote: REMOTE, path: 'a.md', text: '# B\n' })
+    await new Promise((r) => setTimeout(r, 50))
+    expect(await readFile(join(root, 'a.md'), 'utf8')).toBe('# A\n')
+    release()
+    await Promise.all([held, save])
     expect(await readFile(join(root, 'a.md'), 'utf8')).toBe('# B\n')
   })
 
@@ -969,6 +988,28 @@ describe('tasks.move', () => {
     expect(task.status).toBe('doing')
     expect(task.order).toBe(1536)
     expect(await readFile(join(root, 'personal/task.foo.md'), 'utf8')).toContain('order: 1536')
+  })
+
+  it('reads a field change made meanwhile before writing its own', async () => {
+    // The status rides along under the file's lock, as `tasks.update` writes:
+    // a field another writer set while the move waited is kept.
+    const { caller, root } = await rig({ 'task.foo.md': '---\ntitle: Foo\nstatus: todo\n---\n' })
+    let release!: () => void
+    const held = withFileLock(join(root, 'task.foo.md'), async () => {
+      await new Promise<void>((r) => (release = r))
+      await writeFile(join(root, 'task.foo.md'), '---\nstatus: todo\ndue: 2026-08-01\n---\n')
+    })
+    const move = tasksCall(caller, 'move', {
+      remote: REMOTE,
+      path: 'task.foo.md',
+      folder: 'personal',
+      status: 'doing',
+    })
+    await new Promise((r) => setTimeout(r, 50))
+    release()
+    const [, task] = await Promise.all([held, move])
+    expect(task.due).toBe('2026-08-01')
+    expect(task.status).toBe('doing')
   })
 
   it('refuses to clobber a task already in the target lane', async () => {
@@ -1754,5 +1795,29 @@ describe('cap.run', () => {
     await expect(
       caller.cap.run({ remote: REMOTE, name: 'echo.ui', paramsJson: '{' }),
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' })
+  })
+})
+
+describe('comments', () => {
+  // Only `holi comments` marks a comment as the agent's. What the panel sends
+  // is the person's own, whoever's agent is running beside it.
+  it('signs what the panel writes as the person, never as their agent', async () => {
+    const { caller, root } = await rig({ 'a.md': 'One passage here.\n' }, seeded())
+    await caller.vaults.open({ remote: REMOTE })
+    const anchor = { quote: 'passage', prefix: 'One ', suffix: ' here.', line: 1 }
+    const { thread } = await caller.comments.add({
+      remote: REMOTE,
+      path: 'a.md',
+      body: 'Is this right?',
+      anchor,
+    })
+    await caller.comments.reply({ remote: REMOTE, path: 'a.md', thread, body: 'Yes.' })
+
+    const [listed] = await caller.comments.list({ remote: REMOTE, path: 'a.md' })
+    expect(listed!.comments.map((c) => [c.author, c.agent])).toEqual([
+      ['nthomsencph', undefined],
+      ['nthomsencph', undefined],
+    ])
+    expect(await readFile(join(root, '.holi/comments/a.md.json'), 'utf8')).not.toContain('agent')
   })
 })

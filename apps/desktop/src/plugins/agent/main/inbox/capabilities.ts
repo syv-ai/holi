@@ -9,19 +9,20 @@
  * on this machine), so the seed allows them without a prompt; the quiet is in
  * the inbox's rules, not a gate.
  *
- * The work log needs only the vault's folder, so it is written even when Holi
- * does not have the vault open; the inbox is the open vault's, so a notice
- * for another vault is a log line only.
+ * Both need Holi to have the vault open: the `holi` command finds Holi through
+ * the vault's bridge file, which Holi deletes when it leaves the vault. A
+ * session that outlives a switch away from its vault reaches nothing.
  *
  * No `electron` import: this loads under plain Node in the tests.
  */
-import { vaultRelPath } from '@holi/shared'
 import {
   cap,
   CapabilityError,
   noParams,
   optionalStringParam,
   paramsObject,
+  requireOpen,
+  shownPath,
   stringParam,
   type CapabilityContext,
 } from '../../../../main/plugin-api'
@@ -47,21 +48,14 @@ function bounded(raw: Record<string, unknown>, key: string, max: number): string
   return value.length > max ? `${value.slice(0, max - 1)}…` : value
 }
 
-type NotifyResult = RaiseResult | 'logged'
-
-const NOTIFY_TEXT: Record<NotifyResult, string> = {
+const NOTIFY_TEXT: Record<RaiseResult, string> = {
   banner: 'notified',
   inbox: 'added to the inbox',
   repeat: 'already in the inbox, not repeated',
-  logged: 'Holi does not have this vault open: written to the work log only',
 }
 
 export const inboxCapabilities = (deps: InboxCapabilitiesDeps) => {
   const now = deps.now ?? (() => new Date())
-  const isLive = (ctx: CapabilityContext): boolean => deps.liveRemote() === ctx.remote
-  const live = (ctx: CapabilityContext): void => {
-    if (!isLive(ctx)) throw new CapabilityError('UNAVAILABLE', 'That vault is not open in Holi.')
-  }
   /** Best-effort where a notice is the point: the person has been told. */
   const logQuietly = (root: string, text: string): Promise<void> =>
     appendWorkLog(root, now(), text).catch((err: unknown) =>
@@ -84,14 +78,9 @@ export const inboxCapabilities = (deps: InboxCapabilitiesDeps) => {
         if (session !== undefined && !JOB_ID.test(session)) {
           throw new CapabilityError('BAD_REQUEST', `not a session id: ${session}`)
         }
-        let rel: string | undefined
-        if (path !== undefined) {
-          try {
-            rel = vaultRelPath(path)
-          } catch (err) {
-            throw new CapabilityError('BAD_REQUEST', (err as Error).message)
-          }
-        }
+        // What the entry opens is shown to the person, so it is held to what
+        // `holi docs open` may show: never machine state or a secret file.
+        const rel = path === undefined ? undefined : shownPath(path)
         return {
           title: bounded(p, 'title', MAX_TITLE),
           line: bounded(p, 'line', MAX_LINE),
@@ -99,13 +88,10 @@ export const inboxCapabilities = (deps: InboxCapabilitiesDeps) => {
           ...(session === undefined ? {} : { session }),
         }
       },
-      run: async (ctx, notice): Promise<NotifyResult> => {
+      run: async (ctx, notice): Promise<RaiseResult> => {
+        requireOpen(ctx)
         const link = notice.path === undefined ? '' : ` [[${notice.path}]]`
         const line = `${notice.title}: ${notice.line}${link}`
-        if (!isLive(ctx)) {
-          await appendWorkLog(ctx.root, now(), line)
-          return 'logged'
-        }
         const result = await deps.inbox.raise(notice)
         if (result !== 'repeat') await logQuietly(ctx.root, line)
         return result
@@ -141,7 +127,7 @@ export const inboxCapabilities = (deps: InboxCapabilitiesDeps) => {
       doors: ['ui'],
       params: (raw) => ({ id: stringParam(paramsObject(raw), 'id') }),
       run: async (ctx, { id }): Promise<InboxView> => {
-        live(ctx)
+        requireOpen(ctx)
         return deps.inbox.dismiss(id)
       },
     }),
@@ -150,7 +136,7 @@ export const inboxCapabilities = (deps: InboxCapabilitiesDeps) => {
       doors: ['ui'],
       params: noParams,
       run: async (ctx): Promise<InboxView> => {
-        live(ctx)
+        requireOpen(ctx)
         return deps.inbox.seen()
       },
     }),

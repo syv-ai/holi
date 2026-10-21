@@ -10,9 +10,9 @@
 import { isCommentableNote, type CommentAnchor, type CommentThread } from '@holi/shared'
 import { atom, type SetStateAction, type WritableAtom } from 'jotai'
 import { trpc } from '../lib/trpc'
-import { historyOpenAtom, historyTargetPathAtom } from './history'
-import { linksOpenAtom } from './links'
-import { claimsAtom } from './plugins'
+import { historyTargetPathAtom } from './history'
+import { owningClaimsAtom } from './plugins'
+import { drawerOpenAtom } from './right-drawer'
 import { activeRemoteAtom } from './vaults'
 
 /**
@@ -35,24 +35,19 @@ function vaultScoped<T>(initial: T): WritableAtom<T, [SetStateAction<T>], void> 
   )
 }
 
-export const commentsOpenAtom = atom(false)
+export const commentsOpenAtom = drawerOpenAtom('comments')
 
 /** The note the drawer is about: the focused note, as History's, when it
- *  takes comments (`isCommentableNote`, with the running plugins' claims). */
+ *  takes comments (`isCommentableNote`, with the claims that own files). */
 export const commentsTargetPathAtom = atom<string | null>((get) => {
   const path = get(historyTargetPathAtom)
-  return path === null || !isCommentableNote(path, get(claimsAtom)) ? null : path
+  return path === null || !isCommentableNote(path, get(owningClaimsAtom)) ? null : path
 })
 
-/** Open or close the drawer. It, Links and History share the right edge, so
- *  opening it closes the other two. */
+/** Open or close the drawer, in place of whichever right-hand drawer was
+ *  open (`right-drawer.ts`). */
 export const toggleCommentsAtom = atom(null, (get, set, open?: boolean) => {
-  const next = open ?? !get(commentsOpenAtom)
-  set(commentsOpenAtom, next)
-  if (next) {
-    set(historyOpenAtom, false)
-    set(linksOpenAtom, false)
-  }
+  set(commentsOpenAtom, open ?? !get(commentsOpenAtom))
 })
 
 /** Every loaded note's threads, by path. */

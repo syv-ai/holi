@@ -113,7 +113,8 @@ file. On a recurring task, writing `done` by hand ends the series instead of
 rolling it forward; the command applies the same rule as the board's checkbox
 and prints what it wrote. On any other task it simply sets `status: done`.
 
-Outside Holi, where the command is not there, roll it forward by hand: `due` to
+The `holi tasks` commands are there only while the Tasks plugin is on. Outside
+Holi, or with the plugin off, where the command is not there, roll it forward by hand: `due` to
 the rule's next date on or after today, `reminder` moved by the same number of
 days, `status` left at `todo`.
 

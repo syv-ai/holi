@@ -1,5 +1,5 @@
 /**
- * Holi's sweep of the agent's short-lived layers: expired scratch notes and
+ * Holi's sweep of the agent's short-lived layers: expired personal memories and
  * work-log days past the keep window. Real files in a temp vault.
  */
 import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
@@ -24,7 +24,7 @@ async function vault(files: Record<string, string>): Promise<string> {
   return root
 }
 
-const scratch = (expires: string) => `---\ntype: scratch\nexpires: ${expires}\n---\n\nThe fact.\n`
+const expiring = (expires: string) => `---\ntype: project\nexpires: ${expires}\n---\n\nThe fact.\n`
 
 describe('staleWorkLogs', () => {
   it('keeps the last days up to today and leaves anything that is not a day file', () => {
@@ -44,13 +44,13 @@ describe('staleWorkLogs', () => {
 })
 
 describe('sweepAgentMemory', () => {
-  it('deletes expired personal scratch and old log days, and nothing else', async () => {
+  it('deletes expired personal memories and old log days, and nothing else', async () => {
     const root = await vault({
-      '.holi/memory/gone.local.md': scratch('2026-10-20'),
-      '.holi/memory/deep/gone-too.local.md': scratch('2026-10-21T09:00'),
-      '.holi/memory/still.local.md': scratch('2026-10-21'),
-      '.holi/memory/shared-scratch.md': scratch('2020-01-01'),
-      '.holi/memory/person.local.md': '---\ntype: person\nexpires: 2020-01-01\n---\n',
+      '.holi/memory/gone.local.md': expiring('2026-10-20'),
+      '.holi/memory/deep/gone-too.local.md': expiring('2026-10-21T09:00'),
+      '.holi/memory/still.local.md': expiring('2026-10-21'),
+      '.holi/memory/shared.md': expiring('2020-01-01'),
+      '.holi/memory/undated.local.md': '---\ntype: person\nexpires: someday\n---\n',
       '.holi/state/log/2026-10-21.local.md': '- 09:00 a\n',
       '.holi/state/log/2026-08-01.local.md': '- 09:00 b\n',
     })
@@ -64,9 +64,9 @@ describe('sweepAgentMemory', () => {
     ])
     expect((await readdir(join(root, '.holi/memory'))).sort()).toEqual([
       'deep',
-      'person.local.md',
-      'shared-scratch.md',
+      'shared.md',
       'still.local.md',
+      'undated.local.md',
     ])
   })
 

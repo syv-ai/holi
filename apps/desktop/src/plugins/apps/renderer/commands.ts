@@ -177,6 +177,9 @@ export function followAppCommands(remote: string, store: PluginStore): () => voi
             name: command.name,
             ...(command.description === undefined ? {} : { detail: command.description }),
             meta: appName(command.bundle),
+            // Given the note's text, and may write into it: only in a note an
+            // app may both read and write (docs/features/vault-apps.md).
+            offeredIn: (path) => !isAppFencedPath(path) && isAppWritablePath(path),
             run: (input) => runAppCommand(store, remote, command, input, inFlight),
           })),
         )
