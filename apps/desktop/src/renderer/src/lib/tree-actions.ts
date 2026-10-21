@@ -34,6 +34,21 @@ export function planMoveInto(
     .filter((m) => m.from !== m.to)
 }
 
+/** The folders among `sources` (anything that is not a doc) and where moving
+ *  them into `destFolder` takes them, so main can carry what their documents
+ *  leave behind. */
+export function foldersMovedInto(
+  docPaths: string[],
+  sources: string[],
+  destFolder: string,
+): Move[] {
+  const docs = new Set(docPaths)
+  return sources
+    .filter((s) => !docs.has(s))
+    .map((s) => ({ from: s, to: joinPath(destFolder, basename(s)) }))
+    .filter((m) => m.from !== m.to && !m.to.startsWith(`${m.from}/`))
+}
+
 /** Duplicate `targets` in place, each to its first free `… copy` name. */
 export function planDuplicate(docPaths: string[], targets: string[]): Move[] {
   const claimed = new Set(docPaths)
@@ -51,7 +66,7 @@ export function planDuplicate(docPaths: string[], targets: string[]): Move[] {
 }
 
 export type PastePlan =
-  | { mode: 'move'; moves: Move[] }
+  | { mode: 'move'; moves: Move[]; folders: Move[] }
   | { mode: 'copy'; copies: Move[] }
 
 /** Paste the clipboard into `destFolder`: a cut moves, a copy clones to the first
@@ -62,7 +77,11 @@ export function planPaste(
   destFolder: string,
 ): PastePlan {
   if (clip.mode === 'cut') {
-    return { mode: 'move', moves: planMoveInto(docPaths, clip.paths, destFolder) }
+    return {
+      mode: 'move',
+      moves: planMoveInto(docPaths, clip.paths, destFolder),
+      folders: foldersMovedInto(docPaths, clip.paths, destFolder),
+    }
   }
   const claimed = new Set(docPaths)
   const isTaken = (p: string) => pathTaken(claimed, p)
@@ -92,10 +111,11 @@ export function planRenameFolder(
   return { dest, files, moves }
 }
 
-/** The human name for a delete preview: a multi-selection counts notes, a folder
- *  names itself with its note count, a single file is just its path. */
+/** The human name for a delete preview: a multi-selection counts files, a folder
+ *  names itself with its file count, a single file is just its path. Files,
+ *  not notes: a folder or an app holds whatever it holds. */
 export function deleteLabel(targets: string[], fileCount: number, isFolder: boolean): string {
-  if (targets.length > 1) return `${fileCount} notes`
-  if (isFolder) return `${targets[0]}/ (${fileCount} note${fileCount === 1 ? '' : 's'})`
+  if (targets.length > 1) return `${fileCount} files`
+  if (isFolder) return `${targets[0]}/ (${fileCount} file${fileCount === 1 ? '' : 's'})`
   return targets[0]!
 }

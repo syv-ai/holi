@@ -19,6 +19,12 @@
  * it carries no data, so the app reads it again through the bridge and every
  * refusal still applies.
  */
+import { APP_LOG_MAX_TEXT } from '../shared/store'
+
+/** Log entries a frame may send a second: info (console.log and console.info),
+ *  and everything else. */
+const INFO_PER_SECOND = 20
+const OTHER_PER_SECOND = 50
 
 export const BRIDGE_JS = `(() => {
   const pending = new Map()
@@ -41,7 +47,9 @@ export const BRIDGE_JS = `(() => {
     if (msg.ok) entry.resolve(msg.value)
     else {
       report('warn', ['holi ' + entry.method + ' refused: ' + String(msg.error)])
-      entry.reject(new Error(String(msg.error)))
+      const err = new Error(String(msg.error))
+      if (typeof msg.code === 'string') err.code = msg.code
+      entry.reject(err)
     }
   })
   const call = (method, params) =>
@@ -51,23 +59,37 @@ export const BRIDGE_JS = `(() => {
       parent.postMessage({ id, method, params }, '*')
     })
   // The app's log (log.local.txt beside its code, for the vault's agent):
-  // console errors and warnings, uncaught errors, refused calls, and
-  // holi.log(). A burst is capped, so a loop that logs cannot flood Holi.
-  let budget = 50
-  setInterval(() => { budget = 50 }, 1000)
+  // the console, uncaught errors, refused calls, and holi.log(). A burst is
+  // capped, so a loop that logs cannot flood Holi, and info (console.log and
+  // console.info) has a smaller budget of its own. An entry is cut to what
+  // the log keeps of it before it is sent.
+  const BUDGET = { info: ${INFO_PER_SECOND}, other: ${OTHER_PER_SECOND} }
+  let budget = { ...BUDGET }
+  setInterval(() => { budget = { ...BUDGET } }, 1000)
+  const MAX = ${APP_LOG_MAX_TEXT}
   const describe = (part) => {
     if (part instanceof Error) return part.stack || String(part)
     if (typeof part === 'string') return part
     try { return JSON.stringify(part) } catch { return String(part) }
   }
   const report = (level, parts) => {
-    if (budget <= 0) return
-    budget -= 1
-    parent.postMessage({ log: { level, text: parts.map(describe).join(' ') } }, '*')
+    const kind = level === 'info' ? 'info' : 'other'
+    if (budget[kind] <= 0) return
+    budget[kind] -= 1
+    const out = []
+    let size = 0
+    for (const part of parts) {
+      if (size >= MAX) break
+      const text = String(describe(part)).slice(0, MAX)
+      out.push(text)
+      size += text.length + 1
+    }
+    parent.postMessage({ log: { level, text: out.join(' ').slice(0, MAX) } }, '*')
   }
-  for (const level of ['error', 'warn']) {
-    const original = console[level].bind(console)
-    console[level] = (...args) => { report(level, args); original(...args) }
+  // console.log and console.info are both info: the log has no level below it.
+  for (const [method, level] of [['error', 'error'], ['warn', 'warn'], ['info', 'info'], ['log', 'info']]) {
+    const original = console[method].bind(console)
+    console[method] = (...args) => { report(level, args); original(...args) }
   }
   addEventListener('error', (e) => report('error', [e.error || e.message]))
   addEventListener('unhandledrejection', (e) => report('error', ['unhandled rejection:', e.reason]))
@@ -84,10 +106,17 @@ export const BRIDGE_JS = `(() => {
       list: () => call('docs.list'),
       read: (path) => call('docs.read', { path }),
       render: (path) => call('docs.render', { path }),
+      // The whole text, over base: the text you read, or null for a new note.
+      // Refused when the note changed since; read it again and retry.
+      write: (path, text, base) => call('docs.write', { path, text, base }),
     },
     tasks: {
       list: () => call('tasks.list'),
       complete: (path) => call('tasks.complete', { path }),
+      // Fields as the board sets them; null clears one. Done is completion.
+      update: (path, patch) => call('tasks.update', { path, patch }),
+      // { title, folder?, status?, description?, extra?: { due, priority, ... } }
+      create: (task) => call('tasks.create', task),
     },
     // A note's path, or one of Holi's views by name (home, board, settings).
     // Holi decides which: a view this vault has wins over a file.
@@ -109,6 +138,9 @@ export const BRIDGE_JS = `(() => {
       agenda: (range) => call('google.agenda', range || {}),
       search: (query) => call('google.search', query === undefined ? {} : { query }),
     },
+    // A secret from the vault's .env (.env.local wins), or null when unset:
+    // only the names app.yaml lists under env.
+    env: (name) => call('env.get', { name }),
     on,
     // A line in the app's log, for whoever debugs it next.
     log: (...parts) => report('info', parts),
@@ -190,4 +222,29 @@ export const BRIDGE_JS = `(() => {
     'h1,h2,h3{line-height:1.25}blockquote{margin:0;padding-left:12px;color:var(--muted-foreground)}' +
     'table{border-collapse:collapse}td,th{padding:4px 8px}'
   if (!customElements.get('holi-note')) customElements.define('holi-note', HoliNote)
+})()`
+
+/**
+ * The runner document's own script, after the bridge: `holi.command(fn)`
+ * registers the command, and the renderer's one `{ run: input }` runs it. The
+ * answer goes back once, as `{ command: outcome }`; the renderer checks it
+ * (`commandActionOf`), since it came out of the app's code.
+ */
+export const COMMAND_JS = `(() => {
+  let run = null
+  window.holi.command = (fn) => { run = fn }
+  const finish = (outcome) => parent.postMessage({ command: outcome }, '*')
+  addEventListener('message', async (e) => {
+    if (e.source !== parent || !e.data || typeof e.data.run !== 'object') return
+    if (typeof run !== 'function') {
+      finish({ ok: false, error: 'the script never called holi.command(fn)' })
+      return
+    }
+    try {
+      finish({ ok: true, value: await run(e.data.run) })
+    } catch (err) {
+      console.error(err)
+      finish({ ok: false, error: String((err && err.message) || err) })
+    }
+  })
 })()`

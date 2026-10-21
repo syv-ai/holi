@@ -7,7 +7,6 @@
  * hosts untrusted app code, and the process rendering untrusted code must not
  * also be the process deciding what it may read.
  */
-import { taskClaim } from '@holi/shared'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -17,7 +16,6 @@ import { createCapabilityHost, type AppDoor } from '../../../main/capabilities/d
 import { createCapabilityRegistry } from '../../../main/capabilities/registry'
 import { noCoreServices } from '../../../main/capabilities/services'
 import { vaultCapabilities, VAULT_NAMESPACES } from '../../../main/capabilities/vault-caps'
-import { taskCapabilities, TASK_NAMESPACES } from '../../../main/vault/task-capabilities'
 import { seedVault } from '../../../../test/helpers/seed'
 
 const REMOTE = 'ada/vault'
@@ -35,7 +33,6 @@ async function rig() {
   for (const [rel, text] of Object.entries({
     'inbox.md': '# Inbox\n\nnotes\n',
     'USER.local.md': '# Ada Holm\n\nada@syv.ai\n',
-    'task.review.md': '---\ntitle: Review\nstatus: todo\n---\n',
     'Tracker.app/index.html': '<p>tracker</p>\n',
     'Tracker.app/app.yaml': '',
   })) {
@@ -45,9 +42,13 @@ async function rig() {
   const registry = createCapabilityRegistry()
   registry.register(
     VAULT_NAMESPACES,
-    vaultCapabilities({ updateSkills: async () => ({ summary: '', conflicts: null }) }),
+    vaultCapabilities({
+      updateSkills: async () => ({ summary: '', changed: [], conflicts: null }),
+      skillsStatus: async () => ({ pending: [], release: null, autoUpdate: false }),
+      open: () => {},
+      screenshot: async () => new Uint8Array(),
+    }),
   )
-  registry.register(TASK_NAMESPACES, taskCapabilities({ today: () => '2026-09-30' }))
   let door: AppDoor | null = null
   registry.register(
     ['apps'],
@@ -64,7 +65,7 @@ async function rig() {
     active: () => null,
     core: noCoreServices,
     pluginEnabled: async () => true,
-    claims: async () => [{ ...taskClaim, plugin: 'tasks' }],
+    claims: async () => [],
   })
   // No entry here asks for an app's consent.
   door = host.openAppDoor({ admit: async () => {} })
@@ -132,13 +133,6 @@ describe('apps.call', () => {
     // The listing, not just the read: an app that cannot open a memory but can
     // see every memory's path has still been told what the vault remembers.
     expect(paths.some((p) => p.startsWith('.holi/memory/'))).toBe(false)
-  })
-
-  it('lists the vault tasks', async () => {
-    const { call } = await rig()
-    expect(((await call('tasks.list')) as { title: string }[]).map((t) => t.title)).toContain(
-      'Review',
-    )
   })
 
   it('refuses a method no app may call, and a caller that is not an app', async () => {

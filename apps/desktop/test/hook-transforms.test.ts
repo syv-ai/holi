@@ -9,7 +9,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { TASKS_PART } from '../src/main/vault/task-capabilities'
+import { tasksMain } from '../src/plugins/tasks/main'
 import {
   DEFAULT_HOOKS,
   vaultTransforms,
@@ -35,10 +35,11 @@ async function settings(json: string): Promise<void> {
 
 describe('the transform set', () => {
   it('is a short list in a fixed order, and this is not a hook framework', () => {
-    expect(vaultTransforms([], TASKS_PART.transforms!).map((t) => t.name)).toEqual([
+    expect(vaultTransforms([], tasksMain.transforms!).map((t) => t.name)).toEqual([
       'relink',
       'archive-done',
       'normalize-md',
+      'shrink-images',
       // Last, and for its own reason: it is the only transform that reads the
       // whole TREE rather than the staged set, so it has to see what the ones
       // before it left behind.
@@ -46,13 +47,13 @@ describe('the transform set', () => {
     ])
   })
 
-  it('defaults archive-done OFF and the rest on', () => {
-    // It moves task files, which changes what the board shows. A transform that
-    // rearranges someone's work is opt-in.
+  it("defaults core's transforms on", () => {
     expect(DEFAULT_HOOKS).toEqual({
       relink: true,
-      'archive-done': false,
       'normalize-md': true,
+      // On, though it rewrites images: a big image costs every clone forever
+      // once committed, and it changes nothing a screen could show.
+      'shrink-images': true,
       // On for relink's reason: it only ever rewrites a file it generated, and
       // that file says it is generated on its first line.
       'memory-index': true,
@@ -62,7 +63,7 @@ describe('the transform set', () => {
   it('keys the settings by the transform name, kebab and all', () => {
     // A camelCase settings key beside a kebab transform name is a mapping table
     // that exists only to be got wrong once.
-    for (const transform of vaultTransforms([], TASKS_PART.transforms!)) {
+    for (const transform of vaultTransforms([], [])) {
       expect(Object.keys(DEFAULT_HOOKS)).toContain(transform.name)
     }
   })

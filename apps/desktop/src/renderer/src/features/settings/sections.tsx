@@ -1,6 +1,6 @@
 /**
- * The settings tab's sections, in rail order: core's, with every enabled
- * plugin's after the vault's own content and before Vault and Account.
+ * The settings tab's sections, in rail order: core's, then Plugins, with
+ * every enabled plugin's own after it and before Vault and Account.
  *
  * The rail, the section view and the narrow-pane picker all read
  * `settingsSectionsAtom`, so adding a section is adding an entry here, or a
@@ -14,6 +14,8 @@
  */
 import {
   ICONS_FILE,
+  PLUGINS_FILE,
+  PLUGINS_LOCAL_FILE,
   SETTINGS_FILE,
   SETTINGS_LOCAL_FILE,
   THEME_FILE,
@@ -22,13 +24,16 @@ import {
 } from '@holi/shared'
 import { atom } from 'jotai'
 import type { SettingsSection, SettingsSectionHeading } from '@/plugin-api/types'
-import { pluginSettingsSectionsAtom } from '@/state/plugins'
+import { pluginSettingsSectionsAtom, runningPluginsAtom } from '@/state/plugins'
+import { PluginSettingsSection } from './PluginSettingsSection'
 import { AccountSection } from './AccountSection'
 import { DescriptorSection } from './DescriptorSection'
 import { IconsSection } from './IconsSection'
 import { ThemeSection } from './ThemeSection'
+import { UpdatesSection, VaultSkillsSection } from './UpdatesSection'
 import { VaultSection } from './VaultSection'
-import { headingId } from '@/composites'
+import { headingId, SettingsHeading } from '@/composites'
+import { HOLI_UPDATES, VAULT_SKILLS } from './updates-headings'
 import { LIGHT_AND_DARK } from './appearance-headings'
 import { COLLABORATORS, LEAVE_OR_DELETE, WHERE_IT_LIVES } from './vault-headings'
 
@@ -77,7 +82,35 @@ const VAULT_CONTENT: readonly SettingsSection[] = [
   },
 ]
 
-/** The vault itself and who you are: always last. */
+const BUILT_IN = 'Built in'
+
+/**
+ * The Plugins page: the vault's switch per plugin built into Holi, then each
+ * running plugin's own settings about plugins (`within: 'plugins'`), such as
+ * the community plugins it installs, each under its label.
+ */
+function pluginsPage(nested: readonly SettingsSection[]): SettingsSection {
+  return {
+    id: 'plugins',
+    label: 'Plugins',
+    headings: [heading(BUILT_IN), ...nested.map((s) => heading(s.label))],
+    files: [...new Set([PLUGINS_FILE, PLUGINS_LOCAL_FILE, ...nested.flatMap((s) => s.files)])],
+    Component: ({ remote }) => (
+      <>
+        <SettingsHeading title={BUILT_IN} />
+        <DescriptorSection section="plugins" />
+        {nested.map(({ id, label, Component }) => (
+          <section key={id}>
+            <SettingsHeading title={label} />
+            <Component remote={remote} />
+          </section>
+        ))}
+      </>
+    ),
+  }
+}
+
+/** The vault itself, who you are, and the app you run: always last. */
 const VAULT_AND_ACCOUNT: readonly SettingsSection[] = [
   {
     id: 'vault',
@@ -95,19 +128,55 @@ const VAULT_AND_ACCOUNT: readonly SettingsSection[] = [
     files: [],
     Component: () => <AccountSection />,
   },
+  {
+    id: 'updates',
+    label: 'Updates',
+    headings: [heading(HOLI_UPDATES), heading(VAULT_SKILLS)],
+    // Holi's own updates are this machine's; the vault's choice about its
+    // skills is in its settings file.
+    files: [SETTINGS_FILE],
+    Component: () => (
+      <>
+        <SettingsHeading title={HOLI_UPDATES} />
+        <UpdatesSection />
+        <SettingsHeading title={VAULT_SKILLS} />
+        <VaultSkillsSection />
+      </>
+    ),
+  },
 ]
 
 /** Core's sections alone. */
 export const CORE_SETTINGS_SECTIONS: readonly SettingsSection[] = [
   ...VAULT_CONTENT,
+  pluginsPage([]),
   ...VAULT_AND_ACCOUNT,
 ]
 
+/** A section of a running plugin's own settings, for each one that declares
+ *  any (`PluginInfo.settings`), named after the plugin. */
+const pluginOwnSettingsAtom = atom((get): readonly SettingsSection[] =>
+  get(runningPluginsAtom)
+    .filter(({ info }) => (info.settings ?? []).length > 0)
+    .map(({ info }) => ({
+      id: `${info.id}-settings`,
+      label: info.label,
+      headings: [],
+      files: [PLUGINS_FILE, PLUGINS_LOCAL_FILE],
+      Component: () => <PluginSettingsSection info={info} />,
+    })),
+)
+
 /** Every section there is in the open vault. */
-export const settingsSectionsAtom = atom((get): readonly SettingsSection[] => [
-  ...VAULT_CONTENT,
-  ...get(pluginSettingsSectionsAtom),
-  ...VAULT_AND_ACCOUNT,
-])
+export const settingsSectionsAtom = atom((get): readonly SettingsSection[] => {
+  const plugins = get(pluginSettingsSectionsAtom)
+  return [
+    ...VAULT_CONTENT,
+    pluginsPage(plugins.filter((s) => s.within === 'plugins')),
+    ...get(pluginOwnSettingsAtom),
+    ...plugins.filter((s) => s.within === undefined),
+    ...VAULT_AND_ACCOUNT,
+  ]
+})
 
 export const DEFAULT_SECTION_ID = VAULT_CONTENT[0]!.id

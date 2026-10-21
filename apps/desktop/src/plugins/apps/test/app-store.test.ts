@@ -17,7 +17,12 @@ registry.register(['store'], storeCapabilities())
 // `docs.read`, for the refusal of records read as files.
 registry.register(
   VAULT_NAMESPACES,
-  vaultCapabilities({ updateSkills: async () => ({ summary: '', conflicts: null }) }),
+  vaultCapabilities({
+    updateSkills: async () => ({ summary: '', changed: [], conflicts: null }),
+    skillsStatus: async () => ({ pending: [], release: null, autoUpdate: false }),
+    open: () => {},
+    screenshot: async () => new Uint8Array(),
+  }),
 )
 
 let root: string
@@ -54,6 +59,7 @@ function call(method: string, params: Record<string, unknown>, door: Door = 'app
     root,
     bundle: door === 'app' ? 'Work/Tracker.app' : null,
     snapshot: async () => emptyVaultSnapshot(),
+    claims: async () => [],
     core: noCoreServices(),
   }
   return registry.run(method, door, ctx, params).then((r) => r.value)

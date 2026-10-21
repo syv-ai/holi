@@ -14,7 +14,7 @@ import {
   VAULT_SETTING_DEFAULTS,
   VAULT_SETTINGS,
   parseSettingsText,
-  resolveVaultSettings,
+  resolveAppSettings,
   seedSettings,
   seedSettingsText,
   writeSettingsText,
@@ -53,7 +53,7 @@ describe('a seeded settings file', () => {
   })
 
   it('resolves to exactly the defaults, like the file it replaces', () => {
-    const resolved = resolveVaultSettings(seeded, seededLocal)
+    const resolved = resolveAppSettings(seeded, seededLocal)
     expect(resolved.warnings).toEqual([])
     expect(resolved.dailyNotes).toBe(true)
     expect(resolved.home).toBe(VAULT_SETTING_DEFAULTS.home)
@@ -113,6 +113,6 @@ describe('the old JSON still reads', () => {
     // vault caught mid-migration from being unreadable.
     const json = '{"dailyNotes": false, "editorFont": "serif"}'
     expect(parseSettingsText(json)).toEqual({ dailyNotes: false, editorFont: 'serif' })
-    expect(resolveVaultSettings(json, null).editorFont).toBe('serif')
+    expect(resolveAppSettings(json, null).editorFont).toBe('serif')
   })
 })

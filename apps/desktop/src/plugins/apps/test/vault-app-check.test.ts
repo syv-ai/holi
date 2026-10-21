@@ -181,15 +181,23 @@ describe('the boundaries the skill states', () => {
     expect(text).toMatch(/holi\.data/)
   })
 
-  it('reports a write through the bridge — an app shows, the agent changes', async () => {
-    const text = said(await wrote('retro.app/app.js', 'await holi.docs.write("a.md", "x")\n'))
-    expect(text).toMatch(/cannot write/)
+  it('reports a write the bridge does not have', async () => {
+    const text = said(await wrote('retro.app/app.js', 'await holi.docs.delete("a.md")\n'))
+    expect(text).toMatch(/no such write/)
   })
 
   it('reports a hand-added bridge script tag', async () => {
     const html = '<!doctype html>\n<script src="holi-bridge.js"></script>\n<h1>hi</h1>\n'
     const text = said(await wrote('retro.app/index.html', html))
     expect(text).toMatch(/bridge/)
+  })
+
+  it('reports a pop-up dialog, which the frame answers without showing', async () => {
+    for (const source of ['if (confirm("Delete?")) remove()\n', 'window.alert("Saved")\n']) {
+      expect(said(await wrote('retro.app/app.js', source))).toMatch(/without pop-up dialogs/)
+    }
+    const own = 'const dialog = { confirm() {} }\ndialog.confirm()\nfunction prompt() {}\n'
+    expect(said(await wrote('retro.app/app.js', own))).toBe('')
   })
 
   it('nudges about a hard-coded colour, below the rest', async () => {

@@ -12,12 +12,45 @@ import type { TurnRecord } from '../main/host/turn-log'
 
 const VAULT = 'owner/repo'
 
+describe('telling a turn ended', () => {
+  const ctx: TurnVault = {
+    root: '/work',
+    head: () => Promise.resolve('sha'),
+    commitNow: () => Promise.resolve(null),
+    pauseSync: () => () => {},
+  }
+
+  it('says so on Stop and on a confirmed idle, and not for a session that died', () => {
+    let clock = 0
+    const ended: string[] = []
+    const coordinator = createTurnCoordinator({
+      vault: () => ctx,
+      log: () => {},
+      now: () => clock,
+      idleConfirmMs: 1_000,
+      onTurnEnd: (id) => ended.push(id),
+    })
+    coordinator.begin('a')
+    coordinator.end('a')
+    coordinator.begin('b')
+    coordinator.noteIdle('b')
+    clock = 1_500
+    coordinator.noteIdle('b')
+    coordinator.begin('c')
+    coordinator.forget('c')
+    // Not mid-turn: a Stop with no turn open is nothing to tell.
+    coordinator.end('d')
+    expect(ended).toEqual(['a', 'b'])
+  })
+})
+
 /** The recording is fire-and-forget, so a test has to let the microtasks run. */
 const settle = () => new Promise((r) => setTimeout(r, 10))
 
 function rig(
   opts: {
     commitNow?: () => Promise<string | null>
+    snapshot?: () => Promise<string | null>
     turnSafetyMs?: number
     idleConfirmMs?: number
     withLog?: boolean
@@ -51,6 +84,7 @@ function rig(
     vault,
     log: () => {},
     now: () => clock,
+    ...(opts.snapshot === undefined ? {} : { snapshot: opts.snapshot }),
     ...(opts.turnSafetyMs === undefined ? {} : { turnSafetyMs: opts.turnSafetyMs }),
     ...(opts.idleConfirmMs === undefined ? {} : { idleConfirmMs: opts.idleConfirmMs }),
     ...(opts.withLog === false
@@ -109,6 +143,33 @@ describe('the working set', () => {
     const byId = Object.fromEntries(r.appended.map((rec) => [rec.sessionId, rec]))
     expect(byId['a']).toMatchObject({ base: 'base-sha', end: 'end-sha', overlapped: true })
     expect(byId['b']).toMatchObject({ base: 'base-sha', end: 'end-sha', overlapped: true })
+  })
+
+  it('records a turn that ends under another one at once, against the working tree', async () => {
+    const r = rig({ snapshot: () => Promise.resolve('tree-a') })
+    r.coordinator.begin('a')
+    r.coordinator.begin('b')
+    r.coordinator.end('a')
+    await settle()
+    // `b` still holds the pause, and `a`'s next prompt must already see its end.
+    expect(r.resumes()).toBe(0)
+    expect(r.appended).toEqual([expect.objectContaining({ sessionId: 'a', end: 'tree-a' })])
+
+    r.coordinator.end('b')
+    await settle()
+    expect(r.appended.map((rec) => [rec.sessionId, rec.end])).toEqual([
+      ['b', 'end-sha'],
+      ['a', 'tree-a'],
+    ])
+  })
+
+  it('ends such a turn at HEAD when the snapshot fails', async () => {
+    const r = rig({ snapshot: () => Promise.resolve(null) })
+    r.coordinator.begin('a')
+    r.coordinator.begin('b')
+    r.coordinator.end('a')
+    await settle()
+    expect(r.appended).toEqual([expect.objectContaining({ sessionId: 'a', end: 'base-sha' })])
   })
 
   it('does not mark two sequential turns as overlapping', async () => {

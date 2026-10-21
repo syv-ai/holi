@@ -1,3 +1,4 @@
+import { THEME_TOKENS } from '@holi/shared'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, test } from 'vitest'
@@ -132,24 +133,21 @@ describe('index.css is the one motion vocabulary', () => {
 })
 
 /**
- * The ritual keeps its own motion, and its own trap.
+ * The ritual paints with Holi's tokens and nothing of its own.
  *
- * `.onboarding-ritual` redefines `--primary`, `--background`, `--border` and
- * the rest as bare HSL TRIPLETS, because that stylesheet applies alpha with
- * `hsl(var(--x) / a)`. `color-mix()` wants a <color>, so mixing from one of
- * those is invalid and the whole declaration is silently dropped — which is
- * exactly what had happened to the wake ring: it never drew, and only the
- * `scale()` halves of its keyframe ever ran. The full-colour aliases are the
- * `--color-*` pair the same block defines.
+ * It once carried a private palette of bare HSL triplets, and every
+ * `color-mix()` of one was silently dropped: a <color> was wanted. With Holi's
+ * tokens there is no triplet to mix, so the trap is gone as long as nothing
+ * brings a palette back.
  */
-test('the ritual mixes only from its full-colour aliases', () => {
+test('the ritual paints only with Holi’s tokens', () => {
   const css = readFileSync(
     fileURLToPath(
       new URL('../src/renderer/src/features/onboarding/onboarding-ritual.css', import.meta.url),
     ),
     'utf8',
   )
-  const mixedTokens = [...css.matchAll(/color-mix\([^)]*?var\((--[\w-]+)\)/g)].map((m) => m[1])
-  expect(mixedTokens.length).toBeGreaterThan(0)
-  expect(mixedTokens.filter((t) => !t.startsWith('--color-'))).toEqual([])
+  expect(css).not.toMatch(/hsl\(var\(/)
+  const redefined = THEME_TOKENS.filter((slug) => new RegExp(`--${slug}\\s*:`).test(css))
+  expect(redefined).toEqual([])
 })

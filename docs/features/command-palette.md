@@ -79,7 +79,9 @@ app-level action is one row of one command table that keys, palette and menu all
 - The palette as a sixth entry in the form-dialog registry: it is a different overlay class, and
   its keys must work while a form dialog is up.
 - Rebindable keys and a keybindings file; VS Code's other prefixes (`@`, `:`, `#`, `?`);
-  frontmatter titles in rows (the snapshot has none, and the tree shows filenames).
+  frontmatter titles in rows (the snapshot has none, and the tree shows filenames). The only keys
+  a person picks are the [quick agent](quick-agent.md)'s two global ones (a new agent, and its
+  dock), because they are taken from every other app on the machine.
 
 ## Code
 

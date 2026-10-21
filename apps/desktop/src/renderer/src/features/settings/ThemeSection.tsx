@@ -10,10 +10,10 @@
  * shared; `THEME_LOCAL_FILE` is this machine's and overrides it per key. Same
  * split as settings.
  *
- * **A token with no value is the normal case.** Every cell shows the colour *in
- * force* (Holi's default, resolved by the browser), and offers a reset only
- * where this vault set it. A reset deletes the key rather than writing a
- * blank, which is why the patch carries `null`.
+ * **The theme is the vault's.** It is seeded with Holi's whole theme once and
+ * never filled in again. Every cell shows the colour in force and offers a
+ * reset where it differs from Holi's, which writes Holi's value back; a whole
+ * mode resets at the foot of the table.
  *
  * **Rendered from `THEME_TOKEN_GROUPS`**, so adding a token to the whitelist
  * puts it in this pane.
@@ -43,6 +43,9 @@ import { trpc } from '@/lib/trpc'
 import { activeModeAtom } from '@/state/color-scheme'
 
 type Layer = 'committed' | 'local'
+
+/** Holi's own theme, both modes. */
+type HoliTheme = Record<ThemeMode, Record<string, string>>
 
 /** A pair of buttons that read as one choice, the same shape the settings rows
  *  use for `choice`. */
@@ -97,6 +100,7 @@ function TokenCell({
   mode,
   block,
   set,
+  holi,
   onSet,
   onClear,
 }: {
@@ -106,6 +110,8 @@ function TokenCell({
   block: Record<string, string>
   /** What this vault says for this token here. Absent when it says nothing. */
   set: string | undefined
+  /** Holi's own value here: what a reset writes. */
+  holi: string | undefined
   onSet: (value: string) => void
   onClear: () => void
 }): React.JSX.Element {
@@ -148,10 +154,10 @@ function TokenCell({
       <IconButton
         icon={RotateCcw}
         label={`reset ${label}`}
-        tooltip="back to Holi’s default"
-        disabled={set === undefined}
+        tooltip="back to Holi’s value"
+        disabled={set === holi}
         onClick={onClear}
-        className={set === undefined ? 'invisible' : undefined}
+        className={set === holi ? 'invisible' : undefined}
       />
     </div>
   )
@@ -160,11 +166,16 @@ function TokenCell({
 export function ThemeSection({ remote }: { remote: string }): React.JSX.Element {
   const [layer, setLayer] = useState<Layer>('committed')
   const [theme, setTheme] = useState<ResolvedTheme | null>(null)
+  const [holi, setHoli] = useState<HoliTheme | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const read = useCallback(async () => {
     setTheme(await trpc.theme.read.query({ remote }))
   }, [remote])
+
+  useEffect(() => {
+    void trpc.theme.holi.query().then(setHoli)
+  }, [])
 
   useEffect(() => {
     void read()
@@ -197,12 +208,13 @@ export function ThemeSection({ remote }: { remote: string }): React.JSX.Element 
 
       {/* **Above the theme's own loading gate, not behind it.** Light/dark is a
           settings row and the theme file a separate read, so it need not wait. */}
-      {theme === null ? (
+      {theme === null || holi === null ? (
         <p className="py-4 text-xs text-muted-foreground">Reading this vault&rsquo;s theme…</p>
       ) : (
         <ThemeTokens
           remote={remote}
           theme={theme}
+          holi={holi}
           layer={layer}
           setLayer={setLayer}
           error={error}
@@ -223,6 +235,7 @@ export function ThemeSection({ remote }: { remote: string }): React.JSX.Element 
 function ThemeTokens({
   remote,
   theme,
+  holi,
   layer,
   setLayer,
   error,
@@ -230,6 +243,7 @@ function ThemeTokens({
 }: {
   remote: string
   theme: ResolvedTheme
+  holi: HoliTheme
   layer: Layer
   setLayer: (next: Layer) => void
   error: string | null
@@ -324,8 +338,9 @@ function ThemeTokens({
                       mode={mode}
                       block={theme[mode]}
                       set={theme[mode][slug]}
+                      holi={holi[mode][slug]}
                       onSet={(value) => void write(mode, slug, value)}
-                      onClear={() => void write(mode, slug, null)}
+                      onClear={() => void write(mode, slug, holi[mode][slug] ?? null)}
                     />
                   ))}
                 </div>
@@ -341,56 +356,57 @@ function ThemeTokens({
 }
 
 /**
- * Back to the standard look, in one act.
+ * One palette back to Holi's, in one act.
  *
- * **Not the same control as a row's reset**: a row's reset deletes one key,
- * this deletes both theme files.
+ * **Not the same control as a row's reset**: a row's reset writes one token,
+ * this rewrites the whole mode in the shared file and clears this machine's
+ * overrides for it. The other mode is left alone.
  *
- * Confirmed, because deleting the COMMITTED file removes the shared theme for
- * collaborators too, on their next sync.
+ * Confirmed first, because the shared file is committed: collaborators get
+ * the reset on their next sync, and the vault's own colours for that mode are
+ * gone from it.
  */
 function ResetTheme({ remote }: { remote: string }): React.JSX.Element {
-  const [confirming, setConfirming] = useState(false)
+  const [confirming, setConfirming] = useState<ThemeMode | null>(null)
 
-  const reset = (): void => {
-    // The running app reverts itself: the file deletion fires the watcher, which
-    // re-reads the (now empty) theme and clears the applied tokens.
-    void trpc.theme.reset.mutate({ remote }).finally(() => setConfirming(false))
+  const reset = (mode: ThemeMode): void => {
+    // The running app follows through the watcher, as for any theme write.
+    void trpc.theme.reset.mutate({ remote, mode }).finally(() => setConfirming(null))
   }
 
   return (
     // **No rule of its own**: the view's footer draws one, and two would sit a
     // few pixels apart. Spacing separates it.
     <div className="mt-6 flex items-center justify-between gap-3">
-      <SettingsNote>
-        Clear every colour this vault has set, in both files and both modes.
-      </SettingsNote>
-      <Button
-        variant="secondary"
-        size="xs"
-        className="shrink-0"
-        onClick={() => setConfirming(true)}
-      >
-        Reset theme
-      </Button>
+      <SettingsNote>Put a palette back to Holi&rsquo;s, in both files.</SettingsNote>
+      <div className="flex shrink-0 gap-1.5">
+        {MODES.map((mode) => (
+          <Button key={mode} variant="secondary" size="xs" onClick={() => setConfirming(mode)}>
+            {mode === 'light' ? 'Reset light' : 'Reset dark'}
+          </Button>
+        ))}
+      </div>
 
-      {confirming && (
-        <Dialog open onClose={() => setConfirming(false)} size="sm">
+      {confirming !== null && (
+        <Dialog open onClose={() => setConfirming(null)} size="sm">
           <div className="grid gap-4">
-            <Dialog.Header>Reset theme?</Dialog.Header>
+            <Dialog.Header>
+              {confirming === 'light' ? 'Reset the light palette?' : 'Reset the dark palette?'}
+            </Dialog.Header>
             <Dialog.Body>
               <p className="text-xs text-muted-foreground">
-                Deletes <span className="font-mono">{THEME_FILE}</span> and{' '}
-                <span className="font-mono">{THEME_LOCAL_FILE}</span>, returning the vault to the
-                standard look. The shared theme is removed for collaborators on the next sync.
+                Writes Holi&rsquo;s {confirming} palette into{' '}
+                <span className="font-mono">{THEME_FILE}</span> and clears this machine&rsquo;s{' '}
+                {confirming} overrides in <span className="font-mono">{THEME_LOCAL_FILE}</span>. The
+                vault&rsquo;s own {confirming} colours are replaced for everyone on the next sync.
               </p>
             </Dialog.Body>
             <Dialog.Footer>
-              <Button variant="ghost" size="sm" onClick={() => setConfirming(false)}>
+              <Button variant="ghost" size="sm" onClick={() => setConfirming(null)}>
                 Cancel
               </Button>
-              <Button variant="destructive" size="sm" onClick={reset}>
-                Reset theme
+              <Button variant="destructive" size="sm" onClick={() => reset(confirming)}>
+                {confirming === 'light' ? 'Reset light' : 'Reset dark'}
               </Button>
             </Dialog.Footer>
           </div>

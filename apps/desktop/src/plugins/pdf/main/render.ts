@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { wikiLinksToText } from '@holi/shared'
 import type { TemplateField } from '../shared/template-fields'
+import { drawMermaid, type DrawDiagrams } from './mermaid'
 import { composeWrapper } from './wrapper'
 
 const exec = promisify(execFile)
@@ -34,6 +35,14 @@ export interface RenderInput {
   /** The template's declared fields — drives meta coercion in the wrapper. */
   fields: TemplateField[]
   meta: Record<string, string>
+  /** Draws the note's mermaid fences. Absent, they stay code blocks. */
+  diagrams?: DrawDiagrams
+}
+
+export interface RenderResult {
+  /** What did not come out as written, for the person: a diagram mermaid
+   *  could not draw. Empty when everything did. */
+  warnings: string[]
 }
 
 /**
@@ -43,6 +52,8 @@ export interface RenderInput {
  * absolute path — no single narrower root spans them. Throws with typst's
  * stderr on a non-zero exit. `--font-path` is added (via `fontPathArgs`) when the
  * template has a seeded `_brand/fonts` sibling — the branded templates' Raleway.
+ * A mermaid diagram that will not draw does not fail the PDF: it stays code,
+ * and the result says so.
  */
 export async function renderPdf({
   typstBin,
@@ -51,7 +62,8 @@ export async function renderPdf({
   outPath,
   fields,
   meta,
-}: RenderInput): Promise<void> {
+  diagrams,
+}: RenderInput): Promise<RenderResult> {
   const work = await mkdtemp(join(tmpdir(), 'holi-typst-'))
   try {
     // Preprocess the note into the work dir: wiki-links → their display text, so
@@ -60,8 +72,17 @@ export async function renderPdf({
     // cmarker already resolves note-relative images against its own package dir,
     // not the note dir, so moving the note regresses nothing; if that is fixed
     // later, the image base must be the ORIGINAL note dir (dirname(notePath)).
+    //
+    // Wiki-links come out around the diagrams only: mermaid has its own `[[…]]`
+    // (a subroutine shape), which must reach mermaid as written, and a drawn
+    // SVG may hold `[[` in a label.
+    const original = await readFile(notePath, 'utf8')
+    const drawn =
+      diagrams === undefined
+        ? { markdown: wikiLinksToText(original), warnings: [] }
+        : await drawMermaid(original, diagrams, wikiLinksToText)
     const noteForTypst = join(work, 'note.md')
-    await writeFile(noteForTypst, wikiLinksToText(await readFile(notePath, 'utf8')))
+    await writeFile(noteForTypst, drawn.markdown)
 
     const wrapperPath = join(work, 'wrapper.typ')
     await writeFile(
@@ -74,7 +95,15 @@ export async function renderPdf({
         meta,
       }),
     )
-    await exec(typstBin, ['compile', wrapperPath, outPath, '--root', '/', ...fontPathArgs(templateDir)])
+    await exec(typstBin, [
+      'compile',
+      wrapperPath,
+      outPath,
+      '--root',
+      '/',
+      ...fontPathArgs(templateDir),
+    ])
+    return { warnings: drawn.warnings }
   } catch (err) {
     const stderr = (err as { stderr?: string }).stderr ?? String(err)
     throw new Error(`typst compile failed: ${stderr}`)

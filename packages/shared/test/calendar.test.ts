@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { gridFocusMove, monthGrid } from '../src/calendar'
+import { gridFocusMove, isoWeek, monthGrid } from '../src/calendar'
 
 const flat = (year: number, month: number) => monthGrid(year, month).flat()
 
@@ -87,5 +87,14 @@ describe('gridFocusMove', () => {
     for (const key of ['Tab', 'Escape', 'Enter', ' ', 'a']) {
       expect(gridFocusMove('2026-08-27', key)).toBeNull()
     }
+  })
+})
+
+describe('isoWeek', () => {
+  it('numbers a week by its Thursday, as ISO does', () => {
+    expect(isoWeek('2026-09-28')).toBe(40)
+    expect(isoWeek('2026-01-01')).toBe(1)
+    expect(isoWeek('2026-12-31')).toBe(53)
+    expect(isoWeek('2027-01-01')).toBe(53)
   })
 })

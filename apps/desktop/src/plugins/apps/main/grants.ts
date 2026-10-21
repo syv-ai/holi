@@ -16,7 +16,7 @@
  * A personal `.local.app` needs the flag but no approval: its code was written
  * on this machine and its records never sync.
  *
- * Plain JSON in userData, like `google/calendar-prefs.ts`: no credential here.
+ * Plain JSON in userData: no credential here.
  */
 import { createHash } from 'node:crypto'
 import { readdir, readFile, readlink } from 'node:fs/promises'
@@ -26,6 +26,7 @@ import {
   DATA_DIR,
   isAppPrivatePath,
   isLocalOnlyPath,
+  sameLogin,
   vaultRelPath,
 } from '@holi/shared'
 import {
@@ -169,7 +170,7 @@ export async function bundleAuthorship(
 export function commitLogin(commit: BundleCommit, members: readonly string[]): string | null {
   const noreply = /^(?:\d+\+)?([A-Za-z0-9-]+)@users\.noreply\.github\.com$/i.exec(commit.email)
   if (noreply !== null) return noreply[1]!
-  return members.find((login) => login.toLowerCase() === commit.author.toLowerCase()) ?? null
+  return members.find((login) => sameLogin(login, commit.author)) ?? null
 }
 
 /** The bundle's manifest, or null when it has none. */

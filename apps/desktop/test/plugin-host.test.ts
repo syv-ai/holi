@@ -1,6 +1,6 @@
 /**
- * The plugin host with a test-only plugin: enablement gates dispatch and
- * seeding, a plugin starts once per process, and stops at quit.
+ * The plugin host with test-only plugins: enablement gates dispatch and
+ * seeding, and what is started follows the open vault's settings.
  */
 import { mkdtemp, readFile, rm, unlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -9,16 +9,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createCapabilityHost } from '../src/main/capabilities/dispatch'
 import { createCapabilityRegistry } from '../src/main/capabilities/registry'
 import { noCoreServices } from '../src/main/capabilities/services'
-import {
-  cap,
-  noParams,
-  type AppContext,
-  type MainPlugin,
-  type VaultCtx,
-} from '../src/main/plugin-api'
+import { cap, noParams, type MainPlugin, type PluginCtx } from '../src/main/plugin-api'
 import type { PluginEvent } from '../src/main/plugin-host/events'
 import { schemeEntries, serveScheme } from '../src/main/plugin-host/schemes'
 import { createPluginHost, type OpenVault } from '../src/main/plugin-host/host'
+import { install } from '../src/main/plugin-host/installed'
 import { coreSeed } from '../src/main/vault/seed/core'
 import { readSeedState } from '../src/main/vault/seed/state'
 import { writeVaultSettings } from '../src/main/vault/settings'
@@ -36,23 +31,35 @@ async function tempDir(): Promise<string> {
   return dir
 }
 
+/** An open vault the test drives: what `host.open` would have made active. */
+function openVault(remote: string, root: string, log: string[] = []): OpenVault {
+  return {
+    remote,
+    root,
+    pause: (reason) => void log.push(`pause ${reason}`),
+    resume: () => void log.push('resume'),
+    commitNow: async () => null,
+    repo: { head: async () => 'sha' },
+  }
+}
+
 function rig(
   opts: {
     default?: boolean
     roots?: Record<string, string>
     live?: string
-    open?: () => OpenVault | null
-    activateVault?: MainPlugin['activateVault']
+    plugins?: MainPlugin[]
   } = {},
 ) {
   const calls = { started: 0, stopped: 0 }
   const sent: { channel: string; event: PluginEvent }[] = []
   const listeners = new Map<string, (message: unknown) => void>()
-  let context: AppContext | null = null
+  let context: PluginCtx | null = null
+  let open: OpenVault | null = null
   const fake: MainPlugin = {
     info: { id: 'fake', label: 'Fake', default: opts.default ?? true },
     seed: { id: 'fake', once: {}, shipped: { [SKILL]: '# fake\n' } },
-    activateApp(ctx) {
+    activate(ctx) {
       context = ctx
       calls.started += 1
       ctx.register(['fake'], {
@@ -62,15 +69,15 @@ function rig(
         calls.stopped += 1
       }
     },
-    ...(opts.activateVault === undefined ? {} : { activateVault: opts.activateVault }),
   }
+  const plugins = opts.plugins ?? [fake]
   const registry = createCapabilityRegistry()
   const host = createPluginHost({
-    plugins: [fake],
+    plugins,
     registry,
     userData: '/nowhere',
-    coreSeeds: [coreSeed([fake.info])],
-    active: opts.open ?? (() => null),
+    coreSeeds: [coreSeed(plugins.map((p) => p.info))],
+    active: () => open,
     rootFor: async (remote) => opts.roots?.[remote] ?? null,
     events: {
       send: (channel, event) => void sent.push({ channel, event }),
@@ -83,6 +90,10 @@ function rig(
     openAppDoor: (opener) => capabilities.openAppDoor(opener),
     route: () => () => {},
     binDir: () => '/holi/bin',
+    githubToken: () => null,
+    frameOrigin: () => () => {},
+    notify: () => false,
+    focused: () => false,
   })
   let root = ''
   const capabilities = createCapabilityHost({
@@ -99,73 +110,151 @@ function rig(
   }
   /** What the renderer sends the plugin's main side. */
   const fromRenderer = (message: unknown) => listeners.get('plugin:fake')?.(message)
-  return { host, registry, calls, ping, sent, fromRenderer, ctx: () => context! }
+  /** Make `vault` the open one and reconcile, as the router does after `host.open`. */
+  const enter = async (vault: OpenVault | null) => {
+    open = vault
+    await host.reconcile('open')
+  }
+  return { host, registry, calls, ping, sent, fromRenderer, enter, ctx: () => context! }
 }
 
 const turn = (root: string, on: boolean) =>
   writeVaultSettings(root, { committed: { plugins: { fake: on } } })
 
+/** A plugin that logs its start and stop. */
+function logged(
+  log: string[],
+  id: string,
+  info: Partial<MainPlugin['info']> = {},
+  activate?: MainPlugin['activate'],
+): MainPlugin {
+  return {
+    info: { id, label: id, default: true, ...info },
+    activate:
+      activate ??
+      (() => {
+        log.push(`start ${id}`)
+        return () => void log.push(`stop ${id}`)
+      }),
+  }
+}
+
 describe('the plugin host', () => {
-  it('starts an enabled plugin once, however often a vault is entered', async () => {
-    const { host, calls, registry } = rig()
+  it('starts an enabled plugin once, however often the vault reconciles', async () => {
+    const { host, calls, registry, enter } = rig()
     const root = await tempDir()
-    await host.enter(root)
-    await host.enter(root)
+    await enter(openVault('o/r', root))
+    await host.reconcile('snapshot')
+    await host.reconcile('settings')
     expect(calls.started).toBe(1)
     expect(registry.pluginOf('fake.ping')).toBe('fake')
 
-    await host.disposeAll()
+    await host.stop()
     expect(calls.stopped).toBe(1)
     expect(registry.has('fake.ping')).toBe(false)
   })
 
   it('does not start a plugin the vault has off', async () => {
-    const { host, calls } = rig({ default: false })
-    await host.enter(await tempDir())
+    const { calls, enter } = rig({ default: false })
+    await enter(openVault('o/r', await tempDir()))
     expect(calls.started).toBe(0)
   })
 
   it("refuses a plugin's capability in a vault that has it off", async () => {
-    const { host, ping } = rig()
+    const { ping, enter } = rig()
     const on = await tempDir()
     const off = await tempDir()
     await turn(off, false)
-    await host.enter(on)
+    await enter(openVault('o/r', on))
 
     expect((await ping(on)).value).toBe('pong')
     await expect(ping(off)).rejects.toThrow('no such method: fake.ping')
   })
 })
 
-describe('vault activation', () => {
-  it('runs once the vault is open, once per open, and is disposed at leave while still open', async () => {
+describe('the lifecycle', () => {
+  it('stops a plugin turned off by hand, and starts it again, seeded, when turned back on', async () => {
+    const { host, calls, registry, enter } = rig()
+    const root = await tempDir()
+    await enter(openVault('o/r', root))
+
+    await turn(root, false)
+    await host.reconcile('snapshot')
+    expect(calls).toEqual({ started: 1, stopped: 1 })
+    expect(registry.has('fake.ping')).toBe(false)
+
+    await turn(root, true)
+    await host.reconcile('snapshot')
+    expect(calls).toEqual({ started: 2, stopped: 1 })
+    expect(registry.pluginOf('fake.ping')).toBe('fake')
+  })
+
+  it('starts what a plugin requires first, and stops it last', async () => {
+    const log: string[] = []
+    const plugins = [
+      logged(log, 'face', { requires: ['base'] }),
+      logged(log, 'skin', { requires: ['face'] }),
+      logged(log, 'base'),
+    ]
+    const { host, enter } = rig({ plugins })
+    const root = await tempDir()
+    await enter(openVault('o/r', root))
+    expect(log).toEqual(['start base', 'start face', 'start skin'])
+
+    log.length = 0
+    await writeVaultSettings(root, { committed: { plugins: { base: false } } })
+    await host.reconcile('settings')
+    expect(log).toEqual(['stop skin', 'stop face', 'stop base'])
+  })
+
+  it('keeps nothing across a switch: every plugin stops, and starts fresh in the next vault', async () => {
+    const log: string[] = []
+    const plugins = [logged(log, 'base')]
+    const { enter } = rig({ plugins })
+    await enter(openVault('o/a', await tempDir()))
+    await enter(openVault('o/b', await tempDir()))
+    expect(log).toEqual(['start base', 'stop base', 'start base'])
+    await enter(null)
+    expect(log.at(-1)).toBe('stop base')
+  })
+
+  it('says why a plugin did not start, and tries again on a write but not on a bare change', async () => {
+    let fails = true
+    const log: string[] = []
+    const plugins = [
+      logged(log, 'base', {}, () => {
+        log.push('try base')
+        if (fails) throw new Error('keychain locked')
+        return () => {}
+      }),
+      logged(log, 'face', { requires: ['base'] }),
+    ]
+    const { host, enter } = rig({ plugins })
+    await enter(openVault('o/r', await tempDir()))
+    expect(host.failures('o/r')).toEqual({ base: 'keychain locked', face: 'base did not start.' })
+
+    await host.reconcile('snapshot')
+    expect(log).toEqual(['try base'])
+
+    fails = false
+    await host.reconcile('settings')
+    expect(log).toEqual(['try base', 'try base', 'start face'])
+    expect(host.failures('o/r')).toEqual({})
+  })
+
+  it('binds the context to the vault, and lets go of its holds when it stops', async () => {
     const root = await tempDir()
     const log: string[] = []
-    let open: OpenVault | null = null
-    let ctx: VaultCtx | null = null
-    const { host } = rig({
-      open: () => open,
-      activateVault(c) {
+    let ctx: PluginCtx | null = null
+    const plugins = [
+      logged(log, 'base', {}, (c) => {
         ctx = c
-        log.push(`activate ${c.remote}`)
-        return () => void log.push(`dispose, open: ${open?.remote ?? 'none'}`)
-      },
-    })
-    await host.opened()
-    expect(log).toEqual([])
-
-    open = {
-      remote: 'o/r',
-      root,
-      pause: (reason) => void log.push(`pause ${reason}`),
-      resume: () => void log.push('resume'),
-      commitNow: async () => null,
-      repo: { head: async () => 'sha' },
-    }
-    await host.enter(root)
-    await host.opened()
-    await host.opened()
-    expect(log).toEqual(['activate o/r'])
+        return () => void log.push('stop base')
+      }),
+    ]
+    const { host, enter } = rig({ plugins })
+    await enter(openVault('o/r', root, log))
+    expect([ctx!.remote, ctx!.root]).toEqual(['o/r', root])
 
     // Holds stack: the loop runs again only when the last is released.
     const first = ctx!.pauseSync('one')
@@ -173,12 +262,31 @@ describe('vault activation', () => {
     first()
     first()
     second()
-    expect(log.slice(1)).toEqual(['pause one', 'pause two', 'pause two', 'resume'])
+    expect(log).toEqual(['pause one', 'pause two', 'pause two', 'resume'])
 
-    await host.leave()
-    expect(log.at(-1)).toBe('dispose, open: o/r')
-    open = null
-    expect(() => ctx!.pauseSync('late')).toThrow('not the open vault')
+    ctx!.pauseSync('held')
+    await host.stop()
+    expect(log.slice(-3)).toEqual(['pause held', 'stop base', 'resume'])
+  })
+
+  it("tells a started plugin of its vault's snapshots, until it stops", async () => {
+    const root = await tempDir()
+    const heard: string[] = []
+    const plugins = [
+      logged([], 'base', {}, (c) => {
+        c.onSnapshot((snapshot) => heard.push(snapshot.files.map((f) => f.path).join()))
+        return () => {}
+      }),
+    ]
+    const { host, enter } = rig({ plugins })
+    await enter(openVault('o/r', root))
+    const snapshot = (path: string) =>
+      ({ files: [{ path, updatedAt: '' }] }) as unknown as Parameters<typeof host.snapshot>[1]
+    host.snapshot('o/r', snapshot('a.txt'))
+    host.snapshot('o/other', snapshot('b.txt'))
+    await host.stop()
+    host.snapshot('o/r', snapshot('c.txt'))
+    expect(heard).toEqual(['a.txt'])
   })
 })
 
@@ -187,8 +295,8 @@ describe('plugin events', () => {
     const on = await tempDir()
     const off = await tempDir()
     await turn(off, false)
-    const { host, ctx, sent } = rig({ roots: { 'o/on': on, 'o/off': off } })
-    await host.enter(on)
+    const { ctx, sent, enter } = rig({ roots: { 'o/on': on, 'o/off': off } })
+    await enter(openVault('o/on', on))
 
     ctx().emit('o/on', 'tick', 1)
     ctx().emit('o/off', 'tick', 2)
@@ -204,8 +312,8 @@ describe('plugin events', () => {
 
   it("hear only the open vault's messages", async () => {
     const root = await tempDir()
-    const { host, ctx, fromRenderer } = rig({ roots: { 'o/live': root }, live: 'o/live' })
-    await host.enter(root)
+    const { ctx, fromRenderer, enter } = rig({ roots: { 'o/live': root }, live: 'o/live' })
+    await enter(openVault('o/live', root))
     const heard: unknown[] = []
     ctx().on('key', (remote, payload) => heard.push([remote, payload]))
 
@@ -292,9 +400,13 @@ describe('an owned prefix', () => {
       seed: { id: 'owner', owns: ['.claude/'], once: { [OWN]: '{}\n' }, shipped: {} },
     }
     const fake: MainPlugin = {
-      info: { id: 'fake', label: 'Fake', default: true },
+      info: { id: 'fake', label: 'Fake', default: true, addsTo: ['owner'] },
       seed: { id: 'fake', once: {}, shipped: { [SKILL]: '# fake\n', 'fake.md': '# fake\n' } },
     }
+    // Saying nothing of the owner, it may not seed there at all.
+    expect(() => install([owner, { ...fake, info: { ...fake.info, addsTo: [] } }])).toThrow(
+      'without adding to it',
+    )
     const host = createPluginHost({
       plugins: [owner, fake],
       registry: createCapabilityRegistry(),
@@ -308,6 +420,10 @@ describe('an owned prefix', () => {
       },
       route: () => () => {},
       binDir: () => '/holi/bin',
+      githubToken: () => null,
+      frameOrigin: () => () => {},
+      notify: () => false,
+      focused: () => false,
     })
     const root = await tempDir()
     const set = (on: boolean) => writeVaultSettings(root, { committed: { plugins: { owner: on } } })
@@ -327,5 +443,65 @@ describe('an owned prefix', () => {
     await unlink(join(root, SKILL))
     await host.seed(root)
     await expect(readFile(join(root, SKILL), 'utf8')).rejects.toThrow()
+  })
+})
+
+describe('work across vaults', () => {
+  it('runs while some registered vault runs the plugin, and says why', async () => {
+    const [a, b] = [await tempDir(), await tempDir()]
+    const log: string[] = []
+    const whys: (readonly string[])[] = []
+    const across: MainPlugin = {
+      info: { id: 'fake', label: 'Fake', default: false },
+      background: {
+        why: 'reminders',
+        start: async (ctx) => {
+          log.push(`start ${(await ctx.vaults()).map((v) => v.remote).join(' ')}`)
+          return () => void log.push('stop')
+        },
+      },
+    }
+    const host = createPluginHost({
+      plugins: [across],
+      registry: createCapabilityRegistry(),
+      userData: '/nowhere',
+      coreSeeds: [],
+      active: () => null,
+      rootFor: async () => null,
+      events: { send: () => {}, listen: () => () => {}, liveRemote: () => null },
+      openAppDoor: () => {
+        throw new Error('unused')
+      },
+      route: () => () => {},
+      binDir: () => '/holi/bin',
+      githubToken: () => null,
+      frameOrigin: () => () => {},
+      background: {
+        registered: async () => [
+          { remote: 'o/a', root: a },
+          { remote: 'o/b', root: b },
+        ],
+        scan: async () => {
+          throw new Error('unused')
+        },
+        open: () => {},
+        viewerLogin: () => null,
+        onChange: (now) => void whys.push(now),
+      },
+    })
+
+    await host.syncBackground()
+    expect(log).toEqual([])
+    expect(whys.at(-1)).toEqual([])
+
+    await turn(b, true)
+    await host.syncBackground()
+    expect(log).toEqual(['start o/b'])
+    expect(whys.at(-1)).toEqual(['reminders'])
+
+    await turn(b, false)
+    await host.syncBackground()
+    expect(log).toEqual(['start o/b', 'stop'])
+    expect(whys.at(-1)).toEqual([])
   })
 })

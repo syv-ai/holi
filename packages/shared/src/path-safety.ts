@@ -42,17 +42,54 @@ export function vaultRelPath(raw: string): VaultRelPath {
   return segments.join('/') as VaultRelPath
 }
 
-/** Machine-local paths that sync and export layers must never treat as
- * committed vault content, identified **solely** by the `.local.` marker in the
- * file's name or in any folder above it (`.holi/settings/app.local.yaml`,
- * `USER.local.md`, and everything in a personal app, `Home.local.app/…`).
+/** Directories that are never vault content, matched on any path segment: the
+ *  vault store never walks them, and a Holi link never names a file in one.
  *
- * The marker is the whole rule on purpose: a file's git-vs-local status
+ *  `.git` is the load-bearing one: left unignored it would fire the watcher on
+ *  every commit Holi itself makes (an autosave loop), and a stray `.md` under
+ *  `.git/` would surface as a note. */
+export const IGNORED_DIRS: ReadonlySet<string> = new Set(['.git', 'node_modules'])
+
+/** Whether any folder on `path` is one of `IGNORED_DIRS`. */
+export function isInIgnoredDir(path: string): boolean {
+  return path.split('/').some((segment) => IGNORED_DIRS.has(segment))
+}
+
+/** A vault's identity, `owner/repo`: the form the GitHub API and `git clone`
+ *  both speak, and what a Holi link names a vault by. */
+const REMOTE_RE = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/
+
+export function isRemote(value: string): boolean {
+  // Guard the separator cases the regex would otherwise wave through: a leading,
+  // trailing or doubled slash still has two non-empty-looking sides to a lazy
+  // check, and the value ends up in a filesystem path.
+  return REMOTE_RE.test(value) && !value.includes('..')
+}
+
+/** A secret file's name, in any folder: `.env`, `.env.local`, `.env.<x>`,
+ *  `.secrets`, `.secrets.<x>`. The names people already keep secrets under,
+ *  and nothing a note could be called (`env.md`, `secrets.md`). */
+const SECRET_NAME = /^\.(env|secrets)(\..+)?$/i
+
+/** Is `path` a secret file, or inside a folder named like one? Local-only,
+ *  and never readable through a capability (`fences.ts`). */
+export function isSecretPath(path: string): boolean {
+  return path.split('/').some((segment) => SECRET_NAME.test(segment))
+}
+
+/** Machine-local paths that sync and export layers must never treat as
+ * committed vault content, identified by their path alone: the `.local.`
+ * marker in the file's name or in any folder above it
+ * (`.holi/settings/app.local.yaml`, `USER.local.md`, and everything in a
+ * personal app, `Home.local.app/…`), or a secret file's name (`.env`,
+ * `isSecretPath`).
+ *
+ * The path is the whole rule on purpose: a file's git-vs-local status
  * must be legible from its path, never a special-cased exception. A folder
  * counts because git already says so: `*.local.*` has no slash, so it matches
  * a directory and ignores everything under it. */
 export function isLocalOnlyPath(path: string): boolean {
-  return path.split('/').some((segment) => /\.local\./.test(segment))
+  return path.split('/').some((segment) => /\.local\./.test(segment)) || isSecretPath(path)
 }
 
 /**
@@ -63,7 +100,26 @@ export function isLocalOnlyPath(path: string): boolean {
  * `.gitignore`, is the only thing standing between a machine-local file and a
  * commit published to every collaborator.
  */
-export const LOCAL_ONLY_IGNORE_LINES: readonly string[] = ['*.local.*']
+export const LOCAL_ONLY_IGNORE_LINES: readonly string[] = [
+  '*.local.*',
+  '.env',
+  '.env.*',
+  '.secrets',
+  '.secrets.*',
+]
+
+/**
+ * Files an operating system drops into folders on its own: Finder's
+ * `.DS_Store`, Explorer's `Thumbs.db`. Never vault content, and never
+ * committed.
+ *
+ * **A different kind of rule from `LOCAL_ONLY_IGNORE_LINES`**, so a separate
+ * list: those are a person's files kept on one machine, these are nobody's.
+ * Each is a bare file name, which as a `.gitignore` line matches it in every
+ * folder, so this one list is both the vault store's filter and the lines the
+ * seeded `.gitignore` carries.
+ */
+export const OS_JUNK_FILES: readonly string[] = ['.DS_Store', 'Thumbs.db']
 
 /**
  * The sentinel that says a clone IS a Holi vault, and the durable on-disk twin
@@ -128,7 +184,8 @@ export function isKeepFile(path: string): boolean {
  * the hook that asks before mail leaves.
  *
  * The rest of `.holi/` is deliberately absent: that is Holi's own config, not
- * the agent's. `.holi/memory/` is the one agent subtree under it (`MEMORY_DIR`).
+ * the agent's. `.holi/memory/` and `.holi/schedules/` are the agent subtrees
+ * under it (`MEMORY_DIR`, `SCHEDULES_SURFACE_DIR`).
  */
 export const AGENT_SURFACE_FILES: readonly string[] = [
   'AGENTS.md',
@@ -146,10 +203,16 @@ export const AGENT_SURFACE_FILES: readonly string[] = [
  *  below needs it and that module imports this one. */
 export const MEMORY_DIR = '.holi/memory'
 
+/** Scheduled agents' prompts (`schedule.ts`'s `SCHEDULES_DIR`, restated here
+ *  for the same import-order reason as `MEMORY_DIR`). A prompt the agent runs
+ *  unattended is the agent's surface: an app that could write one could make
+ *  the agent do anything it may do without asking. */
+export const SCHEDULES_SURFACE_DIR = '.holi/schedules'
+
 /** Whether a vault-relative path is part of the agent surface. The four named
  *  files match **exactly** (like `isVaultConfigPath`, so `notes/AGENTS.md` is an
- *  ordinary note someone wrote); `.claude/` and `.holi/memory/` match as whole
- *  subtrees.
+ *  ordinary note someone wrote); `.claude/`, `.holi/memory/` and
+ *  `.holi/schedules/` match as whole subtrees.
  *
  *  **`.holi/memory/` is `MEMORY.md` subdivided**: what the user told the
  *  assistant does not become readable to untrusted app code by spreading it
@@ -163,7 +226,8 @@ export function isAgentSurfacePath(path: string): boolean {
   return (
     AGENT_SURFACE_FILES.includes(path) ||
     path.startsWith('.claude/') ||
-    path.startsWith(`${MEMORY_DIR}/`)
+    path.startsWith(`${MEMORY_DIR}/`) ||
+    path.startsWith(`${SCHEDULES_SURFACE_DIR}/`)
   )
 }
 
@@ -176,4 +240,23 @@ export const MACHINE_STATE_DIR = '.holi/state'
  *  code drive Holi as the agent does. Root-anchored, like the agent surface. */
 export function isMachineStatePath(path: string): boolean {
   return path.startsWith(`${MACHINE_STATE_DIR}/`)
+}
+
+/**
+ * `raw` as a vault path a person may be shown in a tab, or null: a real vault
+ * path, not this machine's state (`.holi/state/` holds the bridge's tokens)
+ * and not a secret file. Folded to lower case as well, since macOS opens
+ * `.holi/State/x` as `.holi/state/x`. Main's `shownPath` refuses on it, and
+ * the renderer checks it before opening what an app or a notice names.
+ */
+export function shownPathOrNull(raw: string): VaultRelPath | null {
+  let rel: VaultRelPath
+  try {
+    rel = vaultRelPath(raw)
+  } catch {
+    return null
+  }
+  const folded = rel.toLowerCase()
+  if (isMachineStatePath(rel) || isMachineStatePath(folded) || isSecretPath(rel)) return null
+  return rel
 }

@@ -6,7 +6,7 @@
  * an account, so it lives in `userData` beside the tokens and other account
  * prefs.
  *
- * Plain JSON, unencrypted, like `calendar-prefs.ts`: there is no credential
+ * Plain JSON, unencrypted, unlike `token-store.ts`: there is no credential
  * here, only the id of an account whose tokens are kept elsewhere.
  *
  * Read per call rather than cached, which removes cache invalidation from a

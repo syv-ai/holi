@@ -161,15 +161,19 @@ function boundaries(source, ext) {
   if (/\bholi\s*\.\s*data\b/.test(code)) {
     found.push([
       ERROR,
-      'there is no holi.data — an app stores nothing. The whole API is ' +
-        'holi.docs.list, holi.docs.read, holi.tasks.list and holi.open.',
+      'there is no holi.data: an app keeps its records with holi.store(collection).',
     ])
   }
-  if (/\bholi\s*\.\s*(?:docs|tasks)\s*\.\s*(?:write|create|update|delete|save)\b/.test(code)) {
+  if (
+    /\bholi\s*\.\s*docs\s*\.\s*(?:create|update|delete|save)\b/.test(code) ||
+    /\bholi\s*\.\s*tasks\s*\.\s*(?:write|delete|save)\b/.test(code)
+  ) {
     found.push([
       ERROR,
-      'an app cannot write anything — an app shows, the agent changes. The whole ' +
-        'API is holi.docs.list, holi.docs.read, holi.tasks.list and holi.open.',
+      'no such write. An app writes a note with holi.docs.write(path, text, base), ' +
+        'a task with holi.tasks.create, holi.tasks.update and holi.tasks.complete ' +
+        '(only while the Tasks plugin is on), ' +
+        'and its own records with holi.store. It deletes and moves nothing.',
     ])
   }
   if (/<form\b/i.test(code) || /createElement\(\s*["']form["']/.test(code)) {
@@ -178,6 +182,19 @@ function boundaries(source, ext) {
       'a form never submits in an app: the frame is sandboxed without forms, so ' +
         'submission is blocked before a submit handler runs, and nothing happens. ' +
         'Handle the button click, and Enter as a keydown on the input, instead.',
+    ])
+  }
+  const dialog =
+    /(?<![\w$.]|function\s+)(?:(?:window|self|globalThis)\.)?(alert|confirm|prompt)\s*\((?![^()]*\)\s*\{)/.exec(
+      code,
+    )
+  if (dialog !== null) {
+    found.push([
+      ERROR,
+      `${dialog[1]}() does nothing in an app: the frame is sandboxed without pop-up ` +
+        'dialogs, so it returns at once (confirm as no, prompt as nothing) and shows ' +
+        'nothing. Ask in the page instead, such as a "Delete this note?" row with ' +
+        'Delete and Cancel.',
     ])
   }
   if (/<script[^>]*\bsrc\s*=\s*["'][^"']*(?:holi|bridge)[^"']*["']/i.test(source)) {

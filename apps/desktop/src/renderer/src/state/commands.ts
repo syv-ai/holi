@@ -25,13 +25,14 @@ import { matchHotkey } from '../lib/hotkey'
 import { trpc } from '../lib/trpc'
 import { openHomeAtom } from './home'
 import { openTodaysDailyAtom } from './daily'
+import { commentOnSelectionAtom, commentsTargetPathAtom, toggleCommentsAtom } from './comments'
 import { openDialogAtom } from './dialogs'
+import { copyHoliLinkAtom, linkableHeadingAtom, linkableNoteAtom } from './holi-link'
 import { closeActiveTabWithExitAtom } from './pane-exit'
 import { openPaletteAtom } from './palette'
 import { navOpenAtom } from './preferences'
 import { touchRecentAtom } from './recents'
 import { updateSkillsAtom } from './skills'
-import { openQuickAddAtom } from './tasks'
 import { openPinned, openSurface, splitPane, workspaceAtom } from './panes'
 import { pluginCommandsAtom, surfacesAtom } from './plugins'
 import { activeRemoteAtom, createNoteAtom, snapshotAtom, vaultsAtom } from './vaults'
@@ -51,6 +52,9 @@ export interface Command {
   /** Not listed in the palette and not recorded as recently used: the
    *  palette's own two rows, which a list inside the palette has no use for. */
   hidden?: true
+  /** One of the few keys a new vault is shown on its threshold, at this
+   *  place in the order (lowest first), while the command's plugin runs. */
+  firstKey?: number
   run: (get: Getter, set: Setter) => void | Promise<void>
 }
 
@@ -105,27 +109,28 @@ export const STATIC_COMMANDS: readonly Command[] = [
     hotkey: '⌘B',
     run: (_get, set) => set(navOpenAtom, (open) => !open),
   },
+  // A note's comment threads (docs/features/note-comments.md). ⌘⌥M, as in
+  // the document editors people already know; the selection's own Comment
+  // button is the other way in.
+  {
+    id: 'comments.add',
+    label: 'Comment on selection',
+    hotkey: '⌘⌥M',
+    when: (get) => get(commentsTargetPathAtom) !== null,
+    run: (_get, set) => set(commentOnSelectionAtom),
+  },
+  {
+    id: 'comments.toggle',
+    label: 'Toggle comments',
+    when: (get) => get(commentsTargetPathAtom) !== null,
+    run: (_get, set) => set(toggleCommentsAtom),
+  },
   // The skills and hooks a vault was seeded with are its own; a newer
   // release's reach it only when asked for, here or with `holi skills update`.
   {
     id: 'skills.update',
     label: 'Update skills',
     run: (_get, set) => void set(updateSkillsAtom),
-  },
-  // Create a task in any folder, including one that is not yet a lane. ⌘T is
-  // quick add, the card it will make, in the board's dock or centred; ⌘⇧T is
-  // the full dialog, which opens the task to fill in the rest.
-  {
-    id: 'task.new',
-    label: 'New task',
-    hotkey: '⌘T',
-    run: (_get, set) => set(openQuickAddAtom),
-  },
-  {
-    id: 'task.new.full',
-    label: 'New task with details',
-    hotkey: '⌘⇧T',
-    run: (_get, set) => set(openDialogAtom, { id: 'create-task', size: 'md' }),
   },
   // The focused pane's active tab. A menu accelerator, so the glyph is for
   // display and main sends the id (`main/menu.ts`).
@@ -155,11 +160,33 @@ export const STATIC_COMMANDS: readonly Command[] = [
       set(workspaceAtom, (w) => openPinned(w, path))
     },
   },
+  // A link a teammate can click to land on this note, or on the heading the
+  // caret is on (docs/features/holi-links.md).
+  {
+    id: 'link.copy',
+    label: 'Copy Holi link',
+    when: (get) => get(linkableNoteAtom) !== null,
+    run: async (get, set) => {
+      const path = get(linkableNoteAtom)
+      if (path !== null) await set(copyHoliLinkAtom, path)
+    },
+  },
+  {
+    id: 'link.copy-heading',
+    label: 'Copy Holi link to this heading',
+    when: (get) => get(linkableHeadingAtom) !== null,
+    run: async (get, set) => {
+      const path = get(linkableNoteAtom)
+      const heading = get(linkableHeadingAtom)
+      if (path !== null && heading !== null) await set(copyHoliLinkAtom, path, heading)
+    },
+  },
   {
     id: 'palette.open',
     hidden: true,
     label: 'Quick open',
     hotkey: '⌘P',
+    firstKey: 1,
     run: (_get, set) => set(openPaletteAtom, 'open'),
   },
   {

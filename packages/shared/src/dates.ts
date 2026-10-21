@@ -47,6 +47,17 @@ export function formatDate(epoch: number): string {
   return `${pad(d.getUTCFullYear(), 4)}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`
 }
 
+/** The calendar day a moment falls on in this machine's time zone, as
+ *  `YYYY-MM-DD`: what a person means by "today". */
+export function localDate(date: Date): string {
+  return `${pad(date.getFullYear(), 4)}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+}
+
+/** The `YYYY-MM-DD` after `day`. */
+export function dayAfter(day: string): string {
+  return formatDate((parseDate(day) ?? 0) + DAY_MS)
+}
+
 /** Format a UTC epoch as `YYYY-MM-DDTHH:MM` (minute precision). */
 export function formatDateTime(epoch: number): string {
   const d = new Date(epoch)
@@ -123,3 +134,11 @@ export function withTime(s: string, time: string | null): string | null {
   const combined = `${date}T${time}`
   return parseDateTime(combined) === null ? null : combined
 }
+
+/**
+ * The hour a **timeless** reminder fires at.
+ *
+ * Only ever a fallback: it is never written into a file. Presets that know an
+ * hour write it explicitly.
+ */
+export const ANCHOR_HOUR = 9

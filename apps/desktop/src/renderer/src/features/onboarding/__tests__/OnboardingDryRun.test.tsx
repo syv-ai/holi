@@ -12,20 +12,30 @@
 import { Provider, createStore } from 'jotai'
 import { render, screen, waitFor, within } from '@/test/render'
 import { activeRemoteAtom } from '../../../state/vaults'
+import { installedPluginsAtom } from '../../../state/plugins'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { OnboardingRitual } from '../OnboardingRitual'
 
-/** Every tRPC path the ritual reached for, in order. */
+/** Every tRPC path the ritual reached for, in order, and what it sent. */
 let paths: string[] = []
+let inputs: { path: string; input: unknown }[] = []
 
 beforeEach(() => {
   paths = []
+  inputs = []
   // @ts-expect-error — the preload bridge is not typed onto window in tests.
   window.holi = {
-    trpc: async (op: { path: string }) => {
+    trpc: async (op: { path: string; input: unknown }) => {
       paths.push(op.path)
+      inputs.push(op)
       if (op.path === 'github.orgs') return { ok: true, data: { orgs: [] } }
+      if (op.path === 'github.repos') {
+        return {
+          ok: true,
+          data: [{ remote: 'ada/team', isVault: true, canPush: true, visibility: 'private' }],
+        }
+      }
       return { ok: true, data: undefined }
     },
   }
@@ -61,14 +71,22 @@ async function nameAndCreate() {
   await userEvent.click(screen.getByRole('button', { name: /create vault/i }))
 }
 
-test('walks naming → settings → threshold without creating anything', async () => {
+/** Leave the plugins act as it is, onto the settings act. */
+async function pastPlugins() {
+  await waitFor(() => expect(activeAct()).toHaveAttribute('data-act', 'plugins'))
+  await userEvent.click(screen.getByRole('button', { name: /continue/i }))
+  await waitFor(() => expect(activeAct()).toHaveAttribute('data-act', 'settings'))
+}
+
+test('walks naming → plugins → settings → threshold without creating anything', async () => {
   const onDismiss = vi.fn()
   render(<OnboardingRitual mode="add-vault" dryRun onDismiss={onDismiss} />)
 
   await nameAndCreate()
+  await pastPlugins()
 
   // The settings act is reachable, which is the whole point of the mode.
-  await waitFor(() => expect(activeAct()).toHaveClass('obrit-settings-act'))
+  expect(activeAct()).toHaveAttribute('data-act', 'settings')
   const settings = activeAct()
   expect(within(settings).getByRole('group', { name: 'Keep a daily note' })).toBeInTheDocument()
 
@@ -79,7 +97,7 @@ test('walks naming → settings → threshold without creating anything', async 
   await userEvent.click(screen.getByRole('button', { name: /continue/i }))
 
   // The threshold, which in a real run shows the live remote.
-  await waitFor(() => expect(activeAct()).toHaveClass('obrit-threshold'))
+  await waitFor(() => expect(activeAct()).toHaveAttribute('data-act', 'threshold'))
   await userEvent.click(within(activeAct()).getByRole('button', { name: /open vault/i }))
   expect(onDismiss).toHaveBeenCalled()
 
@@ -93,9 +111,10 @@ test('walks naming → settings → threshold without creating anything', async 
 test('reaches the settings act, which no real run can do without a repo', async () => {
   render(<OnboardingRitual mode="add-vault" dryRun onDismiss={vi.fn()} />)
   await nameAndCreate()
+  await pastPlugins()
 
   // Every descriptor's row, rendered.
-  await waitFor(() => expect(activeAct()).toHaveClass('obrit-settings-act'))
+  expect(activeAct()).toHaveAttribute('data-act', 'settings')
   expect(within(activeAct()).getAllByRole('group').length).toBeGreaterThan(0)
   expect(paths).not.toContain('vaults.create')
 })
@@ -125,4 +144,35 @@ test('a real run still creates — the dry run is the exception, not the rule', 
   // A real submit is async; the dry run short-circuits before the await, which
   // is exactly the difference being asserted.
   await waitFor(() => expect(paths).toContain('vaults.create'))
+})
+
+test('a plugin turned off is written into the new vault’s settings', async () => {
+  const store = createStore()
+  store.set(installedPluginsAtom, [{ info: { id: 'pdf', label: 'PDF', default: true } }] as never)
+  render(
+    <Provider store={store}>
+      <OnboardingRitual mode="add-vault" onDismiss={vi.fn()} />
+    </Provider>,
+  )
+  await nameAndCreate()
+  await waitFor(() => expect(activeAct()).toHaveAttribute('data-act', 'plugins'))
+  await userEvent.click(within(activeAct()).getByRole('switch', { name: 'PDF' }))
+  await userEvent.click(screen.getByRole('button', { name: /continue/i }))
+  await waitFor(() => expect(activeAct()).toHaveAttribute('data-act', 'settings'))
+  await userEvent.click(screen.getByRole('button', { name: /continue/i }))
+
+  await waitFor(() => expect(paths).toContain('settings.write'))
+  const write = inputs.find((op) => op.path === 'settings.write')!.input as {
+    committedJson: string
+  }
+  expect(JSON.parse(write.committedJson).plugins).toEqual({ pdf: false })
+})
+
+test('joining in a dry run clones nothing', async () => {
+  const onDismiss = vi.fn()
+  render(<OnboardingRitual mode="add-vault" dryRun onDismiss={onDismiss} />)
+  await userEvent.click(screen.getByRole('button', { name: /join one you've been added to/i }))
+  await userEvent.click(await screen.findByRole('button', { name: /ada\/team/ }))
+  await waitFor(() => expect(onDismiss).toHaveBeenCalled())
+  expect(paths).not.toContain('vaults.add')
 })

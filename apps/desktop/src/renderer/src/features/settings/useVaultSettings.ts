@@ -13,6 +13,8 @@ import { useCallback, useEffect, useState } from 'react'
 import { useAtomValue, useSetAtom } from 'jotai'
 import {
   VAULT_SETTING_DESCRIPTORS,
+  type PluginInfo,
+  type PluginSetting,
   type ResolvedVaultSettings,
   type VaultSettingDescriptor,
 } from '@holi/shared'
@@ -29,6 +31,8 @@ export interface VaultSettingsHandle {
   /** The last write's refusal, if it was refused. */
   error: string | null
   change: (descriptor: VaultSettingDescriptor, value: unknown) => Promise<void>
+  /** Answer one of a plugin's own settings, in the plugins file it names. */
+  changePlugin: (info: PluginInfo, setting: PluginSetting, value: unknown) => Promise<void>
   /** The resolver's warnings that name this key. */
   warningsFor: (key: string) => string[]
   /** Warnings naming no descriptor at all, which would otherwise be dropped. */
@@ -82,6 +86,30 @@ export function useVaultSettings(): VaultSettingsHandle {
     [remote, resolved, setCached, load],
   )
 
+  const changePlugin = useCallback(
+    async (info: PluginInfo, setting: PluginSetting, value: unknown): Promise<void> => {
+      if (remote === null || resolved === null) return
+      setError(null)
+      const pluginValues = {
+        ...resolved.pluginValues,
+        [info.id]: { ...resolved.pluginValues[info.id], [setting.key]: value },
+      }
+      setCached({ remote, settings: { ...resolved, pluginValues } })
+      const patch = JSON.stringify({ [info.id]: { [setting.key]: value } })
+      try {
+        const result = await trpc.settings.write.mutate({
+          remote,
+          ...(setting.target === 'committed' ? { committedJson: patch } : { localJson: patch }),
+        })
+        if (result.warnings.length > 0) setError(result.warnings.join('; '))
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'could not write the settings file')
+      }
+      await load({ force: true })
+    },
+    [remote, resolved, setCached, load],
+  )
+
   const warningsFor = useCallback(
     (key: string): string[] => (resolved?.warnings ?? []).filter((w) => w.includes(`"${key}"`)),
     [resolved],
@@ -92,6 +120,7 @@ export function useVaultSettings(): VaultSettingsHandle {
     values: (resolved ?? {}) as unknown as Record<string, unknown>,
     error,
     change,
+    changePlugin,
     warningsFor,
     unattributed: (resolved?.warnings ?? []).filter(
       (w) => !VAULT_SETTING_DESCRIPTORS.some((d) => w.includes(`"${d.key}"`)),

@@ -11,7 +11,8 @@ assistant. There is no Holi server or database.
 - `apps/desktop`: Electron 43, Vite, React 19, Jotai, CodeMirror 6, Tailwind v4,
   Radix/shadcn components, tRPC over IPC, xterm, and Vitest 4.
 - `packages/shared`: browser-safe TypeScript rules and types for vault paths,
-  task files, wiki-links, dates, recurrence/reminders, themes, and text merging.
+  wiki-links, dates, settings, plugins, themes, and text merging. A plugin's own
+  rules (task files, recurrence, reminders) live in its `shared/`.
 - `docs/`: architecture, one short page per feature, and the glossary.
 
 Within the desktop app, `src/main` owns filesystem/git/GitHub/Google work, the
@@ -20,12 +21,13 @@ vault store and sync. `src/preload` is the narrow
 Node access or GitHub credentials. `router.ts` is main's typed API seam; keep
 Electron dependencies out of code that should remain testable under plain Node.
 
-Optional parts of Holi are plugins under `src/plugins/<id>/` (the agent, PDF,
-Google and vault apps so far), each with its own `main/`, `renderer/`, `shared/` and
+Optional parts of Holi are plugins under `src/plugins/<id>/` (the agent, tasks,
+PDF, Google, vault apps and community plugins so far), each with its own `main/`, `renderer/`, `shared/` and
 `test/`, reaching core only through `src/main/plugin-api.ts` and
 `@/plugin-api`. Vault apps live in `src/plugins/apps/`; what a synced vault
 holds of an app (the bundle grammar, the record merge, the `.local.app` rule)
-stays in `packages/shared` and core main.
+stays in `packages/shared` and core main. Plugins from other repositories are
+community plugins: processes the `community` plugin runs, never code it loads.
 
 ## Authoritative documentation
 
@@ -117,10 +119,13 @@ legacy alias with the same behavior as `pnpm lint`.
 - Never commit secrets, tokens, or machine state. Root `.gitignore` excludes
   `.env`, `*.local`, logs, build output, and dependencies. Vault-local files such
   as `USER.local.md`, `CLAUDE.local.md`, `.holi/settings/app.local.yaml`,
+  `.holi/settings/plugins.local.yaml`,
   `.holi/memory/*.local.md`, and `*.local.*` must remain machine-local; the GitHub
   token is kept by the app's credential storage, not in source. Local-ness is
-  the `.local.` marker and nothing else: a bare `USER.md` is ordinary
-  committed content, whatever an older vault's `.gitignore` says.
+  read off the path and nothing else: the `.local.` marker, or a secret file's
+  name (`.env`, `.env.*`, `.secrets`, `.secrets.*`, `isSecretPath`). A bare
+  `USER.md` is ordinary committed content, whatever an older vault's
+  `.gitignore` says.
 - A vault's seed files are real files in seed folders: `vault/once/**` and
   `vault/shipped/**` beside the module that contributes them
   (`main/vault/seed/core.ts`, a plugin's `main/seed.ts`; the agent's is
@@ -142,8 +147,9 @@ legacy alias with the same behavior as `pnpm lint`.
   A shipped skill or hook (`vault/shipped/`) is written only at vault creation and
   reaches an existing vault only when its user runs `holi skills update`.
 - **A file whose writer regenerates it is the third answer to that question, and
-  the cheapest.** `.holi/settings/app.yaml`, `app.local.yaml` and the two theme
-  files are once files, but `writeSettingsText`/`writeThemeText` emit the whole
+  the cheapest.** `.holi/settings/app.yaml`, `plugins.yaml`, their `.local`
+  twins and the two theme files are once files, but `writeSettingsText`,
+  `writePluginSettingsText` and `writeThemeText` emit the whole
   document on every write rather than merging into it — so the list of settings
   and theme tokens they carry is rebuilt from `VAULT_SETTINGS` and
   `THEME_TOKEN_GROUPS` each time, and a vault seeded years earlier gains a newly

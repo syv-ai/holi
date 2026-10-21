@@ -2,7 +2,7 @@
  * What core seeds into every vault, whatever else runs: the vault marker,
  * `AGENTS.md` (a vault file every agent reads, so not the agent's), the icons
  * file, the settings and theme pairs, the memory index, and the `.gitignore`
- * that keeps machine-local files local.
+ * that keeps machine-local files local and OS junk out of a commit.
  *
  * The plain files live in `vault/once/` beside this module. The settings,
  * theme and memory files are computed from shared's vocabularies, so the
@@ -11,10 +11,14 @@
 import {
   applyThemePatch,
   LOCAL_ONLY_IGNORE_LINES,
+  OS_JUNK_FILES,
   MEMORY_INDEX,
   MEMORY_INDEX_EMPTY,
   seedSettings,
   seedSettingsText,
+  writePluginSettingsText,
+  PLUGINS_FILE,
+  PLUGINS_LOCAL_FILE,
   SETTINGS_FILE,
   SETTINGS_LOCAL_FILE,
   THEME_FILE,
@@ -34,18 +38,26 @@ const folder = seedFolder(
 )
 
 /**
- * The theme files ship with the whole token vocabulary commented out, not
- * empty, so the file itself names what can be set. Shared overrides go in
- * `theme.css` (committed), personal ones in `theme.local.css` (gitignored).
+ * Holi's own theme, `vault/once/.holi/settings/theme.css`: seeded into a vault
+ * once, after which it is the vault's, and what a reset writes a mode back
+ * from. The renderer's `index.css` imports the same file, so the look outside
+ * a vault and a fresh vault's theme are one text.
  */
-const THEME_SKELETON = applyThemePatch(null, {})
+export const HOLI_THEME_TEXT = folder.once[THEME_FILE] as string
+
+/** The personal `theme.local.css`: the vocabulary commented out, so it names
+ *  what can be overridden and overrides nothing. */
+const THEME_LOCAL_SEED = applyThemePatch(null, {})
 
 export const GITIGNORE = '.gitignore'
 
+const LOCAL_ONLY_HEADER = '# Machine-local, never committed. Managed by Holi.'
+const OS_JUNK_HEADER = '# OS junk, never committed. Managed by Holi.'
+
 /**
- * The `.gitignore` text this vault should have, or **null** if it already has
- * every line it needs: core's `*.local.*` lines plus any a contribution adds
- * as a fragment (a list of lines).
+ * The `.gitignore` text with `lines` added under `header`, or **null** if it
+ * already has every one of them. The header defaults to the machine-local one,
+ * which is what a contribution's fragment (a list of lines) is.
  *
  * Merged rather than create-if-missing: an adopted repo usually already has
  * one, and the sync engine commits with `git add -A`, so skipping it would let
@@ -54,16 +66,30 @@ export const GITIGNORE = '.gitignore'
  * trailing newline is added first, or the append would produce
  * `node_modules*.local.*`, which ignores nothing.
  */
-export function gitignoreWith(existing: string | null, lines: readonly string[]): string | null {
+export function gitignoreWith(
+  existing: string | null,
+  lines: readonly string[],
+  header: string = LOCAL_ONLY_HEADER,
+): string | null {
   const present = new Set((existing ?? '').split('\n').map((l) => l.trim()))
   const missing = [...new Set(lines)].filter((line) => !present.has(line))
   if (missing.length === 0) return null
 
   if (existing === null || existing.trim() === '') {
-    return `# Machine-local — never committed. Managed by Holi.\n${missing.join('\n')}\n`
+    return `${header}\n${missing.join('\n')}\n`
   }
   const base = existing.endsWith('\n') ? existing : `${existing}\n`
-  return `${base}\n# Machine-local — never committed. Managed by Holi.\n${missing.join('\n')}\n`
+  return `${base}\n${header}\n${missing.join('\n')}\n`
+}
+
+/**
+ * The `.gitignore` this vault should have, or **null** if it has every line it
+ * needs: the machine-local lines (core's `*.local.*` ones plus any fragment's)
+ * and, in a section of their own, the OS junk files.
+ */
+function vaultGitignore(existing: string | null, fragments: readonly string[]): string | null {
+  const local = gitignoreWith(existing, [...LOCAL_ONLY_IGNORE_LINES, ...fragments])
+  return gitignoreWith(local ?? existing, OS_JUNK_FILES, OS_JUNK_HEADER) ?? local
 }
 
 /** Core's contribution. `known` is the build's plugins, which the settings
@@ -76,8 +102,11 @@ export const coreSeed = (known: readonly PluginInfo[]): SeedContribution => ({
     // onboarding questions. The local half is gitignored by `*.local.*`.
     [SETTINGS_FILE]: seedSettingsText(seedSettings('committed'), 'committed', known),
     [SETTINGS_LOCAL_FILE]: seedSettingsText(seedSettings('local'), 'local', known),
-    [THEME_FILE]: THEME_SKELETON,
-    [THEME_LOCAL_FILE]: THEME_SKELETON,
+    // Which plugins run and each one's settings, every one commented at its
+    // default until answered. The local half is gitignored by `*.local.*`.
+    [PLUGINS_FILE]: writePluginSettingsText({}, 'committed', known),
+    [PLUGINS_LOCAL_FILE]: writePluginSettingsText({}, 'local', known),
+    [THEME_LOCAL_FILE]: THEME_LOCAL_SEED,
     // The memory directory exists and is tracked from a vault's first commit,
     // in its empty-state form; after that the `memory-index` transform owns
     // the file, which is why it is once and not shipped.
@@ -86,6 +115,6 @@ export const coreSeed = (known: readonly PluginInfo[]): SeedContribution => ({
   shipped: folder.shipped,
   merge: {
     [GITIGNORE]: async (existing, fragments) =>
-      gitignoreWith(existing, [...LOCAL_ONLY_IGNORE_LINES, ...(fragments as string[][]).flat()]),
+      vaultGitignore(existing, (fragments as string[][]).flat()),
   },
 })

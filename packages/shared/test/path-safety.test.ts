@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  shownPathOrNull,
   AGENT_SURFACE_FILES,
   GITKEEP,
   LOCAL_ONLY_IGNORE_LINES,
@@ -9,6 +10,7 @@ import {
   isHiddenPath,
   isKeepFile,
   isLocalOnlyPath,
+  isSecretPath,
   isVaultConfigPath,
   vaultRelPath,
 } from '../src/path-safety'
@@ -171,7 +173,25 @@ describe('LOCAL_ONLY_IGNORE_LINES', () => {
     }
   })
 
-  it('does not ignore ordinary vault content — incl. a bare USER.md (local-ness is only the .local. marker)', () => {
+  it('keeps secret files local and ignored in any folder, and nothing a note could be called', () => {
+    for (const path of [
+      '.env',
+      '.env.local',
+      'Work/.env.production',
+      '.secrets',
+      'a/.secrets.json',
+    ]) {
+      expect(isSecretPath(path)).toBe(true)
+      expect(isLocalOnlyPath(path)).toBe(true)
+      expect(ignoredBy(LOCAL_ONLY_IGNORE_LINES, path)).toBe(true)
+    }
+    for (const path of ['env.md', 'secrets.md', '.envrc', 'notes/.environment.md']) {
+      expect(isSecretPath(path)).toBe(false)
+      expect(ignoredBy(LOCAL_ONLY_IGNORE_LINES, path)).toBe(false)
+    }
+  })
+
+  it('does not ignore ordinary vault content — incl. a bare USER.md (local-ness is read off the path)', () => {
     // USER.md is no longer special-cased: a synced-looking name IS synced. The
     // personal model lives at USER.local.md, whose name declares its locality.
     for (const path of [
@@ -221,6 +241,12 @@ describe('isAgentSurfacePath (what a vault app may never touch)', () => {
     expect(isAgentSurfacePath('.holi/memory/salary.local.md')).toBe(true)
   })
 
+  it("covers scheduled agents' prompts, which the agent runs unattended", () => {
+    expect(isAgentSurfacePath('.holi/schedules/inbox-triage.md')).toBe(true)
+    expect(isAgentSurfacePath('.holi/schedules/mine.local.md')).toBe(true)
+    expect(isAgentSurfacePath('notes/.holi/schedules/x.md')).toBe(false)
+  })
+
   it('is an exact match at the root, so a same-named note elsewhere is ordinary content', () => {
     // The same rule isVaultConfigPath follows: `notes/AGENTS.md` is a note a
     // human wrote about agents, not the file the agent loads.
@@ -244,5 +270,20 @@ describe('isAgentSurfacePath (what a vault app may never touch)', () => {
     // rule would be needed for a hook seeded into the tracked tree, which is
     // one of the reasons there isn't one.
     expect(isAgentSurfacePath('.holi/git-hooks/pre-commit')).toBe(false)
+  })
+})
+
+describe('shownPathOrNull (what a person may be shown in a tab)', () => {
+  it('refuses machine state, in any case macOS would open, and secret files', () => {
+    for (const path of ['.holi/state/bridge.local.json', '.Holi/STATE/x', '.env', 'a/.secrets/k']) {
+      expect(shownPathOrNull(path)).toBeNull()
+    }
+  })
+
+  it('refuses what is not a vault path, and normalises what is', () => {
+    expect(shownPathOrNull('../x.md')).toBeNull()
+    expect(shownPathOrNull('/etc/passwd')).toBeNull()
+    expect(shownPathOrNull('./notes//a.md')).toBe('notes/a.md')
+    expect(shownPathOrNull('.holi/memory/x.md')).toBe('.holi/memory/x.md')
   })
 })

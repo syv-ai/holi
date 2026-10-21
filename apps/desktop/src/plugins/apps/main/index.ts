@@ -12,6 +12,7 @@ import { join } from 'node:path'
 import type { AppDoor, MainPlugin } from '../../../main/plugin-api'
 import { APPS_INFO } from '../info'
 import { appsCapabilities, storeCapabilities } from './capabilities'
+import { envCapabilities, ENV_NAMESPACES } from './env'
 import { admitApps, createAppGrants } from './grants'
 import { appScheme } from './protocol'
 import { appsSeed } from './seed'
@@ -20,7 +21,7 @@ export const appsMain: MainPlugin = {
   info: APPS_INFO,
   seed: appsSeed,
   schemes: [appScheme],
-  activateApp(ctx) {
+  activate(ctx) {
     // Kept in main, never the renderer, which is the process running the
     // apps' code.
     const grants = createAppGrants(join(ctx.userData, 'app-grants.json'))
@@ -28,6 +29,10 @@ export const appsMain: MainPlugin = {
     const door: AppDoor = ctx.openAppDoor({ admit: admitApps(grants) })
     ctx.register(['apps'], appsCapabilities({ events: ctx, appDoor: () => door, grants }))
     ctx.register(['store'], storeCapabilities())
+    ctx.register(ENV_NAMESPACES, envCapabilities())
+    // The renderer may have asked for the slash commands before they were
+    // registered: tell it they answer now.
+    ctx.emit(ctx.remote, 'commands-changed', null)
     return () => {}
   },
 }
