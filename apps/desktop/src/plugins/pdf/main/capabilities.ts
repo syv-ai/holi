@@ -7,9 +7,10 @@
  *
  * No `electron` import: this loads under plain Node in the tests.
  */
-import { readFile, stat } from 'node:fs/promises'
-import { dirname, isAbsolute, join, relative, sep } from 'node:path'
+import { lstat, readFile, realpath, stat } from 'node:fs/promises'
+import { isAbsolute, join, relative, sep } from 'node:path'
 import { localDate, vaultRelPath } from '@holi/shared'
+import { resolveRelative } from '@holi/shared/path-safety-node'
 import {
   cap,
   CapabilityError,
@@ -53,7 +54,8 @@ function sizeText(bytes: number): string {
 }
 
 /** The render params. `out` is where the PDF goes: absolute, or relative to
- *  the vault; absent, it goes beside the note. The template defaults to
+ *  the vault; absent, it goes beside the note. Only an absolute `out` may
+ *  leave the vault. The template defaults to
  *  `plain`. Field values come as `meta` from the dialog and as the remaining
  *  params from the CLI (`--recipient Acme`). */
 function renderParams(raw: unknown): {
@@ -99,6 +101,23 @@ function vaultPathOf(root: string, abs: string): string | null {
   } catch {
     return null
   }
+}
+
+/** `rel` inside the vault at `root`, symlinks resolved, or BAD_REQUEST. */
+async function inVault(root: string, rel: string): Promise<string> {
+  try {
+    return await resolveRelative(root, rel)
+  } catch (err) {
+    throw new CapabilityError('BAD_REQUEST', `${rel}: ${(err as Error).message}`)
+  }
+}
+
+/** Whether `abs` itself is a symlink (absent is not). */
+async function isSymlink(abs: string): Promise<boolean> {
+  return lstat(abs).then(
+    (s) => s.isSymbolicLink(),
+    () => false,
+  )
 }
 
 export function pdfCapabilities(deps: PdfCapabilityDeps) {
@@ -168,12 +187,9 @@ export function pdfCapabilities(deps: PdfCapabilityDeps) {
       },
       params: renderParams,
       run: async (ctx, { path, template, out, meta }) => {
-        let noteAbs: string
-        try {
-          noteAbs = join(ctx.root, vaultRelPath(path))
-        } catch (err) {
-          throw new CapabilityError('BAD_REQUEST', (err as Error).message)
-        }
+        // Canonicalised, so a symlink inside the vault cannot lead the read
+        // out of it.
+        const noteAbs = await inVault(ctx.root, path)
         const templates = await listTemplates(ctx.root)
         const tpl = templates.find((t) => t.slug === template)
         if (tpl === undefined) {
@@ -191,6 +207,17 @@ export function pdfCapabilities(deps: PdfCapabilityDeps) {
         if (out !== undefined && !/\.pdf$/i.test(out)) {
           throw new CapabilityError('BAD_REQUEST', 'out must end in .pdf')
         }
+        // Beside the note, or a vault path, resolved like the note so a
+        // symlink cannot carry the write out of the vault. An absolute `out`
+        // is the one way out, because it says so. A symlink already at the
+        // destination is refused either way: the write would land wherever
+        // it points.
+        const outside = out !== undefined && isAbsolute(out)
+        const pdfRel = out ?? path.replace(/\.(md|markdown)$/i, '') + '.pdf'
+        const pdfPath = outside ? pdfRel : await inVault(ctx.root, pdfRel)
+        if (await isSymlink(outside ? pdfRel : join(ctx.root, vaultRelPath(pdfRel)))) {
+          throw new CapabilityError('BAD_REQUEST', `${pdfRel} is a symlink`)
+        }
         const note = await readFile(noteAbs, 'utf8').catch(() => null)
         if (note === null) throw new CapabilityError('NOT_FOUND', path)
         const values = {
@@ -205,16 +232,6 @@ export function pdfCapabilities(deps: PdfCapabilityDeps) {
           )
         }
         const typstBin = await typst()
-        const base = path
-          .split('/')
-          .at(-1)!
-          .replace(/\.(md|markdown)$/i, '')
-        const pdfPath =
-          out === undefined
-            ? join(dirname(noteAbs), `${base}.pdf`)
-            : isAbsolute(out)
-              ? out
-              : join(ctx.root, out)
         const { warnings } = await renderPdf({
           typstBin,
           templateDir: tpl.dir,
@@ -225,7 +242,11 @@ export function pdfCapabilities(deps: PdfCapabilityDeps) {
           diagrams: deps.diagrams,
         })
         const { size } = await stat(pdfPath)
-        return { pdfPath, vaultPath: vaultPathOf(ctx.root, pdfPath), bytes: size, warnings }
+        // The vault's path as given or as resolved: an absolute `out` may name
+        // either.
+        const vaultPath =
+          vaultPathOf(ctx.root, pdfPath) ?? vaultPathOf(await realpath(ctx.root), pdfPath)
+        return { pdfPath, vaultPath, bytes: size, warnings }
       },
       text: ({ pdfPath, vaultPath, bytes, warnings }) =>
         [`${vaultPath ?? pdfPath} (${sizeText(bytes)})`, ...warnings].join('\n'),

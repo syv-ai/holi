@@ -46,13 +46,19 @@ export function diagramMarkdown(svg: string): string {
  * `markdown` with every closed ```` ```mermaid ```` fence drawn. A diagram
  * mermaid cannot draw keeps its fence, so the PDF shows the source as code,
  * and says so in `warnings`: one diagram never fails the whole PDF.
+ *
+ * `prose` rewrites the markdown around the drawn diagrams and never a
+ * diagram itself, so a rewrite such as wiki-links to text cannot reach into
+ * an SVG whose label holds `[[`. Each diagram keeps its fence's indent, so
+ * one in a list item stays in the item.
  */
 export async function drawMermaid(
   markdown: string,
   draw: DrawDiagrams,
+  prose: (markdown: string) => string = (m) => m,
 ): Promise<{ markdown: string; warnings: string[] }> {
   const fences = fencedBlocks(markdown).filter((b) => b.lang === 'mermaid')
-  if (fences.length === 0) return { markdown, warnings: [] }
+  if (fences.length === 0) return { markdown: prose(markdown), warnings: [] }
 
   const diagrams = await draw(fences.map((f) => f.body))
   const warnings: string[] = []
@@ -65,8 +71,9 @@ export async function drawMermaid(
       warnings.push(`The diagram on line ${fence.line} shows as code: ${why}`)
       return
     }
-    out += markdown.slice(at, fence.from) + diagramMarkdown(diagram.svg)
+    const indent = /^ */.exec(markdown.slice(fence.from))![0]
+    out += prose(markdown.slice(at, fence.from)) + indent + diagramMarkdown(diagram.svg)
     at = fence.to
   })
-  return { markdown: out + markdown.slice(at), warnings }
+  return { markdown: out + prose(markdown.slice(at)), warnings }
 }

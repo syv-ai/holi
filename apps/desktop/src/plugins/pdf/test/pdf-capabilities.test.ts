@@ -2,7 +2,7 @@
  * The capabilities PDF's renderer calls through the UI door: templates,
  * render and the viewer's signatures.
  */
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -140,5 +140,30 @@ describe('pdf capabilities', () => {
       run('pdf.render', { path: 'note.md', meta: { recipient: 'A', colour: 'red' } }),
     ).rejects.toThrow(/colour/)
     await expect(run('pdf.render', { path: 'note.md' })).rejects.toThrow(/recipient/)
+  })
+
+  it('render will not read a note through a symlink that leaves the vault', async () => {
+    const { root, run } = await rig({ ...TEMPLATE_FILES })
+    await writeFile(join(base, 'secret.md'), '# Secret\n')
+    await symlink(join(base, 'secret.md'), join(root, 'note.md'))
+    await expect(run('pdf.render', { path: 'note.md', meta: { recipient: 'A' } })).rejects.toThrow(
+      /escapes vault/,
+    )
+  })
+
+  it('render will not write through a symlink, or to a relative out outside the vault', async () => {
+    const { root, run } = await rig({ ...TEMPLATE_FILES, 'note.md': '# Hi\n', 'other.pdf': '' })
+    await symlink(join(root, 'other.pdf'), join(root, 'note.pdf'))
+    await expect(run('pdf.render', { path: 'note.md', meta: { recipient: 'A' } })).rejects.toThrow(
+      /symlink/,
+    )
+    await mkdir(join(base, 'outside'))
+    await symlink(join(base, 'outside'), join(root, 'out'))
+    await expect(
+      run('pdf.render', { path: 'note.md', out: 'out/x.pdf', meta: { recipient: 'A' } }),
+    ).rejects.toThrow(/escapes vault/)
+    await expect(
+      run('pdf.render', { path: 'note.md', out: '../x.pdf', meta: { recipient: 'A' } }),
+    ).rejects.toThrow()
   })
 })

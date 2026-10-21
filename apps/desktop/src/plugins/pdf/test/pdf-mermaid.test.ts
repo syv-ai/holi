@@ -3,6 +3,7 @@
  * draw stays code.
  */
 import { describe, expect, it } from 'vitest'
+import { wikiLinksToText } from '@holi/shared'
 import { drawMermaid, type DrawDiagrams } from '../main/mermaid'
 
 const drawsAll: DrawDiagrams = async (sources) => sources.map((s) => ({ svg: `<svg>${s}</svg>` }))
@@ -41,6 +42,22 @@ describe('drawMermaid', () => {
     ])
     expect(markdown.indexOf('-->')).toBe(markdown.length - 3)
     expect(markdown).not.toContain('\n')
+  })
+
+  it('keeps the fence’s indent, so a diagram in a list item stays in it', async () => {
+    const { markdown } = await drawMermaid('- item\n\n  ```mermaid\n  x\n  ```\n', drawsAll)
+    expect(markdown).toMatch(/^- item\n\n {2}<!--raw-typst /)
+  })
+
+  it('rewrites the prose around a diagram and never the diagram', async () => {
+    const { markdown } = await drawMermaid(
+      'See [[a.md|A]].\n\n```mermaid\nx\n```\n\n[[b.md|B]]\n',
+      async () => [{ svg: '<svg><text>[[sub]]</text></svg>' }],
+      wikiLinksToText,
+    )
+    expect(markdown).toMatch(/^See A\.\n/)
+    expect(markdown).toMatch(/\nB\n$/)
+    expect(markdown).toContain('[[sub]]')
   })
 
   it('leaves a note without diagrams alone and never calls mermaid', async () => {

@@ -73,15 +73,16 @@ export async function renderPdf({
     // not the note dir, so moving the note regresses nothing; if that is fixed
     // later, the image base must be the ORIGINAL note dir (dirname(notePath)).
     //
-    // Diagrams first, from the note as written: mermaid has its own `[[…]]`
-    // (a subroutine shape), which must reach mermaid rather than read as a link.
+    // Wiki-links come out around the diagrams only: mermaid has its own `[[…]]`
+    // (a subroutine shape), which must reach mermaid as written, and a drawn
+    // SVG may hold `[[` in a label.
     const original = await readFile(notePath, 'utf8')
     const drawn =
       diagrams === undefined
-        ? { markdown: original, warnings: [] }
-        : await drawMermaid(original, diagrams)
+        ? { markdown: wikiLinksToText(original), warnings: [] }
+        : await drawMermaid(original, diagrams, wikiLinksToText)
     const noteForTypst = join(work, 'note.md')
-    await writeFile(noteForTypst, wikiLinksToText(drawn.markdown))
+    await writeFile(noteForTypst, drawn.markdown)
 
     const wrapperPath = join(work, 'wrapper.typ')
     await writeFile(

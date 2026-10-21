@@ -20,8 +20,12 @@ export const pdfMain: MainPlugin = {
     const typst = sharedTypst(join(ctx.userData, 'typst'))
     // The hidden window mermaid draws in, made by the first note with a
     // diagram. A dynamic import keeps Electron out of what the tests load.
+    // Once stopped, a render still in flight gets no window: it would
+    // outlive the plugin.
     let mermaid: Promise<MermaidWindow> | null = null
+    let stopped = false
     const diagrams: DrawDiagrams = async (sources) => {
+      if (stopped) return sources.map(() => ({ error: 'PDF has stopped' }))
       mermaid ??= import('./mermaid-window').then((m) => m.createMermaidWindow())
       return (await mermaid).draw(sources)
     }
@@ -38,6 +42,7 @@ export const pdfMain: MainPlugin = {
     // does not wait on a 30 MB download.
     void typst()
     return () => {
+      stopped = true
       undo()
       void mermaid?.then((w) => w.close())
     }

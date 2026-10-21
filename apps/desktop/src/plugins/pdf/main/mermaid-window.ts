@@ -5,7 +5,8 @@
  * Mermaid lays text out with the DOM, so main draws in a `BrowserWindow` that
  * is never shown. It loads mermaid's own bundle from the app's dependencies,
  * never a CDN; it is sandboxed, has no preload and no Node, cannot navigate or
- * open windows, and every request it makes is cancelled, so a diagram from a
+ * open windows, every request it makes is cancelled and every permission it
+ * asks for is denied, so a diagram from a
  * collaborator or the agent can only draw. Mermaid keeps its strict security
  * level, as in the editor.
  *
@@ -37,6 +38,7 @@ const CONFIG = {
 
 export interface MermaidWindow {
   draw: DrawDiagrams
+  /** Closes the window for good: a draw after this gets errors, not a window. */
   close(): void
 }
 
@@ -46,6 +48,8 @@ export function createMermaidWindow(): MermaidWindow {
   let idle: ReturnType<typeof setTimeout> | null = null
   let queue: Promise<unknown> = Promise.resolve()
   let seq = 0
+  // Set by the plugin's stop: a draw still queued must not reopen the window.
+  let stopped = false
 
   const close = (): void => {
     if (idle !== null) clearTimeout(idle)
@@ -75,9 +79,13 @@ export function createMermaidWindow(): MermaidWindow {
           spellcheck: false,
         },
       })
-      w.webContents.session.webRequest.onBeforeRequest((details, answer) => {
+      const { session } = w.webContents
+      session.webRequest.onBeforeRequest((details, answer) => {
         answer({ cancel: !details.url.startsWith('about:') })
       })
+      // A diagram needs no camera, notifications or anything else asked for.
+      session.setPermissionRequestHandler((_wc, _permission, answer) => answer(false))
+      session.setPermissionCheckHandler(() => false)
       w.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
       w.webContents.on('will-navigate', (event) => event.preventDefault())
       w.webContents.on('render-process-gone', () => {
@@ -92,6 +100,10 @@ export function createMermaidWindow(): MermaidWindow {
         w.destroy()
         opening = null
         throw err
+      }
+      if (stopped) {
+        w.destroy()
+        throw new Error('PDF has stopped')
       }
       win = w
       return w
@@ -128,6 +140,10 @@ export function createMermaidWindow(): MermaidWindow {
     const out: Diagram[] = []
     try {
       for (const source of sources) {
+        if (stopped) {
+          out.push({ error: 'PDF has stopped' })
+          continue
+        }
         let w: BrowserWindow
         try {
           w = await open()
@@ -138,7 +154,7 @@ export function createMermaidWindow(): MermaidWindow {
         out.push(await drawOne(w, source))
       }
     } finally {
-      idle = setTimeout(close, IDLE_MS)
+      if (!stopped) idle = setTimeout(close, IDLE_MS)
     }
     return out
   }
@@ -150,6 +166,9 @@ export function createMermaidWindow(): MermaidWindow {
       queue = run.catch(() => undefined)
       return run
     },
-    close,
+    close: () => {
+      stopped = true
+      close()
+    },
   }
 }
