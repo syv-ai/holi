@@ -388,6 +388,16 @@ describe('docs.open', () => {
       await refusal(runCapability('docs.open', 'cli', withApp, { path: 'Finance' })),
     ).toMatchObject({ code: 'NOT_FOUND' })
   })
+
+  it('takes a bundle with a trailing slash, as a shell completes it', async () => {
+    await put('Clock.app/index.html', '<p></p>')
+    opened.length = 0
+    await runCapability('docs.open', 'cli', ctx({}, null), { path: 'Clock.app/' })
+    expect(opened).toEqual(['Clock.app'])
+    expect(
+      await refusal(runCapability('docs.open', 'cli', ctx({}, null), { path: 'Gone.app' })),
+    ).toMatchObject({ code: 'NOT_FOUND' })
+  })
 })
 
 describe('docs.screenshot', () => {
@@ -398,16 +408,6 @@ describe('docs.screenshot', () => {
     })
     expect(text).toMatch(/^\.holi\/state\/out\/.+\.local\.png$/)
     expect([...(await readText(join(root, text)))]).toEqual([0x89, 0x50, 0x4e, 0x47])
-  })
-
-  it('takes a bundle with a trailing slash, as a shell completes it', async () => {
-    await put('Clock.app/index.html', '<p></p>')
-    opened.length = 0
-    await runCapability('docs.open', 'cli', ctx({}, null), { path: 'Clock.app/' })
-    expect(opened).toEqual(['Clock.app'])
-    expect(
-      await refusal(runCapability('docs.open', 'cli', ctx({}, null), { path: 'Gone.app' })),
-    ).toMatchObject({ code: 'NOT_FOUND' })
   })
 })
 
