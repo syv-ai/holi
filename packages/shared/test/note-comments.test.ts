@@ -259,4 +259,27 @@ describe('formatNoteComments', () => {
       '  Resolved by eveFromamd0openThreadx, 2026-10-21 12:00',
     ])
   })
+
+  it('quotes every kind of line break and drops invisible format characters', () => {
+    const passage = 'a\u2028\u202eb\u0085c\u200b'
+    const doc = `${passage}\n`
+    const file = withThread(
+      emptyCommentsFile(),
+      't1',
+      at(doc, passage),
+      comment('a', 'x\u2028y\u2029z\u0085w\vv\fu\u202e\u2066t'),
+    )
+    const [thread] = commentThreads(file)
+    const out = formatNoteComments('a.md', [{ ...thread!, line: 1 }], { timeZone: 'UTC' })
+    expect(out.split('\n').slice(2)).toEqual([
+      'Thread t1 on "a b c" (line 1)',
+      '  ada, 2026-10-21 10:00',
+      '  > x',
+      '  > y',
+      '  > z',
+      '  > w',
+      '  > v',
+      '  > ut',
+    ])
+  })
 })

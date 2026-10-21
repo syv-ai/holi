@@ -152,7 +152,7 @@ says what the approved schedules listen for (`interest`), and a source does only
   `.claude/` are never file events: a run writes there (memory, settings, its own schedule) as a
   matter of course. Nor are `.local.` files and secret files such as `.env`, which are this
   machine's and never named in a run's line, nor a vault app's records and log, which an app
-  rewrites as it runs (the per-turn changes line holds back the same files). While a schedule's run works, file events for that schedule are dropped: Holi
+  rewrites as it runs. While a schedule's run works, file events for that schedule are dropped: Holi
   cannot tell the run's own writes from anyone else's, so a file someone drops in that window is
   not heard by it either. `changed` is opt-in, because a run that edits the files it watches would
   otherwise start the next run. `added` still loops when a run creates a file under its glob after

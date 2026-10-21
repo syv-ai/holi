@@ -123,7 +123,6 @@ function followThreads(view: EditorView, path: string, store: JotaiStore): () =>
   }
 }
 
-/** Tell the drawer where each thread is, when that changed. */
 /**
  * A commentable note's threads in `view` (`followThreads`), and the palette's
  * Comment on selection, which reaches the editor last focused. `claimNow`
@@ -157,6 +156,7 @@ function followComments(
   }
 }
 
+/** Tell the drawer where each thread is, when that changed. */
 function reportLines(view: EditorView, path: string, store: JotaiStore): void {
   const lines = threadLines(view.state)
   const was = store.get(threadLinesAtom)[path]

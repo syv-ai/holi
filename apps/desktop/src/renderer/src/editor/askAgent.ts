@@ -103,6 +103,13 @@ export interface CommentSeam {
   comment: (from: number, to: number) => void
 }
 
+/** The note's comment seam, while it takes threads. A facet rather than an
+ *  argument, so the note's claim can give or take it (`reconfigureClaimLayer`)
+ *  without rebuilding the tooltip's field, which would close an open ask. */
+export const commentSeamFacet = Facet.define<CommentSeam, CommentSeam | undefined>({
+  combine: (values) => values[0],
+})
+
 /** A picker label, not a name: main derives the real one from the ask's first
  *  line at spawn. */
 const NEW_SESSION = 'New session'
@@ -332,7 +339,7 @@ function askAgentView(
       : [
           button('Comment', () => {
             const { from, to } = view.state.selection.main
-            comment.comment(from, to)
+            ;(view.state.facet(commentSeamFacet) ?? comment).comment(from, to)
           }),
         ]),
   ]
@@ -358,8 +365,9 @@ function tooltipFor(
   state: EditorState,
   notePath: string,
   seam: AskAgentSeam | undefined,
-  comment: CommentSeam | undefined,
 ): Tooltip[] {
+  const comment = state.facet(commentSeamFacet)
+  if (seam === undefined && comment === undefined) return []
   // A read-only file is one a reconcile is resolving (docs/features/vaults-sync.md):
   // do not hand it to a second conversation mid-merge. `state.readOnly`, not the
   // `editable` facet, which is about the caret rather than the file.
@@ -415,17 +423,12 @@ function openedTooltip(
 
 /**
  * Shows "Ask agent" and "Comment" over a non-empty selection, each while its
- * seam is there. `notePath` is static because `EditorPane` rebuilds the view
- * per document.
+ * seam is there (the comment seam is `commentSeamFacet`). `notePath` is static
+ * because `EditorPane` rebuilds the view per document.
  */
-export function askAgentTooltip(
-  notePath: string,
-  seam: AskAgentSeam | undefined,
-  comment?: CommentSeam,
-): Extension {
-  if (seam === undefined && comment === undefined) return []
+export function askAgentTooltip(notePath: string, seam: AskAgentSeam | undefined): Extension {
   const field = StateField.define<readonly Tooltip[]>({
-    create: (state) => tooltipFor(state, notePath, seam, comment),
+    create: (state) => tooltipFor(state, notePath, seam),
     update(tooltips, tr) {
       if (seam !== undefined) {
         for (const effect of tr.effects) {
@@ -433,9 +436,12 @@ export function askAgentTooltip(
         }
       }
       // Not on other transactions: rebuilding would replace the button under
-      // the pointer.
-      if (!tr.docChanged && tr.selection === undefined) return tooltips
-      return tooltipFor(tr.state, notePath, seam, comment)
+      // the pointer. A note that starts or stops taking threads changes the
+      // buttons, so that rebuilds too.
+      const commentable = (state: EditorState) => state.facet(commentSeamFacet) !== undefined
+      const flipped = commentable(tr.startState) !== commentable(tr.state)
+      if (!tr.docChanged && tr.selection === undefined && !flipped) return tooltips
+      return tooltipFor(tr.state, notePath, seam)
     },
     provide: (f) => showTooltip.computeN([f], (state) => state.field(f)),
   })

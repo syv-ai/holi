@@ -555,8 +555,17 @@ export interface LocatedThread extends CommentThread {
   line: number | null
 }
 
+/** A teammate's text with its invisible format characters (`\p{Cf}`: bidi
+ *  overrides, zero-width joiners) removed, so what prints is what is there. */
+const visible = (text: string): string => text.replace(/\p{Cf}/gu, '')
+
+/** A body as quoted lines. Every character a terminal or a model may take as
+ *  a line break starts a new quoted line, so no line of a body can pass for
+ *  one of ours. */
 const quoted = (text: string): string[] =>
-  text.split(/\r\n|\r|\n/).map((line) => `  > ${line}`.trimEnd())
+  visible(text)
+    .split(/\r\n|[\r\n\u2028\u2029\u0085\v\f]/)
+    .map((line) => `  > ${line}`.trimEnd())
 
 export function formatNoteComments(
   path: string,
@@ -571,7 +580,9 @@ export function formatNoteComments(
   ].join(', ')
   const blocks = threads.map((t) => {
     const where = t.line === null ? 'detached, the passage is gone' : `line ${t.line}`
-    const on = t.anchor.quote.replace(/\s+/g, ' ').trim()
+    const on = visible(t.anchor.quote)
+      .replace(/[\s\u0085]+/g, ' ')
+      .trim()
     const lines = [`Thread ${idOf(t.id)} on "${on}" (${where})`]
     t.comments.forEach((c, i) => {
       const lead = i === 0 ? '' : 'Reply, '

@@ -36,7 +36,8 @@
  * watermark). docs/not-built.md.
  */
 import {
-  isAppFencedPath,
+  appBundleOf,
+  isAppPrivatePath,
   isLocalOnlyPath,
   MIN_SCHEDULE_GAP_MINUTES,
   momentFireAt,
@@ -280,11 +281,12 @@ const QUIET = ['.holi/', '.claude/']
 /** Whether a file's change may be a trigger's event, and so be named in a
  *  run's line: not Holi's or the agent's own folders, not this machine's
  *  files (`.local.`) or a secret file, and not an app's records or log, which
- *  an app rewrites as it runs. The per-turn changes line holds back the same. */
+ *  an app rewrites as it runs. A root `AGENTS.md`, `CLAUDE.md` or `MEMORY.md`
+ *  is heard: it is fenced from apps, not from triggers. */
 function heardFile(path: string): boolean {
-  return (
-    !QUIET.some((dir) => path.startsWith(dir)) && !isLocalOnlyPath(path) && !isAppFencedPath(path)
-  )
+  if (QUIET.some((dir) => path.startsWith(dir)) || isLocalOnlyPath(path)) return false
+  const bundle = appBundleOf(path)
+  return bundle === null || !isAppPrivatePath(path.slice(bundle.length + 1))
 }
 
 /**

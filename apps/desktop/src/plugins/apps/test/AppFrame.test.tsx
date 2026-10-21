@@ -16,6 +16,7 @@ import userEvent from '@testing-library/user-event'
 import { activeRemoteAtom, snapshotAtom } from '@/plugin-api'
 import { AppFrame } from '../renderer/AppFrame'
 import { appOpensAtom } from '../renderer/apps'
+import { openTarget } from '../renderer/bridge-host'
 
 /** Main's side of the app door, answering the way the registry would. */
 const bridgeMock = vi.fn((input: { remote: string; method: string }): Promise<unknown> => {
@@ -179,4 +180,15 @@ test('a deleted app leaves a tombstone, not a frame', async () => {
   // closing it is the user's move, not ours.
   await userEvent.click(screen.getByRole('button', { name: /close/i }))
   expect(closed).toEqual([['app', 'Team/Retro.app']])
+})
+
+test("holi.open refuses a secret file and this machine's state, even when they exist", () => {
+  const files = ['.env', '.holi/state/bridge.json']
+  store.set(snapshotAtom, {
+    ...emptyVaultSnapshot(),
+    files: files.map((path) => ({ path, updatedAt: '' })),
+  })
+  for (const target of files) {
+    expect(() => openTarget(store, { target })).toThrow(`may not open ${target}`)
+  }
 })

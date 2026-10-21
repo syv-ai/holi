@@ -11,7 +11,7 @@ import { holiCompletion } from './completion'
 import { fenceLanguage } from './fence-languages'
 import { formattingKeymap } from './formatting'
 import { linkClickHandler, type LinkNav } from './links'
-import { askAgentTooltip, type AskAgentSeam, type CommentSeam } from './askAgent'
+import { askAgentTooltip, commentSeamFacet, type AskAgentSeam, type CommentSeam } from './askAgent'
 import { commentThreads } from './comment-threads'
 import { frontmatterAlwaysOpenFacet, frontmatterExtension } from './frontmatter'
 import { mermaidExtension } from './mermaid'
@@ -92,10 +92,7 @@ const claimLayer = new Compartment()
  *  a compartment for the same reason. */
 const commentLayer = new Compartment()
 
-type ClaimLayer = Pick<
-  EditorDeps,
-  'frontmatterAlwaysOpen' | 'claimExtensions' | 'notePath' | 'askAgent' | 'comment'
->
+type ClaimLayer = Pick<EditorDeps, 'frontmatterAlwaysOpen' | 'claimExtensions' | 'comment'>
 
 function claimLayerOf(deps: ClaimLayer): Extension {
   return [
@@ -105,11 +102,9 @@ function claimLayerOf(deps: ClaimLayer): Extension {
 }
 
 function commentLayerOf(deps: ClaimLayer): Extension {
-  return [
-    askAgentTooltip(deps.notePath, deps.askAgent, deps.comment),
-    // The passages the note's comment threads are about.
-    deps.comment === undefined ? [] : commentThreads,
-  ]
+  if (deps.comment === undefined) return []
+  // The selection's Comment button, and the passages the threads are about.
+  return [commentSeamFacet.of(deps.comment), commentThreads]
 }
 
 /** Swap an open view's claim and comment layers for the file's claim now,
@@ -162,6 +157,8 @@ export function baseEditorExtensions(deps: EditorDeps): Extension[] {
     docExistsFacet.of(deps.docExists),
     linkChipFacet.of(deps.linkChip ?? (() => null)),
     notePathFacet.of(deps.notePath),
+    // Outside the comment layer, so a claim change keeps an open ask open.
+    askAgentTooltip(deps.notePath, deps.askAgent),
     commentLayer.of(commentLayerOf(deps)),
     livePreview,
     // The caret's half of a mark's slide: the transition is CSS, and the
