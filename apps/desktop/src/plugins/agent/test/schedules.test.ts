@@ -40,6 +40,8 @@ let launchFails: string | null
 let turnEnd: ((id: string, pending: number | null) => void) | null
 let scheduler: Scheduler
 let emitted: string[]
+/** When the turn log says a session's last turn ended, or null for none. */
+let lastTurn: number | null
 
 const vault = () => ({ remote: REMOTE, root })
 
@@ -69,6 +71,7 @@ function make(): Scheduler {
       },
     },
     emit: (_remote, name) => emitted.push(name),
+    lastTurnAt: async () => lastTurn,
     now: () => clock,
     // The tests tick by hand.
     tickMs: 1_000_000_000,
@@ -96,6 +99,7 @@ beforeEach(async () => {
   launchFails = null
   turnEnd = null
   emitted = []
+  lastTurn = null
   scheduler = make()
   scheduler.attach(vault())
 })
@@ -270,6 +274,65 @@ describe('running on events', () => {
     expect(launched[1]!.prompt).not.toContain('summary.md')
     const [entry] = await scheduler.list(vault())
     expect(entry!.runs.filter((r) => r.outcome === 'skipped')).toEqual([])
+  })
+})
+
+describe('a file someone else changed while the run worked', () => {
+  const scan = (files: Record<string, Date>) => ({
+    ...emptyVaultSnapshot(),
+    files: Object.entries(files).map(([path, d]) => ({ path, updatedAt: d.toISOString() })),
+  })
+
+  it('starts a follow-up when it changed outside the run, and only then', async () => {
+    await writeSchedule('inbox.md', 'on:\n  - file: inbox/**')
+    await scheduler.enable(vault(), 'inbox')
+    scheduler.snapshot(scan({}))
+    scheduler.snapshot(scan({ 'inbox/a.pdf': at(10, 1) }))
+    clock = at(10, 2)
+    await scheduler.tick()
+    expect(launched).toHaveLength(1)
+    const id = (await scheduler.list(vault()))[0]!.runs[0]!.jobId!
+
+    // While it works: the summary it writes, and a PDF moved in from another
+    // folder, which keeps the time it was made, before the run began.
+    clock = at(10, 5)
+    scheduler.snapshot(
+      scan({ 'inbox/a.pdf': at(10, 1), 'inbox/summary.md': at(10, 5), 'inbox/b.pdf': at(9, 0) }),
+    )
+    // Its turn ends; the record lands a moment later, after the settle commit.
+    clock = at(10, 6)
+    live[0]!.state = 'idle'
+    turnEnd!(id, 0)
+    await vi.waitFor(() => expect(stopped).toEqual([id]))
+    lastTurn = at(10, 6).getTime() + 2_000
+    clock = at(10, 8)
+    await scheduler.tick()
+    // Held as any batch is, for its minute.
+    expect(launched).toHaveLength(1)
+    clock = at(10, 9)
+    await scheduler.tick()
+    expect(launched).toHaveLength(2)
+    expect(launched[1]!.prompt).toContain('file "inbox/b.pdf" added.')
+    expect(launched[1]!.prompt).not.toContain('summary.md')
+  })
+
+  it('drops them as before when the run has no recorded turn', async () => {
+    await writeSchedule('inbox.md', 'on:\n  - file: inbox/**')
+    await scheduler.enable(vault(), 'inbox')
+    scheduler.snapshot(scan({}))
+    scheduler.snapshot(scan({ 'inbox/a.pdf': at(10, 1) }))
+    clock = at(10, 2)
+    await scheduler.tick()
+    const id = (await scheduler.list(vault()))[0]!.runs[0]!.jobId!
+    scheduler.snapshot(scan({ 'inbox/a.pdf': at(10, 1), 'inbox/b.pdf': at(9, 0) }))
+    live[0]!.state = 'idle'
+    turnEnd!(id, 0)
+    await vi.waitFor(() => expect(stopped).toEqual([id]))
+    for (const minute of [8, 9, 10, 11, 12]) {
+      clock = at(10, minute)
+      await scheduler.tick()
+    }
+    expect(launched).toHaveLength(1)
   })
 })
 

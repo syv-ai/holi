@@ -90,6 +90,12 @@ export const agentMain: MainPlugin = {
       emit: ctx.emit,
       // What the schedules' triggers listen for, to the plugins that source it.
       tell: (event) => ctx.events.emit(event),
+      // Where a run's last turn ended, so a file someone else changed while
+      // it worked can start a follow-up.
+      lastTurnAt: async (jobId) => {
+        const turn = (await openTurnLog(ctx.root).list()).find((t) => t.sessionId === jobId)
+        return turn === undefined ? null : Date.parse(turn.at)
+      },
     })
     ctx.register(SCHEDULE_NAMESPACES, scheduleCapabilities({ scheduler: schedules }))
     // The events that start schedules' runs: what the vault's plugins tell,

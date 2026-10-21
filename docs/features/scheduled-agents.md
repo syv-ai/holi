@@ -152,9 +152,18 @@ says what the approved schedules listen for (`interest`), and a source does only
   `.claude/` are never file events: a run writes there (memory, settings, its own schedule) as a
   matter of course. Nor are `.local.` files and secret files such as `.env`, which are this
   machine's and never named in a run's line, nor a vault app's records and log, which an app
-  rewrites as it runs. While a schedule's run works, file events for that schedule are dropped: Holi
-  cannot tell the run's own writes from anyone else's, so a file someone drops in that window is
-  not heard by it either. `changed` is opt-in, because a run that edits the files it watches would
+  rewrites as it runs. While a schedule's run works, its file events are set aside rather than
+  heard. When the run is done, Holi weighs them against the span the run could have written in:
+  from its start to the end of its last turn, as the turn log records it (written after that
+  turn's settle commit and the pre-commit transforms, so a transform's rewrite of the run's file
+  falls inside). A file whose newest change lies outside that span is someone else's, and becomes
+  the cause of one follow-up run, batched, spaced and coalesced like any other events: a file
+  changed after the run's last turn ended, or one moved in from another folder, which keeps its
+  older mtime. A file changed inside the span is dropped, as before: a turn's settle commit holds
+  every change made while it ran, the person's and a teammate's as much as the run's, and so do
+  the gaps between a paused run's turns, where its own background work writes, so neither the
+  range nor the clock can tell them apart. With no recorded turn (the run closed without one, or
+  its record is not in within four checks), everything set aside is dropped. `changed` is opt-in, because a run that edits the files it watches would
   otherwise start the next run. `added` still loops when a run creates a file under its glob after
   it has finished, or when two schedules each write under the other's glob: keep a run's output out
   of what it watches. The first scan after a start is the baseline; what changed while Holi was
@@ -198,7 +207,7 @@ thread or task however often it changed. The run waits at least 5 minutes after 
 previous run, the floor a cron schedule has, and a schedule with both a `cron` and `on` shares it.
 
 **An event never starts a run on top of the previous one, and is never dropped for it** (file events
-while the run works excepted, above). Where a cron moment that finds the previous run working is
+changed within the run's own span excepted, above). Where a cron moment that finds the previous run working is
 skipped, a batch waits: it keeps growing and is the one run that follows once the previous run is
 done. A schedule holds at most one live run and one waiting batch.
 

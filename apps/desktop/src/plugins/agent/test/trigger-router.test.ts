@@ -2,7 +2,7 @@
  * The trigger router: the cases that would catch a real bug. An event fires
  * a schedule once however often it is told, events close together are one
  * run, a moment fires once across checks (and once when told late), a run
- * does not trigger itself, and the run's line is identifiers only.
+ * does not trigger itself (only someone else's change during it does), and the run's line is identifiers only.
  */
 import { describe, expect, it } from 'vitest'
 import { emptyVaultSnapshot, type Trigger, type VaultEvent } from '@holi/shared'
@@ -122,14 +122,28 @@ describe('the trigger router', () => {
     expect(r.due('p', late + BATCH_MS, null)).toBeNull()
   })
 
-  it("drops a schedule's file events while its own run works", () => {
+  it("sets a run's file events aside, and holds only those changed outside its span", () => {
+    const r = createTriggerRouter()
+    const at = (ms: number) => new Date(ms).toISOString()
+    r.running(INBOX.path, true)
+    r.hear(added('inbox/report.md', at(5 * MIN)), [INBOX], 5 * MIN)
+    r.hear(added('inbox/late.pdf', at(20 * MIN)), [INBOX], 20 * MIN)
+    r.hear(added('inbox/moved.pdf', at(-60 * MIN)), [INBOX], 6 * MIN)
+    expect(r.due(INBOX.path, 30 * MIN, null)).toBeNull()
+    r.running(INBOX.path, false)
+    expect(r.settle(INBOX.path, { from: 0, to: 10 * MIN }, 30 * MIN)).toBe(2)
+    expect(line(r, INBOX.path, 30 * MIN + BATCH_MS)).toBe(
+      'file "inbox/late.pdf" added; file "inbox/moved.pdf" added',
+    )
+  })
+
+  it('drops what it set aside when the span is unknown', () => {
     const r = createTriggerRouter()
     r.running(INBOX.path, true)
-    r.hear(added('inbox/report.md'), [INBOX], 0)
-    expect(r.due(INBOX.path, BATCH_MS, null)).toBeNull()
+    r.hear(added('inbox/a.pdf', new Date(20 * MIN).toISOString()), [INBOX], 0)
     r.running(INBOX.path, false)
-    r.hear(added('inbox/a.pdf'), [INBOX], BATCH_MS)
-    expect(line(r, INBOX.path, 2 * BATCH_MS)).toBe('file "inbox/a.pdf" added')
+    expect(r.settle(INBOX.path, null, MIN)).toBe(0)
+    expect(r.due(INBOX.path, MIN + BATCH_MS, null)).toBeNull()
   })
 })
 

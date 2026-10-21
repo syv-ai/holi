@@ -49,10 +49,11 @@ their watermark; file and mail events are not, and nor is what changed while Hol
 issue's shape: the pending queue in `.holi/state/triggers.local.json`, written before a run starts,
 cleared when it has. See [scheduled agents](features/scheduled-agents.md).
 
-**Telling a run's own writes apart.** While a schedule's run works, every file event for that
-schedule is dropped, a stranger's file included, because Holi does not know which paths the run
-wrote. Knowing them (a hook on the run's file tools, or its commits) would drop only those. See
-[scheduled agents](features/scheduled-agents.md).
+**Telling a run's own writes apart.** A file changed while a schedule's run works starts a
+follow-up only when its change lies outside the run's span; one changed during the span is
+dropped, a stranger's included, because a turn's commit holds everyone's changes made while it ran.
+Knowing the run's own paths (a hook on its file tools, which a shell command escapes) would drop
+only those. See [scheduled agents](features/scheduled-agents.md).
 
 **Trigger priority.** A trigger run waits for the schedule's previous run, but not for the person:
 it does not hold back while they are in a session of their own or one waits on them (`needs-you`),
