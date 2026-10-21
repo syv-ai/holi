@@ -20,7 +20,7 @@ Every note is a `.md` file, edited in CodeMirror 6 with live preview: markdown r
 
 **Tables** (`codemirror-markdown-tables`) sit centred in the column, their cells keeping their own alignment; a table wider than the column scrolls from its left edge. A focused cell is a nested editor given inline live preview under `inlineOnlyFacet`. An unfocused cell is rendered by the package from the root highlighter, so a `HighlightStyle` is the only thing that styles it: it can hide `**`, `*` and `` ` ``, and keeps a link's brackets. The app-wide stable scrollbar gutter skips a cell's editor, whose scroller is `overflow: hidden`: the reserved lane widened a cell as it took focus, and the centred table shifted with it.
 
-**Images and binaries.** Any file may live in a vault; markdown is what you write. `![](path)` (note-relative) and `[[img.png]]` (vault-relative) render inline via `holi-vault://`. An image opens in its own tab on a light checkerboard plate, a PDF in the viewer ([pdf.md](pdf.md)), other known binaries in a typed placeholder. Binaries stay out of the link graph.
+**Images and binaries.** Any file may live in a vault; markdown is what you write. `![](path)` (note-relative) and `[[img.png]]` (vault-relative) render inline via `holi-vault://`, at their natural size up to the column's width and 70% of the window's height, aspect ratio kept and never scaled up. There is no per-image size syntax. An image opens in its own tab on a light checkerboard plate, a PDF in the viewer ([pdf.md](pdf.md)), other known binaries in a typed placeholder. Binaries stay out of the link graph.
 
 **Inline code** is the prose's size, in mono scaled to the prose face's x-height (`font-size-adjust: from-font`), with no fill: the `--code` theme token colours it.
 

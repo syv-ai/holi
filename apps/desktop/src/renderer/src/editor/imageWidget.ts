@@ -23,8 +23,11 @@ export class ImageWidget extends WidgetType {
     img.src = this.src
     img.alt = this.alt
     img.className = 'cm-image'
+    // Natural size, shrunk to fit the column and to 70% of the window's height so a
+    // tall figure still fits on screen. Width and height stay `auto`, so the aspect
+    // ratio holds and a small image is never scaled up.
     img.style.maxWidth = '100%'
-    img.style.maxHeight = '320px'
+    img.style.maxHeight = '70vh'
     img.style.display = 'block'
     // Fade in on decode rather than pop, which flickers on an image-heavy note.
     // Opacity only, so CodeMirror's measure loop is untouched.
