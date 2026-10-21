@@ -46,7 +46,7 @@ export function installFakeHoli(handle: (op: TrpcOpWire) => unknown = () => unde
   const heldBackSubs = new Set<(f: HeldBackFile[]) => void>()
   const committedSubs = new Set<(p: string[] | null) => void>()
   const flushSubs = new Set<() => void>()
-  const reminderSubs = new Set<(p: { remote: string; path: string }) => void>()
+  const openSubs = new Set<(p: { remote: string; path: string }) => void>()
   const pluginSubs = new Map<string, Set<(e: unknown) => void>>()
   const pluginSent: { id: string; event: unknown }[] = []
   const testOnboardingSubs = new Set<() => void>()
@@ -76,9 +76,7 @@ export function installFakeHoli(handle: (op: TrpcOpWire) => unknown = () => unde
       onCommitted: subscribe(committedSubs),
       onFlushRequest: subscribe(flushSubs),
       flushDone: () => onFlushed?.(),
-    },
-    reminders: {
-      onOpen: subscribe(reminderSubs),
+      onOpen: subscribe(openSubs),
     },
     plugin: {
       on: (id: string, cb: (e: unknown) => void) => {

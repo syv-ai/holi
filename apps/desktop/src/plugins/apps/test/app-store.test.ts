@@ -20,6 +20,7 @@ registry.register(
   vaultCapabilities({
     updateSkills: async () => ({ summary: '', conflicts: null }),
     pendingSkills: async () => [],
+    open: () => {},
   }),
 )
 

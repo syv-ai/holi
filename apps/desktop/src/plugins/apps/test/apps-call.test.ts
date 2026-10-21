@@ -48,6 +48,7 @@ async function rig() {
     vaultCapabilities({
       updateSkills: async () => ({ summary: '', conflicts: null }),
       pendingSkills: async () => [],
+      open: () => {},
     }),
   )
   registry.register(TASK_NAMESPACES, taskCapabilities({ today: () => '2026-09-30' }))

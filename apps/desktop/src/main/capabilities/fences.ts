@@ -61,7 +61,16 @@ export function readableOrNull(path: string): VaultRelPath | null {
  * the refusals see the real name.
  */
 export async function knownPath(ctx: CapabilityContext, path: string): Promise<VaultRelPath> {
-  const rel = readablePath(path)
+  return inSnapshot(ctx, readablePath(path), path)
+}
+
+/** `rel` if the vault's snapshot holds it exactly (see `knownPath`), else a
+ *  NOT_FOUND naming `path` as the caller gave it. */
+export async function inSnapshot(
+  ctx: CapabilityContext,
+  rel: VaultRelPath,
+  path: string,
+): Promise<VaultRelPath> {
   const snapshot = await ctx.snapshot()
   const known =
     snapshot.docs.some((d) => d.path === rel) ||

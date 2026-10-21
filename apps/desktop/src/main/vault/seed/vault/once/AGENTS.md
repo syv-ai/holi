@@ -12,6 +12,7 @@ A task (a TODO in the vault) is a file named `task.<slug>.md`, in the folder it 
 
 - Moving a file: links to it are rewritten on commit when git sees the rename. If you moved it another way, fix the links manually.
 - A `.local.` in a file or folder name keeps it, and everything in a folder, on this machine (gitignored). Anything personal goes in one.
+- To show the user a file (a note, a task, a PDF), open it in a Holi tab with `holi docs open <path>` rather than telling them where it is. Bare `holi` lists Holi's other commands.
 
 ## Sync
 

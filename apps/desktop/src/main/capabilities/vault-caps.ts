@@ -5,11 +5,18 @@
  *
  * No `electron` import: this loads under plain Node in the tests.
  */
-import { syncLabel, type RecentEntry, type SyncState, type VaultSnapshot } from '@holi/shared'
+import {
+  syncLabel,
+  vaultRelPath,
+  type RecentEntry,
+  type SyncState,
+  type VaultRelPath,
+  type VaultSnapshot,
+} from '@holi/shared'
 import { readVaultSettings } from '../vault/settings'
 import { isSearchable, searchVault, type SearchHit } from '../vault/search'
 import { CapabilityError, unavailable } from './error'
-import { readableOrNull, readablePath, readNote } from './fences'
+import { inSnapshot, readableOrNull, readablePath, readNote } from './fences'
 import { limitParam, noParams, paramsObject, pathParams, stringParam } from './params'
 import { cap } from './registry'
 import { renderNote } from './render-note'
@@ -52,6 +59,9 @@ export interface VaultCapabilitiesDeps {
   /** The shipped files an update would bring the vault, by vault path;
    *  writes nothing. */
   pendingSkills(remote: string): Promise<string[]>
+  /** Show `path` to the person in a tab of `remote`'s window. Throws the
+   *  refusal. */
+  open(remote: string, path: VaultRelPath): void
 }
 
 export const vaultCapabilities = (deps: VaultCapabilitiesDeps) => ({
@@ -80,6 +90,30 @@ export const vaultCapabilities = (deps: VaultCapabilitiesDeps) => ({
     params: pathParams,
     run: async (ctx, { path }): Promise<string> => renderNote(await readNote(ctx, path)),
     text: (html) => html,
+  }),
+
+  /**
+   * Show a note, task, PDF or any vault file in a tab, so the agent can say
+   * "here it is" rather than "go to X". The CLI door only: the agent may show
+   * the person anything in the vault, its own surface included, and an app
+   * has `holi.open`. Reversible: the tab closes.
+   */
+  'docs.open': cap({
+    doors: ['cli'],
+    cli: { args: ['path'], summary: 'show a note, task or other vault file in a tab' },
+    params: pathParams,
+    run: async (ctx, { path }) => {
+      let rel
+      try {
+        rel = vaultRelPath(path)
+      } catch (err) {
+        throw new CapabilityError('BAD_REQUEST', (err as Error).message)
+      }
+      rel = await inSnapshot(ctx, rel, path)
+      deps.open(ctx.remote, rel)
+      return { path: rel }
+    },
+    text: ({ path }) => `opened ${path}`,
   }),
 
   'docs.search': cap({

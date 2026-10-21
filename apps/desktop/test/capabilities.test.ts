@@ -19,11 +19,14 @@ import { taskCapabilities, TASK_NAMESPACES } from '../src/main/vault/task-capabi
 import { MEMBERS_TTL_MS, createMembersCache } from '../src/main/github/members-cache'
 
 const registry = createCapabilityRegistry()
+/** What `docs.open` asked to show, by vault path. */
+const opened: string[] = []
 registry.register(
   VAULT_NAMESPACES,
   vaultCapabilities({
     updateSkills: async () => ({ summary: '', conflicts: null }),
     pendingSkills: async () => [],
+    open: (_remote, path) => void opened.push(path),
   }),
 )
 registry.register(TASK_NAMESPACES, taskCapabilities({ today: () => '2026-09-30' }))
@@ -334,6 +337,29 @@ describe('docs.render', () => {
     await put('a.md', '# Hi\n')
     const { value } = await runCapability('docs.render', 'app', ctx({}), { path: 'a.md' })
     expect(value).toContain('<h1')
+  })
+})
+
+describe('docs.open', () => {
+  it('shows a file the vault holds, by its normalised path', async () => {
+    await put('notes/a.md', '# A\n')
+    opened.length = 0
+    const { text } = await runCapability('docs.open', 'cli', ctx({}, null), {
+      path: './notes/a.md',
+    })
+    expect(opened).toEqual(['notes/a.md'])
+    expect(text).toBe('opened notes/a.md')
+  })
+
+  it('refuses a path outside the vault, or one it does not hold', async () => {
+    opened.length = 0
+    expect(
+      await refusal(runCapability('docs.open', 'cli', ctx({}, null), { path: '../x.md' })),
+    ).toMatchObject({ code: 'BAD_REQUEST' })
+    expect(
+      await refusal(runCapability('docs.open', 'cli', ctx({}, null), { path: 'missing.md' })),
+    ).toMatchObject({ code: 'NOT_FOUND' })
+    expect(opened).toEqual([])
   })
 })
 

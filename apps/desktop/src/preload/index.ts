@@ -47,10 +47,11 @@ const onCommitted = pushChannel<unknown>('vault:committed')
  */
 const onFlushRequest = pushChannel<void>('vault:flush')
 
-/** A reminder fired and its notification was clicked: open this task, switching
- * vaults first if it lives in another one. Carries `remote` so the renderer's
- * switch keeps `activeRemoteAtom` truthful (a main-side switch could not). */
-const onReminderOpen = pushChannel<{ remote: string; path: string }>('reminders:open')
+/** Main asks for a vault path in a tab: a clicked reminder's task, or
+ * `holi docs open`. Carries `remote` so the renderer switches vaults first when
+ * the path lives in another one, keeping `activeRemoteAtom` truthful (a
+ * main-side switch could not). */
+const onOpen = pushChannel<{ remote: string; path: string }>('vault:open')
 
 /** Each plugin's events (`plugin:<id>`), one fan-out per plugin, made the
  *  first time that plugin is subscribed. */
@@ -86,9 +87,7 @@ contextBridge.exposeInMainWorld('holi', {
     onCommitted,
     onFlushRequest,
     flushDone: () => ipcRenderer.send('vault:flush-done'),
-  },
-  reminders: {
-    onOpen: onReminderOpen,
+    onOpen,
   },
   /** Plugin events: main pushes `{remote, name, payload}` on `plugin:<id>`,
    *  and the renderer sends the same shape back, in order and unanswered. */

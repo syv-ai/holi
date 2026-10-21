@@ -313,10 +313,41 @@ async function main(): Promise<void> {
     return (await registry.list()).find((e) => e.remote === remote)?.path ?? null
   }
 
+  /**
+   * Show a vault path in a tab: a clicked reminder's task, `holi docs open`.
+   * Brings the window forward and hands the path to the renderer, which owns
+   * the vault switch (so `activeRemoteAtom` stays truthful). The window may be
+   * gone entirely (tray-resident), so recreate it and deliver on
+   * `did-finish-load`, or the push arrives before any renderer can hear it.
+   */
+  const showPath = (remote: string, path: string): void => {
+    const payload = { remote, path }
+    const win = mainWindow
+    if (win === null || win.isDestroyed()) {
+      const fresh = createWindow()
+      fresh.on('focus', () => host.active()?.onFocus())
+      fresh.webContents.once('did-finish-load', () => fresh.webContents.send('vault:open', payload))
+      return
+    }
+    if (win.isMinimized()) win.restore()
+    win.show()
+    win.focus()
+    win.webContents.send('vault:open', payload)
+  }
+
   // What a vault app and the agent can ask for: core's capabilities, then
   // each feature's, under the namespaces each owns. A feature's table closes
   // over what it needs from the running app.
   const vaultCaps = vaultCapabilities({
+    // `holi docs open`: only into the vault Holi is showing. An agent session
+    // outlives a vault switch, and its open must not switch the person away
+    // from what they are working in.
+    open: (remote, path) => {
+      if (host.active()?.remote !== remote) {
+        throw new CapabilityError('UNAVAILABLE', 'Holi is showing another vault.')
+      }
+      showPath(remote, path)
+    },
     // `holi skills update` and the palette's Update skills: bring this
     // release's skills and hooks to a vault. A conflict is answered with the
     // first turn of a session that would resolve it, which the renderer
@@ -452,30 +483,7 @@ async function main(): Promise<void> {
     },
   }
   const delivered = createDeliveredLog((remote) => clonePaths.get(remote) ?? null)
-  /**
-   * A clicked reminder brings the window forward and hands the task to the
-   * renderer, which owns the vault switch (so `activeRemoteAtom` stays truthful).
-   * The window may be gone entirely (tray-resident), so recreate it and
-   * deliver on `did-finish-load`, or the push arrives before any renderer can
-   * hear it.
-   */
-  const focusTask = (remote: string, path: string): void => {
-    const payload = { remote, path }
-    const win = mainWindow
-    if (win === null || win.isDestroyed()) {
-      const fresh = createWindow()
-      fresh.on('focus', () => host.active()?.onFocus())
-      fresh.webContents.once('did-finish-load', () =>
-        fresh.webContents.send('reminders:open', payload),
-      )
-      return
-    }
-    if (win.isMinimized()) win.restore()
-    win.show()
-    win.focus()
-    win.webContents.send('reminders:open', payload)
-  }
-  const notifier = createNotifier((remote, path) => focusTask(remote, path))
+  const notifier = createNotifier((remote, path) => showPath(remote, path))
   const reminders = createReminderRuntime({
     corpus,
     notifier,

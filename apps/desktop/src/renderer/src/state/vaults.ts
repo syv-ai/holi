@@ -13,10 +13,10 @@ import type { RendererPlugin } from '@/plugin-api/types'
 import { flushAllBuffers } from '../lib/buffer-registry'
 import { trpc } from '../lib/trpc'
 import { closeTabsForPaths, retargetTab, retargetTabs, workspaceAtom } from './panes'
-// A cycle (`plugins` reads `activeRemoteAtom`), safe because neither module
-// reads the other's atoms until a store does.
+// Cycles (`plugins` reads `activeRemoteAtom`, `surfaces` reads `snapshotAtom`),
+// safe because neither module reads the other's atoms until a store does.
 import { folderSurfacesAtom } from './plugins'
-import { openTaskAtom } from './view'
+import { openPathAtom } from './surfaces'
 
 type JotaiStore = ReturnType<typeof createStore>
 
@@ -192,14 +192,16 @@ export function subscribeToVault(
   const offCommitted = window.holi.vault.onCommitted((paths) =>
     store.set(historyEpochsAtom, (e) => bumpHistoryEpochs(e, paths)),
   )
-  // A clicked reminder opens its task. Cross-vault, the switch runs here, not in
-  // main, so `activeRemoteAtom` stays truthful; the task opens once the new
-  // vault's snapshot is in (`openVaultAtom` sets it before this resolves).
-  const offReminder = window.holi.reminders.onOpen(({ remote, path }) => {
+  // Main asks for a path in a tab (a clicked reminder, `holi docs open`).
+  // Cross-vault, the switch runs here, not in main, so `activeRemoteAtom` stays
+  // truthful; the path opens once the new vault's snapshot is in
+  // (`openVaultAtom` sets it before this resolves), pinned, as a deliberate
+  // arrival rather than browsing.
+  const offOpen = window.holi.vault.onOpen(({ remote, path }) => {
     if (remote && remote !== store.get(activeRemoteAtom)) {
-      void store.set(openVaultAtom, remote).then(() => store.set(openTaskAtom, path))
+      void store.set(openVaultAtom, remote).then(() => store.set(openPathAtom, path, 'pinned'))
     } else {
-      store.set(openTaskAtom, path)
+      store.set(openPathAtom, path, 'pinned')
     }
   })
   const tables = plugins.flatMap((p) =>
@@ -215,7 +217,7 @@ export function subscribeToVault(
     offSync()
     offHeldBack()
     offCommitted()
-    offReminder()
+    offOpen()
     offEvents.forEach((off) => off())
   }
 }
