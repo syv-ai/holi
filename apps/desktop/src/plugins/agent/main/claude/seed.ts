@@ -139,6 +139,10 @@ const AGENT_SETTINGS: SettingsFragment = {
     // AND compact: after a compact the agent has just forgotten it has
     // memory at all.
     { event: 'SessionStart', script: 'memory-overview' },
+    // Where the session takes messages, as soon as it runs: Holi can then add
+    // one to a session that has not had a turn yet. The turn's start says it
+    // again, which covers a script older than this entry.
+    { event: 'SessionStart', script: 'turn-signal', args: ['session'] },
     // `.holi/memory/index.md` is regenerated on every commit, so an edit to it is
     // always lost. Refused up front, with the reason.
     { event: 'PreToolUse', matcher: 'Write|Edit|MultiEdit', script: 'memory-index-guard' },

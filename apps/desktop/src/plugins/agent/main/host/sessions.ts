@@ -22,9 +22,10 @@
  *
  * NOTE: no `electron` import, so this loads under vitest.
  */
-import type { PluginCtx } from '../../../../main/plugin-api'
+import { CapabilityError, type PluginCtx } from '../../../../main/plugin-api'
 import type { VaultCliTarget } from '../claude/cli'
 import type { ClaudeRow, SessionSummary } from '../claude/listing'
+import type { SessionChannel } from '../claude/messaging'
 import type { AgentProvider, VaultRef } from '../provider'
 import type { AgentTerminals } from './terminals'
 import { ContextSnapshot, type FocusInput } from './context-snapshot'
@@ -67,6 +68,7 @@ export interface AgentSessionsDeps {
     | 'configure'
     | 'takeFirstSpawn'
     | 'signInNotice'
+    | 'message'
   >
   terminals: AgentTerminals
   /** Holi's generated commands, first on every session's `PATH`. */
@@ -124,6 +126,12 @@ export interface AgentSessions {
   /** A session's status line fired: Claude Code's status JSON, by vault and
    *  job id. */
   noteStatus(remote: string, jobId: string, status: unknown): void
+  /** A session's hook said where it takes messages, by vault and job id. */
+  noteChannel(remote: string, jobId: string, channel: SessionChannel): void
+  /** Add `text` to a running session's conversation: a turn when it is idle,
+   *  read after the tool call in flight when it is working. Never typed into
+   *  a terminal. Throws a `CapabilityError` when it cannot be delivered. */
+  message(id: string, text: string): Promise<void>
   /** The focus file is the vault's, so this names no session. */
   setFocus(focus: FocusInput): void
   /** Let go of the vault: optionally stop its live sessions, close every
@@ -176,6 +184,16 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
    * session between turns is not using any more.
    */
   const contextPercent = new Map<string, number>()
+  /**
+   * Where each session takes messages, by job id, as its hooks reported it.
+   * In memory only: the token is the session's, and a file would outlive it.
+   * Dropped when the session leaves the live listing, when a write to it
+   * fails, and when Holi lets go of the vault. A session is told apart
+   * from one not yet listed by `listedLive`: a `SessionStart` report can
+   * arrive before the listing shows the session at all.
+   */
+  const channels = new Map<string, SessionChannel>()
+  let listedLive = new Set<string>()
 
   const turnEnds = new Set<(id: string, pending: number | null) => void>()
   const sessionListeners = new Set<(sessions: SessionSummary[]) => void>()
@@ -291,6 +309,10 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     for (const id of coordinator.working) if (!liveIds.has(id)) coordinator.forget(id)
     // Nor use any more context; resumed, it says so again at its first event.
     for (const id of contextPercent.keys()) if (!liveIds.has(id)) contextPercent.delete(id)
+    // Nor take messages: a resumed process binds a new inbox and says so.
+    for (const id of channels.keys())
+      if (listedLive.has(id) && !liveIds.has(id)) channels.delete(id)
+    listedLive = liveIds
 
     let wantsRecheck = false
     for (const row of liveRows) {
@@ -492,6 +514,36 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
       push()
     },
 
+    noteChannel(remote, jobId, channel) {
+      if (current?.remote !== remote) return
+      channels.set(jobId, channel)
+    },
+
+    async message(id, text) {
+      const c = await ensureCurrent()
+      if (c === null) throw new CapabilityError('UNAVAILABLE', noVault.message)
+      if (!live().some((row) => row.id === id)) {
+        throw new CapabilityError('NOT_FOUND', `no running session ${id}`)
+      }
+      const channel = channels.get(id)
+      if (channel === undefined) {
+        throw new CapabilityError(
+          'UNAVAILABLE',
+          `session ${id} has not said where it takes messages`,
+          "it says so as it starts and at each turn through the vault's turn-signal hook; " +
+            'run `holi skills update` if the vault predates it',
+        )
+      }
+      try {
+        await provider.message(channel, text)
+      } catch (error) {
+        // Not tried again until the session reports it anew, at its next turn
+        // or its next process: a gone socket stays gone.
+        if (channels.get(id) === channel) channels.delete(id)
+        throw error
+      }
+    },
+
     setFocus(focus) {
       const vault = attached
       if (vault === null) return
@@ -536,6 +588,8 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     for (const id of [...coordinator.working]) coordinator.forget(id)
     unprompted.clear()
     contextPercent.clear()
+    channels.clear()
+    listedLive = new Set()
     if (idleRecheck !== null) {
       clearTimeout(idleRecheck)
       idleRecheck = null

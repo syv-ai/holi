@@ -9,6 +9,11 @@
  * the same way. **Every answer is empty**: whatever a Claude Code hook prints
  * is injected into the agent's context.
  *
+ * At a session's start (`SessionStart`, `/session`) and at each turn's start,
+ * the hook's body carries the session's inbox socket and token, which Claude
+ * Code exports to its hooks: how Holi adds a message to a running session
+ * (`messaging.ts`). Kept in memory by the host, never written down.
+ *
  * The job id rides beside the vault's standing token, because a background
  * session's environment comes from Claude Code's supervisor rather than from
  * Holi: no per-session bearer can reach it.
@@ -17,6 +22,7 @@
  */
 import type { RouteServer } from '../provider'
 import { JOB_ID } from './listing'
+import type { SessionChannel } from './messaging'
 
 export interface AgentRoutesDeps {
   /** A turn began or ended in one of this vault's background sessions, named
@@ -28,10 +34,30 @@ export interface AgentRoutesDeps {
    *  side of a shipped hook must stay backward-compatible, so this route
    *  answers every older script too. */
   onStatus?(remote: string, jobId: string, status: unknown): void
+  /** A session said where it takes messages: its inbox socket and token. */
+  onChannel?(remote: string, jobId: string, channel: SessionChannel): void
   log?: (msg: string) => void
 }
 
 const EMPTY = { status: 204 } as const
+
+/** The inbox a hook's body names, or null when it names none or one that is
+ *  not plausibly a socket path and a token. */
+export function channelOf(body: string): SessionChannel | null {
+  if (body.trim() === '') return null
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(body)
+  } catch {
+    return null
+  }
+  if (parsed === null || typeof parsed !== 'object') return null
+  const { socket, token } = parsed as Record<string, unknown>
+  if (typeof socket !== 'string' || typeof token !== 'string') return null
+  if (!socket.startsWith('/') || socket.length > 1024 || /[\0\n]/.test(socket)) return null
+  if (!/^[\w.-]{1,512}$/.test(token)) return null
+  return { socket, token }
+}
 
 /** Registers the routes; returns the undo. */
 export function registerAgentRoutes(server: RouteServer, deps: AgentRoutesDeps): () => void {
@@ -40,14 +66,22 @@ export function registerAgentRoutes(server: RouteServer, deps: AgentRoutesDeps):
   // A signal that names no job cannot say which session's turn it is, and with
   // several running there is no honest guess, so it is dropped (still answered
   // empty).
+  const channel = (remote: string, job: string, body: string): void => {
+    const found = channelOf(body)
+    if (found !== null) deps.onChannel?.(remote, job, found)
+  }
+
   const turn = (active: boolean) =>
     server.route(active ? '/turn/start' : '/turn/end', {
-      body: 'discard',
-      handle(remote, query) {
+      body: active ? 'text' : 'discard',
+      handle(remote, query, body) {
         const job = query.get('job') ?? ''
         const raw = query.get('pending')
         const pending = raw !== null && /^\d+$/.test(raw) ? Number(raw) : null
-        if (JOB_ID.test(job)) deps.onJobTurn(remote, job, active, active ? null : pending)
+        if (!JOB_ID.test(job)) return EMPTY
+        // Before the turn: a message sent the moment it starts finds the inbox.
+        if (active) channel(remote, job, body)
+        deps.onJobTurn(remote, job, active, active ? null : pending)
         return EMPTY
       },
     })
@@ -55,6 +89,14 @@ export function registerAgentRoutes(server: RouteServer, deps: AgentRoutesDeps):
   const undo = [
     turn(true),
     turn(false),
+    server.route('/session', {
+      body: 'text',
+      handle(remote, query, body) {
+        const job = query.get('job') ?? ''
+        if (JOB_ID.test(job)) channel(remote, job, body)
+        return EMPTY
+      },
+    }),
     server.route('/statusline', {
       body: 'text',
       handle(remote, query, body) {

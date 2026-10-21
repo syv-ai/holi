@@ -724,6 +724,10 @@ async function main(): Promise<void> {
     claims: (root) => plugins.scanClaimsFor(root),
     transforms: (root) => plugins.transformsFor(root),
     preCommit,
+    // The agent's `agent.message`, through the one dispatch: refused as no
+    // such method in a vault that has the agent off.
+    tellSession: (remote, job, text) =>
+      dispatch({ door: 'ui', remote, name: 'agent.message', params: { session: job, text } }),
   })
   await bridge.start()
   const binDir = dirname(holiCliPath)

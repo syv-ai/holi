@@ -108,7 +108,8 @@ One Claude Code background session in a vault, named by its job id: one conversa
 by the supervisor whether or not a window shows it. Holi's **agent tabs** are terminals onto
 sessions: the agent list, or one session attached. Its name and its state (`needs-you`, `working`,
 `idle`) come from Claude Code itself. Closing a tab detaches; Stop, a vault switch or quitting stops
-it, and it stays in the agent list. See [agent-sessions](features/agent-sessions.md).
+it, and it stays in the agent list. Holi adds a **message** to a running session through its inbox
+socket, never through a terminal. See [agent-sessions](features/agent-sessions.md).
 
 ### Schedule
 

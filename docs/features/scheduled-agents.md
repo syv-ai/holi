@@ -270,8 +270,10 @@ repeats inside one session.
   workflow a collaborator with write access pushes can read. It could suit a schedule that needs
   none of that, a weekly digest of the vault itself; mail, the reason schedules exist, needs the
   person's machine.
-- **One long-lived session a schedule types into**: Holi cannot submit into a live session, and a
-  growing conversation costs more each run. A fresh session per run starts clean.
+- **One long-lived session a schedule's runs go into**: Holi can add a message to a running
+  session ([agent-sessions](agent-sessions.md)), but a growing conversation costs more each run,
+  and a session that stopped has nowhere to take one. A fresh session per run starts clean, so
+  triggers start runs.
 - **A timer per schedule**: a sleeping laptop wakes to a stale timer; a periodic check reads the
   clock.
 - **Event text in the prompt** ("3 new mails from X: <subjects>"): a mail's subject is written by
