@@ -2,9 +2,9 @@
 
 Holi updates itself. CI builds a signed, notarized macOS app from `main` and publishes it as a GitHub
 release of `syv-ai/holi`; the installed app finds it there, downloads it in the background, and
-installs it when Holi next quits. There is no update server: the release is the feed. A release's
-newer skills and hooks are offered to each vault, or brought in on open by a vault that asks for
-that.
+installs it when Holi next quits. There is no update server: the release is the feed, and its notes
+are the release notes. A release's newer skills and hooks are offered to each vault, or brought in
+on open by a vault that asks for that.
 
 ## How it works
 
@@ -41,8 +41,12 @@ person's own check ignores the cooldown and the preference. **Dev prereleases** 
 the development release channel. Switching channels immediately checks and downloads from the
 selected feed. Turning dev off selects stable and downloads its latest release, even when that
 version is older than the installed one; **Restart to update** installs the downloaded stable
-version. Beside them, **Open at login**, this machine's login item: Holi starts in the menu bar with
-its window loaded but out of sight, so the vault opens, syncs and fires its reminders from the
+version. **Release notes** are each release's GitHub notes, for the version found and the one
+running, fetched from GitHub's releases API by tag (`v<version>`) when first shown
+(`src/main/updates/release-notes.ts`, `trpc.updates.notes`). They are Markdown, shown as text with
+headings and list items picked out, never as HTML; a version with no release, such as a local build,
+has none. Beside them, **Open at login**, this machine's login item: Holi starts in the menu bar
+with its window loaded but out of sight, so the vault opens, syncs and fires its reminders from the
 start.
 
 **A release's skills reach a vault by asking.** Skills and hooks are the vault's once written, so an
@@ -91,12 +95,19 @@ A dev build reports updates as unsupported.
 - A toast per found update: missed once, the update is missed, and each background check stacked
   another.
 - Failing CI on a pull request that does not bump the version: most merges should not ship.
+- Release notes from `electron-updater`: it has them only for the version it found, as HTML that
+  would need sanitizing, and none for the running one.
+- Starting the conflicts' agent session on an update run on open: a session nobody asked for, at
+  the moment the vault is opening.
+- The release a vault's skills came from in a committed file: it would claim, on a teammate's
+  machine, a write Holi never made there.
 - A separate notarize step on the dmg after packaging: notarizing the app before packaging staples
   the app inside both the dmg and the zip, which the zip alone cannot be.
 
 ## Code
 
-- `apps/desktop/src/main/updates/`: the state machine and the `electron-updater` wiring
+- `apps/desktop/src/main/updates/`: the state machine, the `electron-updater` wiring and the
+  release notes
 - `apps/desktop/src/renderer/src/state/updates.ts`: the status mirror and its actions
 - `apps/desktop/src/renderer/src/features/nav/UpdateItem.tsx`: the nav item, for the app and the
   vault's skills

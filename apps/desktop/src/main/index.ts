@@ -17,6 +17,7 @@ import {
   dialog,
   ipcMain,
   nativeImage,
+  net,
   protocol,
   session as electronSession,
   shell,
@@ -51,6 +52,7 @@ import {
 } from './vault/seed/update'
 import { readSeedState } from './vault/seed/state'
 import { readVaultSettings } from './vault/settings'
+import { createReleaseNotes } from './updates/release-notes'
 import { createVaultPreCommit } from './vault/hooks/pre-commit'
 import { registerGitRoutes } from './vault/git-routes'
 import { registerIpc } from './ipc'
@@ -578,6 +580,7 @@ async function main(): Promise<void> {
 
   const router = createRouter({
     updates: updater,
+    releaseNotes: createReleaseNotes({ fetch: (url, init) => net.fetch(url, init) }),
     loginItem: {
       get: () => app.getLoginItemSettings().openAtLogin,
       set: (open) => app.setLoginItemSettings({ openAtLogin: open }),

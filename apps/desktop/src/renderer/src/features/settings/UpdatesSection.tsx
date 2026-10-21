@@ -1,14 +1,15 @@
 /**
  * Settings → Updates (docs/features/updates.md): updating Holi on this
- * machine, then where the open vault's skills
+ * machine, with each release's notes, then where the open vault's skills
  * stand against this release.
  */
 import { useAtomValue, useSetAtom } from 'jotai'
 import { useEffect, useState } from 'react'
 import { trpc } from '@/lib/trpc'
 import { Button, Checkbox } from '@/primitives'
-import { SettingsList, SettingsNote, SettingsRow } from '@/composites'
+import { ExternalLink, SettingsList, SettingsNote, SettingsRow } from '@/composites'
 import { openSkillsStatusAtom, updateSkillsAtom } from '@/state/skills'
+import type { ReleaseNotes } from '../../../../main/updates/release-notes'
 import { DescriptorSection } from './DescriptorSection'
 import {
   checkForUpdateAtom,
@@ -81,6 +82,20 @@ export function UpdatesSection(): React.JSX.Element {
           <SettingsNote className="break-words">{status.lastError}</SettingsNote>
         )}
       </SettingsRow>
+      {status?.availableVersion != null && status.availableVersion !== status.version && (
+        <ReleaseNotesRow
+          key={status.availableVersion}
+          version={status.availableVersion}
+          label={`What’s new in Holi ${status.availableVersion}`}
+        />
+      )}
+      {status !== null && status.version !== '' && (
+        <ReleaseNotesRow
+          key={status.version}
+          version={status.version}
+          label={`Holi ${status.version}, the version you have`}
+        />
+      )}
       <SettingsRow
         label="Dev prereleases"
         description="Opt in to development releases. Turning this off checks for and downloads the latest stable release, even if it is older than the version you have; restart to install it."
@@ -132,6 +147,83 @@ function OpenAtLoginRow(): React.JSX.Element {
         />
       }
     />
+  )
+}
+
+/**
+ * One release's notes, fetched from its GitHub release when first shown.
+ * GitHub writes them as Markdown; they are shown as text, headings and list
+ * items picked out, never as HTML.
+ */
+function ReleaseNotesRow({ version, label }: { version: string; label: string }) {
+  const [open, setOpen] = useState(false)
+  // undefined: not asked yet; null: no notes to show.
+  const [notes, setNotes] = useState<ReleaseNotes | null | undefined>(undefined)
+  useEffect(() => {
+    if (!open || notes !== undefined) return
+    let live = true
+    trpc.updates.notes
+      .query({ version })
+      .then((n) => live && setNotes(n))
+      .catch(() => live && setNotes(null))
+    return () => {
+      live = false
+    }
+  }, [open, notes, version])
+
+  return (
+    <SettingsRow
+      label={label}
+      control={
+        <Button variant="secondary" size="xs" onClick={() => setOpen((o) => !o)}>
+          {open ? 'Hide notes' : 'Release notes'}
+        </Button>
+      }
+    >
+      {open &&
+        (notes === undefined ? (
+          <SettingsNote>Loading…</SettingsNote>
+        ) : notes === null ? (
+          <SettingsNote>GitHub has no notes for this version.</SettingsNote>
+        ) : (
+          <div className="space-y-2">
+            <NotesText body={notes.body} />
+            <ExternalLink url={notes.url} onOpen={() => void window.holi.openExternal(notes.url)}>
+              {notes.name} on GitHub
+            </ExternalLink>
+          </div>
+        ))}
+    </SettingsRow>
+  )
+}
+
+/** Markdown notes as text: `#` lines as headings, `*` and `-` lines as items,
+ *  emphasis markers dropped. */
+function NotesText({ body }: { body: string }): React.JSX.Element {
+  const lines = body
+    .split(/\r?\n/)
+    .map((line) => line.replace(/\*\*|__/g, '').trimEnd())
+    .filter((line) => line.trim() !== '')
+  if (lines.length === 0) return <SettingsNote>No notes for this version.</SettingsNote>
+  return (
+    <div className="max-h-64 space-y-1 overflow-auto text-[11px] text-muted-foreground">
+      {lines.map((line, i) => {
+        const heading = /^#{1,6}\s+(.*)$/.exec(line)
+        if (heading !== null) {
+          return (
+            <p key={i} className="pt-1 font-medium text-foreground">
+              {heading[1]}
+            </p>
+          )
+        }
+        const item = /^\s*[*-]\s+(.*)$/.exec(line)
+        return (
+          <p key={i} className={item !== null ? 'break-words pl-3 -indent-2' : 'break-words'}>
+            {item !== null ? `• ${item[1]}` : line}
+          </p>
+        )
+      })}
+    </div>
   )
 }
 
