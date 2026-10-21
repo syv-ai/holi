@@ -134,3 +134,11 @@ export function withTime(s: string, time: string | null): string | null {
   const combined = `${date}T${time}`
   return parseDateTime(combined) === null ? null : combined
 }
+
+/**
+ * The hour a **timeless** reminder fires at.
+ *
+ * Only ever a fallback: it is never written into a file. Presets that know an
+ * hour write it explicitly.
+ */
+export const ANCHOR_HOUR = 9

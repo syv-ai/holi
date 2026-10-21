@@ -13,16 +13,8 @@
  * Callers pass `now`/timestamps in; timezone conversion happens at the
  * scheduler's edge, never here.
  */
-import { DAY_MS, formatStamp, parseStamp, stampDate, stampEpoch } from './dates'
+import { ANCHOR_HOUR, DAY_MS, formatStamp, parseStamp, stampDate, stampEpoch } from './dates'
 import type { TaskStatus } from './types'
-
-/**
- * The hour a **timeless** reminder fires at.
- *
- * Only ever a fallback: it is never written into a file. Presets that know an
- * hour write it explicitly.
- */
-export const ANCHOR_HOUR = 9
 
 /**
  * The local fire-time this reminder still owes, or null.
