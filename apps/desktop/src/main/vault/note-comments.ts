@@ -32,7 +32,7 @@ import {
 import { runGit, tryGit } from '../git'
 import type { StagedChanges } from './hooks/staged'
 import type { TransformResult } from './hooks/relink'
-import { absPathFor, listFiles, moveDocFile, writeAtomic } from './vault-files'
+import { absPathFor, listFiles, moveDocFile, withFileLock, writeAtomic } from './vault-files'
 
 /** A thread's or a comment's id: short, random, unique within a note. */
 export const commentId = (): string => randomBytes(4).toString('hex')
@@ -56,32 +56,24 @@ export async function readNoteComments(root: string, notePath: string): Promise<
   return file
 }
 
-/** One change at a time per sidecar, so two quick writes never read the same
- *  old file and drop each other's comment. */
-const queues = new Map<string, Promise<unknown>>()
-
 /**
  * Change `notePath`'s threads: `edit` gets the file as it is now and returns
- * the new one, or null to leave it. Returns what was written.
+ * the new one, or null to leave it. Returns what was written. One change at a
+ * time per sidecar (`withFileLock`), so two quick writes never read the same
+ * old file and drop each other's comment.
  */
 export function changeNoteComments(
   root: string,
   notePath: string,
   edit: (file: CommentsFile) => CommentsFile | null,
 ): Promise<CommentsFile | null> {
-  const key = `${root}\0${notePath}`
-  const run = (queues.get(key) ?? Promise.resolve()).then(async () => {
+  const rel = vaultRelPath(commentsPathFor(notePath))
+  return withFileLock(absPathFor(root, rel), async () => {
     const next = edit(await readNoteComments(root, notePath))
     if (next === null) return null
-    await writeAtomic(root, vaultRelPath(commentsPathFor(notePath)), formatCommentsFile(next))
+    await writeAtomic(root, rel, formatCommentsFile(next))
     return next
   })
-  const settled = run.catch(() => {})
-  queues.set(key, settled)
-  void settled.then(() => {
-    if (queues.get(key) === settled) queues.delete(key)
-  })
-  return run
 }
 
 /** Who writes a comment: the signed-in login, and whether it is their agent. */
@@ -185,6 +177,11 @@ export function locate(text: string, file: CommentsFile): LocatedThread[] {
  * A sidecar that is already at the new path (moved along by someone else) is
  * left alone, and so is one whose note was deleted and re-added in the same
  * commit. History keeps a deleted note's threads, as it keeps the note.
+ *
+ * A merge commit deletes no sidecar: a note it deletes was deleted on the
+ * other side, whose own commit took the sidecar then. One still here is a
+ * comment written on this side meanwhile, which sync keeps as a detached
+ * thread (docs/features/note-comments.md).
  */
 export async function followNoteComments(
   root: string,
@@ -204,6 +201,7 @@ export async function followNoteComments(
     notes.push(`relink: moved the comments of ${from} to ${to}`)
   }
 
+  if (await isMerging(root)) return { changed, notes }
   const added = new Set(staged.added)
   for (const path of staged.deleted) {
     if (notePathOfComments(path) !== null || added.has(path)) continue
@@ -214,6 +212,11 @@ export async function followNoteComments(
     notes.push(`relink: deleted the comments of ${path} with it`)
   }
   return { changed, notes }
+}
+
+async function isMerging(root: string): Promise<boolean> {
+  const out = await tryGit(root, ['rev-parse', '--verify', '--quiet', 'MERGE_HEAD'])
+  return out.ok
 }
 
 /**
