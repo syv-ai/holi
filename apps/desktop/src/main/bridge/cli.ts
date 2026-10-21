@@ -23,13 +23,22 @@
  */
 import { chmod, mkdir, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
+import { CapabilityError, NEXT_STEP } from '../capabilities/error'
 import type { CliCommand } from '../capabilities/registry'
 import { shellReadBridgeEnv } from './env-file'
 
 /** What argv asks for. */
 export type CliRequest =
-  /** Run `name`; a refusal is printed after `label`. */
-  | { kind: 'run'; name: string; label: string; params: Record<string, string>; json: boolean }
+  /** Run `name`; a refusal is printed after `label`, and a BAD_REQUEST one
+   *  with `usage`, the command's line. */
+  | {
+      kind: 'run'
+      name: string
+      label: string
+      usage: string
+      params: Record<string, string>
+      json: boolean
+    }
   /** Not a command: the text says why and what is (exit 2). */
   | { kind: 'usage'; text: string }
   /** The command reads a param from stdin and it was not given: ask the
@@ -141,7 +150,29 @@ export function resolveArgv(
     if (stdin === null) return { kind: 'stdin' }
     params[cli.stdin] = stdin
   }
-  return { kind: 'run', name: command.name, label, params, json }
+  return { kind: 'run', name: command.name, label, usage: commandLine(command), params, json }
+}
+
+/**
+ * A failed command, as the agent reads it on stderr. A refusal names its code
+ * and the next step, since that step is what the agent acts on:
+ *
+ *     holi google search: UNAUTHORIZED: Google needs reconnecting
+ *     next: ask the person to press Reconnect for Google in Holi's vault settings
+ *
+ * Anything else that throws is a failure inside Holi, with no step to name, so
+ * it prints its message alone.
+ */
+export function refusalText(request: { label: string; usage: string }, error: unknown): string {
+  if (!(error instanceof CapabilityError)) {
+    return `${request.label}: ${error instanceof Error ? error.message : String(error)}`
+  }
+  const lines = [
+    `${request.label}: ${error.code}: ${error.message}`,
+    `next: ${error.next ?? NEXT_STEP[error.code]}`,
+  ]
+  if (error.code === 'BAD_REQUEST') lines.push(`usage: ${request.usage}`)
+  return lines.join('\n')
 }
 
 const SCRIPT = `#!/bin/sh

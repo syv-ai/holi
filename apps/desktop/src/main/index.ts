@@ -412,7 +412,7 @@ async function main(): Promise<void> {
   // The bridge: what runs inside a vault (the `holi` command, the agent's
   // hooks, git's hook and merge driver) reaching this Holi on loopback.
   const bridge = createBridgeServer({
-    cli: { dispatch, commands: () => capabilities.commands() },
+    cli: { dispatch, commands: () => capabilities.commands(), rootFor },
   })
   registerGitRoutes(bridge, {
     rootFor,

@@ -23,7 +23,8 @@ import { createServer, type RequestListener, type Server } from 'node:http'
 import { randomBytes } from 'node:crypto'
 import type { Dispatch } from '../capabilities/dispatch'
 import type { CliCommand } from '../capabilities/registry'
-import { resolveArgv } from './cli'
+import { refusalText, resolveArgv } from './cli'
+import { SPILL_BYTES, spillOutput } from './spill'
 
 /** What a route answers. No body is an empty one. */
 export interface Reply {
@@ -47,6 +48,9 @@ export interface BridgeServerDeps {
     dispatch: Dispatch
     /** The capabilities open at the CLI door, read per call. */
     commands(): readonly CliCommand[]
+    /** The vault's clone, where an answer too long to print is spilled
+     *  (`spill.ts`). Null prints it whole. */
+    rootFor(remote: string): Promise<string | null>
   }
   log?: (msg: string) => void
 }
@@ -95,9 +99,10 @@ export function createBridgeServer(deps: BridgeServerDeps = {}): BridgeServer {
 
   /**
    * `holi <namespace> <verb> ...`: argv arrives as repeated `argv` fields, in
-   * order. The output is the answer itself, so it answers text: 200 with it,
-   * 422 with a refusal's one line, 400 with usage, or 428, having run
-   * nothing, when the command reads a param from stdin that was not given.
+   * order. The output is the answer itself, so it answers text: 200 with it
+   * (or, past `SPILL_BYTES`, with where it was written), 422 with a refusal
+   * and its next step, 400 with usage, or 428, having run nothing, when the
+   * command reads a param from stdin that was not given.
    */
   async function runCli(remote: string, body: string): Promise<Reply> {
     const cli = deps.cli!
@@ -105,6 +110,7 @@ export function createBridgeServer(deps: BridgeServerDeps = {}): BridgeServer {
     const request = resolveArgv(form.getAll('argv'), cli.commands(), form.get('stdin'))
     if (request.kind === 'usage') return { status: 400, body: request.text }
     if (request.kind === 'stdin') return { status: 428 }
+    let output: string
     try {
       const result = await cli.dispatch({
         door: 'cli',
@@ -112,13 +118,22 @@ export function createBridgeServer(deps: BridgeServerDeps = {}): BridgeServer {
         name: request.name,
         params: request.params,
       })
-      return {
-        status: 200,
-        body: request.json ? JSON.stringify(result.value, null, 2) : result.text,
-      }
+      output = request.json ? JSON.stringify(result.value, null, 2) : result.text
     } catch (error) {
-      return { status: 422, body: `${request.label}: ${message(error)}` }
+      return { status: 422, body: refusalText(request, error) }
     }
+    if (Buffer.byteLength(output) <= SPILL_BYTES) return { status: 200, body: output }
+    const root = await cli.rootFor(remote)
+    // The command has already run, and may have written: a failed spill
+    // prints the answer whole rather than turning a success into an error.
+    const spilled =
+      root === null
+        ? null
+        : await spillOutput(root, request.label, output).catch((error: unknown) => {
+            log(`spill failed: ${message(error)}`)
+            return null
+          })
+    return { status: 200, body: spilled ?? output }
   }
 
   /** The route for a path: a registered one, or the built-in CLI door. */
