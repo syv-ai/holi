@@ -1381,7 +1381,7 @@ describe('vault memory', () => {
     const twice = mergedSettings(once)
 
     expect(twice).toBeNull()
-    expect(parse(once).hooks.SessionStart).toHaveLength(1)
+    expect(JSON.stringify(parse(once).hooks.SessionStart).match(/memory-overview/g)).toHaveLength(1)
   })
 })
 

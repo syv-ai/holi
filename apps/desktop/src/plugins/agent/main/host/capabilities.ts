@@ -44,7 +44,7 @@ export interface AgentCapabilitiesDeps {
   /** The sessions of the open vault. */
   sessions: Pick<
     AgentSessions,
-    'ensure' | 'sessions' | 'open' | 'start' | 'send' | 'stop' | 'respawn' | 'duplicate'
+    'ensure' | 'sessions' | 'open' | 'start' | 'send' | 'message' | 'stop' | 'respawn' | 'duplicate'
   >
   terminals: Pick<AgentTerminals, 'list' | 'attach' | 'close'>
   /** The open vault's remote, or null with none open. */
@@ -54,6 +54,10 @@ export interface AgentCapabilitiesDeps {
 }
 
 const notOpen = { ok: false as const, message: VAULT_NOT_OPEN }
+
+/** Far under Claude Code's own cap of about a million characters: a message
+ *  is a note to a session, not a document. */
+const MAX_MESSAGE = 100_000
 
 /** An optional whole number, such as a terminal's columns. */
 function countParam(raw: Record<string, unknown>, key: string): number | undefined {
@@ -160,6 +164,41 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
       },
       run: async (ctx, args): Promise<OpenResult> =>
         live(ctx) ? deps.sessions.send(args) : notOpen,
+    }),
+
+    /**
+     * Add a message to a running session's conversation through its inbox
+     * socket (`claude/messaging.ts`): it starts a turn when the session is
+     * idle, and is read after the tool call in flight when it is working.
+     * Nothing is typed into a terminal, so a person's half-written prompt is
+     * left alone. Sent once, never retried.
+     */
+    'agent.message': cap({
+      doors: ['ui', 'cli'],
+      cli: {
+        args: ['session', 'text'],
+        summary:
+          "add a message to a running session's conversation: a turn when it is idle, read after its current step when it is working",
+      },
+      params: (raw) => {
+        const p = paramsObject(raw)
+        const session = stringParam(p, 'session')
+        if (!JOB_ID.test(session)) {
+          throw new CapabilityError('BAD_REQUEST', `not a session id: ${session}`)
+        }
+        const text = stringParam(p, 'text')
+        if (text.trim() === '') throw new CapabilityError('BAD_REQUEST', 'text is empty')
+        if (text.length > MAX_MESSAGE) {
+          throw new CapabilityError('BAD_REQUEST', `text is over ${MAX_MESSAGE} characters`)
+        }
+        return { session, text }
+      },
+      run: async (ctx, { session, text }): Promise<{ ok: true }> => {
+        if (!live(ctx)) throw new CapabilityError('UNAVAILABLE', VAULT_NOT_OPEN)
+        await deps.sessions.message(session, text)
+        return { ok: true }
+      },
+      text: () => 'sent',
     }),
 
     'agent.stop': cap({

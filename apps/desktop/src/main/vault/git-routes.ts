@@ -25,7 +25,14 @@ export interface GitRoutesDeps {
   transforms(root: string): Promise<readonly (Transform & { default: boolean })[]>
   /** The vault's own `.pre-commit-config.yaml`, run last when allowed here. */
   preCommit?: Pick<VaultPreCommit, 'transform'>
+  /** Add `text` to the running agent session `job` of the vault `remote`.
+   *  Rejects when it cannot (no such session, no agent, no inbox). */
+  tellSession?(remote: string, job: string, text: string): Promise<unknown>
+  log?: (msg: string) => void
 }
+
+/** A Claude Code job id, as the hook script passes it from `CLAUDE_JOB_DIR`. */
+const JOB = /^[0-9a-f]{8}$/
 
 const message = (error: unknown): string => (error instanceof Error ? error.message : String(error))
 
@@ -34,6 +41,7 @@ export function registerGitRoutes(
   server: Pick<BridgeServer, 'route'>,
   deps: GitRoutesDeps,
 ): () => void {
+  const log = deps.log ?? ((msg: string) => console.error(`[pre-commit] ${msg}`))
   const undo = [
     /**
      * Holi's own pre-commit hook. The transforms run here rather than in the
@@ -42,7 +50,7 @@ export function registerGitRoutes(
      */
     server.route('/hooks/pre-commit', {
       body: 'discard',
-      async handle(remote) {
+      async handle(remote, query) {
         const json = (value: unknown) => ({
           status: 200,
           body: JSON.stringify(value),
@@ -51,9 +59,23 @@ export function registerGitRoutes(
         try {
           const root = await deps.rootFor(remote)
           if (root === null) return json({ changed: [], failed: [] })
-          // No `notify`: Holi has no push seam into a live Claude Code session,
-          // and typing into the agent's PTY is not one. The run log
-          // (`.holi/state/hooks.local.log`) is the agent-readable surface.
+          // The run log (`.holi/state/hooks.local.log`) always has what the
+          // transforms said. A commit an agent session made also tells that
+          // session, which is mid-turn and reads it after this commit's tool
+          // call. Holi's own commits name no session, so the log is all.
+          const job = query.get('job') ?? ''
+          const tell = deps.tellSession
+          const notify =
+            tell !== undefined && JOB.test(job)
+              ? (summary: string) =>
+                  void tell(
+                    remote,
+                    job,
+                    `Holi's pre-commit transforms on your commit:\n${summary}`,
+                  ).catch((error: unknown) =>
+                    log(`could not tell session ${job}: ${message(error)}`),
+                  )
+              : undefined
           const plugins = await deps.transforms(root)
           const own = deps.preCommit?.transform(remote)
           const result = await runPreCommit(root, await stagedChanges(root), {
@@ -69,6 +91,7 @@ export function registerGitRoutes(
               ...vaultTransforms(await deps.claims(root), plugins),
               ...(own === undefined ? [] : [own]),
             ],
+            ...(notify === undefined ? {} : { notify }),
           })
           return json({ changed: result.changed, failed: result.failed })
         } catch (error) {

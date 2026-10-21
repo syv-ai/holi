@@ -120,6 +120,8 @@ export const agentMain: MainPlugin = {
         started.noteTurn(remote, jobId, active, pending),
       // A session's status line: how much of its context is used.
       onStatus: (remote, jobId, status) => started.noteStatus(remote, jobId, status),
+      // Where a session takes messages: its inbox socket, kept in memory.
+      onChannel: (remote, jobId, channel) => started.noteChannel(remote, jobId, channel),
     })
     // Quitting stops the vault's sessions, so it asks first when one of them
     // is working or waiting on you: that turn is cut short. Idle sessions
