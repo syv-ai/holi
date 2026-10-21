@@ -88,9 +88,9 @@ holds the paste until its TUI has printed and settled, with a 5 s backstop. **Re
 push and a scheduled run are the exception**: their first turn is the command's prompt. A scheduled
 run opens no window at all ([scheduled-agents](scheduled-agents.md)).
 
-**Nothing reaches a live session but its window.** Every trigger, hook and pre-commit note
-therefore starts a session of its own, as reconcile and a scheduled run do, or waits to be asked.
-Claude Code offers three ways in from outside, and none holds for a live session today:
+**Nothing reaches a live session but its window.** Reconcile and a scheduled run therefore start
+a session of their own, and the pre-commit transforms' log waits until the agent is asked to read
+it. Claude Code offers four ways in from outside, and none holds for a live session today:
 
 - `claude --bg --resume <session id> "<prompt>"` adds a turn to a **stopped** session named by its
   full conversation id (the listing's `sessionId`): it wakes under the same job id with its saved
@@ -98,19 +98,22 @@ Claude Code offers three ways in from outside, and none holds for a live session
   session whose process is alive, idle included, it starts a copy under a new id instead and only
   says so in its output. Holi does not stop a live session to resume it: a stop ends a turn in
   flight and drops whatever a person was typing.
+- The agent view's peek panel takes a reply and queues it into a working session. It is typed into
+  the `claude agents` TUI, so Holi would be driving that TUI with keystrokes.
 - Cross-session messaging gives every session an inbox socket. Its delivery is the right shape (a
   message is read between tool calls mid-turn, starts a turn when the session is idle, is marked as
-  not from the person, and never touches the composer), but the socket's path is exported only
-  inside the session (to its hooks and `Bash`), and the format of a message line is not documented,
-  only the optional auth line before it. A turn hook could hand Holi the path; Holi would then be
-  writing an undocumented protocol. This is the channel to adopt once its message format is
-  published.
+  not from the person, and arrives as its own message, not in the input box). The socket's path is
+  exported only inside the session (to its hooks and `Bash`), and a message posted by the session's
+  own children is delivered without a question, so a seeded hook posting to its own session's socket
+  is the documented shape. What blocks it is the message line itself: its format is not documented,
+  only the optional auth line before it. This is the channel to adopt once that format is published.
 - Channels push events into a session through an MCP server the session loads. They are a research
-  preview, need a claude.ai or Console login, are not documented for background sessions, and an
-  MCP server is what the vault agent does without.
+  preview, need a claude.ai or Console login, and an MCP server is what the vault agent does
+  without.
 
 A session Holi has stopped could take a resumed turn, and nothing does that yet: a standing session
-grows its conversation on every turn ([scheduled-agents](scheduled-agents.md)). The person resumes a
+grows its conversation on every turn
+([one long-lived session a schedule types into](scheduled-agents.md)). The person resumes a
 stopped session from the agent list, where Enter picks it up under its own id.
 
 **Git coexistence.** The seeded `UserPromptSubmit` and `Stop` hooks run `turn-signal.mjs`, which
