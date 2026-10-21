@@ -1,9 +1,10 @@
 # Scheduled agents
 
-A scheduled agent is a prompt Holi runs as an agent session at set times, on this machine, while the
-vault is open: check the inbox every half hour and draft replies, file a task for what needs the
-user, start a tilbud from a customer's mail. The definition is a file in the vault; whether it runs
-is this machine's choice; each run is an ordinary [agent session](agent-sessions.md).
+A scheduled agent is a prompt Holi runs as an agent session at set times or when something happens,
+on this machine, while the vault is open: check the inbox every half hour and draft replies, file a
+task for what needs the user, start a tilbud from a customer's mail, read a file dropped in
+`inbox/`. The definition is a file in the vault; whether it runs is this machine's choice; each run
+is an ordinary [agent session](agent-sessions.md).
 
 ## How it works
 
@@ -31,19 +32,22 @@ Look through my unread mail since the previous run…
 Claude Code's `--model`. `allow` is Claude Code permission rules the run may use without asking,
 passed as `--allowedTools`; every other permission prompt still asks, and an `ask` rule (sending
 mail, `curl`) still asks whatever `allow` says. Nothing runs more often than every 5 minutes: a
-`* * * * *` typo would otherwise start a session a minute. The grammar and its parser are in
-`packages/shared` (`cron.ts`, `schedule.ts`), so the settings tab reads a file the way main runs it.
+`* * * * *` typo would otherwise start a session a minute. `on` lists the events that start a run,
+instead of or as well as a time (see Triggers). The grammar and its parser are in `packages/shared`
+(`cron.ts`, `schedule.ts`, `triggers.ts`), so the settings tab reads a file the way main runs it.
 
 **Running is approved per machine, and the approval is of the content.** A schedule file syncs, so a
 teammate's pull brings it, but it runs only where someone turned it on. Turning it on records a
-fingerprint of what it approves: the prompt (in its commit-tidied form), the model and the `allow`
-list. A file whose fingerprint no longer matches reads **changed** and does not run until it is
-turned on again, so neither a pull nor a run of the schedule itself, which may edit files, can
-change the schedule's prompt, model or `allow` without the person's yes. The time is not in the
-fingerprint, so moving a run grants nothing; nor is the `name`, which labels the run's session and
-the settings row and is never in what the run reads. The approvals and the run log live in
-`userData/schedules.json`, keyed by remote and path, not in the clone: the agent can write anything
-in the clone, and an approval it could write would be none.
+fingerprint of what it approves: the prompt (in its commit-tidied form), the model, the `allow`
+list and the `on` triggers. A file whose fingerprint no longer matches reads **changed** and does
+not run until it is turned on again, so neither a pull nor a run of the schedule itself, which may
+edit files, can change the schedule's prompt, model, `allow` or triggers without the person's yes.
+A trigger is in it because it decides who can start a run: anyone who can send the person a mail,
+or drop a file in the vault. The time is not in the fingerprint, so moving a run grants nothing;
+nor is the `name`, which labels the run's session and the settings row and is never in what the
+run reads. The approvals and the run log live in `userData/schedules.json`, keyed by remote and
+path, not in the clone: the agent can write anything in the clone, and an approval it could write
+would be none.
 
 **What a run reads is not its prompt.** Its first turn is the approved prompt and one line of
 Holi's, and nothing a mail or an invite says is spliced into it: the run fetches that itself, with
@@ -88,9 +92,9 @@ it could not reach `holi`.
 
 **A run is a background session** started with `claude --bg`, no terminal, named `<name> · HH:MM`.
 Its first turn is one line Holi adds (the schedule's path, the time, the previous run's time, so a
-prompt can say "since the previous run") and then the file's body. It is in the sidebar like any
-session, pauses sync through the turn hooks like any session, and asks the person in the usual way
-when it needs a tool its schedule does not allow.
+prompt can say "since the previous run", and for a run events started, what they were) and then the
+file's body. It is in the sidebar like any session, pauses sync through the turn hooks like any
+session, and asks the person in the usual way when it needs a tool its schedule does not allow.
 
 **A run closes when it is done.** Its turn ending is Claude Code's `Stop` hook, which already
 drives the turn bracket (`turn-signal.mjs`, the turn coordinator's `onTurnEnd`; a confirmed idle and
@@ -124,22 +128,89 @@ skipped). An idle previous run left open with nobody's window on it is stopped f
 holds at most one live session. Each schedule keeps its last 20 runs: started (with the job id and,
 once done, when), skipped or failed.
 
+## Triggers
+
+```yaml
+on:
+  - file: inbox/** # a file added under inbox/
+  - file: clients/*/brief.md
+    changed: true # added or changed
+  - task: overdue # an open task's due moment has passed
+  - task: due
+    before: 60 # an hour before an open task is due
+  - calendar: 30 # 30 minutes before each timed event
+  - mail: 'from:@acme.com' # a new mail, not yours, in a thread the query finds
+```
+
+**Each source is a plugin's, and they meet in the agent's trigger router.** The plugins started in
+the vault tell each other `VaultEvent`s over `ctx.events`
+([architecture](../architecture.md#plugins)); none imports another. At every check the scheduler
+says what the approved schedules listen for (`interest`), and a source does only that work:
+
+- **`file`** is the agent plugin's own, read off the vault's scans (`ctx.onSnapshot`): a note or
+  file whose path is new is added, one whose mtime moved is changed. `changed` is opt-in, because a
+  run that edits the files it watches would otherwise start the next run. The first scan after a
+  start is the baseline; what changed while Holi was closed is no event. Files a plugin claims (task
+  files) are not files here; they have their own source. A `.local.` file counts, but the watcher
+  ignores those, so it is seen at the next periodic rescan, within half a minute.
+- **`task`** is the tasks plugin's: each open task's due moments, told again with every scan. Due at
+  a time, it is due and overdue then. Due on a day, it is due at 09:00 that day (the hour a timeless
+  reminder fires) and overdue at 09:00 the next: not late until its day is over, and never a
+  midnight run.
+- **`calendar`** is Google's: the timed events of the next day on the vault's calendars, all-day
+  events left out, read every 5 minutes.
+- **`mail`** is Google's too: each query, every 5 minutes, through the mail cache's `history.list`
+  delta (one request when nothing is new). A thread fires when it is new to the query or its latest
+  message is, and not when that message is the person's own, so a reply a run drafts and the person
+  sends does not start the next run. The first look after a start is the baseline.
+
+Google polls only while some approved schedule listens for mail or the calendar, and only the open
+vault's account.
+
+**The router dedupes, batches and spaces** (`router.ts`). An occurrence (a file, a mail) is heard
+once per schedule for its id and version (path and mtime, thread and latest message), however often
+it is told. A moment (a task's due time, an event's start) fires at its time minus `before`, once:
+each schedule keeps, per timed source, the time up to which its moments have been routed, in
+`userData/schedules.json`, so a restart fires none again and moments that passed while Holi was
+closed collapse into one run, like missed cron moments. That watermark does not move for a source
+that has said nothing yet (Google not connected), so its moments are not skipped unseen. What a
+schedule hears is held for a minute from the first event and goes to one run, one line per file,
+thread or task however often it changed. The run waits at least 5 minutes after the schedule's
+previous run, the floor a cron schedule has, and a schedule with both a `cron` and `on` shares it.
+
+**An event never starts a run on top of the previous one, and is never dropped for it.** Where a
+cron moment that finds the previous run working is skipped, a batch waits: it keeps growing and is
+the one run that follows once the previous run is done. A schedule holds at most one live run and
+one waiting batch.
+
+**An event never puts third-party text in the prompt.** The line Holi adds names the trigger and
+identifiers only: `Triggered by: mail from ada@example.com, thread 18c2a; file inbox/offer.pdf
+added; task inbox/task.call.md overdue, due 2026-10-21; and 2 more`. A subject, a snippet, an event
+title or a file's contents stay out; the run reads them itself with `holi` commands, as a cron run
+reads the inbox. So "Holi adds one line to a run's prompt" holds for events too.
+
+**Not durable yet.** A waiting batch and the dedupe memory live in memory: quitting Holi loses file
+and mail events heard and not yet run (moments are safe by their watermark). See
+[not built](../not-built.md).
+
 **Claude Code's own `schedule` skill is off** in a vault (`skillOverrides`): its routines run in
 Anthropic's cloud, away from the vault clone, Holi and the vault's Google account. `loop` stays; it
 repeats inside one session.
 
 ## Rules
 
-- Never run a schedule this machine has not approved in its current content.
+- Never run a schedule this machine has not approved in its current content, its triggers included.
 - Keep approvals out of the vault clone, and turning a schedule on out of the agent's reach.
 - Only what the approval covers reaches a run: its path and prompt, never its name.
 - A run never starts on top of a previous run that is working or needs the person.
 - A run closes itself when done, never while it waits on the person or someone has it open.
 - Missed moments are one run, never a backlog.
-- Holi adds one line to a run's prompt and nothing else; what `holi google` prints of other
-  people's words reaches a run fenced, through a command, never in its prompt. Text a person
-  already copied into the vault (a task made from a mail or an event, a vault app's records) is
-  vault content and reaches a run unfenced.
+- Holi adds one line to a run's prompt and nothing else; an event adds identifiers to it, never
+  text someone else wrote. What `holi google` prints of other people's words reaches a run fenced,
+  through a command, never in its prompt. Text a person already copied into the vault (a task made
+  from a mail or an event, a vault app's records) is vault content and reaches a run unfenced.
+- An event run waits for the previous run instead of being dropped, and waits as one batch.
+- A source does work only while an approved schedule listens for it.
 
 ## Rejected
 
@@ -170,11 +241,23 @@ repeats inside one session.
   growing conversation costs more each run. A fresh session per run starts clean.
 - **A timer per schedule**: a sleeping laptop wakes to a stale timer; a periodic check reads the
   clock.
+- **Event text in the prompt** ("3 new mails from X: <subjects>"): a mail's subject is written by
+  whoever sends it, and a prompt is where an injection lands. Identifiers only; the run fetches.
+- **Leads in the sources** (tasks announcing "due in an hour"): the lead belongs to the trigger, and
+  two schedules may want two. A source publishes its moments; the router times them.
+- **A path and kind on the vault watcher's events**: it is a hint that drops events on macOS, and
+  the scan is the truth. File events come from comparing scans.
+- **Dropping an event while the previous run works**, as a cron moment is: a mail heard once is not
+  heard again, so a skipped one is lost.
 
 ## Code
 
 - `packages/shared/src/cron.ts`: the cron grammar, the next moment, the shortest gap, words
 - `packages/shared/src/schedule.ts`: the file, its approval text, `dueRun`, `nextRun`
+- `packages/shared/src/triggers.ts`: `on:`, `VaultEvent`, what a trigger hears
+- `apps/desktop/src/plugins/agent/main/schedules/router.ts`: dedupe, batches, moments, file events
+- `apps/desktop/src/plugins/tasks/main/triggers.ts`, `apps/desktop/src/plugins/google/main/triggers.ts`:
+  the task, calendar and mail sources
 - `apps/desktop/src/plugins/agent/main/schedules/scheduler.ts`: the check, approvals, runs
 - `apps/desktop/src/plugins/agent/main/schedules/capabilities.ts`:
   `schedules.list|enable|disable|run`, `enable` at the UI door only

@@ -42,6 +42,20 @@ words into a vault file, and a later run reads that file as the vault's own.
 
 **Agent theme proposals.** The agent writes a vault's theme; proposing one for approval is absent.
 
+**Durable trigger events.** A schedule's batch waiting to run and the router's dedupe memory are in
+memory, so quitting Holi loses events heard and not yet run. Moments (tasks, calendar) are safe by
+their watermark; file and mail events are not, and nor is what changed while Holi was closed. The
+issue's shape: the pending queue in `.holi/state/triggers.local.json`, written before a run starts,
+cleared when it has. See [scheduled agents](features/scheduled-agents.md).
+
+**Trigger priority.** A trigger run waits for the schedule's previous run, but not for the person:
+it does not hold back while they are in a session of their own or one waits on them (`needs-you`),
+and no schedule outranks another.
+
+**More task triggers.** A status change (`doing`, `done`) and a task newly assigned to this
+machine's person. Today `task` is due and overdue only, and an assigned task triggers on every
+machine that runs the schedule, not only its assignee's.
+
 ## Vault apps
 
 **Location for apps.** A `location` affordance, approved like mail and calendar. Electron's
