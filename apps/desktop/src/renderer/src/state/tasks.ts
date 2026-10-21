@@ -22,7 +22,6 @@ import {
 import { atom } from 'jotai'
 import type { taskCapabilities } from '../../../main/vault/task-capabilities'
 import { capClient } from '../lib/cap-client'
-import { trpc } from '../lib/trpc'
 import { nowAtom, todayAtom } from './clock'
 import { memberLoginsAtom, peopleList } from './members'
 import { sessionAtom } from './session'
@@ -264,7 +263,7 @@ export function dropIntent(task: Task, targetLane: string, targetStatus: TaskSta
 // Every write re-reads the vault. No optimistic patching and no
 // mutation-result-as-truth: the file on disk is the only truth.
 
-/** The tasks capabilities the renderer calls (`tasks.create`). */
+/** The tasks capabilities the renderer calls. */
 export const tasksCap = capClient<ReturnType<typeof taskCapabilities>>('tasks')
 
 export const createTaskAtom = atom(
@@ -300,7 +299,7 @@ export const patchTaskAtom = atom(
   async (get, set, path: string, patch: Record<string, unknown>) => {
     const remote = get(activeRemoteAtom)
     if (!remote) return
-    await trpc.tasks.update.mutate({ remote, path, patch })
+    await tasksCap.update(remote, { path, patch })
     await set(loadSnapshotAtom)
   },
 )
@@ -313,7 +312,7 @@ export const rankTasksAtom = atom(
     const remote = get(activeRemoteAtom)
     if (!remote || ranks.length === 0) return
     await Promise.all(
-      ranks.map(({ path, order }) => trpc.tasks.update.mutate({ remote, path, patch: { order } })),
+      ranks.map(({ path, order }) => tasksCap.update(remote, { path, patch: { order } })),
     )
     await set(loadSnapshotAtom)
   },
@@ -344,7 +343,7 @@ export const moveTaskAtom = atom(
     const remote = get(activeRemoteAtom)
     if (!remote) return null
     // The rank rides along too, so a drop lands where it was aimed in one write.
-    const moved = await trpc.tasks.move.mutate({ remote, path, folder, status, order })
+    const moved = await tasksCap.move(remote, { path, folder, status, order })
     await set(loadSnapshotAtom)
     return moved.path
   },
@@ -355,7 +354,7 @@ export const moveTaskAtom = atom(
 export const deleteTasksAtom = atom(null, async (get, set, paths: string[]) => {
   const remote = get(activeRemoteAtom)
   if (!remote || paths.length === 0) return
-  await Promise.all(paths.map((path) => trpc.tasks.delete.mutate({ remote, path })))
+  await Promise.all(paths.map((path) => tasksCap.delete(remote, { path })))
   set(workspaceAtom, closeTabsForPaths(get(workspaceAtom), paths))
   await set(loadSnapshotAtom)
 })
@@ -363,7 +362,7 @@ export const deleteTasksAtom = atom(null, async (get, set, paths: string[]) => {
 export const deleteTaskAtom = atom(null, async (get, set, path: string) => {
   const remote = get(activeRemoteAtom)
   if (!remote) return
-  await trpc.tasks.delete.mutate({ remote, path })
+  await tasksCap.delete(remote, { path })
   // The file goes, then its tab: an open one would leave a tab pointing at bytes
   // that are gone, and a live buffer that would write the file back.
   set(workspaceAtom, closeTabsForPaths(get(workspaceAtom), [path]))

@@ -1,14 +1,15 @@
 /**
  * Tasks' capabilities: list the vault's tasks, complete one the way the board
- * does, set its fields as the board does, and create one, which is how the
- * board, other plugins and vault apps add a task.
+ * does, and create one, which is how the board, other plugins and vault apps
+ * add a task; set its fields, as the board and vault apps do; and the board's
+ * own edits at the UI door: a move between lanes, a delete.
  *
  * No `electron` import: this loads under plain Node in the tests.
  */
 import { readFile } from 'node:fs/promises'
 import { isAbsolute, relative } from 'node:path'
 import {
-  applyTaskPatch,
+  completeTask,
   isTaskFilePath,
   parseTaskFile,
   parseTaskPatch,
@@ -31,8 +32,9 @@ import { cap, type CapabilityContext } from '../capabilities/registry'
 import type { MainPlugin } from '../plugin-api'
 import { startReminders } from '../reminders/start'
 import { archiveDone } from './hooks/archive-done'
+import { renameNote } from './rename'
 import { taskDoneOp } from './task-done'
-import { absPathFor, withFileLock, writeAtomic } from './vault-files'
+import { absPathFor, removeDocFile, withFileLock, writeAtomic } from './vault-files'
 
 export const TASK_NAMESPACES = ['tasks'] as const
 
@@ -96,6 +98,19 @@ function optionalString(p: Record<string, unknown>, key: string): string | undef
   return value
 }
 
+/** The task at `rel`. An unparseable task file is refused too: a field edit
+ *  has nothing to merge into, and the honest place to fix bad frontmatter is
+ *  the editor, on the text itself. */
+async function readTask(root: string, rel: VaultRelPath): Promise<Task> {
+  const text = await readFile(absPathFor(root, rel), 'utf8').catch(() => null)
+  if (text === null) throw new CapabilityError('NOT_FOUND', rel)
+  try {
+    return parseTaskFile(text, rel)
+  } catch (err) {
+    throw new CapabilityError('BAD_REQUEST', `${rel}: ${(err as Error).message}`)
+  }
+}
+
 /**
  * `text` written to the first free `task.<slug>.md` in `folder`.
  *
@@ -128,132 +143,232 @@ async function createTaskFile(
   throw new CapabilityError('BAD_REQUEST', `too many tasks named like: ${title}`)
 }
 
-export const taskCapabilities = (deps: TaskCapabilitiesDeps) => ({
+/** A lane move: the task, its new folder, and what rides along with it. */
+export interface MoveTaskInput {
+  path: string
+  /** The lane, '' for the vault root. */
+  folder: string
+  /** A diagonal drop: the new column too. */
+  status?: string
+  /** Where in its new cell it was dropped. */
+  order?: number
+}
+
+export const taskCapabilities = (deps: TaskCapabilitiesDeps) => {
   /**
-   * A new task file in `folder`, `todo` unless a status is given. Fields set
-   * before the task exists (quick add, full create) go in with the create:
-   * one file, one write, through the validator a field edit uses, so nothing
-   * can create a file the board would refuse to parse. `description` seeds
-   * the body (the agenda's link to an event), under the title as its heading.
-   * An app creates one where it may write a note (`writablePath`).
+   * A patch applied to a task. **Done is completion**, wherever it comes from
+   * (a field edit, a drop into Done, the card's checkbox, an app): on a
+   * recurring task it is the next occurrence, not the end of the series
+   * (`completeTask`). The merge SPREADS rather than testing for undefined: a
+   * key present-and-undefined is how `parseTaskPatch` spells "clear this
+   * field".
    */
-  'tasks.create': cap({
-    doors: ['ui', 'app'],
-    writes: true,
-    params: (raw): CreateTaskInput => {
-      const p = paramsObject(raw)
-      const extra = p.extra ?? {}
-      if (typeof extra !== 'object' || extra === null || Array.isArray(extra)) {
-        throw new CapabilityError('BAD_REQUEST', 'extra must be an object')
-      }
-      const input: CreateTaskInput = {
-        title: stringParam(p, 'title'),
-        extra: extra as Record<string, unknown>,
-      }
-      const folder = optionalString(p, 'folder')
-      const status = optionalString(p, 'status')
-      const description = optionalString(p, 'description')
-      if (folder !== undefined) input.folder = folder
-      if (status !== undefined) input.status = status
-      if (description !== undefined) input.description = description
-      return input
-    },
-    run: async (ctx, input): Promise<{ path: string }> => {
-      const patch = patchOf({
-        ...Object.fromEntries(
-          Object.entries(input.extra ?? {}).filter(([key]) => CREATE_FIELDS.includes(key)),
-        ),
-        status: input.status ?? 'todo',
-      })
-      const text = serializeTaskFile({
-        ...patch,
-        status: patch.status ?? 'todo',
-        tags: patch.tags ?? [],
-        assignees: patch.assignees ?? [],
-        // The title is the body's first heading, because that is where the
-        // format keeps it.
-        description: setFirstHeading(input.description ?? '', input.title),
-      })
-      const rel = await createTaskFile(ctx, input.folder ?? '', input.title, text)
-      return { path: rel }
-    },
-  }),
+  const patched = (task: Task, patch: TaskPatch): Task => {
+    const next = { ...task, ...patch }
+    return patch.status === 'done' ? { ...next, ...completeTask(next, deps.today()) } : next
+  }
 
-  'tasks.list': cap({
-    doors: ['app', 'cli'],
-    cli: { args: [], summary: 'every task: status, title and path' },
-    params: noParams,
-    run: async (ctx): Promise<Task[]> => snapshotTasks(await ctx.snapshot()).items,
-    text: (tasks) => tasks.map((t) => `${t.status}\t${t.title}\t${t.path}`).join('\n'),
-  }),
-
-  'tasks.complete': cap({
-    doors: ['app', 'cli'],
-    cli: {
-      args: ['path'],
-      summary: 'complete a task file; a recurring one rolls forward to its next occurrence',
-    },
-    writes: true,
-    params: pathParams,
-    run: async (ctx, { path }) => {
-      // The agent may name the task by its absolute path, as its tools do.
-      const rel = await knownPath(
-        ctx,
-        isAbsolute(path) ? relative(ctx.root, path) : path.replace(/^\.\//, ''),
-      )
-      // An app writes only where it may write a note; the agent writes anywhere.
-      const abs =
-        ctx.bundle !== null ? await writableFile(ctx, writablePath(rel)) : absPathFor(ctx.root, rel)
-      const result = await withFileLock(abs, () => taskDoneOp(ctx.root, rel, deps.today()))
-      if (!result.ok) throw new CapabilityError('BAD_REQUEST', result.error)
-      return result
-    },
-    text: (r) => (r.status === 'done' ? `done: ${r.path}` : `next: ${r.path} due ${r.due}`),
-  }),
-
-  /**
-   * A task's fields set by an app, by the rule the board's field edits follow:
-   * validated by the module that owns the format (`parseTaskPatch`), so an app
-   * cannot write a task the board would refuse, and done is completion
-   * (`applyTaskPatch`), so a recurring task rolls forward. `null` clears a
-   * field that has an empty state. Not the text: a task's body is a note write
-   * (`docs.write`), which checks it is writing over what the app read. The app
-   * door only: the agent edits the frontmatter itself, and completes through
-   * `holi tasks complete`.
-   */
-  'tasks.update': cap({
-    doors: ['app'],
-    writes: true,
-    params: (raw) => {
-      const p = paramsObject(raw)
-      const fields = p.patch
-      if (typeof fields === 'object' && fields !== null && 'description' in fields) {
-        throw new CapabilityError(
-          'BAD_REQUEST',
-          "a task's text is not a field: write it as a note (docs.write)",
-        )
-      }
-      return { path: stringParam(p, 'path'), patch: patchOf(fields) }
-    },
-    run: async (ctx, { path, patch }): Promise<Task> => {
-      const rel = writablePath(path)
-      if (!isTaskFilePath(rel)) {
-        throw new CapabilityError('BAD_REQUEST', `${rel} is not a task file`)
-      }
-      const abs = await writableFile(ctx, rel)
-      return withFileLock(abs, async () => {
-        const text = await readFile(abs, 'utf8').catch(() => null)
-        if (text === null) throw new CapabilityError('NOT_FOUND', path)
-        let task: Task
-        try {
-          task = parseTaskFile(text, rel)
-        } catch (err) {
-          throw new CapabilityError('BAD_REQUEST', `${rel}: ${(err as Error).message}`)
+  return {
+    /**
+     * A new task file in `folder`, `todo` unless a status is given. Fields set
+     * before the task exists (quick add, full create) go in with the create:
+     * one file, one write, through the validator a field edit uses, so nothing
+     * can create a file the board would refuse to parse. `description` seeds
+     * the body (the agenda's link to an event), under the title as its heading.
+     * An app creates one where it may write a note (`writablePath`).
+     */
+    'tasks.create': cap({
+      doors: ['ui', 'app'],
+      writes: true,
+      params: (raw): CreateTaskInput => {
+        const p = paramsObject(raw)
+        const extra = p.extra ?? {}
+        if (typeof extra !== 'object' || extra === null || Array.isArray(extra)) {
+          throw new CapabilityError('BAD_REQUEST', 'extra must be an object')
         }
-        const next = applyTaskPatch(task, patch, deps.today())
-        await writeAtomic(ctx.root, rel, serializeTaskFile(next))
-        return next
-      })
-    },
-  }),
-})
+        const input: CreateTaskInput = {
+          title: stringParam(p, 'title'),
+          extra: extra as Record<string, unknown>,
+        }
+        const folder = optionalString(p, 'folder')
+        const status = optionalString(p, 'status')
+        const description = optionalString(p, 'description')
+        if (folder !== undefined) input.folder = folder
+        if (status !== undefined) input.status = status
+        if (description !== undefined) input.description = description
+        return input
+      },
+      run: async (ctx, input): Promise<{ path: string }> => {
+        const patch = patchOf({
+          ...Object.fromEntries(
+            Object.entries(input.extra ?? {}).filter(([key]) => CREATE_FIELDS.includes(key)),
+          ),
+          status: input.status ?? 'todo',
+        })
+        const text = serializeTaskFile({
+          ...patch,
+          status: patch.status ?? 'todo',
+          tags: patch.tags ?? [],
+          assignees: patch.assignees ?? [],
+          // The title is the body's first heading, because that is where the
+          // format keeps it.
+          description: setFirstHeading(input.description ?? '', input.title),
+        })
+        const rel = await createTaskFile(ctx, input.folder ?? '', input.title, text)
+        return { path: rel }
+      },
+    }),
+
+    'tasks.list': cap({
+      doors: ['app', 'cli'],
+      cli: { args: [], summary: 'every task: status, title and path' },
+      params: noParams,
+      run: async (ctx): Promise<Task[]> => snapshotTasks(await ctx.snapshot()).items,
+      text: (tasks) => tasks.map((t) => `${t.status}\t${t.title}\t${t.path}`).join('\n'),
+    }),
+
+    'tasks.complete': cap({
+      doors: ['app', 'cli'],
+      cli: {
+        args: ['path'],
+        summary: 'complete a task file; a recurring one rolls forward to its next occurrence',
+      },
+      writes: true,
+      params: pathParams,
+      run: async (ctx, { path }) => {
+        // The agent may name the task by its absolute path, as its tools do.
+        const rel = await knownPath(
+          ctx,
+          isAbsolute(path) ? relative(ctx.root, path) : path.replace(/^\.\//, ''),
+        )
+        // An app writes only where it may write a note; the agent writes anywhere.
+        const abs =
+          ctx.bundle !== null
+            ? await writableFile(ctx, writablePath(rel))
+            : absPathFor(ctx.root, rel)
+        const result = await withFileLock(abs, () => taskDoneOp(ctx.root, rel, deps.today()))
+        if (!result.ok) throw new CapabilityError('BAD_REQUEST', result.error)
+        return result
+      },
+      text: (r) => (r.status === 'done' ? `done: ${r.path}` : `next: ${r.path} due ${r.due}`),
+    }),
+
+    /**
+     * A task's fields set from the board, the detail view or an app: read,
+     * merge, rewrite under the file's lock, because the file is the task.
+     * Validated by the module that owns the format (`parseTaskPatch`), so
+     * nothing writes a task the board would refuse, and done is completion
+     * (`patched`), so a recurring task rolls forward. `null` clears a field
+     * that has an empty state.
+     *
+     * An app sets fields only, of a task file where it may write a note
+     * (`writablePath`). Not the text: a task's body is a note write
+     * (`docs.write`), which checks it is writing over what the app read. The
+     * agent edits the frontmatter itself, and completes through
+     * `holi tasks complete`.
+     */
+    'tasks.update': cap({
+      doors: ['ui', 'app'],
+      writes: true,
+      params: (raw): { path: string; patch: TaskPatch } => {
+        const p = paramsObject(raw)
+        return { path: stringParam(p, 'path'), patch: patchOf(p.patch ?? {}) }
+      },
+      run: async (ctx, { path, patch }): Promise<Task> => {
+        let rel: VaultRelPath
+        let abs: string
+        if (ctx.bundle !== null) {
+          if ('description' in patch) {
+            throw new CapabilityError(
+              'BAD_REQUEST',
+              "a task's text is not a field: write it as a note (docs.write)",
+            )
+          }
+          rel = writablePath(path)
+          if (!isTaskFilePath(rel)) {
+            throw new CapabilityError('BAD_REQUEST', `${rel} is not a task file`)
+          }
+          abs = await writableFile(ctx, rel)
+        } else {
+          rel = safe(path)
+          abs = absPathFor(ctx.root, rel)
+        }
+        return withFileLock(abs, async () => {
+          const next = patched(await readTask(ctx.root, rel), patch)
+          await writeAtomic(ctx.root, rel, serializeTaskFile(next))
+          return next
+        })
+      },
+    }),
+
+    /**
+     * The horizontal drag axis: moving a card to another lane moves the
+     * `task.<name>.md` file into that folder and rewrites inbound `[[wiki-links]]`.
+     * A task's path is its identity, so a lane change IS a rename, reusing
+     * `renameNote`'s link-rewriting pass, never a second.
+     *
+     * A `status` rides along for a DIAGONAL drop (lane + column in one gesture):
+     * it is written in place first, so the single `renameNote` carries the final
+     * content to the destination and a card is never half-dropped
+     * (docs/features/tasks.md). `done` is completion (`patched`), so a
+     * recurring task advances instead of persisting done. The card's place in
+     * its new cell rides along like the status: a drop lands where it was
+     * aimed, and is still one write.
+     *
+     * The basename rides along unchanged (identity slug preserved, not re-slugged
+     * from `title`), and a destination that already exists is refused rather than
+     * silently suffixed, which would change an existing task's identity.
+     */
+    'tasks.move': cap({
+      doors: ['ui'],
+      writes: true,
+      params: (raw): MoveTaskInput => {
+        const p = paramsObject(raw)
+        const folder = p.folder
+        if (typeof folder !== 'string')
+          throw new CapabilityError('BAD_REQUEST', 'folder is required')
+        const input: MoveTaskInput = { path: stringParam(p, 'path'), folder }
+        const status = optionalString(p, 'status')
+        if (status !== undefined) input.status = status
+        // Validated by `patchOf` with the status.
+        if (p.order !== undefined) input.order = p.order as number
+        return input
+      },
+      run: async (ctx, input): Promise<Task> => {
+        const from = safe(input.path)
+        const basename = from.slice(from.lastIndexOf('/') + 1)
+        const to = safe(input.folder ? `${input.folder}/${basename}` : basename)
+        const fieldPatch = {
+          ...(input.status !== undefined ? { status: input.status } : {}),
+          ...(input.order !== undefined ? { order: input.order } : {}),
+        }
+        const hasPatch = Object.keys(fieldPatch).length > 0
+
+        if (to === from && !hasPatch) return readTask(ctx.root, to)
+        if (
+          to !== from &&
+          (await readFile(absPathFor(ctx.root, to), 'utf8').catch(() => null)) !== null
+        ) {
+          throw new CapabilityError('BAD_REQUEST', `already exists: ${to}`)
+        }
+        if (hasPatch) {
+          const next = patched(await readTask(ctx.root, from), patchOf(fieldPatch))
+          await writeAtomic(ctx.root, from, serializeTaskFile(next))
+        }
+        if (to !== from) await renameNote(ctx.root, from, to)
+        return readTask(ctx.root, to)
+      },
+    }),
+
+    /** A card's delete, and emptying Done. Git keeps them. */
+    'tasks.delete': cap({
+      doors: ['ui'],
+      writes: true,
+      params: pathParams,
+      run: async (ctx, { path }) => {
+        await removeDocFile(ctx.root, safe(path))
+        return { ok: true as const }
+      },
+    }),
+  }
+}
