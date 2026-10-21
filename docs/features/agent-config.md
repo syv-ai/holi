@@ -137,7 +137,8 @@ core's `.gitignore` gets its `*.local.*` line, line-wise, before anything else i
   outranks. Malformed JSON is left alone.
 
 **Updating skills and hooks**. A Holi release may ship newer versions; they reach a vault
-only when its user asks, with `holi skills update` or the palette's **Update skills**. Against the
+only when its user asks, with `holi skills update` or the palette's **Update skills**, or on open
+when the vault turned on `autoUpdateSkills` ([updates](updates.md)). Against the
 base Holi recorded when it wrote each file (`.holi/state/seed-state.local.json`, machine-local): an
 untouched file is replaced, one the vault changed elsewhere is 3-way merged, and a same-line
 conflict is left as it is with the shipped version (and the base) staged beside it as
@@ -150,7 +151,8 @@ native notification. Whether an update would bring anything is asked, writing no
 vault opens (`skills.status`, also `holi skills status`): a file Holi has a newer version of than the
 one it last brought here, or one new to the vault. A diverged file with no recorded base is not
 counted, since nothing says whose change it is. While there are some, the nav menu's update item
-offers Update skills ([updates](updates.md)). Holi's side of a hook is not kept compatible with older scripts: the update
+offers Update skills ([updates](updates.md)). The seed state also records the Holi version that
+last wrote shipped files here (`release`), which `holi skills status` and Settings show. Holi's side of a hook is not kept compatible with older scripts: the update
 is how a vault gets the current ones.
 
 Changing a once file's seed text reaches new vaults only. To tell existing vaults something, use a

@@ -35,6 +35,10 @@ const onHeldBack = pushChannel<unknown>('vault:heldback')
  * file may have). The disk does not change on a commit, so no snapshot says so. */
 const onCommitted = pushChannel<unknown>('vault:committed')
 
+/** What the skills update a vault runs on open changed (`{remote, summary,
+ * changed, conflicts}`), pushed once it is through. */
+const onSkillsUpdated = pushChannel<unknown>('vault:skills')
+
 /**
  * The one thing main ASKS the renderer, rather than telling it.
  *
@@ -94,6 +98,7 @@ contextBridge.exposeInMainWorld('holi', {
     onSyncState,
     onHeldBack,
     onCommitted,
+    onSkillsUpdated,
     onFlushRequest,
     flushDone: () => ipcRenderer.send('vault:flush-done'),
     onOpen,

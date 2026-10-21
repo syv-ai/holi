@@ -62,6 +62,7 @@ import type { VaultPreCommit } from './vault/hooks/pre-commit'
 import { repoName, type VaultRegistry } from './vault/registry'
 import type { UpdateStatus } from './updates/state'
 import type { Updater } from './updates/updater'
+import { isReleaseVersion, type ReleaseNotesAnswer } from './updates/release-notes'
 
 const t = initTRPC.create()
 
@@ -112,6 +113,12 @@ export interface RouterDeps {
     failures(remote: string): Record<string, string>
     scanClaimsFor(root: string): Promise<readonly ScanClaim[]>
   }
+  /**
+   * The vault `remote` finished opening: seeded, opened and its plugins
+   * started. What has to follow the whole open starts here, such as the skills
+   * update on open (`vault/seed/update-on-open.ts`). Not awaited.
+   */
+  opened?: (remote: string) => void
   /** The managed root clones live under — `~/Holi` in the app, a tmpdir in
    *  tests. Passed in rather than read from `vaultRoot()` here so the router
    *  has no ambient dependency on the environment. */
@@ -174,6 +181,9 @@ export interface RouterDeps {
   /** Updating Holi itself (`updates/updater.ts`). Optional: absent, as in
    *  tests, the app reads as a build that cannot update. */
   updates?: Omit<Updater, 'dispose'>
+  /** A release's notes from its GitHub release (`updates/release-notes.ts`).
+   *  Optional: absent, as in tests, no release has any. */
+  releaseNotes?: (version: string) => Promise<ReleaseNotesAnswer>
   /** Whether Holi opens at login, this machine's login item. Optional: absent,
    *  as in tests, it reads as off and cannot be set. */
   loginItem?: { get(): boolean; set(open: boolean): void }
@@ -404,6 +414,7 @@ export function createRouter(deps: RouterDeps) {
     })
     const active = await deps.host.open(remote)
     await deps.plugins.reconcile('open')
+    deps.opened?.(remote)
     return active.snapshot()
   }
 
@@ -673,6 +684,7 @@ export function createRouter(deps: RouterDeps) {
         await deps.registry.touch(input.remote, now())
         const active = await deps.host.open(input.remote)
         await deps.plugins.reconcile('open')
+        deps.opened?.(input.remote)
         return active.snapshot()
       }),
 
@@ -1628,6 +1640,13 @@ export function createRouter(deps: RouterDeps) {
         async ({ input }): Promise<UpdateStatus> =>
           (await deps.updates?.setEnabled(input.enabled)) ?? unsupported(),
       ),
+    /** The notes of the running release or the one found. */
+    notes: t.procedure
+      .input(fields({ version: 'string' }))
+      .query(async ({ input }): Promise<ReleaseNotesAnswer> => {
+        if (!isReleaseVersion(input.version)) throw new TRPCError({ code: 'BAD_REQUEST' })
+        return (await deps.releaseNotes?.(input.version)) ?? { kind: 'none' }
+      }),
   })
 
   /** This machine's app: whether it opens at login, so the reminders and

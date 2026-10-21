@@ -3,6 +3,7 @@ import type { SyncState } from '../../main/vault/active-vault'
 import type { HeldBackFile } from '../../main/vault/large-files'
 import type { PluginEvent } from '../../main/plugin-host/events'
 import type { UpdateStatus } from '../../main/updates/state'
+import type { SkillsUpdated } from '../../main/capabilities/vault-caps'
 import type { TrpcEnvelope, TrpcOpWire } from './lib/ipc-link'
 
 declare global {
@@ -20,6 +21,8 @@ declare global {
         /** The paths a commit took, or null when a merged pull may have
          *  moved any file's history. */
         onCommitted(cb: (paths: string[] | null) => void): () => void
+        /** What the skills update the vault ran on open changed. */
+        onSkillsUpdated(cb: (notice: SkillsUpdated & { remote: string }) => void): () => void
         /**
          * Main is quitting and wants the buffer on disk before it commits.
          * Write every dirty buffer, then call `flushDone()`.

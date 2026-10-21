@@ -209,6 +209,9 @@ export interface ResolvedAppSettings {
   editorFont: EditorFont
   hooks: VaultHooks
   maxCommittedFileBytes: number
+  /** Whether Holi brings a release's newer skills and hooks in when the vault
+   *  opens, rather than offering them (docs/features/updates.md). */
+  autoUpdateSkills: boolean
   /** Human-readable notes about dropped keys/values, surfaced so a typo is
    *  diagnosable rather than silent. Mirrors `ResolvedTheme.warnings`. */
   warnings: string[]
@@ -368,7 +371,13 @@ export type VaultSettingControl =
  *  with a row in the settings tab. A superset of what the ritual asks
  *  (`askedAtBirth`). */
 export type VaultSettingKey =
-  'dailyNotes' | 'home' | 'hooks' | 'colorScheme' | 'editorFont' | 'maxCommittedFileBytes'
+  | 'dailyNotes'
+  | 'home'
+  | 'hooks'
+  | 'colorScheme'
+  | 'editorFont'
+  | 'maxCommittedFileBytes'
+  | 'autoUpdateSkills'
 
 export interface VaultSettingDescriptor {
   /** A key of `app.yaml`, or `plugins` for the plugins row, whose answer is
@@ -616,6 +625,20 @@ export const VAULT_SETTINGS: readonly VaultSetting[] = [
     askedAtBirth: false,
     whereToChange: SETTINGS_FILE_HINT,
     section: 'editor',
+  },
+  {
+    key: 'autoUpdateSkills',
+    label: 'Update skills automatically',
+    // Committed, so the whole team gets the same answer: a vault whose skills
+    // move with Holi, or one whose skills move only when someone asks.
+    explanation:
+      'When this vault opens, bring in the newer skills and hooks a Holi release ships, merged with this vault’s own changes, and say what changed. Off, Holi offers them and waits for you.',
+    type: { kind: 'boolean' },
+    default: false,
+    target: 'committed',
+    askedAtBirth: false,
+    whereToChange: SETTINGS_FILE_HINT,
+    section: 'updates',
   },
 ]
 

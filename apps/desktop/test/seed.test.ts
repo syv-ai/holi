@@ -26,6 +26,7 @@ import {
   updateShipped as updateWith,
 } from '../src/main/vault/seed/update'
 import { readSeedState, recordSeeded, sha256, SEED_STATE_FILE } from '../src/main/vault/seed/state'
+import { updateOnOpen } from '../src/main/vault/seed/update-on-open'
 import { SEED_CONTRIBUTIONS, seedVault as ensureSeeded } from './helpers/seed'
 
 const exec = promisify(execFile)
@@ -1071,6 +1072,34 @@ describe('updateShipped: what `holi skills update` does', () => {
     await expect(readFile(join(root, SKILL), 'utf8')).rejects.toThrow()
   })
 
+  it('records the release that wrote shipped files, never lowering it', async () => {
+    const root = await tempDir()
+    await ensureSeededWith(root, SEED_CONTRIBUTIONS, [], '1.0.0')
+    expect((await readSeedState(root)).release).toBe('1.0.0')
+    // An open writes no shipped file, nor does an update with nothing to bring.
+    await ensureSeededWith(root, SEED_CONTRIBUTIONS, [], '1.1.0')
+    await updateWith(root, SEED_CONTRIBUTIONS, { release: '1.1.0' })
+    expect((await readSeedState(root)).release).toBe('1.0.0')
+
+    await writeFile(join(root, SKILL), '# an older version\n')
+    await recordSeeded(root, SKILL, '# an older version\n')
+    await updateWith(root, SEED_CONTRIBUTIONS, { release: '1.1.0' })
+    expect((await readSeedState(root)).release).toBe('1.1.0')
+
+    await writeFile(join(root, SKILL), '# an older version\n')
+    await recordSeeded(root, SKILL, '# an older version\n')
+    await updateWith(root, SEED_CONTRIBUTIONS, { release: '1.1.0-dev.3' })
+    expect((await readSeedState(root)).release).toBe('1.1.0')
+  })
+
+  it('does not record the release while a conflict is left', async () => {
+    const root = await seededWith(olderHead())
+    const [, ...rest] = shipped().split('\n')
+    await writeFile(join(root, SKILL), ['# our first line', ...rest].join('\n'))
+    await updateWith(root, SEED_CONTRIBUTIONS, { release: '9.0.0' })
+    expect((await readSeedState(root)).release).not.toBe('9.0.0')
+  })
+
   it('reports a settled vault as current', async () => {
     const root = await tempDir()
     await ensureSeeded(root)
@@ -1137,6 +1166,72 @@ describe('pendingShipped: whether an update exists', () => {
     await pendingShipped(root)
     await expect(readFile(join(root, SKILL), 'utf8')).rejects.toThrow()
     expect(await readFile(join(root, SEED_STATE_FILE), 'utf8')).toBe(before)
+  })
+})
+
+describe('updateOnOpen: the update a vault asks for on open', () => {
+  const SKILL = '.claude/skills/vault-apps/SKILL.md'
+  const THEME = '.claude/skills/theme/SKILL.md'
+
+  const run = (
+    root: string,
+    over: Partial<Parameters<typeof updateOnOpen>[0]> = {},
+  ): ReturnType<typeof updateOnOpen> =>
+    updateOnOpen({
+      root,
+      release: '2.0.0',
+      caughtUp: async () => true,
+      stillOpen: () => true,
+      wanted: async () => true,
+      contributions: async () => SEED_CONTRIBUTIONS,
+      exclusive: (job) => job(),
+      ...over,
+    })
+
+  /** A vault with one file Holi has a newer version of, and one that differs
+   *  with no base on this machine. */
+  async function vault(): Promise<string> {
+    const root = await tempDir()
+    await ensureSeeded(root)
+    await writeFile(join(root, SKILL), '# an older version\n')
+    await recordSeeded(root, SKILL, '# an older version\n')
+    await writeFile(join(root, THEME), '# a teammate changed this\n')
+    const state = JSON.parse(await readFile(join(root, SEED_STATE_FILE), 'utf8'))
+    delete state.files[THEME]
+    await writeFile(join(root, SEED_STATE_FILE), JSON.stringify(state))
+    return root
+  }
+
+  it('brings in only what is pending, staging nothing for a file with no base', async () => {
+    const root = await vault()
+    const report = await run(root)
+    expect(report?.updated).toEqual([SKILL])
+    expect(report?.conflicts).toEqual([])
+    expect(await readFile(join(root, SKILL), 'utf8')).toBe(SHIPPED_FILES[SKILL])
+    expect(await readFile(join(root, THEME), 'utf8')).toBe('# a teammate changed this\n')
+    await expect(readFile(join(root, stagedPath(THEME, 'shipped')), 'utf8')).rejects.toThrow()
+  })
+
+  it('writes nothing before the first pull, after the vault is left, or when not wanted', async () => {
+    for (const over of [
+      { caughtUp: async () => false },
+      { stillOpen: () => false },
+      { wanted: async () => false },
+    ]) {
+      const root = await vault()
+      expect(await run(root, over)).toBeNull()
+      expect(await readFile(join(root, SKILL), 'utf8')).toBe('# an older version\n')
+    }
+  })
+
+  it('waits for the first pull before reading the vault', async () => {
+    const root = await vault()
+    let pulled!: (ok: boolean) => void
+    const running = run(root, { caughtUp: () => new Promise((r) => (pulled = r)) })
+    // The pull brings a teammate's update of this release.
+    await writeFile(join(root, SKILL), SHIPPED_FILES[SKILL]!)
+    pulled(true)
+    expect(await running).toBeNull()
   })
 })
 
