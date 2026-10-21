@@ -57,7 +57,11 @@
   /* The window's ground, under the sidebar and around the content panel: a
      step under the page, so the panel reads as raised off it in both modes.
      Mixed from the page, so a vault theme carries it. */
-  --ground: color-mix(in oklab, var(--background) 82%, black);
+  --ground: color-mix(in oklab, var(--background) 90%, black);
+  /* The light on the ground (`[data-slot='window-ground']`): the sign-in's
+     two colours, warm over cool, held still and faint. */
+  --ground-light-warm: color-mix(in srgb, #ffc46b 9%, transparent);
+  --ground-light-cool: color-mix(in srgb, #96c8ff 5%, transparent);
 
   /* Code-editor syntax colours. Tokens, so they follow the theme: 300 tints
      that glow on near-black wash out on white, hence the light arm below. */
@@ -155,6 +159,9 @@
   --prose: var(--foreground);
   /* Lighter mix on a light page, where a deep step reads as a hole. */
   --ground: color-mix(in oklab, var(--background) 95%, black);
+  /* Stronger on light paper, where a faint warm reads as dirt. */
+  --ground-light-warm: color-mix(in srgb, #ffc46b 18%, transparent);
+  --ground-light-cool: color-mix(in srgb, #96c8ff 10%, transparent);
 
   /* Same hues at the 600/700 end: on white the job is contrast, not glow. */
   --syntax-keyword: var(--color-fuchsia-700);
@@ -788,6 +795,23 @@ html {
 [data-theme='light'] .ambient-grain {
   opacity: 0.5;
 }
+/* The window's ground in the shell (`components/Shell.tsx`): the light from
+   before a vault, carried in. The same two colours from the top-left corner,
+   but still: a wash, not the shader, because the shell is looked at all day
+   and a moving light would nag. Its grain is the sign-in's at a third, under
+   the sidebar and the panel rather than over them, so no text is grainy. */
+[data-slot='window-ground'] {
+  isolation: isolate;
+  background:
+    radial-gradient(ellipse 55% 75% at 0% 0%, var(--ground-light-warm), transparent 70%),
+    radial-gradient(ellipse 45% 60% at 18% 0%, var(--ground-light-cool), transparent 70%),
+    var(--ground);
+}
+[data-slot='window-ground'] > .ambient-grain {
+  z-index: -1;
+  opacity: 0.18;
+}
+
 /* The content panel (`components/Shell.tsx`): the page floats on the
    window's ground, one rounded panel with a hairline edge and the faintest
    lift, so sidebar and page are two places told apart at a glance. Not a

@@ -22,7 +22,7 @@ import { HistoryPanel } from '@/features/history/HistoryPanel'
 import { DialogHost } from './DialogHost'
 import { FrontmatterFieldsHost } from '@/features/frontmatter/FrontmatterFieldsHost'
 import { PaneView } from './PaneView'
-import { DrawerShell } from '@/composites'
+import { AmbientGrain, DrawerShell } from '@/composites'
 import { cn } from '@/lib/cn'
 import { FileTree } from '@/features/explorer/FileTree'
 import { ModeToggle, useAgentsMode } from '@/features/nav/ModeToggle'
@@ -275,7 +275,8 @@ export function Shell() {
   }
 
   return (
-    <div className="relative flex h-screen flex-col bg-ground text-foreground">
+    <div data-slot="window-ground" className="relative flex h-screen flex-col text-foreground">
+      <AmbientGrain />
       <div className="flex min-h-0 flex-1">
         {/* The nav is a DrawerShell; its content stays mounted while hidden, so
             the tree's expansion survives. Hidden, the rail stands in for it. */}
