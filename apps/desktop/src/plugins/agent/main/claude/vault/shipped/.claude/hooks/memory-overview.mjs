@@ -49,7 +49,9 @@ function memoryFiles(dir, prefix = '.holi/memory') {
   const out = { personal: [], shared: [] }
   let entries
   try {
-    entries = readdirSync(dir)
+    // Sorted: `readdir`'s order is the filesystem's, and this text opens the
+    // session, so the same memory has to print the same bytes on any machine.
+    entries = readdirSync(dir).sort()
   } catch {
     return out
   }

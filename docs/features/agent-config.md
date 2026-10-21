@@ -43,7 +43,8 @@ skills are re-read per use.
 `.holi/state/context.local.json`, which main keeps current from the renderer's one report of what
 the person is looking at (`ui.report`: the focused note, the open ones, the recents), the same
 report `holi vault recents` answers from. Tasks, backlinks and sync state the agent
-finds itself with `Glob`, `grep` and `git`.
+finds itself with `Glob`, `grep` and `git`. The line carries no time or count, so the same focus
+prints the same bytes and does not break the prompt cache.
 
 **Seeding.** `ensureSeeded` runs on create, adopt and every open, over a list of seed
 contributions: core (`main/vault/seed/core.ts`), and each plugin the vault
@@ -113,7 +114,9 @@ additions are commands in a directory prepended to `PATH`, plus skills that docu
   it against the capabilities open at the CLI door ([vault apps](vault-apps.md)), each of which
   declares its positional arguments and a one-line summary; bare `holi` prints them all. Any
   argument can also be given as `--name value`, `--json` prints the value, and nothing may come
-  before the verb. Exit 0 prints the answer, 1 a refusal, 2 a usage error. A command that reads a
+  before the verb. Exit 0 prints the answer, 1 a refusal (its code and a `next:` step), 2 a usage
+  error. An answer over 16 KiB is written to `.holi/state/out/` and the command prints its path and
+  shape instead ([architecture](../architecture.md) §3). A command that reads a
   body from stdin and was not given one is answered 428 without running, and the script sends
   stdin once (`send --draft <id>` reads none). Today: `apps open|init`, `skills update`,
   `pdf comments|typst`, `google agenda|search|read|mark-read|star|archive|trash|draft|send|reply|schedule|reschedule|unschedule`, `tasks list|complete`,
@@ -180,7 +183,8 @@ the vault's pre-commit transforms like anyone's ([vaults-sync.md](vaults-sync.md
   `state.ts`: what Holi seeded, the base an update merges from
 - `apps/desktop/src/plugins/agent/main/claude/seed.ts`: the agent's contribution and its `settings.json`
   fragments; `settings.ts`: the merge
-- `apps/desktop/src/main/bridge/cli.ts`: the `holi` script and its argv; `bridge/server.ts`: `/cli`;
+- `apps/desktop/src/main/bridge/cli.ts`: the `holi` script, its argv and refusal text;
+  `bridge/spill.ts`: long answers to a file; `bridge/server.ts`: `/cli`;
   `apps/desktop/src/plugins/agent/main/claude/routes.ts`: the turn and status-line routes
 - `apps/desktop/src/main/bridge/env-file.ts`: `bridge.local.env` and its shell reader
 - `apps/desktop/src/plugins/agent/main/claude/vault/shipped/.claude/`: shipped hook scripts and skills

@@ -59,6 +59,24 @@ What a vault app or the agent's `holi` CLI may ask main for is one capability re
 app's bridge, the CLI) and holds its own refusals. Core registers its namespaces and each feature
 registers its own from the composition root (`src/main/index.ts`); a namespace has one owner.
 
+The CLI door's output lands in an agent's context and stays there, so it is kept short and
+actionable (`src/main/bridge/`):
+
+- **A refusal names its code and the next step**: `holi google search: UNAUTHORIZED: <cause>`, then
+  `next: <what to do>`. The step is the thrower's own when it knows one (`CapabilityError`'s
+  `next`: "press Reconnect for Google in vault settings"), else the code's default (`NEXT_STEP`);
+  a bad request also prints the command's usage line. An error that is not a refusal is a failure
+  inside Holi and prints its message alone.
+- **An answer over 16 KiB is spilled to a file** (`SPILL_BYTES`): written to
+  `.holi/state/out/<stamp>-<command>-<rand>.local.json` (`.txt` when it is not JSON), while the
+  command prints the path, the size and the shape (an array's length and its items' keys, an
+  object's keys). Asked for `--json`, that notice is JSON too,
+  `{"spilled": "<path>", "bytes": <n>, "shape": "<shape>"}`, so a pipe into `jq` still parses. The
+  agent then reads only the part it needs. 16 KiB is about 4k tokens, under Claude
+  Code's own 30,000-character cut of a command's output, past which the agent would read a
+  truncated answer without knowing it. The files are machine state, never committed and out of a
+  vault app's reach; the newest 50 are kept.
+
 ### Plugins
 
 Optional parts of Holi are plugins: first-party modules in the build, under

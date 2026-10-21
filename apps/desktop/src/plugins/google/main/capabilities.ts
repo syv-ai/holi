@@ -90,6 +90,10 @@ export interface GoogleSettingsStore {
 }
 
 const NOT_CONNECTED = 'this vault has no Google account connected'
+/** What the agent does about either: the tokens are main's alone, so the
+ *  person is the only way back to Google. */
+const CONNECT = "ask the person to connect Google in Holi's vault settings"
+const RECONNECT = "ask the person to press Reconnect for Google in Holi's vault settings"
 
 /**
  * Google's verdict as a refusal each door can render. The code is the point:
@@ -101,7 +105,7 @@ async function google<T>(work: () => Promise<T>): Promise<T> {
     return await work()
   } catch (error) {
     if (error instanceof GoogleReconnectRequiredError) {
-      throw new CapabilityError('UNAUTHORIZED', error.message)
+      throw new CapabilityError('UNAUTHORIZED', error.message, RECONNECT)
     }
     if (!(error instanceof GoogleApiError) || error.code === 'unknown') throw error
     const codes: Record<Exclude<GoogleErrorCode, 'unknown'>, CapabilityError['code']> = {
@@ -110,7 +114,10 @@ async function google<T>(work: () => Promise<T>): Promise<T> {
       'rate-limit': 'RATE_LIMITED',
       'not-found': 'NOT_FOUND',
     }
-    throw new CapabilityError(codes[error.code], error.message)
+    // A missing scope is fixed the same way as a lapsed grant: connecting
+    // again asks Google for every scope Holi needs.
+    const next = error.code === 'reconnect' || error.code === 'scope' ? RECONNECT : undefined
+    throw new CapabilityError(codes[error.code], error.message, next)
   }
 }
 
@@ -303,7 +310,7 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
   /** The vault's data layer, or the refusal that says there is none. */
   const dataOf = async (remote: string): Promise<GoogleData> => {
     const data = await deps.dataFor(remote)
-    if (data === null) throw new CapabilityError('UNAVAILABLE', NOT_CONNECTED)
+    if (data === null) throw new CapabilityError('UNAVAILABLE', NOT_CONNECTED, CONNECT)
     return data
   }
 
@@ -315,7 +322,7 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
     new GoogleApi({
       accessToken: async () => {
         const session = await deps.accounts.sessionFor(remote)
-        if (session === null) throw new CapabilityError('UNAVAILABLE', NOT_CONNECTED)
+        if (session === null) throw new CapabilityError('UNAVAILABLE', NOT_CONNECTED, CONNECT)
         return session.getAccessToken()
       },
     })
@@ -366,7 +373,7 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
         if (connectFlow === flow) connectFlow = null
         if (result.kind !== 'granted') return { kind: result.kind }
         const session = await deps.accounts.sessionFor(ctx.remote)
-        if (session === null) throw new CapabilityError('UNAVAILABLE', NOT_CONNECTED)
+        if (session === null) throw new CapabilityError('UNAVAILABLE', NOT_CONNECTED, CONNECT)
         return { kind: 'granted' as const, account: session.account }
       },
     }),
