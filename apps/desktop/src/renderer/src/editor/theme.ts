@@ -462,6 +462,16 @@ export const editorTheme = EditorView.baseTheme({
   },
   '.cm-quote-mark': { color: 'var(--muted-foreground)' },
   /**
+   * A passage a comment thread is about (`comment-threads.ts`): a quiet fill
+   * in the comment banner's own token, stronger for the thread the panel is
+   * on. Background only, no underline: the text stays the text.
+   */
+  '.cm-thread-anchor': {
+    background: 'color-mix(in srgb, var(--comment-background) 70%, transparent)',
+    borderRadius: '2px',
+  },
+  '.cm-thread-anchor-active': { background: 'var(--comment-background)' },
+  /**
    * An HTML comment on its own lines (`comments.ts`): a small note floating over
    * the page, centred in the column, so it has a surface and the popover's
    * shadow. Its own `--comment` and `--comment-background` tokens, so a vault
