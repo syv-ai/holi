@@ -5,7 +5,7 @@ import { cn } from '@/lib/cn'
 /**
  * What a pane shows when it has nothing to show: empty, disconnected, failed,
  * or "pick something". One look everywhere (docs/ui-system.md, States): an
- * optional muted icon, one sentence, an optional muted line under it, and at
+ * optional muted icon (on a lit plate, unless it is an error), one sentence, an optional muted line under it, and at
  * most one action, centred in the region it stands in for. An error passes
  * `role="alert"` and a Retry action; the reasons a region is empty are told
  * apart by the sentence, not by a second layout.
@@ -37,7 +37,17 @@ export function EmptyState({
         className,
       )}
     >
-      {icon && <Icon icon={icon} size="lg" tone="muted" />}
+      {icon &&
+        (role === 'alert' ? (
+          <Icon icon={icon} size="lg" tone="muted" />
+        ) : (
+          // An empty view stands in the light of the screens before a vault:
+          // its icon on a small plate lit from the top-left (index.css). Not an
+          // error's: light on a failure would read as good news.
+          <span data-slot="empty-plate" className="grid size-12 place-items-center rounded-xl">
+            <Icon icon={icon} size="lg" tone="muted" />
+          </span>
+        ))}
       <div className="flex max-w-sm flex-col gap-0.5">
         <p className="text-sm font-medium text-pretty">{title}</p>
         {description && (
