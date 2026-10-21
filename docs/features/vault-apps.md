@@ -101,15 +101,19 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   app, whether it is a plain link (main's `will-frame-navigate` stops the frame leaving its bundle)
   or `target=_blank`/`window.open` (the sandbox's `allow-popups` lets it reach
   `setWindowOpenHandler`, which never makes a window). Any other scheme opens nothing.
-- **The log.** `log.local.txt` at the bundle's root is the app's console on this machine: the
-  bridge shim reports a `load` line when the document starts, `console.log`/`info` (as `info`),
-  `console.warn`/`error`, uncaught errors, unhandled rejections and refused bridge calls, plus
-  `holi.log(...)`, capped at 50 a second, and main appends them
-  (`log.ts`, one write at a time, never through a link, never into a deleted bundle).
-  Each line is timed; a stack continues indented. It keeps the last day and at most 500 entries,
-  trimmed as it is written (`appendAppLog`). It is for the agent: `.local.`, so it never syncs;
-  not served to the app, not readable through the bridge, not in the approval hash, and not
-  watched, so it never triggers a rescan. The pane header's log button, beside reload, opens it in a
+- **The log.** `log.local.txt` at the bundle's root is the app's console on this machine. The
+  bridge shim reports `console.log`/`info` (as `info`), `console.warn`/`error`, uncaught errors,
+  unhandled rejections and refused bridge calls, plus `holi.log(...)`: each entry cut to 4000
+  characters before it is sent, at most 20 `info` and 50 others a second. `AppFrame` adds a
+  `load` line itself as the frame starts each document and refuses one from the frame, so an
+  app cannot move where `holi apps console` starts. Main gathers the reports for a second and
+  appends them in one write (`log.ts`, one write at a time, never through a link, never into a
+  deleted bundle). Each line is timed; a stack continues indented. It keeps the last day and at
+  most 500 entries, of which at most 200 are `info`, so a chatty app never pushes its errors out
+  (`appendAppLog`). It is for the agent: `.local.`, so it never syncs; not served to the app, not
+  readable through the bridge, not in the approval hash, and not watched, so it never triggers
+  a rescan. Whatever an app logs is kept on disk for a day where the vault's agent reads it, so
+  an app must never log a secret, a token or an environment value. The pane header's log button, beside reload, opens it in a
   new pane; it is disabled until a rescan has seen one.
 - **Showing.** The frame is hidden until its document has loaded, then fades in
   (`motion-in-fade`), so a half-styled first paint is never seen; the pane is `aria-busy` until

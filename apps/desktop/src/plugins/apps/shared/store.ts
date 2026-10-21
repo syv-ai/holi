@@ -13,6 +13,9 @@ import { DATA_DIR, formatRecord } from '@holi/shared'
 /** How long a log entry is kept, and the most the file holds. */
 export const APP_LOG_TTL_MS = 24 * 60 * 60 * 1000
 export const APP_LOG_MAX_ENTRIES = 500
+/** The most of those that may be `info` (the console's log and info): a
+ *  chatty app's own output never pushes its errors out. */
+export const APP_LOG_MAX_INFO = 200
 /** One entry's text past this is cut: a log line, not a dump. */
 export const APP_LOG_MAX_TEXT = 4000
 
@@ -20,6 +23,15 @@ export const APP_LOG_MAX_TEXT = 4000
  *  reading. */
 export const APP_LOG_LEVELS = ['error', 'warn', 'info', 'load'] as const
 export type AppLogLevel = (typeof APP_LOG_LEVELS)[number]
+
+export interface AppLogEntry {
+  level: AppLogLevel
+  text: string
+  /** When the frame reported it. */
+  at: Date
+}
+
+const levelOf = (entry: string): string | undefined => entry.split(' ', 2)[1]
 
 /** The log's entries, oldest first: a line starting with its ISO time and
  *  level, and a multi-line text's indented continuation lines with it. */
@@ -37,33 +49,39 @@ export function appLogEntries(log: string | null): string[] {
  *  when no load is in it. */
 export function appLogSinceLoad(log: string | null): string[] {
   const entries = appLogEntries(log)
-  const last = entries.findLastIndex((e) => e.split(' ', 2)[1] === 'load')
+  const last = entries.findLastIndex((e) => levelOf(e) === 'load')
   return last < 0 ? entries : entries.slice(last)
 }
 
 /**
- * The log with one entry added and what is past its day (or over the cap)
- * dropped. An entry is a line starting with its ISO time and level; a
- * multi-line text (a stack) continues on lines indented by two spaces, so it
- * stays one entry when the log is trimmed.
+ * The log with `added` appended (oldest first) and what is past its day, or
+ * over the caps, dropped: the oldest `info` past its own cap, then the oldest
+ * of anything past the log's. An entry is a line starting with its ISO time
+ * and level; a multi-line text (a stack) continues on lines indented by two
+ * spaces, so it stays one entry when the log is trimmed.
  */
 export function appendAppLog(
   existing: string | null,
-  entry: { level: AppLogLevel; text: string },
+  added: readonly AppLogEntry[],
   now: Date,
 ): string {
-  const entries = appLogEntries(existing)
   const cutoff = now.getTime() - APP_LOG_TTL_MS
-  const kept = entries.filter((e) => {
+  const kept = appLogEntries(existing).filter((e) => {
     const at = Date.parse(e.slice(0, e.indexOf(' ')))
     return Number.isFinite(at) && at >= cutoff
   })
-  const text = entry.text.slice(0, APP_LOG_MAX_TEXT).replace(/\r\n?/g, '\n')
-  const [first = '', ...rest] = text.split('\n')
-  kept.push(
-    [`${now.toISOString()} ${entry.level} ${first}`, ...rest.map((l) => `  ${l}`)].join('\n'),
-  )
-  return `${kept.slice(-APP_LOG_MAX_ENTRIES).join('\n')}\n`
+  for (const entry of added) {
+    const text = entry.text.slice(0, APP_LOG_MAX_TEXT).replace(/\r\n?/g, '\n')
+    const [first = '', ...rest] = text.split('\n')
+    kept.push(
+      [`${entry.at.toISOString()} ${entry.level} ${first}`, ...rest.map((l) => `  ${l}`)].join(
+        '\n',
+      ),
+    )
+  }
+  let info = kept.filter((e) => levelOf(e) === 'info').length
+  const trimmed = kept.filter((e) => levelOf(e) !== 'info' || info-- <= APP_LOG_MAX_INFO)
+  return `${trimmed.slice(-APP_LOG_MAX_ENTRIES).join('\n')}\n`
 }
 
 /** The largest record main will write, formatted. A record is a row, not a file store. */

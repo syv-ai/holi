@@ -334,12 +334,14 @@ run. So the loop is:
    refused, each line timed. `holi.log(...)` adds a line of your own.
    `--all` prints the whole of the last day. The same lines are in
    `log.local.txt` at the app's root, which never syncs and the app cannot
-   read.
+   read. Whatever the app logs stays on this machine for a day, so never log
+   a secret, a token or an environment value.
 6. Fix what you saw, and go round again from 3.
 
-The screenshot brings Holi's window to the front, so take one when you mean to
-look, not after every write. When Holi is showing another vault it refuses;
-then ask the user.
+The screenshot brings Holi's window to the front (without taking the user's
+keyboard), so take one when you mean to look, not after every write. When Holi
+is showing another vault it refuses, and so it does while a dialog or menu is
+open over the window; then ask the user.
 
 Build so that a failure is legible in the page itself too, where a screenshot
 and the user both see it:

@@ -28,7 +28,7 @@
  * to approve that (`dangerously-allow`; the approval is kept in main).
  */
 import { useAtomValue, useSetAtom, useStore } from 'jotai'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { isSurfaceName } from '@holi/shared'
 import { APP_METHODS, type AppMethod, type AppPush, type AppResponse } from '../shared/bridge'
 import { appHost, appName } from '../shared/bundle'
@@ -132,10 +132,12 @@ export function AppFrame({ path }: { path: string }): React.JSX.Element {
       }
       if (msg === null || typeof msg !== 'object') return
       // A line for the app's log: no answer, and a failure to write it is not
-      // the app's to hear about. Main checks it again, with the bundle.
+      // the app's to hear about. Main checks it again, with the bundle. Never
+      // a `load` line, which is this frame's own (below), so an app cannot
+      // move where `holi apps console` starts reading.
       if (typeof msg.log === 'object' && msg.log !== null && remote !== null) {
         const { text } = msg.log
-        const level = APP_LOG_LEVELS.find((l) => l === msg.log?.level)
+        const level = APP_LOG_LEVELS.find((l) => l !== 'load' && l === msg.log?.level)
         if (level !== undefined && typeof text === 'string') {
           appsCap.log(remote, { bundle: path, level, text }).catch(() => {})
         }
@@ -218,6 +220,17 @@ export function AppFrame({ path }: { path: string }): React.JSX.Element {
   // Which document the frame holds: the fade-in waits for this one's load.
   const documentKey = `${path}\n${reloads}\n${mode}`
   const [loaded, setLoaded] = useState<string | null>(null)
+
+  // A `load` line in the app's log as the frame starts each document: where
+  // `holi apps console` starts reading. Sent before the frame's scripts can
+  // report anything, so its first lines follow it: a layout effect runs as
+  // the frame is inserted, before its document can come back from main.
+  useLayoutEffect(() => {
+    if (!gateOpen || remote === null) return
+    appsCap
+      .log(remote, { bundle: path, level: 'load', text: `/index.html?mode=${mode}` })
+      .catch(() => {})
+  }, [gateOpen, remote, path, reloads, mode])
 
   const decide = (allow: boolean): void => {
     const shown = ask

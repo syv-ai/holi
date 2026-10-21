@@ -14,7 +14,7 @@
  *
  * No `electron` import: this loads under plain Node in the tests.
  */
-import { appBundleOf, isAppBundlePath } from '@holi/shared'
+import { appBundleOf, isAppBundlePath, vaultRelPath } from '@holi/shared'
 import { APP_LOG_LEVELS, appLogEntries, appLogSinceLoad } from '../shared/store'
 import {
   cap,
@@ -194,7 +194,13 @@ export const appsCapabilities = (deps: AppCapabilitiesDeps) => ({
     },
     params: (raw) => {
       const p = paramsObject(raw)
-      const path = stringParam(p, 'path').replace(/\/+$/, '')
+      const named = stringParam(p, 'path').replace(/\/+$/, '')
+      let path: string
+      try {
+        path = vaultRelPath(named)
+      } catch (err) {
+        throw new CapabilityError('BAD_REQUEST', (err as Error).message)
+      }
       if (!isAppBundlePath(path)) throw new CapabilityError('BAD_REQUEST', `not an app: ${path}`)
       return { bundle: path, all: p.all === true || p.all === 'true' }
     },
