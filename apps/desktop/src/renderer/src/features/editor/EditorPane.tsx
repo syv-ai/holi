@@ -53,7 +53,7 @@ import {
   threadLinesAtom,
   threadsByPathAtom,
 } from '@/state/comments'
-import { claimsAtom, normalizersAtom } from '@/state/plugins'
+import { normalizersAtom, owningClaimsAtom } from '@/state/plugins'
 import { trpc } from '@/lib/trpc'
 import { fileHistoryAtom } from '@/state/file-history'
 import { editorSelectionAtom } from '@/state/ui-report'
@@ -220,8 +220,8 @@ export function EditorPane({
   const draftCommentRef = useRef(draftComment)
   draftCommentRef.current = draftComment
   /** A note that takes threads (`isCommentableNote`), not a plain text file. */
-  const claims = useAtomValue(claimsAtom)
-  const commentable = path !== null && !plain && isCommentableNote(path, claims)
+  const owning = useAtomValue(owningClaimsAtom)
+  const commentable = path !== null && !plain && isCommentableNote(path, owning)
   /** Read by the open view, which takes a change in place rather than
    *  rebuilding (the claim effect below). */
   const commentableRef = useRef(commentable)

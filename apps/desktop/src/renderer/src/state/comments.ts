@@ -11,7 +11,7 @@ import { isCommentableNote, type CommentAnchor, type CommentThread } from '@holi
 import { atom, type SetStateAction, type WritableAtom } from 'jotai'
 import { trpc } from '../lib/trpc'
 import { historyTargetPathAtom } from './history'
-import { claimsAtom } from './plugins'
+import { owningClaimsAtom } from './plugins'
 import { drawerOpenAtom } from './right-drawer'
 import { activeRemoteAtom } from './vaults'
 
@@ -38,10 +38,10 @@ function vaultScoped<T>(initial: T): WritableAtom<T, [SetStateAction<T>], void> 
 export const commentsOpenAtom = drawerOpenAtom('comments')
 
 /** The note the drawer is about: the focused note, as History's, when it
- *  takes comments (`isCommentableNote`, with the running plugins' claims). */
+ *  takes comments (`isCommentableNote`, with the claims that own files). */
 export const commentsTargetPathAtom = atom<string | null>((get) => {
   const path = get(historyTargetPathAtom)
-  return path === null || !isCommentableNote(path, get(claimsAtom)) ? null : path
+  return path === null || !isCommentableNote(path, get(owningClaimsAtom)) ? null : path
 })
 
 /** Open or close the drawer, in place of whichever right-hand drawer was
