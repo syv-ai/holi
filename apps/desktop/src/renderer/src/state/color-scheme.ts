@@ -64,6 +64,14 @@ export function useColorScheme(): void {
   useEffect(() => {
     document.documentElement.dataset.theme = mode
   }, [mode])
+
+  // The native window draws its glass light or dark from the scheme itself,
+  // so "system" goes on following the OS there too.
+  const scheme = useAtomValue(colorSchemeAtom)
+  useEffect(() => {
+    // Absent where there is no preload bridge (the tests' jsdom).
+    window.holi?.setAppearance(scheme)
+  }, [scheme])
 }
 
 /**

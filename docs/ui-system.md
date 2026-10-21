@@ -148,7 +148,12 @@ One place decides how an icon looks, so every icon in the app agrees.
   voice (`text-4xl`, −0.03em); the warm-to-violet accent of sign-in's "own." is
   `--brand-gradient`, carried by exactly two things in the shell, the focused tab's line and the
   open vault's tile, so it stays a signature; the Agents segment wears a Holi's pixel face; an
-  empty state's icon stands on a small lit plate (an error's does not). No glass.
+  empty state's icon stands on a small lit plate (an error's does not). **On macOS the window is
+  glass** (after MonoCode's): transparent over the system's blur of what is behind it
+  (`vibrancy: 'under-window'`, drawn light or dark from the app's own scheme through
+  `nativeTheme.themeSource`), the ground tinting it at `--glass-tint` (80%) so the desk shows
+  through the sidebar faintly. The page panel stays opaque: a note is never read over the
+  desktop. Elsewhere the ground is opaque.
 - **Before a vault**, sign-in and the onboarding ritual stand in the light: shafts of warm light
   falling from the top-left corner and shifting slowly (`composites/AmbientBackdrop.tsx`, drawn by
   the `SideRays` shader), with film grain over them (`AmbientGrain`). It is the one decorative

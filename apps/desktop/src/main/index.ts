@@ -110,8 +110,17 @@ function createWindow({ show = true }: { show?: boolean } = {}): BrowserWindow {
     // No title bar on macOS: the traffic lights sit in the sidebar's top band
     // and the tab strip is the window's handle (docs/ui-system.md, Window).
     // The lights' centre is the tab strip's (36px tall).
+    // On macOS the window is glass (after MonoCode's): transparent, with the
+    // system's blur of what is behind it, which the shell's ground tints
+    // (index.css, Window). Elsewhere the ground is opaque.
     ...(process.platform === 'darwin'
-      ? { titleBarStyle: 'hiddenInset' as const, trafficLightPosition: { x: 14, y: 12 } }
+      ? {
+          titleBarStyle: 'hiddenInset' as const,
+          trafficLightPosition: { x: 14, y: 12 },
+          vibrancy: 'under-window' as const,
+          visualEffectState: 'active' as const,
+          backgroundColor: '#00000000',
+        }
       : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),

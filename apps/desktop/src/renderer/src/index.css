@@ -58,6 +58,9 @@
      step under the page, so the panel reads as raised off it in both modes.
      Mixed from the page, so a vault theme carries it. */
   --ground: color-mix(in oklab, var(--background) 90%, black);
+  /* How much of the ground covers the glass behind the window (macOS): the
+     rest is the blurred desktop. */
+  --glass-tint: 80%;
   /* The light on the ground (`[data-slot='window-ground']`): the sign-in's
      two colours, warm over cool, held still and faint. */
   --ground-light-warm: color-mix(in srgb, #ffc46b 9%, transparent);
@@ -841,6 +844,17 @@ html {
     radial-gradient(ellipse 55% 75% at 0% 0%, var(--ground-light-warm), transparent 70%),
     radial-gradient(ellipse 45% 60% at 18% 0%, var(--ground-light-cool), transparent 70%),
     var(--ground);
+}
+/* On macOS the window is glass (after MonoCode's): main makes it transparent
+   over the system's blur of what is behind it (`vibrancy`, light or dark from
+   the app's scheme), and the ground tints that blur rather than covering it,
+   so the desk shows through the sidebar faintly. The page panel stays opaque:
+   a note is never read over the desktop. */
+[data-platform='mac'] [data-slot='window-ground'] {
+  background:
+    radial-gradient(ellipse 55% 75% at 0% 0%, var(--ground-light-warm), transparent 70%),
+    radial-gradient(ellipse 45% 60% at 18% 0%, var(--ground-light-cool), transparent 70%),
+    color-mix(in srgb, var(--ground) var(--glass-tint), transparent);
 }
 [data-slot='window-ground'] > .ambient-grain {
   z-index: -1;

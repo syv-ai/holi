@@ -6,7 +6,7 @@
  * sent from `index.ts`.
  */
 import type { AnyRouter } from '@trpc/server'
-import { app, BrowserWindow, dialog, ipcMain, nativeImage, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, nativeImage, nativeTheme, shell } from 'electron'
 import { basename, dirname, join } from 'node:path'
 import { vaultRelPath } from '@holi/shared'
 import { callProcedure, toEnvelope, type TrpcEnvelope, type TrpcOp } from './trpc-call'
@@ -56,6 +56,16 @@ export function registerIpc(deps: {
    * promise round trip is one the drag may not survive. The icon is prebuilt for
    * the same reason: `getFileIcon` is async.
    */
+  // The window's appearance follows the app's colour scheme, not only the
+  // system's: the glass behind the window (macOS vibrancy, `index.ts`) is
+  // drawn light or dark from it, as are native menus and scrollbars. The
+  // scheme, never the resolved mode, so "system" keeps following the OS.
+  ipcMain.on('holi:appearance', (_event, scheme: unknown) => {
+    if (scheme === 'light' || scheme === 'dark' || scheme === 'system') {
+      nativeTheme.themeSource = scheme
+    }
+  })
+
   ipcMain.on('holi:startDrag', (event, paths: string[]) => {
     if (paths.length === 0) return
     event.sender.startDrag({ files: paths, file: paths[0]!, icon: DRAG_ICON })

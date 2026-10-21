@@ -126,6 +126,8 @@ contextBridge.exposeInMainWorld('holi', {
   /** Hand these files to the OS as a drag. Fire-and-forget: a drag cannot wait
    *  for a round trip. */
   startDrag: (paths: string[]) => ipcRenderer.send('holi:startDrag', paths),
+  setAppearance: (scheme: 'light' | 'dark' | 'system') =>
+    ipcRenderer.send('holi:appearance', scheme),
   showSaveDialog: (input: {
     remote: string
     path: string

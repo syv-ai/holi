@@ -74,6 +74,9 @@ declare global {
       pathForFile(file: File): string
       /** Hand these absolute paths to the OS as a native file drag. */
       startDrag(paths: string[]): void
+      /** The app's colour scheme, so the native window (its glass, menus and
+       *  scrollbars) is drawn to match. */
+      setAppearance(scheme: 'light' | 'dark' | 'system'): void
       /** Native "save as" for something made from the vault file `path`.
        *  Presents a save sheet beside it, named after it with `extension`
        *  (Downloads when `path` is not in the vault); resolves to the chosen
