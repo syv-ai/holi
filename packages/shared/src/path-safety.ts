@@ -85,6 +85,19 @@ export const LOCAL_ONLY_IGNORE_LINES: readonly string[] = [
 ]
 
 /**
+ * Files an operating system drops into folders on its own: Finder's
+ * `.DS_Store`, Explorer's `Thumbs.db`. Never vault content, and never
+ * committed.
+ *
+ * **A different kind of rule from `LOCAL_ONLY_IGNORE_LINES`**, so a separate
+ * list: those are a person's files kept on one machine, these are nobody's.
+ * Each is a bare file name, which as a `.gitignore` line matches it in every
+ * folder, so this one list is both the vault store's filter and the lines the
+ * seeded `.gitignore` carries.
+ */
+export const OS_JUNK_FILES: readonly string[] = ['.DS_Store', 'Thumbs.db']
+
+/**
  * The sentinel that says a clone IS a Holi vault, and the durable on-disk twin
  * of the `holi-vault` GitHub topic.
  *
