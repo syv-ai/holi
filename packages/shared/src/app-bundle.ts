@@ -11,6 +11,7 @@
  *
  * Browser-safe: the renderer, main and the tests all read these.
  */
+import { isAppPrivatePath } from './app-store'
 import {
   AGENT_SURFACE_FILES,
   isAgentSurfacePath,
@@ -99,4 +100,18 @@ export function isAppWritablePath(path: string): boolean {
     path.split('/').some((seg) => AGENT_INSTRUCTION_NAMES.has(seg.toLowerCase())) ||
     appBundleOf(path) !== null
   )
+}
+
+/**
+ * Is a normalised vault path one no app may reach: the agent surface, this
+ * machine's state under `.holi/state/` (it holds the bridge's tokens), a
+ * secret file (an app gets only the keys it declares, through `holi.env`), or
+ * any app's records and log. The bridge's reads refuse these, and an app's
+ * slash command is not offered in a note that is one, since it would be given
+ * the note's text and could write into it.
+ */
+export function isAppFencedPath(path: string): boolean {
+  if (isAgentSurfacePath(path) || isMachineStatePath(path) || isSecretPath(path)) return true
+  const bundle = appBundleOf(path)
+  return bundle !== null && isAppPrivatePath(path.slice(bundle.length + 1))
 }
