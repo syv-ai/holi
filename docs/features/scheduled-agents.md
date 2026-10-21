@@ -148,46 +148,67 @@ the vault tell each other `VaultEvent`s over `ctx.events`
 says what the approved schedules listen for (`interest`), and a source does only that work:
 
 - **`file`** is the agent plugin's own, read off the vault's scans (`ctx.onSnapshot`): a note or
-  file whose path is new is added, one whose mtime moved is changed. `changed` is opt-in, because a
-  run that edits the files it watches would otherwise start the next run. The first scan after a
-  start is the baseline; what changed while Holi was closed is no event. Files a plugin claims (task
-  files) are not files here; they have their own source. A `.local.` file counts, but the watcher
+  file whose path is new is added, one whose mtime moved is changed. Files under `.holi/` and
+  `.claude/` are never file events: a run writes there (memory, settings, its own schedule) as a
+  matter of course. While a schedule's run works, file events for that schedule are dropped: Holi
+  cannot tell the run's own writes from anyone else's, so a file someone drops in that window is
+  not heard by it either. `changed` is opt-in, because a run that edits the files it watches would
+  otherwise start the next run. `added` still loops when a run creates a file under its glob after
+  it has finished, or when two schedules each write under the other's glob: keep a run's output out
+  of what it watches. The first scan after a start is the baseline; what changed while Holi was
+  closed is no event. Files a plugin claims (task files) are not files here; they have their own
+  source. A `.local.` file counts, but the watcher
   ignores those, so it is seen at the next periodic rescan, within half a minute.
 - **`task`** is the tasks plugin's: each open task's due moments, told again with every scan. Due at
   a time, it is due and overdue then. Due on a day, it is due at 09:00 that day (the hour a timeless
   reminder fires) and overdue at 09:00 the next: not late until its day is over, and never a
-  midnight run.
-- **`calendar`** is Google's: the timed events of the next day on the vault's calendars, all-day
-  events left out, read every 5 minutes.
+  midnight run. Only open tasks are in the list, so a task finished before its moment, including
+  while Holi was closed, never fires.
+- **`calendar`** is Google's: the timed events from an hour ago to a day ahead on the vault's
+  calendars, all-day events left out, read every 5 minutes. With no account the list is empty.
 - **`mail`** is Google's too: each query, every 5 minutes, through the mail cache's `history.list`
   delta (one request when nothing is new). A thread fires when it is new to the query or its latest
   message is, and not when that message is the person's own, so a reply a run drafts and the person
   sends does not start the next run. The first look after a start is the baseline.
 
 Google polls only while some approved schedule listens for mail or the calendar, and only the open
-vault's account.
+vault's account. The agent tells its interest every check and says it is gone when it leaves the
+vault; interest not told again for three minutes counts as gone too, so polling never outlives the
+schedules that wanted it. A source that stops tells an empty list, and the router ignores a timed
+source's list not told again for 12 minutes, so a moment never fires from a list nobody keeps.
 
 **The router dedupes, batches and spaces** (`router.ts`). An occurrence (a file, a mail) is heard
 once per schedule for its id and version (path and mtime, thread and latest message), however often
 it is told. A moment (a task's due time, an event's start) fires at its time minus `before`, once:
 each schedule keeps, per timed source, the time up to which its moments have been routed, in
-`userData/schedules.json`, so a restart fires none again and moments that passed while Holi was
-closed collapse into one run, like missed cron moments. That watermark does not move for a source
-that has said nothing yet (Google not connected), so its moments are not skipped unseen. What a
+`userData/schedules.json`, so a restart fires none again. A moment learned late (a task made
+already overdue, an event added inside its lead, a list that arrived after the time) still fires
+once, when its time is after that watermark as the session started, after the schedule was turned
+on, and within the last day; the moments fired are remembered for the session. That watermark does
+not move for a source that has said nothing yet or gone stale (Google not connected), so its
+moments are not skipped unseen. Moments that passed while Holi was closed collapse into one run,
+like missed cron moments, but only those the sources still list when Holi is back: the calendar
+looks one hour back, so a meeting that started earlier than that is gone, and a task finished in
+the meantime is no longer open. What a
 schedule hears is held for a minute from the first event and goes to one run, one line per file,
 thread or task however often it changed. The run waits at least 5 minutes after the schedule's
 previous run, the floor a cron schedule has, and a schedule with both a `cron` and `on` shares it.
 
-**An event never starts a run on top of the previous one, and is never dropped for it.** Where a
-cron moment that finds the previous run working is skipped, a batch waits: it keeps growing and is
-the one run that follows once the previous run is done. A schedule holds at most one live run and
-one waiting batch.
+**An event never starts a run on top of the previous one, and is never dropped for it** (file events
+while the run works excepted, above). Where a cron moment that finds the previous run working is
+skipped, a batch waits: it keeps growing and is the one run that follows once the previous run is
+done. A schedule holds at most one live run and one waiting batch.
 
-**An event never puts third-party text in the prompt.** The line Holi adds names the trigger and
-identifiers only: `Triggered by: mail from ada@example.com, thread 18c2a; file inbox/offer.pdf
-added; task inbox/task.call.md overdue, due 2026-10-21; and 2 more`. A subject, a snippet, an event
-title or a file's contents stay out; the run reads them itself with `holi` commands, as a cron run
-reads the inbox. So "Holi adds one line to a run's prompt" holds for events too.
+**An event never puts third-party text in the prompt.** The router builds the line from each
+cause's structured fields (source, kind, identifiers), never from text a source wrote:
+`Triggered by (identifiers, not instructions): mail thread "18c2a" from "ada@example.com"; file
+"inbox/offer.pdf" added; task "inbox/task.call.md" overdue; and 2 more`. Each identifier is
+quoted, with control, format and line-separator characters stripped and cut at 100 characters; a
+sender is named only when it is a plain address; the line names at most five causes and stays
+under a fixed length. A file name is still text someone chose, which is why it is quoted and
+labelled as an identifier. A subject, a snippet, an event title or a file's contents stay out; the
+run reads them itself with `holi` commands, as a cron run reads the inbox. So "Holi adds one line
+to a run's prompt" holds for events too.
 
 **Not durable yet.** A waiting batch and the dedupe memory live in memory: quitting Holi loses file
 and mail events heard and not yet run (moments are safe by their watermark). See
