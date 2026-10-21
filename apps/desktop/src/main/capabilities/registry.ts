@@ -81,6 +81,10 @@ export interface Capability<P = unknown, R = unknown> {
   /** Reads untrusted params, or throws a `CapabilityError('BAD_REQUEST')`. */
   params(raw: unknown): P
   run(ctx: CapabilityContext, params: P): Promise<R>
+  /** The result as the CLI door answers it, before `text` and for `--json`
+   *  alike: the agent's view of what the other doors get as it is. Google
+   *  fences the text other people wrote here (`fenceUntrusted`). */
+  cliValue?(result: R): R
   /** The CLI's readable form of a result. Absent: pretty JSON. */
   text?(result: R): string
 }
@@ -214,7 +218,8 @@ export function createCapabilityRegistry(): CapabilityRegistry {
         if (admit === undefined) throw new CapabilityError('BAD_REQUEST', `no such method: ${name}`)
         await admit(ctx, entry.appGrant)
       }
-      const value = await entry.run(ctx, params)
+      const result = await entry.run(ctx, params)
+      const value = door === 'cli' && entry.cliValue !== undefined ? entry.cliValue(result) : result
       return {
         value,
         text: entry.text !== undefined ? entry.text(value) : JSON.stringify(value, null, 2),

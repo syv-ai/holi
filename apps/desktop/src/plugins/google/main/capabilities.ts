@@ -19,6 +19,11 @@
  * refuses any word before the verb, so that pattern cannot be stepped around.
  * A person pressing Send in the UI has already decided.
  *
+ * **What other people wrote reaches the agent fenced** (`untrusted.ts`): each
+ * read the CLI door opens fences it in `cliValue`, so the agent reads a mail's
+ * "ignore previous instructions" as a quote, while the UI and an app get the
+ * same values as they are.
+ *
  * No `electron` import: this loads under plain Node in the tests.
  */
 import {
@@ -61,6 +66,7 @@ import type { LoopbackFlow } from './loopback-flow'
 import type { OutgoingMail } from './mime'
 import { listContacts } from './people'
 import { GoogleReconnectRequiredError } from './session'
+import { fenceEvents, fenceThread, fenceThreads } from './untrusted'
 
 /** Longest calendar window one call may ask for. */
 const MAX_AGENDA_DAYS = 92
@@ -445,6 +451,7 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
         const data = await dataOf(ctx.remote)
         return google(async () => data.agenda(agendaWindow(window), await overrides(ctx.root)))
       },
+      cliValue: fenceEvents,
     }),
 
     /** The last agenda for this exact window and calendar set, or null. Never
@@ -497,6 +504,7 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
         const data = await dataOf(ctx.remote)
         return google(() => data.threads(options))
       },
+      cliValue: (page) => ({ ...page, threads: fenceThreads(page.threads) }),
       text: (page) => json(page.threads),
     }),
 
@@ -537,6 +545,7 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
       params: idParams,
       run: async (ctx, { id }) =>
         google(async () => textOnly(await readThread(apiOf(ctx.remote), id))),
+      cliValue: fenceThread,
     }),
 
     /**
