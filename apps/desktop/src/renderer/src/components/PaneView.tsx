@@ -16,9 +16,9 @@ import { TAB_MIME, paneDropZone, parseTabPayload, type PaneDropZone } from '@/li
 import { EditorPane } from '@/features/editor/EditorPane'
 import { FilePlaceholder } from '@/features/files/FilePlaceholder'
 import { ImageViewer } from '@/features/files/ImageViewer'
-import type { Pane, Tab } from '@/state/panes'
+import { tabKey, type Pane, type Tab } from '@/state/panes'
 import { useArrivalOnChange } from '@/lib/use-arrivals'
-import { TabStrip, tabKey } from './TabStrip'
+import { TabStrip } from './TabStrip'
 
 /** What every drop target shares. `pointer-events-none` keeps the overlay a
  *  single event target, so crossing a band fires no `dragleave` flicker. */
