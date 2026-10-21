@@ -11,15 +11,21 @@ import { readFile } from 'node:fs/promises'
 import { fileKind, parseWikiLinks, wikiLinksToText } from '@holi/shared'
 import { listFiles } from './vault-files'
 
+/** A note, as the snapshot scanner counts one: a `.md` file. The one markdown
+ *  test every scan here makes. */
+const isNote = (path: string): boolean => path.endsWith('.md')
+
 /** Every markdown file in the vault with its text, in walk order, skipping the
  *  paths `skip` names and any file that cannot be read. The one walk every
- *  scan here makes. */
+ *  scan here makes; `paths` is the vault's file list when the caller already
+ *  has it. */
 export async function* markdownFiles(
   root: string,
   skip: (path: string) => boolean = () => false,
+  paths?: readonly string[],
 ): AsyncGenerator<{ path: string; text: string }> {
-  for (const path of await listFiles(root)) {
-    if (!path.endsWith('.md') || skip(path)) continue
+  for (const path of paths ?? (await listFiles(root))) {
+    if (!isNote(path) || skip(path)) continue
     const text = await readFile(`${root}/${path}`, 'utf8').catch(() => null)
     if (text !== null) yield { path, text }
   }
@@ -62,7 +68,7 @@ export interface OutgoingLink {
   label?: string
   /** How many times the file links there. */
   count: number
-  /** Whether the target is a markdown file in the vault now. */
+  /** Whether the target is a file in the vault now. */
   exists: boolean
 }
 
@@ -77,11 +83,18 @@ export interface Backlink {
 
 const SNIPPET_MAX = 160
 
+/** An asset a link can point at: an image, a PDF, an office document. Such a
+ *  link embeds or attaches a file; it is not a link between notes. */
+const isAsset = (path: string): boolean => {
+  const kind = fileKind(path)
+  return kind === 'image' || kind === 'pdf' || kind === 'doc'
+}
+
 /**
  * Both directions of one file's links, in one walk: what it links to, and
- * every line elsewhere that links to it. Only markdown is in the link graph,
- * so a link to an image or any other asset is not an outgoing link; a link to
- * a note that does not exist is, and says so.
+ * every line elsewhere that links to it. A link to an asset is not an outgoing
+ * link. Any other target is, whatever it looks like (`[[note]]` with no
+ * extension included), and says whether it exists, as its chip does.
  *
  * `path`'s own text is read off disk, so an edit shows once autosave has
  * written it.
@@ -90,14 +103,13 @@ export async function scanLinks(
   root: string,
   path: string,
 ): Promise<{ outgoing: OutgoingLink[]; backlinks: Backlink[] }> {
-  const notes = new Set<string>()
+  const paths = await listFiles(root)
   const outgoing = new Map<string, OutgoingLink>()
   const backlinks: Backlink[] = []
-  for await (const file of markdownFiles(root)) {
-    notes.add(file.path)
+  for await (const file of markdownFiles(root, undefined, paths)) {
     if (file.path === path) {
       for (const link of parseWikiLinks(file.text)) {
-        if (fileKind(link.target) !== 'markdown') continue
+        if (isAsset(link.target)) continue
         const seen = outgoing.get(link.target)
         if (seen) seen.count++
         else
@@ -121,7 +133,8 @@ export async function scanLinks(
       })
     })
   }
-  for (const link of outgoing.values()) link.exists = notes.has(link.target)
+  const files = new Set(paths)
+  for (const link of outgoing.values()) link.exists = files.has(link.target)
   backlinks.sort((a, b) => a.path.localeCompare(b.path) || a.line - b.line)
   return { outgoing: [...outgoing.values()], backlinks }
 }

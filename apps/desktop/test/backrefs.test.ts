@@ -68,7 +68,7 @@ describe('scanBackrefsMany', () => {
 describe('scanLinks', () => {
   it("lists a note's outgoing links once each, resolved or not, and every line linking in", async () => {
     const root = await vault({
-      'n.md': '[[a.md|A]] and [[a.md]], [[gone.md]], an image [[logo.png]]',
+      'n.md': '[[a.md|A]] and [[a.md]], [[gone.md]], [[plain]], an image [[logo.png]]',
       'a.md': 'back to [[n.md]]\nplain\nagain [[n.md|the note]] here',
       'b.md': 'mentions n.md without linking',
       'logo.png': 'x',
@@ -77,6 +77,7 @@ describe('scanLinks', () => {
       outgoing: [
         { target: 'a.md', label: 'A', count: 2, exists: true },
         { target: 'gone.md', count: 1, exists: false },
+        { target: 'plain', count: 1, exists: false },
       ],
       backlinks: [
         { path: 'a.md', line: 1, snippet: 'back to n' },
