@@ -361,6 +361,31 @@ describe('docs.open', () => {
     ).toMatchObject({ code: 'NOT_FOUND' })
     expect(opened).toEqual([])
   })
+
+  it('refuses a secret file and this machine state, even when the vault holds them', async () => {
+    await put('.env', 'TOKEN=x\n')
+    await put('.holi/state/bridge.json', '{}\n')
+    opened.length = 0
+    for (const path of ['.env', '.holi/state/bridge.json']) {
+      expect(
+        await refusal(runCapability('docs.open', 'cli', ctx({}, null), { path })),
+      ).toMatchObject({ code: 'FORBIDDEN' })
+    }
+    expect(opened).toEqual([])
+  })
+
+  it('shows a vault app, which is a directory', async () => {
+    opened.length = 0
+    const withApp: CapabilityContext = {
+      ...ctx({}, null),
+      snapshot: async () => ({ ...emptyVaultSnapshot(), dirs: ['Finance', 'Finance/Budget.app'] }),
+    }
+    await runCapability('docs.open', 'cli', withApp, { path: 'Finance/Budget.app' })
+    expect(opened).toEqual(['Finance/Budget.app'])
+    expect(
+      await refusal(runCapability('docs.open', 'cli', withApp, { path: 'Finance' })),
+    ).toMatchObject({ code: 'NOT_FOUND' })
+  })
 })
 
 describe('tasks.complete', () => {

@@ -6,6 +6,9 @@
  * No `electron` import: this loads under plain Node in the tests.
  */
 import {
+  isAppBundlePath,
+  isMachineStatePath,
+  isSecretPath,
   syncLabel,
   vaultRelPath,
   type RecentEntry,
@@ -93,10 +96,12 @@ export const vaultCapabilities = (deps: VaultCapabilitiesDeps) => ({
   }),
 
   /**
-   * Show a note, task, PDF or any vault file in a tab, so the agent can say
-   * "here it is" rather than "go to X". The CLI door only: the agent may show
-   * the person anything in the vault, its own surface included, and an app
-   * has `holi.open`. Reversible: the tab closes.
+   * Show a note, task, PDF, vault app or any vault file in a tab, so the
+   * agent can say "here it is" rather than "go to X". The CLI door only: the
+   * agent may show the person its own surface, and an app has `holi.open`.
+   * Never a secret file or this machine's state (`.holi/state/` holds the
+   * bridge's tokens): a prompt-injected agent must not put either on screen.
+   * Reversible: the tab closes.
    */
   'docs.open': cap({
     doors: ['cli'],
@@ -109,7 +114,10 @@ export const vaultCapabilities = (deps: VaultCapabilitiesDeps) => ({
       } catch (err) {
         throw new CapabilityError('BAD_REQUEST', (err as Error).message)
       }
-      rel = await inSnapshot(ctx, rel, path)
+      if (isSecretPath(rel) || isMachineStatePath(rel)) throw new CapabilityError('FORBIDDEN', path)
+      // A vault app is a directory, which the snapshot lists among `dirs`.
+      const bundle = isAppBundlePath(rel) && (await ctx.snapshot()).dirs.includes(rel)
+      if (!bundle) rel = await inSnapshot(ctx, rel, path)
       deps.open(ctx.remote, rel)
       return { path: rel }
     },

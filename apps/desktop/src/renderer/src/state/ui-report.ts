@@ -19,7 +19,8 @@ import { activeRemoteAtom } from './vaults'
  * The lines selected in a note's editor, by the editor that last changed its
  * selection (`EditorPane`). Kept when that editor unmounts, so a selection
  * still counts while the person types to the agent in the same pane; a fresh
- * editor for the path opens on a caret and clears it.
+ * editor for the path opens on a caret and clears it, and a vault switch clears
+ * it (`reportUiToMain`).
  */
 export const editorSelectionAtom = atom<{ path: string; lines: LineRange } | null>(null)
 
@@ -33,12 +34,19 @@ export function reportUiToMain(store: ReturnType<typeof createStore>): () => voi
   // otherwise every prompt typed in Holi would report no note at all. Open
   // notes are counted across every pane.
   let focusedNote: string | null = null
+  // Nothing carries between vaults: the note kept for the agent's tab belonged
+  // to the vault that was showing then, even when the new one has the same path.
+  let focusedIn: string | null = null
   let queued = false
 
   const send = (): void => {
     queued = false
     const remote = store.get(activeRemoteAtom)
     if (remote === null) return
+    if (remote !== focusedIn) {
+      focusedNote = null
+      focusedIn = remote
+    }
     const workspace = store.get(workspaceAtom)
     const tab = activeTab(workspace)
     const openPaths = workspace.panes.flatMap((p) =>
@@ -85,7 +93,11 @@ export function reportUiToMain(store: ReturnType<typeof createStore>): () => voi
   schedule()
   const offWorkspace = store.sub(workspaceAtom, schedule)
   const offRecents = store.sub(recentsAtom, schedule)
-  const offRemote = store.sub(activeRemoteAtom, schedule)
+  // A selection, kept past its editor's unmount, is the old vault's too.
+  const offRemote = store.sub(activeRemoteAtom, () => {
+    store.set(editorSelectionAtom, null)
+    schedule()
+  })
   const offSelection = store.sub(editorSelectionAtom, scheduleSelection)
   return () => {
     offWorkspace()

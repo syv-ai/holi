@@ -35,15 +35,17 @@ export function askPrompt(instruction: string, quote: string): string {
 }
 
 /** The primary selection's lines, 1-based and inclusive, or null when it is
- *  empty (a caret). Also what the agent's per-turn focus line names
+ *  empty (a caret). A selection that ends at the very start of a later line
+ *  (a triple-click, Mod-L, shift+down) holds nothing of that line, so it does
+ *  not count. Also what the agent's per-turn focus line names
  *  (`state/ui-report.ts`). */
 export function selectedLines(state: EditorState): LineRange | null {
   const range = state.selection.main
   if (range.empty) return null
-  return {
-    startLine: state.doc.lineAt(range.from).number,
-    endLine: state.doc.lineAt(range.to).number,
-  }
+  const startLine = state.doc.lineAt(range.from).number
+  const end = state.doc.lineAt(range.to)
+  const endLine = range.to === end.from && end.number > startLine ? end.number - 1 : end.number
+  return { startLine, endLine }
 }
 
 /** The prompt for the primary selection, or null when it is empty. */
@@ -55,7 +57,7 @@ export function promptForSelection(state: EditorState, notePath: string): string
     notePath,
     lines.startLine,
     lines.endLine,
-    state.sliceDoc(range.from, range.to),
+    state.sliceDoc(range.from, Math.min(range.to, state.doc.line(lines.endLine).to)),
   )
 }
 

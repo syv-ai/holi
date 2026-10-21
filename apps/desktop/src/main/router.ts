@@ -263,9 +263,6 @@ function copiesInput(raw: unknown): { remote: string; copies: { from: string; to
   return { ...fields({ remote: 'string' })(raw), copies: pairsOf(raw, 'copies') }
 }
 
-/** A list of strings from an untrusted input. Shared by the drop-import, whose
- *  sources are absolute OS paths rather than vault paths and so cannot ride
- *  `pathsInput`'s vault-relative contract. */
 /** A selection's lines, 1-based and inclusive, or null for anything else. */
 function lineRange(raw: unknown): LineRange | null {
   if (raw === null || typeof raw !== 'object') return null
@@ -275,6 +272,9 @@ function lineRange(raw: unknown): LineRange | null {
   return { startLine, endLine }
 }
 
+/** A list of strings from an untrusted input. Shared by the drop-import, whose
+ *  sources are absolute OS paths rather than vault paths and so cannot ride
+ *  `pathsInput`'s vault-relative contract. */
 function stringsOrThrow(value: unknown): string[] {
   if (!Array.isArray(value) || value.some((v) => typeof v !== 'string')) {
     throw new Error('sources must be an array of strings')
