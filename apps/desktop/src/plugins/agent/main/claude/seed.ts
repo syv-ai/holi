@@ -3,9 +3,6 @@
  * beside this module) and the `.claude/settings.json` it owns and merges
  * (`settings.ts`). It owns `.claude/`, so every other plugin's files and
  * fragments there wait until the agent runs.
- *
- * The tasks settings ride here too for now, as their own fragment, until
- * tasks becomes its own plugin.
  */
 import {
   seedFolder,
@@ -182,12 +179,6 @@ const AGENT_SETTINGS: SettingsFragment = {
   },
 }
 
-/** Tasks: Claude Code's todo tools, whose "tasks" are not the vault's
- *  `task.*.md`. TaskStop stays: it stops background shells. */
-const TASKS_SETTINGS: SettingsFragment = {
-  permissions: { deny: ['TaskCreate', 'TaskGet', 'TaskList', 'TaskUpdate'] },
-}
-
 /** The agent's `settings.json` for what is on disk, given every
  *  contribution's fragments and which hook scripts the vault has. */
 export const agentSettings = (
@@ -201,7 +192,7 @@ export const claudeSeed: SeedContribution = {
   owns: ['.claude/'],
   once: folder.once,
   shipped: folder.shipped,
-  fragments: { [SETTINGS]: [AGENT_SETTINGS, TASKS_SETTINGS] },
+  fragments: { [SETTINGS]: [AGENT_SETTINGS] },
   merge: {
     [SETTINGS]: async (existing, fragments, has) => {
       const all = fragments as SettingsFragment[]

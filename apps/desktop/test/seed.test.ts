@@ -18,6 +18,7 @@ import { claudeSeed, agentSettings } from '../src/plugins/agent/main/claude/seed
 import { appsSeed } from '../src/plugins/apps/main/seed'
 import { googleSeed } from '../src/plugins/google/main/seed'
 import { pdfSeed } from '../src/plugins/pdf/main/seed'
+import { tasksSeed } from '../src/plugins/tasks/main/seed'
 import { coreSeed, GITIGNORE } from '../src/main/vault/seed/core'
 import { ensureSeeded as ensureSeededWith } from '../src/main/vault/seed/seed'
 import {
@@ -147,9 +148,14 @@ describe('the seed tables', () => {
       '.claude/skills/notify/SKILL.md',
       '.claude/skills/scheduled-agents/SKILL.md',
       '.claude/skills/theme/SKILL.md',
-      '.claude/skills/using-tasks/SKILL.md',
     ])
     expect(keys(claudeSeed.merge!)).toEqual(['.claude/settings.json'])
+  })
+
+  it("tasks ships its skill and the deny rules for Claude Code's own todo tools, and nothing once", () => {
+    expect(keys(tasksSeed.once)).toEqual([])
+    expect(keys(tasksSeed.shipped)).toEqual(['.claude/skills/using-tasks/SKILL.md'])
+    expect(keys(tasksSeed.fragments!)).toEqual(['.claude/settings.json'])
   })
 
   it('vault apps ship their check hook and their skill, and nothing once', () => {
@@ -253,16 +259,6 @@ describe('the seed tables', () => {
     expect(skill).toContain('name: theme')
     expect(skill).toContain('.holi/settings/theme.css') // the file it authors
     expect(skill).toContain('primary') // a token from the whitelist
-  })
-
-  it('seeds the using-tasks skill documenting the task file format', () => {
-    const skill = SEED_FILES['.claude/skills/using-tasks/SKILL.md']!
-    expect(skill).toContain('name: using-tasks')
-    // The two facts an agent gets WRONG rather than merely misses: a
-    // reminder is a moment, and a value that is not a stamp fires nothing.
-    expect(skill).toContain('absolute moment')
-    expect(skill).toContain('inert')
-    expect(skill).toContain('YYYY-MM-DD'.replace('YYYY-MM-DD', '2026-08-25T18:00'))
   })
 
   it('seeds a pdf-comments skill naming the command and its flag', () => {

@@ -1,7 +1,8 @@
 /**
  * The vault as a graph (`docs/features/graph.md`): every note a dot, every
  * wiki-link between two notes a line. Memory is drawn with the rest, in its
- * own colour; hidden files only while the tree shows them.
+ * own colour, as are the files a running plugin claims and says how to draw
+ * (`PathClaim.graph`: a task); hidden files only while the tree shows them.
  *
  * Main builds the graph in one walk per ask, with no index kept; this view
  * asks again a moment after the vault changes on disk, and lays it out once,
@@ -9,7 +10,7 @@
  * ⌘-scroll zooms, a drag on the background pans. A dot opens its note beside
  * the graph, and the note being read is drawn in the theme colour.
  */
-import { taskClaim, MEMORY_DIR } from '@holi/shared'
+import { MEMORY_DIR } from '@holi/shared'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { pathLabel } from '@/composites/file-icons'
@@ -19,6 +20,7 @@ import type { LayoutRequest, LayoutResponse } from '@/lib/graph-layout.worker'
 import { trpc } from '@/lib/trpc'
 import { useVaultScan } from '@/lib/use-vault-scan'
 import { linkFingerprintAtom } from '@/state/links'
+import { claimsAtom } from '@/state/plugins'
 import { openBesideAtom, workspaceAtom } from '@/state/panes'
 import { activeRemoteAtom, showHiddenByVaultAtom } from '@/state/vaults'
 
@@ -32,14 +34,39 @@ const FIT_PAD = 48
 const NO_POINTS: Point[] = []
 const NO_NEIGHBOURS = new Set<number>()
 
-const kindOf = (path: string): 'memory' | 'task' | 'note' =>
-  path.startsWith(`${MEMORY_DIR}/`) ? 'memory' : taskClaim.match(path) ? 'task' : 'note'
+/** A kind of dot: what the legend calls it, its fill, and the files it is. */
+interface DotKind {
+  label: string
+  fill: string
+  match(path: string): boolean
+}
 
-const FILL = {
-  note: 'fill-muted-foreground',
-  task: 'fill-task-todo',
-  memory: 'fill-graph-memory',
-} as const
+const NOTE: DotKind = { label: 'Note', fill: 'fill-muted-foreground', match: () => true }
+const MEMORY: DotKind = {
+  label: 'Memory',
+  fill: 'fill-graph-memory',
+  match: (path) => path.startsWith(`${MEMORY_DIR}/`),
+}
+
+/** The kinds of dot, in the legend's order: notes, what the running plugins'
+ *  claims draw, memory. */
+function useDotKinds(): readonly DotKind[] {
+  const claims = useAtomValue(claimsAtom)
+  return useMemo(
+    () => [
+      NOTE,
+      ...claims.flatMap((c) => (c.graph === undefined ? [] : [{ ...c.graph, match: c.match }])),
+      MEMORY,
+    ],
+    [claims],
+  )
+}
+
+/** The fill of `path`'s dot: memory, else the first claim that draws it, else a note's. */
+function fillOf(kinds: readonly DotKind[], path: string): string {
+  if (MEMORY.match(path)) return MEMORY.fill
+  return kinds.find((k) => k !== NOTE && k.match(path))?.fill ?? NOTE.fill
+}
 
 /** The note being read: the focused pane's, else the one open beside the
  *  graph (where a dot opens it). */
@@ -65,6 +92,7 @@ export function GraphView({ visible }: { id?: string; visible: boolean }): React
   const fingerprint = useAtomValue(linkFingerprintAtom)
   const openBeside = useSetAtom(openBesideAtom)
   const reading = useReadingNote()
+  const kinds = useDotKinds()
 
   // Asked once on open, then again once the vault has been still a moment
   // after a change.
@@ -245,6 +273,7 @@ export function GraphView({ visible }: { id?: string; visible: boolean }): React
         <GraphNode
           key={path}
           path={path}
+          fill={fillOf(kinds, path)}
           index={i}
           at={points[i]!}
           radius={3 + Math.min(5, Math.sqrt(neighbours.get(i)?.size ?? 0))}
@@ -257,7 +286,7 @@ export function GraphView({ visible }: { id?: string; visible: boolean }): React
           onOpen={openBeside}
         />
       )),
-    [drawn, points, neighbours, readingIndex, lit, allNamed, centre, leave, openBeside],
+    [drawn, points, neighbours, readingIndex, lit, allNamed, centre, leave, openBeside, kinds],
   )
 
   const error = layoutFailed
@@ -285,12 +314,12 @@ export function GraphView({ visible }: { id?: string; visible: boolean }): React
       </p>
       {drawn !== null && (
         <p className="pointer-events-none absolute right-4 bottom-3 z-10 flex gap-3 text-[11px] text-muted-foreground">
-          {(['note', 'task', 'memory'] as const).map((kind) => (
-            <span key={kind} className="flex items-center gap-1.5">
+          {kinds.map((kind) => (
+            <span key={kind.label} className="flex items-center gap-1.5">
               <svg viewBox="0 0 8 8" className="size-2" aria-hidden>
-                <circle cx="4" cy="4" r="4" className={FILL[kind]} />
+                <circle cx="4" cy="4" r="4" className={kind.fill} />
               </svg>
-              {kind === 'note' ? 'Note' : kind === 'task' ? 'Task' : 'Memory'}
+              {kind.label}
             </span>
           ))}
         </p>
@@ -347,6 +376,7 @@ const LABEL_STYLE = {
 /** A note: a dot sized by its links, a link to open it beside the graph. */
 const GraphNode = memo(function GraphNode({
   path,
+  fill,
   index,
   at,
   radius,
@@ -359,6 +389,7 @@ const GraphNode = memo(function GraphNode({
   onOpen,
 }: {
   path: string
+  fill: string
   index: number
   at: Point
   radius: number
@@ -393,7 +424,7 @@ const GraphNode = memo(function GraphNode({
         cx={at.x}
         cy={at.y}
         r={radius + (reading ? 2 : 0)}
-        className={reading ? 'fill-primary' : FILL[kindOf(path)]}
+        className={reading ? 'fill-primary' : fill}
       />
       {named && (
         <text

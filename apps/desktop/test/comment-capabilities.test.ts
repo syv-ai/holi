@@ -28,6 +28,7 @@ const ctx = (): CapabilityContext => ({
   root,
   bundle: null,
   snapshot: async () => ({ ...emptyVaultSnapshot(), files: [{ path: NOTE, updatedAt: '' }] }),
+  claims: async () => [],
   core: noCoreServices(),
 })
 

@@ -7,22 +7,19 @@
  * makes the editor's own write a non-event: by the time the watcher reports
  * it, `disk === base`. The decision lives in `lib/editor-reload.ts`.
  *
- * `@` completes notes and open tasks; either inserts an ordinary path
- * wiki-link.
+ * `@` completes notes and what claims offer (open tasks); each inserts an
+ * ordinary path wiki-link.
  */
 import { EditorSelection, EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
-import {
-  anchorAt,
-  findHeadingLine,
-  isCommentableNote,
-  isResolved,
-  snapshotTasks,
-  type Task,
-} from '@holi/shared'
+import { anchorAt, findHeadingLine, isCommentableNote, isResolved } from '@holi/shared'
 import { useAtomValue, useSetAtom, useStore } from 'jotai'
 import { useEffect, useRef } from 'react'
-import { baseEditorExtensions, plainTextExtensions } from '@/editor/extensions'
+import {
+  baseEditorExtensions,
+  plainTextExtensions,
+  reconfigureClaimLayer,
+} from '@/editor/extensions'
 import {
   setActiveThread,
   setCommentThreads,
@@ -31,8 +28,6 @@ import {
 } from '@/editor/comment-threads'
 import { bodyStart, frontmatterValid, setFrontmatterCommit } from '@/editor/frontmatter'
 import { syntaxValid } from '@/editor/languages'
-import type { LinkNav } from '@/editor/links'
-import type { MentionData } from '@/editor/mentions'
 import { playOnce } from '@/lib/motion'
 import { applyReload } from '@/lib/apply-reload'
 import { registerBuffer } from '@/lib/buffer-registry'
@@ -41,7 +36,7 @@ import { selectedLines } from '@/editor/askAgent'
 import { caretHeading } from '@/editor/caret-heading'
 import { headingRequestAtom, quietOpenAtom } from '@/state/arrival'
 import { caretHeadingAtom } from '@/state/holi-link'
-import { NO_AGENT, useAskAgentSeam } from '@/state/agent-service'
+import { useEditorDeps } from '@/state/editor-deps'
 import { historyOpenAtom } from '@/state/history'
 import {
   activeThreadAtom,
@@ -51,7 +46,7 @@ import {
   threadLinesAtom,
   threadsByPathAtom,
 } from '@/state/comments'
-import { normalizersAtom, slashCommandsAtom } from '@/state/plugins'
+import { claimsAtom, normalizersAtom } from '@/state/plugins'
 import { trpc } from '@/lib/trpc'
 import { fileHistoryAtom } from '@/state/file-history'
 import { editorSelectionAtom } from '@/state/ui-report'
@@ -179,44 +174,19 @@ export function EditorPane({
   /** The open editor's `goToRequestedHeading`, for the pane gaining focus. */
   const goToHeadingRef = useRef<() => void>(() => {})
 
-  // Read on demand by the editor's pull-based seams, so a snapshot arriving
-  // mid-edit does not rebuild the EditorView and drop the caret.
-  const docPaths = useRef(new Set<string>())
-  docPaths.current = new Set(snapshot.docs.map((d) => d.path))
-  const tasksByPath = useRef(new Map<string, Task>())
-  tasksByPath.current = new Map(snapshotTasks(snapshot).items.map((t) => [t.path, t]))
-  const mentionRef = useRef<MentionData>({ notes: [], tasks: [] })
-  mentionRef.current = {
-    notes: snapshot.docs.map((d) => ({
-      path: d.path,
-      ...(snapshot.icons[d.path] === undefined ? {} : { icon: snapshot.icons[d.path] }),
-    })),
-    tasks: snapshotTasks(snapshot).items.map((t) => ({
-      path: t.path,
-      title: t.title,
-      status: t.status,
-      ...(t.due === undefined ? {} : { due: t.due }),
-    })),
-  }
   const setHistoryOpen = useSetAtom(historyOpenAtom)
   const refreshThreads = useSetAtom(refreshThreadsAtom)
   const draftComment = useSetAtom(draftCommentAtom)
   const draftCommentRef = useRef(draftComment)
   draftCommentRef.current = draftComment
   /** A note that takes threads (`isCommentableNote`), not a plain text file. */
-  const commentable = path !== null && !plain && isCommentableNote(path)
-  /** In a ref, like `nav`: the extensions must not rebuild on every render.
-   *  Whether there is an agent at all does rebuild them, below. */
-  const askAgent = useAskAgentSeam()
-  const askAgentRef = useRef(askAgent)
-  askAgentRef.current = askAgent
-  const hasAgent = askAgent !== null
-  const navRef = useRef<LinkNav>({ openNote: () => {}, openExternal: () => {} })
-  navRef.current = {
-    // A link to a missing note or task no-ops rather than inventing a file.
-    openNote: (target) =>
-      (docPaths.current.has(target) || tasksByPath.current.has(target)) && onOpenNote(target),
-    openExternal: (url) => void window.holi.openExternal(url),
+  const claims = useAtomValue(claimsAtom)
+  const commentable = path !== null && !plain && isCommentableNote(path, claims)
+  /** Read on demand by the editor's pull-based seams, so a snapshot arriving
+   *  mid-edit does not rebuild the EditorView and drop the caret. Whether
+   *  there is an agent at all does rebuild it, below. */
+  const deps = useEditorDeps(path ?? '', {
+    openNote: onOpenNote,
     // Open, never toggle. Focus first: the sidebar follows the active pane, a
     // pane activates on focus, and the link's mousedown is prevented, so in a
     // split the press alone would open the other pane's history.
@@ -224,7 +194,10 @@ export function EditorPane({
       viewRef.current?.focus()
       setHistoryOpen(true)
     },
-  }
+  })
+  const depsRef = useRef(deps)
+  depsRef.current = deps
+  const hasAgent = deps.askAgent !== undefined
 
   useEffect(() => {
     if (path === null || remote === null || hostRef.current === null) return
@@ -330,29 +303,7 @@ export function EditorPane({
             ...(plain
               ? plainTextExtensions(path, readOnly)
               : baseEditorExtensions({
-                  docExists: (p) => docPaths.current.has(p),
-                  taskByPath: (p) => {
-                    const t = tasksByPath.current.get(p)
-                    return t ? { title: t.title, status: t.status, due: t.due } : null
-                  },
-                  readNote: (p) =>
-                    trpc.notes.read.query({ remote, path: p }).then(
-                      (text) => text,
-                      () => null,
-                    ),
-                  mentionData: () => mentionRef.current,
-                  nav: () => navRef.current,
-                  slashCommands: () => store.get(slashCommandsAtom),
-                  ...(hasAgent
-                    ? {
-                        askAgent: {
-                          targets: () =>
-                            askAgentRef.current?.targets() ?? { sessions: [], initial: 'new' },
-                          onAsk: (prompt, target) =>
-                            askAgentRef.current?.onAsk(prompt, target) ?? Promise.resolve(NO_AGENT),
-                        },
-                      }
-                    : {}),
+                  ...depsRef.current,
                   ...(commentable
                     ? {
                         comment: {
@@ -364,7 +315,6 @@ export function EditorPane({
                         },
                       }
                     : {}),
-                  notePath: path,
                   readOnly,
                 })),
             EditorView.updateListener.of((update) => {
@@ -477,6 +427,14 @@ export function EditorPane({
   useEffect(() => {
     if (focused) goToHeadingRef.current()
   }, [focused])
+
+  // The file's claim came or went (its plugin turned on or off): the open
+  // view takes the new claim layer in place, caret and undo kept.
+  const { frontmatterAlwaysOpen, claimExtensions } = deps
+  useEffect(() => {
+    const view = viewRef.current
+    if (view !== null) reconfigureClaimLayer(view, depsRef.current)
+  }, [frontmatterAlwaysOpen, claimExtensions])
 
   /**
    * The vault changed somewhere: re-read our own file and decide. The snapshot

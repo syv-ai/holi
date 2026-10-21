@@ -41,10 +41,13 @@ export const activeRemoteAtom = atom<string | null>(null)
  */
 export const showHiddenByVaultAtom = atomWithStorage<Record<string, boolean>>('holi:showHidden', {})
 
-/** Per-vault "show task files in the tree" flag, off by default: the board owns
- * tasks. Purely a view filter; task files are always scanned into
- * `snapshot.claimed.tasks`. */
-export const showTasksByVaultAtom = atomWithStorage<Record<string, boolean>>('holi:showTasks', {})
+/** Per vault, the hideable claims (`PathClaim.hideable`) whose files the tree
+ *  shows, by `hideable.id`; the rest are hidden, as their plugin asks. Purely a view
+ *  filter: the files are scanned and claimed either way. */
+export const shownClaimsByVaultAtom = atomWithStorage<Record<string, string[]>>(
+  'holi:shownClaims',
+  {},
+)
 
 const EMPTY_SNAPSHOT: VaultSnapshot = emptyVaultSnapshot()
 

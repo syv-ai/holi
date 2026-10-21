@@ -5,24 +5,10 @@
  * version as `lucide-react`, so the two cannot drift. Size and stroke are CSS
  * (`theme.ts`, from the `--icon-*` tokens).
  */
-import {
-  Circle,
-  CircleCheck,
-  CircleDot,
-  FileText,
-  ListTodo,
-  Settings2,
-  SquareSlash,
-  Table,
-  type IconNode,
-} from 'lucide'
+import { FileText, ListTodo, Settings2, SquareSlash, Table, type IconNode } from 'lucide'
 
 export const GLYPHS: Record<string, IconNode> = {
   'holi-note': FileText,
-  // The explorer's `TaskIcon` vocabulary.
-  'holi-task-todo': Circle,
-  'holi-task-doing': CircleDot,
-  'holi-task-done': CircleCheck,
   'holi-list-todo': ListTodo,
   'holi-table': Table,
   'holi-setting': Settings2,

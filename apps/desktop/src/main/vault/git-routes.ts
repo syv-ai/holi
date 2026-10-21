@@ -21,7 +21,7 @@ export interface GitRoutesDeps {
   rootFor(remote: string): Promise<string | null>
   /** What the plugins the vault at `root` runs claim, for the transforms. */
   claims(root: string): Promise<readonly SnapshotClaim[]>
-  /** The core parts' and enabled plugins' transforms, with their defaults. */
+  /** The enabled plugins' transforms, with their defaults. */
   transforms(root: string): Promise<readonly (Transform & { default: boolean })[]>
   /** The vault's own `.pre-commit-config.yaml`, run last when allowed here. */
   preCommit?: Pick<VaultPreCommit, 'transform'>

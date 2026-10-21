@@ -23,7 +23,6 @@ import {
   Tooltip,
 } from '@/primitives'
 import { ChevronLeft, ChevronRight, X } from 'lucide-react'
-import { snapshotTasks, type TaskStatus } from '@holi/shared'
 import { pathGlyph, pathLabel } from '@/composites/file-icons'
 import { surfaceLabel } from '@/lib/folder-documents'
 import { offscreenTabs, type Offscreen } from '@/lib/tab-overflow'
@@ -38,9 +37,9 @@ import {
   tabPayload,
   type PillBox,
 } from '@/lib/tab-drop'
-import type { Surface, SurfaceTabLook } from '@/plugin-api/types'
+import type { PathMark, Surface, SurfaceTabLook } from '@/plugin-api/types'
 import { tabKey, type Tab } from '@/state/panes'
-import { surfaceTabLooksAtom, surfacesAtom } from '@/state/plugins'
+import { pathMarksAtom, surfaceTabLooksAtom, surfacesAtom } from '@/state/plugins'
 import { cn } from '@/lib/cn'
 import { snapshotAtom } from '@/state/vaults'
 
@@ -78,11 +77,12 @@ function settleMotion(): { duration: number; easing: string } {
 }
 
 /** What a vault file is marked with here and in the tree alike. `icons`
- *  is `.holi/settings/icons.yaml` as the snapshot resolved it, and
- *  `tasks` each task file's status, both keyed by vault-relative path. */
+ *  is `.holi/settings/icons.yaml` as the snapshot resolved it, and `marks`
+ *  what plugins mark paths with (a task's status), both keyed by
+ *  vault-relative path. */
 interface PathMarks {
   icons: Record<string, string>
-  tasks: ReadonlyMap<string, TaskStatus>
+  marks: ReadonlyMap<string, PathMark>
 }
 
 /** The registry a surface tab is, and how the tabs of a surface that says
@@ -102,7 +102,10 @@ function lookOf(tab: Tab, sources: TabSources): SurfaceTabLook | null {
  *  slot, since nothing here lines up with it. */
 function tabIcon(tab: Tab, marks: PathMarks, sources: TabSources): ReactNode {
   if (tab.kind === 'note') {
-    return pathGlyph(tab.path, { emoji: marks.icons[tab.path], task: marks.tasks.get(tab.path) })
+    return pathGlyph(tab.path, {
+      emoji: marks.icons[tab.path],
+      mark: marks.marks.get(tab.path)?.glyph,
+    })
   }
   // A dot its surface gives it (an agent session's state) stands in for
   // the surface's icon.
@@ -260,12 +263,10 @@ export function TabStrip({
   trailing,
 }: TabStripProps) {
   const snapshot = useAtomValue(snapshotAtom)
+  const pathMarks = useAtomValue(pathMarksAtom)
   const marks = useMemo<PathMarks>(
-    () => ({
-      icons: snapshot.icons,
-      tasks: new Map(snapshotTasks(snapshot).items.map((t) => [t.path, t.status])),
-    }),
-    [snapshot],
+    () => ({ icons: snapshot.icons, marks: pathMarks }),
+    [snapshot.icons, pathMarks],
   )
   const surfaces = useAtomValue(surfacesAtom)
   const looks = useAtomValue(surfaceTabLooksAtom)

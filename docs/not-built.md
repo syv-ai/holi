@@ -108,7 +108,7 @@ during a reconcile; the lock covers note tabs only.
 
 **A time-grouped board view** ("Today / This week / Later"), as an option, never a mode to configure.
 
-**A renumber pass** for exhausted ranks. `needsRenumber` exists in `packages/shared/src/rank.ts`;
+**A renumber pass** for exhausted ranks. `needsRenumber` exists in the tasks plugin's `shared/rank.ts`;
 nothing calls it.
 
 **Mail and calendar chips on a board card**, for the Gmail and Calendar links in a task's body.

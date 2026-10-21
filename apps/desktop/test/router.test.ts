@@ -4,7 +4,8 @@ import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
-import { parseTaskFile, SETTINGS_FILE, taskClaim, VAULT_SETTING_DEFAULTS } from '@holi/shared'
+import { parseTaskFile, taskClaim } from '../src/plugins/tasks/shared/task-file'
+import { SETTINGS_FILE, VAULT_SETTING_DEFAULTS } from '@holi/shared'
 import { afterAll, describe, expect, it, vi } from 'vitest'
 import { createVaultHost, type VaultHost } from '../src/main/vault/active-vault'
 import { seedVault } from './helpers/seed'
@@ -13,7 +14,7 @@ import { createCapabilityHost } from '../src/main/capabilities/dispatch'
 import { cap, createCapabilityRegistry } from '../src/main/capabilities/registry'
 import { noCoreServices } from '../src/main/capabilities/services'
 import { vaultCapabilities, VAULT_NAMESPACES } from '../src/main/capabilities/vault-caps'
-import { taskCapabilities, TASK_NAMESPACES } from '../src/main/vault/task-capabilities'
+import { taskCapabilities, TASKS_NAMESPACES } from '../src/plugins/tasks/main/capabilities'
 import { createRouter } from '../src/main/router'
 
 const exec = promisify(execFile)
@@ -106,7 +107,7 @@ async function rig(files: Record<string, string> = {}, auth?: StoredAuth) {
       screenshot: async () => new Uint8Array(),
     }),
   )
-  capabilities.register(TASK_NAMESPACES, taskCapabilities({ today: () => TODAY }))
+  capabilities.register(TASKS_NAMESPACES, taskCapabilities({ today: () => TODAY }))
   const capabilityHost = createCapabilityHost({
     registry: capabilities,
     rootFor: async (remote) =>
@@ -118,7 +119,12 @@ async function rig(files: Record<string, string> = {}, auth?: StoredAuth) {
   })
   const caller = createRouter({
     seed: seedVault,
-    plugins: { reconcile: async () => {}, failures: () => ({}), scanClaimsFor: TASKS },
+    plugins: {
+      reconcile: async () => {},
+      syncBackground: async () => {},
+      failures: () => ({}),
+      scanClaimsFor: TASKS,
+    },
     capabilities: capabilityHost,
     registry,
     session,
@@ -143,10 +149,9 @@ describe('settings', () => {
     const settings = await caller.settings.read({ remote: REMOTE })
     expect(settings.home).toBe(VAULT_SETTING_DEFAULTS.home)
     expect(settings.dailyNotes).toBe(true)
-    // The seed writes a hooks block; `archive-done` is opt-in.
+    // The seed writes a hooks block.
     expect(settings.hooks).toEqual({
       relink: true,
-      'archive-done': false,
       'normalize-md': true,
       'shrink-images': true,
       'memory-index': true,
@@ -184,7 +189,6 @@ describe('settings', () => {
     // The hook transforms are seeded; a write about daily notes must not drop them.
     expect((await caller.settings.read({ remote: REMOTE })).hooks).toEqual({
       relink: true,
-      'archive-done': false,
       'normalize-md': true,
       'shrink-images': true,
       'memory-index': true,
@@ -611,6 +615,16 @@ async function createTask(
   })) as { path: string }
 }
 
+/** One of the board's own `tasks.*` capabilities, at the UI door. */
+async function tasksCall(
+  caller: Awaited<ReturnType<typeof rig>>['caller'],
+  verb: 'update' | 'move' | 'delete',
+  { remote, ...params }: { remote: string } & Record<string, unknown>,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+): Promise<any> {
+  return caller.cap.run({ remote, name: `tasks.${verb}`, paramsJson: JSON.stringify(params) })
+}
+
 describe('tasks', () => {
   it('creates `task.<slug>.md` in the lane it was added to, with that column’s status', async () => {
     const { caller, root } = await rig()
@@ -663,7 +677,7 @@ describe('tasks.update', () => {
 
   it('rewrites the fields it names and leaves the rest alone', async () => {
     const { caller } = await rig({ 'task.review.md': FILE })
-    const task = await caller.tasks.update({
+    const task = await tasksCall(caller, 'update', {
       remote: REMOTE,
       path: 'task.review.md',
       patch: { status: 'doing' },
@@ -676,7 +690,7 @@ describe('tasks.update', () => {
 
   it('clears a field with null', async () => {
     const { caller } = await rig({ 'task.review.md': FILE })
-    const task = await caller.tasks.update({
+    const task = await tasksCall(caller, 'update', {
       remote: REMOTE,
       path: 'task.review.md',
       patch: { due: null },
@@ -690,7 +704,7 @@ describe('tasks.update', () => {
     const { caller, root } = await rig({
       'task.legacy.md': '---\ntitle: Legacy\nstatus: todo\nid: abc\n---\n',
     })
-    await caller.tasks.update({
+    await tasksCall(caller, 'update', {
       remote: REMOTE,
       path: 'task.legacy.md',
       patch: { status: 'done' },
@@ -701,14 +715,22 @@ describe('tasks.update', () => {
   it('refuses a value outside the vocabulary', async () => {
     const { caller } = await rig({ 'task.review.md': FILE })
     await expect(
-      caller.tasks.update({ remote: REMOTE, path: 'task.review.md', patch: { status: 'blocked' } }),
+      tasksCall(caller, 'update', {
+        remote: REMOTE,
+        path: 'task.review.md',
+        patch: { status: 'blocked' },
+      }),
     ).rejects.toThrow(/status must be one of/)
   })
 
   it('reports a missing task rather than creating one', async () => {
     const { caller } = await rig()
     await expect(
-      caller.tasks.update({ remote: REMOTE, path: 'task.ghost.md', patch: { status: 'done' } }),
+      tasksCall(caller, 'update', {
+        remote: REMOTE,
+        path: 'task.ghost.md',
+        patch: { status: 'done' },
+      }),
     ).rejects.toThrow(/task.ghost.md/)
   })
 })
@@ -716,7 +738,7 @@ describe('tasks.update', () => {
 describe('tasks.update: done is completion', () => {
   it('marks a plain task done', async () => {
     const { caller } = await rig({ 'task.review.md': '---\ntitle: Review\nstatus: doing\n---\n' })
-    const task = await caller.tasks.update({
+    const task = await tasksCall(caller, 'update', {
       remote: REMOTE,
       path: 'task.review.md',
       patch: { status: 'done' },
@@ -737,7 +759,7 @@ describe('tasks.update: done is completion', () => {
         '---',
       ].join('\n'),
     })
-    const task = await caller.tasks.update({
+    const task = await tasksCall(caller, 'update', {
       remote: REMOTE,
       path: 'task.standup.md',
       patch: { status: 'done' },
@@ -758,7 +780,7 @@ describe('tasks.update: done is completion', () => {
         '---',
       ].join('\n'),
     })
-    const task = await caller.tasks.update({
+    const task = await tasksCall(caller, 'update', {
       remote: REMOTE,
       path: 'task.water.md',
       patch: { status: 'done' },
@@ -778,7 +800,7 @@ describe('tasks.update: done is completion', () => {
         '---',
       ].join('\n'),
     })
-    const task = await caller.tasks.update({
+    const task = await tasksCall(caller, 'update', {
       remote: REMOTE,
       path: 'task.standup.md',
       patch: { status: 'done' },
@@ -800,7 +822,7 @@ describe('tasks.update: done is completion', () => {
     })
     expect(
       (
-        await caller.tasks.update({
+        await tasksCall(caller, 'update', {
           remote: REMOTE,
           path: 'task.standup.md',
           patch: { status: 'done' },
@@ -820,7 +842,7 @@ describe('tasks.update: done is completion', () => {
         '---',
       ].join('\n'),
     })
-    const task = await caller.tasks.update({
+    const task = await tasksCall(caller, 'update', {
       remote: REMOTE,
       path: 'task.sprint.md',
       patch: { status: 'done' },
@@ -840,7 +862,7 @@ describe('tasks.update: done is completion', () => {
     })
     expect(
       (
-        await caller.tasks.update({
+        await tasksCall(caller, 'update', {
           remote: REMOTE,
           path: 'task.someday.md',
           patch: { status: 'done' },
@@ -858,7 +880,7 @@ describe('tasks.create with fields', () => {
       title: 'Book the venue',
       extra: { due: '2026-10-01', priority: 'high', tags: ['team'] },
     })
-    const task = await caller.tasks.move({ remote: REMOTE, path, folder: '' })
+    const task = await tasksCall(caller, 'move', { remote: REMOTE, path, folder: '' })
     expect(task).toMatchObject({ due: '2026-10-01', priority: 'high', tags: ['team'] })
   })
 
@@ -876,7 +898,7 @@ describe('tasks.move', () => {
       'projects/q2/task.fix-login.md': '---\ntitle: Fix login\nstatus: todo\n---\n',
       'meetings/note.md': 'blocking [[projects/q2/task.fix-login.md]] until fixed',
     })
-    const task = await caller.tasks.move({
+    const task = await tasksCall(caller, 'move', {
       remote: REMOTE,
       path: 'projects/q2/task.fix-login.md',
       folder: 'personal',
@@ -898,7 +920,7 @@ describe('tasks.move', () => {
     const { caller } = await rig({
       'task.foo.md': '---\ntitle: Foo\nstatus: todo\n---\n',
     })
-    const task = await caller.tasks.move({
+    const task = await tasksCall(caller, 'move', {
       remote: REMOTE,
       path: 'task.foo.md',
       folder: 'personal',
@@ -922,7 +944,7 @@ describe('tasks.move', () => {
         '---',
       ].join('\n'),
     })
-    const task = await caller.tasks.move({
+    const task = await tasksCall(caller, 'move', {
       remote: REMOTE,
       path: 'task.standup.md',
       folder: 'archive',
@@ -936,7 +958,7 @@ describe('tasks.move', () => {
   it('lands the card at its aimed rank in the same write as the lane and status', async () => {
     // A drop lands where the gap opened: the rank rides along with the diagonal.
     const { caller, root } = await rig({ 'task.foo.md': '---\ntitle: Foo\nstatus: todo\n---\n' })
-    const task = await caller.tasks.move({
+    const task = await tasksCall(caller, 'move', {
       remote: REMOTE,
       path: 'task.foo.md',
       folder: 'personal',
@@ -955,7 +977,7 @@ describe('tasks.move', () => {
       'personal/task.foo.md': '---\ntitle: Other foo\nstatus: doing\n---\n',
     })
     await expect(
-      caller.tasks.move({ remote: REMOTE, path: 'task.foo.md', folder: 'personal' }),
+      tasksCall(caller, 'move', { remote: REMOTE, path: 'task.foo.md', folder: 'personal' }),
     ).rejects.toThrow(/already exists/)
   })
 })
@@ -963,7 +985,7 @@ describe('tasks.move', () => {
 describe('tasks.delete', () => {
   it('removes the file', async () => {
     const { caller, root } = await rig({ 'task.review.md': '---\ntitle: Review\n---\n' })
-    await caller.tasks.delete({ remote: REMOTE, path: 'task.review.md' })
+    await tasksCall(caller, 'delete', { remote: REMOTE, path: 'task.review.md' })
     await expect(readFile(join(root, 'task.review.md'), 'utf8')).rejects.toThrow()
   })
 })
@@ -998,9 +1020,9 @@ describe('path safety', () => {
     const { caller } = await rig()
     for (const path of escapes) {
       await expect(
-        caller.tasks.update({ remote: REMOTE, path, patch: { status: 'done' } }),
+        tasksCall(caller, 'update', { remote: REMOTE, path, patch: { status: 'done' } }),
       ).rejects.toThrow()
-      await expect(caller.tasks.delete({ remote: REMOTE, path })).rejects.toThrow()
+      await expect(tasksCall(caller, 'delete', { remote: REMOTE, path })).rejects.toThrow()
     }
   })
 
@@ -1120,7 +1142,12 @@ async function authRig(routes: Record<string, Scripted[]>, seed?: StoredAuth) {
   hosts.push(host)
   const caller = createRouter({
     seed: seedVault,
-    plugins: { reconcile: async () => {}, failures: () => ({}), scanClaimsFor: TASKS },
+    plugins: {
+      reconcile: async () => {},
+      syncBackground: async () => {},
+      failures: () => ({}),
+      scanClaimsFor: TASKS,
+    },
     registry,
     session,
     host,

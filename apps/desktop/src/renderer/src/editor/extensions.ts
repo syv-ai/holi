@@ -6,15 +6,14 @@ import { bracketMatching, indentOnInput, indentUnit } from '@codemirror/language
 import { selectNextOccurrence } from '@codemirror/search'
 import { drawSelection, dropCursor, EditorView, keymap } from '@codemirror/view'
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
-import { EditorState, type Extension } from '@codemirror/state'
-import { isTaskFilePath } from '@holi/shared'
+import { Compartment, EditorState, type Extension } from '@codemirror/state'
 import { holiCompletion } from './completion'
 import { fenceLanguage } from './fence-languages'
 import { formattingKeymap } from './formatting'
 import { linkClickHandler, type LinkNav } from './links'
 import { askAgentTooltip, type AskAgentSeam, type CommentSeam } from './askAgent'
 import { commentThreads } from './comment-threads'
-import { frontmatterExtension } from './frontmatter'
+import { frontmatterAlwaysOpenFacet, frontmatterExtension } from './frontmatter'
 import { mermaidExtension } from './mermaid'
 import { commentExtension } from './comments'
 import { languageForPath, validityStatus } from './languages'
@@ -24,9 +23,9 @@ import {
   docExistsFacet,
   inlineOnlyFacet,
   livePreview,
+  linkChipFacet,
   notePathFacet,
-  taskByPathFacet,
-  type TaskChip,
+  type LinkChip,
 } from './livePreview'
 import { mentionSource, type MentionData } from './mentions'
 import { alphaListKeymap, alphaLists, listKindByTyping, renumberOrderedLists } from './lists'
@@ -37,32 +36,24 @@ import { colorModeAware } from './color-mode'
 import { codeHighlighting, editorTheme, markdownHighlighting, notesFontTheme } from './theme'
 
 /**
- * A note's column, and a task's, is centred in the pane it is in, whatever is
- * beside it. The child combinators keep it to the editor's own column: the
- * properties widget nests a whole CodeMirror, whose column must not centre.
+ * A note's column is centred in the pane it is in, whatever is beside it. The
+ * child combinators keep it to the editor's own column: the properties widget
+ * nests a whole CodeMirror, whose column must not centre.
  */
 const noteColumn = EditorView.theme({
   '& > .cm-scroller > .cm-content': { marginInline: 'auto' },
-})
-
-/**
- * A task's body is a narrower column than a note's: as wide as its properties
- * widget (`.cm-fm`, 24rem), so a task reads as a card's back rather than a
- * page, with wider gutters either side. The lines keep their inset inside it.
- */
-const taskColumn = EditorView.theme({
-  '& > .cm-scroller > .cm-content': { maxWidth: 'calc(24rem + 2 * var(--editor-inset))' },
 })
 
 /** Live seams the editor pulls on demand: closures over the renderer's state,
  * read when needed rather than baked in, so new data never rebuilds the view. */
 export interface EditorDeps {
   docExists: (path: string) => boolean
-  /** Title + status for a `[[path]]` chip whose path is a task, else null. */
-  taskByPath: (path: string) => TaskChip | null
+  /** How a `[[path]]` to a claimed file (a task) is drawn, else null: a note
+   *  chip. */
+  linkChip?: (path: string) => LinkChip | null
   /** Reads a note's text for the hover preview; null when the target is missing. */
   readNote: ReadNote
-  /** Notes + tasks for `@`-mention completion. */
+  /** Notes, and what claims offer, for `@`-mention completion. */
   mentionData: () => MentionData
   /** Where a clicked link goes. */
   nav: () => LinkNav
@@ -86,6 +77,27 @@ export interface EditorDeps {
   /** The note's properties bar; off for text that is not a note (a task's
    *  description, whose file's frontmatter is the task's own). */
   frontmatter?: boolean
+  /** The properties bar has no collapsed state (`ClaimFrontmatter.alwaysOpen`). */
+  frontmatterAlwaysOpen?: boolean
+  /** What the file's claim adds to the editor (`ClaimEditor.extensions`). */
+  claimExtensions?: Extension
+}
+
+/** What the file's claim brings: its frontmatter mode and its own layer. A
+ *  compartment, so a plugin turned on or off reaches a view already open. */
+const claimLayer = new Compartment()
+
+type ClaimLayer = Pick<EditorDeps, 'frontmatterAlwaysOpen' | 'claimExtensions'>
+
+function claimLayerOf(deps: ClaimLayer): Extension {
+  return [claimLayer.of(claimLayerOf(deps))]
+}
+
+/** Swap an open view's claim layer for the file's claim now. A view with no
+ *  claim layer (a plain-text file) is left alone. */
+export function reconfigureClaimLayer(view: EditorView, deps: ClaimLayer): void {
+  if (claimLayer.get(view.state) === undefined) return
+  view.dispatch({ effects: claimLayer.reconfigure(claimLayerOf(deps)) })
 }
 
 /**
@@ -123,8 +135,9 @@ export function baseEditorExtensions(deps: EditorDeps): Extension[] {
     // the punctuation grey, visible only on the active line.
     codeHighlighting,
     docExistsFacet.of(deps.docExists),
-    taskByPathFacet.of(deps.taskByPath),
+    linkChipFacet.of(deps.linkChip ?? (() => null)),
     notePathFacet.of(deps.notePath),
+    frontmatterAlwaysOpenFacet.of(deps.frontmatterAlwaysOpen === true),
     askAgentTooltip(deps.notePath, deps.askAgent, deps.comment),
     // The passages the note's comment threads are about.
     deps.comment === undefined ? [] : commentThreads,
@@ -153,7 +166,7 @@ export function baseEditorExtensions(deps: EditorDeps): Extension[] {
         inlineOnlyFacet.of(true),
         docExistsFacet.of(deps.docExists),
         notePathFacet.of(deps.notePath),
-        taskByPathFacet.of(deps.taskByPath),
+        linkChipFacet.of(deps.linkChip ?? (() => null)),
         livePreview,
       ],
     }),
@@ -191,7 +204,7 @@ export function baseEditorExtensions(deps: EditorDeps): Extension[] {
     // Notes only; the other stacks stay mono (see `notesFontTheme`).
     notesFontTheme,
     noteColumn,
-    isTaskFilePath(deps.notePath) ? taskColumn : [],
+    deps.claimExtensions ?? [],
   ]
 }
 

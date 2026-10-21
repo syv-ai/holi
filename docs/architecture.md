@@ -21,8 +21,8 @@ Holi is one desktop app. There is no server, no database and no hosted service.
                                           collaborators, history
 
   ~/Holi/<owner>/<repo>            packages/shared
-  the vault: a git clone           pure rules: paths, task files, wiki-links,
-  of markdown files                dates, recurrence, themes, 3-way merge
+  the vault: a git clone           pure rules: paths, wiki-links, dates,
+  of markdown files                settings, plugins, themes, 3-way merge
 ```
 
 **The filesystem is the truth.** The editor, the board, the file tree and the agent all read and
@@ -92,7 +92,7 @@ verbs with their types read from the table (params cross as JSON, results by str
 Plugins call each other the same way, each typing only the slice it calls; before offering such a
 call, a plugin asks `useHasCapability(name)`, backed by the `cap.names` query (the UI door's names
 whose owner the vault runs), so a button for another plugin's verb hides while that plugin is off.
-Core's `tasks.create` is one: the board and the Google views create tasks through it.
+Tasks' `tasks.create` is one: the board and the Google views create tasks through it.
 A plugin that builds on another says so in `PluginInfo.requires`: it runs only where every plugin
 it requires runs, down a chain, so turning one off turns off what stands on it, its seeds included.
 The dependency runs one way: the plugin underneath knows nothing of what requires it. One resolver,
@@ -105,15 +105,26 @@ skills, hooks and settings fragments to the agent. Unlike `requires`, it runs wi
 what it adds waits until that one runs, and the resolver says what each running plugin is adding
 to right now (`addingTo`).
 A plugin claims vault paths: the first enabled claim with a `view` opens a note tab of that path,
-and its `rowMenu` items join the file tree's menu. On the main side a claim
-(`MainPlugin.claims`, `{match, parse, normalize?}`) owns markdown files in the snapshot: the scanner
-(`scanVault(root, claims)`, the claims from `PluginHost.scanClaimsFor`) parses them into
-`snapshot.claimed[id]` instead of `docs`, and a settings write that changes `plugins` rescans.
+and its `rowMenu` items join the file tree's menu. A claim can say more about its files: what
+the explorer's New makes (`create`), that they stay out of the tree until shown (`hideable`), what
+it adds to the notes editor (`editor`: how a link to one is drawn, what the `@` menu offers, a
+layer for its own files) and how their frontmatter is drawn (`frontmatter`: fields, controls by
+key, an always-open block, suggestions), and how the graph draws them (`graph`). One
+`useEditorDeps` wires every notes editor from them. On the main side a claim
+(`MainPlugin.claims`, `{match, parse, normalize?, checkNoteWrite?}`) owns markdown files in the
+snapshot: the scanner (`scanVault(root, claims)`, the claims from `PluginHost.scanClaimsFor`)
+parses them into `snapshot.claimed[id]` instead of `docs`, and a settings write that changes
+`plugins` rescans. Core asks a claimed file's plugin about it through the claims rather than
+naming the plugin: a capability reads the vault's (`ctx.claims()`), so a vault app's note write
+(`docs.write`) is checked by `checkNoteWrite` (a task's body only), and a file a running plugin
+claims takes no comments.
 A plugin adds `surfaces` (tab kinds) and `rail`
-items to the nav menu ([tabs and panes](features/tabs-panes.md)), registered beside core's own, and
-`settingsSections` to the settings tab ([settings](features/settings.md)), and `slashCommands`
-to the notes editor's slash menu ([editor](features/editor.md)).
-Its dialogs open as `{id: 'plugin', render}`.
+items to the nav menu ([tabs and panes](features/tabs-panes.md)), each with a badge if it likes,
+registered beside core's own, `settingsSections` to the settings tab
+([settings](features/settings.md)), and `slashCommands` to the notes editor's slash menu
+([editor](features/editor.md)). It marks paths in the tree and the tabs (`pathMarks`: a glyph, a
+strike, a badge) and lays `overlays` over the panes (a drawer, quick add), each deciding whether
+it shows. Its dialogs open as `{id: 'plugin', render}`.
 Main tells a plugin's renderer something through events: `ctx.emit(remote, name, payload)` sends
 `{remote, name, payload}` on the plugin's one channel, `plugin:<id>`, read by one preload member,
 `window.holi.plugin.on(id, cb)`. Main sends only about a vault that runs the plugin, so the renderer
@@ -127,7 +138,8 @@ marked `frame` serves framed pages: the window guard lets such a frame move with
 sends a link out of it to the browser.
 A plugin's own code sits in `main/`, `renderer/`, `shared/` and `test/` under its folder; its
 renderer imports its main side as types only, for `capClient`. The plugins are the agent
-([agent-sessions](features/agent-sessions.md)), PDF ([pdf](features/pdf.md)), Google
+([agent-sessions](features/agent-sessions.md)), tasks ([tasks](features/tasks.md)), PDF
+([pdf](features/pdf.md)), Google
 ([google](features/google.md)), vault apps ([vault apps](features/vault-apps.md)) and community
 plugins ([community plugins](features/community-plugins.md)), which hosts plugins from other
 repositories as processes it runs, never as code it loads. A renderer plugin may give its claims as
@@ -157,6 +169,13 @@ starts a plugin's providers before it and stops it before them, seeds a plugin t
 starting it, and stops everything, newest first, when Holi leaves the vault or quits: each
 disposer, then what it registered. A plugin that throws as it starts is reported with its message
 (`settings.pluginFailures`) and tried again on the next write or open, never on a bare change.
+One kind of work outlives the open vault: a plugin's work across every registered vault that runs
+it (`MainPlugin.background`), such as reminders, which fire for a vault that is not open. It
+starts at launch while some registered vault runs its plugin, so a launch's catch-up runs whichever
+vault opens, and is looked at again whenever that may change: a change to what the open vault
+runs, a vault leaving the registry, or no vault being open. Its context reads those vaults' files and
+can show a path, and holds no vault open. While any runs, Holi stays in the tray with its window
+closed; with none, closing the last window quits (except on macOS).
 Turning off a plugin whose renderer side says stopping it costs something (`leaveGuard`, the
 agent's busy sessions) asks before the write; a hand edit stops it without asking. Dispatch refuses
 a capability whose plugin is off in the calling vault, as "no such method".

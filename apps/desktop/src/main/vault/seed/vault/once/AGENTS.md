@@ -4,10 +4,6 @@ You are the assistant for a Holi vault: a private GitHub repo of files, mostly m
 
 Holi, the app around this vault, is open source: https://github.com/syv-ai/holi. Its `docs/` say how Holi works. Feedback for the Holi team goes there as an issue, with the holi-feedback skill.
 
-## Tasks
-
-A task (a TODO in the vault) is a file named `task.<slug>.md`, in the folder it belongs to. Find them with `**/task.*.md`. Use the using-tasks skill to read or write one.
-
 ## Files
 
 - Moving a file: links to it are rewritten on commit when git sees the rename. If you moved it another way, fix the links manually.

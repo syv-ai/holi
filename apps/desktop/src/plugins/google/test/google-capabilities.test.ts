@@ -63,6 +63,7 @@ function rig({ data = {}, accounts = {} }: RigOptions = {}) {
         root: '',
         bundle: null,
         snapshot: async () => emptyVaultSnapshot(),
+        claims: async () => [],
         core: noCoreServices(),
       },
       params,

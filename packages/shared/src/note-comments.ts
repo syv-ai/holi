@@ -24,7 +24,7 @@
 import { formatRecord } from './app-store'
 import { fileKind } from './file-kind'
 import { isAgentSurfacePath } from './path-safety'
-import { isTaskFilePath, sameLogin } from './task-file'
+import { sameLogin } from './logins'
 
 /** Where every note's threads live. */
 export const COMMENTS_DIR = '.holi/comments'
@@ -35,14 +35,20 @@ export function commentsPathFor(notePath: string): string {
 }
 
 /**
- * Whether `path` may have comment threads: a markdown note, not a task (whose
- * body is the task's own editor) and not on the agent surface (`AGENTS.md`,
- * `.claude/`, the vault's memory), which is the agent's instructions rather
- * than a document people review. The panel, the router and `holi comments`
- * all ask this.
+ * Whether `path` may have comment threads: a markdown note, not a file one of
+ * `claims` takes (a task, whose body is its plugin's own editor) and not on
+ * the agent surface (`AGENTS.md`, `.claude/`, the vault's memory), which is
+ * the agent's instructions rather than a document people review. `claims` are
+ * the running plugins' path claims, so a file whose plugin is off is a note
+ * again. The panel, the router and `holi comments` all ask this.
  */
-export function isCommentableNote(path: string): boolean {
-  return fileKind(path) === 'markdown' && !isTaskFilePath(path) && !isAgentSurfacePath(path)
+export function isCommentableNote(
+  path: string,
+  claims: readonly { match(path: string): boolean }[],
+): boolean {
+  return (
+    fileKind(path) === 'markdown' && !claims.some((c) => c.match(path)) && !isAgentSurfacePath(path)
+  )
 }
 
 /** The note a sidecar belongs to, or null for a path that is not one. */

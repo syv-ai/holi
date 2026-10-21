@@ -54,6 +54,7 @@ async function rig(files: Record<string, string> = {}) {
     root,
     bundle: null,
     snapshot: async () => emptyVaultSnapshot(),
+    claims: async () => [],
     core: noCoreServices(),
   }
   const run = async (name: string, params?: unknown) =>

@@ -8,7 +8,7 @@
  * apps) is a group that drills down to them.
  *
  * Reads shared state only, never another feature's components: the rail and
- * its instances from `railAtom`, the board's count from `openTaskCountAtom`.
+ * its instances and each item's badge from `railAtom`.
  */
 import { useAtomValue, useSetAtom } from 'jotai'
 import { Search } from 'lucide-react'
@@ -20,7 +20,6 @@ import { activeTab, workspaceAtom, type Tab } from '@/state/panes'
 import { railAtom } from '@/state/plugins'
 import { openSurfaceAtom } from '@/state/surfaces'
 import { runCommandAtom } from '@/state/commands'
-import { openTaskCountAtom, overdueTaskCountAtom } from '@/state/tasks'
 import { useSyncItem } from './SyncItem'
 import { useUpdateItem } from './UpdateItem'
 
@@ -49,8 +48,6 @@ export function NavMenu({
   const openPalette = useSetAtom(openPaletteAtom)
   const runCommand = useSetAtom(runCommandAtom)
   const rail = useAtomValue(railAtom)
-  const openTaskCount = useAtomValue(openTaskCountAtom)
-  const overdueCount = useAtomValue(overdueTaskCountAtom)
   const sync = useSyncItem()
   const update = useUpdateItem()
 
@@ -58,19 +55,14 @@ export function NavMenu({
   // restarts its morph when its items change.
   const items = useMemo((): MorphingMenuItem[] => {
     const placed: { order: number; item: MorphingMenuItem }[] = [
-      ...rail.map(({ surface, order, of, label, instances, command, running, count }) => ({
+      ...rail.map(({ surface, order, of, label, instances, command, running, badge }) => ({
         order,
         item: {
           id: surface,
           label: `${label ?? surfaceLabel(of)}${running ? ': running' : ''}`,
           icon: of.icon,
           ...(running ? { tone: 'live' as const } : {}),
-          // The board's count is core's own; a plugin's item brings its own.
-          ...(surface === 'board'
-            ? { badge: openTaskCount, badgeTone: overdueCount > 0 ? ('alert' as const) : undefined }
-            : count === undefined
-              ? {}
-              : { badge: count }),
+          ...(badge === null ? {} : { badge: badge.count, badgeTone: badge.tone }),
           // Instances, most recently used first, drill down; the rest open.
           ...(command !== undefined
             ? { onSelect: () => void runCommand(command) }
@@ -95,7 +87,7 @@ export function NavMenu({
     ]
     // Stable, so items of one order keep the order they were listed in.
     return placed.sort((a, b) => a.order - b.order).map((p) => p.item)
-  }, [rail, openTaskCount, overdueCount, sync, update, openPalette, openSurface, runCommand])
+  }, [rail, sync, update, openPalette, openSurface, runCommand])
 
   const railKinds = useMemo(
     () => new Map(rail.map((r) => [r.surface, r.instances !== undefined])),

@@ -123,12 +123,15 @@ export const agentRenderer: RendererPlugin = {
       surface: INBOX_SURFACE,
       order: 65,
       visible: atom((get) => get(inboxAtom).entries.length > 0),
-      badge: atom((get) => get(inboxAtom).unread),
+      badge: atom((get) => {
+        const unread = get(inboxAtom).unread
+        return unread === 0 ? null : { count: unread }
+      }),
     },
   ],
   railSection: SessionOrbs,
   sidebarSection: SessionRowsSection,
-  drawers: [TurnReview],
+  overlays: [TurnReview],
   settingsSections: [
     {
       id: 'schedules',

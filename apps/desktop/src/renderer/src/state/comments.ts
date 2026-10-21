@@ -12,6 +12,7 @@ import { atom, type SetStateAction, type WritableAtom } from 'jotai'
 import { trpc } from '../lib/trpc'
 import { historyOpenAtom, historyTargetPathAtom } from './history'
 import { linksOpenAtom } from './links'
+import { claimsAtom } from './plugins'
 import { activeRemoteAtom } from './vaults'
 
 /**
@@ -37,10 +38,10 @@ function vaultScoped<T>(initial: T): WritableAtom<T, [SetStateAction<T>], void> 
 export const commentsOpenAtom = atom(false)
 
 /** The note the drawer is about: the focused note, as History's, when it
- *  takes comments (`isCommentableNote`). */
+ *  takes comments (`isCommentableNote`, with the running plugins' claims). */
 export const commentsTargetPathAtom = atom<string | null>((get) => {
   const path = get(historyTargetPathAtom)
-  return path === null || !isCommentableNote(path) ? null : path
+  return path === null || !isCommentableNote(path, get(claimsAtom)) ? null : path
 })
 
 /** Open or close the drawer. It, Links and History share the right edge, so

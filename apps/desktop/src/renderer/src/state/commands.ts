@@ -33,7 +33,6 @@ import { openPaletteAtom } from './palette'
 import { navOpenAtom } from './preferences'
 import { touchRecentAtom } from './recents'
 import { updateSkillsAtom } from './skills'
-import { openQuickAddAtom } from './tasks'
 import { openPinned, openSurface, splitPane, workspaceAtom } from './panes'
 import { pluginCommandsAtom, surfacesAtom } from './plugins'
 import { activeRemoteAtom, createNoteAtom, snapshotAtom, vaultsAtom } from './vaults'
@@ -132,22 +131,6 @@ export const STATIC_COMMANDS: readonly Command[] = [
     id: 'skills.update',
     label: 'Update skills',
     run: (_get, set) => void set(updateSkillsAtom),
-  },
-  // Create a task in any folder, including one that is not yet a lane. ⌘T is
-  // quick add, the card it will make, in the board's dock or centred; ⌘⇧T is
-  // the full dialog, which opens the task to fill in the rest.
-  {
-    id: 'task.new',
-    label: 'New task',
-    hotkey: '⌘T',
-    firstKey: 2,
-    run: (_get, set) => set(openQuickAddAtom),
-  },
-  {
-    id: 'task.new.full',
-    label: 'New task with details',
-    hotkey: '⌘⇧T',
-    run: (_get, set) => set(openDialogAtom, { id: 'create-task', size: 'md' }),
   },
   // The focused pane's active tab. A menu accelerator, so the glyph is for
   // display and main sends the id (`main/menu.ts`).

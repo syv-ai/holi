@@ -70,7 +70,7 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   the same change made elsewhere. `tasks.complete` is the board's checkbox. `tasks.update`
   (`holi.tasks.update(path, patch)`) is the board's field edit: the patch is read by
   `parseTaskPatch`, so an app cannot write a task the board would refuse, and `done` is
-  completion (`applyTaskPatch`). It sets fields only; a task's body is a note write.
+  completion, as on the board. It sets fields only; a task's body is a note write.
   `tasks.create` is the board's quick add. `docs.write` (`holi.docs.write(path, text, base)`)
   writes a whole `.md` note over `base`, the text the app read, or `null` for a note that
   must not exist yet; a note that has changed since (a pull, the agent, the person typing)
@@ -79,10 +79,11 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   says for certain it is unchanged. The check and the write run under the file's lock in main
   (`withFileLock`), so two app writes over one base give one write and one conflict. The
   editor's save and a pull do not take that lock: one landing between the check and the
-  rename is overwritten, a window of one file write, and history keeps what it wrote. On a
-  task file `docs.write` changes the body only: its frontmatter must parse to the fields the
-  file has, so a field change goes through `tasks.update`'s rules, and a new task through
-  `tasks.create`. A refusal reaches the app as an `Error` whose `code` is main's verdict
+  rename is overwritten, a window of one file write, and history keeps what it wrote. A file a
+  running plugin claims is written as its claim allows (`SnapshotClaim.checkNoteWrite`), so core
+  names no plugin's format: on a task file `docs.write` changes the body only, its frontmatter
+  must parse to the fields the file has, so a field change goes through `tasks.update`'s rules,
+  and a new task through `tasks.create`. With the tasks plugin off, a task file is a note. A refusal reaches the app as an `Error` whose `code` is main's verdict
   (`CONFLICT`, `FORBIDDEN`, `NOT_FOUND`, `BAD_REQUEST`), so an app matches the code, not the
   words. None of these is open to the agent, which writes files with
   its own tools (`holi tasks complete` aside, for the recurrence rule).

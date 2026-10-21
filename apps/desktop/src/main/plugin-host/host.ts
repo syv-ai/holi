@@ -14,7 +14,6 @@
  * No `electron` import: this loads under plain Node in the tests.
  */
 import {
-  CORE_TRANSFORMS,
   pluginLabels,
   resolvePlugins,
   type PluginResolution,
@@ -23,6 +22,7 @@ import {
 import type { AppDoor, AppDoorOpener } from '../capabilities/dispatch'
 import type { CapabilityRegistry } from '../capabilities/registry'
 import type {
+  AppCtx,
   BridgeRoute,
   Disposer,
   LiveVault,
@@ -49,12 +49,6 @@ export type OpenVault = LiveVault &
 
 export interface PluginHostDeps {
   plugins: readonly MainPlugin[]
-  /**
-   * Core parts written to the plugin contract ahead of their move into a
-   * plugin. They run in every vault, whatever its settings say, and their
-   * capabilities and events are not gated.
-   */
-  core?: readonly MainPlugin[]
   registry: Pick<CapabilityRegistry, 'register'>
   userData: string
   /** What core seeds into every vault, ahead of any plugin. */
@@ -84,16 +78,26 @@ export interface PluginHostDeps {
   /** Whether a Holi window has focus. */
   focused(): boolean
   readSettings?: (root: string) => Promise<ResolvedVaultSettings>
+  /**
+   * Plugins' work across vaults (`MainPlugin.background`): the vaults this
+   * machine has registered, what a background context offers beyond them,
+   * and who hears which plugins run in the background now (the tray and the
+   * keep-alive). Absent, as in most tests, nothing runs in the background.
+   */
+  background?: Omit<AppCtx, 'userData' | 'vaults'> & {
+    registered(): Promise<LiveVault[]>
+    onChange(whys: readonly string[]): void
+  }
 }
 
 export interface PluginHost {
   /** The plugins the vault at `root` runs. Cached for the open vault. */
   enabled(root: string): Promise<ReadonlySet<string>>
-  /** What the scanner claims in the vault at `root`: core parts' claims,
-   *  then its enabled plugins'. Cached for the open vault, like `enabled`. */
+  /** What the scanner claims in the vault at `root`: its enabled plugins'.
+   *  Cached for the open vault, like `enabled`. */
   scanClaimsFor(root: string): Promise<ScanClaim[]>
-  /** The commit transforms of the core parts and the plugins the vault at
-   *  `root` runs, each with its default from its toggle. */
+  /** The commit transforms of the plugins the vault at `root` runs, each
+   *  with its default from its toggle. */
   transformsFor(root: string): Promise<(Transform & { default: boolean })[]>
   /** Seed the vault at `root`: core's contributions and its enabled plugins'. */
   seed(root: string): Promise<SeedResult>
@@ -123,6 +127,16 @@ export interface PluginHost {
   quitQuestions(): QuitQuestion[]
   /** The open vault's settings files may have changed on disk. */
   invalidate(): void
+  /**
+   * Start each plugin's work across vaults that some registered vault runs
+   * and stop the rest, then tell `background.onChange` what runs. At launch,
+   * and again after anything that may change it: a settings write, an open,
+   * a change to what the open vault runs, no vault open, or a vault leaving
+   * the registry. Runs one at a time.
+   */
+  syncBackground(): Promise<void>
+  /** Stop every plugin's work across vaults: at quit. */
+  stopBackground(): Promise<void>
 }
 
 /** One plugin started in the open vault. */
@@ -136,8 +150,6 @@ interface Started {
 
 export function createPluginHost(deps: PluginHostDeps): PluginHost {
   const infos = deps.plugins.map((p) => p.info)
-  const core = deps.core ?? []
-  const coreIds = new Set(core.map((p) => p.info.id))
   const readSettings = deps.readSettings ?? readVaultSettings
   const quitGuards = new Set<() => QuitQuestion | null>()
   /** The vault plugins are started in, and what is started, in start order. */
@@ -180,24 +192,78 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
     return (await read(root)).running
   }
 
-  /** What runs in a vault with `enabled` on: core parts, then plugins. */
-  const running = (enabled: ReadonlySet<string>): MainPlugin[] => [
-    ...core,
-    ...deps.plugins.filter((p) => enabled.has(p.info.id)),
-  ]
+  /** The plugins working across vaults now, by id, in start order. */
+  const inBackground = new Map<string, { why: string; dispose: Disposer }>()
+  let backgroundQueue: Promise<void> = Promise.resolve()
+
+  /** The registered vaults that run `plugin`. */
+  async function vaultsRunning(plugin: MainPlugin): Promise<LiveVault[]> {
+    const all = (await deps.background?.registered()) ?? []
+    const runs = await Promise.all(
+      all.map(async (v) => {
+        const running = await read(v.root).then(
+          (r) => r.running.has(plugin.info.id),
+          () => false,
+        )
+        return running ? [v] : []
+      }),
+    )
+    return runs.flat()
+  }
+
+  async function syncBackgroundNow(): Promise<void> {
+    const bg = deps.background
+    if (bg === undefined) return
+    for (const plugin of deps.plugins) {
+      const work = plugin.background
+      if (work === undefined) continue
+      const id = plugin.info.id
+      const wanted = (await vaultsRunning(plugin)).length > 0
+      const running = inBackground.get(id)
+      if (!wanted && running !== undefined) {
+        inBackground.delete(id)
+        await Promise.resolve()
+          .then(running.dispose)
+          .catch((err) => console.error(`[plugins] ${id} background stop failed:`, err))
+      } else if (wanted && running === undefined) {
+        const ctx: AppCtx = {
+          userData: deps.userData,
+          vaults: () => vaultsRunning(plugin),
+          scan: bg.scan,
+          open: bg.open,
+          viewerLogin: bg.viewerLogin,
+          notify: bg.notify,
+        }
+        try {
+          inBackground.set(id, { why: work.why, dispose: await work.start(ctx) })
+        } catch (err) {
+          console.error(`[plugins] ${id} did not start in the background:`, err)
+        }
+      }
+    }
+    bg.onChange([...inBackground.values()].map((b) => b.why))
+  }
+
+  function queuedBackground(job: () => Promise<void>): Promise<void> {
+    const run = backgroundQueue.then(job, job)
+    backgroundQueue = run.catch((err) => console.error('[plugins] background failed:', err))
+    return run
+  }
+
+  /** What runs in a vault with `enabled` on. */
+  const running = (enabled: ReadonlySet<string>): MainPlugin[] =>
+    deps.plugins.filter((p) => enabled.has(p.info.id))
 
   const eventsOf = new Map<string, ReturnType<typeof pluginEvents>>()
   function events(id: string): ReturnType<typeof pluginEvents> {
     let made = eventsOf.get(id)
     if (made === undefined) {
       // Asked per event, a terminal's every chunk: the open vault's answer is
-      // the cached one. Core parts are not gated.
-      const runs = coreIds.has(id)
-        ? undefined
-        : async (remote: string): Promise<boolean> => {
-            const root = await deps.rootFor(remote)
-            return root !== null && (await enabled(root)).has(id)
-          }
+      // the cached one.
+      const runs = async (remote: string): Promise<boolean> => {
+        const root = await deps.rootFor(remote)
+        return root !== null && (await enabled(root)).has(id)
+      }
       made = pluginEvents(deps.events, id, runs)
       eventsOf.set(id, made)
     }
@@ -254,10 +320,10 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
   }
 
   /** What runs in the vault, providers before what requires them; otherwise
-   *  in list order. Core parts first: nothing requires them. */
+   *  in list order. */
   function startOrder(want: ReadonlySet<string>): MainPlugin[] {
     const byId = new Map(deps.plugins.map((p) => [p.info.id, p]))
-    const ordered: MainPlugin[] = [...core]
+    const ordered: MainPlugin[] = []
     const placed = new Set<string>()
     const place = (p: MainPlugin): void => {
       if (placed.has(p.info.id) || !want.has(p.info.id)) return
@@ -298,8 +364,7 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
       root,
       userData: deps.userData,
       active: deps.active,
-      register: (namespaces, table) =>
-        keep(deps.registry.register(namespaces, table, coreIds.has(id) ? undefined : id)),
+      register: (namespaces, table) => keep(deps.registry.register(namespaces, table, id)),
       emit: events(id).emit,
       on: (name, handler) => keep(events(id).on(name, handler)),
       openAppDoor: (opener) => {
@@ -373,7 +438,13 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
 
   async function reconcileNow(why: 'open' | 'settings' | 'snapshot'): Promise<void> {
     const vault = deps.active()
-    if (vault === null) return stopAll()
+    if (vault === null) {
+      await stopAll()
+      // No vault open is no write to follow, so what runs across vaults is
+      // looked at here: the one that left may have been the last to run it.
+      void queuedBackground(syncBackgroundNow)
+      return
+    }
     if (why === 'open') parked = null
     else if (vault.remote === parked) return
     if (live !== null && live.remote !== vault.remote) await stopAll()
@@ -384,12 +455,16 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
     // Left while it read: the leave stops what is here.
     if (live !== here || deps.active()?.remote !== remote) return
     const wantKey = [...want].sort().join(' ')
-    if (why !== 'snapshot' || wantKey !== lastWant) failed.clear()
+    if (why !== 'snapshot' || wantKey !== lastWant) {
+      failed.clear()
+      // What runs across vaults follows the same writes.
+      void queuedBackground(syncBackgroundNow)
+    }
     lastWant = wantKey
 
     // What left, dependents first: the start order, backwards.
     for (const s of [...here.started].reverse()) {
-      if (coreIds.has(s.id) || want.has(s.id)) continue
+      if (want.has(s.id)) continue
       here.started = here.started.filter((x) => x !== s)
       await stopOne(s)
     }
@@ -436,10 +511,7 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
       running(await enabled(root)).flatMap((p) =>
         (p.transforms ?? []).map((t) => ({
           ...t,
-          // A core part's toggle is in core's list until it is a plugin.
-          default:
-            [...(p.info.transforms ?? []), ...CORE_TRANSFORMS].find((x) => x.name === t.name)
-              ?.default ?? false,
+          default: (p.info.transforms ?? []).find((x) => x.name === t.name)?.default ?? false,
         })),
       ),
 
@@ -465,6 +537,19 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
     failures: (remote) => (live?.remote === remote ? Object.fromEntries(failed) : {}),
 
     invalidate: forget,
+
+    syncBackground: () => queuedBackground(syncBackgroundNow),
+
+    stopBackground: () =>
+      queuedBackground(async () => {
+        for (const [id, b] of [...inBackground].reverse()) {
+          inBackground.delete(id)
+          await Promise.resolve()
+            .then(b.dispose)
+            .catch((err) => console.error(`[plugins] ${id} background stop failed:`, err))
+        }
+        deps.background?.onChange([])
+      }),
 
     report(remote, report) {
       for (const { remote: at, cb } of [...reportListeners]) {

@@ -20,23 +20,17 @@ import { NavMenu } from '../NavMenu'
 import type { RendererPlugin } from '@/plugin-api/types'
 import { Inbox } from 'lucide-react'
 
-const { apps, tasks, overdue } = vi.hoisted(() => ({
-  apps: { current: [] as string[] },
-  tasks: { current: 0 },
-  overdue: { current: 0 },
-}))
-vi.mock('@/state/tasks', () => ({
-  openTaskCountAtom: atom(() => tasks.current),
-  overdueTaskCountAtom: atom(() => overdue.current),
-}))
+const { apps } = vi.hoisted(() => ({ apps: { current: [] as string[] } }))
 
 /** A plugin's rail item, shown while its own condition holds, as Google's
- *  Mail shows once an account is connected. */
+ *  Mail shows once an account is connected, and carrying a count, as the
+ *  board carries its open tasks. */
 const shownAtom = atom(false)
+const badgeAtom = atom<{ count: number; tone?: 'alert' } | null>(null)
 const FAKE_PLUGIN: RendererPlugin = {
   info: { id: 'fake', label: 'Fake', default: true },
   surfaces: [{ kind: 'inbox', label: 'Inbox', icon: Inbox, render: () => null }],
-  rail: [{ surface: 'inbox', order: 40, visible: shownAtom }],
+  rail: [{ surface: 'inbox', order: 40, visible: shownAtom, badge: badgeAtom }],
 }
 
 /** A surface with a tab per thing, as vault apps' is: its rail item drills
@@ -57,17 +51,19 @@ const FAKE_APPS: RendererPlugin = {
 
 function setup({
   appPaths = [],
-  openTasks = 0,
-  overdueTasks = 0,
+  badge = null,
   shown = false,
-}: { appPaths?: string[]; openTasks?: number; overdueTasks?: number; shown?: boolean } = {}) {
+}: {
+  appPaths?: string[]
+  badge?: { count: number; tone?: 'alert' } | null
+  shown?: boolean
+} = {}) {
   apps.current = appPaths
-  tasks.current = openTasks
-  overdue.current = overdueTasks
   const store = createStore()
   store.set(coreContributionAtom, CORE_CONTRIBUTION)
   store.set(installedPluginsAtom, [FAKE_PLUGIN, FAKE_APPS])
   store.set(shownAtom, shown)
+  store.set(badgeAtom, badge)
   render(
     <Provider store={store}>
       <NavMenu orientation="vertical" />
@@ -89,7 +85,7 @@ test("the items are in their order, without apps or a plugin's hidden item", asy
     within(list)
       .getAllByRole('button')
       .map((b) => b.textContent),
-  ).toEqual(['Home', 'Search', 'Board', 'Graph', 'Sync: up to date', 'Settings'])
+  ).toEqual(['Home', 'Search', 'Graph', 'Sync: up to date', 'Settings'])
 })
 
 test("Settings comes last, after a plugin's items, so it sits beside More", async () => {
@@ -99,20 +95,20 @@ test("Settings comes last, after a plugin's items, so it sits beside More", asyn
     within(list)
       .getAllByRole('button')
       .map((b) => b.textContent),
-  ).toEqual(['Home', 'Search', 'Apps', 'Board', 'Graph', 'Inbox', 'Sync: up to date', 'Settings'])
+  ).toEqual(['Home', 'Search', 'Apps', 'Graph', 'Inbox', 'Sync: up to date', 'Settings'])
 })
 
-test('the board count turns to an alert while a task is overdue', async () => {
-  const { user } = setup({ openTasks: 5, overdueTasks: 1 })
+test("an item's count turns to an alert when its badge says so", async () => {
+  const { user } = setup({ shown: true, badge: { count: 5, tone: 'alert' } })
   await openList(user)
-  const count = within(screen.getByRole('button', { name: /Board/ })).getByText('5')
+  const count = within(screen.getByRole('button', { name: /Inbox/ })).getByText('5')
   expect(count).toHaveAttribute('data-tone', 'alert')
 })
 
-test('with nothing overdue the board count is plain', async () => {
-  const { user } = setup({ openTasks: 5 })
+test('a plain badge is a plain count', async () => {
+  const { user } = setup({ shown: true, badge: { count: 5 } })
   await openList(user)
-  const count = within(screen.getByRole('button', { name: /Board/ })).getByText('5')
+  const count = within(screen.getByRole('button', { name: /Inbox/ })).getByText('5')
   expect(count).not.toHaveAttribute('data-tone')
 })
 
@@ -138,13 +134,11 @@ test('Search opens the palette', async () => {
   expect(store.get(paletteAtom).open).toBe(true)
 })
 
-test('Board opens the board and carries the open-task count', async () => {
-  const { store, user } = setup({ openTasks: 12 })
+test("a plugin's item opens its surface", async () => {
+  const { store, user } = setup({ shown: true })
   await openList(user)
-  const board = screen.getByRole('button', { name: /Board/ })
-  expect(board).toHaveTextContent('12')
-  await user.click(board)
-  expect(activeTab(store.get(workspaceAtom))).toEqual({ kind: 'surface', surface: 'board' })
+  await user.click(screen.getByRole('button', { name: /Inbox/ }))
+  expect(activeTab(store.get(workspaceAtom))).toEqual({ kind: 'surface', surface: 'inbox' })
 })
 
 test('Settings opens settings', async () => {
