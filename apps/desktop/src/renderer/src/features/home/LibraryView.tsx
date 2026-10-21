@@ -42,6 +42,7 @@ import { trpc } from '@/lib/trpc'
 import { pinsAtom, togglePinAtom } from '@/state/pins'
 import { openPathAtom } from '@/state/surfaces'
 import { runCommandAtom } from '@/state/commands'
+import { openTaskCountAtom } from '@/state/tasks'
 import { activeRemoteAtom, snapshotAtom, vaultsAtom } from '@/state/vaults'
 import { ActivityFeed } from './ActivityFeed'
 
@@ -67,6 +68,14 @@ export function LibraryView(): React.JSX.Element {
   const runCommand = useSetAtom(runCommandAtom)
   const pins = useAtomValue(pinsAtom)
   const togglePin = useSetAtom(togglePinAtom)
+  const openTasks = useAtomValue(openTaskCountAtom)
+  const noteCount = useMemo(
+    () =>
+      snapshot.docs.filter(
+        (f) => !hidden(f.path) && fileKind(f.path) === 'markdown' && !isTaskFilePath(f.path),
+      ).length,
+    [snapshot.docs],
+  )
   const [tab, setTab] = useState<Tab>('recent')
   const [searching, setSearching] = useState(false)
   const [query, setQuery] = useState('')
@@ -116,7 +125,19 @@ export function LibraryView(): React.JSX.Element {
           past it, so their fills reach beyond the text and their text does
           not. */}
       <div className="mx-auto flex w-full max-w-4xl flex-col gap-3 px-8 pt-10 pb-14">
-        <h1 className="truncate text-2xl font-semibold tracking-tight">{vault?.name ?? 'Vault'}</h1>
+        {/* The vault in the display voice of the screens before it (sign-in's
+            headline), with what it holds under it. The view's one entrance:
+            it rises into place as Home opens. */}
+        <header className="flex min-w-0 flex-col gap-1 motion-in-rise">
+          <h1 className="truncate text-4xl leading-tight font-semibold tracking-[-0.03em]">
+            {vault?.name ?? 'Vault'}
+          </h1>
+          <p className="truncate text-sm text-muted-foreground tabular-nums">
+            {remote !== null && <span className="font-mono text-xs">{remote}</span>}
+            {` · ${noteCount} ${noteCount === 1 ? 'note' : 'notes'}`}
+            {` · ${openTasks} open ${openTasks === 1 ? 'task' : 'tasks'}`}
+          </p>
+        </header>
 
         <Tabs value={tab} onValueChange={(next) => setTab(next as Tab)} className="gap-6">
           <div className="flex flex-wrap items-center gap-1">

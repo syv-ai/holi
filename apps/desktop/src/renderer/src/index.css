@@ -419,6 +419,12 @@ html {
 @utility motion-in-fade {
   animation: motion-in-fade var(--motion-arrive) var(--ease-settle) both;
 }
+/* A view's headline settling into place as the view opens (Home's title),
+ * the shell's echo of the screens before a vault: 6px up and in. Transform
+ * and opacity only; reduced motion leaves the fade. */
+@utility motion-in-rise {
+  animation: motion-in-rise var(--motion-arrive) var(--ease-settle) both;
+}
 @utility motion-out-origin {
   animation: motion-out-origin var(--motion-pop) var(--ease-settle) both;
 }
@@ -459,6 +465,16 @@ html {
   }
   to {
     opacity: 1;
+  }
+}
+@keyframes motion-in-rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
   }
 }
 @keyframes motion-out-origin {
@@ -627,6 +643,10 @@ html {
   .motion-in-fade,
   .motion-out-origin {
     animation-duration: 1ms;
+  }
+  /* The rise keeps its fade and loses the travel. */
+  .motion-in-rise {
+    animation-name: motion-in-fade;
   }
   [data-slot='drawer'] {
     transition-duration: 1ms;
