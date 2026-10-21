@@ -12,7 +12,7 @@ import {
 
 /**
  * The snapshot as the explorer shows it: hidden files, and the files of a
- * hideable claim (task files), filtered by the per-vault toggles, plus the per-path facts a row paints (icon, what plugins
+ * hideable claim, filtered by the per-vault toggles, plus the per-path facts a row paints (icon, what plugins
  * mark it with, ignored).
  * Claimed files show as the files they are, a broken one too, so it can be
  * opened and fixed; a hideable claim's toggle hides its files.
@@ -33,7 +33,7 @@ export function useTreeProjection() {
     return claims.flatMap((claim) =>
       claim.hideable === undefined
         ? []
-        : [{ claim, ...claim.hideable, shown: shown.has(claim.hideable.label) }],
+        : [{ claim, ...claim.hideable, shown: shown.has(claim.hideable.id) }],
     )
   }, [claims, shownByVault, activeRemote])
 
@@ -72,15 +72,13 @@ export function useTreeProjection() {
     hideables,
     toggleHidden: () =>
       activeRemote !== null && setHiddenByVault({ ...hiddenByVault, [activeRemote]: !showHidden }),
-    /** Show or hide the files of the hideable claim named `label`. */
-    toggleClaimed: (label: string) => {
+    /** Show or hide the files of the hideable claim `id`. */
+    toggleClaimed: (id: string) => {
       if (activeRemote === null) return
       const shown = shownByVault[activeRemote] ?? []
       setShownByVault({
         ...shownByVault,
-        [activeRemote]: shown.includes(label)
-          ? shown.filter((l) => l !== label)
-          : [...shown, label],
+        [activeRemote]: shown.includes(id) ? shown.filter((l) => l !== id) : [...shown, id],
       })
     },
   }

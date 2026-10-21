@@ -55,7 +55,7 @@ export const TASK_PATH_CLAIM: PathClaim = {
       (await tasksCap.create(remote, { title: name, status: 'todo', folder: parent })).path,
   },
   // The board owns tasks, so the tree leaves them out until asked.
-  hideable: { label: 'task files', icon: ListTodo },
+  hideable: { id: 'tasks', label: 'task files', icon: ListTodo },
   editor: {
     chips: (snapshot) =>
       new Map(

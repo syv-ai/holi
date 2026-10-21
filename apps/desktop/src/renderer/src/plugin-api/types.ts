@@ -136,11 +136,11 @@ export interface PathClaim {
   frontmatter?: ClaimFrontmatter
   /**
    * Its files leave the file tree until someone shows them, with a toggle in
-   * the explorer's menu ("Show task files"), remembered per vault on this
-   * machine: the files have a view of their own (the board). `label` names
-   * them, and is the toggle's key.
+   * the explorer's menu ("Show <label>"), remembered per vault on this
+   * machine: for files with a view of their own. `id` is the key the choice
+   * is remembered under, stable whatever `label` says; `label` names the files.
    */
-  hideable?: { label: string; icon: IconGlyph }
+  hideable?: { id: string; label: string; icon: IconGlyph }
   /**
    * The file's canonical form: the same function as the main side's claim,
    * which the `normalize-md` commit transform applies. The editor treats a

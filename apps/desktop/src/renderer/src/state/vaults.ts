@@ -42,7 +42,7 @@ export const activeRemoteAtom = atom<string | null>(null)
 export const showHiddenByVaultAtom = atomWithStorage<Record<string, boolean>>('holi:showHidden', {})
 
 /** Per vault, the hideable claims (`PathClaim.hideable`) whose files the tree
- *  shows, by label; the rest are hidden, as their plugin asks. Purely a view
+ *  shows, by `hideable.id`; the rest are hidden, as their plugin asks. Purely a view
  *  filter: the files are scanned and claimed either way. */
 export const shownClaimsByVaultAtom = atomWithStorage<Record<string, string[]>>(
   'holi:shownClaims',

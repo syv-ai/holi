@@ -9,6 +9,7 @@ export type NewKind = 'file' | 'folder' | ClaimCreate
 
 /** A hideable claim's toggle (`PathClaim.hideable`): its files, named. */
 export interface ClaimToggle {
+  id: string
   label: string
   icon: IconGlyph
   shown: boolean
@@ -39,9 +40,9 @@ export function ExplorerHeader({
   /** Whether hidden (dot-prefixed) entries are currently shown. */
   hiddenShown: boolean
   onToggleHidden: () => void
-  /** What enabled claims hide until shown (task files), each a filter. */
+  /** What enabled claims hide until shown, each a filter. */
   claimToggles?: readonly ClaimToggle[]
-  onToggleClaimed?: (label: string) => void
+  onToggleClaimed?: (id: string) => void
 }) {
   // The menu restarts its layout pass when its items change identity, so the
   // items depend on the states and what claims make only, and call the
@@ -84,11 +85,11 @@ export function ExplorerHeader({
         onSelect: () => handlers.current.onCollapseAll(),
       },
       ...claimToggles.map((t) => ({
-        id: `claimed-${t.label}`,
+        id: `claimed-${t.id}`,
         label: `${t.shown ? 'Hide' : 'Show'} ${t.label}`,
         icon: t.icon,
         pressed: t.shown,
-        onSelect: () => handlers.current.onToggleClaimed?.(t.label),
+        onSelect: () => handlers.current.onToggleClaimed?.(t.id),
       })),
       {
         id: 'hidden',

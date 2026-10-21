@@ -26,7 +26,7 @@ function setup(over: Partial<Parameters<typeof ExplorerHeader>[0]> = {}) {
     onCollapseAll: vi.fn(),
     hiddenShown: false,
     onToggleHidden: vi.fn(),
-    claimToggles: [{ label: 'task files', icon: ListTodo, shown: false }],
+    claimToggles: [{ id: 'tasks', label: 'task files', icon: ListTodo, shown: false }],
     onToggleClaimed: vi.fn(),
     ...over,
   }
@@ -67,5 +67,5 @@ test("a hideable claim's toggle reflects state via aria-pressed and label", asyn
   const toggle = screen.getByRole('button', { name: 'Show task files' })
   expect(toggle).toHaveAttribute('aria-pressed', 'false')
   await userEvent.click(toggle)
-  expect(p.onToggleClaimed).toHaveBeenCalledWith('task files')
+  expect(p.onToggleClaimed).toHaveBeenCalledWith('tasks')
 })

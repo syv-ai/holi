@@ -171,9 +171,9 @@ export function FileTree({
   /** What enabled claims add to the New menu (an app). */
   const claims = useAtomValue(claimsAtom)
   const creates = useMemo(() => claims.flatMap((c) => (c.create ? [c.create] : [])), [claims])
-  /** What enabled claims hide until shown (task files), as the menu's filters. */
+  /** What enabled claims hide until shown, as the menu's filters. */
   const claimToggles = useMemo(
-    () => projection.hideables.map(({ label, icon, shown }) => ({ label, icon, shown })),
+    () => projection.hideables.map(({ id, label, icon, shown }) => ({ id, label, icon, shown })),
     [projection.hideables],
   )
   const present = useMemo(() => new Set(projection.docPaths), [projection.docPaths])
