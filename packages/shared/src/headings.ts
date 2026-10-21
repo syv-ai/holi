@@ -16,15 +16,23 @@ const FENCE = /^ {0,3}(`{3,}|~{3,})/
 /** A closing run of hashes is decoration, not part of the text: `# Title #`. */
 const TRAILING_HASHES = /\s+#+\s*$/
 
+/** One ATX heading of a body: its line index, its hashes and its text. */
+interface AtxHeading {
+  index: number
+  hashes: string
+  text: string
+}
+
 /**
- * The first heading's text, or `null` when the body has none.
+ * Every ATX heading in `lines`, top to bottom, from line `from` on.
  *
  * **Fenced code is skipped**, which is why this is not a one-line regex: a task
  * whose body opens with a shell block would otherwise be called `!/bin/bash`.
  */
-export function firstHeading(body: string): string | null {
+function* atxHeadings(lines: readonly string[], from = 0): Generator<AtxHeading> {
   let fence: string | null = null
-  for (const line of body.split('\n')) {
+  for (let i = from; i < lines.length; i++) {
+    const line = lines[i]!
     const fenced = FENCE.exec(line)
     if (fenced !== null) {
       const marker = fenced[1]![0]!
@@ -38,7 +46,13 @@ export function firstHeading(body: string): string | null {
 
     const heading = ATX.exec(line)
     if (heading === null) continue
-    const text = heading[2]!.replace(TRAILING_HASHES, '').trim()
+    yield { index: i, hashes: heading[1]!, text: heading[2]!.replace(TRAILING_HASHES, '').trim() }
+  }
+}
+
+/** The first heading's text, or `null` when the body has none. */
+export function firstHeading(body: string): string | null {
+  for (const { text } of atxHeadings(body.split('\n'))) {
     // `#` alone is an empty heading, which names nothing. Keep looking.
     if (text !== '') return text
   }
@@ -53,25 +67,46 @@ export function firstHeading(body: string): string | null {
  */
 export function setFirstHeading(body: string, title: string): string {
   const lines = body.split('\n')
-  let fence: string | null = null
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]!
-    const fenced = FENCE.exec(line)
-    if (fenced !== null) {
-      const marker = fenced[1]![0]!
-      if (fence === null) fence = marker
-      else if (marker === fence) fence = null
-      continue
-    }
-    if (fence !== null) continue
-
-    const heading = ATX.exec(line)
-    if (heading === null) continue
-    if (heading[2]!.replace(TRAILING_HASHES, '').trim() === '') continue
-    lines[i] = `${heading[1]!} ${title}`
+  for (const { index, hashes, text } of atxHeadings(lines)) {
+    if (text === '') continue
+    lines[index] = `${hashes} ${title}`
     return lines.join('\n')
   }
 
   const rest = body.trim()
   return rest === '' ? `# ${title}\n` : `# ${title}\n\n${rest}\n`
+}
+
+/**
+ * A heading's anchor, as GitHub makes it: lower case, punctuation dropped,
+ * spaces as hyphens. `Next steps (Q3)` is `next-steps-q3`. What a Holi link to
+ * a heading carries, so the link reads like the heading it points at.
+ */
+export function headingSlug(text: string): string {
+  return text
+    .trim()
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s_-]/gu, '')
+    .replace(/\s+/g, '-')
+}
+
+/**
+ * The 1-based line of the first heading in `text` (a whole file, frontmatter
+ * and all) whose slug is `heading`'s, or null. `heading` may be the slug or the
+ * heading's own words. A frontmatter block is skipped: a `# comment` in YAML is
+ * not a heading. Two headings with the same words: the first wins.
+ */
+export function findHeadingLine(text: string, heading: string): number | null {
+  const want = headingSlug(heading)
+  if (want === '') return null
+  const lines = text.replace(/\r\n/g, '\n').split('\n')
+  let from = 0
+  if (lines[0] === '---') {
+    const close = lines.findIndex((line, i) => i > 0 && line.startsWith('---'))
+    if (close !== -1) from = close + 1
+  }
+  for (const { index, text: words } of atxHeadings(lines, from)) {
+    if (words !== '' && headingSlug(words) === want) return index + 1
+  }
+  return null
 }
