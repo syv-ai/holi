@@ -151,19 +151,23 @@ core's `.gitignore` gets its `*.local.*` line, line-wise, before anything else i
 
 **Updating skills and hooks**. A Holi release may ship newer versions; they reach a vault
 only when its user asks, with `holi skills update` or the palette's **Update skills**, or on open
-when the vault turned on `autoUpdateSkills` ([updates](updates.md)). Against the
-base Holi recorded when it wrote each file (`.holi/state/seed-state.local.json`, machine-local): an
-untouched file is replaced, one the vault changed elsewhere is 3-way merged, and a same-line
-conflict is left as it is with the shipped version (and the base) staged beside it as
-`*.shipped.local.*` and `*.base.local.*`. From the palette, conflicts get an agent session whose
+when the vault turned on `autoUpdateSkills` ([updates](updates.md)). A file that is exactly a
+version some release shipped is replaced: Holi carries the sha256 of every version of every shipped
+file it has ever shipped (`seed/shipped-history.json`), so an untouched copy is recognised on any
+machine. Any other file is 3-way merged against a base: the text Holi recorded when it wrote the
+file here (`.holi/state/seed-state.local.json`, machine-local), or, on a machine with no record
+(a clone made elsewhere), the newest version in the vault's git history whose hash is a shipped
+one. A same-line conflict is left as it is with the shipped version (and the base) staged beside it
+as `*.shipped.local.*` and `*.base.local.*`. From the palette, conflicts get an agent session whose
 submitted first turn merges them and deletes the staged files (`skills.update` answers that turn,
 and the renderer starts it through the agent service); until it does, the file stays a conflict.
-`holi skills update` and a vault without the agent leave the staged files for a person. A machine with
-no recorded base hands every changed file to the agent. The palette reports the outcome as a
+`holi skills update` and a vault without the agent leave the staged files for a person. Only a file
+with no base at all, neither recorded nor in git, goes to the agent without one. The palette reports the outcome as a
 native notification. Whether an update would bring anything is asked, writing nothing, whenever a
 vault opens (`skills.status`, also `holi skills status`): a file Holi has a newer version of than the
-one it last brought here, or one new to the vault. A diverged file with no recorded base is not
-counted, since nothing says whose change it is. While there are some, the nav menu's update item
+one it last brought here, one that is exactly an older shipped version, or one new to the vault.
+Any other diverged file with no recorded base is not counted, since nothing says whose change it
+is, and git is not read on every open. While there are some, the nav menu's update item
 offers Update skills ([updates](updates.md)). The seed state also records the Holi version that
 last wrote shipped files here (`release`), which `holi skills status` and Settings show. Holi's side of a hook is not kept compatible with older scripts: the update
 is how a vault gets the current ones.
@@ -253,6 +257,9 @@ agents in Settings; its hooks, and that choice, are flags on its own launch, nev
 
 - `apps/desktop/src/plugins/agent/main/claude/config-dir.ts`: per-vault config dir, first-spawn marker
 - `apps/desktop/src/main/vault/seed/`: the seeder (`seed.ts`), `holi skills update` (`update.ts`),
+  every shipped version's hash (`shipped-history.json`, added to by
+  `pnpm --filter @holi/desktop shipped-history` whenever a shipped file changes, which a test
+  enforces),
   seed folders (`folder.ts`), core's contribution (`core.ts`, `vault/once/AGENTS.md`), and
   `state.ts`: what Holi seeded, the base an update merges from
 - `apps/desktop/src/plugins/agent/main/claude/seed.ts`: the agent's contribution and its `settings.json`

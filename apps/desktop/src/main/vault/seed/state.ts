@@ -15,8 +15,9 @@
  *
  * **Machine-local, and the `.local.` in the name is the whole enforcement**.
  * A committed record would travel to a teammate and claim a base Holi
- * never wrote on their machine. A machine without a record merges nothing and
- * hands every diverged file to the agent, which loses nothing.
+ * never wrote on their machine. A machine without a record falls back on what
+ * every machine has: the hashes of every version Holi shipped, and the vault's
+ * git history (`update.ts`).
  */
 import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
@@ -54,8 +55,8 @@ export const sha256 = (content: string): string =>
 const isObject = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v)
 
-/** Never throws: a corrupt state file reads as empty, which hands every
- *  diverged file to the agent rather than merging against a wrong base. */
+/** Never throws: a corrupt state file reads as empty, as on a machine with no
+ *  record, rather than merging against a wrong base. */
 export async function readSeedState(root: string): Promise<SeedState> {
   const text = await readFile(join(root, SEED_STATE_FILE), 'utf8').catch(() => null)
   const state: SeedState = { files: {} }

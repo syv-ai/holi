@@ -12,6 +12,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "rebuild:natives": "electron-rebuild -f -w node-pty",
+    "shipped-history": "node scripts/shipped-history.mjs",
     "package:mac": "electron-vite build && electron-builder --mac --publish never"
   },
   "dependencies": {
