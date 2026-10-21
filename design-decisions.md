@@ -432,3 +432,68 @@ What is left, in order, each one commit:
 
 Each step's file-level detail was written against the code as of the claimed-snapshot commit.
 Re-derive it from the code rather than trusting line numbers.
+
+## One look from sign-in to shell
+
+Made while working autonomously on "make the main app feel like one product with the lit sign-in and
+onboarding, stealing from good designs". The work before this run is committed at `6290edb5` on
+`feat/agents-holis-automations`. Provisional entries are marked; review those first.
+
+### D1. Screenshots from an isolated test instance, offline to GitHub
+
+- **Context:** to diagnose the shell I needed screenshots of the signed-in app. Restarting your
+  running `pnpm dev` with a debug port was refused by the permission system, so it was left alone.
+- **Decision:** ran a separate instance with its own user data and a scratch demo vault (a local bare
+  repo as its remote), a placeholder sign-in, and a test-only `--require` hook that makes its
+  `api.github.com` calls fail as offline, so the placeholder is never answered with a 401.
+- **Why:** nothing of yours is touched; all of it lives in the session scratchpad, and the repo
+  gained no test hook.
+
+### D2. Took the recommended set without asking
+
+- **Context:** steal-and-inspire ends by asking which ideas to build; the owner is away and asked to
+  work until done.
+- **Decision:** built the ideas marked recommended in the proposal; options are left described there.
+- **Provisional:** the owner may want a different set; each idea is its own commit, so any can be
+  reverted alone.
+
+### D3. The shell takes the light but not its motion
+
+- **Context:** the docs said the before-a-vault light "never enters the shell, where it would nag
+  all day", and the owner asked for the shell to feel like the sign-in.
+- **Decision:** the ground gets the same warm and cool light as a still CSS wash (no shader, no
+  loop), and the grain at a third under the sidebar and panel. The page panel stays plain.
+- **Why:** the nagging was the motion, not the light; a still wash keeps the reason and drops the
+  cost. The doc now says so.
+
+### D4. The accent has exactly two carriers
+
+- **Context:** sign-in's warm-to-violet "own." is the strongest brand signal.
+- **Decision:** `--brand-gradient`, used only on the focused tab's top line and the open vault's tile.
+- **Why:** any wider use turns a signature into a theme and fights "hue identifies".
+- **Provisional:** the owner may want it on the primary button too; it is one class away.
+
+### D5. The rise does not blur
+
+- **Context:** the paragraph-reveal steal eases out of a blur; the house rules allow transform and
+  opacity only.
+- **Decision:** `motion-in-rise` is 6px up and a fade over the arrive pace, the fade alone under
+  reduced motion, used once per view (Home's header).
+
+### D6. Agents' face in the mode toggle, not on the rail
+
+- **Context:** the rail button is an `IconButton`, which takes a glyph, not a component.
+- **Decision:** the face is in the sidebar's Agents segment; the rail keeps the robot glyph with
+  its amber dot.
+- **Provisional:** widening `IconButton` to take a node would let the rail match.
+
+### D7. Errors are not lit
+
+- **Decision:** an `EmptyState` with `role="alert"` keeps the plain icon; only empty and
+  pick-something states stand on the lit plate. Light on a failure would read as good news.
+
+### D8. Options left described, not built
+
+- The proposal's options (a stretching mode toggle, a dot-grid context meter, a budding Save
+  button) are in the proposal page; none was built, because each either conflicts with a
+  documented decision (the toggle without a moving thumb) or is a feature, not a look.
