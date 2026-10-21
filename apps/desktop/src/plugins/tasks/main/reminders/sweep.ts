@@ -35,7 +35,7 @@ export interface SweepMark {
 
 /** `YYYY-MM-DDTHH:MM` in the machine's own timezone — the frame `pendingFireTime`
  * returns fire times in. `new Date().toISOString()` would be UTC, a different
- * wall-clock, and would mis-fire by the timezone offset. Mirrors `localToday`. */
+ * wall-clock, and would mis-fire by the timezone offset. Mirrors `localDate`. */
 export function localNow(): string {
   const d = new Date()
   const pad = (n: number) => String(n).padStart(2, '0')

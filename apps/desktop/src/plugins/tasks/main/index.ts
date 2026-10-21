@@ -5,7 +5,8 @@
  * fire across every registered vault that runs it while Holi runs.
  */
 import { taskClaim } from '../shared/task-file'
-import { localToday, type MainPlugin } from '../../../main/plugin-api'
+import { localDate } from '@holi/shared'
+import type { MainPlugin } from '../../../main/plugin-api'
 import { TASKS_INFO } from '../info'
 import { archiveDone } from './archive-done'
 import { taskCapabilities, TASKS_NAMESPACES } from './capabilities'
@@ -17,6 +18,6 @@ export const tasksMain: MainPlugin = {
   seed: tasksSeed,
   claims: [taskClaim],
   transforms: [{ name: 'archive-done', run: (root, staged) => archiveDone(root, staged) }],
-  activate: (ctx) => ctx.register(TASKS_NAMESPACES, taskCapabilities({ today: localToday })),
+  activate: (ctx) => ctx.register(TASKS_NAMESPACES, taskCapabilities({ today: () => localDate(new Date()) })),
   background: { why: 'Holi stays open for reminders', start: startReminders },
 }

@@ -269,7 +269,6 @@ export {
 } from './vault/vault-files'
 export { moveNotes } from './vault/move'
 export { renameNote } from './vault/rename'
-export { localToday } from './router'
 export { holiTheme, readVaultTheme } from './vault/theme'
 export { readVaultSettings, writePluginSettings } from './vault/settings'
 export { installedInfos } from './plugin-host/installed'

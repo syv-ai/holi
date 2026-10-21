@@ -64,7 +64,12 @@ import {
 import { scanVault, type ScanClaim, type VaultSnapshot } from './vault/vault-store'
 import { holiTheme, readVaultTheme, resetVaultTheme, writeVaultTheme } from './vault/theme'
 import { readVaultSettings, writeVaultSettings } from './vault/settings'
-import { knownTransforms, parsePluginSettingsPatch, parseSettingsPatch } from '@holi/shared'
+import {
+  knownTransforms,
+  localDate,
+  parsePluginSettingsPatch,
+  parseSettingsPatch,
+} from '@holi/shared'
 import { installedInfos } from './plugin-host/installed'
 import type { PreCommitStatus, ResolvedTheme, ResolvedVaultSettings } from '@holi/shared'
 import type { VaultPreCommit } from './vault/hooks/pre-commit'
@@ -198,15 +203,6 @@ export interface RouterDeps {
   /** Whether Holi opens at login, this machine's login item. Optional: absent,
    *  as in tests, it reads as off and cannot be set. */
   loginItem?: { get(): boolean; set(open: boolean): void }
-}
-
-/** `YYYY-MM-DD` in the machine's own timezone. `toISOString().slice(0, 10)`
- * would be the UTC date, which is a different day for much of the world for
- * much of the day. */
-export function localToday(): string {
-  const d = new Date()
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
 }
 
 /** Whether a clone carries the `.holi/vault` marker — i.e. it is a Holi vault
@@ -343,7 +339,7 @@ function deleteManyInput(raw: unknown): { remote: string; paths: string[]; folde
 
 export function createRouter(deps: RouterDeps) {
   const now = deps.now ?? (() => new Date().toISOString())
-  const today = deps.today ?? localToday
+  const today = deps.today ?? (() => localDate(new Date()))
   const cloneUrlFor = deps.cloneUrlFor ?? remoteUrl
   const capabilities =
     deps.capabilities ??
