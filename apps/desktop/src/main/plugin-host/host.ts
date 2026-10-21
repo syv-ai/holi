@@ -259,7 +259,7 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
     let made = eventsOf.get(id)
     if (made === undefined) {
       // Asked per event, a terminal's every chunk: the open vault's answer is
-      // the cached one. Core parts are not gated.
+      // the cached one.
       const runs = async (remote: string): Promise<boolean> => {
         const root = await deps.rootFor(remote)
         return root !== null && (await enabled(root)).has(id)
@@ -320,7 +320,7 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
   }
 
   /** What runs in the vault, providers before what requires them; otherwise
-   *  in list order. Core parts first: nothing requires them. */
+   *  in list order. */
   function startOrder(want: ReadonlySet<string>): MainPlugin[] {
     const byId = new Map(deps.plugins.map((p) => [p.info.id, p]))
     const ordered: MainPlugin[] = []

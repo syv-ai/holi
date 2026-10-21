@@ -3,9 +3,6 @@
  * beside this module) and the `.claude/settings.json` it owns and merges
  * (`settings.ts`). It owns `.claude/`, so every other plugin's files and
  * fragments there wait until the agent runs.
- *
- * The tasks settings ride here too for now, as their own fragment, until
- * tasks becomes its own plugin.
  */
 import {
   seedFolder,
