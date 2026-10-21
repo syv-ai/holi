@@ -12,14 +12,14 @@ describe('agentIndicator', () => {
 
   it('is green while a session is live and nothing is happening', () => {
     const live = agentIndicator(idle)
-    expect(live.dot).toContain('bg-green-500')
+    expect(live.dot).toContain('bg-agent-done')
     expect(live.state).toBe('running')
   })
 
   it('pulses amber while a turn is open', () => {
     const working = agentIndicator({ state: 'working' })
     expect(working.dot).toContain('motion-pulse')
-    expect(working.dot).toContain('bg-amber-400')
+    expect(working.dot).toContain('bg-agent-working')
     expect(working.state).toBe('working…')
   })
 
@@ -72,12 +72,10 @@ describe('contextColour', () => {
   })
 
   it('ramps from amber at 60% to full red at 99%, and stays red past it', () => {
-    expect(contextColour(60)).toBe(
-      'color-mix(in oklab, var(--context-full) 0%, var(--context-warm))',
-    )
-    expect(contextColour(80)).toContain('var(--context-full) 51%')
-    expect(contextColour(99)).toContain('var(--context-full) 100%')
-    expect(contextColour(100)).toContain('var(--context-full) 100%')
+    expect(contextColour(60)).toBe('color-mix(in oklab, var(--fill-full) 0%, var(--fill-warm))')
+    expect(contextColour(80)).toContain('var(--fill-full) 51%')
+    expect(contextColour(99)).toContain('var(--fill-full) 100%')
+    expect(contextColour(100)).toContain('var(--fill-full) 100%')
   })
 })
 

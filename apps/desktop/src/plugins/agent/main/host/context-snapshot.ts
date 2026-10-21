@@ -1,6 +1,6 @@
 /**
  * The per-turn focus file the UserPromptSubmit hook reads: the note the user has
- * focused in the editor, written to `.holi/state/context.local.json` in the vault's
+ * focused in the editor, and the lines selected in it, written to `.holi/state/context.local.json` in the vault's
  * clone. This is the ONE piece of per-turn state the agent cannot discover
  * itself (it is editor-UI focus, which only Holi holds); tasks, backreferences
  * and sync state the agent finds with its own native tools, and vault
@@ -10,18 +10,22 @@
  * syncs. Writes are debounced and
  * atomic: a stale focus line is fine, a hook that blocks a turn is not.
  */
-import { vaultRelPath } from '@holi/shared'
+import { vaultRelPath, type LineRange } from '@holi/shared'
 import { writeAtomic } from '../../../../main/plugin-api'
 
 export const CONTEXT_FILE = '.holi/state/context.local.json'
 
 export interface FocusInput {
   focusedPath: string | null
+  /** The lines selected in the focused note; absent or null for a caret. Line
+   *  numbers only, never the text: nothing a person selected lands on disk. */
+  selection?: LineRange | null
   openPaths: string[]
 }
 
 export interface ContextFile {
   focusedPath: string | null
+  selection: LineRange | null
   openPaths: string[]
   updatedAt: string
 }
@@ -76,6 +80,7 @@ export class ContextSnapshot {
   private async write(): Promise<void> {
     const context: ContextFile = {
       focusedPath: this.focus.focusedPath,
+      selection: this.focus.selection ?? null,
       openPaths: this.focus.openPaths,
       updatedAt: new Date().toISOString(),
     }

@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import {
   THEME_FILE,
   THEME_LOCAL_FILE,
+  holiTheme,
   readVaultTheme,
   resetVaultTheme,
 } from '../src/main/vault/theme'
@@ -68,16 +69,22 @@ describe('readVaultTheme', () => {
 })
 
 describe('resetVaultTheme', () => {
-  it('removes both theme files, returning the vault to standard', async () => {
+  it('puts one mode back to Holi’s in the shared file, clears it locally, and leaves the other', async () => {
     const root = await tempDir()
-    await writeTheme(root, THEME_FILE, { dark: { primary: '#111' } })
-    await writeTheme(root, THEME_LOCAL_FILE, { dark: { primary: '#f00' } })
-    await resetVaultTheme(root)
-    expect(await readVaultTheme(root)).toEqual({ light: {}, dark: {}, warnings: [] })
+    await writeTheme(root, THEME_FILE, { dark: { primary: '#111' }, light: { primary: '#222' } })
+    await writeTheme(root, THEME_LOCAL_FILE, {
+      dark: { primary: '#f00' },
+      light: { brand: '#0f0' },
+    })
+    await resetVaultTheme(root, 'dark')
+    const { dark, light } = await readVaultTheme(root)
+    expect(dark).toEqual(holiTheme().dark)
+    expect(light).toEqual({ primary: '#222', brand: '#0f0' })
   })
 
-  it('is a no-op when there is no theme to reset', async () => {
+  it('writes the files when there are none', async () => {
     const root = await tempDir()
-    await expect(resetVaultTheme(root)).resolves.toBeUndefined()
+    await resetVaultTheme(root, 'light')
+    expect((await readVaultTheme(root)).light).toEqual(holiTheme().light)
   })
 })

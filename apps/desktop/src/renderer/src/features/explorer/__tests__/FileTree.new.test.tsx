@@ -1,5 +1,5 @@
 /**
- * The toolbar's "+": a task, file, folder or app is named in a field that
+ * The toolbar's "+": a file, folder or what a claim makes (an app) is named in a field that
  * opens next to the focused row (`newItemPlace`), and each lands where its
  * field was and opens the way its kind does.
  */
@@ -17,29 +17,8 @@ const REMOTE = 'syv-ai/holi'
 const EMPTY = emptyVaultSnapshot()
 const store = getDefaultStore()
 
-const createTask = vi.fn(async (_input: unknown) => ({ path: 'Finance/task.call-the-bank.md' }))
 vi.mock('../../../lib/trpc', () => ({
-  trpc: {
-    vaults: { snapshot: { query: () => Promise.resolve(EMPTY) } },
-    // `tasks.create` is a capability at the UI door; the double sees its
-    // params with the vault they run in.
-    cap: {
-      run: {
-        mutate: ({
-          remote,
-          name,
-          paramsJson,
-        }: {
-          remote: string
-          name: string
-          paramsJson?: string
-        }) =>
-          name === 'tasks.create'
-            ? createTask({ remote, ...(JSON.parse(paramsJson ?? '{}') as object) })
-            : Promise.reject(new Error(`no such method: ${name}`)),
-      },
-    },
-  },
+  trpc: { vaults: { snapshot: { query: () => Promise.resolve(EMPTY) } } },
 }))
 
 function tree() {
@@ -90,7 +69,6 @@ async function name(text: string) {
 }
 
 beforeEach(() => {
-  createTask.mockClear()
   createFolderDocument.mockClear()
 })
 
@@ -108,25 +86,37 @@ test('with a folder focused, the field is first inside it, and the folder opens'
   expect(order()).toEqual(['Finance', 'Travel', '<folder name>', 'Travel/Rome.md', 'inbox.md'])
 })
 
-test('with a file focused, a task is named right under it and opens once made', async () => {
-  const open = tree()
+test('clicking blank tree space clears a focused folder and makes at the root', async () => {
+  tree()
+  await userEvent.click(rowFor('Travel')!)
+  expect(rowFor('Travel')).toHaveAttribute('aria-selected', 'true')
+
+  await userEvent.click(screen.getByRole('tree'))
+  expect(rowFor('Travel')).toHaveAttribute('aria-selected', 'false')
+  await make('New File')
+
+  expect(order()[0]).toBe('<note name>')
+})
+
+test("with a file focused, a claim's kind is named right under it, in its folder", async () => {
+  tree()
   await userEvent.click(rowFor('Finance')!)
   await userEvent.click(rowFor('Finance/2026.md')!)
-  await make('New Task')
+  await make('New App')
   const list = order()
   expect(list.slice(list.indexOf('Finance/2026.md'), list.indexOf('Finance/2026.md') + 3)).toEqual([
     'Finance/2026.md',
-    '<task title>',
+    '<app name>',
     'Finance/2027.md',
   ])
-  await name('Call the bank')
-  expect(createTask).toHaveBeenCalledWith({
-    remote: REMOTE,
-    title: 'Call the bank',
-    status: 'todo',
-    folder: 'Finance',
-  })
-  await waitFor(() => expect(open.pinned).toHaveBeenCalledWith('Finance/task.call-the-bank.md'))
+  await name('Budget')
+  await waitFor(() =>
+    expect(createFolderDocument).toHaveBeenCalledWith({
+      remote: REMOTE,
+      parent: 'Finance',
+      name: 'Budget',
+    }),
+  )
 })
 
 test('an app is scaffolded beside the focused file, and its index.html opens', async () => {

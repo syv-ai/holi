@@ -8,6 +8,9 @@ import { COMPLETION_CLASS, OPTION_CLASS } from './completion'
  *  notes editor goes proportional cannot drift from the base they restore. */
 const MONO = 'ui-monospace, SF Mono, monospace'
 
+/** The widest an editor's text column gets (`.cm-content`); inline images size against it. */
+export const COLUMN_MAX_WIDTH = '48rem'
+
 /** Every rule in `completionChrome` is prefixed with this, and it is three
  *  classes on purpose. See `COMPLETION_CLASS`. */
 const POPUP = `.cm-tooltip.cm-tooltip-autocomplete.${COMPLETION_CLASS}`
@@ -122,12 +125,6 @@ export const completionChrome = {
     flex: 'none',
     color: 'var(--muted-foreground)',
   },
-  // A task's status colour is information, so it survives selection: no blanket
-  // `color: inherit` for a selected row's glyph. Same `--task-*` tokens as the
-  // editor's task orbs and the file tree.
-  [`${POPUP} .cm-holi-icon-holi-task-todo`]: { color: 'var(--task-todo)' },
-  [`${POPUP} .cm-holi-icon-holi-task-doing`]: { color: 'var(--task-doing)' },
-  [`${POPUP} .cm-holi-icon-holi-task-done`]: { color: 'var(--task-done)' },
   [`${POPUP} .cm-holi-emoji`]: {
     fontSize: '13px',
     lineHeight: '1',
@@ -188,7 +185,7 @@ export const editorTheme = EditorView.baseTheme({
    * `DiffView` share. The notes stack centres its column in its pane
    * (`noteColumn` in `extensions.ts`).
    */
-  '.cm-content': { padding: '16px 0', maxWidth: '48rem', caretColor: '#e5e5e5' },
+  '.cm-content': { padding: '16px 0', maxWidth: COLUMN_MAX_WIDTH, caretColor: '#e5e5e5' },
   /**
    * The side margins live on the LINE, not on `.cm-content`.
    *
@@ -462,6 +459,16 @@ export const editorTheme = EditorView.baseTheme({
   },
   '.cm-quote-mark': { color: 'var(--muted-foreground)' },
   /**
+   * A passage a comment thread is about (`comment-threads.ts`): a quiet fill
+   * in the comment banner's own token, stronger for the thread the panel is
+   * on. Background only, no underline: the text stays the text.
+   */
+  '.cm-thread-anchor': {
+    background: 'color-mix(in srgb, var(--comment-background) 70%, transparent)',
+    borderRadius: '2px',
+  },
+  '.cm-thread-anchor-active': { background: 'var(--comment-background)' },
+  /**
    * An HTML comment on its own lines (`comments.ts`): a small note floating over
    * the page, centred in the column, so it has a surface and the popover's
    * shadow. Its own `--comment` and `--comment-background` tokens, so a vault
@@ -543,26 +550,24 @@ export const editorTheme = EditorView.baseTheme({
     cursor: 'pointer',
   },
   /**
-   * A task chip reads as a task through its status orb, not its colour: it
-   * takes `.cm-wikilink`'s link treatment, as in the file tree and the
-   * `@`-mention list. `inline-flex` so the orb and title share a baseline row.
+   * A claimed chip (a task) reads as what it is through its orb, not its
+   * colour: it takes `.cm-wikilink`'s link treatment, as in the file tree and
+   * the `@`-mention list. `inline-flex` so the orb and title share a baseline
+   * row. The orb's colour is its claim's.
    */
-  '.cm-wikilink-task': {
+  '.cm-wikilink-claimed': {
     display: 'inline-flex',
     alignItems: 'baseline',
     gap: '4px',
   },
-  '.cm-task-orb': {
+  '.cm-link-orb': {
     display: 'inline-block',
     width: '7px',
     height: '7px',
     borderRadius: '50%',
     alignSelf: 'center',
   },
-  '.cm-task-orb-todo': { background: 'var(--task-todo)' },
-  '.cm-task-orb-doing': { background: 'var(--task-doing)' },
-  '.cm-task-orb-done': { background: 'var(--task-done)' },
-  // A done task strikes its title, matching the board card (muted-foreground).
+  // A finished one (a done task) strikes its title, matching the board card.
   '.cm-wikilink-done': { textDecoration: 'line-through', color: 'var(--muted-foreground)' },
   // Last: a missing target outranks the kind tint, for a note and a task alike.
   // Colour only — see `.cm-wikilink`.

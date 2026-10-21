@@ -23,13 +23,22 @@
  */
 import { chmod, mkdir, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
+import { CapabilityError, NEXT_STEP } from '../capabilities/error'
 import type { CliCommand } from '../capabilities/registry'
 import { shellReadBridgeEnv } from './env-file'
 
 /** What argv asks for. */
 export type CliRequest =
-  /** Run `name`; a refusal is printed after `label`. */
-  | { kind: 'run'; name: string; label: string; params: Record<string, string>; json: boolean }
+  /** Run `name`; a refusal is printed after `label`, and a BAD_REQUEST one
+   *  with `usage`, the command's line. */
+  | {
+      kind: 'run'
+      name: string
+      label: string
+      usage: string
+      params: Record<string, string>
+      json: boolean
+    }
   /** Not a command: the text says why and what is (exit 2). */
   | { kind: 'usage'; text: string }
   /** The command reads a param from stdin and it was not given: ask the
@@ -68,11 +77,13 @@ export function usageText(commands: readonly CliCommand[]): string {
  * stays sound only if no option can sit in front of it.
  *
  * `stdin` is what the script sent on its second leg, or null on the first.
+ * `job` is the calling session's job id, or null outside a background one.
  */
 export function resolveArgv(
   argv: readonly string[],
   commands: readonly CliCommand[],
   stdin: string | null,
+  job: string | null = null,
 ): CliRequest {
   const usage = (why: string): CliRequest => ({
     kind: 'usage',
@@ -135,13 +146,38 @@ export function resolveArgv(
     }
   }
   if (positionals.length > 0) return wrong(`unexpected argument: ${positionals[0]}`)
+  if (cli.job !== undefined && job !== null && job !== '' && !Object.hasOwn(params, cli.job)) {
+    params[cli.job] = job
+  }
 
   const bodyless = cli.stdinUnless !== undefined && Object.hasOwn(params, cli.stdinUnless)
   if (cli.stdin !== undefined && !bodyless && !Object.hasOwn(params, cli.stdin)) {
     if (stdin === null) return { kind: 'stdin' }
     params[cli.stdin] = stdin
   }
-  return { kind: 'run', name: command.name, label, params, json }
+  return { kind: 'run', name: command.name, label, usage: commandLine(command), params, json }
+}
+
+/**
+ * A failed command, as the agent reads it on stderr. A refusal names its code
+ * and the next step, since that step is what the agent acts on:
+ *
+ *     holi google search: UNAUTHORIZED: Google needs reconnecting
+ *     next: ask the person to press Reconnect for Google in Holi's vault settings
+ *
+ * Anything else that throws is a failure inside Holi, with no step to name, so
+ * it prints its message alone.
+ */
+export function refusalText(request: { label: string; usage: string }, error: unknown): string {
+  if (!(error instanceof CapabilityError)) {
+    return `${request.label}: ${error instanceof Error ? error.message : String(error)}`
+  }
+  const lines = [
+    `${request.label}: ${error.code}: ${error.message}`,
+    `next: ${error.next ?? NEXT_STEP[error.code]}`,
+  ]
+  if (error.code === 'BAD_REQUEST') lines.push(`usage: ${request.usage}`)
+  return lines.join('\n')
 }
 
 const SCRIPT = `#!/bin/sh
@@ -177,6 +213,12 @@ for a in "\$@"; do
   shift
   set -- "\$@" --data-urlencode "argv=\$a"
 done
+
+# Inside a background Claude Code session, its job id: a command that
+# points back at the session (holi agent notify) needs no flag for it.
+if [ -n "\${CLAUDE_JOB_DIR:-}" ]; then
+  set -- "\$@" --data-urlencode "job=\${CLAUDE_JOB_DIR##*/}"
+fi
 
 send() {
   curl -sS -X POST -o "\$out" -w '%{http_code}' \\

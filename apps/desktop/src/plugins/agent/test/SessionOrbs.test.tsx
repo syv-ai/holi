@@ -48,7 +48,7 @@ test('one orb per live session', () => {
 test('the orb says the state, in the colour the chats section uses', () => {
   setup([session({ id: 'b', name: 'Research', state: 'needs-you' })])
   const orb = screen.getByRole('button', { name: 'Research, needs you' })
-  expect(orb.querySelector('span')).toHaveClass('bg-orange-500')
+  expect(orb.querySelector('span')).toHaveClass('bg-agent-needs-you')
 })
 
 test('a press opens the session', async () => {

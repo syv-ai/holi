@@ -1,15 +1,14 @@
 /**
- * The fence-language table. The interesting part is `fenceLanguageId` — the info
- * string a fence carries in the wild is not just a language name — and the fact
- * that every entry in the table actually resolves to a grammar (a typo in one of
- * the ~30 `legacy-modes` export names is a runtime `undefined`, not a type error,
- * because `StreamLanguage.define` takes anything shaped like a parser).
+ * The fence-language table: every entry actually resolves to a grammar (a typo
+ * in one of the ~30 `legacy-modes` export names is a runtime `undefined`, not a
+ * type error, because `StreamLanguage.define` takes anything shaped like a
+ * parser).
  */
 import { EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import { afterEach, describe, expect, it } from 'vitest'
 import { baseEditorExtensions } from '../extensions'
-import { fenceLanguage, fenceLanguageId } from '../fence-languages'
+import { fenceLanguage } from '../fence-languages'
 
 let view: EditorView | null = null
 
@@ -23,9 +22,8 @@ function mount(doc: string): EditorView {
       doc,
       extensions: baseEditorExtensions({
         docExists: () => true,
-        taskByPath: () => null,
         readNote: async () => null,
-        mentionData: () => ({ notes: [], tasks: [] }),
+        mentionData: () => ({ notes: [], groups: [] }),
         nav: () => ({ openNote: () => {}, openExternal: () => {} }),
         notePath: 'note.md',
         askAgent: {
@@ -66,33 +64,6 @@ afterEach(() => {
   view?.destroy()
   view = null
   document.body.innerHTML = ''
-})
-
-describe('fenceLanguageId', () => {
-  it('takes the bare name', () => {
-    expect(fenceLanguageId('python')).toBe('python')
-  })
-
-  it('lowercases', () => {
-    expect(fenceLanguageId('Python')).toBe('python')
-    expect(fenceLanguageId('JSON')).toBe('json')
-  })
-
-  it('drops everything after the first word', () => {
-    // The shapes real documents use: a title, a line-highlight range, knitr.
-    expect(fenceLanguageId('js title="app.js"')).toBe('js')
-    expect(fenceLanguageId('python {1,3}')).toBe('python')
-    expect(fenceLanguageId('{r setup}')).toBe('r')
-  })
-
-  it('drops a leading dot', () => {
-    expect(fenceLanguageId('.ts')).toBe('ts')
-  })
-
-  it('is empty for a bare fence', () => {
-    expect(fenceLanguageId('')).toBe('')
-    expect(fenceLanguageId('   ')).toBe('')
-  })
 })
 
 describe('fenceLanguage', () => {

@@ -4,15 +4,17 @@
  *
  * `main.tsx` installs the list once at boot; nothing else in core imports a
  * plugin. Which ones run follows the vault's `plugins` setting, through the
- * same resolver main uses (`enabledPlugins`), so the two cannot disagree.
+ * same resolver main uses (`resolvePlugins`), so the two cannot disagree.
  *
  * Core's own surfaces, rail items and claims are installed the same way,
  * beside the plugins' (`components/core-surfaces.tsx`): they render features,
  * which state does not import.
  */
-import { atom, type createStore } from 'jotai'
+import { atom, type Atom, type createStore } from 'jotai'
+import type { ComponentType } from 'react'
 import {
-  enabledPlugins,
+  resolvePlugins,
+  type PluginResolution,
   knownTransforms,
   vaultSettingDescriptors,
   VAULT_SETTING_DEFAULTS,
@@ -22,12 +24,14 @@ import type {
   AgentServiceSource,
   PaletteItem,
   PathClaim,
+  PathMark,
   RailItem,
   RendererPlugin,
   SettingsSection,
   Surface,
   SurfaceTabLook,
 } from '@/plugin-api/types'
+import type { SlashCommand } from '@/editor/slash'
 import type { Command } from './commands'
 import type { FolderSurface } from './panes'
 import { vaultSettingsAtom } from './settings'
@@ -44,32 +48,50 @@ export const settingDescriptorsAtom = atom((get) =>
 
 /** What core contributes the way a plugin does: its own surfaces, rail items
  *  and claims. Always on. */
-export type CoreContribution = Pick<Required<RendererPlugin>, 'surfaces' | 'rail' | 'claims'>
+export type CoreContribution = Pick<Required<RendererPlugin>, 'surfaces' | 'rail'> & {
+  claims: readonly PathClaim[]
+}
 
 export const coreContributionAtom = atom<CoreContribution>({ surfaces: [], rail: [], claims: [] })
 
-/** The ids the open vault runs. Each plugin's default until its settings
- *  are read. */
-export const enabledPluginsAtom = atom((get): ReadonlySet<string> => {
+/** Which plugins the open vault runs and why each other one does not. Each
+ *  plugin's default until its settings are read. */
+export const pluginResolutionAtom = atom((get): PluginResolution => {
   const cached = get(vaultSettingsAtom)
   const settings =
     cached !== null && cached.remote === get(activeRemoteAtom)
       ? cached.settings.plugins
       : VAULT_SETTING_DEFAULTS.plugins
-  return enabledPlugins(
+  return resolvePlugins(
     settings,
     get(installedPluginsAtom).map((p) => p.info),
   )
 })
+
+/** The ids the open vault runs. */
+export const enabledPluginsAtom = atom((get) => get(pluginResolutionAtom).running)
 
 /** Core's path claims, then every enabled plugin's, in list order. */
 export const claimsAtom = atom((get): readonly PathClaim[] => {
   const enabled = get(enabledPluginsAtom)
   return [
     ...get(coreContributionAtom).claims,
-    ...get(installedPluginsAtom).flatMap((p) => (enabled.has(p.info.id) ? (p.claims ?? []) : [])),
+    ...get(installedPluginsAtom).flatMap((p) => {
+      if (!enabled.has(p.info.id) || p.claims === undefined) return []
+      return Array.isArray(p.claims) ? p.claims : get(p.claims as Atom<readonly PathClaim[]>)
+    }),
   ]
 })
+
+/**
+ * The claims that own their files: open them in a view of their own (a
+ * plugin's frame) or in their own editor (a task). The renderer's mirror of
+ * main's scan claims, for `isCommentableNote`. A claim that only adds to a
+ * file (the PDF plugin's Convert to PDF on every note) leaves it a note.
+ */
+export const owningClaimsAtom = atom((get): readonly PathClaim[] =>
+  get(claimsAtom).filter((c) => c.view !== undefined || c.editor?.extensions !== undefined),
+)
 
 /** The claims whose files have a canonical form, for the editor's reload. */
 export const normalizersAtom = atom((get): readonly PathClaim[] =>
@@ -104,6 +126,13 @@ export const runningPluginsAtom = atom((get): readonly RendererPlugin[] => {
   return get(installedPluginsAtom).filter((p) => enabled.has(p.info.id))
 })
 
+/** Every running plugin's slash commands, in list order. */
+export const slashCommandsAtom = atom((get): readonly SlashCommand[] =>
+  get(runningPluginsAtom).flatMap((p) =>
+    p.slashCommands === undefined ? [] : get(p.slashCommands),
+  ),
+)
+
 /** Every running plugin's commands, in list order. */
 export const pluginCommandsAtom = atom((get): readonly Command[] =>
   get(runningPluginsAtom).flatMap((p) => p.commands ?? []),
@@ -128,24 +157,84 @@ export const openPaletteItemAtom = atom(
 )
 
 /** Core's contribution, then every running plugin's, in list order. */
-const contributionsAtom = atom((get): readonly Pick<RendererPlugin, 'surfaces' | 'rail'>[] => [
-  get(coreContributionAtom),
-  ...get(runningPluginsAtom),
-])
+const contributionsAtom = atom(
+  (
+    get,
+  ): readonly (Pick<RendererPlugin, 'surfaces' | 'rail' | 'overlays' | 'pathMarks'> & {
+    id: string
+  })[] => [
+    { ...get(coreContributionAtom), id: 'core' },
+    ...get(runningPluginsAtom).map((p) => ({ ...p, id: p.info.id })),
+  ],
+)
+
+/** What the running plugins lay over the panes, each with a key. */
+export const overlaysAtom = atom((get): readonly { key: string; Overlay: ComponentType }[] =>
+  get(contributionsAtom).flatMap(({ id, overlays = [] }) =>
+    overlays.map((Overlay, i) => ({ key: `${id}:${i}`, Overlay })),
+  ),
+)
+
+/** How every vault path is marked in the tree and the tabs: what the
+ *  running plugins say, the first to mark a path winning. */
+export const pathMarksAtom = atom((get): ReadonlyMap<string, PathMark> => {
+  const marks = new Map<string, PathMark>()
+  for (const { pathMarks } of get(contributionsAtom)) {
+    if (pathMarks === undefined) continue
+    for (const [path, mark] of get(pathMarks)) if (!marks.has(path)) marks.set(path, mark)
+  }
+  return marks
+})
+
+/** What a list field offers in any file's frontmatter, by key: every
+ *  enabled claim's suggestions, each value once, sorted. */
+export const frontmatterSuggestionsAtom = atom((get): ReadonlyMap<string, readonly string[]> => {
+  const byKey = new Map<string, Set<string>>()
+  for (const claim of get(claimsAtom)) {
+    const suggest = claim.frontmatter?.suggest
+    if (suggest === undefined) continue
+    for (const [key, values] of Object.entries(get(suggest))) {
+      const into = byKey.get(key) ?? new Set<string>()
+      values.forEach((v) => into.add(v))
+      byKey.set(key, into)
+    }
+  }
+  return new Map(
+    [...byKey].map(([key, values]) => [key, [...values].sort((a, b) => a.localeCompare(b))]),
+  )
+})
+
+/** What stopping each running plugin would cost now, by id: its
+ *  `leaveGuard` sentence, for one that says something. */
+export const leaveReasonByPluginAtom = atom((get): ReadonlyMap<string, string> => {
+  const reasons = new Map<string, string>()
+  for (const p of get(runningPluginsAtom)) {
+    const reason = p.leaveGuard === undefined ? null : get(p.leaveGuard)
+    if (reason !== null) reasons.set(p.info.id, reason)
+  }
+  return reasons
+})
 
 /** Why leaving the open vault costs something now: every running plugin's
  *  `leaveGuard` sentence. Empty when leaving costs nothing. */
-export const leaveReasonsAtom = atom((get): readonly string[] =>
-  get(runningPluginsAtom).flatMap((p) => {
-    const reason = p.leaveGuard === undefined ? null : get(p.leaveGuard)
-    return reason === null ? [] : [reason]
-  }),
+export const leaveReasonsAtom = atom((get): readonly string[] => [
+  ...get(leaveReasonByPluginAtom).values(),
+])
+
+/** The first running plugin that provides an agent, or null with none. */
+const agentProviderAtom = atom(
+  (get): RendererPlugin | null =>
+    get(runningPluginsAtom).find((p) => p.agent !== undefined) ?? null,
 )
 
 /** The first running plugin's agent, or null with none. */
 export const agentSourceAtom = atom(
-  (get): AgentServiceSource | null =>
-    get(runningPluginsAtom).find((p) => p.agent !== undefined)?.agent ?? null,
+  (get): AgentServiceSource | null => get(agentProviderAtom)?.agent ?? null,
+)
+
+/** Which plugin provides the agent, by id, or null with none. */
+export const agentPluginIdAtom = atom(
+  (get): string | null => get(agentProviderAtom)?.info.id ?? null,
 )
 
 /**
@@ -229,7 +318,12 @@ export const instancesAtom = atom(
 export const railAtom = atom(
   (
     get,
-  ): readonly (RailItem & { of: Surface; instances?: readonly string[]; running: boolean })[] => {
+  ): readonly (Omit<RailItem, 'badge'> & {
+    of: Surface
+    instances?: readonly string[]
+    running: boolean
+    badge: { count: number; tone?: 'alert' } | null
+  })[] => {
     const surfaces = get(surfacesAtom)
     return get(contributionsAtom)
       .flatMap((c) => c.rail ?? [])
@@ -237,9 +331,10 @@ export const railAtom = atom(
         const of = surfaces.get(item.surface)
         if (of === undefined || (item.visible !== undefined && !get(item.visible))) return []
         const running = item.live !== undefined && get(item.live)
-        if (of.instances === undefined) return [{ ...item, of, running }]
+        const badge = item.badge === undefined ? null : get(item.badge)
+        if (of.instances === undefined) return [{ ...item, of, running, badge }]
         const instances = get(of.instances)
-        return instances.length === 0 ? [] : [{ ...item, of, instances, running }]
+        return instances.length === 0 ? [] : [{ ...item, of, instances, running, badge }]
       })
       .sort((a, b) => a.order - b.order)
   },

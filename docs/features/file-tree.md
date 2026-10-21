@@ -17,23 +17,23 @@ The sidebar explorer shows the vault as the folders and files on disk. It reads 
 
 **Opening.** A click opens a preview tab, a double click pins it, and ⌘-click opens the file in a new pane (see [tabs and panes](tabs-panes.md)). A click on a folder opens or closes it.
 
-**Selection.** ⌘⇧-click adds or removes one row, ⇧-click selects the range from the last clicked row, ⇧↑/↓ extends it and ⌘A selects every visible row. The row menu, the keys and a drag act on the whole selection when the row is part of it, and on just that row otherwise. A selection shows a fill only once it holds more than one row: a single one is already shown by the open file's weight and the focus ring.
+**Selection.** ⌘⇧-click adds or removes one row, ⇧-click selects the range from the last clicked row, ⇧↑/↓ extends it and ⌘A selects every visible row. The row menu, the keys and a drag act on the whole selection when the row is part of it, and on just that row otherwise. A selection shows a fill only once it holds more than one row: a single one is already shown by the open file's weight and the focus ring. Clicking blank space in the explorer clears the selection and row focus; clicks on rows, menus and name fields keep their own behavior.
 
 **Keyboard.** The tree is one tab stop. ↑/↓, Home and End move it, and the selection with it. → opens a folder and then steps into it; ← closes it and then steps out to the parent. Enter opens a file or toggles a folder. Letters typed in quick succession jump to the next row whose name begins with them. Escape collapses the selection to the focused row. F2, ⌫ and ⌘X/C/V/D do what the menu says.
 
 **Toolbar.** The tree's top-right holds the [nav menu](nav-menu.md)'s morphing menu, anchored at
 that corner and opening downward: icons on the sidebar's own background, so rows scrolled under
 them do not show through, while the tree is hovered or the menu has focus, kept
-while it is open. **+** unfolds into New Task, New File, New Folder and what enabled claims make (`create`: New App); Collapse All, Show
-task files and Show hidden files are shortcuts, the two filters pressed while on. Every item has a
+while it is open. **+** unfolds into New File, New Folder and what enabled claims make (`create`: New Task, New App); Collapse All, Show hidden files
+and each hideable claim's filter (Show task files) are shortcuts, the filters pressed while on. Every item has a
 shortcut, so there is no More. In a sidebar too narrow for the open menu, it grows rightward over
 the editor rather than past the window's edge.
 
 - **Where a new item goes** is next to the focused row (`newItemPlace`): inside a focused folder as
   its first row, right after a focused file or app in its folder, and at the root when nothing is
   focused. The name field slides in there, making room with the disclose motion.
-- **A task** is named by its title; main names the file and it opens pinned, as ⌘⇧T's does, whether
-  or not the tree shows task files. **An app** is `holi apps init`'s scaffold (`index.html` and an
+- **A task** is named by its title; the tasks plugin names the file, and it opens whether or not
+  the tree shows task files. **An app** is `holi apps init`'s scaffold (`index.html` and an
   `app.yaml`, never overwriting), and its `index.html` opens, which expands the bundle. A typed
   `.app` is not doubled.
 
@@ -54,11 +54,11 @@ the editor rather than past the window's edge.
 
 **Reveal.** A command elsewhere (Edit Source on a vault app) can ask the tree to show a path. The tree opens down to it, selects it and scrolls it into view, even while it is hidden. A request made while a name is being typed is dropped.
 
-**Hidden files.** A per-vault toggle in the header shows or hides entries with any dot-prefixed segment (`.holi/…`, `.claude/…`) and machine-local files (any `.local.` in the name or in a folder above it, such as `USER.local.md` or a personal `Home.local.app`). Hidden by default and remembered per vault. It only filters the view; a revealed path shows even while hidden. `AGENTS.md`, `CLAUDE.md` and `MEMORY.md` are never hidden.
+**Hidden files.** A per-vault toggle in the header shows or hides entries with any dot-prefixed segment (`.holi/…`, `.claude/…`). Machine-local files are not hidden: `.local.` means the file does not sync, not that it is out of sight, so a personal `Home.local.app` shows like any app. Hidden by default and remembered per vault. It only filters the view; a revealed path shows even while hidden. `AGENTS.md`, `CLAUDE.md` and `MEMORY.md` are never hidden.
 
-**Local and ignored files.** Machine-local files reach the snapshot and appear under show-hidden, but never sync. Local markdown is listed as a file, outside the note link graph. The watcher ignores them, so they refresh on the 30 s heal, except the personal theme, the personal settings and a personal app, which reload live. Anything git ignores is dimmed, from `git check-ignore` carried on the snapshot. The dim is on the row's contents, not the row, so a selection behind it stays solid. `.git`, `node_modules`, temp write files and OS junk are never content.
+**Local and ignored files.** Machine-local files reach the snapshot and show in the tree, dimmed because git ignores them, but never sync. Local markdown is listed as a file, outside the note link graph. The watcher ignores them, so they refresh on the 30 s heal, except the personal theme, the personal settings and a personal app, which reload live. Anything git ignores is dimmed, from `git check-ignore` carried on the snapshot. The dim is on the row's contents, not the row, so a selection behind it stays solid. `.git`, `node_modules`, temp write files and OS junk (`.DS_Store`, `Thumbs.db`) are never content, and the seeded `.gitignore` keeps the junk out of a commit.
 
-**Task files.** Hidden by default behind a second per-vault toggle, because the board owns them. The tree lists them from `snapshot.claimed.tasks`, a file that would not parse included; another plugin's claimed files always show. When shown, a task leaf carries its status glyph and a done task is struck through. Today's daily note is marked `today`, with its link count, in brand text at the row's right end, centred on the name's x-height like the name itself.
+**Claimed files.** A claim may hide its files until shown (`hideable`): task files are hidden by default behind Show task files, a per-vault toggle on this machine, because the board owns them. The tree lists claimed files from `snapshot.claimed`, a file that would not parse included; a claim that does not hide its files shows them always. A plugin marks paths (`pathMarks`): a task leaf carries its status glyph and a done task is struck through. Today's daily note is marked `today`, with the tasks plugin's count of open tasks linking to it, in brand text at the row's right end, centred on the name's x-height like the name itself.
 
 **Icons.** A file's type glyph is coloured by extension; git's own files show the Git mark. Any row (note, folder, binary) can instead carry one emoji from the vault's icon map: `.holi/settings/icons.yaml`, committed, under a per-key `.holi/settings/icons.local.yaml`. Set it with Edit Icon; an empty field removes the entry. Keys are normalized vault paths, written back sorted; a key outside the vault is dropped. The value must be exactly one emoji (either variation-selector spelling, or a lone pictograph) and anything else is ignored. The note's tab shows the same icon. The Icons settings section lists every entry and marks those whose path is gone.
 

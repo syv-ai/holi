@@ -19,6 +19,11 @@
  * refuses any word before the verb, so that pattern cannot be stepped around.
  * A person pressing Send in the UI has already decided.
  *
+ * **What other people wrote reaches the agent fenced** (`untrusted.ts`): each
+ * read the CLI door opens fences it in `cliValue`, so the agent reads a mail's
+ * "ignore previous instructions" as a quote, while the UI and an app get the
+ * same values as they are.
+ *
  * No `electron` import: this loads under plain Node in the tests.
  */
 import {
@@ -33,13 +38,13 @@ import {
 } from '../../../main/plugin-api'
 import type { GoogleAccountsManager } from './accounts'
 import { GoogleApi, GoogleApiError, type GoogleErrorCode } from './api'
-import type { CalendarPrefsStore } from './calendar-prefs'
 import {
   createEvent,
   deleteEvent,
   resolveCalendars,
   updateEvent,
   type AgendaWindow,
+  type CalendarOverrides,
   type EventPatch,
 } from './calendar'
 import type { ComposeWrite, GoogleData } from './data'
@@ -56,12 +61,13 @@ import {
   type MailboxName,
   type MailCategory,
 } from './gmail'
-import type { ImagePrefsStore } from './image-prefs'
+import { CLIENT_ID_SUFFIX } from './credentials'
 import { resolveThreadMeeting } from './invite'
 import type { LoopbackFlow } from './loopback-flow'
 import type { OutgoingMail } from './mime'
 import { listContacts } from './people'
 import { GoogleReconnectRequiredError } from './session'
+import { fenceEvents, fenceThread, fenceThreads } from './untrusted'
 
 /** Longest calendar window one call may ask for. */
 const MAX_AGENDA_DAYS = 92
@@ -75,14 +81,25 @@ export interface GoogleCapabilityDeps {
   accounts: GoogleAccountsManager
   /** The vault's cached data layer; null when no account is connected to it. */
   dataFor(remote: string): Promise<GoogleData | null>
-  /** Which calendars the person switched on: the agenda view, an app and the
-   *  agent all read their agenda through it. */
-  calendarPrefs: CalendarPrefsStore
-  /** Senders whose remote images always load. */
-  imagePrefs: ImagePrefsStore
+  /** This vault's Google settings on this machine (`GOOGLE_INFO.settings`):
+   *  the agenda view, an app and the agent all read through them. */
+  settings: GoogleSettingsStore
+}
+
+/** The Google plugin's own settings in a vault, read and written by root. */
+export interface GoogleSettingsStore {
+  read(root: string): Promise<{ calendars: CalendarOverrides; imageSenders: string[] }>
+  write(
+    root: string,
+    values: Partial<{ calendars: CalendarOverrides; imageSenders: string[] }>,
+  ): Promise<void>
 }
 
 const NOT_CONNECTED = 'this vault has no Google account connected'
+/** What the agent does about either: the tokens are main's alone, so the
+ *  person is the only way back to Google. */
+const CONNECT = "ask the person to connect Google in Holi's vault settings"
+const RECONNECT = "ask the person to press Reconnect for Google in Holi's vault settings"
 
 /**
  * Google's verdict as a refusal each door can render. The code is the point:
@@ -94,7 +111,7 @@ async function google<T>(work: () => Promise<T>): Promise<T> {
     return await work()
   } catch (error) {
     if (error instanceof GoogleReconnectRequiredError) {
-      throw new CapabilityError('UNAUTHORIZED', error.message)
+      throw new CapabilityError('UNAUTHORIZED', error.message, RECONNECT)
     }
     if (!(error instanceof GoogleApiError) || error.code === 'unknown') throw error
     const codes: Record<Exclude<GoogleErrorCode, 'unknown'>, CapabilityError['code']> = {
@@ -103,7 +120,10 @@ async function google<T>(work: () => Promise<T>): Promise<T> {
       'rate-limit': 'RATE_LIMITED',
       'not-found': 'NOT_FOUND',
     }
-    throw new CapabilityError(codes[error.code], error.message)
+    // A missing scope is fixed the same way as a lapsed grant: connecting
+    // again asks Google for every scope Holi needs.
+    const next = error.code === 'reconnect' || error.code === 'scope' ? RECONNECT : undefined
+    throw new CapabilityError(codes[error.code], error.message, next)
   }
 }
 
@@ -296,7 +316,7 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
   /** The vault's data layer, or the refusal that says there is none. */
   const dataOf = async (remote: string): Promise<GoogleData> => {
     const data = await deps.dataFor(remote)
-    if (data === null) throw new CapabilityError('UNAVAILABLE', NOT_CONNECTED)
+    if (data === null) throw new CapabilityError('UNAVAILABLE', NOT_CONNECTED, CONNECT)
     return data
   }
 
@@ -308,12 +328,12 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
     new GoogleApi({
       accessToken: async () => {
         const session = await deps.accounts.sessionFor(remote)
-        if (session === null) throw new CapabilityError('UNAVAILABLE', NOT_CONNECTED)
+        if (session === null) throw new CapabilityError('UNAVAILABLE', NOT_CONNECTED, CONNECT)
         return session.getAccessToken()
       },
     })
 
-  const overrides = async () => (await deps.calendarPrefs.read()) ?? {}
+  const overrides = async (root: string) => (await deps.settings.read(root)).calendars
 
   return {
     /**
@@ -359,7 +379,7 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
         if (connectFlow === flow) connectFlow = null
         if (result.kind !== 'granted') return { kind: result.kind }
         const session = await deps.accounts.sessionFor(ctx.remote)
-        if (session === null) throw new CapabilityError('UNAVAILABLE', NOT_CONNECTED)
+        if (session === null) throw new CapabilityError('UNAVAILABLE', NOT_CONNECTED, CONNECT)
         return { kind: 'granted' as const, account: session.account }
       },
     }),
@@ -405,6 +425,44 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
       },
     }),
 
+    /** The OAuth client this machine connects with, and whose it is. The
+     *  secret never leaves main. */
+    'google.client': cap({
+      doors: ['ui'],
+      params: noParams,
+      run: async () => deps.accounts.client(),
+    }),
+
+    /**
+     * Set this machine's own OAuth client, or clear it with an empty `id` to
+     * go back to the next source. A different client disconnects every
+     * account here: their grants belong to the old one.
+     */
+    'google.setClient': cap({
+      doors: ['ui'],
+      params: (raw) => {
+        const p = paramsObject(raw)
+        return {
+          id: (optionalStringParam(p, 'id') ?? '').trim(),
+          secret: (optionalStringParam(p, 'secret') ?? '').trim(),
+        }
+      },
+      run: async (_ctx, { id, secret }) => {
+        if (id === '') {
+          await deps.accounts.setClient(null)
+          return ok
+        }
+        if (!id.endsWith(CLIENT_ID_SUFFIX)) {
+          throw new CapabilityError('BAD_REQUEST', `a client id ends in ${CLIENT_ID_SUFFIX}`)
+        }
+        if (secret === '') {
+          throw new CapabilityError('BAD_REQUEST', 'a Desktop app client needs its secret')
+        }
+        await deps.accounts.setClient({ id, secret })
+        return ok
+      },
+    }),
+
     /** Unlink this vault. The account and any other vault using it stay. */
     'google.disconnectVault': cap({
       doors: ['ui'],
@@ -430,8 +488,9 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
       params: windowParams,
       run: async (ctx, window) => {
         const data = await dataOf(ctx.remote)
-        return google(async () => data.agenda(agendaWindow(window), await overrides()))
+        return google(async () => data.agenda(agendaWindow(window), await overrides(ctx.root)))
       },
+      cliValue: fenceEvents,
     }),
 
     /** The last agenda for this exact window and calendar set, or null. Never
@@ -440,8 +499,10 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
       doors: ['ui'],
       params: windowParams,
       run: async (ctx, window) =>
-        (await deps.dataFor(ctx.remote))?.cachedAgenda(agendaWindow(window), await overrides()) ??
-        null,
+        (await deps.dataFor(ctx.remote))?.cachedAgenda(
+          agendaWindow(window),
+          await overrides(ctx.root),
+        ) ?? null,
     }),
 
     /** Every calendar the account draws from, with its colour and whether it
@@ -450,7 +511,7 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
       doors: ['ui'],
       params: noParams,
       run: async (ctx) =>
-        google(async () => resolveCalendars(apiOf(ctx.remote), await overrides())),
+        google(async () => resolveCalendars(apiOf(ctx.remote), await overrides(ctx.root))),
     }),
 
     /** Switch one calendar on or off, for the agenda view, apps and the agent. */
@@ -460,8 +521,9 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
         const p = paramsObject(raw)
         return { id: stringParam(p, 'id'), enabled: booleanParam(p, 'enabled') }
       },
-      run: async (_ctx, { id, enabled }) => {
-        await deps.calendarPrefs.set(id, enabled)
+      run: async (ctx, { id, enabled }) => {
+        const { calendars } = await deps.settings.read(ctx.root)
+        await deps.settings.write(ctx.root, { calendars: { ...calendars, [id]: enabled } })
         return ok
       },
     }),
@@ -481,6 +543,7 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
         const data = await dataOf(ctx.remote)
         return google(() => data.threads(options))
       },
+      cliValue: (page) => ({ ...page, threads: fenceThreads(page.threads) }),
       text: (page) => json(page.threads),
     }),
 
@@ -494,7 +557,7 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
       params: idParams,
       run: async (ctx, { id }) =>
         google(async () =>
-          resolveThreadMeeting(apiOf(ctx.remote), id, { overrides: await overrides() }),
+          resolveThreadMeeting(apiOf(ctx.remote), id, { overrides: await overrides(ctx.root) }),
         ),
     }),
 
@@ -521,6 +584,7 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
       params: idParams,
       run: async (ctx, { id }) =>
         google(async () => textOnly(await readThread(apiOf(ctx.remote), id))),
+      cliValue: fenceThread,
     }),
 
     /**
@@ -705,10 +769,10 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
         google(() => replyToThread(apiOf(ctx.remote), thread, body, { all })),
     }),
 
-    /** A solo event. There is no way to invite anyone: inviting would email
-     *  them. */
+    /** A solo event, the agent's and the agenda's alike. There is no way to
+     *  invite anyone: inviting would email them. */
     'google.schedule': cap({
-      doors: ['cli'],
+      doors: ['ui', 'cli'],
       cli: {
         args: [],
         flags: ['all-day'],
@@ -783,19 +847,25 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
       run: async (ctx) => google(() => fetchCategoryCounts(apiOf(ctx.remote))),
     }),
 
-    /** The senders whose remote images always load. Kept per machine and
-     *  account, never in a vault: a vault is a shared repo. */
+    /** The senders whose remote images always load: this vault's local
+     *  Google settings, never the committed file, since a vault is shared. */
     'google.imageSenders': cap({
       doors: ['ui'],
       params: noParams,
-      run: async () => deps.imagePrefs.read(),
+      run: async (ctx) => (await deps.settings.read(ctx.root)).imageSenders,
     }),
 
+    /** Lowercased on the way in: `Ada@Syv.ai` and `ada@syv.ai` are one person,
+     *  and matching by case would re-block a sender already allowed. */
     'google.allowImagesFrom': cap({
       doors: ['ui'],
       params: (raw) => ({ sender: stringParam(paramsObject(raw), 'sender') }),
-      run: async (_ctx, { sender }) => {
-        await deps.imagePrefs.allow(sender)
+      run: async (ctx, { sender }) => {
+        const address = sender.trim().toLowerCase()
+        const { imageSenders } = await deps.settings.read(ctx.root)
+        if (address !== '' && !imageSenders.includes(address)) {
+          await deps.settings.write(ctx.root, { imageSenders: [...imageSenders, address] })
+        }
         return ok
       },
     }),
@@ -803,8 +873,8 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
     'google.forgetImageSenders': cap({
       doors: ['ui'],
       params: noParams,
-      run: async () => {
-        await deps.imagePrefs.clear()
+      run: async (ctx) => {
+        await deps.settings.write(ctx.root, { imageSenders: [] })
         return ok
       },
     }),

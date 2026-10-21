@@ -175,6 +175,14 @@ describe('buildAgentEnv', () => {
     expect(env.PATH!.startsWith('/data/bin:')).toBe(true)
   })
 
+  it("appends the vault's plugin commands, so they never stand in for the machine's", () => {
+    const env = buildAgentEnv(
+      { PATH: '/usr/bin:/bin' },
+      { binDir: '/data/bin', commandsDir: '/vault/.holi/state/commands.local.d' },
+    )
+    expect(env.PATH).toBe('/data/bin:/usr/bin:/bin:/vault/.holi/state/commands.local.d')
+  })
+
   it('leaves PATH alone when there is no bin dir', () => {
     expect(buildAgentEnv({ PATH: '/usr/bin:/bin' }).PATH).toBe('/usr/bin:/bin')
     expect(buildAgentEnv({ PATH: '/usr/bin:/bin' }, { binDir: null }).PATH).toBe('/usr/bin:/bin')

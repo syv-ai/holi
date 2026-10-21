@@ -1,7 +1,13 @@
 #!/usr/bin/env node
 // Holi turn-signal hook: tells the running Holi app that a turn in one of
 // this vault's Claude Code background sessions started or ended, so it can pause
-// sync while the agent works. Usage: turn-signal.mjs start|end
+// sync while the agent works. Usage: turn-signal.mjs session|start|end
+//
+// At `session` (SessionStart) and `start` it also hands Holi where the session
+// takes messages: the inbox socket and token Claude Code exports to its hooks
+// as CLAUDE_CODE_MESSAGING_SOCKET and CLAUDE_CODE_MESSAGING_TOKEN, so Holi can
+// add a message to this session while it runs. Holi keeps them in memory only.
+// A session without them (`--bare`, an older Claude Code) sends none.
 //
 // Where Holi is: `.holi/state/bridge.local.env` at the vault's root, found by
 // walking up from the current directory to the folder holding `.holi/vault`.
@@ -10,6 +16,12 @@
 // supervisor, which may have been started long before this Holi was. Read key
 // by key and checked, never evaluated. Which session: the short job id, the
 // name of `$CLAUDE_JOB_DIR`.
+//
+// At `end` it also says whether the session is done or only paused: Claude
+// Code's Stop input lists the `background_tasks` still in flight and the
+// `session_crons` still scheduled, empty when nothing is, which is how its
+// hooks reference says to tell the two apart. Sent as `pending`, their count;
+// left out when the input carries neither list.
 //
 // It never fails the turn and never prints: anything written to stdout from a
 // UserPromptSubmit hook is injected into Claude's context. Outside Holi, in a
@@ -20,6 +32,34 @@ import { basename, dirname, join } from 'node:path'
 
 const edge = process.argv[2]
 const jobDir = process.env.CLAUDE_JOB_DIR
+const ROUTES = { session: '/session', start: '/turn/start', end: '/turn/end' }
+
+/** The hook's input JSON, or null. Bounded: a stdin that never ends must not
+ *  hold the turn. */
+async function hookInput() {
+  if (process.stdin.isTTY) return null
+  const read = (async () => {
+    let text = ''
+    for await (const chunk of process.stdin) text += chunk
+    return text
+  })()
+  const text = await Promise.race([read, new Promise((r) => setTimeout(() => r(null), 1000))])
+  try {
+    return text ? JSON.parse(text) : null
+  } catch {
+    return null
+  }
+}
+
+/** How much the Stop input says is still in flight or scheduled, or null when
+ *  it does not say. */
+function pendingOf(input) {
+  if (input === null || typeof input !== 'object') return null
+  const tasks = input.background_tasks
+  const crons = input.session_crons
+  if (!Array.isArray(tasks) && !Array.isArray(crons)) return null
+  return (Array.isArray(tasks) ? tasks.length : 0) + (Array.isArray(crons) ? crons.length : 0)
+}
 
 /** The vault this runs in: the nearest folder up holding `.holi/vault`. */
 function vaultRoot() {
@@ -30,7 +70,7 @@ function vaultRoot() {
 }
 
 async function main() {
-  if ((edge !== 'start' && edge !== 'end') || !jobDir) return
+  if (!Object.hasOwn(ROUTES, edge ?? '') || !jobDir) return
   const root = vaultRoot()
   if (root === null) return
   const env = Object.create(null)
@@ -41,8 +81,20 @@ async function main() {
   const { HOLI_BRIDGE_PORT: port, HOLI_BRIDGE_TOKEN: token } = env
   if (!/^\d+$/.test(port ?? '') || !/^[0-9a-f]+$/.test(token ?? '')) return
   const query = new URLSearchParams({ t: token, job: basename(jobDir) })
-  await fetch(`http://127.0.0.1:${port}/turn/${edge}?${query}`, {
+  if (edge === 'end') {
+    const pending = pendingOf(await hookInput())
+    if (pending !== null) query.set('pending', String(pending))
+  }
+  const { CLAUDE_CODE_MESSAGING_SOCKET: socket, CLAUDE_CODE_MESSAGING_TOKEN: inboxToken } =
+    process.env
+  const body =
+    edge !== 'end' && socket && inboxToken
+      ? JSON.stringify({ socket, token: inboxToken })
+      : undefined
+  if (edge === 'session' && body === undefined) return
+  await fetch(`http://127.0.0.1:${port}${ROUTES[edge]}?${query}`, {
     method: 'POST',
+    ...(body === undefined ? {} : { body, headers: { 'content-type': 'application/json' } }),
     signal: AbortSignal.timeout(2000),
   })
 }

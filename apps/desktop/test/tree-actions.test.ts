@@ -63,6 +63,7 @@ describe('planPaste', () => {
     expect(planPaste(DOCS, { mode: 'cut', paths: ['a.md'] }, 'notes')).toEqual({
       mode: 'move',
       moves: [{ from: 'a.md', to: 'notes/a.md' }],
+      folders: [],
     })
   })
   it('a copy into a folder that already holds the name takes the free copy name', () => {
@@ -99,11 +100,11 @@ describe('planRenameFolder', () => {
 
 describe('deleteLabel', () => {
   it('counts a multi-selection', () => {
-    expect(deleteLabel(['a.md', 'b.md'], 5, false)).toBe('5 notes')
+    expect(deleteLabel(['a.md', 'b.md'], 5, false)).toBe('5 files')
   })
   it('names a folder with its note count', () => {
-    expect(deleteLabel(['notes'], 1, true)).toBe('notes/ (1 note)')
-    expect(deleteLabel(['notes'], 2, true)).toBe('notes/ (2 notes)')
+    expect(deleteLabel(['notes'], 1, true)).toBe('notes/ (1 file)')
+    expect(deleteLabel(['notes'], 2, true)).toBe('notes/ (2 files)')
   })
   it('is just the path for a single file', () => {
     expect(deleteLabel(['a.md'], 1, false)).toBe('a.md')

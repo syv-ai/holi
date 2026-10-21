@@ -5,7 +5,12 @@ import { FormField } from '@/composites/FormField'
 import { capClient, openNoteTabAtom, trpc } from '@/plugin-api'
 import type { PdfCapabilities } from '../main/capabilities'
 import { FieldWidget } from './FieldWidget'
-import { metaFromValues, missingRequired, parseFrontmatter, prefillValues } from './pdf-fields'
+import {
+  metaFromValues,
+  missingRequired,
+  parseFrontmatter,
+  prefillValues,
+} from '../shared/pdf-fields'
 import {
   Button,
   Dialog,
@@ -50,6 +55,9 @@ export function ConvertToPdf({
   const [frontmatter, setFrontmatter] = useState<Record<string, unknown>>({})
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  /** What the made PDF did not get as written (a diagram mermaid could not
+   *  draw). Set, the PDF is made and the dialog stays open to say so. */
+  const [warnings, setWarnings] = useState<string[] | null>(null)
   const name = path.split('/').at(-1) ?? path
   const selected = templates?.find((t) => t.slug === slug) ?? null
 
@@ -125,21 +133,51 @@ export function ConvertToPdf({
         return // user cancelled the save dialog
       }
       const meta = metaFromValues(selected.fields, values)
-      const { pdfPath, vaultPath } = await pdf.render(remote, {
+      const result = await pdf.render(remote, {
         path,
         template: slug,
-        outPath,
+        out: outPath,
         meta,
       })
       // In the vault it opens in a tab, where it can be read and commented
       // on; anywhere else, Finder shows where it went.
-      if (vaultPath !== null) openTab(vaultPath)
-      else await window.holi.openPath(pdfPath)
+      if (result.vaultPath !== null) openTab(result.vaultPath)
+      else await window.holi.openPath(result.pdfPath)
+      if (result.warnings.length > 0) {
+        setWarnings(result.warnings)
+        setBusy(false)
+        return
+      }
       onClose()
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e))
       setBusy(false)
     }
+  }
+
+  if (warnings !== null) {
+    return (
+      <>
+        <Dialog.Header>
+          Converted <span className="font-mono text-foreground">{name}</span>
+        </Dialog.Header>
+        <Dialog.Body>
+          <p className="text-xs text-muted-foreground">
+            The PDF is made, but not everything came out as written:
+          </p>
+          <ul className="list-disc space-y-0.5 pl-4 text-xs text-muted-foreground">
+            {warnings.map((w) => (
+              <li key={w}>{w}</li>
+            ))}
+          </ul>
+        </Dialog.Body>
+        <Dialog.Footer>
+          <Button size="sm" data-convert-done onClick={onClose}>
+            Done
+          </Button>
+        </Dialog.Footer>
+      </>
+    )
   }
 
   return (

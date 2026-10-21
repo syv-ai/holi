@@ -13,25 +13,21 @@
  */
 import {
   type FieldSpec,
-  completeTask,
+  cleanLogins,
   editYamlMapping,
   fieldList,
-  fieldRecurrence,
   frontmatterRows,
   frontmatterSchema,
   isFieldSet,
-  isTaskFilePath,
   readYamlMapping,
 } from '@holi/shared'
 import { useAtomValue } from 'jotai'
-import { DateTimePicker, FieldRow, RecurrenceField } from '@/composites'
+import { DateTimePicker, EnumField, FieldRow } from '@/composites'
 import { AddFieldRow } from './AddFieldRow'
-import { EnumField } from './EnumField'
 import { TagsField } from './TagsField'
 import { TextField } from './TextField'
-import { duePresets, reminderPresets } from '@/lib/date-presets'
-import { nowAtom, todayAtom } from '@/state/clock'
-import { taskTagsAtom } from '@/state/tasks'
+import { memberLoginsAtom } from '@/state/members'
+import { claimsAtom, frontmatterSuggestionsAtom } from '@/state/plugins'
 
 export function FrontmatterFields({
   path,
@@ -45,11 +41,13 @@ export function FrontmatterFields({
   /** The whole YAML body to write back. */
   onWrite: (yaml: string) => void
 }): React.JSX.Element | null {
-  const now = useAtomValue(nowAtom)
-  const today = useAtomValue(todayAtom)
-  const tags = useAtomValue(taskTagsAtom)
+  const claims = useAtomValue(claimsAtom)
+  const suggestions = useAtomValue(frontmatterSuggestionsAtom)
+  const members = useAtomValue(memberLoginsAtom)
 
-  const schema = frontmatterSchema(path)
+  // A file a plugin claims (a task) is drawn as its claim says.
+  const own = claims.find((c) => c.frontmatter !== undefined && c.match(path))?.frontmatter
+  const schema = frontmatterSchema(path, own?.fields)
   const values = readYamlMapping(yaml)
   // Nothing to draw as rows; the widget shows the YAML instead (it checks first).
   if (schema === null || values === null) return null
@@ -57,11 +55,9 @@ export function FrontmatterFields({
   const write = (patch: Record<string, unknown>): void => onWrite(editYamlMapping(yaml, patch))
   const set = (key: string, next: unknown): void => write({ [key]: next })
 
-  const isTask = isTaskFilePath(path)
-  const due = typeof values.due === 'string' ? values.due : undefined
-  const reminder = typeof values.reminder === 'string' ? values.reminder : undefined
-
   const control = (field: FieldSpec): React.JSX.Element => {
+    const Own = own?.controls?.[field.key]
+    if (Own !== undefined) return <Own field={field} values={values} write={write} />
     const value = values[field.key]
     switch (field.kind.kind) {
       case 'enum':
@@ -71,19 +67,7 @@ export function FrontmatterFields({
             value={value}
             options={field.kind.options}
             clearable={!field.required}
-            onChange={(next) =>
-              // Done is completion: on a recurring task, the next occurrence
-              // rather than the end of the series (docs/features/tasks.md).
-              // Written into this buffer, like every other field edit.
-              field.key === 'status' && next === 'done' && isTask
-                ? write({
-                    ...completeTask(
-                      { due, reminder, recurrence: fieldRecurrence(values.recurrence) },
-                      today,
-                    ),
-                  })
-                : set(field.key, next)
-            }
+            onChange={(next) => set(field.key, next)}
           />
         )
       case 'stamp':
@@ -96,15 +80,6 @@ export function FrontmatterFields({
             emptyText=""
             dateOnly={field.kind.kind === 'date'}
             data-testid={`fm-${field.key}`}
-            presets={
-              !isTask
-                ? undefined
-                : field.key === 'due'
-                  ? duePresets(now)
-                  : field.key === 'reminder'
-                    ? reminderPresets(due, now)
-                    : undefined
-            }
             onChange={(next) => set(field.key, next ?? undefined)}
           />
         )
@@ -113,18 +88,23 @@ export function FrontmatterFields({
           <TagsField
             name={field.key}
             value={fieldList(value)}
-            suggestions={tags}
+            suggestions={suggestions.get(field.key) ?? []}
             onChange={(next) => set(field.key, next.length > 0 ? next : undefined)}
           />
         )
-      case 'recurrence':
+      case 'people':
+        // GitHub logins, offered from the vault's members and whoever a claim
+        // already names, cleaned as the file reader cleans them: `@ada` is
+        // ada, and Ada and ada are one.
         return (
-          <RecurrenceField
-            variant="field"
-            value={fieldRecurrence(value)}
-            warnNoDue={isTask && due === undefined}
-            data-testid="fm-recurrence"
-            onChange={(next) => set(field.key, next)}
+          <TagsField
+            name={field.key}
+            value={fieldList(value)}
+            suggestions={cleanLogins([...members, ...(suggestions.get(field.key) ?? [])])}
+            onChange={(next) => {
+              const logins = cleanLogins(next)
+              set(field.key, logins.length > 0 ? logins : undefined)
+            }}
           />
         )
       case 'text':

@@ -76,6 +76,16 @@ test('skips a record from before a vault could run two sessions', async () => {
   expect(s.get(latestTurnsAtom)).toEqual({})
 })
 
+test('looks past a turn that changed nothing to the last one that did', async () => {
+  const s = store()
+  list.mockResolvedValue([
+    { base: 'z', end: 'z', at: '2026-09-09T11:00:00Z', sessionId: 'sess-a' },
+    TURN,
+  ])
+  await s.set(loadLatestTurnsAtom)
+  expect(s.get(latestTurnsAtom)).toEqual({ 'sess-a': TURN })
+})
+
 test('leaves the map empty for a vault that has never run a turn', async () => {
   const s = store()
   list.mockResolvedValue([])
@@ -148,15 +158,20 @@ test('reverting writes the resolved text and re-asks what is left', async () => 
   s.set(reviewTurnAtom, TURN)
   await s.set(loadTurnFilesAtom)
   files.mockClear()
-  await s.set(revertFileAtom, { path: 'a.md', text: 'mine\n' })
-  expect(revert).toHaveBeenCalledWith({ remote: REMOTE, path: 'a.md', text: 'mine\n' })
+  await s.set(revertFileAtom, { path: 'a.md', text: 'mine\n', base: 'agent\n' })
+  expect(revert).toHaveBeenCalledWith({
+    remote: REMOTE,
+    path: 'a.md',
+    text: 'mine\n',
+    base: 'agent\n',
+  })
   // The revert just made a commit of its own, so the range's file list is stale.
   expect(files).toHaveBeenCalled()
 })
 
 test('reverting does nothing without a vault', async () => {
   const s = createStore()
-  await s.set(revertFileAtom, { path: 'a.md', text: 'mine\n' })
+  await s.set(revertFileAtom, { path: 'a.md', text: 'mine\n', base: 'agent\n' })
   expect(revert).not.toHaveBeenCalled()
 })
 

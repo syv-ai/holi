@@ -6,8 +6,15 @@
  * The seeded `UserPromptSubmit`/`Stop` hooks (`turn-signal.mjs`) POST
  * `/turn/start` and `/turn/end` with the vault's token and the session's job
  * id; the seeded status line POSTs Claude Code's status JSON to `/statusline`
- * the same way. **Every answer is empty**: whatever a Claude Code hook prints
- * is injected into the agent's context.
+ * the same way. **Their answers are empty**: whatever a turn hook prints is
+ * injected into the agent's context. The exception is `/ask`, a quick agent's
+ * question hook, whose printed JSON is its decision (`quick.ts`). Its other
+ * hook posts each turn's last message to `/quick-result`, for its panel.
+ *
+ * At a session's start (`SessionStart`, `/session`) and at each turn's start,
+ * the hook's body carries the session's inbox socket and token, which Claude
+ * Code exports to its hooks: how Holi adds a message to a running session
+ * (`messaging.ts`). Kept in memory by the host, never written down.
  *
  * The job id rides beside the vault's standing token, because a background
  * session's environment comes from Claude Code's supervisor rather than from
@@ -16,22 +23,53 @@
  * NOTE: no runtime `electron` import: this loads under vitest.
  */
 import type { RouteServer } from '../provider'
+import { JOB_ID } from './listing'
+import type { SessionChannel } from './messaging'
 
 export interface AgentRoutesDeps {
   /** A turn began or ended in one of this vault's background sessions, named
-   *  by its short job id. */
-  onJobTurn(remote: string, jobId: string, active: boolean): void
+   *  by its short job id. At an end, `pending` is how many background tasks
+   *  and session crons Claude Code's Stop input listed, 0 meaning the session
+   *  is done rather than paused; null from a script that does not say. */
+  onJobTurn(remote: string, jobId: string, active: boolean, pending: number | null): void
   /** A session's status line fired, with Claude Code's status JSON. Holi's
    *  side of a shipped hook must stay backward-compatible, so this route
    *  answers every older script too. */
   onStatus?(remote: string, jobId: string, status: unknown): void
+  /**
+   * A quick agent's question hook posted its tool call (`quick.ts`). Resolves
+   * to what the hook prints once the person answers, or null to print nothing,
+   * which leaves the question to Claude Code's own box. `signal` aborts when
+   * the hook goes away first.
+   */
+  onAsk?(remote: string, jobId: string, hookInput: unknown, signal: AbortSignal): Promise<unknown>
+  /** A quick agent's turn ended with this message, its answer, in markdown
+   *  (`quick.ts`'s result hook). */
+  onQuickResult?(remote: string, jobId: string, message: string): void
+  /** A session said where it takes messages: its inbox socket and token. */
+  onChannel?(remote: string, jobId: string, channel: SessionChannel): void
   log?: (msg: string) => void
 }
 
-/** A Claude Code job id: eight hex characters, the name of its `jobs/` dir. */
-const JOB_ID = /^[0-9a-f]{8}$/
-
 const EMPTY = { status: 204 } as const
+
+/** The inbox a hook's body names, or null when it names none or one that is
+ *  not plausibly a socket path and a token. */
+export function channelOf(body: string): SessionChannel | null {
+  if (body.trim() === '') return null
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(body)
+  } catch {
+    return null
+  }
+  if (parsed === null || typeof parsed !== 'object') return null
+  const { socket, token } = parsed as Record<string, unknown>
+  if (typeof socket !== 'string' || typeof token !== 'string') return null
+  if (!socket.startsWith('/') || socket.length > 1024 || /[\0\n]/.test(socket)) return null
+  if (!/^[\w.-]{1,512}$/.test(token)) return null
+  return { socket, token }
+}
 
 /** Registers the routes; returns the undo. */
 export function registerAgentRoutes(server: RouteServer, deps: AgentRoutesDeps): () => void {
@@ -40,12 +78,22 @@ export function registerAgentRoutes(server: RouteServer, deps: AgentRoutesDeps):
   // A signal that names no job cannot say which session's turn it is, and with
   // several running there is no honest guess, so it is dropped (still answered
   // empty).
+  const channel = (remote: string, job: string, body: string): void => {
+    const found = channelOf(body)
+    if (found !== null) deps.onChannel?.(remote, job, found)
+  }
+
   const turn = (active: boolean) =>
     server.route(active ? '/turn/start' : '/turn/end', {
-      body: 'discard',
-      handle(remote, query) {
+      body: active ? 'text' : 'discard',
+      handle(remote, query, body) {
         const job = query.get('job') ?? ''
-        if (JOB_ID.test(job)) deps.onJobTurn(remote, job, active)
+        const raw = query.get('pending')
+        const pending = raw !== null && /^\d+$/.test(raw) ? Number(raw) : null
+        if (!JOB_ID.test(job)) return EMPTY
+        // Before the turn: a message sent the moment it starts finds the inbox.
+        if (active) channel(remote, job, body)
+        deps.onJobTurn(remote, job, active, active ? null : pending)
         return EMPTY
       },
     })
@@ -53,6 +101,14 @@ export function registerAgentRoutes(server: RouteServer, deps: AgentRoutesDeps):
   const undo = [
     turn(true),
     turn(false),
+    server.route('/session', {
+      body: 'text',
+      handle(remote, query, body) {
+        const job = query.get('job') ?? ''
+        if (JOB_ID.test(job)) channel(remote, job, body)
+        return EMPTY
+      },
+    }),
     server.route('/statusline', {
       body: 'text',
       handle(remote, query, body) {
@@ -66,6 +122,47 @@ export function registerAgentRoutes(server: RouteServer, deps: AgentRoutesDeps):
           }
         }
         return EMPTY
+      },
+    }),
+    // A quick agent's answer: the `Stop` hook's `last_assistant_message`.
+    server.route('/quick-result', {
+      body: 'text',
+      handle(remote, query, body) {
+        const job = query.get('job') ?? ''
+        if (!JOB_ID.test(job)) return EMPTY
+        try {
+          const input: unknown = JSON.parse(body)
+          const message =
+            typeof input === 'object' && input !== null
+              ? (input as Record<string, unknown>)['last_assistant_message']
+              : undefined
+          if (typeof message === 'string') deps.onQuickResult?.(remote, job, message)
+        } catch (error) {
+          log(`quick result failed: ${String(error)}`)
+        }
+        return EMPTY
+      },
+    }),
+    // The one route that answers with a body: a `PreToolUse` hook's JSON
+    // stdout is its decision, not context. Anything Holi is not taking is
+    // answered empty, and the hook prints nothing.
+    server.route('/ask', {
+      body: 'text',
+      async handle(remote, query, body, signal) {
+        const job = query.get('job') ?? ''
+        if (!JOB_ID.test(job) || deps.onAsk === undefined) return EMPTY
+        let input: unknown
+        try {
+          input = JSON.parse(body)
+        } catch {
+          return EMPTY
+        }
+        const output = await deps.onAsk(remote, job, input, signal).catch((error: unknown) => {
+          log(`ask failed: ${String(error)}`)
+          return null
+        })
+        if (output === null || output === undefined) return EMPTY
+        return { status: 200, body: JSON.stringify(output), contentType: 'application/json' }
       },
     }),
   ]

@@ -11,7 +11,7 @@
 import { syntaxTree } from '@codemirror/language'
 import { StateField, type EditorState } from '@codemirror/state'
 import { Decoration, EditorView, type DecorationSet } from '@codemirror/view'
-import { fenceLanguageId } from './fence-languages'
+import { fenceLanguageId } from '@holi/shared'
 import { touches } from './livePreview'
 import { MermaidWidget } from './mermaidWidget'
 

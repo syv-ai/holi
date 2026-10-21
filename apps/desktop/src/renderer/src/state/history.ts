@@ -11,6 +11,7 @@ import { flushAllBuffers } from '../lib/buffer-registry'
 import { trpc } from '../lib/trpc'
 import { fileHistoryAtom } from './file-history'
 import { openSurface, workspaceAtom } from './panes'
+import { drawerOpenAtom } from './right-drawer'
 import { activeRemoteAtom } from './vaults'
 
 /** One commit that touched the open file: the git `Commit` shape. */
@@ -52,7 +53,8 @@ export interface FileDiff {
   after: string
 }
 
-export const historyOpenAtom = atom(false)
+/** History's drawer, one of the right edge's (`right-drawer.ts`). */
+export const historyOpenAtom = drawerOpenAtom('history')
 
 export const versionsAtom = atom<Version[]>([])
 /**

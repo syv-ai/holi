@@ -43,17 +43,7 @@ import { standardSQL } from '@codemirror/legacy-modes/mode/sql'
 import { stex } from '@codemirror/legacy-modes/mode/stex'
 import { swift } from '@codemirror/legacy-modes/mode/swift'
 import { toml } from '@codemirror/legacy-modes/mode/toml'
-
-/**
- * The fence's language token: the first word of the info string, lowercased.
- * Handles ` ```js title="a.js" `, ` ```python {1,3} `, ` ```{r setup} ` and
- * ` ```.ts `.
- */
-export function fenceLanguageId(info: string): string {
-  return (info.trim().split(/[\s,{}]+/).find((w) => w !== '') ?? '')
-    .replace(/^\./, '')
-    .toLowerCase()
-}
+import { fenceLanguageId } from '@holi/shared'
 
 /** A legacy stream mode, wrapped once and reused: a fence lookup runs on every
  *  parse. */

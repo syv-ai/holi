@@ -9,7 +9,12 @@
  * honest rule is "the document we loaded, and nothing else".
  */
 import { expect, test } from 'vitest'
-import { appFrameExit, externalUrl, isAllowedNavigation } from '../src/main/window-guard'
+import {
+  appFrameExit,
+  externalUrl,
+  isAllowedNavigation,
+  originFrameExit,
+} from '../src/main/window-guard'
 
 const DEV = 'http://localhost:5173'
 const PROD = 'file:///Applications/Holi.app/Contents/Resources/app/out/renderer/index.html'
@@ -94,4 +99,23 @@ test('only web and mail links are handed to the system', () => {
   expect(externalUrl('http://a.b/')).toBe('http://a.b/')
   expect(externalUrl('file:///x')).toBeNull()
   expect(externalUrl('not a url')).toBeNull()
+})
+
+test("a plugin's frame moves within its server, and a link out of it opens in the browser", () => {
+  const origins = new Set(['http://127.0.0.1:3040'])
+  const deck = 'http://127.0.0.1:3040/1'
+  expect(originFrameExit(deck, 'http://127.0.0.1:3040/presenter/2', origins)).toBeNull()
+  expect(originFrameExit(deck, 'https://example.com/a', origins)).toEqual({
+    open: 'https://example.com/a',
+  })
+  expect(originFrameExit(deck, 'http://127.0.0.1:3041/', origins)).toEqual({
+    open: 'http://127.0.0.1:3041/',
+  })
+  expect(originFrameExit(deck, 'file:///etc/passwd', origins)).toEqual({ open: null })
+})
+
+test('a frame on no registered origin is left alone, as before', () => {
+  const origins = new Set(['http://127.0.0.1:3040'])
+  expect(originFrameExit('http://127.0.0.1:3050/', 'https://example.com', origins)).toBeNull()
+  expect(originFrameExit('about:blank', 'http://127.0.0.1:3040/', origins)).toBeNull()
 })

@@ -16,13 +16,7 @@ import {
   type DecorationSet,
   type ViewUpdate,
 } from '@codemirror/view'
-import {
-  fileKind,
-  parseWikiLinks,
-  resolveImageRef,
-  wikiLinkChipText,
-  type TaskStatus,
-} from '@holi/shared'
+import { fileKind, parseWikiLinks, resolveImageRef, wikiLinkChipText } from '@holi/shared'
 import { bareLinks } from './bare-links'
 import { frontmatterRegion } from './frontmatter-region'
 import { isListNode } from './lists'
@@ -42,19 +36,25 @@ export const notePathFacet = Facet.define<string, string>({
   combine: (values) => values[0] ?? '',
 })
 
-/** A task chip's rendered fields, resolved by path from the board's task store. */
-export interface TaskChip {
+/** How a link to a claimed file is drawn: its chip, and the card hovering it
+ *  shows (`PathClaim.editor`). */
+export interface LinkChip {
+  /** Shown in place of the path, unless the link names its own label. */
   title: string
-  status: TaskStatus
-  /** YYYY-MM-DD; shown in the hover preview, not on the inline chip. */
-  due?: string
+  /** The colour of a dot before the title, as a CSS value
+   *  (`var(--task-doing)`). */
+  orb?: string
+  /** Struck through and muted: a thing that is finished. */
+  struck?: boolean
+  /** The hover card's line under the title. */
+  meta?: string
 }
 
-/** Path → task lookup for chips, the sibling of `docExistsFacet`. The unwired default
- * says "no path is a task", so a bare editor renders every link as a note chip. */
-export const taskByPathFacet = Facet.define<
-  (path: string) => TaskChip | null,
-  (path: string) => TaskChip | null
+/** Path → chip lookup for links to claimed files, the sibling of
+ *  `docExistsFacet`. The unwired default draws every link as a note chip. */
+export const linkChipFacet = Facet.define<
+  (path: string) => LinkChip | null,
+  (path: string) => LinkChip | null
 >({
   combine: (values) => values[0] ?? (() => null),
 })
@@ -653,7 +653,7 @@ export function buildDecorations(state: EditorState, from: number, to: number): 
           ranges.push({
             from: node.from,
             to: node.to,
-            deco: Decoration.replace({ widget: new ImageWidget(src, alt) }),
+            deco: Decoration.replace({ widget: new ImageWidget(src, alt, inlineOnly) }),
           })
           break
         }
@@ -672,7 +672,7 @@ export function buildDecorations(state: EditorState, from: number, to: number): 
 
   // wiki-links via the shared grammar (not part of the markdown tree)
   const docExists = state.facet(docExistsFacet)
-  const taskByPath = state.facet(taskByPathFacet)
+  const chipFor = state.facet(linkChipFacet)
   for (const link of wikiLinks) {
     const start = from + link.start
     const end = from + link.end
@@ -683,17 +683,21 @@ export function buildDecorations(state: EditorState, from: number, to: number): 
         from: start,
         to: end,
         deco: Decoration.replace({
-          widget: new ImageWidget(vaultAssetUrl(link.target), link.label ?? link.target),
+          widget: new ImageWidget(
+            vaultAssetUrl(link.target),
+            link.label ?? link.target,
+            inlineOnly,
+          ),
         }),
       })
       continue
     }
-    // A path that resolves to a task renders a task chip (orb + title); everything else
-    // is a note chip, existing or missing. An explicit `|Label` wins over the live title,
-    // and a note chip drops its `.md` (`wikiLinkChipText`).
-    const task = taskByPath(link.target)
-    const chip = task
-      ? new WikiLinkChip(link.target, link.label ?? task.title, true, { status: task.status })
+    // A path a claim draws (a task) renders its chip; everything else is a
+    // note chip, existing or missing. An explicit `|Label` wins over the live
+    // title, and a note chip drops its `.md` (`wikiLinkChipText`).
+    const claimed = chipFor(link.target)
+    const chip = claimed
+      ? new WikiLinkChip(link.target, link.label ?? claimed.title, true, claimed)
       : new WikiLinkChip(link.target, wikiLinkChipText(link), docExists(link.target))
     ranges.push({ from: start, to: end, deco: Decoration.replace({ widget: chip }) })
   }

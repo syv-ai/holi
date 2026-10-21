@@ -5,7 +5,7 @@
  *
  * **Presentational.** `filled` is what it shows, not the task's status: the
  * board drives it from its completion sequence, which runs ahead of the write
- * and behind it (`features/tasks/use-check-sequence.ts`). `onDrawn` fires when
+ * and behind it (the tasks plugin's `use-check-sequence.ts`). `onDrawn` fires when
  * the tick has finished drawing, or undrawing, so the next beat can start.
  *
  * Genuine checkboxes (settings, filters, PDF fields) stay `Checkbox`.

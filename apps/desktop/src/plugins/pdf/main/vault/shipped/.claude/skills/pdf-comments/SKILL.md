@@ -15,6 +15,11 @@ in page order: the page, the kind of mark (highlight, note, strikeout, …), the
 text the mark covers, the author and date, the comment, and any replies. A mark
 with no comment is listed as `(no comment)`; it can still be feedback.
 
+A PDF with very many comments is too long to print: the command writes the
+answer to a file under `.holi/state/out/` and prints where. With `--json` it
+prints `{"spilled": "<path>", "bytes": <n>, "shape": "..."}` instead of the
+comments; read the part you need from that file with `jq`.
+
 It reads the saved file, whichever tool wrote the comments. A mark made in Holi's
 viewer in the last second or so may not be saved yet; run it again.
 

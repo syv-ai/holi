@@ -14,7 +14,7 @@ import { join } from 'node:path'
 import { merge3, vaultRelPath } from '@holi/shared'
 import { writeAtomic } from '../vault-files'
 import { runMerges, shippedFiles } from './seed'
-import { readSeedState, recordSeeded, untouched } from './state'
+import { readSeedState, recordRelease, recordSeeded, untouched } from './state'
 import type { SeedContribution } from './types'
 
 /** What `holi skills update` did, one list per outcome, by vault path. */
@@ -76,10 +76,19 @@ async function removeStaged(root: string, rel: string): Promise<void> {
  * conflict: merging the vault's unresolved text against that new base would
  * quietly keep it and drop Holi's changes. Merged files are merged again at
  * the end: a hook script this added is wired in the same run.
+ *
+ * `release` is the running Holi's version, recorded (`SeedState.release`)
+ * when the run brought something in and left no conflict: only then are the
+ * vault's shipped files this release's.
+ *
+ * `only` limits the run to those paths, as the update on open does with what
+ * `pendingShipped` found: a file that differs with no base on this machine is
+ * a conflict when someone asks, but nothing to stage unasked.
  */
 export async function updateShipped(
   root: string,
   contributions: readonly SeedContribution[],
+  opts: { release?: string; only?: readonly string[] } = {},
 ): Promise<UpdateReport> {
   const report: UpdateReport = {
     updated: [],
@@ -90,8 +99,10 @@ export async function updateShipped(
     deleted: [],
   }
   const state = await readSeedState(root)
+  const only = opts.only === undefined ? null : new Set(opts.only)
 
   for (const [rel, shipped] of shippedFiles(contributions)) {
+    if (only !== null && !only.has(rel)) continue
     const onDisk = await readFile(join(root, rel), 'utf8').catch(() => null)
     const record = state.files[rel]
     let write: string | null = null
@@ -148,7 +159,51 @@ export async function updateShipped(
   }
 
   await runMerges(root, contributions)
+  if (opts.release !== undefined && changedBy(report).length > 0 && report.conflicts.length === 0) {
+    await recordRelease(root, opts.release)
+  }
   return report
+}
+
+/** What an update wrote into the vault's own files: replaced, added or
+ *  merged, by vault path. */
+export const changedBy = (report: UpdateReport): string[] => [
+  ...report.updated,
+  ...report.added,
+  ...report.merged,
+]
+
+/**
+ * What this release would bring the vault, without writing anything: the
+ * shipped files Holi has a newer version of than the one it last brought here,
+ * and those new to this vault. Asked on every open, so Holi can say an update
+ * exists rather than wait to be asked (docs/features/updates.md).
+ *
+ * Deliberately quieter than `updateShipped`: a file that differs with no base
+ * on this machine (a teammate's clone that never seeded it) is not counted,
+ * because nothing says Holi changed it rather than the vault; nor is one the
+ * vault deleted, or one already handed to an agent.
+ */
+export async function pendingShipped(
+  root: string,
+  contributions: readonly SeedContribution[],
+): Promise<string[]> {
+  const state = await readSeedState(root)
+  const pending: string[] = []
+  for (const [rel, shipped] of shippedFiles(contributions)) {
+    const onDisk = await readFile(join(root, rel), 'utf8').catch(() => null)
+    if (onDisk === shipped) continue
+    const record = state.files[rel]
+    if (onDisk === null) {
+      if (record === undefined) pending.push(rel)
+      continue
+    }
+    if (record === undefined || record.text === shipped) continue
+    const handedOff =
+      (await readFile(join(root, stagedPath(rel, 'shipped'))).catch(() => null)) !== null
+    if (!handedOff) pending.push(rel)
+  }
+  return pending
 }
 
 /** The report in one line, for the notification and the CLI. */

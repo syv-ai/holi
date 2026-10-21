@@ -4,7 +4,8 @@ import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
-import { parseTaskFile, SETTINGS_FILE, taskClaim, VAULT_SETTING_DEFAULTS } from '@holi/shared'
+import { parseTaskFile, taskClaim } from '../src/plugins/tasks/shared/task-file'
+import { SETTINGS_FILE, VAULT_SETTING_DEFAULTS } from '@holi/shared'
 import { afterAll, describe, expect, it, vi } from 'vitest'
 import { createVaultHost, type VaultHost } from '../src/main/vault/active-vault'
 import { seedVault } from './helpers/seed'
@@ -13,8 +14,10 @@ import { createCapabilityHost } from '../src/main/capabilities/dispatch'
 import { cap, createCapabilityRegistry } from '../src/main/capabilities/registry'
 import { noCoreServices } from '../src/main/capabilities/services'
 import { vaultCapabilities, VAULT_NAMESPACES } from '../src/main/capabilities/vault-caps'
-import { taskCapabilities, TASK_NAMESPACES } from '../src/main/vault/task-capabilities'
+import { taskCapabilities, TASKS_NAMESPACES } from '../src/plugins/tasks/main/capabilities'
 import { createRouter } from '../src/main/router'
+import { withFileLock } from '../src/main/vault/vault-files'
+import { exactPath } from '@holi/shared/path-safety-node'
 
 const exec = promisify(execFile)
 import { GitHubSession } from '../src/main/github/session'
@@ -99,9 +102,14 @@ async function rig(files: Record<string, string> = {}, auth?: StoredAuth) {
   const capabilities = createCapabilityRegistry()
   capabilities.register(
     VAULT_NAMESPACES,
-    vaultCapabilities({ updateSkills: async () => ({ summary: '', conflicts: null }) }),
+    vaultCapabilities({
+      updateSkills: async () => ({ summary: '', conflicts: null }),
+      pendingSkills: async () => [],
+      open: () => {},
+      screenshot: async () => new Uint8Array(),
+    }),
   )
-  capabilities.register(TASK_NAMESPACES, taskCapabilities({ today: () => TODAY }))
+  capabilities.register(TASKS_NAMESPACES, taskCapabilities({ today: () => TODAY }))
   const capabilityHost = createCapabilityHost({
     registry: capabilities,
     rootFor: async (remote) =>
@@ -113,7 +121,12 @@ async function rig(files: Record<string, string> = {}, auth?: StoredAuth) {
   })
   const caller = createRouter({
     seed: seedVault,
-    plugins: { enter: async () => {}, opened: async () => {}, scanClaimsFor: TASKS },
+    plugins: {
+      reconcile: async () => {},
+      syncBackground: async () => {},
+      failures: () => ({}),
+      scanClaimsFor: TASKS,
+    },
     capabilities: capabilityHost,
     registry,
     session,
@@ -138,11 +151,11 @@ describe('settings', () => {
     const settings = await caller.settings.read({ remote: REMOTE })
     expect(settings.home).toBe(VAULT_SETTING_DEFAULTS.home)
     expect(settings.dailyNotes).toBe(true)
-    // The seed writes a hooks block; `archive-done` is opt-in.
+    // The seed writes a hooks block.
     expect(settings.hooks).toEqual({
       relink: true,
-      'archive-done': false,
       'normalize-md': true,
+      'shrink-images': true,
       'memory-index': true,
     })
     expect(settings.warnings).toEqual([])
@@ -178,8 +191,8 @@ describe('settings', () => {
     // The hook transforms are seeded; a write about daily notes must not drop them.
     expect((await caller.settings.read({ remote: REMOTE })).hooks).toEqual({
       relink: true,
-      'archive-done': false,
       'normalize-md': true,
+      'shrink-images': true,
       'memory-index': true,
     })
   })
@@ -367,6 +380,23 @@ describe('notes', () => {
     expect(await readFile(join(root, 'a.md'), 'utf8')).toBe('# B\n')
   })
 
+  it("waits for an app's write to the same note before saving", async () => {
+    // An app's `docs.write` checks the text it read and writes under the
+    // file's lock; a save landing between the two would be written over.
+    const { caller, root } = await rig({ 'a.md': '# A\n' })
+    let release!: () => void
+    const held = withFileLock((await exactPath(root, 'a.md'))!, async () => {
+      await new Promise<void>((r) => (release = r))
+      await writeFile(join(root, 'a.md'), '# app\n', 'utf8')
+    })
+    const save = caller.notes.write({ remote: REMOTE, path: 'a.md', text: '# B\n' })
+    await new Promise((r) => setTimeout(r, 50))
+    expect(await readFile(join(root, 'a.md'), 'utf8')).toBe('# A\n')
+    release()
+    await Promise.all([held, save])
+    expect(await readFile(join(root, 'a.md'), 'utf8')).toBe('# B\n')
+  })
+
   it('creates, including the folders on the way', async () => {
     const { caller, root } = await rig()
     await caller.notes.create({ remote: REMOTE, path: 'projects/q2/new.md', text: 'hi' })
@@ -478,6 +508,26 @@ describe('notes', () => {
     })
     expect(await readFile(join(root, 'work/a.md'), 'utf8')).toBe('A')
     expect(await readFile(join(root, 'index.md'), 'utf8')).toBe('[[work/a.md]] and [[work/b.md]]')
+  })
+
+  it('move carries a moved folder whole and leaves nothing behind', async () => {
+    // The document moves never list a `.gitkeep`, an empty subfolder or an
+    // ignored `node_modules`; they held the source folder on the tree.
+    const { caller, root } = await rig({
+      'talk.deck/slides.md': 'S',
+      'talk.deck/public/.gitkeep': '',
+      'talk.deck/node_modules/.slidev/cache': 'x',
+    })
+    await mkdir(join(root, 'talk.deck/empty'), { recursive: true })
+    await caller.notes.move({
+      remote: REMOTE,
+      moves: [{ from: 'talk.deck/slides.md', to: 'kunder/talk.deck/slides.md' }],
+      folders: [{ from: 'talk.deck', to: 'kunder/talk.deck' }],
+    })
+    await expect(stat(join(root, 'talk.deck'))).rejects.toThrow()
+    expect(await readFile(join(root, 'kunder/talk.deck/slides.md'), 'utf8')).toBe('S')
+    await stat(join(root, 'kunder/talk.deck/public/.gitkeep'))
+    await stat(join(root, 'kunder/talk.deck/node_modules/.slidev/cache'))
   })
 
   it('move refuses to clobber a destination outside the moved set', async () => {
@@ -604,6 +654,16 @@ async function createTask(
   })) as { path: string }
 }
 
+/** One of the board's own `tasks.*` capabilities, at the UI door. */
+async function tasksCall(
+  caller: Awaited<ReturnType<typeof rig>>['caller'],
+  verb: 'update' | 'move' | 'delete',
+  { remote, ...params }: { remote: string } & Record<string, unknown>,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+): Promise<any> {
+  return caller.cap.run({ remote, name: `tasks.${verb}`, paramsJson: JSON.stringify(params) })
+}
+
 describe('tasks', () => {
   it('creates `task.<slug>.md` in the lane it was added to, with that column’s status', async () => {
     const { caller, root } = await rig()
@@ -656,7 +716,7 @@ describe('tasks.update', () => {
 
   it('rewrites the fields it names and leaves the rest alone', async () => {
     const { caller } = await rig({ 'task.review.md': FILE })
-    const task = await caller.tasks.update({
+    const task = await tasksCall(caller, 'update', {
       remote: REMOTE,
       path: 'task.review.md',
       patch: { status: 'doing' },
@@ -669,7 +729,7 @@ describe('tasks.update', () => {
 
   it('clears a field with null', async () => {
     const { caller } = await rig({ 'task.review.md': FILE })
-    const task = await caller.tasks.update({
+    const task = await tasksCall(caller, 'update', {
       remote: REMOTE,
       path: 'task.review.md',
       patch: { due: null },
@@ -683,7 +743,7 @@ describe('tasks.update', () => {
     const { caller, root } = await rig({
       'task.legacy.md': '---\ntitle: Legacy\nstatus: todo\nid: abc\n---\n',
     })
-    await caller.tasks.update({
+    await tasksCall(caller, 'update', {
       remote: REMOTE,
       path: 'task.legacy.md',
       patch: { status: 'done' },
@@ -694,14 +754,22 @@ describe('tasks.update', () => {
   it('refuses a value outside the vocabulary', async () => {
     const { caller } = await rig({ 'task.review.md': FILE })
     await expect(
-      caller.tasks.update({ remote: REMOTE, path: 'task.review.md', patch: { status: 'blocked' } }),
+      tasksCall(caller, 'update', {
+        remote: REMOTE,
+        path: 'task.review.md',
+        patch: { status: 'blocked' },
+      }),
     ).rejects.toThrow(/status must be one of/)
   })
 
   it('reports a missing task rather than creating one', async () => {
     const { caller } = await rig()
     await expect(
-      caller.tasks.update({ remote: REMOTE, path: 'task.ghost.md', patch: { status: 'done' } }),
+      tasksCall(caller, 'update', {
+        remote: REMOTE,
+        path: 'task.ghost.md',
+        patch: { status: 'done' },
+      }),
     ).rejects.toThrow(/task.ghost.md/)
   })
 })
@@ -709,7 +777,7 @@ describe('tasks.update', () => {
 describe('tasks.update: done is completion', () => {
   it('marks a plain task done', async () => {
     const { caller } = await rig({ 'task.review.md': '---\ntitle: Review\nstatus: doing\n---\n' })
-    const task = await caller.tasks.update({
+    const task = await tasksCall(caller, 'update', {
       remote: REMOTE,
       path: 'task.review.md',
       patch: { status: 'done' },
@@ -730,7 +798,7 @@ describe('tasks.update: done is completion', () => {
         '---',
       ].join('\n'),
     })
-    const task = await caller.tasks.update({
+    const task = await tasksCall(caller, 'update', {
       remote: REMOTE,
       path: 'task.standup.md',
       patch: { status: 'done' },
@@ -751,7 +819,7 @@ describe('tasks.update: done is completion', () => {
         '---',
       ].join('\n'),
     })
-    const task = await caller.tasks.update({
+    const task = await tasksCall(caller, 'update', {
       remote: REMOTE,
       path: 'task.water.md',
       patch: { status: 'done' },
@@ -771,7 +839,7 @@ describe('tasks.update: done is completion', () => {
         '---',
       ].join('\n'),
     })
-    const task = await caller.tasks.update({
+    const task = await tasksCall(caller, 'update', {
       remote: REMOTE,
       path: 'task.standup.md',
       patch: { status: 'done' },
@@ -793,7 +861,7 @@ describe('tasks.update: done is completion', () => {
     })
     expect(
       (
-        await caller.tasks.update({
+        await tasksCall(caller, 'update', {
           remote: REMOTE,
           path: 'task.standup.md',
           patch: { status: 'done' },
@@ -813,7 +881,7 @@ describe('tasks.update: done is completion', () => {
         '---',
       ].join('\n'),
     })
-    const task = await caller.tasks.update({
+    const task = await tasksCall(caller, 'update', {
       remote: REMOTE,
       path: 'task.sprint.md',
       patch: { status: 'done' },
@@ -833,7 +901,7 @@ describe('tasks.update: done is completion', () => {
     })
     expect(
       (
-        await caller.tasks.update({
+        await tasksCall(caller, 'update', {
           remote: REMOTE,
           path: 'task.someday.md',
           patch: { status: 'done' },
@@ -851,7 +919,7 @@ describe('tasks.create with fields', () => {
       title: 'Book the venue',
       extra: { due: '2026-10-01', priority: 'high', tags: ['team'] },
     })
-    const task = await caller.tasks.move({ remote: REMOTE, path, folder: '' })
+    const task = await tasksCall(caller, 'move', { remote: REMOTE, path, folder: '' })
     expect(task).toMatchObject({ due: '2026-10-01', priority: 'high', tags: ['team'] })
   })
 
@@ -869,7 +937,7 @@ describe('tasks.move', () => {
       'projects/q2/task.fix-login.md': '---\ntitle: Fix login\nstatus: todo\n---\n',
       'meetings/note.md': 'blocking [[projects/q2/task.fix-login.md]] until fixed',
     })
-    const task = await caller.tasks.move({
+    const task = await tasksCall(caller, 'move', {
       remote: REMOTE,
       path: 'projects/q2/task.fix-login.md',
       folder: 'personal',
@@ -891,7 +959,7 @@ describe('tasks.move', () => {
     const { caller } = await rig({
       'task.foo.md': '---\ntitle: Foo\nstatus: todo\n---\n',
     })
-    const task = await caller.tasks.move({
+    const task = await tasksCall(caller, 'move', {
       remote: REMOTE,
       path: 'task.foo.md',
       folder: 'personal',
@@ -915,7 +983,7 @@ describe('tasks.move', () => {
         '---',
       ].join('\n'),
     })
-    const task = await caller.tasks.move({
+    const task = await tasksCall(caller, 'move', {
       remote: REMOTE,
       path: 'task.standup.md',
       folder: 'archive',
@@ -929,7 +997,7 @@ describe('tasks.move', () => {
   it('lands the card at its aimed rank in the same write as the lane and status', async () => {
     // A drop lands where the gap opened: the rank rides along with the diagonal.
     const { caller, root } = await rig({ 'task.foo.md': '---\ntitle: Foo\nstatus: todo\n---\n' })
-    const task = await caller.tasks.move({
+    const task = await tasksCall(caller, 'move', {
       remote: REMOTE,
       path: 'task.foo.md',
       folder: 'personal',
@@ -942,13 +1010,35 @@ describe('tasks.move', () => {
     expect(await readFile(join(root, 'personal/task.foo.md'), 'utf8')).toContain('order: 1536')
   })
 
+  it('reads a field change made meanwhile before writing its own', async () => {
+    // The status rides along under the file's lock, as `tasks.update` writes:
+    // a field another writer set while the move waited is kept.
+    const { caller, root } = await rig({ 'task.foo.md': '---\ntitle: Foo\nstatus: todo\n---\n' })
+    let release!: () => void
+    const held = withFileLock(join(root, 'task.foo.md'), async () => {
+      await new Promise<void>((r) => (release = r))
+      await writeFile(join(root, 'task.foo.md'), '---\nstatus: todo\ndue: 2026-08-01\n---\n')
+    })
+    const move = tasksCall(caller, 'move', {
+      remote: REMOTE,
+      path: 'task.foo.md',
+      folder: 'personal',
+      status: 'doing',
+    })
+    await new Promise((r) => setTimeout(r, 50))
+    release()
+    const [, task] = await Promise.all([held, move])
+    expect(task.due).toBe('2026-08-01')
+    expect(task.status).toBe('doing')
+  })
+
   it('refuses to clobber a task already in the target lane', async () => {
     const { caller } = await rig({
       'task.foo.md': '---\ntitle: Foo\nstatus: todo\n---\n',
       'personal/task.foo.md': '---\ntitle: Other foo\nstatus: doing\n---\n',
     })
     await expect(
-      caller.tasks.move({ remote: REMOTE, path: 'task.foo.md', folder: 'personal' }),
+      tasksCall(caller, 'move', { remote: REMOTE, path: 'task.foo.md', folder: 'personal' }),
     ).rejects.toThrow(/already exists/)
   })
 })
@@ -956,7 +1046,7 @@ describe('tasks.move', () => {
 describe('tasks.delete', () => {
   it('removes the file', async () => {
     const { caller, root } = await rig({ 'task.review.md': '---\ntitle: Review\n---\n' })
-    await caller.tasks.delete({ remote: REMOTE, path: 'task.review.md' })
+    await tasksCall(caller, 'delete', { remote: REMOTE, path: 'task.review.md' })
     await expect(readFile(join(root, 'task.review.md'), 'utf8')).rejects.toThrow()
   })
 })
@@ -991,9 +1081,9 @@ describe('path safety', () => {
     const { caller } = await rig()
     for (const path of escapes) {
       await expect(
-        caller.tasks.update({ remote: REMOTE, path, patch: { status: 'done' } }),
+        tasksCall(caller, 'update', { remote: REMOTE, path, patch: { status: 'done' } }),
       ).rejects.toThrow()
-      await expect(caller.tasks.delete({ remote: REMOTE, path })).rejects.toThrow()
+      await expect(tasksCall(caller, 'delete', { remote: REMOTE, path })).rejects.toThrow()
     }
   })
 
@@ -1113,7 +1203,12 @@ async function authRig(routes: Record<string, Scripted[]>, seed?: StoredAuth) {
   hosts.push(host)
   const caller = createRouter({
     seed: seedVault,
-    plugins: { enter: async () => {}, opened: async () => {}, scanClaimsFor: TASKS },
+    plugins: {
+      reconcile: async () => {},
+      syncBackground: async () => {},
+      failures: () => ({}),
+      scanClaimsFor: TASKS,
+    },
     registry,
     session,
     host,
@@ -1720,5 +1815,29 @@ describe('cap.run', () => {
     await expect(
       caller.cap.run({ remote: REMOTE, name: 'echo.ui', paramsJson: '{' }),
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' })
+  })
+})
+
+describe('comments', () => {
+  // Only `holi comments` marks a comment as the agent's. What the panel sends
+  // is the person's own, whoever's agent is running beside it.
+  it('signs what the panel writes as the person, never as their agent', async () => {
+    const { caller, root } = await rig({ 'a.md': 'One passage here.\n' }, seeded())
+    await caller.vaults.open({ remote: REMOTE })
+    const anchor = { quote: 'passage', prefix: 'One ', suffix: ' here.', line: 1 }
+    const { thread } = await caller.comments.add({
+      remote: REMOTE,
+      path: 'a.md',
+      body: 'Is this right?',
+      anchor,
+    })
+    await caller.comments.reply({ remote: REMOTE, path: 'a.md', thread, body: 'Yes.' })
+
+    const [listed] = await caller.comments.list({ remote: REMOTE, path: 'a.md' })
+    expect(listed!.comments.map((c) => [c.author, c.agent])).toEqual([
+      ['nthomsencph', undefined],
+      ['nthomsencph', undefined],
+    ])
+    expect(await readFile(join(root, '.holi/comments/a.md.json'), 'utf8')).not.toContain('agent')
   })
 })

@@ -11,12 +11,15 @@ import type { SyncState } from '../../../main/vault/active-vault'
 import type { HeldBackFile } from '../../../main/vault/large-files'
 import type { RendererPlugin } from '@/plugin-api/types'
 import { flushAllBuffers } from '../lib/buffer-registry'
+import { settledRect } from '../lib/settled-rect'
 import { trpc } from '../lib/trpc'
-import { closeTabsForPaths, retargetTab, retargetTabs, workspaceAtom } from './panes'
-// A cycle (`plugins` reads `activeRemoteAtom`), safe because neither module
-// reads the other's atoms until a store does.
+import { closeTabsForPaths, retargetTab, retargetTabs, tabKey, workspaceAtom } from './panes'
+// Cycles (`plugins` and `arrival` read `activeRemoteAtom`, `surfaces` reads
+// `snapshotAtom`), safe because neither module reads the other's atoms until a
+// store does.
 import { folderSurfacesAtom } from './plugins'
-import { openTaskAtom } from './view'
+import { quietOpenAtom, requestArrivalAtom } from './arrival'
+import { tabForPathAtom } from './surfaces'
 
 type JotaiStore = ReturnType<typeof createStore>
 
@@ -38,10 +41,13 @@ export const activeRemoteAtom = atom<string | null>(null)
  */
 export const showHiddenByVaultAtom = atomWithStorage<Record<string, boolean>>('holi:showHidden', {})
 
-/** Per-vault "show task files in the tree" flag, off by default: the board owns
- * tasks. Purely a view filter; task files are always scanned into
- * `snapshot.claimed.tasks`. */
-export const showTasksByVaultAtom = atomWithStorage<Record<string, boolean>>('holi:showTasks', {})
+/** Per vault, the hideable claims (`PathClaim.hideable`) whose files the tree
+ *  shows, by `hideable.id`; the rest are hidden, as their plugin asks. Purely a view
+ *  filter: the files are scanned and claimed either way. */
+export const shownClaimsByVaultAtom = atomWithStorage<Record<string, string[]>>(
+  'holi:shownClaims',
+  {},
+)
 
 const EMPTY_SNAPSHOT: VaultSnapshot = emptyVaultSnapshot()
 
@@ -192,15 +198,21 @@ export function subscribeToVault(
   const offCommitted = window.holi.vault.onCommitted((paths) =>
     store.set(historyEpochsAtom, (e) => bumpHistoryEpochs(e, paths)),
   )
-  // A clicked reminder opens its task. Cross-vault, the switch runs here, not in
-  // main, so `activeRemoteAtom` stays truthful; the task opens once the new
-  // vault's snapshot is in (`openVaultAtom` sets it before this resolves).
-  const offReminder = window.holi.reminders.onOpen(({ remote, path }) => {
-    if (remote && remote !== store.get(activeRemoteAtom)) {
-      void store.set(openVaultAtom, remote).then(() => store.set(openTaskAtom, path))
-    } else {
-      store.set(openTaskAtom, path)
+  // Main asks for a path in a tab (a clicked reminder, `holi docs open`, a
+  // Holi link). Cross-vault, the switch runs here, not in main, so
+  // `activeRemoteAtom` stays truthful (`state/arrival.ts`).
+  const offOpen = window.holi.vault.onOpen((arrival) => store.set(requestArrivalAtom, arrival))
+  // Main asks where a path's tab is drawn, for `holi docs screenshot`. It
+  // opened the tab first, over `onOpen`, which arrives before this.
+  const offLocate = window.holi.vault.onLocate(({ id, path }) => {
+    const answer = (a: Parameters<typeof window.holi.vault.located>[0]): void => {
+      if (store.get(quietOpenAtom) === path) store.set(quietOpenAtom, null)
+      window.holi.vault.located(a)
     }
+    settledRect(tabKey(store.get(tabForPathAtom)(path))).then(
+      (rect) => answer({ id, rect }),
+      (err: unknown) => answer({ id, error: (err as Error).message }),
+    )
   })
   const tables = plugins.flatMap((p) =>
     p.events === undefined ? [] : [[p.info.id, p.events] as const],
@@ -215,7 +227,8 @@ export function subscribeToVault(
     offSync()
     offHeldBack()
     offCommitted()
-    offReminder()
+    offOpen()
+    offLocate()
     offEvents.forEach((off) => off())
   }
 }
@@ -298,15 +311,24 @@ export const renameNoteAtom = atom(
  * `renameNoteAtom`, one commit-pair for the whole batch: flush the live buffer
  * and commit a clean restore point, run the single-pass `notes.move`, retarget
  * every open tab, reload the snapshot, follow the active doc, commit again.
+ * `folders` are the folders the move was aimed at, whose leftovers (`.gitkeep`,
+ * ignored files) main carries after the documents.
  */
 export const moveNotesAtom = atom(
   null,
-  async (get, set, { moves }: { moves: { from: string; to: string }[] }) => {
+  async (
+    get,
+    set,
+    {
+      moves,
+      folders = [],
+    }: { moves: { from: string; to: string }[]; folders?: { from: string; to: string }[] },
+  ) => {
     const remote = get(activeRemoteAtom)
-    if (!remote || moves.length === 0) return
+    if (!remote || (moves.length === 0 && folders.length === 0)) return
     await flushAllBuffers()
     await trpc.sync.commitNow.mutate()
-    await trpc.notes.move.mutate({ remote, moves })
+    await trpc.notes.move.mutate({ remote, moves, folders })
     set(workspaceAtom, retargetTabs(get(workspaceAtom), moves, get(folderSurfacesAtom)))
     const active = get(activeDocAtom)
     const moved = active ? moves.find((m) => m.from === active.path) : undefined

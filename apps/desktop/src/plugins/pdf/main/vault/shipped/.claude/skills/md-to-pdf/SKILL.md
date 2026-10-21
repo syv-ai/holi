@@ -5,9 +5,12 @@ description: Render a vault note to a PDF using Holi's bundled Typst engine and 
 
 # Render a note to PDF
 
-Holi ships a Typst engine. `holi pdf typst` prints its absolute path,
-downloading it first if this machine does not have it yet. If the command fails,
-Typst could not be had: tell the user what it printed.
+`holi pdf render <note> [<template>]` renders a vault note through one of the
+vault's Typst templates, the same way Holi's own Convert to PDF does: wiki-links
+read as their text, and a ```` ```mermaid ```` block comes out as its diagram. It
+prints where the PDF went and how big it is, and a line for anything that did
+not come out as written (a diagram mermaid could not draw shows as code). If
+the command fails, tell the user what it printed.
 
 ## Templates
 
@@ -36,45 +39,36 @@ List them with `ls .holi/document-templates/`, and read a template's
 (`_brand/` holds the shared fonts/logo/module the branded templates import — not a template itself.)
 
 Each `template.json` field has a `key`, `label`, `type`, and optional `required`,
-`default`, and `options`. The six field types and the Typst value each becomes:
+`default`, and `options`. Give a field as `--<key> <value>`. A field you leave
+out takes the note's frontmatter value for the same key, else its `default`
+(a `date` defaults to today). A field the template does not declare is refused,
+and so is a render missing a required one; the error names them.
 
-| type       | Typst value example                        |
-|------------|--------------------------------------------|
-| `text`     | `"Acme Inc"`                               |
-| `textarea` | `"Line one\nLine two"`                     |
-| `select`   | `"one of the manifest's options"`          |
-| `number`   | `42`                                       |
-| `date`     | `datetime(year: 2026, month: 7, day: 27)`  |
-| `checkbox` | `true` / `false`                           |
-
-Omit an optional field to leave it unset — the template reads
-`meta.at(key, default: none)`.
+| type       | value to give                     |
+|------------|-----------------------------------|
+| `text`     | `--recipient "Acme Inc"`          |
+| `textarea` | the text, with real line breaks   |
+| `select`   | one of the manifest's `options`   |
+| `number`   | `--amount 42`                     |
+| `date`     | `--date 2026-07-27`               |
+| `checkbox` | `--signed true` or `false`        |
 
 ## Recipe
 
 1. Choose a template (default `plain`) and read its `template.json` for the fields.
-2. Write a wrapper `.typ` in a scratch dir outside the vault. Use ABSOLUTE
-   paths so `--root /` can read everything:
-
-   ```typ
-   #import "/ABS/VAULT/.holi/document-templates/plain/template.typ": doc
-   #doc(
-     "/ABS/VAULT/notes/the-note.md",
-     meta: (recipient: "Acme Inc"),
-     assets: "/ABS/VAULT/.holi/document-templates/plain/assets",
-   )
-   ```
-
-3. Compile with the bundled engine:
+2. Render it:
 
    ```sh
-   TYPST=$(holi pdf typst)
-   DIR=$(mktemp -d)
-   # …write "$DIR/wrapper.typ" per above…
-   "$TYPST" compile "$DIR/wrapper.typ" "$DIR/the-note.pdf" --root /
+   holi pdf render notes/the-note.md proposal --date 2026-07-27
    ```
 
-4. Move it to where it goes (below), and tell the user where that is.
+   Without `--out` the PDF goes next to the note (`notes/the-note.pdf`). `--out`
+   takes a path ending in `.pdf`, absolute or relative to the vault root.
+3. Tell the user where it is.
+
+`holi pdf typst` prints the path of the Typst engine Holi uses, downloading it
+first if this machine does not have it yet, for anything `holi pdf render`
+does not cover.
 
 **Where the PDF goes.** In the vault, next to the note (`notes/the-note.pdf` for
 `notes/the-note.md`), the same place Holi's own Convert to PDF offers. There it
@@ -82,5 +76,6 @@ can be read and commented on in Holi (the pdf-comments skill reads those comment
 back), and it is committed and synced like any file. Leave it outside the vault
 when the user asks, or when it comes out large (over about 10 MB, usually from
 images): a repository keeps every version of a binary forever, so say how big it
-is and ask before moving one that size in. Compiling to the scratch dir first is
-what lets you check.
+is and ask before moving one that size in. When a note carries large images,
+render it outside the vault first (`--out "$(mktemp -d)/the-note.pdf"`), check
+the size it prints, and move it in only once that is settled.

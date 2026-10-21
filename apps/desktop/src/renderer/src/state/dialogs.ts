@@ -11,31 +11,31 @@ import type { DialogSize } from '@/primitives'
  * dialog, and an entry sets it only to opt OUT, when its own footer already
  * offers a way out (a Cancel beside a corner ✕ is two controls for one intent).
  */
-export type ActiveDialog = { closable?: boolean } & (
-  | { id: 'create-task'; size: 'md' } // Full create (⌘⇧T); quick add (⌘T) is `QuickAdd`.
+export type ActiveDialog = { closable?: boolean } &
   /**
    * A plugin's dialog. Core knows nothing of its content: the plugin renders
    * it, and calls `close` when it is done.
    */
-  | { id: 'plugin'; size: DialogSize; render: (close: () => void) => ReactNode }
-  /**
-   * Set or clear a path's icon in `.holi/settings/icons.yaml`. Carries the
-   * map's current entry, which the tree already has, so the dialog opens filled.
-   */
-  | {
-      id: 'edit-icon'
-      size: 'sm'
-      remote: string
-      path: string
-      current: string | null
-      /** Opens `.holi/settings/icons.yaml` itself. A closure, unlike every other
-       *  field here, because the tree holds the opener. */
-      onOpenMap: () => void
-    }
-  /** Opened from the vault picker and from Settings, for any registered vault,
-   *  not only the open one. */
-  | { id: 'remove-vault'; size: 'sm'; remote: string; intent: RemoveVaultIntent }
-)
+  (
+    | { id: 'plugin'; size: DialogSize; render: (close: () => void) => ReactNode }
+    /**
+     * Set or clear a path's icon in `.holi/settings/icons.yaml`. Carries the
+     * map's current entry, which the tree already has, so the dialog opens filled.
+     */
+    | {
+        id: 'edit-icon'
+        size: 'sm'
+        remote: string
+        path: string
+        current: string | null
+        /** Opens `.holi/settings/icons.yaml` itself. A closure, unlike every other
+         *  field here, because the tree holds the opener. */
+        onOpenMap: () => void
+      }
+    /** Opened from the vault picker and from Settings, for any registered vault,
+     *  not only the open one. */
+    | { id: 'remove-vault'; size: 'sm'; remote: string; intent: RemoveVaultIntent }
+  )
 
 /** The one dialog a plugin may open. */
 export type PluginDialog = Extract<ActiveDialog, { id: 'plugin' }>

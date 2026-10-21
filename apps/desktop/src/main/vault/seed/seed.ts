@@ -16,7 +16,7 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { vaultRelPath, VAULT_MARKER_FILE } from '@holi/shared'
 import { writeAtomic } from '../vault-files'
-import { readSeedState, recordPlugins, recordSeeded } from './state'
+import { readSeedState, recordPlugins, recordRelease, recordSeeded } from './state'
 import type { SeedContribution, SeedResult } from './types'
 
 const exists = async (root: string, rel: string): Promise<boolean> =>
@@ -61,6 +61,8 @@ const under = (rel: string, prefixes: readonly string[] | undefined): boolean =>
  * The id a file is seeded under: its contribution's, or `<id>@<owner>` for a
  * file under a prefix another contribution owns (`google@agent`), so turning
  * the owner on later is told apart in the seed state like turning on a plugin.
+ * Only a plugin that declares it adds to the owner (`PluginInfo.addsTo`) gets
+ * a file there: `install` refuses any other.
  */
 function seedId(
   contributions: readonly SeedContribution[],
@@ -71,23 +73,28 @@ function seedId(
   return owner === undefined ? c.id : `${c.id}@${owner.id}`
 }
 
+/** Every vault path `c` writes or adds a fragment to. */
+export const seededPaths = (c: SeedContribution): string[] => [
+  ...Object.keys(c.merge ?? {}),
+  ...Object.keys(c.once),
+  ...Object.keys(c.shipped),
+  ...Object.keys(c.fragments ?? {}),
+]
+
 /**
- * `contributions` without what they seed under `prefixes`, the prefixes of
- * owners that are off: files and fragments both.
+ * `c` without what it seeds under `prefixes`, the prefixes of owners it is
+ * not adding to right now: files and fragments both.
  */
-export function withoutOwned(
-  contributions: readonly SeedContribution[],
-  prefixes: readonly string[],
-): SeedContribution[] {
-  if (prefixes.length === 0) return [...contributions]
+export function withoutOwned(c: SeedContribution, prefixes: readonly string[]): SeedContribution {
+  if (prefixes.length === 0) return c
   const keep = <T>(table: Record<string, T>): Record<string, T> =>
     Object.fromEntries(Object.entries(table).filter(([rel]) => !under(rel, prefixes)))
-  return contributions.map((c) => ({
+  return {
     ...c,
     once: keep(c.once),
     shipped: keep(c.shipped),
     ...(c.fragments === undefined ? {} : { fragments: keep(c.fragments) }),
-  }))
+  }
 }
 
 /** The shipped files of every contribution, for `holi skills update`. */
@@ -137,11 +144,15 @@ export async function runMerges(
  * Another contribution's files under an owned prefix (`owns`) count as
  * their own entry, `<id>@<owner>`, so they are written once when the owner
  * is turned on.
+ *
+ * `release` is the running Holi's version, recorded when this writes a
+ * shipped file (`SeedState.release`).
  */
 export async function ensureSeeded(
   root: string,
   contributions: readonly SeedContribution[],
   plugins: readonly string[] = [],
+  release?: string,
 ): Promise<SeedResult> {
   const { once, shipped } = tables(contributions)
   // Read before the once files below write it.
@@ -162,12 +173,15 @@ export async function ensureSeeded(
     written.push(rel)
   }
 
+  let shippedAny = false
   for (const [rel, content] of toShip) {
     if (await exists(root, rel)) continue
     await writeAtomic(root, vaultRelPath(rel), content)
     await recordSeeded(root, rel, content)
     written.push(rel)
+    shippedAny = true
   }
+  if (shippedAny && release !== undefined) await recordRelease(root, release)
 
   // Only ever grows: a plugin turned off and on again is not new here.
   const seen = [...new Set([...(baseline ?? []), ...ids])]

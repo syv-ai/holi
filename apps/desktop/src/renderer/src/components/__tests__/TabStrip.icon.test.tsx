@@ -1,18 +1,18 @@
 /**
  * A tab names and marks a file as its tree row does (`pathLabel`/`pathGlyph`):
- * a note has no `.md` and no glyph, an app (a surface tab) no `.app` and its surface's glyph, a task
- * its status, anything else its type glyph, and an icon-map emoji beats
- * all of them. Which glyph is which is the tree's tests' question; the strip is
+ * a note has no `.md` and no glyph, an app (a surface tab) no `.app` and its surface's glyph, a path
+ * a plugin marks (a task) its mark, anything else its type glyph, and an
+ * icon-map emoji beats all of them. Which glyph is which is the tree's tests' question; the strip is
  * tested for the plumbing from the snapshot.
  */
-import { emptyVaultSnapshot, type Task } from '@holi/shared'
-import { getDefaultStore } from 'jotai'
+import { emptyVaultSnapshot } from '@holi/shared'
+import { atom, getDefaultStore } from 'jotai'
 import { beforeEach, expect, test } from 'vitest'
 import { render, screen } from '@/test/render'
 import { FileText } from 'lucide-react'
-import type { Surface } from '@/plugin-api/types'
+import type { PathMark, Surface } from '@/plugin-api/types'
 import type { Tab } from '@/state/panes'
-import { coreContributionAtom } from '@/state/plugins'
+import { coreContributionAtom, installedPluginsAtom } from '@/state/plugins'
 import { snapshotAtom } from '@/state/vaults'
 import { TabStrip } from '../TabStrip'
 
@@ -27,16 +27,13 @@ const APP_SURFACE: Surface = {
 const EMPTY = emptyVaultSnapshot()
 const store = getDefaultStore()
 
-function strip(
-  tab: Tab,
-  name: string,
-  over: { icons?: Record<string, string>; tasks?: Task[] } = {},
-) {
-  store.set(snapshotAtom, {
-    ...EMPTY,
-    icons: over.icons ?? {},
-    claimed: { tasks: { items: over.tasks ?? [], broken: [] } },
-  })
+/** What a plugin marks paths with, as the tasks plugin marks a task's status. */
+const MARKS = atom<ReadonlyMap<string, PathMark>>(
+  new Map([['task.ship.md', { glyph: <span data-mark="doing" /> }]]),
+)
+
+function strip(tab: Tab, name: string, over: { icons?: Record<string, string> } = {}) {
+  store.set(snapshotAtom, { ...EMPTY, icons: over.icons ?? {} })
   render(
     <TabStrip tabs={[tab]} active={0} onSelect={() => {}} onPin={() => {}} onClose={() => {}} />,
   )
@@ -48,6 +45,9 @@ function strip(
 beforeEach(() => {
   store.set(snapshotAtom, EMPTY)
   store.set(coreContributionAtom, { surfaces: [APP_SURFACE], rail: [], claims: [] })
+  store.set(installedPluginsAtom, [
+    { info: { id: 'marks', label: 'Marks', default: true }, pathMarks: MARKS },
+  ])
 })
 
 test('a note is named without .md and leads with nothing', () => {
@@ -74,10 +74,9 @@ test('any other file keeps its extension and its type glyph', () => {
   expect(pill.innerHTML).toContain('<svg')
 })
 
-test('a task leads with its status glyph', () => {
-  const task = { path: 'task.ship.md', title: 'Ship', status: 'doing', tags: [] } as unknown as Task
-  const pill = strip({ kind: 'note', path: 'task.ship.md' }, 'task.ship', { tasks: [task] })
-  expect(pill.innerHTML).toContain('text-task-doing')
+test("a path a plugin marks leads with the plugin's glyph", () => {
+  const pill = strip({ kind: 'note', path: 'task.ship.md' }, 'task.ship')
+  expect(pill.querySelector('[data-mark="doing"]')).not.toBeNull()
 })
 
 test('an app is named without .app and leads with the app glyph', () => {

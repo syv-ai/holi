@@ -22,7 +22,8 @@ import {
   type AgentTarget,
   type AgentTerminal,
 } from './sessions'
-import { activeRemoteAtom, openSurfaceAtom } from '@/plugin-api'
+import { pendingOpenAtom } from './questions'
+import { activeRemoteAtom, openSurfaceAtom, type PluginStore } from '@/plugin-api'
 
 /** What an action answers: done, or why not, in words the caller can print. */
 export type AgentResult = { ok: true } | { ok: false; message: string }
@@ -175,3 +176,20 @@ export const duplicateSessionAtom = atom(
     return { ok: true }
   },
 )
+
+/**
+ * While `remote` is the open vault: open the session the quick panel asked
+ * for (its ⏎ on a finished agent), now or as soon as it asks. A main window
+ * opened for it hears the request before its vault is open, so the request
+ * waits here rather than in the event.
+ */
+export function followPendingOpen(remote: string, store: PluginStore): () => void {
+  const openPending = (): void => {
+    const pending = store.get(pendingOpenAtom)
+    if (pending === null || pending.remote !== remote) return
+    store.set(pendingOpenAtom, null)
+    void store.set(openSessionAtom, pending.id)
+  }
+  openPending()
+  return store.sub(pendingOpenAtom, openPending)
+}

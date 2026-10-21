@@ -6,16 +6,20 @@
  * `@holi/shared` does the merge, whitelist and validation; this module is only
  * the disk half, where a missing or unreadable file degrades to `null`.
  */
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import {
   THEME_FILE,
   THEME_LOCAL_FILE,
   applyThemePatch,
+  parseVaultTheme,
+  replaceThemeMode,
   resolveTheme,
   type ResolvedTheme,
+  type ThemeMode,
   type ThemePatch,
 } from '@holi/shared'
+import { HOLI_THEME_TEXT } from './seed/core'
 
 /** The local one is gitignored (`*.local.*`); the watcher is taught to see it
  *  despite the local-only filter. */
@@ -38,19 +42,36 @@ export async function readVaultTheme(root: string): Promise<ResolvedTheme> {
   return resolveTheme(committed, local)
 }
 
+/** Holi's own theme, both modes, as the Appearance pane's per-token reset and
+ *  a mode reset write it. */
+export function holiTheme(): { light: Record<string, string>; dark: Record<string, string> } {
+  const parsed = parseVaultTheme(HOLI_THEME_TEXT)
+  return { light: parsed?.light ?? {}, dark: parsed?.dark ?? {} }
+}
+
 /**
- * Reset the vault to the standard look by removing both theme files. The
- * committed file going away is a real deletion that syncs to collaborators;
- * the local one is this machine's alone. Idempotent
- * (`force`), so resetting an already-standard vault is a no-op. The running app
- * reverts on its own: the unlink fires the watcher → rescan → the renderer
- * re-reads and finds nothing to apply.
+ * Reset one mode to Holi's theme: the shared file's block becomes
+ * Holi's block for it and the local file's is emptied, so nothing overrides it.
+ * The other mode is left alone. The running app follows through the watcher,
+ * as for any write.
  */
-export async function resetVaultTheme(root: string): Promise<void> {
+export async function resetVaultTheme(root: string, mode: ThemeMode): Promise<void> {
+  const holi = holiTheme()[mode]
   await Promise.all([
-    rm(join(root, THEME_FILE), { force: true }),
-    rm(join(root, THEME_LOCAL_FILE), { force: true }),
+    writeThemeFile(join(root, THEME_FILE), (text) => replaceThemeMode(text, mode, holi)),
+    writeThemeFile(join(root, THEME_LOCAL_FILE), (text) => replaceThemeMode(text, mode, {})),
   ])
+}
+
+/** Read, transform, write by rename, so a reader never sees half a file. */
+async function writeThemeFile(abs: string, next: (text: string | null) => string): Promise<void> {
+  const text = next(await readOrNull(abs))
+  // `.holi/settings/` may not exist: a vault whose theme was never written, or
+  // one someone tidied by hand. Harmless when it does.
+  await mkdir(dirname(abs), { recursive: true })
+  const tmp = `${abs}.tmp`
+  await writeFile(tmp, text, 'utf8')
+  await rename(tmp, abs)
 }
 
 /** Which of the two files an edit lands in. The pane offers the choice once for
@@ -74,11 +95,5 @@ export async function writeVaultTheme(
 ): Promise<void> {
   if (patch.light === undefined && patch.dark === undefined) return
   const abs = join(root, layer === 'committed' ? THEME_FILE : THEME_LOCAL_FILE)
-  const next = applyThemePatch(await readOrNull(abs), patch)
-  // `.holi/settings/` may not exist: a vault whose theme was never written, or
-  // one someone tidied by hand. Harmless when it does.
-  await mkdir(dirname(abs), { recursive: true })
-  const tmp = `${abs}.tmp`
-  await writeFile(tmp, next, 'utf8')
-  await rename(tmp, abs)
+  await writeThemeFile(abs, (text) => applyThemePatch(text, patch))
 }

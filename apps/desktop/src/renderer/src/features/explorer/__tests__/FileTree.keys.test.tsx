@@ -106,5 +106,5 @@ test('⌫ on a multi-selection asks to delete all of it', async () => {
 
   fireEvent.keyDown(row('b.md'), { key: 'Backspace' })
 
-  await vi.waitFor(() => expect(document.body.textContent).toMatch(/Delete 2 notes\?/))
+  await vi.waitFor(() => expect(document.body.textContent).toMatch(/Delete 2 files\?/))
 })

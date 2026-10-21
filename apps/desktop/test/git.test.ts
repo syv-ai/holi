@@ -229,6 +229,18 @@ describe('commitAll', () => {
     expect((await openRepo(dir).status()).dirty).toBe(false)
   })
 
+  it('commits a deletion someone already staged with git rm', async () => {
+    // The path is in neither the tree nor the index, so naming it to `git add`
+    // fails the whole add, and every autosave after it.
+    const dir = await makeClone(await makeRemote())
+    await plainGit(dir, ['rm', '-q', 'README.md'])
+    await writeFile(join(dir, 'a.md'), 'a\n', 'utf8')
+    const repo = openRepo(dir)
+    const paths = (await repo.status()).dirtyPaths
+    expect(await repo.commitAll('Update 2 files', paths)).not.toBeNull()
+    expect((await repo.status()).dirty).toBe(false)
+  })
+
   it('commits on a machine that has never configured a git identity', async () => {
     // A fresh laptop has no user.email, and git refuses to commit without one.
     // Holi must not require the user to have run `git config --global` first.
@@ -309,7 +321,7 @@ describe('pull', () => {
     const { ours, theirs } = await pair()
     await publish(theirs, 'theirs.md', 'their note\n')
 
-    expect(await openRepo(ours).pull()).toEqual({ kind: 'merged', commits: 1 })
+    expect(await openRepo(ours).pull()).toMatchObject({ kind: 'merged', commits: 1 })
     expect(await readFile(join(ours, 'theirs.md'), 'utf8')).toBe('their note\n')
   })
 
@@ -421,6 +433,28 @@ describe('pull', () => {
 
     expect((await openRepo(ours).remerge()).kind).toBe('merged')
     expect((await openRepo(ours).status()).merging).toBe(false)
+  })
+
+  it('keeps a comment sidecar one side changed and the other deleted, and merges', async () => {
+    // A modify/delete never reaches the comments merge driver: the note was
+    // deleted on one side and commented on on the other. The comment is kept.
+    const { ours, theirs } = await pair()
+    const sidecar = '.holi/comments/a.md.json'
+    for (const repo of [ours, theirs]) {
+      await mkdir(join(repo, '.holi/comments'), { recursive: true })
+    }
+    await publish(theirs, sidecar, '{"threads":{}}\n')
+    await openRepo(ours).pull()
+
+    await plainGit(theirs, ['rm', '-q', sidecar])
+    await plainGit(theirs, ['commit', '-qm', 'delete'])
+    await plainGit(theirs, ['push', 'origin', 'main'])
+    await commitFile(ours, sidecar, '{"threads":{"t":{}}}\n')
+
+    const repo = openRepo(ours)
+    expect((await repo.pull()).kind).toBe('merged')
+    expect((await repo.status()).merging).toBe(false)
+    expect(await readFile(join(ours, sidecar), 'utf8')).toBe('{"threads":{"t":{}}}\n')
   })
 })
 

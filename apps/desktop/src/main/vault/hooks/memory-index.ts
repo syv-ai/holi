@@ -6,10 +6,15 @@
  * **Gated on the diff, but indexed from the tree.** The staged set decides
  * *whether* to run, so the common edit-only commit costs nothing; `listFiles`
  * decides *what* goes in, or unrelated memories would drop out.
+ *
+ * A memory past its `expires` is left out (docs/features/agent-memory.md). The
+ * file itself stays: shared memory is never deleted unattended, so the memory
+ * lint reports it for the agent to propose deleting.
  */
 import { readFile } from 'node:fs/promises'
 import {
   MEMORY_INDEX,
+  isExpiredMemory,
   isSharedMemoryPath,
   readMemoryEntry,
   renderMemoryIndex,
@@ -39,7 +44,11 @@ function touchesSharedMemory(staged: StagedChanges): boolean {
   )
 }
 
-export async function memoryIndex(root: string, staged: StagedChanges): Promise<TransformResult> {
+export async function memoryIndex(
+  root: string,
+  staged: StagedChanges,
+  now = new Date(),
+): Promise<TransformResult> {
   if (!touchesSharedMemory(staged)) return { changed: [], notes: [] }
 
   const entries: MemoryEntry[] = []
@@ -48,7 +57,7 @@ export async function memoryIndex(root: string, staged: StagedChanges): Promise<
     // A memory deleted between `listFiles` and this read is ordinary, not an
     // error: the commit being made may be the one deleting it.
     const text = await readFile(absPathFor(root, vaultRelPath(path)), 'utf8').catch(() => null)
-    if (text === null) continue
+    if (text === null || isExpiredMemory(path, text, now)) continue
     entries.push(readMemoryEntry(path, text))
   }
   entries.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))

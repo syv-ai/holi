@@ -1,4 +1,7 @@
 /**
+ * The selection's tooltip: Ask agent, and Comment, which opens a thread on the
+ * passage in the comments panel (docs/features/note-comments.md).
+ *
  * Select a passage, say what you want done with it, and the agent gets the note
  * and the exact lines you meant. The line numbers come from CodeMirror's range,
  * not from searching the source for the substring, which is wrong when the
@@ -8,8 +11,16 @@
  * `EditorDeps`, which the editors route through the agent service
  * (`useAskAgentSeam`). With no agent there is no seam and no button.
  */
-import { EditorSelection, StateField, type EditorState, type Extension } from '@codemirror/state'
+import {
+  EditorSelection,
+  Facet,
+  StateEffect,
+  StateField,
+  type EditorState,
+  type Extension,
+} from '@codemirror/state'
 import { showTooltip, type EditorView, type Tooltip, type TooltipView } from '@codemirror/view'
+import type { LineRange } from '@holi/shared'
 import { motionDurationMs, prefersReducedMotion } from '@/lib/motion'
 
 /**
@@ -33,15 +44,30 @@ export function askPrompt(instruction: string, quote: string): string {
   return said === '' ? quote : `${said}\n\n${quote}`
 }
 
-/** The prompt for the primary selection, or null when it is empty. */
-export function promptForSelection(state: EditorState, notePath: string): string | null {
+/** The primary selection's lines, 1-based and inclusive, or null when it is
+ *  empty (a caret). A selection that ends at the very start of a later line
+ *  (a triple-click, Mod-L, shift+down) holds nothing of that line, so it does
+ *  not count. Also what the agent's per-turn focus line names
+ *  (`state/ui-report.ts`). */
+export function selectedLines(state: EditorState): LineRange | null {
   const range = state.selection.main
   if (range.empty) return null
+  const startLine = state.doc.lineAt(range.from).number
+  const end = state.doc.lineAt(range.to)
+  const endLine = range.to === end.from && end.number > startLine ? end.number - 1 : end.number
+  return { startLine, endLine }
+}
+
+/** The prompt for the primary selection, or null when it is empty. */
+export function promptForSelection(state: EditorState, notePath: string): string | null {
+  const lines = selectedLines(state)
+  if (lines === null) return null
+  const range = state.selection.main
   return selectionPrompt(
     notePath,
-    state.doc.lineAt(range.from).number,
-    state.doc.lineAt(range.to).number,
-    state.sliceDoc(range.from, range.to),
+    lines.startLine,
+    lines.endLine,
+    state.sliceDoc(range.from, Math.min(range.to, state.doc.line(lines.endLine).to)),
   )
 }
 
@@ -72,6 +98,18 @@ export interface AskAgentSeam {
   onAsk: (prompt: string, target: string | 'new') => Promise<AskResult>
 }
 
+/** Open a comment thread on the selection: the panel takes it from here. */
+export interface CommentSeam {
+  comment: (from: number, to: number) => void
+}
+
+/** The note's comment seam, while it takes threads. A facet rather than an
+ *  argument, so the note's claim can give or take it (`reconfigureClaimLayer`)
+ *  without rebuilding the tooltip's field, which would close an open ask. */
+export const commentSeamFacet = Facet.define<CommentSeam, CommentSeam | undefined>({
+  combine: (values) => values[0],
+})
+
 /** A picker label, not a name: main derives the real one from the ask's first
  *  line at spawn. */
 const NEW_SESSION = 'New session'
@@ -98,7 +136,13 @@ const exitMs = (): number => (prefersReducedMotion() ? 0 : motionDurationMs('--m
  * Sending collapses the selection on purpose: that is how the tooltip closes,
  * one mechanism rather than a second dismiss path. The collapse follows the fade.
  */
-function askAgentView(view: EditorView, quote: string, seam: AskAgentSeam): TooltipView {
+function askAgentView(
+  view: EditorView,
+  quote: string,
+  seam: AskAgentSeam | undefined,
+  comment: CommentSeam | undefined,
+  instruction?: string,
+): TooltipView {
   const dom = document.createElement('div')
   dom.className = 'cm-ask-agent'
 
@@ -115,13 +159,14 @@ function askAgentView(view: EditorView, quote: string, seam: AskAgentSeam): Tool
     }, exitMs())
   }
 
-  const popover = (): HTMLElement => {
+  const popover = (seam: AskAgentSeam, text = ''): HTMLElement => {
     const wrap = document.createElement('div')
     wrap.className = 'cm-ask-agent-popover'
 
     const field = document.createElement('textarea')
     field.rows = 1
     field.className = 'cm-ask-agent-field'
+    field.value = text
 
     // Read as the popover opens. A default that has gone falls back to a new session.
     const { sessions, initial } = seam.targets()
@@ -241,8 +286,15 @@ function askAgentView(view: EditorView, quote: string, seam: AskAgentSeam): Tool
       if (e.key === 'Escape') {
         e.preventDefault()
         e.stopPropagation()
+        // Opened by a command, perhaps with nothing selected: the selection
+        // decides again, which is the button over one and nothing otherwise.
+        if (instruction !== undefined) {
+          view.dispatch({ selection: view.state.selection })
+          view.focus()
+          return
+        }
         dom.classList.remove('cm-ask-agent-open')
-        dom.replaceChildren(trigger())
+        dom.replaceChildren(...triggers())
         view.dispatch({})
       }
     }
@@ -256,25 +308,47 @@ function askAgentView(view: EditorView, quote: string, seam: AskAgentSeam): Tool
     return wrap
   }
 
-  const trigger = (): HTMLElement => {
-    const button = document.createElement('button')
-    button.type = 'button'
-    button.className = 'cm-ask-agent-trigger'
-    button.textContent = 'Ask agent'
-    button.onmousedown = (e) => {
+  const button = (label: string, press: () => void): HTMLElement => {
+    const b = document.createElement('button')
+    b.type = 'button'
+    b.className = 'cm-ask-agent-trigger'
+    b.textContent = label
+    b.onmousedown = (e) => {
       e.preventDefault()
-      dom.replaceChildren(popover())
-      // Added by the press, not at mount: this element is rebuilt on every
-      // selection change, so a mount-time animation would replay during a drag.
-      dom.classList.add('cm-ask-agent-open')
-      // CodeMirror cannot see a DOM swap, so the wider popover would stay placed
-      // for the button. An empty transaction makes it measure again.
-      view.dispatch({})
+      press()
     }
-    return button
+    return b
   }
 
-  dom.appendChild(trigger())
+  const triggers = (): HTMLElement[] => [
+    ...(seam === undefined
+      ? []
+      : [
+          button('Ask agent', () => {
+            dom.replaceChildren(popover(seam))
+            // Added by the press, not at mount: this element is rebuilt on every
+            // selection change, so a mount-time animation would replay during a drag.
+            dom.classList.add('cm-ask-agent-open')
+            // CodeMirror cannot see a DOM swap, so the wider popover would stay placed
+            // for the button. An empty transaction makes it measure again.
+            view.dispatch({})
+          }),
+        ]),
+    ...(comment === undefined
+      ? []
+      : [
+          button('Comment', () => {
+            const { from, to } = view.state.selection.main
+            ;(view.state.facet(commentSeamFacet) ?? comment).comment(from, to)
+          }),
+        ]),
+  ]
+
+  // Opened by a command: the popover straight away, with its instruction in.
+  if (instruction !== undefined && seam !== undefined) {
+    dom.appendChild(popover(seam, instruction))
+    dom.classList.add('cm-ask-agent-open')
+  } else dom.append(...triggers())
   return {
     dom,
     // The tooltip can go before the fade finishes; the pending dispatch must not
@@ -287,7 +361,13 @@ function askAgentView(view: EditorView, quote: string, seam: AskAgentSeam): Tool
   }
 }
 
-function tooltipFor(state: EditorState, notePath: string, seam: AskAgentSeam): Tooltip[] {
+function tooltipFor(
+  state: EditorState,
+  notePath: string,
+  seam: AskAgentSeam | undefined,
+): Tooltip[] {
+  const comment = state.facet(commentSeamFacet)
+  if (seam === undefined && comment === undefined) return []
   // A read-only file is one a reconcile is resolving (docs/features/vaults-sync.md):
   // do not hand it to a second conversation mid-merge. `state.readOnly`, not the
   // `editable` facet, which is about the caret rather than the file.
@@ -301,25 +381,69 @@ function tooltipFor(state: EditorState, notePath: string, seam: AskAgentSeam): T
       pos: range.from,
       end: range.to,
       above: true,
-      create: (view) => askAgentView(view, prompt, seam),
+      create: (view) => askAgentView(view, prompt, seam, comment),
     },
   ]
 }
 
 /**
- * Shows an "Ask agent" button over a non-empty selection. `notePath` is static
+ * Open the popover with `instruction` written in, over the selection, or at the
+ * caret when nothing is selected: what a slash command's `{ agent }` does
+ * (docs/features/editor.md). The person still picks the session and sends.
+ */
+export const openAskAgent = StateEffect.define<string>()
+
+/** Whether this editor has the ask at all: it has none without an agent. */
+export const hasAskAgent = Facet.define<boolean, boolean>({
+  combine: (values) => values.some(Boolean),
+})
+
+/** The opened-by-a-command tooltip: the selection quoted, or the caret's line
+ *  named when there is none. */
+function openedTooltip(
+  state: EditorState,
+  notePath: string,
+  seam: AskAgentSeam,
+  instruction: string,
+): Tooltip[] {
+  if (state.readOnly) return []
+  const range = state.selection.main
+  const quote =
+    promptForSelection(state, notePath) ??
+    `[From ${notePath}, line ${state.doc.lineAt(range.head).number}]`
+  return [
+    {
+      pos: range.from,
+      end: range.to,
+      above: true,
+      create: (view) => askAgentView(view, quote, seam, undefined, instruction),
+    },
+  ]
+}
+
+/**
+ * Shows "Ask agent" and "Comment" over a non-empty selection, each while its
+ * seam is there (the comment seam is `commentSeamFacet`). `notePath` is static
  * because `EditorPane` rebuilds the view per document.
  */
-export function askAgentTooltip(notePath: string, seam: AskAgentSeam): Extension {
+export function askAgentTooltip(notePath: string, seam: AskAgentSeam | undefined): Extension {
   const field = StateField.define<readonly Tooltip[]>({
     create: (state) => tooltipFor(state, notePath, seam),
     update(tooltips, tr) {
+      if (seam !== undefined) {
+        for (const effect of tr.effects) {
+          if (effect.is(openAskAgent)) return openedTooltip(tr.state, notePath, seam, effect.value)
+        }
+      }
       // Not on other transactions: rebuilding would replace the button under
-      // the pointer.
-      if (!tr.docChanged && tr.selection === undefined) return tooltips
+      // the pointer. A note that starts or stops taking threads changes the
+      // buttons, so that rebuilds too.
+      const commentable = (state: EditorState) => state.facet(commentSeamFacet) !== undefined
+      const flipped = commentable(tr.startState) !== commentable(tr.state)
+      if (!tr.docChanged && tr.selection === undefined && !flipped) return tooltips
       return tooltipFor(tr.state, notePath, seam)
     },
     provide: (f) => showTooltip.computeN([f], (state) => state.field(f)),
   })
-  return field
+  return seam === undefined ? field : [field, hasAskAgent.of(true)]
 }

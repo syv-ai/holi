@@ -8,7 +8,7 @@
  * - **This message**: remembered while the app runs, and no longer. Held in an
  *   atom rather than the component, because the reader unmounts every time a
  *   thread is closed.
- * - **This sender, always**: persisted in main (`google/image-prefs.ts`) and
+ * - **This sender, always**: kept in the vault's local Google settings and
  *   applied to every message from that address.
  *
  * **`undefined` means "not asked yet"**, as in `account.ts`: the banner

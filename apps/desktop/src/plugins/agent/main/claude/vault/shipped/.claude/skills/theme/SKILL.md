@@ -14,7 +14,8 @@ break the layout.
 
 - **`.holi/settings/theme.css`** — the vault's theme. Committed, so it travels
   with the vault and everyone who clones it sees it. This is the one to edit for
-  a shared look.
+  a shared look. Holi seeds it with its own whole theme, once; from then on it is
+  this vault's, and Holi never fills it in again.
 - **`.holi/settings/theme.local.css`** — a personal override, gitignored (never
   committed). If it exists, its declarations win over `theme.css` **per token**,
   so a one-line local file can recolour just `--primary` and inherit the rest.
@@ -25,8 +26,8 @@ Both already exist in every vault. Edit them; never create them.
 
 **The file is the vocabulary, so do not work from memory and do not guess a token
 name.** Every token this vault can set is already in both files, grouped, with a
-note on the ones whose name is not enough. A token this vault has not set is a
-commented-out declaration:
+note on the ones whose name is not enough. `theme.css` sets them all; in
+`theme.local.css` they are commented out until you override one:
 
 ```css
 [data-theme='dark'] {
@@ -41,10 +42,11 @@ commented-out declaration:
 }
 ```
 
-**Setting a token is uncommenting its declaration.** `--primary` above is set;
-the three below it are not, and Holi's own value is in force for them. Clearing
-one is commenting it out again, or deleting the line — the next write restores it
-as a comment either way.
+**In `theme.local.css`, overriding a token is uncommenting its declaration.**
+`--primary` above is set; the three below it are not, so `theme.css` shows
+through for them. In `theme.css`, change a value in place. A token commented out
+there falls back to Holi's built-in value. To put a whole mode back to Holi's,
+the user has Reset light and Reset dark in Settings, Appearance.
 
 Two blocks, `[data-theme='dark']` and `[data-theme='light']`, both listing the
 same tokens. The app is dark today, so put your values under `dark` unless you
@@ -67,11 +69,14 @@ for the value, and only the survivors are applied. That is why:
 So a typo is safe, but check your work: a dropped declaration simply does not
 take effect.
 
-Values are ordinary CSS: `#3b82f6`, `rgb(...)`, `hsl(...)`, `oklch(...)`, or a
-name like `transparent`. `--radius` is a length (`0.75rem`, `10px`, `0`) and the
-two `--shadow-*` tokens are box-shadow values. `--divider` and `--selection` are
-derived from other tokens by default and want a flat colour if you set them;
-`color-mix(...)` is not accepted.
+A colour is ordinary CSS: `#3b82f6`, `rgb(...)`, `hsl(...)`, `oklch(...)`, a name
+like `transparent`, or a reference. `var(--<token>)` names another colour token
+and `var(--color-sky-700)` a colour from Tailwind's palette (any hue and shade
+from 50 to 950, and `white`, `black`). `color-mix(in srgb, A 55%, B)` mixes two of
+those. Holi's own theme is written this way: `--divider` is mixed from `--border`
+and `--background`, so it follows them when you change either. `--radius` is a
+length (`0.75rem`, `10px`, `0`) and the two `--shadow-*` tokens are box-shadow
+values.
 
 ## The comments are generated
 
@@ -84,8 +89,9 @@ choice needs explaining, put it in a note in the vault.
 
 ## Tips
 
-- Change just `--primary` for the biggest shift with the least effort: buttons,
-  focus rings, active states and (by default) text selection all follow it.
+- Change just `--primary` and `--brand` for the biggest shift with the least
+  effort: buttons, focus rings, active states and text selection all follow
+  them, as long as `--ring` and `--selection` still refer to them.
 - Set `--brand` whenever you set `--primary`. They are the same colour in two
   roles, and a fill dark enough to carry pale text is too dark to BE text.
 - Keep enough contrast between `--background` and `--foreground` to stay readable.

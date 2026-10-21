@@ -11,8 +11,8 @@ import { createStore } from 'jotai'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   isAppBundlePath,
-  VAULT_SETTING_DEFAULTS,
   type ResolvedVaultSettings,
+  VAULT_SETTING_DEFAULTS,
   type VaultSnapshot,
 } from '@holi/shared'
 import { installFakeHoli, type FakeHoli } from './helpers/fake-holi'

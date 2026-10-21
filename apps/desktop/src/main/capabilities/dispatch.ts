@@ -35,8 +35,8 @@ export interface CapabilityHostDeps {
   core(remote: string, root: string): CoreServices
   /** Whether the vault cloned at `root` runs this plugin. */
   pluginEnabled(plugin: string, root: string): Promise<boolean>
-  /** What the scanner claims in the vault cloned at `root`, for a vault that
-   *  is not open. */
+  /** What the scanner claims in the vault cloned at `root`: the claims of
+   *  the plugins it runs. */
   claims(root: string): Promise<readonly ScanClaim[]>
 }
 
@@ -58,6 +58,8 @@ export interface AppDoorOpener {
 /** The app door, once opened: one call from the frame mounted for `bundle`. */
 export interface AppDoor {
   call(remote: string, bundle: string, name: string, params: unknown): Promise<CapabilityResult>
+  /** Shut it: a call through it throws, and the door can be opened again. */
+  close(): void
 }
 
 export interface CapabilityHost {
@@ -65,7 +67,8 @@ export interface CapabilityHost {
   /** The names open at `door` in the vault at `remote`: core's, and those of
    *  the plugins it runs. What `has('tasks.create')` asks. */
   names(remote: string, door: Door): Promise<string[]>
-  /** Open the app door. Once per process: a second opener throws. */
+  /** Open the app door. One opener at a time: a second throws while the
+   *  first has not closed it. */
   openAppDoor(opener: AppDoorOpener): AppDoor
 }
 
@@ -106,6 +109,7 @@ export function createCapabilityHost(deps: CapabilityHostDeps): CapabilityHost {
             ? active.snapshot()
             : scanVault(root, await deps.claims(root))
         },
+        claims: () => deps.claims(root),
         core: deps.core(remote, root),
       },
       params,
@@ -135,8 +139,17 @@ export function createCapabilityHost(deps: CapabilityHostDeps): CapabilityHost {
     openAppDoor({ admit }) {
       if (opened) throw new Error('the app door is already open')
       opened = true
+      let shut = false
       return {
-        call: (remote, bundle, name, params) => run('app', remote, bundle, name, params, admit),
+        call: async (remote, bundle, name, params) => {
+          if (shut) throw new Error('the app door is closed')
+          return run('app', remote, bundle, name, params, admit)
+        },
+        close: () => {
+          if (shut) return
+          shut = true
+          opened = false
+        },
       }
     },
   }

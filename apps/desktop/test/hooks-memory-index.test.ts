@@ -116,6 +116,20 @@ describe('memory-index', () => {
     expect(await read(MEMORY_INDEX)).toBe(before)
   })
 
+  it('leaves out a memory past its expires, without deleting it', async () => {
+    const expiring = (stamp: string, title: string) =>
+      `---\ntype: project\ntitle: ${title}\nexpires: ${stamp}\n---\n\nThe fact.\n`
+    await write('.holi/memory/old.md', expiring('2026-10-20', 'Old'))
+    await write('.holi/memory/live.md', expiring('2026-10-22', 'Live'))
+
+    await memoryIndex(repo, added('.holi/memory/live.md'), new Date(2026, 9, 21, 12, 0))
+
+    const index = (await read(MEMORY_INDEX))!
+    expect(index).toContain('[[.holi/memory/live.md|Live]] (expires 2026-10-22)')
+    expect(index).not.toContain('.holi/memory/old.md')
+    expect(await read('.holi/memory/old.md')).not.toBeNull()
+  })
+
   it('re-indexes under the new path after a rename', async () => {
     await write('.holi/memory/old.md', memory('convention', 'A', 'the first'))
     await memoryIndex(repo, added('.holi/memory/old.md'))

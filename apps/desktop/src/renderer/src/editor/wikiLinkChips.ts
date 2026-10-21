@@ -1,19 +1,18 @@
 import { WidgetType } from '@codemirror/view'
-import type { TaskStatus } from '@holi/shared'
 
 /**
  * Inline chip for a `[[path]]` / `[[path|Label]]` wiki-link.
  *
- * Every chip routes by path: a task is a file like any other. With
- * `task` present it draws a status orb and strikes the title when done.
- * `label` arrives resolved (`|Label`, or a task's title).
+ * Every chip routes by path: a claimed file (a task) is a file like any
+ * other. `look` is how its claim draws it: an orb before the title, struck
+ * when finished. `label` arrives resolved (`|Label`, or the claim's title).
  */
 export class WikiLinkChip extends WidgetType {
   constructor(
     readonly target: string,
     readonly label: string,
     readonly exists: boolean,
-    readonly task?: { status: TaskStatus },
+    readonly look?: { orb?: string; struck?: boolean },
   ) {
     super()
   }
@@ -23,29 +22,25 @@ export class WikiLinkChip extends WidgetType {
       other.target === this.target &&
       other.label === this.label &&
       other.exists === this.exists &&
-      other.task?.status === this.task?.status
+      other.look?.orb === this.look?.orb &&
+      other.look?.struck === this.look?.struck
     )
   }
 
   override toDOM(): HTMLElement {
     const el = document.createElement('span')
-    const done = this.task?.status === 'done'
     el.className = [
       'cm-wikilink',
-      this.task ? 'cm-wikilink-task' : 'cm-wikilink-note',
-      // A missing tint applies to notes only — a task chip resolved from a real file.
-      !this.task && !this.exists ? 'cm-wikilink-missing' : '',
-      done ? 'cm-wikilink-done' : '',
+      this.look ? 'cm-wikilink-claimed' : 'cm-wikilink-note',
+      // A missing tint applies to notes only: a claimed chip resolved from a real file.
+      !this.look && !this.exists ? 'cm-wikilink-missing' : '',
+      this.look?.struck === true ? 'cm-wikilink-done' : '',
     ]
       .filter(Boolean)
       .join(' ')
     // The dataset key `resolveLinkClick` routes on.
     el.dataset['wikiTarget'] = this.target
-    if (this.task) {
-      const orb = document.createElement('span')
-      orb.className = `cm-task-orb cm-task-orb-${this.task.status}`
-      el.appendChild(orb)
-    }
+    if (this.look?.orb !== undefined) el.appendChild(linkOrb(this.look.orb))
     el.appendChild(document.createTextNode(this.label))
     return el
   }
@@ -53,4 +48,12 @@ export class WikiLinkChip extends WidgetType {
   override ignoreEvent(): boolean {
     return false // clicks bubble to the editor's click handler (open target)
   }
+}
+
+/** The dot a claimed link leads with, in its claim's colour. */
+export function linkOrb(colour: string): HTMLElement {
+  const orb = document.createElement('span')
+  orb.className = 'cm-link-orb'
+  orb.style.background = colour
+  return orb
 }

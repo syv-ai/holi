@@ -10,30 +10,29 @@
  * a shared git repo.
  */
 import { join } from 'node:path'
-import type { MainPlugin } from '../../../main/plugin-api'
+import { pluginSettingValue } from '@holi/shared'
+import { readVaultSettings, writePluginSettings, type MainPlugin } from '../../../main/plugin-api'
 import { GOOGLE_INFO } from '../info'
 import { GoogleApi } from './api'
 import { openGoogleCache, type GoogleCache } from './cache'
-import { createCalendarPrefs } from './calendar-prefs'
+import type { CalendarOverrides } from './calendar'
 import { GOOGLE_NAMESPACES, googleCapabilities } from './capabilities'
 import { createGoogleData, type GoogleData } from './data'
-import { createImagePrefs } from './image-prefs'
 import { googleSeed } from './seed'
+import { startGoogleTriggers } from './triggers'
 
 export const googleMain: MainPlugin = {
   info: GOOGLE_INFO,
   seed: googleSeed,
-  async activateApp(ctx) {
+  async activate(ctx) {
     // The keychain and the system browser: Electron, loaded only when the
     // plugin starts (after `whenReady`), so the module stays importable under
     // plain Node in the tests.
     const { createGoogleAccountsManager } = await import('./electron')
     const accounts = await createGoogleAccountsManager(ctx.userData)
 
-    /**
-     * Each account's data, memoized, so switching between two vaults on one
-     * account does not re-fetch mail and calendar: one cache file per account.
-     */
+    /** Each account's data, memoized while the plugin runs: one cache file
+     *  per account, which outlives it, so a later start does not re-fetch. */
     const bySub = new Map<string, { data: GoogleData; cache: GoogleCache }>()
     const dataForSub = (sub: string): GoogleData => {
       const held = bySub.get(sub)
@@ -73,24 +72,44 @@ export const googleMain: MainPlugin = {
       bySub.delete(sub)
     })
 
+    const dataFor = async (remote: string): Promise<GoogleData | null> => {
+      const sub = (await accounts.sessionFor(remote))?.accountSub ?? null
+      return sub === null ? null : dataForSub(sub)
+    }
+    // The vault's own Google settings, in its local plugins file: the agenda
+    // view, an app, the agent and the triggers all read through them.
+    const readSettings = async (root: string) => {
+      const { pluginValues } = await readVaultSettings(root)
+      return {
+        calendars: pluginSettingValue(pluginValues, GOOGLE_INFO, 'calendars') as CalendarOverrides,
+        imageSenders: pluginSettingValue(pluginValues, GOOGLE_INFO, 'imageSenders') as string[],
+      }
+    }
+
     ctx.register(
       GOOGLE_NAMESPACES,
       googleCapabilities({
         accounts,
-        dataFor: async (remote) => {
-          const sub = (await accounts.sessionFor(remote))?.accountSub ?? null
-          return sub === null ? null : dataForSub(sub)
+        dataFor,
+        settings: {
+          read: readSettings,
+          write: async (root, values) => {
+            const refused = await writePluginSettings(root, GOOGLE_INFO.id, values)
+            if (refused.length > 0) console.warn(`[google] settings: ${refused.join('; ')}`)
+          },
         },
-        // One file, every reader: the agenda view, an app and the agent all
-        // read their agenda through it. It holds calendar ids, not a credential.
-        calendarPrefs: createCalendarPrefs(join(ctx.userData, 'google-calendars.json')),
-        // A decision about the connected account, so kept per machine: pushed
-        // to teammates it would be a disclosure, not a preference.
-        imagePrefs: createImagePrefs(join(ctx.userData, 'google-image-senders.json')),
       }),
     )
 
+    // Mail and the agenda for schedules that run on them, polled only while
+    // one listens.
+    const stopTriggers = startGoogleTriggers(ctx, {
+      data: () => dataFor(ctx.remote),
+      overrides: async () => (await readSettings(ctx.root)).calendars,
+    })
+
     return () => {
+      stopTriggers()
       accounts.cancelConnect()
       stopWatching()
       for (const { cache } of bySub.values()) cache.close()

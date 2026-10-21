@@ -3,35 +3,45 @@
  * CompletionContext → CompletionResult; `mentionSource` wraps it as a
  * CompletionSource fed live data.
  *
- * A task mention is an ordinary path wiki-link to the task file: no opaque id
- * and no `related[]` edge.
+ * Every mention is an ordinary path wiki-link: a claimed file (a task) is
+ * offered in its claim's group, with no opaque id and no `related[]` edge.
  */
 import type {
   CompletionContext,
   CompletionResult,
   CompletionSource,
 } from '@codemirror/autocomplete'
-import { formatWikiLink, isHiddenPath, type TaskStatus } from '@holi/shared'
-import { shortStamp } from '@/lib/date-presets'
+import type { IconNode } from 'lucide'
+import { formatWikiLink, isHiddenPath } from '@holi/shared'
 import type { HoliCompletion } from './completion'
+
+/** One thing the `@` menu offers, which inserts a link to `path`. */
+export interface MentionItem {
+  path: string
+  label: string
+  /** Drawn at the row's start, in `color` (a CSS value) when given. */
+  glyph?: IconNode
+  color?: string
+  /** Trailing text, such as a due date. */
+  meta?: string
+}
+
+/** A section of the `@` menu after the vault's notes, which a claim adds
+ *  (`PathClaim.editor`). */
+export interface MentionGroup {
+  name: string
+  items: readonly MentionItem[]
+}
 
 export interface MentionData {
   notes: { path: string; icon?: string }[]
-  tasks: { path: string; title: string; status: TaskStatus; due?: string }[]
+  groups: readonly MentionGroup[]
 }
 
 /** Shared objects, as CodeMirror recommends: a section is matched by identity
- *  of name, and `rank` is what keeps Notes above Tasks rather than the
+ *  of name, and `rank` is what keeps Notes above the groups rather than the
  *  alphabet. */
 const NOTES = { name: 'Notes', rank: 1 }
-const TASKS = { name: 'Tasks', rank: 2 }
-
-/** The explorer's `TaskIcon` vocabulary, by status. */
-const TASK_TYPE: Record<TaskStatus, string> = {
-  todo: 'holi-task-todo',
-  doing: 'holi-task-doing',
-  done: 'holi-task-done',
-}
 
 /**
  * Trigger: `@` and any following path/word chars, anchored at the `@`.
@@ -66,17 +76,22 @@ export function mentionCompletions(
       ...(n.icon === undefined ? {} : { emoji: n.icon }),
       apply: formatWikiLink(n.path),
     }))
-  // Done tasks are left out; an ordinary `[[link]]` still reaches them.
-  const taskOptions: HoliCompletion[] = data.tasks
-    .filter((t) => t.status !== 'done' && t.title.toLowerCase().includes(query))
-    .map((t) => ({
-      label: t.title,
-      type: TASK_TYPE[t.status],
-      section: TASKS,
-      ...(t.due === undefined ? {} : { meta: `due ${shortStamp(t.due)}` }),
-      apply: formatWikiLink(t.path),
-    }))
-  return { from: match.from, options: [...noteOptions, ...taskOptions], filter: false }
+  // What a group leaves out (done tasks) an ordinary `[[link]]` still reaches.
+  const groupOptions: HoliCompletion[] = data.groups.flatMap((group, i) => {
+    const section = { name: group.name, rank: 2 + i }
+    return group.items
+      .filter((item) => item.label.toLowerCase().includes(query))
+      .map((item) => ({
+        label: item.label,
+        type: 'holi-claimed',
+        section,
+        ...(item.glyph === undefined ? {} : { glyph: item.glyph }),
+        ...(item.color === undefined ? {} : { color: item.color }),
+        ...(item.meta === undefined ? {} : { meta: item.meta }),
+        apply: formatWikiLink(item.path),
+      }))
+  })
+  return { from: match.from, options: [...noteOptions, ...groupOptions], filter: false }
 }
 
 /** The CodeMirror source: pulls live data on each `@`. */

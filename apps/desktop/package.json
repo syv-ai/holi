@@ -1,6 +1,8 @@
 {
   "name": "@holi/desktop",
-  "version": "0.0.1",
+  "version": "0.1.1",
+  "description": "Local-first markdown vaults on GitHub, with Claude Code as the assistant",
+  "author": "syv.ai",
   "private": true,
   "main": "./out/main/index.js",
   "scripts": {
@@ -9,7 +11,8 @@
     "build": "electron-vite build",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "rebuild:natives": "electron-rebuild -f -w node-pty"
+    "rebuild:natives": "electron-rebuild -f -w node-pty",
+    "package:mac": "electron-vite build && electron-builder --mac --publish never"
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",
@@ -57,7 +60,9 @@
     "codemirror": "^6.0.2",
     "codemirror-markdown-tables": "^1.0.0",
     "command-score": "0.1.2",
+    "d3-force": "^3.0.0",
     "dompurify": "^3.4.13",
+    "electron-updater": "^6.8.9",
     "jotai": "^2.20.1",
     "linkify-it": "^6.1.0",
     "lucide": "1.27.0",
@@ -70,6 +75,7 @@
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "react-resizable-panels": "^4.12.2",
+    "sharp": "0.34.4",
     "tailwind-merge": "^3.6.0",
     "turndown": "^7.2.4",
     "turndown-plugin-gfm": "^1.0.2",
@@ -82,11 +88,13 @@
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
+    "@types/d3-force": "^3.0.10",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
     "@types/turndown": "^5.0.6",
     "@vitejs/plugin-react": "^5.2.0",
     "electron": "^43.1.0",
+    "electron-builder": "^26.17.0",
     "electron-vite": "^5.0.0",
     "eslint": "^9.39.5",
     "eslint-import-resolver-typescript": "^3.10.1",

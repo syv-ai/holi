@@ -16,7 +16,15 @@
  */
 import { atom, useAtomValue, useSetAtom } from 'jotai'
 import { useEffect, useRef } from 'react'
-import { SETTINGS_FILE, SETTINGS_LOCAL_FILE, type ResolvedVaultSettings } from '@holi/shared'
+import {
+  PLUGINS_FILE,
+  PLUGINS_LOCAL_FILE,
+  SETTINGS_FILE,
+  SETTINGS_LOCAL_FILE,
+  pluginSettingValue,
+  type PluginInfo,
+  type ResolvedVaultSettings,
+} from '@holi/shared'
 import { trpc } from '../lib/trpc'
 import { activeRemoteAtom, snapshotAtom } from './vaults'
 
@@ -51,15 +59,22 @@ export const loadVaultSettingsAtom = atom(
   },
 )
 
-/** The two settings files as the snapshot last saw them. */
+const SETTINGS_FILES = new Set([
+  SETTINGS_FILE,
+  SETTINGS_LOCAL_FILE,
+  PLUGINS_FILE,
+  PLUGINS_LOCAL_FILE,
+])
+
+/** The four settings files as the snapshot last saw them. */
 const settingsFilesAtom = atom((get): string =>
   get(snapshotAtom)
-    .files.filter((f) => f.path === SETTINGS_FILE || f.path === SETTINGS_LOCAL_FILE)
+    .files.filter((f) => SETTINGS_FILES.has(f.path))
     .map((f) => `${f.path}@${f.updatedAt}`)
     .join('|'),
 )
 
-/** Re-read the settings when either file changes on disk. Mounted once, in Shell. */
+/** Re-read the settings when any of the files changes on disk. Mounted once, in Shell. */
 export function useSettingsFollowDisk(): void {
   const files = useAtomValue(settingsFilesAtom)
   const load = useSetAtom(loadVaultSettingsAtom)
@@ -72,4 +87,13 @@ export function useSettingsFollowDisk(): void {
     }
     load({ force: true }).catch((e: unknown) => console.warn('[settings] re-read failed:', e))
   }, [files, load])
+}
+
+/** A plugin's own setting in the open vault (`PluginInfo.settings`): its
+ *  default until the vault's settings are read. */
+export function usePluginSetting(info: PluginInfo, key: string): unknown {
+  const cached = useAtomValue(vaultSettingsAtom)
+  const remote = useAtomValue(activeRemoteAtom)
+  const values = cached !== null && cached.remote === remote ? cached.settings.pluginValues : {}
+  return pluginSettingValue(values, info, key)
 }

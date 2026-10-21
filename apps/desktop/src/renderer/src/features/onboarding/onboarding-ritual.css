@@ -1,23 +1,11 @@
 /* Scoped styles for the OnboardingRitual component. All rules live under
  * `.onboarding-ritual` so the keyframes + utility classes can't leak into
- * the rest of the app. Mirrors docs/prototypes/onboarding-ritual-v1.html
- * — the static prototype is the visual source of truth. */
+ * the rest of the app. */
 
 .onboarding-ritual {
-  /* Self-contained theme tokens. The ritual is a deliberately dark, full-screen
-   * ceremony that owns its own palette rather than inheriting the app theme —
-   * ported from the old repo's dark tokens (holi src/styles/tokens.css). Only
-   * the five tokens this stylesheet actually references are defined here. */
-  --background: 0 0% 9%;
-  --foreground: 0 0% 82%;
-  --muted-foreground: 0 0% 62%;
-  --primary: 152 32% 52%;
-  --primary-hover: 152 36% 60%;
-  --border: 0 0% 14%;
-  --surface-1: 0 0% 12%;
-  --surface-2: 0 0% 15%;
-  --destructive: 8 50% 58%;
-
+  /* Holi's own theme: the ritual paints with the app's tokens (the seed
+   * theme, or the open vault's in a dry run), so the first screen looks like
+   * the app it opens into. `--brand` is its accent, as text and as glow. */
   /* The overshoot curve, and the ONE place in Holi it survives. The app's
      motion vocabulary (index.css) is weight without bounce; a one-time
      ceremony is allowed a spring, the daily app is not. Moved here from
@@ -25,31 +13,11 @@
      only consumer. */
   --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
 
-  /* Bridge to the app's semantic tokens (full-colour form) so the shared
-   * primitives — Button/Input/Select — render in the ritual's own palette
-   * instead of the app's sky/neutral. The ritual keeps its HSL-triplet tokens
-   * (its atmosphere CSS applies alpha via hsl(var(--x) / a)); these aliases
-   * just wrap them as the colours the primitives read. */
-  --color-background: hsl(var(--background));
-  --color-foreground: hsl(var(--foreground));
-  --color-primary: hsl(var(--primary));
-  --color-primary-foreground: hsl(var(--background));
-  --color-muted: hsl(var(--surface-2));
-  --color-muted-foreground: hsl(var(--muted-foreground));
-  --color-accent: hsl(var(--surface-2));
-  --color-accent-foreground: hsl(var(--foreground));
-  --color-popover: hsl(var(--surface-1));
-  --color-popover-foreground: hsl(var(--foreground));
-  --color-border: hsl(var(--border));
-  --color-input: hsl(var(--border));
-  --color-ring: hsl(var(--primary));
-  --color-destructive: hsl(var(--destructive));
-
   position: fixed;
   inset: 0;
   z-index: 50;
-  background: hsl(var(--background));
-  color: hsl(var(--foreground));
+  background: var(--background);
+  color: var(--foreground);
   font-family: 'Geist', system-ui, sans-serif;
   font-size: 14px;
   letter-spacing: -0.005em;
@@ -62,55 +30,6 @@
 .onboarding-ritual *::before,
 .onboarding-ritual *::after {
   box-sizing: border-box;
-}
-
-/* ── Atmosphere ──────────────────────────────────────────────────── */
-.onboarding-ritual .obrit-grain {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  z-index: 4;
-  opacity: 0.035;
-  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.92' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.14 0 0 0 0 0.14 0 0 0 0 0.14 0 0 0 1 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
-  mix-blend-mode: multiply;
-}
-
-.onboarding-ritual .obrit-vignette {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  z-index: 1;
-  background: radial-gradient(
-    ellipse 60% 50% at 50% 38%,
-    transparent 0%,
-    transparent 40%,
-    hsl(0 0% 14% / 0.05) 80%,
-    hsl(0 0% 12% / 0.08) 100%
-  );
-}
-
-.onboarding-ritual .obrit-ember {
-  position: absolute;
-  left: 50%;
-  bottom: -200px;
-  width: 800px;
-  height: 600px;
-  transform: translateX(-50%);
-  pointer-events: none;
-  z-index: 1;
-  background: radial-gradient(ellipse 50% 50% at 50% 100%, hsl(48 20% 80% / 0.04), transparent 70%);
-  animation: obrit-ember-pulse 8s ease-in-out infinite;
-}
-@keyframes obrit-ember-pulse {
-  0%,
-  100% {
-    opacity: 0.5;
-    transform: translateX(-50%) translateY(0);
-  }
-  50% {
-    opacity: 1;
-    transform: translateX(-50%) translateY(-20px);
-  }
 }
 
 /* ── Frame ───────────────────────────────────────────────────────── */
@@ -134,8 +53,8 @@
   width: 30px;
   height: 30px;
   border-radius: var(--radius-sm, 0.55rem);
-  background: hsl(var(--primary));
-  color: hsl(var(--background));
+  background: var(--brand);
+  color: var(--background);
   display: grid;
   place-items: center;
   font-family: 'Fraunces', serif;
@@ -161,12 +80,16 @@
   align-items: center;
   gap: 14px;
 }
+/* One act's dot and the rule before it, laid out as if unwrapped. */
+.onboarding-ritual .obrit-step {
+  display: contents;
+}
 .onboarding-ritual .obrit-dot {
   position: relative;
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  border: 1px solid hsl(var(--border));
+  border: 1px solid var(--border);
   background: transparent;
   transition:
     background 280ms var(--ease-settle),
@@ -175,13 +98,13 @@
     box-shadow 280ms;
 }
 .onboarding-ritual .obrit-dot[data-state='done'] {
-  background: hsl(var(--muted-foreground));
-  border-color: hsl(var(--muted-foreground));
+  background: var(--muted-foreground);
+  border-color: var(--muted-foreground);
 }
 .onboarding-ritual .obrit-dot[data-state='active'] {
-  background: hsl(var(--primary));
-  border-color: hsl(var(--primary));
-  box-shadow: 0 0 0 3px hsl(var(--primary) / 0.16);
+  background: var(--brand);
+  border-color: var(--brand);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 16%, transparent);
   transform: scale(1.1);
 }
 .onboarding-ritual .obrit-dot[data-state='active']::after {
@@ -189,7 +112,7 @@
   position: absolute;
   inset: -3px;
   border-radius: 50%;
-  background: hsl(var(--primary) / 0.25);
+  background: color-mix(in srgb, var(--brand) 25%, transparent);
   animation: obrit-ink-halo 900ms var(--ease-settle) forwards;
   pointer-events: none;
 }
@@ -209,7 +132,7 @@
 .onboarding-ritual .obrit-rule {
   width: 18px;
   height: 1px;
-  background: hsl(var(--border));
+  background: var(--border);
 }
 
 /* ── Stage + act crossfade ───────────────────────────────────────── */
@@ -256,7 +179,7 @@
 .onboarding-ritual .obrit-eyebrow {
   font-family: 'JetBrains Mono', monospace;
   font-size: 10.5px;
-  color: hsl(var(--muted-foreground));
+  color: var(--muted-foreground);
   letter-spacing: 0.18em;
   text-transform: uppercase;
 }
@@ -268,17 +191,17 @@
   font-variation-settings:
     'opsz' 144,
     'SOFT' 50;
-  color: hsl(var(--foreground));
+  color: var(--foreground);
 }
 .onboarding-ritual .obrit-lede {
   font-family: 'Newsreader', serif;
   font-variation-settings: 'opsz' 22;
   font-weight: 400;
   line-height: 1.55;
-  color: hsl(var(--muted-foreground));
+  color: var(--muted-foreground);
 }
 
-/* ── Act 1: Greeting ─────────────────────────────────────────────── */
+/* ── Greeting ─────────────────────────────────────────────── */
 .onboarding-ritual .obrit-greeting .obrit-act-inner {
   text-align: center;
 }
@@ -293,7 +216,7 @@
   display: inline-block;
   width: 18px;
   height: 1px;
-  background: hsl(var(--border));
+  background: var(--border);
 }
 .onboarding-ritual .obrit-greeting .obrit-display {
   margin: 26px 0 22px;
@@ -317,22 +240,22 @@
 
 /* Staggered rise on Act 1 entry */
 .onboarding-ritual .obrit-greeting[data-state='active'] .obrit-eyebrow {
-  animation: rise 700ms var(--ease-settle) 60ms both;
+  animation: obrit-rise 700ms var(--ease-settle) 60ms both;
 }
 .onboarding-ritual .obrit-greeting[data-state='active'] .obrit-display {
-  animation: rise 700ms var(--ease-settle) 200ms both;
+  animation: obrit-rise 700ms var(--ease-settle) 200ms both;
 }
 .onboarding-ritual .obrit-greeting[data-state='active'] .obrit-lede {
-  animation: rise 700ms var(--ease-settle) 340ms both;
+  animation: obrit-rise 700ms var(--ease-settle) 340ms both;
 }
 .onboarding-ritual .obrit-greeting[data-state='active'] .obrit-cta-row {
-  animation: rise 700ms var(--ease-settle) 480ms both;
+  animation: obrit-rise 700ms var(--ease-settle) 480ms both;
 }
 .onboarding-ritual .obrit-greeting[data-state='active'] .obrit-keyhint {
-  animation: rise 700ms var(--ease-settle) 620ms both;
+  animation: obrit-rise 700ms var(--ease-settle) 620ms both;
 }
 
-/* ── Act 2: Naming ───────────────────────────────────────────────── */
+/* ── Naming ───────────────────────────────────────────────── */
 .onboarding-ritual .obrit-name .obrit-act-inner {
   display: flex;
   flex-direction: column;
@@ -352,28 +275,28 @@
 .onboarding-ritual .obrit-input-underline {
   height: 1px;
   width: 64px;
-  background: hsl(var(--border));
+  background: var(--border);
   transition:
     width 360ms var(--ease-settle),
     background 240ms;
 }
 .onboarding-ritual .obrit-name-stage:focus-within .obrit-input-underline {
   width: 120px;
-  background: hsl(var(--primary) / 0.6);
+  background: color-mix(in srgb, var(--brand) 60%, transparent);
 }
 
 .onboarding-ritual .obrit-path-caption {
   font-family: 'JetBrains Mono', monospace;
   font-size: 11px;
-  color: hsl(var(--muted-foreground));
+  color: var(--muted-foreground);
   letter-spacing: 0.04em;
 }
 .onboarding-ritual .obrit-slug-out {
-  color: hsl(var(--foreground) / 0.7);
+  color: color-mix(in srgb, var(--foreground) 70%, transparent);
   transition: color 240ms;
 }
 .onboarding-ritual .obrit-name-stage:focus-within .obrit-slug-out {
-  color: hsl(var(--primary));
+  color: var(--brand);
 }
 
 .onboarding-ritual .obrit-form {
@@ -392,7 +315,7 @@
   font-family: 'Geist', sans-serif;
   font-size: 10.5px;
   font-weight: 600;
-  color: hsl(var(--muted-foreground));
+  color: var(--muted-foreground);
   letter-spacing: 0.12em;
   text-transform: uppercase;
   padding-left: 2px;
@@ -403,36 +326,36 @@
 .onboarding-ritual .obrit-field-caption {
   font-family: 'JetBrains Mono', monospace;
   font-size: 10.5px;
-  color: hsl(var(--muted-foreground));
+  color: var(--muted-foreground);
   letter-spacing: 0.03em;
   padding-left: 2px;
 }
 .onboarding-ritual .obrit-field-caption.is-warn {
-  color: hsl(var(--primary) / 0.8);
+  color: color-mix(in srgb, var(--brand) 80%, transparent);
 }
 
 .onboarding-ritual .obrit-name[data-state='active'] .obrit-eyebrow {
-  animation: rise 700ms var(--ease-settle) 60ms both;
+  animation: obrit-rise 700ms var(--ease-settle) 60ms both;
 }
 .onboarding-ritual .obrit-name[data-state='active'] .obrit-vault-input,
 .onboarding-ritual .obrit-name[data-state='active'] .obrit-input-underline {
-  animation: rise 700ms var(--ease-settle) 180ms both;
+  animation: obrit-rise 700ms var(--ease-settle) 180ms both;
 }
 .onboarding-ritual .obrit-name[data-state='active'] .obrit-path-caption {
-  animation: rise 700ms var(--ease-settle) 300ms both;
+  animation: obrit-rise 700ms var(--ease-settle) 300ms both;
 }
 .onboarding-ritual .obrit-name[data-state='active'] .obrit-form {
-  animation: rise 700ms var(--ease-settle) 420ms both;
+  animation: obrit-rise 700ms var(--ease-settle) 420ms both;
 }
 
-/* ── Act 3: Threshold ────────────────────────────────────────────── */
+/* ── Threshold ────────────────────────────────────────────── */
 .onboarding-ritual .obrit-threshold .obrit-act-inner {
   text-align: center;
 }
 .onboarding-ritual .obrit-thresh-rule {
   width: 40px;
   height: 1px;
-  background: hsl(var(--primary));
+  background: var(--brand);
   margin: 0 auto 22px;
   opacity: 0.6;
 }
@@ -441,7 +364,7 @@
   margin: 14px 0 14px;
 }
 .onboarding-ritual .obrit-vault-name {
-  color: hsl(var(--primary));
+  color: var(--brand);
   font-style: italic;
   font-variation-settings:
     'opsz' 144,
@@ -451,109 +374,6 @@
   max-width: 380px;
   margin: 0 auto;
   font-size: 17px;
-}
-
-.onboarding-ritual .obrit-vault-preview {
-  margin: 38px auto 0;
-  width: 100%;
-  max-width: 440px;
-  background: hsl(var(--background));
-  border: 1px solid hsl(var(--border));
-  border-radius: var(--radius, 0.9rem);
-  box-shadow:
-    0 2px 8px hsl(0 0% 0% / 0.06),
-    0 8px 28px hsl(0 0% 0% / 0.08);
-  padding: 22px 26px 26px;
-  text-align: left;
-  position: relative;
-  overflow: hidden;
-}
-.onboarding-ritual .obrit-vault-preview::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 18px;
-  right: 18px;
-  height: 1px;
-  background: linear-gradient(90deg, transparent, hsl(var(--background)) 50%, transparent);
-  opacity: 0.6;
-}
-.onboarding-ritual .obrit-vp-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 5px 12px 5px 9px;
-  background: hsl(var(--surface-2));
-  border-radius: 999px;
-  font-family: 'Geist', sans-serif;
-  font-size: 12px;
-  font-weight: 500;
-  color: hsl(var(--foreground));
-  margin-bottom: 18px;
-}
-.onboarding-ritual .obrit-vp-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: hsl(var(--primary));
-  box-shadow: 0 0 0 2px hsl(var(--primary) / 0.18);
-  animation: obrit-vp-dot-pulse 2.2s ease-out infinite;
-}
-@keyframes obrit-vp-dot-pulse {
-  0% {
-    box-shadow: 0 0 0 0 hsl(var(--primary) / 0.5);
-  }
-  100% {
-    box-shadow: 0 0 0 8px hsl(var(--primary) / 0);
-  }
-}
-.onboarding-ritual .obrit-vp-title {
-  font-family: 'Fraunces', serif;
-  font-weight: 480;
-  font-size: 30px;
-  line-height: 1.05;
-  letter-spacing: -0.018em;
-  font-variation-settings:
-    'opsz' 96,
-    'SOFT' 50;
-  color: hsl(var(--foreground));
-  margin: 0 0 4px;
-}
-.onboarding-ritual .obrit-vp-sub {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 10.5px;
-  color: hsl(var(--muted-foreground));
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  margin-bottom: 18px;
-}
-.onboarding-ritual .obrit-vp-body {
-  font-family: 'Newsreader', serif;
-  font-variation-settings: 'opsz' 18;
-  font-size: 15px;
-  line-height: 1.55;
-  color: hsl(var(--muted-foreground));
-  font-style: italic;
-  display: inline-flex;
-  align-items: baseline;
-  gap: 4px;
-}
-.onboarding-ritual .obrit-vp-cursor {
-  display: inline-block;
-  width: 2px;
-  height: 1.05em;
-  background: hsl(var(--primary));
-  vertical-align: -0.18em;
-  animation: obrit-breathe 1.2s ease-in-out infinite;
-}
-@keyframes obrit-breathe {
-  0%,
-  100% {
-    opacity: 0.3;
-  }
-  50% {
-    opacity: 1;
-  }
 }
 
 .onboarding-ritual .obrit-threshold .obrit-cta-row {
@@ -586,15 +406,15 @@
   font-family: 'JetBrains Mono', monospace;
   font-size: 12.5px;
   font-weight: 500;
-  background: hsl(var(--surface-1));
-  color: hsl(var(--foreground));
-  border: 1px solid hsl(var(--border));
+  background: var(--card);
+  color: var(--foreground);
+  border: 1px solid var(--border);
   border-radius: 6px;
   letter-spacing: 0.02em;
   line-height: 1;
   box-shadow:
-    0 1px 0 hsl(var(--border)),
-    inset 0 1px 0 hsl(var(--background));
+    0 1px 0 var(--border),
+    inset 0 1px 0 var(--background);
   transition: transform 160ms var(--ease-spring);
 }
 .onboarding-ritual .obrit-hotkey:hover .obrit-kbd {
@@ -603,37 +423,34 @@
 .onboarding-ritual .obrit-hotkey-label {
   font-family: 'Geist', sans-serif;
   font-size: 12.5px;
-  color: hsl(var(--muted-foreground));
+  color: var(--muted-foreground);
   letter-spacing: 0.005em;
 }
 
-/* Act 3 staggered reveals */
+/* Threshold staggered reveals */
 .onboarding-ritual .obrit-threshold[data-state='active'] .obrit-thresh-rule {
-  animation: rise 600ms var(--ease-settle) 40ms both;
+  animation: obrit-rise 600ms var(--ease-settle) 40ms both;
 }
 .onboarding-ritual .obrit-threshold[data-state='active'] .obrit-eyebrow {
-  animation: rise 600ms var(--ease-settle) 140ms both;
+  animation: obrit-rise 600ms var(--ease-settle) 140ms both;
 }
 .onboarding-ritual .obrit-threshold[data-state='active'] .obrit-display {
-  animation: rise 700ms var(--ease-settle) 240ms both;
+  animation: obrit-rise 700ms var(--ease-settle) 240ms both;
 }
 .onboarding-ritual .obrit-threshold[data-state='active'] .obrit-lede {
-  animation: rise 700ms var(--ease-settle) 360ms both;
-}
-.onboarding-ritual .obrit-threshold[data-state='active'] .obrit-vault-preview {
-  animation: rise 800ms var(--ease-settle) 480ms both;
+  animation: obrit-rise 700ms var(--ease-settle) 360ms both;
 }
 .onboarding-ritual .obrit-threshold[data-state='active'] .obrit-cta-row {
-  animation: rise 700ms var(--ease-settle) 620ms both;
+  animation: obrit-rise 700ms var(--ease-settle) 620ms both;
 }
 .onboarding-ritual .obrit-threshold[data-state='active'] .obrit-hotkey:nth-child(1) {
-  animation: rise 600ms var(--ease-settle) 780ms both;
+  animation: obrit-rise 600ms var(--ease-settle) 780ms both;
 }
 .onboarding-ritual .obrit-threshold[data-state='active'] .obrit-hotkey:nth-child(2) {
-  animation: rise 600ms var(--ease-settle) 880ms both;
+  animation: obrit-rise 600ms var(--ease-settle) 880ms both;
 }
 .onboarding-ritual .obrit-threshold[data-state='active'] .obrit-hotkey:nth-child(3) {
-  animation: rise 600ms var(--ease-settle) 980ms both;
+  animation: obrit-rise 600ms var(--ease-settle) 980ms both;
 }
 
 /* ── Footer + buttons ────────────────────────────────────────────── */
@@ -656,7 +473,7 @@
 .onboarding-ritual .obrit-keyhint {
   font-family: 'Geist', sans-serif;
   font-size: 12px;
-  color: hsl(var(--muted-foreground));
+  color: var(--muted-foreground);
   display: inline-flex;
   align-items: center;
   gap: 7px;
@@ -665,8 +482,8 @@
   font-family: 'JetBrains Mono', monospace;
   font-size: 10.5px;
   padding: 3px 7px;
-  background: hsl(var(--surface-2));
-  color: hsl(var(--muted-foreground));
+  background: var(--secondary);
+  color: var(--muted-foreground);
   border-radius: 5px;
   letter-spacing: 0.02em;
 }
@@ -675,66 +492,15 @@
   margin-top: 16px;
   font-family: 'Geist', sans-serif;
   font-size: 12.5px;
-  color: hsl(var(--destructive, 0 65% 50%));
+  color: var(--destructive);
   text-align: center;
 }
 
 .onboarding-ritual ::selection {
-  background: hsl(var(--primary) / 0.22);
+  background: color-mix(in srgb, var(--brand) 22%, transparent);
 }
 
-/* ─── Dark mode ──────────────────────────────────────────────────── *
- * The light scheme assumes a cream surface and uses dark ink tints
- * for shadows + a low-opacity terracotta bloom for atmosphere. None of
- * those translate to walnut: dark-on-dark shadows vanish, the bloom
- * stops feeling like firelight and starts feeling like a neon sign,
- * and the grain — a dark-RGB multiply — disappears entirely. These
- * overrides keep the same visual intent (warm room, calm focal point,
- * grain you can almost feel) but reach for parchment / ochre / proper
- * black drop shadows so the dark mode reads as the night cousin of
- * the light scheme instead of "orange and black".
- */
-
-/* Parchment-on-walnut speckle, screened so it actually shows. Mirrors
- * the global `.dark body::after` treatment in theme.css. */
-.dark .onboarding-ritual .obrit-grain {
-  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.92' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.90 0 0 0 0 0.92 0 0 0 0 0.86 0 0 0 1 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
-  mix-blend-mode: screen;
-  opacity: 0.025;
-}
-
-/* In light mode the vignette deepens the corners. In dark we invert
- * the metaphor: a soft moonlight glow at the focal point. */
-.dark .onboarding-ritual .obrit-vignette {
-  background: radial-gradient(ellipse 55% 45% at 50% 38%, hsl(0 0% 91% / 0.04) 0%, transparent 60%);
-}
-
-/* Ember pulls way back: forest at low opacity. The cool bottom-edge
- * bloom is the cue, not the show. */
-.dark .onboarding-ritual .obrit-ember {
-  background: radial-gradient(ellipse 50% 50% at 50% 100%, hsl(0 0% 30% / 0.045), transparent 75%);
-}
-
-/* Mark + threshold card: real near-black drop shadows so the pieces
- * still feel lifted off the walnut. Light-mode ink shadows are
- * invisible against the dark background. */
-.dark .onboarding-ritual .obrit-mark {
-  box-shadow:
-    0 1px 2px hsl(0 0% 0% / 0.45),
-    0 2px 8px hsl(0 0% 0% / 0.25);
-}
-.dark .onboarding-ritual .obrit-vault-preview {
-  box-shadow:
-    0 2px 10px hsl(0 0% 0% / 0.35),
-    0 12px 36px hsl(0 0% 0% / 0.4);
-}
-.dark .onboarding-ritual .obrit-vault-preview::before {
-  /* Parchment-tinted page-edge highlight — the light-mode version uses
-   * `--background` (cream on cream) which becomes invisible on forest. */
-  background: linear-gradient(90deg, transparent, hsl(0 0% 91% / 0.08) 50%, transparent);
-}
-
-/* ── Join sub-view (overlays Act 2 with the repo picker) ─────────────
+/* ── Join sub-view (overlays naming with the repo picker) ─────────────
  * New in the Electron port — the old ritual had no join path. Styled to
  * sit inside the same act-2 stage, reusing the ritual's dark tokens. */
 .onboarding-ritual .obrit-join {
@@ -763,7 +529,7 @@
 .onboarding-ritual .obrit-join-vis {
   flex: 0 0 auto;
   font-size: 11px;
-  color: hsl(38 55% 60%);
+  color: var(--muted-foreground);
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
@@ -778,7 +544,7 @@
   padding: 24px 0;
 }
 
-/* ── Act 3: How this vault behaves ───────────────────────────────── */
+/* ── Plugins and settings ───────────────────────────────── */
 /* One row per `VAULT_SETTING_DESCRIPTORS` entry. Rows are laid out by the
  * stylesheet rather than counted in the component, so a fifth setting arriving
  * later needs no change here either. */
@@ -831,17 +597,22 @@
   grid-template-columns: 1fr auto;
   align-items: start;
   gap: 6px 24px;
-  padding: 14px 2px;
-  border-bottom: 1px solid hsl(var(--border));
+  padding: 12px 2px;
 }
-.onboarding-ritual .obrit-setting:last-child {
-  border-bottom: none;
+/* A group (the commit transforms) puts its label above its switches at full
+ * width: beside them, a three-word label was squeezed into a column. */
+.onboarding-ritual .obrit-setting[data-kind='group'] {
+  grid-template-columns: 1fr;
+}
+.onboarding-ritual .obrit-setting[data-kind='group'] .obrit-setting-control {
+  justify-content: flex-start;
+  padding-top: 8px;
 }
 
 .onboarding-ritual .obrit-setting-label {
   font-size: 14px;
   font-weight: 500;
-  color: hsl(var(--foreground));
+  color: var(--foreground);
 }
 .onboarding-ritual .obrit-setting-explain {
   margin-top: 4px;
@@ -849,17 +620,19 @@
   max-width: 560px;
   font-size: 12.5px;
   line-height: 1.5;
-  color: hsl(var(--muted-foreground));
+  color: var(--muted-foreground);
 }
-/* The "change it later in …" line, deliberately the quietest thing in the row:
- * it is reassurance, not instruction. Spans both columns so it reads as a
- * footnote to the row rather than a caption on the control. */
-.onboarding-ritual .obrit-setting-where {
-  grid-column: 1 / -1;
+/* "Change it later", once under the act rather than under every row:
+ * reassurance, not instruction, so the quietest thing on screen. */
+.onboarding-ritual .obrit-settings-where {
+  margin-top: 14px;
+  font-size: 12px;
+  text-align: left;
+  color: color-mix(in srgb, var(--muted-foreground) 80%, transparent);
+}
+.onboarding-ritual .obrit-settings-where code {
   font-family: 'JetBrains Mono', monospace;
-  font-size: 10px;
-  letter-spacing: 0.02em;
-  color: hsl(var(--muted-foreground) / 0.65);
+  font-size: 11px;
 }
 
 .onboarding-ritual .obrit-setting-control {
@@ -872,35 +645,36 @@
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
-  gap: 6px;
+  gap: 2px;
 }
 .onboarding-ritual .obrit-choice-pill {
   padding: 5px 11px;
-  border: 1px solid hsl(var(--border));
   border-radius: 999px;
   background: transparent;
   font-size: 12.5px;
-  color: hsl(var(--muted-foreground));
+  color: var(--muted-foreground);
   cursor: pointer;
   transition:
-    border-color 140ms ease,
     color 140ms ease,
     background-color 140ms ease;
 }
+/* State by fill, as in the app: the pills sit on one quiet track, and the
+ * chosen one is lifted, not outlined. */
+.onboarding-ritual .obrit-choice-row {
+  padding: 3px;
+  border-radius: 999px;
+  background: var(--card);
+}
 .onboarding-ritual .obrit-choice-pill:hover {
-  color: hsl(var(--foreground));
-  border-color: hsl(var(--muted-foreground) / 0.5);
+  color: var(--foreground);
 }
 .onboarding-ritual .obrit-choice-pill.is-on {
-  border-color: hsl(var(--primary));
-  background: hsl(var(--primary) / 0.12);
-  color: hsl(var(--foreground));
+  background: var(--secondary);
+  color: var(--foreground);
 }
-/* One rule, matching the app's: a control recolours its own edge, nothing
- * grows. `:focus-visible` so a click does not leave a ring behind. */
 .onboarding-ritual .obrit-choice-pill:focus-visible {
   outline: none;
-  border-color: hsl(var(--primary));
+  box-shadow: 0 0 0 1px var(--ring);
 }
 
 /* The commit transforms: several switches that read as one decision. */
@@ -919,13 +693,61 @@
 }
 .onboarding-ritual .obrit-setting-sub-label {
   font-size: 12.5px;
-  color: hsl(var(--foreground));
+  color: var(--foreground);
+}
+.onboarding-ritual .obrit-setting-owner {
+  margin-left: 8px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10.5px;
+  color: var(--muted-foreground);
 }
 .onboarding-ritual .obrit-setting-sub-explain {
   grid-column: 2;
   font-size: 11px;
   line-height: 1.45;
-  color: hsl(var(--muted-foreground));
+  color: var(--muted-foreground);
+}
+
+/* The plugins act: a row per plugin, its switch at the right. A row is one
+ * label, so a click anywhere on it flips the switch. */
+.onboarding-ritual .obrit-plugins {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 22px;
+  text-align: left;
+  overflow-y: auto;
+  min-height: 0;
+}
+.onboarding-ritual .obrit-plugin {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 4px 24px;
+  align-items: start;
+  padding: 12px;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background-color 140ms ease;
+}
+.onboarding-ritual .obrit-plugin:hover {
+  background: var(--card);
+}
+.onboarding-ritual .obrit-plugin-name {
+  font-size: 14px;
+  font-weight: 500;
+}
+.onboarding-ritual .obrit-plugin-desc {
+  grid-column: 1;
+  max-width: 560px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--muted-foreground);
+}
+.onboarding-ritual .obrit-plugin-off {
+  grid-column: 1 / -1;
+  font-size: 12px;
+  line-height: 1.45;
+  color: color-mix(in srgb, var(--muted-foreground) 80%, transparent);
 }
 
 /* ── The ritual's own keyframes ───────────────────────────────────────
@@ -934,15 +756,19 @@
  * outside this ceremony. `obrit-wake` replaces the deleted `animate-wake`
  * Tailwind utility and is applied by OnboardingRitual.tsx.
  *
- * `obrit-wake` mixes from `--color-primary`, NOT from `--primary`, and that
- * is a fix rather than a preference. Inside `.onboarding-ritual` the token
- * `--primary` is an HSL TRIPLET (`152 32% 52%`, see the token block above)
- * rather than a colour, because this stylesheet applies alpha with
- * `hsl(var(--x) / a)`. `color-mix()` wants a <color>, so
- * `color-mix(in srgb, 152 32% 52% 45%, transparent)` is invalid, the whole
- * `box-shadow` was dropped, and the ring this keyframe exists to draw has
- * never drawn — only its `scale()` halves ever ran. `--color-primary` is the
- * full-colour alias the ritual already defines for exactly this. */
+ * `obrit-wake` rings in `--brand`, the ritual's accent. */
+/* An act's pieces arriving in turn: a fade and a short rise, on the app's
+ * settle curve. `both` holds the start until each piece's delay is up. */
+@keyframes obrit-rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
 @keyframes obrit-pop {
   0% {
     opacity: 0;
@@ -959,11 +785,11 @@
 @keyframes obrit-wake {
   0% {
     transform: scale(0.94);
-    box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-primary) 45%, transparent);
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--brand) 45%, transparent);
   }
   45% {
     transform: scale(1.04);
-    box-shadow: 0 0 0 6px color-mix(in srgb, var(--color-primary) 18%, transparent);
+    box-shadow: 0 0 0 6px color-mix(in srgb, var(--brand) 18%, transparent);
   }
   100% {
     transform: scale(1);
@@ -972,4 +798,12 @@
 }
 .onboarding-ritual .obrit-wake {
   animation: obrit-wake 1.1s var(--ease-settle);
+}
+
+/* Reduced motion: every piece is simply there, and the crossfade between acts
+ * is the only movement left. */
+@media (prefers-reduced-motion: reduce) {
+  .onboarding-ritual * {
+    animation: none !important;
+  }
 }

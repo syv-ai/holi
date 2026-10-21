@@ -13,13 +13,10 @@
  * The mapping is by extension and independent of `fileKind` (which is coarser,
  * for choosing an editor). Unmapped extensions fall back to a neutral file.
  */
-import type { JSX } from 'react'
-import { fileKind, type TaskStatus } from '@holi/shared'
+import type { JSX, ReactNode } from 'react'
+import { fileKind } from '@holi/shared'
 import {
   Braces,
-  Circle,
-  CircleCheck,
-  CircleDot,
   File,
   FileArchive,
   FileSpreadsheet,
@@ -163,17 +160,6 @@ export function fileIconFor(path: string, icon?: string): JSX.Element {
   return <Icon icon={glyph} size="sm" className={colour} />
 }
 
-/** A task file's glyph, keyed to its status: an empty circle for todo, a
- *  dotted one for doing, a checked one for done.
- *
- *  **The colours are the `--task-*` tokens, not hex**, the same ones the
- *  editor's task orbs use, so a vault theme recolours both at once. */
-export function TaskIcon({ status }: { status: TaskStatus }) {
-  if (status === 'done') return <Icon icon={CircleCheck} size="sm" className="text-task-done" />
-  if (status === 'doing') return <Icon icon={CircleDot} size="sm" className="text-task-doing" />
-  return <Icon icon={Circle} size="sm" className="text-task-todo" />
-}
-
 /**
  * What a file is called wherever it is listed: the tree and the tabs
  * (`docs/features/file-tree.md`). A note is the unmarked thing and drops its
@@ -187,15 +173,16 @@ export function pathLabel(path: string): string {
 
 /**
  * What a file leads with, by the same rule: the vault icon map's emoji first,
- * then a task's status, nothing for a note, and the type glyph for anything
- * else. `null` is a note's empty slot.
+ * then the glyph a plugin marks it with (a task's status, `PathMark`),
+ * nothing for a note, and the type glyph for anything else. `null` is a
+ * note's empty slot.
  */
 export function pathGlyph(
   path: string,
-  { emoji, task }: { emoji?: string; task?: TaskStatus } = {},
-): JSX.Element | null {
+  { emoji, mark }: { emoji?: string; mark?: ReactNode } = {},
+): ReactNode {
   if (emoji) return fileIconFor(path, emoji)
-  if (task) return <TaskIcon status={task} />
+  if (mark !== undefined && mark !== null) return mark
   if (fileKind(path) === 'markdown') return null
   return fileIconFor(path)
 }

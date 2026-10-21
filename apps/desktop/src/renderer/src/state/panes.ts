@@ -52,6 +52,12 @@ export interface SurfaceTab {
  */
 export type Tab = { kind: 'note'; path: string; preview?: boolean } | SurfaceTab
 
+/** A tab's stable identity, for React keys, the tab strip's pill map and the
+ *  `data-tab` on the pane body showing it. */
+export function tabKey(tab: Tab): string {
+  return tab.kind === 'note' ? `note:${tab.path}` : `surface:${tab.surface}:${tab.id ?? ''}`
+}
+
 export interface Pane {
   tabs: Tab[]
   /** Index into `tabs`. `-1` when the pane is empty, which is the empty-editor

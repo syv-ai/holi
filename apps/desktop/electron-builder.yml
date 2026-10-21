@@ -1,0 +1,45 @@
+# Package Holi for GitHub release updates (docs/features/updates.md).
+appId: ai.syv.holi
+productName: Holi
+# The installed app is named Holi: its menu, and its own userData folder. Not
+# in package.json, so `pnpm dev` keeps the dev build's separate userData.
+extraMetadata:
+  productName: Holi
+directories:
+  output: release
+files:
+  - out/**/*
+  - package.json
+asarUnpack:
+  # A native module and its spawn helper are executed, so they cannot live
+  # inside the asar archive.
+  - '**/node_modules/node-pty/**'
+  # sharp's native libvips binding, for the shrink-images commit transform.
+  - '**/node_modules/sharp/**'
+  - '**/node_modules/@img/**'
+  # The PDF plugin hands pdfium's wasm to the engine by path.
+  - '**/node_modules/@embedpdf/pdfium/**'
+# Holi links (docs/features/holi-links.md): the OS hands a clicked `holi://`
+# link to the app.
+protocols:
+  - name: Holi link
+    schemes: [holi]
+publish:
+  # CI selects channel=dev for prereleases; stable uses latest-mac.yml.
+  provider: github
+  owner: syv-ai
+  repo: holi
+mac:
+  target:
+    # The dmg is what a person downloads; the zip and latest-mac.yml are what
+    # the updater downloads.
+    - target: dmg
+      arch: [arm64]
+    - target: zip
+      arch: [arm64]
+  category: public.app-category.productivity
+  artifactName: ${productName}-${version}-${os}-${arch}.${ext}
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist

@@ -2,15 +2,35 @@ import { render, screen, waitFor } from '@/test/render'
 import userEvent from '@testing-library/user-event'
 import { expect, test, vi } from 'vitest'
 import { Provider, createStore } from 'jotai'
+import { readYamlMapping } from '@holi/shared'
+import type { PathClaim } from '@/plugin-api/types'
 import { nowAtom } from '@/state/clock'
+import { coreContributionAtom } from '@/state/plugins'
 import { FrontmatterFields } from '../FrontmatterFields'
 
+/** A file a stand-in claim draws with its own fields, as tasks are. */
 const TASK = 'projects/task.fix-the-tap.md'
+const CLAIM: PathClaim = {
+  match: (path) => path === TASK,
+  frontmatter: {
+    fields: [
+      { key: 'status', kind: { kind: 'enum', options: ['todo', 'doing', 'done'] }, required: true },
+      { key: 'priority', kind: { kind: 'enum', options: ['low', 'medium', 'high'] } },
+      { key: 'due', kind: { kind: 'stamp' } },
+      { key: 'reminder', kind: { kind: 'stamp' } },
+      { key: 'recurrence', kind: { kind: 'text' } },
+      { key: 'tags', kind: { kind: 'list' } },
+      { key: 'assignees', kind: { kind: 'people' } },
+      { key: 'order', kind: { kind: 'text' }, hidden: true },
+    ],
+  },
+}
 
 function fields(yaml: string, path = TASK) {
   const onWrite = vi.fn()
   const store = createStore()
   store.set(nowAtom, '2026-09-12T10:00')
+  store.set(coreContributionAtom, { surfaces: [], rail: [], claims: [CLAIM] })
   render(
     <Provider store={store}>
       <FrontmatterFields path={path} yaml={yaml} onWrite={onWrite} />
@@ -27,12 +47,12 @@ test('draws every schema row, whether the file has the key or not', () => {
   }
 })
 
-test('does not draw `order`, which means nothing to a human', () => {
+test("does not draw a hidden field, such as a task's `order`", () => {
   fields('status: todo\norder: 1.5\n')
   expect(screen.queryByText('order')).not.toBeInTheDocument()
 })
 
-test('a note gets the note schema, not the task one', () => {
+test("a note gets the note schema, not a claim's", () => {
   fields('tags: [ops]\n', 'notes/meeting.md')
   expect(screen.getByText('tags')).toBeInTheDocument()
   expect(screen.queryByText('status')).not.toBeInTheDocument()
@@ -114,6 +134,14 @@ test('the last tag removed clears the key instead of writing an empty list', asy
   expect(onWrite.mock.calls[0]![0]).not.toContain('tags')
 })
 
+test('an assignee typed in another case is the same person, not a second one', async () => {
+  const onWrite = fields('status: todo\nassignees: [Ada]\n')
+  const user = userEvent.setup()
+  await user.click(screen.getByRole('combobox', { name: 'add to assignees' }))
+  await user.keyboard('@ada{Enter}')
+  expect(readYamlMapping(onWrite.mock.lastCall![0] as string)?.assignees).toEqual(['Ada'])
+})
+
 test('any key can be added as free text, below the rows', async () => {
   const onWrite = fields('tags: [ops]\n', 'notes/meeting.md')
   const user = userEvent.setup()
@@ -137,37 +165,6 @@ test('Escape closes the add row and writes nothing', async () => {
 
   expect(onWrite).not.toHaveBeenCalled()
   expect(screen.getByRole('button', { name: 'add field' })).toBeInTheDocument()
-})
-
-test('done on a recurring task writes its next occurrence, not the word', async () => {
-  // `done` on a repeat is the next occurrence: a bare write would end the
-  // series wherever somebody happened to set it. Today is 2026-09-12.
-  const onWrite = fields(
-    'status: todo\ndue: 2026-09-01\nrecurrence:\n  frequency: weekly\n  interval: 1\n',
-  )
-  const user = userEvent.setup()
-
-  await user.click(screen.getByRole('combobox', { name: /status/i }))
-  await user.click(screen.getByRole('option', { name: 'done' }))
-
-  const written = onWrite.mock.lastCall![0] as string
-  expect(written).toContain('status: todo')
-  expect(written).toContain('due: 2026-09-15')
-})
-
-test('done on a task with no rule is just done', async () => {
-  const onWrite = fields('status: doing\n')
-  const user = userEvent.setup()
-
-  await user.click(screen.getByRole('combobox', { name: /status/i }))
-  await user.click(screen.getByRole('option', { name: 'done' }))
-
-  expect(onWrite).toHaveBeenLastCalledWith(expect.stringContaining('status: done'))
-})
-
-test('the recurrence row says the rule in words', () => {
-  fields('status: todo\nrecurrence:\n  frequency: weekly\n  interval: 2\n  weekdays: [wed, mon]\n')
-  expect(screen.getByText('every 2 weeks on Mon, Wed')).toBeInTheDocument()
 })
 
 test('frontmatter that is not a mapping draws nothing, so the YAML can show', () => {

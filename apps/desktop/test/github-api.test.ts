@@ -292,7 +292,7 @@ describe('GitHubApi.collaborators', () => {
   })
 
   it('rejects a remote that is not owner/repo', async () => {
-    // The value goes into a URL path. This reuses registry.ts's isRemote
+    // The value goes into a URL path. This reuses the shared isRemote
     // rather than a second validator that could drift from it.
     const t = api([{ body: [] }])
     await expect(t.client.collaborators('../../etc/passwd')).rejects.toThrow(/owner\/repo/)

@@ -21,8 +21,8 @@ Holi is one desktop app. There is no server, no database and no hosted service.
                                           collaborators, history
 
   ~/Holi/<owner>/<repo>            packages/shared
-  the vault: a git clone           pure rules: paths, task files, wiki-links,
-  of markdown files                dates, recurrence, themes, 3-way merge
+  the vault: a git clone           pure rules: paths, wiki-links, dates,
+  of markdown files                settings, plugins, themes, 3-way merge
 ```
 
 **The filesystem is the truth.** The editor, the board, the file tree and the agent all read and
@@ -36,9 +36,11 @@ Electron. `@holi/shared/path-safety-node` is the one Node-only entrypoint.
 ## 2. Build only what Claude Code does not do
 
 The agent is Claude Code, unmodified. Holi adds no adapter layer and no prompt-building, and fixes
-forward when a Claude Code release changes something. Users are developers: the raw terminal is the
-interface, git is a tool they already know, and Claude Code is already installed and signed in. With
-the vault being plain files in a git repo, the agent needs no Holi-specific operations at all.
+forward when a Claude Code release changes something. The one exception is a person's own choice:
+the [quick agent](features/quick-agent.md)'s panel instructions, a setting that is off until turned
+on. Users are developers: the raw terminal is the interface, git is a tool they already know, and
+Claude Code is already installed and signed in. With the vault being plain files in a git repo, the
+agent needs no Holi-specific operations at all.
 
 ## 3. Processes and the IPC seam
 
@@ -56,8 +58,32 @@ tell "not loaded" from "empty", and the failure looks like data loss.
 
 What a vault app or the agent's `holi` CLI may ask main for is one capability registry
 (`src/main/capabilities/`). Each entry is named `<namespace>.<verb>`, says which doors reach it (an
-app's bridge, the CLI) and holds its own refusals. Core registers its namespaces and each feature
+app's bridge, the CLI) and holds its own refusals, and, for the CLI, how its answer reads
+(`cliValue`, `text`). Core registers its namespaces and each feature
 registers its own from the composition root (`src/main/index.ts`); a namespace has one owner.
+
+The CLI door's output lands in an agent's context and stays there, so it is kept short and
+actionable (`src/main/bridge/`):
+
+- **A refusal names its code and the next step**: `holi google search: UNAUTHORIZED: <cause>`, then
+  `next: <what to do>`. The step is the thrower's own when it knows one (`CapabilityError`'s
+  `next`: "ask the person to press Reconnect for Google in Holi's vault settings"), else the
+  code's default (`NEXT_STEP`);
+  a bad request also prints the command's usage line. An error that is not a refusal is a failure
+  inside Holi and prints its message alone.
+- **An answer over 16 KiB is spilled to a file** (`SPILL_BYTES`): written to
+  `.holi/state/out/spill-<stamp>-<command>-<rand>.local.json` (`.txt` when it is not JSON), while the
+  command prints the path, the size and the shape (an array's length and its items' keys, an
+  object's keys). Asked for `--json`, that notice is JSON too,
+  `{"spilled": "<path>", "bytes": <n>, "shape": "<shape>"}`, so a pipe into `jq` still parses. The
+  agent then reads only the part it needs. 16 KiB is about 4k tokens, under Claude
+  Code's own 30,000-character cut of a command's output, past which the agent would read a
+  truncated answer without knowing it. The files are machine state, never committed and out of a
+  vault app's reach; the newest 50 spills are kept (`main/vault/out-files.ts`).
+- **The agent's view of a result can differ from an app's.** An entry's `cliValue` turns its
+  result into what the CLI door answers, before `text` and for `--json` alike. Google's reads use
+  it to fence text other people wrote (`fenceUntrusted`), so a mail reaches the agent's context as
+  data, not instructions, while an app gets the result as it is.
 
 ### Plugins
 
@@ -73,22 +99,57 @@ verbs with their types read from the table (params cross as JSON, results by str
 Plugins call each other the same way, each typing only the slice it calls; before offering such a
 call, a plugin asks `useHasCapability(name)`, backed by the `cap.names` query (the UI door's names
 whose owner the vault runs), so a button for another plugin's verb hides while that plugin is off.
-Core's `tasks.create` is one: the board and the Google views create tasks through it.
+Tasks' `tasks.create` is one: the board and the Google views create tasks through it.
+A plugin that builds on another says so in `PluginInfo.requires`: it runs only where every plugin
+it requires runs, down a chain, so turning one off turns off what stands on it, its seeds included.
+The dependency runs one way: the plugin underneath knows nothing of what requires it. One resolver,
+`resolvePlugins`, answers which plugins run and why each other one does not (off in the vault, off
+on this machine, or needing one that is off), and every reader in both processes asks it. Both
+processes check their list with `checkPluginCatalogue` at boot, which refuses a missing or circular
+requirement.
+A plugin that only adds to another says so in `PluginInfo.addsTo`: Google, PDF and vault apps add
+skills, hooks and settings fragments to the agent. Unlike `requires`, it runs without the other;
+what it adds waits until that one runs, and the resolver says what each running plugin is adding
+to right now (`addingTo`).
 A plugin claims vault paths: the first enabled claim with a `view` opens a note tab of that path,
-and its `rowMenu` items join the file tree's menu. On the main side a claim
-(`MainPlugin.claims`, `{match, parse, normalize?}`) owns markdown files in the snapshot: the scanner
-(`scanVault(root, claims)`, the claims from `PluginHost.scanClaimsFor`) parses them into
-`snapshot.claimed[id]` instead of `docs`, and a settings write that changes `plugins` rescans.
+and its `rowMenu` items join the file tree's menu. A claim can say more about its files: what
+the explorer's New makes (`create`), that they stay out of the tree until shown (`hideable`), what
+it adds to the notes editor (`editor`: how a link to one is drawn, what the `@` menu offers, a
+layer for its own files) and how their frontmatter is drawn (`frontmatter`: fields, controls by
+key, an always-open block, suggestions), and how the graph draws them (`graph`). One
+`useEditorDeps` wires every notes editor from them. On the main side a claim
+(`MainPlugin.claims`, `{match, parse, normalize?, checkNoteWrite?}`) owns markdown files in the
+snapshot: the scanner (`scanVault(root, claims)`, the claims from `PluginHost.scanClaimsFor`)
+parses them into `snapshot.claimed[id]` instead of `docs`, and a settings write that changes
+`plugins` rescans. Core asks a claimed file's plugin about it through the claims rather than
+naming the plugin: a capability reads the vault's (`ctx.claims()`), so a vault app's note write
+(`docs.write`) is checked by `checkNoteWrite` (a task's body only), and a file a running plugin
+claims takes no comments.
 A plugin adds `surfaces` (tab kinds) and `rail`
-items to the nav menu ([tabs and panes](features/tabs-panes.md)), registered beside core's own, and
-`settingsSections` to the settings tab ([settings](features/settings.md)).
-Its dialogs open as `{id: 'plugin', render}`.
+items to the nav menu ([tabs and panes](features/tabs-panes.md)), each with a badge if it likes,
+registered beside core's own, `settingsSections` to the settings tab
+([settings](features/settings.md)), and `slashCommands` to the notes editor's slash menu
+([editor](features/editor.md)). It marks paths in the tree and the tabs (`pathMarks`: a glyph, a
+strike, a badge) and lays `overlays` over the panes (a drawer, quick add), each deciding whether
+it shows. Its dialogs open as `{id: 'plugin', render}`.
+A plugin may have windows of its own: `ctx.openPage` makes one showing a page of its renderer side
+(`RendererPlugin.pages`), loaded as `?page=<plugin>/<page>`, which boots only that page, with no
+vault subscription and no flush answer. Core makes the window (preload, isolation, navigation
+guard), from the same helper as the main window (`main/renderer-window.ts`); the plugin places,
+shows and closes it (core closes any left open when the plugin stops), and talks to its page over the window's own channel (`page:event`,
+`page:message`), so the plugin's events stay the main window's. `ctx.showMainWindow` brings the main
+window forward. The agent's quick panel and its dock are two such windows.
 Main tells a plugin's renderer something through events: `ctx.emit(remote, name, payload)` sends
 `{remote, name, payload}` on the plugin's one channel, `plugin:<id>`, read by one preload member,
 `window.holi.plugin.on(id, cb)`. Main sends only about a vault that runs the plugin, so the renderer
 subscribes every installed plugin's `events` handlers at boot, and a handler drops an event about a
 vault it does not care about. The other way, `window.holi.plugin.send(id, event)` is ordered and
 unanswered, and `ctx.on(name, handler)` hears only messages about the open vault.
+Main-side plugins started in a vault tell each other one kind of thing, the events that start
+[scheduled agents](features/scheduled-agents.md): `ctx.events.emit` and `ctx.events.on` carry a
+typed `VaultEvent` (`packages/shared/src/triggers.ts`) to every plugin started in that vault, and
+keep nothing, so a speaker says its piece again rather than relying on a listener having started
+first. `ctx.onSnapshot` hears each scan of the vault, the latest one at once.
 A plugin may serve URL schemes (`MainPlugin.schemes`). Electron takes schemes only before the app
 is ready, so every scheme in the build (vault apps' `holi-app:`) is registered at boot beside
 core's `holi-vault:`, and a plugin's handler answers 404 while the open vault has the plugin off. A scheme
@@ -96,11 +157,16 @@ marked `frame` serves framed pages: the window guard lets such a frame move with
 sends a link out of it to the browser.
 A plugin's own code sits in `main/`, `renderer/`, `shared/` and `test/` under its folder; its
 renderer imports its main side as types only, for `capClient`. The plugins are the agent
-([agent-sessions](features/agent-sessions.md)), PDF ([pdf](features/pdf.md)), Google
-([google](features/google.md)) and vault apps ([vault apps](features/vault-apps.md)).
-A seed contribution can own a path prefix (`owns`): the agent owns `.claude/`, so every other
-plugin's skills, hooks and settings fragments there are left out while the agent is off and
-seeded once when it turns on.
+([agent-sessions](features/agent-sessions.md)), tasks ([tasks](features/tasks.md)), PDF
+([pdf](features/pdf.md)), Google
+([google](features/google.md)), vault apps ([vault apps](features/vault-apps.md)) and community
+plugins ([community plugins](features/community-plugins.md)), which hosts plugins from other
+repositories as processes it runs, never as code it loads. A renderer plugin may give its claims as
+an atom, for claims that follow what main tells it, and a plugin may register a frame origin with
+the window guard (`ctx.frameOrigin`).
+A seed contribution can own a path prefix (`owns`): the agent owns `.claude/`. Another plugin seeds
+there only by declaring it adds to the agent, which `install` checks at boot, and its files and
+fragments there are left out while the agent is off and seeded once when it turns on.
 The app door, through which a vault app's frame calls capabilities, is core's, and the apps plugin
 is its one opener (`ctx.openAppDoor`), supplying the consent check for entries with an
 `appGrant`; with apps off, no entry is reachable through it.
@@ -108,16 +174,31 @@ What a synced vault holds stays core whatever this machine runs: an app's record
 field by field and a `.local.app` still never syncs with the apps plugin off, so that bundle
 grammar is in `packages/shared` and the merge driver and fences in core.
 
-Enablement has two layers: `.holi/settings/app.yaml` declares the vault's plugins for everyone,
-and `app.local.yaml` can only turn one off on this machine ([settings](features/settings.md)). The
-plugin host (`src/main/plugin-host/`) starts a plugin once per process when a vault that enables it
-opens (`activateApp`), seeds only enabled plugins' files, and stops them all at quit. Once the vault
-is open it runs `activateVault` with a context bound to that vault (hold sync, commit, read the
-head, hear the renderer's focus report, emit), at most once per open; the disposer runs when Holi
-leaves the vault, while it is still open, and at quit before the bridge stops and the editor
-flushes. A plugin can also ask before Holi quits (`guardQuit`) and serve a bridge route
-(`route`). Dispatch refuses a
-capability whose plugin is off in the calling vault, as "no such method".
+Enablement has two layers: `.holi/settings/plugins.yaml` declares the vault's plugins for everyone,
+and `plugins.local.yaml` can only turn one off on this machine ([settings](features/settings.md)).
+The same pair holds each plugin's own settings under its id (`PluginInfo.settings`).
+Each vault is its own world: a plugin starts in the open vault (`MainPlugin.activate`, with one
+context bound to that vault: register capabilities, emit, hold sync, commit, read the head, hear the
+renderer's focus report, hear a pulled comment that mentions the person, serve a bridge route, ask
+before quit, raise a native notification while no Holi window has focus) and nothing it starts outlives the
+vault, so nothing carries from one vault to the next. The plugin host (`src/main/plugin-host/`)
+keeps what is started in step with the vault's resolution (`reconcile`): at the open, on a settings
+write and on any change to the files, so a hand edit to `plugins.yaml` takes effect at once. It
+starts a plugin's providers before it and stops it before them, seeds a plugin that joins before
+starting it, and stops everything, newest first, when Holi leaves the vault or quits: each
+disposer, then what it registered. A plugin that throws as it starts is reported with its message
+(`settings.pluginFailures`) and tried again on the next write or open, never on a bare change.
+One kind of work outlives the open vault: a plugin's work across every registered vault that runs
+it (`MainPlugin.background`), such as reminders, which fire for a vault that is not open. It
+starts at launch while some registered vault runs its plugin, so a launch's catch-up runs whichever
+vault opens, and is looked at again whenever that may change: a change to what the open vault
+runs, a vault leaving the registry, or no vault being open. Its context (`AppCtx`) lists those
+vaults, scans their files, can show a path, knows the signed-in login and raises a notification
+whatever has focus, and holds no vault open. While any runs, Holi stays in the tray with its window
+closed; with none, closing the last window quits (except on macOS).
+Turning off a plugin whose renderer side says stopping it costs something (`leaveGuard`, the
+agent's busy sessions) asks before the write; a hand edit stops it without asking. Dispatch refuses
+a capability whose plugin is off in the calling vault, as "no such method".
 
 Whatever runs inside a vault (the `holi` CLI, the agent's hooks, git's pre-commit hook and merge
 driver) reaches main through one loopback bridge (`src/main/bridge/`) with a token per vault,
@@ -161,8 +242,19 @@ stay on. There is no MCP server: the agent uses its native tools plus one small 
 that talks to main. Holi pauses sync while a turn runs and reviews a turn as the commit
 range it produced.
 
-See [agent-sessions](features/agent-sessions.md), [agent-config](features/agent-config.md) and
-[agent-memory](features/agent-memory.md).
+**Scheduled agents** are files in `.holi/schedules/` that the open vault's agent plugin starts as
+background sessions at their times, or when one of their triggers hears an event (a file added, a
+task due, a meeting about to start, a mail), on machines that approved their content. The events
+come from the plugins that own them over `ctx.events`, and the agent's trigger router dedupes and
+batches them into runs ([scheduled-agents](features/scheduled-agents.md)).
+
+**The inbox** is how the agent asks for attention while nobody is watching: `holi agent notify`
+adds an entry and, by quiet rules, a banner, and every run leaves a line in the day's work log
+([agent-inbox](features/agent-inbox.md)).
+
+See [agent-sessions](features/agent-sessions.md), [agent-config](features/agent-config.md),
+[agent-memory](features/agent-memory.md), [scheduled-agents](features/scheduled-agents.md) and
+[agent-inbox](features/agent-inbox.md).
 
 ## 6. The pillars
 
@@ -183,10 +275,11 @@ See [agent-sessions](features/agent-sessions.md), [agent-config](features/agent-
 ## 7. State outside the repo
 
 - `userData` holds the GitHub and Google tokens (encrypted with Electron `safeStorage`), the vault
-  registry (which repos are added and where), each vault's agent config directory, the Google cache
-  and the `holi` CLIs. It is a machine fact: a second laptop starts empty.
-- Per vault, `.holi/settings/app.local.yaml` holds machine-local settings and the reminder
-  watermark; `.holi/settings/app.yaml` holds the shared ones.
+  registry (which repos are added and where), each vault's agent config directory, the Google cache,
+  which schedules this machine runs (and their run log) and the `holi` CLIs. It is a machine fact: a
+  second laptop starts empty.
+- Per vault, `.holi/settings/app.local.yaml` and `plugins.local.yaml` hold machine-local settings
+  (the first also the reminder watermark); `app.yaml` and `plugins.yaml` hold the shared ones.
 - Conversations are Claude Code's own transcripts, local to the machine that ran them.
 
 ## 8. Security boundaries
@@ -204,7 +297,8 @@ See [agent-sessions](features/agent-sessions.md), [agent-config](features/agent-
 - **Token scope.** A `repo` grant reaches every repo the user has. Mitigated by encrypting it with
   `safeStorage` and keeping it in main.
 - **Untrusted HTML** (mail bodies, event descriptions) is sanitised and shown in a sandboxed frame
-  that never gets `allow-scripts`; see [google](features/google.md).
+  that never gets `allow-scripts`; see [google](features/google.md). The text other people wrote
+  reaches the agent fenced as `<untrusted ...>`, which the skills teach as data, never instructions.
 - **Vault apps** run in their own `holi-app://` origin and cannot reach the agent surface; see
   [vault-apps](features/vault-apps.md). `holi-vault://` sends no CORS header, because a packaged
   renderer and an app frame share the `null` origin and the header's absence is what keeps apps out.
@@ -213,5 +307,8 @@ See [agent-sessions](features/agent-sessions.md), [agent-config](features/agent-
 
 ## 9. Build
 
-`pnpm dev` runs the app and `pnpm --filter @holi/desktop build` builds it with electron-vite. There
-is no packaging configuration yet, and no Docker, database or compose file.
+`pnpm dev` runs the app and `pnpm --filter @holi/desktop build` builds it with electron-vite.
+`pnpm --filter @holi/desktop package:mac` packages it with electron-builder
+(`apps/desktop/electron-builder.yml`); CI publishes a signed, notarized build as a GitHub release
+whenever the version changes, and the installed app updates itself from there
+([updates](features/updates.md)). There is no Docker, database or compose file.

@@ -16,9 +16,9 @@ import { TAB_MIME, paneDropZone, parseTabPayload, type PaneDropZone } from '@/li
 import { EditorPane } from '@/features/editor/EditorPane'
 import { FilePlaceholder } from '@/features/files/FilePlaceholder'
 import { ImageViewer } from '@/features/files/ImageViewer'
-import type { Pane, Tab } from '@/state/panes'
+import { tabKey, type Pane, type Tab } from '@/state/panes'
 import { useArrivalOnChange } from '@/lib/use-arrivals'
-import { TabStrip, tabKey } from './TabStrip'
+import { TabStrip } from './TabStrip'
 
 /** What every drop target shares. `pointer-events-none` keeps the overlay a
  *  single event target, so crossing a band fires no `dragleave` flicker. */
@@ -158,7 +158,13 @@ export function PaneView({
             terminal that stays mounted read as blinking. Nothing rather than
             an empty flex-1 box, which would take their height. */}
         {activeSurface?.keepMounted === true ? null : (
-          <div ref={bodyRef} className="flex min-h-0 flex-1 flex-col">
+          // `data-tab`: which tab this body shows, for `holi docs screenshot`
+          // (`settledRect`).
+          <div
+            ref={bodyRef}
+            data-tab={tab == null ? undefined : tabKey(tab)}
+            className="flex min-h-0 flex-1 flex-col"
+          >
             {tab?.kind === 'surface' ? (
               SurfaceView === null ? null : (
                 <SurfaceView {...(tab.id === undefined ? {} : { id: tab.id })} visible />
@@ -175,6 +181,7 @@ export function PaneView({
             ) : (
               <EditorPane
                 path={tab?.kind === 'note' ? tab.path : null}
+                focused={focused}
                 // Non-markdown text edits in the plain stack: no wiki-links or
                 // frontmatter, syntax highlighting by extension.
                 plain={tab?.kind === 'note' && fileKind(tab.path) === 'text'}
@@ -203,6 +210,7 @@ export function PaneView({
           return (
             <div
               key={tabKey(t)}
+              data-tab={tabKey(t)}
               className={cn('min-h-0 flex-1 flex-col', i === pane.active ? 'flex' : 'hidden')}
             >
               <Kept {...(t.id === undefined ? {} : { id: t.id })} visible={i === pane.active} />

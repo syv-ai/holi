@@ -7,16 +7,20 @@
 // `startup`, `resume` AND `compact`: after a compaction the agent has forgotten
 // it has memory at all.
 //
-// Reads only: `.holi/memory/index.md` (which the memory-index transform already
-// generated, so nothing is parsed twice), a scan for personal `*.local.md`
-// memories, and one `git log`. It never calls Holi's bridge: Claude Code spawns
-// this, not Holi, so it must work with no server anywhere. Absent `.holi/memory/`, it prints
-// nothing and exits 0, exactly as the focused-note hook does outside Holi.
+// Reads only. The shared memories' titles come from `.holi/memory/index.md`,
+// which the memory-index transform already generated; personal `*.local.md`
+// memories, which no index lists, are read here, and so are the names in the
+// work log's folder. Every memory file is also parsed once per session by the
+// memory lint (`.claude/skills/memory/lint.mjs`), of which only the count is
+// printed, plus one `git log`. It never calls Holi's bridge: Claude Code spawns
+// this, not Holi, so it must work with no server anywhere. Absent
+// `.holi/memory/`, it prints nothing and exits 0, exactly as the focused-note
+// hook does outside Holi.
 //
 // Dependency-free (`node:` builtins only), like the three hooks beside it.
 
 import { execFileSync } from 'node:child_process'
-import { readFileSync, readdirSync, statSync } from 'node:fs'
+import { lstatSync, readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 
 const root = process.env.CLAUDE_PROJECT_DIR || process.cwd()
@@ -43,13 +47,17 @@ function readOr(path) {
  * The personal half is the point — a `*.local.md` appears in no committed file,
  * so this hook is the only reader it has. The shared half is counted rather
  * than read: it exists solely to notice the case below where memory files are
- * present but `index.md` is not.
+ * present but `index.md` is not. Symlinks are skipped, not followed, as the lint
+ * skips them: one could point outside the vault or loop.
  */
 function memoryFiles(dir, prefix = '.holi/memory') {
   const out = { personal: [], shared: [] }
   let entries
   try {
-    entries = readdirSync(dir)
+    // Sorted: `readdir`'s order is the filesystem's, and this text opens the
+    // session, so it may change only when memory changes, a memory
+    // expires, or the day turns, never with the machine it runs on.
+    entries = readdirSync(dir).sort()
   } catch {
     return out
   }
@@ -57,10 +65,11 @@ function memoryFiles(dir, prefix = '.holi/memory') {
     const abs = join(dir, name)
     let stat
     try {
-      stat = statSync(abs)
+      stat = lstatSync(abs)
     } catch {
       continue
     }
+    if (stat.isSymbolicLink()) continue
     if (stat.isDirectory()) {
       const inner = memoryFiles(abs, `${prefix}/${name}`)
       out.personal = out.personal.concat(inner.personal)
@@ -74,29 +83,129 @@ function memoryFiles(dir, prefix = '.holi/memory') {
   return out
 }
 
-/** Frontmatter title/description, without a YAML parser: these are the two keys
- *  the seed asks for and both are one-line scalars. A file whose frontmatter is
- *  malformed simply yields nothing, which is this whole design's house style. */
-function titleAndDescription(text, path) {
-  const fence = /^---\n([\s\S]*?)\n---/.exec(text ?? '')
-  const block = fence?.[1] ?? ''
-  const value = (key) => {
-    const m = new RegExp(`^${key}:\\s*(.+?)\\s*$`, 'm').exec(block)
-    return m?.[1]?.replace(/^["']|["']$/g, '').trim() || null
+/** One frontmatter value, or null for an empty one, or undefined when it is
+ *  not a scalar this reader is sure of: escapes, flow and block syntax, a
+ *  leading indicator, or an unquoted `: ` (which YAML rejects outright). A
+ *  trailing ` # comment` is dropped, as YAML drops it. */
+function scalar(raw) {
+  const quoted = /^(?:"([^"\\]*)"|'([^']*)')(?:[ \t]+#.*)?$/.exec(raw)
+  if (quoted) return (quoted[1] ?? quoted[2]).trim() || null
+  const plain = raw.replace(/(?:^|[ \t]+)#.*$/, '').trim()
+  if (plain === '') return null
+  if (/^[-?:,[\]{}#&*!|>'"%@`]/.test(plain) || /:(?:[ \t]|$)/.test(plain)) return undefined
+  return plain
+}
+
+/**
+ * Frontmatter title/description/expires, without a YAML parser: all are
+ * one-line scalars. The fence is found as `@holi/shared`'s
+ * `splitFrontmatter` finds it, CRLF included.
+ *
+ * `complete` says whether every line was one this reader is sure YAML reads the
+ * same way. Holi's sweep parses real YAML and reads invalid YAML as no
+ * frontmatter, so a personal memory may be hidden as expired only when
+ * `complete`: anything less is one the sweep might never delete. Values from lines it
+ * could not read are still used for display, best effort.
+ */
+function frontmatter(text, path) {
+  const normalized = (text ?? '').replace(/\r\n/g, '\n')
+  const fields = new Map()
+  let complete = true
+  let body = normalized
+  if (normalized.startsWith('---\n')) {
+    const end = normalized.indexOf('\n---', 3)
+    if (end === -1) complete = false
+    else {
+      const after = normalized.indexOf('\n', end + 1)
+      body = after === -1 ? '' : normalized.slice(after + 1)
+      for (const line of normalized.slice(4, end).split('\n')) {
+        if (/^[ \t]*(?:#.*)?$/.test(line)) continue
+        const m = /^([A-Za-z_][\w-]*):(?:[ \t]+(.*))?$/.exec(line)
+        if (!m || fields.has(m[1])) {
+          complete = false
+          continue
+        }
+        const value = scalar(m[2] ?? '')
+        if (value === undefined) complete = false
+        fields.set(m[1], value === undefined ? m[2].trim() : value)
+      }
+    }
   }
-  const h1 = /^\s*#\s+(.+?)\s*$/m.exec((text ?? '').replace(/^---\n[\s\S]*?\n---\n/, ''))
+  const value = (key) => fields.get(key) ?? null
+  const h1 = /^\s*#\s+(.+?)\s*$/m.exec(body)
   const name = (path.split('/').at(-1) ?? path).replace(/\.md$/i, '')
-  return { title: value('title') ?? h1?.[1] ?? name, description: value('description') }
+  return {
+    title: value('title') ?? h1?.[1] ?? name,
+    description: value('description'),
+    expires: value('expires'),
+    complete,
+  }
+}
+
+/** When a memory's `expires` passes, on this machine's clock, or null when it
+ *  is no stamp. A date lasts through that day; `YYYY-MM-DDTHH:MM` ends at that
+ *  minute. The same rule as `memoryExpiry` in `@holi/shared`, which Holi's
+ *  index and sweep go by; this hook imports nothing, so it is written twice. */
+function expiry(value) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2})(?::(\d{2}))?)?$/.exec(value ?? '')
+  if (!m) return null
+  const [y, mo, d] = [Number(m[1]), Number(m[2]) - 1, Number(m[3])]
+  const day = new Date(y, mo, d)
+  if (day.getMonth() !== mo || day.getDate() !== d) return null
+  if (m[4] === undefined) return new Date(y, mo, d + 1)
+  const [h, min, sec] = [Number(m[4]), Number(m[5]), Number(m[6] ?? 0)]
+  if (h > 23 || min > 59 || sec > 59) return null
+  return new Date(y, mo, d, h, min, sec)
 }
 
 const index = readOr(join(MEMORY_DIR, 'index.md'))
-const { personal, shared } = memoryFiles(MEMORY_DIR)
+const { personal: personalFiles, shared } = memoryFiles(MEMORY_DIR)
+
+// Personal memories, read once. One past its `expires` is already gone as far
+// as the agent is concerned: Holi deletes it on its next sweep, and outside
+// Holi nothing does, so it is left out here. Only when the sweep would delete
+// it, though: one whose frontmatter this hook cannot fully read stays listed,
+// since the sweep may never take it.
+const now = new Date()
+const personal = []
+for (const file of personalFiles) {
+  const meta = { ...file, ...frontmatter(readOr(file.abs), file.path) }
+  const ends = expiry(meta.expires)
+  if (ends !== null && now >= ends && meta.complete) continue
+  personal.push({ ...meta, expires: ends === null ? null : meta.expires })
+}
+
+/** Today's work log and the newest one before it, as vault paths, when they
+ *  exist. Only the names: the log is read when someone asks what was done. */
+function workLogs() {
+  let names
+  try {
+    names = readdirSync(join(root, '.holi/state/log'))
+  } catch {
+    return []
+  }
+  const pad = (n) => String(n).padStart(2, '0')
+  const today = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
+  const days = names
+    .map((n) => /^(\d{4}-\d{2}-\d{2})\.local\.md$/.exec(n)?.[1])
+    .filter((d) => d !== undefined && d <= today)
+    .sort()
+  const out = []
+  if (days.at(-1) === today) out.push({ day: days.pop(), label: 'today' })
+  if (days.length > 0) out.push({ day: days.at(-1), label: 'previous' })
+  return out.map(({ day, label }) => `\`.holi/state/log/${day}.local.md\` (${label})`)
+}
+const logs = workLogs()
 
 // Nothing to say. A vault with no memory directory at all is the ordinary case
 // for a repo somebody opened `claude` in by hand.
-if (index === null && personal.length === 0 && shared.length === 0) process.exit(0)
+if (index === null && personal.length === 0 && shared.length === 0 && logs.length === 0)
+  process.exit(0)
 
-/** The index's own entry lines, with their `## type` headings, and the counts. */
+/** The index's own entry lines, with their `## type` headings. A shared memory
+ *  with an `expires` carries `(expires <stamp>)` after its link; once that has
+ *  passed it is left out, as the next index the transform writes leaves it out.
+ *  The file stays: the lint reports it for the agent to propose deleting. */
 function indexSections(text) {
   const sections = []
   let current = null
@@ -106,13 +215,31 @@ function indexSections(text) {
       current = { type: heading[1], lines: [] }
       sections.push(current)
     } else if (line.startsWith('- ') && current) {
-      current.lines.push(line)
+      const stamp = /^- \[\[.*?\]\] \(expires ([^)]+)\)/.exec(line)?.[1]
+      const ends = stamp === undefined ? null : expiry(stamp)
+      if (ends === null || now < ends) current.lines.push(line)
     }
   }
-  return sections
+  return sections.filter((s) => s.lines.length > 0)
 }
 
 const sections = indexSections(index)
+
+/** How many lint findings there are, or 0 when the lint is missing or throws:
+ *  the overview never fails a session start. Imported rather than copied, so the
+ *  count and the list the agent runs are the same code. Only the count is
+ *  printed, and it depends on nothing but the files, so it changes only when
+ *  memory does. */
+async function lintCount() {
+  try {
+    const { lintVault } = await import(new URL('../skills/memory/lint.mjs', import.meta.url).href)
+    return lintVault(root).length
+  } catch {
+    return 0
+  }
+}
+
+const findings = await lintCount()
 const total = sections.reduce((n, s) => n + s.lines.length, 0)
 
 /** `Recent: <date> <subject>` × 3. One subprocess, once per session — a looser
@@ -138,12 +265,22 @@ function render({ descriptions }) {
   // Anchored past the `]]` on purpose: a bare `/\s+—\s+.*$/` would cut at the
   // FIRST em dash, and a title containing one would lose its tail along with
   // the description it was meant to drop.
-  const strip = (line) => (descriptions ? line : line.replace(/^(- \[\[.*?\]\])\s+—\s+.*$/, '$1'))
+  // An `(expires …)` sits between the link and the description.
+  const strip = (line) =>
+    descriptions ? line : line.replace(/^(- \[\[.*?\]\](?: \([^)]*\))?)\s+—\s+.*$/, '$1')
   // With no index, `total` is 0 and the shared count is the only honest number.
   const count = index === null ? shared.length : total
   const out = [
     `# This vault's memory (${count} shared${personal.length > 0 ? `, ${personal.length} personal` : ''})`,
   ]
+
+  // Next to the heading, so the cap's truncation can never cut it.
+  if (findings > 0) {
+    out.push(
+      '',
+      `${findings} memory lint finding(s): run \`node .claude/skills/memory/lint.mjs\` to list them, as proposals.`,
+    )
+  }
 
   if (sections.length > 0) {
     out.push('', `Types in use: ${sections.map((s) => `${s.type} (${s.lines.length})`).join(', ')}`)
@@ -154,9 +291,9 @@ function render({ descriptions }) {
 
   if (personal.length > 0) {
     out.push('', '## personal (this machine only, never committed)', '')
-    for (const file of personal) {
-      const { title, description } = titleAndDescription(readOr(file.abs), file.path)
-      const line = `- [[${file.path}|${title}]]${description ? ` — ${description}` : ''}`
+    for (const { path, title, description, expires } of personal) {
+      const until = expires === null ? '' : ` (expires ${expires})`
+      const line = `- [[${path}|${title}]]${until}${description ? ` — ${description}` : ''}`
       out.push(strip(line))
     }
   }
@@ -171,6 +308,10 @@ function render({ descriptions }) {
       '',
       `${shared.length} shared memory file(s) are present but \`.holi/memory/index.md\` has not been generated yet. Read \`.holi/memory/\` directly; Holi will write the index on the next commit that touches one.`,
     )
+  }
+
+  if (logs.length > 0) {
+    out.push('', `Work log (this machine): ${logs.join(', ')}. Read it when asked what was done.`)
   }
 
   const log = recent()

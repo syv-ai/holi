@@ -22,6 +22,9 @@ afterEach(() => {
   document.body.innerHTML = ''
 })
 
+/** A file whose claim keeps its block open, as the tasks claim does. */
+const TASK = 'projects/task.fix-the-tap.md'
+
 function mount(doc: string, notePath: string): EditorView {
   const parent = document.createElement('div')
   document.body.appendChild(parent)
@@ -30,11 +33,12 @@ function mount(doc: string, notePath: string): EditorView {
       doc,
       extensions: baseEditorExtensions({
         docExists: () => true,
-        taskByPath: () => null,
         readNote: async () => null,
-        mentionData: () => ({ notes: [], tasks: [] }),
+        mentionData: () => ({ notes: [], groups: [] }),
         nav: () => ({ openNote: () => {}, openExternal: () => {} }),
         notePath,
+        // A claim says its block is always open (a task's).
+        frontmatterAlwaysOpen: notePath === TASK,
         askAgent: {
           targets: () => ({ sessions: [], initial: 'new' as const }),
           onAsk: () => Promise.resolve({ ok: true }),
@@ -45,8 +49,6 @@ function mount(doc: string, notePath: string): EditorView {
   })
   return view
 }
-
-const TASK = 'projects/task.fix-the-tap.md'
 
 it('a task file opens with its frontmatter already showing', () => {
   // `frontmatterStartsRevealed`: a note's frontmatter starts hidden because it is

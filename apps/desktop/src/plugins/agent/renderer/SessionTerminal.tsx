@@ -36,6 +36,7 @@ export function SessionTerminal({
   terminalId,
   visible,
   onGeometry,
+  glass = false,
 }: {
   terminalId: string
   /** This terminal's tab is the one showing. Drives the deferred build and the
@@ -44,6 +45,9 @@ export function SessionTerminal({
   /** Every fit, so the panel can spawn the next session at a geometry that has
    *  actually been measured — a tab that has never been shown has none. */
   onGeometry?: (cols: number, rows: number) => void
+  /** Drawn on the quick panel's glass: no background of its own, and no
+   *  gutter, since the panel frames it. */
+  glass?: boolean
 }): React.JSX.Element {
   const hostRef = useRef<HTMLDivElement | null>(null)
   /** Where xterm actually opens: the box INSIDE the gutter. FitAddon sizes the
@@ -111,7 +115,15 @@ export function SessionTerminal({
       fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, monospace',
       scrollback: 10_000,
       cursorBlink: false, // Ink owns the cursor
-      theme: { background: '#0a0a0a', foreground: '#e5e5e5' },
+      ...(glass
+        ? {
+            allowTransparency: true,
+            // On glass the dim greys Claude Code draws in would sink into the
+            // tint behind them: xterm lifts any colour below this contrast.
+            minimumContrastRatio: 4.5,
+            theme: { background: '#00000000', foreground: '#e5e5e5' },
+          }
+        : { theme: { background: '#0a0a0a', foreground: '#e5e5e5' } }),
     })
     const fit = new FitAddon()
     term.loadAddon(fit)
@@ -210,7 +222,7 @@ export function SessionTerminal({
       fitRef.current = null
       disposeRef.current = null
     }
-  }, [terminalId, syncSize, type])
+  }, [terminalId, syncSize, type, glass])
 
   useEffect(() => () => disposeRef.current?.(), [])
 
@@ -233,12 +245,12 @@ export function SessionTerminal({
     <div
       ref={hostRef}
       data-session-terminal={terminalId}
-      className={cn('relative min-h-0 flex-1 bg-background', !visible && 'hidden')}
+      className={cn('relative min-h-0 flex-1', !glass && 'bg-background', !visible && 'hidden')}
     >
       {/* The gutter is the inset, not padding: xterm measures the box it is
           opened in, and an inset box measures what it is. 24px either side,
-          16px above and below. */}
-      <div ref={mountRef} className="absolute inset-x-6 inset-y-4" />
+          16px above and below; 8px on the quick panel, which frames it. */}
+      <div ref={mountRef} className={glass ? 'absolute inset-2' : 'absolute inset-x-6 inset-y-4'} />
     </div>
   )
 }
