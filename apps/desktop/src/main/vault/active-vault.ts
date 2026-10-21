@@ -23,7 +23,7 @@ import type { SyncState, VaultSnapshot } from '@holi/shared'
 import type { GitDeps, GitRepo, PullResult, RepoStatus } from '../git'
 import { isIndexLockError, openRepo } from '../git'
 import { installGitHook, partitionBySize, type HeldBackFile } from './large-files'
-import { installRecordMergeDriver } from './record-merge'
+import { installMergeDrivers } from './merge-drivers'
 import { readMaxCommittedFileBytes } from './vault-settings'
 import type { VaultRegistry } from './registry'
 import { scanVault, type ScanClaim } from './vault-store'
@@ -185,8 +185,8 @@ export async function openActiveVault(args: {
   // App records merge field by field, through a driver that asks us, so two
   // people editing one record do not pause sync. Machine-local and
   // best-effort, like the hook: without it git merges the text.
-  await installRecordMergeDriver(root).catch((err) =>
-    console.error('[vault] record merge driver install failed:', err),
+  await installMergeDrivers(root).catch((err) =>
+    console.error('[vault] merge driver install failed:', err),
   )
   // Tell that hook, the merge driver and every command in the vault how to
   // reach us. Rewritten every open because the port is ephemeral and moves on

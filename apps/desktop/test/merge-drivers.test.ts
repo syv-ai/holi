@@ -6,13 +6,13 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { formatRecord, mergeRecordText } from '@holi/shared'
 import { runGit, tryGit } from '../src/main/git'
 import { bridgeLines, writeVaultEnv } from './helpers/bridge-env'
-import { installRecordMergeDriver, RECORD_ATTRIBUTES_LINE } from '../src/main/vault/record-merge'
+import { attributesLine, installMergeDrivers, MERGE_DRIVERS } from '../src/main/vault/merge-drivers'
 
 let root: string
 const dirs: string[] = []
 
 beforeEach(async () => {
-  root = await mkdtemp(join(tmpdir(), 'holi-record-merge-'))
+  root = await mkdtemp(join(tmpdir(), 'holi-merge-drivers-'))
   dirs.push(root)
   await runGit(root, ['init', '-q', '-b', 'main'])
   await runGit(root, ['config', 'user.email', 'ada@syv.ai'])
@@ -23,17 +23,19 @@ afterEach(async () => {
   await Promise.all(dirs.splice(0).map((d) => rm(d, { recursive: true, force: true })))
 })
 
-describe('installRecordMergeDriver', () => {
+describe('installMergeDrivers', () => {
   it('registers the driver for records only, and is idempotent', async () => {
     await mkdir(join(root, '.git/info'), { recursive: true })
     await writeFile(join(root, '.git/info/attributes'), '*.psd binary\n')
-    await installRecordMergeDriver(root)
-    await installRecordMergeDriver(root)
+    await installMergeDrivers(root)
+    await installMergeDrivers(root)
 
     const driver = await runGit(root, ['config', '--get', 'merge.holi-record.driver'])
-    expect(driver).toContain(join(root, '.git/holi-merge-record'))
+    expect(driver).toContain(join(root, '.git/holi-merge'))
     const attributes = await readFile(join(root, '.git/info/attributes'), 'utf8')
-    expect(attributes.split('\n').filter((l) => l === RECORD_ATTRIBUTES_LINE)).toHaveLength(1)
+    expect(
+      attributes.split('\n').filter((l) => l === attributesLine(MERGE_DRIVERS[0]!)),
+    ).toHaveLength(1)
     // Someone else's line survives: the file is appended to, never replaced.
     expect(attributes).toContain('*.psd binary')
 
@@ -88,7 +90,7 @@ describe('the driver, end to end through git', () => {
 
   it('merges edits of different fields of one record cleanly', async () => {
     await writeVaultEnv(root, bridgeLines(await listen(), 'ab'))
-    await installRecordMergeDriver(root)
+    await installMergeDrivers(root)
     await branches({ title: 'a', done: true, points: 1 }, { title: 'b', done: false, points: 1 })
 
     const merge = await tryGit(root, ['merge', '--no-edit', 'theirs'])
@@ -100,7 +102,7 @@ describe('the driver, end to end through git', () => {
 
   it('leaves a conflict for reconcile when both changed one field', async () => {
     await writeVaultEnv(root, bridgeLines(await listen(), 'ab'))
-    await installRecordMergeDriver(root)
+    await installMergeDrivers(root)
     await branches({ title: 'x', done: false, points: 1 }, { title: 'y', done: false, points: 1 })
 
     expect((await tryGit(root, ['merge', '--no-edit', 'theirs'])).ok).toBe(false)
@@ -108,7 +110,7 @@ describe('the driver, end to end through git', () => {
   })
 
   it('conflicts safely when Holi is not there to ask', async () => {
-    await installRecordMergeDriver(root)
+    await installMergeDrivers(root)
     await branches({ title: 'a', done: true, points: 1 }, { title: 'b', done: false, points: 1 })
 
     expect((await tryGit(root, ['merge', '--no-edit', 'theirs'])).ok).toBe(false)
