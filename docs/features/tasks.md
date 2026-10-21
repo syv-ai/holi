@@ -94,10 +94,13 @@ Todo / Doing / Done, with one swim lane per folder.
 - **Reminders.** While some registered vault runs tasks, closing the window leaves Holi in the
   tray, and Settings > Updates > Open at login starts it at login. Every 60s, and once at launch
   as catch-up, main sweeps every registered vault that runs tasks, open or not, and fires each
-  reminder that is due and newer than its watermark. More than 3 in one sweep
-  become one summary. A timeless reminder fires at 09:00. Clicking a notification opens the task,
-  switching vault if needed. The per-path watermark lives under `reminders` in the vault's
-  machine-local `.holi/settings/app.local.yaml`.
+  reminder that is due and newer than its watermark. Every notification names the vault its task
+  is in. More than 3 in one sweep become a summary per vault ("3 reminders in notes"), never one
+  across vaults, and a vault with a single fire keeps its own. A timeless reminder fires at 09:00.
+  Clicking a notification opens the task through the same arrival as a Holi link, switching vault
+  if needed; that is the only way the sweep reaches the open window. Each vault's tasks are read
+  from its own clone at every sweep and kept nowhere, and the per-path watermark lives under
+  `reminders` in that vault's machine-local `.holi/settings/app.local.yaml`.
 - **Assignees** are GitHub logins (`assignees: [ada]`), the identity a vault already has:
   its members are its repo's collaborators. Like `tags`, a task's assignees are always a list,
   empty when the task is no one's, and an empty list is no key at all. A hand-written `@login` or
