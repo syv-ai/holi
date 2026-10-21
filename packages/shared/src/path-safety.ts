@@ -42,6 +42,19 @@ export function vaultRelPath(raw: string): VaultRelPath {
   return segments.join('/') as VaultRelPath
 }
 
+/** Directories that are never vault content, matched on any path segment: the
+ *  vault store never walks them, and a Holi link never names a file in one.
+ *
+ *  `.git` is the load-bearing one: left unignored it would fire the watcher on
+ *  every commit Holi itself makes (an autosave loop), and a stray `.md` under
+ *  `.git/` would surface as a note. */
+export const IGNORED_DIRS: ReadonlySet<string> = new Set(['.git', 'node_modules'])
+
+/** Whether any folder on `path` is one of `IGNORED_DIRS`. */
+export function isInIgnoredDir(path: string): boolean {
+  return path.split('/').some((segment) => IGNORED_DIRS.has(segment))
+}
+
 /** A vault's identity, `owner/repo`: the form the GitHub API and `git clone`
  *  both speak, and what a Holi link names a vault by. */
 const REMOTE_RE = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/

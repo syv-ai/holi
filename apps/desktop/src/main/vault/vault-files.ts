@@ -10,8 +10,10 @@ import {
   SETTINGS_LOCAL_FILE,
   PLUGINS_LOCAL_FILE,
   THEME_LOCAL_FILE,
+  IGNORED_DIRS,
   appBundleOf,
   isAppBundlePath,
+  isInIgnoredDir,
   isLocalOnlyPath,
   vaultRelPath,
   type VaultRelPath,
@@ -19,13 +21,6 @@ import {
 
 export const TMP_MARKER = '.holi-tmp-'
 const JUNK = new Set(['.DS_Store', 'Thumbs.db'])
-
-/** Directories that are never vault content, matched on any path segment.
- *
- * `.git` is the load-bearing one: left unignored it would fire the
- * watcher on every commit Holi itself makes (an autosave loop), and a stray
- * `.md` under `.git/` would surface as a note. */
-const IGNORED_DIRS = new Set(['.git', 'node_modules'])
 
 export function absPathFor(root: string, rel: VaultRelPath): string {
   return join(root, rel)
@@ -51,9 +46,8 @@ export function toVaultRel(root: string, absPath: string): VaultRelPath | null {
  * reach the snapshot; git is what keeps them out of a commit.
  */
 export function isNonContentPath(rel: string): boolean {
-  const segments = rel.split('/')
-  const base = segments.at(-1)!
-  if (segments.some((s) => IGNORED_DIRS.has(s))) return true
+  const base = rel.slice(rel.lastIndexOf('/') + 1)
+  if (isInIgnoredDir(rel)) return true
   return base.startsWith(TMP_MARKER) || JUNK.has(base)
 }
 
