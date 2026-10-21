@@ -77,8 +77,7 @@ actionable (`src/main/bridge/`):
   agent then reads only the part it needs. 16 KiB is about 4k tokens, under Claude
   Code's own 30,000-character cut of a command's output, past which the agent would read a
   truncated answer without knowing it. The files are machine state, never committed and out of a
-  vault app's reach; the newest 50 spills are kept, each kind in `.holi/state/out/` pruned on its
-  own (`main/vault/out-files.ts`).
+  vault app's reach; the newest 50 spills are kept (`main/vault/out-files.ts`).
 - **The agent's view of a result can differ from an app's.** An entry's `cliValue` turns its
   result into what the CLI door answers, before `text` and for `--json` alike. Google's reads use
   it to fence text other people wrote (`fenceUntrusted`), so a mail reaches the agent's context as

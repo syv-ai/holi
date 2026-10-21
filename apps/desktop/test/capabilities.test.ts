@@ -1,7 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { mkdir, mkdtemp, readFile as readText, symlink, writeFile } from 'node:fs/promises'
+import {
+  mkdir,
+  mkdtemp,
+  readFile as readText,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { emptyVaultSnapshot } from '@holi/shared'
 import type { CapabilityError } from '../src/main/capabilities/error'
 import {
@@ -13,6 +21,7 @@ import { admitApps, type AppGrants } from '../src/plugins/apps/main/grants'
 import { createCapabilityHost } from '../src/main/capabilities/dispatch'
 import { noCoreServices, type CoreServices } from '../src/main/capabilities/services'
 import { vaultCapabilities, VAULT_NAMESPACES } from '../src/main/capabilities/vault-caps'
+import { SCREENSHOT_DIR } from '../src/main/screenshot-files'
 import type { GoogleAccountsManager } from '../src/plugins/google/main/accounts'
 import { googleCapabilities, GOOGLE_NAMESPACES } from '../src/plugins/google/main/capabilities'
 import { taskCapabilities, TASKS_NAMESPACES } from '../src/plugins/tasks/main/capabilities'
@@ -423,13 +432,18 @@ describe('docs.open', () => {
 })
 
 describe('docs.screenshot', () => {
-  it("writes the tab's PNG as machine-local state and prints its path", async () => {
+  it("writes the tab's PNG outside the vault, owner-only, and prints its absolute path", async () => {
     await put('notes/a.md', '# A\n')
     const { text } = await runCapability('docs.screenshot', 'cli', ctx({}, null), {
       path: 'notes/a.md',
     })
-    expect(text).toMatch(/^\.holi\/state\/out\/.+\.local\.png$/)
-    expect([...(await readText(join(root, text)))]).toEqual([0x89, 0x50, 0x4e, 0x47])
+    try {
+      expect(dirname(text)).toBe(SCREENSHOT_DIR)
+      expect([...(await readText(text))]).toEqual([0x89, 0x50, 0x4e, 0x47])
+      if (process.platform !== 'win32') expect((await stat(text)).mode & 0o777).toBe(0o600)
+    } finally {
+      await rm(text, { force: true })
+    }
   })
 })
 

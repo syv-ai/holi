@@ -97,9 +97,12 @@ its document loads), the fonts and its arrival motion are done, and a short sett
 (`lib/settled-rect.ts`), waiting on timers since a hidden page runs no animation frames. Main cuts
 that rect from the page with `capturePage` (`main/tab-capture.ts`), so the PNG is the tab as the
 person sees it: this vault's theme, their light or dark mode, their pane's size, an app's iframe
-included. It is written to `.holi/state/out/screenshot-<stamp>-<id>.local.png`, machine-local by its
-marker, the newest 20 kept (each kind there is pruned on its own, so long answers never push a
-screenshot out), and the command prints that path for the agent to read. A tab that has
+included. It is written outside the vault, to `holi-screenshots/` in the OS temp directory: a folder only
+this user can enter (refused if it is a symlink or another user's), a file only they can read
+(`main/screenshot-files.ts`). A screenshot is read once, in the turn that asked, so it has no place in the
+clone, and outside it nothing can commit or sync it and no vault app can reach it. Each write keeps
+the newest 20 and drops any older than a day. The command prints the PNG's absolute path for the
+agent to read. A tab that has
 not drawn within a few seconds is refused rather than captured half-done, and so is one with a
 dialog, menu or popover open over the window that does not close within a moment. A path is a file the
 snapshot holds or a vault app's bundle (a folder, which opens as the app).

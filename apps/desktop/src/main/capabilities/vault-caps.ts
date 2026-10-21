@@ -14,7 +14,7 @@ import {
   type VaultRelPath,
   type VaultSnapshot,
 } from '@holi/shared'
-import { writeOut } from '../vault/out-files'
+import { writeScreenshot } from '../screenshot-files'
 import { readVaultSettings } from '../vault/settings'
 import { withFileLock, writeAtomic } from '../vault/vault-files'
 import { isSearchable, searchVault, type SearchHit } from '../vault/search'
@@ -156,8 +156,8 @@ export const vaultCapabilities = (deps: VaultCapabilitiesDeps) => ({
    * A PNG of a file's tab as the person sees it, in this vault's theme and
    * mode, so the agent can look at what it made: a vault app, a note's
    * diagram. Opens the tab first, as `docs.open` does (it brings the window
-   * forward), and waits for it to finish drawing. Prints the PNG's path, a
-   * machine-local file the agent reads back.
+   * forward), and waits for it to finish drawing. Prints the PNG's absolute
+   * path, an owner-only file in the OS temp directory the agent reads back.
    */
   'docs.screenshot': cap({
     doors: ['cli'],
@@ -170,7 +170,7 @@ export const vaultCapabilities = (deps: VaultCapabilitiesDeps) => ({
       requireOpen(ctx)
       const rel = await shownFile(ctx, path)
       const png = await deps.screenshot(ctx.remote, rel)
-      return { path: rel, png: await writeOut(ctx.root, 'screenshot', png, { ext: 'png' }) }
+      return { path: rel, png: await writeScreenshot(png) }
     },
     text: ({ png }) => png,
   }),

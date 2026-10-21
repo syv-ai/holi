@@ -415,7 +415,7 @@ app, a screenshot of its tab, and its console.
 
 ```sh
 holi apps open <path>        # opens the app's tab in Holi, or reloads it if open
-holi docs screenshot <path>  # a PNG of the tab as the user sees it; prints its path
+holi docs screenshot <path>  # a PNG of the tab as the user sees it; prints its absolute path
 holi apps console <path>     # its console and errors since it last loaded
 holi apps init <path>        # scaffolds <path>, a folder ending in .app
 ```
@@ -437,8 +437,8 @@ run. So the loop is:
    app that is already open this reloads it, which is how your edit reaches the
    tab.
 4. **Look at it.** `holi docs screenshot <path>` opens the tab if it is not
-   open, waits for it to finish drawing, and prints the path of a PNG of it,
-   in this vault's theme and the light or dark mode the user has. Read that
+   open, waits for it to finish drawing, and prints the absolute path of a PNG
+   of it (in the OS temp directory, not the vault), in this vault's theme and the light or dark mode the user has. Read that
    file. It is what the user sees, at the size their pane has now, so a narrow
    pane shows a narrow app.
 5. **Read its console**: `holi apps console <path>` prints what the app logged

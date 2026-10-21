@@ -80,7 +80,7 @@ export async function spillOutput(root: string, label: string, text: string): Pr
   const json = value !== NOT_JSON
   const command = label.replace(/^holi /, '').replace(/\s+/g, '-')
   return {
-    path: await writeOut(root, 'spill', text, { ext: json ? 'json' : 'txt', tag: command }),
+    path: await writeOut(root, text, { ext: json ? 'json' : 'txt', tag: command }),
     bytes: Buffer.byteLength(text),
     shape: describe(text, value),
   }
