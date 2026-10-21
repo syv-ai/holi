@@ -33,7 +33,7 @@ other rather than repeating each other.
 | [daily-notes](features/daily-notes.md)             | Idempotent daily notes and their archive                                 |
 | [agent-sessions](features/agent-sessions.md)       | Claude Code background sessions, agent tabs, turn review, reconcile      |
 | [agent-config](features/agent-config.md)           | Config layering, the per-vault silo, seeded files, tools, permissions    |
-| [agent-memory](features/agent-memory.md)           | `.holi/memory/`, scratch notes, the session overview, the memory lint    |
+| [agent-memory](features/agent-memory.md)           | `.holi/memory/`, expiring memory, the session overview, the memory lint  |
 | [scheduled-agents](features/scheduled-agents.md)   | Prompts Holi runs as agent sessions on a schedule or on a trigger        |
 | [agent-inbox](features/agent-inbox.md)             | `holi agent notify`, the inbox, needs-you notifications, the work log    |
 | [google](features/google.md)                       | Gmail and Calendar per vault                                             |

@@ -130,7 +130,7 @@ export const agentMain: MainPlugin = {
     void started.ensure(ctx)
     // The open vault's schedules run while it is open.
     schedules.attach({ remote: ctx.remote, root: ctx.root })
-    // Expired scratch notes and old work-log days go, now and hourly. The
+    // Expired personal memories and old work-log days go, now and hourly. The
     // running sweep is kept so leaving the vault waits for it to finish.
     let sweeping: Promise<unknown> = Promise.resolve()
     const sweep = (): void => {

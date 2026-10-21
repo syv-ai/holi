@@ -74,6 +74,10 @@ export interface MemoryEntry {
   title: string
   /** Frontmatter `description`, else the body's first sentence, else empty. */
   description: string
+  /** Frontmatter `expires` as written, when it is a stamp Holi can read, else
+   *  null. The index prints it, so the session overview can hide the memory
+   *  once it passes, between the commits that regenerate the index. */
+  expires: string | null
 }
 
 /** Longest description the index will print. */
@@ -183,12 +187,14 @@ function linkSafe(title: string): string {
 export function readMemoryEntry(path: string, text: string): MemoryEntry {
   const frontmatter = frontmatterOf(text)
   const description = stringValue(frontmatter.description)
+  const expires = stringValue(frontmatter.expires)
   return {
     path,
     type: stringValue(frontmatter.type) ?? DEFAULT_MEMORY_TYPE,
     title: stringValue(frontmatter.title) ?? h1Of(text) ?? titleFromPath(path),
     description:
       description !== null ? truncate(oneLine(description)) : firstSentence(bodyOf(text)),
+    expires: memoryExpiry(expires) === null ? null : expires,
   }
 }
 
@@ -203,6 +209,10 @@ export function readMemoryEntry(path: string, text: string): MemoryEntry {
  * Wiki-links rather than OKF's markdown links: one link grammar in the vault, so
  * `relink`, backlinks and the editor's chips all understand these. The bundle is
  * OKF-shaped and never claims the label.
+ *
+ * A memory with an `expires` carries `(expires <stamp>)` after its link. Leaving
+ * an expired one out is the caller's choice, made with its clock
+ * (`isExpiredMemory`), so this stays a function of its input.
  */
 export function renderMemoryIndex(entries: MemoryEntry[]): string {
   if (entries.length === 0) return MEMORY_INDEX_EMPTY
@@ -220,7 +230,8 @@ export function renderMemoryIndex(entries: MemoryEntry[]): string {
       .slice()
       .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
       .map((entry) => {
-        const link = `[[${entry.path}|${linkSafe(entry.title)}]]`
+        const until = entry.expires === null ? '' : ` (expires ${entry.expires})`
+        const link = `[[${entry.path}|${linkSafe(entry.title)}]]${until}`
         return entry.description === '' ? `- ${link}` : `- ${link} — ${oneLine(entry.description)}`
       })
     return `## ${type}\n\n${lines.join('\n')}\n`
@@ -229,24 +240,23 @@ export function renderMemoryIndex(entries: MemoryEntry[]): string {
   return `${MEMORY_INDEX_HEADER}\n\n${MEMORY_INDEX_LOCAL_NOTE}\n\n${sections.join('\n')}`
 }
 
-// ───────────────────────────────────────────────────────────── scratch ──
+// ──────────────────────────────────────────────────────────── expires ──
 //
-// A scratch note is a personal memory that is true for a while: `type: scratch`
-// and an `expires` stamp. It is the one type Holi gives a meaning to; every
-// other type stays free-form. Holi deletes it once `expires` has passed, so it
-// has to be `.local.`: nothing unattended edits shared memory. The session
-// overview hook reads the same two keys on its own (it imports nothing), so a
-// change to the rule here is a change there too.
-
-/** The memory type Holi expires. */
-export const SCRATCH_TYPE = 'scratch'
+// Any memory may say when it stops being true: `expires: 2026-10-22` (through
+// that day) or `expires: 2026-10-22T15:00` (until that minute), on this
+// machine's clock. Past it, the memory is hidden from the index and the session
+// overview. A personal one is then deleted by Holi's sweep; a shared one is
+// never deleted unattended, since that would take content from under every
+// other member: the memory lint reports it and the agent proposes the deletion.
+// The overview hook and the lint read the stamp on their own (they import
+// nothing), so a change to the rule here is a change there too.
 
 /**
  * When an `expires` value stops being true, on this machine's clock, or null
  * when it is missing or not a stamp. A date (`2026-10-22`) lasts through that
  * day; a local time (`2026-10-22T15:00`) ends at that minute.
  */
-export function scratchExpiry(value: unknown): Date | null {
+export function memoryExpiry(value: unknown): Date | null {
   const s = stringValue(value)
   if (s === null) return null
   const date = parseDate(s)
@@ -267,19 +277,11 @@ export function scratchExpiry(value: unknown): Date | null {
   )
 }
 
-/** A scratch memory's expiry (null when it has none Holi can read), or
- *  undefined when the text is not a scratch memory at all. */
-export function scratchOf(text: string): { expires: Date | null } | undefined {
-  const frontmatter = frontmatterOf(text)
-  if (stringValue(frontmatter.type) !== SCRATCH_TYPE) return undefined
-  return { expires: scratchExpiry(frontmatter.expires) }
-}
-
-/** Whether Holi deletes this file at `now`: a personal memory, scratch, and
- *  past an `expires` it can read. A shared scratch note is never deleted, nor
- *  is one whose `expires` is missing or malformed. */
-export function isExpiredScratch(path: string, text: string, now: Date): boolean {
-  if (!isMemoryPath(path) || !isLocalOnlyPath(path)) return false
-  const expires = scratchOf(text)?.expires
-  return expires != null && now.getTime() >= expires.getTime()
+/** Whether this memory is past an `expires` Holi can read, at `now`. One whose
+ *  `expires` is missing or malformed never expires. Says nothing about deleting
+ *  it: only a personal one is deleted, by the sweep. */
+export function isExpiredMemory(path: string, text: string, now: Date): boolean {
+  if (!isMemoryPath(path)) return false
+  const expires = memoryExpiry(frontmatterOf(text).expires)
+  return expires !== null && now.getTime() >= expires.getTime()
 }

@@ -137,10 +137,12 @@ filled by `holi agent notify`, needs-you and mentions, and shown as the Inbox na
 `holi agent log`, `holi agent notify` and the scheduler. Machine-local, kept 30 days. See
 [agent-inbox](features/agent-inbox.md).
 
-### Scratch note
+### Expiring memory
 
-A personal memory with `type: scratch` and an `expires` stamp: true for a while, then deleted by
-Holi. Only a `.local.md` one is deleted. See [agent-memory](features/agent-memory.md).
+A memory with an `expires` stamp (a date, or a local `YYYY-MM-DDTHH:MM`): true for a while. Past
+it, it is hidden from the index and the session overview; a personal one is then deleted by Holi,
+and a shared one is proposed for deletion by the memory lint. See
+[agent-memory](features/agent-memory.md).
 
 ### Comment thread
 
