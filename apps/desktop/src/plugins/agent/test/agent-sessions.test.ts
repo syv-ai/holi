@@ -1,7 +1,13 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { ClaudeCli } from '../main/claude/cli'
 import { SIGN_IN_NOTICE } from '../main/claude/config-dir'
-import { isLive, parseListing, readContextPercent, summarise } from '../main/claude/listing'
+import {
+  isLive,
+  parseListing,
+  readContextPercent,
+  readModelName,
+  summarise,
+} from '../main/claude/listing'
 import { createAgentSessions, type AgentVault } from '../main/host/sessions'
 import type { AgentTerminals, OpenArgs } from '../main/host/terminals'
 
@@ -86,6 +92,7 @@ function setup(initial: Row[] = []) {
       isLive,
       summarise,
       readContextPercent,
+      readModelName,
       watch: () => () => {},
       configure: async () => ({ dir: '/cfg/vault' }),
       takeFirstSpawn: async () => true,

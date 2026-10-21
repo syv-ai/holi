@@ -87,23 +87,6 @@ test('keepMounted holds the content while hidden, inert', () => {
   expect(screen.getByText('body').closest('[inert]')).not.toBeNull()
 })
 
-test('a collapsible drawer keeps its seam when closed, and a click on it toggles', async () => {
-  const onToggle = vi.fn()
-  const { rerender } = drawer({ id: 'nav', side: 'left', onToggle })
-  const user = userEvent.setup()
-  await user.click(screen.getByRole('separator', { name: 'Resize History' }))
-  expect(onToggle).toHaveBeenCalledTimes(1)
-
-  rerender({ open: false })
-  // Closed to nothing, the seam stays to bring it back; the content sleeps.
-  const seam = screen.getByRole('separator', { name: 'Resize History' })
-  expect(seam).toHaveAttribute('aria-expanded', 'false')
-  seam.focus()
-  await user.keyboard('{Enter}')
-  expect(onToggle).toHaveBeenCalledTimes(2)
-  expect(screen.getByText('body').closest('[inert]')).not.toBeNull()
-})
-
 test('arrow keys resize toward the content, clamped, and remember it per drawer', async () => {
   const { store } = drawer({ id: 'nav', side: 'left' })
   const handle = screen.getByRole('separator', { name: 'Resize History' })

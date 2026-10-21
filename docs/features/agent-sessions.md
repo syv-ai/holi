@@ -55,13 +55,19 @@ reconcile forgets only the turns of its own sessions. The optional chat plugin i
 **Where you meet it.** ⌘J and the nav menu's agent item focus a terminal showing the list, or
 open one. Which terminal shows it is read from its title, since `←` and Enter move a terminal
 between the list and a session. An agent tab's **Open overview** always opens a new one. The agent
-item is green while any session is live. The sidebar's **Agents** mode ([sidebar](sidebar.md)) is
-the agent's: **New session** (⌘N) starts one there, the vault's [Holis](holis.md) come next, then
-one row per **live** session (its process alive) grouped as Needs you, Working and Idle, with its
-state in words and what it waits for when it needs you; a row opens the session in a terminal of
-the view's own. Work in flight turns the house loader (`motion-orbit`), the one loop on a row; a
+item is green while any session is live. The sidebar's **Agents** mode ([sidebar](sidebar.md)) is the agent's. At
+the top, **Inbox**: what needs you, the sessions waiting on a permission prompt or a question and
+what other plugins add there (a Holi's report that asked for you); it is also what the view opens
+on, and empty it says what lands there. Beside it the places plugins add (Automations), then their
+sections ([Holis](holis.md)), then **Sessions** with its **+** (⌘N): one card per **live** session
+(its process alive), after MonoCode's session card, its model and the state or how long ago, its
+name, and where it runs or what it waits for, waiting on you first, then working, then idle, and a
+search over their names. One that needs you is a dashed card. A card opens the session in a
+terminal of the view's own; with none running, Sessions says how to start one. The model comes
+from the session's status line (`model.display_name`), the start time from the listing's
+`startedAt`. Work in flight turns the house loader (`motion-orbit`), the one loop on a row; a
 session or Holi that needs you is a steady amber dot, never a breathing one, since waiting is a
-state and not work. The words beside a step stay still. A Holi's runs are shown on its page, not again here. A stopped or finished session
+state and not work. The words beside a step stay still. A Holi's runs are sessions too, and show among them as well as on its page. A stopped or finished session
 is not in the view: it is in the agent list, where opening it picks it up again. The mode toggle
 counts what needs you and what works, sessions and Holis and what other plugins add, from either
 mode.

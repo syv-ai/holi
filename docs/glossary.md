@@ -105,20 +105,22 @@ it, and it stays in the agent list. See [agent-sessions](features/agent-sessions
 
 ### Schedule
 
-A file in `.holi/schedules/` whose frontmatter says when (`cron` or `at`, local time) and what the
-run may do without asking, and whose body is a prompt. Holi starts it as a session at those times
+Also **automation**. A file in `.holi/schedules/` whose frontmatter says when (`cron`, one or more,
+or `at`, local time), which Holi carries it out (`holi`) and what the run may do without asking,
+and whose body is a prompt. Holi starts it as a session at those times
 while the vault is open, on a machine that turned it on: **on** approves its current prompt, model
-and `allow` list, and any change to those reads **changed** until approved again. See
+and `allow` list and its Holi's soul and rules, and any change to those reads **changed** until
+approved again. See
 [scheduled-agents](features/scheduled-agents.md).
 
 ### Holi
 
-An agent that belongs to the vault: a YAML file in `.holi/holis/` with a name and a face, the
-documents it takes (`accepts`), what it may do without asking and its instructions. A person sends
-it a document from the menu beside the document's Agent button, which opens an agent tab running
-Claude Code with its instructions; the first send on a machine, and the first after what it does
-changed, asks that machine's person to approve it. A file with a `cron` or `at` is a **scheduled
-Holi**: shared vault work for Claude Code's cloud, which Holi cannot set up yet. See
+An agent that belongs to the vault: a folder in `.holi/holis/` with a name and a face
+(`holi.yaml`), a **soul** (`SOUL.md`, its standing instructions) and a **memory** (`MEMORY.md`, dated
+facts its runs keep), the documents it takes and what it may do without asking. A person sends it a
+document from the menu beside the document's Agent button, or gives it **habits**: automations that
+name it. The first run on a machine, and the first after its soul or rules changed, asks that
+machine's person to approve it. See
 [holis](features/holis.md).
 
 ### Ask

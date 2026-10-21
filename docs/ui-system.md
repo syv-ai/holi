@@ -136,14 +136,18 @@ One place decides how an icon looks, so every icon in the app agrees.
     `lib/use-ack.ts`). Never blocks or queues; a repeat replays, which needs a forced reflow.
   - **F, in flight**: the only loop (`motion-pulse`, `-shimmer`, `-orbit`), bound to a real
     in-flight state.
-- **Shell** (after Cursor's, Notion's and Obsidian's). The sidebar sits on the window's ground
-  (`--ground`, a hair off the page) and the content flush beside it on the page colour, with one
-  hairline between them that is also the sidebar's toggle ([sidebar](features/sidebar.md)). No
-  inset panel, no light and no glass: two greys and a line, quiet enough for all day.
-- **Before a vault** (sign-in, the loading screen and the onboarding ritual) is the plain page,
-  the same ground as the app it opens into: no backdrop, no light, no glass and no grain, so the
-  hand-over into the shell is the content changing and not the whole window. Each screen or act
-  has at most one entrance, `motion-in-fade`; nothing morphs between them.
+- **Shell** (after the knowledge bases that float their page). The sidebar sits on the window's
+  ground (`--ground`, a step under the page) and the content floats beside it as one panel on the
+  page colour (`[data-slot='content-panel']`: `rounded-xl`, a `--divider` hairline and the
+  faintest lift), its toggle beside the window's lights ([sidebar](features/sidebar.md)). No
+  light and no glass: two greys and an edge, quiet enough for all day.
+- **Before a vault**, sign-in and the onboarding ritual stand in the light: shafts of warm light
+  falling from the top-left corner and shifting slowly (`composites/AmbientBackdrop.tsx`, drawn by
+  the `SideRays` shader), with film grain over them (`AmbientGrain`). It is the one decorative
+  loop the app allows, held still under reduced motion, and it never enters the shell, where it
+  would nag all day. Sign-in's GitHub button is the GitHub mark that opens into "Continue with
+  GitHub" (`primitives/RevealButton.tsx`, the `reveal` spring). The ritual's acts crossfade in its
+  own stylesheet (`onboarding-ritual.css`). The loading screen stays the plain page.
 - **Tokens** live in `index.css`: `--ease-settle`, `--ease-loop`, `--motion-respond` 150ms,
   `-arrive` 300ms, `-pop` 180ms (a menu, popover, tooltip or select growing from its trigger:
   it answers a click, so it is quicker than an arrival), `-leave` 190ms, `-ack` 800ms, `-inflight` 2400ms. `--motion-stagger`,
@@ -319,8 +323,8 @@ press mid-slide reverses it. It is the one layout property animated outside Code
 editor beside it reflows during the slide. It owns its column rather than living in
 `react-resizable-panels`, which cannot animate a size. Each opens at 320px and resizes between 150
 and 560 (`lib/drawer.ts`) by pointer (1:1, transition off) or arrow keys, remembering its own
-width. The nav closes to a 44px rail holding its toggle (an `edgeControl` that slides with the
-edge), an orb per live agent session and the [nav menu](features/nav-menu.md) on its side. The PDF viewer's sidebars are that library's
+width. The nav closes to an 80px rail (`features/nav/NavRail.tsx`): the window's lights, its toggle, the
+modes and the sidebar's destinations as icons, sliding in on the same width transition. The PDF viewer's sidebars are that library's
 DOM: they copy width, motion, header and edge through the injected stylesheet and cannot resize.
 
 ## Per-vault theming
@@ -365,8 +369,8 @@ DOM: they copy width, motion, header and edge through the injected stylesheet an
   page's own hue on any theme, where `accent` is a fixed step.
 - Hue identifies, it does not decorate: a brand mark, a file type, a status, the destructive red.
   Everything else is the grey ramp.
-- The sidebar sits on the window's `--ground`; the content is flush beside it on the page, one
-  hairline between them.
+- The sidebar sits on the window's `--ground`; the content floats beside it as one panel on the
+  page. The panel is the shell's frame, not a card: nothing inside it is a card around a screen.
 - Only floating things (dialogs, menus, popovers, tooltips, toasts) get `--popover` and a shadow,
   `rounded-lg` and no border of their own, in React and CodeMirror alike (the wiki preview, the
   outline flyout, the completion popup).
@@ -398,11 +402,6 @@ DOM: they copy width, motion, header and edge through the injected stylesheet an
   with the marks that identify things.
 - A card around a whole screen (sign-in's glass card): it framed the one thing on the page and
   added nothing the page did not already give.
-- Light behind the screens before a vault (a blurred-blob gradient, then a WebGL ray shader with
-  film grain and a liquid-glass panel): each fought the content and made the first screens look
-  like a different app from the one they open into.
-- A mark that springs open into a labelled button: the label is what tells a person what the
-  button does, so it is always shown.
 - Creating the vault at the naming step: every later answer had to be written over a repo that
   already existed, and backing out left a repo behind.
 - Theming the titlebar: needs a custom titlebar, which is a layout change.

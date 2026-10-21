@@ -13,7 +13,7 @@
  */
 import type { BridgeRoute, SeedContribution } from '../../../main/plugin-api'
 import type { ClaudeCli, VaultCliTarget } from './claude/cli'
-import type { ClaudeRow, SessionSummary } from './claude/listing'
+import type { ClaudeRow, SessionSummary, StatusReading } from './claude/listing'
 import type { AgentRoutesDeps } from './claude/routes'
 
 /** A vault the provider is asked about. */
@@ -42,9 +42,11 @@ export interface AgentProvider {
   /** Is the session's process alive? */
   isLive(row: ClaudeRow): boolean
   /** What a live session is doing, for the renderer. */
-  summarise(row: ClaudeRow, working: ReadonlySet<string>, contextPercent?: number): SessionSummary
+  summarise(row: ClaudeRow, working: ReadonlySet<string>, reading?: StatusReading): SessionSummary
   /** How full a session's context is, from its status report. */
   readContextPercent(status: unknown): number | null
+  /** The model a session runs on, from its status report. */
+  readModelName(status: unknown): string | null
   /** Call `onChange` when the config directory's session state moves.
    *  Returns the stop. */
   watch(configDir: string, onChange: () => void, log: (msg: string) => void): () => void

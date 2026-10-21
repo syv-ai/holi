@@ -555,9 +555,11 @@ export function TabStrip({
 
   return (
     // Browser tabs (after Arc's and Cursor's): cells that share their
-    // dividers on the window's ground, the active one in the page's colour and
-    // open at the bottom into the header below it.
-    <div className="app-drag flex h-9 min-w-0 shrink-0 items-stretch bg-ground">
+    // dividers on a faint tint of the panel they sit in, the active one in the
+    // page's colour and open at the bottom into the header below it. A tint,
+    // not the window's ground: inside the floating panel the ground read as a
+    // hole cut in it.
+    <div className="app-drag flex h-9 min-w-0 shrink-0 items-stretch bg-foreground/[0.03]">
       {leading}
       {/* The frame the side counts float in, so they sit on the scroller's
           edges and `trailing` keeps its place. */}

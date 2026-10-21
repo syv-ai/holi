@@ -61,6 +61,11 @@ declare global {
       updates: {
         onStatus(cb: (status: UpdateStatus) => void): () => void
       }
+      /** The window went in or out of fullscreen, where macOS hides the
+       *  traffic lights. Returns its unsubscribe. */
+      window: {
+        onFullScreen(cb: (fullScreen: boolean) => void): () => void
+      }
       openExternal(url: string): Promise<void>
       /** Reveal a local path — a vault's clone folder — in the system file
        *  manager (Finder on macOS), selected in its parent. */

@@ -1,14 +1,14 @@
 /**
  * The onboarding ritual: the frame and the flow, with each act its own
- * component. The acts are `ACTS` in the reducer; this file mounts the one that
- * is current (its fade in is the view's one entrance) and owns the keys and
- * the footer, which both run the current act's primary action.
+ * component. The acts are `ACTS` in the reducer; this file shows the one that
+ * is current, crossfades between them, and owns the keys and the footer, which
+ * both run the current act's primary action.
  */
 import { useEffect, useReducer, useState } from 'react'
 import { useAtomValue } from 'jotai'
-import { ArrowLeft, ArrowRight, Check, X } from 'lucide-react'
+import { ArrowLeft, ArrowRight, X } from 'lucide-react'
 import { VAULT_SETTING_DEFAULTS, resolvePlugins, type PluginSettings } from '@holi/shared'
-import { BrandMark } from '@/composites'
+import { AmbientBackdrop, AmbientGrain, BrandMark } from '@/composites'
 import {
   Button,
   Icon,
@@ -21,11 +21,13 @@ import {
   StepperSeparator,
   StepperTitle,
 } from '@/primitives'
+import { cn } from '@/lib/cn'
 import {
   actsFor,
   canAdvance,
   initialState,
   reduce,
+  slugify,
   vaultSlug,
   startingAct,
   type Act,
@@ -39,8 +41,10 @@ import { JoinPicker } from './JoinPicker'
 import { NamingAct } from './NamingAct'
 import { PluginsAct } from './PluginsAct'
 import { ThresholdAct } from './ThresholdAct'
-import { ActHeading } from './ActHeading'
 import { VaultSettingsAct } from './VaultSettingsAct'
+import './onboarding-ritual.css'
+
+type ActState = 'idle' | 'active' | 'exiting'
 
 interface Props {
   /** `first-run` plays every act from the greeting; `add-vault` skips the
@@ -75,12 +79,21 @@ export function OnboardingRitual({ mode, onDismiss, dryRun = false }: Props) {
     initialState(mode, session?.login ?? ''),
   )
 
+  // Purely visual crossfade bookkeeping: which act is fading out. Kept out of
+  // the reducer, which owns the logical flow.
+  const [exitingAct, setExitingAct] = useState<Act | null>(null)
+  // The one-time awakening of "create vault", the first time a valid name
+  // appears.
+  const [wokenOnce, setWokenOnce] = useState(false)
+  const [waking, setWaking] = useState(false)
   /** The `owner/repo` of the vault just created. */
   const [createdRemote, setCreatedRemote] = useState<string | null>(null)
   /** How far the build on the threshold has got: the repo, then the answers. */
   const [built, setBuilt] = useState(0)
 
   const slug = vaultSlug(s.name)
+  /** Only a name the user typed wakes "Create vault"; the default is there from the start. */
+  const typed = slugify(s.name)
   const naming = s.act === 'naming' && s.view === 'form'
   const plugins =
     (s.settings.plugins as PluginSettings | undefined) ?? VAULT_SETTING_DEFAULTS.plugins
@@ -89,8 +102,22 @@ export function OnboardingRitual({ mode, onDismiss, dryRun = false }: Props) {
     installed.map((p) => p.info),
   )
 
+  useEffect(() => {
+    if (!naming || !typed || wokenOnce) return
+    setWokenOnce(true)
+    setWaking(true)
+    const t = setTimeout(() => setWaking(false), 1200)
+    return () => clearTimeout(t)
+  }, [naming, typed, wokenOnce])
+
+  const runExit = (from: Act) => {
+    setExitingAct(from)
+    setTimeout(() => setExitingAct((cur) => (cur === from ? null : cur)), 500)
+  }
+
   const advance = () => {
     if (!canAdvance(s)) return
+    runExit(s.act)
     dispatch({ type: 'advance' })
   }
 
@@ -103,6 +130,7 @@ export function OnboardingRitual({ mode, onDismiss, dryRun = false }: Props) {
       return
     }
     if (s.act !== startingAct(mode)) {
+      runExit(s.act)
       dispatch({ type: 'back', mode })
       return
     }
@@ -123,6 +151,7 @@ export function OnboardingRitual({ mode, onDismiss, dryRun = false }: Props) {
    */
   const create = async () => {
     if (s.submitting) return
+    runExit(s.act)
     dispatch({ type: 'advance' })
     dispatch({ type: 'submitStart' })
     setBuilt(0)
@@ -130,6 +159,7 @@ export function OnboardingRitual({ mode, onDismiss, dryRun = false }: Props) {
     try {
       ;[remote] = await Promise.all([actions.create({ name: slug, owner: s.owner }), beat()])
     } catch (err) {
+      runExit('threshold')
       dispatch({ type: 'createFailed', error: err instanceof Error ? err.message : String(err) })
       return
     }
@@ -189,145 +219,158 @@ export function OnboardingRitual({ mode, onDismiss, dryRun = false }: Props) {
   }, [s, mode, slug, createdRemote])
 
   const acts = actsFor(mode)
+  const stateOf = (act: Act): ActState =>
+    act === s.act ? 'active' : act === exitingAct ? 'exiting' : 'idle'
   const dismissible = mode === 'add-vault' && onDismiss != null
   const footPrimary = primary[s.act]
   const atFloor = s.act === startingAct(mode)
 
-  const act = (() => {
-    switch (s.act) {
-      case 'greeting':
-        return <GreetingAct onBegin={advance} />
-      case 'naming':
-        return s.view === 'form' ? (
-          <NamingAct
-            name={s.name}
-            owner={s.owner}
-            slug={slug}
-            error={s.error}
-            active={naming}
-            onName={(name) => dispatch({ type: 'setName', name })}
-            onOwner={(owner) => dispatch({ type: 'setOwner', owner })}
-            onJoin={() => dispatch({ type: 'toJoin' })}
-          />
-        ) : (
-          <JoinPicker
-            submitting={s.submitting}
-            error={s.error}
-            onPick={join}
-            onBack={() => dispatch({ type: 'toForm' })}
-          />
-        )
-      case 'plugins':
-        return (
-          <>
-            <ActHeading
-              title="What this vault runs"
-              description="Notes, tasks and sync are always there. These come on top."
-            />
-            <PluginsAct
-              plugins={plugins}
-              onChange={(info, on) =>
-                dispatch({ type: 'setPlugin', id: info.id, on, byDefault: info.default })
-              }
-            />
-            <p className="text-xs text-muted-foreground">
-              Everyone who clones this vault gets the same plugins. Any of them can be turned off on
-              one machine, in Settings.
-            </p>
-          </>
-        )
-      case 'settings':
-        return (
-          <>
-            <ActHeading
-              title="A few choices"
-              description="All of them have sensible answers already."
-            />
-            <VaultSettingsAct
-              settings={s.settings}
-              onChange={(key, value) => dispatch({ type: 'setSetting', key, value })}
-            />
-          </>
-        )
-      case 'threshold':
-        return (
-          <ThresholdAct
-            slug={slug}
-            owner={s.owner}
-            remote={createdRemote}
-            running={running}
-            building={s.submitting}
-            built={built}
-            error={s.error}
-            onOpen={open}
-          />
-        )
-    }
-  })()
+  const section = (act: Act, className: string, children: React.ReactNode) => (
+    // Every act stays mounted for the crossfade, so the ones not on screen are
+    // `inert`: invisible is not enough, or Tab reaches their buttons and the
+    // greeting's Begin, pressed from naming, would skip creating the vault.
+    <section
+      className={`obrit-act ${className}`}
+      data-act={act}
+      data-state={stateOf(act)}
+      inert={stateOf(act) !== 'active'}
+    >
+      <div className="obrit-act-inner">{children}</div>
+    </section>
+  )
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex flex-col bg-background text-sm text-foreground"
-      role="dialog"
-      aria-modal="true"
-      aria-label="Set up a vault"
-    >
-      <header className="flex shrink-0 items-center justify-between px-6 py-5">
-        <BrandMark />
-        {dismissible && (
-          <IconButton
-            icon={X}
-            label="Dismiss"
-            tooltip="Dismiss (Esc)"
-            size="md"
-            shape="round"
-            onClick={onDismiss}
-          />
-        )}
-      </header>
+    <div className="onboarding-ritual" role="dialog" aria-modal="true">
+      <AmbientBackdrop />
+      <div className="obrit-frame">
+        <header className="obrit-head app-drag">
+          <BrandMark />
+          <div className="obrit-head-right">
+            {dismissible && (
+              <IconButton
+                icon={X}
+                label="Dismiss"
+                tooltip="Dismiss (Esc)"
+                size="md"
+                shape="round"
+                onClick={onDismiss}
+              />
+            )}
+          </div>
+        </header>
 
-      {/* Joining clones a vault that already has its plugins and choices, so
-          there are no steps to count while the join list is up. */}
-      <RitualSteps acts={acts} current={s.act} hidden={s.view === 'join'} />
+        {/* Joining clones a vault that already has its plugins and choices, so
+            there are no steps to count while the join list is up. */}
+        <RitualSteps acts={acts} current={s.act} hidden={s.view === 'join'} />
 
-      <main className="min-h-0 flex-1 overflow-y-auto">
-        {/* Only the act on screen is mounted, so nothing of another act can be
-            reached by Tab: the greeting's Begin, pressed from naming, would
-            skip creating the vault. Keyed, so each act fades in once. */}
-        <section
-          key={`${s.act}:${s.view}`}
-          data-act={s.act}
-          className={`mx-auto flex min-h-full w-full flex-col justify-center gap-6 px-6 py-8 motion-in-fade ${
-            s.act === 'plugins' || s.act === 'settings' ? 'max-w-2xl' : 'max-w-xl'
-          }`}
-        >
-          {act}
-        </section>
-      </main>
+        <div className="obrit-stage">
+          {mode === 'first-run' &&
+            section('greeting', 'obrit-greeting', <GreetingAct onBegin={advance} />)}
 
-      <footer className="flex shrink-0 items-center justify-between gap-3 px-6 py-5">
-        <div className="flex items-center gap-2">
-          {s.view === 'form' && s.act !== 'threshold' && (!atFloor || dismissible) && (
-            <Button variant="ghost" onClick={back}>
-              <Icon icon={ArrowLeft} size="sm" />
-              {atFloor ? 'Dismiss' : 'Back'}
-            </Button>
+          {section(
+            'naming',
+            'obrit-name',
+            s.view === 'form' ? (
+              <NamingAct
+                name={s.name}
+                owner={s.owner}
+                slug={slug}
+                error={s.error}
+                active={naming}
+                onName={(name) => dispatch({ type: 'setName', name })}
+                onOwner={(owner) => dispatch({ type: 'setOwner', owner })}
+                onJoin={() => dispatch({ type: 'toJoin' })}
+              />
+            ) : (
+              <JoinPicker
+                submitting={s.submitting}
+                error={s.error}
+                onPick={join}
+                onBack={() => dispatch({ type: 'toForm' })}
+              />
+            ),
+          )}
+
+          {section(
+            'plugins',
+            'obrit-settings-act',
+            <>
+              <div className="obrit-eyebrow">WHAT THIS VAULT RUNS</div>
+              <p className="obrit-lede">
+                Notes, tasks and sync are always there. These come on top.
+              </p>
+              <PluginsAct
+                plugins={plugins}
+                onChange={(info, on) =>
+                  dispatch({ type: 'setPlugin', id: info.id, on, byDefault: info.default })
+                }
+              />
+              <p className="obrit-settings-where">
+                Everyone who clones this vault gets the same plugins. Any of them can be turned off
+                on one machine, in Settings.
+              </p>
+            </>,
+          )}
+
+          {section(
+            'settings',
+            'obrit-settings-act',
+            <>
+              <div className="obrit-eyebrow">A FEW CHOICES</div>
+              <p className="obrit-lede">All of them have sensible answers already.</p>
+              <VaultSettingsAct
+                settings={s.settings}
+                onChange={(key, value) => dispatch({ type: 'setSetting', key, value })}
+              />
+            </>,
+          )}
+
+          {section(
+            'threshold',
+            'obrit-threshold',
+            <ThresholdAct
+              slug={slug}
+              owner={s.owner}
+              remote={createdRemote}
+              running={running}
+              building={s.submitting}
+              built={built}
+              error={s.error}
+              onOpen={open}
+            />,
           )}
         </div>
-        <div className="flex items-center gap-3">
-          {s.act === 'naming' && naming && !s.submitting && (
-            <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-              Press <Kbd>Enter</Kbd>
-            </span>
-          )}
-          {footPrimary !== undefined && (
-            <Button onClick={footPrimary.run} disabled={footPrimary.disabled}>
-              {footPrimary.label}
-              <Icon icon={ArrowRight} size="sm" />
-            </Button>
-          )}
-        </div>
-      </footer>
+
+        <footer className="obrit-foot">
+          <div className="obrit-foot-side">
+            {s.view === 'form' && s.act !== 'threshold' && (!atFloor || dismissible) && (
+              <Button variant="ghost" onClick={back}>
+                <Icon icon={ArrowLeft} size="sm" />
+                {atFloor ? 'Dismiss' : 'Back'}
+              </Button>
+            )}
+          </div>
+          <div className="obrit-foot-side is-right">
+            {s.act === 'naming' && naming && !s.submitting && (
+              <span className="obrit-keyhint">
+                Press <Kbd>Enter</Kbd>
+              </span>
+            )}
+            {footPrimary !== undefined && (
+              <Button
+                size="lg"
+                className={cn(s.act === 'naming' && waking && 'obrit-wake')}
+                onClick={footPrimary.run}
+                disabled={footPrimary.disabled}
+              >
+                {footPrimary.label}
+                <Icon icon={ArrowRight} size="sm" />
+              </Button>
+            )}
+          </div>
+        </footer>
+      </div>
+      <AmbientGrain />
     </div>
   )
 }
@@ -345,12 +388,13 @@ const STEP_TITLES: Partial<Record<Act, string>> = {
 }
 
 /**
- * Where the ritual is, above the act: a numbered step per act with its name,
- * ticked once done (ReUI's `stepper`). It counts only the acts that ask
- * something (`STEPPED`): the greeting is the door in and the threshold is the
- * result, so on those it is not shown. Progress only: the acts are gated by
- * what each one needs, so there are no triggers and nothing here reads as a
- * way to jump ahead.
+ * Where the ritual is, above the act: the step count, then a numbered step
+ * per act with its name, the rule between two filling as the first is done
+ * (`primitives/Stepper.tsx`). It counts only the acts that ask something
+ * (`STEPPED`): the greeting is the door in and the threshold is the result,
+ * so on those the stepper fades out, keeping its height so the act does not
+ * jump. Progress only: the acts are gated by what each one needs, so there
+ * are no triggers and nothing here reads as a way to jump ahead.
  */
 function RitualSteps({
   acts,
@@ -362,33 +406,45 @@ function RitualSteps({
   hidden?: boolean
 }) {
   const steps = acts.filter((act) => STEPPED.has(act))
-  if (!STEPPED.has(current) || hidden) return null
-  const at = steps.indexOf(current) + 1
+  const shown = STEPPED.has(current) && !hidden
+  // On the threshold every step is done; on the greeting none has started.
+  const at = shown ? steps.indexOf(current) + 1 : current === 'threshold' ? steps.length + 1 : 0
   return (
-    <div className="flex shrink-0 justify-center px-6 pb-2">
+    <div className="obrit-progress" data-shown={shown || undefined} aria-hidden={!shown}>
+      <p className="text-xs text-muted-foreground tabular-nums">
+        Step {Math.min(Math.max(at, 1), steps.length)} of {steps.length}
+      </p>
       <Stepper
         value={at}
-        indicators={{ completed: <Icon icon={Check} size="sm" /> }}
         role="progressbar"
         aria-label="Setup progress"
         aria-valuemin={1}
         aria-valuemax={steps.length}
-        aria-valuenow={at}
-        aria-valuetext={`Step ${at} of ${steps.length}: ${STEP_TITLES[current] ?? ''}`}
-        className="max-w-md"
+        aria-valuenow={Math.min(Math.max(at, 1), steps.length)}
+        aria-valuetext={`Step ${Math.min(Math.max(at, 1), steps.length)} of ${steps.length}: ${STEP_TITLES[current] ?? ''}`}
+        className="w-full max-w-md"
       >
+        {/* The nav is what lays the steps in a row (`primitives/Stepper.tsx`):
+            without it they stack. */}
         <StepperNav>
-          {steps.map((act, i) => (
-            <StepperItem key={act} step={i + 1}>
-              <div className="flex items-center gap-2">
-                <StepperIndicator>{i + 1}</StepperIndicator>
-                <StepperTitle className="data-[state=inactive]:text-muted-foreground">
-                  {STEP_TITLES[act]}
-                </StepperTitle>
-              </div>
-              {i < steps.length - 1 && <StepperSeparator className="mx-3" />}
-            </StepperItem>
-          ))}
+          {steps.map((act, i) => {
+            const step = i + 1
+            return (
+              <StepperItem key={act} step={step} className="relative flex-1 flex-col!">
+                <div className="flex flex-col items-center gap-2">
+                  <StepperIndicator />
+                  <StepperTitle className="obrit-step-title text-xs group-data-[state=inactive]/step:text-muted-foreground">
+                    {STEP_TITLES[act]}
+                  </StepperTitle>
+                </div>
+                {step < steps.length && (
+                  // From this step's dot to the next one's, filled once this
+                  // step is done.
+                  <StepperSeparator className="absolute start-[calc(50%+0.875rem)] top-3 m-0 w-[calc(100%-1.75rem)] -translate-y-1/2 group-data-[orientation=horizontal]/stepper-nav:flex-none data-[state=completed]:bg-foreground" />
+                )}
+              </StepperItem>
+            )
+          })}
         </StepperNav>
       </Stepper>
     </div>

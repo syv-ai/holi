@@ -6,13 +6,16 @@ import {
   holiApprovalText,
   holiIdOf,
   holiSlug,
+  holiSoul,
   isHoliFilePath,
+  isHoliFolderFile,
   parseHoliFile,
   serializeHoliFile,
+  SOUL_SEED,
+  soulText,
   type HoliDef,
 } from '../src/holi'
 import { isAgentSurfacePath } from '../src/path-safety'
-import { describeScheduleWhen } from '../src/schedule'
 
 const PROPOSAL = `# Proposal turns a customer note into a PDF.
 name: Proposal
@@ -53,7 +56,7 @@ describe('Holi files', () => {
       instructions: 'Write a proposal laid out as Templates/proposal.typ.',
       unknownKeys: [],
     })
-    expect(def(PROPOSAL).when).toBeUndefined()
+    expect(def(PROPOSAL).folder).toBe(false)
   })
 
   it('gives a bare Holi a stable look from its id, and takes any document', () => {
@@ -115,64 +118,71 @@ describe('Holi files', () => {
     expect(isHoliFilePath('.holi/holis/ada.local.yaml')).toBe(true)
     expect(isHoliFilePath('.holi/holis/ada.md')).toBe(false)
     expect(isHoliFilePath('.holi/holis/x/ada.yaml')).toBe(false)
+    expect(isHoliFilePath('.holi/holis/ada/holi.yaml')).toBe(true)
+    expect(isHoliFilePath('.holi/holis/ada/SOUL.md')).toBe(false)
+    expect(isHoliFolderFile('.holi/holis/ada/holi.yaml')).toBe(true)
     expect(holiIdOf('.holi/holis/ada.local.yaml')).toBe('ada')
+    expect(holiIdOf('.holi/holis/ada/holi.yaml')).toBe('ada')
     expect(holiSlug('Ådå the Great!')).toBe('ada-the-great')
     expect(isAgentSurfacePath('.holi/holis/ada.yaml')).toBe(true)
   })
 
-  it('writes a file it reads back, its instructions a block', () => {
+  it('writes a folder Holi it reads back, its soul in SOUL.md', () => {
     const text = serializeHoliFile({
       name: 'Proposal',
       mascot: 'rocket',
       accepts: ['kunder/**/*.md'],
       allow: ['Edit(tilbud/**)'],
-      instructions: 'Write it.\n\nThen export it.',
     })
-    expect(text).toContain('instructions: |')
-    expect(def(text)).toMatchObject({
-      accepts: ['kunder/**/*.md'],
-      instructions: 'Write it.\n\nThen export it.',
-    })
-  })
-})
-
-describe('scheduled Holis', () => {
-  it('reads a cron as a scheduled Holi, which takes no document', () => {
-    const tidy = def("cron: '0 3 * * *'\ninstructions: Tidy the notes.\n", '.holi/holis/tidy.yaml')
-    expect(describeScheduleWhen(tidy.when!)).toBe('Every day at 03:00')
-    expect(holiAccepts(tidy, 'Notes/a.md')).toBe(false)
-    expect(error("cron: '0 3 * * *'\naccepts: ['*.md']\ninstructions: x\n")).toMatch(
-      /takes no document/,
+    expect(text).not.toContain('instructions')
+    const folder = def(text, '.holi/holis/proposal/holi.yaml')
+    expect(folder).toMatchObject({ folder: true, accepts: ['kunder/**/*.md'], instructions: '' })
+    expect(holiSoul(folder, soulText('Write it.\n\nThen export it.'))).toContain(
+      'Write it.\n\nThen export it.',
     )
-    expect(error('cron: "* * * * *"\ninstructions: x\n')).toMatch(/every 5 minutes/)
-    expect(error('at: 2026-10-09\ninstructions: x\n')).toMatch(/quoted local time/)
+    expect(soulText('')).toBe(SOUL_SEED)
   })
 
-  it('keeps the cloud for work on the vault alone', () => {
-    expect(error("cron: '0 3 * * *'\ninstructions: Run `holi google draft` for each.\n")).toMatch(
-      /scheduled agent/,
+  it("reads an older file's instructions as its soul", () => {
+    expect(holiSoul(def(PROPOSAL), 'ignored')).toBe(
+      'Write a proposal laid out as Templates/proposal.typ.',
     )
-    expect(error("cron: '0 3 * * *'\ninstructions: Read USER.local.md first.\n")).toMatch(
-      /\.local\./,
-    )
+  })
+
+  it('sends a clock to automations', () => {
+    expect(error("cron: '0 3 * * *'\ninstructions: Tidy.\n")).toMatch(/automation/)
+    expect(error("at: '2026-10-09T15:00'\ninstructions: Tidy.\n")).toMatch(/automation/)
   })
 })
 
 describe('approval', () => {
   it('approves what a run may do: not its look, its name or its comments', () => {
-    const base = holiApprovalText(def(PROPOSAL))
-    expect(holiApprovalText(def(PROPOSAL.replace('name: Proposal', 'name: Offer')))).toBe(base)
-    expect(holiApprovalText(def(PROPOSAL.replace('mascot: rocket', 'mascot: ghost')))).toBe(base)
-    expect(holiApprovalText(def(PROPOSAL.replace('# customer notes only', '')))).toBe(base)
-    expect(holiApprovalText(def(PROPOSAL.replace('laid out', 'set out')))).not.toBe(base)
-    expect(holiApprovalText(def(PROPOSAL.replace('model: sonnet', 'model: opus')))).not.toBe(base)
-    expect(holiApprovalText(def(PROPOSAL.replace('tilbud/**', 'tilbud/2026/**')))).not.toBe(base)
-    expect(holiApprovalText(def(PROPOSAL.replace('kunder/**', 'leads/**')))).not.toBe(base)
+    const text = (t: string): string => {
+      const d = def(t)
+      return holiApprovalText(d, holiSoul(d, null))
+    }
+    const base = text(PROPOSAL)
+    expect(text(PROPOSAL.replace('name: Proposal', 'name: Offer'))).toBe(base)
+    expect(text(PROPOSAL.replace('mascot: rocket', 'mascot: ghost'))).toBe(base)
+    expect(text(PROPOSAL.replace('# customer notes only', ''))).toBe(base)
+    expect(text(PROPOSAL.replace('laid out', 'set out'))).not.toBe(base)
+    expect(text(PROPOSAL.replace('model: sonnet', 'model: opus'))).not.toBe(base)
+    expect(text(PROPOSAL.replace('tilbud/**', 'tilbud/2026/**'))).not.toBe(base)
+    expect(text(PROPOSAL.replace('kunder/**', 'leads/**'))).not.toBe(base)
+  })
+
+  it("approves a folder Holi's soul", () => {
+    const d = def('name: A\n', '.holi/holis/a/holi.yaml')
+    expect(holiApprovalText(d, holiSoul(d, '# Soul\n\nBe brief.'))).not.toBe(
+      holiApprovalText(d, holiSoul(d, '# Soul\n\nBe thorough.')),
+    )
   })
 
   it('does not change with trailing whitespace', () => {
-    const a = holiApprovalText(def('instructions: "Line one. \\nLine two.\\n\\n\\n"\n'))
-    const b = holiApprovalText(def('instructions: |\n  Line one.\n  Line two.\n'))
+    const da = def('instructions: "Line one. \\nLine two.\\n\\n\\n"\n')
+    const db = def('instructions: |\n  Line one.\n  Line two.\n')
+    const a = holiApprovalText(da, holiSoul(da, null))
+    const b = holiApprovalText(db, holiSoul(db, null))
     expect(a).toBe(b)
   })
 })

@@ -1,12 +1,19 @@
 /**
- * A Holi: an agent that belongs to the vault, with a face, that a person sends
- * work to (docs/features/holis.md). A Holi is **triggered**: it runs when
- * someone sends it something, today a document, with the person there to
- * answer Claude Code's prompts. It never runs on a clock on a member's machine;
- * local schedules are scheduled agents (`schedule.ts`).
+ * A Holi: an agent that belongs to the vault, with a name and a face, a soul
+ * and a memory (docs/features/holis.md, after MonoCode's Monos). It runs when
+ * someone sends it a document, or when an automation it carries out comes due
+ * on a machine that turned that automation on; either way Claude Code asks the
+ * person what its `allow` does not cover.
  *
- * One YAML file, `.holi/holis/<id>.yaml` (`<id>.local.yaml` keeps one on this
- * machine), committed and synced like a note:
+ * A Holi is a folder, `.holi/holis/<id>/`, committed and synced like a note:
+ *
+ * ```
+ * .holi/holis/proposal/
+ *   holi.yaml   name, mascot, colour, model, accepts, allow
+ *   SOUL.md     who it is: its standing instructions
+ *   MEMORY.md   what it has learned, one dated fact a line (`holi-memory.ts`)
+ *   memory/     topic notes read on demand, and archive.md
+ * ```
  *
  * ```yaml
  * name: Proposal
@@ -17,15 +24,10 @@
  *   - kunder/**\/*.md
  * allow:
  *   - Edit(tilbud/**)
- * instructions: |
- *   Write a proposal for the customer in the note, laid out as
- *   Templates/proposal.typ, and export it as a PDF to tilbud/.
  * ```
  *
- * A file with a `cron` or `at` is a **scheduled Holi** instead: shared vault
- * work that runs once per moment in Claude Code's cloud against the vault's
- * repository, never on a member's machine. It takes no document (`accepts`),
- * and may name nothing only a machine has (`holi` commands, `.local.` files).
+ * An older Holi is one file, `.holi/holis/<id>.yaml` (`<id>.local.yaml` keeps
+ * one on this machine), whose `instructions` key is its soul. It still reads.
  *
  * YAML rather than markdown with frontmatter, so it can carry settings as it
  * grows: a key this build does not know is kept on write and ignored on read,
@@ -34,14 +36,24 @@
  *
  * Pure and browser-safe: the renderer reads a file the way main runs it.
  */
-import { Document, parse as parseYaml, parseDocument, Scalar } from 'yaml'
-import { CronError, parseCron, shortestGapMinutes } from './cron'
-import { parseDateTime } from './dates'
+import { Document, parse as parseYaml, parseDocument } from 'yaml'
 import { HOLIS_SURFACE_DIR } from './path-safety'
-import { MIN_SCHEDULE_GAP_MINUTES, type ScheduleWhen } from './schedule'
 
 /** Where Holi definitions live: one file each, directly inside. */
 export const HOLIS_DIR = HOLIS_SURFACE_DIR
+
+/** A folder Holi's files, by name inside its folder. */
+export const HOLI_FILE = 'holi.yaml'
+export const SOUL_FILE = 'SOUL.md'
+
+/** The soul a new Holi starts with, after MonoCode's: a heading and one
+ *  placeholder line for the person to replace. */
+export const SOUL_SEED = `# Soul
+
+## Standing instructions
+
+- (Add anything it should always keep in mind.)
+`
 
 /**
  * The pixel figures a Holi can be drawn as (after MonoCode's project mascots).
@@ -84,13 +96,14 @@ export interface HoliDef {
   model?: string
   /** Vault-path globs of the documents it takes. Empty: any document. */
   accepts: string[]
-  /** Its `cron` or `at`: a scheduled Holi, run in the cloud. Absent: one a
-   *  person sends work to. */
-  when?: ScheduleWhen
   /** Claude Code permission rules a run may use without asking. */
   allow: string[]
-  /** What a run carries out. */
+  /** An older single-file Holi's `instructions`: its soul. A folder Holi's
+   *  soul is its `SOUL.md`, and this is ''. */
   instructions: string
+  /** Whether it is a folder (`<id>/holi.yaml`, with a soul and a memory) or
+   *  an older single file. */
+  folder: boolean
   /** Keys this build does not know: kept in the file, ignored here, shown as
    *  a warning. */
   unknownKeys: string[]
@@ -110,8 +123,6 @@ const HOLI_KEYS = new Set([
   'description',
   'model',
   'accepts',
-  'cron',
-  'at',
   'allow',
   'instructions',
 ])
@@ -123,27 +134,39 @@ const HOLI_KEYS = new Set([
  */
 const PERMISSION_KEY = /permission|bypass|skip|danger|dontask|yolo/i
 
-/** A `holi` command, or a machine-local file: what only a member's machine
- *  has, and a cloud run cannot reach. */
-const MACHINE_ONLY = /(?:^|[\s(`'"])holi\s+[a-z]|\.local\./i
-
 /** A rule that would let a run write anywhere: the agent's surface included,
  *  so a run could be talked into changing every later one. */
 const BARE_WRITE = /^(?:Edit|Write|MultiEdit)(?:\(\s*(?:\*\*?(?:\/\*\*?)*)?\s*\))?$/
 
-/** Whether a vault path is a Holi file: a YAML file directly inside
- *  `HOLIS_DIR`. A `.local.yaml` one is a Holi only this machine has. */
+/** Whether a vault path is a Holi's file: `<id>/holi.yaml`, or an older
+ *  single `<id>.yaml` directly inside `HOLIS_DIR` (`.local.yaml` is a Holi only
+ *  this machine has). */
 export function isHoliFilePath(path: string): boolean {
   if (!path.startsWith(`${HOLIS_DIR}/`)) return false
   const rest = path.slice(HOLIS_DIR.length + 1)
-  return !rest.includes('/') && rest.endsWith('.yaml') && rest !== '.yaml'
+  const parts = rest.split('/')
+  if (parts.length === 2) return parts[0] !== '' && parts[1] === HOLI_FILE
+  return parts.length === 1 && rest.endsWith('.yaml') && rest !== '.yaml'
 }
 
-/** `ada` for `.holi/holis/ada.yaml` and `.holi/holis/ada.local.yaml`. */
+/** Whether a Holi file is the folder form, `<id>/holi.yaml`. */
+export function isHoliFolderFile(path: string): boolean {
+  return path.endsWith(`/${HOLI_FILE}`) && isHoliFilePath(path)
+}
+
+/** `ada` for `.holi/holis/ada/holi.yaml`, `.holi/holis/ada.yaml` and
+ *  `.holi/holis/ada.local.yaml`. */
 export function holiIdOf(path: string): string {
+  if (isHoliFolderFile(path)) {
+    const dir = path.slice(0, -HOLI_FILE.length - 1)
+    return dir.slice(dir.lastIndexOf('/') + 1)
+  }
   const base = path.slice(path.lastIndexOf('/') + 1)
   return base.replace(/\.yaml$/, '').replace(/\.local$/, '')
 }
+
+/** A folder Holi's folder, `.holi/holis/<id>`. */
+export const holiFolder = (id: string): string => `${HOLIS_DIR}/${id}`
 
 /** A name as an id: lowercase words joined by dashes. Empty for a name with
  *  no letters or digits. */
@@ -163,49 +186,6 @@ function pick<T>(list: readonly T[], seed: string): T {
   let hash = 0
   for (let i = 0; i < seed.length; i++) hash = (hash * 131 + seed.charCodeAt(i)) >>> 0
   return list[hash % list.length]!
-}
-
-/** A local `YYYY-MM-DDTHH:MM` as the `Date` of that wall-clock minute. */
-function localStamp(stamp: string): Date | null {
-  const naive = parseDateTime(stamp)
-  if (naive === null) return null
-  const d = new Date(naive)
-  return new Date(
-    d.getUTCFullYear(),
-    d.getUTCMonth(),
-    d.getUTCDate(),
-    d.getUTCHours(),
-    d.getUTCMinutes(),
-  )
-}
-
-/** `cron` or `at`, never both; undefined for neither; an error in words. */
-function readWhen(cronText: unknown, atText: unknown): ScheduleWhen | undefined | string {
-  if (cronText !== undefined && atText !== undefined) return 'give a `cron` or an `at`, not both'
-  if (cronText !== undefined) {
-    if (typeof cronText !== 'string') return '`cron` must be quoted text'
-    try {
-      const cron = parseCron(cronText)
-      if (shortestGapMinutes(cron) < MIN_SCHEDULE_GAP_MINUTES) {
-        return `cron: runs more often than every ${MIN_SCHEDULE_GAP_MINUTES} minutes`
-      }
-      return { kind: 'cron', cron }
-    } catch (err) {
-      if (err instanceof CronError) return `cron: ${err.message}`
-      throw err
-    }
-  }
-  if (atText !== undefined) {
-    // YAML reads an unquoted timestamp as a Date; the stamp is wall-clock
-    // text, so only the quoted form is unambiguous.
-    const stamp = typeof atText === 'string' ? atText.trim() : null
-    const local = stamp === null ? null : localStamp(stamp)
-    if (stamp === null || local === null) {
-      return '`at` must be a quoted local time, "YYYY-MM-DDTHH:MM"'
-    }
-    return { kind: 'at', stamp, local }
-  }
-  return undefined
 }
 
 /**
@@ -257,8 +237,13 @@ export function parseHoliFile(text: string, path: string): HoliParse {
   if (rawModel !== undefined && (typeof rawModel !== 'string' || !MODEL_RE.test(rawModel))) {
     return { ok: false, error: '`model` must be one model name, like `sonnet`' }
   }
-  const when = readWhen(f['cron'], f['at'])
-  if (typeof when === 'string') return { ok: false, error: when }
+  if (f['cron'] !== undefined || f['at'] !== undefined) {
+    return {
+      ok: false,
+      error:
+        'a Holi runs on a clock through an automation: take `cron` and `at` out, and make an automation in the Agents view that this Holi carries out.',
+    }
+  }
   const rawAccepts = f['accepts'] ?? []
   const acceptsList = typeof rawAccepts === 'string' ? [rawAccepts] : rawAccepts
   if (
@@ -268,12 +253,6 @@ export function parseHoliFile(text: string, path: string): HoliParse {
     return { ok: false, error: '`accepts` is a list of vault paths, like `kunder/**/*.md`' }
   }
   const accepts = (acceptsList as string[]).map((g) => g.trim())
-  if (when !== undefined && accepts.length > 0) {
-    return {
-      ok: false,
-      error: 'a scheduled Holi (`cron` or `at`) takes no document, so no `accepts`',
-    }
-  }
 
   const rawAllow = f['allow'] ?? []
   if (!Array.isArray(rawAllow)) return { ok: false, error: '`allow` must be a list of rules' }
@@ -290,17 +269,15 @@ export function parseHoliFile(text: string, path: string): HoliParse {
     }
     allow.push(rule.trim())
   }
+  // A folder Holi's soul is its SOUL.md; an older file's is `instructions`.
+  const folder = isHoliFolderFile(path)
   const rawInstructions = f['instructions']
-  if (typeof rawInstructions !== 'string' || rawInstructions.trim() === '') {
-    return { ok: false, error: '`instructions` (what a run carries out) is empty' }
+  if (rawInstructions !== undefined && typeof rawInstructions !== 'string') {
+    return { ok: false, error: '`instructions` must be text' }
   }
-  const instructions = rawInstructions.trim()
-  if (when !== undefined && [...allow, instructions].some((x) => MACHINE_ONLY.test(x))) {
-    return {
-      ok: false,
-      error:
-        'a scheduled Holi runs in the cloud, on the vault alone: it has no `holi` commands (mail, agenda) and no `.local.` files. A schedule that needs this machine is a scheduled agent (`.holi/schedules/`).',
-    }
+  const instructions = typeof rawInstructions === 'string' ? rawInstructions.trim() : ''
+  if (!folder && instructions === '') {
+    return { ok: false, error: '`instructions` (what a run carries out) is empty' }
   }
 
   return {
@@ -313,9 +290,9 @@ export function parseHoliFile(text: string, path: string): HoliParse {
       description: typeof rawDescription === 'string' ? rawDescription.trim() : '',
       ...(typeof rawModel === 'string' ? { model: rawModel } : {}),
       accepts,
-      ...(when === undefined ? {} : { when }),
       allow,
       instructions,
+      folder,
       unknownKeys: Object.keys(f).filter((k) => !HOLI_KEYS.has(k)),
     },
   }
@@ -323,7 +300,6 @@ export function parseHoliFile(text: string, path: string): HoliParse {
 
 /** Whether a Holi takes the document at `path`: any, when it names none. */
 export function holiAccepts(def: HoliDef, path: string): boolean {
-  if (def.when !== undefined) return false
   return def.accepts.length === 0 || def.accepts.some((g) => globToRegExp(g).test(path))
 }
 
@@ -350,21 +326,31 @@ export function globToRegExp(glob: string): RegExp {
 }
 
 /**
- * What approving a Holi on this machine approves: its instructions, model,
- * the rules it may run without asking, which documents it takes and, for a
- * scheduled one, that it is. A change to any of them is a Holi nobody here has
- * approved yet. Its look and name are not here: a label grants nothing.
+ * A Holi's soul as a run reads it: its `SOUL.md`, or an older file's
+ * `instructions`. Trailing spaces and the ends trimmed, so reflowed whitespace
+ * is not a change.
+ */
+export function holiSoul(def: HoliDef, soulText: string | null): string {
+  const text = def.folder ? (soulText ?? '') : def.instructions
+  return text.replace(/[ \t]+$/gm, '').trim()
+}
+
+/**
+ * What approving a Holi on this machine approves: its soul, model, the rules
+ * it may run without asking and which documents it takes. A change to any of
+ * them is a Holi nobody here has approved yet. Its look and name are not here:
+ * a label grants nothing. Nor is its memory, which its own runs write: it goes
+ * into a run as notes, never as instructions (docs/features/holis.md).
  *
  * Read from the parsed fields, so a comment, a reordered key or reflowed
  * whitespace is not a change anyone has to approve.
  */
-export function holiApprovalText(def: HoliDef): string {
+export function holiApprovalText(def: HoliDef, soul: string): string {
   return JSON.stringify({
-    instructions: def.instructions.replace(/[ \t]+$/gm, '').trim(),
+    instructions: soul,
     model: def.model ?? null,
     allow: def.allow,
     accepts: def.accepts,
-    scheduled: def.when !== undefined,
   })
 }
 
@@ -377,11 +363,13 @@ export interface HoliDraft {
   model?: string
   accepts?: string[]
   allow?: string[]
-  instructions: string
+  /** Its soul: the standing instructions `SOUL.md` starts with. Empty: the
+   *  seed, for the person to fill in. */
+  soul?: string
 }
 
-/** A new Holi file's text. Only what was given is written, so the file reads
- *  like one a person wrote, its instructions a block of lines. */
+/** A new folder Holi's `holi.yaml`. Only what was given is written, so the
+ *  file reads like one a person wrote. */
 export function serializeHoliFile(draft: HoliDraft): string {
   const fm: Record<string, unknown> = { name: draft.name.trim() }
   if (draft.mascot !== undefined) fm['mascot'] = draft.mascot
@@ -390,11 +378,15 @@ export function serializeHoliFile(draft: HoliDraft): string {
   if (draft.model?.trim()) fm['model'] = draft.model.trim()
   if (draft.accepts !== undefined && draft.accepts.length > 0) fm['accepts'] = draft.accepts
   if (draft.allow !== undefined && draft.allow.length > 0) fm['allow'] = draft.allow
-  fm['instructions'] = `${draft.instructions.trim()}\n`
-  const doc = new Document(fm)
-  const node = doc.get('instructions', true)
-  if (node instanceof Scalar) node.type = Scalar.BLOCK_LITERAL
-  return doc.toString({ lineWidth: 0 })
+  return new Document(fm).toString({ lineWidth: 0 })
+}
+
+/** A new Holi's `SOUL.md`: the seed, with the draft's instructions as its
+ *  standing instructions when it has some. */
+export function soulText(instructions?: string): string {
+  const text = instructions?.trim() ?? ''
+  if (text === '') return SOUL_SEED
+  return `# Soul\n\n## Standing instructions\n\n${text}\n`
 }
 
 /**

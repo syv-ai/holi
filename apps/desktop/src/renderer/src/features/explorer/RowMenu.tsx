@@ -1,13 +1,21 @@
 import { fileKind, ICONS_FILE } from '@holi/shared'
 import { useAtomValue, useSetAtom } from 'jotai'
+import { Check } from 'lucide-react'
 import {
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuSeparator,
   ContextMenuShortcut,
+  ContextMenuSub,
+  ContextMenuSubContent,
+  ContextMenuSubTrigger,
+  Icon,
 } from '@/primitives'
+import { cn } from '@/lib/cn'
+import { FOLDER_COLOURS, FOLDER_COLOUR_LABEL, FOLDER_SWATCH } from '@/lib/folder-colour'
 import { parentOf } from '@/lib/tree-paths'
 import { openDialogAtom } from '@/state/dialogs'
+import { folderColoursAtom, setFolderColourAtom } from '@/state/folder-colours'
 import { pinsAtom, togglePinAtom } from '@/state/pins'
 import { claimsAtom } from '@/state/plugins'
 import { activeRemoteAtom, snapshotAtom, vaultsAtom } from '@/state/vaults'
@@ -54,6 +62,8 @@ export function RowMenu({
   const openDialog = useSetAtom(openDialogAtom)
   const pinned = useAtomValue(pinsAtom)
   const togglePin = useSetAtom(togglePinAtom)
+  const colour = useAtomValue(folderColoursAtom)[path]
+  const setColour = useSetAtom(setFolderColourAtom)
   // What enabled claims add for this path, in claim order: those whose
   // condition holds.
   const claimItems = useAtomValue(claimsAtom).flatMap((c) =>
@@ -110,6 +120,31 @@ export function RowMenu({
           <ContextMenuItem onSelect={() => togglePin(path)}>
             {pinned.includes(path) ? 'Unpin from Sidebar' : 'Pin to Sidebar'}
           </ContextMenuItem>
+          {/* A plain folder's colour, on this machine (`state/folder-colours.ts`). */}
+          {isFolder && document === null && (
+            <ContextMenuSub>
+              <ContextMenuSubTrigger>Colour</ContextMenuSubTrigger>
+              <ContextMenuSubContent className="w-40">
+                {FOLDER_COLOURS.map((c) => (
+                  <ContextMenuItem key={c} onSelect={() => setColour({ path, colour: c })}>
+                    <span
+                      aria-hidden="true"
+                      className={cn('size-3 shrink-0 rounded-full', FOLDER_SWATCH[c])}
+                    />
+                    <span className="flex-1">{FOLDER_COLOUR_LABEL[c]}</span>
+                    {colour === c && <Icon icon={Check} size="sm" />}
+                  </ContextMenuItem>
+                ))}
+                <ContextMenuSeparator />
+                <ContextMenuItem
+                  disabled={colour === undefined}
+                  onSelect={() => setColour({ path, colour: null })}
+                >
+                  No colour
+                </ContextMenuItem>
+              </ContextMenuSubContent>
+            </ContextMenuSub>
+          )}
           <ContextMenuItem onSelect={onRename}>
             Rename…
             <ContextMenuShortcut>F2</ContextMenuShortcut>

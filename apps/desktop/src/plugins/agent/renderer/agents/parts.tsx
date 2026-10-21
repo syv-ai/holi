@@ -1,15 +1,19 @@
 /**
  * The small pieces every row and header share: the state ("Need approval",
- * "Working…", "Done"), the lines a turn changed, and how long ago. After
- * MonoCode's sidebar rows (MIT, Copyright (c) 2026 Nick; see NOTICE.md).
+ * "Working…", "Done"), the lines a turn changed, how long ago, the sidebar's
+ * row, and a session's card. After MonoCode's sidebar rows (MIT, Copyright
+ * (c) 2026 Nick; see NOTICE.md).
  *
  * Colour here is state, each with its `dark:` pair: amber for waiting on you,
  * green for done, and the diff's own added and removed tokens
  * (`docs/ui-system.md`, Monotone).
  */
-import { Check, CircleAlert, LoaderCircle } from 'lucide-react'
-import { Icon } from '@/primitives'
+import { SiClaude } from '@icons-pack/react-simple-icons'
+import { Check, CircleAlert, GitBranch, LoaderCircle } from 'lucide-react'
+import type { ComponentProps, ReactNode } from 'react'
+import { Button, Icon, type IconGlyph } from '@/primitives'
 import { cn } from '@/plugin-api'
+import type { AgentSession } from '../state/sessions'
 
 export type RowState = 'needs-you' | 'working' | 'done' | 'idle'
 
@@ -80,4 +84,106 @@ export function ago(at: number, now: number): string {
   const days = Math.floor(hours / 24)
   if (days < 7) return `${days}d`
   return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' }).format(new Date(at))
+}
+
+/** The chrome row (`docs/ui-system.md`, Rules): one fill scale on the
+ *  foreground, `text-nav`. The Documents sidebar's own. */
+export const NAV_ROW =
+  'h-7 w-full min-w-0 justify-start gap-2 rounded-lg px-2 text-nav font-medium text-muted-foreground motion-respond hover:bg-foreground/[0.04] hover:text-foreground active:bg-foreground/[0.07] aria-[current=page]:bg-foreground/[0.06] aria-[current=page]:text-foreground'
+
+/** A place in the Agents sidebar's top group: Inbox, Automations. */
+export function NavRow({
+  icon,
+  label,
+  current,
+  end,
+  onClick,
+}: {
+  icon: IconGlyph
+  label: string
+  current: boolean
+  end?: ReactNode
+  onClick: () => void
+}): React.JSX.Element {
+  return (
+    <Button
+      variant="ghost"
+      className={NAV_ROW}
+      aria-current={current ? 'page' : undefined}
+      onClick={onClick}
+    >
+      <Icon icon={icon} size="sm" />
+      <span className="min-w-0 flex-1 truncate text-start">{label}</span>
+      {end}
+    </Button>
+  )
+}
+
+/**
+ * A live session as MonoCode's session card draws one: the provider's mark
+ * and its model with the state or how long ago on the right, its title, and
+ * where it runs. One that needs you is a dashed card, so it reads at a glance
+ * among the others.
+ */
+export function SessionCard({
+  session,
+  vault,
+  current,
+  now,
+  className,
+  ...props
+}: Omit<ComponentProps<typeof Button>, 'children'> & {
+  session: AgentSession
+  /** Where it runs: the vault's `owner/repo`. */
+  vault: string
+  current: boolean
+  now: number
+}): React.JSX.Element {
+  const needs = session.state === 'needs-you'
+  return (
+    <Button
+      {...props}
+      variant="ghost"
+      className={cn(
+        'h-auto w-full min-w-0 flex-col items-stretch gap-1 rounded-lg border border-transparent px-2.5 py-2 text-start font-normal motion-respond hover:bg-foreground/[0.04] active:bg-foreground/[0.07] aria-[current=page]:bg-foreground/[0.06]',
+        needs && 'border-dashed border-foreground/25 bg-foreground/[0.05]',
+        className,
+      )}
+      aria-current={current ? 'page' : undefined}
+      data-session-row={session.id}
+      data-session-state={session.state}
+    >
+      <span className="flex min-w-0 items-center gap-2">
+        <span className="flex min-w-0 flex-1 items-center gap-1.5">
+          <Icon
+            icon={SiClaude}
+            size="sm"
+            className="text-orange-500 dark:text-orange-400"
+            aria-hidden="true"
+          />
+          <span className="min-w-0 truncate text-xs text-muted-foreground">
+            {session.model ?? 'Claude'}
+          </span>
+        </span>
+        <span className="flex shrink-0 items-center text-xs text-muted-foreground tabular-nums">
+          {session.state === 'idle' ? (
+            session.startedAt === undefined ? (
+              'Idle'
+            ) : (
+              ago(session.startedAt, now)
+            )
+          ) : (
+            <StateLabel state={session.state} />
+          )}
+        </span>
+      </span>
+      <span className="line-clamp-1 text-sm font-semibold text-foreground">{session.name}</span>
+      <span className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
+        <Icon icon={GitBranch} size="sm" className="size-3" aria-hidden="true" />
+        <span className="min-w-0 truncate">
+          {needs && session.waitingFor !== undefined ? session.waitingFor : vault}
+        </span>
+      </span>
+    </Button>
+  )
 }

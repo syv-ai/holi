@@ -15,6 +15,7 @@ import { useTree } from '@headless-tree/react'
 import { DeleteConfirm } from '@/composites'
 import { fileIconFor, pathGlyph, pathLabel } from '@/composites/file-icons'
 import { cn } from '@/lib/cn'
+import { FOLDER_GLYPH } from '@/lib/folder-colour'
 import { folderDocumentAt, surfaceLabel } from '@/lib/folder-documents'
 import {
   canMoveInto,
@@ -26,6 +27,7 @@ import {
 } from '@/lib/tree-view'
 import { buildTreeData, ROOT_ID, type TreeItemData } from '@/lib/tree-data'
 import { placeAmong } from '@/lib/tree-order'
+import { folderColoursAtom } from '@/state/folder-colours'
 import { setTreeOrderAtom, treeOrderAtom } from '@/state/tree-order'
 import {
   ancestorsOf,
@@ -234,6 +236,22 @@ export function FileTree({
   const [skipped, setSkipped] = useState<{ name: string; reason: string }[]>([])
 
   const rows = useMemo(() => visibleRows(data, open), [data, open])
+  const colours = useAtomValue(folderColoursAtom)
+  /** How many files each folder holds, at any depth, of those the tree shows:
+   *  a folder's size at a glance, beside its name. */
+  const counts = useMemo(() => {
+    const out = new Map<string, number>()
+    const walk = (id: string): number => {
+      const node = data[id]
+      if (node === undefined) return 0
+      if (!node.isFolder || node.isDocument) return 1
+      const n = node.children.reduce((sum, child) => sum + walk(child), 0)
+      out.set(id, n)
+      return n
+    }
+    walk(ROOT_ID)
+    return out
+  }, [data])
   // A new array as the data changes too, which is what makes the tree flatten again.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const expandedItems = useMemo(() => [...open], [open, data])
@@ -572,7 +590,12 @@ export function FileTree({
       glyph = emoji ? (
         fileIconFor(id, emoji)
       ) : (
-        <Icon icon={isOpen ? FolderOpen : Folder} size="sm" tone="muted" />
+        <Icon
+          icon={isOpen ? FolderOpen : Folder}
+          size="sm"
+          tone={colours[id] === undefined ? 'muted' : undefined}
+          className={colours[id] === undefined ? undefined : FOLDER_GLYPH[colours[id]]}
+        />
       )
     } else {
       glyph = pathGlyph(id, { emoji, task: taskByPath.get(id)?.status }) ?? fileIconFor(id)
@@ -715,6 +738,11 @@ export function FileTree({
               >
                 {label(id, node)}
               </span>
+              {node.isFolder && !node.isDocument && (counts.get(id) ?? 0) > 0 && (
+                <span className="ms-auto shrink-0 ps-2 text-xs font-normal text-muted-foreground tabular-nums">
+                  {counts.get(id)}
+                </span>
+              )}
               {/* Today's daily, marked where it lives (docs/features/daily-notes.md),
                   at the row's right end. */}
               {id === todayDailyPath && (

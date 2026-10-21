@@ -26,7 +26,8 @@ import { DrawerShell } from '@/composites'
 import { cn } from '@/lib/cn'
 import { FileTree } from '@/features/explorer/FileTree'
 import { ModeToggle, useAgentsMode } from '@/features/nav/ModeToggle'
-import { SidebarLinks, SidebarPinned, SidebarProfile } from '@/features/nav/Sidebar'
+import { NavRail, RAIL_WIDTH, SidebarToggle } from '@/features/nav/NavRail'
+import { SidebarLinks, SidebarPinned, SidebarProfile, SidebarSearch } from '@/features/nav/Sidebar'
 import { SettingsSidebar } from '@/features/settings/SettingsSidebar'
 import { VaultPicker } from '@/features/vault/VaultPicker'
 import { trpc } from '../lib/trpc'
@@ -116,7 +117,7 @@ export function Shell() {
   const folderClaims = useAtomValue(folderClaimsAtom)
   const surfaces = useAtomValue(surfacesAtom)
   const running = useAtomValue(runningPluginsAtom)
-  const [navOpen, setNavOpen] = useAtom(navOpenAtom)
+  const navOpen = useAtomValue(navOpenAtom)
   const agentsMode = useAgentsMode()
   const [mode, setMode] = useAtom(appModeAtom)
   const agentsInFront = mode === 'agents' && agentsMode !== undefined
@@ -277,15 +278,19 @@ export function Shell() {
     <div className="relative flex h-screen flex-col bg-ground text-foreground">
       <div className="flex min-h-0 flex-1">
         {/* The nav is a DrawerShell; its content stays mounted while hidden, so
-            the tree's expansion survives. */}
+            the tree's expansion survives. Hidden, the rail stands in for it. */}
         <DrawerShell
           id="nav"
           side="left"
           open={navOpen}
           label="Sidebar"
-          // Its seam is the toggle (after ReUI's app shell): drag to resize,
-          // click to hide, and hidden it stays at the window's edge.
-          onToggle={() => setNavOpen((open) => !open)}
+          keepMounted
+          // The window's band: the lights, then the toggle beside them.
+          top={
+            <div data-window-band="nav" className="app-drag flex h-10 shrink-0 items-center px-2">
+              <SidebarToggle />
+            </div>
+          }
           // The sidebar's one inset: its rows, the switchers and the labels
           // all start from 8px, so their icons share one left edge.
           headerClassName="h-9 border-b-0 px-2"
@@ -336,7 +341,10 @@ export function Shell() {
                 ) : (
                   <>
                     <div className="flex shrink-0 flex-col gap-4 px-2">
-                      <SidebarLinks />
+                      <div className="flex flex-col gap-1">
+                        <SidebarSearch />
+                        <SidebarLinks />
+                      </div>
                       <SidebarPinned />
                     </div>
                     <div className="flex min-h-0 flex-1 flex-col">
@@ -366,12 +374,30 @@ export function Shell() {
             </div>
           </div>
         </DrawerShell>
+        {/* The sidebar, collapsed: a rail, sliding in as the sidebar slides
+            out (the drawer's own width transition, index.css). */}
+        <section
+          data-slot="drawer"
+          data-drawer="rail"
+          data-state={navOpen ? 'closed' : 'open'}
+          aria-label="Sidebar, collapsed"
+          inert={navOpen}
+          style={{ '--drawer-w': `${RAIL_WIDTH}px` } as React.CSSProperties}
+          className="relative flex h-full shrink-0 justify-end overflow-clip"
+        >
+          <div className="flex h-full w-(--drawer-w) shrink-0">
+            <NavRail />
+          </div>
+        </section>
 
-        {/* The content, flush beside the sidebar: the sidebar on the window's
-            ground, the content on the page, the drawer's seam between them. In
-            Agents mode the agent plugin's view stands in for the panes, which
-            stay mounted underneath so nothing open is lost. */}
-        <div className="relative flex min-w-60 flex-1 flex-col overflow-hidden bg-background">
+        {/* The content, floating on the window's ground beside the sidebar: one
+            panel on the page colour (index.css, `content-panel`). In Agents
+            mode the agent plugin's view stands in for the panes, which stay
+            mounted underneath so nothing open is lost. */}
+        <div
+          data-slot="content-panel"
+          className="relative my-2 me-2 flex min-w-60 flex-1 flex-col overflow-hidden"
+        >
           {agentsInFront && (
             <div className="absolute inset-0 z-10 flex flex-col bg-background">
               <agentsMode.main />
@@ -389,9 +415,6 @@ export function Shell() {
                 <ResizablePanel id={`pane-${i}`} minSize={240}>
                   <PaneView
                     pane={p}
-                    // The window's lights sit over the first pane's tabs once
-                    // the sidebar is hidden (index.css, Window).
-                    leading={i === 0 && !navOpen ? <span data-window-inset="" /> : undefined}
                     focused={i === workspace.active}
                     onFocus={() => setWorkspace((w) => focusPane(w, i))}
                     // Every action focuses this pane first, then acts on the

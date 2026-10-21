@@ -20,8 +20,8 @@ vault store and sync. `src/preload` is the narrow
 Node access or GitHub credentials. `router.ts` is main's typed API seam; keep
 Electron dependencies out of code that should remain testable under plain Node.
 
-Optional parts of Holi are plugins under `src/plugins/<id>/` (the agent, PDF,
-Google, vault apps and community plugins so far), each with its own `main/`, `renderer/`, `shared/` and
+Optional parts of Holi are plugins under `src/plugins/<id>/` (the agent, automations, Holis, PDF, Google, vault apps and community plugins
+so far), each with its own `main/`, `renderer/`, `shared/` and
 `test/`, reaching core only through `src/main/plugin-api.ts` and
 `@/plugin-api`. Vault apps live in `src/plugins/apps/`; what a synced vault
 holds of an app (the bundle grammar, the record merge, the `.local.app` rule)
@@ -109,10 +109,12 @@ legacy alias with the same behavior as `pnpm lint`.
   host (`main/host/`, the PTY in `pty.ts`) and Claude Code as its provider
   (`main/claude/`). Keep Claude's native permission prompts; do
   not add `--dangerously-skip-permissions` or a parallel prompt system.
-  Scheduled agents (`main/schedules/`) run prompts on a clock on this
-  machine; Holis (`main/holis/`, `docs/features/holis.md`) are agents a
-  person sends a document to, in an agent tab, once this machine approved
-  what the Holi's file says. Core reaches Holis only through plugin slots. A conversation drawn as chat is the optional
+  Automations (`src/plugins/automations/`) run prompts on a clock on this
+  machine; Holis (`src/plugins/holis/`, `docs/features/holis.md`) are agents
+  with a soul and a memory that a person sends a document to, or that carry
+  out an automation, once this machine approved what the Holi says. Both are
+  plugins built on the agent: they start sessions through `agent.launch` and
+  hear it through `ctx.hear`; core reaches them only through plugin slots. A conversation drawn as chat is the optional
   plugin `src/plugins/chat/` (off by default), which answers Claude Code's
   own `can_use_tool` prompts and nothing more.
 - Use system `git` and parse plumbing/porcelain output, not human-readable git

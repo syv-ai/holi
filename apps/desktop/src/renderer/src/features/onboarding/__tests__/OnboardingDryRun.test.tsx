@@ -46,9 +46,16 @@ afterEach(() => {
   delete window.holi
 })
 
-/** The act currently on screen: the only one mounted. */
+/**
+ * The act currently on screen.
+ *
+ * **Every act is mounted at once** (they crossfade on `data-state`), so a bare
+ * `getByRole('button', {name: /continue/i})` can find the settings act's CTA
+ * while the naming act is showing, and still advance the reducer. Scope to the
+ * active act or the test measures the wrong thing.
+ */
 const activeAct = () => {
-  const el = document.querySelector('[data-act]')
+  const el = document.querySelector('.obrit-act[data-state="active"]')
   if (el === null) throw new Error('no act is active')
   return el as HTMLElement
 }
@@ -84,14 +91,13 @@ const BUILT = { timeout: 5000 }
 const settled = () =>
   waitFor(() => expect(screen.getByText(/your vault is ready/i)).toBeInTheDocument(), BUILT)
 
-test('only the act on screen can be reached: the others are not mounted', async () => {
+test('only the act on screen can be reached: the others are inert', async () => {
   render(<OnboardingRitual mode="first-run" dryRun onDismiss={vi.fn()} />)
   await userEvent.click(screen.getByRole('button', { name: /begin/i }))
-  // The greeting's Begin must not be reachable from naming: pressed there, it
-  // would skip the questions.
-  expect(document.querySelector('[data-act="greeting"]')).toBeNull()
-  expect(screen.queryByRole('button', { name: /begin/i })).toBeNull()
-  expect(activeAct()).toHaveAttribute('data-act', 'naming')
+  // The greeting is still mounted for the crossfade, but its Begin must not be
+  // reachable from naming: pressed there, it would skip the questions.
+  expect(document.querySelector('[data-act="greeting"]')).toHaveAttribute('inert')
+  expect(activeAct()).not.toHaveAttribute('inert')
 })
 
 test('walks naming → plugins → settings → build → threshold without creating anything', async () => {

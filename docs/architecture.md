@@ -185,12 +185,15 @@ stay on. There is no MCP server: the agent uses its native tools plus one small 
 that talks to main. Holi pauses sync while a turn runs and reviews a turn as the commit
 range it produced.
 
-**Scheduled agents** are files in `.holi/schedules/` that the open vault's agent plugin starts as
-background sessions at their times, on machines that approved their content
+**Automations** (scheduled agents) are files in `.holi/schedules/` that the `automations` plugin
+starts as background sessions at their times, on machines that approved their content
 ([scheduled-agents](features/scheduled-agents.md)). **Holis** are agents that belong to the vault,
-files in `.holi/holis/` that a person sends a document to from its Agent menu: an agent tab running
-Claude Code with the Holi's instructions, once this machine approved what the file says. Core draws
-that menu from a plugin slot and knows nothing of Holis ([holis](features/holis.md)).
+folders in `.holi/holis/` with a soul and a memory, that a person sends a document to from its Agent
+menu or that carry out an automation, once this machine approved what they say. Both are plugins
+built on the agent: they start sessions through `agent.launch` (`ctx.call`), hear its session list
+and turn ends through `ctx.hear` (what a plugin's main side `publish`es, heard only by the plugins
+that require it), and fill the Agents view and the Agent menu from slots core knows nothing of
+([holis](features/holis.md)).
 
 **Chat** is the optional plugin that draws Claude Code as a conversation: Claude Code on its
 structured channel (`stream-json`, with `--permission-prompt-tool stdio`), its prompts Claude Code's

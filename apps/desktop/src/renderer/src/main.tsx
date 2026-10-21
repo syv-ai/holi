@@ -23,6 +23,11 @@ const store = createStore()
 // macOS draws the window's traffic lights over the page (`hiddenInset`), so
 // the chrome makes room for them where this is set (index.css, Window).
 if (navigator.userAgent.includes('Mac')) document.documentElement.dataset.platform = 'mac'
+// Fullscreen hides the lights, and the room kept for them with them.
+window.holi.window.onFullScreen((on) => {
+  if (on) document.documentElement.dataset.fullscreen = ''
+  else delete document.documentElement.dataset.fullscreen
+})
 // The plugins this build has: the one place the renderer imports them. Core's
 // own surfaces go in beside them.
 checkPluginCatalogue(RENDERER_PLUGINS.map((p) => p.info))

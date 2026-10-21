@@ -240,6 +240,38 @@ describe('the lifecycle', () => {
     expect(host.failures('o/r')).toEqual({})
   })
 
+  it('carries what one main side publishes to those that require it, until they stop', async () => {
+    const heard: unknown[] = []
+    let base: PluginCtx | null = null
+    const log: string[] = []
+    const plugins = [
+      logged(log, 'base', {}, (c) => {
+        base = c
+        return () => {}
+      }),
+      logged(log, 'face', { requires: ['base'] }, (c) => {
+        c.hear('base', 'news', (p) => heard.push(p))
+        return () => {}
+      }),
+      logged(log, 'stranger', {}, (c) => {
+        // Not built on base: hearing it is refused, so the plugin does not start.
+        c.hear('base', 'news', () => {})
+        return () => {}
+      }),
+    ]
+    const { host, enter } = rig({ plugins })
+    const root = await tempDir()
+    await enter(openVault('o/r', root))
+    base!.publish('news', 1)
+    expect(heard).toEqual([1])
+    expect(host.failures('o/r')['stranger']).toMatch(/does not require/)
+
+    await writeVaultSettings(root, { committed: { plugins: { face: false } } })
+    await host.reconcile('settings')
+    base!.publish('news', 2)
+    expect(heard).toEqual([1])
+  })
+
   it('binds the context to the vault, and lets go of its holds when it stops', async () => {
     const root = await tempDir()
     const log: string[] = []
@@ -371,6 +403,11 @@ describe('seeding by enablement', () => {
 })
 
 describe('an owned prefix', () => {
+  it('is respected by the plugins this build ships', async () => {
+    const { MAIN_PLUGINS } = await import('../src/plugins/main')
+    expect(() => install(MAIN_PLUGINS)).not.toThrow()
+  })
+
   it("holds another plugin's files under it until the owner is on, then seeds them once", async () => {
     const OWN = '.claude/settings.json'
     const owner: MainPlugin = {

@@ -1,0 +1,641 @@
+/* Scoped styles for the OnboardingRitual component. All rules live under
+ * `.onboarding-ritual` so the keyframes + utility classes can't leak into
+ * the rest of the app.
+ *
+ * The ritual paints with the app's tokens (the seed theme, or the open
+ * vault's in a dry run), so the first screen looks like the app it opens
+ * into, over the same ambient backdrop and grain as sign-in. `--brand` is its
+ * accent, as text and as glow. Type is the app's own Geist, on one scale:
+ * display headings, an 18px lede, 14px controls, 12px meta, nothing smaller. */
+
+.onboarding-ritual {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  /* The backdrop and grain blend with this box and nothing behind it. */
+  isolation: isolate;
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  font-size: 0.875rem;
+  overflow: hidden;
+}
+
+.onboarding-ritual *,
+.onboarding-ritual *::before,
+.onboarding-ritual *::after {
+  box-sizing: border-box;
+}
+
+/* ── Frame ───────────────────────────────────────────────────────── */
+.onboarding-ritual .obrit-frame {
+  position: relative;
+  height: 100%;
+  display: grid;
+  /* Header, progress, the act, footer. Only the act's row gives up height. */
+  grid-template-rows: 4.5rem auto minmax(0, 1fr) 4.5rem;
+  padding-inline: 2.5rem;
+}
+
+.onboarding-ritual .obrit-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+/* On macOS the window has no title bar: the header is its handle, and the
+ * mark starts clear of the traffic lights (14px in, ending near 73px). */
+[data-platform='mac']:not([data-fullscreen]) .onboarding-ritual .obrit-head {
+  padding-inline-start: 3rem;
+}
+
+.onboarding-ritual .obrit-head-right {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+/* ── Progress ──────────────────────────────────────────────────────
+ * Above the act it counts: the step count, then the stepper. */
+.onboarding-ritual .obrit-progress {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+  padding-block: 0.5rem 1rem;
+}
+/* Off the counted acts (the greeting, the threshold) it fades out but keeps
+ * its height, so the act below does not jump as it comes and goes. */
+.onboarding-ritual .obrit-progress {
+  transition: opacity 300ms var(--ease-settle);
+}
+.onboarding-ritual .obrit-progress:not([data-shown]) {
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity 300ms var(--ease-settle),
+    visibility 0s 300ms;
+}
+
+/* A short window keeps its height for the act: the numbers stay, the names
+ * under them go. */
+@media (max-height: 600px) {
+  .onboarding-ritual .obrit-step-title {
+    display: none;
+  }
+  .onboarding-ritual .obrit-progress {
+    padding-block: 0 0.5rem;
+  }
+}
+
+/* ── Stage + act crossfade ───────────────────────────────────────── */
+.onboarding-ritual .obrit-stage {
+  position: relative;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+}
+
+.onboarding-ritual .obrit-act {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  /* `safe`: an act taller than the stage (a short window, 200% zoom) starts
+   * at the top and scrolls, instead of centring with its top cut off. */
+  place-items: safe center;
+  overflow-y: auto;
+  padding: 1rem 1.5rem;
+  opacity: 0;
+  transform: translateY(0.75rem);
+  transition:
+    opacity 300ms var(--ease-settle),
+    transform 300ms var(--ease-settle);
+  pointer-events: none;
+}
+.onboarding-ritual .obrit-act[data-state='active'] {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+.onboarding-ritual .obrit-act[data-state='exiting'] {
+  opacity: 0;
+  transform: translateY(-0.75rem);
+}
+
+.onboarding-ritual .obrit-act-inner {
+  width: 100%;
+  /* Wide enough that a medium vault title stays on one line: the threshold's
+   * "Welcome to <slug>." heading. The ledes keep their own narrower measure. */
+  max-width: 54rem;
+}
+
+/* ── Shared typography ───────────────────────────────────────────── */
+.onboarding-ritual .obrit-eyebrow {
+  font-size: 0.75rem;
+  font-weight: 500;
+  line-height: 1.3;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+.onboarding-ritual .obrit-display {
+  font-weight: 600;
+  line-height: 1.1;
+  letter-spacing: -0.025em;
+  text-wrap: balance;
+  color: var(--foreground);
+}
+.onboarding-ritual .obrit-lede {
+  font-size: 1.125rem;
+  line-height: 1.55;
+  text-wrap: pretty;
+  color: var(--muted-foreground);
+}
+
+/* ── Greeting ─────────────────────────────────────────────── */
+.onboarding-ritual .obrit-greeting .obrit-act-inner {
+  text-align: center;
+}
+.onboarding-ritual .obrit-greeting .obrit-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+.onboarding-ritual .obrit-greeting .obrit-eyebrow::before,
+.onboarding-ritual .obrit-greeting .obrit-eyebrow::after {
+  content: '';
+  display: inline-block;
+  width: 1.5rem;
+  height: 1px;
+  background: color-mix(in srgb, var(--muted-foreground) 50%, transparent);
+}
+.onboarding-ritual .obrit-greeting .obrit-display {
+  margin: 1.5rem 0 1.25rem;
+  font-size: 4rem;
+}
+.onboarding-ritual .obrit-greeting .obrit-lede {
+  margin: 0 auto;
+  max-width: 32rem;
+}
+.onboarding-ritual .obrit-greeting .obrit-cta-row {
+  display: flex;
+  justify-content: center;
+  margin-top: 2.5rem;
+}
+.onboarding-ritual .obrit-greeting .obrit-keyhint {
+  margin-top: 1.25rem;
+  display: flex;
+  justify-content: center;
+}
+
+/* ── Naming ───────────────────────────────────────────────── */
+.onboarding-ritual .obrit-name .obrit-act-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2.5rem;
+}
+
+.onboarding-ritual .obrit-name-stage {
+  width: 100%;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+  /* The name's size is measured against this column (below). */
+  container-type: inline-size;
+}
+/* As large as a heading while it fits, then shrinking with its length so a
+ * long name never scrolls inside the field. `--name-len` is the character
+ * count (at least 10), set by NamingAct; 0.62em is Geist's semibold average
+ * advance with room to spare. */
+.onboarding-ritual .obrit-vault-input {
+  font-size: min(4.5rem, calc(100cqi / (var(--name-len) * 0.62)));
+}
+
+.onboarding-ritual .obrit-input-underline {
+  height: 1px;
+  width: 4rem;
+  background: var(--border);
+  transition:
+    width 300ms var(--ease-settle),
+    background-color 200ms var(--ease-settle);
+}
+.onboarding-ritual .obrit-name-stage:focus-within .obrit-input-underline {
+  width: 7.5rem;
+  background: color-mix(in srgb, var(--brand) 60%, transparent);
+}
+
+/* The repo's address as a breadcrumb: `github.com / owner / slug · Private`,
+ * the owner a switcher. Wraps at the slashes rather than overflowing. */
+.onboarding-ritual .obrit-path {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem 0.375rem;
+  max-width: 100%;
+  font-family: var(--font-mono);
+  font-size: 0.875rem;
+  line-height: 1.5;
+  color: var(--muted-foreground);
+}
+.onboarding-ritual .obrit-path-sep {
+  color: color-mix(in srgb, var(--muted-foreground) 60%, transparent);
+}
+.onboarding-ritual .obrit-owner {
+  font-family: var(--font-mono);
+  color: var(--foreground);
+  max-width: 16rem;
+}
+.onboarding-ritual .obrit-slug-out {
+  overflow-wrap: anywhere;
+}
+/* The default name, until one is typed: as quiet as the field's placeholder. */
+.onboarding-ritual .obrit-path .obrit-slug-out[data-default] {
+  color: var(--muted-foreground);
+}
+.onboarding-ritual .obrit-path-private {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  margin-inline-start: 0.5rem;
+  font-family: var(--font-sans);
+  font-size: 0.75rem;
+}
+.onboarding-ritual .obrit-path .obrit-slug-out {
+  color: color-mix(in srgb, var(--foreground) 70%, transparent);
+  transition: color 200ms var(--ease-settle);
+}
+.onboarding-ritual .obrit-name-stage:focus-within .obrit-slug-out {
+  color: var(--brand);
+}
+
+.onboarding-ritual .obrit-name-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+}
+.onboarding-ritual .obrit-field-caption {
+  font-size: 0.75rem;
+  line-height: 1.5;
+  color: var(--muted-foreground);
+  padding-inline-start: 2px;
+}
+.onboarding-ritual .obrit-field-caption.is-warn {
+  color: var(--destructive);
+}
+
+/* ── Threshold ────────────────────────────────────────────── */
+.onboarding-ritual .obrit-threshold .obrit-act-inner {
+  text-align: center;
+}
+.onboarding-ritual .obrit-thresh-rule {
+  width: 2.5rem;
+  height: 1px;
+  background: var(--brand);
+  margin: 0 auto 1.25rem;
+  opacity: 0.6;
+}
+.onboarding-ritual .obrit-threshold .obrit-display {
+  font-size: 3.25rem;
+  margin: 1rem 0 0.875rem;
+}
+/* The vault's own name, in the backdrop's warm gradient: the one word on the
+ * screen that is the user's. Sign-in's headline marks its word the same way. */
+.onboarding-ritual .obrit-vault-name {
+  background-image: linear-gradient(
+    to right,
+    var(--color-orange-500),
+    var(--color-pink-500),
+    var(--color-violet-500)
+  );
+  background-clip: text;
+  color: transparent;
+}
+.onboarding-ritual .obrit-threshold .obrit-lede {
+  max-width: 26rem;
+  margin: 0 auto;
+}
+.onboarding-ritual .obrit-repo-url {
+  margin-top: 1.5rem;
+  gap: 1rem;
+  font-weight: 400;
+}
+.onboarding-ritual .obrit-repo-url-text {
+  font-family: var(--font-mono);
+}
+.onboarding-ritual .obrit-repo-url-copy {
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
+}
+
+.onboarding-ritual .obrit-threshold .obrit-cta-row {
+  display: flex;
+  justify-content: center;
+  margin-top: 2.25rem;
+}
+
+.onboarding-ritual .obrit-hotkeys {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 1.75rem;
+  margin-top: 2rem;
+  flex-wrap: wrap;
+}
+.onboarding-ritual .obrit-hotkey {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.625rem;
+}
+.onboarding-ritual .obrit-kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 2.25rem;
+  height: 1.75rem;
+  padding: 0 0.5rem;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 500;
+  line-height: 1;
+  background: var(--card);
+  color: var(--foreground);
+  border: 1px solid var(--border);
+  border-radius: 0.375rem;
+  box-shadow:
+    0 1px 0 var(--border),
+    inset 0 1px 0 var(--background);
+}
+.onboarding-ritual .obrit-hotkey-label {
+  font-size: 0.8125rem;
+  color: var(--muted-foreground);
+}
+
+/* ── Footer + buttons ────────────────────────────────────────────── */
+.onboarding-ritual .obrit-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.onboarding-ritual .obrit-foot-side {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-width: 9rem;
+}
+.onboarding-ritual .obrit-foot-side.is-right {
+  justify-content: flex-end;
+}
+
+.onboarding-ritual .obrit-keyhint {
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+}
+
+.onboarding-ritual .obrit-error {
+  margin-top: 1rem;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  color: var(--destructive);
+  text-align: center;
+}
+
+.onboarding-ritual ::selection {
+  background: color-mix(in srgb, var(--brand) 22%, transparent);
+}
+
+/* ── Join sub-view (overlays naming with the repo picker) ───────────── */
+.onboarding-ritual .obrit-join {
+  width: 100%;
+  max-width: 32rem;
+}
+.onboarding-ritual .obrit-join-list {
+  max-height: 46vh;
+  overflow-y: auto;
+  /* The app-wide gutter rule keys on the Tailwind overflow utilities; this list
+     declares its own overflow, so it reserves its own gutter. The rule is "the
+     gutter goes wherever the overflow is declared", not "on every scroller". */
+  scrollbar-gutter: stable;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  text-align: start;
+}
+.onboarding-ritual .obrit-join-remote {
+  flex: 1 1 auto;
+  /* A button centres its text by default. */
+  text-align: start;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* One account's vaults: its name over its rows, the rows set in by the same
+ * step as the avatar so names align under the account. */
+.onboarding-ritual .obrit-join-group {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding-block: 0.375rem;
+}
+.onboarding-ritual .obrit-join-owner {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.375rem 0.625rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--muted-foreground);
+}
+.onboarding-ritual .obrit-join-row {
+  padding-inline-start: 2.125rem;
+}
+.onboarding-ritual .obrit-join-meta {
+  flex: 0 0 auto;
+  margin-inline-start: auto;
+  font-size: 0.75rem;
+  font-weight: 400;
+  color: var(--muted-foreground);
+}
+.onboarding-ritual .obrit-join-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 1.5rem 1rem;
+  text-align: center;
+  text-wrap: pretty;
+}
+.onboarding-ritual .obrit-join-empty .obrit-field-caption {
+  max-width: 26rem;
+  padding: 0;
+}
+.onboarding-ritual .obrit-join-empty code {
+  font-family: var(--font-mono);
+}
+.onboarding-ritual .obrit-join-vis {
+  flex: 0 0 auto;
+  font-family: var(--font-sans);
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* Join picker: repo-list load failure, with a retry (a timeout must not
+ * tear down the ritual — it stays here). */
+.onboarding-ritual .obrit-join-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 1.5rem 0;
+}
+
+/* ── Plugins and settings ───────────────────────────────── */
+/* The acts are `position:absolute; inset:0` with `place-items:center`, so the
+ * inner box is content-height inside a definite one. That is what `max-height:
+ * 100%` below resolves against. The vertical padding is this act's alone: the
+ * prose acts are short enough to centre in empty space, and this one is not. */
+.onboarding-ritual .obrit-settings-act {
+  padding-top: 1rem;
+  padding-bottom: 1.25rem;
+}
+.onboarding-ritual .obrit-settings-act .obrit-act-inner {
+  /* Wider than the prose acts: two cards to a row, and a narrow column wraps
+   * every description onto three lines for no reason. */
+  max-width: 48rem;
+  /* The stage is a fixed height and this list is the one act that can outgrow
+   * it. Bound it here and scroll, rather than letting the last row fall off the
+   * bottom edge at the window size Holi opens at. */
+  display: flex;
+  flex-direction: column;
+  max-height: 100%;
+  min-height: 0;
+}
+.onboarding-ritual .obrit-settings-act .obrit-lede {
+  margin-top: 0.625rem;
+  max-width: 38rem;
+}
+
+/* The cards (`OptionCard`, `SettingCard`). They are the flex child that
+ * scrolls when the window is short: `min-height: 0` lets it, and the last
+ * 1.25rem fades out, so a cut-off card reads as "more below". The same depth
+ * of padding means that at the end of the list only empty space is faded. */
+.onboarding-ritual .obrit-cards {
+  min-height: 0;
+  margin-top: 1.5rem;
+  overflow-y: auto;
+  /* Room for the scrollbar so it never sits on top of a checkbox. */
+  padding-inline-end: 4px;
+  padding-bottom: 1.25rem;
+  mask-image: linear-gradient(to bottom, black calc(100% - 1.25rem), transparent);
+  text-align: start;
+}
+
+/* "Change it later", once under the act rather than under every row:
+ * reassurance, not instruction, so the quietest thing on screen. */
+.onboarding-ritual .obrit-settings-where {
+  margin-top: 0.875rem;
+  font-size: 0.75rem;
+  line-height: 1.5;
+  text-align: start;
+  color: color-mix(in srgb, var(--muted-foreground) 80%, transparent);
+}
+.onboarding-ritual .obrit-settings-where code {
+  font-family: var(--font-mono);
+}
+
+/* ── Arrival ──────────────────────────────────────────────────────────
+ * Each act's one entrance: its pieces rise into place in turn, a short fade
+ * and lift on the app's settle curve, 50ms apart. `both` holds each piece at
+ * its start until its delay is up. */
+@keyframes obrit-rise {
+  from {
+    opacity: 0;
+    transform: translateY(0.5rem);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.onboarding-ritual .obrit-act[data-state='active'] .obrit-act-inner > * {
+  animation: obrit-rise 300ms var(--ease-settle) both;
+}
+.onboarding-ritual .obrit-act[data-state='active'] .obrit-act-inner > :nth-child(2) {
+  animation-delay: 50ms;
+}
+.onboarding-ritual .obrit-act[data-state='active'] .obrit-act-inner > :nth-child(3) {
+  animation-delay: 100ms;
+}
+.onboarding-ritual .obrit-act[data-state='active'] .obrit-act-inner > :nth-child(4) {
+  animation-delay: 150ms;
+}
+.onboarding-ritual .obrit-act[data-state='active'] .obrit-act-inner > :nth-child(n + 5) {
+  animation-delay: 200ms;
+}
+
+/* "Create vault" acknowledging the first valid name: one ring of the brand
+ * colour going out from the button, no change of size. */
+@keyframes obrit-wake {
+  from {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--brand) 45%, transparent);
+  }
+  to {
+    box-shadow: 0 0 0 0.75rem transparent;
+  }
+}
+.onboarding-ritual .obrit-wake {
+  animation: obrit-wake 800ms var(--ease-settle);
+}
+
+/* Reduced motion: every piece is simply there, and the crossfade between acts
+ * is the only movement left. */
+@media (prefers-reduced-motion: reduce) {
+  .onboarding-ritual * {
+    animation: none !important;
+  }
+}
+
+/* ── The build ─────────────────────────────────────────────────────────
+ * The threshold while the vault is being made: the steps in a column, each a
+ * mark and a line. A step to come is quiet, the one under way spins, a done
+ * one ticks and stays at full strength, so the column fills from the top. */
+.onboarding-ritual .obrit-build {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  /* Its own width, centred under the heading: the act's column is wider. */
+  align-self: center;
+  margin: 2rem auto 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.875rem;
+}
+.onboarding-ritual .obrit-build-step {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  color: var(--muted-foreground);
+  transition: color var(--motion-respond) var(--ease-settle);
+}
+.onboarding-ritual .obrit-build-step[data-state='now'],
+.onboarding-ritual .obrit-build-step[data-state='done'] {
+  color: var(--foreground);
+}
+.onboarding-ritual .obrit-build-mark {
+  display: grid;
+  place-items: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: 9999px;
+  background: var(--secondary);
+  color: var(--secondary-foreground);
+}

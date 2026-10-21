@@ -9,7 +9,14 @@
 import type { AgentProvider } from '../provider'
 import { createClaudeCli, terminalCommand } from './cli'
 import { resolveVaultAgentConfig, SIGN_IN_NOTICE, takeFirstSpawn } from './config-dir'
-import { isLive, parseListing, readContextPercent, summarise, watchConfigDir } from './listing'
+import {
+  isLive,
+  parseListing,
+  readContextPercent,
+  readModelName,
+  summarise,
+  watchConfigDir,
+} from './listing'
 import { registerAgentRoutes } from './routes'
 import { claudeSeed } from './seed'
 
@@ -29,6 +36,7 @@ export function claudeProvider(deps: ClaudeProviderDeps): AgentProvider {
     isLive,
     summarise,
     readContextPercent,
+    readModelName,
     watch: watchConfigDir,
     // Per vault open, not per launch: the open vault moves, and the theme
     // stamped into its directory tracks a setting the user can flip while

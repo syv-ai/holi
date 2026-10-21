@@ -11,6 +11,8 @@ import { afterEach, describe, expect, it } from 'vitest'
 import type { SettingsFragment } from '../src/main/vault/seed/types'
 import { claudeSeed, agentSettings } from '../src/plugins/agent/main/claude/seed'
 import { appsSeed } from '../src/plugins/apps/main/seed'
+import { automationsSeed } from '../src/plugins/automations/main/seed'
+import { holisSeed } from '../src/plugins/holis/main/seed'
 import { googleSeed } from '../src/plugins/google/main/seed'
 import { pdfSeed } from '../src/plugins/pdf/main/seed'
 import { coreSeed, GITIGNORE } from '../src/main/vault/seed/core'
@@ -135,13 +137,16 @@ describe('the seed tables', () => {
       '.claude/hooks/turn-signal.mjs',
       '.claude/hooks/user-prompt-submit.mjs',
       '.claude/skills/holi-feedback/SKILL.md',
-      '.claude/skills/holis/SKILL.md',
       '.claude/skills/memory/SKILL.md',
-      '.claude/skills/scheduled-agents/SKILL.md',
       '.claude/skills/theme/SKILL.md',
       '.claude/skills/using-tasks/SKILL.md',
     ])
     expect(keys(claudeSeed.merge!)).toEqual(['.claude/settings.json'])
+  })
+
+  it('Holis and automations ship their own skills', () => {
+    expect(keys(holisSeed.shipped)).toEqual(['.claude/skills/holis/SKILL.md'])
+    expect(keys(automationsSeed.shipped)).toEqual(['.claude/skills/scheduled-agents/SKILL.md'])
   })
 
   it('vault apps ship their check hook and their skill, and nothing once', () => {

@@ -144,6 +144,9 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
    *  change landing while Holi leaves it must not restart anything. */
   let parked: string | null = null
   const reportListeners = new Set<{ remote: string; cb: (report: UiReport) => void }>()
+  /** What one plugin's main side tells the plugins that require it
+   *  (`publish`/`hear`), by `<from>/<name>`. */
+  const heard = new Map<string, Set<(payload: unknown) => void>>()
   /** The open vault's sync holds, and the vault they hold. */
   let holds: { remote: string; reasons: Map<symbol, string> } | null = null
 
@@ -313,6 +316,26 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
       call: async (name, params) => {
         if (deps.call === undefined) throw new Error(`no capability calls here: ${name}`)
         return deps.call(remote, name, params)
+      },
+      publish: (name, payload) => {
+        for (const handler of heard.get(`${id}/${name}`) ?? []) {
+          try {
+            handler(payload)
+          } catch (err) {
+            console.error(`[plugins] ${id} ${name}:`, err)
+          }
+        }
+      },
+      hear: (from, name, handler) => {
+        // Only what it builds on: a plugin's news is for those that require it.
+        if (!(plugin.info.requires ?? []).includes(from)) {
+          throw new Error(`${id} hears ${from}, which it does not require`)
+        }
+        const key = `${from}/${name}`
+        const set = heard.get(key) ?? new Set()
+        heard.set(key, set)
+        set.add(handler)
+        return keep(() => void set.delete(handler))
       },
     }
     if (plugin.activate === undefined) return { id, dispose: () => {}, undos }

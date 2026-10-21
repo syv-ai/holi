@@ -6,14 +6,12 @@ plugin's parts carry their own notice (`../chat/NOTICE.md`).
 
 Ported or adapted:
 
-- `renderer/agents/pixel-mascots.ts` (from `features/projects/model/projectMascots.ts` and
-  `pixelMascots.ts`: the sprites, shading and talk frames)
-- `renderer/agents/PixelMascot.tsx` and the mascot motion in `renderer/agents/agents.css` (from
-  `features/projects/ui/PixelMascot.tsx` and its stylesheet)
-- `renderer/agents/AgentsSidebar.tsx`, `parts.tsx` (after `app/shell/Sidebar.tsx`'s session rows; their
-  braille spinner and shimmering step text gave way to Holi's own `motion-orbit`)
+- `renderer/agents/AgentsSidebar.tsx`, `parts.tsx` (after `app/shell/Sidebar.tsx`'s session cards
+  and rail; their braille spinner and shimmering step text gave way to Holi's own `motion-orbit`)
 - `renderer/agents/AgentsMain.tsx` (after `features/sessions/ui/SessionPane.tsx`)
-- The idea of a Holi, after MonoCode's Monos (`docs/features/holis.md`)
+- The pixel mascots, now in core (`src/renderer/src/composites/pixel-mascot/`), the Holis
+  (`../holis/NOTICE.md`) and the automations view (`../automations/`, after
+  `features/automations/ui/AutomationsView.tsx`), which carry the same licence
 
 MonoCode is not affiliated with Holi. Provider marks shown in the UI are trademarks of their owners
 and identify those products only.

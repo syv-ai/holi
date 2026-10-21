@@ -53,6 +53,8 @@ export interface AgentCapabilitiesDeps {
     | 'sessions'
     | 'open'
     | 'start'
+    | 'launch'
+    | 'watched'
     | 'send'
     | 'stop'
     | 'respawn'
@@ -166,6 +168,47 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
       },
       run: async (ctx, args): Promise<StartResult> =>
         live(ctx) ? deps.sessions.start(args) : notOpen,
+    }),
+
+    /**
+     * A background session whose first turn is `prompt`, with no terminal:
+     * how a plugin built on the agent runs Claude Code (a Holi's send, an
+     * automation's run), from its main side through `ctx.call`, once it has
+     * approved what runs. `model`, `allow` and `system` (appended to Claude
+     * Code's system prompt) are that approval's. The UI door alone, never
+     * the CLI's: a session could otherwise start another with rules of its
+     * own choosing.
+     */
+    'agent.launch': cap({
+      doors: ['ui'],
+      params: (raw) => {
+        const p = paramsObject(raw)
+        const model = optionalStringParam(p, 'model')
+        const system = optionalStringParam(p, 'system')
+        const allow = p['allow']
+        if (
+          allow !== undefined &&
+          (!Array.isArray(allow) || allow.some((r) => typeof r !== 'string'))
+        ) {
+          throw new CapabilityError('BAD_REQUEST', 'allow must be a list of rules')
+        }
+        return {
+          name: stringParam(p, 'name'),
+          prompt: stringParam(p, 'prompt'),
+          ...(model === undefined ? {} : { model }),
+          ...(allow === undefined ? {} : { allow: allow as string[] }),
+          ...(system === undefined ? {} : { appendSystemPrompt: system }),
+        }
+      },
+      run: async (ctx, args) => (live(ctx) ? deps.sessions.launch(args) : notOpen),
+    }),
+
+    /** Whether Holi has a terminal open on the session: someone may be
+     *  watching it, so it is not to be stopped from under them. */
+    'agent.watched': cap({
+      doors: ['ui'],
+      params: idParams,
+      run: async (ctx, { id }): Promise<boolean> => live(ctx) && deps.sessions.watched(id),
     }),
 
     /** Put text in a session's input, unsent: a live one by id, or `'new'`.

@@ -13,10 +13,8 @@ import { useState } from 'react'
 import { useAtomValue } from 'jotai'
 import { ArrowRight, Check, LoaderCircle } from 'lucide-react'
 import { Button, Icon, Kbd, Tooltip } from '@/primitives'
-import { cn } from '@/lib/cn'
 import { STATIC_COMMANDS, type Command } from '@/state/commands'
 import { installedPluginsAtom } from '@/state/plugins'
-import { ActHeading } from './ActHeading'
 
 interface Props {
   slug: string
@@ -72,24 +70,17 @@ export function ThresholdAct({
       'Setting up your plugins and choices',
     ]
     return (
-      <div className="flex flex-col items-center gap-6">
-        <ActHeading center title={`Making ${slug}`} description="Building your vault." />
-        <ol className="flex flex-col gap-3" aria-live="polite">
+      <>
+        <div className="obrit-eyebrow">Building your vault</div>
+        <h1 className="obrit-display">
+          Making <span className="obrit-vault-name">{slug}</span>.
+        </h1>
+        <ol className="obrit-build" aria-live="polite">
           {steps.map((label, i) => {
             const state = i < built ? 'done' : i === built ? 'now' : 'next'
             return (
-              <li
-                key={label}
-                data-state={state}
-                className={cn(
-                  'flex items-center gap-3 text-sm',
-                  state === 'next' ? 'text-muted-foreground' : 'text-foreground',
-                )}
-              >
-                <span
-                  className="flex size-6 items-center justify-center rounded-full bg-secondary text-secondary-foreground"
-                  aria-hidden="true"
-                >
+              <li key={label} className="obrit-build-step" data-state={state}>
+                <span className="obrit-build-mark" aria-hidden="true">
                   {state === 'done' ? (
                     <Icon icon={Check} size="sm" />
                   ) : state === 'now' ? (
@@ -101,48 +92,49 @@ export function ThresholdAct({
             )
           })}
         </ol>
-      </div>
+      </>
     )
   }
 
   return (
-    <div className="flex flex-col items-center gap-6">
-      <ActHeading
-        center
-        title={`Welcome to ${slug || '…'}`}
-        description={`${owner ? `Created under ${owner}. ` : ''}Your vault is ready, and your team can clone it now.`}
-      />
+    <>
+      <div className="obrit-thresh-rule" />
+      <div className="obrit-eyebrow">Your vault is ready</div>
+      <h1 className="obrit-display">
+        Welcome to <span className="obrit-vault-name">{slug || '…'}</span>.
+      </h1>
+      <p className="obrit-lede">
+        {owner ? `Created under ${owner}. ` : ''}Your team can clone it now.
+      </p>
 
       {remote !== null && (
         <Tooltip content="Copy the repo URL">
-          <Button variant="outline" onClick={copy}>
-            <span className="font-mono">github.com/{remote}</span>
-            <span className="text-xs text-muted-foreground">{copied ? 'Copied' : 'Copy'}</span>
+          <Button variant="outline" className="obrit-repo-url" onClick={copy}>
+            <span className="obrit-repo-url-text">github.com/{remote}</span>
+            <span className="obrit-repo-url-copy">{copied ? 'Copied' : 'Copy'}</span>
           </Button>
         </Tooltip>
       )}
 
-      <Button onClick={onOpen}>
-        Open vault
-        <Icon icon={ArrowRight} size="sm" />
-      </Button>
+      <div className="obrit-cta-row">
+        <Button size="lg" onClick={onOpen}>
+          Open vault
+          <Icon icon={ArrowRight} size="sm" />
+        </Button>
+      </div>
 
       {keys.length > 0 && (
-        <div className="flex flex-wrap items-center justify-center gap-6">
+        <div className="obrit-hotkeys">
           {keys.map((k) => (
-            <div key={k.id} className="flex items-center gap-2 text-xs text-muted-foreground">
-              <Kbd>{k.hotkey}</Kbd>
-              {k.label}
+            <div key={k.id} className="obrit-hotkey">
+              <Kbd className="obrit-kbd">{k.hotkey}</Kbd>
+              <span className="obrit-hotkey-label">{k.label}</span>
             </div>
           ))}
         </div>
       )}
 
-      {error && (
-        <p role="alert" className="text-center text-sm text-destructive">
-          {error}
-        </p>
-      )}
-    </div>
+      {error && <div className="obrit-error">{error}</div>}
+    </>
   )
 }

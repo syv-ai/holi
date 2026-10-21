@@ -22,10 +22,15 @@ export function useAgentsMode() {
   return useAtomValue(runningPluginsAtom).find((p) => p.agentsMode !== undefined)?.agentsMode
 }
 
+/** What the agents report: needing you, working. Idle without the plugin. */
+export function useAgentsStatus(): AgentsStatus {
+  return useAtomValue(useAgentsMode()?.status ?? IDLE)
+}
+
 export function ModeToggle(): React.JSX.Element | null {
   const agents = useAgentsMode()
   const [mode, setMode] = useAtom(appModeAtom)
-  const status = useAtomValue(agents?.status ?? IDLE)
+  const status = useAgentsStatus()
   if (agents === undefined) return null
 
   const said =

@@ -20,23 +20,17 @@
  * Arrow keys move it by 16px for the keyboard. Every drawer shares one range
  * (`DRAWER_WIDTH`).
  *
- * **A collapsible drawer** (the nav's, after ReUI's app shell) draws its seam
- * as a hairline outside the column, so it stays when the drawer closes to
- * nothing: dragging it resizes, a click without moving toggles, and a grip
- * shows under the pointer. Arrow keys resize, Enter or Space toggles.
- *
  * **The edge** is `--drawer-edge`, a vault theme token, transparent by default:
- * a drawer lies flat on the page (a collapsible one draws `--divider`). The handle shows `--divider` under the
+ * a drawer lies flat on the page. The handle shows `--divider` under the
  * pointer, so the seam can be found without being drawn.
  */
 import { useAtom } from 'jotai'
-import { GripVertical, X } from 'lucide-react'
+import { X } from 'lucide-react'
 import { atomWithStorage } from 'jotai/utils'
 import { useEffect, useRef, useState } from 'react'
 import { cn } from '@/lib/cn'
 import { DRAWER_WIDTH, clampDrawerWidth } from '@/lib/drawer'
 import { prefersReducedMotion } from '@/lib/motion'
-import { Icon, Tooltip } from '@/primitives'
 import { PanelHeader, type HeaderAction } from './PanelHeader'
 
 /** Each drawer's dragged width, by id. Account-wide rather than per vault: a
@@ -51,12 +45,12 @@ export function DrawerShell({
   open,
   label,
   header,
+  top,
   headerClassName,
   aside,
   actions,
   onClose,
   keepMounted = false,
-  onToggle,
   className,
   children,
 }: {
@@ -70,6 +64,9 @@ export function DrawerShell({
   /** The header's leading region: a `DrawerTitle`, or a composition (the nav's
    *  vault picker). */
   header: React.ReactNode
+  /** A band above the header: the nav's, which holds the window's lights
+   *  and the sidebar's toggle. */
+  top?: React.ReactNode
   /** The header row's own classes: the nav aligns it to its rows' inset. */
   headerClassName?: string
   /** A dim fact at the header's right edge, before the actions. */
@@ -83,10 +80,6 @@ export function DrawerShell({
    * away. Other drawers unmount once they have slid out.
    */
   keepMounted?: boolean
-  /** Makes the seam the drawer's toggle (see A collapsible drawer above):
-   *  a click on it without dragging calls this. Implies the content stays
-   *  mounted, since the drawer comes back. */
-  onToggle?: () => void
   className?: string
   children: React.ReactNode
 }): React.JSX.Element | null {
@@ -103,8 +96,7 @@ export function DrawerShell({
 
   const [resizing, setResizing] = useState(false)
 
-  const kept = keepMounted || onToggle !== undefined
-  if (!present && !kept) return null
+  if (!present && !keepMounted) return null
 
   const store = (px: number) => setWidths((prev) => ({ ...prev, [id]: clampDrawerWidth(px) }))
   // Dragging toward the content widens a drawer: rightward for the left one.
@@ -118,24 +110,22 @@ export function DrawerShell({
     handle.setPointerCapture(e.pointerId)
     const startX = e.clientX
     let next = width
-    // A drag starts past a few pixels, so a click that wobbles still toggles.
     let dragging = false
     const move = (ev: PointerEvent) => {
       if (!open) return
-      if (!dragging && Math.abs(ev.clientX - startX) < 4) return
       if (!dragging) setResizing(true)
       dragging = true
       next = clampDrawerWidth(width + grow * (ev.clientX - startX))
       el.style.setProperty('--drawer-w', `${next}px`)
     }
-    const up = (ev: PointerEvent) => {
+    const up = () => {
       handle.removeEventListener('pointermove', move)
       handle.removeEventListener('pointerup', up)
       handle.removeEventListener('pointercancel', up)
       if (dragging) {
         setResizing(false)
         store(next)
-      } else if (ev.type === 'pointerup') onToggle?.()
+      }
     }
     handle.addEventListener('pointermove', move)
     handle.addEventListener('pointerup', up)
@@ -143,11 +133,6 @@ export function DrawerShell({
   }
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
-    if (onToggle !== undefined && (e.key === 'Enter' || e.key === ' ')) {
-      e.preventDefault()
-      onToggle()
-      return
-    }
     if (!open) return
     const dir = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0
     if (dir === 0) return
@@ -155,7 +140,7 @@ export function DrawerShell({
     store(width + grow * dir * KEY_STEP)
   }
 
-  const section = (
+  return (
     <section
       ref={ref}
       data-slot="drawer"
@@ -164,7 +149,7 @@ export function DrawerShell({
       data-state={open ? 'open' : 'closed'}
       // Slide in on mount, for a drawer that mounts BY opening. One that is
       // there from the start (the nav, at launch) just is.
-      data-appear={kept ? undefined : ''}
+      data-appear={keepMounted ? undefined : ''}
       data-resizing={resizing ? '' : undefined}
       aria-label={label}
       style={{ '--drawer-w': `${width}px` } as React.CSSProperties}
@@ -182,6 +167,7 @@ export function DrawerShell({
         className="flex h-full w-(--drawer-w) shrink-0 flex-col"
         inert={!open}
       >
+        {top}
         <PanelHeader
           actions={actions}
           close={onClose ? { icon: X, label: `Close ${label}`, onSelect: onClose } : undefined}
@@ -196,84 +182,29 @@ export function DrawerShell({
         </PanelHeader>
         <div className="flex min-h-0 flex-1 flex-col">{children}</div>
       </div>
-      {onToggle === undefined && (
-        <div
-          role="separator"
-          aria-orientation="vertical"
-          aria-label={`Resize ${label}`}
-          aria-valuemin={DRAWER_WIDTH.min}
-          aria-valuemax={DRAWER_WIDTH.max}
-          aria-valuenow={width}
-          tabIndex={open ? 0 : -1}
-          hidden={!open}
-          className={cn(
-            // A 7px strip to catch the pointer, drawing a 1px line in its middle:
-            // the theme's edge at rest, the divider while found or held. Keyboard
-            // focus is the house ring (docs/ui-system.md, Focus).
-            'absolute inset-y-0 z-10 w-[7px] cursor-col-resize touch-none outline-none',
-            'after:absolute after:inset-y-0 after:left-[3px] after:w-px after:bg-drawer-edge',
-            'after:motion-respond hover:after:bg-divider focus-visible:ring-1 focus-visible:ring-ring',
-            resizing && 'after:bg-divider',
-            side === 'left' ? '-right-[3px]' : '-left-[3px]',
-          )}
-          onPointerDown={onPointerDown}
-          onKeyDown={onKeyDown}
-        />
-      )}
-    </section>
-  )
-
-  if (onToggle === undefined) return section
-
-  const seam = (
-    <Tooltip content={open ? 'Drag to resize · Click to hide' : 'Click to show'}>
       <div
         role="separator"
         aria-orientation="vertical"
         aria-label={`Resize ${label}`}
         aria-valuemin={DRAWER_WIDTH.min}
         aria-valuemax={DRAWER_WIDTH.max}
-        aria-valuenow={open ? width : 0}
-        aria-expanded={open}
-        tabIndex={0}
-        data-resizing={resizing ? '' : undefined}
+        aria-valuenow={width}
+        tabIndex={open ? 0 : -1}
+        hidden={!open}
         className={cn(
-          // One hairline, wider to the pointer than it looks (the ::after),
-          // lit while found or held; the grip names what it does.
-          'group/seam relative z-10 w-px shrink-0 cursor-col-resize touch-none bg-divider outline-none',
-          'motion-respond after:absolute after:inset-y-0 after:-inset-x-1.5',
-          'hover:bg-foreground/25 data-resizing:bg-foreground/25 focus-visible:ring-1 focus-visible:ring-ring',
+          // A 7px strip to catch the pointer, drawing a 1px line in its middle:
+          // the theme's edge at rest, the divider while found or held. Keyboard
+          // focus is the house ring (docs/ui-system.md, Focus).
+          'absolute inset-y-0 z-10 w-[7px] cursor-col-resize touch-none outline-none',
+          'after:absolute after:inset-y-0 after:left-[3px] after:w-px after:bg-drawer-edge',
+          'after:motion-respond hover:after:bg-divider focus-visible:ring-1 focus-visible:ring-ring',
+          resizing && 'after:bg-divider',
+          side === 'left' ? '-right-[3px]' : '-left-[3px]',
         )}
         onPointerDown={onPointerDown}
         onKeyDown={onKeyDown}
-      >
-        <span
-          aria-hidden="true"
-          className={cn(
-            'absolute top-1/2 grid h-7 w-3 -translate-y-1/2 place-items-center rounded-sm bg-ground text-muted-foreground ring-1 ring-foreground/15',
-            // Centred on the line; closed, against the window's edge, it sits
-            // just inside it rather than half off-screen.
-            open ? 'left-1/2 -translate-x-1/2' : 'left-1',
-            'motion-respond opacity-0 group-hover/seam:opacity-100 group-focus-visible/seam:opacity-100 group-data-resizing/seam:opacity-100',
-            // Closed, the grip is the only sign the sidebar is there.
-            !open && 'opacity-100',
-          )}
-        >
-          <Icon icon={GripVertical} size="sm" />
-        </span>
-      </div>
-    </Tooltip>
-  )
-  return side === 'left' ? (
-    <>
-      {section}
-      {seam}
-    </>
-  ) : (
-    <>
-      {seam}
-      {section}
-    </>
+      />
+    </section>
   )
 }
 

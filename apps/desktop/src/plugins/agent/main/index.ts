@@ -16,21 +16,17 @@ import { join } from 'node:path'
 import { jsonFileStore, type MainPlugin } from '../../../main/plugin-api'
 import { AGENT_INFO } from '../info'
 import { claudeProvider } from './claude'
-import { holiCapabilities, HOLI_NAMESPACES } from './holis/capabilities'
-import { createHolis, parseHolisFile, type NeedsYou } from './holis/holis'
 import { claudeSeed } from './claude/seed'
 import { agentCapabilities, AGENT_NAMESPACES } from './host/capabilities'
 import { createAgentSessions } from './host/sessions'
 import { createAgentTerminals } from './host/terminals'
 import { openTurnLog } from './host/turn-log'
-import { scheduleCapabilities, SCHEDULE_NAMESPACES } from './schedules/capabilities'
-import { createScheduler, parseSchedulesFile } from './schedules/scheduler'
 
 export const agentMain: MainPlugin = {
   info: AGENT_INFO,
   seed: claudeSeed,
   async activate(ctx) {
-    const { BrowserWindow, Notification, nativeTheme } = await import('electron')
+    const { nativeTheme } = await import('electron')
     const provider = claudeProvider({
       userData: ctx.userData,
       holiBin: () => join(ctx.binDir(), 'holi'),
@@ -39,6 +35,9 @@ export const agentMain: MainPlugin = {
     const terminals = createAgentTerminals({ emit: ctx.emit, command: provider.terminal })
     const started = createAgentSessions({
       emit: ctx.emit,
+      // The session list and each turn's end, for the plugins built on the
+      // agent (automations close a run once it is done).
+      publish: ctx.publish,
       provider,
       terminals,
       binDir: ctx.binDir,
@@ -54,39 +53,6 @@ export const agentMain: MainPlugin = {
         commitNow: () => ctx.commitNow(),
       }),
     )
-    // A run that needs the person says so where they are, which is often not
-    // Holi: a system notification, and a click opens Agents mode on it.
-    const notify = (n: NeedsYou): void => {
-      if (!Notification.isSupported()) return
-      const note = new Notification({ title: `${n.name} needs you`, body: n.text })
-      note.on('click', () => {
-        const win = BrowserWindow.getAllWindows()[0]
-        if (win !== undefined) {
-          if (win.isMinimized()) win.restore()
-          win.show()
-          win.focus()
-        }
-        ctx.emit(n.remote, 'holi-open', { holi: n.id })
-      })
-      note.show()
-    }
-    // Which schedules this machine runs, and what they did: outside the
-    // vault, where the agent cannot approve its own (`schedules/scheduler.ts`).
-    const schedules = createScheduler({
-      store: jsonFileStore(join(ctx.userData, 'schedules.json'), parseSchedulesFile),
-      sessions: started,
-      emit: ctx.emit,
-    })
-    ctx.register(SCHEDULE_NAMESPACES, scheduleCapabilities({ scheduler: schedules }))
-    // Which Holis this machine approved, and their runs: outside the vault
-    // for the same reason (`holis/holis.ts`).
-    const holis = createHolis({
-      store: jsonFileStore(join(ctx.userData, 'holis.json'), parseHolisFile),
-      sessions: started,
-      emit: ctx.emit,
-      needsYou: notify,
-    })
-    ctx.register(HOLI_NAMESPACES, holiCapabilities({ holis }))
     // Keystrokes and resizes, in the order they were typed. The host drops
     // any about a vault that is not the open one.
     ctx.on('pty-write', (_remote, payload) => {
@@ -119,8 +85,6 @@ export const agentMain: MainPlugin = {
       }
     })
     void started.ensure(ctx)
-    // The open vault's schedules run while it is open.
-    schedules.attach({ remote: ctx.remote, root: ctx.root })
     // The per-turn hook reads the focused note from a file in this clone.
     const unreport = ctx.onReport((report) =>
       started.setFocus({ focusedPath: report.focusedPath, openPaths: report.openPaths }),
@@ -128,7 +92,6 @@ export const agentMain: MainPlugin = {
     // Stopping stops the vault's sessions (the renderer asked first if one
     // was busy). They stay in the agents list and resume when opened.
     return async () => {
-      schedules.dispose()
       unreport()
       await started.leave().catch((err) => console.error('[agent] leave failed:', err))
       await terminals.closeAll().catch((err) => console.error('[agent] terminals:', err))

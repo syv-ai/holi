@@ -7,6 +7,8 @@
  * importing a plugin (only `main.tsx` installs the list).
  */
 export type {
+  AgentRunFile,
+  AgentRunsSource,
   AgentService,
   AgentServiceSource,
   AgentsMode,
@@ -56,7 +58,17 @@ export {
   surfaceTabIdsAtom,
   tabForPathAtom,
 } from '@/state/surfaces'
-export { agentSessionRowsAtom, useAgentService } from '@/state/agent-service'
+export {
+  agentRunFilesAtom,
+  agentRunsReviewedAtom,
+  agentSessionRowsAtom,
+  keepAgentRunAtom,
+  loadAgentRunsAtom,
+  reviewAgentRunAtom,
+  revertAgentRunAtom,
+  showAgentSessionAtom,
+  useAgentService,
+} from '@/state/agent-service'
 export { surfacesAtom } from '@/state/plugins'
 export { byRecency, recentsAtom } from '@/state/recents'
 export { openCommitInHistoryAtom } from '@/state/history'

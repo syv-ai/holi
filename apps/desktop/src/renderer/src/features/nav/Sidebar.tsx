@@ -2,7 +2,8 @@
  * The open sidebar's own parts, top to bottom (docs/features/sidebar.md):
  *
  * - `ModeToggle` (its own file): Documents or Agents.
- * - `SidebarLinks`: Home, Board (with a new-task +) and Search.
+ * - `SidebarSearch`: a field that opens the command menu.
+ * - `SidebarLinks`: Home and Board (with a new-task +).
  * - `SidebarPinned`: what you pinned from the tree, under its own label;
  *   absent while nothing is pinned.
  * - `SidebarProfile` (after ReUI's app-shell nav-user): who is signed in, with
@@ -114,19 +115,18 @@ function NavRow({
 }
 
 /**
- * The sidebar's destinations, above the files (docs/features/sidebar.md):
+ * The sidebar's destinations, under the search field and above the files
+ * (docs/features/sidebar.md):
  *
  * - **Home** always opens Home, the vault's library. The vault's "Home is"
  *   setting decides what a vault opens on, not where this row goes: a row
  *   named Home that opened the board read as a broken link.
  * - **Board**, with its open-task count; under the pointer the count gives way
  *   to a + that opens the board and starts a task in Todo.
- * - **Search**, the command menu (⌘P): files, notes and commands.
  */
 export function SidebarLinks(): React.JSX.Element {
   const { items, activeId } = useNavItems()
   const setWorkspace = useSetAtom(workspaceAtom)
-  const openPalette = useSetAtom(openPaletteAtom)
   const newTaskIn = useSetAtom(openQuickAddInColumnAtom)
   const board = items.find((i) => i.id === 'board')
   const openBoard = () => setWorkspace((w) => openSurface(w, 'board'))
@@ -170,12 +170,28 @@ export function SidebarLinks(): React.JSX.Element {
           />
         </div>
       )}
-      <NavRow
-        item={{ icon: Search, label: 'Search' }}
-        onClick={() => openPalette('open')}
-        end={<Kbd>⌘P</Kbd>}
-      />
     </nav>
+  )
+}
+
+/**
+ * Search, as a field at the top of the Documents side (after the knowledge
+ * bases that lead with one): a press opens the command menu (⌘P), where the
+ * typing happens, so there is one search and not two. A grey fill, as every
+ * text field is (docs/ui-system.md, Rules).
+ */
+export function SidebarSearch(): React.JSX.Element {
+  const openPalette = useSetAtom(openPaletteAtom)
+  return (
+    <Button
+      variant="ghost"
+      className={cn(ROW, 'h-8 bg-foreground/[0.04] font-normal hover:bg-foreground/[0.07]')}
+      onClick={() => openPalette('open')}
+    >
+      <Icon icon={Search} size="sm" />
+      <span className="min-w-0 flex-1 truncate text-start">Search</span>
+      <Kbd>⌘P</Kbd>
+    </Button>
   )
 }
 
@@ -279,7 +295,12 @@ const MENU_ROW = 'min-h-7 rounded-md px-2 py-1 text-nav'
  * one), and Sign out, which goes to Settings' Account, where its dialog asks
  * about the clones on disk.
  */
-export function SidebarProfile(): React.JSX.Element | null {
+export function SidebarProfile({
+  compact = false,
+}: {
+  /** The rail's: the avatar alone, the menu the same. */
+  compact?: boolean
+} = {}): React.JSX.Element | null {
   const session = useAtomValue(sessionAtom)
   const scheme = useAtomValue(colorSchemeAtom)
   const writeScheme = useSetAtom(writeColorSchemeAtom)
@@ -302,7 +323,10 @@ export function SidebarProfile(): React.JSX.Element | null {
     <DropdownMenu>
       <DropdownMenuTrigger
         aria-label={`${name}, account and app${wants ? ', needs attention' : ''}`}
-        className="flex h-9 w-full min-w-0 items-center gap-2 rounded-lg px-2 text-start outline-none motion-respond hover:bg-foreground/[0.04] active:bg-foreground/[0.07] focus-visible:ring-1 focus-visible:ring-ring data-[state=open]:bg-foreground/[0.06]"
+        className={cn(
+          'flex h-9 min-w-0 items-center gap-2 rounded-lg text-start outline-none motion-respond hover:bg-foreground/[0.04] active:bg-foreground/[0.07] focus-visible:ring-1 focus-visible:ring-ring data-[state=open]:bg-foreground/[0.06]',
+          compact ? 'w-9 justify-center' : 'w-full px-2',
+        )}
       >
         <span className="relative shrink-0">
           <Avatar url={session.avatarUrl} name={name} />
@@ -313,11 +337,15 @@ export function SidebarProfile(): React.JSX.Element | null {
             />
           )}
         </span>
-        <span className="grid min-w-0 flex-1 leading-tight">
-          <span className="truncate text-nav font-medium text-foreground">{name}</span>
-          <span className="truncate text-xs text-muted-foreground">@{session.login}</span>
-        </span>
-        <Icon icon={ChevronsUpDown} size="sm" tone="muted" />
+        {!compact && (
+          <>
+            <span className="grid min-w-0 flex-1 leading-tight">
+              <span className="truncate text-nav font-medium text-foreground">{name}</span>
+              <span className="truncate text-xs text-muted-foreground">@{session.login}</span>
+            </span>
+            <Icon icon={ChevronsUpDown} size="sm" tone="muted" />
+          </>
+        )}
       </DropdownMenuTrigger>
       <DropdownMenuContent
         side="right"

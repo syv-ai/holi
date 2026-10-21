@@ -82,6 +82,7 @@ function Row({
         title={label}
         description={explanation}
         data-setting={key}
+        pressable
         control={
           <Switch
             checked={value === true}
@@ -117,14 +118,14 @@ function Row({
   const block = (value ?? {}) as Record<string, boolean>
   return (
     <SettingCard mark={mark} title={label} description={explanation} data-setting={key}>
-      <div className="flex flex-col divide-y divide-border">
+      <div className="flex flex-col divide-y divide-border/60 rounded-lg border border-border/60">
         {control.kind === 'group' &&
           control.toggles.map((toggle) => {
             const owner = owners.get(toggle.key)
             return (
               <Label
                 key={toggle.key}
-                className="flex cursor-pointer items-start gap-3 py-2.5 leading-normal font-normal"
+                className="flex cursor-pointer items-start gap-3 px-3 py-2.5 leading-normal font-normal"
               >
                 <span className="flex min-w-0 flex-1 flex-col gap-0.5">
                   <span className="flex flex-wrap items-center gap-2 text-sm font-medium">

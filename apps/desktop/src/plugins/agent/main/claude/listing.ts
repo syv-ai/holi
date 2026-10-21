@@ -39,6 +39,8 @@ export interface ClaudeRow {
   /** `working | blocked | done | failed | stopped`. Kept as text: Holi reads
    *  `status` for what a live session is doing. */
   state?: string
+  /** When it started, epoch ms. */
+  startedAt?: number
 }
 
 /** What the renderer is told a session is doing. */
@@ -54,6 +56,17 @@ export interface SessionSummary {
   /** How much of its context window is used, 0 to 100, from its status line.
    *  Absent until Claude Code has said, and again after a `/clear`. */
   contextPercent?: number
+  /** The model it runs on, in Claude Code's words (`Opus 5.5`), from its
+   *  status line. Absent until Claude Code has said. */
+  model?: string
+  /** When it started, epoch ms, from the listing. */
+  startedAt?: number
+}
+
+/** What a session's status line says: its context use and its model. */
+export interface StatusReading {
+  contextPercent?: number
+  model?: string
 }
 
 const NEW_SESSION = 'New session'
@@ -85,6 +98,9 @@ function toRow(value: unknown, vaultRoot: string): ClaudeRow | null {
     ...(isStatus(r['status']) ? { status: r['status'] } : {}),
     ...(typeof r['waitingFor'] === 'string' ? { waitingFor: r['waitingFor'] } : {}),
     ...(typeof r['state'] === 'string' ? { state: r['state'] } : {}),
+    ...(typeof r['startedAt'] === 'number' && Number.isFinite(r['startedAt'])
+      ? { startedAt: r['startedAt'] }
+      : {}),
   }
 }
 
@@ -119,7 +135,7 @@ export function isLive(row: ClaudeRow): boolean {
 export function summarise(
   row: ClaudeRow,
   working: ReadonlySet<string>,
-  contextPercent?: number,
+  reading: StatusReading = {},
 ): SessionSummary {
   let state: SessionState = 'idle'
   if (row.status === 'waiting') state = 'needs-you'
@@ -132,7 +148,9 @@ export function summarise(
     ...(state === 'needs-you' && row.waitingFor !== undefined
       ? { waitingFor: row.waitingFor }
       : {}),
-    ...(contextPercent === undefined ? {} : { contextPercent }),
+    ...(reading.contextPercent === undefined ? {} : { contextPercent: reading.contextPercent }),
+    ...(reading.model === undefined ? {} : { model: reading.model }),
+    ...(row.startedAt === undefined ? {} : { startedAt: row.startedAt }),
   }
 }
 
@@ -151,6 +169,15 @@ export function readContextPercent(status: unknown): number | null {
   return typeof used === 'number' && Number.isFinite(used)
     ? Math.min(100, Math.max(0, Math.round(used)))
     : null
+}
+
+/** The model's name from the same JSON (`model.display_name`), or null. */
+export function readModelName(status: unknown): string | null {
+  if (status === null || typeof status !== 'object') return null
+  const model = (status as Record<string, unknown>)['model']
+  if (model === null || typeof model !== 'object') return null
+  const name = (model as Record<string, unknown>)['display_name']
+  return typeof name === 'string' && name.trim() !== '' ? name.trim().slice(0, 40) : null
 }
 
 /** The directories Claude Code keeps session state in, under the config dir. */

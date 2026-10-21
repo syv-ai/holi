@@ -123,6 +123,11 @@ function createWindow({ show = true }: { show?: boolean } = {}): BrowserWindow {
   win.on('closed', () => {
     if (mainWindow === win) mainWindow = null
   })
+  // Fullscreen hides the traffic lights, so the sidebar's band for them goes.
+  const sendFullScreen = () => win.webContents.send('window:fullscreen', win.isFullScreen())
+  win.on('enter-full-screen', sendFullScreen)
+  win.on('leave-full-screen', sendFullScreen)
+  win.webContents.on('did-finish-load', sendFullScreen)
 
   const devUrl = process.env['ELECTRON_RENDERER_URL']
   if (devUrl) {

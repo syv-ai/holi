@@ -131,6 +131,17 @@ export interface PluginCtx extends LiveVault, SchemeContext {
    * entry's value.
    */
   call(name: string, params: unknown): Promise<unknown>
+  /**
+   * Tell the main side of every plugin that requires this one something about
+   * the open vault, as it happens: the agent's session list, a turn ending.
+   * Nobody hearing it is not an error.
+   */
+  publish(name: string, payload: unknown): void
+  /**
+   * Hear what the main side of `from`, a plugin this one requires, publishes.
+   * Throws for a plugin it does not require. Returns the undo.
+   */
+  hear(from: string, name: string, handler: (payload: unknown) => void): () => void
 }
 
 /** What a quit guard asks. */

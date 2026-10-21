@@ -13,9 +13,9 @@ them push access to. The same ritual, minus the greeting, is how any later vault
   dismissed. If agent sessions are running, the vault-switch confirm asks first.
 - **Five acts**, named in order in the reducer's `ACTS`, which everything that walks them (next,
   back, the floor, the stepper) reads. The stepper above the act counts only the acts that ask
-  something (naming, plugins, settings), as ReUI's stepper with the done steps ticked; on the
-  greeting and the threshold it is absent. Only the current act is mounted, so Tab and a stray
-  press cannot reach another act's buttons; it fades in (`motion-in-fade`), the one entrance:
+  something (naming, plugins, settings: "Step 1 of 3"); on the greeting and the threshold it
+  fades out but keeps its height. Every act stays mounted for the crossfade, and all but the
+  current one are `inert`, so Tab and a stray press cannot reach another act's buttons:
   1. Greeting: what a vault is, plainly, with the plugins named as optional. First-run only.
   2. Naming: one name field, slugified live, and under it the repo's path,
      `github.com / <owner> / <slug>`, whose owner is a switcher listing your login and your orgs,
@@ -24,27 +24,26 @@ them push access to. The same ritual, minus the greeting, is how any later vault
      so the act never opens on a blank; a typed name that slugifies to nothing blocks instead.
      While a control or its menu has focus, Enter and Escape are that control's, never the
      act's. Continue goes on to the questions; nothing exists on GitHub yet.
-  3. Plugins: "What this vault runs", a row per plugin in the build, stacked in one ReUI `Frame`
-     (`SettingCard`, pressable, after ReUI's `settings-1`): its mark (Claude, Google, a PDF page, Holi's own glyph for vault
+  3. Plugins: "What this vault runs", a card per plugin in the build, two to a row (`OptionCard`,
+     after ReUI's `settings-1`): its mark (Claude, Google, a PDF page, Holi's own glyph for vault
      apps and community plugins), its description, an "Optional" badge on one that is off by
      default, and a checkbox at its own default. Turning one off says what that means in place; a plugin whose
      `requires` are off shows off, cannot be switched, and says what it needs. Only choosing
      happens here; setting a plugin up (connecting Google) is per machine and happens where it is
      used.
-  4. Settings: the vault settings marked as asked at birth, a row each in one `Frame` with its
-     mark (`SettingCard`) and its default already chosen, with only the commit transforms of core and
+  4. Settings: the vault settings marked as asked at birth, a card each with its mark
+     (`SettingCard`) and its default already chosen, with only the commit transforms of core and
      of the plugins kept on, each plugin's tagged with its name. One note at the foot says where
      to change them later. Its button is **Create vault**.
   5. Threshold. First the build: the repo is created (seeded, committed, pushed and tagged with
      the `holi-vault` topic), then the plugins and settings answers are written into it together
      ([settings](settings.md)), each step listed as it lands and held for a short beat so it reads
-     as made rather than flashed. Then "Welcome to <slug>", the copyable remote, a few hotkeys,
+     as made rather than flashed. Then "Welcome to <slug>.", the copyable remote, a few hotkeys,
      and "Open vault", which
      activates the vault and flips the gate to the shell. The hotkeys are read off core's commands
      and the kept plugins', so a hint never names a key nothing binds; a command marks itself as one
      of these few (`Command.firstKey`, its place in the order).
-- **Join** ("Join vaults in your accounts") is a quiet link on act 2 that swaps in a picker (one
-  `Frame` holding the search and the list) of
+- **Join** ("Join vaults in your accounts") is a quiet link on act 2 that swaps in a picker of
   every vault your accounts reach: your own, your organisations' and ones shared with you, from
   one GitHub listing, grouped by account. The search field carries an account selector (all
   accounts, or one) rather than a second control. It lists only repos with the `holi-vault` topic
@@ -81,9 +80,10 @@ them push access to. The same ritual, minus the greeting, is how any later vault
 - Joining never asks the plugin or settings questions. An adopted vault's committed answers already speak,
   and overwriting a teammate's choice by cloning would be wrong.
 - Holi sends no invitations. You join a repo you already have access to on GitHub.
-- The ritual is drawn with the app's tokens, parts and Tailwind classes on the plain page, with
-  no stylesheet, backdrop or motion of its own, so the first screen looks like the app it opens
-  into.
+- The ritual paints with Holi's theme tokens, not a palette of its own, so the first screen looks
+  like the app it opens into. Its CSS (`onboarding-ritual.css`, `obrit-` prefixed) is global and
+  the one place the spring easing is allowed: a one-time ceremony gets one spring, the daily app
+  does not.
 
 ## Rejected
 
@@ -100,17 +100,15 @@ them push access to. The same ritual, minus the greeting, is how any later vault
 - Creating the repo at the naming act: the later answers then had to be written over a vault that
   already existed, and dismissing halfway left a repo behind.
 - A palette of its own: the ritual is drawn with the app's tokens and parts, and is the reference
-  for new screens ([UI system](../ui-system.md), Page baseline).
-- An atmosphere behind the acts (light shafts, grain, a glass panel) and acts that crossfade and
-  rise in a stagger: the ceremony made the first screens a different app from the one they open
-  into.
+  for new screens ([UI system](../ui-system.md), Page baseline). Its one atmosphere, the light
+  from the top-left and the grain, is the app's ambient, shared with sign-in.
 
 ## Code
 
 - `apps/desktop/src/renderer/src/App.tsx`: the gate and the dry-run hook.
 - `apps/desktop/src/renderer/src/features/onboarding/OnboardingRitual.tsx`: the frame and the flow;
   each act is its own component beside it (`GreetingAct`, `NamingAct` and `JoinPicker`,
-  `PluginsAct`, `VaultSettingsAct`, `ThresholdAct`), each headed by `ActHeading`.
+  `PluginsAct`, `VaultSettingsAct`, `ThresholdAct`).
 - `apps/desktop/src/renderer/src/features/onboarding/actions.ts`: what the ritual does to the world,
   real or dry.
 - `PluginsAct.tsx`: act 3, from the installed plugins' `PluginInfo`, each with its mark from

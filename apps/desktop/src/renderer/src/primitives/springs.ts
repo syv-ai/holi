@@ -13,3 +13,9 @@ export const settle = { type: 'spring', duration: 0.4, bounce: 0.15 } as const
 
 /** What reduced motion swaps in: the change, without the travel. */
 export const instant = { duration: 0 } as const
+
+/**
+ * A mark opening into its labelled button (`RevealButton`, sign-in's GitHub
+ * button): firm, with the faintest settle, so it arrives rather than stops.
+ */
+export const reveal = { stiffness: 420, damping: 30 } as const

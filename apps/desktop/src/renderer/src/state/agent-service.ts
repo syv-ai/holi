@@ -6,7 +6,7 @@
 import { atom, useAtomValue, useStore } from 'jotai'
 import { useMemo } from 'react'
 import type { AskAgentSeam } from '@/editor/askAgent'
-import type { AgentService, AgentSessionRow } from '@/plugin-api/types'
+import type { AgentRunFile, AgentService, AgentSessionRow, AskResult } from '@/plugin-api/types'
 import { agentSourceAtom } from './plugins'
 
 export function useAgentService(): AgentService | null {
@@ -26,6 +26,50 @@ export function useAgentService(): AgentService | null {
     [source, store],
   )
 }
+
+/** Show a session in the Agents view, brought back first if it finished. */
+export const showAgentSessionAtom = atom(
+  null,
+  (get, set, args: { session: string; live: boolean }): Promise<AskResult> => {
+    const source = get(agentSourceAtom)
+    return source === null ? Promise.resolve(NO_AGENT) : set(source.show, args)
+  },
+)
+
+const NO_FILES: Readonly<Record<string, readonly AgentRunFile[]>> = {}
+const NO_REVIEWS: Readonly<Record<string, 'kept' | 'reverted'>> = {}
+
+/** What each run changed, by job id (`AgentRunsSource`); empty with no agent. */
+export const agentRunFilesAtom = atom((get) => {
+  const source = get(agentSourceAtom)
+  return source === null ? NO_FILES : get(source.runs.files)
+})
+
+/** Runs kept or reverted here, by job id; empty with no agent. */
+export const agentRunsReviewedAtom = atom((get) => {
+  const source = get(agentSourceAtom)
+  return source === null ? NO_REVIEWS : get(source.runs.reviewed)
+})
+
+export const loadAgentRunsAtom = atom(null, (get, set, ids: readonly string[]) => {
+  const source = get(agentSourceAtom)
+  return source === null ? Promise.resolve() : set(source.runs.load, ids)
+})
+
+export const reviewAgentRunAtom = atom(null, (get, set, id: string) => {
+  const source = get(agentSourceAtom)
+  if (source !== null) set(source.runs.review, id)
+})
+
+export const keepAgentRunAtom = atom(null, (get, set, id: string) => {
+  const source = get(agentSourceAtom)
+  if (source !== null) set(source.runs.keep, id)
+})
+
+export const revertAgentRunAtom = atom(null, (get, set, id: string): Promise<AskResult> => {
+  const source = get(agentSourceAtom)
+  return source === null ? Promise.resolve(NO_AGENT) : set(source.runs.revert, id)
+})
 
 /** The agent's live sessions, for an atom that cannot call a hook; empty with
  *  no agent. */

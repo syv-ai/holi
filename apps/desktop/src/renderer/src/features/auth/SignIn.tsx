@@ -1,8 +1,10 @@
 /**
- * The device flow: press once, read a code, type it into a browser that is
- * already signed in to GitHub. One centred column on the plain page, the
- * same ground as the app it opens into; the code replaces the button in
- * place, with a fade as its one entrance.
+ * The device flow, as a ritual: press once, read a code, type it into a browser
+ * that is already signed in to GitHub. Laid out after ReUI's `auth-5`: a pitch
+ * on the left, the one act on the right, over the ambient light. No card: the
+ * plain page is already the quiet surface a card would add. Once the flow
+ * starts the pitch steps aside and the act glides to the middle of the window,
+ * because from then on the code is all that matters.
  *
  * **Two phases, one screen.** `auth.signIn` returns the code to show and opens
  * the browser itself (the URI GitHub handed back, never a hardcoded one).
@@ -15,8 +17,9 @@
 import { SiGithub } from '@icons-pack/react-simple-icons'
 import { useSetAtom } from 'jotai'
 import { Check, Copy } from 'lucide-react'
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { useEffect, useRef, useState } from 'react'
-import { BrandMark } from '@/composites'
+import { AmbientBackdrop, AmbientGrain, BrandMark } from '@/composites'
 import {
   Button,
   Icon,
@@ -25,7 +28,11 @@ import {
   InputOTPGroup,
   InputOTPSeparator,
   InputOTPSlot,
+  instant,
+  RevealButton,
+  settle,
 } from '@/primitives'
+import { cn } from '@/lib/cn'
 import { trpc } from '@/lib/trpc'
 import { sessionAtom } from '@/state/session'
 
@@ -109,72 +116,137 @@ export function SignIn() {
     void trpc.auth.cancelSignIn.mutate()
   }
 
+  const reduced = useReducedMotion() ?? false
+  const focused = phase.kind === 'starting' || phase.kind === 'waiting'
+
   return (
-    <div className="flex h-screen w-full flex-col overflow-y-auto bg-background text-foreground">
-      <header className="flex shrink-0 items-center px-6 py-5">
-        <BrandMark />
-      </header>
+    <div className="relative isolate h-screen w-full overflow-hidden bg-background text-foreground">
+      <AmbientBackdrop />
 
-      <main className="flex flex-1 items-center justify-center px-6 py-12">
-        <div className="flex w-full max-w-sm flex-col items-center gap-8 text-center">
-          <div className="flex flex-col gap-2">
-            <h1 className="text-xl font-semibold tracking-tight">Sign in to Holi</h1>
-            <p className="text-sm text-balance text-muted-foreground">
-              {phase.kind === 'waiting'
-                ? 'Enter this code on GitHub to finish signing in.'
-                : 'Holi keeps your notes, tasks and agent in a GitHub repository on this computer. Sign in with GitHub to start.'}
-            </p>
-          </div>
+      {/* Only the content scrolls: a scroller reserves its gutter inside
+          itself, and the backdrop and grain must reach under it. */}
+      <div className="relative h-full overflow-y-auto">
+        <div className="flex min-h-full flex-col px-6 py-7 sm:px-12 sm:py-10 lg:px-14 lg:py-12">
+          <header className="flex items-center justify-between">
+            <BrandMark />
+          </header>
 
-          {phase.kind === 'waiting' ? (
-            <Waiting
-              userCode={phase.userCode}
-              verificationUri={phase.verificationUri}
-              copied={copied}
-              onCopy={() => void copyCode(phase.userCode)}
-              onCancel={cancel}
-            />
-          ) : (
-            <div className="flex w-full flex-col items-center gap-3">
-              <Button
-                size="lg"
-                className="w-full"
-                disabled={phase.kind === 'starting'}
-                onClick={() => void start()}
-              >
-                <Icon icon={SiGithub} size="sm" />
-                {phase.kind === 'starting'
-                  ? 'Opening GitHub…'
-                  : phase.kind === 'idle'
-                    ? 'Continue with GitHub'
-                    : 'Try again'}
-              </Button>
-              <Outcome phase={phase} />
-            </div>
-          )}
-
-          {/* Sign-in grants a broad `repo` token (docs/features/auth.md); a
-              fine-grained PAT is the tighter option, so the screen says so.
-              Informational only: the device flow is the sole sign-in path. */}
-          <p className="text-xs text-pretty text-muted-foreground">
-            Holi requests broad repo access.{' '}
-            <Button
-              variant="link"
-              className="h-auto p-0 text-xs"
-              onClick={() => void window.holi.openExternal(FINE_GRAINED_TOKEN_DOCS)}
+          <main className="mx-auto flex w-full max-w-6xl flex-1 items-center py-16 sm:py-20 lg:py-24">
+            <div
+              className={cn(
+                'relative grid w-full grid-cols-1 items-center justify-items-center gap-14 sm:gap-16 lg:gap-24',
+                !focused && 'lg:grid-cols-[minmax(0,1fr)_minmax(0,420px)] lg:justify-items-stretch',
+              )}
             >
-              Prefer a fine-grained token?
-            </Button>
-          </p>
-        </div>
-      </main>
+              {/* popLayout takes the leaving pitch out of the grid at once, so
+                the pane starts for the middle while the pitch fades. */}
+              <AnimatePresence mode="popLayout" initial={false}>
+                {!focused && (
+                  <motion.div
+                    key="pitch"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    transition={reduced ? instant : settle}
+                  >
+                    <Pitch />
+                  </motion.div>
+                )}
+              </AnimatePresence>
+              <motion.div
+                layout="position"
+                transition={reduced ? instant : settle}
+                className="w-full max-w-[420px]"
+              >
+                <div className="flex w-full flex-col items-center gap-7 text-center sm:gap-8">
+                  <div className="flex flex-col gap-2">
+                    <h2 className="text-xl font-semibold tracking-tight">Sign in to Holi</h2>
+                    <p className="text-sm text-balance text-muted-foreground">
+                      {phase.kind === 'waiting'
+                        ? 'Enter this code on GitHub to finish signing in.'
+                        : 'Use your GitHub account. Holi opens GitHub in your browser to confirm.'}
+                    </p>
+                  </div>
 
-      <footer className="shrink-0 px-6 pt-4 pb-6">
-        <p className="text-center text-xs text-muted-foreground">
-          Holi has no server. Your GitHub token is encrypted on this computer and used only to talk
-          to GitHub.
-        </p>
-      </footer>
+                  {phase.kind === 'waiting' ? (
+                    <Waiting
+                      userCode={phase.userCode}
+                      verificationUri={phase.verificationUri}
+                      copied={copied}
+                      onCopy={() => void copyCode(phase.userCode)}
+                      onCancel={cancel}
+                    />
+                  ) : (
+                    <div className="flex flex-col items-center gap-3">
+                      {/* The mark at rest, the words on hover. Anything but the
+                        first offer stays open, because a status or "Try again"
+                        must be read without reaching for it. */}
+                      <RevealButton
+                        icon={SiGithub}
+                        open={phase.kind !== 'idle'}
+                        disabled={phase.kind === 'starting'}
+                        onClick={() => void start()}
+                        label={
+                          phase.kind === 'starting'
+                            ? 'Opening GitHub…'
+                            : phase.kind === 'idle'
+                              ? 'Continue with GitHub'
+                              : 'Try again'
+                        }
+                      />
+                      <Outcome phase={phase} />
+                    </div>
+                  )}
+
+                  {/* Sign-in grants a broad `repo` token (docs/features/auth.md); a
+                    fine-grained PAT is the tighter option, so the screen says so.
+                    Informational only: the device flow is the sole sign-in path. */}
+                  <p className="text-center text-xs text-pretty text-muted-foreground">
+                    Holi requests broad repo access.{' '}
+                    <Button
+                      variant="link"
+                      className="h-auto p-0 text-xs"
+                      onClick={() => void window.holi.openExternal(FINE_GRAINED_TOKEN_DOCS)}
+                    >
+                      Prefer a fine-grained token?
+                    </Button>
+                  </p>
+                </div>
+              </motion.div>
+            </div>
+          </main>
+
+          <footer className="mx-auto w-full max-w-6xl pt-10 pb-6 sm:pt-14">
+            <p className="text-center text-xs text-muted-foreground">
+              Holi has no server. Your GitHub token is encrypted on this computer and used only to
+              talk to GitHub.
+            </p>
+          </footer>
+        </div>
+      </div>
+      <AmbientGrain />
+    </div>
+  )
+}
+
+function Pitch() {
+  return (
+    <div className="flex max-w-xl flex-col gap-7 sm:gap-8">
+      <div className="inline-flex w-fit items-center gap-2 rounded-full border border-border/60 bg-background/80 px-3 py-1 text-sm font-medium tracking-tight text-foreground/70 backdrop-blur-sm">
+        <span className="size-1.5 rounded-full bg-primary" aria-hidden="true" />
+        <span>Local-first notes on GitHub</span>
+      </div>
+      <h1 className="text-4xl leading-[1.02] font-semibold tracking-[-0.02em] text-balance sm:text-5xl lg:text-[56px]">
+        Your notes, in a repo you{' '}
+        <span className="bg-linear-to-r from-orange-500 via-pink-500 to-violet-500 bg-clip-text text-transparent">
+          own
+        </span>
+        .
+      </h1>
+      <p className="max-w-xl text-base leading-relaxed text-pretty text-muted-foreground sm:text-lg">
+        Holi keeps your notes, tasks and agent in a markdown vault: a GitHub repository cloned to
+        this computer. It works offline and syncs when you are back.
+      </p>
     </div>
   )
 }

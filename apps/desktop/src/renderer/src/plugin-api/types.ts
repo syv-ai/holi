@@ -207,6 +207,41 @@ export interface AgentSessionRow {
   id: string
   name: string
   state: 'needs-you' | 'working' | 'idle'
+  /** Only for 'needs-you': why, e.g. 'permission prompt'. */
+  waitingFor?: string
+  /** The model, in the agent's words (`Opus 5.5`), once it has said. */
+  model?: string
+  /** When it started, epoch ms. */
+  startedAt?: number
+}
+
+/** A file a run changed, across its whole range. */
+export interface AgentRunFile {
+  path: string
+  added: number
+  removed: number
+  /** `A` | `M` | `D` | `R<score>`. */
+  status: string
+}
+
+/**
+ * What a run changed, for a plugin whose runs are agent sessions (a Holi's
+ * sends): each run is a session, and its range is its first turn's base to
+ * its last turn's end, from the agent's turn log, by job id.
+ */
+export interface AgentRunsSource {
+  /** What each run changed, by job id, once loaded. */
+  files: Atom<Readonly<Record<string, readonly AgentRunFile[]>>>
+  /** Runs the person kept or reverted, by job id. This machine's. */
+  reviewed: Atom<Readonly<Record<string, 'kept' | 'reverted'>>>
+  /** Read the turn log and these runs' files again. */
+  load: WritableAtom<null, [readonly string[]], Promise<void>>
+  /** The turn review drawer over the run's range. */
+  review: WritableAtom<null, [string], void>
+  /** What it changed stays, and its entry stops asking. */
+  keep: WritableAtom<null, [string], void>
+  /** The vault as it was before the run, one new commit per file. */
+  revert: WritableAtom<null, [string], Promise<AskResult>>
 }
 
 /** Where an ask may go, and where it goes when nobody picks. */
@@ -241,6 +276,10 @@ export interface AgentServiceSource {
   targets: Atom<AskTargets>
   ask: WritableAtom<null, [{ text: string; target: string }], Promise<AskResult>>
   start: WritableAtom<null, [{ name?: string; prompt: string }], Promise<AskResult>>
+  /** Show a session in the Agents view; one that has finished (`live`
+   *  false) is brought back first, its conversation intact. */
+  show: WritableAtom<null, [{ session: string; live: boolean }], Promise<AskResult>>
+  runs: AgentRunsSource
 }
 
 export interface AgentsStatus {
@@ -263,8 +302,17 @@ export interface AgentsMode {
  * them is selected `main` is the main view.
  */
 export interface AgentsSlot {
-  /** Its section of the Agents sidebar, after the provider's own. */
+  /** Where its section sits in the Agents sidebar: lower first. The
+   *  provider's sessions are at 100; a slot without one comes after them. */
+  order?: number
+  /** Its rows in the sidebar's top group, under the provider's Inbox: a
+   *  place it opens (Automations), not a list. */
+  nav?: ComponentType
+  /** Its section of the Agents sidebar. */
   sidebar?: ComponentType
+  /** Its rows in the provider's Inbox: what of its own needs the person, or
+   *  nothing. Counted by its `status`'s `needsYou`. */
+  inbox?: ComponentType
   /** The main view while the selection is its own; gets the selected id. */
   main?: ComponentType<{ id: string }>
   /** Added to what the mode toggle reports. */

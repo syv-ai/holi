@@ -18,12 +18,11 @@ asked. Also absent: surfacing a hook failure in the sync status bar when no sess
 
 **A cap on concurrent sessions.** A vault can run any number.
 
-**Scheduled Holis in the cloud.** A Holi file with a `cron` or `at` parses, is refused for anything
-that needs a machine (`holi` commands, `.local.` files), and is listed in the Agents view as "Not set
-up in the cloud"; nothing runs it. It would be Claude Code's scheduled cloud runs against the vault's
-GitHub repository, once per moment for everyone, its outcome read from its commit (the message its
-report, the diff its review). Claude Code drives those from its `/schedule` skill against claude.ai,
-which Holi has no interface to yet ([holis](features/holis.md)).
+**Shared automations in the cloud.** An automation runs on each machine that turned it on. Work
+that should run once for everyone, with every laptop shut, would be Claude Code's scheduled cloud
+runs against the vault's GitHub repository, its outcome read from its commit. Claude Code drives
+those from its `/schedule` skill against claude.ai, which Holi has no interface to yet
+([scheduled-agents](features/scheduled-agents.md)).
 
 **More ways to send a Holi work.** Only a document, from its Agent menu, today. Each further trigger
 would start the same session under the same per-machine approval:

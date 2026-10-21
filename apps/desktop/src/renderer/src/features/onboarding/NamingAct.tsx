@@ -10,7 +10,7 @@
  * Owns the org list: `read:org` buys exactly one feature, offering an org as
  * the owner, and when it fails the personal account still works.
  */
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { useAtomValue } from 'jotai'
 import { ChevronsUpDown, CornerDownRight, Lock } from 'lucide-react'
 import {
@@ -26,9 +26,8 @@ import {
 } from '@/primitives'
 import { trpc } from '@/lib/trpc'
 import { DEFAULT_VAULT_NAME } from '@/state/onboarding-flow'
-import { sessionAtom } from '@/state/session'
-import { ActHeading } from './ActHeading'
 import { OwnerAvatar, type Owner } from './OwnerAvatar'
+import { sessionAtom } from '@/state/session'
 
 interface Props {
   name: string
@@ -54,8 +53,11 @@ export function NamingAct({ name, owner, slug, error, active, onName, onOwner, o
       .catch(() => {})
   }, [])
 
+  // After the act has crossfaded in, not during, or the caret lands mid-fade.
   useEffect(() => {
-    if (active) nameRef.current?.focus()
+    if (!active) return
+    const t = setTimeout(() => nameRef.current?.focus(), 220)
+    return () => clearTimeout(t)
   }, [active])
 
   const owners: Owner[] = session
@@ -66,15 +68,17 @@ export function NamingAct({ name, owner, slug, error, active, onName, onOwner, o
     : orgs
 
   return (
-    <div className="flex flex-col items-center gap-6">
-      <ActHeading
-        center
-        title="Name your vault"
-        description="A private repository on GitHub, made when you finish."
-      />
-      <div className="flex w-full max-w-sm flex-col gap-2">
+    <>
+      <div className="obrit-name-stage">
+        <div className="obrit-eyebrow">Name your vault</div>
         <Input
           ref={nameRef}
+          variant="display"
+          className="obrit-vault-input"
+          // The size follows the length, so a long name shrinks to fit the
+          // column instead of scrolling inside the field (index.css cannot
+          // count characters; `--name-len` hands it the count).
+          style={{ '--name-len': Math.max(name.length, 10) } as CSSProperties}
           value={name}
           onChange={(e) => onName(e.target.value)}
           placeholder={DEFAULT_VAULT_NAME}
@@ -84,36 +88,35 @@ export function NamingAct({ name, owner, slug, error, active, onName, onOwner, o
           autoCapitalize="off"
           maxLength={40}
         />
-        {/* The repo's address, the owner a switcher. A URL reads left to right
-            in any language. */}
-        <div
-          className="flex flex-wrap items-center gap-1 font-mono text-xs text-muted-foreground"
-          dir="ltr"
-        >
+        <div className="obrit-input-underline" />
+        {/* A URL reads left to right in any language. */}
+        <div className="obrit-path" dir="ltr">
           <span>github.com</span>
-          <span aria-hidden>/</span>
+          <span className="obrit-path-sep" aria-hidden>
+            /
+          </span>
           <OwnerSwitcher owners={owners} owner={owner} onOwner={onOwner} />
-          <span aria-hidden>/</span>
-          <span className="break-all text-foreground">{slug}</span>
-          <span className="ms-auto flex items-center gap-1 font-sans">
+          <span className="obrit-path-sep" aria-hidden>
+            /
+          </span>
+          <span className="obrit-slug-out" data-default={name.trim() === '' || undefined}>
+            {slug}
+          </span>
+          <span className="obrit-path-private">
             <Icon icon={Lock} size="sm" />
             Private
           </span>
         </div>
       </div>
 
-      <div className="flex flex-col items-center gap-3">
+      <div className="obrit-name-actions">
         <Button variant="ghost" onClick={onJoin}>
           <Icon icon={CornerDownRight} size="sm" tone="muted" />
           Join vaults in your accounts
         </Button>
-        {error && (
-          <p role="alert" className="text-center text-sm text-destructive">
-            {error}
-          </p>
-        )}
+        {error && <div className="obrit-error">{error}</div>}
       </div>
-    </div>
+    </>
   )
 }
 
@@ -132,7 +135,7 @@ function OwnerSwitcher({
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="sm" className="max-w-64 min-w-0 shrink font-mono">
+        <Button variant="ghost" size="sm" className="obrit-owner min-w-0 shrink">
           <span className="sr-only">Owner: </span>
           <OwnerAvatar owner={current ?? { login: owner, kind: 'personal' }} />
           <span className="truncate">{owner || 'owner'}</span>

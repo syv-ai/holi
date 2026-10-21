@@ -54,11 +54,10 @@
   /* A note's and a task's running text: a touch under the foreground, which is
      glaring at length on near-black. Mixed, so a vault theme's colours carry it. */
   --prose: color-mix(in srgb, var(--foreground) 88%, var(--background));
-  /* The window's ground, under the sidebar and around the content panel
-     (after Linear): a hair off the page, so sidebar and panel are two places
-     told apart by the panel's edge more than by fill. Mixed from the page,
-     so a vault theme carries it. */
-  --ground: color-mix(in oklab, var(--background), white 2.5%);
+  /* The window's ground, under the sidebar and around the content panel: a
+     step under the page, so the panel reads as raised off it in both modes.
+     Mixed from the page, so a vault theme carries it. */
+  --ground: color-mix(in oklab, var(--background) 82%, black);
 
   /* Code-editor syntax colours. Tokens, so they follow the theme: 300 tints
      that glow on near-black wash out on white, hence the light arm below. */
@@ -739,7 +738,8 @@ html {
    sandboxed frame the app's cascade deliberately cannot reach. */
 
 /* Window (macOS, `hiddenInset`): there is no title bar, so the sidebar's top
-   band holds the traffic lights and the tab strip is the window's handle.
+   band (or the rail's) holds the traffic lights, the sidebar's toggle sits
+   beside them, and the band and the tab strip are the window's handles.
    Anything you click inside a handle opts out of dragging the window. */
 .app-drag {
   -webkit-app-region: drag;
@@ -747,18 +747,56 @@ html {
 .app-drag :is(button, a, input, [role='button'], [role='tab'], [draggable='true']) {
   -webkit-app-region: no-drag;
 }
-[data-platform='mac'] [data-drawer='nav'] [data-slot='panel-header'] {
-  height: auto;
-  /* The lights' band is the tab strip's height, and the switcher below it
-     ends where the pane's header row does. */
-  padding-top: 2.25rem;
-  padding-bottom: 0.5rem;
-  -webkit-app-region: drag;
+/* The lights start 14px in (`main/index.ts`) and end near 73px: the toggle
+   starts clear of them, as the rail's width does (`NavRail.tsx`). */
+[data-platform='mac']:not([data-fullscreen]) [data-window-band='nav'] {
+  padding-inline-start: 5rem;
 }
-[data-platform='mac'] [data-drawer='nav'] [data-slot='panel-header'] :is(button, [role='button']) {
-  -webkit-app-region: no-drag;
+/* The rail's band is room for the lights alone: none to make room for in
+   fullscreen, or off macOS. */
+[data-fullscreen] [data-window-band='rail'],
+:root:not([data-platform='mac']) [data-window-band='rail'] {
+  display: none;
 }
-/* With the sidebar hidden, the first pane's tabs start clear of the lights. */
-[data-platform='mac'] [data-window-inset] {
-  padding-left: 4.75rem;
+
+/* ── Ambient · the light before a vault ──────────────────────────────
+ * The one decorative loop, and it lives only behind the screens shown before
+ * a vault opens (sign-in, loading, the onboarding ritual;
+ * `composites/AmbientBackdrop.tsx`), never inside the shell, where it would
+ * nag all day: shafts of light from the top-left corner, drawn by a shader
+ * (`SideRays`) that shifts them slowly and holds still under reduced motion.
+ * This box only places it. */
+.ambient-backdrop {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+/* Film grain over the light, as on a print: grey noise in both directions
+ * (lighter and darker specks), blended with `overlay`, so it shows in the
+ * light and all but vanishes on the plain paper around it. */
+.ambient-grain {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.55;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='1.1' numOctaves='3' stitchTiles='stitch'/><feColorMatrix type='saturate' values='0'/><feComponentTransfer><feFuncR type='linear' slope='1.6' intercept='-0.3'/><feFuncG type='linear' slope='1.6' intercept='-0.3'/><feFuncB type='linear' slope='1.6' intercept='-0.3'/><feFuncA type='linear' slope='0' intercept='1'/></feComponentTransfer></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+}
+/* Lighter on light paper: overlay bites hardest on mid-greys, and the grain
+ * lies over the content, so at full strength a grey field's text went noisy. */
+[data-theme='light'] .ambient-grain {
+  opacity: 0.5;
+}
+/* The content panel (`components/Shell.tsx`): the page floats on the
+   window's ground, one rounded panel with a hairline edge and the faintest
+   lift, so sidebar and page are two places told apart at a glance. Not a
+   floating thing's shadow (those are `--shadow-popover`): it sits on the
+   ground, it does not hover over it. */
+[data-slot='content-panel'] {
+  background: var(--background);
+  border-radius: var(--radius-xl);
+  box-shadow:
+    0 0 0 1px var(--divider),
+    0 1px 2px color-mix(in srgb, black 6%, transparent);
 }

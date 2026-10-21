@@ -34,6 +34,15 @@ const AGENT: RendererPlugin = {
     targets: atom({ sessions: [{ id: 's1', name: 'refactor' }], default: 's1' }),
     ask: atom(null, (_get, _set, args: { text: string; target: string }) => send(args)),
     start: atom(null, async () => ({ ok: true as const })),
+    show: atom(null, async () => ({ ok: true as const })),
+    runs: {
+      files: atom({}),
+      reviewed: atom({}),
+      load: atom(null, async () => {}),
+      review: atom(null, () => {}),
+      keep: atom(null, () => {}),
+      revert: atom(null, async () => ({ ok: true as const })),
+    },
   },
 }
 

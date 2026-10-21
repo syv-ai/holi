@@ -148,11 +148,8 @@ const AGENT_SETTINGS: SettingsFragment = {
   ],
   permissions: {
     // Network egress: the user still approves each one, it just does not
-    // slip through unasked.
-    // A schedule's run starts an unattended session: the person says yes to
-    // each one. Turning a schedule on is no command at all (Settings only).
-    ask: ['Bash(curl:*)', 'Bash(wget:*)', 'Bash(holi schedules run:*)'],
-    allow: ['Bash(holi schedules list:*)'],
+    // slip through unasked. The automations plugin adds its own rules.
+    ask: ['Bash(curl:*)', 'Bash(wget:*)'],
     // Claude Code tools with no job in a vault: notebooks, plan mode,
     // worktrees (one working tree is what sync assumes), code-review
     // reporting, and SendFeedback, which reaches Anthropic rather than Holi

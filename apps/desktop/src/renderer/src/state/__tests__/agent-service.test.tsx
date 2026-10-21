@@ -18,6 +18,15 @@ const STAND_IN: RendererPlugin = {
     targets: atom({ sessions: [], default: 'new' }),
     ask: atom(null, async () => ({ ok: true as const })),
     start: atom(null, async () => ({ ok: true as const })),
+    show: atom(null, async () => ({ ok: true as const })),
+    runs: {
+      files: atom({}),
+      reviewed: atom({}),
+      load: atom(null, async () => {}),
+      review: atom(null, () => {}),
+      keep: atom(null, () => {}),
+      revert: atom(null, async () => ({ ok: true as const })),
+    },
   },
 }
 

@@ -56,6 +56,9 @@ export type AgentVault = Pick<PluginCtx, 'remote' | 'root'> & TurnVault
 export interface AgentSessionsDeps {
   /** Tell the renderer `name` about the vault `remote`. */
   emit(remote: string, name: string, payload: unknown): void
+  /** Tell the plugins built on the agent, in main: the session list as it is
+   *  pushed (`sessions`) and each turn's end (`turn-end`). */
+  publish?(name: string, payload: unknown): void
   provider: Pick<
     AgentProvider,
     | 'cli'
@@ -63,6 +66,7 @@ export interface AgentSessionsDeps {
     | 'isLive'
     | 'summarise'
     | 'readContextPercent'
+    | 'readModelName'
     | 'watch'
     | 'configure'
     | 'takeFirstSpawn'
@@ -112,6 +116,8 @@ export interface AgentSessions {
     prompt: string
     model?: string
     allow?: readonly string[]
+    /** A Holi's soul and memory, when one carries the run out. */
+    appendSystemPrompt?: string
   }): Promise<{ ok: true; sessionId: string } | { ok: false; message: string }>
   /** Whether Holi has a terminal open on the session. */
   watched(id: string): boolean
@@ -196,6 +202,8 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
    * session between turns is not using any more.
    */
   const contextPercent = new Map<string, number>()
+  /** Each live session's model, in Claude Code's words, from its status line. */
+  const modelName = new Map<string, string>()
 
   const turnEnds = new Set<(id: string, pending: number | null) => void>()
   /** What the Stop that is ending a turn said was pending, until the end is
@@ -212,13 +220,21 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
       const pending = stopPending.get(id) ?? null
       stopPending.delete(id)
       for (const listener of turnEnds) listener(id, pending)
+      deps.publish?.('turn-end', { id, pending })
     },
     log,
   })
 
   const live = (): ClaudeRow[] => rows.filter((row) => provider.isLive(row))
   const summaries = (): SessionSummary[] =>
-    live().map((row) => provider.summarise(row, coordinator.working, contextPercent.get(row.id)))
+    live().map((row) => {
+      const percent = contextPercent.get(row.id)
+      const model = modelName.get(row.id)
+      return provider.summarise(row, coordinator.working, {
+        ...(percent === undefined ? {} : { contextPercent: percent }),
+        ...(model === undefined ? {} : { model }),
+      })
+    })
 
   /** Tell the renderer the list, when it changed: the vault's, or `remote`'s
    *  as Holi lets go of it. */
@@ -229,6 +245,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     if (encoded === lastPushed) return
     lastPushed = encoded
     deps.emit(remote, 'sessions', next)
+    if (remote === current?.remote) deps.publish?.('sessions', next)
   }
 
   const targetOf = (c: Current): VaultCliTarget => ({
@@ -311,6 +328,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     }
     // Nor use any more context; resumed, it says so again at its first event.
     for (const id of contextPercent.keys()) if (!liveIds.has(id)) contextPercent.delete(id)
+    for (const id of modelName.keys()) if (!liveIds.has(id)) modelName.delete(id)
 
     let wantsRecheck = false
     for (const row of liveRows) {
@@ -416,7 +434,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
       return opened.ok ? { ok: true, sessionId: res.id, terminalId: opened.terminalId } : opened
     },
 
-    async launch({ name, prompt, model, allow }) {
+    async launch({ name, prompt, model, allow, appendSystemPrompt }) {
       const c = await ensureCurrent()
       if (c === null) return noVault
       const res = await provider.cli.startBg(targetOf(c), {
@@ -424,6 +442,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
         prompt,
         ...(model === undefined ? {} : { model }),
         ...(allow === undefined ? {} : { allow }),
+        ...(appendSystemPrompt === undefined ? {} : { appendSystemPrompt }),
       })
       if (!res.ok) return res
       await refresh()
@@ -513,6 +532,8 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
       const percent = provider.readContextPercent(status)
       if (percent === null) contextPercent.delete(jobId)
       else contextPercent.set(jobId, percent)
+      const model = provider.readModelName(status)
+      if (model !== null) modelName.set(jobId, model)
       push()
     },
 
@@ -577,6 +598,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     bracketed.clear()
     unprompted.clear()
     contextPercent.clear()
+    modelName.clear()
     if (idleRecheck !== null) {
       clearTimeout(idleRecheck)
       idleRecheck = null

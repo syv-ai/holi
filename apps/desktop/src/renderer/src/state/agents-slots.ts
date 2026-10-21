@@ -16,9 +16,12 @@ export interface AgentsSelection {
 
 export const agentsSelectionAtom = atom<AgentsSelection | null>(null)
 
-/** The running plugins' additions, each with its plugin's id, in list order. */
+/** The running plugins' additions, each with its plugin's id, by `order`
+ *  (then list order). */
 export const agentsSlotsAtom = atom((get): readonly (AgentsSlot & { plugin: string })[] =>
-  get(runningPluginsAtom).flatMap((p) =>
-    p.agentsSlot === undefined ? [] : [{ ...p.agentsSlot, plugin: p.info.id }],
-  ),
+  get(runningPluginsAtom)
+    .flatMap((p) => (p.agentsSlot === undefined ? [] : [{ ...p.agentsSlot, plugin: p.info.id }]))
+    .map((slot, i) => ({ slot, i }))
+    .sort((a, b) => (a.slot.order ?? 200) - (b.slot.order ?? 200) || a.i - b.i)
+    .map(({ slot }) => slot),
 )

@@ -43,6 +43,7 @@ describe('parseListing', () => {
         pid: 4242,
         status: 'busy',
         state: 'working',
+        startedAt: LIVE.startedAt,
       },
     ])
   })
@@ -151,7 +152,7 @@ describe('claude-cli', () => {
     }
   })
 
-  it("starts a scheduled run or a Holi with its model, rules and who it is, a plain option ending the rules", async () => {
+  it('starts a scheduled run or a Holi with its model, rules and who it is, a plain option ending the rules', async () => {
     const calls: string[][] = []
     const cli = createClaudeCli({
       resolveBin: () => '/c',

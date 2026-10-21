@@ -2,7 +2,7 @@
 /**
  * Fill a vault clone with demo content that shows Holi's features: the editor's
  * blocks and marks, the board's tasks, a daily note, Holis to send documents
- * to, a scheduled Holi and a scheduled agent.
+ * to, and automations, one of them a Holi's.
  *
  *   node apps/desktop/scripts/seed-demo.mjs <vault clone> [--yes]
  *
@@ -237,8 +237,9 @@ Done: Settings → Theme.`,
 ## Next steps
 `,
 
-  // Holis: agents you send a document to (docs/features/holis.md).
-  '.holi/holis/proposal.yaml': `# Sent a customer note, writes a proposal next to it.
+  // Holis: agents with a soul and a memory, sent a document or run by an
+  // automation (docs/features/holis.md). Each is a folder.
+  '.holi/holis/proposal/holi.yaml': `# Sent a customer note, writes a proposal next to it.
 name: Proposal
 mascot: rocket
 description: Turns a customer note into a proposal
@@ -247,12 +248,18 @@ accepts:
   - kunder/**/*.md
 allow:
   - Edit(kunder/**)
-instructions: |
-  Write a proposal for the customer in the note you are sent, following
-  Templates/Proposal layout.md. Save it beside the note as "Proposal.md",
-  then report its path with \`holi holis report\`.
 `,
-  '.holi/holis/meeting.yaml': `# Sent a meeting note, files its action items as tasks.
+  '.holi/holis/proposal/SOUL.md': `# Soul
+
+## Standing instructions
+
+- Write a proposal for the customer in the note you are sent, following
+  Templates/Proposal layout.md.
+- Save it beside the note as "Proposal.md".
+`,
+  '.holi/holis/proposal/MEMORY.md': `- ${iso(day(-3))} · Prices are quoted in DKK, excluding VAT
+`,
+  '.holi/holis/meeting/holi.yaml': `# Sent a meeting note, files its action items as tasks.
 name: Meeting
 mascot: frog
 description: Files a task for each action item in a meeting note
@@ -261,25 +268,32 @@ accepts:
 allow:
   - Edit(Meetings/**)
   - Edit(**/task.*.md)
-instructions: |
-  For every unchecked action item in the meeting note, create a task file
-  (see the using-tasks skill) in the folder the item belongs to, linking back
-  to the meeting. Tick the item in the note once its task exists.
 `,
-  // A scheduled Holi: shared work on a clock, meant for the cloud.
-  '.holi/holis/housekeeping.yaml': `name: Housekeeping
+  '.holi/holis/meeting/SOUL.md': `# Soul
+
+## Standing instructions
+
+- For every unchecked action item in the meeting note, create a task file
+  (see the using-tasks skill) in the folder the item belongs to, linking back
+  to the meeting.
+- Tick the item in the note once its task exists.
+`,
+  '.holi/holis/housekeeping/holi.yaml': `name: Housekeeping
 mascot: robot
-description: Tidies the vault every Sunday evening
-cron: '0 20 * * 0'
+description: Keeps the vault tidy
 allow:
   - Edit(**/task.*.md)
-instructions: |
-  Find done tasks older than 30 days and move them to Archive/, keeping their
-  folders. Fix wiki-links that point at a moved or renamed note.
+`,
+  '.holi/holis/housekeeping/SOUL.md': `# Soul
+
+## Standing instructions
+
+- Move, never delete. Keep a moved note's folders.
+- Fix wiki-links that point at a moved or renamed note.
 `,
 
-  // A scheduled agent on this machine (docs/features/scheduled-agents.md).
-  // It does nothing until someone turns it on in Settings → Schedules.
+  // Automations on this machine (docs/features/scheduled-agents.md). They do
+  // nothing until someone turns them on in the Agents view.
   '.holi/schedules/morning-brief.md': `---
 name: Morning brief
 cron: '0 8 * * 1-5'
@@ -290,6 +304,15 @@ allow:
 
 Read today's daily note and the board. Write a short brief at the top of the
 daily note: what is due today, what is late, and what changed since yesterday.
+`,
+  // One a Holi carries out: its habit.
+  '.holi/schedules/sunday-tidy.md': `---
+name: Sunday tidy
+cron: '0 20 * * 0'
+holi: housekeeping
+---
+
+Find done tasks older than 30 days and move them to Archive/.
 `,
 }
 

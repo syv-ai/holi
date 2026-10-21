@@ -1,14 +1,18 @@
 # Sidebar
 
-The sidebar sits on the window's own ground, flush beside the content, with one hairline between
-them. It has two modes, **Documents** and **Agents**, and stays deliberately small: the vault, the
+The sidebar sits on the window's own ground, and the content floats beside it as one rounded panel
+(the content panel). It has two modes, **Documents** and **Agents**, and stays deliberately small: the vault, the
 mode, the mode's own list, and who is signed in. Everywhere else is one keystroke away in the
 [command palette](command-palette.md) (⌘P, ⌘⇧P).
 
 ## How it works
 
 - **Vault switcher** (after shadcn's team switcher), the full width of the sidebar: the vault's
-  initial on a tile, its name and owner, and a menu of the vaults with Add vault.
+  initial on a tile, its name and owner, and a menu of the vaults with Add vault. It sits just
+  under the window's band.
+- **The window's band** is the sidebar's top row: on macOS the traffic lights, then the sidebar's
+  toggle beside them, the rest of the row a handle to drag the window by. Fullscreen hides the
+  lights, and main says so (`window:fullscreen`), so the toggle moves to the band's start.
 - **Mode toggle** (`features/nav/ModeToggle.tsx`): Documents and Agents as two wide `Tabs`
   segments, the active one raised in place, with no thumb travelling between them: it is pressed
   all day, and a switch that moves is one that lags. Arrow keys move it. The Agents segment reports the
@@ -19,21 +23,25 @@ mode, the mode's own list, and who is signed in. Everywhere else is one keystrok
   back, since the panes are where it opens.
 - **The Agents side is a plugin's.** `RendererPlugin.agentsMode` gives a sidebar, a main view and a
   status atom. In Agents mode the sidebar body is its sidebar, and its view covers the panes, which
-  stay mounted underneath so nothing open is lost. The agent plugin provides it: the vault's
-  scheduled Holis and [Holis](holis.md), then its live background sessions by what they need from you
+  stay mounted underneath so nothing open is lost. The agent plugin provides it: the Inbox, then its live background sessions under Sessions
   ([agent sessions](agent-sessions.md)); with no plugin providing it there is one mode and no
   toggle. **Other plugins add to it without the agent knowing them**: `RendererPlugin.agentsSlot`
-  gives rows for its sidebar, a main view for those rows and a status the toggle adds in. What is
+  gives a row for the top group beside the Inbox (`nav`: [Automations](scheduled-agents.md)), a
+  section (`sidebar`: [Holis](holis.md)) placed by its `order` (the sessions are at 100; a slot with
+  none comes after them, as chat does), rows in the Inbox (`inbox`), a main view for its rows and
+  a status the toggle adds in. What is
   shown is core's `agentsSelectionAtom`, `{owner, id}`, so a plugin's row opens its own view. The
   optional [chat](chat.md) plugin is one.
-- **Documents** is three destinations, then what you pinned, then the files:
+- **Documents** is a search field and two destinations, then what you pinned, then the files:
+  - **Search** is a field at the top (a grey fill, as every text field is) that opens the
+    [command palette](command-palette.md) (⌘P): files, notes and commands. It is a press, not a
+    field that filters here, so there is one search and not two.
   - **Home** opens the vault's [library](home.md), always. The "Home is" setting decides what a
     vault opens on, not where this row goes: a row named Home that opened the board read as a
     broken link.
   - **Board** opens the [board](tasks.md) and shows how many tasks are open (in the destructive
     colour when one is late). Under the pointer or focus the count gives way to a **+** that opens
     the board and starts a task in Todo; it is its own control beside the row, not inside it.
-  - **Search** opens the [command palette](command-palette.md) (⌘P): files, notes and commands.
   - **Pinned** is absent until something is pinned. A row's context menu in the tree pins or
     unpins it (Pin to Sidebar). Pins are per vault and machine-local (`state/pins.ts`, local
     storage): what one person keeps at hand is not a decision about the vault. A pin whose path
@@ -41,7 +49,8 @@ mode, the mode's own list, and who is signed in. Everywhere else is one keystrok
   - **Files** is the [file tree](file-tree.md) under a band with two controls: "+" makes a note,
     and "⋯" holds the rest (New folder, New task, what an app makes, the task-files and
     hidden-files filters as checkable rows, Collapse all). The everyday act is one press,
-    everything else one menu away.
+    everything else one menu away. A folder can be coloured on this machine, and shows how many
+    files it holds ([file tree](file-tree.md)).
 - **Type and alignment.** Every row is `text-nav` (13px on an 18px line, medium, muted until
   hovered or current), a step under body text so the chrome reads quieter than the page; section
   labels are `text-xs`. A row shows its press on pointer-down; current is a fill, never an outline.
@@ -54,9 +63,21 @@ mode, the mode's own list, and who is signed in. Everywhere else is one keystrok
 - **Settings in front:** the sidebar's body becomes Back and Settings' sections (see
   [settings](settings.md)).
 
-**The seam is the toggle** (after ReUI's app shell, `DrawerShell`'s `onToggle`). The hairline
-between sidebar and content shows a grip under the pointer: dragging it resizes the sidebar, a
-click without moving hides it, and hidden, the seam stays at the window's edge with its grip
-showing, so a click brings it back. ⌘B toggles too, and for the keyboard the seam takes Enter or
-Space to toggle and the arrow keys to resize. There is no separate toggle button: it would be a
-second control for one thing, and the seam is where the sidebar's edge already is.
+**The toggle sits beside the window's lights** (`features/nav/NavRail.tsx`, `SidebarToggle`), where
+the window's own controls already are, and ⌘B does the same. Hidden, the sidebar collapses to a
+80px **rail** rather than to nothing: the lights and the toggle at its top, the two modes, Home, the
+board and Search as icons with tooltips (a mode button switches the mode without opening the
+sidebar), and the avatar's menu at its foot. The rail slides in as the sidebar slides out, on the
+drawer's own width transition. 80px is the lights' width and the panel's 8px margin, so they never sit
+over the content panel. The sidebar's edge still resizes it by dragging, and the arrow keys.
+
+## Rejected
+
+- The seam as the toggle, with no button: a hairline is hard to find as a control, and hidden, the
+  sidebar left only a grip at the window's edge. A button beside the window's own controls is
+  where people look for one.
+- Hiding the sidebar to nothing: the destinations went with it, and the lights then sat over the
+  first pane's tabs.
+- The content flush beside the sidebar on one hairline: sidebar and page read as one surface. A
+  panel floating on the ground tells them apart at a glance, as the knowledge bases this follows
+  do.

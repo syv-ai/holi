@@ -22,3 +22,7 @@ export {
 export { pluginMark } from './marks'
 export { SettingCard } from './SettingCard'
 export { SectionLabel } from './SectionLabel'
+export { PixelMascot, type MascotStatus } from './pixel-mascot/PixelMascot'
+export { AmbientBackdrop, AmbientGrain } from './AmbientBackdrop'
+export { IconTile } from './IconTile'
+export { OptionCard } from './OptionCard'

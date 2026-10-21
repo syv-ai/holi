@@ -43,6 +43,10 @@ export interface AgentSession {
   /** How much of its context window is used, 0 to 100, from its status line.
    *  Absent before its first message and after a `/clear`. */
   contextPercent?: number
+  /** Its model in Claude Code's words (`Opus 5.5`), once its status line ran. */
+  model?: string
+  /** When it started, epoch ms. */
+  startedAt?: number
 }
 
 /**

@@ -71,6 +71,8 @@ than removed, so an undone rename finds its place again.
 
 **Icons.** A file's type glyph is coloured by extension; git's own files show the Git mark. Any row (note, folder, binary) can instead carry one emoji from the vault's icon map: `.holi/settings/icons.yaml`, committed, under a per-key `.holi/settings/icons.local.yaml`. Set it with Edit Icon; an empty field removes the entry. Keys are normalized vault paths, written back sorted; a key outside the vault is dropped. The value must be exactly one emoji (either variation-selector spelling, or a lone pictograph) and anything else is ignored. The note's tab shows the same icon. The Icons settings section lists every entry and marks those whose path is gone.
 
+**Colours and counts.** A folder can be given a colour from its row menu (Colour, eight categorical hues and No colour). Its glyph takes the hue with a light fill of it, so a person finds their folders at a glance, as a knowledge base's coloured folders do. Colours are per vault and machine-local (`state/folder-colours.ts`, local storage, keyed by remote), as pins are: how one person marks their folders is not a decision about the vault. A colour names a path, so a renamed folder loses it until it is coloured again, and an undone rename brings it back. An emoji from the icon map still wins over the glyph. Every folder also shows, at its row's end, how many files it holds at any depth, of those the tree shows.
+
 ## Rules
 
 - The tree is a view of the snapshot. It never caches vault data.
@@ -88,6 +90,7 @@ than removed, so an undone rename finds its place again.
 - ⌘-click as the selection toggle: ⌘-click already opens a file in a new pane, as it does on a link in the editor.
 - An icon in the note's frontmatter: it cannot serve folders, binaries, agent instructions or local markdown, and two sources need a precedence rule.
 - An emoji in the filename: a wiki-link would need the icon to be written.
+- Folder colours in the committed icon map: a colour is how one person finds their own folders, and a committed one would repaint everyone's tree.
 - Fixed hidden roots for `AGENTS.md` and friends: the agent's instructions should always be visible.
 - OS-trash delete: git history is the recovery path, and the link preview is the safeguard.
 - Waiting for a cloud file to download on drop: the fix belongs in Finder.
@@ -101,6 +104,7 @@ than removed, so an undone rename finds its place again.
 - `apps/desktop/src/renderer/src/features/explorer/useTreeProjection.ts`, `lib/tree-data.ts`: snapshot to tree data, filters
 - `apps/desktop/src/renderer/src/features/explorer/useExplorerActions.ts`, `lib/tree-actions.ts`: clipboard, delete preview, planned moves
 - `apps/desktop/src/renderer/src/composites/file-icons.tsx`, `features/explorer/EditIcon.tsx`: glyphs and the icon dialog
+- `apps/desktop/src/renderer/src/state/folder-colours.ts`, `lib/folder-colour.ts`: folder colours and their classes
 - `packages/shared/src/path-safety.ts`: `isHiddenPath`, `isLocalOnlyPath`, `isKeepFile`
 - `packages/shared/src/icon-map.ts`: icon map parsing and validation
 - `apps/desktop/src/main/vault/vault-store.ts`, `vault-files.ts`, `git-ignored.ts`: scan, non-content rules, ignored paths
