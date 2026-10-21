@@ -6,7 +6,7 @@
 import { atom } from 'jotai'
 import {
   activeRemoteAtom,
-  openPathAtom,
+  requestArrivalAtom,
   type PluginEventHandler,
   type PluginStore,
 } from '@/plugin-api'
@@ -23,10 +23,13 @@ const EMPTY: InboxView = { entries: [], unread: 0 }
 
 export const inboxAtom = atom<InboxView>(EMPTY)
 
-/** Open what an entry points at: its note or file, else its session. */
-export const openInboxEntryAtom = atom(null, (_get, set, entry: InboxEntry): void => {
-  if (entry.path !== undefined) set(openPathAtom, entry.path)
-  else if (entry.session !== undefined) {
+/** Open what an entry points at: its note or file, as any arrival main asks
+ *  for (beside the agent when it has the focus), else its session. */
+export const openInboxEntryAtom = atom(null, (get, set, entry: InboxEntry): void => {
+  const remote = get(activeRemoteAtom)
+  if (entry.path !== undefined) {
+    if (remote !== null) set(requestArrivalAtom, { remote, path: entry.path })
+  } else if (entry.session !== undefined) {
     void set(openSessionAtom, entry.session).then((res) => {
       if (!res.ok) console.warn(`[agent] open ${entry.session} failed: ${res.message}`)
     })

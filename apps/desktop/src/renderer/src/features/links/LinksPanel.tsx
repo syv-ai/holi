@@ -15,7 +15,7 @@ import { pathLabel } from '@/composites/file-icons'
 import { Button } from '@/primitives'
 import { trpc } from '@/lib/trpc'
 import { useVaultScan } from '@/lib/use-vault-scan'
-import { historyOpenAtom, historyTargetPathAtom } from '@/state/history'
+import { historyTargetPathAtom } from '@/state/history'
 import { linkFingerprintAtom, linksOpenAtom, type NoteLinks } from '@/state/links'
 import { openPathAtom, openSurfaceAtom } from '@/state/surfaces'
 import { activeRemoteAtom } from '@/state/vaults'
@@ -28,7 +28,6 @@ const ROW =
 
 export function LinksPanel() {
   const open = useAtomValue(linksOpenAtom)
-  const historyOpen = useAtomValue(historyOpenAtom)
   const path = useAtomValue(historyTargetPathAtom)
   const remote = useAtomValue(activeRemoteAtom)
   const fingerprint = useAtomValue(linkFingerprintAtom)
@@ -56,7 +55,7 @@ export function LinksPanel() {
     <DrawerShell
       id="links"
       side="right"
-      open={open && !historyOpen && path !== null}
+      open={open && path !== null}
       label="Links"
       header={<DrawerTitle title="Links" subtitle={path} />}
       actions={[{ icon: Waypoints, label: 'Open the graph', onSelect: () => openSurface('graph') }]}

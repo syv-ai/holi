@@ -6,20 +6,17 @@
  */
 import { atom } from 'jotai'
 import { trpc } from '../lib/trpc'
-import { historyOpenAtom } from './history'
+import { drawerOpenAtom } from './right-drawer'
 import { snapshotAtom } from './vaults'
 
 export type NoteLinks = Awaited<ReturnType<typeof trpc.notes.links.query>>
 
-export const linksOpenAtom = atom(false)
+export const linksOpenAtom = drawerOpenAtom('links')
 
-/** Open or close the drawer. The right edge holds one drawer at a time:
- *  opening this closes History, and Comments stays hidden behind it
- *  (`toggleCommentsAtom` closes this one in turn). */
+/** Open or close the drawer, in place of whichever right-hand drawer was
+ *  open (`right-drawer.ts`). */
 export const toggleLinksAtom = atom(null, (get, set, open?: boolean) => {
-  const next = open ?? !get(linksOpenAtom)
-  set(linksOpenAtom, next)
-  if (next) set(historyOpenAtom, false)
+  set(linksOpenAtom, open ?? !get(linksOpenAtom))
 })
 
 /**
