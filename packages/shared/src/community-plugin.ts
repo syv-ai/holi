@@ -15,7 +15,9 @@
  * Main reads this grammar when it installs and pins; the renderer reads it to
  * know which files a plugin opens. Pure and browser-safe.
  */
+import { PLUGINS_FILE, PLUGINS_LOCAL_FILE } from './plugin-settings'
 import { isPluginId } from './plugins'
+import type { FileMeta } from './types'
 
 /** The manifest's name, in the plugin's folder. */
 export const PLUGIN_MANIFEST_FILE = 'holi-plugin.json'
@@ -53,6 +55,22 @@ export function parseReleaseTag(tag: string): { path: string; version: string } 
 
 /** Where a vault keeps its pins. */
 export const PLUGIN_PINS_DIR = '.holi/plugins'
+
+/**
+ * What on disk decides which community plugins run in a vault, as one string
+ * that changes when it does: the pins and the two plugins settings files.
+ */
+export function communityPluginsSignature(files: readonly FileMeta[]): string {
+  return files
+    .filter(
+      (f) =>
+        f.path.startsWith(`${PLUGIN_PINS_DIR}/`) ||
+        f.path === PLUGINS_FILE ||
+        f.path === PLUGINS_LOCAL_FILE,
+    )
+    .map((f) => `${f.path}@${f.updatedAt}`)
+    .join('|')
+}
 
 /** A pin's path in the vault. */
 export function pluginPinPath(id: string): string {
@@ -98,6 +116,27 @@ export interface PluginManifest {
    *  `SKILL.md` and what it references), copied to the vault's
    *  `.claude/skills/<folder name>/` when the vault turns the plugin on. */
   skills?: string[]
+  /** Commands for the vault's agent, by name: each an executable file in the
+   *  plugin, linked into `PLUGIN_COMMANDS_DIR` while the plugin runs in the
+   *  vault. That folder comes last on the agent's `PATH`, so a plugin can add
+   *  a command but never stand in for one the machine already has. */
+  bin?: Record<string, string>
+}
+
+/** Where a vault links its running plugins' commands, on the agent's `PATH`:
+ *  machine state, and `.local.` so it never syncs, since each link points at
+ *  this machine's copy of the plugin. */
+export const PLUGIN_COMMANDS_DIR = '.holi/state/commands.local.d'
+
+/** Holi's own command, which no plugin may name one of its own. */
+const RESERVED_COMMANDS = ['holi']
+
+/** A name fit for a command on `PATH`: lowercase, no path, no shell meaning. */
+const COMMAND_NAME = /^[a-z0-9][a-z0-9._-]*$/
+
+/** Can a plugin's command be called `name`? */
+export function isCommandName(name: unknown): name is string {
+  return typeof name === 'string' && COMMAND_NAME.test(name) && !RESERVED_COMMANDS.includes(name)
 }
 
 export interface PluginPin extends PluginManifest {
@@ -183,6 +222,7 @@ export function parsePluginManifest(json: unknown, path = ''): Parsed<PluginMani
     skills,
     folder,
     apps,
+    bin,
   } = json
   const opens = json.opens ?? []
 
@@ -220,8 +260,10 @@ export function parsePluginManifest(json: unknown, path = ''): Parsed<PluginMani
     problems.push(
       'apps must be a list of folders inside the plugin ending in .app, like apps/Notes.app',
     )
-  if (!opensSomething && apps === undefined && skills === undefined)
-    problems.push('the plugin must do something: list opens, give a folder, or ship apps or skills')
+  if (!opensSomething && apps === undefined && skills === undefined && bin === undefined)
+    problems.push(
+      'the plugin must do something: list opens, give a folder, or ship apps, skills or commands',
+    )
   if (setup !== undefined) problems.push(...commandProblems('setup', setup, []))
   if (opensSomething || serve !== undefined)
     problems.push(...commandProblems('serve', serve, ['{port}']))
@@ -235,6 +277,23 @@ export function parsePluginManifest(json: unknown, path = ''): Parsed<PluginMani
     (!isStringList(skills) || skills.some((p) => !isPluginRelativePath(p)))
   )
     problems.push('skills must be a list of folders inside the plugin, like skills/prezzi')
+  if (bin !== undefined) {
+    if (!isRecord(bin) || Object.keys(bin).length === 0)
+      problems.push(
+        'bin must map command names to files in the plugin, like {"dashctl": "bin/dashctl"}',
+      )
+    else
+      for (const [name, file] of Object.entries(bin)) {
+        if (!isCommandName(name))
+          problems.push(
+            name === 'holi'
+              ? "bin: holi is Holi's own command"
+              : `bin: "${name}" is not a command name (lowercase letters, digits, . _ -)`,
+          )
+        if (typeof file !== 'string' || !isPluginRelativePath(file))
+          problems.push(`bin: ${name} must name a file inside the plugin, like bin/${name}`)
+      }
+  }
 
   if (problems.length > 0) return { ok: false, problems }
   const manifest: PluginManifest = {
@@ -250,6 +309,7 @@ export function parsePluginManifest(json: unknown, path = ''): Parsed<PluginMani
   if (setup !== undefined) manifest.setup = setup as string[]
   if (ignore !== undefined) manifest.ignore = ignore as string[]
   if (skills !== undefined) manifest.skills = skills as string[]
+  if (bin !== undefined) manifest.bin = { ...(bin as Record<string, string>) }
   if (folder !== undefined) {
     const f = folder as { suffix: string; entry: string }
     manifest.folder = { suffix: f.suffix, entry: f.entry }

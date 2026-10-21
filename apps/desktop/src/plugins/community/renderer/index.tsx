@@ -24,6 +24,7 @@ import { PluginFrame } from './PluginFrame'
 import { PluginsSettings } from './PluginsSettings'
 import {
   followRows,
+  refreshRows,
   rowsAtom,
   serversAtom,
   setupLogsAtom,
@@ -204,6 +205,11 @@ export const communityRenderer: RendererPlugin = {
         // A null line is setup beginning: its output starts over.
         [id]: line === null ? [] : [...(all[id] ?? []), line].slice(-500),
       }))
+    },
+    // Main linked the agent's commands again: the rows say what it refused.
+    commands: ({ remote }, store) => {
+      if (remote !== store.get(activeRemoteAtom)) return
+      void refreshRows(remote, store)
     },
   },
 }

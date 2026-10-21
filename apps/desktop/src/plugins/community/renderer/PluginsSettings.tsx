@@ -154,6 +154,9 @@ export function PluginsSettings({ remote }: { remote: string }): React.JSX.Eleme
                   {row.description !== '' && <>{row.description} </>}
                   {STATUS[row.status]}
                   {row.install?.kind === 'dev' && <> · from {row.install.folder}</>}
+                  {row.commandsNote !== null && (
+                    <span className="text-amber-400"> {row.commandsNote}</span>
+                  )}
                 </>
               }
               control={

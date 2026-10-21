@@ -17,6 +17,8 @@
  */
 import { execFile } from 'node:child_process'
 import { accessSync, constants } from 'node:fs'
+import { join } from 'node:path'
+import { PLUGIN_COMMANDS_DIR } from '@holi/shared'
 import { resolveBin } from '../../../../main/plugin-api'
 import type { TerminalCommand } from '../provider'
 
@@ -35,6 +37,13 @@ export interface AgentEnvOpts {
    * *text*: with `holi` on `PATH` the agent types the bare name.
    */
   binDir?: string | null
+  /**
+   * The vault's community plugin commands (`PLUGIN_COMMANDS_DIR`), **appended
+   * to `PATH`**: last, so a plugin adds a command but never stands in for one
+   * the machine has. Linking refuses a name already on `PATH`, so nothing
+   * there goes unreached.
+   */
+  commandsDir?: string | null
   /**
    * Holi's own Claude Code config directory, as `$CLAUDE_CONFIG_DIR`.
    *
@@ -98,6 +107,9 @@ export function buildAgentEnv(
   // inherited PATH would otherwise win under a name the gate trusts.
   if (opts.binDir) {
     env.PATH = env.PATH ? `${opts.binDir}:${env.PATH}` : opts.binDir
+  }
+  if (opts.commandsDir) {
+    env.PATH = env.PATH ? `${env.PATH}:${opts.commandsDir}` : opts.commandsDir
   }
   return env
 }
@@ -199,9 +211,14 @@ export function parseBackgrounded(stdout: string): string | null {
   return match?.[1] ?? null
 }
 
-/** The environment every `claude` Holi runs for a vault gets. */
+/** The environment every `claude` Holi runs for a vault gets. It is also the
+ *  vault's supervisor's, which its background sessions inherit. */
 export function cliEnv(base: NodeJS.ProcessEnv, target: VaultCliTarget): Record<string, string> {
-  return buildAgentEnv(base, { configDir: target.configDir, binDir: target.binDir })
+  return buildAgentEnv(base, {
+    configDir: target.configDir,
+    binDir: target.binDir,
+    commandsDir: join(target.root, PLUGIN_COMMANDS_DIR),
+  })
 }
 
 /** The binary when it is not on the machine. */
