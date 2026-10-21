@@ -14,7 +14,7 @@ import { join } from 'node:path'
 import { merge3, vaultRelPath } from '@holi/shared'
 import { writeAtomic } from '../vault-files'
 import { runMerges, shippedFiles } from './seed'
-import { readSeedState, recordSeeded, untouched } from './state'
+import { readSeedState, recordRelease, recordSeeded, untouched } from './state'
 import type { SeedContribution } from './types'
 
 /** What `holi skills update` did, one list per outcome, by vault path. */
@@ -76,10 +76,19 @@ async function removeStaged(root: string, rel: string): Promise<void> {
  * conflict: merging the vault's unresolved text against that new base would
  * quietly keep it and drop Holi's changes. Merged files are merged again at
  * the end: a hook script this added is wired in the same run.
+ *
+ * `release` is the running Holi's version, recorded (`SeedState.release`)
+ * when the run brought something in and left no conflict: only then are the
+ * vault's shipped files this release's.
+ *
+ * `only` limits the run to those paths, as the update on open does with what
+ * `pendingShipped` found: a file that differs with no base on this machine is
+ * a conflict when someone asks, but nothing to stage unasked.
  */
 export async function updateShipped(
   root: string,
   contributions: readonly SeedContribution[],
+  opts: { release?: string; only?: readonly string[] } = {},
 ): Promise<UpdateReport> {
   const report: UpdateReport = {
     updated: [],
@@ -90,8 +99,10 @@ export async function updateShipped(
     deleted: [],
   }
   const state = await readSeedState(root)
+  const only = opts.only === undefined ? null : new Set(opts.only)
 
   for (const [rel, shipped] of shippedFiles(contributions)) {
+    if (only !== null && !only.has(rel)) continue
     const onDisk = await readFile(join(root, rel), 'utf8').catch(() => null)
     const record = state.files[rel]
     let write: string | null = null
@@ -148,8 +159,19 @@ export async function updateShipped(
   }
 
   await runMerges(root, contributions)
+  if (opts.release !== undefined && changedBy(report).length > 0 && report.conflicts.length === 0) {
+    await recordRelease(root, opts.release)
+  }
   return report
 }
+
+/** What an update wrote into the vault's own files: replaced, added or
+ *  merged, by vault path. */
+export const changedBy = (report: UpdateReport): string[] => [
+  ...report.updated,
+  ...report.added,
+  ...report.merged,
+]
 
 /**
  * What this release would bring the vault, without writing anything: the

@@ -14,6 +14,7 @@ import { execFile } from 'node:child_process'
 import { appendFile, lstat, mkdir, mkdtemp, readdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
+import { notePathOfComments } from '@holi/shared'
 
 /** A git command that ran and failed. */
 export class GitError extends Error {
@@ -125,7 +126,9 @@ export interface RepoStatus {
 /** A conflict names its paths, because the reconcile prompt is built from them. */
 export type PullResult =
   | { kind: 'up-to-date' }
-  | { kind: 'merged'; commits: number }
+  /** `from` and `to` are HEAD before and after: what the merge brought in is
+   *  the difference between them. */
+  | { kind: 'merged'; commits: number; from: string; to: string }
   | { kind: 'conflict'; paths: string[] }
 
 export type PushResult =
@@ -400,29 +403,7 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
    * with it.
    */
   async function pull(): Promise<PullResult> {
-    const target = (await defaultBranch()) ?? 'HEAD'
-    await runGit(root, ['fetch', 'origin'], opts)
-
-    const before = await runGit(root, ['rev-parse', 'HEAD'], opts)
-    const incoming = await runGit(root, ['rev-list', '--count', `HEAD..origin/${target}`], opts)
-    if (incoming === '0') return { kind: 'up-to-date' }
-
-    const merge = await tryGit(root, ['merge', '--no-edit', `origin/${target}`], opts)
-    if (!merge.ok) {
-      // `--diff-filter=U` is the unmerged set — the paths git could not decide.
-      const raw = await runGit(root, ['diff', '--name-only', '--diff-filter=U', '-z'], opts).catch(
-        () => '',
-      )
-      const paths = raw.split('\0').filter((p) => p !== '')
-      await abortMerge()
-      return { kind: 'conflict', paths }
-    }
-
-    const after = await runGit(root, ['rev-parse', 'HEAD'], opts)
-    return {
-      kind: 'merged',
-      commits: Number(await runGit(root, ['rev-list', '--count', `${before}..${after}`], opts)),
-    }
+    return mergeRemote({ abortOnConflict: true })
   }
 
   /**
@@ -431,6 +412,14 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
    * agent (running inside this state) can resolve them and finish the merge.
    */
   async function remerge(): Promise<PullResult> {
+    return mergeRemote({ abortOnConflict: false })
+  }
+
+  async function mergeRemote({
+    abortOnConflict,
+  }: {
+    abortOnConflict: boolean
+  }): Promise<PullResult> {
     const target = (await defaultBranch()) ?? 'HEAD'
     await runGit(root, ['fetch', 'origin'], opts)
 
@@ -440,19 +429,62 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
 
     const merge = await tryGit(root, ['merge', '--no-edit', `origin/${target}`], opts)
     if (!merge.ok) {
-      const raw = await runGit(root, ['diff', '--name-only', '--diff-filter=U', '-z'], opts).catch(
-        () => '',
-      )
-      const paths = raw.split('\0').filter((p) => p !== '')
-      // No abortMerge() — leave the conflicted tree in place for the reconcile.
-      return { kind: 'conflict', paths }
+      const paths = await settleKeptSidecars()
+      if (paths.length > 0 || !(await isMerging())) {
+        if (abortOnConflict) await abortMerge()
+        // Left in the tree for the reconcile otherwise.
+        return { kind: 'conflict', paths }
+      }
+      // Every conflict was a sidecar kept: the merge is whole, and committed
+      // as `git merge` commits one it finishes itself, with no pre-commit
+      // hook. Its changes were committed on both sides already, and the
+      // hook would hold this merge alone to a gate (large files) the clean
+      // ones skip. The transforms would keep the sidecar anyway: relink
+      // deletes none (`followNoteComments`).
+      await runGit(root, [...(await identityArgs()), 'commit', '--no-verify', '--no-edit'], opts)
     }
 
     const after = await runGit(root, ['rev-parse', 'HEAD'], opts)
     return {
       kind: 'merged',
       commits: Number(await runGit(root, ['rev-list', '--count', `${before}..${after}`], opts)),
+      from: before,
+      to: after,
     }
+  }
+
+  /**
+   * Settle what a merge left unmerged that has only one answer, and return
+   * the paths still unmerged (`--diff-filter=U`, the paths git could not
+   * decide).
+   *
+   * A note's comment sidecar merges through its driver and never conflicts on
+   * content, but a modify/delete (the note deleted on one side, commented on
+   * on the other) never reaches a driver. The comment is kept: the sidecar
+   * that changed is staged as it is in the tree, which is where git left it.
+   * A thread whose note is gone is detached, not lost
+   * (docs/features/note-comments.md).
+   */
+  async function settleKeptSidecars(): Promise<string[]> {
+    const unmerged = await runGit(root, ['ls-files', '-u', '-z'], opts).catch(() => '')
+    // `<mode> <sha> <stage>\t<path>`: stage 1 base, 2 ours, 3 theirs.
+    const stages = new Map<string, Set<string>>()
+    for (const entry of unmerged.split('\0').filter((e) => e !== '')) {
+      const tab = entry.indexOf('\t')
+      const path = entry.slice(tab + 1)
+      const stage = entry.slice(0, tab).split(' ')[2] ?? ''
+      stages.set(path, (stages.get(path) ?? new Set()).add(stage))
+    }
+    const keep = [...stages]
+      .filter(
+        ([path, s]) => notePathOfComments(path) !== null && s.has('1') && s.has('2') !== s.has('3'),
+      )
+      .map(([path]) => path)
+    if (keep.length > 0) await runGit(root, ['add', '--', ...keep], opts)
+    const raw = await runGit(root, ['diff', '--name-only', '--diff-filter=U', '-z'], opts).catch(
+      () => '',
+    )
+    return raw.split('\0').filter((p) => p !== '')
   }
 
   /**

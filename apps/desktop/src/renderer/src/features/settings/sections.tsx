@@ -30,9 +30,10 @@ import { AccountSection } from './AccountSection'
 import { DescriptorSection } from './DescriptorSection'
 import { IconsSection } from './IconsSection'
 import { ThemeSection } from './ThemeSection'
-import { UpdatesSection } from './UpdatesSection'
+import { UpdatesSection, VaultSkillsSection } from './UpdatesSection'
 import { VaultSection } from './VaultSection'
 import { headingId, SettingsHeading } from '@/composites'
+import { HOLI_UPDATES, VAULT_SKILLS } from './updates-headings'
 import { LIGHT_AND_DARK } from './appearance-headings'
 import { COLLABORATORS, LEAVE_OR_DELETE, WHERE_IT_LIVES } from './vault-headings'
 
@@ -130,9 +131,18 @@ const VAULT_AND_ACCOUNT: readonly SettingsSection[] = [
   {
     id: 'updates',
     label: 'Updates',
-    headings: [],
-    files: [],
-    Component: () => <UpdatesSection />,
+    headings: [heading(HOLI_UPDATES), heading(VAULT_SKILLS)],
+    // Holi's own updates are this machine's; the vault's choice about its
+    // skills is in its settings file.
+    files: [SETTINGS_FILE],
+    Component: () => (
+      <>
+        <SettingsHeading title={HOLI_UPDATES} />
+        <UpdatesSection />
+        <SettingsHeading title={VAULT_SKILLS} />
+        <VaultSkillsSection />
+      </>
+    ),
   },
 ]
 

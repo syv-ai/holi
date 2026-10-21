@@ -609,6 +609,7 @@ describe('listAgenda', () => {
     const [event] = await listAgenda(api, WINDOW)
     expect(event!.attendeeCount).toBe(3)
     expect(event!.organizer).toBe('Jane Doe')
+    expect(event!.organizerEmail).toBe('jane@syv.ai')
   })
 
   it('does not count a meeting room as an attendee', async () => {

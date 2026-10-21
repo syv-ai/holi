@@ -72,12 +72,11 @@ test('the transforms are one row of several switches', async () => {
   const row = screen.getByRole('group', { name: 'Run on every commit' })
   expect(within(row).getAllByRole('switch')).toHaveLength(CORE_TRANSFORMS.length)
 
-  await userEvent.click(within(row).getByRole('switch', { name: /File finished tasks away/ }))
+  await userEvent.click(within(row).getByRole('switch', { name: /Fix links when a file moves/ }))
   // The whole block comes back, not just the switch that moved: a patch naming
   // one transform must not read as an answer about the others.
   expect(onChange).toHaveBeenCalledWith('hooks', {
-    relink: true,
-    'archive-done': true,
+    relink: false,
     'normalize-md': true,
     'shrink-images': true,
     'memory-index': true,
@@ -85,10 +84,10 @@ test('the transforms are one row of several switches', async () => {
 })
 
 test('a transform switch shows the vault’s current answer', () => {
-  setup({ hooks: { ...VAULT_SETTING_DEFAULTS.hooks, relink: false, 'archive-done': true } })
+  setup({ hooks: { ...VAULT_SETTING_DEFAULTS.hooks, relink: false } })
   const row = screen.getByRole('group', { name: 'Run on every commit' })
   expect(within(row).getByRole('switch', { name: /Fix links when a file moves/ })).not.toBeChecked()
-  expect(within(row).getByRole('switch', { name: /File finished tasks away/ })).toBeChecked()
+  expect(within(row).getByRole('switch', { name: /Tidy markdown/ })).toBeChecked()
 })
 
 test('warns about the shared-vault collision on the daily-note row', () => {

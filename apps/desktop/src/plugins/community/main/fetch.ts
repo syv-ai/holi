@@ -11,6 +11,7 @@
 import { mkdir, mkdtemp, readFile, rename, rm, stat } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import {
+  compareVersions,
   parsePluginManifest,
   parseReleaseTag,
   PLUGIN_MANIFEST_FILE,
@@ -25,20 +26,8 @@ export interface GitAccess {
   token(): string | null
 }
 
-/** A semver's parts, for sorting newest first. A pre-release sorts below its
- *  release. */
-function semverKey(version: string): [number, number, number, number] {
-  const [core, pre] = version.split('-', 2)
-  const [a, b, c] = core!.split('.').map(Number)
-  return [a!, b!, c!, pre === undefined ? 1 : 0]
-}
-
-export function newestFirst(a: string, b: string): number {
-  const ka = semverKey(a)
-  const kb = semverKey(b)
-  for (let i = 0; i < ka.length; i++) if (ka[i] !== kb[i]) return kb[i]! - ka[i]!
-  return 0
-}
+/** For sorting versions newest first. */
+export const newestFirst = (a: string, b: string): number => compareVersions(b, a)
 
 /** Every release in a repository, of each plugin in it: one read for all. */
 export async function listReleases(

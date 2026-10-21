@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { ClaudeCli } from '../main/claude/cli'
 import { SIGN_IN_NOTICE } from '../main/claude/config-dir'
 import { isLive, parseListing, readContextPercent, summarise } from '../main/claude/listing'
+import type { SessionChannel } from '../main/claude/messaging'
 import { createAgentSessions, type AgentVault } from '../main/host/sessions'
 import type { AgentTerminals, OpenArgs } from '../main/host/terminals'
 
@@ -67,6 +68,7 @@ function setup(initial: Row[] = []) {
     listTerminal: () => null,
   }
   const sent: Array<[string, unknown]> = []
+  const message = vi.fn(async (_channel: SessionChannel, _text: string) => {})
   const pauses: string[] = []
   const vault: AgentVault = {
     remote: REMOTE,
@@ -90,6 +92,7 @@ function setup(initial: Row[] = []) {
       configure: async () => ({ dir: '/cfg/vault' }),
       takeFirstSpawn: async () => true,
       signInNotice: SIGN_IN_NOTICE,
+      message,
     },
     terminals,
     binDir: () => '/holi/bin',
@@ -104,6 +107,7 @@ function setup(initial: Row[] = []) {
     opened,
     pastes,
     sent,
+    message,
     terminals,
     setListing: (rows: Row[]) => {
       listing = rows
@@ -170,6 +174,35 @@ describe('agent sessions', () => {
     t.setListing([row('aaaaaaaa'), row('bbbbbbbb')])
     await t.sessions.refresh()
     expect(t.sessions.sessions()[1]?.contextPercent).toBeUndefined()
+  })
+
+  it('messages a session through the inbox its hook reported, until it stops', async () => {
+    const inbox = { socket: '/tmp/cc-socks/1.sock', token: 'abc123' }
+    // Reported at SessionStart, before the listing shows the session.
+    const t = setup([row('aaaaaaaa')])
+    await t.attach()
+    t.sessions.noteChannel(REMOTE, 'cccccccc', inbox)
+    t.sessions.noteChannel('someone/else', 'aaaaaaaa', inbox)
+    await expect(t.sessions.message('aaaaaaaa', 'hi')).rejects.toThrow(/not said where/)
+
+    t.setListing([row('aaaaaaaa'), row('cccccccc')])
+    await t.sessions.refresh()
+    await t.sessions.message('cccccccc', 'change the date')
+    expect(t.message).toHaveBeenCalledWith(inbox, 'change the date')
+
+    // Stopped: no longer running, and its inbox is forgotten with it.
+    await t.sessions.stop('cccccccc')
+    await expect(t.sessions.message('cccccccc', 'hi')).rejects.toThrow(/no running session/)
+    t.setListing([row('aaaaaaaa'), row('cccccccc')])
+    await t.sessions.refresh()
+    await expect(t.sessions.message('cccccccc', 'hi')).rejects.toThrow(/not said where/)
+
+    // A write that fails is not tried again until the session reports anew.
+    t.sessions.noteChannel(REMOTE, 'aaaaaaaa', inbox)
+    t.message.mockRejectedValueOnce(new Error('gone'))
+    await expect(t.sessions.message('aaaaaaaa', 'hi')).rejects.toThrow('gone')
+    await expect(t.sessions.message('aaaaaaaa', 'hi')).rejects.toThrow(/not said where/)
+    expect(t.message).toHaveBeenCalledTimes(2)
   })
 
   it('stops a session: it leaves the list', async () => {

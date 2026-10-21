@@ -1,27 +1,148 @@
 #!/usr/bin/env node
-// Holi UserPromptSubmit hook — injects the ONE piece of per-turn state the agent
-// cannot discover itself: the note the user has focused in the editor. Tasks,
-// backreferences and sync state the agent finds with its own native tools
-// (Glob/grep/git); vault conventions and memory guidance live in AGENTS.md.
-// See docs/features/agent-config.md.
+// Holi UserPromptSubmit hook: injects the per-turn state the agent cannot
+// discover itself. The note the user has focused in the editor, and the lines
+// selected in it (numbers only; the agent reads the text). And, in a session
+// Holi has recorded a turn of, the files that changed since that turn ended,
+// which this session did not change: the user's edits, a pull, another session.
+// Tasks, backreferences and sync state the agent finds with its own native
+// tools (Glob/grep/git); vault conventions and memory guidance live in
+// AGENTS.md. See docs/features/agent-config.md.
 //
-// Pure local read (<50 ms): Holi's main process keeps `.holi/state/context.local.json`
-// current, so this never talks to a server. Outside Holi — or with nothing
-// focused — the file is absent and it prints nothing.
+// Local reads and a few git plumbing calls. Holi's main process keeps
+// `.holi/state/context.local.json` current and records where each turn ended
+// in `.holi/state/turns.local.json`, keyed by the session's job id (the name of
+// `$CLAUDE_JOB_DIR`). Outside Holi, with nothing focused, or in a session with
+// no recorded turn, those are absent and it prints nothing for them.
 
-import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { execFileSync } from 'node:child_process'
+import { copyFileSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { basename, join } from 'node:path'
 
 const root = process.env.CLAUDE_PROJECT_DIR || process.cwd()
+const jobDir = process.env.CLAUDE_JOB_DIR
 
-let context = null
-try {
-  context = JSON.parse(readFileSync(join(root, '.holi/state/context.local.json'), 'utf8'))
-} catch {
-  // no editor context (bare CLI, or nothing focused yet) — print nothing
+/** How many changed paths the line names before it says "and N more". */
+const SHOWN = 10
+
+function readJson(rel) {
+  try {
+    return JSON.parse(readFileSync(join(root, rel), 'utf8'))
+  } catch {
+    return null
+  }
 }
 
-if (context?.focusedPath) {
-  process.stdout.write(`Focused note: \`${context.focusedPath}\` (use \`Read\` to view its contents)`)
+/** Plumbing output, or null when git fails (no repo, a sha that is gone).
+ *  Never takes `.git/index.lock` for a stat refresh: a live agent may be
+ *  committing beside it. */
+function git(args, env) {
+  try {
+    return execFileSync('git', ['--no-optional-locks', ...args], {
+      cwd: root,
+      encoding: 'utf8',
+      env: { ...process.env, ...env },
+      stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: 2000,
+    })
+  } catch {
+    return null
+  }
 }
+
+/** The working tree as a tree object, through a scratch copy of the index so
+ *  the real one is untouched; ignored files left out. The same thing Holi
+ *  records as a turn's end while another session's turn is still running. */
+function worktreeTree() {
+  const dir = mkdtempSync(join(tmpdir(), 'holi-prompt-'))
+  try {
+    const index = join(dir, 'index')
+    const real = git(['rev-parse', '--path-format=absolute', '--git-path', 'index'])?.trim()
+    if (!real) return null
+    try {
+      copyFileSync(real, index)
+    } catch {
+      // No index yet: start from empty.
+    }
+    const env = { GIT_INDEX_FILE: index }
+    if (git(['add', '--all'], env) === null) return null
+    return git(['write-tree'], env)?.trim() || null
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
+/** The longest path a line names. */
+const PATH_MAX = 200
+
+/** Each UTF-16 unit of `text` as a JSON escape. */
+const escaped = (text) =>
+  text
+    .split('')
+    .map((unit) => `\\u${unit.charCodeAt(0).toString(16).padStart(4, '0')}`)
+    .join('')
+
+/**
+ * A path as a code span, cut short. A teammate names files, so one with a
+ * backtick, or a control, format or line-breaking character (which could end
+ * the line, or hide or reorder what it says), is quoted as JSON instead, those
+ * characters escaped. The same rule as a scheduled run's line (`quote` in
+ * `schedules/router.ts`), except that those characters are escaped rather
+ * than dropped, so the name still says which file it is.
+ */
+const shown = (path) => {
+  const cut = path.length > PATH_MAX ? `${path.slice(0, PATH_MAX - 1)}…` : path
+  if (!/[`\p{C}\p{Zl}\p{Zp}]/u.test(cut)) return `\`${cut}\``
+  return JSON.stringify(cut).replace(/[\p{C}\p{Zl}\p{Zp}]/gu, escaped)
+}
+
+function focusLine() {
+  const context = readJson('.holi/state/context.local.json')
+  if (typeof context?.focusedPath !== 'string' || context.focusedPath === '') return null
+  const { startLine, endLine } = context.selection ?? {}
+  const selected = !Number.isInteger(startLine)
+    ? ''
+    : startLine === endLine
+      ? `selected line ${startLine}; `
+      : `selected lines ${startLine}-${endLine}; `
+  return `Focused note: ${shown(context.focusedPath)} (${selected}use \`Read\` to view its contents)`
+}
+
+/** A secret file's name, in any folder: `.env`, `.env.<x>`, `.secrets`,
+ *  `.secrets.<x>`. A copy of `isSecretPath` in `@holi/shared`, because a hook
+ *  runs in any Claude Code and cannot import Holi. */
+const SECRET_NAME = /^\.(env|secrets)(\..+)?$/i
+
+/** Holi's own state, machine-local files and secrets are not what anyone needs
+ *  told about. */
+const worthNaming = (path) =>
+  !path.startsWith('.holi/state/') &&
+  !path.includes('.local.') &&
+  !path.split('/').some((segment) => SECRET_NAME.test(segment))
+
+function changesLine() {
+  if (!jobDir) return null
+  const turns = readJson('.holi/state/turns.local.json')
+  // Newest first, so the first record naming this session is its last turn.
+  const job = basename(jobDir)
+  const end = Array.isArray(turns) ? turns.find((t) => t?.sessionId === job)?.end : undefined
+  if (typeof end !== 'string' || !/^[0-9a-f]{7,64}$/.test(end)) return null
+
+  // Everything between where the turn ended (its settle commit, or the working
+  // tree when another session's turn was still running) and the working tree
+  // now, committed or not.
+  const now = worktreeTree()
+  if (now === null) return null
+  const changed = git(['diff-tree', '-r', '--name-only', '--no-renames', '-z', end, now, '--'])
+  if (changed === null) return null
+  const paths = changed.split('\0').filter(Boolean).filter(worthNaming)
+  if (paths.length === 0) return null
+
+  const named = paths.slice(0, SHOWN).map(shown)
+  const more = paths.length > SHOWN ? ` and ${paths.length - SHOWN} more` : ''
+  return `Changed since your last turn, not by you: ${named.join(', ')}${more} (\`git diff ${end.slice(0, 12)}\` shows how)`
+}
+
+const lines = [focusLine(), changesLine()].filter(Boolean)
+if (lines.length > 0) process.stdout.write(lines.join('\n'))
 process.exit(0)

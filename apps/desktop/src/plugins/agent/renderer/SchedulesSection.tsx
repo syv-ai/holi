@@ -61,7 +61,12 @@ function when(iso: string | undefined): string | null {
 function runWords(run: RunRecord): string {
   const at = when(run.at) ?? ''
   if (run.outcome === 'started') {
-    const how = run.trigger === 'manual' ? ' by hand' : ''
+    const how =
+      run.trigger === 'manual'
+        ? ' by hand'
+        : run.trigger === 'event' && run.cause !== undefined
+          ? ` on ${run.cause}`
+          : ''
     if (run.finishedAt === undefined) return `${at} started${how}, running`
     const done = when(run.finishedAt) ?? ''
     return run.kept === true

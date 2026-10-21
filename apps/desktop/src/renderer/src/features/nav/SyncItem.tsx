@@ -4,11 +4,13 @@
  * nothing is wrong, the brand and turning while a pull runs, amber when it
  * wants you, turning amber while a reconcile holds the files.
  *
- * It opens a panel rather than acting: the state in words, what to do about
- * it when there is something, and the vault's history. A conflict can always
+ * It opens a panel rather than acting: the state in words beside how full the
+ * repo is on GitHub (`RepoUsage`), what to do about it when there is
+ * something, the vault's history, and the repo on GitHub. A conflict can always
  * be tried again; a config conflict's reconcile stays with its banner, which
  * outranks this.
  */
+import { SiGithub } from '@icons-pack/react-simple-icons'
 import { useAtomValue, useSetAtom } from 'jotai'
 import {
   Cloud,
@@ -32,12 +34,19 @@ import {
   type IconTone,
   type MorphingMenuItem,
 } from '@/primitives'
+import { RepoUsage } from '@/composites'
 import { cn } from '@/lib/cn'
 import { syncLabel } from '@/lib/sync-label'
 import { useAgentService } from '@/state/agent-service'
 import { reconcileAtom } from '@/state/reconcile'
 import { openSurface, workspaceAtom } from '@/state/panes'
-import { abandonReconcileAtom, retrySyncAtom, syncStateAtom } from '@/state/vaults'
+import { useRepoSize } from '@/state/repo-usage'
+import {
+  abandonReconcileAtom,
+  activeRemoteAtom,
+  retrySyncAtom,
+  syncStateAtom,
+} from '@/state/vaults'
 
 type Glyph = { icon: IconGlyph; tone?: IconTone; motion?: IconMotion }
 
@@ -72,6 +81,8 @@ function SyncPanel({ close }: { close: () => void }): React.JSX.Element {
   const agent = useAgentService()
   const abandon = useSetAtom(abandonReconcileAtom)
   const retry = useSetAtom(retrySyncAtom)
+  const remote = useAtomValue(activeRemoteAtom)
+  const sizeKb = useRepoSize(remote)
   const label = syncLabel(state)
   // Content conflicts only: a config conflict's banner owns the action.
   const contentConflict =
@@ -79,9 +90,10 @@ function SyncPanel({ close }: { close: () => void }): React.JSX.Element {
 
   return (
     <div className="flex w-72 flex-col gap-0.5 p-1">
-      <p data-morph-row="" className={cn('px-2.5 py-1.5 text-sm', TEXT_TONE[label.tone])}>
-        {label.text}
-      </p>
+      <div data-morph-row="" className="flex items-center gap-2 px-2.5 py-1.5">
+        <p className={cn('min-w-0 flex-1 text-sm', TEXT_TONE[label.tone])}>{label.text}</p>
+        <RepoUsage sizeKb={sizeKb} />
+      </div>
       {state.kind === 'conflict' && (
         <ul data-morph-row="" className="px-2.5 pb-1 text-xs text-muted-foreground">
           {state.paths.map((path) => (
@@ -149,6 +161,23 @@ function SyncPanel({ close }: { close: () => void }): React.JSX.Element {
         <Icon icon={History} />
         Open history
       </Button>
+      {/* A row, not an icon beside the state: the panel focuses its first
+          control on open, and an icon button there would open its tooltip. */}
+      {remote !== null && (
+        <Button
+          variant="ghost"
+          data-morph-row=""
+          data-repo-link=""
+          className={ROW}
+          onClick={() => {
+            close()
+            void window.holi.openExternal(`https://github.com/${remote}`)
+          }}
+        >
+          <Icon icon={SiGithub} />
+          Open on GitHub
+        </Button>
+      )}
     </div>
   )
 }

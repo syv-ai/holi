@@ -19,7 +19,7 @@ vault opens and filed into `journal/` once the day is over. Whether a vault does
   seeded heading) that nothing links to is deleted. Anything else is moved to `journal/` through
   the standard rename, so links follow it. If anything changed, the sweep ends in one commit.
 - **In the tree**, today's row carries a `today` marker, plus the count of open tasks whose body
-  wiki-links to today's note. No file, no marker.
+  wiki-links to today's note (the tasks plugin's path mark). No file, no marker.
 - The onboarding ritual asks both settings at vault creation ([settings](settings.md)).
 
 ## Rules

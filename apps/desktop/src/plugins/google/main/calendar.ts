@@ -2,6 +2,7 @@
  * The agenda: Google Calendar, flattened into the shape the panel renders, plus
  * the agent's attendee-free calendar writes at the bottom.
  */
+import { fenceUntrusted } from '@holi/shared'
 import type { GoogleApi } from './api'
 import { fetchEventColors } from './event-colors'
 
@@ -65,7 +66,10 @@ export interface CalendarEvent {
   description: string | null
   /** People, not rooms: a booked room is an `attendee` to Google. */
   attendeeCount: number
+  /** The organizer's display name, or their address when Google has none. */
   organizer: string | null
+  /** The organizer's address, or `null`. */
+  organizerEmail: string | null
   /** Meet, Zoom or Teams. `conferenceData`'s video entry point, then
    *  `hangoutLink` (Meet-only), then a join link recognised in the invite's own
    *  body. See `conferenceUrlOf` for why the third is needed. */
@@ -405,6 +409,7 @@ function toCalendarEvent(
     // Rooms and equipment are attendees to Google.
     attendeeCount: attendees.filter((a) => a.resource !== true).length,
     organizer,
+    organizerEmail: event.organizer?.email ?? null,
     conferenceUrl: conferenceUrlOf(event),
     recurring: event.recurringEventId !== undefined,
   }
@@ -504,10 +509,15 @@ async function assertNobodyIsInvited(api: GoogleApi, eventId: string): Promise<v
   const event = await api.get<RawAttendees>(`${PRIMARY_EVENTS}/${encodeURIComponent(eventId)}`)
   if (Array.isArray(event.attendees) && event.attendees.length > 0) {
     // Read by the agent, so it says what to do instead rather than only what
-    // went wrong.
+    // went wrong. The title is the organizer's words, so it is fenced like
+    // everything else `holi google` prints.
+    const named =
+      event.summary === undefined || event.summary === ''
+        ? `Event ${eventId}`
+        : `Event ${eventId} (${fenceUntrusted(event.summary, 'calendar')})`
     throw new Error(
-      `"${event.summary ?? eventId}" has attendees, so changing it would email them. ` +
-        'Holi does not let me do that — ask the user to make this change in Google Calendar.',
+      `${named} has attendees, so changing it would email them. ` +
+        'Holi does not let me do that: ask the user to make this change in Google Calendar.',
     )
   }
 }

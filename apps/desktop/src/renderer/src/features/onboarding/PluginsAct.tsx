@@ -1,6 +1,6 @@
 /**
- * The ritual's plugins act: what this vault runs on top of notes, tasks and
- * sync, chosen once, at birth.
+ * The ritual's plugins act: what this vault runs on top of notes and sync,
+ * chosen once, at birth.
  *
  * **Renders the build's plugins; does not know them.** Each row is a plugin's
  * own `PluginInfo`, so a new plugin shows up here by existing. Which are on is

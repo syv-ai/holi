@@ -4,16 +4,23 @@ import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
 import { emptyTaskMarker } from './empty-task'
 import { bracketMatching, indentOnInput, indentUnit } from '@codemirror/language'
 import { selectNextOccurrence } from '@codemirror/search'
-import { drawSelection, dropCursor, EditorView, keymap } from '@codemirror/view'
+import {
+  drawSelection,
+  dropCursor,
+  EditorView,
+  keymap,
+  placeholder,
+  tooltips,
+} from '@codemirror/view'
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
-import { EditorState, type Extension } from '@codemirror/state'
-import { isTaskFilePath } from '@holi/shared'
+import { Compartment, EditorState, type Extension } from '@codemirror/state'
 import { holiCompletion } from './completion'
 import { fenceLanguage } from './fence-languages'
 import { formattingKeymap } from './formatting'
 import { linkClickHandler, type LinkNav } from './links'
-import { askAgentTooltip, type AskAgentSeam } from './askAgent'
-import { frontmatterExtension } from './frontmatter'
+import { askAgentTooltip, commentSeamFacet, type AskAgentSeam, type CommentSeam } from './askAgent'
+import { commentThreads } from './comment-threads'
+import { frontmatterAlwaysOpenFacet, frontmatterExtension } from './frontmatter'
 import { mermaidExtension } from './mermaid'
 import { commentExtension } from './comments'
 import { languageForPath, validityStatus } from './languages'
@@ -23,51 +30,51 @@ import {
   docExistsFacet,
   inlineOnlyFacet,
   livePreview,
+  linkChipFacet,
   notePathFacet,
-  taskByPathFacet,
-  type TaskChip,
+  type LinkChip,
 } from './livePreview'
 import { mentionSource, type MentionData } from './mentions'
+import { memberMentionSource } from './member-mentions'
 import { alphaListKeymap, alphaLists, listKindByTyping, renumberOrderedLists } from './lists'
 import { arrowsByTyping } from './arrows'
-import { slashCommands, tableSizes } from './slash'
+import { slashCommandsWith, tableSizes, type SlashCommand } from './slash'
 import { wikiHoverPreview, type ReadNote } from './wikiHover'
 import { colorModeAware } from './color-mode'
 import { codeHighlighting, editorTheme, markdownHighlighting, notesFontTheme } from './theme'
 
 /**
- * A note's column, and a task's, is centred in the pane it is in, whatever is
- * beside it. The child combinators keep it to the editor's own column: the
- * properties widget nests a whole CodeMirror, whose column must not centre.
+ * A note's column is centred in the pane it is in, whatever is beside it. The
+ * child combinators keep it to the editor's own column: the properties widget
+ * nests a whole CodeMirror, whose column must not centre.
  */
 const noteColumn = EditorView.theme({
   '& > .cm-scroller > .cm-content': { marginInline: 'auto' },
-})
-
-/**
- * A task's body is a narrower column than a note's: as wide as its properties
- * widget (`.cm-fm`, 24rem), so a task reads as a card's back rather than a
- * page, with wider gutters either side. The lines keep their inset inside it.
- */
-const taskColumn = EditorView.theme({
-  '& > .cm-scroller > .cm-content': { maxWidth: 'calc(24rem + 2 * var(--editor-inset))' },
 })
 
 /** Live seams the editor pulls on demand: closures over the renderer's state,
  * read when needed rather than baked in, so new data never rebuilds the view. */
 export interface EditorDeps {
   docExists: (path: string) => boolean
-  /** Title + status for a `[[path]]` chip whose path is a task, else null. */
-  taskByPath: (path: string) => TaskChip | null
+  /** How a `[[path]]` to a claimed file (a task) is drawn, else null: a note
+   *  chip. */
+  linkChip?: (path: string) => LinkChip | null
   /** Reads a note's text for the hover preview; null when the target is missing. */
   readNote: ReadNote
-  /** Notes + tasks for `@`-mention completion. */
+  /** Notes, and what claims offer, for `@`-mention completion. */
   mentionData: () => MentionData
   /** Where a clicked link goes. */
   nav: () => LinkNav
   /** Hand the current selection to one of the vault's agent sessions.
    *  Absent with no agent, and then there is no button. */
   askAgent?: AskAgentSeam
+  /** The slash commands the running plugins add, read each time the menu
+   *  opens. */
+  slashCommands?: () => readonly SlashCommand[]
+  /** Open a comment thread on the selection. Absent where a note's threads
+   *  are not shown (a task's description), and then there is no button and
+   *  no marks. */
+  comment?: CommentSeam
   /** The open note's vault path, for note-relative image resolution. */
   notePath: string
   /** The document is locked while a reconcile resolves this file
@@ -78,6 +85,47 @@ export interface EditorDeps {
   /** The note's properties bar; off for text that is not a note (a task's
    *  description, whose file's frontmatter is the task's own). */
   frontmatter?: boolean
+  /** The properties bar has no collapsed state (`ClaimFrontmatter.alwaysOpen`). */
+  frontmatterAlwaysOpen?: boolean
+  /** What the file's claim adds to the editor (`ClaimEditor.extensions`). */
+  claimExtensions?: Extension
+}
+
+/** What the file's claim brings: its frontmatter mode and its own layer. A
+ *  compartment, so a plugin turned on or off reaches a view already open. */
+const claimLayer = new Compartment()
+
+/** The note's comment threads and the selection's Comment button. Whether a
+ *  note takes threads follows its claim too (`isCommentableNote`), so this is
+ *  a compartment for the same reason. */
+const commentLayer = new Compartment()
+
+type ClaimLayer = Pick<EditorDeps, 'frontmatterAlwaysOpen' | 'claimExtensions' | 'comment'>
+
+function claimLayerOf(deps: ClaimLayer): Extension {
+  return [
+    frontmatterAlwaysOpenFacet.of(deps.frontmatterAlwaysOpen === true),
+    deps.claimExtensions ?? [],
+  ]
+}
+
+function commentLayerOf(deps: ClaimLayer): Extension {
+  if (deps.comment === undefined) return []
+  // The selection's Comment button, and the passages the threads are about.
+  return [commentSeamFacet.of(deps.comment), commentThreads]
+}
+
+/** Swap an open view's claim and comment layers for the file's claim now,
+ *  caret and undo kept. A view without them (a plain-text file) is left
+ *  alone. */
+export function reconfigureClaimLayer(view: EditorView, deps: ClaimLayer): void {
+  if (claimLayer.get(view.state) === undefined) return
+  view.dispatch({
+    effects: [
+      claimLayer.reconfigure(claimLayerOf(deps)),
+      commentLayer.reconfigure(commentLayerOf(deps)),
+    ],
+  })
 }
 
 /**
@@ -92,6 +140,7 @@ export interface EditorDeps {
  * `test/completion.test.ts`).
  */
 export function baseEditorExtensions(deps: EditorDeps): Extension[] {
+  const slash = slashCommandsWith(deps.slashCommands ?? (() => []), deps.notePath)
   return [
     EditorState.readOnly.of(deps.readOnly === true),
     EditorView.editable.of(deps.readOnly !== true),
@@ -114,9 +163,11 @@ export function baseEditorExtensions(deps: EditorDeps): Extension[] {
     // the punctuation grey, visible only on the active line.
     codeHighlighting,
     docExistsFacet.of(deps.docExists),
-    taskByPathFacet.of(deps.taskByPath),
+    linkChipFacet.of(deps.linkChip ?? (() => null)),
     notePathFacet.of(deps.notePath),
-    deps.askAgent === undefined ? [] : askAgentTooltip(deps.notePath, deps.askAgent),
+    // Outside the comment layer, so a claim change keeps an open ask open.
+    askAgentTooltip(deps.notePath, deps.askAgent),
+    commentLayer.of(commentLayerOf(deps)),
     livePreview,
     // The caret's half of a mark's slide: the transition is CSS, and the
     // drawn caret has to be moved along while it runs.
@@ -142,16 +193,17 @@ export function baseEditorExtensions(deps: EditorDeps): Extension[] {
         inlineOnlyFacet.of(true),
         docExistsFacet.of(deps.docExists),
         notePathFacet.of(deps.notePath),
-        taskByPathFacet.of(deps.taskByPath),
+        linkChipFacet.of(deps.linkChip ?? (() => null)),
         livePreview,
       ],
     }),
     holiCompletion([
       mentionSource(deps.mentionData),
-      slashCommands,
+      slash.source,
       tableSizes,
       markdownTableAutocompleter(),
     ]),
+    slash.extension,
     // Multi-cursor is off by default; ⌘D's next-occurrence selections need it.
     EditorState.allowMultipleSelections.of(true),
     formattingKeymap, // ⌘B / ⌘I / ⌘E / ⌘K / ⌘⇧X — higher precedence than defaults
@@ -179,7 +231,7 @@ export function baseEditorExtensions(deps: EditorDeps): Extension[] {
     // Notes only; the other stacks stay mono (see `notesFontTheme`).
     notesFontTheme,
     noteColumn,
-    isTaskFilePath(deps.notePath) ? taskColumn : [],
+    claimLayer.of(claimLayerOf(deps)),
   ]
 }
 
@@ -263,3 +315,69 @@ export function plainTextExtensions(path: string, readOnly = false): Extension[]
     colorModeAware(),
   ]
 }
+
+/** What a comment field is told to do: its people, and its two keys. */
+export interface CommentFieldDeps {
+  /** Who `@` offers, read on each `@`. */
+  logins: () => readonly string[]
+  placeholder: string
+  /** ⌘↵. */
+  submit: () => void
+  /** Escape, once the popup (if any) is closed. */
+  cancel?: () => void
+}
+
+/**
+ * A comment's text field (the comments panel's composer and reply): plain
+ * text in the app's own face, with `@login` completion of the vault's people
+ * through the one completion popup. No markdown layers: a comment's body is
+ * shown as it was typed.
+ */
+export function commentFieldExtensions(deps: CommentFieldDeps): Extension[] {
+  return [
+    history(),
+    drawSelection(),
+    EditorView.lineWrapping,
+    placeholder(deps.placeholder),
+    holiCompletion([memberMentionSource(deps.logins)]),
+    // On the body, not in the panel: the drawer scrolls and clips, and the
+    // popup must not be cut off at its edge.
+    tooltips({ parent: document.body }),
+    keymap.of([
+      // First, so Enter and Escape act on an open popup before the field.
+      ...completionKeymap,
+      {
+        key: 'Mod-Enter',
+        run: () => {
+          deps.submit()
+          return true
+        },
+      },
+      {
+        key: 'Escape',
+        run: () => {
+          if (deps.cancel === undefined) return false
+          deps.cancel()
+          return true
+        },
+      },
+      ...historyKeymap,
+      ...defaultKeymap,
+    ]),
+    editorTheme,
+    colorModeAware(),
+    commentFieldTheme,
+  ]
+}
+
+/** The field sits in a panel, not a pane: the panel's face and size, and
+ *  none of the notes column's inset. */
+const commentFieldTheme = EditorView.theme({
+  '&': { height: 'auto', fontSize: '13px' },
+  '&.cm-focused': { outline: 'none' },
+  '.cm-scroller': { fontFamily: 'inherit', lineHeight: '1.5' },
+  '.cm-content': { padding: '0', caretColor: 'var(--foreground)' },
+  '.cm-line': { padding: '0' },
+  '.cm-cursor, .cm-cursor-primary': { borderLeftColor: 'var(--foreground)' },
+  '.cm-placeholder': { color: 'var(--muted-foreground)' },
+})

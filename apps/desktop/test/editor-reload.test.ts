@@ -12,7 +12,8 @@
  * because it is the only one of the three that cannot race.
  */
 import { describe, expect, it } from 'vitest'
-import { normalizeText, taskClaim } from '@holi/shared'
+import { normalizeText } from '@holi/shared'
+import { taskClaim } from '../src/plugins/tasks/shared/task-file'
 import { decideReload, hasNewText, minimalChange } from '../src/renderer/src/lib/editor-reload'
 
 /** Tasks, still a core claim: the canonical forms the editor recognises. */

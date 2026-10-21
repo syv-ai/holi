@@ -11,7 +11,8 @@ assistant. There is no Holi server or database.
 - `apps/desktop`: Electron 43, Vite, React 19, Jotai, CodeMirror 6, Tailwind v4,
   Radix/shadcn components, tRPC over IPC, xterm, and Vitest 4.
 - `packages/shared`: browser-safe TypeScript rules and types for vault paths,
-  task files, wiki-links, dates, recurrence/reminders, themes, and text merging.
+  wiki-links, dates, settings, plugins, themes, and text merging. A plugin's own
+  rules (task files, recurrence, reminders) live in its `shared/`.
 - `docs/`: architecture, one short page per feature, and the glossary.
 
 Within the desktop app, `src/main` owns filesystem/git/GitHub/Google work, the
@@ -20,8 +21,8 @@ vault store and sync. `src/preload` is the narrow
 Node access or GitHub credentials. `router.ts` is main's typed API seam; keep
 Electron dependencies out of code that should remain testable under plain Node.
 
-Optional parts of Holi are plugins under `src/plugins/<id>/` (the agent, PDF,
-Google, vault apps and community plugins so far), each with its own `main/`, `renderer/`, `shared/` and
+Optional parts of Holi are plugins under `src/plugins/<id>/` (the agent, tasks,
+PDF, Google, vault apps and community plugins so far), each with its own `main/`, `renderer/`, `shared/` and
 `test/`, reaching core only through `src/main/plugin-api.ts` and
 `@/plugin-api`. Vault apps live in `src/plugins/apps/`; what a synced vault
 holds of an app (the bundle grammar, the record merge, the `.local.app` rule)
