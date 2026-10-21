@@ -43,9 +43,12 @@ selected feed. Turning dev off selects stable and downloads its latest release, 
 version is older than the installed one; **Restart to update** installs the downloaded stable
 version. **Release notes** are each release's GitHub notes, for the version found and the one
 running, fetched from GitHub's releases API by tag (`v<version>`) when first shown
-(`src/main/updates/release-notes.ts`, `trpc.updates.notes`). They are Markdown, shown as text with
-headings and list items picked out, never as HTML, with a link to the release built from the tag; a
-version with no release, such as a local build, has none. GitHub not answering (offline, rate
+(`src/main/updates/release-notes.ts`, `trpc.updates.notes`). They are Markdown, rendered as formatted
+text (headings, lists, emphasis, code, links) from `marked`'s tokens straight into React elements
+(`ReleaseNotesText`), so nothing in them ever becomes HTML: raw HTML shows as its text. A link opens
+in the browser and only when it is `http:` or `https:`; any other is shown as its words. Below them
+is a link to the release built from the tag; a version with no release, such as a local build, has
+none. GitHub not answering (offline, rate
 limited, down) is said as such and asked again on the next showing. Beside them, **Open at login**,
 this machine's login item and the one place it is asked: Holi starts with its window loaded but out
 of sight, so the vault opens, syncs and fires its reminders from the start.
