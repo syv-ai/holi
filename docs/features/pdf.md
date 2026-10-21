@@ -55,6 +55,6 @@ PDF is a plugin (`apps/desktop/src/plugins/pdf/`, default on; [architecture](../
 - `plugins/pdf/main/capabilities.ts`: `pdf.comments` and `pdf.typst` (CLI door); `pdf.templates`, `pdf.render`, `pdf.signatures`, `pdf.saveSignatures` (UI door).
 - `plugins/pdf/main/seed.ts`, `main/vault/once/.holi/document-templates/`: seeded templates and `_brand/`, whose fonts and logo seed as bytes (`?inline`); `main/vault/shipped/.claude/skills/md-to-pdf/`, `skills/pdf-comments/`.
 - `plugins/pdf/renderer/index.tsx`: the claims: a `.pdf` opens in `PdfViewer`, a markdown note's row menu offers Convert to PDF in the plugin dialog. With the plugin off, a `.pdf` opens in the file placeholder.
-- `plugins/pdf/renderer/`: `ConvertToPdf.tsx`, `FieldWidget.tsx`, `pdf-fields.ts`; `PdfViewer.tsx`, `PdfDocument.tsx`, `PdfCommentField.tsx`, `pdf-sidebar-leave.ts`, `pdf-viewer-config.ts`, `pdf-read-only.ts`, `pdf-comments.ts`. They call the main side through `capClient` over a type import of its table.
-- `plugins/pdf/shared/`: `pdf-comments.ts` (the thread model and formatter both sides use), `template-fields.ts`.
+- `plugins/pdf/renderer/`: `ConvertToPdf.tsx`, `FieldWidget.tsx`; `PdfViewer.tsx`, `PdfDocument.tsx`, `PdfCommentField.tsx`, `pdf-sidebar-leave.ts`, `pdf-viewer-config.ts`, `pdf-read-only.ts`, `pdf-comments.ts`. They call the main side through `capClient` over a type import of its table.
+- `plugins/pdf/shared/`: `pdf-comments.ts` (the thread model and formatter both sides use), `template-fields.ts`, `pdf-fields.ts` (frontmatter prefill and required fields).
 - `plugins/pdf/test/`: the plugin's node and DOM tests.

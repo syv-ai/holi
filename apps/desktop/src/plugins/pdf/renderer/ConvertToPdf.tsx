@@ -5,7 +5,7 @@ import { FormField } from '@/composites/FormField'
 import { capClient, openNoteTabAtom, trpc } from '@/plugin-api'
 import type { PdfCapabilities } from '../main/capabilities'
 import { FieldWidget } from './FieldWidget'
-import { metaFromValues, missingRequired, parseFrontmatter, prefillValues } from './pdf-fields'
+import { metaFromValues, missingRequired, parseFrontmatter, prefillValues } from '../shared/pdf-fields'
 import {
   Button,
   Dialog,
