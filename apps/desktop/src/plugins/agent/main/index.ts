@@ -88,8 +88,14 @@ export const agentMain: MainPlugin = {
       store: jsonFileStore(join(ctx.userData, 'schedules.json'), parseSchedulesFile),
       sessions: started,
       emit: ctx.emit,
+      // What the schedules' triggers listen for, to the plugins that source it.
+      tell: (event) => ctx.events.emit(event),
     })
     ctx.register(SCHEDULE_NAMESPACES, scheduleCapabilities({ scheduler: schedules }))
+    // The events that start schedules' runs: what the vault's plugins tell,
+    // and the files that change between scans.
+    ctx.events.on((event) => schedules.hear(event))
+    ctx.onSnapshot((snapshot) => schedules.snapshot(snapshot))
     // Keystrokes and resizes, in the order they were typed. The host drops
     // any about a vault that is not the open one.
     ctx.on('pty-write', (_remote, payload) => {

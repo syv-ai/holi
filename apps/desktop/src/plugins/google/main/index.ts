@@ -19,6 +19,7 @@ import type { CalendarOverrides } from './calendar'
 import { GOOGLE_NAMESPACES, googleCapabilities } from './capabilities'
 import { createGoogleData, type GoogleData } from './data'
 import { googleSeed } from './seed'
+import { startGoogleTriggers } from './triggers'
 
 export const googleMain: MainPlugin = {
   info: GOOGLE_INFO,
@@ -71,32 +72,27 @@ export const googleMain: MainPlugin = {
       bySub.delete(sub)
     })
 
+    const dataFor = async (remote: string): Promise<GoogleData | null> => {
+      const sub = (await accounts.sessionFor(remote))?.accountSub ?? null
+      return sub === null ? null : dataForSub(sub)
+    }
+    // The vault's own Google settings, in its local plugins file: the agenda
+    // view, an app, the agent and the triggers all read through them.
+    const readSettings = async (root: string) => {
+      const { pluginValues } = await readVaultSettings(root)
+      return {
+        calendars: pluginSettingValue(pluginValues, GOOGLE_INFO, 'calendars') as CalendarOverrides,
+        imageSenders: pluginSettingValue(pluginValues, GOOGLE_INFO, 'imageSenders') as string[],
+      }
+    }
+
     ctx.register(
       GOOGLE_NAMESPACES,
       googleCapabilities({
         accounts,
-        dataFor: async (remote) => {
-          const sub = (await accounts.sessionFor(remote))?.accountSub ?? null
-          return sub === null ? null : dataForSub(sub)
-        },
-        // The vault's own Google settings, in its local plugins file: the
-        // agenda view, an app and the agent all read through them.
+        dataFor,
         settings: {
-          read: async (root) => {
-            const { pluginValues } = await readVaultSettings(root)
-            return {
-              calendars: pluginSettingValue(
-                pluginValues,
-                GOOGLE_INFO,
-                'calendars',
-              ) as CalendarOverrides,
-              imageSenders: pluginSettingValue(
-                pluginValues,
-                GOOGLE_INFO,
-                'imageSenders',
-              ) as string[],
-            }
-          },
+          read: readSettings,
           write: async (root, values) => {
             const refused = await writePluginSettings(root, GOOGLE_INFO.id, values)
             if (refused.length > 0) console.warn(`[google] settings: ${refused.join('; ')}`)
@@ -105,7 +101,15 @@ export const googleMain: MainPlugin = {
       }),
     )
 
+    // Mail and the agenda for schedules that run on them, polled only while
+    // one listens.
+    const stopTriggers = startGoogleTriggers(ctx, {
+      data: () => dataFor(ctx.remote),
+      overrides: async () => (await readSettings(ctx.root)).calendars,
+    })
+
     return () => {
+      stopTriggers()
       accounts.cancelConnect()
       stopWatching()
       for (const { cache } of bySub.values()) cache.close()

@@ -12,6 +12,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { emptyVaultSnapshot } from '@holi/shared'
 import { jsonFileStore } from '../../../main/plugin-api'
 import type { SessionSummary } from '../main/claude/listing'
 import { workLogPath } from '../main/inbox/work-log'
@@ -222,6 +223,39 @@ describe('running on schedule', () => {
     await scheduler.tick()
     expect(stopped).toEqual(['job1'])
     expect(launched).toHaveLength(3)
+  })
+})
+
+describe('running on events', () => {
+  const scan = (...paths: string[]) => ({
+    ...emptyVaultSnapshot(),
+    files: paths.map((path) => ({ path, updatedAt: '2026-10-08T08:00:00.000Z' })),
+  })
+
+  it('runs on a batch of events, names them, and follows a working run once', async () => {
+    await writeSchedule('inbox.md', 'on:\n  - file: inbox/**')
+    await scheduler.enable(vault(), 'inbox')
+    await scheduler.tick() // learns which schedules listen
+    scheduler.snapshot(scan()) // the baseline: nothing is new
+    scheduler.snapshot(scan('inbox/a.pdf'))
+    clock = at(10, 2)
+    await scheduler.tick()
+    expect(launched).toHaveLength(1)
+    expect(launched[0]!.prompt).toContain('Triggered by: file inbox/a.pdf added.')
+
+    // Two more while it works: held, then one run once it is done.
+    scheduler.snapshot(scan('inbox/a.pdf', 'inbox/b.pdf'))
+    scheduler.snapshot(scan('inbox/a.pdf', 'inbox/b.pdf', 'inbox/c.pdf'))
+    clock = at(10, 10)
+    await scheduler.tick()
+    expect(launched).toHaveLength(1)
+    live[0]!.state = 'idle'
+    clock = at(10, 11)
+    await scheduler.tick()
+    expect(launched).toHaveLength(2)
+    expect(launched[1]!.prompt).toContain('file inbox/b.pdf added; file inbox/c.pdf added')
+    const [entry] = await scheduler.list(vault())
+    expect(entry!.runs.filter((r) => r.outcome === 'skipped')).toEqual([])
   })
 })
 
