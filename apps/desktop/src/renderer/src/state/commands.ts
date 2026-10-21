@@ -26,6 +26,7 @@ import { trpc } from '../lib/trpc'
 import { openHomeAtom } from './home'
 import { openTodaysDailyAtom } from './daily'
 import { openDialogAtom } from './dialogs'
+import { copyHoliLinkAtom, linkableHeadingAtom, linkableNoteAtom } from './holi-link'
 import { closeActiveTabWithExitAtom } from './pane-exit'
 import { openPaletteAtom } from './palette'
 import { navOpenAtom } from './preferences'
@@ -157,6 +158,27 @@ export const STATIC_COMMANDS: readonly Command[] = [
       const path = untitledPath(new Set(get(snapshotAtom).docs.map((d) => d.path)))
       await set(createNoteAtom, path)
       set(workspaceAtom, (w) => openPinned(w, path))
+    },
+  },
+  // A link a teammate can click to land on this note, or on the heading the
+  // caret is on (docs/features/holi-links.md).
+  {
+    id: 'link.copy',
+    label: 'Copy Holi link',
+    when: (get) => get(linkableNoteAtom) !== null,
+    run: async (get, set) => {
+      const path = get(linkableNoteAtom)
+      if (path !== null) await set(copyHoliLinkAtom, path)
+    },
+  },
+  {
+    id: 'link.copy-heading',
+    label: 'Copy Holi link to this heading',
+    when: (get) => get(linkableHeadingAtom) !== null,
+    run: async (get, set) => {
+      const path = get(linkableNoteAtom)
+      const heading = get(linkableHeadingAtom)
+      if (path !== null && heading !== null) await set(copyHoliLinkAtom, path, heading)
     },
   },
   {

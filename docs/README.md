@@ -26,6 +26,7 @@ other rather than repeating each other.
 | [tabs-panes](features/tabs-panes.md)               | Panes, preview and pinned tabs, moving tabs                              |
 | [frontmatter](features/frontmatter.md)             | The frontmatter block, typed rows, schemas                               |
 | [wiki-links](features/wiki-links.md)               | Link grammar, rename, backrefs                                           |
+| [holi-links](features/holi-links.md)               | `holi://` links that open a note or heading from chat or email           |
 | [tasks](features/tasks.md)                         | Task files, the board, dates, recurrence, reminders                      |
 | [daily-notes](features/daily-notes.md)             | Idempotent daily notes and their archive                                 |
 | [agent-sessions](features/agent-sessions.md)       | Claude Code background sessions, agent tabs, turn review, reconcile      |

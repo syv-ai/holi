@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { firstHeading, setFirstHeading } from '../src/headings'
+import { findHeadingLine, firstHeading, headingSlug, setFirstHeading } from '../src/headings'
 
 describe('firstHeading', () => {
   test('reads the first heading at any level', () => {
@@ -72,5 +72,40 @@ describe('setFirstHeading', () => {
   test('round-trips with firstHeading', () => {
     expect(firstHeading(setFirstHeading('body text', 'Fix the tap'))).toBe('Fix the tap')
     expect(firstHeading(setFirstHeading('# Old\n\nbody', 'Fix the tap'))).toBe('Fix the tap')
+  })
+})
+
+describe('findHeadingLine', () => {
+  const note = [
+    '---',
+    '# a yaml comment',
+    'tags: [plan]',
+    '---',
+    '# Plan',
+    '```sh',
+    '## Next steps',
+    '```',
+    '## Next steps (Q3)',
+    '## Next steps (Q3)',
+  ].join('\n')
+
+  test('finds a heading by its slug or its words, skipping frontmatter and code', () => {
+    expect(findHeadingLine(note, 'next-steps-q3')).toBe(9)
+    expect(findHeadingLine(note, 'Next steps (Q3)')).toBe(9)
+    expect(findHeadingLine(note, 'a-yaml-comment')).toBeNull()
+    expect(findHeadingLine(note, 'next-steps')).toBeNull()
+    expect(findHeadingLine(note, 'plan')).toBe(5)
+  })
+
+  test('slugs the way GitHub does', () => {
+    expect(headingSlug('  Next steps (Q3)! ')).toBe('next-steps-q3')
+    expect(headingSlug('Hvad så?')).toBe('hvad-så')
+  })
+
+  test('a heading is found whichever Unicode form it and the link use', () => {
+    const nfd = 'Caf\u0065\u0301'
+    expect(headingSlug(nfd)).toBe(headingSlug('Caf\u00e9'))
+    expect(findHeadingLine(`# ${nfd}`, 'caf\u00e9')).toBe(1)
+    expect(findHeadingLine('# Caf\u00e9', nfd)).toBe(1)
   })
 })

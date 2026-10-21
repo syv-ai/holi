@@ -81,6 +81,11 @@ Copy to Folder and Move to Folder cover the need.
 
 **Tabs.** Dragging a tab to a new window or another vault, and vertical splits.
 
+**More of Holi links.** Joining a vault from a link to one this machine has not cloned (today a
+dialog says to add it first), a copy action in the editor itself (there is no editor context menu;
+the palette has it), and telling apart two headings with the same words, which GitHub does with a
+`-1` suffix and a link does not. See [holi-links](features/holi-links.md).
+
 ## Sync
 
 **Git LFS setup.** The large-file hook's message mentions LFS; nothing configures it.

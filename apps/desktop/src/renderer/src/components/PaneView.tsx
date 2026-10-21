@@ -175,6 +175,7 @@ export function PaneView({
             ) : (
               <EditorPane
                 path={tab?.kind === 'note' ? tab.path : null}
+                focused={focused}
                 // Non-markdown text edits in the plain stack: no wiki-links or
                 // frontmatter, syntax highlighting by extension.
                 plain={tab?.kind === 'note' && fileKind(tab.path) === 'text'}

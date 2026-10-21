@@ -12,18 +12,11 @@ import type { HeldBackFile } from '../../../main/vault/large-files'
 import type { RendererPlugin } from '@/plugin-api/types'
 import { flushAllBuffers } from '../lib/buffer-registry'
 import { trpc } from '../lib/trpc'
-import {
-  activeTab,
-  closeTabsForPaths,
-  focusPane,
-  retargetTab,
-  retargetTabs,
-  workspaceAtom,
-} from './panes'
-// Cycles (`plugins` reads `activeRemoteAtom`, `surfaces` reads `snapshotAtom`),
-// safe because neither module reads the other's atoms until a store does.
-import { folderSurfacesAtom, surfacesAtom } from './plugins'
-import { openPathAtom } from './surfaces'
+import { closeTabsForPaths, retargetTab, retargetTabs, workspaceAtom } from './panes'
+// Cycles (`plugins` and `arrival` read `activeRemoteAtom`), safe because
+// neither module reads the other's atoms until a store does.
+import { folderSurfacesAtom } from './plugins'
+import { requestArrivalAtom } from './arrival'
 
 type JotaiStore = ReturnType<typeof createStore>
 
@@ -177,24 +170,6 @@ export const createVaultAtom = atom(
 )
 
 /**
- * Open a path main asked for, pinned. When the active tab keeps the focused
- * note (the agent's), the path opens in the pane beside it, or a new one, so
- * the agent that asked stays in view.
- */
-function showPath(store: JotaiStore, path: string): void {
-  const workspace = store.get(workspaceAtom)
-  const tab = activeTab(workspace)
-  const agent =
-    tab?.kind === 'surface' && store.get(surfacesAtom).get(tab.surface)?.keepsFocusedNote === true
-  if (!agent) return store.set(openPathAtom, path, 'pinned')
-  const beside =
-    workspace.active + 1 < workspace.panes.length ? workspace.active + 1 : workspace.active - 1
-  if (beside < 0) return store.set(openPathAtom, path, 'pane')
-  store.set(workspaceAtom, focusPane(workspace, beside))
-  store.set(openPathAtom, path, 'pinned')
-}
-
-/**
  * Subscribe to everything main pushes, for the lifetime of the app.
  *
  * Established once where the store is created, **not** from a component effect:
@@ -217,18 +192,10 @@ export function subscribeToVault(
   const offCommitted = window.holi.vault.onCommitted((paths) =>
     store.set(historyEpochsAtom, (e) => bumpHistoryEpochs(e, paths)),
   )
-  // Main asks for a path in a tab (a clicked reminder, `holi docs open`).
-  // Cross-vault, the switch runs here, not in main, so `activeRemoteAtom` stays
-  // truthful; the path opens once the new vault's snapshot is in
-  // (`openVaultAtom` sets it before this resolves), pinned, as a deliberate
-  // arrival rather than browsing.
-  const offOpen = window.holi.vault.onOpen(({ remote, path }) => {
-    if (remote && remote !== store.get(activeRemoteAtom)) {
-      void store.set(openVaultAtom, remote).then(() => showPath(store, path))
-    } else {
-      showPath(store, path)
-    }
-  })
+  // Main asks for a path in a tab (a clicked reminder, `holi docs open`, a
+  // Holi link). Cross-vault, the switch runs here, not in main, so
+  // `activeRemoteAtom` stays truthful (`state/arrival.ts`).
+  const offOpen = window.holi.vault.onOpen((arrival) => store.set(requestArrivalAtom, arrival))
   const tables = plugins.flatMap((p) =>
     p.events === undefined ? [] : [[p.info.id, p.events] as const],
   )
