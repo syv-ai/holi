@@ -39,7 +39,7 @@ import {
   type PillBox,
 } from '@/lib/tab-drop'
 import type { Surface, SurfaceTabLook } from '@/plugin-api/types'
-import type { Tab } from '@/state/panes'
+import { tabKey, type Tab } from '@/state/panes'
 import { surfaceTabLooksAtom, surfacesAtom } from '@/state/plugins'
 import { cn } from '@/lib/cn'
 import { snapshotAtom } from '@/state/vaults'
@@ -75,11 +75,6 @@ function settleMotion(): { duration: number; easing: string } {
     duration: Number.isFinite(ms) ? ms : 150,
     easing: easing === '' ? 'ease-out' : easing,
   }
-}
-
-/** A tab's stable identity, for React keys and for the pill-element map. */
-export function tabKey(tab: Tab): string {
-  return tab.kind === 'note' ? `note:${tab.path}` : `surface:${tab.surface}:${tab.id ?? ''}`
 }
 
 /** What a vault file is marked with here and in the tree alike. `icons`

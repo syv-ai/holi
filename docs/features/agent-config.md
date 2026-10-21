@@ -79,6 +79,24 @@ window forward. Main asks the renderer over one push, `vault:open`, the same one
 reminder uses; the renderer switches vault when the path lives elsewhere and opens it through
 `openPathAtom`.
 
+**Seeing a tab.** `holi docs screenshot <path>` is how the agent looks at what it made: a note's
+diagram, a vault app. It opens the path as `holi docs open` does (same refusals), but shows the
+window without focusing it and the tab without moving the caret into it (`focus: false` on
+`vault:open`, `quietOpenAtom`), since the person may be typing to the agent that asked; a
+minimised window is still restored. Screenshots run one at a time. It then asks the renderer where that tab is drawn over `vault:locate`, answered by id on
+`vault:located`. A pane's body carries its tab's `data-tab` (`tabKey`), and the renderer
+answers once that body is on screen, nothing inside it is `aria-busy` (an app frame is, until
+its document loads), the fonts and its arrival motion are done, and a short settle has passed
+(`lib/settled-rect.ts`), waiting on timers since a hidden page runs no animation frames. Main cuts
+that rect from the page with `capturePage` (`main/tab-capture.ts`), so the PNG is the tab as the
+person sees it: this vault's theme, their light or dark mode, their pane's size, an app's iframe
+included. It is written to `.holi/state/out/screenshot-<stamp>-<id>.local.png`, machine-local by its
+marker, the newest 20 kept (each kind there is pruned on its own, so long answers never push a
+screenshot out), and the command prints that path for the agent to read. A tab that has
+not drawn within a few seconds is refused rather than captured half-done, and so is one with a
+dialog, menu or popover open over the window that does not close within a moment. A path is a file the
+snapshot holds or a vault app's bundle (a folder, which opens as the app).
+
 **Seeding.** `ensureSeeded` runs on create, adopt and every open, over a list of seed
 contributions: core (`main/vault/seed/core.ts`), and each plugin the vault
 enables (`src/plugins/<id>/main/`, through `main/plugin-host/`), the agent's included
@@ -151,9 +169,9 @@ additions are commands in a directory prepended to `PATH`, plus skills that docu
   error. An answer over 16 KiB is written to `.holi/state/out/` and the command prints its path and
   shape instead ([architecture](../architecture.md) §3). A command that reads a
   body from stdin and was not given one is answered 428 without running, and the script sends
-  stdin once (`send --draft <id>` reads none). Today: `apps open|init`, `skills update`,
+  stdin once (`send --draft <id>` reads none). Today: `apps open|init|console`, `skills update`,
   `pdf comments|typst`, `google agenda|search|read|mark-read|star|archive|trash|draft|send|reply|schedule|reschedule|unschedule`, `tasks list|complete`,
-  `store list|get|put|delete|check`, `docs list|read|render|open`, `sync status`, `agent sessions`,
+  `store list|get|put|delete|check`, `docs list|read|render|open|screenshot`, `sync status`, `agent sessions`,
   `schedules list|enable|disable|run`,
   `vault members|recents`. The registry's reads the agent already has as Grep, Read and git
   (search, history, settings) stay app-only rather than grow a second way in. The script finds

@@ -103,6 +103,7 @@ async function rig(files: Record<string, string> = {}, auth?: StoredAuth) {
       updateSkills: async () => ({ summary: '', conflicts: null }),
       pendingSkills: async () => [],
       open: () => {},
+      screenshot: async () => new Uint8Array(),
     }),
   )
   capabilities.register(TASK_NAMESPACES, taskCapabilities({ today: () => TODAY }))

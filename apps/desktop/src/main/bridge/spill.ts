@@ -4,18 +4,12 @@
  * (jq, grep, Read with a range) instead of carrying a whole page of mail in its
  * context for the rest of the session.
  *
- * The files are machine state (`.holi/state/out/`), local by their `.local.`
- * marker so they are never committed, and out of a vault app's reach like the
- * rest of `.holi/state/`. Only the newest `KEEP` are kept.
+ * The files go to `.holi/state/out/` (`vault/out-files.ts`), which keeps the
+ * newest few.
  *
  * No `electron` import: this loads under plain Node in the tests.
  */
-import { randomBytes } from 'node:crypto'
-import { mkdir, readdir, rm, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
-import { MACHINE_STATE_DIR } from '@holi/shared'
-
-export const SPILL_DIR = `${MACHINE_STATE_DIR}/out`
+import { writeOut } from '../vault/out-files'
 
 /**
  * Past this many bytes an answer is spilled. About 4k tokens: enough for any
@@ -24,10 +18,6 @@ export const SPILL_DIR = `${MACHINE_STATE_DIR}/out`
  * which the agent would see a truncated answer and not know what it lost.
  */
 export const SPILL_BYTES = 16 * 1024
-
-/** Spills kept per vault. Each is read within the turn that asked for it, so
- *  this only has to outlast a busy stretch of a few sessions side by side. */
-const KEEP = 50
 
 /** At most this many keys are named in a summary. */
 const MAX_KEYS = 12
@@ -88,17 +78,9 @@ export interface Spill {
 export async function spillOutput(root: string, label: string, text: string): Promise<Spill> {
   const value = parsed(text)
   const json = value !== NOT_JSON
-  // An ISO stamp first, so names sort oldest first; the random tail keeps two
-  // answers in the same millisecond apart.
-  const stamp = new Date().toISOString().replace(/[:.]/g, '-')
   const command = label.replace(/^holi /, '').replace(/\s+/g, '-')
-  const name = `${stamp}-${command}-${randomBytes(3).toString('hex')}.local.${json ? 'json' : 'txt'}`
-  const dir = join(root, SPILL_DIR)
-  await mkdir(dir, { recursive: true })
-  await writeFile(join(dir, name), text, 'utf8')
-  await prune(dir)
   return {
-    path: `${SPILL_DIR}/${name}`,
+    path: await writeOut(root, 'spill', text, { ext: json ? 'json' : 'txt', tag: command }),
     bytes: Buffer.byteLength(text),
     shape: describe(text, value),
   }
@@ -117,15 +99,4 @@ export function spillNotice(label: string, spill: Spill, json: boolean): string 
     `It is ${spill.shape}.`,
     'Read only the part you need from it (jq, grep, or Read with an offset and limit).',
   ].join('\n')
-}
-
-/** Remove all but the newest `KEEP` spills. A failure is ignored: the next
- *  spill tries again, and an extra file costs nothing meanwhile. */
-async function prune(dir: string): Promise<void> {
-  try {
-    const names = (await readdir(dir)).filter((n) => n.includes('.local.')).sort()
-    await Promise.all(names.slice(0, -KEEP).map((n) => rm(join(dir, n), { force: true })))
-  } catch {
-    // See the doc comment.
-  }
 }

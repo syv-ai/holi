@@ -13,12 +13,13 @@ import {
   type VaultRelPath,
   type VaultSnapshot,
 } from '@holi/shared'
+import { writeOut } from '../vault/out-files'
 import { readVaultSettings } from '../vault/settings'
 import { isSearchable, searchVault, type SearchHit } from '../vault/search'
 import { CapabilityError, unavailable } from './error'
 import { inSnapshot, readableOrNull, readablePath, readNote, shownPath } from './fences'
 import { limitParam, noParams, paramsObject, pathParams, stringParam } from './params'
-import { cap } from './registry'
+import { cap, type CapabilityContext } from './registry'
 import { renderNote } from './render-note'
 
 /** Recents an app may see: things it can name or open. The renderer leaves
@@ -62,6 +63,19 @@ export interface VaultCapabilitiesDeps {
   /** Show `path` to the person in a tab of `remote`'s window. Throws the
    *  refusal. */
   open(remote: string, path: VaultRelPath): void
+  /** Show `path` the same way, then a PNG of its tab once it has drawn.
+   *  Throws the refusal. */
+  screenshot(remote: string, path: VaultRelPath): Promise<Uint8Array>
+}
+
+/** A path the agent may show, by its normalised name (`shownPath`): a file
+ *  the vault's snapshot holds, or a vault app (a directory, which the snapshot
+ *  lists among `dirs`). A trailing slash is dropped: a shell completes a folder
+ *  with one, and an app's bundle is a folder. */
+async function shownFile(ctx: CapabilityContext, path: string): Promise<VaultRelPath> {
+  const rel = shownPath(path.replace(/\/+$/, ''))
+  if (isAppBundlePath(rel) && (await ctx.snapshot()).dirs.includes(rel)) return rel
+  return inSnapshot(ctx, rel, path)
 }
 
 export const vaultCapabilities = (deps: VaultCapabilitiesDeps) => ({
@@ -105,14 +119,32 @@ export const vaultCapabilities = (deps: VaultCapabilitiesDeps) => ({
     cli: { args: ['path'], summary: 'show a note, task or other vault file in a tab' },
     params: pathParams,
     run: async (ctx, { path }) => {
-      let rel = shownPath(path)
-      // A vault app is a directory, which the snapshot lists among `dirs`.
-      const bundle = isAppBundlePath(rel) && (await ctx.snapshot()).dirs.includes(rel)
-      if (!bundle) rel = await inSnapshot(ctx, rel, path)
+      const rel = await shownFile(ctx, path)
       deps.open(ctx.remote, rel)
       return { path: rel }
     },
     text: ({ path }) => `opened ${path}`,
+  }),
+
+  /**
+   * A PNG of a file's tab as the person sees it, in this vault's theme and
+   * mode, so the agent can look at what it made: a vault app, a note's
+   * diagram. Opens the tab first, as `docs.open` does (it brings the window
+   * forward), and waits for it to finish drawing. Prints the PNG's path, a
+   * machine-local file the agent reads back.
+   */
+  'docs.screenshot': cap({
+    doors: ['cli'],
+    cli: {
+      args: ['path'],
+      summary: "a PNG of a file's tab as the user sees it (opens it); prints the PNG's path",
+    },
+    params: pathParams,
+    run: async (ctx, { path }) => {
+      const png = await deps.screenshot(ctx.remote, await shownFile(ctx, path))
+      return { png: await writeOut(ctx.root, 'screenshot', png, { ext: 'png' }) }
+    },
+    text: ({ png }) => png,
   }),
 
   'docs.search': cap({
