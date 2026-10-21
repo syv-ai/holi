@@ -65,6 +65,32 @@ should not carry one person's model of another.
 - **Do not reorganise or consolidate shared memory unasked.** Rewriting what
   someone else recorded is a change to shared state; propose it instead.
 
+## Checking memory
+
+When the session overview says there are memory lint findings, or after you
+have written or moved several memories, list them from the vault root:
+
+```sh
+node .claude/skills/memory/lint.mjs
+```
+
+It reads `.holi/memory/` and changes nothing. Each finding names a file, a kind
+and what to do:
+
+- **frontmatter**: no frontmatter, no `type` or `description`, a fence that never
+  closes, or a value with an unquoted `: ` (invalid YAML, which hides every key).
+- **broken-link**: a link to a memory that does not exist, or a shared memory
+  linking a personal one, which no other clone has.
+- **stale**: a link to a vault file that is not there any more. The fact may no
+  longer hold.
+- **duplicate**: two memories with the same description or title, likely one
+  fact.
+
+**Findings are proposals.** Fix a memory you wrote this session, or one the user
+asks you to fix. For shared memory someone else recorded, tell the user what you
+found and what you would change, and change it only when they agree. Merging
+duplicates in particular is a rewrite of shared state.
+
 ## The older shape
 
 Some vaults still carry a root **`MEMORY.md`**, and some a **`USER.local.md`**.

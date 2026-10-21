@@ -9,7 +9,8 @@
 //
 // Reads only: `.holi/memory/index.md` (which the memory-index transform already
 // generated, so nothing is parsed twice), a scan for personal `*.local.md`
-// memories, and one `git log`. It never calls Holi's bridge: Claude Code spawns
+// memories, one `git log`, and the memory lint (`.claude/skills/memory/lint.mjs`),
+// of which it prints only the count. It never calls Holi's bridge: Claude Code spawns
 // this, not Holi, so it must work with no server anywhere. Absent `.holi/memory/`, it prints
 // nothing and exits 0, exactly as the focused-note hook does outside Holi.
 //
@@ -115,6 +116,22 @@ function indexSections(text) {
 }
 
 const sections = indexSections(index)
+
+/** How many lint findings there are, or 0 when the lint is missing or throws:
+ *  the overview never fails a session start. Imported rather than copied, so the
+ *  count and the list the agent runs are the same code. Only the count is
+ *  printed, and it depends on nothing but the files, so the overview stays the
+ *  same from session to session until memory changes. */
+async function lintCount() {
+  try {
+    const { lintVault } = await import(new URL('../skills/memory/lint.mjs', import.meta.url).href)
+    return lintVault(root).length
+  } catch {
+    return 0
+  }
+}
+
+const findings = await lintCount()
 const total = sections.reduce((n, s) => n + s.lines.length, 0)
 
 /** `Recent: <date> <subject>` × 3. One subprocess, once per session — a looser
@@ -146,6 +163,14 @@ function render({ descriptions }) {
   const out = [
     `# This vault's memory (${count} shared${personal.length > 0 ? `, ${personal.length} personal` : ''})`,
   ]
+
+  // Next to the heading, so the cap's truncation can never cut it.
+  if (findings > 0) {
+    out.push(
+      '',
+      `${findings} memory lint finding(s): run \`node .claude/skills/memory/lint.mjs\` to list them, as proposals.`,
+    )
+  }
 
   if (sections.length > 0) {
     out.push('', `Types in use: ${sections.map((s) => `${s.type} (${s.lines.length})`).join(', ')}`)

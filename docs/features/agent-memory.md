@@ -38,6 +38,23 @@ index. With memory files but no index yet, it says so and points at the director
 port: local reads and one `git log` with a 2 s timeout. Its files are read in sorted order and it
 prints no clock time, so the same memory prints the same text on any machine.
 
+**A lint lists what looks wrong, as proposals.** `.claude/skills/memory/lint.mjs` reads every
+memory file, personal ones included, and prints findings of four kinds: `frontmatter` (none, no
+`type` or `description`, an unclosed fence, or a value with an unquoted `: `, which is invalid YAML
+and makes the indexer drop every key), `broken-link` (a wiki-link to a memory that does not exist,
+or a shared memory linking a personal one, which no other clone has), `stale` (a wiki-link to a vault
+file that is not there) and `duplicate` (two memories with the same description or title, after
+case and punctuation are folded). Links inside code are examples and are skipped. It is
+deterministic and writes nothing: the agent fixes what it wrote, and proposes changes to shared
+memory someone else recorded. Staleness has no other deterministic signal, so a dead link is the
+only one used. The overview prints only the count, next to its heading so the cap never cuts it,
+with the command to run; the count depends only on the files, so the overview stays the same from
+session to session until memory changes. The overview imports the lint rather than copying it, and
+prints no count if the file is missing. The skill says how to run it and what to do with findings.
+Like the hooks it is plain node with no dependencies, so it works in any Claude Code; for the same
+reason it reads frontmatter without a YAML parser, and only the unquoted `: ` case of invalid YAML is
+caught.
+
 **One memory surface.** The seeded `.claude/settings.json` sets `autoMemoryEnabled: false`, merged
 into existing vaults only when the key is absent, so Claude Code's own out-of-vault memory is off.
 
@@ -65,9 +82,14 @@ only when the user asks.
 - Duplicating `x.local.md` yields `x copy.local.md`, keeping the marker. A copy name that breaks the
   marker publishes the file.
 - No unattended edits to shared memory: consolidation or splitting is agent work the user asks for.
+  Lint findings are proposals under the same rule.
 
 ## Rejected
 
+- The lint in `packages/shared` beside the indexer: a vault hook cannot import Holi's code, so the
+  overview would need a second copy. The lint is the shipped script and the overview imports it.
+- Every lint finding in the overview: a list paid for in every session, where a count and a command
+  cost one line.
 - Surfacing Claude Code's own memory directory in the tree: two memory surfaces, and a read/write
   path outside path containment.
 - `autoMemoryDirectory` pointed at `.holi/memory/`: ignored in checked-in project settings, and its
@@ -88,4 +110,5 @@ only when the user asks.
 - `apps/desktop/src/main/vault/hooks/memory-index.ts`: the pre-commit transform
 - `apps/desktop/src/plugins/agent/main/claude/vault/shipped/.claude/hooks/memory-overview.mjs`: the `SessionStart` overview
 - `apps/desktop/src/plugins/agent/main/claude/vault/shipped/.claude/skills/memory/SKILL.md`: the memory contract given to the agent
+- `apps/desktop/src/plugins/agent/main/claude/vault/shipped/.claude/skills/memory/lint.mjs`: the memory lint, run by the agent and counted by the overview
 - `packages/shared/src/path-safety.ts`: `MEMORY_DIR`, `isAgentSurfacePath`

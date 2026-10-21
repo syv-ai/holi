@@ -18,7 +18,7 @@ asked. Also absent: surfacing a hook failure in the sync status bar when no sess
 
 **A cap on concurrent sessions.** A vault can run any number.
 
-**Memory tooling.** Lint findings as proposals, a graph view, and per-directory indexes. See
+**Memory tooling.** A graph view and per-directory indexes. See
 [agent-memory](features/agent-memory.md).
 
 **Self-improvement loop.** Dropped from v1: unproven, and one person's background agent editing
