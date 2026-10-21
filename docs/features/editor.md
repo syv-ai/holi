@@ -32,7 +32,7 @@ Every note is a `.md` file, edited in CodeMirror 6 with live preview: markdown r
 
 **Mermaid.** A mermaid fence draws as a diagram and shows source when touched. Mermaid loads on first use, a broken diagram shows its source, and the palette follows light/dark at render time.
 
-**Completion.** Every popup in the app comes from `holiCompletion`. `@` lists notes, then open tasks, and inserts a `[[path]]`. `/todo` inserts a checkbox; `/table` reopens on sizes (columns by body rows).
+**Completion.** Every popup in the app comes from `holiCompletion`. `@` lists notes, then open tasks, and inserts a `[[path]]`. `/todo` inserts a checkbox; `/table` reopens on sizes (columns by body rows). A running plugin adds commands of its own after these (`RendererPlugin.slashCommands`), read each time the menu opens; a built-in's name stays the built-in's. Vault apps add theirs this way ([vault apps](vault-apps.md)). Typing `/` over a selection replaces it as any typing does, but the command still gets it: picking a command puts the text back, selected, and runs the command on `{ text, line, path }` (that text, the line as it was, the note). Its answer replaces the text, inserts after it, or opens the ask-the-agent popover with an instruction written in, over the text or at the caret, where the person still picks the session and sends. A command that fails leaves the text as it was put back. Nothing more of the buffer is handed over.
 
 **Ask the agent.** A selection shows a button that opens a field and a session picker. The message is your instruction, then `[From <path>, lines 12-18]` and the passage quoted with `> `; line numbers come from CodeMirror's range, so they are exact.
 

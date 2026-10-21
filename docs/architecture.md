@@ -111,7 +111,8 @@ and its `rowMenu` items join the file tree's menu. On the main side a claim
 `snapshot.claimed[id]` instead of `docs`, and a settings write that changes `plugins` rescans.
 A plugin adds `surfaces` (tab kinds) and `rail`
 items to the nav menu ([tabs and panes](features/tabs-panes.md)), registered beside core's own, and
-`settingsSections` to the settings tab ([settings](features/settings.md)).
+`settingsSections` to the settings tab ([settings](features/settings.md)), and `slashCommands`
+to the notes editor's slash menu ([editor](features/editor.md)).
 Its dialogs open as `{id: 'plugin', render}`.
 Main tells a plugin's renderer something through events: `ctx.emit(remote, name, payload)` sends
 `{remote, name, payload}` on the plugin's one channel, `plugin:<id>`, read by one preload member,

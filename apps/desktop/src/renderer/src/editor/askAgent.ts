@@ -8,7 +8,14 @@
  * `EditorDeps`, which the editors route through the agent service
  * (`useAskAgentSeam`). With no agent there is no seam and no button.
  */
-import { EditorSelection, StateField, type EditorState, type Extension } from '@codemirror/state'
+import {
+  EditorSelection,
+  Facet,
+  StateEffect,
+  StateField,
+  type EditorState,
+  type Extension,
+} from '@codemirror/state'
 import { showTooltip, type EditorView, type Tooltip, type TooltipView } from '@codemirror/view'
 import type { LineRange } from '@holi/shared'
 import { motionDurationMs, prefersReducedMotion } from '@/lib/motion'
@@ -114,7 +121,12 @@ const exitMs = (): number => (prefersReducedMotion() ? 0 : motionDurationMs('--m
  * Sending collapses the selection on purpose: that is how the tooltip closes,
  * one mechanism rather than a second dismiss path. The collapse follows the fade.
  */
-function askAgentView(view: EditorView, quote: string, seam: AskAgentSeam): TooltipView {
+function askAgentView(
+  view: EditorView,
+  quote: string,
+  seam: AskAgentSeam,
+  instruction?: string,
+): TooltipView {
   const dom = document.createElement('div')
   dom.className = 'cm-ask-agent'
 
@@ -131,13 +143,14 @@ function askAgentView(view: EditorView, quote: string, seam: AskAgentSeam): Tool
     }, exitMs())
   }
 
-  const popover = (): HTMLElement => {
+  const popover = (text = ''): HTMLElement => {
     const wrap = document.createElement('div')
     wrap.className = 'cm-ask-agent-popover'
 
     const field = document.createElement('textarea')
     field.rows = 1
     field.className = 'cm-ask-agent-field'
+    field.value = text
 
     // Read as the popover opens. A default that has gone falls back to a new session.
     const { sessions, initial } = seam.targets()
@@ -257,6 +270,13 @@ function askAgentView(view: EditorView, quote: string, seam: AskAgentSeam): Tool
       if (e.key === 'Escape') {
         e.preventDefault()
         e.stopPropagation()
+        // Opened by a command, perhaps with nothing selected: the selection
+        // decides again, which is the button over one and nothing otherwise.
+        if (instruction !== undefined) {
+          view.dispatch({ selection: view.state.selection })
+          view.focus()
+          return
+        }
         dom.classList.remove('cm-ask-agent-open')
         dom.replaceChildren(trigger())
         view.dispatch({})
@@ -290,7 +310,11 @@ function askAgentView(view: EditorView, quote: string, seam: AskAgentSeam): Tool
     return button
   }
 
-  dom.appendChild(trigger())
+  if (instruction === undefined) dom.appendChild(trigger())
+  else {
+    dom.appendChild(popover(instruction))
+    dom.classList.add('cm-ask-agent-open')
+  }
   return {
     dom,
     // The tooltip can go before the fade finishes; the pending dispatch must not
@@ -323,6 +347,41 @@ function tooltipFor(state: EditorState, notePath: string, seam: AskAgentSeam): T
 }
 
 /**
+ * Open the popover with `instruction` written in, over the selection, or at the
+ * caret when nothing is selected: what a slash command's `{ agent }` does
+ * (docs/features/editor.md). The person still picks the session and sends.
+ */
+export const openAskAgent = StateEffect.define<string>()
+
+/** Whether this editor has the ask at all: it has none without an agent. */
+export const hasAskAgent = Facet.define<boolean, boolean>({
+  combine: (values) => values.some(Boolean),
+})
+
+/** The opened-by-a-command tooltip: the selection quoted, or the caret's line
+ *  named when there is none. */
+function openedTooltip(
+  state: EditorState,
+  notePath: string,
+  seam: AskAgentSeam,
+  instruction: string,
+): Tooltip[] {
+  if (state.readOnly) return []
+  const range = state.selection.main
+  const quote =
+    promptForSelection(state, notePath) ??
+    `[From ${notePath}, line ${state.doc.lineAt(range.head).number}]`
+  return [
+    {
+      pos: range.from,
+      end: range.to,
+      above: true,
+      create: (view) => askAgentView(view, quote, seam, instruction),
+    },
+  ]
+}
+
+/**
  * Shows an "Ask agent" button over a non-empty selection. `notePath` is static
  * because `EditorPane` rebuilds the view per document.
  */
@@ -330,6 +389,9 @@ export function askAgentTooltip(notePath: string, seam: AskAgentSeam): Extension
   const field = StateField.define<readonly Tooltip[]>({
     create: (state) => tooltipFor(state, notePath, seam),
     update(tooltips, tr) {
+      for (const effect of tr.effects) {
+        if (effect.is(openAskAgent)) return openedTooltip(tr.state, notePath, seam, effect.value)
+      }
       // Not on other transactions: rebuilding would replace the button under
       // the pointer.
       if (!tr.docChanged && tr.selection === undefined) return tooltips
@@ -337,5 +399,5 @@ export function askAgentTooltip(notePath: string, seam: AskAgentSeam): Extension
     },
     provide: (f) => showTooltip.computeN([f], (state) => state.field(f)),
   })
-  return field
+  return [field, hasAskAgent.of(true)]
 }

@@ -28,6 +28,7 @@ export type {
   SurfaceTabLook,
 } from './types'
 export type { Command } from '@/state/commands'
+export type { SlashCommand, SlashInput, SlashResult } from '@/editor/slash'
 export type { PluginInfo } from '@holi/shared'
 
 export { trpc } from '@/lib/trpc'

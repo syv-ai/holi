@@ -12,6 +12,7 @@ import {
   FileText,
   ListTodo,
   Settings2,
+  SquareSlash,
   Table,
   type IconNode,
 } from 'lucide'
@@ -25,4 +26,6 @@ export const GLYPHS: Record<string, IconNode> = {
   'holi-list-todo': ListTodo,
   'holi-table': Table,
   'holi-setting': Settings2,
+  // A command a plugin added to the slash menu.
+  'holi-command': SquareSlash,
 }

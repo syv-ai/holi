@@ -30,7 +30,7 @@ import {
 import { mentionSource, type MentionData } from './mentions'
 import { alphaListKeymap, alphaLists, listKindByTyping, renumberOrderedLists } from './lists'
 import { arrowsByTyping } from './arrows'
-import { slashCommands, tableSizes } from './slash'
+import { slashCommandsWith, tableSizes, type SlashCommand } from './slash'
 import { wikiHoverPreview, type ReadNote } from './wikiHover'
 import { colorModeAware } from './color-mode'
 import { codeHighlighting, editorTheme, markdownHighlighting, notesFontTheme } from './theme'
@@ -68,6 +68,9 @@ export interface EditorDeps {
   /** Hand the current selection to one of the vault's agent sessions.
    *  Absent with no agent, and then there is no button. */
   askAgent?: AskAgentSeam
+  /** The slash commands the running plugins add, read each time the menu
+   *  opens. */
+  slashCommands?: () => readonly SlashCommand[]
   /** The open note's vault path, for note-relative image resolution. */
   notePath: string
   /** The document is locked while a reconcile resolves this file
@@ -92,6 +95,7 @@ export interface EditorDeps {
  * `test/completion.test.ts`).
  */
 export function baseEditorExtensions(deps: EditorDeps): Extension[] {
+  const slash = slashCommandsWith(deps.slashCommands ?? (() => []), deps.notePath)
   return [
     EditorState.readOnly.of(deps.readOnly === true),
     EditorView.editable.of(deps.readOnly !== true),
@@ -148,10 +152,11 @@ export function baseEditorExtensions(deps: EditorDeps): Extension[] {
     }),
     holiCompletion([
       mentionSource(deps.mentionData),
-      slashCommands,
+      slash.source,
       tableSizes,
       markdownTableAutocompleter(),
     ]),
+    slash.extension,
     // Multi-cursor is off by default; ⌘D's next-occurrence selections need it.
     EditorState.allowMultipleSelections.of(true),
     formattingKeymap, // ⌘B / ⌘I / ⌘E / ⌘K / ⌘⇧X — higher precedence than defaults
