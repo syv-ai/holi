@@ -70,7 +70,7 @@ export const turnDiffAtom = atom<TurnDiff | null>(null)
 
 // ------------------------------------------------------------------- write atoms
 
-/** The newest record for each session. The log is already newest-first and is
+/** The newest record for each session that changed something. The log is already newest-first and is
  *  never re-sorted here, so the first record naming a session is that session's
  *  latest. */
 export const loadLatestTurnsAtom = atom(null, async (get, set) => {
@@ -79,7 +79,9 @@ export const loadLatestTurnsAtom = atom(null, async (get, set) => {
   const turns = await agentCap.turns(remote)
   const latest: Record<string, Turn> = {}
   for (const turn of turns) {
-    if (turn.sessionId === undefined) continue
+    // A turn that changed nothing has nothing to review: the chip keeps showing
+    // the session's last one that did.
+    if (turn.sessionId === undefined || turn.base === turn.end) continue
     latest[turn.sessionId] ??= turn
   }
   set(latestTurnsAtom, latest)

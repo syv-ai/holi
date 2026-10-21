@@ -41,8 +41,9 @@ export interface TurnLog {
   /** Newest first, capped. `[]` for a vault that has never run a turn, and for
    *  an unreadable or malformed file. */
   list(): Promise<TurnRecord[]>
-  /** Prepend and cap. A record whose `base` equals its `end` is dropped here, so
-   *  no caller has to ask whether a turn changed anything. */
+  /** Prepend and cap. A turn that changed nothing (`base` equals `end`) is kept:
+   *  it still ends the session's turn, which is where the prompt hook's "changed
+   *  since your last turn" starts counting. The chip skips it. */
   append(record: TurnRecord): Promise<void>
 }
 
@@ -80,9 +81,6 @@ export function openTurnLog(vaultRoot: string): TurnLog {
   }
 
   const append = async (record: TurnRecord): Promise<void> => {
-    // A turn that committed nothing is not a turn worth reviewing, and the chip
-    // that would announce it would have nothing to open.
-    if (record.base === record.end) return
     const next = [record, ...(await list())].slice(0, CAP)
     // A freshly cloned vault may have no `.holi/` yet.
     await mkdir(dirname(path), { recursive: true })

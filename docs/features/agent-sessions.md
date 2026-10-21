@@ -100,7 +100,8 @@ opens puts any session already busy into the set.
 
 **Turn review.** A turn is a commit range, `base` at start to the settle commit. Records go to
 `.holi/state/turns.local.json` (50, newest first), keyed by job id; files and diffs come from git
-when shown. A chip under a session's window says `Claude changed N files` and opens a review with
+when shown. A turn that changed nothing is recorded too, since the prompt hook counts "changed since
+your last turn" from it ([agent-config.md](agent-config.md)); the chip skips it. A chip under a session's window says `Claude changed N files` and opens a review with
 per-hunk accept and reject, saved as one new commit per file. An overlapped turn says so; an
 unreachable range says its history is gone.
 

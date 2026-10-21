@@ -76,6 +76,16 @@ test('skips a record from before a vault could run two sessions', async () => {
   expect(s.get(latestTurnsAtom)).toEqual({})
 })
 
+test('looks past a turn that changed nothing to the last one that did', async () => {
+  const s = store()
+  list.mockResolvedValue([
+    { base: 'z', end: 'z', at: '2026-09-09T11:00:00Z', sessionId: 'sess-a' },
+    TURN,
+  ])
+  await s.set(loadLatestTurnsAtom)
+  expect(s.get(latestTurnsAtom)).toEqual({ 'sess-a': TURN })
+})
+
 test('leaves the map empty for a vault that has never run a turn', async () => {
   const s = store()
   list.mockResolvedValue([])
