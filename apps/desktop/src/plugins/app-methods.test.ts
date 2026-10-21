@@ -47,6 +47,7 @@ it('answers every bridge method that is not the renderer’s at the app door', (
     pdfCapabilities({
       signatures: { read: async () => '[]', write: async () => {} },
       typst: async () => null,
+      diagrams: async () => [],
     }),
   )
   registry.register(

@@ -30,7 +30,7 @@ Every note is a `.md` file, edited in CodeMirror 6 with live preview: markdown r
 
 **Fenced code** hides its backticks while the caret is outside the block, leaving the language as a small label. The fence lines stay, so the block keeps its height when the caret enters and the fences show.
 
-**Mermaid.** A mermaid fence draws as a diagram and shows source when touched. Mermaid loads on first use, a broken diagram shows its source, and the palette follows light/dark at render time.
+**Mermaid.** A mermaid fence draws as a diagram and shows source when touched. Mermaid loads on first use, a broken diagram shows its source, and the palette follows light/dark at render time. A PDF draws it too, always light ([pdf.md](pdf.md)).
 
 **Completion.** Every popup in the app comes from `holiCompletion`. `@` lists notes, then open tasks, and inserts a `[[path]]`. `/todo` inserts a checkbox; `/table` reopens on sizes (columns by body rows).
 

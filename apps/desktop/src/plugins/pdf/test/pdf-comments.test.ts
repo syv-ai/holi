@@ -140,6 +140,7 @@ describe('pdfCommentsInVault', () => {
       pdfCapabilities({
         signatures: createSignatureStore(join(root, '..', 'signatures.json')),
         typst: async () => null,
+        diagrams: async () => [],
       }),
     )
     const runCapability = registry.run

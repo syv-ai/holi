@@ -1,23 +1,29 @@
 /**
- * PDF's capabilities. The agent reads a marked-up PDF's comments and finds
- * Typst at the CLI door; the plugin's own renderer lists templates, renders a
- * note and keeps the viewer's signatures at the UI door.
+ * PDF's capabilities. The agent reads a marked-up PDF's comments, renders a
+ * note and finds Typst at the CLI door; the plugin's own renderer lists
+ * templates, renders a note and keeps the viewer's signatures at the UI door.
+ * Both doors render through one entry, so the agent's PDFs and Convert to
+ * PDF's come out the same, diagrams included.
  *
  * No `electron` import: this loads under plain Node in the tests.
  */
-import { dirname, join, relative, sep } from 'node:path'
-import { vaultRelPath } from '@holi/shared'
+import { readFile, stat } from 'node:fs/promises'
+import { dirname, isAbsolute, join, relative, sep } from 'node:path'
+import { localDate, vaultRelPath } from '@holi/shared'
 import {
   cap,
   CapabilityError,
   noParams,
+  optionalStringParam,
   paramsObject,
   pathParams,
   stringParam,
   type CapabilityTable,
 } from '../../../main/plugin-api'
 import { commentThreadsJson, formatCommentThreads } from '../shared/pdf-comments'
+import { missingRequired, parseFrontmatter, prefillValues } from '../shared/pdf-fields'
 import { pdfCommentsInVault } from './comments'
+import type { DrawDiagrams } from './mermaid'
 import { renderPdf } from './render'
 import type { SignatureStore } from './signatures'
 import { listTemplates } from './templates'
@@ -36,27 +42,34 @@ export interface PdfCapabilityDeps {
   /** The Typst binary, downloaded on first use (`sharedTypst`); null when it
    *  cannot be had. */
   typst(): Promise<string | null>
+  /** Draws a note's mermaid diagrams for its PDF (`mermaid-window.ts`). */
+  diagrams: DrawDiagrams
 }
 
-/** The render params. `outPath` is an absolute destination the native save
- *  dialog chose; absent, the PDF goes beside the note. `meta` maps the
- *  template's declared fields to the values typed for them. */
+/** A size the way a person reads it. */
+function sizeText(bytes: number): string {
+  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+/** The render params. `out` is where the PDF goes: absolute, or relative to
+ *  the vault; absent, it goes beside the note. The template defaults to
+ *  `plain`. Field values come as `meta` from the dialog and as the remaining
+ *  params from the CLI (`--recipient Acme`). */
 function renderParams(raw: unknown): {
   path: string
   template: string
-  outPath?: string
+  out?: string
   meta: Record<string, string>
 } {
-  const p = paramsObject(raw)
-  const outPath = p.outPath
-  if (outPath !== undefined && typeof outPath !== 'string') {
-    throw new CapabilityError('BAD_REQUEST', 'outPath must be a string')
-  }
+  const { path, template, out, meta, ...fields } = paramsObject(raw)
+  const p = { path, template, out }
+  const outPath = optionalStringParam(p, 'out')
   return {
     path: stringParam(p, 'path'),
-    template: stringParam(p, 'template'),
-    ...(outPath === undefined ? {} : { outPath }),
-    meta: metaOf(p.meta),
+    template: optionalStringParam(p, 'template') ?? 'plain',
+    ...(outPath === undefined ? {} : { out: outPath }),
+    meta: { ...metaOf(meta), ...metaOf(fields) },
   }
 }
 
@@ -141,37 +154,81 @@ export function pdfCapabilities(deps: PdfCapabilityDeps) {
         })),
     }),
 
-    // Render `path` through `template` to a PDF and return where it went.
-    // `vaultPath` is set when the PDF is inside the vault, so the caller can
-    // open it in a tab; the watcher picks the new file up.
+    // Render `path` through `template` to a PDF and say where it went, how
+    // big it is, and what did not come out as written. `vaultPath` is set when
+    // the PDF is inside the vault, so the caller can open it in a tab; the
+    // watcher picks the new file up. Fields fill as the dialog fills them: a
+    // value given, else the note's frontmatter, else the field's default.
     'pdf.render': cap({
-      doors: ['ui'],
+      doors: ['ui', 'cli'],
+      cli: {
+        args: ['path', 'template?'],
+        summary:
+          'render a note to a PDF through a template (default plain): [--out <path>], [--<field> <value>]',
+      },
       params: renderParams,
-      run: async (ctx, { path, template, outPath, meta }) => {
+      run: async (ctx, { path, template, out, meta }) => {
         let noteAbs: string
         try {
           noteAbs = join(ctx.root, vaultRelPath(path))
         } catch (err) {
           throw new CapabilityError('BAD_REQUEST', (err as Error).message)
         }
-        const tpl = (await listTemplates(ctx.root)).find((t) => t.slug === template)
-        if (tpl === undefined) throw new CapabilityError('NOT_FOUND', `template ${template}`)
+        const templates = await listTemplates(ctx.root)
+        const tpl = templates.find((t) => t.slug === template)
+        if (tpl === undefined) {
+          const known = templates.map((t) => t.slug).join(', ')
+          throw new CapabilityError('NOT_FOUND', `template ${template} (the vault has: ${known})`)
+        }
+        const unknown = Object.keys(meta).filter((k) => !tpl.fields.some((f) => f.key === k))
+        if (unknown.length > 0) {
+          const known = tpl.fields.map((f) => f.key).join(', ') || 'none'
+          throw new CapabilityError(
+            'BAD_REQUEST',
+            `not a field of ${template}: ${unknown.join(', ')} (its fields: ${known})`,
+          )
+        }
+        if (out !== undefined && !/\.pdf$/i.test(out)) {
+          throw new CapabilityError('BAD_REQUEST', 'out must end in .pdf')
+        }
+        const note = await readFile(noteAbs, 'utf8').catch(() => null)
+        if (note === null) throw new CapabilityError('NOT_FOUND', path)
+        const values = {
+          ...prefillValues(tpl.fields, parseFrontmatter(note), localDate(new Date())),
+          ...meta,
+        }
+        const missing = missingRequired(tpl.fields, values)
+        if (missing.length > 0) {
+          throw new CapabilityError(
+            'BAD_REQUEST',
+            `${template} needs ${missing.map((f) => f.key).join(', ')}`,
+          )
+        }
         const typstBin = await typst()
         const base = path
           .split('/')
           .at(-1)!
           .replace(/\.(md|markdown)$/i, '')
-        const pdfPath = outPath ?? join(dirname(noteAbs), `${base}.pdf`)
-        await renderPdf({
+        const pdfPath =
+          out === undefined
+            ? join(dirname(noteAbs), `${base}.pdf`)
+            : isAbsolute(out)
+              ? out
+              : join(ctx.root, out)
+        const { warnings } = await renderPdf({
           typstBin,
           templateDir: tpl.dir,
           notePath: noteAbs,
           outPath: pdfPath,
           fields: tpl.fields,
-          meta,
+          meta: values,
+          diagrams: deps.diagrams,
         })
-        return { pdfPath, vaultPath: vaultPathOf(ctx.root, pdfPath) }
+        const { size } = await stat(pdfPath)
+        return { pdfPath, vaultPath: vaultPathOf(ctx.root, pdfPath), bytes: size, warnings }
       },
+      text: ({ pdfPath, vaultPath, bytes, warnings }) =>
+        [`${vaultPath ?? pdfPath} (${sizeText(bytes)})`, ...warnings].join('\n'),
     }),
 
     // The signatures made in the viewer, as the library's serialized list.
