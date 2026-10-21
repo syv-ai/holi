@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { createDeliveredLog } from '../src/main/reminders/delivered-log'
+import { createDeliveredLog } from '../main/reminders/delivered-log'
 
 let root: string
 const rootFor = (remote: string) => (remote === 'o/r' ? root : null)
@@ -47,7 +47,7 @@ describe('createDeliveredLog', () => {
   // answers. Reading it as anything else loses them on the first fire.
   it('keeps the settings in the seeded YAML file when writing', async () => {
     await mkdir(join(root, '.holi/settings'), { recursive: true })
-    await writeFile(settingsPath(), seedSettingsText({ colorScheme: 'light' }, 'local'), 'utf8')
+    await writeFile(settingsPath(), seedSettingsText({ colorScheme: 'light' }, 'local', []), 'utf8')
     const log = createDeliveredLog(rootFor)
     log.markDelivered('o/r', 'task.a.md', '2026-07-28T09:00')
     const text = await readFile(settingsPath(), 'utf8')
@@ -62,6 +62,7 @@ describe('createDeliveredLog', () => {
     const seeded = seedSettingsText(
       { colorScheme: 'dark', reminders: { 'task.a.md': '2026-07-28T09:00' } },
       'local',
+      [],
     )
     await writeFile(settingsPath(), seeded, 'utf8')
     expect(createDeliveredLog(rootFor).read('o/r')).toEqual({ 'task.a.md': '2026-07-28T09:00' })

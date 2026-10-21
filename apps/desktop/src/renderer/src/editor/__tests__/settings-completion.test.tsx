@@ -56,7 +56,7 @@ test('a number offers the sizes the pane offers — a suggestion is not a closed
 test('a hooks flag offers true and false, though it is not a setting by name', () => {
   // The five switches live inside the `hooks` setting's type, not in
   // VAULT_SETTINGS, so a naive key lookup finds nothing for them.
-  expect(labels('  archive-done: ')).toEqual(['true', 'false'])
+  expect(labels('  relink: ')).toEqual(['true', 'false'])
 })
 
 test('completes a partly typed value, replacing only what was typed', () => {

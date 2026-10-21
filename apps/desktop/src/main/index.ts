@@ -36,7 +36,6 @@ import { createCapabilityHost } from './capabilities/dispatch'
 import { CapabilityError } from './capabilities/error'
 import { createCapabilityRegistry } from './capabilities/registry'
 import { vaultCapabilities, VAULT_NAMESPACES, type SkillsUpdated } from './capabilities/vault-caps'
-import { taskCapabilities, TASK_NAMESPACES, TASKS_PART } from './vault/task-capabilities'
 import { commentCapabilities, COMMENT_NAMESPACES } from './vault/comment-capabilities'
 import { pulledMentions } from './vault/note-comments'
 import { coreSeed } from './vault/seed/core'
@@ -60,7 +59,7 @@ import { createReleaseNotes } from './updates/release-notes'
 import { createVaultPreCommit } from './vault/hooks/pre-commit'
 import { registerGitRoutes } from './vault/git-routes'
 import { registerIpc } from './ipc'
-import { createRouter, localToday } from './router'
+import { createRouter } from './router'
 import { createCoreServices, createUiReports } from './capabilities/services'
 import { createVaultHost } from './vault/active-vault'
 import { VaultRegistry, vaultRoot } from './vault/registry'
@@ -266,7 +265,6 @@ async function main(): Promise<void> {
   const capabilities = createCapabilityRegistry()
   const plugins = createPluginHost({
     plugins: MAIN_PLUGINS,
-    core: [TASKS_PART],
     registry: capabilities,
     userData: userDataDir,
     coreSeeds: CORE_SEEDS,
@@ -305,6 +303,7 @@ async function main(): Promise<void> {
       scan: async (root) => scanVault(root, await plugins.scanClaimsFor(root)),
       open: (remote, path) => showPath(remote, path),
       viewerLogin: () => session.viewer?.login ?? null,
+      notify: (notice) => showNotification(notice),
       // The tray is the way back in (Open Holi) and the way out (Quit, since
       // ⌘W is not) for as long as something runs in the background.
       onChange: (whys) => {
@@ -641,9 +640,7 @@ async function main(): Promise<void> {
       return skillsUpdated(root, report)
     },
   })
-  const taskCaps = taskCapabilities({ today: localToday })
   capabilities.register(VAULT_NAMESPACES, vaultCaps)
-  capabilities.register(TASK_NAMESPACES, taskCaps)
   // Comment threads on notes, for the agent: written as the signed-in person.
   capabilities.register(
     COMMENT_NAMESPACES,

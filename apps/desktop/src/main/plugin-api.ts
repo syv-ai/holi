@@ -170,6 +170,10 @@ export interface AppCtx {
   open(remote: string, path: string): void
   /** The GitHub login this machine is signed in as, or null. */
   viewerLogin(): string | null
+  /** A native notification, `PluginCtx.notify`'s kind, but raised whether or
+   *  not a Holi window has focus: work across vaults says what is due now,
+   *  whatever the person is looking at. */
+  notify(notice: Notice): void
 }
 
 /** What a quit guard asks. */
@@ -240,7 +244,7 @@ export {
 } from './capabilities/registry'
 export type { AppDoor, AppDoorOpener } from './capabilities/dispatch'
 export { CapabilityError } from './capabilities/error'
-export { knownPath } from './capabilities/fences'
+export { knownPath, writableFile, writablePath } from './capabilities/fences'
 export {
   flagParam,
   limitParam,
@@ -256,7 +260,16 @@ export { resolveBin, toolPath } from './bin'
 export { defaultProbePid, type PidState } from './process-group'
 export { remoteUrl, runGit, type RangeFile } from './git'
 export { gitignoreWith } from './vault/seed/core'
-export { writeAtomic } from './vault/vault-files'
+export {
+  absPathFor,
+  listFiles,
+  removeDocFile,
+  withFileLock,
+  writeAtomic,
+} from './vault/vault-files'
+export { moveNotes } from './vault/move'
+export { renameNote } from './vault/rename'
+export { localToday } from './router'
 export { holiTheme, readVaultTheme } from './vault/theme'
 export { readVaultSettings, writePluginSettings } from './vault/settings'
 export { installedInfos } from './plugin-host/installed'

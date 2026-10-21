@@ -15,7 +15,7 @@ import { noCoreServices, type CoreServices } from '../src/main/capabilities/serv
 import { vaultCapabilities, VAULT_NAMESPACES } from '../src/main/capabilities/vault-caps'
 import type { GoogleAccountsManager } from '../src/plugins/google/main/accounts'
 import { googleCapabilities, GOOGLE_NAMESPACES } from '../src/plugins/google/main/capabilities'
-import { taskCapabilities, TASK_NAMESPACES } from '../src/main/vault/task-capabilities'
+import { taskCapabilities, TASKS_NAMESPACES } from '../src/plugins/tasks/main/capabilities'
 import { MEMBERS_TTL_MS, createMembersCache } from '../src/main/github/members-cache'
 
 const registry = createCapabilityRegistry()
@@ -30,7 +30,7 @@ registry.register(
     screenshot: async () => new Uint8Array([0x89, 0x50, 0x4e, 0x47]),
   }),
 )
-registry.register(TASK_NAMESPACES, taskCapabilities({ today: () => '2026-09-30' }))
+registry.register(TASKS_NAMESPACES, taskCapabilities({ today: () => '2026-09-30' }))
 /** What the Google entries see of this person's approvals; each test sets it. */
 let grantStatus: AppGrants['status'] = async () => ({ codeHash: '', affordances: [] })
 registry.register(

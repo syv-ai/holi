@@ -1,7 +1,7 @@
 import type { Task } from '@holi/shared'
 import { describe, expect, it } from 'vitest'
-import { sweep } from '../src/main/reminders/sweep'
-import type { Delivered } from '../src/main/reminders/sweep'
+import { sweep } from '../main/reminders/sweep'
+import type { Delivered } from '../main/reminders/sweep'
 
 const task = (over: Partial<Task> = {}): Task => ({
   path: 'task.t.md',

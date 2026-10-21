@@ -27,7 +27,7 @@ import {
 import { noCoreServices } from '../src/main/capabilities/services'
 import { vaultCapabilities } from '../src/main/capabilities/vault-caps'
 import { pdfCapabilities } from '../src/plugins/pdf/main/capabilities'
-import { taskCapabilities } from '../src/main/vault/task-capabilities'
+import { taskCapabilities } from '../src/plugins/tasks/main/capabilities'
 import { bridgeLines, writeVaultEnv } from './helpers/bridge-env'
 
 const execFileAsync = promisify(execFile)

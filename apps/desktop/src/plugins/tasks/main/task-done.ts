@@ -20,7 +20,7 @@ import {
   type VaultRelPath,
 } from '@holi/shared'
 import { resolveRelative } from '@holi/shared/path-safety-node'
-import { absPathFor, writeAtomic } from './vault-files'
+import { absPathFor, writeAtomic } from '../../../main/plugin-api'
 
 export type TaskDoneResult =
   | { ok: true; path: string; status: 'done' }

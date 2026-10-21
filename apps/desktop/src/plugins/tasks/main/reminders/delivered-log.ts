@@ -1,5 +1,5 @@
 import { SETTINGS_LOCAL_FILE, parseSettingsText, writeSettingsText } from '@holi/shared'
-import { installedInfos } from '../plugin-host/installed'
+import { installedInfos } from '../../../../main/plugin-api'
 /**
  * The delivery watermark, named. Two verbs over the per-task last-fired map:
  * `read` is what `sweep` indexes (one file read per vault per tick), `markDelivered`

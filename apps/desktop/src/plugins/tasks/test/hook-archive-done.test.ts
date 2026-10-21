@@ -8,9 +8,14 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterAll, beforeEach, describe, expect, it } from 'vitest'
-import { cleanupFixtures, makeClone, makeRemote, plainGit } from './helpers/git-fixtures'
-import { archiveDone } from '../src/main/vault/hooks/archive-done'
-import type { StagedChanges } from '../src/main/vault/hooks/staged'
+import {
+  cleanupFixtures,
+  makeClone,
+  makeRemote,
+  plainGit,
+} from '../../../../test/helpers/git-fixtures'
+import { archiveDone } from '../main/archive-done'
+import type { StagedChanges } from '../../../main/plugin-api'
 
 let repo: string
 
@@ -90,7 +95,9 @@ describe('archive-done', () => {
     await commitFile('notes.md', 'see [[projects/task.fix-login.md|the login fix]]\n')
 
     await archiveDone(repo, NOTHING, { now: daysFromNow(30) })
-    expect(await read('notes.md')).toBe('see [[archive/projects/task.fix-login.md|the login fix]]\n')
+    expect(await read('notes.md')).toBe(
+      'see [[archive/projects/task.fix-login.md|the login fix]]\n',
+    )
   })
 
   it('moves nothing the second time', async () => {

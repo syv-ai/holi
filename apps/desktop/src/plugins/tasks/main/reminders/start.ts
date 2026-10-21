@@ -8,17 +8,14 @@
  * or the runtime marks the watermark, so the delivered log resolves the same
  * clones the sweep just scanned. A vault whose scan throws (a stale registry
  * entry, a missing clone) is skipped, never a stall.
- *
- * Electron loads only once it starts (the notifier), so the module stays
- * importable under plain Node in the tests.
  */
 import { snapshotTasks } from '@holi/shared'
-import type { AppCtx, Disposer } from '../plugin-api'
+import type { AppCtx, Disposer } from '../../../../main/plugin-api'
+import { createNotifier } from './notify'
 import { createDeliveredLog, createReminderRuntime } from './runtime'
 import type { VaultTasks } from './sweep'
 
-export async function startReminders(ctx: AppCtx): Promise<Disposer> {
-  const { createNotifier } = await import('./notify')
+export function startReminders(ctx: AppCtx): Disposer {
   const clonePaths = new Map<string, string>()
   const corpus = {
     async all(): Promise<VaultTasks[]> {
@@ -37,7 +34,7 @@ export async function startReminders(ctx: AppCtx): Promise<Disposer> {
   const reminders = createReminderRuntime({
     corpus,
     // A click opens the task, switching vault when it is not the open one.
-    notifier: createNotifier((remote, path) => ctx.open(remote, path)),
+    notifier: createNotifier(ctx),
     delivered: createDeliveredLog((remote) => clonePaths.get(remote) ?? null),
     // An assigned task reminds only its assignees (docs/features/tasks.md).
     viewerLogin: ctx.viewerLogin,

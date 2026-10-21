@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { notificationsFor } from '../src/main/reminders/notifications'
-import type { RemindersEvent } from '../src/main/reminders/types'
+import { notificationsFor } from '../main/reminders/notifications'
+import type { RemindersEvent } from '../main/reminders/types'
 
 const fire = (n: number) => ({
   remote: 'o/r',

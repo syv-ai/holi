@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { DeliveredLog } from '../src/main/reminders/delivered-log'
-import { createReminderRuntime } from '../src/main/reminders/runtime'
-import type { Delivered, VaultTasks } from '../src/main/reminders/sweep'
-import type { RemindersEvent } from '../src/main/reminders/types'
+import type { DeliveredLog } from '../main/reminders/delivered-log'
+import { createReminderRuntime } from '../main/reminders/runtime'
+import type { Delivered, VaultTasks } from '../main/reminders/sweep'
+import type { RemindersEvent } from '../main/reminders/types'
 
 afterEach(() => {
   vi.useRealTimers()

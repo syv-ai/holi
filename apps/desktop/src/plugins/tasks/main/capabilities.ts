@@ -16,8 +16,6 @@ import {
   serializeTaskFile,
   setFirstHeading,
   snapshotTasks,
-  taskClaim,
-  TASKS_CLAIM,
   taskFilePath,
   taskSlug,
   vaultRelPath,
@@ -25,31 +23,26 @@ import {
   type TaskPatch,
   type VaultRelPath,
 } from '@holi/shared'
-import { CapabilityError } from '../capabilities/error'
-import { knownPath, writableFile, writablePath } from '../capabilities/fences'
-import { noParams, paramsObject, pathParams, stringParam } from '../capabilities/params'
-import { cap, type CapabilityContext } from '../capabilities/registry'
-import type { MainPlugin } from '../plugin-api'
-import { startReminders } from '../reminders/start'
-import { archiveDone } from './hooks/archive-done'
-import { renameNote } from './rename'
+import {
+  absPathFor,
+  cap,
+  type CapabilityContext,
+  CapabilityError,
+  knownPath,
+  noParams,
+  paramsObject,
+  pathParams,
+  removeDocFile,
+  renameNote,
+  stringParam,
+  withFileLock,
+  writableFile,
+  writablePath,
+  writeAtomic,
+} from '../../../main/plugin-api'
 import { taskDoneOp } from './task-done'
-import { absPathFor, removeDocFile, withFileLock, writeAtomic } from './vault-files'
 
-export const TASK_NAMESPACES = ['tasks'] as const
-
-/**
- * Tasks as a core part on the plugin contract, in every vault: it claims task
- * files, so the scanner parses them into `snapshot.claimed.tasks`, runs the
- * `archive-done` commit transform, and fires reminders across every
- * registered vault while Holi runs.
- */
-export const TASKS_PART: MainPlugin = {
-  info: { id: TASKS_CLAIM, label: 'Tasks', default: true },
-  claims: [taskClaim],
-  transforms: [{ name: 'archive-done', run: (root, staged) => archiveDone(root, staged) }],
-  background: { why: 'Holi stays open for reminders', start: startReminders },
-}
+export const TASKS_NAMESPACES = ['tasks'] as const
 
 export interface TaskCapabilitiesDeps {
   /** Today, local, as `YYYY-MM-DD`: the frame a recurrence rolls against. */

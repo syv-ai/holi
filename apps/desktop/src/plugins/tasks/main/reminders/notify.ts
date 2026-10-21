@@ -1,24 +1,24 @@
 /**
  * The Notifier seam's real adapter: the pure `notificationsFor` decision fed to
- * Holi's native notifications (`../notifications.ts`). A per-fire spec carries
- * a `task` (its click opens that task via `onClick`); a coalesced summary
+ * the background context's native notifications (`AppCtx.notify`). A per-fire
+ * spec carries a `task` (its click opens that task); a coalesced summary
  * carries none, since it speaks for several and there is nothing single to open.
  */
-import { showNotification } from '../notifications'
+import type { AppCtx } from '../../../../main/plugin-api'
 import { notificationsFor } from './notifications'
 import type { RemindersEvent } from './types'
 
-export function createNotifier(onClick: (remote: string, path: string) => void): {
+export function createNotifier(ctx: Pick<AppCtx, 'notify' | 'open'>): {
   fire(event: RemindersEvent): void
 } {
   return {
     fire(event) {
       for (const spec of notificationsFor(event)) {
         const task = spec.task
-        showNotification({
+        ctx.notify({
           title: spec.title,
           body: spec.body,
-          ...(task === undefined ? {} : { onClick: () => onClick(task.remote, task.path) }),
+          ...(task === undefined ? {} : { onClick: () => ctx.open(task.remote, task.path) }),
         })
       }
     },

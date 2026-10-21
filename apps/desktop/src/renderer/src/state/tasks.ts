@@ -20,8 +20,7 @@ import {
   virtualLabels,
 } from '@holi/shared'
 import { atom } from 'jotai'
-import type { taskCapabilities } from '../../../main/vault/task-capabilities'
-import { capClient } from '../lib/cap-client'
+import { capClient, type UiCapability } from '../lib/cap-client'
 import { nowAtom, todayAtom } from './clock'
 import { memberLoginsAtom, peopleList } from './members'
 import { sessionAtom } from './session'
@@ -263,8 +262,28 @@ export function dropIntent(task: Task, targetLane: string, targetStatus: TaskSta
 // Every write re-reads the vault. No optimistic patching and no
 // mutation-result-as-truth: the file on disk is the only truth.
 
-/** The tasks capabilities the renderer calls. */
-export const tasksCap = capClient<ReturnType<typeof taskCapabilities>>('tasks')
+/** The tasks plugin's capabilities the board calls, typed here as the slice
+ *  it calls while the board is still core's. */
+export const tasksCap = capClient<{
+  'tasks.create': UiCapability<
+    {
+      title: string
+      status: TaskStatus
+      folder: string
+      description?: string
+      extra?: Partial<
+        Pick<Task, 'due' | 'priority' | 'tags' | 'assignees' | 'reminder' | 'recurrence'>
+      >
+    },
+    { path: string }
+  >
+  'tasks.update': UiCapability<{ path: string; patch: Record<string, unknown> }, Task>
+  'tasks.move': UiCapability<
+    { path: string; folder: string; status?: TaskStatus; order?: number },
+    Task
+  >
+  'tasks.delete': UiCapability<{ path: string }, { ok: true }>
+}>('tasks')
 
 export const createTaskAtom = atom(
   null,

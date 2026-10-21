@@ -13,7 +13,7 @@ import { createCapabilityHost } from '../src/main/capabilities/dispatch'
 import { cap, createCapabilityRegistry } from '../src/main/capabilities/registry'
 import { noCoreServices } from '../src/main/capabilities/services'
 import { vaultCapabilities, VAULT_NAMESPACES } from '../src/main/capabilities/vault-caps'
-import { taskCapabilities, TASK_NAMESPACES } from '../src/main/vault/task-capabilities'
+import { taskCapabilities, TASKS_NAMESPACES } from '../src/plugins/tasks/main/capabilities'
 import { createRouter } from '../src/main/router'
 
 const exec = promisify(execFile)
@@ -106,7 +106,7 @@ async function rig(files: Record<string, string> = {}, auth?: StoredAuth) {
       screenshot: async () => new Uint8Array(),
     }),
   )
-  capabilities.register(TASK_NAMESPACES, taskCapabilities({ today: () => TODAY }))
+  capabilities.register(TASKS_NAMESPACES, taskCapabilities({ today: () => TODAY }))
   const capabilityHost = createCapabilityHost({
     registry: capabilities,
     rootFor: async (remote) =>
@@ -143,10 +143,9 @@ describe('settings', () => {
     const settings = await caller.settings.read({ remote: REMOTE })
     expect(settings.home).toBe(VAULT_SETTING_DEFAULTS.home)
     expect(settings.dailyNotes).toBe(true)
-    // The seed writes a hooks block; `archive-done` is opt-in.
+    // The seed writes a hooks block.
     expect(settings.hooks).toEqual({
       relink: true,
-      'archive-done': false,
       'normalize-md': true,
       'shrink-images': true,
       'memory-index': true,
@@ -184,7 +183,6 @@ describe('settings', () => {
     // The hook transforms are seeded; a write about daily notes must not drop them.
     expect((await caller.settings.read({ remote: REMOTE })).hooks).toEqual({
       relink: true,
-      'archive-done': false,
       'normalize-md': true,
       'shrink-images': true,
       'memory-index': true,

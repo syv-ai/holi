@@ -14,10 +14,13 @@ import { execFile } from 'node:child_process'
 import { readFile } from 'node:fs/promises'
 import { promisify } from 'node:util'
 import { isTaskFilePath, parseTaskFile, vaultRelPath } from '@holi/shared'
-import { absPathFor, listFiles } from '../vault-files'
-import { moveNotes } from '../move'
-import type { StagedChanges } from './staged'
-import type { TransformResult } from './relink'
+import {
+  absPathFor,
+  listFiles,
+  moveNotes,
+  type StagedChanges,
+  type TransformResult,
+} from '../../../main/plugin-api'
 
 const exec = promisify(execFile)
 
