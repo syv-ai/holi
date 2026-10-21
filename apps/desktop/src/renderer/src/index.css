@@ -62,6 +62,15 @@
      two colours, warm over cool, held still and faint. */
   --ground-light-warm: color-mix(in srgb, #ffc46b 9%, transparent);
   --ground-light-cool: color-mix(in srgb, #96c8ff 5%, transparent);
+  /* The one accent, warm to violet: the word "own." on sign-in. Rare on
+     purpose: in the shell only the focused tab's line and the open vault's
+     tile carry it, so it stays a signature rather than a theme. */
+  --brand-gradient: linear-gradient(
+    90deg,
+    var(--color-orange-500),
+    var(--color-pink-500),
+    var(--color-violet-500)
+  );
 
   /* Code-editor syntax colours. Tokens, so they follow the theme: 300 tints
      that glow on near-black wash out on white, hence the light arm below. */

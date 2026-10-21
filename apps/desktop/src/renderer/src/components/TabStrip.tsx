@@ -634,7 +634,7 @@ export function TabStrip({
                       i === active
                         ? `bg-background text-foreground ${
                             focused
-                              ? 'before:absolute before:inset-x-0 before:top-0 before:h-0.5 before:bg-foreground/60'
+                              ? 'before:absolute before:inset-x-0 before:top-0 before:h-0.5 before:bg-(image:--brand-gradient)'
                               : ''
                           }`
                         : 'border-b text-muted-foreground hover:bg-foreground/[0.03] hover:text-foreground'

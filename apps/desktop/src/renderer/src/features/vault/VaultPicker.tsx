@@ -21,13 +21,17 @@ import { cn } from '@/lib/cn'
 const ownerOf = (remote: string) => remote.split('/')[0] ?? remote
 
 /** A vault's mark: its initial on a square tile, as shadcn's team switcher
- *  marks a team. Monotone; the open one is the filled tile. */
+ *  marks a team. The open one, in the trigger, carries the accent
+ *  (`--brand-gradient`); the list's are monotone. */
 function VaultTile({ name, size = 'md' }: { name: string; size?: 'sm' | 'md' }) {
   return (
     <span
       aria-hidden="true"
       className={cn(
-        'flex shrink-0 items-center justify-center bg-primary font-semibold text-primary-foreground',
+        'flex shrink-0 items-center justify-center font-semibold',
+        size === 'md'
+          ? 'bg-(image:--brand-gradient) text-white'
+          : 'bg-primary text-primary-foreground',
         size === 'md' ? 'size-6 rounded-md text-xs' : 'size-5 rounded text-xs',
       )}
     >
