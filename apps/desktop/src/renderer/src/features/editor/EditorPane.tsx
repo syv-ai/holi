@@ -70,10 +70,14 @@ export function EditorPane({
   onOpenNote,
   onConflict,
   onEdit,
+  focused = false,
   plain = false,
   readOnly = false,
 }: {
   path: string | null
+  /** Whether this editor's pane is the focused one: the pane an arrival opens
+   *  in, so the one that takes its heading (`headingRequestAtom`). */
+  focused?: boolean
   onOpenNote: (path: string) => void
   onConflict: (path: string, resolve: ConflictResolvers) => void
   /** Fired the first time the buffer changes for this open note: editing
@@ -105,6 +109,11 @@ export function EditorPane({
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   /** Whether `onEdit` has fired for this open note; reset per open. */
   const editedRef = useRef(false)
+  /** Read when a heading request arrives (`goToRequestedHeading`). */
+  const focusedRef = useRef(focused)
+  focusedRef.current = focused
+  /** The open editor's `goToRequestedHeading`, for the pane gaining focus. */
+  const goToHeadingRef = useRef<() => void>(() => {})
 
   // Read on demand by the editor's pull-based seams, so a snapshot arriving
   // mid-edit does not rebuild the EditorView and drop the caret.
@@ -212,13 +221,14 @@ export function EditorPane({
       if (!same) store.set(caretHeadingAtom, heading === null ? null : { path, heading })
     }
 
-    /** A Holi link's heading (`headingRequestAtom`), when it is for this note:
-     *  the caret to its line, scrolled to the top. Taken once; a heading that
-     *  is not there leaves the note where it opened. */
+    /** A Holi link's heading (`headingRequestAtom`), when it is for this note
+     *  in the focused pane: the caret to its line, scrolled to the top. Taken
+     *  once; a heading that is not there leaves the note where it opened. */
     const goToRequestedHeading = (): void => {
       const view = viewRef.current
       const request = store.get(headingRequestAtom)
-      if (view === null || disposed || request === null || request.path !== path) return
+      if (view === null || disposed || !focusedRef.current) return
+      if (request === null || request.path !== path) return
       store.set(headingRequestAtom, null)
       const line = findHeadingLine(view.state.doc.toString(), request.heading)
       if (line === null) return
@@ -229,6 +239,7 @@ export function EditorPane({
       })
       view.focus()
     }
+    goToHeadingRef.current = goToRequestedHeading
     const offHeadingRequest = store.sub(headingRequestAtom, goToRequestedHeading)
 
     const scheduleSave = () => {
@@ -337,6 +348,12 @@ export function EditorPane({
     // you see the markers the agent is working on. So does an agent coming or
     // going, which adds or drops the Ask button. The teardown flushes first.
   }, [path, remote, plain, readOnly, store, hasAgent])
+
+  // An arrival into the pane beside the agent focuses that pane after asking
+  // for the heading, so an editor already showing the note takes it now.
+  useEffect(() => {
+    if (focused) goToHeadingRef.current()
+  }, [focused])
 
   /**
    * The vault changed somewhere: re-read our own file and decide. The snapshot

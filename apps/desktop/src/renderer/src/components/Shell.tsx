@@ -28,7 +28,7 @@ import { NavMenu } from '@/features/nav/NavMenu'
 import { VaultPicker } from '@/features/vault/VaultPicker'
 import { trpc } from '../lib/trpc'
 import { sweepDailyAtom } from '../state/daily'
-import { landArrivalAtom } from '../state/arrival'
+import { dropArrivalAtom, landArrivalAtom } from '../state/arrival'
 import { openLandingAtom } from '../state/home'
 import { useSettingsFollowDisk } from '../state/settings'
 import { useVaultMembers } from '../state/members'
@@ -103,6 +103,7 @@ export function Shell() {
   const openVault = useSetAtom(openVaultAtom)
   const openLanding = useSetAtom(openLandingAtom)
   const landArrival = useSetAtom(landArrivalAtom)
+  const dropArrival = useSetAtom(dropArrivalAtom)
   const sweepDaily = useSetAtom(sweepDailyAtom)
   const startPendingPrompt = useSetAtom(startPendingVaultPromptAtom)
   const setPendingPrompt = useSetAtom(pendingVaultPromptAtom)
@@ -320,6 +321,7 @@ export function Shell() {
                 onCancel={() => {
                   setLeaving(null)
                   setPendingPrompt(null)
+                  dropArrival()
                 }}
               />
             )}
