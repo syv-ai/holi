@@ -386,4 +386,24 @@ export default [
       'boundaries/external': ['warn', external],
     },
   },
+  // The fresh frontend: stock shadcn and ReUI (`components/ui`, `components/reui`,
+  // `components/blocks`) and the code built on them. The gate above encodes the
+  // old design system (its primitives, motion vocabulary and icon wrapper), so
+  // it applies to the screens kept from before the fresh start, not to these.
+  {
+    files: [
+      'src/renderer/src/components/ui/**/*.{ts,tsx}',
+      'src/renderer/src/components/reui/**/*.{ts,tsx}',
+      'src/renderer/src/components/blocks/**/*.{ts,tsx}',
+      'src/renderer/src/components/Shell.tsx',
+      'src/renderer/src/components/leave-confirm.tsx',
+      'src/renderer/src/hooks/**/*.{ts,tsx}',
+    ],
+    rules: {
+      'no-restricted-syntax': 'off',
+      'boundaries/element-types': 'off',
+      'boundaries/external': 'off',
+      'holi/icon-through-primitive': 'off',
+    },
+  },
 ]

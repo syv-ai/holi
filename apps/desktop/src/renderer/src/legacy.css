@@ -1,0 +1,262 @@
+/*
+ * LEGACY. What the screens kept from before the fresh start still use: the
+ * sign-in, the onboarding ritual and the agents sidebar (with the old
+ * `primitives/` and `composites/` under them). Their old names, mapped onto the
+ * new theme in `index.css`, plus the utilities they call.
+ *
+ * Nothing new may use anything in this file. Delete a block when the last
+ * screen that needs it is rebuilt, and the file with the last one.
+ */
+
+/* Old token names, on the new theme. */
+:root {
+  --brand: var(--foreground);
+  --divider: var(--border);
+  --drawer-edge: transparent;
+  --selection: color-mix(in srgb, var(--foreground) 22%, transparent);
+  --scrollbar-thumb: color-mix(in srgb, var(--foreground) 18%, transparent);
+  --scrollbar-thumb-hover: color-mix(in srgb, var(--foreground) 30%, transparent);
+  --shadow-popover:
+    0 0 0 1px var(--border), 0 8px 24px -6px color-mix(in srgb, black 30%, transparent);
+  --shadow-dialog: 0 16px 48px -12px color-mix(in srgb, black 40%, transparent);
+  --task: var(--muted-foreground);
+  --task-todo: var(--muted-foreground);
+  --task-doing: var(--color-amber-400);
+  --task-done: var(--color-emerald-500);
+  --diff-added: var(--color-green-500);
+  --diff-removed: var(--color-red-500);
+  --diff-added-foreground: var(--color-green-400);
+  --diff-removed-foreground: var(--color-red-400);
+  --context-warm: var(--color-amber-400);
+  --context-full: var(--color-red-500);
+  --icon-sm: 14px;
+  --icon-md: 16px;
+  --icon-lg: 20px;
+  --icon-stroke: 2;
+  --motion-stagger: 45ms;
+  --motion-slide: 400ms;
+  --ease-slide: cubic-bezier(0.65, 0, 0.35, 1);
+}
+[data-theme='light'] {
+  --diff-added-foreground: var(--color-green-700);
+  --diff-removed-foreground: var(--color-red-700);
+  --context-warm: var(--color-amber-600);
+  --context-full: var(--color-red-600);
+}
+
+@theme inline {
+  --color-brand: var(--brand);
+  --color-divider: var(--divider);
+  --color-drawer-edge: var(--drawer-edge);
+  --color-icon: var(--muted-foreground);
+  --color-icon-active: var(--foreground);
+  --color-task-todo: var(--task-todo);
+  --color-task-doing: var(--task-doing);
+  --color-task-done: var(--task-done);
+  --color-diff-added-foreground: var(--diff-added-foreground);
+  --color-diff-removed-foreground: var(--diff-removed-foreground);
+}
+
+@theme {
+  --text-nav: 0.8125rem;
+  --text-nav--line-height: calc(18 / 13);
+  --ease-settle: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-loop: cubic-bezier(0.45, 0, 0.55, 1);
+  --motion-respond: 150ms;
+  --motion-arrive: 300ms;
+  --motion-pop: 180ms;
+  --motion-leave: 190ms;
+  --motion-ack: 800ms;
+  --motion-inflight: 2400ms;
+}
+
+::selection {
+  background: var(--selection);
+}
+.shadow-popover {
+  box-shadow: var(--shadow-popover);
+}
+.shadow-dialog {
+  box-shadow: var(--shadow-dialog);
+}
+
+@utility icon-sm {
+  width: var(--icon-sm);
+  height: var(--icon-sm);
+  stroke-width: var(--icon-stroke);
+}
+@utility icon-md {
+  width: var(--icon-md);
+  height: var(--icon-md);
+  stroke-width: var(--icon-stroke);
+}
+@utility icon-lg {
+  width: var(--icon-lg);
+  height: var(--icon-lg);
+  stroke-width: var(--icon-stroke);
+}
+@utility file-type-lift {
+  color: color-mix(in oklab, currentColor 70%, white);
+}
+@utility file-type-glyph {
+  color: var(--file-type-glyph, var(--file-type-foreground));
+}
+
+@utility motion-respond {
+  transition-property:
+    color, background-color, border-color, box-shadow, opacity, filter, fill, stroke,
+    text-decoration-color, outline-color, transform, translate, scale, rotate;
+  transition-duration: var(--motion-respond);
+  transition-timing-function: var(--ease-settle);
+}
+@utility motion-in-origin {
+  animation: legacy-in-origin var(--motion-pop) var(--ease-settle) both;
+}
+@utility motion-out-origin {
+  animation: legacy-out-origin var(--motion-pop) var(--ease-settle) both;
+}
+@utility motion-in-fade {
+  animation: legacy-in-fade var(--motion-arrive) var(--ease-settle) both;
+}
+@utility motion-in-rise {
+  animation: legacy-in-rise var(--motion-arrive) var(--ease-settle) both;
+}
+@utility motion-ack-bloom {
+  animation: legacy-ack-bloom var(--motion-ack) var(--ease-settle) both;
+}
+@utility motion-ack-tick {
+  animation: legacy-ack-tick var(--motion-ack) var(--ease-settle) both;
+}
+@utility motion-ack-flash {
+  animation: legacy-ack-flash var(--motion-ack) var(--ease-settle) both;
+}
+@utility motion-ack-nudge {
+  animation: legacy-ack-nudge var(--motion-ack) var(--ease-settle) both;
+}
+@utility motion-pulse {
+  animation: legacy-pulse var(--motion-inflight) var(--ease-loop) infinite;
+}
+@utility motion-shimmer {
+  background-image: linear-gradient(
+    100deg,
+    var(--muted) 32%,
+    color-mix(in srgb, var(--foreground) 12%, var(--muted)) 50%,
+    var(--muted) 68%
+  );
+  background-size: 280% 100%;
+  animation: legacy-shimmer calc(var(--motion-inflight) * 1.2) linear infinite;
+}
+@utility motion-orbit {
+  animation: legacy-orbit calc(var(--motion-inflight) * 1.4) linear infinite;
+}
+@keyframes legacy-in-origin {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+}
+@keyframes legacy-out-origin {
+  to {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+}
+@keyframes legacy-in-fade {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes legacy-in-rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+@keyframes legacy-ack-bloom {
+  from {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--primary) 45%, transparent);
+  }
+  to {
+    box-shadow: 0 0 0 12px transparent;
+  }
+}
+@keyframes legacy-ack-tick {
+  from {
+    opacity: 0;
+    transform: scale(0.72);
+  }
+}
+@keyframes legacy-ack-flash {
+  from {
+    background-color: color-mix(in srgb, var(--primary) 28%, transparent);
+  }
+}
+@keyframes legacy-ack-nudge {
+  15% {
+    transform: translateX(-5px);
+  }
+  30% {
+    transform: translateX(5px);
+  }
+  45% {
+    transform: translateX(-3px);
+  }
+}
+@keyframes legacy-pulse {
+  0%,
+  100% {
+    opacity: 0.32;
+    transform: scale(0.8);
+  }
+  50% {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes legacy-shimmer {
+  from {
+    background-position: 180% 0;
+  }
+  to {
+    background-position: -80% 0;
+  }
+}
+@keyframes legacy-orbit {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .motion-pulse,
+  .motion-shimmer,
+  .motion-orbit,
+  .motion-ack-tick,
+  .motion-ack-nudge {
+    animation: none;
+  }
+  .motion-in-origin,
+  .motion-in-fade,
+  .motion-out-origin {
+    animation-duration: 1ms;
+  }
+  .motion-in-rise {
+    animation-name: legacy-in-fade;
+  }
+}
+
+/* The light and grain behind the sign-in and onboarding
+   (`composites/AmbientBackdrop.tsx`). */
+.ambient-backdrop {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+.ambient-grain {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.55;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='1.1' numOctaves='3' stitchTiles='stitch'/><feColorMatrix type='saturate' values='0'/><feComponentTransfer><feFuncR type='linear' slope='1.6' intercept='-0.3'/><feFuncG type='linear' slope='1.6' intercept='-0.3'/><feFuncB type='linear' slope='1.6' intercept='-0.3'/><feFuncA type='linear' slope='0' intercept='1'/></feComponentTransfer></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+}

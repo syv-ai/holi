@@ -1,25 +1,35 @@
 /**
  * The app, once someone is signed in: what keeps a vault alive (opening it in
- * main, its theme, settings that follow the disk, the clock), the shell
- * (`features/shell/AppShell.tsx`) and the two flows that leave the open vault,
- * switching and adding one, which ask first when leaving would stop something.
+ * main, settings that follow the disk, the clock), the shell (ReUI's
+ * app-shell-21, `components/blocks/app-shell-21`) and the two flows that leave
+ * the open vault, switching and adding one, which ask first when leaving would
+ * stop something.
+ *
+ * A vault's theme file (`.holi/settings/theme.css`) does not reach the screen
+ * here: the fresh frontend is shadcn's neutral theme until theming is rebuilt
+ * on it.
  */
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { useEffect, useRef, useState } from 'react'
-import { PanelsTopLeft } from 'lucide-react'
+import { PanelsTopLeftIcon } from 'lucide-react'
+import { AppShell } from '@/components/blocks/app-shell-21/components/app-shell'
+import {
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from '@/components/ui/empty'
 import { Toaster } from '@/primitives'
-import { AmbientGrain, EmptyState } from '@/composites'
 import { OnboardingRitual } from '@/features/onboarding/OnboardingRitual'
-import { AppShell } from '@/features/shell/AppShell'
 import { leaveReasonsAtom } from '@/state/plugins'
 import { activeModeAtom } from '../state/color-scheme'
 import { tickNowAtom } from '../state/clock'
 import { useVaultMembers } from '../state/members'
 import { useSettingsFollowDisk } from '../state/settings'
-import { useVaultTheme } from '../state/theme'
 import { applyVaultSwitchAtom, leavingVaultAtom } from '../state/vault-switch'
 import { activeRemoteAtom, openVaultAtom } from '../state/vaults'
-import { LeaveConfirm } from './LeaveConfirm'
+import { LeaveConfirm } from './leave-confirm'
 
 export function Shell() {
   const activeRemote = useAtomValue(activeRemoteAtom)
@@ -30,7 +40,6 @@ export function Shell() {
   const applySwitch = useSetAtom(applyVaultSwitchAtom)
   const [showAdd, setShowAdd] = useState(false)
 
-  useVaultTheme()
   useSettingsFollowDisk()
   useVaultMembers()
 
@@ -58,14 +67,17 @@ export function Shell() {
   }
 
   return (
-    <div data-slot="window-ground" className="relative flex h-screen text-foreground">
-      <AmbientGrain />
+    <>
       <AppShell onAddVault={addVault}>
-        <EmptyState
-          icon={PanelsTopLeft}
-          title="Nothing open yet"
-          description="Views come back one at a time in the new shell."
-        />
+        <Empty className="h-full border-0">
+          <EmptyHeader>
+            <EmptyMedia variant="icon">
+              <PanelsTopLeftIcon aria-hidden="true" />
+            </EmptyMedia>
+            <EmptyTitle>Nothing Open Yet</EmptyTitle>
+            <EmptyDescription>Views come back one at a time in the new shell.</EmptyDescription>
+          </EmptyHeader>
+        </Empty>
       </AppShell>
       {showAdd && <OnboardingRitual mode="add-vault" onDismiss={() => setShowAdd(false)} />}
       {leaving !== null && (
@@ -82,6 +94,6 @@ export function Shell() {
         />
       )}
       <Toaster theme={colorMode} position="bottom-center" />
-    </div>
+    </>
   )
 }
