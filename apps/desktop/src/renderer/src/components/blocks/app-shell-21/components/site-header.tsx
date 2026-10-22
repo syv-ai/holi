@@ -93,7 +93,7 @@ export function SiteHeader({
         {tabs.length > 0 ? (
           <TabsList
             variant="line"
-            className="min-w-0 justify-start overflow-x-auto"
+            className="min-w-0 justify-start overflow-x-auto group-data-horizontal/tabs:h-9"
           >
             {tabs.map((tab) => (
               // The close button is the trigger's sibling: a button cannot
@@ -101,7 +101,7 @@ export function SiteHeader({
               <div key={tab.id} className="group/tab relative flex h-full">
                 <TabsTrigger
                   value={tab.id}
-                  className="hover:bg-foreground/5 group-data-[variant=line]/tabs-list:data-active:bg-foreground/8 dark:group-data-[variant=line]/tabs-list:data-active:bg-foreground/8 w-44 flex-none justify-start gap-2 px-2.5 pe-7 after:hidden"
+                  className="hover:bg-foreground/5 group-data-[variant=line]/tabs-list:data-active:bg-foreground/8 dark:group-data-[variant=line]/tabs-list:data-active:bg-foreground/8 w-56 flex-none justify-start gap-2 rounded-lg px-3 pe-8 after:hidden"
                 >
                   <MessageSquareIcon aria-hidden="true" />
                   <span className="truncate">{tab.title}</span>
@@ -111,7 +111,7 @@ export function SiteHeader({
                   size="icon-xs"
                   aria-label={`Close ${tab.title}`}
                   onClick={() => onCloseTab(tab.id)}
-                  className="absolute end-0.5 top-1/2 -translate-y-1/2 opacity-0 group-hover/tab:opacity-100 group-has-data-active/tab:opacity-100 focus-visible:opacity-100"
+                  className="absolute end-1.5 top-1/2 -translate-y-1/2 opacity-0 group-hover/tab:opacity-100 group-has-data-active/tab:opacity-100 focus-visible:opacity-100"
                 >
                   <XIcon aria-hidden="true" />
                 </Button>
