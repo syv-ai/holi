@@ -81,10 +81,16 @@ events are not sent and nothing under `.claude/` is seeded.
 **Where you meet it.** ⌘J and the nav menu's agent item open the agents page, and the stack of
 bubbles floats over the top right of every tab (the plugin's `floating`, `AgentBubbles`), so any
 session is one hover away from a note or a board. The agent item is green while any session is live.
-Statuses live only in the bubbles: there are no rows under the file tree, no orbs on the rail and
-no header on the page. A live bubble's context menu is **Restart** (`claude respawn`, a fresh
-process for the same conversation, which re-reads settings and `AGENTS.md`), **Duplicate** and
-**Stop** (`claude stop`; an idle session stops at once, one mid-turn or waiting on you asks first).
+Statuses live in the bubbles: there are no orbs on the rail and no header on the page. A live
+bubble's context menu is **Restart** (`claude respawn`, a fresh process for the same conversation,
+which re-reads settings and `AGENTS.md`), **Duplicate** and **Stop** (`claude stop`; an idle session
+stops at once, one mid-turn or waiting on you asks first). **Or rows in the sidebar**, where this
+machine chose that: `agent-ui`'s `sessionList` setting (`bubbles` by default, `target: 'local'`, so
+it is each person's and never a teammate's) lists the live sessions under the file tree instead
+(`SessionRows`, the plugin's `sidebarSection`), a row opening the full chat, with the same menu and
+Stop on hover. Then no stack floats and there is no smaller chat; the notices keep their corner.
+Chats do not open as tabs under either: the page is one surface, and a chat as a tab of its own
+would be a second way to hold the selection, not a setting.
 
 **One page, chats only.** The agent surface is one page with no tab per terminal (`AgentOverview`):
 one session's chat, and beside it every session the vault has had as a **stack of bubbles**

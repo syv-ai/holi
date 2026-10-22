@@ -1,12 +1,13 @@
 /**
  * The agent's interface (docs/features/agent-sessions.md): its page is the
  * surface `agent`, kept mounted, the chat of one session; the stack of
- * bubbles for all of them floats over every tab, with the
- * smaller chat and the notices beside it; its nav item runs `agent.show`; its
- * turn review is an overlay; the palette lists its live sessions; and it
+ * bubbles for all of them floats over every tab, with the smaller chat and
+ * the notices beside it, or, where this machine chose it (`sessionList`),
+ * the live sessions are rows in the sidebar; its nav item runs `agent.show`;
+ * its turn review is an overlay; the palette lists its live sessions; and it
  * provides the agent service every "Ask" goes through, since an ask lands in
  * a chat. What the sessions are (lists, events, the leave guard) is the
- * `agent` plugin's, whose state this reads.
+ * `agent` plugin's, read through its `public.ts`.
  */
 import { atom } from 'jotai'
 import { Bot } from 'lucide-react'
@@ -20,6 +21,7 @@ import { resetTurnReviewAtom, turnReviewOpenAtom } from './state/turns'
 import { AGENT_UI_INFO } from '../info'
 import { AgentBubbles } from './AgentBubbles'
 import { AgentSurface } from './AgentSurface'
+import { SessionRows } from './SessionRows'
 import { TurnReview } from './TurnReview'
 
 const COMMANDS: readonly Command[] = [
@@ -61,6 +63,9 @@ export const agentUiRenderer: RendererPlugin = {
     },
   ],
   floating: AgentBubbles,
+  // Where this machine lists the sessions in the sidebar (`sessionList`)
+  // rather than as bubbles. Each draws nothing under the other choice.
+  sidebarSection: SessionRows,
   overlays: [TurnReview],
   commands: COMMANDS,
   // While this runs the page is the agent's to land on (the inbox, a

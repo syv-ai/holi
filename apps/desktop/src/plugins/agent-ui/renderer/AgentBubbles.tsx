@@ -10,10 +10,14 @@
  * where it comes back; a running one is stopped first, so nothing runs out of
  * sight. An idle session stops at once; one mid-turn, or waiting on an answer,
  * asks first, because that turn is cut short.
+ *
+ * Where this machine lists the sessions in the sidebar instead
+ * (`sessionList`), there is no stack: the rows are `SessionRows`, and only
+ * the notices float here.
  */
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { useState } from 'react'
-import { surfaceActiveAtom } from '@/plugin-api'
+import { cn, surfaceActiveAtom } from '@/plugin-api'
 import { Button, Dialog } from '@/primitives'
 import { AgentNotices } from './AgentNotices'
 import { BubbleStack } from './BubbleStack'
@@ -34,6 +38,7 @@ import {
 } from './state/actions'
 import { AGENT_SURFACE, agentStackAtom, shownEntryAtom } from './state/page'
 import { QuickChat } from './QuickChat'
+import { useSessionList } from './state/session-list'
 
 export function AgentBubbles(): React.JSX.Element | null {
   const stack = useAtomValue(agentStackAtom)
@@ -49,6 +54,7 @@ export function AgentBubbles(): React.JSX.Element | null {
   const onAgentsPage = useAtomValue(surfaceActiveAtom(AGENT_SURFACE))
   const [quick, setQuick] = useAtom(quickChatAtom)
   const setNotices = useSetAtom(agentNoticesAtom)
+  const bubbles = useSessionList() === 'bubbles'
   /** A running session about to be stopped, and whether it is then archived. */
   const [confirming, setConfirming] = useState<{
     session: AgentSession
@@ -95,28 +101,34 @@ export function AgentBubbles(): React.JSX.Element | null {
 
   return (
     <>
-      <BubbleStack
-        entries={stack}
-        shownId={shown?.id ?? null}
-        onPick={(id) => void openSession(id)}
-        onFace={face}
-        // Off the agents page, a new session opens as the smaller chat.
-        onNew={() => void startSession({ quick: !onAgentsPage })}
-        // A fresh process for the same conversation: it picks up changed
-        // settings and AGENTS.md.
-        onRestart={(id) => void respawnSession(id)}
-        // A copy in a session of its own: the original keeps running.
-        onDuplicate={(id) => void duplicateSession(id)}
-        onArchive={requestArchive}
-        onStop={(id) => requestStop(id)}
-        archivedCount={archivedCount}
-        onHistory={() => void showHistory()}
-      />
+      {bubbles && (
+        <BubbleStack
+          entries={stack}
+          shownId={shown?.id ?? null}
+          onPick={(id) => void openSession(id)}
+          onFace={face}
+          // Off the agents page, a new session opens as the smaller chat.
+          onNew={() => void startSession({ quick: !onAgentsPage })}
+          // A fresh process for the same conversation: it picks up changed
+          // settings and AGENTS.md.
+          onRestart={(id) => void respawnSession(id)}
+          // A copy in a session of its own: the original keeps running.
+          onDuplicate={(id) => void duplicateSession(id)}
+          onArchive={requestArchive}
+          onStop={(id) => requestStop(id)}
+          archivedCount={archivedCount}
+          onHistory={() => void showHistory()}
+        />
+      )}
       {/* To the left of the stack, in the top right: the smaller chat a bubble
-          opened, and what the agents have to say. */}
+          opened, and what the agents have to say. In the corner itself when
+          there is no stack. */}
       <div
         data-agent-notices=""
-        className="pointer-events-none absolute top-4 right-24 z-10 flex w-[22rem] max-w-[calc(100%-8rem)] flex-col gap-2"
+        className={cn(
+          'pointer-events-none absolute top-4 z-10 flex w-[22rem] flex-col gap-2',
+          bubbles ? 'right-24 max-w-[calc(100%-8rem)]' : 'right-4 max-w-[calc(100%-2rem)]',
+        )}
       >
         {quick !== null && <QuickChat key={quick} sessionId={quick} />}
         <AgentNotices />
