@@ -19,7 +19,9 @@ import { SidebarProvider } from "@/components/ui/sidebar"
 import { TooltipProvider } from "@/components/ui/tooltip"
 
 import { ChatSearchDialog } from "./chat-search-dialog"
-import { MODELS, NEW_THREAD_ID, THREADS, type ThreadRecord } from "./data"
+import { MODELS, THREADS } from "./data"
+import type { Move } from "@/lib/tree-actions"
+import { BOARD_TAB, useNewDocument } from "./documents-section"
 import { MobileHeader } from "./mobile-header"
 import { SiteHeader } from "./site-header"
 import { ThreadSidebar } from "./thread-sidebar"
@@ -33,12 +35,12 @@ const SETTLE_MS = 280
 
 export function AppShell() {
   const isMobile = useIsMobile()
-  const [threads, setThreads] = useState<ThreadRecord[]>(THREADS)
-  const [activeThreadId, setActiveThreadId] = useState<string | null>(
-    THREADS[0]!.id
-  )
+  /** The block's demo threads, still behind ⌘K until search covers the vault. */
+  const threads = THREADS
+  /** The open tab: a vault path, the board, or a ⌘K thread. */
+  const [activeThreadId, setActiveThreadId] = useState<string | null>(null)
   /** The header's tabs, in the order they were opened. */
-  const [openTabIds, setOpenTabIds] = useState<string[]>([THREADS[0]!.id])
+  const [openTabIds, setOpenTabIds] = useState<string[]>([])
   const [modelId, setModelId] = useState(MODELS[0]!.id)
   const [memoryOn, setMemoryOn] = useState(true)
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
@@ -91,10 +93,17 @@ export function AppShell() {
 
   const tabs = openTabIds.map((id) => ({
     id,
-    title: threads.find((thread) => thread.id === id)?.title ?? "New chat",
+    title: tabTitle(id),
   }))
 
-  /** Opening a thread brings its tab forward, adding one if it has none. */
+  function tabTitle(id: string): string {
+    if (id === BOARD_TAB) return "Board"
+    const thread = threads.find((candidate) => candidate.id === id)
+    if (thread) return thread.title
+    return id.slice(id.lastIndexOf("/") + 1).replace(/\.md$/, "")
+  }
+
+  /** Opening a document brings its tab forward, adding one if it has none. */
   function openTab(id: string) {
     setOpenTabIds((current) =>
       current.includes(id) ? current : [...current, id]
@@ -117,17 +126,18 @@ export function AppShell() {
     setMobileNavOpen(false)
   }
 
-  function handleNewChat() {
-    openTab(NEW_THREAD_ID)
-    setMobileNavOpen(false)
+  /** A moved file's tab follows it to its new path. */
+  function retargetTabs(moves: Move[]) {
+    const to = new Map(moves.map((move) => [move.from, move.to]))
+    setOpenTabIds((current) => current.map((id) => to.get(id) ?? id))
+    setActiveThreadId((current) =>
+      current === null ? null : (to.get(current) ?? current)
+    )
   }
 
-  function handleTogglePin(id: string) {
-    setThreads((current) =>
-      current.map((thread) =>
-        thread.id === id ? { ...thread, pinned: !thread.pinned } : thread
-      )
-    )
+  const newDocument = useNewDocument(handleSelectThread)
+  function handleNewChat() {
+    void newDocument()
   }
 
   /** In the sheet the header button closes it; on desktop it collapses the panel. */
@@ -136,11 +146,10 @@ export function AppShell() {
       collapsed={false}
       onToggle={isMobile ? () => setMobileNavOpen(false) : toggleSidebar}
       onOpenSearch={() => setSearchOpen(true)}
-      threads={threads}
-      activeId={activeThreadId ?? ""}
-      onSelect={handleSelectThread}
-      onNewChat={handleNewChat}
-      onTogglePin={handleTogglePin}
+      activeId={activeThreadId}
+      onOpen={handleSelectThread}
+      onMoved={retargetTabs}
+      onNewDocument={handleNewChat}
     />
   )
 
@@ -149,11 +158,10 @@ export function AppShell() {
       collapsed
       onToggle={toggleSidebar}
       onOpenSearch={() => setSearchOpen(true)}
-      threads={threads}
-      activeId={activeThreadId ?? ""}
-      onSelect={handleSelectThread}
-      onNewChat={handleNewChat}
-      onTogglePin={handleTogglePin}
+      activeId={activeThreadId}
+      onOpen={handleSelectThread}
+      onMoved={retargetTabs}
+      onNewDocument={handleNewChat}
     />
   )
 

@@ -1,0 +1,497 @@
+import { useEffect, useMemo, useState, type DragEvent } from "react"
+import { useAtom, useAtomValue, useSetAtom } from "jotai"
+import {
+  dragAndDropFeature,
+  expandAllFeature,
+  hotkeysCoreFeature,
+  selectionFeature,
+  syncDataLoaderFeature,
+  type DragTarget,
+  type ItemInstance,
+} from "@headless-tree/core"
+import { useTree } from "@headless-tree/react"
+import { toast } from "sonner"
+import { isHiddenPath, TASKS_CLAIM } from "@holi/shared"
+import { cn } from "@/lib/cn"
+
+import {
+  ContextMenu,
+  ContextMenuCheckboxItem,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu"
+import {
+  SidebarGroup,
+  SidebarGroupAction,
+  SidebarGroupLabel,
+  SidebarMenu,
+  SidebarMenuBadge,
+  SidebarMenuButton,
+  SidebarMenuItem,
+} from "@/components/ui/sidebar"
+import {
+  Tree,
+  TreeDragLine,
+  TreeItem,
+  TreeItemLabel,
+} from "@/components/reui/tree"
+import { folderDocumentAt } from "@/lib/folder-documents"
+import { buildTreeData, ROOT_ID, type TreeItemData } from "@/lib/tree-data"
+import { planMoveInto, type Move } from "@/lib/tree-actions"
+import { basename, joinPath, parentOf } from "@/lib/tree-paths"
+import { canMoveInto } from "@/lib/tree-view"
+import { claimsAtom, folderClaimsAtom } from "@/state/plugins"
+import { createTaskAtom, openTaskCountAtom } from "@/state/tasks"
+import { setTreeOrderAtom, treeOrderAtom } from "@/state/tree-order"
+import {
+  activeRemoteAtom,
+  createFolderAtom,
+  createNoteAtom,
+  importFilesAtom,
+  moveNotesAtom,
+  showHiddenByVaultAtom,
+  showTasksByVaultAtom,
+  snapshotAtom,
+  vaultsAtom,
+} from "@/state/vaults"
+import {
+  AppWindowIcon,
+  FileIcon,
+  FileTextIcon,
+  FolderIcon,
+  FolderOpenIcon,
+  FolderPlusIcon,
+  ListChecksIcon,
+  PlusIcon,
+  SquareKanbanIcon,
+} from "lucide-react"
+
+/** The header tab id of the task board, beside the document paths. */
+export const BOARD_TAB = "board"
+
+const INDENT = 16
+
+/** `base`, then `base 2`, `base 3`… : the first name the folder does not hold. */
+function freeName(
+  taken: ReadonlySet<string>,
+  parent: string,
+  base: string,
+  ext = ""
+): string {
+  for (let n = 1; ; n++) {
+    const name = n === 1 ? `${base}${ext}` : `${base} ${n}${ext}`
+    if (!taken.has(joinPath(parent, name))) return name
+  }
+}
+
+/**
+ * The paths the tree shows, and every path it can act on: documents, other
+ * files and claimed files (tasks only while "show task files" is on), minus
+ * dot paths unless "show hidden files" is on.
+ */
+function useFiles() {
+  const snapshot = useAtomValue(snapshotAtom)
+  const remote = useAtomValue(activeRemoteAtom)
+  const [hiddenByVault, setHiddenByVault] = useAtom(showHiddenByVaultAtom)
+  const [tasksByVault, setTasksByVault] = useAtom(showTasksByVaultAtom)
+  const showHidden = remote !== null && hiddenByVault[remote] === true
+  const showTasks = remote !== null && tasksByVault[remote] === true
+
+  const docPaths = useMemo(
+    () => [
+      ...snapshot.docs.map((doc) => doc.path),
+      ...snapshot.files.map((file) => file.path),
+      ...Object.entries(snapshot.claimed).flatMap(([id, set]) =>
+        id === TASKS_CLAIM && !showTasks
+          ? []
+          : [
+              ...set.items.map((item) => item.path),
+              ...set.broken.map((item) => item.path),
+            ]
+      ),
+    ],
+    [snapshot, showTasks]
+  )
+  const paths = showHidden
+    ? docPaths
+    : docPaths.filter((path) => !isHiddenPath(path))
+  const dirs = showHidden
+    ? snapshot.dirs
+    : snapshot.dirs.filter((dir) => !isHiddenPath(dir))
+
+  return {
+    remote,
+    docPaths,
+    paths,
+    dirs,
+    taken: new Set([...docPaths, ...snapshot.dirs]),
+    showHidden,
+    showTasks,
+    toggleHidden: () =>
+      remote !== null &&
+      setHiddenByVault({ ...hiddenByVault, [remote]: !showHidden }),
+    toggleTasks: () =>
+      remote !== null &&
+      setTasksByVault({ ...tasksByVault, [remote]: !showTasks }),
+  }
+}
+
+/** New Document and Board, above the files. */
+export function DocumentsNav({
+  activeId,
+  onNewDocument,
+  onOpen,
+}: {
+  activeId: string | null
+  onNewDocument: () => void
+  onOpen: (id: string) => void
+}) {
+  const openTasks = useAtomValue(openTaskCountAtom)
+
+  return (
+    <SidebarMenu className="gap-0.5 px-2">
+      <SidebarMenuItem>
+        <SidebarMenuButton
+          onClick={onNewDocument}
+          className="hover:bg-foreground/5 data-active:bg-foreground/10 data-active:hover:bg-foreground/12"
+        >
+          <PlusIcon aria-hidden="true" />
+          <span>New Document</span>
+        </SidebarMenuButton>
+      </SidebarMenuItem>
+      <SidebarMenuItem>
+        <SidebarMenuButton
+          isActive={activeId === BOARD_TAB}
+          onClick={() => onOpen(BOARD_TAB)}
+          className="hover:bg-foreground/5 data-active:bg-foreground/10 data-active:hover:bg-foreground/12"
+        >
+          <SquareKanbanIcon aria-hidden="true" />
+          <span>Board</span>
+          {openTasks > 0 ? (
+            <SidebarMenuBadge>{openTasks}</SidebarMenuBadge>
+          ) : null}
+        </SidebarMenuButton>
+      </SidebarMenuItem>
+    </SidebarMenu>
+  )
+}
+
+/** A new, uniquely named note at the vault's root, for New Document and +. */
+export function useNewDocument(onCreated: (path: string) => void) {
+  const { taken } = useFiles()
+  const createNote = useSetAtom(createNoteAtom)
+  return async () => {
+    const path = freeName(taken, "", "Untitled", ".md")
+    await createNote(path)
+    onCreated(path)
+  }
+}
+
+/**
+ * The vault's files as a ReUI tree. Drag a row to reorder it among its
+ * siblings (kept per machine, `state/tree-order.ts`) or into another folder
+ * (a move that rewrites links); drop files from Finder anywhere on it to copy
+ * them in. Right-click for the section's menu.
+ */
+export function FilesSection({
+  activeId,
+  onOpen,
+  onMoved,
+}: {
+  activeId: string | null
+  onOpen: (path: string) => void
+  /** Moved files, so their open tabs follow them. */
+  onMoved: (moves: Move[]) => void
+}) {
+  const files = useFiles()
+  const order = useAtomValue(treeOrderAtom)
+  const setOrder = useSetAtom(setTreeOrderAtom)
+  const folderClaims = useAtomValue(folderClaimsAtom)
+  const creates = useAtomValue(claimsAtom).flatMap(
+    (claim) => claim.create ?? []
+  )
+  const vaults = useAtomValue(vaultsAtom)
+  const createNote = useSetAtom(createNoteAtom)
+  const createFolder = useSetAtom(createFolderAtom)
+  const createTask = useSetAtom(createTaskAtom)
+  const moveNotes = useSetAtom(moveNotesAtom)
+  const importFiles = useSetAtom(importFilesAtom)
+  const [dropping, setDropping] = useState(false)
+
+  const data = useMemo(
+    () =>
+      buildTreeData(
+        files.paths,
+        files.dirs,
+        (folder, has) => folderDocumentAt(folderClaims, folder, has) !== null,
+        order
+      ),
+    [files.paths, files.dirs, folderClaims, order]
+  )
+
+  const folderOf = (item: ItemInstance<TreeItemData>) =>
+    item.getId() === ROOT_ID ? "" : item.getId()
+
+  async function move(moves: Move[]) {
+    await moveNotes({ moves })
+    onMoved(moves)
+  }
+
+  /** Rows from this vault move; anything else is copied in from outside. */
+  async function dropPaths(sources: string[], dest: string) {
+    const root = vaults.find((vault) => vault.remote === files.remote)?.path
+    const prefix = root ? `${root}/` : null
+    const inside = prefix
+      ? sources
+          .filter((source) => source.startsWith(prefix))
+          .map((source) => source.slice(prefix.length))
+      : []
+    const outside = sources.filter(
+      (source) => !prefix || !source.startsWith(prefix)
+    )
+    if (inside.length > 0 && canMoveInto(inside, dest)) {
+      await move(planMoveInto(files.docPaths, inside, dest))
+    }
+    if (outside.length > 0) {
+      const skipped = await importFiles(outside, dest)
+      for (const { name, reason } of skipped) toast.error(`${name}: ${reason}`)
+    }
+  }
+
+  async function onDrop(
+    items: ItemInstance<TreeItemData>[],
+    target: DragTarget<TreeItemData>
+  ) {
+    const dest = folderOf(target.item)
+    const sources = items.map((item) => item.getId())
+    const moving = sources.filter((source) => parentOf(source) !== dest)
+    if (moving.length > 0) {
+      if (!canMoveInto(moving, dest)) return
+      await move(planMoveInto(files.docPaths, moving, dest))
+    }
+    // Between two rows: the moved rows land there in the folder's order.
+    if ("insertionIndex" in target) {
+      const landed = sources.map((source) => joinPath(dest, basename(source)))
+      const siblings = target.item
+        .getChildren()
+        .map((child) => child.getId())
+        .filter((id) => !sources.includes(id))
+      siblings.splice(target.insertionIndex, 0, ...landed)
+      setOrder(dest, siblings)
+    }
+  }
+
+  const tree = useTree<TreeItemData>({
+    rootItemId: ROOT_ID,
+    indent: INDENT,
+    getItemName: (item) => item.getItemData()?.name ?? "",
+    // An app's bundle is one document: it opens rather than expands.
+    isItemFolder: (item) =>
+      item.getItemData()?.isFolder === true &&
+      item.getItemData()?.isDocument !== true,
+    dataLoader: {
+      getItem: (id) =>
+        data[id] ?? {
+          name: "",
+          isFolder: false,
+          isDocument: false,
+          children: [],
+        },
+      getChildren: (id) => data[id]?.children ?? [],
+    },
+    onPrimaryAction: (item) => {
+      if (!item.isFolder()) onOpen(item.getId())
+    },
+    canReorder: true,
+    onDrop: (items, target) => void onDrop(items, target),
+    canDropForeignDragObject: (dataTransfer) =>
+      dataTransfer.types.includes("Files"),
+    onDropForeignDragObject: (dataTransfer, target) =>
+      void dropPaths(
+        [...dataTransfer.files].map((file) => window.holi.pathForFile(file)),
+        folderOf(target.item)
+      ),
+    features: [
+      syncDataLoaderFeature,
+      selectionFeature,
+      hotkeysCoreFeature,
+      dragAndDropFeature,
+      expandAllFeature,
+    ],
+  })
+
+  // The snapshot is the source; a watcher tick replaces it, and the tree
+  // re-reads its items.
+  useEffect(() => {
+    tree.rebuildTree()
+  }, [data, tree])
+
+  /** Finder drops on the empty space below the rows land at the root. */
+  function onAreaDrop(event: DragEvent) {
+    setDropping(false)
+    if (event.defaultPrevented || event.dataTransfer.files.length === 0) return
+    event.preventDefault()
+    void dropPaths(
+      [...event.dataTransfer.files].map((file) =>
+        window.holi.pathForFile(file)
+      ),
+      ""
+    )
+  }
+
+  async function newNote() {
+    const name = freeName(files.taken, "", "Untitled", ".md")
+    await createNote(name)
+    onOpen(name)
+  }
+
+  const empty = (data[ROOT_ID]?.children.length ?? 0) === 0
+
+  return (
+    <SidebarGroup className="min-h-0 flex-1 px-2">
+      <SidebarGroupLabel>Files</SidebarGroupLabel>
+      <SidebarGroupAction title="New note" onClick={() => void newNote()}>
+        <PlusIcon aria-hidden="true" />
+        <span className="sr-only">New note</span>
+      </SidebarGroupAction>
+
+      <ContextMenu>
+        <ContextMenuTrigger asChild>
+          <div
+            data-dropping={dropping || undefined}
+            onDragOver={(event) => {
+              if (!event.dataTransfer.types.includes("Files")) return
+              event.preventDefault()
+              setDropping(true)
+            }}
+            onDragLeave={(event) => {
+              if (!event.currentTarget.contains(event.relatedTarget as Node))
+                setDropping(false)
+            }}
+            onDrop={onAreaDrop}
+            className={cn(
+              "relative min-h-24 flex-1 overflow-y-auto overscroll-contain rounded-md",
+              "data-dropping:bg-foreground/5 data-dropping:ring-ring/50 data-dropping:ring-1"
+            )}
+          >
+            {empty ? (
+              <p className="text-muted-foreground px-2 py-6 text-center text-xs">
+                Drop files here, or right-click to add one.
+              </p>
+            ) : (
+              <Tree indent={INDENT} tree={tree} className="relative">
+                {tree.getItems().map((item) => (
+                  <TreeItem key={item.getId()} item={item}>
+                    <TreeItemLabel
+                      className={cn(
+                        "hover:bg-foreground/5 bg-transparent",
+                        item.getId() === activeId && "bg-foreground/10"
+                      )}
+                    >
+                      <span className="flex min-w-0 items-center gap-2">
+                        <FileGlyph item={item} />
+                        <span className="truncate">{item.getItemName()}</span>
+                      </span>
+                    </TreeItemLabel>
+                  </TreeItem>
+                ))}
+                <TreeDragLine />
+              </Tree>
+            )}
+          </div>
+        </ContextMenuTrigger>
+
+        <ContextMenuContent className="w-52">
+          <ContextMenuItem
+            onSelect={() =>
+              void createFolder(freeName(files.taken, "", "New folder"))
+            }
+          >
+            <FolderPlusIcon aria-hidden="true" />
+            New folder
+          </ContextMenuItem>
+          <ContextMenuItem
+            onSelect={async () => {
+              const path = await createTask({
+                title: "Untitled task",
+                status: "todo",
+                folder: "",
+              })
+              if (path) onOpen(path)
+            }}
+          >
+            <ListChecksIcon aria-hidden="true" />
+            New task
+          </ContextMenuItem>
+          {creates.map((create) => (
+            <ContextMenuItem
+              key={create.id}
+              disabled={files.remote === null}
+              onSelect={async () => {
+                if (files.remote === null) return
+                const path = await create.run({
+                  remote: files.remote,
+                  parent: "",
+                  name: freeName(files.taken, "", "Untitled", ".app").replace(
+                    /\.app$/,
+                    ""
+                  ),
+                })
+                if (path) onOpen(path)
+              }}
+            >
+              <AppWindowIcon aria-hidden="true" />
+              {create.label}
+            </ContextMenuItem>
+          ))}
+          <ContextMenuSeparator />
+          <ContextMenuCheckboxItem
+            checked={files.showTasks}
+            onCheckedChange={files.toggleTasks}
+          >
+            Show task files
+          </ContextMenuCheckboxItem>
+          <ContextMenuCheckboxItem
+            checked={files.showHidden}
+            onCheckedChange={files.toggleHidden}
+          >
+            Show hidden files
+          </ContextMenuCheckboxItem>
+          <ContextMenuSeparator />
+          <ContextMenuItem onSelect={() => tree.collapseAll()}>
+            Collapse all
+          </ContextMenuItem>
+        </ContextMenuContent>
+      </ContextMenu>
+    </SidebarGroup>
+  )
+}
+
+function FileGlyph({ item }: { item: ItemInstance<TreeItemData> }) {
+  const data = item.getItemData()
+  if (data?.isDocument) {
+    return (
+      <AppWindowIcon
+        className="text-muted-foreground size-4"
+        aria-hidden="true"
+      />
+    )
+  }
+  if (item.isFolder()) {
+    return item.isExpanded() ? (
+      <FolderOpenIcon
+        className="text-muted-foreground size-4"
+        aria-hidden="true"
+      />
+    ) : (
+      <FolderIcon className="text-muted-foreground size-4" aria-hidden="true" />
+    )
+  }
+  return item.getId().endsWith(".md") ? (
+    <FileTextIcon className="text-muted-foreground size-4" aria-hidden="true" />
+  ) : (
+    <FileIcon className="text-muted-foreground size-4" aria-hidden="true" />
+  )
+}

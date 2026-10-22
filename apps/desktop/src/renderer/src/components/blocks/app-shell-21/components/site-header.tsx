@@ -23,7 +23,7 @@ import {
 } from "@/components/ui/tooltip"
 import { MODELS } from "./data"
 import {
-  MessageSquareIcon,
+  FileTextIcon,
   PlusIcon,
   XIcon,
   Share2Icon,
@@ -103,7 +103,7 @@ export function SiteHeader({
                   value={tab.id}
                   className="hover:bg-foreground/5 group-data-[variant=line]/tabs-list:data-active:bg-foreground/8 dark:group-data-[variant=line]/tabs-list:data-active:bg-foreground/8 w-56 flex-none justify-start gap-2 rounded-md px-3 pe-8 after:hidden"
                 >
-                  <MessageSquareIcon aria-hidden="true" />
+                  <FileTextIcon aria-hidden="true" />
                   <span className="truncate">{tab.title}</span>
                 </TabsTrigger>
                 <Button
