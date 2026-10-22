@@ -15,13 +15,16 @@ import type { Workspace } from '@/state/panes'
 interface ViewPosition {
   anchor: number
   head: number
+  /** Which side an empty caret binds to: a caret left at the body's start is
+   *  bound below the frontmatter, and must come back bound the same way. */
+  assoc: -1 | 0 | 1
   /** `EditorView.scrollSnapshot()`, which a new view takes as `scrollTo`. */
   scroll: StateEffect<{ range: { head: number } }>
 }
 
-const positions = new Map<string, ViewPosition>()
-
-const keyOf = (remote: string, path: string): string => `${remote}\n${path}`
+/** By vault, then path. The workspace is emptied before a vault switch, so
+ *  only the active vault's notes are ever open. */
+const positions = new Map<string, Map<string, ViewPosition>>()
 
 function isOpen(workspace: Workspace, path: string): boolean {
   return workspace.panes.some((p) => p.tabs.some((t) => t.kind === 'note' && t.path === path))
@@ -29,8 +32,9 @@ function isOpen(workspace: Workspace, path: string): boolean {
 
 /**
  * Keep where `view` is for its note while the note is still open in some
- * pane; forget it when the tab closed. Notes closed while another was showing
- * are forgotten here too.
+ * pane; forget it when the tab closed. Notes closed while another was showing,
+ * and other vaults, are forgotten here too. A renamed note is no longer open
+ * under its old path, so its place is forgotten with it.
  */
 export function rememberPosition(
   remote: string,
@@ -38,30 +42,38 @@ export function rememberPosition(
   view: EditorView,
   workspace: Workspace,
 ): void {
-  for (const key of positions.keys()) {
-    const [r, p] = key.split('\n') as [string, string]
-    if (r !== remote || !isOpen(workspace, p)) positions.delete(key)
-  }
+  for (const r of positions.keys()) if (r !== remote) positions.delete(r)
+  const vault = positions.get(remote) ?? new Map<string, ViewPosition>()
+  positions.set(remote, vault)
+  for (const p of vault.keys()) if (!isOpen(workspace, p)) vault.delete(p)
   if (!isOpen(workspace, path)) return
-  const { anchor, head } = view.state.selection.main
-  positions.set(keyOf(remote, path), { anchor, head, scroll: view.scrollSnapshot() })
+  const { anchor, head, assoc } = view.state.selection.main
+  vault.set(path, { anchor, head, assoc: assoc as -1 | 0 | 1, scroll: view.scrollSnapshot() })
 }
 
 /**
  * Where a new view of the note should open, if it was left somewhere: the
  * caret, kept inside the document as it now reads, and the scroll, unless the
- * document has since shrunk past it.
+ * document has since shrunk past it. `bodyStart` is where the body begins
+ * (0 for a plain file): a caret is never put back above it, since frontmatter
+ * may have grown above where the caret was while the tab was away.
  */
 export function rememberedPosition(
   remote: string,
   path: string,
   docLength: number,
+  bodyStart: number,
 ): { selection: EditorSelection; scrollTo?: StateEffect<unknown> } | null {
-  const at = positions.get(keyOf(remote, path))
+  const at = positions.get(remote)?.get(path)
   if (at === undefined) return null
-  const clamp = (n: number): number => Math.min(n, docLength)
+  const clamp = (n: number): number => Math.min(Math.max(n, bodyStart), docLength)
+  const anchor = clamp(at.anchor)
+  const head = clamp(at.head)
+  const assoc = head === bodyStart && bodyStart > 0 ? 1 : at.assoc
   return {
-    selection: EditorSelection.single(clamp(at.anchor), clamp(at.head)),
+    selection: EditorSelection.create([
+      anchor === head ? EditorSelection.cursor(head, assoc) : EditorSelection.range(anchor, head),
+    ]),
     ...(at.scroll.value.range.head <= docLength ? { scrollTo: at.scroll } : {}),
   }
 }

@@ -359,7 +359,7 @@ export function EditorPane({
       if (disposed) return
       baseRef.current = text
       // Back where this note was left, when its tab was switched away from.
-      const left = rememberedPosition(remote, path, text.length)
+      const left = rememberedPosition(remote, path, text.length, plain ? 0 : bodyStart(text))
       const view = new EditorView({
         ...(left?.scrollTo === undefined ? {} : { scrollTo: left.scrollTo }),
         state: EditorState.create({
