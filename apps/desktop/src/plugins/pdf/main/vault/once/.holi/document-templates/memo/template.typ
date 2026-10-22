@@ -34,10 +34,10 @@
     #let row(k, val) = if val != none and val != "" {
       grid(columns: (3.2cm, 1fr), text(weight: 700)[#k], [#val])
     }
-    #row("Til", to)
-    #row("Fra", from)
-    #row("Dato", dateStr)
-    #row("Emne", re)
+    #row(ord.to, to)
+    #row(ord.from, from)
+    #row(ord.date, dateStr)
+    #row(ord.re, re)
     #v(0.8em)
 
     #render-body(notePath, figures: (:))

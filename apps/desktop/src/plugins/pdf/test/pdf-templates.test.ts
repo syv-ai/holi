@@ -125,6 +125,18 @@ describe('listTemplates', () => {
     expect(t.fields[1]!.default).toBeUndefined()
   })
 
+  it('reads a language code, and ignores anything else with a warning', async () => {
+    const root = await vault()
+    await seed(root, 'a', { name: 'A', language: 'EN', fields: [] })
+    await seed(root, 'b', { name: 'B', language: 'english', fields: [] })
+    const [a, b] = await listTemplates(root)
+    expect(a!.language).toBe('en')
+    expect(b!.language).toBeUndefined()
+    expect(b!.warnings).toEqual([
+      '"language" must be a language code such as "da" or "en", and was ignored',
+    ])
+  })
+
   it('a clean manifest has no warnings', async () => {
     const root = await vault()
     await seed(root, 'p', { name: 'P', fields: [{ key: 'a', type: 'text' }] })

@@ -1,6 +1,7 @@
 {
   "name": "Contract",
   "description": "Branded syv.ai contract (kontrakt): numbered clause indentation and signature blocks.",
+  "language": "da",
   "fields": [
     { "key": "date", "label": "Date", "type": "date", "required": false }
   ]

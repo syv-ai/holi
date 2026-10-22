@@ -53,7 +53,7 @@
       it.element.location(),
       it.indented(if it.level == 2 { box(width: 2em, sektion(it.element.location())) }, it.inner(), gap: 0pt),
     )
-    #outline(title: [Indhold], depth: 2, indent: 0pt)
+    #outline(title: ord.contents, depth: 2, indent: 0pt)
     #v(0.6cm)
     #render-body(notePath, figures: (:))
   ]

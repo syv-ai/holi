@@ -38,6 +38,12 @@ List them with `ls .holi/document-templates/`, and read a template's
 
 (`_brand/` holds the shared fonts/logo/module the branded templates import — not a template itself.)
 
+A `template.json` may set `language` (`"da"`, `"en"`): the language the
+template writes its dates and its own labels in (Contents, To/From, the
+signature lines). The branded templates are Danish and `plain` is English
+until that key says otherwise. Change it in the manifest when a user wants a
+template in another language; there is no flag for it.
+
 Each `template.json` field has a `key`, `label`, `type`, and optional `required`,
 `default`, and `options`. Give a field as `--<key> <value>`. A field you leave
 out takes the note's frontmatter value for the same key, else its `default`
