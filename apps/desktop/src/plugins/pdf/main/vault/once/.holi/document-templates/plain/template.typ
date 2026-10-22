@@ -30,7 +30,7 @@
     let months = ("januar", "februar", "marts", "april", "maj", "juni", "juli", "august", "september", "oktober", "november", "december")
     str(d.day()) + ". " + months.at(d.month() - 1) + " " + str(d.year())
   } else {
-    d.display("[day] [month repr:long] [year]")
+    d.display("[day padding:none] [month repr:long] [year]")
   }
 }
 

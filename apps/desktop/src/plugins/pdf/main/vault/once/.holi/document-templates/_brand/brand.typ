@@ -36,7 +36,7 @@
 #let dato(d) = if sprog == "da" {
   str(d.day()) + ". " + maaneder.at(d.month() - 1) + " " + str(d.year())
 } else {
-  d.display("[day] [month repr:long] [year]")
+  d.display("[day padding:none] [month repr:long] [year]")
 }
 
 // ---- Signature block (contracts): a write-on line with a small label under it.
