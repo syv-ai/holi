@@ -18,7 +18,7 @@ them push access to. The same ritual, minus the greeting, is how any later vault
      owner picker listing your login and your orgs, defaulting to you. A caption shows
      `github.com/<owner>/<slug>`. Continue creates the repo: seeded, committed, pushed and tagged
      with the `holi-vault` topic before it returns. The answer, when given, is also the repo's
-     description on GitHub.
+     description on GitHub, on one line and cut at 300 characters.
   3. Plugins: "What this vault runs", a row per plugin in the build with its description and a
      switch at its own default. Turning one off says what that means in place; a plugin whose
      `requires` are off shows off, cannot be switched, and says what it needs. Only choosing

@@ -1,10 +1,11 @@
 /**
  * The Home tab. Home is the setting `home`: by default the recents, shown
- * here under the vault's README when it has one. The home surface shows Home's folder document (an app) instead
- * whenever Home names one the vault has. Anything else Home is opens as
- * itself (`state/home.ts`), so reaching this with one means it was not there,
- * or Home changed while the tab was open: here it says what Home is and why
- * it is not showing, and going there is one click.
+ * here under the vault's README when it has one. The home surface shows
+ * Home's folder document (an app) instead whenever Home names one the vault
+ * has. Anything else Home is opens as itself (`state/home.ts`), so reaching
+ * this with one means it was not there, or Home changed while the tab was
+ * open: here it says what Home is and why it is not showing, and going there
+ * is one click.
  */
 import type { HomeTarget, RecentEntry } from '@holi/shared'
 import { useAtomValue, useSetAtom } from 'jotai'
@@ -70,7 +71,9 @@ function Recents(): React.JSX.Element {
     )
 
   return (
-    <div className="flex flex-1 flex-col items-center justify-center gap-8 px-4 py-8 text-sm">
+    // `safe` centring and its own scroll: with a README above the recents, a
+    // short window would otherwise cut off the top with no way to reach it.
+    <div className="flex min-h-0 flex-1 flex-col items-center justify-center-safe gap-8 overflow-auto px-4 py-8 text-sm">
       <Readme />
       <section className="w-full max-w-[22rem]">
         <h2 className="mb-2 text-xs font-medium text-muted-foreground">Recently opened</h2>
@@ -120,6 +123,8 @@ function Readme(): React.JSX.Element | null {
       return
     }
     let current = true
+    // Not the last vault's README while this one's is read.
+    setText(null)
     trpc.notes.read.query({ remote, path: README }).then(
       (read) => current && setText(read),
       () => current && setText(null),

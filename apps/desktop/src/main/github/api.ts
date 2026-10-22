@@ -189,8 +189,20 @@ export class GitHubApi {
     const url = args.owner
       ? `${this.#base}/orgs/${encodeURIComponent(args.owner)}/repos`
       : `${this.#base}/user/repos`
-    // GitHub's description is one line; a long answer is cut rather than refused.
-    const description = args.description?.replace(/\s+/g, ' ').trim().slice(0, 300)
+    // GitHub's description is one line of about 350 characters at most; a long
+    // answer is cut rather than refused, by code point so no emoji is split,
+    // and control characters go, so an optional field cannot fail the create.
+    const description =
+      args.description === undefined
+        ? undefined
+        : [
+            ...args.description
+              .replace(/\s+/g, ' ')
+              .replace(/\p{Cc}/gu, '')
+              .trim(),
+          ]
+            .slice(0, 300)
+            .join('')
 
     try {
       return toRepo(

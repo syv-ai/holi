@@ -87,6 +87,9 @@ import type { UpdateStatus } from './updates/state'
 import type { Updater } from './updates/updater'
 import { isReleaseVersion, type ReleaseNotesAnswer } from './updates/release-notes'
 
+/** The longest answer to "What is this vault for?", as the onboarding field caps it. */
+const PURPOSE_MAX = 300
+
 const t = initTRPC.create()
 
 /**
@@ -753,7 +756,8 @@ export function createRouter(deps: RouterDeps) {
       // answer to "What is this vault for?": the README's paragraph and the
       // repo's description on GitHub.
       .mutation(async ({ input }): Promise<VaultSnapshot> => {
-        const purpose = input.purpose?.trim() ?? ''
+        // The renderer caps the answer; this caps a raw call the same way.
+        const purpose = [...(input.purpose?.trim() ?? '')].slice(0, PURPOSE_MAX).join('')
         const repo = await gh(() =>
           deps.session.api.createRepo({
             name: input.name,
