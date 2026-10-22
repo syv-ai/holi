@@ -13,9 +13,11 @@ import {
   communityCapabilities,
   linkRunningCommands,
   parseServerKey,
+  runChecks,
   seedRunningApps,
   unlinkWhenOff,
 } from './capabilities'
+import { createChecks } from './checks'
 import { createConsentStore } from './consent'
 import { createInstallStore, pluginsDir } from './store'
 import { createSupervisor } from './supervisor'
@@ -34,6 +36,8 @@ export const communityMain: MainPlugin = {
   activate(ctx) {
     const store = createInstallStore(ctx.userData)
     const consent = createConsentStore(join(ctx.userData, 'plugin-consent.json'))
+    // Per activation, so per vault: switching vaults drops every answer.
+    const checks = createChecks()
     const servers = createSupervisor({
       frameOrigin: ctx.frameOrigin,
       // Servers run only for the open vault; one stopping as it is left has
@@ -57,13 +61,16 @@ export const communityMain: MainPlugin = {
         emit: ctx.emit,
         bridgeScript: () => null,
         scratch: join(pluginsDir(ctx.userData), '.staging'),
+        checks,
       }),
     )
     // What runs here follows the vault: at the start, and whenever a pin or
     // the plugins settings change on disk (the settings tab's write, a pull,
     // a hand edit). A running plugin's apps that this vault (or, for a
     // `.local.app`, this machine) does not have yet, and its commands; the
-    // renderer reads the rows again once they are linked.
+    // renderer reads the rows again once they are linked. And the readiness
+    // check of each running plugin not asked yet: every one as the vault
+    // opens, and one just turned on.
     const follow = () => {
       void seedRunningApps(ctx.root, { store, consent }).catch((err) =>
         console.error('[community] apps:', err),
@@ -71,6 +78,9 @@ export const communityMain: MainPlugin = {
       void linkRunningCommands(ctx.root, { store, consent }).then(() =>
         ctx.emit(ctx.remote, 'commands', null),
       )
+      void runChecks(ctx.root, { store, consent, checks }).then((asked) => {
+        if (asked) ctx.emit(ctx.remote, 'check', null)
+      })
     }
     follow()
     let signature: string | null = null
@@ -82,7 +92,9 @@ export const communityMain: MainPlugin = {
       if (!first) follow()
     })
     return async () => {
-      // Stopping stops its servers: the tabs on them are gone too.
+      // Stopping stops its servers: the tabs on them are gone too. And any
+      // check still running.
+      checks.stop()
       await servers.stopAll()
       await unlinkWhenOff(ctx.root, installedInfos())
     }

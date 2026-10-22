@@ -16,7 +16,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { isExpiredMemory } from '@holi/shared'
+import { isExpiredMemory, writePluginSettingsText, type PluginInfo } from '@holi/shared'
 import { afterEach, describe, expect, it } from 'vitest'
 
 const HOOK = join(
@@ -298,6 +298,73 @@ describe('memory-overview', () => {
     expect(out).toContain('`.holi/state/log/2000-01-02.local.md` (previous)')
     expect(out).not.toContain('2000-01-01')
     expect(out).not.toContain('the secret line')
+  })
+
+  it('names the pinned community plugins from the vault files, with no memory at all', async () => {
+    // The two settings files as Holi writes them, so the hook's small reader
+    // is held to the real writer's shape.
+    const known: PluginInfo[] = [
+      { id: 'agent', label: 'Agent', default: true },
+      { id: 'community', label: 'Community plugins', default: false },
+    ]
+    const pin = (id: string, extra: object = {}) => JSON.stringify({ id, ...extra })
+    const files = {
+      '.holi/plugins/dash/manifest.json': pin('dash', { bin: { dashctl: 'bin/dashctl' } }),
+      '.holi/plugins/notes/manifest.json': pin('notes'),
+      '.holi/plugins/prezzi/manifest.json': pin('prezzi'),
+      '.holi/settings/plugins.local.yaml': writePluginSettingsText(
+        { plugins: { prezzi: false } },
+        'local',
+        known,
+      ),
+    }
+    const on = await run(
+      await vault({
+        ...files,
+        '.holi/settings/plugins.yaml': writePluginSettingsText(
+          { plugins: { community: true, dash: true, prezzi: true } },
+          'committed',
+          known,
+        ),
+      }),
+    )
+    expect(on.code).toBe(0)
+    expect(on.out).toContain('dash (on, commands: dashctl)')
+    expect(on.out).toContain('notes (off in this vault)')
+    // Holi still runs a community plugin the local file turns off.
+    expect(on.out).toContain('prezzi (on)')
+
+    const hostOff = await run(
+      await vault({
+        ...files,
+        '.holi/settings/plugins.yaml': writePluginSettingsText(
+          { plugins: { dash: true } },
+          'committed',
+          known,
+        ),
+      }),
+    )
+    expect(hostOff.out).toContain('dash, notes, prezzi')
+    expect(hostOff.out).not.toContain('(on')
+
+    // The local file can turn community plugins themselves off on this machine.
+    const localOff = await run(
+      await vault({
+        ...files,
+        '.holi/settings/plugins.yaml': writePluginSettingsText(
+          { plugins: { community: true, dash: true } },
+          'committed',
+          known,
+        ),
+        '.holi/settings/plugins.local.yaml': writePluginSettingsText(
+          { plugins: { community: false } },
+          'local',
+          known,
+        ),
+      }),
+    )
+    expect(localOff.out).toContain('off on this machine')
+    expect(localOff.out).not.toContain('(on')
   })
 
   it('exits 0 and prints nothing when CLAUDE_PROJECT_DIR points nowhere', async () => {

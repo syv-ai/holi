@@ -1,6 +1,7 @@
 #!/usr/bin/env node
-// Holi SessionStart hook — tell the agent what this vault remembers, once per
-// session, before it answers anything. See docs/features/agent-memory.md.
+// Holi SessionStart hook — tell the agent what this vault remembers, and which
+// community plugins it pins, once per session, before it answers anything. See
+// docs/features/agent-memory.md.
 //
 // SessionStart rather than UserPromptSubmit: memory is session state, and 3k
 // characters injected into every turn is a cost paid over and over. It prints on
@@ -12,10 +13,13 @@
 // memories, which no index lists, are read here, and so are the names in the
 // work log's folder. Every memory file is also parsed once per session by the
 // memory lint (`.claude/skills/memory/lint.mjs`), of which only the count is
-// printed, plus one `git log`. It never calls Holi's bridge: Claude Code spawns
-// this, not Holi, so it must work with no server anywhere. Absent
-// `.holi/memory/`, it prints nothing and exits 0, exactly as the focused-note
-// hook does outside Holi.
+// printed, plus one `git log`. The community plugins line comes from the pins
+// (`.holi/plugins/*/manifest.json`) and the `plugins:` block of
+// `.holi/settings/plugins.yaml` and `plugins.local.yaml`, so a question about a
+// plugin's tool leads to the plugin rather than to another app's files. It
+// never calls Holi's bridge: Claude Code spawns this, not Holi, so it must work
+// with no server anywhere. With no memory and no pins, it prints nothing and
+// exits 0, exactly as the focused-note hook does outside Holi.
 //
 // Dependency-free (`node:` builtins only), like the three hooks beside it.
 
@@ -197,10 +201,112 @@ function workLogs() {
 }
 const logs = workLogs()
 
-// Nothing to say. A vault with no memory directory at all is the ordinary case
-// for a repo somebody opened `claude` in by hand.
-if (index === null && personal.length === 0 && shared.length === 0 && logs.length === 0)
+/**
+ * One file's `plugins:` block as id to on or off, read without a YAML parser.
+ * Holi writes these files (`writePluginSettingsText`) as a `plugins:` line
+ * followed by indented `  <id>: true|false` lines, unset ones commented out,
+ * or, rarely, as a one-line `plugins: { a: true }`. Anything else answers
+ * nothing, which reads as off: this line only informs, it never decides.
+ */
+function pluginSwitches(text) {
+  const out = new Map()
+  if (text === null) return out
+  const lines = text.replace(/\r\n/g, '\n').split('\n')
+  const start = lines.findIndex((l) => /^plugins:/.test(l))
+  if (start === -1) return out
+  const entry = /^\s*([a-z][a-z0-9-]*)\s*:\s*(true|false)\s*$/
+  const rest = lines[start]
+    .slice('plugins:'.length)
+    .replace(/(?:^|\s)#.*$/, '')
+    .trim()
+  if (rest !== '') {
+    const flow = /^\{(.*)\}$/.exec(rest)
+    for (const part of flow === null ? [] : flow[1].split(',')) {
+      const m = entry.exec(part)
+      if (m) out.set(m[1], m[2] === 'true')
+    }
+    return out
+  }
+  for (const line of lines.slice(start + 1)) {
+    if (/^\s*(?:#.*)?$/.test(line)) continue
+    if (!/^\s/.test(line)) break
+    const m = entry.exec(line.replace(/\s#.*$/, ''))
+    if (m) out.set(m[1], m[2] === 'true')
+  }
+  return out
+}
+
+/**
+ * The community plugins this vault pins, as one line, or null when it pins
+ * none. As Holi reads them: the committed file turns a plugin on, and the
+ * local file's off counts only for `community` itself, a plugin built into
+ * Holi; a community plugin is on wherever the committed file says so. Whether
+ * this machine has a plugin installed and set up is Holi's to know, not the
+ * vault's, so "on" is what the vault says.
+ */
+function communityPlugins() {
+  let ids
+  try {
+    ids = readdirSync(join(root, '.holi/plugins')).sort()
+  } catch {
+    return null
+  }
+  const pins = []
+  for (const id of ids) {
+    if (!/^[a-z][a-z0-9-]*$/.test(id)) continue
+    const file = join(root, '.holi/plugins', id, 'manifest.json')
+    // A regular file only: a link to a pipe would hang the session start.
+    try {
+      if (!lstatSync(file).isFile()) continue
+    } catch {
+      continue
+    }
+    let pin
+    try {
+      pin = JSON.parse(readOr(file) ?? 'null')
+    } catch {
+      continue
+    }
+    if (pin === null || typeof pin !== 'object' || pin.id !== id) continue
+    const bin =
+      pin.bin !== null && typeof pin.bin === 'object' && !Array.isArray(pin.bin)
+        ? Object.keys(pin.bin).filter((name) => /^[a-z0-9][a-z0-9._-]*$/.test(name))
+        : []
+    pins.push({ id, bin })
+  }
+  if (pins.length === 0) return null
+  const committed = pluginSwitches(readOr(join(root, '.holi/settings/plugins.yaml')))
+  const local = pluginSwitches(readOr(join(root, '.holi/settings/plugins.local.yaml')))
+  const state = (id) => (committed.get(id) === true ? 'on' : 'off in this vault')
+  const where = "Holi's settings, under Plugins"
+  const hostState =
+    state('community') === 'on' && local.get('community') === false
+      ? 'off on this machine'
+      : state('community')
+  if (hostState !== 'on') {
+    return `Community plugins: ${pins.map((p) => p.id).join(', ')}, none running: community plugins are ${hostState}. Turned on in ${where}.`
+  }
+  const each = pins.map(({ id, bin }) => {
+    const s = state(id)
+    return s === 'on' && bin.length > 0 ? `${id} (on, commands: ${bin.join(', ')})` : `${id} (${s})`
+  })
+  return `Community plugins: ${each.join(', ')}. Turned on and off in ${where}.`
+}
+const plugins = communityPlugins()
+
+/** Fit `text` under the cap, still naming where the rest is. */
+function capped(text) {
+  if (text.length <= CAP) return text
+  const pointer = '\n…truncated. The whole list is in `.holi/memory/index.md`.\n'
+  return text.slice(0, CAP - pointer.length) + pointer
+}
+
+// No memory. A vault with no memory directory at all is the ordinary case for a
+// repo somebody opened `claude` in by hand; it may still pin plugins.
+if (index === null && personal.length === 0 && shared.length === 0 && logs.length === 0) {
+  if (plugins !== null) process.stdout.write(capped(`${plugins}\n`))
   process.exit(0)
+}
 
 /** The index's own entry lines, with their `## type` headings. A shared memory
  *  with an `expires` carries `(expires <stamp>)` after its link; once that has
@@ -282,6 +388,10 @@ function render({ descriptions }) {
     )
   }
 
+  // Near the top too, for the same reason: not memory, but one line the cap
+  // must not cut.
+  if (plugins !== null) out.push('', plugins)
+
   if (sections.length > 0) {
     out.push('', `Types in use: ${sections.map((s) => `${s.type} (${s.lines.length})`).join(', ')}`)
     for (const section of sections) {
@@ -339,11 +449,8 @@ function render({ descriptions }) {
 
 let text = render({ descriptions: true })
 if (text.length > CAP) text = render({ descriptions: false })
-if (text.length > CAP) {
-  // Last resort, and it still names where the rest is rather than stopping dead.
-  const pointer = '\n…truncated. The whole list is in `.holi/memory/index.md`.\n'
-  text = text.slice(0, CAP - pointer.length) + pointer
-}
+// Last resort, and it still names where the rest is rather than stopping dead.
+text = capped(text)
 
 process.stdout.write(text)
 process.exit(0)
