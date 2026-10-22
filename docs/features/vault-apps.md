@@ -76,7 +76,9 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   (`holi.tasks.update(path, patch)`) is the board's field edit: the patch is read by
   `parseTaskPatch`, so an app cannot write a task the board would refuse, and `done` is
   completion, as on the board. It sets fields only; a task's body is a note write.
-  `tasks.create` is the board's quick add. `docs.write` (`holi.docs.write(path, text, base)`)
+  `tasks.create` is the board's quick add, and like it makes a private task
+  (`task.<slug>.local.md`) unless given `shared: true`; an app may write a private task where it
+  may write the shared one, and no other local file. `docs.write` (`holi.docs.write(path, text, base)`)
   writes a whole `.md` note over `base`, the text the app read, or `null` for a note that
   must not exist yet; a note that has changed since (a pull, the agent, the person typing)
   is refused as a conflict and nothing is written, so an app never overwrites what it did not
@@ -92,7 +94,7 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   (`CONFLICT`, `FORBIDDEN`, `NOT_FOUND`, `BAD_REQUEST`, and `PRECONDITION_FAILED` with
   `vault-not-open` when Holi no longer has the app's vault open), so an app matches the code,
   not the words. None of these is open to the agent, which writes files with
-  its own tools (`holi tasks complete` aside, for the recurrence rule).
+  its own tools (`holi tasks complete` aside, for the recurrence rule, and `holi tasks create`).
 - **Push.** `holi.on(topic, fn)` hears `docs`, `tasks`, `sync`, `agent`, `recents`, `history` and
   `store:<collection>`. `AppFrame` posts a topic when its signature changes (`renderer/app-push.ts`),
   never on mount. A push carries no data: the app reads again through main, so every refusal

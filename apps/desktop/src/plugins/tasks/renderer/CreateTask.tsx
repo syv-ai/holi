@@ -23,6 +23,7 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
+  Switch,
   Tooltip,
 } from '@/primitives'
 import { createTaskAtom, laneLabel, patchTaskAtom, ROOT_LANE, taskCreateFolders } from './state'
@@ -62,6 +63,8 @@ export function CreateTask({ onClose }: { onClose: () => void }): React.JSX.Elem
   const [title, setTitle] = useState('')
   const [folder, setFolder] = useState(() => (activeDoc ? folderOf(activeDoc.path) : ROOT_LANE))
   const [status, setStatus] = useState<TaskStatus>('todo')
+  /** A new task is private until the person shares it. */
+  const [shared, setShared] = useState(false)
   const [draft, setDraft] = useState<Draft>({ assignees: [], tags: [] })
   const [busy, setBusy] = useState(false)
   const now = useAtomValue(nowAtom)
@@ -116,6 +119,7 @@ export function CreateTask({ onClose }: { onClose: () => void }): React.JSX.Elem
       title: t,
       status,
       folder: folder.trim().replace(/^\/+|\/+$/g, ''),
+      shared,
       ...(body !== '' ? { description: body } : {}),
       extra: {
         ...(draft.due ? { due: draft.due } : {}),
@@ -165,6 +169,20 @@ export function CreateTask({ onClose }: { onClose: () => void }): React.JSX.Elem
               <option key={f} value={f} />
             ))}
           </datalist>
+        </FormField>
+
+        <FormField label="Share with vault">
+          <span className="flex items-center gap-2">
+            <Switch
+              data-create-task-shared
+              checked={shared}
+              onCheckedChange={setShared}
+              aria-label="Share with vault"
+            />
+            <span className="text-xs text-muted-foreground">
+              {shared ? 'Syncs to everyone in the vault' : 'Private: only on this machine'}
+            </span>
+          </span>
         </FormField>
 
         <div className="flex flex-col gap-3 border-t border-divider pt-3">

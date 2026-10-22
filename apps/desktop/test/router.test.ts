@@ -4,7 +4,12 @@ import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
-import { parseTaskFile, taskClaim } from '../src/plugins/tasks/shared/task-file'
+import {
+  parseTaskFile,
+  privateTaskPath,
+  sharedTaskPath,
+  taskClaim,
+} from '../src/plugins/tasks/shared/task-file'
 import { SETTINGS_FILE, VAULT_SETTING_DEFAULTS } from '@holi/shared'
 import { afterAll, describe, expect, it, vi } from 'vitest'
 import { createVaultHost, type VaultHost } from '../src/main/vault/active-vault'
@@ -672,6 +677,7 @@ describe('tasks', () => {
       folder: 'projects/q2',
       title: 'Review the Q2 doc',
       status: 'doing',
+      shared: true,
     })
     expect(path).toBe('projects/q2/task.review-the-q2-doc.md')
 
@@ -680,10 +686,12 @@ describe('tasks', () => {
     expect(task.status).toBe('doing')
   })
 
-  it('defaults to todo at the vault root', async () => {
+  it('defaults to a private todo at the vault root, which the board still shows', async () => {
     const { caller } = await rig()
     const { path } = await createTask(caller, { remote: REMOTE, title: 'Call the vendor' })
-    expect(path).toBe('task.call-the-vendor.md')
+    expect(path).toBe('task.call-the-vendor.local.md')
+    const snap = await caller.vaults.snapshot({ remote: REMOTE })
+    expect(snap.claimed.tasks!.items.map((t) => t.path)).toContain(path)
   })
 
   it('suffixes a colliding slug rather than refusing or clobbering', async () => {
@@ -692,11 +700,41 @@ describe('tasks', () => {
     const { caller } = await rig({
       'task.call-the-vendor.md': '---\ntitle: Call the vendor\n---\n',
     })
+    const shared = { remote: REMOTE, title: 'Call the vendor', shared: true }
+    expect((await createTask(caller, shared)).path).toBe('task.call-the-vendor-2.md')
+    expect((await createTask(caller, shared)).path).toBe('task.call-the-vendor-3.md')
+    // The private twin of a taken name is taken too, so either can be renamed
+    // into the other later.
     expect((await createTask(caller, { remote: REMOTE, title: 'Call the vendor' })).path).toBe(
-      'task.call-the-vendor-2.md',
+      'task.call-the-vendor-4.local.md',
     )
-    expect((await createTask(caller, { remote: REMOTE, title: 'Call the vendor' })).path).toBe(
-      'task.call-the-vendor-3.md',
+  })
+
+  it('shares and unshares a task by the rename every file takes', async () => {
+    const { caller, root } = await rig({
+      'ops/task.fix-login.local.md': '---\nstatus: todo\n---\n\n# Fix login\n',
+      'note.md': 'see [[ops/task.fix-login.local.md]]',
+      'mine.local.md': 'mine [[ops/task.fix-login.local.md]]',
+    })
+    const tasks = async () =>
+      (await caller.vaults.snapshot({ remote: REMOTE })).claimed.tasks!.items.map((t) => t.path)
+    const share = sharedTaskPath('ops/task.fix-login.local.md')!
+    await caller.notes.rename({ remote: REMOTE, from: 'ops/task.fix-login.local.md', to: share })
+    expect(await tasks()).toEqual(['ops/task.fix-login.md'])
+    expect(await readFile(join(root, 'note.md'), 'utf8')).toBe('see [[ops/task.fix-login.md]]')
+    expect(await readFile(join(root, 'mine.local.md'), 'utf8')).toBe(
+      'mine [[ops/task.fix-login.md]]',
+    )
+
+    // Making it private leaves the shared note's link at the shared path, which
+    // history holds: teammates never get a link to a file they cannot have.
+    // This machine's own local file follows.
+    const unshare = privateTaskPath(share)!
+    await caller.notes.rename({ remote: REMOTE, from: share, to: unshare, localLinksOnly: true })
+    expect(await tasks()).toEqual(['ops/task.fix-login.local.md'])
+    expect(await readFile(join(root, 'note.md'), 'utf8')).toBe('see [[ops/task.fix-login.md]]')
+    expect(await readFile(join(root, 'mine.local.md'), 'utf8')).toBe(
+      'mine [[ops/task.fix-login.local.md]]',
     )
   })
 })
