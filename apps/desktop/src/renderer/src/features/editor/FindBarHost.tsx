@@ -76,11 +76,21 @@ function FindBar({ portal }: { portal: FindPortal }): React.JSX.Element {
   const position = matchPosition(view.state, query)
   const readOnly = view.state.readOnly
 
+  // Whether the query last changed by typing in the field. Any other change
+  // (⌘F again, seeded from a new selection) selects the field's text, so
+  // typing replaces it. CodeMirror selects it too, but before React has
+  // written the new value, which would collapse that selection.
+  const typed = useRef(false)
+
+  useLayoutEffect(() => playOnce(portal.el, 'motion-in-fade'), [portal.el])
+
   useLayoutEffect(() => {
-    playOnce(portal.el, 'motion-in-fade')
-    find.current?.focus()
-    find.current?.select()
-  }, [portal.el])
+    if (!typed.current) {
+      find.current?.focus()
+      find.current?.select()
+    }
+    typed.current = false
+  }, [query.search])
 
   const setQuery = (patch: { search?: string; replace?: string }): SearchQuery => {
     const next = new SearchQuery({
@@ -102,7 +112,7 @@ function FindBar({ portal }: { portal: FindPortal }): React.JSX.Element {
   const onFindKey = (e: KeyboardEvent<HTMLInputElement>): void => {
     if (runScopeHandlers(view, e.nativeEvent, 'search-panel')) {
       e.preventDefault()
-    } else if (e.key === 'Enter') {
+    } else if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
       e.preventDefault()
       if (e.shiftKey) findPrevious(view)
       else findNext(view)
@@ -112,7 +122,7 @@ function FindBar({ portal }: { portal: FindPortal }): React.JSX.Element {
   const onReplaceKey = (e: KeyboardEvent<HTMLInputElement>): void => {
     if (runScopeHandlers(view, e.nativeEvent, 'search-panel')) {
       e.preventDefault()
-    } else if (e.key === 'Enter') {
+    } else if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
       e.preventDefault()
       if (e.metaKey || e.ctrlKey) replaceAll(view)
       else replaceNext(view)
@@ -122,7 +132,7 @@ function FindBar({ portal }: { portal: FindPortal }): React.JSX.Element {
   const label = countLabel(query, position)
 
   return createPortal(
-    <div className="flex w-80 flex-col gap-1 rounded-lg bg-popover p-1.5 text-popover-foreground shadow-popover">
+    <div className="flex w-80 max-w-full flex-col gap-1 rounded-lg bg-popover p-1.5 text-popover-foreground shadow-popover">
       <div className="flex items-center gap-1">
         {!readOnly && (
           <IconButton
@@ -140,7 +150,10 @@ function FindBar({ portal }: { portal: FindPortal }): React.JSX.Element {
           placeholder="Find"
           className="h-7 flex-1 px-2 md:text-xs"
           value={query.search}
-          onChange={(e) => selectNearest(view, setQuery({ search: e.target.value }))}
+          onChange={(e) => {
+            typed.current = true
+            selectNearest(view, setQuery({ search: e.target.value }))
+          }}
           onKeyDown={onFindKey}
         />
         <span className="min-w-14 text-right text-xs tabular-nums text-muted-foreground">

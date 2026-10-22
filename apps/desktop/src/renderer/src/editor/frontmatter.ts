@@ -717,13 +717,19 @@ export function bodyStart(doc: string): number {
  * delete the whole block, so two guards:
  *
  *  - a change filter drops any user edit touching the region. It keys on
- *    `userEvent`, so programmatic reloads/merges and our own write-back pass.
+ *    `userEvent`, so programmatic reloads/merges and our own write-back pass,
+ *    and so does find's replace: a deliberate edit, which would otherwise skip
+ *    the block's matches while counting them. Invalid YAML holds the save.
  *  - a transaction filter pushes a caret at or before the block to just after it.
  */
 const protectFrontmatter = EditorState.changeFilter.of((tr) => {
   const region = frontmatterRegion(tr.startState.doc.toString())
   if (region === null) return true
-  if (tr.annotation(frontmatterEdit) || tr.annotation(Transaction.userEvent) === undefined)
+  if (
+    tr.annotation(frontmatterEdit) ||
+    tr.annotation(Transaction.userEvent) === undefined ||
+    tr.isUserEvent('input.replace')
+  )
     return true
   return [region.from, region.to]
 })

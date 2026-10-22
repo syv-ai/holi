@@ -147,6 +147,8 @@ const findTheme = EditorView.theme({
     left: 'auto',
     right: '0',
     margin: '8px 12px 0 0',
+    // A narrow pane squeezes the bar rather than pushing it past its left edge.
+    maxWidth: 'calc(100% - 24px)',
     background: 'transparent',
     border: 'none',
   },
@@ -159,7 +161,17 @@ const findTheme = EditorView.theme({
   },
 })
 
+/**
+ * A read-only editor's content is not `contenteditable`, so it could never take
+ * focus, and CodeMirror only hears keys on its content: ⌘F would do nothing in
+ * the one case where finding is all there is to do. A tab stop gives it focus.
+ */
+const focusableWhenReadOnly = EditorView.contentAttributes.compute(
+  [EditorView.editable],
+  (state): Record<string, string> => (state.facet(EditorView.editable) ? {} : { tabindex: '0' }),
+)
+
 /** Find in this editor: the search state, its bar, and its colours. */
 export function findInFile(): Extension {
-  return [search({ top: true, createPanel: findPanel }), findTheme]
+  return [search({ top: true, createPanel: findPanel }), findTheme, focusableWhenReadOnly]
 }
