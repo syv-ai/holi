@@ -1,7 +1,7 @@
 /**
  * The app, once someone is signed in: what keeps a vault alive (opening it in
  * main, settings that follow the disk, the clock), the shell (ReUI's
- * app-shell-21, `components/blocks/app-shell-21`) and the two flows that leave
+ * app-shell-21 as published, `components/blocks/app-shell-21`) and the two flows that leave
  * the open vault, switching and adding one, which ask first when leaving would
  * stop something.
  *
@@ -11,15 +11,7 @@
  */
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { useEffect, useRef, useState } from 'react'
-import { PanelsTopLeftIcon } from 'lucide-react'
 import { AppShell } from '@/components/blocks/app-shell-21/components/app-shell'
-import {
-  Empty,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from '@/components/ui/empty'
 import { Toaster } from '@/primitives'
 import { OnboardingRitual } from '@/features/onboarding/OnboardingRitual'
 import { leaveReasonsAtom } from '@/state/plugins'
@@ -68,17 +60,7 @@ export function Shell() {
 
   return (
     <>
-      <AppShell onAddVault={addVault}>
-        <Empty className="h-full border-0">
-          <EmptyHeader>
-            <EmptyMedia variant="icon">
-              <PanelsTopLeftIcon aria-hidden="true" />
-            </EmptyMedia>
-            <EmptyTitle>Nothing Open Yet</EmptyTitle>
-            <EmptyDescription>Views come back one at a time in the new shell.</EmptyDescription>
-          </EmptyHeader>
-        </Empty>
-      </AppShell>
+      <AppShell />
       {showAdd && <OnboardingRitual mode="add-vault" onDismiss={() => setShowAdd(false)} />}
       {leaving !== null && (
         <LeaveConfirm

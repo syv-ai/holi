@@ -1,22 +1,12 @@
-// Who is signed in and which vault is open (ReUI app-shell-21's account menu,
-// wired to Holi): the block's organizations are this machine's vaults, and
-// picking one switches to it, asking first when leaving would stop something.
-import { useAtomValue, useSetAtom } from "jotai"
-import {
-  CheckIcon,
-  ExternalLinkIcon,
-  LogOutIcon,
-  MonitorIcon,
-  MoonIcon,
-  MoreHorizontalIcon,
-  PaletteIcon,
-  PlusIcon,
-  SunIcon,
-} from "lucide-react"
-import type { ColorScheme } from "@holi/shared"
+import { type ComponentType } from "react"
 import { cn } from "@/lib/cn"
+import { useTheme } from "next-themes"
 
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
+import {
+  Avatar,
+  AvatarFallback,
+  AvatarImage,
+} from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -25,93 +15,154 @@ import {
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
+  DropdownMenuShortcut,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  useSidebar,
 } from "@/components/ui/sidebar"
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
-import { colorSchemeAtom, writeColorSchemeAtom } from "@/state/color-scheme"
-import { sessionAtom, signOutAtom } from "@/state/session"
-import { switchVaultAtom } from "@/state/vault-switch"
-import { activeRemoteAtom, vaultsAtom } from "@/state/vaults"
+import {
+  ToggleGroup,
+  ToggleGroupItem,
+} from "@/components/ui/toggle-group"
+import { ACCOUNT, WORKSPACES, type Workspace } from "./data"
+import { SunIcon, MoonIcon, MonitorIcon, CheckIcon, PlusIcon, UserIcon, CreditCardIcon, SettingsIcon, PaletteIcon, LogOutIcon, MoreHorizontalIcon } from "lucide-react"
 
-// ── Vault Logos ──
+// ── Workspace Logos ──
 
-/** The block's three workspace gradients; a vault gets one by its remote. */
-const GRADIENTS = [
-  ["#6366f1", "#8b5cf6", "#ec4899"],
-  ["#0ea5e9", "#06b6d4", "#10b981"],
-  ["#f97316", "#f59e0b", "#84cc16"],
-]
-
-function gradientFor(remote: string) {
-  let hash = 0
-  for (const char of remote) hash = (hash * 31 + char.charCodeAt(0)) | 0
-  return GRADIENTS[Math.abs(hash) % GRADIENTS.length]!
-}
-
-function VaultLogo({
-  remote,
-  className,
-}: {
-  remote: string
-  className?: string
-}) {
-  const [from, via, to] = gradientFor(remote)
-  const id = `vault-logo-${remote.replace(/[^a-z0-9]/gi, "-")}`
+function AtlasLogo({ className }: { className?: string }) {
   return (
     <svg
       viewBox="0 0 28 28"
       fill="none"
       width="100%"
       height="100%"
-      className={cn("shrink-0", className)}
+      className={className}
       aria-hidden="true"
     >
       <defs>
         <linearGradient
-          id={id}
+          id="sb21-atlas"
           x1="0"
           y1="0"
           x2="28"
           y2="28"
           gradientUnits="userSpaceOnUse"
         >
-          <stop offset="0%" stopColor={from} />
-          <stop offset="50%" stopColor={via} />
-          <stop offset="100%" stopColor={to} />
+          <stop offset="0%" stopColor="#6366f1" />
+          <stop offset="50%" stopColor="#8b5cf6" />
+          <stop offset="100%" stopColor="#ec4899" />
         </linearGradient>
       </defs>
-      <circle cx="14" cy="14" r="14" fill={`url(#${id})`} />
+      <circle cx="14" cy="14" r="14" fill="url(#sb21-atlas)" />
     </svg>
   )
+}
+
+function RelayLogo({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 28 28"
+      fill="none"
+      width="100%"
+      height="100%"
+      className={className}
+      aria-hidden="true"
+    >
+      <defs>
+        <linearGradient
+          id="sb21-relay"
+          x1="0"
+          y1="0"
+          x2="28"
+          y2="28"
+          gradientUnits="userSpaceOnUse"
+        >
+          <stop offset="0%" stopColor="#0ea5e9" />
+          <stop offset="50%" stopColor="#06b6d4" />
+          <stop offset="100%" stopColor="#10b981" />
+        </linearGradient>
+      </defs>
+      <circle cx="14" cy="14" r="14" fill="url(#sb21-relay)" />
+    </svg>
+  )
+}
+
+function OrbitLogo({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 28 28"
+      fill="none"
+      width="100%"
+      height="100%"
+      className={className}
+      aria-hidden="true"
+    >
+      <defs>
+        <linearGradient
+          id="sb21-orbit"
+          x1="0"
+          y1="0"
+          x2="28"
+          y2="28"
+          gradientUnits="userSpaceOnUse"
+        >
+          <stop offset="0%" stopColor="#f97316" />
+          <stop offset="50%" stopColor="#f59e0b" />
+          <stop offset="100%" stopColor="#84cc16" />
+        </linearGradient>
+      </defs>
+      <circle cx="14" cy="14" r="14" fill="url(#sb21-orbit)" />
+    </svg>
+  )
+}
+
+const WORKSPACE_LOGOS: Record<string, ComponentType<{ className?: string }>> = {
+  atlas: AtlasLogo,
+  relay: RelayLogo,
+  orbit: OrbitLogo,
 }
 
 // ── Theme Toggle ──
 
 const THEMES = [
-  { value: "light", label: "Light", icon: <SunIcon aria-hidden="true" /> },
-  { value: "dark", label: "Dark", icon: <MoonIcon aria-hidden="true" /> },
+  {
+    value: "light",
+    label: "Light",
+    icon: (
+      <SunIcon aria-hidden="true" />
+    ),
+  },
+  {
+    value: "dark",
+    label: "Dark",
+    icon: (
+      <MoonIcon aria-hidden="true" />
+    ),
+  },
   {
     value: "system",
     label: "System",
-    icon: <MonitorIcon aria-hidden="true" />,
+    icon: (
+      <MonitorIcon aria-hidden="true" />
+    ),
   },
 ]
 
 function ThemeSegmentedToggle() {
-  const scheme = useAtomValue(colorSchemeAtom)
-  const writeScheme = useSetAtom(writeColorSchemeAtom)
+  const { theme, setTheme } = useTheme()
+  // The menu mounts on open, long after the theme resolves: no hydration gate.
+  const currentTheme = theme ?? "system"
 
   return (
     <ToggleGroup
       type="single"
-      value={scheme}
+      value={currentTheme}
       // A theme is always set, so pressing the active one again changes nothing.
-      onValueChange={(value) => value && void writeScheme(value as ColorScheme)}
+      onValueChange={(value) => value && setTheme(value)}
       variant="outline"
       spacing={0}
       size="sm"
@@ -126,41 +177,87 @@ function ThemeSegmentedToggle() {
   )
 }
 
-// ── Menu ──
+// ── Workspace Avatar ──
 
-function WorkspaceMenuContent({ onAddVault }: { onAddVault: () => void }) {
-  const vaults = useAtomValue(vaultsAtom)
-  const active = useAtomValue(activeRemoteAtom)
-  const session = useAtomValue(sessionAtom)
-  const switchVault = useSetAtom(switchVaultAtom)
-  const signOut = useSetAtom(signOutAtom)
+function WorkspaceAvatar({
+  workspace,
+  className,
+}: {
+  workspace: Workspace
+  className?: string
+}) {
+  const LogoComponent = WORKSPACE_LOGOS[workspace.id]
+
+  if (LogoComponent) {
+    return <LogoComponent className={cn("shrink-0", className)} />
+  }
 
   return (
-    <DropdownMenuContent side="right" align="end" sideOffset={8} className="w-60">
+    <Avatar className={cn("shrink-0", className)}>
+      <AvatarFallback className="bg-background border-border text-foreground border text-sm font-medium">
+        {workspace.name.charAt(0).toUpperCase()}
+      </AvatarFallback>
+    </Avatar>
+  )
+}
+
+// ── Workspace Item ──
+
+function WorkspaceItem({
+  workspace,
+  isActive,
+  onSelect,
+}: {
+  workspace: Workspace
+  isActive: boolean
+  onSelect: (id: string) => void
+}) {
+  return (
+    <DropdownMenuItem onClick={() => onSelect(workspace.id)}>
+      <WorkspaceAvatar workspace={workspace} className="size-5!" />
+      <span className="flex-1 truncate text-sm font-medium">
+        {workspace.name}
+      </span>
+      {isActive && (
+        <CheckIcon className="ml-auto shrink-0 opacity-60" aria-hidden="true" />
+      )}
+    </DropdownMenuItem>
+  )
+}
+
+// ── Nav Workspace ──
+
+function WorkspaceMenuContent({
+  isMobile,
+  activeWorkspaceId,
+  onSelectWorkspace,
+}: {
+  isMobile: boolean
+  activeWorkspaceId: string
+  onSelectWorkspace: (id: string) => void
+}) {
+  return (
+    <DropdownMenuContent
+      side={isMobile ? "top" : "right"}
+      align="end"
+      sideOffset={8}
+      className="w-60"
+    >
       <DropdownMenuGroup>
         <DropdownMenuLabel className="text-muted-foreground text-xs font-normal">
-          Vaults
+          Organizations
         </DropdownMenuLabel>
-        {vaults.map((vault) => (
-          <DropdownMenuItem
-            key={vault.remote}
-            onClick={() => switchVault(vault.remote)}
-          >
-            <VaultLogo remote={vault.remote} className="size-5!" />
-            <span className="flex-1 truncate text-sm font-medium">
-              {vault.name}
-            </span>
-            {vault.remote === active && (
-              <CheckIcon
-                className="ml-auto shrink-0 opacity-60"
-                aria-hidden="true"
-              />
-            )}
-          </DropdownMenuItem>
+        {WORKSPACES.map((workspace) => (
+          <WorkspaceItem
+            key={workspace.id}
+            workspace={workspace}
+            isActive={activeWorkspaceId === workspace.id}
+            onSelect={onSelectWorkspace}
+          />
         ))}
-        <DropdownMenuItem onClick={onAddVault}>
+        <DropdownMenuItem>
           <PlusIcon aria-hidden="true" className="mx-0.5" />
-          Add Vault
+          New Organization
         </DropdownMenuItem>
       </DropdownMenuGroup>
 
@@ -170,18 +267,19 @@ function WorkspaceMenuContent({ onAddVault }: { onAddVault: () => void }) {
         <DropdownMenuLabel className="text-muted-foreground text-xs font-normal">
           Account
         </DropdownMenuLabel>
-        {session ? (
-          <DropdownMenuItem
-            onClick={() =>
-              void window.holi.openExternal(
-                `https://github.com/${session.login}`
-              )
-            }
-          >
-            <ExternalLinkIcon aria-hidden="true" />
-            GitHub Profile
-          </DropdownMenuItem>
-        ) : null}
+        <DropdownMenuItem>
+          <UserIcon aria-hidden="true" />
+          Profile
+          <DropdownMenuShortcut>⇧⌘P</DropdownMenuShortcut>
+        </DropdownMenuItem>
+        <DropdownMenuItem>
+          <CreditCardIcon aria-hidden="true" />
+          Billing
+        </DropdownMenuItem>
+        <DropdownMenuItem>
+          <SettingsIcon aria-hidden="true" />
+          Preferences
+        </DropdownMenuItem>
         {/* The swatches set a value in place, so the menu outlives the click. */}
         <DropdownMenuItem
           onSelect={(event) => event.preventDefault()}
@@ -198,9 +296,10 @@ function WorkspaceMenuContent({ onAddVault }: { onAddVault: () => void }) {
       <DropdownMenuSeparator />
 
       <DropdownMenuGroup>
-        <DropdownMenuItem onClick={() => void signOut()}>
+        <DropdownMenuItem>
           <LogOutIcon aria-hidden="true" />
           Sign Out
+          <DropdownMenuShortcut>⇧⌘Q</DropdownMenuShortcut>
         </DropdownMenuItem>
       </DropdownMenuGroup>
     </DropdownMenuContent>
@@ -209,23 +308,17 @@ function WorkspaceMenuContent({ onAddVault }: { onAddVault: () => void }) {
 
 export function NavUser({
   collapsed = false,
-  onAddVault,
+  activeWorkspaceId,
+  onSelectWorkspace,
 }: {
   collapsed?: boolean
-  onAddVault: () => void
+  activeWorkspaceId: string
+  onSelectWorkspace: (id: string) => void
 }) {
-  const session = useAtomValue(sessionAtom)
-  const vaults = useAtomValue(vaultsAtom)
-  const remote = useAtomValue(activeRemoteAtom)
-  const vault = vaults.find((v) => v.remote === remote)
-  if (!session) return null
-  const name = session.name ?? session.login
-  const initials = name
-    .split(/\s+/)
-    .map((part) => part.charAt(0))
-    .join("")
-    .slice(0, 2)
-    .toUpperCase()
+  const { isMobile } = useSidebar()
+
+  const activeWorkspace =
+    WORKSPACES.find((w) => w.id === activeWorkspaceId) ?? WORKSPACES[0]!
 
   // Rail mode: the avatar is the whole control, and the menu is unchanged.
   if (collapsed) {
@@ -235,59 +328,76 @@ export function NavUser({
           <Button
             variant="ghost"
             size="icon"
-            aria-label="Account and vault menu"
+            aria-label="Account and workspace menu"
             className="size-8 shrink-0 rounded-full"
           >
             <Avatar className="size-7">
-              <AvatarImage src={session.avatarUrl} alt="" />
-              <AvatarFallback className="text-[10px]">{initials}</AvatarFallback>
+              <AvatarImage src={ACCOUNT.avatar} alt="" />
+              <AvatarFallback className="text-[10px]">
+                {ACCOUNT.initials}
+              </AvatarFallback>
             </Avatar>
           </Button>
         </DropdownMenuTrigger>
-        <WorkspaceMenuContent onAddVault={onAddVault} />
+        <WorkspaceMenuContent
+          isMobile={isMobile}
+          activeWorkspaceId={activeWorkspaceId}
+          onSelectWorkspace={onSelectWorkspace}
+        />
       </DropdownMenu>
     )
   }
 
   return (
     <SidebarMenu>
+      {/* Sidebar */}
       <SidebarMenuItem>
         <DropdownMenu>
           <DropdownMenuTrigger
             className="border-border bg-background hover:bg-accent h-auto rounded-lg border py-1.5 ps-1.5 pe-1.5"
             asChild
           >
-            <SidebarMenuButton aria-label="Open account and vault menu">
+            <SidebarMenuButton aria-label="Open workspace menu">
               <div className="flex min-w-0 flex-1 items-center gap-2">
                 <Avatar className="size-8 shrink-0 in-data-[state=collapsed]:size-6!">
-                  <AvatarImage src={session.avatarUrl} alt={name} />
+                  <AvatarImage src={ACCOUNT.avatar} alt={ACCOUNT.name} />
                   <AvatarFallback className="text-[10px] font-semibold">
-                    {initials}
+                    {ACCOUNT.initials}
                   </AvatarFallback>
                 </Avatar>
                 <div className="flex min-w-0 flex-col">
                   <span className="truncate text-[13px] leading-4 font-medium">
-                    {name}
+                    {ACCOUNT.name}
                   </span>
-                  {/* leading-none on the text so the mark and label centre on
-                    the same axis instead of sitting on a baseline. */}
-                  {vault ? (
-                    <span className="flex min-w-0 items-center gap-1 leading-none">
-                      <VaultLogo remote={vault.remote} className="block size-3!" />
-                      <span className="text-muted-foreground truncate text-[11px] leading-none">
-                        {vault.name}
-                      </span>
+                  {/* leading-none on the text so the mark, dot and labels all
+                    centre on the same axis instead of sitting on a baseline. */}
+                  <span className="flex min-w-0 items-center gap-1 leading-none">
+                    <WorkspaceAvatar
+                      workspace={activeWorkspace}
+                      className="block size-3!"
+                    />
+                    <span className="text-muted-foreground truncate text-[11px] leading-none">
+                      {activeWorkspace.name}
                     </span>
-                  ) : null}
+                    <span
+                      aria-hidden="true"
+                      className="bg-muted-foreground/40 size-1 shrink-0 rounded-full"
+                    />
+                    <span className="text-muted-foreground shrink-0 text-[11px] leading-none">
+                      {activeWorkspace.tier}
+                    </span>
+                  </span>
                 </div>
               </div>
-              <MoreHorizontalIcon
-                className="mr-1 ml-auto size-4 shrink-0 opacity-50"
-                aria-hidden="true"
-              />
+              <MoreHorizontalIcon className="mr-1 ml-auto size-4 shrink-0 opacity-50" aria-hidden="true" />
             </SidebarMenuButton>
           </DropdownMenuTrigger>
-          <WorkspaceMenuContent onAddVault={onAddVault} />
+
+          <WorkspaceMenuContent
+            isMobile={isMobile}
+            activeWorkspaceId={activeWorkspaceId}
+            onSelectWorkspace={onSelectWorkspace}
+          />
         </DropdownMenu>
       </SidebarMenuItem>
     </SidebarMenu>

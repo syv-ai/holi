@@ -1,35 +1,34 @@
-// App shell (ReUI app-shell-21, wired to Holi): a resizable sidebar that
-// collapses to an icon rail, a header across the top and the view under it.
-//
-// Holi's one change to the block's layout: the header is a row the full width
-// of the window. With the sidebar open its first part is the sidebar's top (the
-// window's lights, the toggle, Search) and the divider runs up through it, so
-// the sidebar reads as full height; collapsed, the header runs on over the
-// rail. The toggle sits right after the lights in both, so it never moves.
-// Desktop only: the block's mobile sheet and bar are dropped.
-import { useEffect, useRef, useState, type ReactNode } from "react"
-import { useAtomValue } from "jotai"
-import { PanelLeftIcon, SearchIcon } from "lucide-react"
+import { useEffect, useRef, useState } from "react"
 import { cn } from "@/lib/cn"
 import { type PanelImperativeHandle } from "react-resizable-panels"
 
-import { Button } from "@/components/ui/button"
-import { Kbd } from "@/components/ui/kbd"
+import { useIsMobile } from "@/hooks/use-mobile"
 import {
   ResizableHandle,
   ResizablePanel,
   ResizablePanelGroup,
 } from "@/components/ui/resizable"
-import { SidebarProvider } from "@/components/ui/sidebar"
 import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip"
-import { activeRemoteAtom, vaultsAtom } from "@/state/vaults"
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet"
+import { SidebarProvider } from "@/components/ui/sidebar"
+import { TooltipProvider } from "@/components/ui/tooltip"
 
 import { ChatSearchDialog } from "./chat-search-dialog"
+import { ContentSkeleton } from "./content-skeleton"
+import {
+  MODELS,
+  NEW_THREAD_ID,
+  THREADS,
+  WORKSPACES,
+  type ThreadRecord,
+} from "./data"
+import { MobileHeader } from "./mobile-header"
+import { SiteHeader } from "./site-header"
 import { ThreadSidebar } from "./thread-sidebar"
 
 /** Expanded width in pixels, and the drag point below which the rail takes over. */
@@ -38,17 +37,15 @@ const RAIL_THRESHOLD = 190
 /** Matches the panel transition, so state lands after the motion finishes. */
 const SETTLE_MS = 280
 
-export function AppShell({
-  children,
-  onAddVault,
-}: {
-  /** The view under the header. */
-  children: ReactNode
-  /** Opens the add-vault flow, which the shell's holder owns. */
-  onAddVault: () => void
-}) {
-  const remote = useAtomValue(activeRemoteAtom)
-  const vault = useAtomValue(vaultsAtom).find((v) => v.remote === remote)
+export function AppShell() {
+  const isMobile = useIsMobile()
+  const [threads, setThreads] = useState<ThreadRecord[]>(THREADS)
+  const [activeThreadId, setActiveThreadId] = useState(THREADS[0]!.id)
+  /** Lifted: the rail and the expanded nav both render it, so one owner. */
+  const [activeWorkspaceId, setActiveWorkspaceId] = useState(WORKSPACES[0]!.id)
+  const [modelId, setModelId] = useState(MODELS[0]!.id)
+  const [memoryOn, setMemoryOn] = useState(true)
+  const [mobileNavOpen, setMobileNavOpen] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [searchOpen, setSearchOpen] = useState(false)
   /** Pointer x at press, so a drag does not also register as a click. */
@@ -56,7 +53,6 @@ export function AppShell({
   const sidebarPanel = useRef<PanelImperativeHandle>(null)
   /** Driven imperatively during the gesture: a React render here re-renders the
       whole shell, and a flex transition cannot draw behind that. */
-  const rootRef = useRef<HTMLDivElement>(null)
   const fadeRef = useRef<HTMLDivElement>(null)
   const pinRef = useRef<HTMLDivElement>(null)
   const widthRef = useRef(SIDEBAR_WIDTH)
@@ -70,18 +66,6 @@ export function AppShell({
     return () => {
       if (settleTimer.current) window.clearTimeout(settleTimer.current)
     }
-  }, [])
-
-  // ⌘K opens Search from anywhere in the shell.
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key.toLowerCase() !== "k" || !(event.metaKey || event.ctrlKey))
-        return
-      event.preventDefault()
-      setSearchOpen((open) => !open)
-    }
-    window.addEventListener("keydown", onKey)
-    return () => window.removeEventListener("keydown", onKey)
   }, [])
 
   /** React state catches up only after the motion has finished. */
@@ -107,79 +91,111 @@ export function AppShell({
     else panel.collapse()
   }
 
+  const activeThread = threads.find((thread) => thread.id === activeThreadId)
+  const title = activeThread?.title ?? "New chat"
+
+  function handleSelectThread(id: string) {
+    setActiveThreadId(id)
+    setMobileNavOpen(false)
+  }
+
+  function handleNewChat() {
+    setActiveThreadId(NEW_THREAD_ID)
+    setMobileNavOpen(false)
+  }
+
+  function handleTogglePin(id: string) {
+    setThreads((current) =>
+      current.map((thread) =>
+        thread.id === id ? { ...thread, pinned: !thread.pinned } : thread
+      )
+    )
+  }
+
+  /** In the sheet the header button closes it; on desktop it collapses the panel. */
+  const sidebar = (
+    <ThreadSidebar
+      collapsed={false}
+      onToggle={isMobile ? () => setMobileNavOpen(false) : toggleSidebar}
+      onOpenSearch={() => setSearchOpen(true)}
+      threads={threads}
+      activeId={activeThreadId}
+      activeWorkspaceId={activeWorkspaceId}
+      onSelect={handleSelectThread}
+      onNewChat={handleNewChat}
+      onTogglePin={handleTogglePin}
+      onSelectWorkspace={setActiveWorkspaceId}
+    />
+  )
+
+  const rail = (
+    <ThreadSidebar
+      collapsed
+      onToggle={toggleSidebar}
+      onOpenSearch={() => setSearchOpen(true)}
+      threads={threads}
+      activeId={activeThreadId}
+      activeWorkspaceId={activeWorkspaceId}
+      onSelect={handleSelectThread}
+      onNewChat={handleNewChat}
+      onTogglePin={handleTogglePin}
+      onSelectWorkspace={setActiveWorkspaceId}
+    />
+  )
+
+  const main = (
+    <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col">
+      <SiteHeader
+        title={title}
+        modelId={modelId}
+        memoryOn={memoryOn}
+        onModelChange={setModelId}
+        onToggleMemory={() => setMemoryOn((current) => !current)}
+      />
+      {/* The landmark stays with the shell, so whatever replaces the
+          placeholder inherits it. */}
+      <main className="flex min-h-0 flex-1 flex-col">
+        <ContentSkeleton />
+      </main>
+    </div>
+  )
+
   return (
     // Every tooltip in the shell needs this ancestor to open.
     <TooltipProvider>
       <SidebarProvider
         open={sidebarOpen}
         onOpenChange={toggleSidebar}
-        className="text-foreground h-svh min-h-0 w-full"
+        className="bg-background text-foreground h-svh min-h-0 w-full"
       >
-        <div
-          ref={rootRef}
-          style={
-            { "--shell-sidebar-w": `${sidebarWidth}px` } as React.CSSProperties
-          }
-          className="flex min-h-0 min-w-0 flex-1 flex-col"
-        >
-          <header
-            data-slot="app-chrome"
-            className="app-drag bg-sidebar flex h-11 shrink-0 items-center"
-          >
-            <div
-              data-window-band="lights"
-              className={cn(
-                "flex h-full shrink-0 items-center gap-1 px-2",
-                // The divider beside the sidebar runs up through the header.
-                sidebarOpen &&
-                  "w-[calc(var(--shell-sidebar-w)+1px)] border-e"
-              )}
+        {isMobile ? (
+          <Sheet open={mobileNavOpen} onOpenChange={setMobileNavOpen}>
+            {/* The brand bar is global chrome and the header below is this
+                chat's toolbar, so both stay pinned while the column scrolls. */}
+            <div className="flex h-full min-h-0 w-full min-w-0 flex-col">
+              <MobileHeader
+                onOpenSearch={() => setSearchOpen(true)}
+                onNewChat={handleNewChat}
+              />
+              {main}
+            </div>
+            {/* No stock close button: it would sit on the sidebar's Search
+                  button, and the sidebar header carries Close chats instead. */}
+            <SheetContent
+              side="left"
+              showCloseButton={false}
+              className="w-72 p-0"
             >
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    aria-label={
-                      sidebarOpen ? "Collapse sidebar" : "Expand sidebar"
-                    }
-                    aria-expanded={sidebarOpen}
-                    onClick={toggleSidebar}
-                  >
-                    <PanelLeftIcon aria-hidden="true" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  {sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}{" "}
-                  <Kbd>⌘B</Kbd>
-                </TooltipContent>
-              </Tooltip>
-              {sidebarOpen ? (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      aria-label="Search"
-                      onClick={() => setSearchOpen(true)}
-                      className="ms-auto"
-                    >
-                      <SearchIcon aria-hidden="true" />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    Search <Kbd>⌘K</Kbd>
-                  </TooltipContent>
-                </Tooltip>
-              ) : null}
-            </div>
-            <div className="flex min-w-0 flex-1 items-center gap-2 px-4">
-              <h1 className="min-w-0 truncate text-sm font-medium">
-                {vault?.name ?? remote}
-              </h1>
-            </div>
-          </header>
-
+              <SheetHeader className="sr-only">
+                <SheetTitle>Chats</SheetTitle>
+                <SheetDescription>
+                  Switch between your conversations.
+                </SheetDescription>
+              </SheetHeader>
+              {sidebar}
+            </SheetContent>
+          </Sheet>
+        ) : (
           <ResizablePanelGroup
             orientation="horizontal"
             className={cn(
@@ -210,10 +226,6 @@ export function AppShell({
                   if (open && pinRef.current) {
                     widthRef.current = size.inPixels
                     pinRef.current.style.width = `${size.inPixels}px`
-                    rootRef.current?.style.setProperty(
-                      "--shell-sidebar-w",
-                      `${size.inPixels}px`
-                    )
                   }
                   setSidebarOpen(open)
                 }
@@ -232,20 +244,13 @@ export function AppShell({
                   style={{ width: sidebarWidth }}
                   className="h-full transition-opacity duration-200 group-data-[state=collapsed]/fade:pointer-events-none group-data-[state=collapsed]/fade:opacity-0"
                 >
-                  <ThreadSidebar
-                    onOpenSearch={() => setSearchOpen(true)}
-                    onAddVault={onAddVault}
-                  />
+                  {sidebar}
                 </div>
                 <div
                   inert={sidebarOpen}
                   className="pointer-events-none absolute inset-y-0 start-0 w-12 opacity-0 transition-opacity duration-200 group-data-[state=collapsed]/fade:pointer-events-auto group-data-[state=collapsed]/fade:opacity-100"
                 >
-                  <ThreadSidebar
-                    collapsed
-                    onOpenSearch={() => setSearchOpen(true)}
-                    onAddVault={onAddVault}
-                  />
+                  {rail}
                 </div>
               </div>
             </ResizablePanel>
@@ -253,7 +258,7 @@ export function AppShell({
             {/* One hairline divider: drag resizes, a still click toggles. */}
             <ResizableHandle
               withHandle
-              aria-label="Drag to resize. Click to collapse."
+              title="Drag to resize. Click to collapse."
               onPointerDown={(event) => {
                 pressX.current = event.clientX
               }}
@@ -266,19 +271,16 @@ export function AppShell({
             />
 
             <ResizablePanel minSize={360} className="min-h-0">
-              {/* The landmark stays with the shell, so whatever replaces the
-                  placeholder inherits it. */}
-              <main className="bg-background flex h-full min-h-0 flex-col border-t">
-                {children}
-              </main>
+              {main}
             </ResizablePanel>
           </ResizablePanelGroup>
-        </div>
+        )}
 
         <ChatSearchDialog
           open={searchOpen}
           onOpenChange={setSearchOpen}
-          onAddVault={onAddVault}
+          threads={threads}
+          onSelect={handleSelectThread}
         />
       </SidebarProvider>
     </TooltipProvider>

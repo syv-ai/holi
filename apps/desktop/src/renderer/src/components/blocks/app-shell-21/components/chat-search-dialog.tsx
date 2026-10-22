@@ -1,15 +1,6 @@
-// ⌘K (ReUI app-shell-21's search palette, wired to Holi): the places the
-// sidebar holds and this machine's vaults, filtered by what you type. Enter
-// opens the top match.
-import { useMemo, useState, type ReactNode } from "react"
-import { useAtomValue, useSetAtom } from "jotai"
-import {
-  BotIcon,
-  FileTextIcon,
-  FolderGit2Icon,
-  PlusIcon,
-  SearchIcon,
-} from "lucide-react"
+"use client"
+
+import { useMemo, useState } from "react"
 import { cn } from "@/lib/cn"
 
 import {
@@ -33,41 +24,28 @@ import {
 } from "@/components/ui/input-group"
 import { Kbd } from "@/components/ui/kbd"
 import { ScrollArea } from "@/components/ui/scroll-area"
-import { appModeAtom } from "@/state/app-mode"
-import { runningPluginsAtom } from "@/state/plugins"
-import { switchVaultAtom } from "@/state/vault-switch"
-import { activeRemoteAtom, vaultsAtom } from "@/state/vaults"
-
-type Result = {
-  id: string
-  group: "Places" | "Vaults"
-  label: string
-  detail?: string
-  icon: ReactNode
-  run: () => void
-}
+import { type ThreadRecord } from "./data"
+import { MessageSquareIcon, SearchIcon } from "lucide-react"
 
 function ResultRow({
-  result,
+  thread,
   onSelect,
 }: {
-  result: Result
-  onSelect: (result: Result) => void
+  thread: ThreadRecord
+  onSelect: (id: string) => void
 }) {
   return (
     <li>
       <button
         type="button"
-        onClick={() => onSelect(result)}
-        className="hover:bg-accent focus-visible:bg-accent group/row flex w-full items-center gap-2.5 rounded-md px-2 py-2 text-start transition-colors outline-none [&_svg]:text-muted-foreground [&_svg]:size-4 [&_svg]:shrink-0"
+        onClick={() => onSelect(thread.id)}
+        className="hover:bg-accent focus-visible:bg-accent group/row flex w-full items-center gap-2.5 rounded-md px-2 py-2 text-start transition-colors outline-none"
       >
-        {result.icon}
-        <span className="min-w-0 flex-1 truncate text-sm">{result.label}</span>
-        {result.detail ? (
-          <span className="text-muted-foreground shrink-0 text-xs group-hover/row:hidden">
-            {result.detail}
-          </span>
-        ) : null}
+        <MessageSquareIcon className="text-muted-foreground size-4 shrink-0" aria-hidden="true" />
+        <span className="min-w-0 flex-1 truncate text-sm">{thread.title}</span>
+        <span className="text-muted-foreground shrink-0 text-xs tabular-nums group-hover/row:hidden">
+          {thread.updatedLabel}
+        </span>
         <Kbd className="hidden group-hover/row:inline-flex">Enter</Kbd>
       </button>
     </li>
@@ -77,74 +55,34 @@ function ResultRow({
 export function ChatSearchDialog({
   open,
   onOpenChange,
-  onAddVault,
+  threads,
+  onSelect,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
-  onAddVault: () => void
+  threads: ThreadRecord[]
+  onSelect: (id: string) => void
 }) {
   const [query, setQuery] = useState("")
-  const vaults = useAtomValue(vaultsAtom)
-  const active = useAtomValue(activeRemoteAtom)
-  const setMode = useSetAtom(appModeAtom)
-  const switchVault = useSetAtom(switchVaultAtom)
-  const hasAgents = useAtomValue(runningPluginsAtom).some(
-    (plugin) => plugin.agentsMode !== undefined
-  )
 
-  const results = useMemo<Result[]>(() => {
-    const all: Result[] = [
-      {
-        id: "documents",
-        group: "Places",
-        label: "Documents",
-        icon: <FileTextIcon aria-hidden="true" />,
-        run: () => setMode("documents"),
-      },
-      ...(hasAgents
-        ? [
-            {
-              id: "agents",
-              group: "Places" as const,
-              label: "Agents",
-              icon: <BotIcon aria-hidden="true" />,
-              run: () => setMode("agents"),
-            },
-          ]
-        : []),
-      ...vaults
-        .filter((vault) => vault.remote !== active)
-        .map((vault) => ({
-          id: vault.remote,
-          group: "Vaults" as const,
-          label: vault.name,
-          detail: vault.remote,
-          icon: <FolderGit2Icon aria-hidden="true" />,
-          run: () => switchVault(vault.remote),
-        })),
-      {
-        id: "add-vault",
-        group: "Vaults",
-        label: "Add Vault",
-        icon: <PlusIcon aria-hidden="true" />,
-        run: onAddVault,
-      },
-    ]
+  const { pinned, recent } = useMemo(() => {
     const term = query.trim().toLowerCase()
-    return term
-      ? all.filter((result) =>
-          `${result.label} ${result.detail ?? ""}`.toLowerCase().includes(term)
-        )
-      : all
-  }, [query, vaults, active, hasAgents, setMode, switchVault, onAddVault])
+    const matched = term
+      ? threads.filter((thread) => thread.title.toLowerCase().includes(term))
+      : threads
+    return {
+      pinned: matched.filter((thread) => thread.pinned),
+      recent: matched.filter((thread) => !thread.pinned),
+    }
+  }, [query, threads])
 
-  const places = results.filter((result) => result.group === "Places")
-  const vaultResults = results.filter((result) => result.group === "Vaults")
+  const empty = pinned.length + recent.length === 0
+  const firstMatch = pinned[0] ?? recent[0]
 
-  function choose(result: Result) {
+  function choose(id: string) {
+    onSelect(id)
     setQuery("")
     onOpenChange(false)
-    result.run()
   }
 
   function handleOpenChange(next: boolean) {
@@ -161,8 +99,8 @@ export function ChatSearchDialog({
         className="top-[18%] max-w-xl translate-y-0 gap-0 p-0"
       >
         <DialogHeader className="sr-only">
-          <DialogTitle>Search</DialogTitle>
-          <DialogDescription>Go to a place or another vault.</DialogDescription>
+          <DialogTitle>Search chats</DialogTitle>
+          <DialogDescription>Find a conversation by title.</DialogDescription>
         </DialogHeader>
 
         <div className="p-2">
@@ -176,12 +114,12 @@ export function ChatSearchDialog({
               onChange={(event) => setQuery(event.target.value)}
               onKeyDown={(event) => {
                 // Enter opens the top result, the palette convention.
-                if (event.key !== "Enter" || !results[0]) return
+                if (event.key !== "Enter" || !firstMatch) return
                 event.preventDefault()
-                choose(results[0])
+                choose(firstMatch.id)
               }}
-              placeholder="Search places and vaults"
-              aria-label="Search places and vaults"
+              placeholder="Search chats and projects"
+              aria-label="Search chats and projects"
             />
           </InputGroup>
         </div>
@@ -198,10 +136,10 @@ export function ChatSearchDialog({
           )}
         >
           <p aria-live="polite" className="sr-only">
-            {results.length} results
+            {pinned.length + recent.length} results
           </p>
 
-          {results.length === 0 ? (
+          {empty ? (
             <Empty className="border-0 bg-transparent py-10">
               <EmptyHeader>
                 <EmptyMedia variant="icon">
@@ -209,29 +147,41 @@ export function ChatSearchDialog({
                 </EmptyMedia>
                 <EmptyTitle>No Matches</EmptyTitle>
                 <EmptyDescription>
-                  Try a vault's name or its owner.
+                  Try a different word from the chat title.
                 </EmptyDescription>
               </EmptyHeader>
             </Empty>
           ) : null}
 
-          {places.length > 0 ? (
+          {pinned.length > 0 ? (
             <>
-              <p className="text-muted-foreground px-2 py-1.5 text-xs">Places</p>
+              <p className="text-muted-foreground px-2 py-1.5 text-xs">
+                Pinned
+              </p>
               <ul className="flex flex-col">
-                {places.map((result) => (
-                  <ResultRow key={result.id} result={result} onSelect={choose} />
+                {pinned.map((thread) => (
+                  <ResultRow
+                    key={thread.id}
+                    thread={thread}
+                    onSelect={choose}
+                  />
                 ))}
               </ul>
             </>
           ) : null}
 
-          {vaultResults.length > 0 ? (
+          {recent.length > 0 ? (
             <>
-              <p className="text-muted-foreground px-2 py-1.5 text-xs">Vaults</p>
+              <p className="text-muted-foreground px-2 py-1.5 text-xs">
+                Recent
+              </p>
               <ul className="flex flex-col">
-                {vaultResults.map((result) => (
-                  <ResultRow key={result.id} result={result} onSelect={choose} />
+                {recent.map((thread) => (
+                  <ResultRow
+                    key={thread.id}
+                    thread={thread}
+                    onSelect={choose}
+                  />
                 ))}
               </ul>
             </>

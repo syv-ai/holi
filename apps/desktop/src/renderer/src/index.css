@@ -168,3 +168,10 @@
 [data-platform='mac']:not([data-fullscreen]) [data-window-band='lights'] {
   padding-inline-start: 5rem;
 }
+/* The sidebar's first row (app-shell-21, as published) sits under the lights'
+   own strip rather than beneath them. */
+[data-platform='mac']:not([data-fullscreen])
+  [data-slot='sidebar']
+  > [data-slot='sidebar-header']:first-child {
+  padding-top: 2.25rem;
+}
