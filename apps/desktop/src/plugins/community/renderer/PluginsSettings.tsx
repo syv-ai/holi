@@ -46,6 +46,14 @@ async function setOn(remote: string, row: PluginRow, on: boolean): Promise<void>
   })
 }
 
+/** Once a plugin added here is set up, use it in this vault too: settings is
+ *  always inside an open vault, and installing from it is asking for that.
+ *  One already on stays as the vault has it. */
+async function turnOnHere(remote: string, id: string): Promise<void> {
+  const row = (await communityCap.list(remote)).find((r) => r.id === id)
+  if (row !== undefined && !row.on) await setOn(remote, row, true)
+}
+
 export function PluginsSettings({ remote }: { remote: string }): React.JSX.Element {
   const store = useStore()
   const openDialog = useSetAtom(openDialogAtom)
@@ -269,7 +277,11 @@ function AddPlugin({
             remote={flow.remote}
             disabled={busy}
             onChoose={(c) =>
-              void act(() => installAndAsk(flow, { repo: c.repo, path: c.path, version: c.latest }))
+              void act(() =>
+                installAndAsk(flow, { repo: c.repo, path: c.path, version: c.latest }, (row) =>
+                  turnOnHere(flow.remote, row.id),
+                ),
+              )
             }
           />
         </div>

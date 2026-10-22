@@ -193,12 +193,12 @@ export interface InstallFlow {
 }
 
 /** Fetch the plugin at `path` in `repo` at `version` (the newest when
- *  absent), then ask. Resolves to an error message, or null when the dialog is
- *  up. */
+ *  absent), then ask, running `onReady` with the fetched row once it is set
+ *  up. Resolves to an error message, or null when the dialog is up. */
 export async function installAndAsk(
   flow: InstallFlow,
   args: { repo: string; path: string; version?: string; id?: string },
-  onReady?: () => Promise<unknown>,
+  onReady?: (row: PluginRow) => Promise<unknown>,
 ): Promise<string | null> {
   try {
     const version =
@@ -213,7 +213,7 @@ export async function installAndAsk(
       ...(args.id === undefined ? {} : { expectId: args.id }),
     })
     await refreshRows(flow.remote, flow.store)
-    askToRun(flow, row, onReady)
+    askToRun(flow, row, onReady === undefined ? undefined : () => onReady(row))
     return null
   } catch (err) {
     return err instanceof Error ? err.message : String(err)

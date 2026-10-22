@@ -60,6 +60,11 @@ plugin or its folder, and `commit`), and turns it on with
 `plugins: { community: true, <id>: true }` in `.holi/settings/plugins.yaml`, beside the first-party plugins. A folder
 install is never pinned.
 
+**Adding a plugin from settings uses it in the open vault.** Settings is always inside a vault, so
+a release added there under "Add a plugin" is pinned and turned on in that vault once it is allowed
+and set up, as its switch would. One the vault already has on stays as the vault has it. A folder
+added with "Use a folder" is only installed; its switch turns it on.
+
 **Vault apps.** A manifest's `apps` names folders in the plugin, each a vault app (`Notes.app`
 with its `index.html` and `app.yaml`). Each is copied to the vault's root once: when the vault
 turns the plugin on, when setup finishes in a vault that runs it, and when a vault that runs it
