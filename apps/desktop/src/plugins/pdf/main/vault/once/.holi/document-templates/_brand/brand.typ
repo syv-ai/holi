@@ -18,6 +18,12 @@
 #let accent-tint = rgb("F7F6F3") // tinted label column
 #let col-sep = rgb("DBDBDB") // fine vertical separators
 
+// ---- Dates ----
+// A date the Danish way, "21. oktober 2026". Typst's own `display` writes
+// month names in English whatever the text language, and the brand is Danish.
+#let maaneder = ("januar", "februar", "marts", "april", "maj", "juni", "juli", "august", "september", "oktober", "november", "december")
+#let dato(d) = str(d.day()) + ". " + maaneder.at(d.month() - 1) + " " + str(d.year())
+
 // ---- Signature block (contracts): a write-on line with a small label under it.
 #let sig-felt(label) = {
   v(2.2em)

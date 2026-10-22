@@ -18,16 +18,28 @@
   s
 }
 
+// A date in the document's language: Danish ("21. oktober 2026") when the text
+// is Danish, Typst's own English otherwise. Typst's `display` writes month
+// names in English whatever the language, so Danish is spelled out here.
+#let long-date(d) = context {
+  if text.lang == "da" {
+    let months = ("januar", "februar", "marts", "april", "maj", "juni", "juli", "august", "september", "oktober", "november", "december")
+    str(d.day()) + ". " + months.at(d.month() - 1) + " " + str(d.year())
+  } else {
+    d.display("[day] [month repr:long] [year]")
+  }
+}
+
 #let doc(notePath, meta: (:), assets: "") = {
   set page(paper: "a4", margin: 2.5cm)
   set text(size: 11pt)
 
   // Metadata header: state each provided value cleanly, no key labels. `date`
-  // arrives as a native datetime, formatted here; `recipient` is shown as-is.
+  // arrives as a native datetime, formatted here in the document's language; `recipient` is shown as-is.
   // Fields the user left blank are absent from `meta`, so nothing prints.
   let lines = ()
   let d = meta.at("date", default: none)
-  if d != none { lines.push(d.display("[day] [month repr:long] [year]")) }
+  if d != none { lines.push(long-date(d)) }
   let r = meta.at("recipient", default: none)
   if r != none and r != "" { lines.push(r) }
   if lines.len() > 0 {

@@ -30,7 +30,7 @@
     #line(length: 100%, stroke: 1pt + ink)
     #v(0.8em)
 
-    #let dateStr = if d != none { d.display("[day] [month repr:long] [year]") } else { none }
+    #let dateStr = if d != none { dato(d) } else { none }
     #let row(k, val) = if val != none and val != "" {
       grid(columns: (3.2cm, 1fr), text(weight: 700)[#k], [#val])
     }

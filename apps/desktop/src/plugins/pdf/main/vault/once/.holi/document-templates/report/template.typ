@@ -20,7 +20,7 @@
       #v(1.2cm)
       #if title != none { text(size: 30pt, weight: 800, fill: ink)[#title] }
       #if subtitle != none { v(0.4cm); text(size: 15pt, fill: muted)[#subtitle] }
-      #if d != none { v(0.8cm); text(size: 11pt, fill: muted)[#d.display("[day] [month repr:long] [year]")] }
+      #if d != none { v(0.8cm); text(size: 11pt, fill: muted)[#dato(d)] }
     ]
     #v(2fr)
   ]
