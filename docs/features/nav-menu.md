@@ -56,7 +56,10 @@ hidden, the same menu runs down the rail.
 - **Home** goes where the vault's `home` setting says ([settings](settings.md)). By default it
   is the recents: the Home tab (the `home` surface, opened leftmost like the board) lists the
   last eight notes, files, apps and views opened, under "Recently opened", each opening as the
-  palette would open it. A folder document named there (an app) shows in the Home tab instead,
+  palette would open it. Above them, when the vault has a `README.md`, it shows read-only, with an
+  Open button that opens the file: a new member sees what the vault is for first. It is read again
+  whenever the file changes, rendered by the same `MarkdownText` as release notes, so it never
+  becomes HTML. A folder document named there (an app) shows in the Home tab instead,
   in its own surface, found through the claims ([vault apps](vault-apps.md)); today's note, a
   view that can be Home (the board, agenda, mail) or a file open as themselves. When the target
   is not there, the Home tab says so.
@@ -104,5 +107,5 @@ hidden, the same menu runs down the rail.
   [command palette](command-palette.md).
 - `apps/desktop/src/renderer/src/features/nav/NavMenu.tsx`: the items.
 - `apps/desktop/src/renderer/src/components/core-surfaces.tsx` (whose Home surface picks Home's
-  folder document or `HomeView`), `features/home/HomeView.tsx` (the recents, or why Home is not there).
+  folder document or `HomeView`), `features/home/HomeView.tsx` (the README and the recents, or why Home is not there).
 - `apps/desktop/src/renderer/src/components/Shell.tsx`: the sidebar and rail placement.

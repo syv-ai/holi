@@ -1,6 +1,6 @@
 /**
  * The Home tab. Home is the setting `home`: by default the recents, shown
- * here. The home surface shows Home's folder document (an app) instead
+ * here under the vault's README when it has one. The home surface shows Home's folder document (an app) instead
  * whenever Home names one the vault has. Anything else Home is opens as
  * itself (`state/home.ts`), so reaching this with one means it was not there,
  * or Home changed while the tab was open: here it says what Home is and why
@@ -8,6 +8,9 @@
  */
 import type { HomeTarget, RecentEntry } from '@holi/shared'
 import { useAtomValue, useSetAtom } from 'jotai'
+import { useEffect, useState } from 'react'
+import { MarkdownText } from '@/composites'
+import { trpc } from '@/lib/trpc'
 import { surfaceLabel } from '@/lib/folder-documents'
 import { Button } from '@/primitives'
 import type { Surface } from '@/plugin-api/types'
@@ -15,6 +18,7 @@ import { openHomeAtom } from '@/state/home'
 import { openPinned, openSurface, workspaceAtom } from '@/state/panes'
 import { surfacesAtom } from '@/state/plugins'
 import { recentsAtom } from '@/state/recents'
+import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
 
 export function HomeView({ target }: { target: HomeTarget }): React.JSX.Element {
   return target.kind === 'recents' ? <Recents /> : <NotThere target={target} />
@@ -66,7 +70,8 @@ function Recents(): React.JSX.Element {
     )
 
   return (
-    <div className="flex flex-1 items-center justify-center px-4 py-8 text-sm">
+    <div className="flex flex-1 flex-col items-center justify-center gap-8 px-4 py-8 text-sm">
+      <Readme />
       <section className="w-full max-w-[22rem]">
         <h2 className="mb-2 text-xs font-medium text-muted-foreground">Recently opened</h2>
         {entries.length === 0 ? (
@@ -95,6 +100,54 @@ function Recents(): React.JSX.Element {
         )}
       </section>
     </div>
+  )
+}
+
+const README = 'README.md'
+
+/** The vault's `README.md`, read-only, when it has one: what the vault is for,
+ *  above what you opened. Read again whenever the file changes on disk. */
+function Readme(): React.JSX.Element | null {
+  const remote = useAtomValue(activeRemoteAtom)
+  const doc = useAtomValue(snapshotAtom).docs.find((d) => d.path === README)
+  const setWorkspace = useSetAtom(workspaceAtom)
+  const [text, setText] = useState<string | null>(null)
+  const updatedAt = doc?.updatedAt
+
+  useEffect(() => {
+    if (remote === null || updatedAt === undefined) {
+      setText(null)
+      return
+    }
+    let current = true
+    trpc.notes.read.query({ remote, path: README }).then(
+      (read) => current && setText(read),
+      () => current && setText(null),
+    )
+    return () => {
+      current = false
+    }
+  }, [remote, updatedAt])
+
+  if (doc === undefined || text === null || text.trim() === '') return null
+  return (
+    <section className="w-full max-w-[22rem]">
+      <div className="mb-2 flex items-center justify-between">
+        <h2 className="text-xs font-medium text-muted-foreground">README</h2>
+        <Button
+          variant="ghost"
+          size="xs"
+          className="font-normal text-muted-foreground"
+          onClick={() => setWorkspace((w) => openPinned(w, README))}
+        >
+          Open
+        </Button>
+      </div>
+      <MarkdownText
+        body={text}
+        className="max-h-72 space-y-2 overflow-auto break-words text-muted-foreground"
+      />
+    </section>
   )
 }
 

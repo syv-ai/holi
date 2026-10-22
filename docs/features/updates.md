@@ -45,7 +45,7 @@ version. **Release notes** are each release's GitHub notes, for the version foun
 running, fetched from GitHub's releases API by tag (`v<version>`) when first shown
 (`src/main/updates/release-notes.ts`, `trpc.updates.notes`). They are Markdown, rendered as formatted
 text (headings, lists, emphasis, code, links) from `marked`'s tokens straight into React elements
-(`ReleaseNotesText`), so nothing in them ever becomes HTML: raw HTML shows as its text. A link opens
+(`ReleaseNotesText`, over the `MarkdownText` composite), so nothing in them ever becomes HTML: raw HTML shows as its text. A link opens
 in the browser and only when it is `http:` or `https:`; any other is shown as its words. Below them
 is a link to the release built from the tag; a version with no release, such as a local build, has
 none. GitHub not answering (offline, rate
