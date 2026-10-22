@@ -33,7 +33,7 @@ const RAIL_THRESHOLD = 190
 /** Matches the panel transition, so state lands after the motion finishes. */
 const SETTLE_MS = 280
 
-export function AppShell() {
+export function AppShell({ onAddVault }: { onAddVault: () => void }) {
   const isMobile = useIsMobile()
   /** The block's demo threads, still behind ⌘K until search covers the vault. */
   const threads = THREADS
@@ -150,6 +150,7 @@ export function AppShell() {
       onOpen={handleSelectThread}
       onMoved={retargetTabs}
       onNewDocument={handleNewChat}
+      onAddVault={onAddVault}
     />
   )
 
@@ -162,6 +163,7 @@ export function AppShell() {
       onOpen={handleSelectThread}
       onMoved={retargetTabs}
       onNewDocument={handleNewChat}
+      onAddVault={onAddVault}
     />
   )
 

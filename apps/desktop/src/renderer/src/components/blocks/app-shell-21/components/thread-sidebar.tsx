@@ -19,6 +19,7 @@ import type { Move } from "@/lib/tree-actions"
 import { BOARD_TAB, DocumentsNav, FilesSection } from "./documents-section"
 import { NavUser } from "./nav-user"
 import { ReuiMark } from "./reui-mark"
+import { VaultSwitcher } from "./vault-switcher"
 import {
   BugIcon,
   HelpCircleIcon,
@@ -54,6 +55,7 @@ export function ThreadSidebar({
   onOpen,
   onMoved,
   onNewDocument,
+  onAddVault,
   onToggle,
   onOpenSearch,
 }: {
@@ -64,6 +66,7 @@ export function ThreadSidebar({
   onOpen: (id: string) => void
   onMoved: (moves: Move[]) => void
   onNewDocument: () => void
+  onAddVault: () => void
   onToggle: () => void
   onOpenSearch: () => void
 }) {
@@ -172,7 +175,8 @@ export function ThreadSidebar({
 
       {/* Two equal tabs: the body below switches with them. */}
       <SidebarContent className="overflow-hidden">
-        <div className="px-2 py-3">
+        <div className="flex flex-col gap-3 px-2 py-3">
+          <VaultSwitcher onAddVault={onAddVault} />
           <Tabs
             value={section}
             onValueChange={(value) =>

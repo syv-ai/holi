@@ -60,7 +60,7 @@ export function Shell() {
 
   return (
     <>
-      <AppShell />
+      <AppShell onAddVault={addVault} />
       {showAdd && <OnboardingRitual mode="add-vault" onDismiss={() => setShowAdd(false)} />}
       {leaving !== null && (
         <LeaveConfirm
