@@ -15,7 +15,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { useSidebar } from "@/components/ui/sidebar"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
   Tooltip,
@@ -23,29 +22,34 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 import { MODELS } from "./data"
-import { PlusIcon, XIcon, Share2Icon, DownloadIcon, PencilIcon, BookmarkIcon, ChevronDownIcon, EllipsisVerticalIcon, Trash2Icon } from "lucide-react"
+import {
+  MessageSquareIcon,
+  PlusIcon,
+  XIcon,
+  Share2Icon,
+  DownloadIcon,
+  PencilIcon,
+  BookmarkIcon,
+  ChevronDownIcon,
+  EllipsisVerticalIcon,
+  Trash2Icon,
+} from "lucide-react"
 
 const THREAD_ACTIONS = [
   {
     id: "share",
     label: "Share chat",
-    icon: (
-      <Share2Icon aria-hidden="true" />
-    ),
+    icon: <Share2Icon aria-hidden="true" />,
   },
   {
     id: "export",
     label: "Export transcript",
-    icon: (
-      <DownloadIcon aria-hidden="true" />
-    ),
+    icon: <DownloadIcon aria-hidden="true" />,
   },
   {
     id: "rename",
     label: "Rename",
-    icon: (
-      <PencilIcon aria-hidden="true" />
-    ),
+    icon: <PencilIcon aria-hidden="true" />,
   },
 ]
 
@@ -73,16 +77,13 @@ export function SiteHeader({
   onToggleMemory: () => void
 }) {
   const activeModel = MODELS.find((model) => model.id === modelId) ?? MODELS[0]!
-  // Collapsed, the header starts beside the rail, under macOS's window buttons.
-  const { state } = useSidebar()
 
   return (
-    // Sits above the content column, not over it: the column below owns the
-    // scroll, so z-10 keeps the fade masking its top edge.
-    <header
+    // A row, not a landmark: the title band holds it on desktop and the
+    // mobile column's header on phones.
+    <div
       data-slot="site-header"
-      data-sidebar={state}
-      className="app-drag bg-background after:from-background relative z-10 flex h-12 shrink-0 items-center gap-2 px-3 after:pointer-events-none after:absolute after:inset-x-0 after:top-full after:h-6 after:bg-gradient-to-b after:to-transparent sm:px-4 md:h-14"
+      className="flex h-full min-w-0 flex-1 items-center gap-2 px-2"
     >
       <Tabs
         value={activeTabId ?? ""}
@@ -90,12 +91,19 @@ export function SiteHeader({
         className="min-w-0 flex-1 items-center gap-1 data-horizontal:flex-row"
       >
         {tabs.length > 0 ? (
-          <TabsList className="min-w-0 justify-start overflow-x-auto">
+          <TabsList
+            variant="line"
+            className="min-w-0 justify-start overflow-x-auto"
+          >
             {tabs.map((tab) => (
               // The close button is the trigger's sibling: a button cannot
               // hold another button.
               <div key={tab.id} className="group/tab relative flex h-full">
-                <TabsTrigger value={tab.id} className="max-w-48 flex-none pe-7">
+                <TabsTrigger
+                  value={tab.id}
+                  className="hover:bg-foreground/5 group-data-[variant=line]/tabs-list:data-active:bg-foreground/8 dark:group-data-[variant=line]/tabs-list:data-active:bg-foreground/8 w-44 flex-none justify-start gap-2 px-2.5 pe-7 after:hidden"
+                >
+                  <MessageSquareIcon aria-hidden="true" />
                   <span className="truncate">{tab.title}</span>
                 </TabsTrigger>
                 <Button
@@ -246,6 +254,6 @@ export function SiteHeader({
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
-    </header>
+    </div>
   )
 }

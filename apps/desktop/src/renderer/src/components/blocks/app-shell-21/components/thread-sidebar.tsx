@@ -46,7 +46,26 @@ import { runningPluginsAtom } from "@/state/plugins"
 import { NEW_THREAD_ID, type ThreadRecord } from "./data"
 import { NavUser } from "./nav-user"
 import { ReuiMark } from "./reui-mark"
-import { BookOpenIcon, StarIcon, HelpCircleIcon, MoreHorizontalIcon, PinOffIcon, Pin, PencilIcon, Share2Icon, ArchiveIcon, Trash2Icon, ChevronDownIcon, PanelLeftIcon, PlusIcon, SearchIcon, FolderIcon, ClockIcon, Settings2Icon, MessageSquareIcon } from "lucide-react"
+import {
+  BookOpenIcon,
+  StarIcon,
+  HelpCircleIcon,
+  MoreHorizontalIcon,
+  PinOffIcon,
+  Pin,
+  PencilIcon,
+  Share2Icon,
+  ArchiveIcon,
+  Trash2Icon,
+  ChevronDownIcon,
+  PanelLeftIcon,
+  PlusIcon,
+  SearchIcon,
+  FolderIcon,
+  ClockIcon,
+  Settings2Icon,
+  MessageSquareIcon,
+} from "lucide-react"
 
 type SidebarSection = "chats" | "agents"
 
@@ -54,23 +73,17 @@ const SECONDARY_LINKS = [
   {
     id: "docs",
     label: "Docs",
-    icon: (
-      <BookOpenIcon aria-hidden="true" />
-    ),
+    icon: <BookOpenIcon aria-hidden="true" />,
   },
   {
     id: "whats-new",
     label: "What is new",
-    icon: (
-      <StarIcon aria-hidden="true" />
-    ),
+    icon: <StarIcon aria-hidden="true" />,
   },
   {
     id: "help",
     label: "Help",
-    icon: (
-      <HelpCircleIcon aria-hidden="true" />
-    ),
+    icon: <HelpCircleIcon aria-hidden="true" />,
   },
 ]
 
@@ -288,7 +301,10 @@ function ThreadGroup({
             <span className="text-muted-foreground ms-auto text-xs tabular-nums">
               {threads.length}
             </span>
-            <ChevronDownIcon className="ms-1 size-4 transition-transform group-data-[state=open]/collapsible:rotate-180" aria-hidden="true" />
+            <ChevronDownIcon
+              className="ms-1 size-4 transition-transform group-data-[state=open]/collapsible:rotate-180"
+              aria-hidden="true"
+            />
           </SidebarGroupLabel>
         </CollapsibleTrigger>
 
@@ -353,23 +369,6 @@ export function ThreadSidebar({
     // label transition are the primitive's, not a second implementation.
     return (
       <Sidebar collapsible="none" className="h-full w-full overflow-hidden">
-        {/* No bottom inset: the rail rows then start where the expanded nav rows do. */}
-        <SidebarHeader className="px-2 pt-2 pb-0">
-          <SidebarMenu className="gap-0.5">
-            <SidebarMenuItem>
-              <SidebarMenuButton
-                tooltip="Expand sidebar"
-                onClick={onToggle}
-                aria-label="Expand sidebar"
-                className="hover:bg-foreground/5 data-active:bg-foreground/10 data-active:hover:bg-foreground/12 size-8 p-2 [&>span:last-child]:sr-only"
-              >
-                <PanelLeftIcon aria-hidden="true" />
-                <span>Expand sidebar</span>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-          </SidebarMenu>
-        </SidebarHeader>
-
         <SidebarContent className="overflow-hidden">
           <SidebarMenu className="gap-0.5 px-2 pt-2">
             <SidebarMenuItem>
@@ -464,9 +463,7 @@ export function ThreadSidebar({
               </SidebarMenuItem>
             ))}
           </SidebarMenu>
-          <NavUser
-            collapsed
-          />
+          <NavUser collapsed />
         </SidebarFooter>
       </Sidebar>
     )
@@ -474,30 +471,33 @@ export function ThreadSidebar({
 
   return (
     <Sidebar collapsible="none" className="h-full w-full">
-      <SidebarHeader className="gap-2">
-        <div className="flex items-center gap-2 px-1 pt-1">
-          <ReuiMark />
-          <span className="min-w-0 flex-1 truncate text-sm font-semibold tracking-tight">
-            ReUI Chat
-          </span>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            aria-label="Search chats"
-            onClick={onOpenSearch}
-          >
-            <SearchIcon aria-hidden="true" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            aria-label={isMobile ? "Close chats" : "Collapse sidebar"}
-            onClick={onToggle}
-          >
-            <PanelLeftIcon aria-hidden="true" />
-          </Button>
-        </div>
-      </SidebarHeader>
+      {/* On desktop the title band carries these; the phone sheet has no band. */}
+      {isMobile ? (
+        <SidebarHeader className="gap-2">
+          <div className="flex items-center gap-2 px-1 pt-1">
+            <ReuiMark />
+            <span className="min-w-0 flex-1 truncate text-sm font-semibold tracking-tight">
+              ReUI Chat
+            </span>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              aria-label="Search chats"
+              onClick={onOpenSearch}
+            >
+              <SearchIcon aria-hidden="true" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              aria-label={isMobile ? "Close chats" : "Collapse sidebar"}
+              onClick={onToggle}
+            >
+              <PanelLeftIcon aria-hidden="true" />
+            </Button>
+          </div>
+        </SidebarHeader>
+      ) : null}
 
       {/* Two equal tabs: the body below switches with them. */}
       <SidebarContent>
@@ -516,45 +516,45 @@ export function ThreadSidebar({
         </div>
 
         {section === "chats" ? (
-        <>
-        <SidebarMenu className="gap-0.5 px-2">
-          <SidebarMenuItem>
-            <SidebarMenuButton
-              isActive={activeId === NEW_THREAD_ID}
-              onClick={onNewChat}
-              className="hover:bg-foreground/5 data-active:bg-foreground/10 data-active:hover:bg-foreground/12"
-            >
-              <PlusIcon aria-hidden="true" />
-              <span>New Chat</span>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
+          <>
+            <SidebarMenu className="gap-0.5 px-2">
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  isActive={activeId === NEW_THREAD_ID}
+                  onClick={onNewChat}
+                  className="hover:bg-foreground/5 data-active:bg-foreground/10 data-active:hover:bg-foreground/12"
+                >
+                  <PlusIcon aria-hidden="true" />
+                  <span>New Chat</span>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
 
-          <SidebarMenuItem>
-            <SidebarMenuButton className="hover:bg-foreground/5 data-active:bg-foreground/10 data-active:hover:bg-foreground/12">
-              <FolderIcon aria-hidden="true" />
-              <span>Projects</span>
-              <SidebarMenuBadge>4</SidebarMenuBadge>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
+              <SidebarMenuItem>
+                <SidebarMenuButton className="hover:bg-foreground/5 data-active:bg-foreground/10 data-active:hover:bg-foreground/12">
+                  <FolderIcon aria-hidden="true" />
+                  <span>Projects</span>
+                  <SidebarMenuBadge>4</SidebarMenuBadge>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
 
-          <SidebarMenuItem>
-            <SidebarMenuButton className="hover:bg-foreground/5 data-active:bg-foreground/10 data-active:hover:bg-foreground/12">
-              <ClockIcon aria-hidden="true" />
-              <span>Scheduled</span>
-              <SidebarMenuBadge>2</SidebarMenuBadge>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
+              <SidebarMenuItem>
+                <SidebarMenuButton className="hover:bg-foreground/5 data-active:bg-foreground/10 data-active:hover:bg-foreground/12">
+                  <ClockIcon aria-hidden="true" />
+                  <span>Scheduled</span>
+                  <SidebarMenuBadge>2</SidebarMenuBadge>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
 
-          <SidebarMenuItem>
-            <SidebarMenuButton className="hover:bg-foreground/5 data-active:bg-foreground/10 data-active:hover:bg-foreground/12">
-              <Settings2Icon aria-hidden="true" />
-              <span>Customize</span>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-        </SidebarMenu>
+              <SidebarMenuItem>
+                <SidebarMenuButton className="hover:bg-foreground/5 data-active:bg-foreground/10 data-active:hover:bg-foreground/12">
+                  <Settings2Icon aria-hidden="true" />
+                  <span>Customize</span>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            </SidebarMenu>
 
-        <SidebarSeparator className="mx-0 my-3" />
-        </>
+            <SidebarSeparator className="mx-0 my-3" />
+          </>
         ) : null}
 
         {section === "agents" ? (

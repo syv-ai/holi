@@ -1,0 +1,98 @@
+import { type ReactNode, type Ref } from "react"
+import { cn } from "@/lib/cn"
+
+import { Button } from "@/components/ui/button"
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
+import { PanelLeftIcon, PlusIcon, SearchIcon } from "lucide-react"
+
+/**
+ * The window's one top band, after MonoCode and Superset: the traffic lights,
+ * the sidebar's own controls over the sidebar, and the view's header (the
+ * tabs) beside them, with a hairline under all of it. Open, the lead matches
+ * the sidebar's width, so its divider runs on from the resize handle below;
+ * collapsed, it shrinks to the lights and the toggle.
+ */
+export function TitleBar({
+  sidebarOpen,
+  sidebarWidth,
+  leadRef,
+  onToggleSidebar,
+  onOpenSearch,
+  onNew,
+  children,
+}: {
+  sidebarOpen: boolean
+  sidebarWidth: number
+  /** Resized by the shell during a drag, without a render. */
+  leadRef: Ref<HTMLDivElement>
+  onToggleSidebar: () => void
+  onOpenSearch: () => void
+  onNew: () => void
+  children: ReactNode
+}) {
+  return (
+    <header
+      data-slot="app-chrome"
+      className="app-drag flex h-11 shrink-0 items-center border-b"
+    >
+      <div
+        ref={leadRef}
+        data-window-band="lights"
+        style={sidebarOpen ? { width: sidebarWidth } : undefined}
+        className={cn(
+          "flex h-full shrink-0 items-center gap-1 px-2",
+          sidebarOpen && "border-e"
+        )}
+      >
+        <BandButton
+          label={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
+          onClick={onToggleSidebar}
+        >
+          <PanelLeftIcon aria-hidden="true" />
+        </BandButton>
+        {sidebarOpen ? (
+          <>
+            <div className="flex-1" />
+            <BandButton label="Search" onClick={onOpenSearch}>
+              <SearchIcon aria-hidden="true" />
+            </BandButton>
+            <BandButton label="New" onClick={onNew}>
+              <PlusIcon aria-hidden="true" />
+            </BandButton>
+          </>
+        ) : null}
+      </div>
+      {children}
+    </header>
+  )
+}
+
+function BandButton({
+  label,
+  onClick,
+  children,
+}: {
+  label: string
+  onClick: () => void
+  children: ReactNode
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          aria-label={label}
+          onClick={onClick}
+        >
+          {children}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
+  )
+}

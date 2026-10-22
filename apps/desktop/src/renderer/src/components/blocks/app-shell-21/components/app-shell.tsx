@@ -19,15 +19,11 @@ import { SidebarProvider } from "@/components/ui/sidebar"
 import { TooltipProvider } from "@/components/ui/tooltip"
 
 import { ChatSearchDialog } from "./chat-search-dialog"
-import {
-  MODELS,
-  NEW_THREAD_ID,
-  THREADS,
-  type ThreadRecord,
-} from "./data"
+import { MODELS, NEW_THREAD_ID, THREADS, type ThreadRecord } from "./data"
 import { MobileHeader } from "./mobile-header"
 import { SiteHeader } from "./site-header"
 import { ThreadSidebar } from "./thread-sidebar"
+import { TitleBar } from "./title-bar"
 
 /** Expanded width in pixels, and the drag point below which the rail takes over. */
 const SIDEBAR_WIDTH = 248
@@ -38,7 +34,9 @@ const SETTLE_MS = 280
 export function AppShell() {
   const isMobile = useIsMobile()
   const [threads, setThreads] = useState<ThreadRecord[]>(THREADS)
-  const [activeThreadId, setActiveThreadId] = useState<string | null>(THREADS[0]!.id)
+  const [activeThreadId, setActiveThreadId] = useState<string | null>(
+    THREADS[0]!.id
+  )
   /** The header's tabs, in the order they were opened. */
   const [openTabIds, setOpenTabIds] = useState<string[]>([THREADS[0]!.id])
   const [modelId, setModelId] = useState(MODELS[0]!.id)
@@ -53,6 +51,8 @@ export function AppShell() {
       whole shell, and a flex transition cannot draw behind that. */
   const fadeRef = useRef<HTMLDivElement>(null)
   const pinRef = useRef<HTMLDivElement>(null)
+  /** The title band's sidebar half, kept to the sidebar's width the same way. */
+  const leadRef = useRef<HTMLDivElement>(null)
   const widthRef = useRef(SIDEBAR_WIDTH)
   const settling = useRef(false)
   const settleTimer = useRef<number | null>(null)
@@ -96,7 +96,9 @@ export function AppShell() {
 
   /** Opening a thread brings its tab forward, adding one if it has none. */
   function openTab(id: string) {
-    setOpenTabIds((current) => (current.includes(id) ? current : [...current, id]))
+    setOpenTabIds((current) =>
+      current.includes(id) ? current : [...current, id]
+    )
     setActiveThreadId(id)
   }
 
@@ -155,19 +157,28 @@ export function AppShell() {
     />
   )
 
+  const header = (
+    <SiteHeader
+      tabs={tabs}
+      activeTabId={activeThreadId}
+      onSelectTab={setActiveThreadId}
+      onCloseTab={closeTab}
+      onNewTab={handleNewChat}
+      modelId={modelId}
+      memoryOn={memoryOn}
+      onModelChange={setModelId}
+      onToggleMemory={() => setMemoryOn((current) => !current)}
+    />
+  )
+
   const main = (
     <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col">
-      <SiteHeader
-        tabs={tabs}
-        activeTabId={activeThreadId}
-        onSelectTab={setActiveThreadId}
-        onCloseTab={closeTab}
-        onNewTab={handleNewChat}
-        modelId={modelId}
-        memoryOn={memoryOn}
-        onModelChange={setModelId}
-        onToggleMemory={() => setMemoryOn((current) => !current)}
-      />
+      {/* On desktop the header rides in the title band above both columns. */}
+      {isMobile ? (
+        <div className="bg-background flex h-12 shrink-0 border-b">
+          {header}
+        </div>
+      ) : null}
       {/* The landmark stays with the shell, so whatever fills the view
           inherits it. */}
       <main className="flex min-h-0 flex-1 flex-col" />
@@ -210,84 +221,99 @@ export function AppShell() {
             </SheetContent>
           </Sheet>
         ) : (
-          <ResizablePanelGroup
-            orientation="horizontal"
-            className={cn(
-              "group/panels min-h-0 flex-1",
-              animate &&
-                "[&>[data-panel]:first-child]:transition-[flex] [&>[data-panel]:first-child]:duration-200 [&>[data-panel]:first-child]:ease-linear has-[[data-separator=active]]:[&>[data-panel]:first-child]:transition-none"
-            )}
-          >
-            {/* One mounted panel that animates between rail and full width, the
-                way the shadcn sidebar transitions. */}
-            <ResizablePanel
-              panelRef={sidebarPanel}
-              defaultSize={SIDEBAR_WIDTH}
-              minSize={208}
-              maxSize={360}
-              collapsible
-              collapsedSize={48}
-              groupResizeBehavior="preserve-pixel-size"
-              onResize={(size) => {
-                // Drags update everything live; the animated toggle updates
-                // nothing until it settles.
-                if (!settling.current) {
-                  const open = size.inPixels > RAIL_THRESHOLD
-                  fadeRef.current?.setAttribute(
-                    "data-state",
-                    open ? "open" : "collapsed"
-                  )
-                  if (open && pinRef.current) {
-                    widthRef.current = size.inPixels
-                    pinRef.current.style.width = `${size.inPixels}px`
-                  }
-                  setSidebarOpen(open)
-                }
-                setAnimate(true)
-              }}
-              className="min-h-0"
+          <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col">
+            <TitleBar
+              sidebarOpen={sidebarOpen}
+              sidebarWidth={sidebarWidth}
+              leadRef={leadRef}
+              onToggleSidebar={toggleSidebar}
+              onOpenSearch={() => setSearchOpen(true)}
+              onNew={handleNewChat}
             >
-              <div
-                ref={fadeRef}
-                data-state={sidebarOpen ? "open" : "collapsed"}
-                className="group/fade relative h-full overflow-hidden"
+              {header}
+            </TitleBar>
+            <ResizablePanelGroup
+              orientation="horizontal"
+              className={cn(
+                "group/panels min-h-0 flex-1",
+                animate &&
+                  "[&>[data-panel]:first-child]:transition-[flex] [&>[data-panel]:first-child]:duration-200 [&>[data-panel]:first-child]:ease-linear has-[[data-separator=active]]:[&>[data-panel]:first-child]:transition-none"
+              )}
+            >
+              {/* One mounted panel that animates between rail and full width, the
+                way the shadcn sidebar transitions. */}
+              <ResizablePanel
+                panelRef={sidebarPanel}
+                defaultSize={SIDEBAR_WIDTH}
+                minSize={208}
+                maxSize={360}
+                collapsible
+                collapsedSize={48}
+                groupResizeBehavior="preserve-pixel-size"
+                onResize={(size) => {
+                  // Drags update everything live; the animated toggle updates
+                  // nothing until it settles.
+                  if (!settling.current) {
+                    const open = size.inPixels > RAIL_THRESHOLD
+                    fadeRef.current?.setAttribute(
+                      "data-state",
+                      open ? "open" : "collapsed"
+                    )
+                    if (open && pinRef.current) {
+                      widthRef.current = size.inPixels
+                      pinRef.current.style.width = `${size.inPixels}px`
+                      if (leadRef.current) {
+                        leadRef.current.style.width = `${size.inPixels}px`
+                      }
+                    }
+                    setSidebarOpen(open)
+                  }
+                  setAnimate(true)
+                }}
+                className="min-h-0"
               >
                 <div
-                  ref={pinRef}
-                  inert={!sidebarOpen}
-                  style={{ width: sidebarWidth }}
-                  className="h-full transition-opacity duration-200 group-data-[state=collapsed]/fade:pointer-events-none group-data-[state=collapsed]/fade:opacity-0"
+                  ref={fadeRef}
+                  data-state={sidebarOpen ? "open" : "collapsed"}
+                  className="group/fade relative h-full overflow-hidden"
                 >
-                  {sidebar}
+                  <div
+                    ref={pinRef}
+                    inert={!sidebarOpen}
+                    style={{ width: sidebarWidth }}
+                    className="h-full transition-opacity duration-200 group-data-[state=collapsed]/fade:pointer-events-none group-data-[state=collapsed]/fade:opacity-0"
+                  >
+                    {sidebar}
+                  </div>
+                  <div
+                    inert={sidebarOpen}
+                    className="pointer-events-none absolute inset-y-0 start-0 w-12 opacity-0 transition-opacity duration-200 group-data-[state=collapsed]/fade:pointer-events-auto group-data-[state=collapsed]/fade:opacity-100"
+                  >
+                    {rail}
+                  </div>
                 </div>
-                <div
-                  inert={sidebarOpen}
-                  className="pointer-events-none absolute inset-y-0 start-0 w-12 opacity-0 transition-opacity duration-200 group-data-[state=collapsed]/fade:pointer-events-auto group-data-[state=collapsed]/fade:opacity-100"
-                >
-                  {rail}
-                </div>
-              </div>
-            </ResizablePanel>
+              </ResizablePanel>
 
-            {/* One hairline divider: drag resizes, a still click toggles. */}
-            <ResizableHandle
-              withHandle
-              title="Drag to resize. Click to collapse."
-              onPointerDown={(event) => {
-                pressX.current = event.clientX
-              }}
-              onClick={(event) => {
-                const moved = Math.abs(event.clientX - (pressX.current ?? 0))
-                if (moved > 4) return
-                toggleSidebar()
-              }}
-              className="hover:bg-primary data-[separator=hover]:bg-primary data-[separator=active]:bg-primary hover:[&>div]:bg-primary [&[data-separator=hover]>div]:bg-primary [&[data-separator=active]>div]:bg-primary relative z-10 cursor-col-resize transition-colors after:w-3 [&>div]:transition-colors"
-            />
+              {/* One hairline divider: drag resizes, a still click toggles. */}
+              <ResizableHandle
+                withHandle
+                title="Drag to resize. Click to collapse."
+                onPointerDown={(event) => {
+                  pressX.current = event.clientX
+                }}
+                onClick={(event) => {
+                  const moved = Math.abs(event.clientX - (pressX.current ?? 0))
+                  if (moved > 4) return
+                  toggleSidebar()
+                }}
+                className="hover:bg-primary data-[separator=hover]:bg-primary data-[separator=active]:bg-primary hover:[&>div]:bg-primary [&[data-separator=hover]>div]:bg-primary [&[data-separator=active]>div]:bg-primary relative z-10 cursor-col-resize transition-colors after:w-3 [&>div]:transition-colors"
+              />
 
-            <ResizablePanel minSize={360} className="min-h-0">
-              {main}
-            </ResizablePanel>
-          </ResizablePanelGroup>
+              <ResizablePanel minSize={360} className="min-h-0">
+                {main}
+              </ResizablePanel>
+            </ResizablePanelGroup>
+          </div>
         )}
 
         <ChatSearchDialog
