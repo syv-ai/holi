@@ -188,3 +188,8 @@
   > [data-slot='sidebar-header']:first-child {
   padding-top: 2.25rem;
 }
+/* Collapsed, the site header starts beside the 48px rail, so it moves its
+   tabs past the lights' 73px. */
+[data-platform='mac']:not([data-fullscreen]) [data-slot='site-header'][data-sidebar='collapsed'] {
+  padding-inline-start: 2.25rem;
+}

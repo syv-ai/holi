@@ -15,13 +15,15 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { useSidebar } from "@/components/ui/sidebar"
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 import { MODELS } from "./data"
-import { Share2Icon, DownloadIcon, PencilIcon, BookmarkIcon, ChevronDownIcon, EllipsisVerticalIcon, Trash2Icon } from "lucide-react"
+import { PlusIcon, XIcon, Share2Icon, DownloadIcon, PencilIcon, BookmarkIcon, ChevronDownIcon, EllipsisVerticalIcon, Trash2Icon } from "lucide-react"
 
 const THREAD_ACTIONS = [
   {
@@ -47,28 +49,82 @@ const THREAD_ACTIONS = [
   },
 ]
 
+export type HeaderTab = { id: string; title: string }
+
 export function SiteHeader({
-  title,
+  tabs,
+  activeTabId,
+  onSelectTab,
+  onCloseTab,
+  onNewTab,
   modelId,
   memoryOn,
   onModelChange,
   onToggleMemory,
 }: {
-  title: string
+  tabs: HeaderTab[]
+  activeTabId: string | null
+  onSelectTab: (id: string) => void
+  onCloseTab: (id: string) => void
+  onNewTab: () => void
   modelId: string
   memoryOn: boolean
   onModelChange: (id: string) => void
   onToggleMemory: () => void
 }) {
   const activeModel = MODELS.find((model) => model.id === modelId) ?? MODELS[0]!
+  // Collapsed, the header starts beside the rail, under macOS's window buttons.
+  const { state } = useSidebar()
 
   return (
     // Sits above the content column, not over it: the column below owns the
     // scroll, so z-10 keeps the fade masking its top edge.
-    <header className="bg-background after:from-background relative z-10 flex h-12 shrink-0 items-center gap-2 px-3 after:pointer-events-none after:absolute after:inset-x-0 after:top-full after:h-6 after:bg-gradient-to-b after:to-transparent sm:px-4 md:h-14">
-      <div className="flex min-w-0 flex-1 items-center gap-2">
-        <h1 className="min-w-0 truncate text-sm font-medium">{title}</h1>
-      </div>
+    <header
+      data-slot="site-header"
+      data-sidebar={state}
+      className="app-drag bg-background after:from-background relative z-10 flex h-12 shrink-0 items-center gap-2 px-3 after:pointer-events-none after:absolute after:inset-x-0 after:top-full after:h-6 after:bg-gradient-to-b after:to-transparent sm:px-4 md:h-14"
+    >
+      <Tabs
+        value={activeTabId ?? ""}
+        onValueChange={onSelectTab}
+        className="min-w-0 flex-1 items-center gap-1 data-horizontal:flex-row"
+      >
+        {tabs.length > 0 ? (
+          <TabsList className="min-w-0 justify-start overflow-x-auto">
+            {tabs.map((tab) => (
+              // The close button is the trigger's sibling: a button cannot
+              // hold another button.
+              <div key={tab.id} className="group/tab relative flex h-full">
+                <TabsTrigger value={tab.id} className="max-w-48 flex-none pe-7">
+                  <span className="truncate">{tab.title}</span>
+                </TabsTrigger>
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  aria-label={`Close ${tab.title}`}
+                  onClick={() => onCloseTab(tab.id)}
+                  className="absolute end-0.5 top-1/2 -translate-y-1/2 opacity-0 group-hover/tab:opacity-100 group-has-data-active/tab:opacity-100 focus-visible:opacity-100"
+                >
+                  <XIcon aria-hidden="true" />
+                </Button>
+              </div>
+            ))}
+          </TabsList>
+        ) : null}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              aria-label="New tab"
+              onClick={onNewTab}
+            >
+              <PlusIcon aria-hidden="true" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>New tab</TooltipContent>
+        </Tooltip>
+      </Tabs>
 
       {/* A filled variant, not a tint: the primary token reads as the
           foreground here, so colour alone would not show the state. */}

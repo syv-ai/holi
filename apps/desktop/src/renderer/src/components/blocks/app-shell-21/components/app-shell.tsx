@@ -19,7 +19,6 @@ import { SidebarProvider } from "@/components/ui/sidebar"
 import { TooltipProvider } from "@/components/ui/tooltip"
 
 import { ChatSearchDialog } from "./chat-search-dialog"
-import { ContentSkeleton } from "./content-skeleton"
 import {
   MODELS,
   NEW_THREAD_ID,
@@ -39,7 +38,9 @@ const SETTLE_MS = 280
 export function AppShell() {
   const isMobile = useIsMobile()
   const [threads, setThreads] = useState<ThreadRecord[]>(THREADS)
-  const [activeThreadId, setActiveThreadId] = useState(THREADS[0]!.id)
+  const [activeThreadId, setActiveThreadId] = useState<string | null>(THREADS[0]!.id)
+  /** The header's tabs, in the order they were opened. */
+  const [openTabIds, setOpenTabIds] = useState<string[]>([THREADS[0]!.id])
   const [modelId, setModelId] = useState(MODELS[0]!.id)
   const [memoryOn, setMemoryOn] = useState(true)
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
@@ -88,16 +89,34 @@ export function AppShell() {
     else panel.collapse()
   }
 
-  const activeThread = threads.find((thread) => thread.id === activeThreadId)
-  const title = activeThread?.title ?? "New chat"
+  const tabs = openTabIds.map((id) => ({
+    id,
+    title: threads.find((thread) => thread.id === id)?.title ?? "New chat",
+  }))
+
+  /** Opening a thread brings its tab forward, adding one if it has none. */
+  function openTab(id: string) {
+    setOpenTabIds((current) => (current.includes(id) ? current : [...current, id]))
+    setActiveThreadId(id)
+  }
+
+  /** Closing the active tab hands focus to its neighbour, the next one first. */
+  function closeTab(id: string) {
+    const index = openTabIds.indexOf(id)
+    const rest = openTabIds.filter((tabId) => tabId !== id)
+    setOpenTabIds(rest)
+    if (id === activeThreadId) {
+      setActiveThreadId(rest[Math.min(index, rest.length - 1)] ?? null)
+    }
+  }
 
   function handleSelectThread(id: string) {
-    setActiveThreadId(id)
+    openTab(id)
     setMobileNavOpen(false)
   }
 
   function handleNewChat() {
-    setActiveThreadId(NEW_THREAD_ID)
+    openTab(NEW_THREAD_ID)
     setMobileNavOpen(false)
   }
 
@@ -116,7 +135,7 @@ export function AppShell() {
       onToggle={isMobile ? () => setMobileNavOpen(false) : toggleSidebar}
       onOpenSearch={() => setSearchOpen(true)}
       threads={threads}
-      activeId={activeThreadId}
+      activeId={activeThreadId ?? ""}
       onSelect={handleSelectThread}
       onNewChat={handleNewChat}
       onTogglePin={handleTogglePin}
@@ -129,7 +148,7 @@ export function AppShell() {
       onToggle={toggleSidebar}
       onOpenSearch={() => setSearchOpen(true)}
       threads={threads}
-      activeId={activeThreadId}
+      activeId={activeThreadId ?? ""}
       onSelect={handleSelectThread}
       onNewChat={handleNewChat}
       onTogglePin={handleTogglePin}
@@ -139,17 +158,19 @@ export function AppShell() {
   const main = (
     <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col">
       <SiteHeader
-        title={title}
+        tabs={tabs}
+        activeTabId={activeThreadId}
+        onSelectTab={setActiveThreadId}
+        onCloseTab={closeTab}
+        onNewTab={handleNewChat}
         modelId={modelId}
         memoryOn={memoryOn}
         onModelChange={setModelId}
         onToggleMemory={() => setMemoryOn((current) => !current)}
       />
-      {/* The landmark stays with the shell, so whatever replaces the
-          placeholder inherits it. */}
-      <main className="flex min-h-0 flex-1 flex-col">
-        <ContentSkeleton />
-      </main>
+      {/* The landmark stays with the shell, so whatever fills the view
+          inherits it. */}
+      <main className="flex min-h-0 flex-1 flex-col" />
     </div>
   )
 
