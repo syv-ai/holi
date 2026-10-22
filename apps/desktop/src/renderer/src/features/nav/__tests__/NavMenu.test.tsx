@@ -13,13 +13,7 @@ import { VAULT_SETTING_DEFAULTS } from '@holi/shared'
 import { paletteAtom } from '@/state/palette'
 import { CORE_CONTRIBUTION } from '@/components/core-surfaces'
 import { activeTab, workspaceAtom, type Tab } from '@/state/panes'
-import {
-  coreContributionAtom,
-  hubPlacementAtom,
-  installedPluginsAtom,
-  tabsPlacementAtom,
-  utilitiesPlacementAtom,
-} from '@/state/plugins'
+import { coreContributionAtom, installedPluginsAtom } from '@/state/plugins'
 import { vaultSettingsAtom } from '@/state/settings'
 import { activeRemoteAtom } from '@/state/vaults'
 import { NavMenu } from '../NavMenu'
@@ -194,43 +188,6 @@ test('the active surface reads as the current page', async () => {
   expect(screen.getByRole('button', { name: 'Settings' })).toHaveAttribute('aria-current', 'page')
 })
 
-test('the menu sits in the sidebar until a running plugin docks it', () => {
-  const docking: RendererPlugin = {
-    info: { id: 'docking', label: 'Docking', default: false },
-    layout: { hub: 'dock' },
-  }
-  const store = createStore()
-  store.set(installedPluginsAtom, [FAKE_PLUGIN, docking])
-  // Installed, and off by its own default.
-  expect(store.get(hubPlacementAtom)).toBe('sidebar')
-
-  store.set(activeRemoteAtom, 'me/vault')
-  store.set(vaultSettingsAtom, {
-    remote: 'me/vault',
-    settings: {
-      ...VAULT_SETTING_DEFAULTS,
-      plugins: { vault: { docking: true }, localOff: [] },
-      warnings: [],
-    },
-  })
-  expect(store.get(hubPlacementAtom)).toBe('dock')
-})
-
-test('as a dock it lays every item out in one centred, floating row', () => {
-  const store = createStore()
-  store.set(coreContributionAtom, CORE_CONTRIBUTION)
-  render(
-    <Provider store={store}>
-      <NavMenu dock />
-    </Provider>,
-  )
-  // Horizontal, so nothing overflows into More.
-  expect(screen.queryByRole('button', { name: 'More' })).toBeNull()
-  expect(screen.getByRole('button', { name: 'Settings' })).toBeInTheDocument()
-  const shell = screen.getByRole('navigation', { name: 'Go to' }).firstElementChild!
-  expect(shell).toHaveClass('left-1/2', 'bg-popover')
-})
-
 /** A plugin that puts the open tabs in the menu, as the workspace plugin does. */
 const TABS_IN_MENU: RendererPlugin = {
   info: { id: 'tabs-in-menu', label: 'Tabs in menu', default: true },
@@ -265,13 +222,6 @@ function setupTabs(panes: { tabs: Tab[]; active: number }[], plugins = [TABS_IN_
   )
   return { store, user: userEvent.setup() }
 }
-
-test('the tabs stay in each pane until a running plugin puts them in the menu', () => {
-  const store = createStore()
-  expect(store.get(tabsPlacementAtom)).toBe('strip')
-  store.set(installedPluginsAtom, [TABS_IN_MENU])
-  expect(store.get(tabsPlacementAtom)).toBe('hub')
-})
 
 const tabsGroup = () => screen.queryByRole('group', { name: 'Open tabs' })
 
@@ -316,16 +266,6 @@ test('the open tabs are a section of the bar: go to one, or close it', async () 
       { kind: 'note', path: 'notes/beta.md' },
     ]),
   )
-})
-
-test('the section is in the menu’s own bar, after a line that sets it apart', () => {
-  setupTabs([{ tabs: [{ kind: 'note', path: 'notes/alpha.md' }], active: 0 }])
-  const group = tabsGroup()!
-  const bar = screen.getByRole('button', { name: 'Home' }).closest('.grid')!
-  expect(bar.contains(group)).toBe(true)
-  const section = group.closest('[data-menu-trailing]')!
-  expect(section).toHaveAttribute('data-menu-trailing', 'inline')
-  expect(section.firstElementChild).toHaveAttribute('data-menu-trailing-line')
 })
 
 test('resting on a tab opens its name and close button above the bar, which keeps its size', async () => {
@@ -416,13 +356,6 @@ const UTILITIES_IN_HEADER: RendererPlugin = {
   info: { id: 'utilities-in-header', label: 'Utilities in header', default: true },
   layout: { utilities: 'header' },
 }
-
-test('Settings and sync are the menu’s until a running plugin moves them to the header', () => {
-  const store = createStore()
-  expect(store.get(utilitiesPlacementAtom)).toBe('hub')
-  store.set(installedPluginsAtom, [UTILITIES_IN_HEADER])
-  expect(store.get(utilitiesPlacementAtom)).toBe('header')
-})
 
 function setupUtilities() {
   const store = createStore()

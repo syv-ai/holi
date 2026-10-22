@@ -33,8 +33,8 @@ hidden, the same menu runs down the rail.
   (`RailItem.replaces`) and opens the `apps` surface: a tile per finished app, in the same order,
   with the folder it lives in; a tile opens that app in a tab of its own. A page has room to read
   what a list of bare names in a drill-down does not. It is on the menu even with no apps, when the
-  page says what one is and how to get one, but only while the apps plugin runs: a stand-in shows
-  only beside the item it stands in for, so with the apps plugin off there is no Apps at all.
+  page says what one is and how to get one, but only while the apps plugin runs: the page
+  `requires` it (`Surface.requires`), so with the apps plugin off there is no Apps at all.
 - **Mail and Agenda** appear only while a Google account is connected. `undefined` (not asked
   main yet) hides them too, so they never flash in.
 - **The dock wraps.** Every item has a 32px shortcut, in rows as wide as the
@@ -155,8 +155,8 @@ hidden, the same menu runs down the rail.
 - Dropping the open tabs when the dock wraps: the tabs are the panes' only strip then, so a narrow
   window would leave no way to see or close them. A row of its own keeps them.
 - The workspace plugin requiring the apps plugin: the dock, the tabs in it and the header icons
-  have nothing to do with apps, and turning apps off would take them all away. Its Apps item goes
-  instead, with the item it stands in for.
+  have nothing to do with apps, and turning apps off would take them all away. Only its Apps page
+  requires the apps plugin, and goes with it.
 - The sidebar's Apps section: Finish this app is on the tree's app row, and Show App Files there
   replaces its Edit Source.
 - Home as closing all tabs or emptying the pane: the first destroys the working set, and neither

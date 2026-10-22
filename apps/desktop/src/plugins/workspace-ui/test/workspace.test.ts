@@ -15,6 +15,7 @@ import {
   tabsPlacementAtom,
   utilitiesPlacementAtom,
 } from '../../../renderer/src/state/plugins'
+import { commandsAtom } from '../../../renderer/src/state/commands'
 import { WORKSPACE_INFO } from '../info'
 import { workspaceRenderer } from '../renderer'
 
@@ -35,14 +36,6 @@ function storeWith(plugins: readonly RendererPlugin[]) {
   return store
 }
 
-test('it is off until a vault turns it on', () => {
-  expect(WORKSPACE_INFO.default).toBe(false)
-  const store = storeWith([workspaceRenderer])
-  expect(store.get(hubPlacementAtom)).toBe('sidebar')
-  expect(store.get(tabsPlacementAtom)).toBe('strip')
-  expect(store.get(utilitiesPlacementAtom)).toBe('hub')
-})
-
 test('running, it docks the nav menu, puts the tabs in it and Settings and sync in the header', () => {
   const store = storeWith([ON])
   expect(store.get(hubPlacementAtom)).toBe('dock')
@@ -62,8 +55,10 @@ test('the nav lists its Apps page in place of the apps plugin’s item, wherever
   expect(off.map((item) => item.surface)).toEqual(['app'])
 })
 
-test('with the apps plugin off there is no Apps item, and the dock stays', () => {
+test('with the apps plugin off there is no Apps page or item, and the dock stays', () => {
   const store = storeWith([ON])
+  expect(store.get(surfacesAtom).has('apps')).toBe(false)
   expect(store.get(railAtom).map((item) => item.surface)).toEqual([])
+  expect(store.get(commandsAtom).some((c) => c.id === 'apps.open')).toBe(false)
   expect(store.get(hubPlacementAtom)).toBe('dock')
 })

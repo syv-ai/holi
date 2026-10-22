@@ -178,6 +178,11 @@ export interface Surface {
   unlisted?: true
   /** Offered as the `home` setting, and opened by it. */
   homeable?: true
+  /** Other plugins it is about (the apps plugin's apps, for Workspace's Apps
+   *  page): the registry leaves it out while any of them is off, so its rail
+   *  item, Open command, Home option and open tabs go with them, while the
+   *  rest of its plugin stays. Its own plugin is implied. */
+  requires?: readonly string[]
   /** The ids there are to open, most recently used first: the palette lists
    *  them, the Home picker offers a folder document's, and its rail item
    *  drills down to them. */
@@ -233,9 +238,8 @@ export interface RailItem {
    *  Apps is the page of apps, and each open app is a tab of the `app` surface,
    *  so Apps reads as current while an app is showing. */
   tabs?: string
-  /** A surface whose item this one stands in for: the nav menu lists this
-   *  item and leaves that one out. Only while that one is contributed (its
-   *  plugin runs); otherwise this item is left out too. */
+  /** A surface whose item this one stands in for while its plugin runs: the
+   *  nav menu lists this item and leaves that one out. */
   replaces?: string
   /** Run this command (`state/commands.ts`) instead of opening the surface. */
   command?: string

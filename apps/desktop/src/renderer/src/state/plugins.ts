@@ -301,9 +301,14 @@ export function hostPluginVaults(store: ReturnType<typeof createStore>): () => v
 /** Every surface there is right now, by kind. The first to name a kind wins,
  *  so a plugin cannot take over one of core's. */
 export const surfacesAtom = atom((get): ReadonlyMap<string, Surface> => {
+  const running = get(enabledPluginsAtom)
   const byKind = new Map<string, Surface>()
   for (const c of get(contributionsAtom)) {
-    for (const s of c.surfaces ?? []) if (!byKind.has(s.kind)) byKind.set(s.kind, s)
+    for (const s of c.surfaces ?? []) {
+      // One about a plugin that is off is not there, as that plugin's own are not.
+      if ((s.requires ?? []).some((id) => !running.has(id))) continue
+      if (!byKind.has(s.kind)) byKind.set(s.kind, s)
+    }
   }
   return byKind
 })
@@ -348,14 +353,7 @@ export const railAtom = atom(
     badge: { count: number; tone?: 'alert' } | null
   })[] => {
     const surfaces = get(surfacesAtom)
-    const all = get(contributionsAtom).flatMap((c) => c.rail ?? [])
-    // A stand-in shows only while the item it stands in for is contributed:
-    // with that item's plugin off there is nothing to stand in for, so the
-    // two come and go together (Workspace's Apps with the apps plugin).
-    const contributed = new Set(all.map((item) => item.surface))
-    const items = all.filter(
-      (item) => item.replaces === undefined || contributed.has(item.replaces),
-    )
+    const items = get(contributionsAtom).flatMap((c) => c.rail ?? [])
     const replaced = new Set(
       items.flatMap((item) => (item.replaces === undefined ? [] : [item.replaces])),
     )

@@ -6,9 +6,9 @@
  * the nav's Apps item opens a page of the vault's apps (every open app a tab
  * of the `app` surface).
  *
- * It names the surface of the apps plugin and draws over it. Each part does
- * nothing while the plugin it draws over is off. (The Agenda opening on its
- * month is Google's own `agendaView` setting.)
+ * Its Apps page is about the apps plugin's apps, so it `requires` that plugin:
+ * with apps off there is no page and no item, and the dock stays. (The Agenda
+ * opening on its month is Google's own `agendaView` setting.)
  */
 import { AppWindow } from 'lucide-react'
 import type { RailItem, RendererPlugin, Surface } from '@/plugin-api'
@@ -21,6 +21,7 @@ export const APPS_SURFACE: Surface = {
   label: 'Apps',
   icon: AppWindow,
   render: AppsPage,
+  requires: ['apps'],
 }
 
 /** Apps reads as current while an app, a tab of the `app` surface, is showing,
