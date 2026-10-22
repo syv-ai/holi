@@ -1,4 +1,5 @@
 import * as React from "react"
+import { useAtomValue } from "jotai"
 import { useEffect, useMemo, useRef, useState } from "react"
 import { cn } from "@/lib/cn"
 
@@ -41,43 +42,13 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { runningPluginsAtom } from "@/state/plugins"
 import { NEW_THREAD_ID, type ThreadRecord } from "./data"
 import { NavUser } from "./nav-user"
 import { ReuiMark } from "./reui-mark"
-import { FileTextIcon, CodeIcon, BarChart3Icon, ImageIcon, BookOpenIcon, StarIcon, HelpCircleIcon, MoreHorizontalIcon, PinOffIcon, Pin, PencilIcon, Share2Icon, ArchiveIcon, Trash2Icon, ChevronDownIcon, PanelLeftIcon, PlusIcon, SearchIcon, FolderIcon, ClockIcon, Settings2Icon, MessageSquareIcon } from "lucide-react"
+import { BookOpenIcon, StarIcon, HelpCircleIcon, MoreHorizontalIcon, PinOffIcon, Pin, PencilIcon, Share2Icon, ArchiveIcon, Trash2Icon, ChevronDownIcon, PanelLeftIcon, PlusIcon, SearchIcon, FolderIcon, ClockIcon, Settings2Icon, MessageSquareIcon } from "lucide-react"
 
-type SidebarSection = "chats" | "artifacts"
-
-const ARTIFACTS = [
-  {
-    id: "af_notes",
-    name: "release-notes-3.4.pdf",
-    icon: (
-      <FileTextIcon aria-hidden="true" />
-    ),
-  },
-  {
-    id: "af_webhook",
-    name: "stripe-webhook.ts",
-    icon: (
-      <CodeIcon aria-hidden="true" />
-    ),
-  },
-  {
-    id: "af_churn",
-    name: "Churn by plan tier chart",
-    icon: (
-      <BarChart3Icon aria-hidden="true" />
-    ),
-  },
-  {
-    id: "af_adoption",
-    name: "Adoption chart",
-    icon: (
-      <ImageIcon aria-hidden="true" />
-    ),
-  },
-]
+type SidebarSection = "chats" | "agents"
 
 const SECONDARY_LINKS = [
   {
@@ -368,6 +339,9 @@ export function ThreadSidebar({
 }) {
   const [section, setSection] = useState<SidebarSection>("chats")
   const { isMobile } = useSidebar()
+  const AgentsSidebar = useAtomValue(runningPluginsAtom).find(
+    (plugin) => plugin.agentsMode
+  )?.agentsMode?.sidebar
 
   const { pinned, recent } = useMemo(
     () => ({
@@ -543,11 +517,13 @@ export function ThreadSidebar({
           >
             <TabsList className="bg-foreground/5 grid w-full grid-cols-2">
               <TabsTrigger value="chats">Chats</TabsTrigger>
-              <TabsTrigger value="artifacts">Artifacts</TabsTrigger>
+              <TabsTrigger value="agents">Agents</TabsTrigger>
             </TabsList>
           </Tabs>
         </div>
 
+        {section === "chats" ? (
+        <>
         <SidebarMenu className="gap-0.5 px-2">
           <SidebarMenuItem>
             <SidebarMenuButton
@@ -585,25 +561,16 @@ export function ThreadSidebar({
         </SidebarMenu>
 
         <SidebarSeparator className="mx-0 my-3" />
+        </>
+        ) : null}
 
-        {section === "artifacts" ? (
-          <SidebarGroup className="py-1">
-            <SidebarGroupLabel>Recent artifacts</SidebarGroupLabel>
-            <SidebarGroupContent>
-              <SidebarMenu className="gap-0.5">
-                {ARTIFACTS.map((artifact) => (
-                  <SidebarMenuItem key={artifact.id}>
-                    <SidebarMenuButton className="hover:bg-foreground/5 data-active:bg-foreground/10 data-active:hover:bg-foreground/12">
-                      {artifact.icon}
-                      <span className="min-w-0 flex-1 truncate">
-                        {artifact.name}
-                      </span>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                ))}
-              </SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
+        {section === "agents" ? (
+          // The agent plugin's own sidebar: Inbox, Automations, Holis, sessions.
+          AgentsSidebar ? (
+            <div className="flex min-h-0 flex-1 flex-col">
+              <AgentsSidebar />
+            </div>
+          ) : null
         ) : null}
 
         {section === "chats" ? (

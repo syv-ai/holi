@@ -89,6 +89,19 @@
   --invert: var(--color-zinc-700);
 }
 
+/* Type a step under Tailwind's defaults, the size desktop tools set their
+   chrome in (13px body, 11px meta): the type shrinks, the spacing does not. */
+@theme {
+  --text-xs: 0.6875rem;
+  --text-xs--line-height: 1rem;
+  --text-sm: 0.8125rem;
+  --text-sm--line-height: 1.25rem;
+  --text-base: 0.875rem;
+  --text-base--line-height: 1.375rem;
+  --text-lg: 1rem;
+  --text-lg--line-height: 1.5rem;
+}
+
 @theme inline {
   --font-sans: 'Geist Variable', ui-sans-serif, system-ui, sans-serif;
   --font-mono: 'Geist Mono Variable', ui-monospace, 'SF Mono', Menlo, monospace;
