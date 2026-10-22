@@ -3,7 +3,7 @@
  * parts this build could not place: signatures and counts, and the Claude
  * Code version that wrote them. Never a word of the conversation.
  */
-import type { ChatItem } from '../../../agent/renderer/chat/items'
+import type { ChatItem } from '../../../agent/renderer/public'
 
 export interface Shapes {
   total: number

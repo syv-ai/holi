@@ -106,10 +106,17 @@ const elementTypes = {
       allow: ['primitives', 'composites', ['plugins', { plugin: '${from.plugin}' }]],
     },
     {
-      // The agent interface draws the agent's sessions and reads its state
-      // (`requires: ['agent']`): the one plugin that may import another.
+      // The agent interface draws the agent's sessions (`requires: ['agent']`):
+      // the one plugin that may import another, and only through the entry the
+      // agent offers for it. The dependency is one way: the agent never
+      // imports its interface, which fills the agent's page slot instead.
       from: [['plugins', { plugin: 'agent-ui' }]],
-      allow: ['primitives', 'composites', ['plugins', { plugin: 'agent*' }]],
+      allow: ['agent-public'],
+    },
+    {
+      // That entry re-exports the agent's own modules.
+      from: ['agent-public'],
+      allow: [['plugins', { plugin: 'agent' }]],
     },
   ],
 }
@@ -239,6 +246,8 @@ export default [
         { type: 'primitives', pattern: '**/primitives', mode: 'folder' },
         { type: 'composites', pattern: '**/composites', mode: 'folder' },
         { type: 'features', pattern: '**/features/*', mode: 'folder', capture: ['feature'] },
+        // Before `plugins`, so this one file is an element of its own.
+        { type: 'agent-public', pattern: 'src/plugins/agent/renderer/public.ts', mode: 'full' },
         { type: 'plugins', pattern: 'src/plugins/*', mode: 'folder', capture: ['plugin'] },
       ],
       'import/resolver': {

@@ -6,8 +6,7 @@
 import { render, screen } from '@/test/render'
 import { act, fireEvent } from '@testing-library/react'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
-import type { ChatContext, ChatItem } from '../../agent/renderer/chat/items'
-import type { AgentSession } from '../../agent/renderer/state/sessions'
+import type { ChatContext, ChatItem, AgentSession } from '../../agent/renderer/public'
 import { ChatView, INITIAL_ITEMS, MORE_ITEMS } from '../renderer/chat/ChatView'
 import { resetRowErrors } from '../renderer/chat/rows/RowBoundary'
 

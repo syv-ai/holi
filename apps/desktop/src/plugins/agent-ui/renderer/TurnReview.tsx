@@ -25,7 +25,7 @@ import {
   turnFilesAtom,
   turnReviewOpenAtom,
   type TurnFile,
-} from '../../agent/renderer/state/turns'
+} from './state/turns'
 
 /** `at` is an ISO string, not a Date: no superjson transformer on the ipcLink. */
 const when = (iso: string) =>

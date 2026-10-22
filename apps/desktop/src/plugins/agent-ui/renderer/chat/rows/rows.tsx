@@ -15,7 +15,7 @@ import {
 import { useEffect, useState } from 'react'
 import { Icon } from '@/primitives'
 import { cn } from '@/plugin-api'
-import type { ChatItem } from '../../../../agent/renderer/chat/items'
+import type { ChatItem } from '../../../../agent/renderer/public'
 import { ChatMarkdown } from '../ChatMarkdown'
 import { Disclose, RawBlock, RawDisclosure, Toggle, clipText, safeJson, str } from './parts'
 

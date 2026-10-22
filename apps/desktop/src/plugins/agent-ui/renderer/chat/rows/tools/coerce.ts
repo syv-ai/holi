@@ -7,7 +7,7 @@
  *
  * Pure: no React, no Electron.
  */
-import type { ToolItem } from '../../../../../agent/renderer/chat/items'
+import type { ToolItem } from '../../../../../agent/renderer/public'
 
 export type Rec = Record<string, unknown>
 

@@ -104,8 +104,10 @@ A plugin that builds on another says so in `PluginInfo.requires`: it runs only w
 it requires runs, down a chain, so turning one off turns off what stands on it, its seeds included.
 The dependency runs one way: the plugin underneath knows nothing of what requires it. Calls between
 plugins go through capabilities, with one exception: `agent-ui`, which requires the agent, imports
-the agent's renderer state (its session atoms), because a page drawn from live lists has no other
-way to read them; ESLint allows that one pair. One resolver,
+the agent's session lists and verbs, because a page drawn from live lists has no other way to read
+them. It imports one file, `agent/renderer/public.ts`, and ESLint allows that file and nothing
+else; what the page shows stays in `agent-ui`, and the agent opens a session on it through a slot
+the page fills (`agentPageAtom`), never by importing it. One resolver,
 `resolvePlugins`, answers which plugins run and why each other one does not (off in the vault, off
 on this machine, or needing one that is off), and every reader in both processes asks it. Both
 processes check their list with `checkPluginCatalogue` at boot, which refuses a missing or circular

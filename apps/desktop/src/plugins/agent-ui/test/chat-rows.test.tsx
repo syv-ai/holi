@@ -5,7 +5,7 @@
 import { render, screen, within } from '@/test/render'
 import { act, fireEvent } from '@testing-library/react'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
-import type { ChatContext, ChatItem } from '../../agent/renderer/chat/items'
+import type { ChatContext, ChatItem } from '../../agent/renderer/public'
 import { ChatMarkdown, chatMarkdownBlocks } from '../renderer/chat/ChatMarkdown'
 import { ItemRow } from '../renderer/chat/rows/ItemRow'
 import { RowBoundary, resetRowErrors, rowErrorsOf } from '../renderer/chat/rows/RowBoundary'

@@ -11,7 +11,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@/test/render'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeAll, beforeEach, expect, test, vi } from 'vitest'
-import type { ChatContext, ChatItem, ToolItem, ToolState } from '../../agent/renderer/chat/items'
+import type { ChatContext, ChatItem, ToolItem, ToolState } from '../../agent/renderer/public'
 import { ToolCard } from '../renderer/chat/rows/ToolCard'
 import type { ToolRenderer } from '../renderer/chat/rows/registry'
 import { clip } from '../renderer/chat/rows/tools/parts'

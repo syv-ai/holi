@@ -12,15 +12,15 @@ import userEvent from '@testing-library/user-event'
 import { Provider, createStore } from 'jotai'
 import { beforeEach, expect, test, vi } from 'vitest'
 import { TurnChip } from '../renderer/TurnChip'
-import { agentSessionsAtom, type AgentSession } from '../../agent/renderer/state/sessions'
-import { activeRemoteAtom } from '@/plugin-api'
+import { agentSessionsAtom, type AgentSession } from '../../agent/renderer/public'
 import {
   latestTurnsAtom,
   reviewTurnAtom,
   turnCountsAtom,
   turnReviewOpenAtom,
   type Turn,
-} from '../../agent/renderer/state/turns'
+} from '../renderer/state/turns'
+import { activeRemoteAtom } from '@/plugin-api'
 
 const list = vi.fn()
 const files = vi.fn()

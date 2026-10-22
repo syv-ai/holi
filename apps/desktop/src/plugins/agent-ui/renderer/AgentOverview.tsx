@@ -12,13 +12,9 @@ import { Button } from '@/primitives'
 import { AgentFace } from './AgentFace'
 import { AgentHistory } from './AgentHistory'
 import { ChatView } from './chat/ChatView'
-import { startErrorAtom, startSessionAtom } from '../../agent/renderer/state/send'
-import {
-  agentViewAtom,
-  shownEntryAtom,
-  type AgentSession,
-  type StackEntry,
-} from '../../agent/renderer/state/sessions'
+import { startErrorAtom, startSessionAtom } from './state/actions'
+import { agentViewAtom, shownEntryAtom, type StackEntry } from './state/page'
+import type { AgentSession } from '../../agent/renderer/public'
 import { TurnChip } from './TurnChip'
 
 /** A past session read as a session that is idle, which is what its chat wants. */

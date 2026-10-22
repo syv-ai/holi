@@ -17,7 +17,7 @@ import {
   turnReviewOpenAtom,
   type Turn,
   type TurnFile,
-} from '../../agent/renderer/state/turns'
+} from '../renderer/state/turns'
 import { activeRemoteAtom } from '@/plugin-api'
 
 const files = vi.fn()

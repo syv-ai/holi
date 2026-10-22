@@ -8,7 +8,7 @@ import { ArrowUp, Paperclip, Square } from 'lucide-react'
 import { useRef, useState } from 'react'
 import { Button, Icon, IconButton, Input } from '@/primitives'
 import { cn } from '@/plugin-api'
-import { filesOf, pastedFiles } from '../../../agent/renderer/chat/attachments'
+import { filesOf, pastedFiles } from '../../../agent/renderer/public'
 import { RichInput, type RichInputHandle } from './RichInput'
 
 export function Composer({

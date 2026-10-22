@@ -10,7 +10,7 @@
 import './overview.css'
 import { useEffect, useRef, type CSSProperties } from 'react'
 import { cn } from '@/plugin-api'
-import type { SessionState } from '../../agent/renderer/state/sessions'
+import type { SessionState } from '../../agent/renderer/public'
 import {
   BLINK_GAP_MS,
   BLINK_HOLD_MS,

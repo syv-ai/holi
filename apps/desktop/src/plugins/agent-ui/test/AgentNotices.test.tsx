@@ -10,21 +10,15 @@ import { Provider, createStore } from 'jotai'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { activeRemoteAtom, openSurfaceAtom, surfaceActiveAtom } from '@/plugin-api'
 import { AgentBubbles } from '../renderer/AgentBubbles'
-import { lastAnswer, plainPreview } from '../../agent/renderer/lib/preview'
+import { lastAnswer, plainPreview } from '../renderer/lib/preview'
 import {
   ANSWER_NOTICE_MS,
   agentNoticesAtom,
   quickChatAtom,
   watchNotices,
-} from '../../agent/renderer/state/notices'
-import {
-  agentPageAtom,
-  agentHistoryAtom,
-  agentSessionsAtom,
-  agentViewAtom,
-  overviewSelectionAtom,
-  type AgentSession,
-} from '../../agent/renderer/state/sessions'
+} from '../renderer/state/notices'
+import { agentHistoryAtom, agentSessionsAtom, type AgentSession } from '../../agent/renderer/public'
+import { agentViewAtom, overviewSelectionAtom } from '../renderer/state/page'
 
 const cap = vi.hoisted(() => ({
   press: vi.fn(),
@@ -106,8 +100,6 @@ previewTests()
 function watching(sessions: AgentSession[]) {
   const store = createStore()
   store.set(activeRemoteAtom, 'o/vault')
-  // agent-ui runs: the agents page is there to land on.
-  store.set(agentPageAtom, true)
   store.set(agentSessionsAtom, sessions)
   const stop = watchNotices('o/vault', store)
   return { store, stop }
@@ -169,8 +161,6 @@ test('nothing is announced about the chat you are looking at, or one whose small
 function ui(sessions: AgentSession[], opts: { history?: boolean } = {}) {
   const store = createStore()
   store.set(activeRemoteAtom, 'o/vault')
-  // agent-ui runs: the agents page is there to land on.
-  store.set(agentPageAtom, true)
   store.set(agentSessionsAtom, sessions)
   if (opts.history)
     store.set(agentHistoryAtom, [{ id: 'p', name: 'Old one', phase: 'done', startedAt: 0 }])
@@ -435,7 +425,7 @@ test('a finished chat has only its full page', async () => {
   expect(store.get(overviewSelectionAtom)).toBe('p')
 })
 
-function notified(notice: Partial<import('../../agent/renderer/state/notices').AgentNotice>) {
+function notified(notice: Partial<import('../renderer/state/notices').AgentNotice>) {
   const r = ui([session({ id: 'a', name: 'Travel agent' })])
   act(() =>
     r.store.set(agentNoticesAtom, [

@@ -21,7 +21,7 @@ import {
   turnCountsAtom,
   turnDiffAtom,
   turnFilesAtom,
-} from '../../agent/renderer/state/turns'
+} from '../renderer/state/turns'
 import { activeRemoteAtom } from '@/plugin-api'
 
 const list = vi.fn()

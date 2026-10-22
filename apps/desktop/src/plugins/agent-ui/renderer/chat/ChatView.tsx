@@ -11,21 +11,15 @@ import { ArrowDown, MessagesSquare, SquareTerminal } from 'lucide-react'
 import { useReducedMotion } from 'motion/react'
 import { useCallback, useEffect, useLayoutEffect, useReducer, useRef, useState } from 'react'
 import { Button, Icon, IconButton } from '@/primitives'
-import { SessionTerminal } from '../../../agent/renderer/SessionTerminal'
 import {
+  SessionTerminal,
   archiveSessionAtom,
   ensureTerminalAtom,
   pressAtom,
   sayAtom,
   uploadAtom,
-} from '../../../agent/renderer/state/send'
-import {
   agentTerminalsAtom,
-  chatAttachmentsAtom,
-  chatDraftsAtom,
   type AgentSession,
-} from '../../../agent/renderer/state/sessions'
-import {
   MAX_ATTACHMENTS,
   insertMarker,
   markerFor,
@@ -35,14 +29,18 @@ import {
   uploadName,
   withPaths,
   type Attachment,
-} from '../../../agent/renderer/chat/attachments'
+  askFailed,
+  openCallOf,
+  useQuestions,
+  useTranscript,
+  type ChatItem,
+  type ToolItem,
+} from '../../../agent/renderer/public'
+import { chatAttachmentsAtom, chatDraftsAtom } from '../state/page'
 import { Composer } from './Composer'
 import { HeldQuestion, useHeldQuestion } from './HeldQuestion'
 import { QuickAsk } from './QuickAsk'
-import { askFailed, openCallOf } from '../../../agent/renderer/lib/ask'
 import type { RichInputHandle } from './RichInput'
-import { useQuestions, useTranscript } from '../../../agent/renderer/chat/use-transcript'
-import type { ChatItem, ToolItem } from '../../../agent/renderer/chat/items'
 import { chatDiagnostics, claudeVersions, unplacedTotal } from './diagnostics'
 import { ItemRow } from './rows/ItemRow'
 import { copyText } from './rows/parts'

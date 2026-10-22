@@ -17,30 +17,28 @@ import { surfaceActiveAtom } from '@/plugin-api'
 import { Button, Dialog } from '@/primitives'
 import { AgentNotices } from './AgentNotices'
 import { BubbleStack } from './BubbleStack'
-import { sessionsWorthAsking } from '../../agent/renderer/lib/notices'
-import { QuickChat } from './QuickChat'
-import { agentNoticesAtom, quickChatAtom } from '../../agent/renderer/state/notices'
 import {
+  sessionsWorthAsking,
   archiveSessionAtom,
-  duplicateSessionAtom,
-  openSessionAtom,
   respawnSessionAtom,
+  stopSessionAtom,
+  agentArchivedAtom,
+  type AgentSession,
+} from '../../agent/renderer/public'
+import { agentNoticesAtom, quickChatAtom } from './state/notices'
+import {
+  duplicateSessionAtom,
+  showSessionAtom,
   showHistoryAtom,
   startSessionAtom,
-  stopSessionAtom,
-} from '../../agent/renderer/state/send'
-import {
-  AGENT_SURFACE,
-  agentArchivedAtom,
-  agentStackAtom,
-  shownEntryAtom,
-  type AgentSession,
-} from '../../agent/renderer/state/sessions'
+} from './state/actions'
+import { AGENT_SURFACE, agentStackAtom, shownEntryAtom } from './state/page'
+import { QuickChat } from './QuickChat'
 
 export function AgentBubbles(): React.JSX.Element | null {
   const stack = useAtomValue(agentStackAtom)
   const shown = useAtomValue(shownEntryAtom)
-  const openSession = useSetAtom(openSessionAtom)
+  const openSession = useSetAtom(showSessionAtom)
   const startSession = useSetAtom(startSessionAtom)
   const stopSession = useSetAtom(stopSessionAtom)
   const respawnSession = useSetAtom(respawnSessionAtom)

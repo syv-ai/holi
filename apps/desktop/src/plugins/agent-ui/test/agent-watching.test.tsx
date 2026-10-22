@@ -6,16 +6,12 @@
 import { createStore } from 'jotai'
 import { beforeEach, expect, test, vi } from 'vitest'
 import { quickChatAtom, reportWatching, watchedSessionAtom } from '../renderer/state/notices'
-import {
-  agentSessionsAtom,
-  agentViewAtom,
-  overviewSelectionAtom,
-  type AgentSession,
-} from '../renderer/state/sessions'
+import { agentSessionsAtom, type AgentSession } from '../../agent/renderer/public'
+import { agentViewAtom, overviewSelectionAtom } from '../renderer/state/page'
 import { activeRemoteAtom, openNoteTabAtom, openSurfaceAtom } from '@/plugin-api'
 
 const watching = vi.fn()
-vi.mock('../renderer/agent-cap', () => ({
+vi.mock('../../agent/renderer/agent-cap', () => ({
   agentCap: {
     watching: (remote: string, args: { id: string | null }) => watching(remote, args.id),
   },

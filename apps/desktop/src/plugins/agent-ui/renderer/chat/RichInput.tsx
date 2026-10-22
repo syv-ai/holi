@@ -13,7 +13,7 @@
  */
 import { useEffect, useImperativeHandle, useRef, useState } from 'react'
 import { cn } from '@/plugin-api'
-import { markerLabel, markerIsImage } from '../../../agent/renderer/chat/attachments'
+import { markerLabel, markerIsImage } from '../../../agent/renderer/public'
 
 /** What the chat can do to the field. */
 export interface RichInputHandle {

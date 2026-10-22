@@ -6,7 +6,7 @@
  * and says "N items" for the rest, never the bytes.
  */
 import { Globe, Plug } from 'lucide-react'
-import type { ToolItem } from '../../../../../agent/renderer/chat/items'
+import type { ToolItem } from '../../../../../agent/renderer/public'
 import type { ToolRenderer } from '../registry'
 import {
   argsOf,

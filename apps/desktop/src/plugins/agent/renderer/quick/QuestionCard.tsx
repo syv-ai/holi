@@ -23,6 +23,8 @@ import {
   type CardState,
 } from './card'
 import { Button, Input } from '@/primitives'
+// Its look is the quick panel's, wherever it is drawn.
+import './quick.css'
 
 /** An option's label without the "(Recommended)" Claude marks it with: the
  *  card says so with its own badge. */

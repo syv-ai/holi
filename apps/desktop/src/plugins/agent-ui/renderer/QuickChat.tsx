@@ -28,21 +28,26 @@ import {
   pastedFiles,
   toBase64,
   uploadName,
-} from '../../agent/renderer/chat/attachments'
+  useQuestions,
+  useTranscript,
+  askFailed,
+  openCallOf,
+  agentIndicator,
+  pressAtom,
+  sayAtom,
+  uploadAtom,
+  agentSessionsAtom,
+} from '../../agent/renderer/public'
+import { plainPreview } from './lib/preview'
+import { quickChatAtom } from './state/notices'
+import { showSessionAtom } from './state/actions'
 import { useHeldQuestion } from './chat/HeldQuestion'
 import { QuickAsk } from './chat/QuickAsk'
-import { useQuestions, useTranscript } from '../../agent/renderer/chat/use-transcript'
-import { askFailed, openCallOf } from '../../agent/renderer/lib/ask'
-import { agentIndicator } from '../../agent/renderer/lib/notices'
-import { plainPreview } from '../../agent/renderer/lib/preview'
-import { quickChatAtom } from '../../agent/renderer/state/notices'
-import { openSessionAtom, pressAtom, sayAtom, uploadAtom } from '../../agent/renderer/state/send'
-import { agentSessionsAtom } from '../../agent/renderer/state/sessions'
 
 export function QuickChat({ sessionId }: { sessionId: string }): React.JSX.Element | null {
   const session = useAtomValue(agentSessionsAtom).find((s) => s.id === sessionId) ?? null
   const setQuick = useSetAtom(quickChatAtom)
-  const openFull = useSetAtom(openSessionAtom)
+  const openFull = useSetAtom(showSessionAtom)
   const say = useSetAtom(sayAtom)
   const press = useSetAtom(pressAtom)
   const held = useHeldQuestion(sessionId)

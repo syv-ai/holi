@@ -5,7 +5,7 @@
  * the kinds this build knows and has a runtime default for one it does not.
  */
 import { memo } from 'react'
-import type { ChatContext, ChatItem } from '../../../../agent/renderer/chat/items'
+import type { ChatContext, ChatItem } from '../../../../agent/renderer/public'
 import { ChatMarkdown } from '../ChatMarkdown'
 import { RowBoundary } from './RowBoundary'
 import { ToolCard } from './ToolCard'

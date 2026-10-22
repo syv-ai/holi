@@ -11,20 +11,24 @@ import {
   agentSessionsAtom,
   agentTerminalsAtom,
   askTargetsAtom,
+  openSessionAtom,
+  stopSessionAtom,
+  type AgentSession,
+  type AgentTerminal,
+} from '../../agent/renderer/public'
+import {
+  AGENT_PAGE,
+  duplicateSessionAtom,
+  sendToAgentAtom,
+  showAgentsAtom,
+  showSessionAtom,
+  startSessionAtom,
+} from '../renderer/state/actions'
+import {
   chatDraftsAtom,
   defaultAgentTargetAtom,
   overviewSelectionAtom,
-  type AgentSession,
-  type AgentTerminal,
-} from '../renderer/state/sessions'
-import {
-  duplicateSessionAtom,
-  openSessionAtom,
-  sendToAgentAtom,
-  showAgentsAtom,
-  startSessionAtom,
-  stopSessionAtom,
-} from '../renderer/state/send'
+} from '../renderer/state/page'
 import { activeRemoteAtom, surfaceTabIdsAtom } from '@/plugin-api'
 
 const session = (over: Partial<AgentSession> & { id: string }): AgentSession => ({
@@ -45,7 +49,7 @@ const send = vi.fn()
 const stop = vi.fn()
 const duplicate = vi.fn()
 
-vi.mock('../renderer/agent-cap', () => ({
+vi.mock('../../agent/renderer/agent-cap', () => ({
   agentCap: {
     open: (_remote: string, args: unknown) => open(args),
     start: (_remote: string, args: unknown) => start(args),
@@ -68,8 +72,8 @@ beforeEach(() => {
 function storeWith(sessions: AgentSession[] = [], terminals: AgentTerminal[] = []) {
   const store = createStore()
   store.set(activeRemoteAtom, 'o/vault')
-  // agent-ui runs: the agents page is there to land on.
-  store.set(agentPageAtom, true)
+  // agent-ui runs: its page is the agent's to land on.
+  store.set(agentPageAtom, AGENT_PAGE)
   store.set(agentSessionsAtom, sessions)
   store.set(agentTerminalsAtom, terminals)
   return store
@@ -90,7 +94,7 @@ test('going to the agents opens the page and nothing else', async () => {
 
 test('opening a session shows its chat, and opens no terminal', async () => {
   const store = storeWith([session({ id: 'aaaaaaaa' })], [terminal('t-a', 'aaaaaaaa')])
-  await store.set(openSessionAtom, 'aaaaaaaa')
+  await store.set(showSessionAtom, 'aaaaaaaa')
 
   expect(open).not.toHaveBeenCalled()
   expect(shown(store)).toBe('aaaaaaaa')
@@ -178,21 +182,21 @@ test('the default target is a new session when there is none, it needs you, or i
   expect(finished.get(defaultAgentTargetAtom)).toBe('new')
 })
 
-test('with the agents page off, an ask starts nothing and says why', async () => {
-  // agent-ui off: there is no chat for the draft, so no session is started
-  // for it and no page is asked for.
+test("the agent's own surfaces open a session on the page agent-ui provides", async () => {
   const store = storeWith([session({ id: 'aaaa0001' })])
-  store.set(agentPageAtom, false)
-  for (const res of [
-    await store.set(sendToAgentAtom, { text: 'fix it', target: 'new' }),
-    await store.set(sendToAgentAtom, { text: 'fix it', target: 'aaaa0001' }),
-    await store.set(startSessionAtom, { prompt: 'fix it' }),
-    await store.set(openSessionAtom, 'aaaa0001'),
-    await store.set(showAgentsAtom),
-  ]) {
-    expect(res).toEqual({ ok: false, message: expect.stringContaining('interface is off') })
-  }
-  expect(start).not.toHaveBeenCalled()
-  expect(store.get(chatDraftsAtom)).toEqual({})
+  expect(await store.set(openSessionAtom, 'aaaa0001')).toEqual({ ok: true })
+  expect(shown(store)).toBe('aaaa0001')
+})
+
+test('with no page to land on, the agent opens nothing and says why', async () => {
+  // agent-ui off: the slot is empty, so the inbox or a schedule's run cannot
+  // show a session, and says so rather than opening a page that is not there.
+  const store = storeWith([session({ id: 'aaaa0001' })])
+  store.set(agentPageAtom, null)
+  expect(await store.set(openSessionAtom, 'aaaa0001')).toEqual({
+    ok: false,
+    message: expect.stringContaining('interface is off'),
+  })
+  expect(shown(store)).toBeNull()
   expect(store.get(surfaceTabIdsAtom('agent'))).toEqual([])
 })

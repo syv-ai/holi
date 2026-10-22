@@ -5,7 +5,7 @@ import { FileText, ImageIcon } from 'lucide-react'
 import { useState } from 'react'
 import { Icon } from '@/primitives'
 import { cn, vaultAssetUrl } from '@/plugin-api'
-import { splitUserText, uploadVaultPath } from '../../../../agent/renderer/chat/attachments'
+import { splitUserText, uploadVaultPath } from '../../../../agent/renderer/public'
 
 /**
  * A picture the person attached, drawn from the vault where it was saved

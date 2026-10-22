@@ -48,19 +48,26 @@ scheduled run open. The chat that is left lets go of the terminal it typed into,
 message or a key sent to a session nobody is looking at: main closes it once what it holds has
 gone in and a few seconds have passed (`terminals.release`), and the next message opens another.
 The agent is the plugin `agent` (`src/plugins/agent/`, on by default), and its renderer side
-(`renderer/index.tsx`) holds the session lists and notices, the leave question and the schedules
+(`renderer/index.tsx`) holds the session lists, the verbs, the leave question and the schedules
 section in settings. The agent service every "Ask" goes through (`useAgentService`) is
 `agent-ui`'s, because an ask lands as a draft in a chat that only it can show: with either plugin
-off there is no service, so no "Ask" is offered, and what would land on the agents page (opening a
-session from the inbox, the quick panel's "open in Holi") is refused with the reason rather than
-starting anything (`agentPageAtom`, set while `agent-ui` runs). Its main side starts with the vault and
+off there is no service, so no "Ask" is offered, and the turn review goes with `agent-ui` too.
+**The agent has a page slot**, `agentPageAtom`: a plugin that shows a session's chat fills it
+while it runs (`agent-ui` puts its own "show this session" there), and the agent's own surfaces
+open sessions through it (the inbox, a schedule's run, the quick panel's "open in Holi", which
+waits until there is a page). Empty, they are refused with the reason rather than starting
+anything. Its main side starts with the vault and
 attaches to it (`activate`), and its disposer stops the vault's sessions and terminals. What is
 drawn of the sessions is a second plugin, `agent-ui` (`src/plugins/agent-ui/`, on by default,
 `requires: ['agent']`, so it never runs without the agent): its renderer registers the page (the
 surface `agent`, kept mounted, one page, no `tabs`), the nav item (which runs `agent.show`), the
 commands (`agent.show` on ⌘J, `agent.new`), the floating stack (`floating`), the turn review (one of its `overlays`), the agent service, and the palette's session
-rows. It has no main side of its own beyond its name. It reads the agent's state by import, the one
-place a plugin imports another; turned off, the agent still runs and its sessions are reachable
+rows. It has no main side of its own beyond its name. What the page shows is its own state
+(`agent-ui/renderer/state/`: the chat or the history, the selected session, drafts and attachments,
+the smaller chat, the notices and whose chat is watched, the turn review). It reads the agent's
+lists and calls its verbs by import, through the one entry the agent offers for it,
+`agent/renderer/public.ts`: the one place a plugin imports another, and only that file (ESLint),
+so the dependency runs one way. Turned off, the agent still runs and its sessions are reachable
 from `claude` itself. The
 renderer reaches it through the `agent.*` capabilities (sessions, terminals, open, start, send,
 say, press, watching, message, stop, respawn, duplicate, attach, detach, and the turn review's turns, turnFiles, turnDiff and
@@ -220,9 +227,9 @@ picks the chat shown, as before. **The words of a row** (name and state, in the 
 **Notifications.** In the same corner, **notifications** (`AgentNotices`) say when an agent has
 an answer (**Answer ready**, with its first words, which goes by itself after 15 s unless the
 pointer is on it) or needs you (**Approval required** / **Needs you**, which stays until answered
-or dismissed). They are read off the session list's own edges (`state/notices.ts`): working to idle
+or dismissed). They are read off the session list's own edges (`agent-ui/renderer/state/notices.ts`): working to idle
 is a turn that ended, anything to needs-you is a question; the transcript's tail supplies the
-words and the call it asks to run (`lib/preview.ts`). What was running when the vault opened is not
+words (`lib/preview.ts`) and the call it asks to run, when it can be told. What was running when the vault opened is not
 news, and nothing is said of the chat you are reading in full or have the smaller chat open on.
 Pressing a notification opens the full chat; ✕ dismisses it. **A permission prompt is answered on
 its card**: Allow presses Enter and Deny Escape in the session's terminal, as the chat's own card
@@ -405,5 +412,9 @@ showing it busy, crosses it off), so a session resumed from the list is never re
   `scrub-transcript.ts`: the drift check and the fixture scrubber
 - `apps/desktop/src/plugins/agent-ui/renderer/`: `BubbleStack.tsx`/`AgentBubbles.tsx`, `QuickChat.tsx`, terminal (`terminal.css`), turn chip and review; `index.tsx`: the
   interface's renderer side
-- `apps/desktop/src/plugins/agent/renderer/`: `index.tsx`: the agent's renderer side; `service.ts`: the agent service
-- `apps/desktop/src/plugins/agent/renderer/state/sessions.ts`, `send.ts`, `turns.ts`: the lists, what you do, and turn review
+- `apps/desktop/src/plugins/agent-ui/renderer/state/`: `page.ts` (what the page shows), `actions.ts`
+  (where a session lands), `notices.ts`, `turns.ts` (the turn review); `service.ts`: the agent service
+- `apps/desktop/src/plugins/agent/renderer/`: `index.tsx`: the agent's renderer side; `public.ts`: the
+  one entry `agent-ui` imports
+- `apps/desktop/src/plugins/agent/renderer/state/sessions.ts`, `send.ts`: the lists and the page slot,
+  and what you do

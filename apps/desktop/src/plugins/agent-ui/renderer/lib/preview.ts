@@ -1,9 +1,8 @@
 /**
  * What a notification says of a conversation, read from the tail of its
- * transcript: the answer that was just given, and the tool call a session is
- * waiting to be allowed to run. Pure.
+ * transcript: the answer that was just given. Pure.
  */
-import type { ChatEntry } from '../agent-cap'
+import type { ChatEntry } from '../../../agent/renderer/public'
 
 /** The most a preview keeps: a notification is a glance, not the answer. */
 const PREVIEW_CHARS = 240

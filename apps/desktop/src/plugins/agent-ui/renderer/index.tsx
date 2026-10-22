@@ -11,19 +11,12 @@
 import { atom } from 'jotai'
 import { Bot } from 'lucide-react'
 import type { Command, RendererPlugin } from '@/plugin-api'
-import { agentIndicator } from '../../agent/renderer/lib/notices'
-import { AGENT_SERVICE } from '../../agent/renderer/service'
-import {
-  followPendingOpen,
-  openSessionAtom,
-  showAgentsAtom,
-  startSessionAtom,
-} from '../../agent/renderer/state/send'
-import {
-  AGENT_SURFACE,
-  agentPageAtom,
-  agentSessionsAtom,
-} from '../../agent/renderer/state/sessions'
+import { agentIndicator, agentPageAtom, agentSessionsAtom } from '../../agent/renderer/public'
+import { AGENT_SERVICE } from './service'
+import { AGENT_PAGE, showAgentsAtom, showSessionAtom, startSessionAtom } from './state/actions'
+import { reportWatching, watchNotices } from './state/notices'
+import { AGENT_SURFACE, pageVault } from './state/page'
+import { resetTurnReviewAtom, turnReviewOpenAtom } from './state/turns'
 import { AGENT_UI_INFO } from '../info'
 import { AgentBubbles } from './AgentBubbles'
 import { AgentSurface } from './AgentSurface'
@@ -70,14 +63,19 @@ export const agentUiRenderer: RendererPlugin = {
   floating: AgentBubbles,
   overlays: [TurnReview],
   commands: COMMANDS,
-  // The page is there to land on while this runs; with it, a session the
-  // quick panel asked the main window to show opens in its chat.
+  // While this runs the page is the agent's to land on (the inbox, a
+  // schedule's run, the quick panel's "open in Holi" open sessions here), the
+  // notices watch the sessions, and main is told whose chat is showing.
   vault: (remote, store) => {
-    store.set(agentPageAtom, true)
-    const offPending = followPendingOpen(remote, store)
+    store.set(agentPageAtom, AGENT_PAGE)
+    const off = [watchNotices(remote, store), reportWatching(remote, store)]
     return () => {
-      offPending()
-      store.set(agentPageAtom, false)
+      off.forEach((undo) => undo())
+      store.set(agentPageAtom, null)
+      // What the page showed is this vault's: the next opens on its own.
+      pageVault(store)
+      store.set(resetTurnReviewAtom)
+      store.set(turnReviewOpenAtom, false)
     }
   },
   // Every "Ask" lands in a chat, so the service is the interface's.
@@ -86,6 +84,6 @@ export const agentUiRenderer: RendererPlugin = {
     items: atom((get) =>
       get(agentSessionsAtom).map((s) => ({ key: s.id, name: s.name, dot: agentIndicator(s).dot })),
     ),
-    open: atom(null, (_get, set, id: string) => void set(openSessionAtom, id)),
+    open: atom(null, (_get, set, id: string) => void set(showSessionAtom, id)),
   },
 }

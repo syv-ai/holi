@@ -5,7 +5,7 @@
  * the structured result or the text, not only from the call's state.
  */
 import { Globe } from 'lucide-react'
-import type { ToolItem } from '../../../../../agent/renderer/chat/items'
+import type { ToolItem } from '../../../../../agent/renderer/public'
 import type { ToolRenderer } from '../registry'
 import {
   argsOf,

@@ -18,9 +18,9 @@ import {
   agentNoticesAtom,
   dismissNoticeAtom,
   type AgentNotice,
-} from '../../agent/renderer/state/notices'
-import { openSessionAtom, pressAtom } from '../../agent/renderer/state/send'
-import { agentSessionsAtom } from '../../agent/renderer/state/sessions'
+} from './state/notices'
+import { showSessionAtom } from './state/actions'
+import { pressAtom, agentSessionsAtom } from '../../agent/renderer/public'
 
 const ENTER = '\r'
 const ESCAPE = '\x1b'
@@ -30,7 +30,7 @@ const PILL = 'shrink-0 text-[11px] font-medium'
 function NoticeCard({ notice }: { notice: AgentNotice }): React.JSX.Element {
   const session = useAtomValue(agentSessionsAtom).find((s) => s.id === notice.sessionId) ?? null
   const dismiss = useSetAtom(dismissNoticeAtom)
-  const openFull = useSetAtom(openSessionAtom)
+  const openFull = useSetAtom(showSessionAtom)
   const press = useSetAtom(pressAtom)
   const [hovered, setHovered] = useState(false)
   const [error, setError] = useState<string | null>(null)

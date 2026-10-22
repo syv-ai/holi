@@ -5,7 +5,7 @@
  * diff when the hunks are there.
  */
 import { FilePlus2, PencilLine } from 'lucide-react'
-import type { ToolItem } from '../../../../../agent/renderer/chat/items'
+import type { ToolItem } from '../../../../../agent/renderer/public'
 import type { ToolRenderer } from '../registry'
 import { argsOf, countLabel, dataOf, firstStr, flag, get, shortPath, str, textOf } from './coerce'
 import { Diff, diffFromPatch, diffFromStrings, type DiffModel } from './Diff'

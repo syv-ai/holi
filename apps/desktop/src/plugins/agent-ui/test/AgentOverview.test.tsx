@@ -10,26 +10,27 @@ import { act } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { Provider, createStore } from 'jotai'
 import { beforeEach, expect, test, vi } from 'vitest'
-import { agentQuestionsAtom } from '../../agent/renderer/state/questions'
-import { activeRemoteAtom, openSurfaceAtom, surfaceTabIdsAtom } from '@/plugin-api'
-import { AgentBubbles } from '../renderer/AgentBubbles'
-import { AgentOverview } from '../renderer/AgentOverview'
-import { headOf } from '../renderer/AgentFace'
-import { toChatItems } from '../../agent/renderer/chat/use-transcript'
-import { openSessionAtom, sendToAgentAtom, showAgentsAtom } from '../../agent/renderer/state/send'
 import {
-  agentPageAtom,
-  activeSessionAtom,
+  agentQuestionsAtom,
+  toChatItems,
   agentSessionsAtom,
   agentArchivedAtom,
   agentHistoryAtom,
+  type AgentSession,
+  type PastSession,
+} from '../../agent/renderer/public'
+import { showSessionAtom, sendToAgentAtom, showAgentsAtom } from '../renderer/state/actions'
+import {
+  activeSessionAtom,
   agentStackAtom,
   agentViewAtom,
   chatDraftsAtom,
   overviewSelectionAtom,
-  type AgentSession,
-  type PastSession,
-} from '../../agent/renderer/state/sessions'
+} from '../renderer/state/page'
+import { activeRemoteAtom, openSurfaceAtom, surfaceTabIdsAtom } from '@/plugin-api'
+import { AgentBubbles } from '../renderer/AgentBubbles'
+import { AgentOverview } from '../renderer/AgentOverview'
+import { headOf } from '../renderer/AgentFace'
 
 const cap = vi.hoisted(() => ({
   press: vi.fn(),
@@ -121,8 +122,6 @@ function setup(
   const store = createStore()
   current = store
   store.set(activeRemoteAtom, 'o/vault')
-  // agent-ui runs: the agents page is there to land on.
-  store.set(agentPageAtom, true)
   store.set(agentSessionsAtom, sessions)
   store.set(agentHistoryAtom, history)
   store.set(agentArchivedAtom, archived)
@@ -288,7 +287,7 @@ test('a permission prompt it cannot pin to one call offers no Allow, only the te
 
 test('a session opened from anywhere lands in its chat', async () => {
   const { store } = setup()
-  await store.set(openSessionAtom, 'b')
+  await store.set(showSessionAtom, 'b')
   expect(store.get(overviewSelectionAtom)).toBe('b')
   expect(cap.open).not.toHaveBeenCalled()
 })

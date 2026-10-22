@@ -8,7 +8,7 @@
 import { Check, MessageCircleQuestion } from 'lucide-react'
 import { Icon } from '@/primitives'
 import { cn } from '@/plugin-api'
-import type { ToolItem } from '../../../../../agent/renderer/chat/items'
+import type { ToolItem } from '../../../../../agent/renderer/public'
 import type { ToolRenderer } from '../registry'
 import { argsOf, arr, dataOf, firstStr, flag, get, isRec, recs, str, textOf } from './coerce'
 import { Caption, Chip, Stack } from './parts'

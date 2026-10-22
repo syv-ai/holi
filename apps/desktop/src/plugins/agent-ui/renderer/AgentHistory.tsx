@@ -12,16 +12,9 @@ import { useState } from 'react'
 import { Button, Dialog, Icon, IconButton, Input } from '@/primitives'
 import { AgentFace } from './AgentFace'
 import { ago } from './BubbleStack'
-import {
-  archiveSessionAtom,
-  openSessionAtom,
-  removeSessionAtom,
-} from '../../agent/renderer/state/send'
-import {
-  agentArchiveListAtom,
-  agentViewAtom,
-  type StackEntry,
-} from '../../agent/renderer/state/sessions'
+import { archiveSessionAtom, removeSessionAtom } from '../../agent/renderer/public'
+import { showSessionAtom } from './state/actions'
+import { agentArchiveListAtom, agentViewAtom, type StackEntry } from './state/page'
 
 /** How a finished chat ended, and when it began. */
 function line(entry: StackEntry, now: number): string {
@@ -37,7 +30,7 @@ function line(entry: StackEntry, now: number): string {
 export function AgentHistory(): React.JSX.Element {
   const archived = useAtomValue(agentArchiveListAtom)
   const setView = useSetAtom(agentViewAtom)
-  const openSession = useSetAtom(openSessionAtom)
+  const openSession = useSetAtom(showSessionAtom)
   const archive = useSetAtom(archiveSessionAtom)
   const remove = useSetAtom(removeSessionAtom)
   const [query, setQuery] = useState('')

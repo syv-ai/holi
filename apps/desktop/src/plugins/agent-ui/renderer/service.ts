@@ -5,8 +5,9 @@
  */
 import { atom } from 'jotai'
 import type { AgentServiceSource } from '@/plugin-api'
-import { agentSessionsAtom, askTargetsAtom, defaultAgentTargetAtom } from './state/sessions'
-import { sendToAgentAtom, startSessionAtom } from './state/send'
+import { agentSessionsAtom, askTargetsAtom } from '../../agent/renderer/public'
+import { sendToAgentAtom, startSessionAtom } from './state/actions'
+import { defaultAgentTargetAtom } from './state/page'
 
 export const AGENT_SERVICE: AgentServiceSource = {
   name: 'Claude',

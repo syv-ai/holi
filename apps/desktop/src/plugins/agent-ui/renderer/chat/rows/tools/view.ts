@@ -2,7 +2,7 @@
  * What a tool renderer adds to `ToolView` for the card to draw: nothing the
  * contract needs, so a plain `ToolView` is still a valid answer.
  */
-import type { ToolItem, ToolState } from '../../../../../agent/renderer/chat/items'
+import type { ToolItem, ToolState } from '../../../../../agent/renderer/public'
 import type { ToolView } from '../registry'
 
 export interface CardView extends ToolView {

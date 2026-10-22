@@ -22,8 +22,8 @@ import {
 } from '@/primitives'
 import { cn } from '@/plugin-api'
 import { AgentFace } from './AgentFace'
-import { agentIndicator } from '../../agent/renderer/lib/notices'
-import type { StackEntry } from '../../agent/renderer/state/sessions'
+import { agentIndicator } from '../../agent/renderer/public'
+import type { StackEntry } from './state/page'
 
 /** How many bubbles show while the stack rests. */
 export const RESTING = 3

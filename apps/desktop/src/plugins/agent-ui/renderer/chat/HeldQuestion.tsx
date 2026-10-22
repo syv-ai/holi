@@ -7,11 +7,13 @@
  */
 import { useAtomValue, useSetAtom } from 'jotai'
 import { useCallback, useMemo, useState } from 'react'
-import type { AskAnswers, PendingQuestion } from '../../../agent/shared/questions'
-import { QuestionCard } from '../../../agent/renderer/quick/QuestionCard'
-import '../../../agent/renderer/quick/quick.css'
-import { questionForAtom } from '../../../agent/renderer/state/questions'
-import { answerHeldAtom } from '../../../agent/renderer/state/send'
+import {
+  type AskAnswers,
+  type PendingQuestion,
+  QuestionCard,
+  questionForAtom,
+  answerHeldAtom,
+} from '../../../agent/renderer/public'
 import { cn } from '@/plugin-api'
 
 /** The question Holi holds for a session, oldest first, or null. */

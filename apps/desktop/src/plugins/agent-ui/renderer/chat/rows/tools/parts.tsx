@@ -13,7 +13,7 @@ import { Check, Copy, ImageIcon } from 'lucide-react'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Button, Icon, IconButton } from '@/primitives'
 import { cn } from '@/plugin-api'
-import type { ToolItem } from '../../../../../agent/renderer/chat/items'
+import type { ToolItem } from '../../../../../agent/renderer/public'
 import { ChatMarkdown } from '../../ChatMarkdown'
 import { bytesLabel, isRec, isWebUrl, textOf, unwrap } from './coerce'
 

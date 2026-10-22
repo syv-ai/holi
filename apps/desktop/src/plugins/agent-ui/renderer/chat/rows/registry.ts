@@ -6,7 +6,7 @@
  */
 import type { LucideIcon } from 'lucide-react'
 import type { ReactNode } from 'react'
-import type { ChatContext, ToolItem } from '../../../../agent/renderer/chat/items'
+import type { ChatContext, ToolItem } from '../../../../agent/renderer/public'
 
 /** What a tool renderer decides about its card; `ToolCard` draws the shell
  *  (the status dot, the chevron, the open/close motion). */

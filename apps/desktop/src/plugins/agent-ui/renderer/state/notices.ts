@@ -9,17 +9,15 @@
  * you needs you. Nothing is inferred from a terminal.
  */
 import { atom } from 'jotai'
-import { agentCap } from '../agent-cap'
-import { openCalls } from '../../shared/open-calls'
+import {
+  agentCap,
+  agentSessionsAtom,
+  openCalls,
+  type AgentSession,
+} from '../../../agent/renderer/public'
 import { lastAnswer } from '../lib/preview'
 import { surfaceActiveAtom, type PluginStore } from '@/plugin-api'
-import {
-  AGENT_SURFACE,
-  agentSessionsAtom,
-  agentViewAtom,
-  shownEntryAtom,
-  type AgentSession,
-} from './sessions'
+import { AGENT_SURFACE, agentViewAtom, shownEntryAtom } from './page'
 
 export interface AgentNotice {
   /** One per session and kind: a newer one replaces it. */

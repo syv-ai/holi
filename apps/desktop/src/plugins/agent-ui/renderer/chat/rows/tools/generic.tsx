@@ -7,7 +7,7 @@
  * is itself written not to throw.
  */
 import { Wrench } from 'lucide-react'
-import type { ToolItem } from '../../../../../agent/renderer/chat/items'
+import type { ToolItem } from '../../../../../agent/renderer/public'
 import {
   argsOf,
   dataOf,

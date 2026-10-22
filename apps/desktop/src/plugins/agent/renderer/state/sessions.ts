@@ -1,27 +1,29 @@
-import { atom } from 'jotai'
+import { atom, type WritableAtom } from 'jotai'
 import { agentCap } from '../agent-cap'
-import type { Attachment } from '../chat/attachments'
 import { sessionsWorthAsking } from '../lib/notices'
 import { receivePtyData } from '../lib/session-terminals'
 import { activeRemoteAtom, type PluginEventHandler, type PluginStore } from '@/plugin-api'
 import type { PendingQuestion } from '../../shared/questions'
 import { agentQuestionsAtom, pendingOpenAtom } from './questions'
-import { resetTurnReviewAtom, turnReviewOpenAtom } from './turns'
+
+/** What an action answers: done, or why not, in words the caller can print. */
+export type AgentResult = { ok: true } | { ok: false; message: string }
 
 /**
- * The surface the agents are: one page, the chat of one session with every
- * session, finished ones included, as a stack of bubbles beside it. A terminal
- * onto Claude Code stays behind it, never shown unless a dialog needs one,
- * because what is written in the chat is typed into it.
+ * The page a session's chat is shown on, as whichever plugin draws one
+ * provides it: today `agent-ui`, which fills `agentPageAtom` while it runs.
+ * `open` brings a session's chat forward, from the inbox, a schedule's run or
+ * the quick panel's "open in Holi".
  */
-export const AGENT_SURFACE = 'agent'
+export interface AgentPage {
+  open: WritableAtom<null, [id: string], Promise<AgentResult>>
+}
 
 /**
- * Whether the agents page is there to land on: true while the `agent-ui`
- * plugin runs in the open vault, which sets it. Without it a chat has nowhere
- * to show, so nothing here starts a session or writes a draft for one.
+ * The page there is to land on, or null while no plugin draws one. The agent
+ * runs its sessions either way; it only cannot show one.
  */
-export const agentPageAtom = atom(false)
+export const agentPageAtom = atom<AgentPage | null>(null)
 
 /** What a session is doing. Claude Code's own answer, read by main. */
 export type SessionState = 'needs-you' | 'working' | 'idle'
@@ -91,80 +93,6 @@ export const agentHistoryAtom = atom<PastSession[]>([])
 /** The chats put in the archive, by job id: out of the stack, in the history. */
 export const agentArchivedAtom = atom<string[]>([])
 
-/** One session in the stack: a live one, or a finished one. */
-export type StackEntry =
-  | { kind: 'live'; id: string; name: string; startedAt: number; session: AgentSession }
-  | { kind: 'past'; id: string; name: string; startedAt: number; session: PastSession }
-
-/**
- * Every session the agent has had that is not archived, the most recent
- * first: what the stack of bubbles shows, its top the one started last. One that has no start time
- * (Claude Code did not say) sorts as the oldest. Ties keep listing order, live
- * before finished, so the order never shuffles between reads.
- */
-const allEntriesAtom = atom((get): StackEntry[] => {
-  const live = get(agentSessionsAtom).map((session): StackEntry => ({
-    kind: 'live',
-    id: session.id,
-    name: session.name,
-    startedAt: session.startedAt ?? 0,
-    session,
-  }))
-  const past = get(agentHistoryAtom).map((session): StackEntry => ({
-    kind: 'past',
-    id: session.id,
-    name: session.name,
-    startedAt: session.startedAt ?? 0,
-    session,
-  }))
-  return [...live, ...past].sort((x, y) => y.startedAt - x.startedAt)
-})
-
-export const agentStackAtom = atom((get): StackEntry[] => {
-  const archived = new Set(get(agentArchivedAtom))
-  return get(allEntriesAtom).filter((e) => !archived.has(e.id))
-})
-
-/** The archived chats, the most recent first: the history page's list. */
-export const agentArchiveListAtom = atom((get): StackEntry[] => {
-  const archived = new Set(get(agentArchivedAtom))
-  return get(allEntriesAtom).filter((e) => archived.has(e.id))
-})
-
-/** What the agents page shows: a chat, or the history of archived chats. */
-export const agentViewAtom = atom<'chat' | 'history'>('chat')
-
-/** The session whose chat the person opened, by job id. Null is none opened:
- *  the page then shows the most recent. */
-export const overviewSelectionAtom = atom<string | null>(null)
-
-/** The session the page shows: the one opened if it is still there, else the
- *  most recent, else none. */
-export const shownEntryAtom = atom((get): StackEntry | null => {
-  const stack = get(agentStackAtom)
-  const picked = get(overviewSelectionAtom)
-  // One opened from the history is shown though it is not in the stack.
-  return get(allEntriesAtom).find((e) => e.id === picked) ?? stack[0] ?? null
-})
-
-/** What is written and not yet sent in each session's chat, by job id: an
- *  ask lands here, as it lands unsent in a terminal's own box. */
-export const chatDraftsAtom = atom<Readonly<Record<string, string>>>({})
-
-/** The files attached to each session's unsent message, by job id: the draft
- *  names each by a marker, and keeps its place if the chat is left and come
- *  back to. */
-export const chatAttachmentsAtom = atom<Readonly<Record<string, readonly Attachment[]>>>({})
-
-/**
- * The session the app is on: the one whose chat the page shows, while it is
- * live. Null when none is, or the one shown has finished.
- */
-export const activeSessionAtom = atom<AgentSession | null>((get) => {
-  const shown = get(shownEntryAtom)
-  return shown?.kind === 'live' ? shown.session : null
-})
-
 /** Claude Code's name for an unnamed session, and Holi's for one. */
 export const NEW_SESSION = 'New session'
 
@@ -182,17 +110,6 @@ export const askTargetsAtom = atom((get) =>
     .filter((s) => s.state !== 'needs-you')
     .map((s) => ({ id: s.id, name: s.name })),
 )
-
-/**
- * The target an ask goes to when nobody picked one: the current session, unless
- * there is none or it is waiting on a question of its own, in which case a new
- * one.
- */
-export const defaultAgentTargetAtom = atom<AgentTarget>((get) => {
-  const active = get(activeSessionAtom)
-  if (active === null || active.state === 'needs-you') return 'new'
-  return active.id
-})
 
 /** What a terminal is opened at before any tab has been measured. xterm's own
  *  native default, so the first paint is never a resize-to-catch-up. */
@@ -259,7 +176,7 @@ export const agentEvents: Readonly<Record<string, PluginEventHandler>> = {
     }
   },
   // The quick panel's ⏎ on a finished agent: its session, in the main window.
-  // Opened by `agentVault` once its vault is the one showing.
+  // Opened by `followPendingOpen` once its vault is the one showing.
   'open-session': ({ remote, payload }, store) => {
     const id = (payload as { id?: unknown } | null)?.id
     if (typeof id === 'string') store.set(pendingOpenAtom, { remote, id })
@@ -268,8 +185,8 @@ export const agentEvents: Readonly<Record<string, PluginEventHandler>> = {
 
 /**
  * The agent while `remote` is the open vault: fill the session, history and
- * terminal lists (the events keep them in step after that), and clear them and
- * the turn review on the way out.
+ * terminal lists (the events keep them in step after that), and clear them on
+ * the way out.
  *
  * Asked fresh for every vault, so a renderer reload pulls the lists again.
  */
@@ -306,16 +223,11 @@ export function agentVault(remote: string, store: PluginStore): () => void {
 
   return () => {
     store.set(agentQuestionsAtom, [])
-    // The lists, the open chat and the turn record are per vault: left as they
-    // are, the next vault would show this one's sessions until its own answer
-    // came, and the review would ask its git for a range it has never heard of.
+    // The lists are per vault: left as they are, the next vault would show
+    // this one's sessions until its own answer came.
     store.set(agentSessionsAtom, [])
     store.set(agentHistoryAtom, [])
     store.set(agentArchivedAtom, [])
-    store.set(agentViewAtom, 'chat')
     store.set(agentTerminalsAtom, [])
-    store.set(overviewSelectionAtom, null)
-    store.set(resetTurnReviewAtom)
-    store.set(turnReviewOpenAtom, false)
   }
 }

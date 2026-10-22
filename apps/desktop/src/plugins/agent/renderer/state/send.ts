@@ -1,50 +1,26 @@
 /**
- * What you *do* to the vault's assistant: open the agents, open a session,
- * start one, send one an ask, stop, restart or copy it.
+ * What you *do* to the vault's sessions: start one, copy, stop or restart it,
+ * archive or delete one, write to it, press keys in it, answer what it asks,
+ * and open its chat on whichever page draws one (`agentPageAtom`).
  *
- * Separate from `state/agent.ts` (what the assistant *is*) because these need
- * the terminal geometry and the workspace, and a third module keeps
- * `agent.ts` free of both.
- *
- * **Every session lands through `land`**: the page comes forward showing its
- * chat.
+ * Separate from `state/sessions.ts` (what the sessions *are*) because these
+ * need the terminal geometry and the open vault. Where a chat lands and what
+ * the page shows are the page's own (`agent-ui`).
  */
-import { atom, type Getter, type Setter } from 'jotai'
+import { atom, type Getter } from 'jotai'
 import { agentCap } from '../agent-cap'
 import type { AskAnswers } from '../../shared/questions'
-import {
-  AGENT_SURFACE,
-  agentGeometryAtom,
-  agentPageAtom,
-  agentSessionsAtom,
-  agentTerminalsAtom,
-  chatDraftsAtom,
-  agentViewAtom,
-  overviewSelectionAtom,
-  type AgentTarget,
-} from './sessions'
+import { agentGeometryAtom, agentPageAtom, agentTerminalsAtom, type AgentResult } from './sessions'
 import { pendingOpenAtom } from './questions'
-import { activeRemoteAtom, openSurfaceAtom, type PluginStore } from '@/plugin-api'
-import { agentNoticesAtom, quickChatAtom } from './notices'
+import { activeRemoteAtom, type PluginStore } from '@/plugin-api'
 
-/** What an action answers: done, or why not, in words the caller can print. */
-export type AgentResult = { ok: true } | { ok: false; message: string }
-
-/** Bring the page forward, showing one session's chat. */
-function land(set: Setter, sessionId: string): void {
-  set(overviewSelectionAtom, sessionId)
-  set(agentViewAtom, 'chat')
-  // Read in full now: nothing left to announce, and no smaller chat to keep.
-  set(agentNoticesAtom, (all) => all.filter((n) => n.sessionId !== sessionId))
-  set(quickChatAtom, null)
-  set(openSurfaceAtom, AGENT_SURFACE)
-}
+export type { AgentResult } from './sessions'
 
 const geometry = (get: Getter) => get(agentGeometryAtom)
 
 const NO_VAULT = { ok: false as const, message: 'No vault is open.' }
 
-/** The agents page is off (`agentPageAtom`): a chat has nowhere to show. */
+/** No page draws a chat (`agentPageAtom`): there is nowhere to show one. */
 export const NO_AGENTS_PAGE = {
   ok: false as const,
   message:
@@ -60,20 +36,37 @@ function inVault<R>(
   return remote === null ? Promise.resolve(NO_VAULT) : call(remote)
 }
 
+/** A session started or copied: its job id, or why not. */
+export type Started = { ok: true; sessionId: string } | { ok: false; message: string }
+
 /**
- * ⌘J and the agent icon: the agents page, as it was left.
+ * One session, from the inbox, a schedule's run or the palette: its chat, on
+ * the page that draws one, or refused when none does.
  */
-export const showAgentsAtom = atom(null, (get, set): Promise<AgentResult> => {
-  if (!get(agentPageAtom)) return Promise.resolve(NO_AGENTS_PAGE)
-  set(openSurfaceAtom, AGENT_SURFACE)
-  return Promise.resolve({ ok: true })
+export const openSessionAtom = atom(null, (get, set, id: string): Promise<AgentResult> => {
+  const page = get(agentPageAtom)
+  return page === null ? Promise.resolve(NO_AGENTS_PAGE) : set(page.open, id)
 })
 
-/** The history of archived chats, on the agents page. */
-export const showHistoryAtom = atom(null, (_get, set): void => {
-  set(agentViewAtom, 'history')
-  set(openSurfaceAtom, AGENT_SURFACE)
-})
+/**
+ * A new background session. With a `prompt` that prompt is its first turn;
+ * without one it waits for yours. Where it is shown is the caller's.
+ */
+export const startAtom = atom(
+  null,
+  (get, _set, opts: { name?: string; prompt?: string } = {}): Promise<Started> =>
+    inVault(get, (remote) => agentCap.start(remote, { ...opts, ...geometry(get) })).catch(
+      (err: unknown) => ({ ok: false as const, message: failure(err) }),
+    ),
+)
+
+/** Copy a session's conversation into a background session of its own. Main
+ *  reads Claude Code's conversation id at the moment of the fork. */
+export const duplicateAtom = atom(null, (get, _set, id: string): Promise<Started> =>
+  inVault(get, (remote) => agentCap.duplicate(remote, { id, ...geometry(get) })).catch(
+    (err: unknown) => ({ ok: false as const, message: failure(err) }),
+  ),
+)
 
 /** Put a chat in the archive, or take it out. A live session is stopped by
  *  the caller first: archiving never leaves one running out of sight. */
@@ -94,90 +87,6 @@ export const removeSessionAtom = atom(null, (get, _set, id: string): Promise<Age
   ),
 )
 
-/**
- * One session, from a bubble, the palette or the history: its chat
- * on the agents page. A chat is read from the transcript and needs no
- * terminal, so neither a live session nor a finished one opens anything here.
- */
-export const openSessionAtom = atom(null, (get, set, id: string): Promise<AgentResult> => {
-  if (!get(agentPageAtom)) return Promise.resolve(NO_AGENTS_PAGE)
-  land(set, id)
-  return Promise.resolve({ ok: true })
-})
-
-/** Why the last session could not start, for the agents page to say. */
-export const startErrorAtom = atom<string | null>(null)
-
-/**
- * A new background session and its window. With a `prompt` that prompt is its
- * first turn (reconcile, a stuck push); without one it waits for yours. With
- * `quick` it opens as the smaller chat over the current page instead of
- * bringing the agents page forward.
- */
-export const startSessionAtom = atom(
-  null,
-  async (
-    get,
-    set,
-    { quick = false, ...opts }: { name?: string; prompt?: string; quick?: boolean } = {},
-  ): Promise<AgentResult> => {
-    if (!get(agentPageAtom)) return NO_AGENTS_PAGE
-    set(startErrorAtom, null)
-    const res = await inVault(get, (remote) =>
-      agentCap.start(remote, { ...opts, ...geometry(get) }),
-    ).catch((err: unknown) => ({ ok: false as const, message: failure(err) }))
-    if (!res.ok) {
-      // Said where the person is looking: the agents page, which shows it.
-      set(startErrorAtom, res.message)
-      set(agentViewAtom, 'chat')
-      set(openSurfaceAtom, AGENT_SURFACE)
-      return res
-    }
-    if (quick) set(quickChatAtom, res.sessionId)
-    else land(set, res.sessionId)
-    return { ok: true }
-  },
-)
-
-/**
- * Send text to a session, live or new. It lands in that session's chat as an
- * unsent **draft**, and its chat comes forward.
- *
- * One rule for every sender: nothing Holi writes can append a submit to a
- * half-typed draft. A `'new'` target starts a session named from the ask's
- * first line.
- *
- * A target that ended between being picked and being sent to is **refused**,
- * not silently dropped, so the caller can keep the text.
- */
-export const sendToAgentAtom = atom(
-  null,
-  async (get, set, args: { text: string; target: AgentTarget }): Promise<AgentResult> => {
-    // Refused before anything starts: a session started for a draft nobody
-    // can see would only be a blank row in Claude Code's list.
-    if (!get(agentPageAtom)) return NO_AGENTS_PAGE
-    let id = args.target
-    if (id === 'new') {
-      // The CLI makes a name of the text's first line.
-      const started = await inVault(get, (remote) =>
-        agentCap.start(remote, { name: args.text, ...geometry(get) }),
-      )
-      if (!started.ok) return started
-      id = started.sessionId
-    } else if (!get(agentSessionsAtom).some((s) => s.id === id)) {
-      return { ok: false, message: 'That session has ended. Pick another one.' }
-    }
-    const drafts = get(chatDraftsAtom)
-    const before = drafts[id] ?? ''
-    set(chatDraftsAtom, {
-      ...drafts,
-      [id]: before === '' ? args.text : `${before}\n\n${args.text}`,
-    })
-    land(set, id)
-    return { ok: true }
-  },
-)
-
 /** Stop a session: `claude stop`. Its conversation stays in the history. */
 export const stopSessionAtom = atom(null, (get, _set, id: string) =>
   inVault(get, (remote) => agentCap.stop(remote, { id })),
@@ -187,19 +96,6 @@ export const stopSessionAtom = atom(null, (get, _set, id: string) =>
  *  changed settings and `AGENTS.md`. */
 export const respawnSessionAtom = atom(null, (get, _set, id: string) =>
   inVault(get, (remote) => agentCap.respawn(remote, { id })),
-)
-
-/** Copy a session's conversation into a background session of its own, and
- *  open it. Main reads Claude Code's conversation id at the moment of the fork. */
-export const duplicateSessionAtom = atom(
-  null,
-  async (get, set, id: string): Promise<AgentResult> => {
-    if (!get(agentPageAtom)) return NO_AGENTS_PAGE
-    const res = await inVault(get, (remote) => agentCap.duplicate(remote, { id, ...geometry(get) }))
-    if (!res.ok) return res
-    land(set, res.sessionId)
-    return { ok: true }
-  },
 )
 
 /** A message from a session's chat: sent as a turn. */
@@ -299,17 +195,22 @@ export const answerHeldAtom = atom(
 
 /**
  * While `remote` is the open vault: open the session the quick panel asked
- * for (its ⏎ on a finished agent), now or as soon as it asks. A main window
- * opened for it hears the request before its vault is open, so the request
- * waits here rather than in the event.
+ * for (its ⏎ on a finished agent), now or as soon as it asks and a page is
+ * there to show it. A main window opened for it hears the request before its
+ * vault is open, so the request waits here rather than in the event.
  */
 export function followPendingOpen(remote: string, store: PluginStore): () => void {
   const openPending = (): void => {
     const pending = store.get(pendingOpenAtom)
-    if (pending === null || pending.remote !== remote) return
+    if (pending === null || pending.remote !== remote || store.get(agentPageAtom) === null) return
     store.set(pendingOpenAtom, null)
     void store.set(openSessionAtom, pending.id)
   }
   openPending()
-  return store.sub(pendingOpenAtom, openPending)
+  const offPending = store.sub(pendingOpenAtom, openPending)
+  const offPage = store.sub(agentPageAtom, openPending)
+  return () => {
+    offPending()
+    offPage()
+  }
 }

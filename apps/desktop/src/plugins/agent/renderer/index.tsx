@@ -4,7 +4,8 @@
  * vault asks while a session is busy, and the schedules in settings. What is
  * drawn of the sessions is the `agent-ui` plugin's, and so is the agent
  * service every "Ask" goes through: an ask lands in a chat, which only it can
- * show. The inbox
+ * show. A plugin that draws the agent imports `public.ts` alone, and fills
+ * `agentPageAtom` so the agent's own surfaces can open a session. The inbox
  * (docs/features/agent-inbox.md) is the surface `inbox`, with a nav item that
  * counts what is unread.
  *
@@ -19,7 +20,7 @@ import { AGENT_INFO } from '../info'
 import { InboxView } from './InboxView'
 import { SchedulesSection, schedulesEpochAtom } from './SchedulesSection'
 import { agentEvents, agentLeaveGuardAtom, agentVault } from './state/sessions'
-import { reportWatching, watchNotices } from './state/notices'
+import { followPendingOpen } from './state/send'
 import { answerDockKey } from './quick/keys'
 import { QuickDock } from './quick/QuickDock'
 import { QuickPanel } from './quick/QuickPanel'
@@ -81,8 +82,7 @@ export const agentRenderer: RendererPlugin = {
   vault: (remote, store) => {
     const off = [
       agentVault(remote, store),
-      watchNotices(remote, store),
-      reportWatching(remote, store),
+      followPendingOpen(remote, store),
       inboxVault(remote, store),
       answerDockKey(remote, store),
     ]

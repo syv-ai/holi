@@ -15,16 +15,16 @@ import { ArrowLeft, HelpCircle, ShieldCheck } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { Button, Icon, Input } from '@/primitives'
 import { cn } from '@/plugin-api'
-import type { PendingQuestion } from '../../../agent/shared/questions'
-import { HeldQuestion } from './HeldQuestion'
 import {
+  type PendingQuestion,
   EMPTY_ANSWER,
   isAnswered,
   type OpenCall,
   keysForAll,
   type AskAnswer,
   type AskQuestion,
-} from '../../../agent/renderer/lib/ask'
+} from '../../../agent/renderer/public'
+import { HeldQuestion } from './HeldQuestion'
 
 const ENTER = '\r'
 const ESCAPE = '\x1b'

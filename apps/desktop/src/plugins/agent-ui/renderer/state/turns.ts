@@ -9,7 +9,7 @@
  * shapes and the renderer does not import from main.
  */
 import { atom } from 'jotai'
-import { agentCap } from '../agent-cap'
+import { agentCap } from '../../../agent/renderer/public'
 import { activeRemoteAtom } from '@/plugin-api'
 
 /** One recorded turn: two shas and when it ended. */

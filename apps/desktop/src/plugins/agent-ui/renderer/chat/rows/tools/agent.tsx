@@ -10,7 +10,7 @@
 import { Bot, MessageSquare, Reply } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { Button } from '@/primitives'
-import type { ChatContext, ChatItem, ToolItem } from '../../../../../agent/renderer/chat/items'
+import type { ChatContext, ChatItem, ToolItem } from '../../../../../agent/renderer/public'
 import { ItemRow } from '../ItemRow'
 import type { ToolRenderer } from '../registry'
 import {
