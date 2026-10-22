@@ -1629,6 +1629,8 @@ describe('vaults.create', () => {
     // The new repo is stamped a vault, so it reads as one and passes the guard.
     expect(markVault).toHaveBeenCalledWith('syv-ai/fresh')
     expect(snap.docs.map((d) => d.path).sort()).toContain('AGENTS.md')
+    // The README is written from this vault's own answer, in the first commit.
+    expect(snap.docs.map((d) => d.path)).toContain('README.md')
     // Seeded, committed AND pushed, so the vault exists for everyone else.
     // The push is automatic (open-drain + the explicit kick in vaults.create),
     // and can land a moment after create() returns — so poll origin/main rather

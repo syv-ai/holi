@@ -128,7 +128,7 @@ export function OnboardingRitual({ mode, onDismiss, dryRun = false }: Props) {
     if (s.submitting || !canAdvance(s)) return
     dispatch({ type: 'submitStart' })
     try {
-      setCreatedRemote(await actions.create({ name: slug, owner: s.owner }))
+      setCreatedRemote(await actions.create({ name: slug, owner: s.owner, purpose: s.purpose }))
       runExit('naming')
       dispatch({ type: 'created' })
     } catch (err) {
@@ -243,11 +243,13 @@ export function OnboardingRitual({ mode, onDismiss, dryRun = false }: Props) {
               <NamingAct
                 name={s.name}
                 owner={s.owner}
+                purpose={s.purpose}
                 slug={slug}
                 error={s.error}
                 active={naming}
                 onName={(name) => dispatch({ type: 'setName', name })}
                 onOwner={(owner) => dispatch({ type: 'setOwner', owner })}
+                onPurpose={(purpose) => dispatch({ type: 'setPurpose', purpose })}
                 onJoin={() => dispatch({ type: 'toJoin' })}
               />
             ) : (

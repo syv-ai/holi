@@ -6,7 +6,7 @@
  * with no server, a check running on the machine of the person it restricts is
  * theatre. GitHub decides what leaves, at push time (docs/features/auth.md).
  */
-import { readFile, rm, stat } from 'node:fs/promises'
+import { readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { initTRPC, TRPCError } from '@trpc/server'
 import { exactPath } from '@holi/shared/path-safety-node'
@@ -60,6 +60,7 @@ import {
   withFileLock,
   writeAtomic,
 } from './vault/vault-files'
+import { vaultReadme } from './vault/readme'
 import { renameNote } from './vault/rename'
 import {
   addReply,
@@ -426,7 +427,7 @@ export function createRouter(deps: RouterDeps) {
   async function addVault(
     remote: string,
     url: string | undefined,
-    opts: { requireVault?: boolean } = {},
+    opts: { requireVault?: boolean; readme?: string } = {},
   ): Promise<VaultSnapshot> {
     const { repo, outcome } = await ensureClone({
       root: deps.vaultRoot,
@@ -448,6 +449,16 @@ export function createRouter(deps: RouterDeps) {
       )
     }
     await deps.seed(repo.root)
+    // A new vault's README, beside the seed so it lands in the first commit.
+    // Not a once-seed file: it is written from this vault's own answer. Never
+    // over one that is already there (`wx`).
+    if (opts.readme !== undefined) {
+      await writeFile(join(repo.root, 'README.md'), opts.readme, { flag: 'wx' }).catch(
+        (err: NodeJS.ErrnoException) => {
+          if (err.code !== 'EEXIST') throw err
+        },
+      )
+    }
     await deps.registry.add({
       remote,
       path: repo.root,
@@ -737,13 +748,22 @@ export function createRouter(deps: RouterDeps) {
       ),
 
     create: t.procedure
-      .input(fields({ name: 'string', owner: 'string?', url: 'string?' }))
-      // A private repo, seeded, committed, pushed, opened.
+      .input(fields({ name: 'string', owner: 'string?', url: 'string?', purpose: 'string?' }))
+      // A private repo, seeded, committed, pushed, opened. `purpose` is the
+      // answer to "What is this vault for?": the README's paragraph and the
+      // repo's description on GitHub.
       .mutation(async ({ input }): Promise<VaultSnapshot> => {
+        const purpose = input.purpose?.trim() ?? ''
         const repo = await gh(() =>
-          deps.session.api.createRepo({ name: input.name, owner: repoOwner(input.owner) }),
+          deps.session.api.createRepo({
+            name: input.name,
+            owner: repoOwner(input.owner),
+            ...(purpose === '' ? {} : { description: purpose }),
+          }),
         )
-        const snapshot = await addVault(repo.remote, input.url)
+        const snapshot = await addVault(repo.remote, input.url, {
+          readme: vaultReadme(repoName(repo.remote), purpose),
+        })
         // The seed is the repo's first commit, and it has to leave the machine:
         // a "vault" that exists only locally is not one anybody can be invited
         // to. A brand-new repo should not wait out the coalesce timer to become

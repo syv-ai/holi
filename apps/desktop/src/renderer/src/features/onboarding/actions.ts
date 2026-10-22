@@ -14,8 +14,9 @@ import { trpc } from '@/lib/trpc'
 import { activeRemoteAtom, addVaultAtom, createVaultAtom, loadVaultsAtom } from '@/state/vaults'
 
 export interface RitualActions {
-  /** Create, seed, commit and push the repo; resolves to its `owner/name`. */
-  create(input: { name: string; owner: string }): Promise<string>
+  /** Create, seed, commit and push the repo, with a README from `purpose`;
+   *  resolves to its `owner/name`. */
+  create(input: { name: string; owner: string; purpose: string }): Promise<string>
   /** Clone a vault a teammate has given you access to, and open it. */
   join(remote: string): Promise<void>
   /** Merge the plugins and settings answers over the new vault's seed. */
