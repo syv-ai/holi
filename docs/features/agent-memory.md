@@ -63,6 +63,15 @@ port: local reads and one `git log` with a 2 s timeout. Its files are read in so
 prints no clock time, so its text changes only when memory changes, a memory expires, or the day
 turns.
 
+**The overview names the vault's community plugins too**, in one line near its heading: each pin in
+`.holi/plugins/`, whether the vault turns it on (`.holi/settings/plugins.yaml`, which
+`plugins.local.yaml` can only turn off) and, when on, the commands it gives the agent, such as
+`Community plugins: dash (on, commands: dashctl), notes (off in this vault)`. So a question about a
+plugin's tool leads the agent to the plugin, not into another app's files. It reads only vault
+files, so "on" is what the vault says, not whether this machine has the plugin set up. It reads the
+`plugins:` block without a YAML parser, in the shape Holi writes it. It prints with no memory at
+all, and nothing when the vault pins no plugin. See [community-plugins.md](community-plugins.md).
+
 **A lint lists what looks wrong, as proposals.** `.claude/skills/memory/lint.mjs` reads every
 memory file, personal ones included, and prints findings of six kinds: `frontmatter` (none, no
 `type` or `description`, an unclosed fence, or a value with an unquoted `: `, which is invalid YAML

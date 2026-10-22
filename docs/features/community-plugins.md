@@ -152,7 +152,12 @@ release, asks in the consent dialog, sets it up and, where the vault pins the pl
 release, so its members are offered it in turn.
 
 **The vault notice.** A vault that turns on a plugin this machine cannot run says so under the file
-tree, with the one next step (install the pinned version, or allow and set up).
+tree, with the one next step (install the pinned version, or allow and set up). A running plugin
+whose readiness check fails is there too, with its hint and **Check again**.
+
+**The agent knows the plugins.** The session overview the agent gets at each start names every
+plugin the vault pins, whether the vault turns it on, and the commands it gives the agent
+([agent-memory.md](agent-memory.md)), so it finds the plugin before it goes looking elsewhere.
 
 ## Rules
 
@@ -200,7 +205,7 @@ tree, with the one next step (install the pinned version, or allow and set up).
 - `packages/shared/src/community-plugin.ts`: the manifest and pin grammar, `opensPath`,
   `pluginServerOrigin`, `PLUGIN_COMMANDS_DIR`.
 - `apps/desktop/src/plugins/community/main/`: the install store, fetch, the topic search, setup,
-  consent, the supervisor, the agent's commands (`commands.ts`) and the `community.*` capabilities.
+  consent, the readiness checks (`checks.ts`), the supervisor, the agent's commands (`commands.ts`) and the `community.*` capabilities.
 - `apps/desktop/src/plugins/community/renderer/`: the tab (`PluginFrame`), the settings section, the
   consent dialog and the vault notice.
 - `apps/desktop/src/main/window-guard.ts`: `originFrameExit`.
