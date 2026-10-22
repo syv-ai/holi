@@ -101,7 +101,7 @@ export function SiteHeader({
               <div key={tab.id} className="group/tab relative flex h-full">
                 <TabsTrigger
                   value={tab.id}
-                  className="hover:bg-foreground/5 group-data-[variant=line]/tabs-list:data-active:bg-foreground/8 dark:group-data-[variant=line]/tabs-list:data-active:bg-foreground/8 w-56 flex-none justify-start gap-2 rounded-lg px-3 pe-8 after:hidden"
+                  className="hover:bg-foreground/5 group-data-[variant=line]/tabs-list:data-active:bg-foreground/8 dark:group-data-[variant=line]/tabs-list:data-active:bg-foreground/8 w-56 flex-none justify-start gap-2 rounded-md px-3 pe-8 after:hidden"
                 >
                   <MessageSquareIcon aria-hidden="true" />
                   <span className="truncate">{tab.title}</span>
