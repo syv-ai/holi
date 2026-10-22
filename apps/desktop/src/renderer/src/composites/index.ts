@@ -35,3 +35,4 @@ export {
   SettingsRow,
   headingId,
 } from './settings-ui'
+export { MarkdownText } from './MarkdownText'

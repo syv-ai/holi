@@ -169,7 +169,7 @@ export const addVaultAtom = atom(null, async (_get, set, remote: string) => {
  */
 export const createVaultAtom = atom(
   null,
-  async (_get, set, input: { name: string; owner: string }): Promise<string> => {
+  async (_get, set, input: { name: string; owner: string; purpose?: string }): Promise<string> => {
     await trpc.vaults.create.mutate(input)
     return `${input.owner}/${input.name}`
   },

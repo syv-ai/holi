@@ -60,8 +60,16 @@ rewritten when a commit touches memory. Over
 the cap it drops descriptions first and keeps every title, then truncates with a pointer to the
 index. With memory files but no index yet, it says so and points at the directory. It needs no Holi
 port: local reads and one `git log` with a 2 s timeout. Its files are read in sorted order and it
-prints no clock time, so its text changes only when memory changes, a memory expires, or the day
-turns.
+prints no clock time, so its text changes only when memory or the README changes, a memory
+expires, or the day turns.
+
+**The overview opens with the vault's `README.md`**: its first 15 lines, leading blank lines
+skipped, under a budget of its own of 1,200 characters, with a line saying where the rest is when it
+cuts. The README says what the vault is for, so every session starts knowing that without working it
+out from folder names. The budget is separate from the memory's cap, so a long README never pushes a
+memory title out. With no README it prints one line saying so, and the agent can offer to write one.
+This part prints even when the vault has no memory. A new vault gets its README from the one
+question the [onboarding](onboarding.md) naming step asks.
 
 **The overview names the vault's community plugins too**, in one line near its heading: each pin in
 `.holi/plugins/`, whether the vault turns it on in `.holi/settings/plugins.yaml` and, when on, the
