@@ -45,7 +45,13 @@
   )
 
   with-brand[
-    #outline(title: [Indhold], depth: 2)
+    // Flush left whether or not the note has a level-1 title, with the
+    // section numbers in a column of their own so "10." lines up with "9.".
+    #show outline.entry: it => link(
+      it.element.location(),
+      it.indented(if it.level == 2 { box(width: 1.6em, it.prefix()) }, it.inner(), gap: 0pt),
+    )
+    #outline(title: [Indhold], depth: 2, indent: 0pt)
     #v(0.6cm)
     #render-body(notePath, figures: (:))
   ]

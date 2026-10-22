@@ -53,8 +53,9 @@
   // Clause paragraphs ("5.1 ...") arrive as blockquotes: plain indent, no bar.
   show quote.where(block: true): it => pad(left: 0.7em, it.body)
 
-  set heading(numbering: none)
-  let seccount = counter("sektion")
+  // Only level-2 headings are numbered ("1.", "2.", ...). Real heading
+  // numbering, not a counter of its own, so the numbers reach `outline()`.
+  set heading(numbering: (..n) => if n.pos().len() == 2 { str(n.pos().at(1)) + "." })
   // Level 1 = document title.
   show heading.where(level: 1): it => {
     set text(size: 28pt, weight: 800, fill: ink)
@@ -63,11 +64,10 @@
   }
   // Level 2 = numbered sections (1., 2., ...).
   show heading.where(level: 2): it => {
-    seccount.step()
     set text(size: 22pt, weight: 800, fill: ink)
     set par(justify: false, leading: 0.3em)
     block(above: 1.5em, below: 1.0em)[
-      #context seccount.display("1"). #h(0.3em) #it.body
+      #counter(heading).display(it.numbering) #h(0.3em) #it.body
     ]
   }
   // Level 3 = subheadings.
