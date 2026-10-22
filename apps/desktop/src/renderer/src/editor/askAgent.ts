@@ -19,6 +19,7 @@ import {
   type EditorState,
   type Extension,
 } from '@codemirror/state'
+import { searchPanelOpen } from '@codemirror/search'
 import { showTooltip, type EditorView, type Tooltip, type TooltipView } from '@codemirror/view'
 import type { LineRange } from '@holi/shared'
 import { motionDurationMs, prefersReducedMotion } from '@/lib/motion'
@@ -372,6 +373,9 @@ function tooltipFor(
   // do not hand it to a second conversation mid-merge. `state.readOnly`, not the
   // `editable` facet, which is about the caret rather than the file.
   if (state.readOnly) return []
+  // Stepping through find's matches selects each one; that is not a selection
+  // to ask about.
+  if (searchPanelOpen(state)) return []
   const prompt = promptForSelection(state, notePath)
   if (prompt === null) return []
 
@@ -437,9 +441,11 @@ export function askAgentTooltip(notePath: string, seam: AskAgentSeam | undefined
       }
       // Not on other transactions: rebuilding would replace the button under
       // the pointer. A note that starts or stops taking threads changes the
-      // buttons, so that rebuilds too.
+      // buttons, so that rebuilds too, and so does find opening or closing.
       const commentable = (state: EditorState) => state.facet(commentSeamFacet) !== undefined
-      const flipped = commentable(tr.startState) !== commentable(tr.state)
+      const flipped =
+        commentable(tr.startState) !== commentable(tr.state) ||
+        searchPanelOpen(tr.startState) !== searchPanelOpen(tr.state)
       if (!tr.docChanged && tr.selection === undefined && !flipped) return tooltips
       return tooltipFor(tr.state, notePath, seam)
     },
