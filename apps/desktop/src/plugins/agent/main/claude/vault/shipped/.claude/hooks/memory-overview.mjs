@@ -1,7 +1,11 @@
 #!/usr/bin/env node
-// Holi SessionStart hook — tell the agent what this vault remembers, and which
-// community plugins it pins, once per session, before it answers anything. See
-// docs/features/agent-memory.md.
+// Holi SessionStart hook — tell the agent what this vault is for, what it
+// remembers and which community plugins it pins, once per session, before it
+// answers anything. See docs/features/agent-memory.md.
+//
+// First the top of the vault's `README.md`, or one line saying there is none,
+// with a budget of its own so a long README can never push a memory title out.
+// Then the memory section, under its own cap.
 //
 // SessionStart rather than UserPromptSubmit: memory is session state, and 3k
 // characters injected into every turn is a cost paid over and over. It prints on
@@ -18,13 +22,14 @@
 // `.holi/settings/plugins.yaml` and `plugins.local.yaml`, so a question about a
 // plugin's tool leads to the plugin rather than to another app's files. It
 // never calls Holi's bridge: Claude Code spawns this, not Holi, so it must work
-// with no server anywhere. With no memory and no pins, it prints nothing and
-// exits 0, exactly as the focused-note hook does outside Holi.
+// with no server anywhere. Absent `.holi/memory/`, it prints only the README
+// part and the plugins line; with no project directory to read at all, it
+// prints nothing and exits 0.
 //
 // Dependency-free (`node:` builtins only), like the three hooks beside it.
 
 import { execFileSync } from 'node:child_process'
-import { lstatSync, readFileSync, readdirSync } from 'node:fs'
+import { lstatSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 
 const root = process.env.CLAUDE_PROJECT_DIR || process.cwd()
@@ -34,6 +39,11 @@ const MEMORY_DIR = join(root, '.holi/memory')
 // a memory the agent cannot see the name of is a memory it will never Read, so
 // dropping names to save room defeats the whole section.
 const CAP = 3000
+
+// The README's budget, apart from the memory's: its first lines, cut on a line
+// boundary, and never more than this many characters.
+const README_LINES = 15
+const README_CAP = 1200
 
 /** Read a file, or null. Every failure here is ordinary — no vault, no memory
  *  directory, a file deleted mid-scan — and none is worth an error. */
@@ -161,6 +171,43 @@ function expiry(value) {
   if (h > 23 || min > 59 || sec > 59) return null
   return new Date(y, mo, d, h, min, sec)
 }
+
+/**
+ * The top of the vault's `README.md`: what the vault is for, in its own words.
+ * Leading blank lines are skipped, and a cut says where the rest is. With no
+ * README it says so in one line, so the agent can offer to write one when it
+ * fits.
+ */
+function readmeSection() {
+  const text = readOr(join(root, 'README.md'))
+  if (text === null) return 'This vault has no README.md.\n'
+  const lines = text.replace(/\r\n/g, '\n').split('\n')
+  while (lines.length > 0 && lines[0].trim() === '') lines.shift()
+  while (lines.length > 0 && lines.at(-1).trim() === '') lines.pop()
+  if (lines.length === 0) return "This vault's README.md is empty.\n"
+  const kept = []
+  let size = 0
+  for (const line of lines.slice(0, README_LINES)) {
+    if (size + line.length + 1 > README_CAP) {
+      if (kept.length === 0) kept.push(line.slice(0, README_CAP))
+      break
+    }
+    kept.push(line)
+    size += line.length + 1
+  }
+  const cut = kept.length < lines.length || kept[0] !== lines[0]
+  const out = ["# This vault's README.md", '', ...kept]
+  if (cut) out.push('', '…cut here. The rest is in `README.md`.')
+  return `${out.join('\n')}\n`
+}
+
+// No project directory to read: nothing to say.
+try {
+  statSync(root)
+} catch {
+  process.exit(0)
+}
+const readme = readmeSection()
 
 const index = readOr(join(MEMORY_DIR, 'index.md'))
 const { personal: personalFiles, shared } = memoryFiles(MEMORY_DIR)
@@ -301,10 +348,11 @@ function capped(text) {
   return text.slice(0, CAP - pointer.length) + pointer
 }
 
-// No memory. A vault with no memory directory at all is the ordinary case for a
-// repo somebody opened `claude` in by hand; it may still pin plugins.
+// No memory to speak of: the README part and the plugins line alone. A vault
+// with no memory directory at all is the ordinary case for a repo somebody
+// opened `claude` in by hand; it may still pin plugins.
 if (index === null && personal.length === 0 && shared.length === 0 && logs.length === 0) {
-  if (plugins !== null) process.stdout.write(capped(`${plugins}\n`))
+  process.stdout.write(plugins === null ? readme : `${readme}\n${capped(`${plugins}\n`)}`)
   process.exit(0)
 }
 
@@ -452,5 +500,5 @@ if (text.length > CAP) text = render({ descriptions: false })
 // Last resort, and it still names where the rest is rather than stopping dead.
 text = capped(text)
 
-process.stdout.write(text)
+process.stdout.write(`${readme}\n${text}`)
 process.exit(0)
