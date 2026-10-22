@@ -763,10 +763,26 @@ const caretInBlock = ViewPlugin.fromClass(
   },
 )
 
+/**
+ * Find stepping onto a match inside a collapsed block opens it; collapsed, the
+ * match would be counted but out of sight. Through `toggleFrontmatter`, the one
+ * effect the block's decorations rebuild on.
+ */
+const openForFind = EditorState.transactionExtender.of((tr) => {
+  if (!tr.isUserEvent('select.search') || tr.startState.field(frontmatterExpandedField, false)) {
+    return null
+  }
+  const block = frontmatterBlockRange(tr.newDoc.toString())
+  const at = tr.newSelection.main.from
+  if (block === null || at < block.from || at >= block.to) return null
+  return { effects: toggleFrontmatter.of(true) }
+})
+
 /** The whole frontmatter feature, one extension. Register AFTER livePreview so
  *  the block-replace owns the region's rendering. */
 export const frontmatterExtension: Extension = [
   frontmatterExpandedField,
+  openForFind,
   frontmatterCommitField,
   frontmatterDecoField,
   frontmatterTheme,

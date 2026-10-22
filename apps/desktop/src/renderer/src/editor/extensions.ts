@@ -16,6 +16,7 @@ import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirro
 import { Compartment, EditorState, type Extension } from '@codemirror/state'
 import { holiCompletion } from './completion'
 import { fenceLanguage } from './fence-languages'
+import { findInFile, findKeymap } from './find'
 import { formattingKeymap } from './formatting'
 import { linkClickHandler, type LinkNav } from './links'
 import { askAgentTooltip, commentSeamFacet, type AskAgentSeam, type CommentSeam } from './askAgent'
@@ -216,8 +217,12 @@ export function baseEditorExtensions(deps: EditorDeps): Extension[] {
     listKindByTyping,
     // ` -> ` becomes ` → ` in the file, its own undo step.
     arrowsByTyping,
+    // ⌘F / ⌘⌥F: find and replace in this file, with the app's own bar.
+    findInFile(),
     keymap.of([
       ...completionKeymap,
+      // After completion, so Escape closes an open popup before the bar.
+      ...findKeymap,
       // ⌘D: select the word, then each press adds the next matching occurrence.
       { key: 'Mod-d', run: selectNextOccurrence, preventDefault: true },
       indentWithTab, // Tab indents the line/selection, ⇧Tab dedents
@@ -301,10 +306,12 @@ export function plainTextExtensions(path: string, readOnly = false): Extension[]
     indentUnit.of('    '),
     EditorView.lineWrapping,
     EditorState.allowMultipleSelections.of(true),
+    findInFile(),
     keymap.of([
       // First: Enter, Tab and the arrows are bound further down, and the popup
       // would appear but be unusable.
       ...completionKeymap,
+      ...findKeymap,
       { key: 'Mod-d', run: selectNextOccurrence, preventDefault: true },
       indentWithTab,
       ...historyKeymap,
