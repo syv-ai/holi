@@ -10,7 +10,7 @@ import { Provider, createStore } from 'jotai'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { activeRemoteAtom, openSurfaceAtom, surfaceActiveAtom } from '@/plugin-api'
 import { AgentBubbles } from '../renderer/AgentBubbles'
-import { lastAnswer, pendingTool, plainPreview } from '../../agent/renderer/lib/preview'
+import { lastAnswer, plainPreview } from '../../agent/renderer/lib/preview'
 import {
   ANSWER_NOTICE_MS,
   agentNoticesAtom,
@@ -98,16 +98,6 @@ function previewTests(): void {
       '',
     )
     expect(lastAnswer([])).toBe('')
-  })
-
-  test('the pending tool is the last call with no result yet', () => {
-    const entries = [
-      { kind: 'tool', id: 't1', name: 'Read', summary: 'a.md', input: '{}' },
-      { kind: 'tool-result', id: 't1', ok: true, text: 'x' },
-      { kind: 'tool', id: 't2', name: 'Bash', summary: 'rm -rf build', input: '{}' },
-    ]
-    expect(pendingTool(entries as never)).toBe('Bash: rm -rf build')
-    expect(pendingTool(entries.slice(0, 2) as never)).toBe('')
   })
 }
 
@@ -494,15 +484,33 @@ test('a permission prompt is answered on its notification, without leaving the p
     kind: 'needs-you',
     waitingFor: 'permission prompt',
     tool: 'Bash: ls flights',
+    call: 'toolu_1',
     preview: '',
   })
   expect(within(card()).getByText('Approval required')).toBeInTheDocument()
   expect(within(card()).getByText('Bash: ls flights')).toBeInTheDocument()
   await user.click(within(card()).getByRole('button', { name: 'Allow' }))
-  await waitFor(() => expect(pressed()).toContainEqual(['\r']))
+  await waitFor(() =>
+    expect(cap.press).toHaveBeenCalledWith(
+      expect.objectContaining({ keys: ['\r'], expect: 'toolu_1' }),
+    ),
+  )
   await waitFor(() => expect(store.get(agentNoticesAtom)).toEqual([]))
   // Still where it was.
   expect(store.get(overviewSelectionAtom)).toBeNull()
+})
+
+test('a permission prompt it cannot pin to one call is only opened, never answered', async () => {
+  notified({
+    id: 'a:needs-you',
+    kind: 'needs-you',
+    waitingFor: 'permission prompt',
+    tool: '',
+    preview: '',
+  })
+  expect(within(card()).queryByRole('button', { name: 'Allow' })).toBeNull()
+  expect(within(card()).queryByRole('button', { name: 'Deny' })).toBeNull()
+  expect(within(card()).getByRole('button', { name: 'Answer' })).toBeInTheDocument()
 })
 
 test('it can be denied there too, and a question of any other kind is answered in full', async () => {
@@ -511,6 +519,7 @@ test('it can be denied there too, and a question of any other kind is answered i
     kind: 'needs-you',
     waitingFor: 'permission prompt',
     tool: 'Bash: rm -rf build',
+    call: 'toolu_2',
     preview: '',
   })
   await user.click(within(card()).getByRole('button', { name: 'Deny' }))

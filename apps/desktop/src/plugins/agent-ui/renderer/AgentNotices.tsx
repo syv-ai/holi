@@ -43,8 +43,15 @@ function NoticeCard({ notice }: { notice: AgentNotice }): React.JSX.Element {
   }, [notice.kind, notice.id, hovered, dismiss])
 
   const permission = notice.kind === 'needs-you' && notice.waitingFor === 'permission prompt'
+  // Allow and Deny name the call they answer; without one nothing says which
+  // prompt they would answer, and the card only opens the chat.
+  const sure = notice.call !== undefined
   const answer = (keys: string): void => {
-    void press({ id: notice.sessionId, keys }).then((res) => {
+    void press({
+      id: notice.sessionId,
+      keys,
+      ...(notice.call === undefined ? {} : { expect: notice.call }),
+    }).then((res) => {
       if (res.ok) return dismiss(notice.id)
       setError(res.message)
     })
@@ -130,7 +137,7 @@ function NoticeCard({ notice }: { notice: AgentNotice }): React.JSX.Element {
 
       {notice.kind === 'needs-you' && (
         <div className="flex flex-wrap items-center gap-2 px-3 pb-3">
-          {permission && (
+          {permission && sure && (
             <>
               <Button size="sm" onClick={() => answer(ENTER)}>
                 Allow
@@ -141,7 +148,7 @@ function NoticeCard({ notice }: { notice: AgentNotice }): React.JSX.Element {
             </>
           )}
           <Button size="sm" variant="ghost" onClick={() => void openFull(notice.sessionId)}>
-            {permission ? 'More choices' : 'Answer'}
+            {permission && sure ? 'More choices' : 'Answer'}
           </Button>
         </div>
       )}

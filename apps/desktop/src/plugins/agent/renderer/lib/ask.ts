@@ -7,7 +7,34 @@
  * it. Only a call that cannot be read (no options, a shape this does not know)
  * is left to the terminal.
  */
+import { openCalls } from '../../shared/open-calls'
 import type { ChatItem } from '../chat/items'
+
+/** The one call the session's turn has open: what a prompt is about, and what
+ *  the keys that answer it name, for main to check before they go in. */
+export interface OpenCall {
+  id: string
+  /** As `Bash: ls`. */
+  label: string
+}
+
+/**
+ * What a waiting session is asking about, read from its conversation: the one
+ * call its turn has open, or none. `ambiguous` when there is more than one, so
+ * nothing can say which a prompt is about and no key is offered for it.
+ */
+export function openCallOf(items: readonly ChatItem[]): {
+  call: OpenCall | null
+  ambiguous: boolean
+} {
+  const open = openCalls(items)
+  const only = open.length === 1 ? items.find((i) => i.kind === 'tool' && i.id === open[0]) : null
+  const call =
+    only?.kind === 'tool'
+      ? { id: only.id, label: only.summary === '' ? only.name : `${only.name}: ${only.summary}` }
+      : null
+  return { call, ambiguous: open.length > 1 }
+}
 
 export interface AskOption {
   label: string

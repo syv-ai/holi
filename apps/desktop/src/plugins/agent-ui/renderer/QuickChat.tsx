@@ -32,7 +32,7 @@ import {
 import { useHeldQuestion } from './chat/HeldQuestion'
 import { QuickAsk } from './chat/QuickAsk'
 import { useQuestions, useTranscript } from '../../agent/renderer/chat/use-transcript'
-import { askFailed } from '../../agent/renderer/lib/ask'
+import { askFailed, openCallOf } from '../../agent/renderer/lib/ask'
 import { agentIndicator } from '../../agent/renderer/lib/notices'
 import { plainPreview } from '../../agent/renderer/lib/preview'
 import { quickChatAtom } from '../../agent/renderer/state/notices'
@@ -87,8 +87,7 @@ export function QuickChat({ sessionId }: { sessionId: string }): React.JSX.Eleme
   if (session === null) return null
 
   const lastAnswer = [...items].reverse().find((i) => i.kind === 'assistant') ?? null
-  const lastTool = [...items].reverse().find((i) => i.kind === 'tool') ?? null
-  const asked = lastTool !== null && lastTool.result === undefined ? lastTool : null
+  const { call, ambiguous } = openCallOf(items)
   const needsYou = session.state === 'needs-you' && !askFailed(items)
   const working = session.state === 'working'
   const indicator = agentIndicator(session)
@@ -174,14 +173,13 @@ export function QuickChat({ sessionId }: { sessionId: string }): React.JSX.Eleme
         {needsYou ? (
           <QuickAsk
             waitingFor={session.waitingFor}
-            tool={
-              asked === null
-                ? ''
-                : `${asked.name}${asked.summary === '' ? '' : `: ${asked.summary}`}`
-            }
+            call={call}
+            ambiguous={ambiguous}
             questions={questions}
             held={held}
-            press={(keys) => press({ id: sessionId, keys })}
+            press={(keys, expect) =>
+              press({ id: sessionId, keys, ...(expect === undefined ? {} : { expect }) })
+            }
             fallbackLabel="Open the full chat"
             onFallback={() => void openFull(sessionId)}
           />

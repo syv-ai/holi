@@ -252,17 +252,24 @@ export const ensureTerminalAtom = atom(
  * cannot draw Claude Code's dialogs, so it answers the ones it can name with
  * the keys that answer them. Main opens a terminal when there is none, holds
  * the keys until it reads input and spaces the runs, so nothing here waits on
- * a clock. A refusal (the session ended, its terminal closed) comes back as
- * one; ok says the keys went to the terminal, and the session's own state
- * says whether they answered it.
+ * a clock. Keys that answer a prompt name its call (`expect`), and main
+ * refuses them unless that call is still the only one open. A refusal (the
+ * session ended, its terminal closed, the prompt moved on) comes back as one;
+ * ok says the keys went to the terminal, and the session's own state says
+ * whether they answered it.
  */
 export const pressAtom = atom(
   null,
-  (get, _set, args: { id: string; keys: string | readonly string[] }): Promise<AgentResult> =>
+  (
+    get,
+    _set,
+    args: { id: string; keys: string | readonly string[]; expect?: string },
+  ): Promise<AgentResult> =>
     inVault(get, (remote) =>
       agentCap.press(remote, {
         id: args.id,
         keys: typeof args.keys === 'string' ? [args.keys] : [...args.keys],
+        ...(args.expect === undefined ? {} : { expect: args.expect }),
         ...geometry(get),
       }),
     ).then(

@@ -4,7 +4,7 @@
  * has had, live or finished (an overlay, rendered beside it here). No terminal is drawn, and every way to a session
  * lands in its chat.
  */
-import { render, screen, waitFor, within } from '@/test/render'
+import { cleanup, render, screen, waitFor, within } from '@/test/render'
 import { fireEvent } from '@testing-library/react'
 import { act } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -193,7 +193,7 @@ test('a bubble opens that session, one chat at a time', async () => {
   const { store, user } = setup()
   await user.click(bubble('b'))
   expect(store.get(overviewSelectionAtom)).toBe('b')
-  expect(await screen.findByText('Allow this to run?')).toBeInTheDocument()
+  expect(await screen.findByText('Approval required')).toBeInTheDocument()
   await waitFor(() => expect(document.querySelector('[data-agent-chat="a"]')).toBeNull())
   expect(bubble('b')).toHaveAttribute('aria-current', 'true')
   expect(stack()).not.toHaveAttribute('data-open')
@@ -243,11 +243,47 @@ test('a conversation that cannot be read says so rather than looking empty', asy
 })
 
 test('a session that waits on you says so in the chat, and takes no message', async () => {
+  // Its one open call is what the prompt is about, and Allow names it.
+  cap.transcript.mockResolvedValue({
+    ...TRANSCRIPT,
+    entries: [
+      ...TRANSCRIPT.entries,
+      { kind: 'tool', id: 'call-2', name: 'Bash', summary: 'rm -rf build', input: '{}' },
+    ],
+  })
   const { user } = setup()
   await user.click(bubble('b'))
   expect(await screen.findByText('Allow this to run?')).toBeInTheDocument()
-  expect(screen.getByRole('button', { name: 'Allow' })).toBeInTheDocument()
+  expect(screen.getByText('Bash: rm -rf build')).toBeInTheDocument()
   expect(screen.getByRole('textbox', { name: 'Message' })).toHaveAttribute('aria-disabled', 'true')
+  await user.click(screen.getByRole('button', { name: 'Allow' }))
+  await waitFor(() =>
+    expect(cap.press).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'b', keys: ['\r'], expect: 'call-2' }),
+    ),
+  )
+})
+
+test('a permission prompt it cannot pin to one call offers no Allow, only the terminal', async () => {
+  // No call open (the only one has its result), or two at once: nothing says
+  // which the prompt is about, so no key is offered for it.
+  for (const entries of [
+    TRANSCRIPT.entries,
+    [
+      ...TRANSCRIPT.entries,
+      { kind: 'tool', id: 'call-2', name: 'Bash', summary: 'ls', input: '{}' },
+      { kind: 'tool', id: 'call-3', name: 'Bash', summary: 'rm -rf build', input: '{}' },
+    ],
+  ]) {
+    cap.transcript.mockResolvedValue({ ...TRANSCRIPT, entries })
+    const { user } = setup()
+    await user.click(bubble('b'))
+    expect(await screen.findByText(/cannot tell which call/)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Allow' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Deny' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Answer in the terminal' })).toBeInTheDocument()
+    cleanup()
+  }
 })
 
 test('a session opened from anywhere lands in its chat', async () => {

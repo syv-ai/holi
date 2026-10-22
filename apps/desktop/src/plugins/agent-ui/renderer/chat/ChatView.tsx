@@ -39,7 +39,7 @@ import {
 import { Composer } from './Composer'
 import { HeldQuestion, useHeldQuestion } from './HeldQuestion'
 import { QuickAsk } from './QuickAsk'
-import { askFailed } from '../../../agent/renderer/lib/ask'
+import { askFailed, openCallOf } from '../../../agent/renderer/lib/ask'
 import type { RichInputHandle } from './RichInput'
 import { useQuestions, useTranscript } from '../../../agent/renderer/chat/use-transcript'
 import type { ChatItem, ToolItem } from '../../../agent/renderer/chat/items'
@@ -277,8 +277,7 @@ export function ChatView({
   const working = session.state === 'working'
   const needsYou = session.state === 'needs-you' && !askFailed(items)
   const questions = useQuestions(session.id, items, needsYou)
-  const lastTool = [...items].reverse().find((i): i is ToolItem => i.kind === 'tool') ?? null
-  const asked = lastTool !== null && lastTool.result === undefined ? lastTool : null
+  const { call, ambiguous } = openCallOf(items)
 
   const rowErrors = useRowErrors(session.id)
   const notPlaced = unplacedTotal(drift) + rowErrors.total
@@ -500,14 +499,13 @@ export function ChatView({
                 {needsYou && (
                   <QuickAsk
                     waitingFor={session.waitingFor}
-                    tool={
-                      asked === null
-                        ? ''
-                        : `${asked.name}${asked.summary === '' ? '' : `: ${asked.summary}`}`
-                    }
+                    call={call}
+                    ambiguous={ambiguous}
                     questions={questions}
                     held={held}
-                    press={(keys) => press({ id: session.id, keys })}
+                    press={(keys, expect) =>
+                      press({ id: session.id, keys, ...(expect === undefined ? {} : { expect }) })
+                    }
                     fallbackLabel="Answer in the terminal"
                     onFallback={toggleTerminal}
                   />

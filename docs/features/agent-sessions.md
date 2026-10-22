@@ -159,7 +159,15 @@ presses Enter (`terminals.paste(id, text, true)`), and an ask lands in the compo
 (`chatDraftsAtom`) rather than in the terminal's box. While a turn runs the composer's button
 stops it (Escape). **While the session waits on you** the composer is off and a card says what for
 (`chat/QuickAsk`, shared with the smaller chat): a permission prompt is answered there, Allow
-pressing Enter on the dialog's highlighted Yes and Deny pressing Escape; a question (the
+pressing Enter on the dialog's highlighted Yes and Deny pressing Escape. **Allow and Deny are
+offered only when Holi can tell which call the prompt is about**: the turn has exactly one tool call
+without a result (`openCalls`, `agent/shared/open-calls.ts`). With none, or several running at once
+(Claude Code runs calls in parallel and only one of them is asking), the card names no call and
+offers the terminal alone, because Enter would approve whichever prompt is on screen. The keys carry
+that call's id (`expect`), and main reads the transcript again before pressing them: the session
+still needs you and the call is still the only one open, or the press is refused with the reason.
+Nothing else says which prompt a dialog is for: the question desk holds only a quick agent's
+`AskUserQuestion`, never a permission prompt. A question (the
 `AskUserQuestion` call, read whole from the transcript, `lib/ask.ts`) shows its options, single or
 multiple choice, one question at a time, with "Write another answer" for the person's own words.
 The answers go in as the keys that answer the dialog: arrows down from the first option and Enter,
@@ -218,7 +226,8 @@ words and the call it asks to run (`lib/preview.ts`). What was running when the 
 news, and nothing is said of the chat you are reading in full or have the smaller chat open on.
 Pressing a notification opens the full chat; ✕ dismisses it. **A permission prompt is answered on
 its card**: Allow presses Enter and Deny Escape in the session's terminal, as the chat's own card
-does, with no trip to the page. A question or dialog of any other kind says **Answer**, which
+does, with no trip to the page, and under the same rule: only when one call is open, which the
+press names. Otherwise the card says **Answer**. A question or dialog of any other kind says **Answer**, which
 opens the chat, where the terminal can be shown for it.
 
 **Idle is said as what it is.** A live session that is doing nothing reads `done` when Claude

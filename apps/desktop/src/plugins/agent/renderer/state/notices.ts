@@ -10,7 +10,8 @@
  */
 import { atom } from 'jotai'
 import { agentCap } from '../agent-cap'
-import { lastAnswer, pendingTool } from '../lib/preview'
+import { openCalls } from '../../shared/open-calls'
+import { lastAnswer } from '../lib/preview'
 import { surfaceActiveAtom, type PluginStore } from '@/plugin-api'
 import {
   AGENT_SURFACE,
@@ -32,8 +33,12 @@ export interface AgentNotice {
   failed?: boolean
   /** What it said, in plain words. */
   preview: string
-  /** For a permission prompt: the call it asks to run. */
+  /** For a permission prompt: the call it asks to run, as `Bash: ls`, when
+   *  its turn has exactly one call open; '' when it cannot be told. */
   tool: string
+  /** That call's id, which Allow and Deny name so main can check it is still
+   *  the one asked about. Absent when it cannot be told: no keys are offered. */
+  call?: string
 }
 
 export const agentNoticesAtom = atom<readonly AgentNotice[]>([])
@@ -111,6 +116,10 @@ export function watchNotices(remote: string, store: PluginStore): () => void {
     const now = store.get(agentSessionsAtom).find((s) => s.id === session.id)
     if (now === undefined || (kind === 'needs-you' && now.state !== 'needs-you')) return
     const entries = chunk?.entries ?? []
+    const open = kind === 'needs-you' ? openCalls(entries) : []
+    const only =
+      open.length === 1 ? entries.find((e) => e.kind === 'tool' && e.id === open[0]) : undefined
+    const call = only?.kind === 'tool' ? only : null
     const notice: AgentNotice = {
       id: `${session.id}:${kind}`,
       sessionId: session.id,
@@ -121,7 +130,8 @@ export function watchNotices(remote: string, store: PluginStore): () => void {
         : {}),
       ...(kind === 'answer' && session.phase === 'failed' ? { failed: true } : {}),
       preview: kind === 'answer' ? lastAnswer(entries) : '',
-      tool: kind === 'needs-you' ? pendingTool(entries) : '',
+      tool: call === null ? '' : call.summary === '' ? call.name : `${call.name}: ${call.summary}`,
+      ...(call === null ? {} : { call: call.id }),
     }
     store.set(agentNoticesAtom, (all) => [...all.filter((n) => n.id !== notice.id), notice])
   }

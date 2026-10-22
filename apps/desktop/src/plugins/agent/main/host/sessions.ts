@@ -30,6 +30,7 @@ import type { AgentProvider, VaultRef } from '../provider'
 import type { AgentTerminals, TerminalSink } from './terminals'
 import { readArchive, writeArchive } from './archive'
 import { saveUpload, type UploadResult } from './uploads'
+import { openCalls } from '../../shared/open-calls'
 import { ContextSnapshot, type FocusInput } from './context-snapshot'
 import { createSessionState, type ListingSource } from './session-state'
 import type { TurnVault } from './turn-coordinator'
@@ -146,8 +147,13 @@ export interface AgentSessions {
   say(args: Geometry & { id: string; text: string }): Promise<OpenResult>
   /** Press keys in a live session's terminal, run by run, opening one when
    *  Holi has none: the chat's answer to a dialog Claude Code draws. Held
-   *  until the terminal reads input, so a terminal just opened takes them. */
-  press(args: Geometry & { id: string; keys: readonly string[] }): Promise<OpenResult>
+   *  until the terminal reads input, so a terminal just opened takes them.
+   *  With `expect`, the id of the call the keys answer: refused unless the
+   *  session still waits on you and that call is the only one its turn has
+   *  open, read from the conversation now (`openCalls`). */
+  press(
+    args: Geometry & { id: string; keys: readonly string[]; expect?: string },
+  ): Promise<OpenResult>
   /** The archived chats' job ids. */
   archived(): string[]
   /** Archive a chat, or bring it back. Never stops a session: the caller
@@ -350,6 +356,30 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
   }
 
   /**
+   * Why keys meant for the call `expect` must not go in now, or null when they
+   * may: the session waits on you, and that call is the only one its current
+   * turn has open, read from the conversation at this moment. Two calls open,
+   * or a newer one than the card showed, and nothing can say which the dialog
+   * is about, so the keys are refused rather than guessed.
+   */
+  async function stillAsking(c: Current, id: string, expect: string): Promise<string | null> {
+    await refresh()
+    if (state.sessions().find((s) => s.id === id)?.state !== 'needs-you') {
+      return 'It is not waiting on you any more.'
+    }
+    const sessionId = state.row(id)?.sessionId
+    const chunk =
+      sessionId === undefined
+        ? null
+        : await provider.transcript(c.configDir, sessionId).catch(() => null)
+    const open = chunk === null ? [] : openCalls(chunk.entries)
+    if (open.length === 1 && open[0] === expect) return null
+    return open.length > 1
+      ? 'It is waiting on more than one thing, so Holi cannot tell which this answers. Answer it in the terminal.'
+      : 'It is asking about something else now. Look again, or answer it in the terminal.'
+  }
+
+  /**
    * Stamp the config directory again before a session process starts: what
    * it carries (the theme, the agent's `bypassPermissions` setting) follows
    * settings a person can change while the vault is open, and only a new
@@ -539,11 +569,15 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
       return { ok: true, terminalId }
     },
 
-    async press({ id, keys, cols, rows: r }) {
+    async press({ id, keys, expect, cols, rows: r }) {
       const c = await ensureCurrent()
       if (c === null) return noVault
       if (!state.isLive(id)) {
         return { ok: false, message: 'That session has ended.' }
+      }
+      if (expect !== undefined) {
+        const sure = await stillAsking(c, id, expect)
+        if (sure !== null) return { ok: false, message: sure }
       }
       let terminalId = deps.terminals.launchedFor(id)
       if (terminalId === null) {

@@ -14,11 +14,13 @@
 import { ArrowLeft, HelpCircle, ShieldCheck } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { Button, Icon, Input } from '@/primitives'
+import { cn } from '@/plugin-api'
 import type { PendingQuestion } from '../../../agent/shared/questions'
 import { HeldQuestion } from './HeldQuestion'
 import {
   EMPTY_ANSWER,
   isAnswered,
+  type OpenCall,
   keysForAll,
   type AskAnswer,
   type AskQuestion,
@@ -37,7 +39,8 @@ type Pressed = Promise<{ ok: true } | { ok: false; message: string }>
 
 export function QuickAsk({
   waitingFor,
-  tool,
+  call,
+  ambiguous = false,
   questions,
   held = null,
   press,
@@ -45,14 +48,18 @@ export function QuickAsk({
   onFallback,
 }: {
   waitingFor: string | undefined
-  /** The call it asks to run, as `Bash: ls`, when the transcript shows one. */
-  tool: string
+  /** The one call its turn has open, when the transcript shows exactly one. */
+  call: OpenCall | null
+  /** Its turn has more than one call open: nothing says which a prompt is
+   *  about, so no key is offered for it. */
+  ambiguous?: boolean
   /** Its open question, when the transcript has it. */
   questions: AskQuestion[] | null
   /** The question Holi holds for it, which wins: no dialog to press into. */
   held?: PendingQuestion | null
-  /** Press runs of keys in the session's terminal; main spaces them. */
-  press: (keys: readonly string[]) => Pressed
+  /** Press runs of keys in the session's terminal; main spaces them, and with
+   *  `expect` first checks that call is still the one open. */
+  press: (keys: readonly string[], expect?: string) => Pressed
   /** What a dialog this cannot draw offers, and where it goes. */
   fallbackLabel: string
   onFallback: () => void
@@ -66,7 +73,9 @@ export function QuickAsk({
   const run = async (keys: string[]): Promise<void> => {
     setSending(true)
     setError(null)
-    const res = await press(keys)
+    // Keys that answer a call name it, so main refuses them if the prompt has
+    // moved on. A question only Claude Code's job record has names none.
+    const res = await press(keys, call?.id)
     setSending(false)
     // Refused: said, and the card is usable again. Taken: the session leaves
     // needs-you and this card goes with it; if a key did not take, it stays.
@@ -74,7 +83,9 @@ export function QuickAsk({
   }
 
   const permission = waitingFor === 'permission prompt'
-  const unreadable = !permission && questions === null
+  // Which call a permission prompt is about: the one open call, or unknown.
+  const sure = call !== null && !ambiguous
+  const unreadable = !permission && (questions === null || ambiguous)
   const [gaveUp, setGaveUp] = useState(false)
   useEffect(() => {
     setGaveUp(false)
@@ -85,7 +96,7 @@ export function QuickAsk({
 
   if (held !== null) return <HeldQuestion question={held} />
 
-  if (!permission && questions !== null) {
+  if (!permission && questions !== null && !ambiguous) {
     const q = questions[Math.min(step, questions.length - 1)]!
     const last = step === questions.length - 1
     const answer = answers[step] ?? EMPTY_ANSWER
@@ -252,19 +263,30 @@ export function QuickAsk({
             <div className="min-w-0">
               <p className="font-medium text-foreground">
                 {permission
-                  ? 'Allow this to run?'
+                  ? sure
+                    ? 'Allow this to run?'
+                    : 'It asks to run something'
                   : reading
                     ? 'Reading its question…'
                     : 'Claude is waiting for you'}
               </p>
-              <p className="mt-0.5 truncate font-mono text-xs text-muted-foreground">
-                {permission && tool !== '' ? tool : (waitingFor ?? 'It has a question')}
+              <p
+                className={cn(
+                  'mt-0.5 text-xs text-muted-foreground',
+                  !permission || sure ? 'truncate font-mono' : '',
+                )}
+              >
+                {permission
+                  ? sure
+                    ? call?.label
+                    : 'Holi cannot tell which call this is about. Answer it in the terminal.'
+                  : (waitingFor ?? 'It has a question')}
               </p>
             </div>
             <span className={PILL}>{permission ? 'Approval required' : 'Needs you'}</span>
           </div>
           <div className="mt-2.5 flex flex-wrap items-center gap-2">
-            {permission && (
+            {permission && sure && (
               <>
                 <Button size="sm" disabled={sending} onClick={() => void run([ENTER])}>
                   Allow

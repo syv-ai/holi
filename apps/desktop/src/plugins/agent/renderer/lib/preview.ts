@@ -31,16 +31,3 @@ export function lastAnswer(entries: readonly ChatEntry[]): string {
   }
   return ''
 }
-
-/** The call the agent is waiting on, as `Bash: ls`, or '' when it asked
- *  nothing of a tool. */
-export function pendingTool(entries: readonly ChatEntry[]): string {
-  const done = new Set(entries.flatMap((e) => (e.kind === 'tool-result' ? [e.id] : [])))
-  for (let i = entries.length - 1; i >= 0; i -= 1) {
-    const entry = entries[i]!
-    if (entry.kind === 'tool' && !done.has(entry.id)) {
-      return entry.summary === '' ? entry.name : `${entry.name}: ${entry.summary}`
-    }
-  }
-  return ''
-}

@@ -13,6 +13,7 @@ import {
   summarisePast,
 } from '../main/claude/listing'
 import type { SessionChannel } from '../main/claude/messaging'
+import type { ChatEntry } from '../main/claude/transcript'
 import { createAgentSessions, type AgentVault } from '../main/host/sessions'
 import type { AgentTerminals, OpenArgs } from '../main/host/terminals'
 
@@ -96,6 +97,8 @@ function setup(initial: Row[] = [], root = ROOT, held: ReadonlySet<string> = new
     listTerminal: () => null,
   }
   const sent: Array<[string, unknown]> = []
+  /** The conversation the transcript reads, or null for none. */
+  let entries: ChatEntry[] | null = null
   const configure = vi.fn(async () => ({ dir: '/cfg/vault' }))
   const message = vi.fn(async (_channel: SessionChannel, _text: string) => {})
   const pauses: string[] = []
@@ -123,7 +126,7 @@ function setup(initial: Row[] = [], root = ROOT, held: ReadonlySet<string> = new
       readContextPercent,
       watch: () => () => {},
       configure,
-      transcript: async () => null,
+      transcript: async () => (entries === null ? null : { sessionId: 's', offset: 0, entries }),
       blockedQuestion: async () => null,
       takeFirstSpawn: async () => true,
       signInNotice: SIGN_IN_NOTICE,
@@ -148,6 +151,9 @@ function setup(initial: Row[] = [], root = ROOT, held: ReadonlySet<string> = new
     message,
     configure,
     terminals,
+    setEntries: (next: ChatEntry[] | null) => {
+      entries = next
+    },
     setListing: (rows: Row[]) => {
       listing = rows
     },
@@ -169,6 +175,57 @@ function setup(initial: Row[] = [], root = ROOT, held: ReadonlySet<string> = new
 
 describe('agent sessions', () => {
   describe('the chat and its terminals', () => {
+    describe('keys that answer a prompt', () => {
+      const waiting = { status: 'waiting', state: 'blocked', waitingFor: 'permission prompt' }
+      const call = (id: string): ChatEntry => ({
+        kind: 'tool',
+        id,
+        name: 'Bash',
+        summary: 'ls',
+        args: {},
+      })
+
+      it('go in when the call they name is the only one open', async () => {
+        const t = setup([row('aaaaaaaa', waiting)])
+        await t.attach()
+        t.setEntries([call('toolu_1')])
+        const res = await t.sessions.press({ id: 'aaaaaaaa', keys: ['\r'], expect: 'toolu_1' })
+        expect(res.ok).toBe(true)
+        expect(t.presses).toEqual([['term-1', ['\r']]])
+      })
+
+      it('are refused when the prompt has moved on to another call', async () => {
+        const t = setup([row('aaaaaaaa', waiting)])
+        await t.attach()
+        t.setEntries([
+          call('toolu_1'),
+          { kind: 'tool-result', id: 'toolu_1', ok: true, text: '' },
+          call('toolu_2'),
+        ])
+        const res = await t.sessions.press({ id: 'aaaaaaaa', keys: ['\r'], expect: 'toolu_1' })
+        expect(res).toEqual({ ok: false, message: expect.stringContaining('something else') })
+        expect(t.presses).toEqual([])
+        expect(t.opened).toEqual([])
+      })
+
+      it('are refused when two calls are open and nothing says which', async () => {
+        const t = setup([row('aaaaaaaa', waiting)])
+        await t.attach()
+        t.setEntries([call('toolu_1'), call('toolu_2')])
+        const res = await t.sessions.press({ id: 'aaaaaaaa', keys: ['\r'], expect: 'toolu_1' })
+        expect(res).toEqual({ ok: false, message: expect.stringContaining('more than one') })
+        expect(t.presses).toEqual([])
+      })
+
+      it('are refused once the session no longer waits on you', async () => {
+        const t = setup([row('aaaaaaaa')])
+        await t.attach()
+        t.setEntries([call('toolu_1')])
+        const res = await t.sessions.press({ id: 'aaaaaaaa', keys: ['\r'], expect: 'toolu_1' })
+        expect(res).toEqual({ ok: false, message: 'It is not waiting on you any more.' })
+      })
+    })
+
     it('is watched only while its chat is the one showing, not for a terminal behind it', async () => {
       const t = setup([row('aaaaaaaa')])
       await t.attach()

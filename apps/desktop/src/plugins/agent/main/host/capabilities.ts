@@ -267,7 +267,8 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
     }),
 
     /** Keys pressed in a session's terminal, run by run: the chat's answer to
-     *  a dialog Claude Code draws (a permission prompt, a question). */
+     *  a dialog Claude Code draws (a permission prompt, a question). `expect`
+     *  names the call they answer, checked against the conversation first. */
     'agent.press': cap({
       doors: ['ui'],
       params: (raw) => {
@@ -283,7 +284,13 @@ export const agentCapabilities = (deps: AgentCapabilitiesDeps) => {
         ) {
           throw new CapabilityError('BAD_REQUEST', 'keys must be a short list of key runs')
         }
-        return { ...geometry(p), id, keys: keys as string[] }
+        const expect = optionalStringParam(p, 'expect')
+        return {
+          ...geometry(p),
+          id,
+          keys: keys as string[],
+          ...(expect === undefined ? {} : { expect }),
+        }
       },
       run: async (ctx, args): Promise<OpenResult> =>
         live(ctx) ? deps.sessions.press(args) : notOpen,
