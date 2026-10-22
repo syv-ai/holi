@@ -97,6 +97,34 @@ describe('renderPdf (integration — needs typst on PATH; first run fetches cmar
     expect((await readFile(join(root, 'out.pdf'))).subarray(0, 5).toString('latin1')).toBe('%PDF-')
   }, 30_000)
 
+  it('still makes the PDF when an image is broken, and says which', async () => {
+    const typst = await resolveTypstBin()
+    if (typst === null) return
+
+    const root = await work()
+    const templateDir = join(root, '.holi/document-templates/plain')
+    await mkdir(join(templateDir, 'assets'), { recursive: true })
+    await writeFile(join(templateDir, 'template.typ'), plainTemplateTyp)
+    await writeFile(join(root, 'bad.png'), 'not a png')
+    const notePath = join(root, 'n.md')
+    await writeFile(notePath, '![Broken](bad.png)\n\n![Gone](gone.png)\n')
+
+    const { warnings } = await renderPdf({
+      typstBin: typst,
+      vaultRoot: root,
+      templateDir,
+      notePath,
+      outPath: join(root, 'out.pdf'),
+      fields: [],
+      meta: {},
+    })
+    expect(warnings).toEqual([
+      'The image on line 1 is left out: bad.png is not a png file',
+      'The image on line 3 is left out: gone.png: no such file in the vault',
+    ])
+    expect((await readFile(join(root, 'out.pdf'))).subarray(0, 5).toString('latin1')).toBe('%PDF-')
+  }, 30_000)
+
   it('renders declared metadata (Date/Recipient) as a header — larger than an empty-meta render', async () => {
     const typst = await resolveTypstBin()
     if (typst === null) return // no typst on this machine — skip, don't fail

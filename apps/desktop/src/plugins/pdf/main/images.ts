@@ -11,7 +11,8 @@
  * Reading is a function handed in (`render.ts` keeps it inside the vault), so
  * this module only finds the images and says what stands in for each.
  */
-import { fencedBlocks, fileKind, parseWikiLinks, resolveImageRef } from '@holi/shared'
+import { fileKind, parseWikiLinks, resolveImageRef } from '@holi/shared'
+import { GFM, parser } from '@lezer/markdown'
 import { commentSafeString } from './mermaid'
 
 /** An image's bytes, by vault path. Throws with the reason it cannot. */
@@ -36,17 +37,27 @@ interface Found {
   target: { kind: 'vault'; path: string } | { kind: 'external'; url: string }
 }
 
-/** `![alt](target)` and `![alt](<target with spaces> "title")`. */
-const MARKDOWN_IMAGE = /!\[([^\]\n]*)\]\(\s*(?:<([^>\n]+)>|([^)\s]+))(?:\s+"[^"\n]*")?\s*\)/g
+/** CommonMark with GitHub's extensions, as the editor reads a note. */
+const markdownParser = parser.configure(GFM)
 
-/** Ranges no image is read from: fenced blocks and inline code spans. */
-function codeRanges(markdown: string): [number, number][] {
-  const ranges: [number, number][] = fencedBlocks(markdown).map((b) => [b.from, b.to])
-  for (const m of markdown.matchAll(/(`+)[^`\n]*?\1/g)) {
-    ranges.push([m.index, m.index + m[0].length])
-  }
-  return ranges
-}
+/** Nodes whose text is never an image: code, and HTML (comments included). */
+const VERBATIM = new Set([
+  'FencedCode',
+  'CodeBlock',
+  'InlineCode',
+  'CommentBlock',
+  'Comment',
+  'HTMLBlock',
+  'HTMLTag',
+])
+
+/** A reference label as CommonMark matches it: case and runs of space ignored. */
+const labelKey = (label: string): string =>
+  label
+    .replace(/^\[|\]$/g, '')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .toLowerCase()
 
 function decode(target: string): string {
   try {
@@ -56,29 +67,112 @@ function decode(target: string): string {
   }
 }
 
-/** Every image in `markdown`, in order: markdown images, and wiki-links to an
- *  image file (`[[a.png]]` or `![[a.png]]`, vault-relative like the editor). */
+/** A link destination as written: without its `<…>`, percent-decoded. */
+const destination = (url: string): string => decode(url.replace(/^<(.*)>$/, '$1'))
+
+/** Every image in `markdown`, in order: markdown images (inline and by
+ *  reference), and wiki-links to an image file (`[[a.png]]` or `![[a.png]]`,
+ *  vault-relative like the editor). Never one inside code or HTML. */
 function findImages(markdown: string, notePath: string): Found[] {
-  const code = codeRanges(markdown)
-  const inCode = (at: number): boolean => code.some(([from, to]) => at >= from && at < to)
+  const tree = markdownParser.parse(markdown)
+  const verbatim: [number, number][] = []
+  const definitions = new Map<string, string>()
+  const images: { from: number; to: number; alt: string; url?: string; label?: string }[] = []
+  tree.iterate({
+    enter: (node) => {
+      if (VERBATIM.has(node.name)) {
+        verbatim.push([node.from, node.to])
+        return false
+      }
+      if (node.name === 'LinkReference') {
+        const label = node.node.getChild('LinkLabel')
+        const url = node.node.getChild('URL')
+        if (label !== null && url !== null) {
+          const key = labelKey(markdown.slice(label.from, label.to))
+          // The first definition of a label wins.
+          if (!definitions.has(key)) definitions.set(key, markdown.slice(url.from, url.to))
+        }
+        return false
+      }
+      if (node.name !== 'Image') return
+      // The alt ends at the last `]` before the destination or the label:
+      // brackets inside the alt are marks of their own.
+      let altEnd = node.to
+      let url: string | undefined
+      let label: string | undefined
+      for (let c = node.node.firstChild; c !== null; c = c.nextSibling) {
+        const text = markdown.slice(c.from, c.to)
+        if (c.name === 'LinkMark' && text === ']' && url === undefined && label === undefined)
+          altEnd = c.from
+        else if (c.name === 'URL') url = text
+        else if (c.name === 'LinkLabel') label = text
+      }
+      const alt = markdown.slice(node.from + 2, altEnd).trim()
+      images.push({
+        from: node.from,
+        to: node.to,
+        alt,
+        ...(url === undefined ? {} : { url }),
+        ...(label === undefined ? {} : { label }),
+      })
+      return false
+    },
+  })
+
   const found: Found[] = []
-  for (const m of markdown.matchAll(MARKDOWN_IMAGE)) {
-    if (inCode(m.index)) continue
-    const ref = resolveImageRef(notePath, decode(m[2] ?? m[3]!))
-    found.push({ from: m.index, to: m.index + m[0].length, alt: m[1]!.trim(), target: ref })
+  for (const image of images) {
+    // `![a][r]`, `![a][]` and `![a]` look their address up by label; an
+    // undefined label is not an image, and stays text.
+    const url =
+      image.url ??
+      definitions.get(
+        labelKey(image.label === undefined || image.label === '[]' ? image.alt : image.label),
+      )
+    if (url === undefined) continue
+    found.push({
+      from: image.from,
+      to: image.to,
+      alt: image.alt,
+      target: resolveImageRef(notePath, destination(url)),
+    })
   }
+  const inVerbatim = (at: number): boolean => verbatim.some(([from, to]) => at >= from && at < to)
   for (const link of parseWikiLinks(markdown)) {
-    if (fileKind(link.target) !== 'image' || inCode(link.start)) continue
+    if (fileKind(link.target) !== 'image' || inVerbatim(link.start)) continue
     const from = markdown[link.start - 1] === '!' ? link.start - 1 : link.start
     if (found.some((f) => from < f.to && link.end > f.from)) continue
     found.push({
       from,
       to: link.end,
-      alt: link.label ?? '',
+      alt: link.label ?? link.target,
       target: { kind: 'vault', path: link.target },
     })
   }
   return found.sort((a, b) => a.from - b.from)
+}
+
+/** Why `bytes` will not draw as `format`, or null when it will. Typst fails
+ *  the whole PDF on an image it cannot decode, so a file whose bytes are not
+ *  what its name says is caught here, as is an SVG that points at another
+ *  file: Typst would look for that file inside cmarker's package. */
+function unusable(bytes: Uint8Array, format: string): string | null {
+  const starts = (sig: number[], at = 0): boolean => sig.every((b, i) => bytes[at + i] === b)
+  const ascii = (s: string): number[] => [...s].map((c) => c.charCodeAt(0))
+  const ok: Record<string, () => boolean> = {
+    png: () => starts([0x89, 0x50, 0x4e, 0x47]),
+    jpg: () => starts([0xff, 0xd8, 0xff]),
+    gif: () => starts(ascii('GIF8')),
+    webp: () => starts(ascii('RIFF')) && starts(ascii('WEBP'), 8),
+    svg: () => /<svg[\s>]/.test(new TextDecoder().decode(bytes)),
+  }
+  if (!ok[format]!()) return `is not a ${format === 'jpg' ? 'jpeg' : format} file`
+  if (format === 'svg') {
+    const svg = new TextDecoder().decode(bytes)
+    for (const m of svg.matchAll(/(?:xlink:)?href\s*=\s*["']\s*([^"'\s]*)/g)) {
+      if (!/^(#|data:)/i.test(m[1]!)) return 'is an SVG that links to another file'
+    }
+  }
+  return null
 }
 
 /** The markdown that stands in for an image: the image itself, in Typst. */
@@ -124,11 +218,16 @@ export async function inlineImages(
       leftOut(`${path} is not an image Typst can read (png, jpg, gif, webp or svg)`)
       continue
     }
+    let bytes: Uint8Array
     try {
-      out += imageMarkdown(await load(path), format, image.alt)
+      bytes = await load(path)
     } catch (err) {
       leftOut(`${path}: ${(err as Error).message}`)
+      continue
     }
+    const why = unusable(bytes, format)
+    if (why === null) out += imageMarkdown(bytes, format, image.alt)
+    else leftOut(`${path} ${why}`)
   }
   return { markdown: out + markdown.slice(at), warnings }
 }
