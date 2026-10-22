@@ -19,7 +19,7 @@ import { SidebarProvider } from "@/components/ui/sidebar"
 import { TooltipProvider } from "@/components/ui/tooltip"
 
 import { ChatSearchDialog } from "./chat-search-dialog"
-import { MODELS, THREADS } from "./data"
+import { THREADS } from "./data"
 import type { Move } from "@/lib/tree-actions"
 import { BOARD_TAB, useNewDocument } from "./documents-section"
 import { MobileHeader } from "./mobile-header"
@@ -41,8 +41,6 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null)
   /** The header's tabs, in the order they were opened. */
   const [openTabIds, setOpenTabIds] = useState<string[]>([])
-  const [modelId, setModelId] = useState(MODELS[0]!.id)
-  const [memoryOn, setMemoryOn] = useState(true)
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [searchOpen, setSearchOpen] = useState(false)
@@ -121,6 +119,11 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
     }
   }
 
+  function closeAllTabs() {
+    setOpenTabIds([])
+    setActiveThreadId(null)
+  }
+
   function handleSelectThread(id: string) {
     openTab(id)
     setMobileNavOpen(false)
@@ -174,10 +177,7 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
       onSelectTab={setActiveThreadId}
       onCloseTab={closeTab}
       onNewTab={handleNewChat}
-      modelId={modelId}
-      memoryOn={memoryOn}
-      onModelChange={setModelId}
-      onToggleMemory={() => setMemoryOn((current) => !current)}
+      onCloseAllTabs={closeAllTabs}
     />
   )
 

@@ -67,6 +67,7 @@ import {
   PlusIcon,
   SquareKanbanIcon,
 } from "lucide-react"
+import GradualBlur from "@/components/react-bits/GradualBlur"
 
 /** The header tab id of the task board, beside the document paths. */
 export const BOARD_TAB = "board"
@@ -350,121 +351,135 @@ export function FilesSection({
   const empty = (data[ROOT_ID]?.children.length ?? 0) === 0
 
   return (
-    <SidebarGroup className="min-h-0 flex-1 px-2">
+    <SidebarGroup className="min-h-0 flex-1 px-2 pb-0">
       <SidebarGroupLabel>Files</SidebarGroupLabel>
       <SidebarGroupAction title="New note" onClick={() => void newNote()}>
         <PlusIcon aria-hidden="true" />
         <span className="sr-only">New note</span>
       </SidebarGroupAction>
 
-      <ContextMenu>
-        <ContextMenuTrigger asChild>
-          <div
-            data-dropping={dropping || undefined}
-            onDragOver={(event) => {
-              if (!event.dataTransfer.types.includes("Files")) return
-              event.preventDefault()
-              setDropping(true)
-            }}
-            onDragLeave={(event) => {
-              if (!event.currentTarget.contains(event.relatedTarget as Node))
-                setDropping(false)
-            }}
-            onDrop={onAreaDrop}
-            className={cn(
-              "relative min-h-24 flex-1 overflow-y-auto overscroll-contain rounded-md",
-              "data-dropping:bg-foreground/5 data-dropping:ring-ring/50 data-dropping:ring-1"
-            )}
-          >
-            {empty ? (
-              <p className="text-muted-foreground px-2 py-6 text-center text-xs">
-                Drop files here, or right-click to add one.
-              </p>
-            ) : (
-              <Tree indent={INDENT} tree={tree} className="relative">
-                {tree.getItems().map((item) => (
-                  <TreeItem key={item.getId()} item={item}>
-                    <TreeItemLabel
-                      className={cn(
-                        "hover:bg-foreground/5 bg-transparent",
-                        item.getId() === activeId && "bg-foreground/10"
-                      )}
-                    >
-                      <span className="flex min-w-0 items-center gap-2">
-                        <FileGlyph item={item} />
-                        <span className="truncate">{item.getItemName()}</span>
-                      </span>
-                    </TreeItemLabel>
-                  </TreeItem>
-                ))}
-                <TreeDragLine />
-              </Tree>
-            )}
-          </div>
-        </ContextMenuTrigger>
+      {/* The tree fades into a blur at its foot while there is more below. */}
+      <div className="relative flex min-h-24 flex-1 flex-col">
+        <ContextMenu>
+          <ContextMenuTrigger asChild>
+            <div
+              data-dropping={dropping || undefined}
+              onDragOver={(event) => {
+                if (!event.dataTransfer.types.includes("Files")) return
+                event.preventDefault()
+                setDropping(true)
+              }}
+              onDragLeave={(event) => {
+                if (!event.currentTarget.contains(event.relatedTarget as Node))
+                  setDropping(false)
+              }}
+              onDrop={onAreaDrop}
+              className={cn(
+                "relative min-h-0 flex-1 overflow-y-auto pb-6 overscroll-contain rounded-md",
+                "data-dropping:bg-foreground/5 data-dropping:ring-ring/50 data-dropping:ring-1"
+              )}
+            >
+              {empty ? (
+                <p className="text-muted-foreground px-2 py-6 text-center text-xs">
+                  Drop files here, or right-click to add one.
+                </p>
+              ) : (
+                <Tree indent={INDENT} tree={tree} className="relative">
+                  {tree.getItems().map((item) => (
+                    <TreeItem key={item.getId()} item={item}>
+                      <TreeItemLabel
+                        className={cn(
+                          "hover:bg-foreground/5 bg-transparent",
+                          item.getId() === activeId && "bg-foreground/10"
+                        )}
+                      >
+                        <span className="flex min-w-0 items-center gap-2">
+                          <FileGlyph item={item} />
+                          <span className="truncate">{item.getItemName()}</span>
+                        </span>
+                      </TreeItemLabel>
+                    </TreeItem>
+                  ))}
+                  <TreeDragLine />
+                </Tree>
+              )}
+            </div>
+          </ContextMenuTrigger>
 
-        <ContextMenuContent className="w-52">
-          <ContextMenuItem
-            onSelect={() =>
-              void createFolder(freeName(files.taken, "", "New folder"))
-            }
-          >
-            <FolderPlusIcon aria-hidden="true" />
-            New folder
-          </ContextMenuItem>
-          <ContextMenuItem
-            onSelect={async () => {
-              const path = await createTask({
-                title: "Untitled task",
-                status: "todo",
-                folder: "",
-              })
-              if (path) onOpen(path)
-            }}
-          >
-            <ListChecksIcon aria-hidden="true" />
-            New task
-          </ContextMenuItem>
-          {creates.map((create) => (
+          <ContextMenuContent className="w-52">
             <ContextMenuItem
-              key={create.id}
-              disabled={files.remote === null}
+              onSelect={() =>
+                void createFolder(freeName(files.taken, "", "New folder"))
+              }
+            >
+              <FolderPlusIcon aria-hidden="true" />
+              New folder
+            </ContextMenuItem>
+            <ContextMenuItem
               onSelect={async () => {
-                if (files.remote === null) return
-                const path = await create.run({
-                  remote: files.remote,
-                  parent: "",
-                  name: freeName(files.taken, "", "Untitled", ".app").replace(
-                    /\.app$/,
-                    ""
-                  ),
+                const path = await createTask({
+                  title: "Untitled task",
+                  status: "todo",
+                  folder: "",
                 })
                 if (path) onOpen(path)
               }}
             >
-              <AppWindowIcon aria-hidden="true" />
-              {create.label}
+              <ListChecksIcon aria-hidden="true" />
+              New task
             </ContextMenuItem>
-          ))}
-          <ContextMenuSeparator />
-          <ContextMenuCheckboxItem
-            checked={files.showTasks}
-            onCheckedChange={files.toggleTasks}
-          >
-            Show task files
-          </ContextMenuCheckboxItem>
-          <ContextMenuCheckboxItem
-            checked={files.showHidden}
-            onCheckedChange={files.toggleHidden}
-          >
-            Show hidden files
-          </ContextMenuCheckboxItem>
-          <ContextMenuSeparator />
-          <ContextMenuItem onSelect={() => tree.collapseAll()}>
-            Collapse all
-          </ContextMenuItem>
-        </ContextMenuContent>
-      </ContextMenu>
+            {creates.map((create) => (
+              <ContextMenuItem
+                key={create.id}
+                disabled={files.remote === null}
+                onSelect={async () => {
+                  if (files.remote === null) return
+                  const path = await create.run({
+                    remote: files.remote,
+                    parent: "",
+                    name: freeName(files.taken, "", "Untitled", ".app").replace(
+                      /\.app$/,
+                      ""
+                    ),
+                  })
+                  if (path) onOpen(path)
+                }}
+              >
+                <AppWindowIcon aria-hidden="true" />
+                {create.label}
+              </ContextMenuItem>
+            ))}
+            <ContextMenuSeparator />
+            <ContextMenuCheckboxItem
+              checked={files.showTasks}
+              onCheckedChange={files.toggleTasks}
+            >
+              Show task files
+            </ContextMenuCheckboxItem>
+            <ContextMenuCheckboxItem
+              checked={files.showHidden}
+              onCheckedChange={files.toggleHidden}
+            >
+              Show hidden files
+            </ContextMenuCheckboxItem>
+            <ContextMenuSeparator />
+            <ContextMenuItem onSelect={() => tree.collapseAll()}>
+              Collapse all
+            </ContextMenuItem>
+          </ContextMenuContent>
+        </ContextMenu>
+        <GradualBlur
+          position="bottom"
+          height="3rem"
+          strength={2}
+          layers={8}
+          curve="linear"
+          exponential
+          tint="var(--sidebar)"
+          autoHide
+          zIndex={10}
+        />
+      </div>
     </SidebarGroup>
   )
 }
