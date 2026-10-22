@@ -70,7 +70,17 @@ export function ConsentDialog({
         setStep({ kind: 'failed', message: 'Setup did not finish.' })
         return
       }
-      await onReady?.()
+      try {
+        await onReady?.()
+      } catch (err) {
+        // Setup did finish: only the step after it, in this vault, did not.
+        const why = err instanceof Error ? err.message : String(err)
+        setStep({
+          kind: 'failed',
+          message: `${row.name} is set up, but could not be turned on in this vault: ${why}`,
+        })
+        return
+      }
       setStep({ kind: 'done' })
     } catch (err) {
       setStep({ kind: 'failed', message: err instanceof Error ? err.message : String(err) })

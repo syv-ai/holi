@@ -95,9 +95,15 @@ describe('parsePluginManifest', () => {
     expect(problems({ ...dash, check: ['dashctl', 'version'] })).toHaveLength(1)
     expect(problems({ ...dash, check: { ...check, run: ['dashctl version'] } })).toHaveLength(1)
     expect(problems({ ...dash, check: { ...check, run: ['x', '{home}'] } })).toHaveLength(1)
+    expect(problems({ ...dash, check: { ...check, run: ['x', '{vault}'] } })).toEqual([])
+    expect(problems({ ...dash, check: { ...check, run: ['x', '{file}'] } })).toHaveLength(1)
+    expect(problems({ ...dash, check: { ...check, run: ['x', '--port', '{port}'] } })).toHaveLength(
+      1,
+    )
     expect(problems({ ...dash, check: { ...check, run: [] } })).toHaveLength(1)
     expect(problems({ ...dash, check: { run: check.run } })).toHaveLength(1)
     expect(problems({ ...dash, check: { ...check, hint: 'two\nlines' } })).toHaveLength(1)
+    expect(problems({ ...dash, check: { ...check, hint: 'a\ttab' } })).toHaveLength(1)
     expect(problems({ ...dash, check: { ...check, hint: 'x'.repeat(201) } })).toHaveLength(1)
   })
 

@@ -632,6 +632,23 @@ describe('readiness check', () => {
     expect((await call('community.check', { id: 'prezzi' })).check).toEqual({ ok: true })
   })
 
+  test('an answer from before forget is dropped, and a fresh ask does not join it', async () => {
+    const answers: ((ok: boolean) => void)[] = []
+    const checks = createChecks(() => new Promise<boolean>((resolve) => answers.push(resolve)))
+    const check = { run: ['x'], hint: 'Switch it on' }
+    const stale = checks.run(vault, 'dash', check, dir)
+    expect(checks.run(vault, 'dash', check, dir)).toBe(stale)
+    checks.forget(vault, 'dash')
+    const fresh = checks.run(vault, 'dash', check, dir)
+    expect(answers).toHaveLength(2)
+    answers[0]!(true)
+    await stale
+    expect(checks.get(vault, 'dash')).toBeNull()
+    answers[1]!(false)
+    await fresh
+    expect(checks.get(vault, 'dash')).toEqual({ ok: false, hint: 'Switch it on' })
+  })
+
   test('a check that does not finish in time fails', async () => {
     const started = Date.now()
     expect(

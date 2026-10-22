@@ -676,7 +676,8 @@ export async function seedRunningApps(
 /**
  * Run the readiness check of every plugin that runs in the vault at `root`
  * and has one (`checks.ts`), or only of `ids`: those not asked yet, or all of
- * them with `fresh`. Resolves true when any was asked. Never throws.
+ * them with `fresh`. A plugin that does not run has its answer forgotten.
+ * Resolves true when any was asked. Never throws.
  */
 export async function runChecks(
   root: string,
@@ -686,7 +687,13 @@ export async function runChecks(
   try {
     const asked = []
     for (const row of await listPlugins(root, deps)) {
-      if (!row.running || (opts.ids !== undefined && !opts.ids.includes(row.id))) continue
+      // Turned off, or no longer ready: what its check said no longer holds,
+      // so turning it on again asks afresh.
+      if (!row.running) {
+        deps.checks.forget(root, row.id)
+        continue
+      }
+      if (opts.ids !== undefined && !opts.ids.includes(row.id)) continue
       if (!opts.fresh && deps.checks.get(root, row.id) !== null) continue
       const install = await deps.store.get(row.id)
       const check = install?.manifest.check

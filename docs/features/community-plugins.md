@@ -118,7 +118,7 @@ setting switched on in a companion app, says how to tell in its manifest:
 "check": { "run": ["dashctl", "version"], "hint": "Switch on Let other agents control Dash in Dash" }
 ```
 
-`run` is an argv like `setup`, with the same placeholders, run in the plugin's folder with no shell
+`run` is an argv like `setup`, with `{vault}` its only placeholder, run in the plugin's folder with no shell
 and on the same `PATH`; it passes when it exits 0 within 10 seconds, and is killed with what it
 started when it does not. `hint` is one short line for the person. Main asks it for each plugin that
 runs in the vault: when the vault opens, when a plugin is turned on there, right after its setup

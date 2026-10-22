@@ -92,7 +92,9 @@ export const communityMain: MainPlugin = {
       if (!first) follow()
     })
     return async () => {
-      // Stopping stops its servers: the tabs on them are gone too.
+      // Stopping stops its servers: the tabs on them are gone too. And any
+      // check still running.
+      checks.stop()
       await servers.stopAll()
       await unlinkWhenOff(ctx.root, installedInfos())
     }

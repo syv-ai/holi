@@ -122,7 +122,7 @@ export interface PluginManifest {
    *  a command but never stand in for one the machine already has. */
   bin?: Record<string, string>
   /** Whether the plugin can do its work now, beyond being set up: `run` is an
-   *  argv run in the plugin's folder, passing when it exits 0, and `hint` is
+   *  argv run in the plugin's folder, with `{vault}` its one placeholder, passing when it exits 0, and `hint` is
    *  what to tell the person when it fails ("Switch on Let other agents
    *  control Dash in Dash"). A failing check does not stop the plugin. */
   check?: PluginCheck
@@ -193,7 +193,12 @@ const isRecord = (v: unknown): v is Record<string, unknown> =>
 const isStringList = (v: unknown): v is string[] =>
   Array.isArray(v) && v.every((s) => typeof s === 'string')
 
-function commandProblems(field: string, argv: unknown, required: readonly string[]): string[] {
+function commandProblems(
+  field: string,
+  argv: unknown,
+  required: readonly string[],
+  allowed: readonly string[] = COMMAND_PLACEHOLDERS,
+): string[] {
   if (!isStringList(argv) || argv.length === 0 || argv.some((s) => s.length === 0))
     return [`${field} must be a non-empty list of arguments`]
   const problems: string[] = []
@@ -201,10 +206,8 @@ function commandProblems(field: string, argv: unknown, required: readonly string
     problems.push(`${field} is an argv, not a shell string: split "${argv[0]}" into its arguments`)
   for (const arg of argv)
     for (const found of arg.match(PLACEHOLDER) ?? [])
-      if (!(COMMAND_PLACEHOLDERS as readonly string[]).includes(found))
-        problems.push(
-          `${field} uses ${found}; only ${COMMAND_PLACEHOLDERS.join(', ')} are filled in`,
-        )
+      if (!allowed.includes(found))
+        problems.push(`${field} uses ${found}; Holi fills in only ${allowed.join(', ')} here`)
   for (const placeholder of required)
     if (!argv.some((arg) => arg.includes(placeholder)))
       problems.push(`${field} must pass ${placeholder}`)
@@ -313,12 +316,14 @@ export function parsePluginManifest(json: unknown, path = ''): Parsed<PluginMani
     if (!isRecord(check))
       problems.push('check must be an object, like {"run": ["tool", "version"], "hint": "..."}')
     else {
-      problems.push(...commandProblems('check.run', check.run, []))
+      // A check runs for the plugin, not for a file or a server: only
+      // `{vault}` has a value then.
+      problems.push(...commandProblems('check.run', check.run, [], ['{vault}']))
       const hint = check.hint
       if (
         typeof hint !== 'string' ||
         hint.trim() === '' ||
-        hint.includes('\n') ||
+        /\p{Cc}/u.test(hint) ||
         hint.length > CHECK_HINT_MAX
       )
         problems.push(`check.hint must be one line of text, at most ${CHECK_HINT_MAX} characters`)

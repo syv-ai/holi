@@ -11,7 +11,7 @@ import { spawn } from 'node:child_process'
 import { createWriteStream } from 'node:fs'
 import { mkdir } from 'node:fs/promises'
 import { dirname } from 'node:path'
-import { defaultProbePid, toolPath } from '../../../main/plugin-api'
+import { toolPath } from '../../../main/plugin-api'
 
 /** What a command's `{file}`, `{vault}` and `{port}` stand for. */
 export interface CommandValues {
@@ -89,38 +89,47 @@ export const CHECK_TIMEOUT_MS = 10_000
 
 /**
  * Run a plugin's `check` in `cwd`, its output ignored. Resolves true for exit
- * code 0 within `timeoutMs`; a check still running then is killed, with
- * anything it started, and fails.
+ * code 0 within `timeoutMs`; a check still running then, or when `signal`
+ * aborts, is killed, with anything it started, and fails.
  */
 export function runCheck(args: {
   argv: readonly string[]
   cwd: string
   timeoutMs?: number
+  signal?: AbortSignal
 }): Promise<boolean> {
   const [command, ...rest] = args.argv
   return new Promise((resolve) => {
-    // Its own process group, so a timeout stops what it started too.
+    if (args.signal?.aborted) return resolve(false)
+    // Its own process group, so a kill stops what it started too.
     const child = spawn(command!, rest, {
       cwd: args.cwd,
       env: pluginEnv(),
       stdio: 'ignore',
       detached: true,
     })
-    const timer = setTimeout(() => {
+    let done = false
+    const finish = (ok: boolean) => {
+      if (done) return
+      done = true
+      clearTimeout(timer)
+      args.signal?.removeEventListener('abort', stop)
+      resolve(ok)
+    }
+    // Not exited, so not reaped: its pid is still ours, and leads its group.
+    const stop = () => {
       const pid = child.pid
-      if (pid !== undefined && defaultProbePid(pid) === 'group-leader') {
+      if (pid !== undefined && child.exitCode === null && child.signalCode === null) {
         try {
           process.kill(-pid, 'SIGKILL')
         } catch {
-          // Gone in between.
+          child.kill('SIGKILL')
         }
       }
-      resolve(false)
-    }, args.timeoutMs ?? CHECK_TIMEOUT_MS)
-    const finish = (ok: boolean) => {
-      clearTimeout(timer)
-      resolve(ok)
+      finish(false)
     }
+    const timer = setTimeout(stop, args.timeoutMs ?? CHECK_TIMEOUT_MS)
+    args.signal?.addEventListener('abort', stop, { once: true })
     child.once('error', () => finish(false))
     child.once('exit', (code) => finish(code === 0))
   })
