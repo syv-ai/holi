@@ -23,6 +23,7 @@ import { askToRun, installAndAsk, updatePlugin, type InstallFlow } from './insta
 import { PluginFrame } from './PluginFrame'
 import { PluginsSettings } from './PluginsSettings'
 import {
+  communityCap,
   followRows,
   refreshRows,
   rowsAtom,
@@ -92,6 +93,11 @@ const waitingAtom = atom((get): readonly PluginRow[] =>
   (get(rowsAtom)?.rows ?? []).filter((r) => r.on && r.status !== 'ready'),
 )
 
+/** Plugins the vault runs here whose readiness check fails. */
+const notWorkingAtom = atom((get): readonly PluginRow[] =>
+  (get(rowsAtom)?.rows ?? []).filter((r) => r.running && r.check?.ok === false),
+)
+
 /** Plugins the vault runs here that have a newer release, with it. */
 const updatableAtom = atom((get): readonly { row: PluginRow; version: string }[] => {
   const updates = get(updatesAtom)
@@ -104,18 +110,24 @@ const updatableAtom = atom((get): readonly { row: PluginRow; version: string }[]
 
 /**
  * The notice a vault's plugins raise under the file tree, one line per plugin
- * and its next step: one this machine cannot run yet, and one with a newer
- * release. It stays until acted on, as Holi's own update offer does, since a
+ * and its next step: one this machine cannot run yet, one whose readiness
+ * check fails, with the plugin's hint, and one with a newer release. It stays until acted on, as Holi's own update offer does, since a
  * passing toast could be missed. Never an install by itself; the dialog asks.
  */
 function WaitingNotice(): React.JSX.Element | null {
   const waiting = useAtomValue(waitingAtom)
+  const notWorking = useAtomValue(notWorkingAtom)
   const updatable = useAtomValue(updatableAtom)
   const remote = useAtomValue(activeRemoteAtom)
   const store = useStore()
   const openDialog = useSetAtom(openDialogAtom)
   const [error, setError] = useState<string | null>(null)
-  if ((waiting.length === 0 && updatable.length === 0) || remote === null) return null
+  const [checking, setChecking] = useState<string | null>(null)
+  if (
+    (waiting.length === 0 && notWorking.length === 0 && updatable.length === 0) ||
+    remote === null
+  )
+    return null
   const flow: InstallFlow = {
     remote,
     store,
@@ -134,6 +146,18 @@ function WaitingNotice(): React.JSX.Element | null {
       )
     else askToRun(flow, row)
   }
+  const checkAgain = async (row: PluginRow) => {
+    setError(null)
+    setChecking(row.id)
+    try {
+      await communityCap.check(remote, { id: row.id })
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setChecking(null)
+      await refreshRows(remote, store)
+    }
+  }
   return (
     <div className="grid gap-1.5 px-3 py-2 text-[11px] text-muted-foreground">
       {waiting.map((row) => (
@@ -147,6 +171,22 @@ function WaitingNotice(): React.JSX.Element | null {
               {row.status === 'not-installed' ? 'Install…' : 'Set up…'}
             </Button>
           )}
+        </div>
+      ))}
+      {notWorking.map((row) => (
+        <div key={row.id} className="flex items-center justify-between gap-2">
+          <span className="min-w-0">
+            <span className="text-foreground">{row.name}</span>:{' '}
+            {row.check?.ok === false && row.check.hint}
+          </span>
+          <Button
+            size="xs"
+            variant="secondary"
+            disabled={checking === row.id}
+            onClick={() => void checkAgain(row)}
+          >
+            Check again
+          </Button>
         </div>
       ))}
       {updatable.map(({ row, version }) => (
@@ -208,6 +248,11 @@ export const communityRenderer: RendererPlugin = {
     },
     // Main linked the agent's commands again: the rows say what it refused.
     commands: ({ remote }, store) => {
+      if (remote !== store.get(activeRemoteAtom)) return
+      void refreshRows(remote, store)
+    },
+    // Main asked plugins' readiness checks: the rows carry the answers.
+    check: ({ remote }, store) => {
       if (remote !== store.get(activeRemoteAtom)) return
       void refreshRows(remote, store)
     },

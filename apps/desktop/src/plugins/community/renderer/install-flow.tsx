@@ -44,9 +44,11 @@ export function ConsentDialog({
 }): React.JSX.Element {
   const remote = useAtomValue(activeRemoteAtom)
   const log = useAtomValue(setupLogsAtom)[row.id] ?? []
-  // Which of its commands the agent did not get, once the rows are read again.
-  const commandsNote =
-    useAtomValue(rowsAtom)?.rows.find((r) => r.id === row.id)?.commandsNote ?? null
+  // Which of its commands the agent did not get, and what its readiness check
+  // said, once the rows are read again.
+  const current = useAtomValue(rowsAtom)?.rows.find((r) => r.id === row.id)
+  const commandsNote = current?.commandsNote ?? null
+  const failedCheck = current?.check?.ok === false ? current.check.hint : null
   const [step, setStep] = useState<Step>({ kind: 'ask' })
   const logEnd = useRef<HTMLDivElement>(null)
   const install = row.install
@@ -147,7 +149,10 @@ export function ConsentDialog({
           <div className="grid gap-2">
             <p className="text-xs text-muted-foreground">
               {step.kind === 'setup' && 'Running setup…'}
-              {step.kind === 'done' && `${row.name} is ready.`}
+              {step.kind === 'done' &&
+                (failedCheck === null
+                  ? `${row.name} is ready.`
+                  : `${row.name} is set up, but cannot work yet. ${failedCheck}`)}
               {step.kind === 'done' && commandsNote !== null && ` ${commandsNote}`}
               {step.kind === 'failed' && step.message}
             </p>

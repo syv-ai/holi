@@ -152,7 +152,11 @@ export function PluginsSettings({ remote }: { remote: string }): React.JSX.Eleme
               description={
                 <>
                   {row.description !== '' && <>{row.description} </>}
-                  {STATUS[row.status]}
+                  {row.check?.ok === false ? (
+                    <span className="text-amber-400">{row.check.hint}</span>
+                  ) : (
+                    STATUS[row.status]
+                  )}
                   {row.install?.kind === 'dev' && <> · from {row.install.folder}</>}
                   {row.commandsNote !== null && (
                     <span className="text-amber-400"> {row.commandsNote}</span>
@@ -168,6 +172,20 @@ export function PluginsSettings({ remote }: { remote: string }): React.JSX.Eleme
                       onClick={() => void act(() => updatePlugin(flow, row, updates[row.id]!))}
                     >
                       Update to {updates[row.id]}…
+                    </Button>
+                  )}
+                  {row.check?.ok === false && (
+                    <Button
+                      size="xs"
+                      variant="ghost"
+                      disabled={busy}
+                      onClick={() =>
+                        void act(
+                          async () => void (await communityCap.check(remote, { id: row.id })),
+                        )
+                      }
+                    >
+                      Check again
                     </Button>
                   )}
                   {nextStep(row)}

@@ -121,7 +121,20 @@ export interface PluginManifest {
    *  vault. That folder comes last on the agent's `PATH`, so a plugin can add
    *  a command but never stand in for one the machine already has. */
   bin?: Record<string, string>
+  /** Whether the plugin can do its work now, beyond being set up: `run` is an
+   *  argv run in the plugin's folder, passing when it exits 0, and `hint` is
+   *  what to tell the person when it fails ("Switch on Let other agents
+   *  control Dash in Dash"). A failing check does not stop the plugin. */
+  check?: PluginCheck
 }
+
+export interface PluginCheck {
+  run: string[]
+  hint: string
+}
+
+/** The longest a check's hint may be: one short line in a settings row. */
+export const CHECK_HINT_MAX = 200
 
 /** Where a vault links its running plugins' commands, on the agent's `PATH`:
  *  machine state, and `.local.` so it never syncs, since each link points at
@@ -223,6 +236,7 @@ export function parsePluginManifest(json: unknown, path = ''): Parsed<PluginMani
     folder,
     apps,
     bin,
+    check,
   } = json
   const opens = json.opens ?? []
 
@@ -295,6 +309,22 @@ export function parsePluginManifest(json: unknown, path = ''): Parsed<PluginMani
       }
   }
 
+  if (check !== undefined) {
+    if (!isRecord(check))
+      problems.push('check must be an object, like {"run": ["tool", "version"], "hint": "..."}')
+    else {
+      problems.push(...commandProblems('check.run', check.run, []))
+      const hint = check.hint
+      if (
+        typeof hint !== 'string' ||
+        hint.trim() === '' ||
+        hint.includes('\n') ||
+        hint.length > CHECK_HINT_MAX
+      )
+        problems.push(`check.hint must be one line of text, at most ${CHECK_HINT_MAX} characters`)
+    }
+  }
+
   if (problems.length > 0) return { ok: false, problems }
   const manifest: PluginManifest = {
     id: id as string,
@@ -310,6 +340,10 @@ export function parsePluginManifest(json: unknown, path = ''): Parsed<PluginMani
   if (ignore !== undefined) manifest.ignore = ignore as string[]
   if (skills !== undefined) manifest.skills = skills as string[]
   if (bin !== undefined) manifest.bin = { ...(bin as Record<string, string>) }
+  if (check !== undefined) {
+    const c = check as { run: string[]; hint: string }
+    manifest.check = { run: [...c.run], hint: c.hint.trim() }
+  }
   if (folder !== undefined) {
     const f = folder as { suffix: string; entry: string }
     manifest.folder = { suffix: f.suffix, entry: f.entry }

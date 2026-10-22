@@ -106,6 +106,22 @@ dialog naming the repository, version, commit, both commands and the commands it
 its output streamed into the dialog and kept in `setup.log`. A folder install asks nothing: it is
 the person's own checkout.
 
+**A readiness check.** A plugin that needs something outside Holi before it can work, such as a
+setting switched on in a companion app, says how to tell in its manifest:
+
+```json
+"check": { "run": ["dashctl", "version"], "hint": "Switch on Let other agents control Dash in Dash" }
+```
+
+`run` is an argv like `setup`, with the same placeholders, run in the plugin's folder with no shell
+and on the same `PATH`; it passes when it exits 0 within 10 seconds, and is killed with what it
+started when it does not. `hint` is one short line for the person. Main asks it for each plugin that
+runs in the vault: when the vault opens, when a plugin is turned on there, right after its setup
+succeeds, and when the person clicks **Check again**, never on a timer. The last answer is kept in
+memory per vault and plugin, and leaving the vault drops it. A failing check does not stop the
+plugin: its skills and commands stay and it still counts as running. Its settings row and the
+vault notice show the hint in place of "Ready", with **Check again** beside it.
+
 **A row's status**, as settings and the vault notice show it: `not-installed` (pinned, absent here),
 `pin-differs` (this machine has another release), `needs-consent`, `needs-setup`, `setup-failed`,
 `ready`. A plugin is running where the vault turns it on and it is `ready`; only then does its claim

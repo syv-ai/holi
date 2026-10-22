@@ -85,6 +85,22 @@ describe('parsePluginManifest', () => {
     expect(problems({ ...dash, bin: ['bin/dashctl'] })).toHaveLength(1)
   })
 
+  it('reads a readiness check: an argv like setup, and a one-line hint', () => {
+    const dash = { id: 'dash', name: 'Dash', version: '0.1.0', bin: { dashctl: 'bin/dashctl' } }
+    const check = { run: ['dashctl', 'version'], hint: 'Switch it on in Dash' }
+    expect(parsePluginManifest({ ...dash, check })).toEqual({
+      ok: true,
+      value: { ...dash, opens: [], check },
+    })
+    expect(problems({ ...dash, check: ['dashctl', 'version'] })).toHaveLength(1)
+    expect(problems({ ...dash, check: { ...check, run: ['dashctl version'] } })).toHaveLength(1)
+    expect(problems({ ...dash, check: { ...check, run: ['x', '{home}'] } })).toHaveLength(1)
+    expect(problems({ ...dash, check: { ...check, run: [] } })).toHaveLength(1)
+    expect(problems({ ...dash, check: { run: check.run } })).toHaveLength(1)
+    expect(problems({ ...dash, check: { ...check, hint: 'two\nlines' } })).toHaveLength(1)
+    expect(problems({ ...dash, check: { ...check, hint: 'x'.repeat(201) } })).toHaveLength(1)
+  })
+
   it('names a command without a path or shell meaning, and never holi', () => {
     for (const name of ['dashctl', 'gh2', 'my-tool', 'x.y_z'])
       expect(isCommandName(name)).toBe(true)
