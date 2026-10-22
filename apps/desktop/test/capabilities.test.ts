@@ -25,7 +25,7 @@ import { SCREENSHOT_DIR } from '../src/main/screenshot-files'
 import type { GoogleAccountsManager } from '../src/plugins/google/main/accounts'
 import { googleCapabilities, GOOGLE_NAMESPACES } from '../src/plugins/google/main/capabilities'
 import { taskCapabilities, TASKS_NAMESPACES } from '../src/plugins/tasks/main/capabilities'
-import { taskClaim } from '../src/plugins/tasks/shared/task-file'
+import { parseTaskFile, taskClaim } from '../src/plugins/tasks/shared/task-file'
 import { MEMBERS_TTL_MS, createMembersCache } from '../src/main/github/members-cache'
 
 const registry = createCapabilityRegistry()
@@ -650,17 +650,57 @@ describe('tasks.create at the app door', () => {
       folder: 'ops',
       extra: { due: '2026-10-01' },
     })
-    expect(value).toEqual({ path: 'ops/task.call-the-vendor.md' })
-    expect(await readText(join(root, 'ops/task.call-the-vendor.md'), 'utf8')).toContain(
+    // Private unless asked otherwise, though an app may write no other local file.
+    expect(value).toEqual({ path: 'ops/task.call-the-vendor.local.md' })
+    expect(await readText(join(root, 'ops/task.call-the-vendor.local.md'), 'utf8')).toContain(
       '2026-10-01',
     )
+    const shared = await runCapability('tasks.create', 'app', ctx({}), {
+      title: 'Call the vendor',
+      folder: 'ops',
+      shared: true,
+    })
+    // The private one holds the name, so the shared one takes the next.
+    expect(shared.value).toEqual({ path: 'ops/task.call-the-vendor-2.md' })
     await mkdir(join(root, 'elsewhere'))
     await symlink(join(root, 'elsewhere'), join(root, 'link'))
     for (const folder of ['.claude', 'Budget.app', 'mine.local.d', 'link', 'CLAUDE.md']) {
-      expect(
-        await refusal(runCapability('tasks.create', 'app', ctx({}), { title: 'X', folder })),
-      ).toMatchObject({ code: 'FORBIDDEN' })
+      for (const shared of [false, true]) {
+        expect(
+          await refusal(
+            runCapability('tasks.create', 'app', ctx({}), { title: 'X', folder, shared }),
+          ),
+        ).toMatchObject({ code: 'FORBIDDEN' })
+      }
     }
+  })
+
+  it('completes a private task, but reaches no other local file', async () => {
+    await put('ops/task.a.local.md', '---\nstatus: todo\n---\n')
+    await put('USER.local.md', 'me')
+    const withTask = (): CapabilityContext => ({
+      ...ctx({}),
+      snapshot: async () => ({
+        ...emptyVaultSnapshot(),
+        files: [{ path: 'USER.local.md', updatedAt: '' }],
+        claimed: {
+          tasks: {
+            items: [parseTaskFile('---\nstatus: todo\n---\n', 'ops/task.a.local.md')],
+            broken: [],
+          },
+        },
+      }),
+    })
+    await runCapability('tasks.complete', 'app', withTask(), { path: 'ops/task.a.local.md' })
+    expect(await readText(join(root, 'ops/task.a.local.md'), 'utf8')).toContain('status: done')
+    expect(
+      await refusal(
+        runCapability('tasks.update', 'app', withTask(), {
+          path: 'USER.local.md',
+          patch: { status: 'done' },
+        }),
+      ),
+    ).toMatchObject({ code: 'FORBIDDEN' })
   })
 })
 
@@ -669,7 +709,7 @@ describe('tasks.create, twice at once', () => {
     const create = () => runCapability('tasks.create', 'app', ctx({}), { title: 'Call' })
     const [a, b] = await Promise.all([create(), create()])
     expect(new Set([a.value, b.value].map((v) => (v as { path: string }).path))).toEqual(
-      new Set(['task.call.md', 'task.call-2.md']),
+      new Set(['task.call.local.md', 'task.call-2.local.md']),
     )
   })
 })

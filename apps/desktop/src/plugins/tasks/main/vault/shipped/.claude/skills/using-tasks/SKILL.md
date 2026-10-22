@@ -1,6 +1,6 @@
 ---
 name: using-tasks
-description: Read and write this vault's tasks — the frontmatter a task file holds, due dates and reminders, recurrence, and where a task lives. Use when asked to add, find, change, schedule, remind about, or complete a task, or when writing a task file by hand.
+description: Read and write this vault's tasks: the frontmatter a task file holds, due dates and reminders, recurrence, where a task lives, and private versus shared tasks. Use when asked to add, find, change, schedule, remind about, or complete a task, or when writing a task file by hand.
 ---
 
 # Tasks in this vault
@@ -8,6 +8,34 @@ description: Read and write this vault's tasks — the frontmatter a task file h
 **A task is a file.** There is no database and no task id: `task.<slug>.md`, ordinary
 markdown with frontmatter, living anywhere in the vault. Create one by writing the
 file; change one by editing it. The board reads the files.
+
+## Private and shared tasks
+
+**A new task is private unless the user says to share it.** A private task is
+`task.<slug>.local.md`: the `.local.` marker keeps the file on this machine. Git
+ignores it, so it is never committed, never synced, and never on a teammate's board.
+On this machine it is a task like any other: the board shows it (with a small lock),
+its reminder fires, it recurs, and it triggers schedules.
+
+A shared task is `task.<slug>.md`. It is committed and syncs to everyone in the vault.
+
+- Write `task.<slug>.local.md` when creating a task, unless the user asks for a task
+  the team should see ("add it to the team board", "for Bo", "share it"). A task
+  assigned to someone else only reaches them if it is shared, so ask before writing
+  a private task with another person in `assignees`.
+- Or create it with `holi tasks create "<title>" [folder]`, which writes the private
+  file and prints its path; add `--shared` for a shared one.
+- **Sharing a task is renaming its file** to drop `.local.`, and making it private is
+  renaming it to add `.local.`. Ask for the rename (or use the card's Share with vault
+  and Make private) rather than `mv`, so the links to it follow. Making a shared task
+  private takes it off every teammate's board on their next sync, git history still
+  holds the shared version, and links to it from shared notes stop resolving (they are
+  left at the shared path, not rewritten): say all three before doing it.
+- Only the file's own name makes a task private. A task file inside a `.local.` folder
+  is not a task at all, just a local file.
+- Never give a private and a shared task the same name (`task.x.local.md` beside
+  `task.x.md`): neither could then be renamed into the other.
+- `holi tasks list` ends a private task's line with `private`.
 
 ## The file
 
@@ -129,8 +157,11 @@ the same pass.
 ## Tips
 
 - **Finding tasks is a grep.** They are files: `task.*.md` with `status: todo` in the
-  frontmatter. There is no index to query and no API to call.
+  frontmatter, private ones included (`task.*.local.md` matches the same glob). Your
+  search tool may skip gitignored files, so look for private tasks explicitly, or use
+  `holi tasks list`. There is no index to query.
 - Writing a whole task file at once is fine and is the fastest way to create one.
-  Use the title's slug for the filename — lowercase, dashes, no punctuation.
+  Use the title's slug for the filename: lowercase, dashes, no punctuation, then
+  `.local.md` for a private task or `.md` for a shared one.
 - After changing a `due` or `reminder`, check the value you wrote is a stamp. It is
   the one field where a wrong format fails quietly.

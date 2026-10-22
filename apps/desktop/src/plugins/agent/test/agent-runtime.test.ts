@@ -195,12 +195,12 @@ describe('buildAgentEnv', () => {
     }
   })
 
-  it("appends the vault's plugin commands, so they never stand in for the machine's", () => {
+  it("appends the vault's plugin commands after Holi's node, so they never stand in for the machine's", () => {
     const path = buildAgentEnv(
       { PATH: '/usr/bin:/bin', HOME: '/h' },
       { binDir: '/data/bin', commandsDir: '/vault/.holi/state/commands.local.d' },
     ).PATH!.split(':')
-    expect(path.slice(0, 3)).toEqual(['/data/bin', '/usr/bin', '/bin'])
+    expect(path[0]).toBe('/data/bin')
     expect(path.slice(-2)).toEqual(['/data/bin/fallback', '/vault/.holi/state/commands.local.d'])
   })
 

@@ -213,7 +213,10 @@ export async function openActiveVault(args: {
   }
 
   let closed = false
-  let cached: VaultSnapshot = await scanVault(root, await args.claims())
+  /** The claims the last scan ran with: the watcher watches a local file one
+   *  of them takes (a private task), as it watches any note. */
+  let claimed: readonly ScanClaim[] = await args.claims()
+  let cached: VaultSnapshot = await scanVault(root, claimed)
   let state: SyncState = { kind: 'up-to-date' }
   let scanning = false
   let committing = false
@@ -282,7 +285,10 @@ export async function openActiveVault(args: {
       // empty vault is the honest reading of an absent one.
       cached = await args
         .claims()
-        .then((claims) => scanVault(root, claims))
+        .then((claims) => {
+          claimed = claims
+          return scanVault(root, claims)
+        })
         .catch(() => emptyVaultSnapshot())
       if (!closed) args.onSnapshot(cached)
     } finally {
@@ -612,6 +618,7 @@ export async function openActiveVault(args: {
   const watcher: VaultWatcher = await watchVault({
     root,
     debounceMs: timings.rescanDebounceMs,
+    watches: (rel) => rel.endsWith('.md') && claimed.some((c) => c.match(rel)),
     onChange: () => {
       // The tree updates promptly; the commit waits for the edits to stop. Two
       // debounces off one signal, because they answer different questions.

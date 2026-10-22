@@ -121,12 +121,17 @@ export async function scanVault(
         .then((s) => s.mtime.toISOString())
         .catch(() => new Date(0).toISOString())
 
-    // Non-markdown OR local-only: a plain file entry. No read, no parse — it is
-    // not a note, so it stays out of `docs` and the link-aware ops
+    // A claim is asked first, so a local file a plugin claims is still its: a
+    // private task (`task.<name>.local.md`) is a task on this machine's board,
+    // and git keeps it off everyone else's.
+    const claim = path.endsWith('.md') ? claims.find((c) => c.match(path)) : undefined
+
+    // Non-markdown OR unclaimed local-only: a plain file entry. No read, no
+    // parse: it is not a note, so it stays out of `docs` and the link-aware ops
     // (backrefs/rename/mentions) never see it. Local-only markdown (USER.local.md,
     // CLAUDE.local.md) is content the tree shows but the note graph must not
     // absorb: it is personal config, not a linkable note.
-    if (!path.endsWith('.md') || isLocalOnlyPath(path)) {
+    if (claim === undefined && (!path.endsWith('.md') || isLocalOnlyPath(path))) {
       snapshot.files.push({ path, updatedAt: await mtime() })
       continue
     }
@@ -136,7 +141,6 @@ export async function scanVault(
     // watcher is about to tell us about it anyway.
     if (text === null) continue
 
-    const claim = claims.find((c) => c.match(path))
     if (claim !== undefined) {
       const into = snapshot.claimed[claim.plugin]!
       try {

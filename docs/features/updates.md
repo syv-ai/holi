@@ -68,7 +68,8 @@ started) and after the vault's first pull has caught up with its remote, which t
 then rather than waiting for a focus or the pull timer. A teammate may already have brought the
 release in, and an update ahead of the pull would write it twice. It writes only what
 `pendingShipped` reports, with the same rules for a file the vault edited; a file that differs
-with no base on this machine is left alone rather than staged as a conflict nobody asked about. A
+from every shipped version with no base on this machine is left alone rather than staged as a
+conflict nobody asked about. A
 vault left before then is not touched, and one skills update runs at a time, asked for or not.
 Main pushes what changed (`vault:skills`), and the nav's update item says it, naming the files,
 until **Done** or the vault is left; the vault is not offered the update meanwhile. Unasked, it

@@ -118,6 +118,18 @@ describe('scanVault', () => {
     ])
   })
 
+  it('gives a local file a claim takes to its claim, and leaves the rest plain files', async () => {
+    // A private task (`task.<name>.local.md`) is a task on this machine's board.
+    const root = await vault({
+      'card.mine.local.md': '---\nkind: bug\n---\n',
+      'USER.local.md': '# private\n',
+    })
+    const snap = await scanVault(root)
+    expect(cards(snap).items).toEqual([{ path: 'card.mine.local.md', kind: 'bug' }])
+    expect(snap.files.map((f) => f.path)).toEqual(['USER.local.md'])
+    expect(snap.docs).toEqual([])
+  })
+
   it('ignores non-markdown files', async () => {
     const root = await vault({ 'note.md': '# real\n', 'logo.png': 'binary', 'data.json': '{}' })
     const snap = await scanVault(root)

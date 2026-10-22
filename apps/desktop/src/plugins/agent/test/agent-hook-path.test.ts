@@ -75,10 +75,15 @@ describe('the agent finds node from a Dock-launched Holi', () => {
 
   it('looks where tools usually are, which a Dock launch does not', async () => {
     const { env, home } = await finderEnv()
-    await fakeNode(join(home, '.local', 'bin'), 'local-bin-node')
+    // A name no machine has, so a real tool in an earlier directory (a
+    // Homebrew `node`, say) cannot answer instead.
+    const dir = join(home, '.local', 'bin')
+    await mkdir(dir, { recursive: true })
+    await writeFile(join(dir, 'holi-probe-tool'), '#!/bin/sh\necho local-bin-tool\n')
+    await chmod(join(dir, 'holi-probe-tool'), 0o755)
     // `~/.local/bin` is not on the Dock's PATH, and is where Claude Code and
     // many node installs put things.
-    expect(sh(env, 'node')).toBe('local-bin-node')
+    expect(sh(env, 'holi-probe-tool')).toBe('local-bin-tool')
   })
 
   describe('every hook Holi seeds', () => {
