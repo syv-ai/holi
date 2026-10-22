@@ -223,6 +223,16 @@
   --color-divider: var(--divider);
   --color-ground: var(--ground);
   --color-drawer-edge: var(--drawer-edge);
+  /* shadcn's Sidebar names, on Holi's own tokens. The sidebar has no fill of
+     its own: it is the window's ground (glass on macOS) showing through. */
+  --color-sidebar: transparent;
+  --color-sidebar-foreground: var(--foreground);
+  --color-sidebar-primary: var(--primary);
+  --color-sidebar-primary-foreground: var(--primary-foreground);
+  --color-sidebar-accent: color-mix(in oklab, var(--foreground) 6%, transparent);
+  --color-sidebar-accent-foreground: var(--foreground);
+  --color-sidebar-border: var(--divider);
+  --color-sidebar-ring: var(--ring);
   /* The diff hues as text utilities. The tints are not exposed: only
      `DiffView` paints with them. */
   --color-diff-added-foreground: var(--diff-added-foreground);

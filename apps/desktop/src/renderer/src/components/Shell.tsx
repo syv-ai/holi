@@ -1,27 +1,34 @@
 /**
- * The app, once someone is signed in: a fresh start. What is kept is what
- * keeps a vault alive (opening it in main, its theme, settings that follow the
- * disk, the clock) and the Agents sidebar the agent plugin draws. Everything
- * else is to be built again from here.
+ * The app, once someone is signed in: what keeps a vault alive (opening it in
+ * main, its theme, settings that follow the disk, the clock), the shell
+ * (`features/shell/AppShell.tsx`) and the two flows that leave the open vault,
+ * switching and adding one, which ask first when leaving would stop something.
  */
-import { useAtomValue, useSetAtom } from 'jotai'
-import { useEffect, useRef } from 'react'
+import { useAtom, useAtomValue, useSetAtom } from 'jotai'
+import { useEffect, useRef, useState } from 'react'
+import { PanelsTopLeft } from 'lucide-react'
 import { Toaster } from '@/primitives'
-import { AmbientGrain } from '@/composites'
-import { runningPluginsAtom } from '@/state/plugins'
+import { AmbientGrain, EmptyState } from '@/composites'
+import { OnboardingRitual } from '@/features/onboarding/OnboardingRitual'
+import { AppShell } from '@/features/shell/AppShell'
+import { leaveReasonsAtom } from '@/state/plugins'
 import { activeModeAtom } from '../state/color-scheme'
 import { tickNowAtom } from '../state/clock'
 import { useVaultMembers } from '../state/members'
 import { useSettingsFollowDisk } from '../state/settings'
 import { useVaultTheme } from '../state/theme'
+import { applyVaultSwitchAtom, leavingVaultAtom } from '../state/vault-switch'
 import { activeRemoteAtom, openVaultAtom } from '../state/vaults'
+import { LeaveConfirm } from './LeaveConfirm'
 
 export function Shell() {
   const activeRemote = useAtomValue(activeRemoteAtom)
   const colorMode = useAtomValue(activeModeAtom)
   const openVault = useSetAtom(openVaultAtom)
-  // The one plugin that provides the Agents mode (the agent), if it runs.
-  const agentsMode = useAtomValue(runningPluginsAtom).find((p) => p.agentsMode)?.agentsMode
+  const leaveReasons = useAtomValue(leaveReasonsAtom)
+  const [leaving, setLeaving] = useAtom(leavingVaultAtom)
+  const applySwitch = useSetAtom(applyVaultSwitchAtom)
+  const [showAdd, setShowAdd] = useState(false)
 
   useVaultTheme()
   useSettingsFollowDisk()
@@ -43,14 +50,37 @@ export function Shell() {
     void openVault(activeRemote)
   }, [activeRemote, openVault])
 
+  /** Adding a vault opens it, leaving this one as a switch does. Asked at the
+   *  trigger, before someone names a repo and waits for a clone. */
+  const addVault = () => {
+    if (leaveReasons.length > 0) setLeaving({ kind: 'add' })
+    else setShowAdd(true)
+  }
+
   return (
     <div data-slot="window-ground" className="relative flex h-screen text-foreground">
       <AmbientGrain />
-      <aside aria-label="Sidebar" className="flex h-full w-64 shrink-0 flex-col">
-        <div data-window-band="nav" className="app-drag h-10 shrink-0" />
-        <div className="flex min-h-0 flex-1 flex-col">{agentsMode && <agentsMode.sidebar />}</div>
-      </aside>
-      <main data-slot="content-panel" className="relative my-2 me-2 flex min-w-60 flex-1" />
+      <AppShell onAddVault={addVault}>
+        <EmptyState
+          icon={PanelsTopLeft}
+          title="Nothing open yet"
+          description="Views come back one at a time in the new shell."
+        />
+      </AppShell>
+      {showAdd && <OnboardingRitual mode="add-vault" onDismiss={() => setShowAdd(false)} />}
+      {leaving !== null && (
+        <LeaveConfirm
+          intent={leaving.kind}
+          onConfirm={() => {
+            if (leaving.kind === 'switch') applySwitch(leaving.remote)
+            else {
+              setLeaving(null)
+              setShowAdd(true)
+            }
+          }}
+          onCancel={() => setLeaving(null)}
+        />
+      )}
       <Toaster theme={colorMode} position="bottom-center" />
     </div>
   )
