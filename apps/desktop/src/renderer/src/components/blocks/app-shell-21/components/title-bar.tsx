@@ -1,5 +1,4 @@
 import { type ReactNode, type Ref } from "react"
-import { cn } from "@/lib/cn"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -36,7 +35,7 @@ export function TitleBar({
 }: {
   sidebarOpen: boolean
   sidebarWidth: number
-  /** Resized by the shell during a drag, without a render. */
+  /** Resized by the shell as the sidebar moves, without a render. */
   leadRef: Ref<HTMLDivElement>
   onToggleSidebar: () => void
   onOpenSearch: () => void
@@ -51,11 +50,9 @@ export function TitleBar({
       <div
         ref={leadRef}
         data-window-band="lights"
+        data-open={sidebarOpen || undefined}
         style={sidebarOpen ? { width: leadWidth(sidebarWidth) } : undefined}
-        className={cn(
-          "flex h-full shrink-0 items-center gap-1 px-2",
-          sidebarOpen && "border-e"
-        )}
+        className="group/lead data-open:border-e flex h-full shrink-0 items-center gap-1 overflow-hidden px-2"
       >
         <BandButton
           label={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
@@ -63,17 +60,16 @@ export function TitleBar({
         >
           <PanelLeftIcon aria-hidden="true" />
         </BandButton>
-        {sidebarOpen ? (
-          <>
-            <div className="flex-1" />
-            <BandButton label="Search" onClick={onOpenSearch}>
-              <SearchIcon aria-hidden="true" />
-            </BandButton>
-            <BandButton label="New" onClick={onNew}>
-              <PlusIcon aria-hidden="true" />
-            </BandButton>
-          </>
-        ) : null}
+        {/* Shown off the same attribute the shell flips mid-toggle, so the
+            lead lets go of them the moment it does. */}
+        <div className="hidden flex-1 items-center justify-end gap-1 group-data-open/lead:flex">
+          <BandButton label="Search" onClick={onOpenSearch}>
+            <SearchIcon aria-hidden="true" />
+          </BandButton>
+          <BandButton label="New" onClick={onNew}>
+            <PlusIcon aria-hidden="true" />
+          </BandButton>
+        </div>
       </div>
       {children}
     </header>

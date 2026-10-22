@@ -259,8 +259,18 @@ export function AppShell() {
                 collapsedSize={48}
                 groupResizeBehavior="preserve-pixel-size"
                 onResize={(size) => {
-                  // Drags update everything live; the animated toggle updates
-                  // nothing until it settles.
+                  // The band's divider follows the panel every frame, the
+                  // animated toggle included, so the two never part.
+                  const lead = leadRef.current
+                  if (lead) {
+                    const wide = size.inPixels > RAIL_THRESHOLD
+                    lead.style.width = wide
+                      ? `${leadWidth(size.inPixels)}px`
+                      : ""
+                    lead.toggleAttribute("data-open", wide)
+                  }
+                  // Drags update everything else live too; the animated
+                  // toggle updates nothing else until it settles.
                   if (!settling.current) {
                     const open = size.inPixels > RAIL_THRESHOLD
                     fadeRef.current?.setAttribute(
@@ -270,9 +280,6 @@ export function AppShell() {
                     if (open && pinRef.current) {
                       widthRef.current = size.inPixels
                       pinRef.current.style.width = `${size.inPixels}px`
-                      if (leadRef.current) {
-                        leadRef.current.style.width = `${leadWidth(size.inPixels)}px`
-                      }
                     }
                     setSidebarOpen(open)
                   }
