@@ -8,6 +8,10 @@ import { resolveTypstBin } from '../main/typst-bin'
 // The ACTUAL seeded template — this test proves that exact file compiles.
 import plainTemplateTyp from '../main/vault/once/.holi/document-templates/plain/template.typ?raw'
 
+/** A 1×1 PNG. */
+const DOT_PNG =
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='
+
 const dirs: string[] = []
 async function work(): Promise<string> {
   const d = await mkdtemp(join(tmpdir(), 'holi-render-'))
@@ -52,11 +56,45 @@ describe('renderPdf (integration — needs typst on PATH; first run fetches cmar
     )
     const outPath = join(root, 'out.pdf')
 
-    await renderPdf({ typstBin: typst, templateDir, notePath, outPath, fields: [], meta: {} })
+    await renderPdf({
+      typstBin: typst,
+      vaultRoot: root,
+      templateDir,
+      notePath,
+      outPath,
+      fields: [],
+      meta: {},
+    })
 
     const bytes = await readFile(outPath)
     expect(bytes.length).toBeGreaterThan(0)
     expect(bytes.subarray(0, 5).toString('latin1')).toBe('%PDF-')
+  }, 30_000)
+
+  it('shows an image the note links relative to its own folder', async () => {
+    const typst = await resolveTypstBin()
+    if (typst === null) return
+
+    const root = await work()
+    const templateDir = join(root, '.holi/document-templates/plain')
+    await mkdir(join(templateDir, 'assets'), { recursive: true })
+    await writeFile(join(templateDir, 'template.typ'), plainTemplateTyp)
+    await mkdir(join(root, 'kunder/figurer'), { recursive: true })
+    await writeFile(join(root, 'kunder/figurer/dot.png'), Buffer.from(DOT_PNG, 'base64'))
+    const notePath = join(root, 'kunder/rapport.md')
+    await writeFile(notePath, '# Rapport\n\n![Et diagram](figurer/dot.png)\n')
+
+    const { warnings } = await renderPdf({
+      typstBin: typst,
+      vaultRoot: root,
+      templateDir,
+      notePath,
+      outPath: join(root, 'out.pdf'),
+      fields: [],
+      meta: {},
+    })
+    expect(warnings).toEqual([])
+    expect((await readFile(join(root, 'out.pdf'))).subarray(0, 5).toString('latin1')).toBe('%PDF-')
   }, 30_000)
 
   it('renders declared metadata (Date/Recipient) as a header — larger than an empty-meta render', async () => {
@@ -79,6 +117,7 @@ describe('renderPdf (integration — needs typst on PATH; first run fetches cmar
     const metaOut = join(root, 'meta.pdf')
     await renderPdf({
       typstBin: typst,
+      vaultRoot: root,
       templateDir,
       notePath,
       outPath: emptyOut,
@@ -87,6 +126,7 @@ describe('renderPdf (integration — needs typst on PATH; first run fetches cmar
     })
     await renderPdf({
       typstBin: typst,
+      vaultRoot: root,
       templateDir,
       notePath,
       outPath: metaOut,
@@ -121,6 +161,7 @@ describe('renderPdf (integration — needs typst on PATH; first run fetches cmar
 
     await renderPdf({
       typstBin: typst,
+      vaultRoot: root,
       templateDir,
       notePath,
       outPath,
@@ -170,6 +211,7 @@ describe('renderPdf — branded set (integration — needs typst on PATH)', () =
     const outPath = join(root, 'tilbud.pdf')
     await renderPdf({
       typstBin: typst,
+      vaultRoot: root,
       templateDir: join(root, '.holi/document-templates/proposal'),
       notePath,
       outPath,
@@ -191,6 +233,7 @@ describe('renderPdf — branded set (integration — needs typst on PATH)', () =
     const letterOut = join(root, 'brev.pdf')
     await renderPdf({
       typstBin: typst,
+      vaultRoot: root,
       templateDir: join(root, '.holi/document-templates/letter'),
       notePath: letterNote,
       outPath: letterOut,
@@ -214,6 +257,7 @@ describe('renderPdf — branded set (integration — needs typst on PATH)', () =
     const memoOut = join(root, 'memo.pdf')
     await renderPdf({
       typstBin: typst,
+      vaultRoot: root,
       templateDir: join(root, '.holi/document-templates/memo'),
       notePath: memoNote,
       outPath: memoOut,
@@ -242,6 +286,7 @@ describe('renderPdf — branded set (integration — needs typst on PATH)', () =
     const outPath = join(root, 'aftale.pdf')
     await renderPdf({
       typstBin: typst,
+      vaultRoot: root,
       templateDir: join(root, '.holi/document-templates/contract'),
       notePath,
       outPath,
@@ -264,6 +309,7 @@ describe('renderPdf — branded set (integration — needs typst on PATH)', () =
     const outPath = join(root, 'rapport.pdf')
     await renderPdf({
       typstBin: typst,
+      vaultRoot: root,
       templateDir: join(root, '.holi/document-templates/report'),
       notePath,
       outPath,

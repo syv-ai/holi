@@ -22,12 +22,12 @@ export type Diagram = { svg: string } | { error: string }
 export type DrawDiagrams = (sources: string[]) => Promise<Diagram[]>
 
 /**
- * The SVG as a Typst string literal that can sit inside an HTML comment:
- * every `>` is an escape, so no `-->` can end the comment early, and the
- * literal stays on one line.
+ * A Typst string literal that can sit inside an HTML comment: every `>` is an
+ * escape, so no `-->` can end the comment early, and the literal stays on one
+ * line.
  */
-function svgLiteral(svg: string): string {
-  const escaped = svg
+export function commentSafeString(s: string): string {
+  const escaped = s
     .replace(/\\/g, '\\\\')
     .replace(/"/g, '\\"')
     .replace(/\r/g, '\\r')
@@ -39,7 +39,7 @@ function svgLiteral(svg: string): string {
 
 /** The markdown that stands in for a fence: a centred diagram, in Typst. */
 export function diagramMarkdown(svg: string): string {
-  return `<!--raw-typst #align(center, image(bytes(${svgLiteral(svg)}), format: "svg", alt: "Diagram"))-->`
+  return `<!--raw-typst #align(center, image(bytes(${commentSafeString(svg)}), format: "svg", alt: "Diagram"))-->`
 }
 
 /**
