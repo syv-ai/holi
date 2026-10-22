@@ -331,7 +331,8 @@ describe('memory-overview', () => {
     expect(on.code).toBe(0)
     expect(on.out).toContain('dash (on, commands: dashctl)')
     expect(on.out).toContain('notes (off in this vault)')
-    expect(on.out).toContain('prezzi (off on this machine)')
+    // Holi still runs a community plugin the local file turns off.
+    expect(on.out).toContain('prezzi (on)')
 
     const hostOff = await run(
       await vault({
@@ -345,6 +346,25 @@ describe('memory-overview', () => {
     )
     expect(hostOff.out).toContain('dash, notes, prezzi')
     expect(hostOff.out).not.toContain('(on')
+
+    // The local file can turn community plugins themselves off on this machine.
+    const localOff = await run(
+      await vault({
+        ...files,
+        '.holi/settings/plugins.yaml': writePluginSettingsText(
+          { plugins: { community: true, dash: true } },
+          'committed',
+          known,
+        ),
+        '.holi/settings/plugins.local.yaml': writePluginSettingsText(
+          { plugins: { community: false } },
+          'local',
+          known,
+        ),
+      }),
+    )
+    expect(localOff.out).toContain('off on this machine')
+    expect(localOff.out).not.toContain('(on')
   })
 
   it('exits 0 and prints nothing when CLAUDE_PROJECT_DIR points nowhere', async () => {

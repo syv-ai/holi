@@ -238,9 +238,11 @@ function pluginSwitches(text) {
 
 /**
  * The community plugins this vault pins, as one line, or null when it pins
- * none. The committed file turns a plugin on; the local one can only turn it
- * off, as Holi reads them. Whether this machine has a plugin installed and set
- * up is Holi's to know, not the vault's, so "on" is what the vault says.
+ * none. As Holi reads them: the committed file turns a plugin on, and the
+ * local file's off counts only for `community` itself, a plugin built into
+ * Holi; a community plugin is on wherever the committed file says so. Whether
+ * this machine has a plugin installed and set up is Holi's to know, not the
+ * vault's, so "on" is what the vault says.
  */
 function communityPlugins() {
   let ids
@@ -252,9 +254,16 @@ function communityPlugins() {
   const pins = []
   for (const id of ids) {
     if (!/^[a-z][a-z0-9-]*$/.test(id)) continue
+    const file = join(root, '.holi/plugins', id, 'manifest.json')
+    // A regular file only: a link to a pipe would hang the session start.
+    try {
+      if (!lstatSync(file).isFile()) continue
+    } catch {
+      continue
+    }
     let pin
     try {
-      pin = JSON.parse(readOr(join(root, '.holi/plugins', id, 'manifest.json')) ?? 'null')
+      pin = JSON.parse(readOr(file) ?? 'null')
     } catch {
       continue
     }
@@ -268,14 +277,12 @@ function communityPlugins() {
   if (pins.length === 0) return null
   const committed = pluginSwitches(readOr(join(root, '.holi/settings/plugins.yaml')))
   const local = pluginSwitches(readOr(join(root, '.holi/settings/plugins.local.yaml')))
-  const state = (id) =>
-    committed.get(id) !== true
-      ? 'off in this vault'
-      : local.get(id) === false
-        ? 'off on this machine'
-        : 'on'
+  const state = (id) => (committed.get(id) === true ? 'on' : 'off in this vault')
   const where = "Holi's settings, under Plugins"
-  const hostState = state('community')
+  const hostState =
+    state('community') === 'on' && local.get('community') === false
+      ? 'off on this machine'
+      : state('community')
   if (hostState !== 'on') {
     return `Community plugins: ${pins.map((p) => p.id).join(', ')}, none running: community plugins are ${hostState}. Turned on in ${where}.`
   }
