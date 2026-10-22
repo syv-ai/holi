@@ -222,7 +222,6 @@ export function ThreadSidebar({
                 onClick={() => void window.holi.openExternal(link.href)}
                 className="text-muted-foreground hover:text-foreground hover:bg-foreground/5"
               >
-                {link.icon}
                 <span>{link.label}</span>
               </SidebarMenuButton>
             </SidebarMenuItem>

@@ -16,6 +16,15 @@ import { PanelLeftIcon, PlusIcon, SearchIcon } from "lucide-react"
  * the sidebar's width, so its divider runs on from the resize handle below;
  * collapsed, it shrinks to the lights and the toggle.
  */
+/**
+ * The lead's width for a sidebar this wide. The resize handle is a 1px line
+ * after the panel, and the lead's divider is its own last pixel, so the lead
+ * runs a pixel past the sidebar to put the two in one line.
+ */
+export function leadWidth(sidebarWidth: number) {
+  return sidebarWidth + 1
+}
+
 export function TitleBar({
   sidebarOpen,
   sidebarWidth,
@@ -42,7 +51,7 @@ export function TitleBar({
       <div
         ref={leadRef}
         data-window-band="lights"
-        style={sidebarOpen ? { width: sidebarWidth } : undefined}
+        style={sidebarOpen ? { width: leadWidth(sidebarWidth) } : undefined}
         className={cn(
           "flex h-full shrink-0 items-center gap-1 px-2",
           sidebarOpen && "border-e"

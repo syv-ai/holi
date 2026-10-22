@@ -25,7 +25,7 @@ import { BOARD_TAB, useNewDocument } from "./documents-section"
 import { MobileHeader } from "./mobile-header"
 import { SiteHeader } from "./site-header"
 import { ThreadSidebar } from "./thread-sidebar"
-import { TitleBar } from "./title-bar"
+import { leadWidth, TitleBar } from "./title-bar"
 
 /** Expanded width in pixels, and the drag point below which the rail takes over. */
 const SIDEBAR_WIDTH = 248
@@ -271,7 +271,7 @@ export function AppShell() {
                       widthRef.current = size.inPixels
                       pinRef.current.style.width = `${size.inPixels}px`
                       if (leadRef.current) {
-                        leadRef.current.style.width = `${size.inPixels}px`
+                        leadRef.current.style.width = `${leadWidth(size.inPixels)}px`
                       }
                     }
                     setSidebarOpen(open)
