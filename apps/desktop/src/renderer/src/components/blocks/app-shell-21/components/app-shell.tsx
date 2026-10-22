@@ -24,7 +24,6 @@ import {
   MODELS,
   NEW_THREAD_ID,
   THREADS,
-  WORKSPACES,
   type ThreadRecord,
 } from "./data"
 import { MobileHeader } from "./mobile-header"
@@ -41,8 +40,6 @@ export function AppShell() {
   const isMobile = useIsMobile()
   const [threads, setThreads] = useState<ThreadRecord[]>(THREADS)
   const [activeThreadId, setActiveThreadId] = useState(THREADS[0]!.id)
-  /** Lifted: the rail and the expanded nav both render it, so one owner. */
-  const [activeWorkspaceId, setActiveWorkspaceId] = useState(WORKSPACES[0]!.id)
   const [modelId, setModelId] = useState(MODELS[0]!.id)
   const [memoryOn, setMemoryOn] = useState(true)
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
@@ -120,11 +117,9 @@ export function AppShell() {
       onOpenSearch={() => setSearchOpen(true)}
       threads={threads}
       activeId={activeThreadId}
-      activeWorkspaceId={activeWorkspaceId}
       onSelect={handleSelectThread}
       onNewChat={handleNewChat}
       onTogglePin={handleTogglePin}
-      onSelectWorkspace={setActiveWorkspaceId}
     />
   )
 
@@ -135,11 +130,9 @@ export function AppShell() {
       onOpenSearch={() => setSearchOpen(true)}
       threads={threads}
       activeId={activeThreadId}
-      activeWorkspaceId={activeWorkspaceId}
       onSelect={handleSelectThread}
       onNewChat={handleNewChat}
       onTogglePin={handleTogglePin}
-      onSelectWorkspace={setActiveWorkspaceId}
     />
   )
 

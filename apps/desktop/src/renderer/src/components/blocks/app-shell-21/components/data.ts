@@ -41,31 +41,7 @@ export const MODELS: ModelRecord[] = [
   },
 ]
 
-export type PersonRecord = {
-  name: string
-  initials: string
-  avatar: string
-}
-
-export const ACCOUNT: PersonRecord = {
-  name: "shadcn",
-  initials: "CN",
-  avatar: "https://github.com/shadcn.png",
-}
-
 export const NEW_THREAD_ID = "th_new"
-
-export type Workspace = {
-  id: string
-  name: string
-  tier?: string
-}
-
-export const WORKSPACES: Workspace[] = [
-  { id: "atlas", name: "Atlas", tier: "Max" },
-  { id: "relay", name: "Relay", tier: "Pro" },
-  { id: "orbit", name: "Orbit", tier: "Free" },
-]
 
 export type ThreadRecord = {
   id: string

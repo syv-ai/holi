@@ -316,26 +316,21 @@ export function ThreadSidebar({
   threads,
   activeId,
   collapsed = false,
-  activeWorkspaceId,
   onSelect,
   onNewChat,
   onTogglePin,
   onToggle,
   onOpenSearch,
-  onSelectWorkspace,
 }: {
   threads: ThreadRecord[]
   activeId: string
   /** Rail mode: the list is closed but the shell keeps its spine. */
   collapsed?: boolean
-  /** Owned by the shell so the rail and the expanded nav never disagree. */
-  activeWorkspaceId: string
   onSelect: (id: string) => void
   onNewChat: () => void
   onTogglePin: (id: string) => void
   onToggle: () => void
   onOpenSearch: () => void
-  onSelectWorkspace: (id: string) => void
 }) {
   const [section, setSection] = useState<SidebarSection>("chats")
   const { isMobile } = useSidebar()
@@ -471,8 +466,6 @@ export function ThreadSidebar({
           </SidebarMenu>
           <NavUser
             collapsed
-            activeWorkspaceId={activeWorkspaceId}
-            onSelectWorkspace={onSelectWorkspace}
           />
         </SidebarFooter>
       </Sidebar>
@@ -623,10 +616,7 @@ export function ThreadSidebar({
           ))}
         </SidebarMenu>
 
-        <NavUser
-          activeWorkspaceId={activeWorkspaceId}
-          onSelectWorkspace={onSelectWorkspace}
-        />
+        <NavUser />
       </SidebarFooter>
     </Sidebar>
   )
