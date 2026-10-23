@@ -8,6 +8,7 @@
  * `electron-vite` resolves imports without typechecking, so an unresolvable
  * import anywhere on this path stops the window opening at all.
  */
+import { applyLiquidGlass, wantsLiquidGlass } from './liquid-glass'
 import { readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -103,6 +104,7 @@ if (!app.requestSingleInstanceLock()) {
 /** The main window. `show: false` for a launch at login: its page still loads
  *  and opens the vault, out of sight until the tray's Open Holi or the dock. */
 function createWindow({ show = true }: { show?: boolean } = {}): BrowserWindow {
+  const liquid = wantsLiquidGlass()
   const win = new BrowserWindow({
     width: 1200,
     height: 800,
@@ -113,13 +115,16 @@ function createWindow({ show = true }: { show?: boolean } = {}): BrowserWindow {
     // On macOS the window is glass (after MonoCode's): transparent, with the
     // system's blur of what is behind it, which the shell's ground tints
     // (index.css, Window). Elsewhere the ground is opaque.
+    // On macOS 26 and later the glass is the system's liquid glass instead
+    // (`liquid-glass.ts`), which wants a transparent window and no vibrancy.
     ...(process.platform === 'darwin'
       ? {
           titleBarStyle: 'hiddenInset' as const,
           trafficLightPosition: { x: 14, y: 12 },
-          vibrancy: 'under-window' as const,
-          visualEffectState: 'active' as const,
           backgroundColor: '#00000000',
+          ...(liquid
+            ? { transparent: true }
+            : { vibrancy: 'under-window' as const, visualEffectState: 'active' as const }),
         }
       : {}),
     webPreferences: {
@@ -129,6 +134,7 @@ function createWindow({ show = true }: { show?: boolean } = {}): BrowserWindow {
     },
   })
   mainWindow = win
+  if (liquid) applyLiquidGlass(win)
   win.on('closed', () => {
     if (mainWindow === win) mainWindow = null
   })

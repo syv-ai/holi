@@ -68,6 +68,7 @@
     "codemirror-markdown-tables": "^1.0.0",
     "command-score": "0.1.2",
     "dompurify": "^3.4.13",
+    "electron-liquid-glass": "1.1.1",
     "electron-updater": "^6.8.9",
     "input-otp": "^1.5.0",
     "jotai": "^2.20.1",
