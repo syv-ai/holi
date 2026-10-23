@@ -20,7 +20,7 @@
       #v(1.2cm)
       #if title != none { text(size: 30pt, weight: 800, fill: ink)[#title] }
       #if subtitle != none { v(0.4cm); text(size: 15pt, fill: muted)[#subtitle] }
-      #if d != none { v(0.8cm); text(size: 11pt, fill: muted)[#d.display("[day] [month repr:long] [year]")] }
+      #if d != none { v(0.8cm); text(size: 11pt, fill: muted)[#dato(d)] }
     ]
     #v(2fr)
   ]
@@ -53,7 +53,7 @@
       it.element.location(),
       it.indented(if it.level == 2 { box(width: 2em, sektion(it.element.location())) }, it.inner(), gap: 0pt),
     )
-    #outline(title: [Indhold], depth: 2, indent: 0pt)
+    #outline(title: ord.contents, depth: 2, indent: 0pt)
     #v(0.6cm)
     #render-body(notePath, figures: (:))
   ]

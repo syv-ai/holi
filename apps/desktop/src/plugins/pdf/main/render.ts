@@ -28,6 +28,8 @@ export interface RenderInput {
   typstBin: string
   /** Absolute `.holi/document-templates/<name>/`. */
   templateDir: string
+  /** The template's `language`, handed to Typst as `--input lang=…`. */
+  language?: string
   /** Absolute path to the note. */
   notePath: string
   /** Absolute `.pdf` destination. */
@@ -58,6 +60,7 @@ export interface RenderResult {
 export async function renderPdf({
   typstBin,
   templateDir,
+  language,
   notePath,
   outPath,
   fields,
@@ -102,6 +105,7 @@ export async function renderPdf({
       '--root',
       '/',
       ...fontPathArgs(templateDir),
+      ...(language === undefined ? [] : ['--input', `lang=${language}`]),
     ])
     return { warnings: drawn.warnings }
   } catch (err) {

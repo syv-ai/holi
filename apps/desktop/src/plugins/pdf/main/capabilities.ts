@@ -253,6 +253,7 @@ export function pdfCapabilities(deps: PdfCapabilityDeps) {
         const { warnings } = await renderPdf({
           typstBin,
           templateDir: tpl.dir,
+          ...(tpl.language === undefined ? {} : { language: tpl.language }),
           notePath: noteAbs,
           outPath: pdfPath,
           fields: tpl.fields,

@@ -1,6 +1,7 @@
 {
   "name": "Report",
   "description": "Branded syv.ai report / whitepaper: cover page, table of contents, running header.",
+  "language": "da",
   "fields": [
     { "key": "title", "label": "Title", "type": "text", "required": false },
     { "key": "subtitle", "label": "Subtitle", "type": "text", "required": false },
