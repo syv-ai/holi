@@ -1,0 +1,209 @@
+import { act, fireEvent, render, screen } from '@testing-library/react'
+import { createStore, Provider } from 'jotai'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { ShortcutsDialog } from '@/components/blocks/app-shell-21/components/shortcuts-dialog'
+import { hotkeyLabels, matchShortcutKey } from '@/lib/hotkey'
+import { liveShortcuts, resolveShortcut, SHORTCUTS, type KeyContext } from '@/lib/shortcuts'
+import {
+  shortcutsDialogOpenAtom,
+  useShortcutDispatcher,
+  useShortcutHandlers,
+  type ShortcutHandler,
+} from '@/state/shortcuts'
+
+const ev = (init: Partial<KeyboardEvent>): KeyboardEvent =>
+  ({
+    metaKey: false,
+    ctrlKey: false,
+    shiftKey: false,
+    altKey: false,
+    repeat: false,
+    isComposing: false,
+    defaultPrevented: false,
+    key: '',
+    code: '',
+    ...init,
+  }) as KeyboardEvent
+
+const ALL = new Set(SHORTCUTS.map((s) => s.id))
+const ctx = (over: Partial<KeyContext> = {}): KeyContext => ({
+  mac: true,
+  target: 'page',
+  dialogOpen: false,
+  live: ALL,
+  ...over,
+})
+const idOf = (e: KeyboardEvent, c: KeyContext) => resolveShortcut(e, c)?.shortcut.id ?? null
+
+describe('the table', () => {
+  test('ids are unique and every key is bound once', () => {
+    const ids = SHORTCUTS.map((s) => s.id)
+    expect(new Set(ids).size).toBe(ids.length)
+    const keys = SHORTCUTS.flatMap((s) => s.keys)
+    expect(new Set(keys).size).toBe(keys.length)
+  })
+
+  test('labels follow the platform', () => {
+    expect(hotkeyLabels('⇧⌘T', true)).toEqual(['⇧', '⌘', 'T'])
+    expect(hotkeyLabels('⇧⌘T', false)).toEqual(['Ctrl', 'Shift', 'T'])
+    expect(hotkeyLabels('⌥⌘←', false)).toEqual(['Ctrl', 'Alt', '←'])
+    expect(hotkeyLabels('⌃Tab', true)).toEqual(['⌃', 'Tab'])
+  })
+
+  test('the dialog merges rows that share a label', () => {
+    const lines = liveShortcuts(new Set(['shortcuts.show', 'shortcuts.toggle']))
+    expect(lines).toEqual([{ group: 'Help', label: 'Show keyboard shortcuts', specs: ['?', '⌘/'] }])
+  })
+})
+
+describe('matching keys', () => {
+  test('on a Mac ⌘ is Command only, so ⌃K stays a text key', () => {
+    expect(matchShortcutKey(ev({ metaKey: true, key: 'k' }), '⌘K', true)).toBe(true)
+    expect(matchShortcutKey(ev({ ctrlKey: true, key: 'k' }), '⌘K', true)).toBe(false)
+    expect(matchShortcutKey(ev({ ctrlKey: true, key: 'k' }), '⌘K', false)).toBe(true)
+  })
+
+  test('? matches with the Shift that types it', () => {
+    expect(matchShortcutKey(ev({ shiftKey: true, key: '?' }), '?', true)).toBe(true)
+    expect(matchShortcutKey(ev({ key: '?' }), '?', false)).toBe(true)
+  })
+
+  test('⌥ falls back to the physical key', () => {
+    const e = ev({ metaKey: true, altKey: true, key: '∑', code: 'KeyW' })
+    expect(matchShortcutKey(e, '⌥⌘W', true)).toBe(true)
+  })
+})
+
+describe('resolveShortcut', () => {
+  test('? opens the sheet on the page, never while typing', () => {
+    const q = ev({ shiftKey: true, key: '?' })
+    expect(idOf(q, ctx())).toBe('shortcuts.show')
+    expect(idOf(q, ctx({ target: 'text' }))).toBeNull()
+    expect(idOf(q, ctx({ target: 'terminal' }))).toBeNull()
+  })
+
+  test('⌘K reaches search from a text field', () => {
+    expect(idOf(ev({ metaKey: true, key: 'k' }), ctx({ target: 'text' }))).toBe('search.open')
+  })
+
+  test('Ctrl keys belong to the terminal', () => {
+    const ctrlK = ev({ ctrlKey: true, key: 'k' })
+    expect(idOf(ctrlK, ctx({ mac: false }))).toBe('search.open')
+    expect(idOf(ctrlK, ctx({ mac: false, target: 'terminal' }))).toBeNull()
+    expect(idOf(ev({ ctrlKey: true, key: 'Tab' }), ctx({ target: 'terminal' }))).toBeNull()
+    expect(idOf(ev({ metaKey: true, key: 'k' }), ctx({ target: 'terminal' }))).toBe('search.open')
+  })
+
+  test('a key the focused widget handled is left alone', () => {
+    expect(idOf(ev({ metaKey: true, key: 'b', defaultPrevented: true }), ctx())).toBeNull()
+  })
+
+  test('only live rows fire', () => {
+    expect(idOf(ev({ metaKey: true, key: 'k' }), ctx({ live: new Set() }))).toBeNull()
+  })
+
+  test('behind a dialog only the dialog toggles fire', () => {
+    expect(idOf(ev({ metaKey: true, key: 'n' }), ctx({ dialogOpen: true }))).toBeNull()
+    expect(idOf(ev({ metaKey: true, key: '/' }), ctx({ dialogOpen: true }))).toBe(
+      'shortcuts.toggle',
+    )
+  })
+
+  test('the menu-bound key is the menu’s', () => {
+    expect(idOf(ev({ metaKey: true, key: 'w' }), ctx())).toBeNull()
+  })
+
+  test('⌘9 is the ninth key of one row', () => {
+    const match = resolveShortcut(ev({ metaKey: true, key: '9' }), ctx())
+    expect(match?.shortcut.id).toBe('tab.goto')
+    expect(match?.index).toBe(8)
+  })
+})
+
+describe('the dispatcher', () => {
+  beforeEach(() => {
+    document.documentElement.dataset.platform = 'mac'
+  })
+  afterEach(() => {
+    delete document.documentElement.dataset.platform
+  })
+
+  function Host({ handlers }: { handlers: Record<string, ShortcutHandler> }) {
+    useShortcutDispatcher()
+    useShortcutHandlers(handlers)
+    return (
+      <>
+        <Input aria-label="field" />
+        <div contentEditable suppressContentEditableWarning aria-label="editable" />
+        <Button type="button">plain</Button>
+      </>
+    )
+  }
+
+  test('runs a live key on the page and not in a field', () => {
+    const show = vi.fn()
+    render(
+      <Provider store={createStore()}>
+        <Host handlers={{ 'shortcuts.show': show }} />
+      </Provider>,
+    )
+    fireEvent.keyDown(screen.getByRole('button', { name: 'plain' }), { key: '?', shiftKey: true })
+    expect(show).toHaveBeenCalledTimes(1)
+    fireEvent.keyDown(screen.getByLabelText('field'), { key: '?', shiftKey: true })
+    fireEvent.keyDown(screen.getByLabelText('editable'), { key: '?', shiftKey: true })
+    expect(show).toHaveBeenCalledTimes(1)
+  })
+
+  test('a handler unmounted is no longer run', () => {
+    const search = vi.fn()
+    const view = render(
+      <Provider store={createStore()}>
+        <Host handlers={{ 'search.open': search }} />
+      </Provider>,
+    )
+    view.unmount()
+    fireEvent.keyDown(document.body, { key: 'k', metaKey: true })
+    expect(search).not.toHaveBeenCalled()
+  })
+})
+
+describe('the dialog', () => {
+  function Live({ ids }: { ids: string[] }) {
+    useShortcutHandlers(Object.fromEntries(ids.map((id) => [id, () => {}])))
+    return <ShortcutsDialog />
+  }
+
+  test('lists the live shortcuts by group, and filters them', async () => {
+    document.documentElement.dataset.platform = 'mac'
+    const store = createStore()
+    store.set(shortcutsDialogOpenAtom, true)
+    render(
+      <Provider store={store}>
+        <Live ids={['search.open', 'tab.next', 'shortcuts.show', 'shortcuts.toggle']} />
+      </Provider>,
+    )
+    expect(await screen.findByRole('heading', { name: 'Navigation' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Tabs' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Apps' })).toBeNull()
+    expect(screen.getByText('Search')).toBeInTheDocument()
+    // Not live, so not listed.
+    expect(screen.queryByText('Open board')).toBeNull()
+
+    const field = screen.getByRole('textbox', { name: 'Search keyboard shortcuts' })
+    act(() => {
+      fireEvent.change(field, { target: { value: 'tab' } })
+    })
+    expect(screen.getByText('Next tab')).toBeInTheDocument()
+    expect(screen.queryByText('Search')).toBeNull()
+
+    act(() => {
+      fireEvent.change(field, { target: { value: 'zzz' } })
+    })
+    expect(screen.getByText('No shortcuts found')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Clear search' }))
+    expect(screen.getByText('Search')).toBeInTheDocument()
+    delete document.documentElement.dataset.platform
+  })
+})

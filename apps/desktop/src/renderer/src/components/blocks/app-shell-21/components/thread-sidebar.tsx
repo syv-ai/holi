@@ -1,4 +1,4 @@
-import { useAtomValue } from "jotai"
+import { useAtom, useAtomValue } from "jotai"
 import { useState } from "react"
 
 import { Button } from "@/components/ui/button"
@@ -16,6 +16,10 @@ import {
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { cn } from "@/lib/cn"
 import { runningPluginsAtom } from "@/state/plugins"
+import {
+  sidebarSectionAtom,
+  type SidebarSection,
+} from "@/state/sidebar-section"
 import { activeRemoteAtom } from "@/state/vaults"
 import type { Move } from "@/lib/tree-actions"
 import {
@@ -34,8 +38,6 @@ import {
   SearchIcon,
   SquareKanbanIcon,
 } from "lucide-react"
-
-type SidebarSection = "documents" | "agents"
 
 const RAIL_BUTTON =
   "hover:bg-foreground/5 data-active:bg-foreground/10 data-active:hover:bg-foreground/12 size-8 p-2 [&>span:last-child]:sr-only"
@@ -67,7 +69,7 @@ export function ThreadSidebar({
   onOpenApp: (id: string) => void
 }) {
   const apps = useSidebarApps()
-  const [section, setSection] = useState<SidebarSection>("documents")
+  const [section, setSection] = useAtom(sidebarSectionAtom)
   const remote = useAtomValue(activeRemoteAtom)
   /** Off until the first switch, so the sidebar's first paint is never held
    *  back by a fade. */

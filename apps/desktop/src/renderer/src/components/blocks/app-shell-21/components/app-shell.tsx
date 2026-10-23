@@ -26,6 +26,9 @@ import { EmptyView, isNewTab, NEW_TAB_PREFIX } from "./empty-view"
 import { MobileHeader } from "./mobile-header"
 import { SiteHeader } from "./site-header"
 import { useSidebarApps } from "./sidebar-apps"
+import { ShortcutsDialog } from "./shortcuts-dialog"
+import { useShellShortcuts } from "./use-shell-shortcuts"
+import { useShortcutDispatcher } from "@/state/shortcuts"
 import { ThreadSidebar } from "./thread-sidebar"
 import { leadWidth, TitleBar } from "./title-bar"
 
@@ -43,6 +46,8 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null)
   /** The header's tabs, in the order they were opened. */
   const [openTabIds, setOpenTabIds] = useState<string[]>([])
+  /** Closed tabs, last closed last, for Reopen closed tab. */
+  const closedTabs = useRef<string[]>([])
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [searchOpen, setSearchOpen] = useState(false)
@@ -166,6 +171,7 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
   function closeTab(id: string) {
     const index = openTabIds.indexOf(id)
     const rest = openTabIds.filter((tabId) => tabId !== id)
+    closedTabs.current.push(id)
     setOpenTabIds(rest)
     if (id === activeThreadId) {
       setActiveThreadId(rest[Math.min(index, rest.length - 1)] ?? null)
@@ -201,6 +207,32 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
   function handleNewChat() {
     void newDocument()
   }
+
+  useShortcutDispatcher()
+  useShellShortcuts({
+    tabIds: openTabIds,
+    activeTabId: activeThreadId,
+    appOpen: app !== null,
+    apps,
+    open: handleSelectThread,
+    selectTab,
+    closeTab,
+    closeAllTabs,
+    reopenTab: () => {
+      const id = closedTabs.current.pop()
+      if (id !== undefined) handleSelectThread(id)
+    },
+    newDocument: handleNewChat,
+    toggleFiles,
+    showFiles: () => {
+      if (isMobile) return setMobileNavOpen(true)
+      setApp(null)
+      if (sidebarPanel.current?.isCollapsed()) toggleSidebar()
+    },
+    openApp,
+    leaveApp,
+    setSearchOpen,
+  })
 
   /** In the sheet the header button closes it; on desktop it collapses the panel. */
   const sidebar = (
@@ -419,6 +451,7 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
           threads={threads}
           onSelect={handleSelectThread}
         />
+        <ShortcutsDialog />
       </SidebarProvider>
     </TooltipProvider>
   )
