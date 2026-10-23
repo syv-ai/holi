@@ -699,8 +699,53 @@ describe('tasks.update', () => {
   it('refuses a value outside the vocabulary', async () => {
     const { caller } = await rig({ 'task.review.md': FILE })
     await expect(
-      caller.tasks.update({ remote: REMOTE, path: 'task.review.md', patch: { status: 'blocked' } }),
-    ).rejects.toThrow(/status must be one of/)
+      caller.tasks.update({
+        remote: REMOTE,
+        path: 'task.review.md',
+        patch: { priority: 'critical' },
+      }),
+    ).rejects.toThrow(/priority must be one of/)
+  })
+
+  it("completes into the vault's own completed status and reopens into its first unstarted one", async () => {
+    const statuses = [
+      'statuses:',
+      '  - { id: next, name: Next, category: unstarted }',
+      '  - { id: qa, name: QA, category: review }',
+      '  - { id: shipped, name: Shipped, category: completed }',
+      '',
+    ].join('\n')
+    const { caller } = await rig({
+      '.holi/statuses.yaml': statuses,
+      'task.ship.md': '---\nstatus: next\n---\n',
+      'task.standup.md': [
+        '---',
+        'status: qa',
+        'due: 2026-07-20',
+        'recurrence: { frequency: weekly, interval: 1 }',
+        '---',
+      ].join('\n'),
+    })
+    const ship = await caller.tasks.update({
+      remote: REMOTE,
+      path: 'task.ship.md',
+      patch: { status: 'shipped' },
+    })
+    expect(ship.status).toBe('shipped')
+    const standup = await caller.tasks.update({
+      remote: REMOTE,
+      path: 'task.standup.md',
+      patch: { status: 'shipped' },
+    })
+    expect(standup.status).toBe('next')
+    expect(standup.due).toBe('2026-07-27')
+    // A word the vault does not list is kept as it is, open.
+    const qa = await caller.tasks.update({
+      remote: REMOTE,
+      path: 'task.ship.md',
+      patch: { status: 'blocked' },
+    })
+    expect(qa.status).toBe('blocked')
   })
 
   it('reports a missing task rather than creating one', async () => {
@@ -863,7 +908,7 @@ describe('tasks.create with fields', () => {
   it('refuses a field the board could not read back', async () => {
     const { caller } = await rig({})
     await expect(
-      createTask(caller, { remote: REMOTE, title: 'Bad', extra: { priority: 'urgent' } }),
+      createTask(caller, { remote: REMOTE, title: 'Bad', extra: { priority: 'critical' } }),
     ).rejects.toThrow()
   })
 })

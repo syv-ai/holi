@@ -15,7 +15,9 @@ describe('frontmatterSchema', () => {
     expect(schema.map((f) => f.key)).toEqual([
       'status',
       'priority',
+      'start',
       'due',
+      'estimate',
       'reminder',
       'recurrence',
       'tags',
@@ -24,7 +26,7 @@ describe('frontmatterSchema', () => {
     ])
     expect(schema.find((f) => f.key === 'status')!.kind).toEqual({
       kind: 'enum',
-      options: ['todo', 'doing', 'done'],
+      options: ['backlog', 'todo', 'doing', 'review', 'done'],
     })
   })
 
@@ -57,7 +59,9 @@ describe('frontmatterRows', () => {
     expect(frontmatterRows(schema, ['status']).map((f) => f.key)).toEqual([
       'status',
       'priority',
+      'start',
       'due',
+      'estimate',
       'reminder',
       'recurrence',
       'tags',

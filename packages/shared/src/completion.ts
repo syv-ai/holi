@@ -21,18 +21,27 @@ export interface Completion {
   reminder?: string
 }
 
+/** The statuses completion writes: `done` for finished, `reopen` for a
+ *  recurring task's next occurrence. A vault's own are its first `completed`
+ *  and first `unstarted` statuses (`statuses.ts`); Holi's defaults otherwise. */
+export interface CompletionStatuses {
+  done: TaskStatus
+  reopen: TaskStatus
+}
+
 export function completeTask(
   task: Pick<Task, 'due' | 'recurrence' | 'reminder'>,
   today: string,
+  statuses: CompletionStatuses = { done: 'done', reopen: 'todo' },
 ): Completion {
   const rolled =
     task.recurrence !== undefined && task.due !== undefined
       ? nextDueCatchup(task.due, task.recurrence, today)
       : null
-  if (rolled === null) return { status: 'done' }
-  if (task.reminder === undefined) return { status: 'todo', due: rolled }
+  if (rolled === null) return { status: statuses.done }
+  if (task.reminder === undefined) return { status: statuses.reopen, due: rolled }
   // A reminder is a wall-clock stamp tied to the old occurrence, so it moves
   // with the due date. An inert (non-stamp) reminder is carried as it is.
   const reminder = shiftForRollover(task.reminder, task.due!, rolled) ?? task.reminder
-  return { status: 'todo', due: rolled, reminder }
+  return { status: statuses.reopen, due: rolled, reminder }
 }

@@ -20,13 +20,14 @@
  *   - **Unknown keys are carried, never rejected** (`Task.extra`).
  *
  * It still throws `TaskFileError` for a value that is *present and wrong* (a
- * status outside the vocabulary, a due date that is not a date): absent means
+ * priority outside the vocabulary, a due date that is not a date): absent means
  * "not set", malformed means "you meant something and it did not land", and
  * only the second is worth interrupting for.
  */
 
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml'
 import { parseStamp } from './dates'
+import { isEstimate } from './estimate'
 import { firstHeading } from './headings'
 import { FrontmatterError, splitFrontmatter } from './frontmatter'
 import { claimedFiles, type ClaimedFiles, type SnapshotClaim, type VaultSnapshot } from './types'
@@ -51,8 +52,7 @@ export class TaskFileError extends Error {
  * name rather than in frontmatter a copy-paste could carry. */
 export const TASK_PREFIX = 'task.'
 
-const STATUSES: TaskStatus[] = ['todo', 'doing', 'done']
-const PRIORITIES: Priority[] = ['low', 'medium', 'high']
+const PRIORITIES: Priority[] = ['low', 'medium', 'high', 'urgent']
 const FREQUENCIES: RecurrenceFrequency[] = ['daily', 'weekly', 'monthly', 'yearly']
 const WEEKDAYS: RecurrenceWeekday[] = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']
 
@@ -62,8 +62,10 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
  * `Task.extra` and is written back verbatim. */
 const KNOWN_KEYS = new Set([
   'status',
+  'start',
   'due',
   'priority',
+  'estimate',
   'tags',
   'assignees',
   'reminder',
@@ -131,8 +133,10 @@ export function serializeTaskFile(
   // text, so an unstable serializer would make every rewrite look foreign.
   const front: Record<string, unknown> = { status: task.status }
 
+  if (task.start !== undefined) front.start = task.start
   if (task.due !== undefined) front.due = task.due
   if (task.priority !== undefined) front.priority = task.priority
+  if (task.estimate !== undefined) front.estimate = task.estimate
   if (task.tags.length) front.tags = task.tags
   if (task.assignees.length) front.assignees = task.assignees
   if (task.reminder !== undefined) front.reminder = task.reminder
@@ -181,7 +185,7 @@ export function parseTaskFile(text: string, path: string): Task {
   const task: Task = {
     path,
     title: firstHeading(body) ?? titleFromTaskPath(path),
-    status: front.status === undefined ? 'todo' : enumOf(front.status, STATUSES, 'status'),
+    status: front.status === undefined ? 'todo' : readStatus(front.status),
     tags: [],
     assignees: [],
     description: body,
@@ -191,8 +195,10 @@ export function parseTaskFile(text: string, path: string): Task {
   // are held to one vocabulary. Absent *and* null both mean "not set": a key
   // written as `due:` with nothing after it is an empty field, not a malformed one.
   for (const key of [
+    'start',
     'due',
     'priority',
+    'estimate',
     'tags',
     'assignees',
     'reminder',
@@ -219,8 +225,10 @@ export type TaskPatch = Partial<
   Pick<
     Task,
     | 'status'
+    | 'start'
     | 'due'
     | 'priority'
+    | 'estimate'
     | 'tags'
     | 'assignees'
     | 'reminder'
@@ -234,18 +242,20 @@ export type TaskPatch = Partial<
  * with `parseTaskFile` is the point: an edit and a hand-written file are held to
  * the same vocabulary, so the board cannot write a file it would then refuse. */
 const PATCH_READERS: Record<string, (v: unknown) => unknown> = {
-  status: (v) => enumOf(v, STATUSES, 'status'),
+  status: readStatus,
   // A stamp: the time is optional, and its absence is meaningful. The
   // validity rules live in `dates.ts` and must not be restated here.
-  due: (v) => {
-    if (typeof v !== 'string' || parseStamp(v) === null) {
+  due: (v) => readStamp(v, 'due'),
+  start: (v) => readStamp(v, 'start'),
+  priority: (v) => enumOf(v, PRIORITIES, 'priority'),
+  estimate: (v) => {
+    if (typeof v !== 'string' || !isEstimate(v)) {
       throw new TaskFileError(
-        `due must be YYYY-MM-DD or YYYY-MM-DDTHH:MM, got: ${JSON.stringify(v)}`,
+        `estimate must be a number and m, h, d or w (30m, 2d), got: ${JSON.stringify(v)}`,
       )
     }
     return v
   },
-  priority: (v) => enumOf(v, PRIORITIES, 'priority'),
   tags: (v) => {
     if (!Array.isArray(v) || v.some((t) => typeof t !== 'string')) {
       throw new TaskFileError('tags must be a list of strings')
@@ -283,7 +293,29 @@ const PATCH_READERS: Record<string, (v: unknown) => unknown> = {
 
 /** The fields with a meaningful empty state. `null` on one of these clears it;
  * `null` anywhere else is a bug in the caller, not a value. */
-const CLEARABLE = new Set(['due', 'priority', 'reminder', 'recurrence'])
+const CLEARABLE = new Set(['start', 'due', 'priority', 'estimate', 'reminder', 'recurrence'])
+
+/**
+ * A status as the file says it: any word on one line. Which words a vault
+ * uses is `.holi/statuses.yaml`'s to say (`statuses.ts`), and a word it does
+ * not list still shows and is never rewritten, so the file format holds only
+ * that there is a word.
+ */
+function readStatus(v: unknown): TaskStatus {
+  if (typeof v !== 'string' || v.trim() === '' || /[\r\n]/.test(v)) {
+    throw new TaskFileError(`status must be a word, got: ${JSON.stringify(v)}`)
+  }
+  return v.trim()
+}
+
+function readStamp(v: unknown, field: string): string {
+  if (typeof v !== 'string' || parseStamp(v) === null) {
+    throw new TaskFileError(
+      `${field} must be YYYY-MM-DD or YYYY-MM-DDTHH:MM, got: ${JSON.stringify(v)}`,
+    )
+  }
+  return v
+}
 
 /** A login as written by hand or typed after `@`: trimmed, without the `@`. */
 export function normalizeLogin(raw: string): string {

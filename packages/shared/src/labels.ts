@@ -11,9 +11,14 @@
 import { stampDate, stampEpoch, stampTime } from './dates'
 import type { Task } from './types'
 
-export type VirtualLabel = 'overdue' | 'p1' | 'p2' | 'p3'
+export type VirtualLabel = 'overdue' | 'p0' | 'p1' | 'p2' | 'p3'
 
-const PRIORITY_LABEL = { high: 'p1', medium: 'p2', low: 'p3' } as const
+const PRIORITY_LABEL = { urgent: 'p0', high: 'p1', medium: 'p2', low: 'p3' } as const
+
+/** Whether a status is finished, for the `overdue` rule. Holi's `done` unless
+ *  the caller knows the vault's statuses (`isClosedStatus`). */
+export type IsClosed = (status: string) => boolean
+const closedIfDone: IsClosed = (status) => status === 'done'
 
 /**
  * Whether a task is late, given the moment `now`.
@@ -29,7 +34,7 @@ const PRIORITY_LABEL = { high: 'p1', medium: 'p2', low: 'p3' } as const
  * An unparseable `due` is never overdue, so a typo costs a chip rather than
  * throwing mid-render.
  */
-function isOverdue(due: string, now: string): boolean {
+export function isOverdue(due: string, now: string): boolean {
   const at = stampEpoch(due, 0)
   if (at === null) return false
   if (stampTime(due) !== null) {
@@ -46,9 +51,10 @@ function isOverdue(due: string, now: string): boolean {
 export function virtualLabels(
   task: Pick<Task, 'due' | 'priority' | 'status'>,
   now: string,
+  isClosed: IsClosed = closedIfDone,
 ): VirtualLabel[] {
   const labels: VirtualLabel[] = []
-  if (task.status !== 'done' && task.due !== undefined && isOverdue(task.due, now)) {
+  if (!isClosed(task.status) && task.due !== undefined && isOverdue(task.due, now)) {
     labels.push('overdue')
   }
   if (task.priority !== undefined) labels.push(PRIORITY_LABEL[task.priority])
@@ -60,6 +66,7 @@ export function virtualLabels(
 export function allLabels(
   task: Pick<Task, 'due' | 'priority' | 'status' | 'tags'>,
   now: string,
+  isClosed: IsClosed = closedIfDone,
 ): string[] {
-  return [...virtualLabels(task, now), ...task.tags]
+  return [...virtualLabels(task, now, isClosed), ...task.tags]
 }

@@ -148,9 +148,42 @@ describe('parseTaskFile', () => {
     expect(() => parse('---\ntitle: "unterminated\n---\n')).toThrow(TaskFileError)
   })
 
-  it('rejects an out-of-vocabulary status or priority', () => {
-    expect(() => parse('---\nstatus: blocked\n---\n')).toThrow(/status must be one of/)
-    expect(() => parse('---\npriority: urgent\n---\n')).toThrow(/priority must be one of/)
+  it('rejects an out-of-vocabulary priority', () => {
+    expect(() => parse('---\npriority: critical\n---\n')).toThrow(/priority must be one of/)
+  })
+
+  it('keeps any status word, listed by the vault or not, and never rewrites it', () => {
+    // Which words are columns is `.holi/statuses.yaml`'s business; the file
+    // only has to say a word.
+    const text = '---\nstatus: blocked\n---\n'
+    const task = parse(text)
+    expect(task.status).toBe('blocked')
+    expect(serializeTaskFile(task)).toBe(text)
+    expect(() => parse('---\nstatus: ""\n---\n')).toThrow(/status must be a word/)
+    expect(() => parse('---\nstatus: [a]\n---\n')).toThrow(/status must be a word/)
+  })
+
+  it('reads urgent, start and estimate, and writes them back in place', () => {
+    const text =
+      '---\nstatus: todo\nstart: 2026-10-01\ndue: 2026-10-20\npriority: urgent\nestimate: 2d\n---\n'
+    const task = parse(text)
+    expect(task).toMatchObject({ priority: 'urgent', start: '2026-10-01', estimate: '2d' })
+    expect(serializeTaskFile(task)).toBe(text)
+  })
+
+  it('writes start before due and estimate after priority, whatever order the file had', () => {
+    const task = parse(
+      '---\nestimate: 30m\npriority: low\ndue: 2026-10-20\nstart: 2026-10-01\n---\n',
+    )
+    expect(serializeTaskFile(task)).toBe(
+      '---\nstatus: todo\nstart: 2026-10-01\ndue: 2026-10-20\npriority: low\nestimate: 30m\n---\n',
+    )
+  })
+
+  it('rejects a start that is not a date and an estimate without a unit', () => {
+    expect(() => parse('---\nstart: soon\n---\n')).toThrow(/start must be YYYY-MM-DD/)
+    expect(() => parse('---\nestimate: 2\n---\n')).toThrow(/estimate must be/)
+    expect(() => parse('---\nestimate: 0d\n---\n')).toThrow(/estimate must be/)
   })
 
   it('rejects a due date that is not YYYY-MM-DD', () => {
@@ -288,8 +321,14 @@ describe('parseTaskPatch', () => {
   })
 
   it('rejects a value outside the vocabulary, exactly as the parser does', () => {
-    expect(() => parseTaskPatch({ status: 'blocked' })).toThrow(/status must be one of/)
-    expect(() => parseTaskPatch({ priority: 'urgent' })).toThrow(/priority must be one of/)
+    expect(() => parseTaskPatch({ status: '' })).toThrow(/status must be a word/)
+    expect(() => parseTaskPatch({ priority: 'critical' })).toThrow(/priority must be one of/)
+    expect(() => parseTaskPatch({ estimate: 'a while' })).toThrow(/estimate must be/)
+    expect(parseTaskPatch({ status: 'review', priority: 'urgent', start: null })).toEqual({
+      status: 'review',
+      priority: 'urgent',
+      start: undefined,
+    })
     expect(() => parseTaskPatch({ due: 'Friday' })).toThrow(/due must be YYYY-MM-DD/)
     expect(() => parseTaskPatch({ tags: 'finance' })).toThrow(/tags must be a list/)
     expect(() => parseTaskPatch({ recurrence: { frequency: 'fortnightly' } })).toThrow(
