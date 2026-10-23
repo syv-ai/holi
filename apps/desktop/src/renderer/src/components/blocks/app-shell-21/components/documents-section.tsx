@@ -49,6 +49,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Kbd } from "@/components/ui/kbd"
 import {
   SidebarGroup,
   SidebarGroupAction,
@@ -97,6 +98,7 @@ import {
   FolderOpenIcon,
   FolderPlusIcon,
   ListChecksIcon,
+  SearchIcon,
   PencilIcon,
   PlusIcon,
   SquareKanbanIcon,
@@ -201,14 +203,14 @@ async function attempt(what: string, action: () => Promise<void>) {
 const ARRIVE =
   "animate-in fade-in-0 duration-200 ease-[cubic-bezier(0.22,1,0.36,1)]"
 
-/** New document and Board, above the files. */
+/** Search and Board, at the top of the Documents tab. */
 export function DocumentsNav({
   activeId,
-  onNewDocument,
+  onOpenSearch,
   onOpen,
 }: {
   activeId: string | null
-  onNewDocument: () => void
+  onOpenSearch: () => void
   onOpen: (id: string) => void
 }) {
   const openTasks = useAtomValue(openTaskCountAtom)
@@ -217,11 +219,12 @@ export function DocumentsNav({
     <SidebarMenu className="gap-0.5 px-2">
       <SidebarMenuItem>
         <SidebarMenuButton
-          onClick={onNewDocument}
+          onClick={onOpenSearch}
           className="hover:bg-foreground/5 data-active:bg-foreground/10 data-active:hover:bg-foreground/12"
         >
-          <PlusIcon aria-hidden="true" />
-          <span>New document</span>
+          <SearchIcon aria-hidden="true" />
+          <span>Search</span>
+          <Kbd className="ms-auto">⌘K</Kbd>
         </SidebarMenuButton>
       </SidebarMenuItem>
       <SidebarMenuItem>
@@ -248,6 +251,27 @@ export function DocumentsNav({
             {openTasks}
           </SidebarMenuBadge>
         ) : null}
+      </SidebarMenuItem>
+    </SidebarMenu>
+  )
+}
+
+/** New document, heading the files it adds to. */
+export function NewDocumentNav({
+  onNewDocument,
+}: {
+  onNewDocument: () => void
+}) {
+  return (
+    <SidebarMenu className="px-2">
+      <SidebarMenuItem>
+        <SidebarMenuButton
+          onClick={onNewDocument}
+          className="hover:bg-foreground/5 data-active:bg-foreground/10 data-active:hover:bg-foreground/12"
+        >
+          <PlusIcon aria-hidden="true" />
+          <span>New document</span>
+        </SidebarMenuButton>
       </SidebarMenuItem>
     </SidebarMenu>
   )
@@ -743,15 +767,13 @@ export function FilesSection({
   }
 
   const empty = (data[ROOT_ID]?.children.length ?? 0) === 0
-  const focused = empty ? null : tree.getFocusedItem()
+  // The row the ⋯ menu acts on: the one picked in the tree, never the
+  // first row headless-tree focuses by default.
+  const focused = empty ? null : (tree.getSelectedItems()[0] ?? null)
 
   return (
     <SidebarGroup className="min-h-0 flex-1 px-2 pb-0">
       <SidebarGroupLabel>Files</SidebarGroupLabel>
-      <SidebarGroupAction className="right-9" onClick={newNote}>
-        <PlusIcon aria-hidden="true" />
-        <span className="sr-only">New document</span>
-      </SidebarGroupAction>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <SidebarGroupAction>

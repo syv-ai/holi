@@ -295,7 +295,6 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
               sidebarWidth={sidebarWidth}
               leadRef={leadRef}
               onToggleSidebar={toggleFiles}
-              onOpenSearch={() => setSearchOpen(true)}
             >
               {header}
             </TitleBar>

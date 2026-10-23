@@ -18,7 +18,12 @@ import { cn } from "@/lib/cn"
 import { runningPluginsAtom } from "@/state/plugins"
 import { activeRemoteAtom } from "@/state/vaults"
 import type { Move } from "@/lib/tree-actions"
-import { BOARD_TAB, DocumentsNav, FilesSection } from "./documents-section"
+import {
+  BOARD_TAB,
+  DocumentsNav,
+  FilesSection,
+  NewDocumentNav,
+} from "./documents-section"
 import { NavUser } from "./nav-user"
 import { ReuiMark } from "./reui-mark"
 import { VaultSwitcher } from "./vault-switcher"
@@ -81,18 +86,6 @@ export function ThreadSidebar({
           <SidebarMenu className="gap-0.5 px-2 pt-2">
             <SidebarMenuItem>
               <SidebarMenuButton
-                tooltip="New document"
-                onClick={onNewDocument}
-                aria-label="New document"
-                className={RAIL_BUTTON}
-              >
-                <PlusIcon aria-hidden="true" />
-                <span>New document</span>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-
-            <SidebarMenuItem>
-              <SidebarMenuButton
                 tooltip="Search"
                 onClick={onOpenSearch}
                 aria-label="Search"
@@ -113,6 +106,18 @@ export function ThreadSidebar({
               >
                 <SquareKanbanIcon aria-hidden="true" />
                 <span>Board</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                tooltip="New document"
+                onClick={onNewDocument}
+                aria-label="New document"
+                className={RAIL_BUTTON}
+              >
+                <PlusIcon aria-hidden="true" />
+                <span>New document</span>
               </SidebarMenuButton>
             </SidebarMenuItem>
           </SidebarMenu>
@@ -199,10 +204,11 @@ export function ThreadSidebar({
             <>
               <DocumentsNav
                 activeId={activeId}
-                onNewDocument={onNewDocument}
+                onOpenSearch={onOpenSearch}
                 onOpen={onOpen}
               />
               <SidebarSeparator className="mx-0 my-3" />
+              <NewDocumentNav onNewDocument={onNewDocument} />
               <FilesSection
                 activeId={activeId}
                 onOpen={onOpen}

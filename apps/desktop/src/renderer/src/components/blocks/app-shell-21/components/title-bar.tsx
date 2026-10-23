@@ -6,7 +6,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-import { PanelLeftIcon, SearchIcon } from "lucide-react"
+import { PanelLeftIcon } from "lucide-react"
 
 /**
  * The window's one top band, after MonoCode and Superset: the traffic lights,
@@ -29,7 +29,6 @@ export function TitleBar({
   sidebarWidth,
   leadRef,
   onToggleSidebar,
-  onOpenSearch,
   children,
 }: {
   sidebarOpen: boolean
@@ -37,7 +36,6 @@ export function TitleBar({
   /** Resized by the shell as the sidebar moves, without a render. */
   leadRef: Ref<HTMLDivElement>
   onToggleSidebar: () => void
-  onOpenSearch: () => void
   children: ReactNode
 }) {
   return (
@@ -52,19 +50,16 @@ export function TitleBar({
         style={sidebarOpen ? { width: leadWidth(sidebarWidth) } : undefined}
         className="group/lead data-open:border-e flex h-full shrink-0 items-center gap-1 overflow-hidden px-2"
       >
+        {/* Open, the toggle rides the divider (and so follows a resize);
+            collapsed, it sits by the traffic lights. Off the attribute the
+            shell flips mid-toggle, so it moves with the motion. */}
+        <div className="hidden flex-1 group-data-open/lead:block" />
         <BandButton
           label={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
           onClick={onToggleSidebar}
         >
           <PanelLeftIcon aria-hidden="true" />
         </BandButton>
-        {/* Shown off the same attribute the shell flips mid-toggle, so the
-            lead lets go of them the moment it does. */}
-        <div className="hidden flex-1 items-center justify-end gap-1 group-data-open/lead:flex">
-          <BandButton label="Search" onClick={onOpenSearch}>
-            <SearchIcon aria-hidden="true" />
-          </BandButton>
-        </div>
       </div>
       {children}
     </header>
