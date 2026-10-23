@@ -7,7 +7,13 @@ import type { RendererPlugin } from '@/plugin-api'
 import { AUTOMATIONS_INFO } from '../info'
 import { AutomationsNav } from './AutomationsNav'
 import { AutomationsView } from './AutomationsView'
-import { automationEvents, automationsVault } from './state'
+import {
+  automationEvents,
+  automationSessionItemsAtom,
+  automationsLoadedAtom,
+  automationsVault,
+  loadAutomationsAtom,
+} from './state'
 
 export const automationsRenderer: RendererPlugin = {
   info: AUTOMATIONS_INFO,
@@ -16,6 +22,12 @@ export const automationsRenderer: RendererPlugin = {
     order: 10,
     nav: AutomationsNav,
     main: AutomationsView,
+    // Its runs, in the agent's one session list.
+    sessions: {
+      items: automationSessionItemsAtom,
+      status: automationsLoadedAtom,
+      reload: loadAutomationsAtom,
+    },
   },
   vault: automationsVault,
 }

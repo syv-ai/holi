@@ -14,6 +14,7 @@ import {
   activeRemoteAtom,
   agentsSelectionAtom,
   appModeAtom,
+  type AgentsSessionItem,
   type AgentsStatus,
   type PluginEventHandler,
 } from '@/plugin-api'
@@ -40,6 +41,9 @@ export const transcriptsAtom = atom<Record<string, TranscriptItem[]>>({})
 /** Whether the list has come back from main once, so an empty list means
  *  none rather than not asked yet. */
 export const chatsLoadedAtom = atom(false)
+
+/** Main never answered the list: the session list offers Retry. */
+export const chatsErrorAtom = atom(false)
 
 /** What the chat rows put in the Agents view: the composer, or a chat. */
 export type ChatView = { kind: 'none' } | { kind: 'new' } | { kind: 'chat'; id: string }
@@ -121,6 +125,51 @@ export const draftsAtom = atom<Record<string, string>>({})
 /** The chats the sidebar lists: not archived. */
 export const sidebarChatsAtom = atom((get) => get(chatsAtom).filter((c) => !c.archived))
 
+/** A chat's row key in the Agents sidebar's session list. */
+export const chatKey = (id: string): string => `${CHAT_OWNER}:${id}`
+
+/** A chat as a row of the agent's session list (its slot's `sessions`):
+ *  selecting it shows the conversation in the chat's main view. */
+export function chatItem(c: ChatSummary): AgentsSessionItem {
+  return {
+    key: chatKey(c.id),
+    selection: { owner: CHAT_OWNER, id: c.id },
+    title: c.title,
+    state: c.state,
+    updatedAt: c.updatedAt,
+    archived: c.archived,
+    ...(c.model === undefined ? {} : { model: c.model }),
+    ...(c.waitingFor === undefined ? {} : { waitingFor: c.waitingFor }),
+    ...(c.endedAt === undefined ? {} : { endedAt: c.endedAt }),
+  }
+}
+
+export const chatSessionItemsAtom = atom((get) => get(chatsAtom).map(chatItem))
+
+export const chatSessionsStatusAtom = atom((get): 'loading' | 'ready' | 'error' =>
+  get(chatsLoadedAtom) ? 'ready' : get(chatsErrorAtom) ? 'error' : 'loading',
+)
+
+/** Ask main for the list again: the session list's Retry. */
+export const reloadChatsAtom = atom(null, async (get, set) => {
+  const remote = get(activeRemoteAtom)
+  if (remote === null) return
+  set(chatsErrorAtom, false)
+  try {
+    set(chatsAtom, await chatCap.list(remote))
+    set(chatsLoadedAtom, true)
+  } catch {
+    set(chatsErrorAtom, true)
+  }
+})
+
+/** Archive a chat by its row key, or bring it back. */
+export const archiveChatRowAtom = atom(null, (_get, set, key: string, archived: boolean) => {
+  const prefix = `${CHAT_OWNER}:`
+  if (!key.startsWith(prefix)) return
+  return set(updateChatAtom, { id: key.slice(prefix.length), archived })
+})
+
 /** What the chats add to the mode toggle's report. */
 export const chatStatusAtom = atom((get): AgentsStatus => {
   let needsYou = 0
@@ -164,7 +213,12 @@ export const chatEvents: Readonly<Record<string, PluginEventHandler>> = {
  * started in main, which refuses as "no such method". A few tries a second
  * apart, then the events are what fill it.
  */
-export function askSoon<T>(ask: () => Promise<T>, then: (value: T) => void, tries = 8): () => void {
+export function askSoon<T>(
+  ask: () => Promise<T>,
+  then: (value: T) => void,
+  tries = 8,
+  fail?: () => void,
+): () => void {
   let stopped = false
   let timer: ReturnType<typeof setTimeout> | null = null
   const go = (left: number): void => {
@@ -173,7 +227,9 @@ export function askSoon<T>(ask: () => Promise<T>, then: (value: T) => void, trie
         if (!stopped) then(value)
       })
       .catch(() => {
-        if (!stopped && left > 1) timer = setTimeout(() => go(left - 1), 1_000)
+        if (stopped) return
+        if (left > 1) timer = setTimeout(() => go(left - 1), 1_000)
+        else fail?.()
       })
   }
   go(tries)
@@ -195,12 +251,15 @@ export function chatsVault(
       if (store.get(chatsAtom) === asked) store.set(chatsAtom, list)
       store.set(chatsLoadedAtom, true)
     },
+    8,
+    () => store.set(chatsErrorAtom, true),
   )
   return () => {
     offList()
     store.set(chatsAtom, [])
     store.set(transcriptsAtom, {})
     store.set(chatsLoadedAtom, false)
+    store.set(chatsErrorAtom, false)
     store.set(draftsAtom, {})
     store.set(commandsAtom, { status: 'idle' })
     store.set(branchAtom, null)

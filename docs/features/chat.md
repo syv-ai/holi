@@ -55,9 +55,10 @@ turn created is deleted, every other file gets its old text back), one new commi
 so it is never in the clone.
 
 **In the Agents mode** the chat plugin fills the slot the agent's view offers
-([sidebar](sidebar.md)): a **Chats** section in its sidebar, its main view (one conversation) and
-the mode's **home** (`AgentsSlot.home`), the new-session page the mode opens on and New session
-goes to. Selecting a chat sets `agentsSelectionAtom` to `{owner: 'chat', id}` (`new` for the
+([sidebar](sidebar.md)): its chats as rows of the sidebar's one session list (the slot's
+`sessions`, [agent-sessions](agent-sessions.md): working, needs you, done until opened, and
+Archive), its main view (one conversation) and the mode's **home** (`AgentsSlot.home`), the
+new-session page the mode opens on and the list's **+** (its `create`) goes to. Selecting a chat sets `agentsSelectionAtom` to `{owner: 'chat', id}` (`new` for the
 page); nothing selected is the home. What its chats wait on is added to the count on the mode
 toggle. **Sign in** runs Claude Code's `/login` for the vault (`agent.open` with `login`), since a
 chat has no TUI to type it in. Quitting while a chat works or waits on the person asks first (the
@@ -111,7 +112,7 @@ Output 4 tok/s", "2 input · 22 output · 12.7k cached"), then when it ended.
 - `apps/desktop/src/plugins/chat/main/capabilities.ts`: `chats.*`
 - `apps/desktop/src/plugins/chat/main/commands.ts`: what the `/` menu lists
 - `apps/desktop/src/plugins/chat/shared/chat.ts`: transcript items, tool phrasing, the reducer
-- `apps/desktop/src/plugins/chat/renderer/`: `ChatSidebar.tsx`, `ChatMain.tsx` (the new-session
+- `apps/desktop/src/plugins/chat/renderer/`: `ChatMain.tsx` (the new-session
   page and a conversation), `Transcript.tsx`, `Composer.tsx`, `ComposerMenus.tsx` and
   `composer-tokens.ts` (`/` and `@`), `ReviewCard.tsx`; `state/chats.ts`, `state/review.ts`
 - `apps/desktop/src/plugins/chat/NOTICE.md`: MonoCode's licence for the parts after it

@@ -22,6 +22,7 @@ import { activeRemoteAtom, agentsSlotsAtom } from '@/plugin-api'
 import { inboxCountAtom } from '../state/agents-status'
 import { agentsViewAtom } from '../state/agents-view'
 import { newViewSessionAtom } from '../state/session-view'
+import { stopSessionAtom } from '../state/send'
 import { agentSessionsAtom } from '../state/sessions'
 import { SessionCard, StateLabel } from './parts'
 import { useNow } from './AgentsSidebar'
@@ -103,11 +104,34 @@ function InboxView(): React.JSX.Element {
   )
 }
 
-/** A background session, without its terminal: what it is and where it
- *  stands. Holis and automations run sessions like this one. */
+/**
+ * A background run (a Holi's, an automation's, one the agent started), as a
+ * summary rather than its terminal: what it is, where it stands, its model
+ * and since when, and Stop. Its transcript is Claude Code's TUI, which this
+ * view does not draw, and a background job's id is not a conversation a
+ * chat could `--resume`, so there is no read-only conversation or "Continue
+ * in chat" here. What it changes reaches the vault and its turn review.
+ */
 function SessionView({ id }: { id: string }): React.JSX.Element {
   const sessions = useAtomValue(agentSessionsAtom)
+  const stop = useSetAtom(stopSessionAtom)
+  const [error, setError] = useState<string | null>(null)
   const session = sessions.find((s) => s.id === id)
+  const facts = [
+    session?.model,
+    session?.startedAt === undefined
+      ? undefined
+      : `started ${new Date(session.startedAt).toLocaleTimeString(undefined, {
+          hour: 'numeric',
+          minute: '2-digit',
+        })}`,
+  ].filter((f): f is string => f !== undefined)
+  const description =
+    session?.state === 'needs-you'
+      ? `It waits on ${session.waitingFor ?? 'you'}: a prompt in its own terminal, which this view does not show yet. Stop it, or let it time out.`
+      : session?.state === 'working'
+        ? 'A Holi, an automation or the agent started it. It works on its own; what it changes reaches the vault and its turn review.'
+        : 'It has finished its work for now. What it changed is in the vault and its turn review.'
   return (
     <>
       <Bar>
@@ -117,11 +141,18 @@ function SessionView({ id }: { id: string }): React.JSX.Element {
             <StateLabel state={session.state} />
           </span>
         )}
+        {facts.length > 0 && (
+          <span className="truncate text-xs text-muted-foreground">{facts.join(' · ')}</span>
+        )}
       </Bar>
       <EmptyState
         icon={Bot}
-        title="Running in the background"
-        description="This session was started by a Holi or an automation. It works on its own; what it changes shows up in the vault and in its turn review."
+        title="A background run"
+        description={error ?? description}
+        action={{
+          label: 'Stop session',
+          onClick: () => void stop(id).then((res) => setError(res.ok ? null : res.message)),
+        }}
       />
     </>
   )

@@ -92,9 +92,9 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
   /** The sidebar's tab: on Agents, the main area is the Agents mode's. */
   const [section, setSection] = useAtom(sidebarSectionAtom)
   /** The Agents mode's main view, from the plugin that provides the mode. */
-  const AgentsMain = useAtomValue(runningPluginsAtom).find(
-    (plugin) => plugin.agentsMode
-  )?.agentsMode?.main
+  const running = useAtomValue(runningPluginsAtom)
+  const AgentsMain = running.find((plugin) => plugin.agentsMode)?.agentsMode
+    ?.main
   useSettingsHotkey()
 
   useEffect(() => {
@@ -363,31 +363,39 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
       ) : null}
       {/* The landmark stays with the shell, so whatever fills the view
           inherits it. */}
-      <main className="flex min-h-0 flex-1 flex-col">
-        {/* An app arrives from the rail's edge, where the files just folded
+      {/* The main area, then the running plugins' right-hand drawers (the
+          agent's turn review, the Holis' dialogs), each deciding whether it
+          is open, as the old shell mounted them. */}
+      <div className="flex min-h-0 flex-1">
+        <main className="flex min-h-0 min-w-0 flex-1 flex-col">
+          {/* An app arrives from the rail's edge, where the files just folded
             away: once per switch, keyed on the app. */}
-        {AppView ? (
-          <div
-            key={app}
-            className="animate-in fade-in-0 slide-in-from-left-3 motion-reduce:slide-in-from-left-0 flex min-h-0 flex-1 flex-col duration-200 ease-[cubic-bezier(0.22,1,0.36,1)]"
-          >
-            <AppView />
-          </div>
-        ) : settingsActive ? (
-          <SettingsView navHidden={isMobile || !sidebarOpen} />
-        ) : agentsActive && AgentsMain ? (
-          <AgentsMain />
-        ) : activeThreadId === null || isNewTab(activeThreadId) ? (
-          <EmptyView
-            key={activeThreadId ?? "none"}
-            onOpen={handleSelectThread}
-            onNewDocument={handleNewChat}
-            onOpenSearch={() => setSearchOpen(true)}
-          />
-        ) : activeThreadId === BOARD_TAB ? (
-          <PlanningView onOpenTask={handleSelectThread} />
-        ) : null}
-      </main>
+          {AppView ? (
+            <div
+              key={app}
+              className="animate-in fade-in-0 slide-in-from-left-3 motion-reduce:slide-in-from-left-0 flex min-h-0 flex-1 flex-col duration-200 ease-[cubic-bezier(0.22,1,0.36,1)]"
+            >
+              <AppView />
+            </div>
+          ) : settingsActive ? (
+            <SettingsView navHidden={isMobile || !sidebarOpen} />
+          ) : agentsActive && AgentsMain ? (
+            <AgentsMain />
+          ) : activeThreadId === null || isNewTab(activeThreadId) ? (
+            <EmptyView
+              key={activeThreadId ?? "none"}
+              onOpen={handleSelectThread}
+              onNewDocument={handleNewChat}
+              onOpenSearch={() => setSearchOpen(true)}
+            />
+          ) : activeThreadId === BOARD_TAB ? (
+            <PlanningView onOpenTask={handleSelectThread} />
+          ) : null}
+        </main>
+        {running.flatMap(({ info, drawers = [] }) =>
+          drawers.map((Drawer, i) => <Drawer key={`${info.id}:${i}`} />)
+        )}
+      </div>
     </div>
   )
 
