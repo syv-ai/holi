@@ -55,6 +55,7 @@ import {
   vaultsAtom,
 } from "@/plugin-api"
 import {
+  BUILTIN_COMMANDS,
   EFFORTS,
   modelLabel,
   PERMISSION_MODES,
@@ -193,10 +194,14 @@ export function Composer({
 
   const commands: ChatCommand[] = useMemo(() => {
     if (!slashOpen) return []
+    // A vault whose list cannot be read still has Claude Code's built-ins:
+    // the menu lists those, and says so quietly at its foot.
     const list =
       commandsState.status === "ready" || commandsState.status === "loading"
         ? (commandsState.list ?? [])
-        : []
+        : commandsState.status === "error"
+          ? [...BUILTIN_COMMANDS]
+          : []
     return rankCommands(list, slash?.query ?? "")
   }, [slashOpen, commandsState, slash?.query])
 

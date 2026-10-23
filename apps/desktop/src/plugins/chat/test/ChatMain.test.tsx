@@ -128,6 +128,40 @@ test("/ lists the vault's commands and Enter picks one", async () => {
   expect(cap.start).not.toHaveBeenCalled()
 })
 
+test("a command list that will not load falls back to the built-ins, quietly", async () => {
+  const user = userEvent.setup()
+  cap.commands
+    .mockReset()
+    .mockRejectedValue(new Error("no such method: chats.commands"))
+  cap.where
+    .mockReset()
+    .mockRejectedValue(new Error("no such method: chats.where"))
+  mount()
+  const box = screen.getByRole("textbox", { name: "Message Claude Code" })
+  // Nothing shouts while the menu is shut, and the branch chip is left out.
+  expect(screen.queryByRole("alert")).toBeNull()
+  expect(screen.queryByText("main")).toBeNull()
+  await user.type(box, "/")
+  const menu = await screen.findByRole("listbox", {
+    name: "Commands and skills",
+  })
+  expect(within(menu).getByText("/compact")).toBeTruthy()
+  expect(screen.queryByRole("alert")).toBeNull()
+  expect(
+    screen.getByText(
+      "Couldn’t load this vault’s commands. Showing the built-ins."
+    )
+  ).toBeTruthy()
+  cap.commands.mockResolvedValue(COMMANDS)
+  await user.click(screen.getByRole("button", { name: "Retry" }))
+  expect(await screen.findByText("/standup")).toBeTruthy()
+  expect(
+    screen.queryByText(
+      "Couldn’t load this vault’s commands. Showing the built-ins."
+    )
+  ).toBeNull()
+})
+
 test("Escape closes a menu, and the arrow keys move through it", async () => {
   const user = userEvent.setup()
   mount()

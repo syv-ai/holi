@@ -1,26 +1,30 @@
 # Chat
 
-The `chat` plugin (`src/plugins/chat/`, on by default, requires `agent`) shows Claude Code in the
+Chat (`src/plugins/chat/`, built in, requires the agent) shows Claude Code in the
 vault as a conversation in the Agents mode instead of a terminal: each step as a line (the one in
 flight beside a spinner, its words still), its permission prompts as cards, and under a finished
 turn what it changed. It is the same Claude
 Code, in the same clone, with the same settings, skills, hooks and memory as a background session
 ([agent-sessions](agent-sessions.md)).
 
-## Why it exists, and why it is the default
+## Why it exists, and why it is built in
 
 Claude Code in a terminal is the vault's assistant as Claude Code draws it, and Holi adds no layer
 to it ([architecture](../architecture.md), §2). A conversation drawn by Holi needs each step, each
 question and each turn's end as data, which a terminal's screen is not, so a chat runs Claude Code
 on its documented structured channel instead.
 
-**It is now the Agents mode's session UI**, on by default: the person prefers the conversation to
-the TUI, so the mode opens on the new-session page and a session is a conversation. No terminal is
-drawn in the mode for now (a background session a Holi or an automation started shows what it is
-and where it stands, not its screen); a terminal view may come back later. The agent's PTY host
-stays, since Holis and automations still start their sessions through `agent.launch`. Chat is
-still an adapter, so it stays a plugin, never core: turned off, the Agents mode is Holis and
-background sessions, and nothing of chat remains but its records on this machine.
+**It is the Agents mode's session UI**, and part of Holi: the person prefers the conversation to
+the TUI, so the mode opens on the new-session page whenever nothing is selected, and a session is a
+conversation. No vault setting, `plugins.yaml` entry or settings switch turns it off
+(`PluginInfo.builtIn`, [architecture](../architecture.md), Plugins): an older Holi wrote
+`chat: false` into some vaults' committed `plugins.yaml`, and that left the mode on the Inbox with
+no composer, so such a pin is ignored and dropped at the file's next write. No terminal is drawn
+in the mode for now (a background session a Holi or an automation started shows what it is and
+where it stands, not its screen); a terminal view may come back later. The agent's PTY host stays,
+since Holis and automations still start their sessions through `agent.launch`. Chat is still an
+adapter, so it is written to the plugin contract rather than into core: it reaches core only
+through the plugin API, and the agent only through its capabilities.
 
 ## How it works
 
@@ -54,7 +58,7 @@ turn created is deleted, every other file gets its old text back), one new commi
 `userData/agent-chats/<vault>/`. Like Claude Code's own transcripts, a conversation is one person's,
 so it is never in the clone.
 
-**In the Agents mode** the chat plugin fills the slot the agent's view offers
+**In the Agents mode** chat fills the slot the agent's view offers
 ([sidebar](sidebar.md)): its chats as rows of the sidebar's one session list (the slot's
 `sessions`, [agent-sessions](agent-sessions.md): working, needs you, done until opened, and
 Archive), its main view (one conversation) and the mode's **home** (`AgentsSlot.home`), the
@@ -77,7 +81,11 @@ lists what Claude Code runs as a command in the vault (`chats.commands`): the `s
 vault's last session reported in its `init`, less the TUI-only ones, merged with what the vault's
 and its config directory's `.claude/commands/**.md` and `.claude/skills/*/SKILL.md` say about
 themselves, so a row has a description and a vault with no session yet still lists its own (with
-a short list of built-ins that work in a chat standing in for Claude Code's). **`@`** lists the
+a short list of built-ins that work in a chat standing in for Claude Code's). A list that cannot
+be read (a main process older than the renderer, say) is no failure the person has to deal with:
+the menu lists those built-ins and says quietly at its foot that the vault's commands did not
+load, with Retry, only while the menu is open. The branch chip is left out the same way when
+`chats.where` does not answer. **`@`** lists the
 vault's documents from the vault snapshot, most recently changed first, and inserts `@path`
 (quoted when the path has a space), which Claude Code reads as a file reference. Arrow keys and
 Enter or Tab pick, Escape closes; otherwise Enter sends and Shift+Enter is a new line.
@@ -96,8 +104,11 @@ Output 4 tok/s", "2 input · 22 output · 12.7k cached"), then when it ended.
 
 ## Rejected
 
-- **Chat in core**: re-implements the TUI ([agent-sessions](agent-sessions.md), Rejected). Chat is
-  the default session UI as a plugin, not as core.
+- **Chat in core's own folders**: it would make core know Claude Code's structured channel. It is
+  built in, written to the plugin contract.
+- **Chat as an optional plugin**: a vault that turned it off had an Agents mode with no composer,
+  which is not a Holi anyone meant to have.
+- **A conversation that re-implements the TUI** ([agent-sessions](agent-sessions.md), Rejected).
 - **Reading a background session's steps off its terminal**: a TUI is not an interface.
 - **Other harnesses** (Pi and the like): a harness with no permission system runs its tools
   without asking, which a vault's assistant may not.

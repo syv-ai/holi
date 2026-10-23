@@ -81,6 +81,20 @@ export interface ChatCommand {
   scope: 'builtin' | 'vault' | 'user' | 'plugin'
 }
 
+/** Built-ins that do something in a chat (Claude Code's print mode), with
+ *  their own words. The TUI-only ones (`/doctor`, `/color`) are not here.
+ *  Main lists them before any session has said what it runs; the composer
+ *  falls back to them when the vault's list cannot be read. */
+export const BUILTIN_COMMANDS: readonly ChatCommand[] = [
+  { name: 'compact', description: 'Summarise the conversation so far to free up context' },
+  { name: 'context', description: 'Show what fills the context window' },
+  { name: 'init', description: 'Write an AGENTS.md that describes this vault' },
+  { name: 'review', description: 'Review a pull request' },
+  { name: 'security-review', description: 'Review the pending changes for security issues' },
+  { name: 'usage', description: 'Show plan usage and limits' },
+  { name: 'cost', description: 'Show what this session has cost' },
+].map((c) => ({ ...c, kind: 'builtin', scope: 'builtin' }) as const)
+
 /** What a session is doing, as the sidebar groups it. */
 export type ChatState = 'needs-you' | 'working' | 'idle'
 

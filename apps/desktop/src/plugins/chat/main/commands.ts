@@ -22,20 +22,8 @@
 import { readdir, readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join, relative, sep } from 'node:path'
-import type { ChatCommand } from '../shared/chat'
+import { BUILTIN_COMMANDS, type ChatCommand } from '../shared/chat'
 import type { SessionCommands } from './chats'
-
-/** Built-ins that do something in a chat (Claude Code's print mode), with
- *  their own words. The TUI-only ones (`/doctor`, `/color`) are not here. */
-export const BUILTIN_COMMANDS: readonly { name: string; description: string }[] = [
-  { name: 'compact', description: 'Summarise the conversation so far to free up context' },
-  { name: 'context', description: 'Show what fills the context window' },
-  { name: 'init', description: 'Write an AGENTS.md that describes this vault' },
-  { name: 'review', description: 'Review a pull request' },
-  { name: 'security-review', description: 'Review the pending changes for security issues' },
-  { name: 'usage', description: 'Show plan usage and limits' },
-  { name: 'cost', description: 'Show what this session has cost' },
-]
 
 /** How many files a scan reads at most, so a huge folder cannot stall it. */
 const MAX_FILES = 2_000
@@ -141,11 +129,7 @@ export async function listCommands(src: CommandSources): Promise<ChatCommand[]> 
     scanCommands(src.configDir, 'user'),
     scanSkills(src.configDir, 'user'),
   ])
-  const builtins: ChatCommand[] = BUILTIN_COMMANDS.map((b) => ({
-    ...b,
-    kind: 'builtin',
-    scope: 'builtin',
-  }))
+  const builtins: readonly ChatCommand[] = BUILTIN_COMMANDS
   // Earlier wins: the vault's own, then the person's, then Claude Code's.
   const byName = new Map<string, ChatCommand>()
   for (const c of [...vaultSkills, ...vaultCommands, ...userSkills, ...userCommands, ...builtins]) {

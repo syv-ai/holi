@@ -131,22 +131,7 @@ export function CommandMenu({
   const rows = usePointerRows(active, commands)
   return (
     <MenuSurface label="Commands and skills">
-      {error !== null ? (
-        <div role="alert" className="flex items-center gap-2 px-3 py-2">
-          <p className="text-muted-foreground min-w-0 flex-1 text-xs">
-            Couldn’t list the commands: {error}
-          </p>
-          <Button
-            type="button"
-            size="xs"
-            variant="outline"
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={onRetry}
-          >
-            Retry
-          </Button>
-        </div>
-      ) : loading && commands.length === 0 ? (
+      {loading && commands.length === 0 && error === null ? (
         <MenuSkeleton label="Loading commands" />
       ) : commands.length === 0 ? (
         <Hint>
@@ -199,6 +184,27 @@ export function CommandMenu({
               </button>
             )
           })}
+        </div>
+      )}
+      {error !== null && (
+        // Not a failure the person has to deal with: the built-ins above
+        // still run. Quiet, at the menu's foot, and only while it is open.
+        <div
+          role="status"
+          className="border-border flex items-center gap-2 border-t px-3 py-2"
+        >
+          <p className="text-muted-foreground min-w-0 flex-1 text-xs">
+            Couldn’t load this vault’s commands. Showing the built-ins.
+          </p>
+          <Button
+            type="button"
+            size="xs"
+            variant="ghost"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={onRetry}
+          >
+            Retry
+          </Button>
         </div>
       )}
     </MenuSurface>
