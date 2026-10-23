@@ -238,7 +238,6 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
               leadRef={leadRef}
               onToggleSidebar={toggleSidebar}
               onOpenSearch={() => setSearchOpen(true)}
-              onNew={handleNewChat}
             >
               {header}
             </TitleBar>

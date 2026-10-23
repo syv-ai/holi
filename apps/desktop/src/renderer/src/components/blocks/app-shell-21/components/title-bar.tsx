@@ -6,7 +6,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-import { PanelLeftIcon, PlusIcon, SearchIcon } from "lucide-react"
+import { PanelLeftIcon, SearchIcon } from "lucide-react"
 
 /**
  * The window's one top band, after MonoCode and Superset: the traffic lights,
@@ -30,7 +30,6 @@ export function TitleBar({
   leadRef,
   onToggleSidebar,
   onOpenSearch,
-  onNew,
   children,
 }: {
   sidebarOpen: boolean
@@ -39,7 +38,6 @@ export function TitleBar({
   leadRef: Ref<HTMLDivElement>
   onToggleSidebar: () => void
   onOpenSearch: () => void
-  onNew: () => void
   children: ReactNode
 }) {
   return (
@@ -65,9 +63,6 @@ export function TitleBar({
         <div className="hidden flex-1 items-center justify-end gap-1 group-data-open/lead:flex">
           <BandButton label="Search" onClick={onOpenSearch}>
             <SearchIcon aria-hidden="true" />
-          </BandButton>
-          <BandButton label="New" onClick={onNew}>
-            <PlusIcon aria-hidden="true" />
           </BandButton>
         </div>
       </div>
