@@ -71,7 +71,10 @@ place of the provider's mark when one ran it) with the age on the right, the tit
 hover, and the vault with where it ran (a Holi's document). A card selects what it stands for
 (`agentsSelectionAtom`: a chat's conversation) or opens the session it is, brought back first
 when it has finished. **+**, ⌘N and the empty state start a session in the view a slot offers
-(chat's composer), else in a terminal. Search reads the title, who ran it, the place and the
+(chat's composer), else in a terminal. A background run opened from its card (a Holi's, an
+automation's) shows in the Agents mode as a summary, not its terminal: its name, state, model and
+start, and Stop; a run waiting on a permission prompt says so, since only its terminal answers it
+([chat](chat.md), why no terminal is drawn). Search reads the title, who ran it, the place and the
 model; the filter keeps states, who started it (you, or Holis and automations), and archived rows
 on request (a slot that keeps an archive offers Archive on its cards). Arrow keys, Home and End
 move between cards; Enter opens one.
@@ -182,8 +185,9 @@ showing it busy, crosses it off), so a session resumed from the list is never re
   process Holi never spawned.
 - A bearer or port in a session's environment: a background session's environment is the
   supervisor's, and the supervisor outlives a Holi restart.
-- A headless chat panel in core: re-implements the TUI. Offered only as the optional chat plugin
-  ([chat](chat.md)), off by default, on Claude Code's own structured channel and prompts.
+- A headless chat panel in core: re-implements the TUI. Offered only as the chat plugin
+  ([chat](chat.md)), now the Agents mode's session UI and on by default, on Claude Code's own
+  structured channel and prompts.
 - A server-side agent: there is no server.
 - A Holi list of past sessions: the agent list is that list.
 - A gate before the agent's writes: Claude Code already asks.

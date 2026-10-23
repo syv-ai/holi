@@ -35,6 +35,7 @@ export const chatMain: MainPlugin = {
       chatCapabilities({
         chats,
         liveRemote: () => ctx.active()?.remote ?? null,
+        target: async () => (await ctx.call('agent.target', {})) as CommandTarget | null,
         openFork: (conversation) => open({ fork: conversation }),
         openLogin: () => open({ login: true }),
       }),

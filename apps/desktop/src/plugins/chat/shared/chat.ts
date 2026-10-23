@@ -24,6 +24,63 @@ export const PERMISSION_MODES: readonly { value: PermissionMode; label: string; 
   { value: 'plan', label: 'Plan only', hint: 'Reads and plans, changes nothing' },
 ]
 
+/** Claude Code's effort levels (`--effort`). Absent is Claude Code's own default. */
+export type Effort = 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+
+export const EFFORTS: readonly { value: Effort; label: string }[] = [
+  { value: 'low', label: 'Low' },
+  { value: 'medium', label: 'Medium' },
+  { value: 'high', label: 'High' },
+  { value: 'xhigh', label: 'Extra high' },
+  { value: 'max', label: 'Max' },
+]
+
+export const isEffort = (value: unknown): value is Effort => EFFORTS.some((e) => e.value === value)
+
+/**
+ * A model as a person reads it: `claude-opus-5-5` is "Opus 5.5", an alias
+ * (`opus`) is "Opus", and anything else is shown as it is. The id is
+ * Claude Code's, so no table of models is kept.
+ */
+export function modelLabel(id: string): string {
+  const name = id.replace(/\[.*\]$/, '').trim()
+  const family = (word: string): string => word.charAt(0).toUpperCase() + word.slice(1)
+  // claude-opus-5-5, claude-sonnet-4-5-20250929, claude-haiku-4
+  const modern = /^claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?(?:-\d{6,})?$/.exec(name)
+  if (modern !== null) {
+    return `${family(modern[1]!)} ${modern[2]}${modern[3] === undefined ? '' : `.${modern[3]}`}`
+  }
+  // claude-3-5-sonnet-20241022
+  const older = /^claude-(\d+)(?:-(\d{1,2}))?-([a-z]+)(?:-\d{6,})?$/.exec(name)
+  if (older !== null) {
+    return `${family(older[3]!)} ${older[1]}${older[2] === undefined ? '' : `.${older[2]}`}`
+  }
+  if (/^[a-z]+$/.test(name)) return family(name)
+  return name
+}
+
+/** What one finished turn cost in tokens, from Claude Code's `result`. After
+ *  MonoCode's `TurnMetrics` (MIT, Copyright (c) 2026 Nick; see NOTICE.md). */
+export interface TurnUsage {
+  inputTokens?: number
+  outputTokens?: number
+  cacheReadTokens?: number
+  cacheWriteTokens?: number
+  /** Share of the input served from the prompt cache, 0 to 100. */
+  cacheHitPercent?: number
+}
+
+/** One entry of the composer's `/` menu: what Claude Code runs as `/<name>`. */
+export interface ChatCommand {
+  name: string
+  description?: string
+  /** Built into Claude Code, a skill, or a command file. */
+  kind: 'builtin' | 'skill' | 'command'
+  /** Where it was found: the vault's `.claude/`, the vault's Claude Code
+   *  config directory, or Claude Code itself. */
+  scope: 'builtin' | 'vault' | 'user' | 'plugin'
+}
+
 /** What a session is doing, as the sidebar groups it. */
 export type ChatState = 'needs-you' | 'working' | 'idle'
 
@@ -50,7 +107,16 @@ export interface Question {
 export type TranscriptItem =
   | { kind: 'user'; id: string; text: string; at: number }
   /** One turn's bracket: "Working…" while open, "Worked for 6s" once shut. */
-  | { kind: 'turn'; id: string; startedAt: number; endedAt?: number; failed?: boolean }
+  | {
+      kind: 'turn'
+      id: string
+      startedAt: number
+      endedAt?: number
+      failed?: boolean
+      /** The model that answered, as Claude Code names it. */
+      model?: string
+      usage?: TurnUsage
+    }
   | { kind: 'assistant'; id: string; text: string; streaming: boolean }
   | { kind: 'reasoning'; id: string; text: string; streaming: boolean }
   | {
@@ -98,7 +164,7 @@ export type TranscriptItem =
 export type ChatEvent =
   | { type: 'user'; id: string; text: string; at: number }
   | { type: 'turn-start'; id: string; at: number }
-  | { type: 'turn-end'; at: number; failed?: boolean }
+  | { type: 'turn-end'; at: number; failed?: boolean; model?: string; usage?: TurnUsage }
   | { type: 'text'; delta: string }
   | { type: 'text-done'; text?: string }
   | { type: 'reasoning'; delta: string }
@@ -123,6 +189,7 @@ export interface ChatSummary {
   id: string
   title: string
   model?: string
+  effort?: Effort
   mode: PermissionMode
   state: ChatState
   /** What it is doing now, in the present tense: the step in flight. */
@@ -347,7 +414,13 @@ export function applyChatEvent(
       }
       const turn = [...next].reverse().find((i) => i.kind === 'turn')
       if (turn?.kind === 'turn' && turn.endedAt === undefined) {
-        put({ ...turn, endedAt: event.at, ...(event.failed ? { failed: true } : {}) })
+        put({
+          ...turn,
+          endedAt: event.at,
+          ...(event.failed ? { failed: true } : {}),
+          ...(event.model === undefined ? {} : { model: event.model }),
+          ...(event.usage === undefined ? {} : { usage: event.usage }),
+        })
       }
       break
     }

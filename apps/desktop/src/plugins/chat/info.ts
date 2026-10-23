@@ -2,14 +2,14 @@
 import type { PluginInfo } from '@holi/shared'
 
 /**
- * Off by default: the vault's assistant is Claude Code as Claude Code draws it,
- * in a terminal. Chat is another way to talk to the same Claude Code, for a
- * person who would rather not read a TUI.
+ * On by default: a conversation is the session UI of the Agents mode
+ * (docs/features/chat.md). It is the same Claude Code a terminal would show,
+ * on its structured channel, with its own permission prompts as cards.
  */
 export const CHAT_INFO: PluginInfo = {
   id: 'chat',
   label: 'Chat',
-  default: false,
+  default: true,
   requires: ['agent'],
   description:
     'Claude Code in this vault as a conversation in the Agents view: its steps, its permission prompts as cards, and what each turn changed.',

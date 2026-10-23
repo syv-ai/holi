@@ -9,9 +9,18 @@ Ported or adapted:
 - `renderer/ChatSidebar.tsx`, `parts.tsx` (after `app/shell/Sidebar.tsx`'s session rows; their braille
   spinner and shimmering step text gave way to Holi's own `motion-orbit`)
 - `renderer/Transcript.tsx`, `Markdown.tsx`, `Composer.tsx`, `ChatMain.tsx` (after
-  `features/sessions/ui/AgentTranscript.tsx`, `AgentMarkdown.tsx`, `Composer.tsx`, `SessionPane.tsx`)
+  `features/sessions/ui/AgentTranscript.tsx` with its turn line, `TurnDuration`,
+  `TurnMetricsBadge`, `CopyTurnButton` and `SaveNoteButton`, `AgentMarkdown.tsx`, `Composer.tsx`,
+  `ModelPicker.tsx`, `AccessPicker.tsx`, `SessionPane.tsx` and `EmptySession.tsx`)
+- `renderer/ComposerMenus.tsx` (after `features/skills/ui/SkillPicker.tsx` and
+  `features/sessions/ui/FileMentionPicker.tsx`)
+- `renderer/composer-tokens.ts` (after `features/skills/model/slashCommands.ts`,
+  `features/files/model/fileMentions.ts` and `shared/lib/fuzzy.ts`)
+- `renderer/ReviewCard.tsx` (after `features/sessions/ui/SessionReview.tsx`)
+- `main/commands.ts` (after `src-tauri/src/skills.rs`'s skill discovery)
 - `shared/chat.ts` (the transcript's item shapes and tool phrasing)
-- `main/claude-stream.ts` (after `integrations/harness/providers/claude/claudeProtocol.ts`)
+- `main/claude-stream.ts` (after `integrations/harness/providers/claude/claudeProtocol.ts`, its
+  `turnMetricsFromResult` included)
 
 MonoCode is not affiliated with Holi. Provider marks shown in the UI are trademarks of their owners
 and identify those products only.

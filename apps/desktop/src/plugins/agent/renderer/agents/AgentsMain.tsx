@@ -1,27 +1,29 @@
 /**
  * The Agents mode's main view (docs/features/agent-sessions.md, The Agents
- * view): one of three things, picked in the sidebar.
+ * view): one of four things, picked in the sidebar.
  *
- * - **The Inbox**, also what the view opens on: the sessions waiting on you,
- *   and what other plugins add there (a Holi's report that asked for you).
- * - **A live background session**: its terminal, `claude attach`, since
- *   Claude Code's TUI is its interface.
+ * - **Home**, what the view opens on: a slot's `home` when one offers it
+ *   (the chat plugin's new-session page), else the Inbox.
+ * - **The Inbox**: the sessions waiting on you, and what other plugins add
+ *   there (a Holi's report that asked for you).
+ * - **A background session**: what it is and its state. Its terminal is not
+ *   drawn here while conversations are the session UI (docs/features/chat.md);
+ *   the session runs on, and Holis and automations keep starting them.
  * - **A row another plugin added**: that plugin's own view (its slot).
  *
  * After MonoCode's `SessionPane` (MIT, Copyright (c) 2026 Nick; see
  * NOTICE.md), cut to the mock's simplicity.
  */
 import { useAtomValue, useSetAtom } from 'jotai'
-import { Inbox, SquarePen } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { Bot, Inbox, SquarePen } from 'lucide-react'
+import { useEffect, useState } from 'react'
 import { EmptyState } from '@/composites'
 import { activeRemoteAtom, agentsSlotsAtom } from '@/plugin-api'
-import { agentCap } from '../agent-cap'
-import { SessionTerminal } from '../SessionTerminal'
 import { inboxCountAtom } from '../state/agents-status'
-import { agentsViewAtom, viewTerminalsAtom } from '../state/agents-view'
+import { agentsViewAtom } from '../state/agents-view'
 import { newViewSessionAtom } from '../state/session-view'
-import { agentGeometryAtom, agentSessionsAtom } from '../state/sessions'
+import { stopSessionAtom } from '../state/send'
+import { agentSessionsAtom } from '../state/sessions'
 import { SessionCard, StateLabel } from './parts'
 import { useNow } from './AgentsSidebar'
 
@@ -102,49 +104,34 @@ function InboxView(): React.JSX.Element {
   )
 }
 
-/** A background session in a terminal of the view's own: the one its New
- *  session opened, or a new `claude attach` window that closes with the view. */
-function TerminalView({ id }: { id: string }): React.JSX.Element {
-  const remote = useAtomValue(activeRemoteAtom)
+/**
+ * A background run (a Holi's, an automation's, one the agent started), as a
+ * summary rather than its terminal: what it is, where it stands, its model
+ * and since when, and Stop. Its transcript is Claude Code's TUI, which this
+ * view does not draw, and a background job's id is not a conversation a
+ * chat could `--resume`, so there is no read-only conversation or "Continue
+ * in chat" here. What it changes reaches the vault and its turn review.
+ */
+function SessionView({ id }: { id: string }): React.JSX.Element {
   const sessions = useAtomValue(agentSessionsAtom)
-  const geometry = useAtomValue(agentGeometryAtom)
-  const setGeometry = useSetAtom(agentGeometryAtom)
-  const owned = useAtomValue(viewTerminalsAtom)[id]
-  const setOwned = useSetAtom(viewTerminalsAtom)
-  const session = sessions.find((s) => s.id === id)
-  const [terminalId, setTerminalId] = useState<string | null>(owned ?? null)
+  const stop = useSetAtom(stopSessionAtom)
   const [error, setError] = useState<string | null>(null)
-  const opened = useRef<string | null>(owned ?? null)
-
-  useEffect(() => {
-    if (remote === null) return
-    let gone = false
-    if (opened.current === null) {
-      void agentCap.open(remote, { attach: id, ...geometry }).then((res) => {
-        if (gone) {
-          if (res.ok) void agentCap.detach(remote, { id: res.terminalId })
-          return
-        }
-        if (res.ok) {
-          opened.current = res.terminalId
-          setTerminalId(res.terminalId)
-        } else setError(res.message)
-      })
-    }
-    return () => {
-      gone = true
-      // The window closes with the view; the session goes on in the background.
-      if (opened.current !== null) void agentCap.detach(remote, { id: opened.current })
-      opened.current = null
-      setOwned((t) => {
-        const { [id]: _gone, ...rest } = t
-        return rest
-      })
-    }
-    // Opened once per session shown; the geometry is only where it starts.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [remote, id])
-
+  const session = sessions.find((s) => s.id === id)
+  const facts = [
+    session?.model,
+    session?.startedAt === undefined
+      ? undefined
+      : `started ${new Date(session.startedAt).toLocaleTimeString(undefined, {
+          hour: 'numeric',
+          minute: '2-digit',
+        })}`,
+  ].filter((f): f is string => f !== undefined)
+  const description =
+    session?.state === 'needs-you'
+      ? `It waits on ${session.waitingFor ?? 'you'}: a prompt in its own terminal, which this view does not show yet. Stop it, or let it time out.`
+      : session?.state === 'working'
+        ? 'A Holi, an automation or the agent started it. It works on its own; what it changes reaches the vault and its turn review.'
+        : 'It has finished its work for now. What it changed is in the vault and its turn review.'
   return (
     <>
       <Bar>
@@ -154,26 +141,19 @@ function TerminalView({ id }: { id: string }): React.JSX.Element {
             <StateLabel state={session.state} />
           </span>
         )}
-      </Bar>
-      <div className="flex min-h-0 flex-1 flex-col">
-        {error !== null ? (
-          <div className="flex flex-1 items-center justify-center text-sm text-destructive">
-            {error}
-          </div>
-        ) : terminalId === null ? (
-          <div
-            role="status"
-            aria-label="Opening the terminal"
-            className="m-6 h-24 rounded-lg motion-shimmer"
-          />
-        ) : (
-          <SessionTerminal
-            terminalId={terminalId}
-            visible
-            onGeometry={(cols, rows) => setGeometry({ cols, rows })}
-          />
+        {facts.length > 0 && (
+          <span className="truncate text-xs text-muted-foreground">{facts.join(' · ')}</span>
         )}
-      </div>
+      </Bar>
+      <EmptyState
+        icon={Bot}
+        title="A background run"
+        description={error ?? description}
+        action={{
+          label: 'Stop session',
+          onClick: () => void stop(id).then((res) => setError(res.ok ? null : res.message)),
+        }}
+      />
     </>
   )
 }
@@ -184,6 +164,7 @@ export function AgentsMain(): React.JSX.Element {
   const sessions = useAtomValue(agentSessionsAtom)
   const slots = useAtomValue(agentsSlotsAtom)
   const slot = view.kind === 'slot' ? slots.find((s) => s.plugin === view.owner) : undefined
+  const Home = slots.find((s) => s.home !== undefined)?.home
 
   // A session that stopped, or a plugin turned off, is no longer something to
   // show.
@@ -197,9 +178,11 @@ export function AgentsMain(): React.JSX.Element {
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-background" data-agents-main={view.kind}>
       {view.kind === 'session' && !missing ? (
-        <TerminalView key={view.id} id={view.id} />
+        <SessionView key={view.id} id={view.id} />
       ) : view.kind === 'slot' && slot?.main !== undefined ? (
         <slot.main key={view.id} id={view.id} />
+      ) : view.kind === 'home' && Home !== undefined ? (
+        <Home />
       ) : (
         <InboxView />
       )}

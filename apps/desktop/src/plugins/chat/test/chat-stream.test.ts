@@ -163,7 +163,7 @@ describe('Claude Code stream-json', () => {
       detail: 'File created',
     })
     const end = results.at(-1)!
-    expect(end.turnEnded).toEqual({ failed: false })
+    expect(end.turnEnded).toMatchObject({ failed: false })
     expect(end.contextPercent).toBe(25)
   })
 

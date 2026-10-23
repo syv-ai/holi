@@ -45,6 +45,10 @@ drawn ([chat](features/chat.md)).
 **Steering a working chat.** A message written while a turn runs waits for it to finish; Claude Code
 can take one mid-turn.
 
+**A session's terminal in the Agents mode.** While a conversation is the session UI, the mode draws
+no terminal: a background session shows its name and state, not its screen, and a chat's "open a
+copy in a terminal" is not offered there ([chat](features/chat.md)).
+
 **Memory tooling.** Lint findings as proposals, a graph view, and per-directory indexes. See
 [agent-memory](features/agent-memory.md).
 

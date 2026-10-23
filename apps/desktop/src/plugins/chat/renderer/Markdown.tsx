@@ -38,7 +38,7 @@ function inlineToken(t: Token, key: string): ReactNode {
       return <del>{inline((t as Tokens.Del).tokens, key)}</del>
     case 'codespan':
       return (
-        <code className="rounded-md bg-foreground/[0.06] px-1.5 py-px font-mono text-xs text-foreground">
+        <code className="rounded-md bg-muted px-1.5 py-px font-mono text-xs text-foreground">
           {(t as Tokens.Codespan).text}
         </code>
       )
@@ -52,7 +52,7 @@ function inlineToken(t: Token, key: string): ReactNode {
           href={link.href}
           target="_blank"
           rel="noopener noreferrer"
-          className="text-brand underline-offset-4 hover:underline"
+          className="text-foreground underline decoration-foreground/30 underline-offset-4 transition-colors hover:decoration-foreground"
         >
           {inline(link.tokens, key)}
         </a>
@@ -111,19 +111,19 @@ function block(t: Token, key: string): ReactNode {
       return (
         <pre
           key={key}
-          className="overflow-x-auto rounded-lg bg-foreground/[0.04] p-3 font-mono text-xs leading-relaxed text-foreground"
+          className="overflow-x-auto rounded-lg bg-muted p-3 font-mono text-xs leading-relaxed text-foreground"
         >
           <code>{(t as Tokens.Code).text}</code>
         </pre>
       )
     case 'blockquote':
       return (
-        <blockquote key={key} className="border-l-2 border-divider pl-3 text-muted-foreground">
+        <blockquote key={key} className="border-l-2 border-border pl-3 text-muted-foreground">
           {(t as Tokens.Blockquote).tokens.map((c, i) => block(c, `${key}.${i}`))}
         </blockquote>
       )
     case 'hr':
-      return <hr key={key} className="border-divider" />
+      return <hr key={key} className="border-border" />
     case 'table': {
       // A table the agent wrote in its reply, drawn as prose: not a data
       // region, so not the data grid.
@@ -132,7 +132,7 @@ function block(t: Token, key: string): ReactNode {
         <div key={key} className="overflow-x-auto">
           <table className="w-full text-left text-sm">
             <thead>
-              <tr className="border-b border-divider text-xs text-muted-foreground">
+              <tr className="border-b border-border text-xs text-muted-foreground">
                 {table.header.map((cell, i) => (
                   <th key={i} className="py-1.5 pr-3 font-medium">
                     {inline(cell.tokens, `${key}.h${i}`)}
@@ -142,7 +142,7 @@ function block(t: Token, key: string): ReactNode {
             </thead>
             <tbody>
               {table.rows.map((row, r) => (
-                <tr key={r} className="border-b border-divider">
+                <tr key={r} className="border-b border-border">
                   {row.map((cell, c) => (
                     <td key={c} className="py-1.5 pr-3">
                       {inline(cell.tokens, `${key}.${r}.${c}`)}

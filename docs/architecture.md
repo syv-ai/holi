@@ -40,7 +40,7 @@ forward when a Claude Code release changes something. Users are developers: the 
 interface, git is a tool they already know, and Claude Code is already installed and signed in. With
 the vault being plain files in a git repo, the agent needs no Holi-specific operations at all.
 Drawing Claude Code as a conversation instead of a terminal is an adapter, so it is not core: it is
-the optional chat plugin, off by default ([chat](features/chat.md)).
+the chat plugin, on by default as the Agents mode's session UI ([chat](features/chat.md)).
 
 ## 3. Processes and the IPC seam
 
@@ -195,7 +195,7 @@ and turn ends through `ctx.hear` (what a plugin's main side `publish`es, heard o
 that require it), and fill the Agents view and the Agent menu from slots core knows nothing of
 ([holis](features/holis.md)).
 
-**Chat** is the optional plugin that draws Claude Code as a conversation: Claude Code on its
+**Chat** is the plugin, on by default, that draws Claude Code as a conversation: Claude Code on its
 structured channel (`stream-json`, with `--permission-prompt-tool stdio`), its prompts Claude Code's
 own, answered from a card. The agent knows nothing of it; chat reaches the agent's turn bracket,
 command target and terminals through general capabilities ([chat](features/chat.md)).

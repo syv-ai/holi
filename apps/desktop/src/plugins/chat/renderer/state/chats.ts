@@ -19,7 +19,13 @@ import {
   type PluginEventHandler,
 } from '@/plugin-api'
 import { chatCap } from '../chat-cap'
-import type { ChatSummary, PermissionMode, TranscriptItem } from '../../shared/chat'
+import type {
+  ChatCommand,
+  ChatSummary,
+  Effort,
+  PermissionMode,
+  TranscriptItem,
+} from '../../shared/chat'
 
 export { chatCap }
 
@@ -61,12 +67,60 @@ export const chatViewAtom = atom(
  *  person's last pick, kept on this machine. */
 export interface ComposerPrefs {
   model: string | null
+  /** Null is Claude Code's own default. */
+  effort: Effort | null
   mode: PermissionMode
 }
 
 export const composerPrefsAtom = atomWithStorage<ComposerPrefs>('holi.chat.composer', {
   model: null,
+  effort: null,
   mode: 'default',
+})
+
+/** The composer's `/` menu: what Claude Code runs as a command in this vault
+ *  (`chats.commands`), asked for when the menu first opens and again once
+ *  it is a minute old. */
+export type CommandsState =
+  | { status: 'idle' }
+  | { status: 'loading'; list?: ChatCommand[] }
+  | { status: 'ready'; list: ChatCommand[]; at: number }
+  | { status: 'error'; message: string }
+
+export const commandsAtom = atom<CommandsState>({ status: 'idle' })
+
+const COMMANDS_FRESH_MS = 60_000
+
+export const loadCommandsAtom = atom(null, async (get, set, force = false) => {
+  const remote = get(activeRemoteAtom)
+  if (remote === null) return
+  const now = get(commandsAtom)
+  if (now.status === 'loading') return
+  if (!force && now.status === 'ready' && Date.now() - now.at < COMMANDS_FRESH_MS) return
+  set(commandsAtom, { status: 'loading', ...(now.status === 'ready' ? { list: now.list } : {}) })
+  try {
+    const list = await chatCap.commands(remote)
+    set(commandsAtom, { status: 'ready', list, at: Date.now() })
+  } catch (err) {
+    set(commandsAtom, {
+      status: 'error',
+      message: err instanceof Error ? err.message : String(err),
+    })
+  }
+})
+
+/** Where a chat works: the clone's branch, for the composer's chips. */
+export const branchAtom = atom<string | null>(null)
+
+/** Asked until main answers: the composer can mount before the vault's
+ *  plugin has started in main (see `askSoon`). Returns the undo. */
+export const loadBranchAtom = atom(null, (get, set): (() => void) => {
+  const remote = get(activeRemoteAtom)
+  if (remote === null) return () => {}
+  return askSoon(
+    () => chatCap.where(remote),
+    (where) => set(branchAtom, where.branch),
+  )
 })
 
 /** Unsent text, per composer: `new` and each session's id. */
@@ -211,6 +265,8 @@ export function chatsVault(
     store.set(chatsLoadedAtom, false)
     store.set(chatsErrorAtom, false)
     store.set(draftsAtom, {})
+    store.set(commandsAtom, { status: 'idle' })
+    store.set(branchAtom, null)
   }
 }
 
@@ -234,15 +290,18 @@ export const startChatAtom = atom(
   async (
     get,
     set,
-    args: { text: string; model?: string | null; mode?: PermissionMode },
+    args: { text: string; model?: string | null; effort?: Effort | null; mode?: PermissionMode },
   ): Promise<ChatActionResult> => {
     const remote = get(activeRemoteAtom)
     if (remote === null) return NO_VAULT
     const prefs = get(composerPrefsAtom)
+    const model = args.model === undefined ? prefs.model : args.model
+    const effort = args.effort === undefined ? (prefs.effort ?? null) : args.effort
     const res = await chatCap.start(remote, {
       text: args.text,
       mode: args.mode ?? prefs.mode,
-      ...((args.model ?? prefs.model) ? { model: args.model ?? prefs.model } : {}),
+      ...(model ? { model } : {}),
+      ...(effort ? { effort } : {}),
     })
     if (!res.ok) return res
     set(chatViewAtom, { kind: 'chat', id: res.id })
@@ -260,6 +319,7 @@ export const sendChatAtom = atom(
       id: string
       text: string
       model?: string | null
+      effort?: Effort | null
       mode?: PermissionMode
     },
   ): Promise<ChatActionResult> => {

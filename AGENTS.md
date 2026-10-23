@@ -114,9 +114,11 @@ legacy alias with the same behavior as `pnpm lint`.
   with a soul and a memory that a person sends a document to, or that carry
   out an automation, once this machine approved what the Holi says. Both are
   plugins built on the agent: they start sessions through `agent.launch` and
-  hear it through `ctx.hear`; core reaches them only through plugin slots. A conversation drawn as chat is the optional
-  plugin `src/plugins/chat/` (off by default), which answers Claude Code's
-  own `can_use_tool` prompts and nothing more.
+  hear it through `ctx.hear`; core reaches them only through plugin slots. A
+  conversation drawn as chat is the plugin `src/plugins/chat/`, on by default
+  and the Agents mode's session UI (the person prefers the conversation; a
+  terminal view may return later), which answers Claude Code's own
+  `can_use_tool` prompts and nothing more.
 - Use system `git` and parse plumbing/porcelain output, not human-readable git
   output. Holi-managed clones autosave, pull, merge, and push; do not assume a
   user-maintained checkout or a dirty working tree.
