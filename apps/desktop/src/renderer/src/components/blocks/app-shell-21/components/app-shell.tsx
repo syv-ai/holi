@@ -22,6 +22,7 @@ import { ChatSearchDialog } from "./chat-search-dialog"
 import { THREADS } from "./data"
 import type { Move } from "@/lib/tree-actions"
 import { BOARD_TAB, useNewDocument } from "./documents-section"
+import { EmptyView, isNewTab, NEW_TAB_PREFIX } from "./empty-view"
 import { MobileHeader } from "./mobile-header"
 import { SiteHeader } from "./site-header"
 import { useSidebarApps } from "./sidebar-apps"
@@ -57,6 +58,8 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
   const widthRef = useRef(SIDEBAR_WIDTH)
   const settling = useRef(false)
   const settleTimer = useRef<number | null>(null)
+  /** Numbers each New tab, so two of them are two tabs. */
+  const newTabSeq = useRef(0)
   const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_WIDTH)
   /** Armed on the first resize: any earlier and the first layout animates in. */
   const [animate, setAnimate] = useState(false)
@@ -132,16 +135,30 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
 
   function tabTitle(id: string): string {
     if (id === BOARD_TAB) return "Board"
+    if (isNewTab(id)) return "New tab"
     const thread = threads.find((candidate) => candidate.id === id)
     if (thread) return thread.title
     return id.slice(id.lastIndexOf("/") + 1).replace(/\.md$/, "")
   }
 
-  /** Opening a document brings its tab forward, adding one if it has none. */
+  /** Opening a document brings its tab forward, adding one if it has none.
+   *  From a New tab it takes that tab's place, as in a browser. */
   function openTab(id: string) {
-    setOpenTabIds((current) =>
-      current.includes(id) ? current : [...current, id]
-    )
+    const blank = isNewTab(activeThreadId) ? activeThreadId : null
+    setOpenTabIds((current) => {
+      if (current.includes(id)) return current.filter((tab) => tab !== blank)
+      if (blank) return current.map((tab) => (tab === blank ? id : tab))
+      return [...current, id]
+    })
+    setActiveThreadId(id)
+  }
+
+  /** +: a tab that shows the empty view until something is picked in it. */
+  function openNewTab() {
+    leaveApp()
+    newTabSeq.current += 1
+    const id = `${NEW_TAB_PREFIX}${newTabSeq.current}`
+    setOpenTabIds((current) => [...current, id])
     setActiveThreadId(id)
   }
 
@@ -222,7 +239,7 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
       activeTabId={app === null ? activeThreadId : null}
       onSelectTab={selectTab}
       onCloseTab={closeTab}
-      onNewTab={handleNewChat}
+      onNewTab={openNewTab}
       onCloseAllTabs={closeAllTabs}
     />
   )
@@ -248,6 +265,13 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
           >
             <AppView />
           </div>
+        ) : activeThreadId === null || isNewTab(activeThreadId) ? (
+          <EmptyView
+            key={activeThreadId ?? "none"}
+            onOpen={handleSelectThread}
+            onNewDocument={handleNewChat}
+            onOpenSearch={() => setSearchOpen(true)}
+          />
         ) : null}
       </main>
     </div>
