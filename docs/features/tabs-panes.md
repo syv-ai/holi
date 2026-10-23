@@ -26,14 +26,18 @@ Holis play Paper run by themselves: papers (documents and tasks) land on the boa
 picks them up into a stack that trails behind it and files them in the outbox, saying so in a
 speech bubble in its own voice, and merge conflicts wander about and scatter a stack they touch.
 The cast is the vault's Holis by mascot and colour, which the holis plugin contributes through
-the `arcadeCast` plugin slot; with none (or the plugin off) a default cast plays. Content wins: the
-board takes no pointer, dims to a whisper under the logo (anything marked `data-arcade-keepout`)
-and puts nothing there, and is gone below a 48rem pane, before the logo goes. The Play button in
-the corner hands the first Holi to the arrow keys or WASD, the board covers the view (which goes
-`inert`), a bigger stack filed at once scores more (1 + 2 + … + n), and Escape, or focus leaving
-the board, gives it back. It never moves on its own under reduced motion, and its loop parks while
-the view is hidden or off screen. `gridArcade` (Settings, Appearance; machine-local, on by default)
-turns it off.
+the `arcadeCast` plugin slot; with none (or the plugin off) a default cast plays. Content wins: idle, the
+board melts into the pane (dimmed, slightly blurred, masked away toward the foot and the sides),
+takes no pointer, dims to a whisper under the logo (anything marked `data-arcade-keepout`) and puts
+nothing there, and is gone below a 48rem pane, before the logo goes. MonoCode's take-control pill
+(`Take control · Paper run`) sits in the band under the content, never over a row, and shows
+while the pointer is on the board's free ground or on keyboard focus. Taking control hands the
+first Holi to the arrow keys or WASD, and the board covers the pane (the sidebar and title stay)
+at full brightness, with a thin HUD along its top: the score, the speed and Release (Esc); the
+content goes `inert`. A bigger stack filed at once scores more (1 + 2 + … + n). Only Escape or
+Release ends a game, and focus goes back to the pill. It never moves on its own under reduced
+motion, and its loop parks while the view is hidden or off screen. `gridArcade` (Settings,
+Appearance; machine-local, on by default) turns it off.
 
 **The strip and the header** (after Arc's and Cursor's tabs, Linear's page header). Tabs are
 browser tabs: cells of one width that share their dividers on the window's ground, every one with

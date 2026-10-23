@@ -4,9 +4,14 @@
  */
 import { Provider, createStore } from "jotai"
 import { expect, test, vi } from "vitest"
-import { emptyVaultSnapshot, type VaultSnapshot } from "@holi/shared"
+import {
+  emptyVaultSnapshot,
+  VAULT_SETTING_DEFAULTS,
+  type VaultSnapshot,
+} from "@holi/shared"
 import { fireEvent, render, screen } from "@/test/render"
 import { nowAtom } from "@/state/clock"
+import { vaultSettingsAtom } from "@/state/settings"
 import { activeRemoteAtom, snapshotAtom, vaultsAtom } from "@/state/vaults"
 import { BOARD_TAB } from "../documents-section"
 import { EmptyView, isNewTab, NEW_TAB_PREFIX } from "../empty-view"
@@ -15,7 +20,10 @@ function snapshotWith(docs: VaultSnapshot["docs"]): VaultSnapshot {
   return { ...emptyVaultSnapshot(), docs }
 }
 
-function mount(snapshot: VaultSnapshot | null) {
+function mount(
+  snapshot: VaultSnapshot | null,
+  prepare?: (store: ReturnType<typeof createStore>) => void
+) {
   const store = createStore()
   store.set(nowAtom, "2026-10-23T12:00")
   store.set(activeRemoteAtom, "mara/notes")
@@ -28,6 +36,7 @@ function mount(snapshot: VaultSnapshot | null) {
     },
   ] as never)
   if (snapshot) store.set(snapshotAtom, snapshot)
+  prepare?.(store)
   const onOpen = vi.fn()
   const onNewDocument = vi.fn()
   render(
@@ -96,4 +105,61 @@ test("a New tab is told apart by its id", () => {
   expect(isNewTab(`${NEW_TAB_PREFIX}1`)).toBe(true)
   expect(isNewTab("Meetings/Kickoff.md")).toBe(false)
   expect(isNewTab(null)).toBe(false)
+})
+
+/** The scrolling content, which steps out while a game is on. */
+function content() {
+  return document.querySelector("[data-slot=empty-view-content]")!
+}
+
+test("the take-control pill shows over the board's free ground, or on focus", () => {
+  mount(snapshotWith([]))
+  const pill = screen.getByRole("button", { name: /take control/i })
+  expect(pill.dataset.show).toBe("false")
+  fireEvent.pointerMove(pill.parentElement!)
+  expect(pill.dataset.show).toBe("true")
+  // Over a row is not the board.
+  fireEvent.pointerMove(screen.getByText("Board"))
+  expect(pill.dataset.show).toBe("false")
+})
+
+test("taking control covers the pane; Escape gives it back to the pill", () => {
+  mount(snapshotWith([]))
+  const pill = screen.getByRole("button", { name: /take control/i })
+  fireEvent.click(pill)
+
+  const board = screen.getByRole("application", { name: /paper run/i })
+  expect(document.activeElement).toBe(board)
+  expect(content().hasAttribute("inert")).toBe(true)
+  expect(screen.getByRole("button", { name: /release/i })).toBeTruthy()
+
+  // Focus going elsewhere does not end it.
+  fireEvent.blur(board)
+  expect(screen.queryByRole("application")).toBeTruthy()
+
+  fireEvent.keyDown(board, { key: "Escape" })
+  expect(screen.queryByRole("application")).toBeNull()
+  expect(content().hasAttribute("inert")).toBe(false)
+  expect(document.activeElement).toBe(pill)
+})
+
+test("Release ends the game too", () => {
+  mount(snapshotWith([]))
+  fireEvent.click(screen.getByRole("button", { name: /take control/i }))
+  fireEvent.click(screen.getByRole("button", { name: /release/i }))
+  expect(screen.queryByRole("application")).toBeNull()
+  expect(document.activeElement).toBe(
+    screen.getByRole("button", { name: /take control/i })
+  )
+})
+
+test("with the arcade off on this machine, there is no board and no pill", () => {
+  mount(snapshotWith([]), (store) =>
+    store.set(vaultSettingsAtom, {
+      remote: "mara/notes",
+      settings: { ...VAULT_SETTING_DEFAULTS, gridArcade: false, warnings: [] },
+    })
+  )
+  expect(screen.queryByRole("button", { name: /take control/i })).toBeNull()
+  expect(document.querySelector("[data-slot=arcade]")).toBeNull()
 })

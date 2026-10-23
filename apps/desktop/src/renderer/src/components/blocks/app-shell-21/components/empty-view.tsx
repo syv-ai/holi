@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { useAtomValue, useSetAtom } from "jotai"
 import { toast } from "sonner"
 import { isHiddenPath, type DocMeta } from "@holi/shared"
@@ -11,7 +11,10 @@ import {
 } from "lucide-react"
 
 import { AsciiWake } from "@/components/bencho/ASCIIWake"
-import { HoliArcade } from "@/components/monocode/arcade/HoliArcade"
+import {
+  ArcadeTakeControl,
+  HoliArcade,
+} from "@/components/monocode/arcade/HoliArcade"
 import { Button } from "@/components/ui/button"
 import {
   Item,
@@ -88,8 +91,30 @@ export function EmptyView({
   const ensureDaily = useSetAtom(ensureTodaysDailyAtom)
   const arcadeOn = useAtomValue(gridArcadeAtom)
   const cast = useAtomValue(arcadeCastAtom)
-  /** While someone plays, the board is on top and the content steps out. */
+  /** While someone plays, the board covers the pane and the content steps
+   *  out; Escape or Release brings it back, focus on the take-control pill. */
   const [playing, setPlaying] = useState(false)
+  /** The pointer is over the board's free ground, not over the content. */
+  const [overBoard, setOverBoard] = useState(false)
+  const gridRef = useRef<HTMLDivElement>(null)
+  const takeControlRef = useRef<HTMLButtonElement>(null)
+  const wasPlaying = useRef(false)
+
+  useEffect(() => {
+    if (wasPlaying.current && !playing) takeControlRef.current?.focus()
+    wasPlaying.current = playing
+  }, [playing])
+
+  /** Over the board when the pointer is on the scroller or the grid itself
+   *  (the gaps between things), or on the take-control pill's own row. */
+  function trackBoard(event: React.PointerEvent<HTMLDivElement>) {
+    const target = event.target as Element
+    const free =
+      target === event.currentTarget ||
+      target === gridRef.current ||
+      target.closest("[data-arcade-free]") !== null
+    if (free !== overBoard) setOverBoard(free)
+  }
 
   const vaultName =
     vaults.find((vault) => vault.remote === remote)?.name ?? remote
@@ -110,28 +135,41 @@ export function EmptyView({
       data-slot="empty-view"
       className="@container relative isolate flex min-h-0 flex-1 flex-col"
     >
-      {/* The Holis' arcade, under everything and filling the pane: content
-          wins, so it takes no pointer until someone presses Play. The first
-          of the fun to go as the pane narrows (below 48rem), before the
-          logo; machine-local, on by default (`gridArcade`). */}
+      {/* The Holis' arcade, under everything and melting into the pane:
+          content wins, so it takes no pointer until someone takes control,
+          and then it covers the pane. The first of the fun to go as the
+          pane narrows (below 48rem), before the logo; machine-local, on by
+          default (`gridArcade`). */}
       {arcadeOn ? (
         <HoliArcade
           cast={cast}
-          onPlayingChange={setPlaying}
+          playing={playing}
+          onRelease={() => setPlaying(false)}
           className="hidden @3xl:block"
         />
       ) : null}
-      {/* The content scrolls over a board that stays put. */}
+      {/* The content scrolls over a board that stays put, and steps out
+          while a game is on. */}
       <div
+        data-slot="empty-view-content"
         inert={playing}
-        className="relative z-10 flex min-h-0 flex-1 flex-col overflow-y-auto"
+        aria-hidden={playing || undefined}
+        onPointerMove={arcadeOn ? trackBoard : undefined}
+        onPointerLeave={() => setOverBoard(false)}
+        className={cn(
+          "relative z-10 flex min-h-0 flex-1 flex-col overflow-y-auto transition-opacity duration-200 ease-[cubic-bezier(0.22,1,0.36,1)]",
+          playing && "opacity-0"
+        )}
       >
         {/* No entrance: a New tab opens many times a day, and opening a tab
           lands at once everywhere else in Holi. */}
         {/* Sized by the pane, not the window, since the sidebar takes its share:
           one column when narrow, and from 56rem the day across the top, the
           mark beside what you would do, and what was written across the foot. */}
-        <div className="mx-auto grid w-full max-w-lg gap-10 px-6 pt-[max(3rem,12vh)] pb-16 @4xl:max-w-5xl @4xl:grid-cols-[auto_minmax(0,1fr)] @4xl:items-start @4xl:gap-x-16">
+        <div
+          ref={gridRef}
+          className="mx-auto grid w-full max-w-lg gap-10 px-6 pt-[max(3rem,12vh)] pb-16 @4xl:max-w-5xl @4xl:grid-cols-[auto_minmax(0,1fr)] @4xl:items-start @4xl:gap-x-16"
+        >
           {/* The day heads the page, across both columns: where you are
             and what is open, before anything to do about it. */}
           <header className="flex flex-col gap-1 @4xl:col-span-2">
@@ -217,6 +255,22 @@ export function EmptyView({
           </section>
 
           <RecentlyEdited onOpen={onOpen} onNewDocument={onNewDocument} />
+
+          {/* MonoCode's take-control pill, in the band under the content
+              rather than over it, so it never covers a row: shown while the
+              pointer is on the board's free ground, or on keyboard focus. */}
+          {arcadeOn ? (
+            <div
+              data-arcade-free=""
+              className="hidden justify-center py-2 @3xl:flex @4xl:col-span-2"
+            >
+              <ArcadeTakeControl
+                ref={takeControlRef}
+                show={overBoard}
+                onClick={() => setPlaying(true)}
+              />
+            </div>
+          ) : null}
         </div>
       </div>
     </div>

@@ -1,7 +1,9 @@
 /**
- * The empty view's arcade: a dot grid that fills the pane behind its content,
- * where the vault's Holis play Paper run (`paperRun.ts`) by themselves until
- * someone takes control.
+ * The empty view's arcade: a dot grid that melts into the pane behind its
+ * content, where the vault's Holis play Paper run (`paperRun.ts`) by
+ * themselves; and, once someone takes control (`ArcadeTakeControl`), the
+ * same board over the whole pane at full brightness, with a thin HUD along
+ * its top.
  *
  * Ported from MonoCode's `features/terminal/ui/TerminalGridBackground.tsx`
  * (https://github.com/hardbeat920/monocode), MIT License, Copyright (c) 2026
@@ -11,20 +13,22 @@
  * Holi's changes: one game, so no slider; its own cast drawn from the Holis'
  * pixel mascots; colours read off the theme's tokens; a keep-out the content
  * marks (`data-arcade-keepout`); no autoplay under reduced motion; the loop
- * parks while the view is hidden or off screen; and the HUD is Holi's own
- * components.
+ * parks while the view is hidden or off screen; the take-control pill lives
+ * in the content's flow rather than over it; and the HUD and the pill are
+ * Holi's own components.
  */
-import { useCallback, useEffect, useRef, useState } from "react"
-import { Gamepad2Icon } from "lucide-react"
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react"
 
 import { Button } from "@/components/ui/button"
 import { Kbd } from "@/components/ui/kbd"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip"
 import { pixelLayers } from "@/composites/pixel-mascot/pixel-mascots"
 import { cn } from "@/lib/cn"
 
@@ -36,7 +40,7 @@ import {
   type CellRect,
   type GridArcade,
 } from "./gridArcade"
-import { createPaperRun } from "./paperRun"
+import { createPaperRun, stackScore } from "./paperRun"
 import { drawSpeechBubble } from "./speechBubble"
 
 const CELL = 6
@@ -46,10 +50,22 @@ const PITCH = CELL + GAP
 const BORDER_OPACITY = 0.04
 const PEAK_OPACITY = 0.72
 /** Idle, the board sits behind what you read: this much of a game's light. */
-const IDLE_DIM = 0.4
+const IDLE_DIM = 0.3
 /** The Holis themselves are paint, so they dim harder than the cells. */
-const IDLE_SPRITE_DIM = 0.5
+const IDLE_SPRITE_DIM = 0.4
 const BUBBLE_OPACITY = 0.95
+const IDLE_BUBBLE_OPACITY = 0.7
+
+/**
+ * Idle, the board melts into the pane rather than reading as a layer: full
+ * under the top of the content, gone by the foot (MonoCode's fade), and
+ * softened at the sides.
+ */
+const IDLE_MASK: CSSProperties = {
+  maskImage:
+    "linear-gradient(to bottom, #000 45%, transparent 100%), linear-gradient(to right, transparent, #000 10%, #000 90%, transparent)",
+  maskComposite: "intersect",
+}
 /** Under the logo (the keep-out): a whisper of the board. */
 const KEEP_DIM = 0.12
 /** Cells over which the keep-out's dimming eases back to the open board. */
@@ -176,14 +192,17 @@ function drawConflict(
 
 export function HoliArcade({
   cast,
-  onPlayingChange,
+  playing,
+  onRelease,
   className,
 }: {
   /** The vault's Holis; empty brings the board's default cast. */
   cast: readonly ArcadeCastMember[]
-  /** Told when someone takes control and lets go, so the view under the
-   *  board can step out of the way. */
-  onPlayingChange?: (playing: boolean) => void
+  /** Someone has taken control (`ArcadeTakeControl`): the board covers the
+   *  pane at full brightness and takes the keys. */
+  playing: boolean
+  /** Escape or Release: the only ways out. */
+  onRelease: () => void
   className?: string
 }) {
   const rootRef = useRef<HTMLDivElement>(null)
@@ -198,36 +217,41 @@ export function HoliArcade({
   /** Measures the keep-out again: a game in play has none, since the
    *  board covers the logo then. */
   const refreshRef = useRef<() => void>(() => undefined)
-  const [playing, setPlaying] = useState(false)
   const [score, setScore] = useState(0)
   const [carrying, setCarrying] = useState(0)
   const [mode, setMode] = useState<ArcadeMode>("mid")
-  const [lead, setLead] = useState<ArcadeCastMember | null>(null)
-
-  playingRef.current = playing
+  const modeRef = useRef(mode)
+  modeRef.current = mode
+  const onReleaseRef = useRef(onRelease)
+  onReleaseRef.current = onRelease
 
   // The cast follows the vault without restarting the loop.
   useEffect(() => {
     arcadeRef.current?.setCast(cast)
-    setLead(arcadeRef.current?.lead() ?? null)
   }, [cast])
 
+  /** Hand the board over, or take it back: on the arcade, then wake the
+   *  loop. The keep-out goes while a game is on, since it covers the logo. */
   useEffect(() => {
-    onPlayingChange?.(playing)
-  }, [playing, onPlayingChange])
-
-  const releaseControl = useCallback(() => {
-    if (!playingRef.current) return
-    playingRef.current = false
+    const arcade = arcadeRef.current
+    if (playing === playingRef.current) return
+    playingRef.current = playing
     refreshRef.current()
-    arcadeRef.current?.releaseControl()
     scoreRef.current = 0
     carryRef.current = 0
     setScore(0)
     setCarrying(0)
-    setPlaying(false)
+    if (playing) {
+      arcade?.setMode(modeRef.current)
+      arcade?.takeControl()
+      rootRef.current?.focus()
+    } else {
+      arcade?.releaseControl()
+    }
     kickRef.current()
-  }, [])
+  }, [playing])
+
+  const release = useCallback(() => onReleaseRef.current(), [])
 
   useEffect(() => {
     const root = rootRef.current
@@ -238,7 +262,6 @@ export function HoliArcade({
     const arcade = createPaperRun()
     arcade.setCast(cast)
     arcadeRef.current = arcade
-    setLead(arcade.lead())
 
     // The cell outlines never move, so they're stroked once here and
     // blitted each frame instead of thousands of strokeRects per paint.
@@ -347,7 +370,7 @@ export function HoliArcade({
       height = rect.height
       if (width <= 0 || height <= 0) {
         // Narrowed out of sight mid-game: give the view back.
-        if (playingRef.current) releaseControl()
+        if (playingRef.current) onReleaseRef.current()
         return
       }
 
@@ -442,7 +465,7 @@ export function HoliArcade({
         bubbleAt.y,
         CELL,
         { width, height },
-        bubble.alpha * BUBBLE_OPACITY,
+        bubble.alpha * (controlled ? BUBBLE_OPACITY : IDLE_BUBBLE_OPACITY),
         { fg: ink.fg, bg: ink.surface, accent: bubble.accent }
       )
     }
@@ -541,22 +564,7 @@ export function HoliArcade({
     }
     // The cast is handed over by its own effect; this one runs once.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [releaseControl])
-
-  const takeControl = useCallback(() => {
-    const arcade = arcadeRef.current
-    if (!arcade) return
-    arcade.setMode(mode)
-    playingRef.current = true
-    refreshRef.current()
-    arcade.takeControl()
-    scoreRef.current = 0
-    carryRef.current = 0
-    setScore(0)
-    setCarrying(0)
-    setLead(arcade.lead())
-    setPlaying(true)
-  }, [mode])
+  }, [])
 
   const pickMode = useCallback((next: ArcadeMode) => {
     arcadeRef.current?.setMode(next)
@@ -564,12 +572,12 @@ export function HoliArcade({
     rootRef.current?.focus()
   }, [])
 
-  // Playing: the board takes the focus, the keys and the wake-up of the loop.
+  // Playing: the board takes the keys while it has the focus. Focus going
+  // elsewhere (the sidebar, say) leaves the game running and the keys alone;
+  // only Escape or Release ends it.
   useEffect(() => {
     if (!playing) return
     const root = rootRef.current
-    root?.focus()
-    kickRef.current()
 
     const onKey = (event: KeyboardEvent) => {
       if (event.metaKey || event.ctrlKey || event.altKey || event.isComposing) {
@@ -585,7 +593,7 @@ export function HoliArcade({
       if (event.key === "Escape") {
         event.preventDefault()
         event.stopPropagation()
-        releaseControl()
+        release()
         return
       }
       const heading = HEADING[event.key] ?? HEADING[event.key.toLowerCase()]
@@ -595,35 +603,26 @@ export function HoliArcade({
       arcadeRef.current?.steer(heading.x, heading.y)
     }
 
-    // Focus leaving the board (a click in the sidebar, say) ends the game,
-    // so keys never go missing into a board nobody is looking at.
-    const onFocusOut = (event: FocusEvent) => {
-      const next = event.relatedTarget
-      if (next instanceof Node && root?.contains(next)) return
-      releaseControl()
-    }
-
     window.addEventListener("keydown", onKey, true)
-    root?.addEventListener("focusout", onFocusOut)
-    return () => {
-      window.removeEventListener("keydown", onKey, true)
-      root?.removeEventListener("focusout", onFocusOut)
-    }
-  }, [playing, releaseControl])
+    return () => window.removeEventListener("keydown", onKey, true)
+  }, [playing, release])
 
   return (
     <div
       ref={rootRef}
+      data-slot="arcade"
+      data-playing={playing}
       tabIndex={playing ? 0 : -1}
       role={playing ? "application" : undefined}
       aria-label={
         playing
-          ? "Paper run. Arrow keys or WASD to move. Escape to stop."
+          ? "Paper run. Arrow keys or WASD to move, Escape to release."
           : undefined
       }
+      aria-hidden={playing ? undefined : true}
       className={cn(
         "absolute inset-0 overflow-hidden outline-none",
-        playing ? "bg-background z-30" : "pointer-events-none",
+        playing ? "z-20" : "pointer-events-none",
         className
       )}
     >
@@ -634,81 +633,99 @@ export function HoliArcade({
         aria-hidden="true"
         className="text-foreground bg-popover border-destructive hidden"
       />
-      <canvas
-        ref={canvasRef}
+      {/* The pane's own ground under a game: opaque on the glass, fading in
+          and out with taking control. */}
+      <div
         aria-hidden="true"
-        className="absolute inset-0 size-full"
+        className={cn(
+          "bg-background absolute inset-0 transition-opacity duration-200 ease-[cubic-bezier(0.22,1,0.36,1)]",
+          playing ? "opacity-100" : "opacity-0"
+        )}
       />
+      <div className="absolute inset-0" style={playing ? undefined : IDLE_MASK}>
+        <canvas
+          ref={canvasRef}
+          aria-hidden="true"
+          className={cn(
+            "absolute inset-0 size-full",
+            !playing && "blur-[0.6px]"
+          )}
+        />
+      </div>
 
       {playing ? (
-        <div className="absolute inset-x-0 top-0 z-10 flex items-center justify-between gap-4 px-4 py-3">
-          <div className="text-muted-foreground flex items-center gap-3 text-xs">
-            {lead ? (
-              <span className="text-foreground font-medium">{lead.name}</span>
-            ) : null}
-            <span className="tabular-nums">Score {score}</span>
-            <span className="tabular-nums">
-              Carrying {carrying}
-              {carrying > 1
-                ? ` · files for ${(carrying * (carrying + 1)) / 2}`
-                : ""}
+        // MonoCode's thin row: the score, the speed, the way out.
+        <div className="animate-in fade-in-0 absolute inset-x-0 top-0 z-10 grid grid-cols-3 items-center gap-4 px-4 py-3 duration-200 ease-[cubic-bezier(0.22,1,0.36,1)]">
+          <p className="text-muted-foreground flex gap-3 text-xs tabular-nums">
+            <span>
+              Score <span className="text-foreground font-medium">{score}</span>
             </span>
-          </div>
-          <div className="flex items-center gap-2">
-            <ToggleGroup
-              type="single"
-              value={mode}
-              onValueChange={(next) => next && pickMode(next as ArcadeMode)}
-              variant="outline"
-              spacing={0}
-              size="sm"
-              aria-label="Speed"
-            >
-              {ARCADE_MODES.map((id) => (
-                <ToggleGroupItem key={id} value={id}>
-                  {MODE_LABEL[id]}
-                </ToggleGroupItem>
-              ))}
-            </ToggleGroup>
-            <Button variant="outline" size="sm" onClick={releaseControl}>
-              Stop
-              <Kbd>Esc</Kbd>
-            </Button>
-          </div>
-        </div>
-      ) : (
-        <div className="pointer-events-auto absolute right-3 bottom-3 z-20">
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                aria-label="Play Paper run"
-                className="text-muted-foreground"
-                onClick={takeControl}
-              >
-                <Gamepad2Icon aria-hidden="true" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>
-              Play Paper run: file papers in the outbox, dodge merge conflicts
-            </TooltipContent>
-          </Tooltip>
-        </div>
-      )}
-
-      {playing ? (
-        <div className="text-muted-foreground pointer-events-none absolute inset-x-0 bottom-0 z-10 flex justify-center gap-2 px-4 py-3 text-xs">
-          <span className="flex items-center gap-1">
-            <Kbd>←</Kbd>
-            <Kbd>↑</Kbd>
-            <Kbd>↓</Kbd>
-            <Kbd>→</Kbd>
-            to move. Pick up papers, file them in the outbox: the bigger the
-            stack, the more it scores. Conflicts scatter it.
-          </span>
+            {carrying > 0 ? (
+              <span>
+                Carrying {carrying}, files for {stackScore(carrying)}
+              </span>
+            ) : null}
+          </p>
+          <ToggleGroup
+            type="single"
+            value={mode}
+            onValueChange={(next) => next && pickMode(next as ArcadeMode)}
+            variant="outline"
+            spacing={0}
+            size="sm"
+            aria-label="Speed"
+            className="justify-self-center"
+          >
+            {ARCADE_MODES.map((id) => (
+              <ToggleGroupItem key={id} value={id}>
+                {MODE_LABEL[id]}
+              </ToggleGroupItem>
+            ))}
+          </ToggleGroup>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={release}
+            className="justify-self-end"
+          >
+            Release
+            <Kbd>Esc</Kbd>
+          </Button>
         </div>
       ) : null}
     </div>
   )
 }
+
+/**
+ * MonoCode's `[ take control · pac-man ▌ ]`, as a Button: shown while the
+ * pointer is over the board's free ground (`show`) or the button has the
+ * keyboard's focus, and in the content's flow, so it never sits on a row.
+ */
+export const ArcadeTakeControl = forwardRef<
+  HTMLButtonElement,
+  { show: boolean; onClick: () => void; className?: string }
+>(function ArcadeTakeControl({ show, onClick, className }, ref) {
+  return (
+    <Button
+      ref={ref}
+      variant="outline"
+      size="sm"
+      data-show={show}
+      onClick={onClick}
+      className={cn(
+        "group/take font-mono transition-opacity duration-200 ease-[cubic-bezier(0.22,1,0.36,1)]",
+        "pointer-events-none opacity-0 focus-visible:pointer-events-auto focus-visible:opacity-100 data-[show=true]:pointer-events-auto data-[show=true]:opacity-100",
+        className
+      )}
+    >
+      Take control · Paper run
+      {/* The cursor block blinks only where motion is welcome. */}
+      <span
+        aria-hidden="true"
+        className="inline-block h-3 w-1.5 bg-current motion-safe:animate-pulse"
+      />
+      <Kbd>↵</Kbd>
+    </Button>
+  )
+})
