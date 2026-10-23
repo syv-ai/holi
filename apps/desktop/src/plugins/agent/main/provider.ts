@@ -13,9 +13,10 @@
  */
 import type { BridgeRoute, SeedContribution } from '../../../main/plugin-api'
 import type { ClaudeCli, VaultCliTarget } from './claude/cli'
-import type { ClaudeRow, SessionSummary } from './claude/listing'
+import type { ClaudeRow, PastSession, SessionSummary } from './claude/listing'
 import type { SessionChannel } from './claude/messaging'
 import type { AgentRoutesDeps } from './claude/routes'
+import type { EarlierChunk, TranscriptChunk } from './claude/transcript'
 
 /** A vault the provider is asked about. */
 export interface VaultRef {
@@ -38,14 +39,48 @@ export interface RouteServer {
 export interface AgentProvider {
   /** The provider's CLI verbs, each run for one vault. */
   cli: ClaudeCli
-  /** The vault's sessions out of the CLI's listing. */
-  parseListing(stdout: string | null, vaultRoot: string): ClaudeRow[]
+  /** The vault's sessions out of the CLI's listing, or null when the read
+   *  failed, which is not the same as a listing that is empty. */
+  parseListing(stdout: string | null, vaultRoot: string): ClaudeRow[] | null
   /** Is the session's process alive? */
   isLive(row: ClaudeRow): boolean
+  /** A session whose process has gone, as a line of the agent's history. */
+  summarisePast(row: ClaudeRow): PastSession
   /** What a live session is doing, for the renderer. */
   summarise(row: ClaudeRow, working: ReadonlySet<string>, contextPercent?: number): SessionSummary
   /** How full a session's context is, from its status report. */
   readContextPercent(status: unknown): number | null
+  /** A conversation from `offset` on, for the chat. Null when it has no
+   *  transcript to read. */
+  transcript(
+    configDir: string,
+    sessionId: string,
+    offset?: number,
+    fingerprint?: string,
+  ): Promise<TranscriptChunk | null>
+  /** The part of that conversation before `before` (a line start: the
+   *  `start` of a chunk already had). Null when it has no transcript. A
+   *  provider without it cannot be read backwards. */
+  transcriptEarlier?(
+    configDir: string,
+    sessionId: string,
+    before: number,
+  ): Promise<EarlierChunk | null>
+  /** A sub-agent's own conversation, from `offset` on. Null when it has no
+   *  file. A provider without sub-agents omits it. */
+  subagent?(
+    configDir: string,
+    sessionId: string,
+    agentId: string,
+    offset?: number,
+    fingerprint?: string,
+  ): Promise<TranscriptChunk | null>
+  /** Where the provider tells of what it cannot place (one line each, never
+   *  content). Called once by the host with its own log. */
+  setLogger?(log: (message: string) => void): void
+  /** The question a session is blocked on, as the JSON of its
+   *  `AskUserQuestion` input, when the transcript does not hold it yet. */
+  blockedQuestion(configDir: string, jobId: string): Promise<string | null>
   /** Call `onChange` when the config directory's session state moves.
    *  Returns the stop. */
   watch(configDir: string, onChange: () => void, log: (msg: string) => void): () => void

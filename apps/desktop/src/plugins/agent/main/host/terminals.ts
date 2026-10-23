@@ -29,6 +29,18 @@ import { TerminalMirror } from './terminal-mirror'
  *  there is no `\r`, so nothing Holi writes can submit a draft. */
 export const bracketedPaste = (text: string): string => `\x1b[200~${text}\x1b[201~`
 
+/** After a paste, how long the TUI gets to take it in before the Enter that
+ *  submits it: sent together, the Enter lands inside the paste. */
+const SUBMIT_AFTER_PASTE_MS = 120
+
+/** Between one run of keys and the next: a dialog redraws after each, and a
+ *  key sent into the redraw is lost. */
+const KEY_STEP_MS = 120
+
+/** How long a released terminal stays after its last input, so a submit or a
+ *  dialog's keys are taken before the client ends. */
+const RELEASE_GRACE_MS = 3_000
+
 /** After a terminal's first output, how long to let the TUI settle into raw
  *  mode before a held paste goes in. */
 const PASTE_SETTLE_MS = 200
@@ -79,6 +91,7 @@ export interface AgentTerminalsDeps {
   killBackstopMs?: number
   pasteSettleMs?: number
   pasteBackstopMs?: number
+  releaseGraceMs?: number
   log?: (msg: string) => void
 }
 
@@ -88,8 +101,19 @@ export interface AgentTerminals {
   attach(id: string): Promise<string>
   write(id: string, data: string): void
   resize(id: string, cols: number, rows: number): void
-  /** Put text in the terminal's input, unsent. False for a terminal that is gone. */
-  paste(id: string, text: string): boolean
+  /** Put text in the terminal's input, unsent. False for a terminal that is gone.
+   *  With `submit` it is then sent as a turn: the chat's composer is Holi's, so
+   *  there is no draft in the terminal's own box to send along with it. */
+  paste(id: string, text: string, submit?: boolean): boolean
+  /** Press keys in the terminal, run by run, a moment apart: the answer to a
+   *  dialog its TUI draws. Held, like a paste, until the TUI is ready, so a
+   *  terminal just opened takes them once it reads input. False for a
+   *  terminal that is gone. */
+  press(id: string, runs: readonly string[]): boolean
+  /** Close the terminal once what it holds has gone in and a moment has
+   *  passed: one the chat opened to type into, which nobody is looking at
+   *  now. Input before then keeps it open, released again by its caller. */
+  release(id: string): void
   /** Detach: end the client. The session it shows keeps running. */
   close(id: string): Promise<void>
   closeAll(): Promise<void>
@@ -115,14 +139,20 @@ interface Terminal {
   sink: TerminalSink | null
   /** The settle timer is running. */
   settling: boolean
-  pending: string[]
+  pending: Input[]
   timers: ReturnType<typeof setTimeout>[]
+  /** The release timer, while the terminal is let go of. */
+  releasing: ReturnType<typeof setTimeout> | null
 }
+
+/** What waits for a terminal's TUI to be ready. */
+type Input = { kind: 'paste'; text: string; submit: boolean } | { kind: 'keys'; runs: string[] }
 
 export function createAgentTerminals(deps: AgentTerminalsDeps): AgentTerminals {
   const log = deps.log ?? ((msg: string) => console.log(`[agent-terminals] ${msg}`))
   const settleMs = deps.pasteSettleMs ?? PASTE_SETTLE_MS
   const backstopMs = deps.pasteBackstopMs ?? PASTE_BACKSTOP_MS
+  const graceMs = deps.releaseGraceMs ?? RELEASE_GRACE_MS
   /** Insertion-ordered: the order they were opened. */
   const terminals = new Map<string, Terminal>()
   let lastPushed = ''
@@ -149,13 +179,47 @@ export function createAgentTerminals(deps: AgentTerminalsDeps): AgentTerminals {
     deps.emit(remote, 'terminals', next)
   }
 
+  /** Paste into a terminal that is ready for it, and submit if asked. */
+  function put(t: Terminal, text: string, submit: boolean): void {
+    t.runtime.write(bracketedPaste(text))
+    if (!submit) return
+    const timer = setTimeout(() => {
+      if (terminals.get(t.id) === t) t.runtime.write('\r')
+    }, SUBMIT_AFTER_PASTE_MS)
+    t.timers.push(timer)
+  }
+
+  /** Press runs of keys, each a step after the last. */
+  function keys(t: Terminal, runs: readonly string[]): void {
+    runs.forEach((run, i) => {
+      if (i === 0) return t.runtime.write(run)
+      const timer = setTimeout(() => {
+        if (terminals.get(t.id) === t) t.runtime.write(run)
+      }, i * KEY_STEP_MS)
+      t.timers.push(timer)
+    })
+  }
+
+  /** New input: a release in progress is called off. */
+  function keep(t: Terminal): void {
+    if (t.releasing === null) return
+    clearTimeout(t.releasing)
+    t.releasing = null
+  }
+
+  function take(t: Terminal, input: Input): void {
+    if (input.kind === 'paste') put(t, input.text, input.submit)
+    else keys(t, input.runs)
+  }
+
   function markReady(t: Terminal): void {
     if (t.ready) return
     t.ready = true
-    for (const text of t.pending.splice(0)) t.runtime.write(bracketedPaste(text))
+    for (const input of t.pending.splice(0)) take(t, input)
   }
 
   function drop(t: Terminal): void {
+    keep(t)
     for (const timer of t.timers.splice(0)) clearTimeout(timer)
     t.pending.length = 0
     terminals.delete(t.id)
@@ -187,6 +251,7 @@ export function createAgentTerminals(deps: AgentTerminalsDeps): AgentTerminals {
         settling: false,
         pending: [],
         timers: [],
+        releasing: null,
       }
       mirror.onTitle((title) => {
         t.title = title
@@ -249,12 +314,38 @@ export function createAgentTerminals(deps: AgentTerminalsDeps): AgentTerminals {
       t.mirror.resize(cols, rows)
     },
 
-    paste(id, text) {
+    paste(id, text, submit = false) {
       const t = terminals.get(id)
       if (t === undefined) return false
-      if (t.ready) t.runtime.write(bracketedPaste(text))
-      else t.pending.push(text)
+      keep(t)
+      if (t.ready) put(t, text, submit)
+      else t.pending.push({ kind: 'paste', text, submit })
       return true
+    },
+
+    press(id, runs) {
+      const t = terminals.get(id)
+      if (t === undefined) return false
+      keep(t)
+      if (t.ready) keys(t, runs)
+      else t.pending.push({ kind: 'keys', runs: [...runs] })
+      return true
+    },
+
+    release(id) {
+      const t = terminals.get(id)
+      if (t === undefined) return
+      keep(t)
+      const wait = (): void => {
+        t.releasing = setTimeout(() => {
+          t.releasing = null
+          if (terminals.get(id) !== t) return
+          // Still holding input for a TUI not ready yet: wait for it.
+          if (!t.ready || t.pending.length > 0) return wait()
+          void api.close(id)
+        }, graceMs)
+      }
+      wait()
     },
 
     async close(id) {

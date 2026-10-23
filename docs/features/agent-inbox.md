@@ -31,8 +31,8 @@ inbox gets "_name_ needs you" with what it waits for, opening that session. It i
 session: once on the way in, and again only after the session has stopped waiting. A session the
 inbox already holds an entry for, of any age, counts as already told when Holi starts watching, so
 restarting Holi or reopening the vault does not tell about a session still waiting. Not while the
-person is plainly looking, which is a session Holi has a terminal open on with Holi's window
-focused.
+person is plainly looking, which is a session whose chat Holi is showing
+([agent-sessions](agent-sessions.md): `watched`) with Holi's window focused.
 
 **Mentions.** A teammate's comment that mentions the person, arriving with a pull, becomes
 "_login_ mentioned you" with the passage and the comment, opening the note

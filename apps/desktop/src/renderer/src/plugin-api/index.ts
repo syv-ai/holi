@@ -58,6 +58,7 @@ export {
 export { sessionAtom } from '@/state/session'
 export { usePluginSetting } from '@/state/settings'
 export { activeModeAtom } from '@/state/color-scheme'
+export { vaultAssetUrl } from '@/lib/vault-asset'
 export { useVaultTheme } from '@/state/theme'
 export {
   activeTab,
@@ -77,6 +78,7 @@ export {
   closeSurfaceTabsAtom,
   openPathAtom,
   openSurfaceAtom,
+  surfaceActiveAtom,
   surfaceTabIdsAtom,
   tabForPathAtom,
 } from '@/state/surfaces'

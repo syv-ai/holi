@@ -170,8 +170,8 @@ export type ActionResult = { ok: true } | { ok: false; message: string }
 export type StartResult = { ok: true; id: string } | { ok: false; message: string }
 
 export interface ClaudeCli {
-  /** `claude agents --json`, raw. Null for every failure: no binary, a
-   *  non-zero exit, a timeout. */
+  /** `claude agents --json --all` (the finished sessions too), raw. Null for
+   *  every failure: no binary, a non-zero exit, a timeout. */
   list(target: VaultCliTarget): Promise<string | null>
   stop(target: VaultCliTarget, id: string): Promise<ActionResult>
   respawn(target: VaultCliTarget, id: string): Promise<ActionResult>
@@ -241,6 +241,18 @@ export function cliEnv(base: NodeJS.ProcessEnv, target: VaultCliTarget): Record<
     binDir: target.binDir,
     commandsDir: join(target.root, PLUGIN_COMMANDS_DIR),
   })
+}
+
+/** Claude Code refuses `--bg` in a directory it has not been told to trust, and
+ *  tells you to run `claude` there: which runs on `~/.claude`, not on the
+ *  config directory Holi gives the vault's agent, so the advice does not help.
+ *  This says what does. */
+export function explainStartFailure(message: string, target: VaultCliTarget): string {
+  if (!/Workspace not trusted/i.test(message)) return message
+  return (
+    'Claude Code has not been set up for this vault on this Holi profile yet. Run this once in a terminal, accept the trust prompt and sign in, then start a session again:\n' +
+    `cd '${target.root}' && CLAUDE_CONFIG_DIR='${target.configDir}' claude`
+  )
 }
 
 /** The binary when it is not on the machine. */
@@ -313,7 +325,10 @@ export function createClaudeCli(deps: ClaudeCliDeps = {}): ClaudeCli {
       stdout = await exec(target, args, ACTION_TIMEOUT_MS)
     } catch (err: unknown) {
       log(`--bg failed: ${String(err)}`)
-      return { ok: false, message: err instanceof Error ? err.message : String(err) }
+      return {
+        ok: false,
+        message: explainStartFailure(err instanceof Error ? err.message : String(err), target),
+      }
     }
     const id = parseBackgrounded(stdout)
     if (id === null)
@@ -323,12 +338,20 @@ export function createClaudeCli(deps: ClaudeCliDeps = {}): ClaudeCli {
 
   return {
     async list(target) {
-      try {
-        return await exec(target, ['agents', '--json'], LIST_TIMEOUT_MS)
-      } catch (err: unknown) {
-        log(`listing failed: ${String(err)}`)
-        return null
+      // `--all` brings the finished sessions, the history. A Claude Code too
+      // old to know it fails the whole call, so ask again without it: the
+      // live sessions matter more than their past.
+      for (const args of [
+        ['agents', '--json', '--all'],
+        ['agents', '--json'],
+      ]) {
+        try {
+          return await exec(target, args, LIST_TIMEOUT_MS)
+        } catch (err: unknown) {
+          log(`listing failed: ${String(err)}`)
+        }
       }
+      return null
     },
     stop: (target, id) => action(target, ['stop', id]),
     respawn: (target, id) => action(target, ['respawn', id]),

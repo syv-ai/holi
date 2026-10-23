@@ -335,6 +335,11 @@ export interface RendererPlugin {
   railSection?: ComponentType
   /** Shown in the sidebar, under the file tree. */
   sidebarSection?: ComponentType
+  /** Floats over the panes' top right corner, on every tab: it takes pointer
+   *  events itself (`pointer-events: auto`) and leaves the rest of the panes
+   *  to what is under it. Unlike `overlays`, it is laid out inside the panes'
+   *  frame, clear of a pane's tab strip. */
+  floating?: ComponentType
   /** Mounted in the shell above the panes while it runs; each decides
    *  whether it shows (a right-hand drawer, a dialog of its own making). */
   overlays?: readonly ComponentType[]

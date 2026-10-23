@@ -10,6 +10,8 @@
     "dev:debug": "electron-vite dev -- --remote-debugging-port=9333",
     "build": "electron-vite build",
     "typecheck": "tsc --noEmit",
+    "chat:drift": "node scripts/run-ts.mjs scripts/chat-drift.ts",
+    "chat:fixtures": "node scripts/run-ts.mjs scripts/scrub-transcript.ts",
     "test": "vitest run",
     "rebuild:natives": "electron-rebuild -f -w node-pty",
     "shipped-history": "node scripts/shipped-history.mjs",

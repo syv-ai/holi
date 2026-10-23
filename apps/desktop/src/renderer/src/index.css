@@ -264,6 +264,29 @@
   /* --motion-stagger is NOT here. See the :root block below. */
 }
 
+/* The session orb (AgentFace): body colours, ink, status dots and the two
+ * timings of its face. A session keeps one body colour for life. Plain `:root`
+ * because `overview.css` and the orb's loop read them, not Tailwind. Vault
+ * themes recolour them like any token. */
+:root {
+  --session-teal: #8daa91;
+  --session-olive: #788475;
+  --session-charcoal: #5e5d5c;
+  --session-mauve: #453643;
+  --session-violet: #28112b;
+  /* The face's ink: dark on the light bodies, light on the dark ones. */
+  --session-ink: rgb(22 20 18 / 0.86);
+  --session-ink-light: rgb(250 250 250 / 0.9);
+  --session-dot-ready: #555555;
+  --session-dot-done: #22c55e;
+  --session-dot-working: #0ea5e9;
+  --session-dot-error: #ef4444;
+  --session-dot-needs-you: #f97316;
+  /* An expression morphs; a blink is quicker than the eye can follow. */
+  --motion-morph: 220ms;
+  --motion-blink: 90ms;
+}
+
 /* Motion tokens NOT in `@theme`: a plain `:root` rule always emits.
  *
  * Tailwind v4 tree-shakes `@theme` variables the CSS does not reference. The
@@ -736,6 +759,19 @@
     transition-duration: 1ms;
     transition-delay: 0ms;
   }
+}
+
+/**
+ * The document never scrolls: the frame is the height of the window and every
+ * pane scrolls itself. Without this, anything that reaches a pixel past the
+ * window's edge, even unseen, gives the document a scrollbar, which takes
+ * 10px, which makes the `h-screen` frame overflow the other way: two bars
+ * that come and go together and resize everything in the window by their
+ * width.
+ */
+html,
+body {
+  overflow: hidden;
 }
 
 /**

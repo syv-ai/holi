@@ -1,0 +1,202 @@
+/**
+ * The agent turn under review.
+ *
+ * A turn is a commit range, so everything here is a question asked of git at the
+ * moment it is asked. What that leaves worth testing is the ordering: a turn
+ * whose range has gone, a file selected while another is still in flight, and a
+ * vault switched underneath a panel that is still showing the last one's turn.
+ */
+import { createStore } from 'jotai'
+import { beforeEach, expect, test, vi } from 'vitest'
+import {
+  latestTurnsAtom,
+  loadLatestTurnsAtom,
+  loadTurnCountAtom,
+  loadTurnDiffAtom,
+  loadTurnFilesAtom,
+  resetTurnReviewAtom,
+  reviewTurnAtom,
+  revertFileAtom,
+  selectedTurnPathAtom,
+  turnCountsAtom,
+  turnDiffAtom,
+  turnFilesAtom,
+} from '../renderer/state/turns'
+import { activeRemoteAtom } from '@/plugin-api'
+
+const list = vi.fn()
+const files = vi.fn()
+const fileDiff = vi.fn()
+const revert = vi.fn()
+
+vi.mock('../../agent/renderer/agent-cap', () => ({
+  agentCap: {
+    turns: () => list(),
+    turnFiles: (_remote: string, i: unknown) => files(i),
+    turnDiff: (_remote: string, i: unknown) => fileDiff(i),
+    revert: (remote: string, i: object) => revert({ remote, ...i }),
+  },
+}))
+
+const flushAllBuffers = vi.fn(() => Promise.resolve())
+vi.mock('@/lib/buffer-registry', () => ({ flushAllBuffers: () => flushAllBuffers() }))
+
+const TURN = { base: 'aaa', end: 'bbb', at: '2026-09-09T10:00:00Z', sessionId: 'sess-a' }
+const REMOTE = 'git@github.com:syv-ai/vault.git'
+
+beforeEach(() => {
+  for (const fn of [list, files, fileDiff, revert, flushAllBuffers]) fn.mockReset()
+  flushAllBuffers.mockResolvedValue(undefined)
+  list.mockResolvedValue([TURN])
+  files.mockResolvedValue([{ path: 'a.md', status: 'M', added: 2, removed: 1 }])
+  fileDiff.mockResolvedValue({ before: 'old\n', after: 'new\n' })
+  revert.mockResolvedValue({ ok: true })
+})
+
+function store() {
+  const s = createStore()
+  s.set(activeRemoteAtom, REMOTE)
+  return s
+}
+
+test('takes the newest turn PER SESSION, which is the one each tab shows', async () => {
+  const s = store()
+  const older = { base: 'x', end: 'y', at: '2026-09-08T10:00:00Z', sessionId: 'sess-a' }
+  const other = { base: 'p', end: 'q', at: '2026-09-08T11:00:00Z', sessionId: 'sess-b' }
+  list.mockResolvedValue([TURN, other, older])
+  await s.set(loadLatestTurnsAtom)
+  expect(s.get(latestTurnsAtom)).toEqual({ 'sess-a': TURN, 'sess-b': other })
+})
+
+test('skips a record from before a vault could run two sessions', async () => {
+  // It names no session, so there is no tab for its chip to sit under.
+  const s = store()
+  list.mockResolvedValue([{ base: 'x', end: 'y', at: '2026-09-08T10:00:00Z' }])
+  await s.set(loadLatestTurnsAtom)
+  expect(s.get(latestTurnsAtom)).toEqual({})
+})
+
+test('looks past a turn that changed nothing to the last one that did', async () => {
+  const s = store()
+  list.mockResolvedValue([
+    { base: 'z', end: 'z', at: '2026-09-09T11:00:00Z', sessionId: 'sess-a' },
+    TURN,
+  ])
+  await s.set(loadLatestTurnsAtom)
+  expect(s.get(latestTurnsAtom)).toEqual({ 'sess-a': TURN })
+})
+
+test('leaves the map empty for a vault that has never run a turn', async () => {
+  const s = store()
+  list.mockResolvedValue([])
+  await s.set(loadLatestTurnsAtom)
+  expect(s.get(latestTurnsAtom)).toEqual({})
+})
+
+test('counts a turn’s files once per range, however often it is asked', async () => {
+  // Two sessions that shared a settle commit share an `end` and differ only in
+  // `base`, so the range is the identity and the same range asked twice is one
+  // query.
+  const s = store()
+  await s.set(loadTurnCountAtom, TURN)
+  await s.set(loadTurnCountAtom, TURN)
+  expect(files).toHaveBeenCalledTimes(1)
+  expect(s.get(turnCountsAtom)).toEqual({ 'aaa..bbb': 1 })
+})
+
+test('lists what the turn changed', async () => {
+  const s = store()
+  s.set(reviewTurnAtom, TURN)
+  await s.set(loadTurnFilesAtom)
+  expect(files).toHaveBeenCalledWith({ base: 'aaa', end: 'bbb' })
+  expect(s.get(turnFilesAtom)).toHaveLength(1)
+})
+
+test('asks nothing when there is no turn to ask about', async () => {
+  const s = store()
+  await s.set(loadTurnFilesAtom)
+  expect(files).not.toHaveBeenCalled()
+  expect(s.get(turnFilesAtom)).toEqual([])
+})
+
+test('an unreachable range is an empty file list, not a throw', async () => {
+  // A turn record outlives the commits it names. The panel says so; it must not
+  // be handed an error.
+  const s = store()
+  files.mockResolvedValue([])
+  s.set(reviewTurnAtom, TURN)
+  await s.set(loadTurnFilesAtom)
+  expect(s.get(turnFilesAtom)).toEqual([])
+})
+
+test('loads the diff for the file that was picked', async () => {
+  const s = store()
+  s.set(reviewTurnAtom, TURN)
+  await s.set(loadTurnDiffAtom, 'a.md')
+  expect(fileDiff).toHaveBeenCalledWith({ base: 'aaa', end: 'bbb', path: 'a.md' })
+  expect(s.get(selectedTurnPathAtom)).toBe('a.md')
+  expect(s.get(turnDiffAtom)).toEqual({ before: 'old\n', after: 'new\n' })
+})
+
+test('does not stamp one file’s diff over another’s', async () => {
+  // Two rows clicked in quick succession: the slower answer must not win.
+  const s = store()
+  s.set(reviewTurnAtom, TURN)
+  let releaseSlow: (v: unknown) => void = () => {}
+  fileDiff.mockImplementationOnce(() => new Promise((r) => (releaseSlow = r)))
+  const slow = s.set(loadTurnDiffAtom, 'slow.md')
+  fileDiff.mockResolvedValue({ before: '', after: 'fast\n' })
+  await s.set(loadTurnDiffAtom, 'fast.md')
+  releaseSlow({ before: '', after: 'slow\n' })
+  await slow
+  expect(s.get(selectedTurnPathAtom)).toBe('fast.md')
+  expect(s.get(turnDiffAtom)).toEqual({ before: '', after: 'fast\n' })
+})
+
+test('reverting writes the resolved text and re-asks what is left', async () => {
+  const s = store()
+  s.set(reviewTurnAtom, TURN)
+  await s.set(loadTurnFilesAtom)
+  files.mockClear()
+  await s.set(revertFileAtom, { path: 'a.md', text: 'mine\n', base: 'agent\n' })
+  expect(revert).toHaveBeenCalledWith({
+    remote: REMOTE,
+    path: 'a.md',
+    text: 'mine\n',
+    base: 'agent\n',
+  })
+  // The revert just made a commit of its own, so the range's file list is stale.
+  expect(files).toHaveBeenCalled()
+})
+
+test('reverting does nothing without a vault', async () => {
+  const s = createStore()
+  await s.set(revertFileAtom, { path: 'a.md', text: 'mine\n', base: 'agent\n' })
+  expect(revert).not.toHaveBeenCalled()
+})
+
+test('a reset clears the last turn off the screen', async () => {
+  // Switching vault must not leave the previous one's turn under review.
+  const s = store()
+  s.set(reviewTurnAtom, TURN)
+  await s.set(loadTurnFilesAtom)
+  await s.set(loadTurnDiffAtom, 'a.md')
+  await s.set(loadLatestTurnsAtom)
+  await s.set(loadTurnCountAtom, TURN)
+  s.set(resetTurnReviewAtom)
+  expect(s.get(reviewTurnAtom)).toBeNull()
+  expect(s.get(latestTurnsAtom)).toEqual({})
+  // The counts go too: a range from the vault you just left is one this git has
+  // never heard of.
+  expect(s.get(turnCountsAtom)).toEqual({})
+  expect(s.get(turnFilesAtom)).toEqual([])
+  expect(s.get(selectedTurnPathAtom)).toBeNull()
+  expect(s.get(turnDiffAtom)).toBeNull()
+})
+
+test('does not flush the open buffer before reverting', () => {
+  // Unlike History's Restore: a turn revert takes back what the AGENT did, and
+  // flushing would write the reader's unsaved edits to disk only to overwrite
+  // them. Left alone, `decideReload` 3-way merges them instead.
+  expect(flushAllBuffers).not.toHaveBeenCalled()
+})

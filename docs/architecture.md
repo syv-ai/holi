@@ -102,7 +102,12 @@ whose owner the vault runs), so a button for another plugin's verb hides while t
 Tasks' `tasks.create` is one: the board and the Google views create tasks through it.
 A plugin that builds on another says so in `PluginInfo.requires`: it runs only where every plugin
 it requires runs, down a chain, so turning one off turns off what stands on it, its seeds included.
-The dependency runs one way: the plugin underneath knows nothing of what requires it. One resolver,
+The dependency runs one way: the plugin underneath knows nothing of what requires it. Calls between
+plugins go through capabilities, with one exception: `agent-ui`, which requires the agent, imports
+the agent's session lists and verbs, because a page drawn from live lists has no other way to read
+them. It imports one file, `agent/renderer/public.ts`, and ESLint allows that file and nothing
+else; what the page shows stays in `agent-ui`, and the agent opens a session on it through a slot
+the page fills (`agentPageAtom`), never by importing it. One resolver,
 `resolvePlugins`, answers which plugins run and why each other one does not (off in the vault, off
 on this machine, or needing one that is off), and every reader in both processes asks it. Both
 processes check their list with `checkPluginCatalogue` at boot, which refuses a missing or circular
@@ -131,7 +136,8 @@ registered beside core's own, `settingsSections` to the settings tab
 ([settings](features/settings.md)), and `slashCommands` to the notes editor's slash menu
 ([editor](features/editor.md)). It marks paths in the tree and the tabs (`pathMarks`: a glyph, a
 strike, a badge) and lays `overlays` over the panes (a drawer, quick add), each deciding whether
-it shows. Its dialogs open as `{id: 'plugin', render}`.
+it shows. Its `floating` component floats over the panes' top right on every tab, clear of a pane's
+tab strip, taking pointer events only where it draws. Its dialogs open as `{id: 'plugin', render}`.
 A plugin may have windows of its own: `ctx.openPage` makes one showing a page of its renderer side
 (`RendererPlugin.pages`), loaded as `?page=<plugin>/<page>`, which boots only that page, with no
 vault subscription and no flush answer. Core makes the window (preload, isolation, navigation
@@ -157,8 +163,8 @@ marked `frame` serves framed pages: the window guard lets such a frame move with
 sends a link out of it to the browser.
 A plugin's own code sits in `main/`, `renderer/`, `shared/` and `test/` under its folder; its
 renderer imports its main side as types only, for `capClient`. The plugins are the agent
-([agent-sessions](features/agent-sessions.md)), tasks ([tasks](features/tasks.md)), PDF
-([pdf](features/pdf.md)), Google
+([agent-sessions](features/agent-sessions.md)) and its interface (`agent-ui`, which `requires` the
+agent), tasks ([tasks](features/tasks.md)), PDF ([pdf](features/pdf.md)), Google
 ([google](features/google.md)), vault apps ([vault apps](features/vault-apps.md)) and community
 plugins ([community plugins](features/community-plugins.md)), which hosts plugins from other
 repositories as processes it runs, never as code it loads. A renderer plugin may give its claims as

@@ -1,8 +1,19 @@
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { ARCHIVE_FILE, readArchive } from '../main/host/archive'
 import { describe, expect, it, vi } from 'vitest'
 import type { ClaudeCli } from '../main/claude/cli'
 import { SIGN_IN_NOTICE } from '../main/claude/config-dir'
-import { isLive, parseListing, readContextPercent, summarise } from '../main/claude/listing'
+import {
+  isLive,
+  parseListing,
+  readContextPercent,
+  summarise,
+  summarisePast,
+} from '../main/claude/listing'
 import type { SessionChannel } from '../main/claude/messaging'
+import type { ChatEntry } from '../main/claude/transcript'
 import { createAgentSessions, type AgentVault } from '../main/host/sessions'
 import type { AgentTerminals, OpenArgs } from '../main/host/terminals'
 
@@ -22,10 +33,13 @@ const row = (id: string, over: Row = {}): Row => ({
   ...over,
 })
 
-function setup(initial: Row[] = [], held: ReadonlySet<string> = new Set()) {
+function setup(initial: Row[] = [], root = ROOT, held: ReadonlySet<string> = new Set()) {
   let listing: Row[] = initial
+  /** What `claude agents --json` printed instead of the listing: null is a
+   *  call that failed (a timeout, a missing binary). */
+  let broken: { stdout: string | null } | null = null
   const cli = {
-    list: vi.fn(async () => JSON.stringify(listing)),
+    list: vi.fn(async () => (broken !== null ? broken.stdout : JSON.stringify(listing))),
     stop: vi.fn(async (_t, id: string) => {
       listing = listing.map((r) => (r.id === id ? { ...r, pid: undefined, state: 'stopped' } : r))
       return { ok: true as const }
@@ -53,6 +67,9 @@ function setup(initial: Row[] = [], held: ReadonlySet<string> = new Set()) {
   } satisfies ClaudeCli
   const opened: OpenArgs[] = []
   const pastes: Array<[string, string]> = []
+  const presses: Array<[string, string[]]> = []
+  /** The terminals let go of (`release`). */
+  const releasedTerminals: string[] = []
   const launched = new Map<string, string>()
   const terminals: AgentTerminals = {
     open: (args) => {
@@ -68,6 +85,11 @@ function setup(initial: Row[] = [], held: ReadonlySet<string> = new Set()) {
       pastes.push([id, text])
       return true
     },
+    press: (id, runs) => {
+      presses.push([id, [...runs]])
+      return launched.size > 0 && [...launched.values()].includes(id)
+    },
+    release: (id) => void releasedTerminals.push(id),
     close: async () => {},
     closeAll: vi.fn(async () => {}),
     list: () => [],
@@ -75,16 +97,22 @@ function setup(initial: Row[] = [], held: ReadonlySet<string> = new Set()) {
     listTerminal: () => null,
   }
   const sent: Array<[string, unknown]> = []
+  /** The conversation the transcript reads, or null for none. */
+  let entries: ChatEntry[] | null = null
+  const configure = vi.fn(async () => ({ dir: '/cfg/vault' }))
   const message = vi.fn(async (_channel: SessionChannel, _text: string) => {})
   const pauses: string[] = []
+  const released: string[] = []
   const vault: AgentVault = {
     remote: REMOTE,
-    root: ROOT,
+    root,
     head: () => Promise.resolve('base-sha'),
     commitNow: () => Promise.resolve(null),
     pauseSync: (reason: string) => {
       pauses.push(reason)
-      return () => {}
+      return () => {
+        released.push(reason)
+      }
     },
   }
   const sessions = createAgentSessions({
@@ -94,9 +122,12 @@ function setup(initial: Row[] = [], held: ReadonlySet<string> = new Set()) {
       parseListing,
       isLive,
       summarise,
+      summarisePast,
       readContextPercent,
       watch: () => () => {},
-      configure: async () => ({ dir: '/cfg/vault' }),
+      configure,
+      transcript: async () => (entries === null ? null : { sessionId: 's', offset: 0, entries }),
+      blockedQuestion: async () => null,
       takeFirstSpawn: async () => true,
       signInNotice: SIGN_IN_NOTICE,
       message,
@@ -114,28 +145,231 @@ function setup(initial: Row[] = [], held: ReadonlySet<string> = new Set()) {
     cli,
     opened,
     pastes,
+    presses,
+    releasedTerminals,
     sent,
     message,
+    configure,
     terminals,
+    setEntries: (next: ChatEntry[] | null) => {
+      entries = next
+    },
     setListing: (rows: Row[]) => {
       listing = rows
     },
     pauses,
+    /** The sync holds given back. */
+    released,
+    /** The next listings fail, as `claude agents` printing `stdout` (null:
+     *  not at all) rather than the listing. */
+    breakListing: (stdout: string | null) => {
+      broken = { stdout }
+    },
+    mendListing: () => {
+      broken = null
+    },
     /** The vault opened: what its activation does. */
     attach: () => sessions.ensure(vault),
   }
 }
 
 describe('agent sessions', () => {
+  describe('the chat and its terminals', () => {
+    describe('keys that answer a prompt', () => {
+      const waiting = { status: 'waiting', state: 'blocked', waitingFor: 'permission prompt' }
+      const call = (id: string): ChatEntry => ({
+        kind: 'tool',
+        id,
+        name: 'Bash',
+        summary: 'ls',
+        args: {},
+      })
+
+      it('go in when the call they name is the only one open', async () => {
+        const t = setup([row('aaaaaaaa', waiting)])
+        await t.attach()
+        t.setEntries([call('toolu_1')])
+        const res = await t.sessions.press({ id: 'aaaaaaaa', keys: ['\r'], expect: 'toolu_1' })
+        expect(res.ok).toBe(true)
+        expect(t.presses).toEqual([['term-1', ['\r']]])
+      })
+
+      it('are refused when the prompt has moved on to another call', async () => {
+        const t = setup([row('aaaaaaaa', waiting)])
+        await t.attach()
+        t.setEntries([
+          call('toolu_1'),
+          { kind: 'tool-result', id: 'toolu_1', ok: true, text: '' },
+          call('toolu_2'),
+        ])
+        const res = await t.sessions.press({ id: 'aaaaaaaa', keys: ['\r'], expect: 'toolu_1' })
+        expect(res).toEqual({ ok: false, message: expect.stringContaining('something else') })
+        expect(t.presses).toEqual([])
+        expect(t.opened).toEqual([])
+      })
+
+      it('are refused when two calls are open and nothing says which', async () => {
+        const t = setup([row('aaaaaaaa', waiting)])
+        await t.attach()
+        t.setEntries([call('toolu_1'), call('toolu_2')])
+        const res = await t.sessions.press({ id: 'aaaaaaaa', keys: ['\r'], expect: 'toolu_1' })
+        expect(res).toEqual({ ok: false, message: expect.stringContaining('more than one') })
+        expect(t.presses).toEqual([])
+      })
+
+      it('are refused once the session no longer waits on you', async () => {
+        const t = setup([row('aaaaaaaa')])
+        await t.attach()
+        t.setEntries([call('toolu_1')])
+        const res = await t.sessions.press({ id: 'aaaaaaaa', keys: ['\r'], expect: 'toolu_1' })
+        expect(res).toEqual({ ok: false, message: 'It is not waiting on you any more.' })
+      })
+    })
+
+    it('is watched only while its chat is the one showing, not for a terminal behind it', async () => {
+      const t = setup([row('aaaaaaaa')])
+      await t.attach()
+      await t.sessions.say({ id: 'aaaaaaaa', text: 'hello' })
+      // A terminal was opened to type into; nobody is looking at it.
+      expect(t.sessions.watched('aaaaaaaa')).toBe(false)
+      t.sessions.watching('aaaaaaaa')
+      expect(t.sessions.watched('aaaaaaaa')).toBe(true)
+      t.sessions.watching(null)
+      expect(t.sessions.watched('aaaaaaaa')).toBe(false)
+    })
+
+    it('lets go of the terminal a message went through when nobody watches', async () => {
+      const t = setup([row('aaaaaaaa')])
+      await t.attach()
+      const res = await t.sessions.say({ id: 'aaaaaaaa', text: 'hello' })
+      expect(res).toEqual({ ok: true, terminalId: 'term-1' })
+      expect(t.releasedTerminals).toEqual(['term-1'])
+    })
+
+    it('keeps the terminal of the chat showing, and lets it go when the chat is left', async () => {
+      const t = setup([row('aaaaaaaa'), row('bbbbbbbb')])
+      await t.attach()
+      t.sessions.watching('aaaaaaaa')
+      await t.sessions.say({ id: 'aaaaaaaa', text: 'hello' })
+      expect(t.releasedTerminals).toEqual([])
+      t.sessions.watching('bbbbbbbb')
+      expect(t.releasedTerminals).toEqual(['term-1'])
+    })
+
+    it('presses keys in the session’s terminal, opening one, and says when it cannot', async () => {
+      const t = setup([row('aaaaaaaa')])
+      await t.attach()
+      t.sessions.watching('aaaaaaaa')
+      expect(await t.sessions.press({ id: 'aaaaaaaa', keys: ['\x1b[B', '\r'] })).toEqual({
+        ok: true,
+        terminalId: 'term-1',
+      })
+      expect(t.opened.map((o) => o.attach)).toEqual(['aaaaaaaa'])
+      expect(t.presses).toEqual([['term-1', ['\x1b[B', '\r']]])
+      expect(await t.sessions.press({ id: 'zzzzzzzz', keys: ['\r'] })).toEqual({
+        ok: false,
+        message: 'That session has ended.',
+      })
+    })
+  })
+
+  it('stamps the config directory again before each session process starts', async () => {
+    // What it carries follows settings a person can change while the vault is
+    // open (the theme, bypass permissions), and only a new process reads it.
+    const t = setup([row('aaaaaaaa')])
+    await t.attach()
+    expect(t.configure).toHaveBeenCalledTimes(1)
+    await t.sessions.start({})
+    await t.sessions.launch({ prompt: 'go' })
+    await t.sessions.respawn('aaaaaaaa')
+    await t.sessions.duplicate('aaaaaaaa')
+    expect(t.configure).toHaveBeenCalledTimes(5)
+  })
+
   it('lists only live sessions', async () => {
     const t = setup([row('aaaaaaaa'), row('bbbbbbbb', { pid: undefined, status: undefined })])
     await t.attach()
 
     expect(t.sessions.sessions().map((s) => s.id)).toEqual(['aaaaaaaa'])
-    expect(t.sent.at(-1)).toEqual([
+    expect(t.sent.filter(([name]) => name === 'sessions').at(-1)).toEqual([
       'sessions',
-      [{ id: 'aaaaaaaa', name: 'Session aaaaaaaa', state: 'idle' }],
+      // Idle, and finished: the listing's `state: done` is passed on.
+      [{ id: 'aaaaaaaa', name: 'Session aaaaaaaa', state: 'idle', phase: 'done' }],
     ])
+  })
+
+  it('tells the finished sessions apart as the history, and only when it changes', async () => {
+    const t = setup([
+      row('aaaaaaaa'),
+      row('bbbbbbbb', { pid: undefined, status: undefined, startedAt: 7 }),
+      row('cccccccc', { pid: undefined, status: undefined, state: 'failed' }),
+    ])
+    await t.attach()
+
+    expect(t.sessions.history()).toEqual([
+      { id: 'bbbbbbbb', name: 'Session bbbbbbbb', phase: 'done', startedAt: 7 },
+      { id: 'cccccccc', name: 'Session cccccccc', phase: 'failed' },
+    ])
+    const told = () => t.sent.filter(([name]) => name === 'history').length
+    expect(told()).toBe(1)
+    // A read that finds the same past says nothing more.
+    await t.sessions.refresh()
+    expect(told()).toBe(1)
+  })
+
+  it('archives a chat, keeps it across a restart, and tells the renderer', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'holi-archive-'))
+    try {
+      const gone = { pid: undefined, status: undefined, cwd: root }
+      const t = setup([row('aaaaaaaa', gone)], root)
+      await t.attach()
+      expect(t.sessions.archived()).toEqual([])
+
+      expect(await t.sessions.archive('aaaaaaaa', true)).toEqual({ ok: true })
+      expect(t.sessions.archived()).toEqual(['aaaaaaaa'])
+      expect(t.sent.filter(([name]) => name === 'archive').at(-1)).toEqual([
+        'archive',
+        ['aaaaaaaa'],
+      ])
+      // Kept in the vault's machine state, a `.local.` file.
+      expect(await readArchive(root)).toEqual(['aaaaaaaa'])
+      expect(ARCHIVE_FILE).toContain('.local.')
+
+      // A new run of Holi reads it back.
+      const again = setup([row('aaaaaaaa', gone)], root)
+      await again.attach()
+      expect(again.sessions.archived()).toEqual(['aaaaaaaa'])
+
+      expect(await t.sessions.archive('aaaaaaaa', false)).toEqual({ ok: true })
+      expect(await readArchive(root)).toEqual([])
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('deletes a finished chat for good, and refuses a running one', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'holi-remove-'))
+    try {
+      const t = setup(
+        [
+          row('aaaaaaaa', { cwd: root }),
+          row('bbbbbbbb', { pid: undefined, status: undefined, cwd: root }),
+        ],
+        root,
+      )
+      await t.attach()
+      expect(await t.sessions.remove('aaaaaaaa')).toEqual({
+        ok: false,
+        message: 'That session is still running. Stop it first.',
+      })
+      await t.sessions.archive('bbbbbbbb', true)
+      expect(await t.sessions.remove('bbbbbbbb')).toEqual({ ok: true })
+      expect(t.cli.rm).toHaveBeenCalledWith(expect.anything(), 'bbbbbbbb')
+      expect(t.sessions.history()).toEqual([])
+      expect(t.sessions.archived()).toEqual([])
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
   })
 
   it('holds sync for a session found mid-turn when the vault opens', async () => {
@@ -148,6 +382,17 @@ describe('agent sessions', () => {
     t.setListing([row('aaaaaaaa', { status: 'idle' })])
     await t.sessions.refresh()
     await vi.waitFor(() => expect(t.sessions.sessions()[0]?.state).toBe('idle'))
+  })
+
+  // The rules of a failed read are `session-state.test.ts`'s; this is the
+  // wiring: a listing the CLI could not print reaches the state as one.
+  it('keeps its sessions when the CLI fails to print the listing', async () => {
+    const t = setup([row('aaaaaaaa', { status: 'busy', state: 'working' })])
+    await t.attach()
+    t.breakListing(null)
+    await t.sessions.refresh()
+    expect(t.sessions.sessions().map((s) => [s.id, s.state])).toEqual([['aaaaaaaa', 'working']])
+    expect(t.released).toEqual([])
   })
 
   it('takes the turn bracket from the hook, for this vault only', async () => {
@@ -358,6 +603,7 @@ describe('launched sessions', () => {
   it('needs you while Holi holds its question, though the listing says busy', async () => {
     const { sessions, attach } = setup(
       [row('aaaa0001', { status: 'busy', state: 'working' })],
+      ROOT,
       new Set(['aaaa0001']),
     )
     await attach()

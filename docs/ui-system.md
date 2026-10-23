@@ -92,6 +92,9 @@ One place decides how an icon looks, so every icon in the app agrees.
     `lib/use-ack.ts`). Never blocks or queues; a repeat replays, which needs a forced reflow.
   - **F, in flight**: the only loop (`motion-pulse`, `-shimmer`, `-orbit`), bound to a real
     in-flight state.
+- **The session orb is the one exception** (`AgentFace`, `orb-loop.ts`): its eyes follow the
+  pointer and it breathes and blinks while no state is in flight. Limited to that component, driven
+  by one shared loop, and stopped entirely under reduced motion (a static gaze stays).
 - **Tokens** live in `index.css`: `--ease-settle`, `--ease-loop`, `--motion-respond` 150ms,
   `-arrive` 300ms, `-leave` 190ms, `-ack` 800ms, `-inflight` 2400ms. `--motion-stagger`,
   `--motion-slide` and `--ease-slide` sit in plain `:root`, because Tailwind tree-shakes `@theme`

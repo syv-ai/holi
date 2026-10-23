@@ -1,0 +1,155 @@
+/*
+ * The chat's rendered markdown (ChatMarkdown): an assistant message reads as
+ * prose, in the app's own tokens. State is a background, never an edge.
+ */
+.agent-chat-md {
+  font-size: 0.875rem;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.agent-chat-md-compact {
+  font-size: 0.8125rem;
+  line-height: 1.5;
+}
+/* A block of the message, kept by its raw text so a growing message redraws only
+ * its tail. It has no box of its own: the margins of its first and last child
+ * collapse with the neighbours' as if the blocks were one document. */
+.agent-chat-block {
+  display: contents;
+}
+.agent-chat-md > .agent-chat-block:first-child > :first-child {
+  margin-top: 0;
+}
+.agent-chat-md > .agent-chat-block:last-child > :last-child {
+  margin-bottom: 0;
+}
+.agent-chat-md p,
+.agent-chat-md ul,
+.agent-chat-md ol,
+.agent-chat-md .agent-chat-code,
+.agent-chat-md .agent-chat-table,
+.agent-chat-md blockquote {
+  margin: 0.6em 0;
+}
+.agent-chat-md h1,
+.agent-chat-md h2,
+.agent-chat-md h3,
+.agent-chat-md h4 {
+  margin: 1em 0 0.4em;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+.agent-chat-md ul,
+.agent-chat-md ol {
+  padding-left: 1.4em;
+}
+.agent-chat-md ul {
+  list-style: disc;
+}
+.agent-chat-md ol {
+  list-style: decimal;
+}
+.agent-chat-md li {
+  margin: 0.15em 0;
+}
+.agent-chat-md a {
+  color: var(--link);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+/* A link that leads nowhere (an address that is not http, https or mailto) is
+ * plain text. */
+.agent-chat-md a:not([href]) {
+  color: inherit;
+  text-decoration: none;
+}
+.agent-chat-md code {
+  border-radius: 0.3rem;
+  background: var(--muted);
+  padding: 0.1em 0.35em;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.8rem;
+}
+/* A code block: a heavy leaf the browser may skip while it is off screen, a
+ * scroll of its own for a wide line, and a Copy button that shows under the
+ * pointer or on focus. */
+.agent-chat-code {
+  position: relative;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 8rem;
+}
+.agent-chat-code pre {
+  margin: 0;
+  overflow-x: auto;
+  border-radius: 0.75rem;
+  background: color-mix(in srgb, var(--muted) 45%, transparent);
+  padding: 0.6rem 0.75rem;
+}
+.agent-chat-md pre code {
+  background: none;
+  padding: 0;
+}
+.agent-chat-copy {
+  position: absolute;
+  top: 0.35rem;
+  right: 0.35rem;
+  border-radius: 0.375rem;
+  background: var(--muted);
+  padding: 0.1rem 0.5rem;
+  color: var(--muted-foreground);
+  font-size: 0.75rem;
+  line-height: 1.4;
+  opacity: 0;
+  cursor: default;
+  outline: none;
+  transition:
+    opacity var(--motion-respond) var(--ease-settle),
+    background-color var(--motion-respond) var(--ease-settle);
+}
+.agent-chat-code:hover .agent-chat-copy,
+.agent-chat-copy:focus-visible {
+  opacity: 1;
+}
+.agent-chat-copy:hover {
+  background: var(--accent);
+  color: var(--foreground);
+}
+.agent-chat-md blockquote {
+  border-left: 2px solid var(--border);
+  padding-left: 0.75rem;
+  color: var(--muted-foreground);
+}
+/* A table too wide for the column scrolls inside itself. */
+.agent-chat-table {
+  overflow-x: auto;
+}
+.agent-chat-md table {
+  border-collapse: collapse;
+  font-size: 0.8rem;
+}
+.agent-chat-md th,
+.agent-chat-md td {
+  border: 1px solid var(--border);
+  padding: 0.25rem 0.5rem;
+  text-align: left;
+}
+.agent-chat-md hr {
+  margin: 0.9em 0;
+  border-color: var(--border);
+}
+
+/*
+ * The list of rows (ChatView). The browser keeps what is on screen where it is
+ * when something above it changes size, and a row's layout and paint are its
+ * own. A row is never `content-visibility`: estimated heights off screen
+ * would move the scroll range under the pointer. Only a heavy leaf is
+ * (`.agent-chat-code`, `.agent-chat-heavy`).
+ */
+.agent-chat-list {
+  overflow-anchor: auto;
+  contain: layout style;
+}
+.agent-chat-heavy {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 6rem;
+}

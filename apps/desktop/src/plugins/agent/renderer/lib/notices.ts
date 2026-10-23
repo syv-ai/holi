@@ -35,8 +35,10 @@ export function agentIndicator(args: {
   state: 'needs-you' | 'working' | 'idle'
   /** Only for 'needs-you': what it is waiting for. */
   waitingFor?: string
+  /** Only for 'idle': what the session has behind it. */
+  phase?: 'new' | 'done' | 'failed'
 }): AgentIndicator {
-  const { state, waitingFor } = args
+  const { state, waitingFor, phase } = args
 
   // The loudest state: blocked on a dialog until you answer.
   if (state === 'needs-you') {
@@ -58,10 +60,29 @@ export function agentIndicator(args: {
     }
   }
 
+  // Idle, in the words for what it has behind it: a session whose process is
+  // alive is not thereby doing anything.
+  if (phase === 'failed') {
+    return {
+      dot: 'bg-agent-failed',
+      state: 'failed',
+      title: 'The last turn ended with an error',
+    }
+  }
+  if (phase === 'new') {
+    return {
+      dot: 'bg-muted-foreground',
+      state: 'ready',
+      title: 'Waiting for your first message',
+    }
+  }
   return {
     dot: 'bg-agent-done',
-    state: 'running',
-    title: 'session running, ready for your next message',
+    state: phase === 'done' ? 'done' : 'idle',
+    title:
+      phase === 'done'
+        ? 'Claude has finished, and is ready for your next message'
+        : 'Ready for your next message',
   }
 }
 

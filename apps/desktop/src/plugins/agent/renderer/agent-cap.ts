@@ -9,6 +9,17 @@ import type { agentCapabilities } from '../main/host/capabilities'
 import type { inboxCapabilities } from '../main/inbox/capabilities'
 import type { quickCapabilities } from '../main/quick/capabilities'
 
+/** One thing in a session's conversation, as main reads it for the chat, and
+ *  the chunks and reports it comes in. */
+export type {
+  ChatEntry,
+  DriftReport,
+  EarlierChunk,
+  ImageRef,
+  Plain,
+  TranscriptChunk,
+} from '../main/claude/transcript'
+
 export const agentCap = capClient<
   ReturnType<typeof agentCapabilities> &
     ReturnType<typeof inboxCapabilities> &

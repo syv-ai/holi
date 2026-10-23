@@ -1,29 +1,29 @@
-import { atom } from 'jotai'
+import { atom, type WritableAtom } from 'jotai'
 import { agentCap } from '../agent-cap'
 import { sessionsWorthAsking } from '../lib/notices'
 import { receivePtyData } from '../lib/session-terminals'
-import {
-  activeRemoteAtom,
-  activeSurfaceIdAtom,
-  closeSurfaceTabsAtom,
-  surfaceTabIdsAtom,
-  type PluginEventHandler,
-  type PluginStore,
-} from '@/plugin-api'
+import { activeRemoteAtom, type PluginEventHandler, type PluginStore } from '@/plugin-api'
 import type { PendingQuestion } from '../../shared/questions'
 import { agentQuestionsAtom, pendingOpenAtom } from './questions'
-import { resetTurnReviewAtom, turnReviewOpenAtom } from './turns'
+
+/** What an action answers: done, or why not, in words the caller can print. */
+export type AgentResult = { ok: true } | { ok: false; message: string }
 
 /**
- * The surface an agent tab is: a terminal onto Claude Code, by the id main
- * minted for it, the agents list or one background session.
- *
- * **Closing the tab does not end a session**: it detaches, the session keeps
- * running, and the sidebar's rows are how you get back to it. What the tab
- * shows can change under it (`←` goes back to the list), so it is named by its
- * terminal, never by a session.
+ * The page a session's chat is shown on, as whichever plugin draws one
+ * provides it: today `agent-ui`, which fills `agentPageAtom` while it runs.
+ * `open` brings a session's chat forward, from the inbox, a schedule's run or
+ * the quick panel's "open in Holi".
  */
-export const AGENT_SURFACE = 'agent'
+export interface AgentPage {
+  open: WritableAtom<null, [id: string], Promise<AgentResult>>
+}
+
+/**
+ * The page there is to land on, or null while no plugin draws one. The agent
+ * runs its sessions either way; it only cannot show one.
+ */
+export const agentPageAtom = atom<AgentPage | null>(null)
 
 /** What a session is doing. Claude Code's own answer, read by main. */
 export type SessionState = 'needs-you' | 'working' | 'idle'
@@ -42,9 +42,26 @@ export interface AgentSession {
   state: SessionState
   /** Only for 'needs-you': why, e.g. 'permission prompt'. */
   waitingFor?: string
+  /** Only for 'idle': finished a turn, failed one, or not given one yet. */
+  phase?: 'new' | 'done' | 'failed'
   /** How much of its context window is used, 0 to 100, from its status line.
    *  Absent before its first message and after a `/clear`. */
   contextPercent?: number
+  /** Epoch milliseconds, when it was started. */
+  startedAt?: number
+}
+
+/**
+ * A session whose process has gone: a line of the agent's history. Mirrors
+ * `PastSession` in main/claude/listing.ts, pushed as the agent's `history`
+ * event. Its conversation can still be read, and opening a terminal on it
+ * picks it up again.
+ */
+export interface PastSession {
+  id: string
+  name: string
+  phase: 'done' | 'failed'
+  startedAt?: number
 }
 
 /**
@@ -70,76 +87,14 @@ export const agentTerminalsAtom = atom<AgentTerminal[]>([])
 export const agentTerminalAtom = (id: string) =>
   atom((get) => get(agentTerminalsAtom).find((t) => t.id === id) ?? null)
 
-/**
- * The session the app is on: the one the active tab was opened for, while it
- * is live. Otherwise the one behind the most recently opened terminal that was
- * opened for a live session. Null when neither says.
- *
- * A guess by construction: an agents tab can be attached to any session, and
- * nothing Claude Code publishes says which. So this is only ever a
- * default for an ask, never an identity.
- */
-export const activeSessionAtom = atom<AgentSession | null>((get) => {
-  const sessions = get(agentSessionsAtom)
-  const terminals = get(agentTerminalsAtom)
-  const byId = (id: string | null) =>
-    id === null ? null : (sessions.find((s) => s.id === id) ?? null)
-  const tabId = get(activeSurfaceIdAtom(AGENT_SURFACE))
-  if (tabId !== null) {
-    const shown = byId(terminals.find((t) => t.id === tabId)?.launchedFor ?? null)
-    if (shown !== null) return shown
-  }
-  for (const t of [...terminals].reverse()) {
-    const s = byId(t.launchedFor)
-    if (s !== null) return s
-  }
-  return null
-})
+/** Every finished session of the vault, in listing order. */
+export const agentHistoryAtom = atom<PastSession[]>([])
+
+/** The chats put in the archive, by job id: out of the stack, in the history. */
+export const agentArchivedAtom = atom<string[]>([])
 
 /** Claude Code's name for an unnamed session, and Holi's for one. */
 export const NEW_SESSION = 'New session'
-
-/** A terminal's title less the state glyph Claude Code puts in front of it. */
-export const titleText = (terminal: AgentTerminal): string =>
-  terminal.title.replace(/^[^\p{L}\p{N}]+\s+/u, '').trim()
-
-/** Claude Code titles its list `… claude agents`. */
-export const titleIsList = (terminal: AgentTerminal): boolean =>
-  /\bclaude agents$/.test(titleText(terminal))
-
-/**
- * The live session a terminal's title names, if exactly one has that name.
- * Claude Code titles an attached session by its name, so only a named one can
- * be found this way: an unnamed session's title is generic ("current
- * session", "Claude Code").
- */
-export function sessionTitled(
-  terminal: AgentTerminal,
-  sessions: AgentSession[],
-): AgentSession | null {
-  const title = titleText(terminal)
-  if (title === '' || title === NEW_SESSION) return null
-  // Names are not unique: a name two sessions share names neither.
-  const named = sessions.filter((s) => s.name === title)
-  return named.length === 1 ? named[0]! : null
-}
-
-/**
- * What an agent tab is called, in Holi's names so a tab and its sidebar row
- * agree: the session its title names, "Agents" for the list, and "New
- * session" for a session Claude Code has not named, whatever generic title it
- * gave that. A terminal that has not titled itself yet is what Holi opened it
- * for.
- */
-export function terminalLabel(terminal: AgentTerminal | null, sessions: AgentSession[]): string {
-  if (terminal === null) return 'Agents'
-  if (titleText(terminal) === '') {
-    if (terminal.launchedFor === null) return 'Agents'
-    return sessions.find((s) => s.id === terminal.launchedFor)?.name ?? NEW_SESSION
-  }
-  if (titleIsList(terminal)) return 'Agents'
-  return sessionTitled(terminal, sessions)?.name ?? NEW_SESSION
-}
 
 /** Where an ask goes: one of the vault's sessions, by id, or a new one. */
 export type AgentTarget = string | 'new'
@@ -155,17 +110,6 @@ export const askTargetsAtom = atom((get) =>
     .filter((s) => s.state !== 'needs-you')
     .map((s) => ({ id: s.id, name: s.name })),
 )
-
-/**
- * The target an ask goes to when nobody picked one: the current session, unless
- * there is none or it is waiting on a question of its own, in which case a new
- * one.
- */
-export const defaultAgentTargetAtom = atom<AgentTarget>((get) => {
-  const active = get(activeSessionAtom)
-  if (active === null || active.state === 'needs-you') return 'new'
-  return active.id
-})
 
 /** What a terminal is opened at before any tab has been measured. xterm's own
  *  native default, so the first paint is never a resize-to-catch-up. */
@@ -214,6 +158,13 @@ export const agentEvents: Readonly<Record<string, PluginEventHandler>> = {
     if (remote === store.get(activeRemoteAtom))
       store.set(agentSessionsAtom, payload as AgentSession[])
   },
+  archive: ({ remote, payload }, store) => {
+    if (remote === store.get(activeRemoteAtom)) store.set(agentArchivedAtom, payload as string[])
+  },
+  history: ({ remote, payload }, store) => {
+    if (remote === store.get(activeRemoteAtom))
+      store.set(agentHistoryAtom, payload as PastSession[])
+  },
   terminals: ({ remote, payload }, store) => {
     if (remote === store.get(activeRemoteAtom)) {
       store.set(agentTerminalsAtom, payload as AgentTerminal[])
@@ -225,7 +176,7 @@ export const agentEvents: Readonly<Record<string, PluginEventHandler>> = {
     }
   },
   // The quick panel's ⏎ on a finished agent: its session, in the main window.
-  // Opened by `agentVault` once its vault is the one showing.
+  // Opened by `followPendingOpen` once its vault is the one showing.
   'open-session': ({ remote, payload }, store) => {
     const id = (payload as { id?: unknown } | null)?.id
     if (typeof id === 'string') store.set(pendingOpenAtom, { remote, id })
@@ -233,10 +184,9 @@ export const agentEvents: Readonly<Record<string, PluginEventHandler>> = {
 }
 
 /**
- * The agent while `remote` is the open vault: fill the session and terminal
- * lists (the events keep them in step after that), close the tabs of
- * terminals that have gone, detach a terminal whose last tab closed, and clear
- * the lists and the turn review on the way out.
+ * The agent while `remote` is the open vault: fill the session, history and
+ * terminal lists (the events keep them in step after that), and clear them on
+ * the way out.
  *
  * Asked fresh for every vault, so a renderer reload pulls the lists again.
  */
@@ -245,10 +195,24 @@ export function agentVault(remote: string, store: PluginStore): () => void {
   // than its answer, and letting the answer win would drop what was just
   // announced. Every event is a new list, so an unchanged one means none came.
   const sessionsAsked = store.get(agentSessionsAtom)
+  const historyAsked = store.get(agentHistoryAtom)
   const terminalsAsked = store.get(agentTerminalsAtom)
+  const archiveAsked = store.get(agentArchivedAtom)
+  void agentCap
+    .archived(remote)
+    .then((list) => {
+      if (store.get(agentArchivedAtom) === archiveAsked) store.set(agentArchivedAtom, list)
+    })
+    .catch(() => {})
   void agentCap.sessions(remote).then((list) => {
     if (store.get(agentSessionsAtom) === sessionsAsked) store.set(agentSessionsAtom, list)
   })
+  void agentCap
+    .history(remote)
+    .then((list) => {
+      if (store.get(agentHistoryAtom) === historyAsked) store.set(agentHistoryAtom, list)
+    })
+    .catch(() => {})
   void agentCap.terminals(remote).then((list) => {
     if (store.get(agentTerminalsAtom) === terminalsAsked) store.set(agentTerminalsAtom, list)
   })
@@ -257,38 +221,13 @@ export function agentVault(remote: string, store: PluginStore): () => void {
     if (store.get(agentQuestionsAtom) === questionsAsked) store.set(agentQuestionsAtom, list)
   })
 
-  // A terminal leaves main's list when its client exits: a detach, `/exit`,
-  // or its session stopped. Its tabs go with it.
-  const offGone = store.sub(agentTerminalsAtom, () =>
-    store.set(
-      closeSurfaceTabsAtom,
-      AGENT_SURFACE,
-      store.get(agentTerminalsAtom).map((t) => t.id),
-    ),
-  )
-
-  // Closing an agent tab only ends its window (the session keeps running);
-  // without a detach the PTY would linger in main's list, which the palette
-  // and the reuse paths read. Diffed across each change of the open tabs, so
-  // a tab moved between panes is not a close.
-  const tabs = surfaceTabIdsAtom(AGENT_SURFACE)
-  let open = new Set(store.get(tabs))
-  const offTabs = store.sub(tabs, () => {
-    const now = new Set(store.get(tabs))
-    for (const id of open) if (!now.has(id)) void agentCap.detach(remote, { id })
-    open = now
-  })
-
   return () => {
-    offGone()
-    offTabs()
     store.set(agentQuestionsAtom, [])
-    // Both lists and the turn record are per vault: left as they are, the
-    // next vault would show this one's sessions until its own answer came,
-    // and the review would ask its git for a range it has never heard of.
+    // The lists are per vault: left as they are, the next vault would show
+    // this one's sessions until its own answer came.
     store.set(agentSessionsAtom, [])
+    store.set(agentHistoryAtom, [])
+    store.set(agentArchivedAtom, [])
     store.set(agentTerminalsAtom, [])
-    store.set(resetTurnReviewAtom)
-    store.set(turnReviewOpenAtom, false)
   }
 }
