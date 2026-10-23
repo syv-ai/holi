@@ -376,10 +376,7 @@ export function ChatMain({ id }: { id: string }) {
   const loaded = useAtomValue(chatsLoadedAtom)
   const chat = chats.find((c) => c.id === id)
   return (
-    <div
-      className="bg-background flex min-h-0 flex-1 flex-col"
-      data-chat-main={id}
-    >
+    <div className="flex min-h-0 flex-1 flex-col" data-chat-main={id}>
       {id === "new" ? (
         <NewSession />
       ) : chat !== undefined ? (
