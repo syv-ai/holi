@@ -19,7 +19,7 @@ import { SessionActions } from './SessionActions'
 import { AgentsMain } from './agents/AgentsMain'
 import { AgentsSidebar } from './agents/AgentsSidebar'
 import { agentsStatusAtom } from './state/agents-status'
-import { newViewSessionAtom } from './state/session-view'
+import { newSessionAtom, sessionListVault } from './state/session-list'
 import {
   AGENT_SURFACE,
   agentEvents,
@@ -66,7 +66,7 @@ const COMMANDS: readonly Command[] = [
     label: 'New session',
     hotkey: '⌘N',
     when: (get) => get(appModeAtom) === 'agents',
-    run: (_get, set) => void set(newViewSessionAtom),
+    run: (_get, set) => void set(newSessionAtom),
   },
   {
     id: 'agent.terminal',
@@ -109,8 +109,16 @@ export const agentRenderer: RendererPlugin = {
   },
   drawers: [TurnReview],
   leaveGuard: agentLeaveGuardAtom,
-  // The agent's terminals while the vault is open.
-  vault: agentVault,
+  // The agent's terminals and the session list's turn ends while the vault
+  // is open.
+  vault: (remote, store) => {
+    const offAgent = agentVault(remote, store)
+    const offList = sessionListVault(store)
+    return () => {
+      offList()
+      offAgent()
+    }
+  },
   agent: AGENT_SERVICE,
   commands: COMMANDS,
   palette: {

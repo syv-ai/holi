@@ -12,7 +12,15 @@ import { HoliDialogs } from './HoliDialogs'
 import { HoliPage } from './HoliPage'
 import { HolisInbox } from './HolisInbox'
 import { HolisSection } from './HolisSection'
-import { holiEvents, holisArcadeCastAtom, holisStatusAtom, holisVault } from './state'
+import {
+  holiEvents,
+  holiSessionItemsAtom,
+  holiSessionsStatusAtom,
+  holisArcadeCastAtom,
+  holisStatusAtom,
+  holisVault,
+  loadHolisAtom,
+} from './state'
 
 export const holisRenderer: RendererPlugin = {
   info: HOLIS_INFO,
@@ -24,6 +32,12 @@ export const holisRenderer: RendererPlugin = {
     main: HoliPage,
     inbox: HolisInbox,
     status: holisStatusAtom,
+    // Its runs, in the agent's one session list.
+    sessions: {
+      items: holiSessionItemsAtom,
+      status: holiSessionsStatusAtom,
+      reload: loadHolisAtom,
+    },
   },
   drawers: [HoliDialogs],
   // Send to Holi, in a document's Agent menu.

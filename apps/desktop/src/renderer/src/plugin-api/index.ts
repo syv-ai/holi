@@ -13,6 +13,8 @@ export type {
   AgentService,
   AgentServiceSource,
   AgentsMode,
+  AgentsSessionItem,
+  AgentsSessionsSource,
   AgentsSlot,
   AgentsStatus,
   AgentSessionRow,
