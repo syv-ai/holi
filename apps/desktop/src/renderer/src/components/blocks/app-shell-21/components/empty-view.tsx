@@ -1,4 +1,4 @@
-import { useMemo } from "react"
+import { useMemo, useRef } from "react"
 import { useAtomValue, useSetAtom } from "jotai"
 import { toast } from "sonner"
 import { isHiddenPath, type DocMeta } from "@holi/shared"
@@ -21,6 +21,7 @@ import {
   ItemTitle,
 } from "@/components/ui/item"
 import { Skeleton } from "@/components/ui/skeleton"
+import { cn } from "@/lib/cn"
 import { relativeTime } from "@/lib/relative-time"
 import { nowAtom, todayAtom } from "@/state/clock"
 import { ensureTodaysDailyAtom } from "@/state/daily"
@@ -101,7 +102,9 @@ export function EmptyView({
       data-slot="empty-view"
       className="flex min-h-0 flex-1 flex-col overflow-y-auto"
     >
-      <div className="mx-auto flex w-full max-w-lg flex-col gap-10 px-6 pt-[max(3rem,12vh)] pb-16 animate-in fade-in-0 slide-in-from-bottom-1 duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:slide-in-from-bottom-0">
+      {/* No entrance: a New tab opens many times a day, and opening a tab
+          lands at once everywhere else in Holi. */}
+      <div className="mx-auto flex w-full max-w-lg flex-col gap-10 px-6 pt-[max(3rem,12vh)] pb-16">
         <header className="flex flex-col gap-1">
           {vaultName ? (
             <p className="text-muted-foreground text-xs font-medium">
@@ -189,7 +192,8 @@ function StartRow({
         asChild
         variant="outline"
         size="sm"
-        className="hover:bg-foreground/5 focus-visible:bg-foreground/5 h-full text-start"
+        // A press answers with the slightest give; hover stays a colour.
+        className="hover:bg-foreground/5 focus-visible:bg-foreground/5 h-full text-start transition-[background-color,border-color,transform] duration-150 ease-[cubic-bezier(0.22,1,0.36,1)] active:scale-[0.98] motion-reduce:active:scale-100"
       >
         <button type="button" onClick={onClick}>
           <ItemMedia
@@ -225,6 +229,10 @@ function RecentlyEdited({
   const snapshot = useAtomValue(snapshotAtom)
   const loaded = useAtomValue(snapshotLoadedAtom)
   const now = Date.parse(useAtomValue(nowAtom))
+  /** Whether the rows replace a loading state: only then do they fade in,
+   *  so the list does not swap in abruptly, and a vault already scanned
+   *  shows it at once. */
+  const arrived = useRef(!loaded).current
 
   const recent = useMemo(
     () =>
@@ -265,7 +273,13 @@ function RecentlyEdited({
           </Button>
         </div>
       ) : (
-        <ItemGroup className="gap-0.5 has-data-[size=xs]:gap-0.5">
+        <ItemGroup
+          className={cn(
+            "gap-0.5 has-data-[size=xs]:gap-0.5",
+            arrived &&
+              "animate-in fade-in-0 duration-200 ease-[cubic-bezier(0.22,1,0.36,1)]"
+          )}
+        >
           {recent.map((doc) => (
             <RecentRow key={doc.path} doc={doc} now={now} onOpen={onOpen} />
           ))}
