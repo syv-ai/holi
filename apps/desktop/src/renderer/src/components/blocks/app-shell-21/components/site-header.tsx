@@ -13,6 +13,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
+import type { IconGlyph } from "@/primitives"
 import {
   FileTextIcon,
   PlusIcon,
@@ -20,7 +21,12 @@ import {
   EllipsisVerticalIcon,
 } from "lucide-react"
 
-export type HeaderTab = { id: string; title: string }
+export type HeaderTab = {
+  id: string
+  title: string
+  /** A view's own mark (Settings' cog); a document's when absent. */
+  icon?: IconGlyph
+}
 
 export function SiteHeader({
   tabs,
@@ -54,7 +60,7 @@ export function SiteHeader({
             variant="line"
             className="min-w-0 justify-start overflow-x-auto group-data-horizontal/tabs:h-9"
           >
-            {tabs.map((tab) => (
+            {tabs.map(({ icon: TabIcon = FileTextIcon, ...tab }) => (
               // The close button is the trigger's sibling: a button cannot
               // hold another button.
               <div key={tab.id} className="group/tab relative flex h-full">
@@ -62,7 +68,7 @@ export function SiteHeader({
                   value={tab.id}
                   className="hover:bg-foreground/5 group-data-[variant=line]/tabs-list:data-active:bg-foreground/8 dark:group-data-[variant=line]/tabs-list:data-active:bg-foreground/8 w-56 flex-none justify-start gap-2 rounded-md px-3 pe-8 after:hidden"
                 >
-                  <FileTextIcon aria-hidden="true" />
+                  <TabIcon aria-hidden={true} />
                   <span className="truncate">{tab.title}</span>
                 </TabsTrigger>
                 <Button

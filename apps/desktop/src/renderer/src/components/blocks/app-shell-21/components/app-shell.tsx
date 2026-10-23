@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react"
+import { useAtomValue } from "jotai"
 import { cn } from "@/lib/cn"
 import { type PanelImperativeHandle } from "react-resizable-panels"
 
@@ -17,6 +18,12 @@ import {
 } from "@/components/ui/sheet"
 import { SidebarProvider } from "@/components/ui/sidebar"
 import { TooltipProvider } from "@/components/ui/tooltip"
+import { SETTINGS_TAB } from "@/components/blocks/profile-9/components/sections"
+import { SettingsNav } from "@/components/blocks/profile-9/components/settings-nav"
+import { SettingsView } from "@/components/blocks/profile-9/components/settings-view"
+import { useSettingsHotkey } from "@/components/blocks/profile-9/components/use-settings-hotkey"
+import { settingsRequestAtom } from "@/state/settings-section"
+import { SettingsIcon } from "lucide-react"
 
 import { ChatSearchDialog } from "./chat-search-dialog"
 import { THREADS } from "./data"
@@ -69,12 +76,27 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
   /** Whether the files sidebar was open when an app took over, so leaving
    *  the app gives it back as it was. */
   const openBeforeApp = useRef(false)
+  /** The tab in front when Settings came forward, for its Back. */
+  const beforeSettings = useRef<string | null>(null)
+  const settingsRequest = useAtomValue(settingsRequestAtom)
+  useSettingsHotkey()
 
   useEffect(() => {
     return () => {
       if (settleTimer.current) window.clearTimeout(settleTimer.current)
     }
   }, [])
+
+  // ⌘, the profile menu, or a plugin's "Open Connections" asked for
+  // Settings: bring its tab forward, with the sidebar open to carry its nav.
+  const seenRequest = useRef(settingsRequest)
+  useEffect(() => {
+    if (settingsRequest === seenRequest.current) return
+    seenRequest.current = settingsRequest
+    openSettings()
+    // Only a new request opens it; the handler reads the latest state.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settingsRequest])
 
   /** React state catches up only after the motion has finished. */
   function settleOpen(next: boolean) {
@@ -131,9 +153,11 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
   const tabs = openTabIds.map((id) => ({
     id,
     title: tabTitle(id),
+    icon: id === SETTINGS_TAB ? SettingsIcon : undefined,
   }))
 
   function tabTitle(id: string): string {
+    if (id === SETTINGS_TAB) return "Settings"
     if (id === BOARD_TAB) return "Board"
     if (isNewTab(id)) return "New tab"
     const thread = threads.find((candidate) => candidate.id === id)
@@ -151,6 +175,25 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
       return [...current, id]
     })
     setActiveThreadId(id)
+  }
+
+  /** Settings comes forward as a tab, its nav in place of the files. A
+   *  folded sidebar opens for it, since the nav is how its pages are reached. */
+  function openSettings() {
+    leaveApp()
+    setMobileNavOpen(false)
+    if (activeThreadId !== SETTINGS_TAB) beforeSettings.current = activeThreadId
+    setOpenTabIds((current) =>
+      current.includes(SETTINGS_TAB) ? current : [...current, SETTINGS_TAB]
+    )
+    setActiveThreadId(SETTINGS_TAB)
+    if (!isMobile && sidebarPanel.current?.isCollapsed()) toggleSidebar()
+  }
+
+  /** Settings' Back: to the tab it came from, Settings staying open. */
+  function leaveSettings() {
+    const back = beforeSettings.current
+    setActiveThreadId(back !== null && openTabIds.includes(back) ? back : null)
   }
 
   /** +: a tab that shows the empty view until something is picked in it. */
@@ -202,8 +245,13 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
     void newDocument()
   }
 
+  /** Settings in front: its nav takes the sidebar's place. */
+  const settingsActive = app === null && activeThreadId === SETTINGS_TAB
+
   /** In the sheet the header button closes it; on desktop it collapses the panel. */
-  const sidebar = (
+  const sidebar = settingsActive ? (
+    <SettingsNav onBack={leaveSettings} />
+  ) : (
     <ThreadSidebar
       collapsed={false}
       onToggle={isMobile ? () => setMobileNavOpen(false) : toggleFiles}
@@ -265,6 +313,8 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
           >
             <AppView />
           </div>
+        ) : settingsActive ? (
+          <SettingsView navHidden={isMobile || !sidebarOpen} />
         ) : activeThreadId === null || isNewTab(activeThreadId) ? (
           <EmptyView
             key={activeThreadId ?? "none"}

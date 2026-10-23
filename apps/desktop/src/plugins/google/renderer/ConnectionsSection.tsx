@@ -19,7 +19,7 @@
  */
 import { useAtomValue } from 'jotai'
 import { useEffect, useRef, useState } from 'react'
-import { SettingsHeading, SettingsNote } from '@/composites'
+import { SettingsNote } from '@/composites'
 import { activeRemoteAtom } from '@/plugin-api'
 import { Button, Dialog } from '@/primitives'
 import { googleCap, useGoogleAccount } from './account'
@@ -142,8 +142,8 @@ export function ConnectionsSection(): React.JSX.Element {
   const needsReconsent = connected && missingScopes.length > 0
 
   return (
+    // The settings page's card carries the plugin's name above this.
     <section>
-      <SettingsHeading title="Google" />
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
           <p className="text-xs text-pretty break-words text-muted-foreground">

@@ -3,7 +3,7 @@
  * their nav items once an account is connected, and the Connections section
  * of the settings tab.
  */
-import { CalendarDays, Mail } from 'lucide-react'
+import { Cable, CalendarDays, Mail } from 'lucide-react'
 import { usePluginSetting, type RendererPlugin } from '@/plugin-api'
 import { GOOGLE_INFO } from '../info'
 import { googleConnectedAtom } from './account'
@@ -51,6 +51,8 @@ export const googleRenderer: RendererPlugin = {
     {
       id: 'connections',
       label: 'Connections',
+      icon: Cable,
+      description: 'The accounts this vault reads mail and calendar from.',
       headings: [],
       // Nothing on disk in the vault: a Google grant is the machine's, held by
       // main's credential storage, and the renderer never sees a token.

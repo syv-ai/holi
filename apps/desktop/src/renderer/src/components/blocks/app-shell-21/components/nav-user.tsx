@@ -5,6 +5,10 @@ import type { ColorScheme, WindowGlass } from "@holi/shared"
 import { colorSchemeAtom, writeColorSchemeAtom } from "@/state/color-scheme"
 import { windowGlassAtom, writeWindowGlassAtom } from "@/state/window-glass"
 import { sessionAtom, signOutAtom } from "@/state/session"
+import {
+  openSettingsAtom,
+  openSettingsSectionAtom,
+} from "@/state/settings-section"
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
@@ -15,6 +19,7 @@ import {
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
+  DropdownMenuShortcut,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import {
@@ -137,6 +142,8 @@ function isMac() {
 
 function AccountMenuContent({ isMobile }: { isMobile: boolean }) {
   const signOut = useSetAtom(signOutAtom)
+  const openSettings = useSetAtom(openSettingsAtom)
+  const openSection = useSetAtom(openSettingsSectionAtom)
 
   return (
     <DropdownMenuContent
@@ -149,17 +156,19 @@ function AccountMenuContent({ isMobile }: { isMobile: boolean }) {
         <DropdownMenuLabel className="text-muted-foreground text-xs font-normal">
           Account
         </DropdownMenuLabel>
-        <DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => openSection("account")}>
           <UserIcon aria-hidden="true" />
           Profile
         </DropdownMenuItem>
-        <DropdownMenuItem>
+        {/* Preferences are how Holi looks to you: Settings' Appearance. */}
+        <DropdownMenuItem onSelect={() => openSection("appearance")}>
           <SlidersHorizontalIcon aria-hidden="true" />
           Preferences
         </DropdownMenuItem>
-        <DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => openSettings()}>
           <SettingsIcon aria-hidden="true" />
           Settings
+          <DropdownMenuShortcut>⌘,</DropdownMenuShortcut>
         </DropdownMenuItem>
         {/* TODO: open the keyboard shortcuts sheet once there is one. */}
         <DropdownMenuItem>

@@ -175,6 +175,10 @@ export interface SettingsSectionHeading {
 export interface SettingsSection {
   id: string
   label: string
+  /** Its row in the settings nav; a plug when absent. */
+  icon?: IconGlyph
+  /** One line under the section's title: what it is for. */
+  description?: string
   /** What the rail shows beneath the section you are in: declared, so a test
    *  can hold the section to rendering each one. */
   headings: readonly SettingsSectionHeading[]
