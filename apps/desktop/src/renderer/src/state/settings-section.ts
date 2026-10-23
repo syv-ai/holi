@@ -1,22 +1,30 @@
 /**
- * Where the Settings tab is: its open section, and a heading to scroll to.
+ * Where Settings is: its open section, and a request to bring it forward.
  *
- * **Shared, because the rail lives in the sidebar** while Settings is the tab
- * in front (docs/features/settings.md): the sidebar's rail and the tab's
+ * **Shared, because the nav lives in the sidebar** while Settings is the tab
+ * in front (docs/features/settings.md): the sidebar's nav and the tab's
  * content are two components that must agree on one section. `null` is the
  * first section.
+ *
+ * The shell owns its tabs, so opening Settings is a request it answers
+ * (`settingsRequestAtom`): anything (a plugin's "Open Connections", the
+ * profile menu, ⌘,) asks, and the shell adds or focuses the tab.
  */
 import { atom } from 'jotai'
-import { openSurface, workspaceAtom } from './panes'
 
 export const settingsSectionAtom = atom<string | null>(null)
 
-/** A heading the rail asked the content to scroll to; `n` makes a repeat a
- *  new request. Taken by the content, which owns the scroller. */
-export const settingsJumpAtom = atom<{ id: string; n: number } | null>(null)
+/** Bumped on every request to show Settings; the shell watches it. */
+export const settingsRequestAtom = atom(0)
 
-/** Open Settings at one section (the profile menu's Sign out goes to Account). */
+/** Bring Settings forward on the section it was last on. */
+export const openSettingsAtom = atom(null, (_get, set) => {
+  set(settingsRequestAtom, (n) => n + 1)
+})
+
+/** Open Settings at one section (Mail's and Calendar's "Open Connections",
+ *  the profile menu's Preferences). */
 export const openSettingsSectionAtom = atom(null, (_get, set, section: string) => {
   set(settingsSectionAtom, section)
-  set(workspaceAtom, (w) => openSurface(w, 'settings'))
+  set(settingsRequestAtom, (n) => n + 1)
 })
