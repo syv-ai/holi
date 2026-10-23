@@ -12,7 +12,7 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   another bundle. Like a note it is identified by its vault-relative path (`Finance/Budget.app`);
   its name is the folder name without `.app`, as a note drops `.md`. `app.yaml` is the "finished"
   marker: an agent writes an app file by file, so the manifest is written last. Its keys are
-  `description`, `collections`, `dangerously-allow`, `env` and `commands`, all optional; `holi apps init` writes
+  `description`, `collections`, `dangerously-allow`, `env`, `hosts` and `commands`, all optional; `holi apps init` writes
   every one with the unused ones blank (`appManifestText`), so the file shows what
   an app can say, and an empty file still finishes the app. The icon is the vault icon map's,
   as for any row. The parser never throws; a typo costs a field, never the app.
@@ -127,7 +127,27 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   that sync to every member, or send it over the network. So the app declares
   `dangerously-allow: [mail, calendar]` in `app.yaml`, or as a map giving each one a reason
   (`{ calendar: To show your next meeting }`, plain text, at most 200 characters) that the dialog
-  quotes as the developer's explanation (without the flag the call fails and names it), and each person approves the app in a dialog before its frame loads. The approval is
+  quotes as the developer's explanation (without the flag the call fails and names it), and each person approves the app in a dialog before its frame loads. `recording` is the
+  third affordance, and the one the renderer answers: Chromium refuses media capture to an opaque
+  origin, so an app cannot record in its frame. `holi.record.start({ microphone, system })` and
+  `stop()` are `RENDERER_METHODS`: `AppFrame` checks the grant and records in Holi's own document
+  (`renderer/recorder.ts`), mixing the microphone with a share of the main screen's sound, and
+  `stop` hands the frame the audio as a `Blob`. One recording at a time: a second `start` while
+  the first is still asking for the microphone is refused, and a start whose document goes (a
+  reload, a mode change, the app deleted) lets go of what it got. While it records, `AppFrame` pushes
+  `record:level` and `record:spectrum` (32 bands, numbers only, about 20 times a second) for a
+  live waveform, never any audio. Main answers `getDisplayMedia` for a top-level
+  document only, with the main screen and its system audio (`audio: 'loopback'`, on macOS
+  through Chromium's `MacCatapLoopbackAudioForScreenShare`). `network` is the fourth:
+  `holi.fetch(url, init)` is `net.fetch` (`main/net.ts`), made by main, which has no CORS, for an
+  app whose frame (origin `null`) would be refused by most APIs. It reaches only the hosts the
+  manifest lists in `hosts` (exact hostnames, https only, a redirect refused rather than
+  followed), with nothing of Holi's added to the request, and the approval dialog lists them. A
+  host is a name, never an IP address or `localhost`, and one that resolves to a loopback, private
+  or link-local address is refused, so a listed name cannot reach this machine or its network
+  (checked by a lookup before the request, so DNS rebinding between the two is not caught). Bodies
+  cross the bridge as base64, up to 100 MB each way, the request's parts counted together and the
+  answer counted as it arrives. The approval is
   kept in main (`userData/app-grants.json`), never the renderer, which is the process running the
   app. It lapses after 30 days and whenever the app's code (anything but `data/`) changes, whoever
   changed it: approving a teammate's app approves that code, not what it becomes after a pull. A

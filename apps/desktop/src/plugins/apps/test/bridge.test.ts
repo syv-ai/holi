@@ -29,6 +29,9 @@ describe('APP_METHODS', () => {
       'docs.write',
       'tasks.update',
       'tasks.create',
+      'record.start',
+      'record.stop',
+      'net.fetch',
     ])
   })
 
@@ -46,6 +49,8 @@ describe('topics', () => {
     expect(isAppTopic(storeTopic('items'))).toBe(true)
     expect(isAppTopic('store:')).toBe(false)
     expect(isAppTopic('store:../x')).toBe(false)
+    expect(isAppTopic('record:level')).toBe(true)
+    expect(isAppTopic('record:spectrum')).toBe(true)
     expect(isAppTopic('mail')).toBe(false)
   })
 })

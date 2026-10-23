@@ -27,14 +27,37 @@ const bridgeMock = vi.fn((input: { remote: string; method: string }): Promise<un
   return Promise.resolve([])
 })
 
+/** Main's approvals. By default no `dangerously-allow` reads to approve, so
+ *  the frame mounts at once. */
+const grantsMock = vi.fn(
+  (): Promise<{
+    codeHash: string
+    affordances: { affordance: string; granted: boolean }[]
+    hosts?: string[]
+  }> => Promise.resolve({ codeHash: 'h', affordances: [] }),
+)
+
 vi.mock('../renderer/apps-cap', () => ({
   appsCap: {
     call: (remote: string, input: { method: string }) => bridgeMock({ remote, ...input }),
-    // No `dangerously-allow` reads to approve, so the frame mounts at once.
-    grants: () => Promise.resolve({ codeHash: 'h', affordances: [] }),
+    grants: () => grantsMock(),
     log: () => Promise.resolve(true),
   },
 }))
+
+/** The audio a recording hands back, and the recorder that "records" it. */
+const AUDIO = vi.hoisted(() => ({ audio: 'bytes' }))
+const startRecordingMock = vi.hoisted(() =>
+  vi.fn((_params: unknown) =>
+    Promise.resolve({
+      level: () => 0.5,
+      spectrum: () => [0.25],
+      stop: () => Promise.resolve(AUDIO),
+      discard() {},
+    }),
+  ),
+)
+vi.mock('../renderer/recorder', () => ({ startRecording: startRecordingMock }))
 
 /** The tabs the tombstone's button closed, as `[surface, id]`. */
 const closed = vi.hoisted(() => [] as [string, string][])
@@ -99,6 +122,106 @@ test('is sandboxed WITHOUT allow-same-origin', async () => {
   const sandbox = frameOf().getAttribute('sandbox')!.split(' ')
   expect(sandbox).toContain('allow-scripts')
   expect(sandbox).not.toContain('allow-same-origin')
+})
+
+test('may not record until recording is granted', async () => {
+  await renderApp()
+  const post = vi.spyOn(frameOf().contentWindow!, 'postMessage')
+  fromFrame({ id: 'r', method: 'record.start' })
+  await waitFor(() => expect(post).toHaveBeenCalled())
+  expect(post.mock.calls[0]![0]).toMatchObject({ id: 'r', ok: false })
+  expect(startRecordingMock).not.toHaveBeenCalled()
+})
+
+test('records for a granted app here, never in the frame, and hands back the audio', async () => {
+  grantsMock.mockResolvedValueOnce({
+    codeHash: 'h',
+    affordances: [{ affordance: 'recording', granted: true }],
+  })
+  await renderApp()
+  const post = vi.spyOn(frameOf().contentWindow!, 'postMessage')
+  const replies = (): unknown[] =>
+    post.mock.calls.map((c) => c[0]).filter((m) => (m as { id?: string }).id !== undefined)
+  fromFrame({ id: 's', method: 'record.start', params: { system: false } })
+  await waitFor(() => expect(replies()).toHaveLength(1))
+  expect(startRecordingMock).toHaveBeenCalledWith({ system: false })
+  fromFrame({ id: 'e', method: 'record.stop' })
+  await waitFor(() => expect(replies()).toHaveLength(2))
+  expect(replies()[1]).toEqual({ id: 'e', ok: true, value: AUDIO })
+  // Neither ever reached main.
+  expect(bridgeMock).not.toHaveBeenCalled()
+})
+
+/** A recording whose start waits until the test lets it through, as one does
+ *  while the system asks the person for the microphone. */
+function slowRecording() {
+  const discard = vi.fn()
+  let letThrough = (): void => {}
+  startRecordingMock.mockImplementationOnce(
+    () =>
+      new Promise((done) => {
+        letThrough = () =>
+          done({
+            level: () => 0.5,
+            spectrum: () => [0.25],
+            stop: () => Promise.resolve(AUDIO),
+            discard,
+          })
+      }),
+  )
+  return { discard, letThrough: () => letThrough() }
+}
+
+const grantRecording = () =>
+  grantsMock.mockResolvedValueOnce({
+    codeHash: 'h',
+    affordances: [{ affordance: 'recording', granted: true }],
+  })
+
+test('refuses a second record.start while the first is still asking', async () => {
+  grantRecording()
+  const slow = slowRecording()
+  await renderApp()
+  const post = vi.spyOn(frameOf().contentWindow!, 'postMessage')
+  const reply = (id: string) =>
+    post.mock.calls.map((c) => c[0]).find((m) => (m as { id?: string }).id === id)
+  fromFrame({ id: 'a', method: 'record.start' })
+  fromFrame({ id: 'b', method: 'record.start' })
+  await waitFor(() => expect(reply('b')).toMatchObject({ ok: false, error: 'already recording' }))
+  slow.letThrough()
+  await waitFor(() => expect(reply('a')).toMatchObject({ ok: true }))
+  // One capture, not two: the second never reached the microphone.
+  expect(startRecordingMock).toHaveBeenCalledTimes(1)
+  expect(slow.discard).not.toHaveBeenCalled()
+})
+
+test('lets go of a capture whose document went away while it started', async () => {
+  grantRecording()
+  const slow = slowRecording()
+  await renderApp()
+  fromFrame({ id: 'a', method: 'record.start' })
+  await waitFor(() => expect(startRecordingMock).toHaveBeenCalledTimes(1))
+  // A reload while the system is still asking for the microphone.
+  act(() =>
+    store.set(appOpensAtom, (n) => ({ ...n, 'Team/Retro.app': (n['Team/Retro.app'] ?? 0) + 1 })),
+  )
+  slow.letThrough()
+  // Nobody holds it, so it is let go rather than left recording.
+  await waitFor(() => expect(slow.discard).toHaveBeenCalled())
+})
+
+test('the approval names the sites network would let the app reach', async () => {
+  grantsMock.mockResolvedValueOnce({
+    codeHash: 'h',
+    affordances: [{ affordance: 'network', granted: false }],
+    hosts: ['api.example.com', 'uploads.example.com'],
+  })
+  render(<AppFrame path="Team/Retro.app" />)
+  expect(await screen.findByText(/wants permission to send requests to other sites/)).toBeTruthy()
+  expect(screen.getByText('api.example.com')).toBeTruthy()
+  expect(screen.getByText('uploads.example.com')).toBeTruthy()
+  // Not the mail wording: network reads nothing of its own.
+  expect(screen.queryByText(/What it reads/)).toBeNull()
 })
 
 test('ignores a message that did not come from the frame', async () => {
@@ -180,6 +303,31 @@ test('a deleted app leaves a tombstone, not a frame', async () => {
   // closing it is the user's move, not ours.
   await userEvent.click(screen.getByRole('button', { name: /close/i }))
   expect(closed).toEqual([['app', 'Team/Retro.app']])
+})
+
+test('pushes the recording level to the frame while recording, and stops after', async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true })
+  try {
+    grantsMock.mockResolvedValueOnce({
+      codeHash: 'h',
+      affordances: [{ affordance: 'recording', granted: true }],
+    })
+    await renderApp()
+    const post = vi.spyOn(frameOf().contentWindow!, 'postMessage')
+    fromFrame({ id: 's', method: 'record.start' })
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(1))
+    await vi.advanceTimersByTimeAsync(120)
+    expect(post).toHaveBeenCalledWith({ push: 'record:level', value: 0.5 }, '*')
+    fromFrame({ id: 'e', method: 'record.stop' })
+    await waitFor(() =>
+      expect(post.mock.calls.some((c) => (c[0] as { id?: string }).id === 'e')).toBe(true),
+    )
+    const sent = post.mock.calls.length
+    await vi.advanceTimersByTimeAsync(200)
+    expect(post.mock.calls.length).toBe(sent)
+  } finally {
+    vi.useRealTimers()
+  }
 })
 
 test("holi.open refuses a secret file and this machine's state, even when they exist", () => {
