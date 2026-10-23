@@ -53,8 +53,9 @@ Projects/Q2/Burndown.app/app.yaml     ← required: write this LAST
   ```yaml
   description: Sprint retros # shown where the app is listed
   collections: # the records it keeps: see Keeping data
-  dangerously-allow: # one person's data it reads: mail, calendar, location
   env: # the secrets it needs, by name: see Secrets
+  dangerously-allow: # one person's data it reads: mail, calendar; or recording, network
+  hosts: # with network: the exact hosts holi.fetch may reach
   commands: # what it adds to the notes' slash menu: see Slash commands
   ```
 
@@ -255,6 +256,33 @@ One plain sentence about what the app does with it (at most 200 characters):
 ```yaml
 dangerously-allow:
   calendar: To show your next meeting
+```
+
+**Recording is `recording`, through `holi.record`.** An app cannot record for
+itself: `navigator.mediaDevices.getUserMedia` and `getDisplayMedia` always fail in
+the app's frame. Declare `recording`, and Holi records for it:
+
+```js
+await holi.record.start({ microphone: true, system: true }) // both default true
+const audio = await holi.record.stop() // a Blob, audio/webm
+```
+
+`system` is the computer's sound (the meeting, whatever app plays it). There is no
+audio stream, but there is a level to draw: `holi.record.onLevel((x) => …)` is
+called about 20 times a second while recording, with the mix's loudness, 0 to 1
+(it returns a function that stops listening). For a spectrum-style waveform use
+`holi.record.onSpectrum((bands) => …)`: 32 values, 0 to 1, lowest pitch first. On macOS the person is asked once by
+the system for the microphone and for screen and audio recording.
+
+**Calling a web API is `network`, through `holi.fetch`.** An app's own `fetch`
+reaches only servers that allow any origin by CORS, which most APIs do not. Declare
+`network` and list the exact hosts, and `holi.fetch` (same arguments, resolves a
+`Response`) is made by Holi, to those hosts only, over https:
+
+```yaml
+dangerously-allow:
+  network: To send recordings for transcription
+hosts: [api.example.com]
 ```
 
 **There is no location.** `navigator.geolocation` is always refused in an app:

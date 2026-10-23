@@ -16,7 +16,7 @@
  * mounted and therefore which app is speaking.
  *
  * A message with `push` and no `id` is the renderer saying something changed;
- * it carries no data, so the app reads it again through the bridge and every
+ * it carries no data (but record:level's loudness), so the app reads it again through the bridge and every
  * refusal still applies.
  */
 import { APP_LOG_MAX_TEXT } from '../shared/store'
@@ -36,7 +36,7 @@ export const BRIDGE_JS = `(() => {
     // A push has a topic and no id: something the app can read has changed.
     if (typeof msg.push === 'string') {
       for (const fn of listeners.get(msg.push) || []) {
-        try { fn() } catch (err) { console.error(err) }
+        try { fn(msg.value) } catch (err) { console.error(err) }
       }
       return
     }
@@ -100,6 +100,35 @@ export const BRIDGE_JS = `(() => {
     listeners.get(topic).add(fn)
     return () => listeners.get(topic).delete(fn)
   }
+  // holi.fetch's bodies cross to Holi as base64.
+  const toBase64 = async (blob) => {
+    const bytes = new Uint8Array(await blob.arrayBuffer())
+    if (bytes.toBase64) return bytes.toBase64()
+    let s = ''
+    for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000))
+    return btoa(s)
+  }
+  const fromBase64 = (b64) =>
+    Uint8Array.fromBase64 ? Uint8Array.fromBase64(b64) : Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))
+  const packBody = async (body) => {
+    if (body == null) return undefined
+    if (typeof body === 'string') return { kind: 'text', text: body }
+    if (body instanceof URLSearchParams) return { kind: 'text', text: body.toString() }
+    if (body instanceof Blob) return { kind: 'bytes', type: body.type, base64: await toBase64(body) }
+    if (body instanceof ArrayBuffer || ArrayBuffer.isView(body)) {
+      return { kind: 'bytes', type: '', base64: await toBase64(new Blob([body])) }
+    }
+    if (body instanceof FormData) {
+      const entries = []
+      for (const [name, value] of body.entries()) {
+        entries.push(typeof value === 'string'
+          ? { name, value }
+          : { name, filename: value.name || 'blob', type: value.type, base64: await toBase64(value) })
+      }
+      return { kind: 'form', entries }
+    }
+    throw new Error('holi.fetch: unsupported body')
+  }
   const caches = new Map()
   window.holi = {
     docs: {
@@ -141,6 +170,38 @@ export const BRIDGE_JS = `(() => {
     // A secret from the vault's .env (.env.local wins), or null when unset:
     // only the names app.yaml lists under env.
     env: (name) => call('env.get', { name }),
+    // The microphone and the computer's sound, recorded by Holi (this frame may
+    // not): needs dangerously-allow: [recording]. start({ microphone, system })
+    // (both default true); stop() resolves the audio as a Blob.
+    record: {
+      start: (opts) => call('record.start', opts || {}),
+      stop: () => call('record.stop'),
+      // fn(level) about 20 times a second while recording, level 0..1.
+      onLevel: (fn) => on('record:level', fn),
+      // fn(bands): 32 numbers 0..1, lowest pitch first, about 20 times a second.
+      onSpectrum: (fn) => on('record:spectrum', fn),
+    },
+    // fetch(), made by Holi, which this frame's origin cannot: needs
+    // dangerously-allow: [network] and the host in app.yaml's hosts. Resolves
+    // a Response, as fetch does.
+    fetch: async (url, init) => {
+      init = init || {}
+      const headers = {}
+      new Headers(init.headers || {}).forEach((v, k) => { headers[k] = v })
+      const answer = await call('net.fetch', {
+        url: String(url),
+        method: init.method || 'GET',
+        headers,
+        body: await packBody(init.body),
+      })
+      const bytes = fromBase64(answer.base64)
+      const empty = [101, 204, 205, 304].includes(answer.status)
+      return new Response(empty ? null : bytes, {
+        status: answer.status,
+        statusText: answer.statusText,
+        headers: answer.headers,
+      })
+    },
     on,
     // A line in the app's log, for whoever debugs it next.
     log: (...parts) => report('info', parts),

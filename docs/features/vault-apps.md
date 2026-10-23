@@ -127,7 +127,20 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   that sync to every member, or send it over the network. So the app declares
   `dangerously-allow: [mail, calendar]` in `app.yaml`, or as a map giving each one a reason
   (`{ calendar: To show your next meeting }`, plain text, at most 200 characters) that the dialog
-  quotes as the developer's explanation (without the flag the call fails and names it), and each person approves the app in a dialog before its frame loads. The approval is
+  quotes as the developer's explanation (without the flag the call fails and names it), and each person approves the app in a dialog before its frame loads. `recording` is the
+  third affordance, and the one the renderer answers: Chromium refuses media capture to an opaque
+  origin, so an app cannot record in its frame. `holi.record.start({ microphone, system })` and
+  `stop()` are `RENDERER_METHODS`: `AppFrame` checks the grant and records in Holi's own document
+  (`renderer/recorder.ts`), mixing the microphone with a share of the main screen's sound, and
+  `stop` hands the frame the audio as a `Blob`. While it records, `AppFrame` pushes
+  `record:level` and `record:spectrum` (32 bands, numbers only, about 20 times a second) for a
+  live waveform, never any audio. Main answers `getDisplayMedia` for a top-level
+  document only, with the main screen and its system audio (`audio: 'loopback'`, on macOS
+  through Chromium's `MacCatapLoopbackAudioForScreenShare`). `network` is the fourth:
+  `holi.fetch(url, init)` is `net.fetch` (`main/net.ts`), made by main, which has no CORS, for an
+  app whose frame (origin `null`) would be refused by most APIs. It reaches only the hosts the
+  manifest lists in `hosts` (exact hostnames, https only, no redirects), with nothing of Holi's
+  added to the request; bodies cross the bridge as base64, up to 100 MB. The approval is
   kept in main (`userData/app-grants.json`), never the renderer, which is the process running the
   app. It lapses after 30 days and whenever the app's code (anything but `data/`) changes, whoever
   changed it: approving a teammate's app approves that code, not what it becomes after a pull. A
@@ -380,3 +393,5 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   `packages/shared/src/app-store.ts` (where records and the log live, the record format and the
   field merge): the bundle grammar core keeps, because a synced vault holds bundles whatever
   this machine runs; `packages/shared/src/path-safety.ts` (`isAgentSurfacePath`).
+
+**Transcribe** is a first-party plugin (`plugins/transcribe/`), off by default, that seeds one app: `Transcribe.local.app`, which records an online meeting (microphone and meeting sound) and sends it to syv.ai for a transcript. It asks for `recording` and `network` through its manifest like any app. The `.local.` keeps the bundle, the recorded meetings and the API key the app stores on this machine, out of git; the bundle is seeded once. It requires Vault apps, since the app runs there, and a signed build carries the microphone entitlement (`build/entitlements.mac.plist`) for it. Turning Transcribe off leaves the folder where it is.
