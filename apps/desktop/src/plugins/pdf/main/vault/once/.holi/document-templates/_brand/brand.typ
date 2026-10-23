@@ -41,6 +41,12 @@
   )
 }
 
+// A level-2 section's number, "1.", "2.", ..., at `loc`: how many level-2
+// headings there are up to and including it. Counted rather than kept in a
+// counter so a table of contents can number its entries too, and it runs
+// through the whole document, never restarting at a level-1 heading.
+#let sektion(loc) = str(query(heading.where(level: 2).before(loc)).len()) + "."
+
 // ---- Brand typography/tables, applied to `body` ----
 // Call as `with-brand(content)`; the set/show rules below wrap `content`.
 #let with-brand(body) = {
@@ -54,7 +60,6 @@
   show quote.where(block: true): it => pad(left: 0.7em, it.body)
 
   set heading(numbering: none)
-  let seccount = counter("sektion")
   // Level 1 = document title.
   show heading.where(level: 1): it => {
     set text(size: 28pt, weight: 800, fill: ink)
@@ -63,11 +68,10 @@
   }
   // Level 2 = numbered sections (1., 2., ...).
   show heading.where(level: 2): it => {
-    seccount.step()
     set text(size: 22pt, weight: 800, fill: ink)
     set par(justify: false, leading: 0.3em)
     block(above: 1.5em, below: 1.0em)[
-      #context seccount.display("1"). #h(0.3em) #it.body
+      #context sektion(here()) #h(0.3em) #it.body
     ]
   }
   // Level 3 = subheadings.
