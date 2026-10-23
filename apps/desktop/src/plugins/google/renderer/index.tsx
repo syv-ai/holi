@@ -10,6 +10,8 @@ import { googleConnectedAtom } from './account'
 import { AgendaView } from './AgendaView'
 import { ConnectionsSection } from './ConnectionsSection'
 import { MailView } from './MailView'
+import { CalendarView } from './calendar/CalendarView'
+import { MailShell } from './mail/app-shell'
 
 /** The Agenda tab, opened on the view this machine's `agendaView` asks for. */
 function AgendaSurface(): React.JSX.Element {
@@ -22,6 +24,24 @@ export const googleRenderer: RendererPlugin = {
   surfaces: [
     { kind: 'mail', label: 'Mail', icon: Mail, render: MailView, homeable: true },
     { kind: 'agenda', label: 'Agenda', icon: CalendarDays, render: AgendaSurface, homeable: true },
+  ],
+  sidebarApps: [
+    {
+      id: 'mail',
+      label: 'Mail',
+      icon: Mail,
+      order: 10,
+      render: MailShell,
+      visible: googleConnectedAtom,
+    },
+    {
+      id: 'calendar',
+      label: 'Calendar',
+      icon: CalendarDays,
+      order: 20,
+      render: CalendarView,
+      visible: googleConnectedAtom,
+    },
   ],
   rail: [
     { surface: 'mail', order: 40, visible: googleConnectedAtom },

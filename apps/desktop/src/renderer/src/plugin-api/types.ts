@@ -289,6 +289,23 @@ export interface AgentsStatus {
   working: number
 }
 
+/**
+ * An app that takes the window over from the files (Mail, Calendar): listed at
+ * the foot of the sidebar, above the profile. Picking it folds the files
+ * sidebar to its rail and shows `render` beside it, which brings its own
+ * sidebar; picking anything of the files' brings them back.
+ */
+export interface SidebarApp {
+  id: string
+  label: string
+  icon: IconGlyph
+  /** Its place among every plugin's apps, lowest first. */
+  order: number
+  render: ComponentType
+  /** Listed only while true (an account it needs is connected). */
+  visible?: Atom<boolean>
+}
+
 export interface AgentsMode {
   sidebar: ComponentType
   main: ComponentType
@@ -337,6 +354,8 @@ export interface RendererPlugin {
    * it (the agent); without it the toggle is not shown.
    */
   agentsMode?: AgentsMode
+  /** Apps it lists at the foot of the sidebar (`SidebarApp`). */
+  sidebarApps?: readonly SidebarApp[]
   /** Its additions to the Agents mode another plugin provides. */
   agentsSlot?: AgentsSlot
   /**

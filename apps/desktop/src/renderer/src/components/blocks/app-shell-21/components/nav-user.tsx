@@ -37,6 +37,8 @@ import {
   SquareDashedIcon,
   SquareIcon,
   LogOutIcon,
+  BugIcon,
+  HelpCircleIcon,
   MoreHorizontalIcon,
 } from "lucide-react"
 
@@ -192,6 +194,31 @@ function AccountMenuContent({ isMobile }: { isMobile: boolean }) {
             </div>
           </DropdownMenuItem>
         ) : null}
+      </DropdownMenuGroup>
+
+      <DropdownMenuSeparator />
+
+      <DropdownMenuGroup>
+        <DropdownMenuItem
+          onSelect={() =>
+            void window.holi.openExternal(
+              "https://github.com/syv-ai/holi/issues/new"
+            )
+          }
+        >
+          <BugIcon aria-hidden="true" />
+          File issue
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          onSelect={() =>
+            void window.holi.openExternal(
+              "https://github.com/syv-ai/holi/tree/main/docs"
+            )
+          }
+        >
+          <HelpCircleIcon aria-hidden="true" />
+          Help
+        </DropdownMenuItem>
       </DropdownMenuGroup>
 
       <DropdownMenuSeparator />

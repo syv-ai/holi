@@ -28,6 +28,7 @@ export type {
   RendererPlugin,
   SettingsSection,
   SettingsSectionHeading,
+  SidebarApp,
   PaletteItem,
   Surface,
   SurfaceTabLook,

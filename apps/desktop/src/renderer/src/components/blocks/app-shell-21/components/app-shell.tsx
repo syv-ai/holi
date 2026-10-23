@@ -24,6 +24,7 @@ import type { Move } from "@/lib/tree-actions"
 import { BOARD_TAB, useNewDocument } from "./documents-section"
 import { MobileHeader } from "./mobile-header"
 import { SiteHeader } from "./site-header"
+import { useSidebarApps } from "./sidebar-apps"
 import { ThreadSidebar } from "./thread-sidebar"
 import { leadWidth, TitleBar } from "./title-bar"
 
@@ -59,6 +60,12 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
   const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_WIDTH)
   /** Armed on the first resize: any earlier and the first layout animates in. */
   const [animate, setAnimate] = useState(false)
+  const apps = useSidebarApps()
+  /** The app holding the window (Mail, Calendar), or null for the files. */
+  const [app, setApp] = useState<string | null>(null)
+  /** Whether the files sidebar was open when an app took over, so leaving
+   *  the app gives it back as it was. */
+  const openBeforeApp = useRef(false)
 
   useEffect(() => {
     return () => {
@@ -87,6 +94,35 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
     settleOpen(next)
     if (next) panel.expand()
     else panel.collapse()
+  }
+
+  /** An app folds the files sidebar to its rail and brings its own. */
+  function openApp(id: string) {
+    setMobileNavOpen(false)
+    if (id === app) return
+    const panel = sidebarPanel.current
+    if (app === null) openBeforeApp.current = !!panel && !panel.isCollapsed()
+    setApp(id)
+    if (panel && !panel.isCollapsed()) toggleSidebar()
+  }
+
+  /** Back to the files: the sidebar opens again if the app had folded it. */
+  function leaveApp() {
+    if (app === null) return
+    setApp(null)
+    if (openBeforeApp.current && sidebarPanel.current?.isCollapsed()) {
+      toggleSidebar()
+    }
+  }
+
+  /** The band's toggle and the divider: opening the files leaves any app. */
+  function toggleFiles() {
+    if (app !== null && sidebarPanel.current?.isCollapsed()) {
+      setApp(null)
+      toggleSidebar()
+      return
+    }
+    toggleSidebar()
   }
 
   const tabs = openTabIds.map((id) => ({
@@ -125,8 +161,14 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
   }
 
   function handleSelectThread(id: string) {
+    leaveApp()
     openTab(id)
     setMobileNavOpen(false)
+  }
+
+  function selectTab(id: string) {
+    leaveApp()
+    setActiveThreadId(id)
   }
 
   /** A moved file's tab follows it to its new path. */
@@ -147,40 +189,45 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
   const sidebar = (
     <ThreadSidebar
       collapsed={false}
-      onToggle={isMobile ? () => setMobileNavOpen(false) : toggleSidebar}
+      onToggle={isMobile ? () => setMobileNavOpen(false) : toggleFiles}
       onOpenSearch={() => setSearchOpen(true)}
       activeId={activeThreadId}
       onOpen={handleSelectThread}
       onMoved={retargetTabs}
       onNewDocument={handleNewChat}
       onAddVault={onAddVault}
+      activeApp={app}
+      onOpenApp={openApp}
     />
   )
 
   const rail = (
     <ThreadSidebar
       collapsed
-      onToggle={toggleSidebar}
+      onToggle={toggleFiles}
       onOpenSearch={() => setSearchOpen(true)}
       activeId={activeThreadId}
       onOpen={handleSelectThread}
       onMoved={retargetTabs}
       onNewDocument={handleNewChat}
       onAddVault={onAddVault}
+      activeApp={app}
+      onOpenApp={openApp}
     />
   )
 
   const header = (
     <SiteHeader
       tabs={tabs}
-      activeTabId={activeThreadId}
-      onSelectTab={setActiveThreadId}
+      activeTabId={app === null ? activeThreadId : null}
+      onSelectTab={selectTab}
       onCloseTab={closeTab}
       onNewTab={handleNewChat}
       onCloseAllTabs={closeAllTabs}
     />
   )
 
+  const AppView = apps.find((candidate) => candidate.id === app)?.render
   const main = (
     <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col">
       {/* On desktop the header rides in the title band above both columns. */}
@@ -191,7 +238,18 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
       ) : null}
       {/* The landmark stays with the shell, so whatever fills the view
           inherits it. */}
-      <main className="flex min-h-0 flex-1 flex-col" />
+      <main className="flex min-h-0 flex-1 flex-col">
+        {/* An app arrives from the rail's edge, where the files just folded
+            away: once per switch, keyed on the app. */}
+        {AppView ? (
+          <div
+            key={app}
+            className="animate-in fade-in-0 slide-in-from-left-3 motion-reduce:slide-in-from-left-0 flex min-h-0 flex-1 flex-col duration-200 ease-[cubic-bezier(0.22,1,0.36,1)]"
+          >
+            <AppView />
+          </div>
+        ) : null}
+      </main>
     </div>
   )
 
@@ -200,7 +258,7 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
     <TooltipProvider>
       <SidebarProvider
         open={sidebarOpen}
-        onOpenChange={toggleSidebar}
+        onOpenChange={toggleFiles}
         className="bg-background text-foreground h-svh min-h-0 w-full"
       >
         {isMobile ? (
@@ -236,7 +294,7 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
               sidebarOpen={sidebarOpen}
               sidebarWidth={sidebarWidth}
               leadRef={leadRef}
-              onToggleSidebar={toggleSidebar}
+              onToggleSidebar={toggleFiles}
               onOpenSearch={() => setSearchOpen(true)}
             >
               {header}
@@ -320,7 +378,7 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
                 onClick={(event) => {
                   const moved = Math.abs(event.clientX - (pressX.current ?? 0))
                   if (moved > 4) return
-                  toggleSidebar()
+                  toggleFiles()
                 }}
                 className="hover:bg-primary data-[separator=hover]:bg-primary data-[separator=active]:bg-primary hover:[&>div]:bg-primary [&[data-separator=hover]>div]:bg-primary [&[data-separator=active]>div]:bg-primary relative z-10 cursor-col-resize transition-colors after:w-3 [&>div]:transition-colors"
               />

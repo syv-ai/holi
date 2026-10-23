@@ -22,9 +22,8 @@ import { BOARD_TAB, DocumentsNav, FilesSection } from "./documents-section"
 import { NavUser } from "./nav-user"
 import { ReuiMark } from "./reui-mark"
 import { VaultSwitcher } from "./vault-switcher"
+import { SidebarAppItem, useSidebarApps } from "./sidebar-apps"
 import {
-  BugIcon,
-  HelpCircleIcon,
   PanelLeftIcon,
   PlusIcon,
   SearchIcon,
@@ -32,21 +31,6 @@ import {
 } from "lucide-react"
 
 type SidebarSection = "documents" | "agents"
-
-const SECONDARY_LINKS = [
-  {
-    id: "file-issue",
-    label: "File issue",
-    href: "https://github.com/syv-ai/holi/issues/new",
-    icon: <BugIcon aria-hidden="true" />,
-  },
-  {
-    id: "help",
-    label: "Help",
-    href: "https://github.com/syv-ai/holi/tree/main/docs",
-    icon: <HelpCircleIcon aria-hidden="true" />,
-  },
-]
 
 const RAIL_BUTTON =
   "hover:bg-foreground/5 data-active:bg-foreground/10 data-active:hover:bg-foreground/12 size-8 p-2 [&>span:last-child]:sr-only"
@@ -60,6 +44,8 @@ export function ThreadSidebar({
   onAddVault,
   onToggle,
   onOpenSearch,
+  activeApp,
+  onOpenApp,
 }: {
   /** The open tab: a vault path, or the board. */
   activeId: string | null
@@ -71,7 +57,11 @@ export function ThreadSidebar({
   onAddVault: () => void
   onToggle: () => void
   onOpenSearch: () => void
+  /** The app holding the window (Mail, Calendar), or null for the files. */
+  activeApp: string | null
+  onOpenApp: (id: string) => void
 }) {
+  const apps = useSidebarApps()
   const [section, setSection] = useState<SidebarSection>("documents")
   const remote = useAtomValue(activeRemoteAtom)
   /** Off until the first switch, so the sidebar's first paint is never held
@@ -130,17 +120,15 @@ export function ThreadSidebar({
 
         <SidebarFooter className="gap-1 px-2 pb-3">
           <SidebarMenu className="gap-0.5">
-            {SECONDARY_LINKS.map((link) => (
-              <SidebarMenuItem key={link.id}>
-                <SidebarMenuButton
-                  tooltip={link.label}
-                  onClick={() => void window.holi.openExternal(link.href)}
-                  className={RAIL_BUTTON}
-                >
-                  {link.icon}
-                  <span>{link.label}</span>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
+            {apps.map((app) => (
+              <SidebarAppItem
+                key={app.id}
+                app={app}
+                collapsed
+                active={app.id === activeApp}
+                onSelect={onOpenApp}
+                className={RAIL_BUTTON}
+              />
             ))}
           </SidebarMenu>
           <NavUser collapsed />
@@ -235,18 +223,17 @@ export function ThreadSidebar({
       </SidebarContent>
 
       <SidebarFooter className="gap-2">
-        {/* Secondary links: useful, but never competing with the main nav. */}
+        {/* Apps that take the window over (Mail, Calendar), above the profile. */}
         <SidebarMenu className="gap-0.5">
-          {SECONDARY_LINKS.map((link) => (
-            <SidebarMenuItem key={link.id}>
-              <SidebarMenuButton
-                size="sm"
-                onClick={() => void window.holi.openExternal(link.href)}
-                className="text-muted-foreground hover:text-foreground hover:bg-foreground/5"
-              >
-                <span>{link.label}</span>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
+          {apps.map((app) => (
+            <SidebarAppItem
+              key={app.id}
+              app={app}
+              collapsed={false}
+              active={app.id === activeApp}
+              onSelect={onOpenApp}
+              className="hover:bg-foreground/5 data-active:bg-foreground/10 data-active:hover:bg-foreground/12"
+            />
           ))}
         </SidebarMenu>
 
