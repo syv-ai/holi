@@ -73,7 +73,13 @@ export default defineConfig({
         plugins: [react()],
         test: {
           name: 'dom',
-          include: ['src/renderer/**/*.test.tsx', 'src/plugins/**/*.test.tsx'],
+          // `.test.ts` too: pure renderer modules (the empty view's arcade)
+          // test without a component, and nothing else picks them up.
+          include: [
+            'src/renderer/**/*.test.tsx',
+            'src/renderer/**/*.test.ts',
+            'src/plugins/**/*.test.tsx',
+          ],
           environment: 'jsdom',
           setupFiles: ['test/setup.dom.ts'],
           // `codemirror-markdown-tables` depends on `@mobily/ts-belt`, whose ESM

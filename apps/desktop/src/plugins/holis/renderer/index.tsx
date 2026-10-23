@@ -12,7 +12,7 @@ import { HoliDialogs } from './HoliDialogs'
 import { HoliPage } from './HoliPage'
 import { HolisInbox } from './HolisInbox'
 import { HolisSection } from './HolisSection'
-import { holiEvents, holisStatusAtom, holisVault } from './state'
+import { holiEvents, holisArcadeCastAtom, holisStatusAtom, holisVault } from './state'
 
 export const holisRenderer: RendererPlugin = {
   info: HOLIS_INFO,
@@ -29,4 +29,6 @@ export const holisRenderer: RendererPlugin = {
   // Send to Holi, in a document's Agent menu.
   documentActions: DocumentHoliActions,
   vault: holisVault,
+  // Its Holis play the empty view's arcade.
+  arcadeCast: holisArcadeCastAtom,
 }

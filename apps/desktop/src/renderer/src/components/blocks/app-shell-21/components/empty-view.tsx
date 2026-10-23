@@ -1,4 +1,4 @@
-import { useMemo, useRef } from "react"
+import { useMemo, useRef, useState } from "react"
 import { useAtomValue, useSetAtom } from "jotai"
 import { toast } from "sonner"
 import { isHiddenPath, type DocMeta } from "@holi/shared"
@@ -11,6 +11,7 @@ import {
 } from "lucide-react"
 
 import { AsciiWake } from "@/components/bencho/ASCIIWake"
+import { HoliArcade } from "@/components/monocode/arcade/HoliArcade"
 import { Button } from "@/components/ui/button"
 import {
   Item,
@@ -26,6 +27,7 @@ import { cn } from "@/lib/cn"
 import { relativeTime } from "@/lib/relative-time"
 import { nowAtom, todayAtom } from "@/state/clock"
 import { ensureTodaysDailyAtom } from "@/state/daily"
+import { arcadeCastAtom, gridArcadeAtom } from "@/state/grid-arcade"
 import { openTaskCountAtom, overdueTaskCountAtom } from "@/state/tasks"
 import {
   activeRemoteAtom,
@@ -84,6 +86,10 @@ export function EmptyView({
   const openTasks = useAtomValue(openTaskCountAtom)
   const overdue = useAtomValue(overdueTaskCountAtom)
   const ensureDaily = useSetAtom(ensureTodaysDailyAtom)
+  const arcadeOn = useAtomValue(gridArcadeAtom)
+  const cast = useAtomValue(arcadeCastAtom)
+  /** While someone plays, the board is on top and the content steps out. */
+  const [playing, setPlaying] = useState(false)
 
   const vaultName =
     vaults.find((vault) => vault.remote === remote)?.name ?? remote
@@ -102,101 +108,118 @@ export function EmptyView({
   return (
     <div
       data-slot="empty-view"
-      className="@container flex min-h-0 flex-1 flex-col overflow-y-auto"
+      className="@container relative isolate flex min-h-0 flex-1 flex-col"
     >
-      {/* No entrance: a New tab opens many times a day, and opening a tab
+      {/* The Holis' arcade, under everything and filling the pane: content
+          wins, so it takes no pointer until someone presses Play. The first
+          of the fun to go as the pane narrows (below 48rem), before the
+          logo; machine-local, on by default (`gridArcade`). */}
+      {arcadeOn ? (
+        <HoliArcade
+          cast={cast}
+          onPlayingChange={setPlaying}
+          className="hidden @3xl:block"
+        />
+      ) : null}
+      {/* The content scrolls over a board that stays put. */}
+      <div
+        inert={playing}
+        className="relative z-10 flex min-h-0 flex-1 flex-col overflow-y-auto"
+      >
+        {/* No entrance: a New tab opens many times a day, and opening a tab
           lands at once everywhere else in Holi. */}
-      {/* Sized by the pane, not the window, since the sidebar takes its share:
+        {/* Sized by the pane, not the window, since the sidebar takes its share:
           one column when narrow, and from 56rem the mark stands beside the
           day and what you would do, with what was written across both. */}
-      <div className="mx-auto grid w-full max-w-lg gap-10 px-6 pt-[max(3rem,12vh)] pb-16 @4xl:max-w-5xl @4xl:grid-cols-[auto_minmax(0,1fr)] @4xl:items-start @4xl:gap-x-16">
-        {/* The mark, in dots the pointer drags a wake through: it moves only
+        <div className="mx-auto grid w-full max-w-lg gap-10 px-6 pt-[max(3rem,12vh)] pb-16 @4xl:max-w-5xl @4xl:grid-cols-[auto_minmax(0,1fr)] @4xl:items-start @4xl:gap-x-16">
+          {/* The mark, in dots the pointer drags a wake through: it moves only
             under the hand, so it costs nothing while the view is read. The
             first thing to go when the pane narrows. */}
-        <AsciiWake
-          shape="holi"
-          size={8}
-          label="Holi"
-          className="hidden @xl:block"
-        />
+          {/* The arcade keeps clear of it (`data-arcade-keepout`): the
+            board dims to a whisper here and puts nothing on it, so the
+            two sets of dots never fight. */}
+          <div data-arcade-keepout="" className="hidden w-fit @xl:block">
+            <AsciiWake shape="holi" size={8} label="Holi" />
+          </div>
 
-        {/* The day and the board head what you would do next, beside the
+          {/* The day and the board head what you would do next, beside the
             mark, so the two columns come out the same height. */}
-        <div className="flex flex-col gap-8">
-          <header className="flex flex-col gap-1">
-            {vaultName ? (
-              <p className="text-muted-foreground text-xs font-medium">
-                {vaultName}
+          <div className="flex flex-col gap-8">
+            <header className="flex flex-col gap-1">
+              {vaultName ? (
+                <p className="text-muted-foreground text-xs font-medium">
+                  {vaultName}
+                </p>
+              ) : null}
+              <h1 className="text-2xl leading-tight font-semibold tracking-[-0.02em]">
+                {dayLabel(today)}
+              </h1>
+              <p className="text-muted-foreground text-sm">
+                {openTasks === 0 ? (
+                  "Nothing open on the board."
+                ) : (
+                  <>
+                    <span className="text-foreground font-medium tabular-nums">
+                      {openTasks}
+                    </span>{" "}
+                    open {openTasks === 1 ? "task" : "tasks"}
+                    {overdue > 0 ? (
+                      <>
+                        ,{" "}
+                        <span className="text-foreground font-medium tabular-nums">
+                          {overdue}
+                        </span>{" "}
+                        overdue
+                      </>
+                    ) : null}
+                    .
+                  </>
+                )}
               </p>
-            ) : null}
-            <h1 className="text-2xl leading-tight font-semibold tracking-[-0.02em]">
-              {dayLabel(today)}
-            </h1>
-            <p className="text-muted-foreground text-sm">
-              {openTasks === 0 ? (
-                "Nothing open on the board."
-              ) : (
-                <>
-                  <span className="text-foreground font-medium tabular-nums">
-                    {openTasks}
-                  </span>{" "}
-                  open {openTasks === 1 ? "task" : "tasks"}
-                  {overdue > 0 ? (
-                    <>
-                      ,{" "}
-                      <span className="text-foreground font-medium tabular-nums">
-                        {overdue}
-                      </span>{" "}
-                      overdue
-                    </>
-                  ) : null}
-                  .
-                </>
-              )}
-            </p>
-          </header>
+            </header>
 
-          {/* Commands as plain rows under a heading, the way an editor's
+            {/* Commands as plain rows under a heading, the way an editor's
               welcome page lists them: the heading, not a fill, sets them
               apart from the documents. Kept to a short column, so Board's
               count stays beside it. */}
-          <section
-            aria-labelledby="start"
-            className="flex flex-col gap-2 @4xl:max-w-sm"
-          >
-            <h2
-              id="start"
-              className="text-muted-foreground text-xs font-medium"
+            <section
+              aria-labelledby="start"
+              className="flex flex-col gap-2 @4xl:max-w-sm"
             >
-              Start
-            </h2>
-            <ItemGroup className="gap-0.5 has-data-[size=xs]:gap-0.5">
-              <StartRow
-                icon={<FilePlusIcon />}
-                label="New document"
-                onClick={onNewDocument}
-              />
-              <StartRow
-                icon={<CalendarDaysIcon />}
-                label="Today’s note"
-                onClick={() => void openToday()}
-              />
-              <StartRow
-                icon={<SquareKanbanIcon />}
-                label="Board"
-                count={openTasks}
-                onClick={() => onOpen(BOARD_TAB)}
-              />
-              <StartRow
-                icon={<SearchIcon />}
-                label="Search"
-                onClick={onOpenSearch}
-              />
-            </ItemGroup>
-          </section>
-        </div>
+              <h2
+                id="start"
+                className="text-muted-foreground text-xs font-medium"
+              >
+                Start
+              </h2>
+              <ItemGroup className="gap-0.5 has-data-[size=xs]:gap-0.5">
+                <StartRow
+                  icon={<FilePlusIcon />}
+                  label="New document"
+                  onClick={onNewDocument}
+                />
+                <StartRow
+                  icon={<CalendarDaysIcon />}
+                  label="Today’s note"
+                  onClick={() => void openToday()}
+                />
+                <StartRow
+                  icon={<SquareKanbanIcon />}
+                  label="Board"
+                  count={openTasks}
+                  onClick={() => onOpen(BOARD_TAB)}
+                />
+                <StartRow
+                  icon={<SearchIcon />}
+                  label="Search"
+                  onClick={onOpenSearch}
+                />
+              </ItemGroup>
+            </section>
+          </div>
 
-        <RecentlyEdited onOpen={onOpen} onNewDocument={onNewDocument} />
+          <RecentlyEdited onOpen={onOpen} onNewDocument={onNewDocument} />
+        </div>
       </div>
     </div>
   )

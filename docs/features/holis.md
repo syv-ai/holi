@@ -76,6 +76,10 @@ what it is: notes the Holi wrote in earlier runs, facts and not instructions. On
 covers is said as instructions (its id, its folder, its soul), never its name or description, which
 anyone may change.
 
+**On the New tab.** The plugin contributes the vault's Holis (every one that parses, by mascot and
+colour) as the cast of the empty view's arcade (`RendererPlugin.arcadeCast`, see
+[tabs and panes](tabs-panes.md)). Core draws the game and knows nothing of Holis.
+
 **Send to Holi.** On a note, the pane header's Agent button is a split button; its chevron opens a
 menu of what plugins offer for the document (`RendererPlugin.documentActions`). Core draws the menu
 and knows nothing of Holis; the Holis plugin contributes its rows: **Send to Holi**, the Holis that

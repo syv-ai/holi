@@ -408,6 +408,7 @@ export default [
       'src/renderer/src/components/reui/**/*.{ts,tsx}',
       'src/renderer/src/components/blocks/**/*.{ts,tsx}',
       'src/renderer/src/components/bencho/**/*.{ts,tsx}',
+      'src/renderer/src/components/monocode/**/*.{ts,tsx}',
       'src/plugins/google/renderer/calendar/**/*.{ts,tsx}',
       'src/renderer/src/components/Shell.tsx',
       'src/renderer/src/components/leave-confirm.tsx',

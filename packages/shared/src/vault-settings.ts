@@ -216,6 +216,8 @@ export interface ResolvedAppSettings {
   editorFont: EditorFont
   /** Space on an empty line opens an ask for a new agent session. */
   spaceAsksAgent: boolean
+  /** The Holis' game plays behind the empty view (a New tab). */
+  gridArcade: boolean
   hooks: VaultHooks
   maxCommittedFileBytes: number
   /** Human-readable notes about dropped keys/values, surfaced so a typo is
@@ -384,6 +386,7 @@ export type VaultSettingKey =
   | 'windowGlass'
   | 'editorFont'
   | 'spaceAsksAgent'
+  | 'gridArcade'
   | 'maxCommittedFileBytes'
 
 export interface VaultSettingDescriptor {
@@ -627,6 +630,20 @@ export const VAULT_SETTINGS: readonly VaultSetting[] = [
     default: 'frosted' as WindowGlass,
     // Machine-local, like Appearance: how see-through your window is is
     // nobody else's business.
+    target: 'local',
+    askedAtBirth: false,
+    whereToChange: LOCAL_FILE_HINT,
+    section: 'appearance',
+  },
+  {
+    key: 'gridArcade',
+    label: 'Arcade on the New tab',
+    explanation:
+      'The vault’s Holis play a small game behind an empty tab, filing papers in the outbox. Take control with the arrow keys.',
+    type: { kind: 'boolean' },
+    default: true,
+    // Machine-local, like Appearance: a game in the background is one
+    // person's taste, not the vault's.
     target: 'local',
     askedAtBirth: false,
     whereToChange: LOCAL_FILE_HINT,
