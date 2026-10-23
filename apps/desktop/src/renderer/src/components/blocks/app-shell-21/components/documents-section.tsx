@@ -374,8 +374,15 @@ export function FilesSection({
                   setDropping(false)
               }}
               onDrop={onAreaDrop}
+              // Rows fade out over the bottom padding, so the blur above has
+              // nothing sharp to stop on at the edge; at the end of the list
+              // the last row clears the fade.
+              style={{
+                maskImage:
+                  "linear-gradient(to bottom, #000 calc(100% - 3rem), transparent calc(100% - 1rem))",
+              }}
               className={cn(
-                "relative min-h-0 flex-1 overflow-y-auto pb-6 overscroll-contain rounded-md",
+                "relative min-h-0 flex-1 overflow-y-auto pb-12 overscroll-contain rounded-md",
                 "data-dropping:bg-foreground/5 data-dropping:ring-ring/50 data-dropping:ring-1"
               )}
             >
@@ -475,9 +482,9 @@ export function FilesSection({
           layers={8}
           curve="linear"
           exponential
-          tint="var(--sidebar)"
           autoHide
           zIndex={10}
+          edgeFade={0.3}
         />
       </div>
     </SidebarGroup>

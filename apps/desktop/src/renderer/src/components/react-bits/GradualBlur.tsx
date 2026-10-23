@@ -76,6 +76,9 @@ export interface GradualBlurProps {
   saturation?: number
   tint?: string
   autoHide?: boolean
+  /** Share of the ramp, at the edge, over which the blur lets go again, so it
+   *  ends without a line where the container cuts it. 0 keeps it to the edge. */
+  edgeFade?: number
   container?: Container
   hoverIntensity?: number
   duration?: number | string
@@ -98,6 +101,7 @@ const GradualBlur = ({
   saturation = 1,
   tint = 'transparent',
   autoHide = false,
+  edgeFade = 0,
   container,
   hoverIntensity = 1,
   duration = 0.3,
@@ -134,7 +138,14 @@ const GradualBlur = ({
       ]
         .filter(Boolean)
         .join(' ')
-      const mask = `linear-gradient(${direction}, transparent ${((i / count) * 100).toFixed(2)}%, #000 ${(((i + 1) / count) * 100).toFixed(2)}%)`
+      const ramp = `linear-gradient(${direction}, transparent ${((i / count) * 100).toFixed(2)}%, #000 ${(((i + 1) / count) * 100).toFixed(2)}%)`
+      // The edge fade is a second mask intersected with the ramp, so every
+      // layer lets go over the same final stretch.
+      const letGo = clamp01(edgeFade)
+      const mask =
+        letGo > 0
+          ? `${ramp}, linear-gradient(${direction}, #000 ${((1 - letGo) * 100).toFixed(2)}%, transparent 100%)`
+          : ramp
       steps.push({
         position: 'absolute',
         inset: 0,
@@ -143,6 +154,8 @@ const GradualBlur = ({
         WebkitBackdropFilter: filter,
         maskImage: mask,
         WebkitMaskImage: mask,
+        maskComposite: 'intersect',
+        WebkitMaskComposite: 'source-in',
         opacity,
         transition: `backdrop-filter ${fade}, -webkit-backdrop-filter ${fade}`,
       })
@@ -168,7 +181,19 @@ const GradualBlur = ({
           }
         : null
     return { steps, wash }
-  }, [layers, curve, strength, exponential, saturation, duration, easing, edge, opacity, tint])
+  }, [
+    layers,
+    curve,
+    strength,
+    exponential,
+    saturation,
+    duration,
+    easing,
+    edge,
+    opacity,
+    tint,
+    edgeFade,
+  ])
 
   useIsomorphicLayoutEffect(() => {
     const root = rootRef.current
