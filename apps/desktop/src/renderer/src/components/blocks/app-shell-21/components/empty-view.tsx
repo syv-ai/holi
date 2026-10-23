@@ -108,7 +108,7 @@ export function EmptyView({
           lands at once everywhere else in Holi. */}
       {/* Sized by the pane, not the window, since the sidebar takes its share:
           one column when narrow, and from 56rem the mark and the day stand
-          beside what you would do. */}
+          beside what you would do, with what was written across both. */}
       <div className="mx-auto grid w-full max-w-lg gap-10 px-6 pt-[max(3rem,12vh)] pb-16 @4xl:max-w-5xl @4xl:grid-cols-[auto_minmax(0,1fr)] @4xl:items-start @4xl:gap-x-16">
         <div className="flex flex-col gap-10">
           {/* The mark, in dots the pointer drags a wake through: it moves only
@@ -155,14 +155,14 @@ export function EmptyView({
           </header>
         </div>
 
-        <div className="flex flex-col gap-10">
-          {/* Commands, so filled tiles: on the glass a light fill reads as a
-            control, and they must not read as the list of documents under
-            them. */}
-          <ItemGroup
-            aria-label="Start"
-            className="grid grid-cols-2 gap-2 has-data-[size=sm]:gap-2"
-          >
+        {/* Commands as plain rows under a heading, the way an editor's
+            welcome page lists them: the heading, not a fill, sets them
+            apart from the documents. */}
+        <section aria-labelledby="start" className="flex flex-col gap-2">
+          <h2 id="start" className="text-muted-foreground text-xs font-medium">
+            Start
+          </h2>
+          <ItemGroup className="gap-0.5 has-data-[size=xs]:gap-0.5">
             <StartRow
               icon={<FilePlusIcon />}
               label="New document"
@@ -185,9 +185,9 @@ export function EmptyView({
               onClick={onOpenSearch}
             />
           </ItemGroup>
+        </section>
 
-          <RecentlyEdited onOpen={onOpen} onNewDocument={onNewDocument} />
-        </div>
+        <RecentlyEdited onOpen={onOpen} onNewDocument={onNewDocument} />
       </div>
     </div>
   )
@@ -210,10 +210,8 @@ function StartRow({
     <div role="listitem">
       <Item
         asChild
-        variant="muted"
-        size="sm"
-        // A press answers with the slightest give; hover stays a colour.
-        className="bg-foreground/5 hover:bg-foreground/8 focus-visible:bg-foreground/8 h-full text-start transition-[background-color,border-color,transform] duration-150 ease-[cubic-bezier(0.22,1,0.36,1)] active:scale-[0.98] motion-reduce:active:scale-100"
+        size="xs"
+        className="hover:bg-foreground/5 focus-visible:bg-foreground/5 text-start"
       >
         <button type="button" onClick={onClick}>
           <ItemMedia
@@ -224,7 +222,9 @@ function StartRow({
             {icon}
           </ItemMedia>
           <ItemContent className="min-w-0">
-            <ItemTitle className="block w-full truncate">{label}</ItemTitle>
+            <ItemTitle className="block w-full truncate font-normal">
+              {label}
+            </ItemTitle>
           </ItemContent>
           {count ? (
             <ItemActions className="text-muted-foreground text-xs tabular-nums">
@@ -264,7 +264,10 @@ function RecentlyEdited({
   )
 
   return (
-    <section aria-labelledby="recently-edited" className="flex flex-col gap-2">
+    <section
+      aria-labelledby="recently-edited"
+      className="flex flex-col gap-2 @4xl:col-span-2"
+    >
       <h2
         id="recently-edited"
         className="text-muted-foreground text-xs font-medium"
