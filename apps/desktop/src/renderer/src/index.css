@@ -199,20 +199,3 @@
 [data-platform='mac']:not([data-fullscreen]) [data-window-band='lights'] {
   padding-inline-start: 5rem;
 }
-
-/* ── Desk ─────────────────────────────────────────────────────────────────
- * The empty view's light (`empty-view.tsx`): sign-in's warm-into-cool light
- * from the top-left (`AmbientBackdrop`), held still, because a moving light
- * looked at all day would nag. It fades out before the centred column, so
- * nothing is written on it, and it lays over whatever the glass shows. */
-[data-slot='desk-light'] {
-  --desk-warm: oklch(0.86 0.13 75 / 0.16);
-  --desk-cool: oklch(0.81 0.09 245 / 0.08);
-  background:
-    radial-gradient(55% 50% at 0% 0%, var(--desk-warm), transparent),
-    radial-gradient(75% 70% at 0% 0%, var(--desk-cool), transparent);
-}
-[data-theme='light'] [data-slot='desk-light'] {
-  --desk-warm: oklch(0.86 0.13 75 / 0.3);
-  --desk-cool: oklch(0.81 0.09 245 / 0.16);
-}

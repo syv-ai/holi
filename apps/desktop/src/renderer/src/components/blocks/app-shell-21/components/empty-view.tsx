@@ -60,9 +60,10 @@ function dayLabel(today: string): string {
 /**
  * What the view shows when nothing is open, or in a New tab: where you are
  * (the vault and the day), the board in one line, the few things you would do
- * next, and what was written most recently. A still light from the top-left
- * corner (index.css, Desk) carries the sign-in's light into the shell; the
- * text stays clear of it.
+ * next, and what was written most recently.
+ *
+ * Anchored to the top, not centred: a centred column would jump each time
+ * the recent list changes length, the first load included.
  */
 export function EmptyView({
   onOpen,
@@ -98,16 +99,10 @@ export function EmptyView({
   return (
     <div
       data-slot="empty-view"
-      className="relative isolate flex min-h-0 flex-1 flex-col overflow-y-auto"
+      className="flex min-h-0 flex-1 flex-col overflow-y-auto"
     >
-      <div
-        aria-hidden="true"
-        data-slot="desk-light"
-        className="pointer-events-none absolute inset-0 -z-10"
-      />
-      {/* Sits a little above the middle, where the eye lands first. */}
-      <div className="m-auto flex w-full max-w-md flex-col gap-8 px-4 pt-12 pb-24 animate-in fade-in-0 slide-in-from-bottom-1 duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:slide-in-from-bottom-0">
-        <header className="flex flex-col gap-1 px-2.5">
+      <div className="mx-auto flex w-full max-w-lg flex-col gap-10 px-6 pt-[max(3rem,12vh)] pb-16 animate-in fade-in-0 slide-in-from-bottom-1 duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:slide-in-from-bottom-0">
+        <header className="flex flex-col gap-1">
           {vaultName ? (
             <p className="text-muted-foreground text-xs font-medium">
               {vaultName}
@@ -140,9 +135,11 @@ export function EmptyView({
           </p>
         </header>
 
+        {/* Commands, so bordered tiles: they must not read as the list of
+            documents under them. */}
         <ItemGroup
           aria-label="Start"
-          className="gap-0.5 has-data-[size=xs]:gap-0.5"
+          className="grid grid-cols-2 gap-2 has-data-[size=sm]:gap-2"
         >
           <StartRow
             icon={<FilePlusIcon />}
@@ -190,8 +187,9 @@ function StartRow({
     <div role="listitem">
       <Item
         asChild
-        size="xs"
-        className="hover:bg-foreground/5 focus-visible:bg-foreground/5 text-start"
+        variant="outline"
+        size="sm"
+        className="hover:bg-foreground/5 focus-visible:bg-foreground/5 h-full text-start"
       >
         <button type="button" onClick={onClick}>
           <ItemMedia
@@ -201,8 +199,10 @@ function StartRow({
           >
             {icon}
           </ItemMedia>
-          <ItemContent>
-            <ItemTitle className="font-normal">{label}</ItemTitle>
+          <ItemContent className="min-w-0">
+            <ItemTitle className="block w-full truncate font-normal">
+              {label}
+            </ItemTitle>
           </ItemContent>
           {count ? (
             <ItemActions className="text-muted-foreground text-xs tabular-nums">
@@ -241,7 +241,7 @@ function RecentlyEdited({
     <section aria-labelledby="recently-edited" className="flex flex-col gap-2">
       <h2
         id="recently-edited"
-        className="text-muted-foreground px-2.5 text-xs font-medium"
+        className="text-muted-foreground text-xs font-medium"
       >
         Recently edited
       </h2>
@@ -249,14 +249,15 @@ function RecentlyEdited({
         <div
           role="status"
           aria-label="Loading recent documents"
-          className="flex flex-col gap-1"
+          className="flex flex-col gap-0.5"
         >
+          {/* The height of a real row, so nothing moves when the rows land. */}
           {Array.from({ length: 3 }, (_, row) => (
-            <Skeleton key={row} className="h-11 motion-reduce:animate-none" />
+            <Skeleton key={row} className="h-9 motion-reduce:animate-none" />
           ))}
         </div>
       ) : recent.length === 0 ? (
-        <div className="flex flex-col items-start gap-3 px-2.5">
+        <div className="flex flex-col items-start gap-3">
           <p className="text-muted-foreground text-sm">
             Nothing written in this vault yet.
           </p>
@@ -306,14 +307,21 @@ function RecentRow({
           >
             {doc.kind === "daily" ? <CalendarDaysIcon /> : <FileTextIcon />}
           </ItemMedia>
-          <ItemContent className="min-w-0 gap-0.5">
-            <ItemTitle className="block w-full truncate font-normal">
+          {/* One line: the name leads, where it lives follows and gives way
+              first, and when trails in its own column. */}
+          <ItemContent className="min-w-0 flex-row items-baseline gap-2 group-data-[size=xs]/item:gap-2">
+            <ItemTitle className="block min-w-0 shrink truncate font-normal">
               {name}
             </ItemTitle>
-            <ItemDescription className="truncate">
-              {folder ? `${folder} · ${when}` : when}
-            </ItemDescription>
+            {folder ? (
+              <ItemDescription className="min-w-0 shrink-[4] truncate">
+                {folder}
+              </ItemDescription>
+            ) : null}
           </ItemContent>
+          <ItemActions className="text-muted-foreground text-xs tabular-nums">
+            {when}
+          </ItemActions>
         </button>
       </Item>
     </div>
