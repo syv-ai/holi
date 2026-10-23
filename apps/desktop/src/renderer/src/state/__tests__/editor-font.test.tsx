@@ -26,7 +26,7 @@ const settings = (editorFont: ResolvedVaultSettings['editorFont']): ResolvedVaul
   spaceAsksAgent: true,
   gridArcade: true,
   colorScheme: 'system',
-  windowGlass: 'clear',
+  windowGlass: 'frosted',
   editorFont,
   hooks: VAULT_SETTING_DEFAULTS.hooks,
   maxCommittedFileBytes: 10 * 1024 * 1024,

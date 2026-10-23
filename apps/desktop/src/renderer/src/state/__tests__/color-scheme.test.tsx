@@ -51,7 +51,7 @@ const settings = (colorScheme: ResolvedVaultSettings['colorScheme']): ResolvedVa
   spaceAsksAgent: true,
   gridArcade: true,
   colorScheme,
-  windowGlass: 'clear',
+  windowGlass: 'frosted',
   editorFont: 'mono',
   hooks: VAULT_SETTING_DEFAULTS.hooks,
   maxCommittedFileBytes: 10 * 1024 * 1024,

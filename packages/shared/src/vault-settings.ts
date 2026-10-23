@@ -627,7 +627,7 @@ export const VAULT_SETTINGS: readonly VaultSetting[] = [
         { value: 'solid', label: 'Solid' },
       ],
     },
-    default: 'clear' as WindowGlass,
+    default: 'frosted' as WindowGlass,
     // Machine-local, like Appearance: how see-through your window is is
     // nobody else's business.
     target: 'local',
