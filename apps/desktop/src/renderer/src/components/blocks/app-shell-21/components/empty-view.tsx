@@ -10,6 +10,7 @@ import {
   SquareKanbanIcon,
 } from "lucide-react"
 
+import { AsciiWake } from "@/components/bencho/ASCIIWake"
 import { Button } from "@/components/ui/button"
 import {
   Item,
@@ -43,8 +44,9 @@ export function isNewTab(id: string | null): boolean {
   return id !== null && id.startsWith(NEW_TAB_PREFIX)
 }
 
-/** How many recently edited documents the view lists. */
-const RECENT_COUNT = 5
+/** How many recently edited documents the view lists when it is wide; a
+ *  narrow one shows the first five. */
+const RECENT_COUNT = 8
 
 /** "Friday 23 October", from the clock's `YYYY-MM-DD`. */
 const DAY = new Intl.DateTimeFormat(undefined, {
@@ -100,75 +102,92 @@ export function EmptyView({
   return (
     <div
       data-slot="empty-view"
-      className="flex min-h-0 flex-1 flex-col overflow-y-auto"
+      className="@container flex min-h-0 flex-1 flex-col overflow-y-auto"
     >
       {/* No entrance: a New tab opens many times a day, and opening a tab
           lands at once everywhere else in Holi. */}
-      <div className="mx-auto flex w-full max-w-lg flex-col gap-10 px-6 pt-[max(3rem,12vh)] pb-16">
-        <header className="flex flex-col gap-1">
-          {vaultName ? (
-            <p className="text-muted-foreground text-xs font-medium">
-              {vaultName}
-            </p>
-          ) : null}
-          <h1 className="text-2xl leading-tight font-semibold tracking-[-0.02em]">
-            {dayLabel(today)}
-          </h1>
-          <p className="text-muted-foreground text-sm">
-            {openTasks === 0 ? (
-              "Nothing open on the board."
-            ) : (
-              <>
-                <span className="text-foreground font-medium tabular-nums">
-                  {openTasks}
-                </span>{" "}
-                open {openTasks === 1 ? "task" : "tasks"}
-                {overdue > 0 ? (
-                  <>
-                    ,{" "}
-                    <span className="text-foreground font-medium tabular-nums">
-                      {overdue}
-                    </span>{" "}
-                    overdue
-                  </>
-                ) : null}
-                .
-              </>
-            )}
-          </p>
-        </header>
+      {/* Sized by the pane, not the window, since the sidebar takes its share:
+          one column when narrow, and from 56rem the mark and the day stand
+          beside what you would do. */}
+      <div className="mx-auto grid w-full max-w-lg gap-10 px-6 pt-[max(3rem,12vh)] pb-16 @4xl:max-w-5xl @4xl:grid-cols-[auto_minmax(0,1fr)] @4xl:items-start @4xl:gap-x-16">
+        <div className="flex flex-col gap-10">
+          {/* The mark, in dots the pointer drags a wake through: it moves only
+            under the hand, so it costs nothing while the view is read. The
+            first thing to go when the pane narrows. */}
+          <AsciiWake
+            shape="holi"
+            size={8}
+            label="Holi"
+            className="hidden @xl:block"
+          />
 
-        {/* Commands, so filled tiles: on the glass a light fill reads as a
+          <header className="flex flex-col gap-1">
+            {vaultName ? (
+              <p className="text-muted-foreground text-xs font-medium">
+                {vaultName}
+              </p>
+            ) : null}
+            <h1 className="text-2xl leading-tight font-semibold tracking-[-0.02em]">
+              {dayLabel(today)}
+            </h1>
+            <p className="text-muted-foreground text-sm">
+              {openTasks === 0 ? (
+                "Nothing open on the board."
+              ) : (
+                <>
+                  <span className="text-foreground font-medium tabular-nums">
+                    {openTasks}
+                  </span>{" "}
+                  open {openTasks === 1 ? "task" : "tasks"}
+                  {overdue > 0 ? (
+                    <>
+                      ,{" "}
+                      <span className="text-foreground font-medium tabular-nums">
+                        {overdue}
+                      </span>{" "}
+                      overdue
+                    </>
+                  ) : null}
+                  .
+                </>
+              )}
+            </p>
+          </header>
+        </div>
+
+        <div className="flex flex-col gap-10">
+          {/* Commands, so filled tiles: on the glass a light fill reads as a
             control, and they must not read as the list of documents under
             them. */}
-        <ItemGroup
-          aria-label="Start"
-          className="grid grid-cols-2 gap-2 has-data-[size=sm]:gap-2"
-        >
-          <StartRow
-            icon={<FilePlusIcon />}
-            label="New document"
-            onClick={onNewDocument}
-          />
-          <StartRow
-            icon={<CalendarDaysIcon />}
-            label="Today’s note"
-            onClick={() => void openToday()}
-          />
-          <StartRow
-            icon={<SquareKanbanIcon />}
-            label="Board"
-            count={openTasks}
-            onClick={() => onOpen(BOARD_TAB)}
-          />
-          <StartRow
-            icon={<SearchIcon />}
-            label="Search"
-            onClick={onOpenSearch}
-          />
-        </ItemGroup>
+          <ItemGroup
+            aria-label="Start"
+            className="grid grid-cols-2 gap-2 has-data-[size=sm]:gap-2"
+          >
+            <StartRow
+              icon={<FilePlusIcon />}
+              label="New document"
+              onClick={onNewDocument}
+            />
+            <StartRow
+              icon={<CalendarDaysIcon />}
+              label="Today’s note"
+              onClick={() => void openToday()}
+            />
+            <StartRow
+              icon={<SquareKanbanIcon />}
+              label="Board"
+              count={openTasks}
+              onClick={() => onOpen(BOARD_TAB)}
+            />
+            <StartRow
+              icon={<SearchIcon />}
+              label="Search"
+              onClick={onOpenSearch}
+            />
+          </ItemGroup>
 
-        <RecentlyEdited onOpen={onOpen} onNewDocument={onNewDocument} />
+          <RecentlyEdited onOpen={onOpen} onNewDocument={onNewDocument} />
+        </div>
       </div>
     </div>
   )
@@ -277,6 +296,7 @@ function RecentlyEdited({
         <ItemGroup
           className={cn(
             "gap-0.5 has-data-[size=xs]:gap-0.5",
+            "[&>*:nth-child(n+6)]:hidden @4xl:[&>*:nth-child(n+6)]:block",
             arrived &&
               "animate-in fade-in-0 duration-200 ease-[cubic-bezier(0.22,1,0.36,1)]"
           )}
