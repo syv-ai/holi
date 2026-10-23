@@ -112,11 +112,15 @@ export const loadCommandsAtom = atom(null, async (get, set, force = false) => {
 /** Where a chat works: the clone's branch, for the composer's chips. */
 export const branchAtom = atom<string | null>(null)
 
-export const loadBranchAtom = atom(null, async (get, set) => {
+/** Asked until main answers: the composer can mount before the vault's
+ *  plugin has started in main (see `askSoon`). Returns the undo. */
+export const loadBranchAtom = atom(null, (get, set): (() => void) => {
   const remote = get(activeRemoteAtom)
-  if (remote === null) return
-  const where = await chatCap.where(remote).catch(() => ({ branch: null }))
-  set(branchAtom, where.branch)
+  if (remote === null) return () => {}
+  return askSoon(
+    () => chatCap.where(remote),
+    (where) => set(branchAtom, where.branch),
+  )
 })
 
 /** Unsent text, per composer: `new` and each session's id. */

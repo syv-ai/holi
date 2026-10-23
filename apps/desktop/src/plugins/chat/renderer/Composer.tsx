@@ -175,9 +175,7 @@ export function Composer({
   useEffect(() => {
     if (autoFocus) ref.current?.focus()
   }, [autoFocus])
-  useEffect(() => {
-    void loadBranch()
-  }, [loadBranch])
+  useEffect(() => loadBranch(), [loadBranch])
   useLayoutEffect(() => {
     const el = ref.current
     if (el === null || caretAfter.current === null) return
@@ -451,7 +449,10 @@ export function Composer({
                   className="ms-auto"
                   onClick={onStop}
                 >
-                  <SquareIcon aria-hidden="true" className="fill-current" />
+                  <SquareIcon
+                    aria-hidden="true"
+                    className="size-2.5 fill-current"
+                  />
                 </InputGroupButton>
               ) : busy ? (
                 <InputGroupButton
