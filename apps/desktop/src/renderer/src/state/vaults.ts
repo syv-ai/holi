@@ -58,6 +58,10 @@ const EMPTY_SNAPSHOT: VaultSnapshot = emptyVaultSnapshot()
  */
 export const snapshotAtom = atom<VaultSnapshot>(EMPTY_SNAPSHOT)
 
+/** False until the open vault's first snapshot arrives: an empty vault and a
+ *  loading one look alike otherwise. */
+export const snapshotLoadedAtom = atom((get) => get(snapshotAtom) !== EMPTY_SNAPSHOT)
+
 /** The doc open in the editor. */
 export const activeDocAtom = atom<DocMeta | null>(null)
 

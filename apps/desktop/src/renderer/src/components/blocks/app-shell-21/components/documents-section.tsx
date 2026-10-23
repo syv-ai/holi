@@ -1,4 +1,11 @@
-import { useEffect, useMemo, useRef, useState, type DragEvent } from "react"
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type DragEvent,
+  type ReactNode,
+} from "react"
 import { useAtom, useAtomValue, useSetAtom } from "jotai"
 import {
   dragAndDropFeature,
@@ -21,8 +28,26 @@ import {
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuSeparator,
+  ContextMenuShortcut,
+  ContextMenuSub,
+  ContextMenuSubContent,
+  ContextMenuSubTrigger,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu"
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuShortcut,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import {
   SidebarGroup,
@@ -32,6 +57,7 @@ import {
   SidebarMenuBadge,
   SidebarMenuButton,
   SidebarMenuItem,
+  SidebarMenuSkeleton,
 } from "@/components/ui/sidebar"
 import {
   Tree,
@@ -56,10 +82,15 @@ import {
   showHiddenByVaultAtom,
   showTasksByVaultAtom,
   snapshotAtom,
+  snapshotLoadedAtom,
   vaultsAtom,
 } from "@/state/vaults"
 import {
   AppWindowIcon,
+  ArrowDownIcon,
+  ArrowUpIcon,
+  EllipsisIcon,
+  FolderInputIcon,
   FileIcon,
   FileTextIcon,
   FolderIcon,
@@ -156,7 +187,22 @@ function useFiles() {
   }
 }
 
-/** New Document and Board, above the files. */
+/** The one way a failed vault action is reported: what failed, and what to do. */
+async function attempt(what: string, action: () => Promise<void>) {
+  try {
+    await action()
+  } catch {
+    toast.error(
+      `Couldn't ${what}. Check that the vault is reachable, then try again.`
+    )
+  }
+}
+
+/** The reveal curve for things that arrive (ReUI's motion rules). */
+const ARRIVE =
+  "animate-in fade-in-0 duration-200 ease-[cubic-bezier(0.22,1,0.36,1)]"
+
+/** New document and Board, above the files. */
 export function DocumentsNav({
   activeId,
   onNewDocument,
@@ -176,42 +222,162 @@ export function DocumentsNav({
           className="hover:bg-foreground/5 data-active:bg-foreground/10 data-active:hover:bg-foreground/12"
         >
           <PlusIcon aria-hidden="true" />
-          <span>New Document</span>
+          <span>New document</span>
         </SidebarMenuButton>
       </SidebarMenuItem>
       <SidebarMenuItem>
         <SidebarMenuButton
           isActive={activeId === BOARD_TAB}
+          aria-current={activeId === BOARD_TAB ? "page" : undefined}
           onClick={() => onOpen(BOARD_TAB)}
           className="hover:bg-foreground/5 data-active:bg-foreground/10 data-active:hover:bg-foreground/12"
         >
           <SquareKanbanIcon aria-hidden="true" />
           <span>Board</span>
           {openTasks > 0 ? (
-            <SidebarMenuBadge>{openTasks}</SidebarMenuBadge>
+            <span className="sr-only">, {openTasks} open tasks</span>
           ) : null}
         </SidebarMenuButton>
+        {/* A sibling of the button, where the badge's own placement applies;
+            keyed on the count, so a change pops it in again. */}
+        {openTasks > 0 ? (
+          <SidebarMenuBadge
+            key={openTasks}
+            aria-hidden="true"
+            className={cn(ARRIVE, "zoom-in-95 motion-reduce:zoom-in-100")}
+          >
+            {openTasks}
+          </SidebarMenuBadge>
+        ) : null}
       </SidebarMenuItem>
     </SidebarMenu>
   )
 }
 
-/** A new, uniquely named note at the vault's root, for New Document and +. */
+/** A new, uniquely named note at the vault's root, for New document and +. */
 export function useNewDocument(onCreated: (path: string) => void) {
   const { taken } = useFiles()
   const createNote = useSetAtom(createNoteAtom)
-  return async () => {
-    const path = freeName(taken, "", "Untitled", ".md")
-    await createNote(path)
-    onCreated(path)
-  }
+  return () =>
+    attempt("create a document", async () => {
+      const path = freeName(taken, "", "Untitled", ".md")
+      await createNote(path)
+      onCreated(path)
+    })
+}
+
+/**
+ * A menu written once and drawn twice: as the tree's right-click menu and as
+ * the ⋯ button's dropdown, which is the keyboard's way to the same actions.
+ */
+type MenuAction =
+  | {
+      kind: "item"
+      label: string
+      icon?: ReactNode
+      shortcut?: string
+      disabled?: boolean
+      run: () => void
+    }
+  | { kind: "check"; label: string; checked: boolean; toggle: () => void }
+  | { kind: "sub"; label: string; icon?: ReactNode; items: MenuAction[] }
+  | { kind: "separator" }
+
+function ContextMenuActions({ actions }: { actions: MenuAction[] }) {
+  return actions.map((action, index) => {
+    switch (action.kind) {
+      case "separator":
+        return <ContextMenuSeparator key={index} />
+      case "check":
+        return (
+          <ContextMenuCheckboxItem
+            key={index}
+            checked={action.checked}
+            onCheckedChange={action.toggle}
+          >
+            {action.label}
+          </ContextMenuCheckboxItem>
+        )
+      case "sub":
+        return (
+          <ContextMenuSub key={index}>
+            <ContextMenuSubTrigger>
+              {action.icon}
+              {action.label}
+            </ContextMenuSubTrigger>
+            <ContextMenuSubContent className="max-h-72 w-52 overflow-y-auto">
+              <ContextMenuActions actions={action.items} />
+            </ContextMenuSubContent>
+          </ContextMenuSub>
+        )
+      case "item":
+        return (
+          <ContextMenuItem
+            key={index}
+            disabled={action.disabled}
+            onSelect={action.run}
+          >
+            {action.icon}
+            {action.label}
+            {action.shortcut ? (
+              <ContextMenuShortcut>{action.shortcut}</ContextMenuShortcut>
+            ) : null}
+          </ContextMenuItem>
+        )
+    }
+  })
+}
+
+function DropdownMenuActions({ actions }: { actions: MenuAction[] }) {
+  return actions.map((action, index) => {
+    switch (action.kind) {
+      case "separator":
+        return <DropdownMenuSeparator key={index} />
+      case "check":
+        return (
+          <DropdownMenuCheckboxItem
+            key={index}
+            checked={action.checked}
+            onCheckedChange={action.toggle}
+          >
+            {action.label}
+          </DropdownMenuCheckboxItem>
+        )
+      case "sub":
+        return (
+          <DropdownMenuSub key={index}>
+            <DropdownMenuSubTrigger>
+              {action.icon}
+              {action.label}
+            </DropdownMenuSubTrigger>
+            <DropdownMenuSubContent className="max-h-72 w-52 overflow-y-auto">
+              <DropdownMenuActions actions={action.items} />
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
+        )
+      case "item":
+        return (
+          <DropdownMenuItem
+            key={index}
+            disabled={action.disabled}
+            onSelect={action.run}
+          >
+            {action.icon}
+            {action.label}
+            {action.shortcut ? (
+              <DropdownMenuShortcut>{action.shortcut}</DropdownMenuShortcut>
+            ) : null}
+          </DropdownMenuItem>
+        )
+    }
+  })
 }
 
 /**
  * The vault's files as a ReUI tree. Drag a row to reorder it among its
  * siblings (kept per machine, `state/tree-order.ts`) or into another folder
  * (a move that rewrites links); drop files from Finder anywhere on it to copy
- * them in. Right-click for the section's menu.
+ * them in. Right-click, or the ⋯ beside +, for the menu.
  */
 export function FilesSection({
   activeId,
@@ -224,6 +390,7 @@ export function FilesSection({
   onMoved: (moves: Move[]) => void
 }) {
   const files = useFiles()
+  const loaded = useAtomValue(snapshotLoadedAtom)
   const order = useAtomValue(treeOrderAtom)
   const setOrder = useSetAtom(setTreeOrderAtom)
   const folderClaims = useAtomValue(folderClaimsAtom)
@@ -239,9 +406,14 @@ export function FilesSection({
   const [dropping, setDropping] = useState(false)
   /** The row the context menu was opened on, or null for the empty space. */
   const [menuTarget, setMenuTarget] = useState<string | null>(null)
-  /** Set by the menu's Rename; the field opens once the menu has closed, so
+  /** Set by a menu's Rename; the field opens once the menu has closed, so
    *  the menu handing focus back does not take it from the field. */
   const renameNext = useRef<string | null>(null)
+  /** Rows that just landed (made, moved, renamed, dropped in): they fade in
+   *  once, so the eye finds where they went. */
+  const [arrived, setArrived] = useState<ReadonlySet<string>>(new Set())
+  const markArrived = (paths: string[]) =>
+    setArrived((current) => new Set([...current, ...paths]))
 
   const data = useMemo(
     () =>
@@ -262,6 +434,13 @@ export function FilesSection({
     onMoved(moves)
   }
 
+  /** Move `sources` into `dest`, the rows landing there visibly. */
+  async function moveInto(sources: string[], dest: string) {
+    if (!canMoveInto(sources, dest)) return
+    await move(planMoveInto(files.allPaths, sources, dest))
+    markArrived(sources.map((source) => joinPath(dest, basename(source))))
+  }
+
   /** Rows from this vault move; anything else is copied in from outside. */
   async function dropPaths(sources: string[], dest: string) {
     const root = vaults.find((vault) => vault.remote === files.remote)?.path
@@ -274,12 +453,17 @@ export function FilesSection({
     const outside = sources.filter(
       (source) => !prefix || !source.startsWith(prefix)
     )
-    if (inside.length > 0 && canMoveInto(inside, dest)) {
-      await move(planMoveInto(files.docPaths, inside, dest))
-    }
+    if (inside.length > 0) await moveInto(inside, dest)
     if (outside.length > 0) {
       const skipped = await importFiles(outside, dest)
       for (const { name, reason } of skipped) toast.error(`${name}: ${reason}`)
+      const took = new Set(skipped.map((skip) => skip.name))
+      markArrived(
+        outside
+          .map((source) => basename(source))
+          .filter((name) => !took.has(name))
+          .map((name) => joinPath(dest, name))
+      )
     }
   }
 
@@ -290,12 +474,14 @@ export function FilesSection({
     const name = value.trim()
     if (name === "" || name === basename(from)) return
     if (name.includes("/")) {
-      toast.error("A name can't contain a slash.")
+      toast.error("Use a name without “/”.")
       return
     }
     const to = joinPath(parentOf(from), name)
     if (files.taken.has(to)) {
-      toast.error(`There is already a ${name} here.`)
+      toast.error(
+        `“${name}” already exists in this folder. Choose another name.`
+      )
       return
     }
     // The row keeps its place in a hand-made order, and a folder keeps its own.
@@ -316,15 +502,16 @@ export function FilesSection({
     }
     if (item.getItemData()?.isFolder !== true) {
       await move([{ from, to }])
-      return
+    } else {
+      const { moves } = planRenameFolder(files.allPaths, from, name)
+      // An empty folder holds only its keep file.
+      await move(
+        moves.length > 0
+          ? moves
+          : [{ from: `${from}/${GITKEEP}`, to: `${to}/${GITKEEP}` }]
+      )
     }
-    const { moves } = planRenameFolder(files.allPaths, from, name)
-    // An empty folder holds only its keep file.
-    await move(
-      moves.length > 0
-        ? moves
-        : [{ from: `${from}/${GITKEEP}`, to: `${to}/${GITKEEP}` }]
-    )
+    markArrived([to])
   }
 
   async function onDrop(
@@ -334,10 +521,7 @@ export function FilesSection({
     const dest = folderOf(target.item)
     const sources = items.map((item) => item.getId())
     const moving = sources.filter((source) => parentOf(source) !== dest)
-    if (moving.length > 0) {
-      if (!canMoveInto(moving, dest)) return
-      await move(planMoveInto(files.docPaths, moving, dest))
-    }
+    if (moving.length > 0) await moveInto(moving, dest)
     // Between two rows: the moved rows land there in the folder's order.
     if ("insertionIndex" in target) {
       const landed = sources.map((source) => joinPath(dest, basename(source)))
@@ -372,15 +556,19 @@ export function FilesSection({
       if (!item.isFolder()) onOpen(item.getId())
     },
     canRename: (item) => item.getId() !== ROOT_ID,
-    onRename: (item, value) => void rename(item, value),
+    onRename: (item, value) =>
+      void attempt(`rename “${item.getItemName()}”`, () => rename(item, value)),
     canReorder: true,
-    onDrop: (items, target) => void onDrop(items, target),
+    onDrop: (items, target) =>
+      void attempt("move the files", () => onDrop(items, target)),
     canDropForeignDragObject: (dataTransfer) =>
       dataTransfer.types.includes("Files"),
     onDropForeignDragObject: (dataTransfer, target) =>
-      void dropPaths(
-        [...dataTransfer.files].map((file) => window.holi.pathForFile(file)),
-        folderOf(target.item)
+      void attempt("add the files", () =>
+        dropPaths(
+          [...dataTransfer.files].map((file) => window.holi.pathForFile(file)),
+          folderOf(target.item)
+        )
       ),
     features: [
       syncDataLoaderFeature,
@@ -403,29 +591,191 @@ export function FilesSection({
     setDropping(false)
     if (event.defaultPrevented || event.dataTransfer.files.length === 0) return
     event.preventDefault()
-    void dropPaths(
-      [...event.dataTransfer.files].map((file) =>
-        window.holi.pathForFile(file)
-      ),
-      ""
+    const sources = [...event.dataTransfer.files].map((file) =>
+      window.holi.pathForFile(file)
     )
+    void attempt("add the files", () => dropPaths(sources, ""))
   }
 
-  async function newNote() {
-    const name = freeName(files.taken, "", "Untitled", ".md")
-    await createNote(name)
-    onOpen(name)
+  function newNote() {
+    void attempt("create a document", async () => {
+      const name = freeName(files.taken, "", "Untitled", ".md")
+      await createNote(name)
+      markArrived([name])
+      onOpen(name)
+    })
+  }
+
+  /** Swap a row with its neighbour, as the folder's hand-made order. */
+  function shift(id: string, by: -1 | 1) {
+    const parent = tree.getItemInstance(id).getParent()
+    if (!parent) return
+    const siblings = parent.getChildren().map((child) => child.getId())
+    const from = siblings.indexOf(id)
+    const to = from + by
+    if (from < 0 || to < 0 || to >= siblings.length) return
+    siblings.splice(from, 1)
+    siblings.splice(to, 0, id)
+    setOrder(folderOf(parent), siblings)
+    markArrived([id])
+  }
+
+  /** The actions on one row: what right-click on it, or ⋯ with it focused, offers. */
+  function rowActions(id: string): MenuAction[] {
+    const item = tree.getItemInstance(id)
+    const parent = item.getParent()
+    const siblings = parent?.getChildren().map((child) => child.getId()) ?? []
+    const index = siblings.indexOf(id)
+    const here = parentOf(id)
+    const destinations = ["", ...files.dirs].filter(
+      (dir) => dir !== here && dir !== id && !dir.startsWith(`${id}/`)
+    )
+    return [
+      {
+        kind: "item",
+        label: "Rename",
+        icon: <PencilIcon aria-hidden="true" />,
+        shortcut: "F2",
+        run: () => {
+          renameNext.current = id
+        },
+      },
+      {
+        kind: "item",
+        label: "Move up",
+        icon: <ArrowUpIcon aria-hidden="true" />,
+        disabled: index <= 0,
+        run: () => shift(id, -1),
+      },
+      {
+        kind: "item",
+        label: "Move down",
+        icon: <ArrowDownIcon aria-hidden="true" />,
+        disabled: index < 0 || index >= siblings.length - 1,
+        run: () => shift(id, 1),
+      },
+      {
+        kind: "sub",
+        label: "Move to",
+        icon: <FolderInputIcon aria-hidden="true" />,
+        items: destinations.map((dest) => ({
+          kind: "item",
+          label: dest === "" ? "Vault root" : dest,
+          run: () =>
+            void attempt(`move “${basename(id)}”`, () => moveInto([id], dest)),
+        })),
+      },
+      { kind: "separator" },
+    ]
+  }
+
+  const sectionActions: MenuAction[] = [
+    {
+      kind: "item",
+      label: "New folder",
+      icon: <FolderPlusIcon aria-hidden="true" />,
+      run: () =>
+        void attempt("create the folder", async () => {
+          const name = freeName(files.taken, "", "New folder")
+          await createFolder(name)
+          markArrived([name])
+        }),
+    },
+    {
+      kind: "item",
+      label: "New task",
+      icon: <ListChecksIcon aria-hidden="true" />,
+      run: () =>
+        void attempt("create the task", async () => {
+          const path = await createTask({
+            title: "Untitled task",
+            status: "todo",
+            folder: "",
+          })
+          if (path) onOpen(path)
+        }),
+    },
+    ...creates.map((create): MenuAction => ({
+      kind: "item",
+      label: create.label,
+      icon: <AppWindowIcon aria-hidden="true" />,
+      disabled: files.remote === null,
+      run: () =>
+        void attempt("create the app", async () => {
+          if (files.remote === null) return
+          const path = await create.run({
+            remote: files.remote,
+            parent: "",
+            name: freeName(files.taken, "", "Untitled", ".app").replace(
+              /\.app$/,
+              ""
+            ),
+          })
+          if (path) {
+            markArrived([path])
+            onOpen(path)
+          }
+        }),
+    })),
+    { kind: "separator" },
+    {
+      kind: "check",
+      label: "Show task files",
+      checked: files.showTasks,
+      toggle: files.toggleTasks,
+    },
+    {
+      kind: "check",
+      label: "Show hidden files",
+      checked: files.showHidden,
+      toggle: files.toggleHidden,
+    },
+    { kind: "separator" },
+    { kind: "item", label: "Collapse all", run: () => tree.collapseAll() },
+  ]
+
+  /** A menu closing on Rename opens the field instead of taking focus back. */
+  function openRenameOnClose(event: Event) {
+    const id = renameNext.current
+    if (id === null) return
+    renameNext.current = null
+    event.preventDefault()
+    tree.getItemInstance(id).startRenaming()
   }
 
   const empty = (data[ROOT_ID]?.children.length ?? 0) === 0
+  const focused = empty ? null : tree.getFocusedItem()
 
   return (
     <SidebarGroup className="min-h-0 flex-1 px-2 pb-0">
       <SidebarGroupLabel>Files</SidebarGroupLabel>
-      <SidebarGroupAction title="New note" onClick={() => void newNote()}>
+      <SidebarGroupAction className="right-9" onClick={newNote}>
         <PlusIcon aria-hidden="true" />
-        <span className="sr-only">New note</span>
+        <span className="sr-only">New document</span>
       </SidebarGroupAction>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <SidebarGroupAction>
+            <EllipsisIcon aria-hidden="true" />
+            <span className="sr-only">More file actions</span>
+          </SidebarGroupAction>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent
+          align="end"
+          className="w-56"
+          onCloseAutoFocus={openRenameOnClose}
+        >
+          {focused ? (
+            <>
+              <DropdownMenuLabel className="text-muted-foreground truncate text-xs font-normal">
+                {focused.getItemName()}
+              </DropdownMenuLabel>
+              <DropdownMenuActions actions={rowActions(focused.getId())} />
+            </>
+          ) : null}
+          <DropdownMenuActions actions={sectionActions} />
+        </DropdownMenuContent>
+      </DropdownMenu>
 
       {/* The tree fades into a blur at its foot while there is more below. */}
       <div className="relative flex min-h-24 flex-1 flex-col">
@@ -449,33 +799,64 @@ export function FilesSection({
                 )
                 if (!row) setMenuTarget(null)
               }}
-              // Rows fade out over the bottom padding, so the blur above has
-              // nothing sharp to stop on at the edge; at the end of the list
-              // the last row clears the fade.
+              // Rows are gone before the blur lets go at the edge, so nothing
+              // sharp shows under its end; at the end of the list the bottom
+              // padding lifts the last row clear of the fade.
               style={{
                 maskImage:
                   "linear-gradient(to bottom, #000 calc(100% - 3rem), transparent calc(100% - 1rem))",
               }}
               className={cn(
-                "relative min-h-0 flex-1 overflow-y-auto pb-12 overscroll-contain rounded-md",
+                "relative min-h-0 flex-1 overflow-y-auto pb-12 overscroll-contain rounded-md transition-colors",
                 "data-dropping:bg-foreground/5 data-dropping:ring-ring/50 data-dropping:ring-1"
               )}
             >
-              {empty ? (
-                <p className="text-muted-foreground px-2 py-6 text-center text-xs">
-                  Drop files here, or right-click to add one.
-                </p>
+              {!loaded ? (
+                <div aria-busy="true" aria-label="Loading files">
+                  {Array.from({ length: 6 }, (_, index) => (
+                    <SidebarMenuSkeleton key={index} showIcon />
+                  ))}
+                </div>
+              ) : empty ? (
+                <div className="flex flex-col items-center gap-2 px-2 py-6 text-center">
+                  <p className="text-muted-foreground text-xs">
+                    No files yet. Drop some here, or start one.
+                  </p>
+                  <Button variant="outline" size="sm" onClick={newNote}>
+                    <PlusIcon aria-hidden="true" />
+                    New document
+                  </Button>
+                </div>
               ) : (
                 <Tree indent={INDENT} tree={tree} className="relative">
                   {tree.getItems().map((item) => (
                     <TreeItem
                       key={item.getId()}
                       item={item}
+                      aria-current={
+                        item.getId() === activeId ? "page" : undefined
+                      }
                       onContextMenu={() => setMenuTarget(item.getId())}
+                      onAnimationEnd={() =>
+                        setArrived((current) => {
+                          const next = new Set(current)
+                          next.delete(item.getId())
+                          return next
+                        })
+                      }
+                      className={cn(
+                        arrived.has(item.getId()) &&
+                          cn(
+                            ARRIVE,
+                            "slide-in-from-top-1 motion-reduce:slide-in-from-top-0"
+                          )
+                      )}
                     >
                       <TreeItemLabel
                         className={cn(
                           "hover:bg-foreground/5 bg-transparent",
+                          // The folder arrow turns rather than snaps.
+                          "[&>svg:first-child]:transition-transform [&>svg:first-child]:duration-150 [&>svg:first-child]:ease-[cubic-bezier(0.22,1,0.36,1)]",
                           item.getId() === activeId && "bg-foreground/10"
                         )}
                       >
@@ -517,86 +898,12 @@ export function FilesSection({
 
           <ContextMenuContent
             className="w-52"
-            onCloseAutoFocus={(event) => {
-              const id = renameNext.current
-              if (id === null) return
-              renameNext.current = null
-              event.preventDefault()
-              tree.getItemInstance(id).startRenaming()
-            }}
+            onCloseAutoFocus={openRenameOnClose}
           >
             {menuTarget !== null ? (
-              <>
-                <ContextMenuItem
-                  onSelect={() => {
-                    renameNext.current = menuTarget
-                  }}
-                >
-                  <PencilIcon aria-hidden="true" />
-                  Rename
-                </ContextMenuItem>
-                <ContextMenuSeparator />
-              </>
+              <ContextMenuActions actions={rowActions(menuTarget)} />
             ) : null}
-            <ContextMenuItem
-              onSelect={() =>
-                void createFolder(freeName(files.taken, "", "New folder"))
-              }
-            >
-              <FolderPlusIcon aria-hidden="true" />
-              New folder
-            </ContextMenuItem>
-            <ContextMenuItem
-              onSelect={async () => {
-                const path = await createTask({
-                  title: "Untitled task",
-                  status: "todo",
-                  folder: "",
-                })
-                if (path) onOpen(path)
-              }}
-            >
-              <ListChecksIcon aria-hidden="true" />
-              New task
-            </ContextMenuItem>
-            {creates.map((create) => (
-              <ContextMenuItem
-                key={create.id}
-                disabled={files.remote === null}
-                onSelect={async () => {
-                  if (files.remote === null) return
-                  const path = await create.run({
-                    remote: files.remote,
-                    parent: "",
-                    name: freeName(files.taken, "", "Untitled", ".app").replace(
-                      /\.app$/,
-                      ""
-                    ),
-                  })
-                  if (path) onOpen(path)
-                }}
-              >
-                <AppWindowIcon aria-hidden="true" />
-                {create.label}
-              </ContextMenuItem>
-            ))}
-            <ContextMenuSeparator />
-            <ContextMenuCheckboxItem
-              checked={files.showTasks}
-              onCheckedChange={files.toggleTasks}
-            >
-              Show task files
-            </ContextMenuCheckboxItem>
-            <ContextMenuCheckboxItem
-              checked={files.showHidden}
-              onCheckedChange={files.toggleHidden}
-            >
-              Show hidden files
-            </ContextMenuCheckboxItem>
-            <ContextMenuSeparator />
-            <ContextMenuItem onSelect={() => tree.collapseAll()}>
-              Collapse all
-            </ContextMenuItem>
+            <ContextMenuActions actions={sectionActions} />
           </ContextMenuContent>
         </ContextMenu>
         <GradualBlur

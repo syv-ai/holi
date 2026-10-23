@@ -75,7 +75,7 @@ function VaultAvatar({
       {/* The owner's GitHub avatar, falling back to the initial offline. */}
       <AvatarImage
         src={`https://github.com/${vault.remote.split("/")[0]}.png?size=48`}
-        alt={vault.name}
+        alt=""
         className="rounded-md"
       />
       <AvatarFallback className="bg-primary text-primary-foreground rounded-md text-sm">
@@ -121,7 +121,7 @@ export function VaultSwitcher({ onAddVault }: { onAddVault: () => void }) {
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <SidebarMenuButton className="h-9" aria-label="Switch vault">
-              <SidebarLogo className="transition-[margin] duration-300 ease-in-out in-data-[state=collapsed]:-ml-1" />
+              <SidebarLogo />
               <div className="truncate font-semibold">{active?.name}</div>
               <MoreHorizontalIcon
                 aria-hidden="true"
@@ -147,7 +147,7 @@ export function VaultSwitcher({ onAddVault }: { onAddVault: () => void }) {
               <DropdownMenuItem onClick={onAddVault}>
                 <PlusIcon aria-hidden="true" className="mx-1 size-4" />
                 <div className="flex flex-col items-start">
-                  <span className="text-sm">New Vault</span>
+                  <span className="text-sm">New vault</span>
                   <span className="text-muted-foreground ml-auto text-xs">
                     Start one, or join your team's.
                   </span>

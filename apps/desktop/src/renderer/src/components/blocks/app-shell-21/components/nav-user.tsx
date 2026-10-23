@@ -5,11 +5,7 @@ import type { ColorScheme } from "@holi/shared"
 import { colorSchemeAtom, writeColorSchemeAtom } from "@/state/color-scheme"
 import { sessionAtom, signOutAtom } from "@/state/session"
 
-import {
-  Avatar,
-  AvatarFallback,
-  AvatarImage,
-} from "@/components/ui/avatar"
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -26,11 +22,19 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from "@/components/ui/sidebar"
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import {
-  ToggleGroup,
-  ToggleGroupItem,
-} from "@/components/ui/toggle-group"
-import { SunIcon, MoonIcon, MonitorIcon, UserIcon, SlidersHorizontalIcon, SettingsIcon, KeyboardIcon, PaletteIcon, LogOutIcon, MoreHorizontalIcon } from "lucide-react"
+  SunIcon,
+  MoonIcon,
+  MonitorIcon,
+  UserIcon,
+  SlidersHorizontalIcon,
+  SettingsIcon,
+  KeyboardIcon,
+  PaletteIcon,
+  LogOutIcon,
+  MoreHorizontalIcon,
+} from "lucide-react"
 
 // ── Theme Toggle ──
 
@@ -38,23 +42,17 @@ const THEMES: { value: ColorScheme; label: string; icon: ReactNode }[] = [
   {
     value: "light",
     label: "Light",
-    icon: (
-      <SunIcon aria-hidden="true" />
-    ),
+    icon: <SunIcon aria-hidden="true" />,
   },
   {
     value: "dark",
     label: "Dark",
-    icon: (
-      <MoonIcon aria-hidden="true" />
-    ),
+    icon: <MoonIcon aria-hidden="true" />,
   },
   {
     value: "system",
     label: "System",
-    icon: (
-      <MonitorIcon aria-hidden="true" />
-    ),
+    icon: <MonitorIcon aria-hidden="true" />,
   },
 ]
 
@@ -140,7 +138,7 @@ function AccountMenuContent({ isMobile }: { isMobile: boolean }) {
       <DropdownMenuGroup>
         <DropdownMenuItem onSelect={() => void signOut()}>
           <LogOutIcon aria-hidden="true" />
-          Sign Out
+          Sign out
         </DropdownMenuItem>
       </DropdownMenuGroup>
     </DropdownMenuContent>
@@ -166,7 +164,7 @@ export function NavUser({ collapsed = false }: { collapsed?: boolean }) {
           >
             <Avatar className="size-7">
               <AvatarImage src={viewer?.avatarUrl} alt="" />
-              <AvatarFallback className="text-[10px]">{initials}</AvatarFallback>
+              <AvatarFallback className="text-xs">{initials}</AvatarFallback>
             </Avatar>
           </Button>
         </DropdownMenuTrigger>
@@ -186,22 +184,23 @@ export function NavUser({ collapsed = false }: { collapsed?: boolean }) {
           >
             <SidebarMenuButton aria-label="Open account menu">
               <div className="flex min-w-0 flex-1 items-center gap-2">
-                <Avatar className="size-8 shrink-0 in-data-[state=collapsed]:size-6!">
-                  <AvatarImage src={viewer?.avatarUrl} alt={name} />
-                  <AvatarFallback className="text-[10px] font-semibold">
+                <Avatar className="size-8 shrink-0">
+                  <AvatarImage src={viewer?.avatarUrl} alt="" />
+                  <AvatarFallback className="text-xs font-semibold">
                     {initials}
                   </AvatarFallback>
                 </Avatar>
                 <div className="flex min-w-0 flex-col">
-                  <span className="truncate text-[13px] leading-4 font-medium">
-                    {name}
-                  </span>
-                  <span className="text-muted-foreground truncate text-[11px] leading-none">
+                  <span className="truncate text-sm font-medium">{name}</span>
+                  <span className="text-muted-foreground truncate text-xs">
                     @{viewer?.login}
                   </span>
                 </div>
               </div>
-              <MoreHorizontalIcon className="mr-1 ml-auto size-4 shrink-0 opacity-50" aria-hidden="true" />
+              <MoreHorizontalIcon
+                className="mr-1 ml-auto size-4 shrink-0 opacity-50"
+                aria-hidden="true"
+              />
             </SidebarMenuButton>
           </DropdownMenuTrigger>
 

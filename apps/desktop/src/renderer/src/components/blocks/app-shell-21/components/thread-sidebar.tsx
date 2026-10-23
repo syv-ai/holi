@@ -14,7 +14,9 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { cn } from "@/lib/cn"
 import { runningPluginsAtom } from "@/state/plugins"
+import { activeRemoteAtom } from "@/state/vaults"
 import type { Move } from "@/lib/tree-actions"
 import { BOARD_TAB, DocumentsNav, FilesSection } from "./documents-section"
 import { NavUser } from "./nav-user"
@@ -71,6 +73,10 @@ export function ThreadSidebar({
   onOpenSearch: () => void
 }) {
   const [section, setSection] = useState<SidebarSection>("documents")
+  const remote = useAtomValue(activeRemoteAtom)
+  /** Off until the first switch, so the sidebar's first paint is never held
+   *  back by a fade. */
+  const [switched, setSwitched] = useState(false)
   const { isMobile } = useSidebar()
   const AgentsSidebar = useAtomValue(runningPluginsAtom).find(
     (plugin) => plugin.agentsMode
@@ -91,7 +97,7 @@ export function ThreadSidebar({
                 className={RAIL_BUTTON}
               >
                 <PlusIcon aria-hidden="true" />
-                <span>New Document</span>
+                <span>New document</span>
               </SidebarMenuButton>
             </SidebarMenuItem>
 
@@ -179,9 +185,11 @@ export function ThreadSidebar({
           <VaultSwitcher onAddVault={onAddVault} />
           <Tabs
             value={section}
-            onValueChange={(value) =>
-              value && setSection(value as SidebarSection)
-            }
+            onValueChange={(value) => {
+              if (!value) return
+              setSection(value as SidebarSection)
+              setSwitched(true)
+            }}
           >
             <TabsList className="bg-foreground/5 grid w-full grid-cols-2">
               <TabsTrigger value="documents">Documents</TabsTrigger>
@@ -190,30 +198,40 @@ export function ThreadSidebar({
           </Tabs>
         </div>
 
-        {section === "documents" ? (
-          <>
-            <DocumentsNav
-              activeId={activeId}
-              onNewDocument={onNewDocument}
-              onOpen={onOpen}
-            />
-            <SidebarSeparator className="mx-0 my-3" />
-            <FilesSection
-              activeId={activeId}
-              onOpen={onOpen}
-              onMoved={onMoved}
-            />
-          </>
-        ) : null}
+        {/* A switch of tab or vault cross-fades the body instead of swapping it. */}
+        <div
+          key={`${section}:${remote}`}
+          className={cn(
+            "flex min-h-0 flex-1 flex-col",
+            switched &&
+              "animate-in fade-in-0 duration-200 ease-[cubic-bezier(0.22,1,0.36,1)]"
+          )}
+        >
+          {section === "documents" ? (
+            <>
+              <DocumentsNav
+                activeId={activeId}
+                onNewDocument={onNewDocument}
+                onOpen={onOpen}
+              />
+              <SidebarSeparator className="mx-0 my-3" />
+              <FilesSection
+                activeId={activeId}
+                onOpen={onOpen}
+                onMoved={onMoved}
+              />
+            </>
+          ) : null}
 
-        {section === "agents" ? (
-          // The agent plugin's own sidebar: Inbox, Automations, Holis, sessions.
-          AgentsSidebar ? (
-            <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
-              <AgentsSidebar />
-            </div>
-          ) : null
-        ) : null}
+          {section === "agents" ? (
+            // The agent plugin's own sidebar: Inbox, Automations, Holis, sessions.
+            AgentsSidebar ? (
+              <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+                <AgentsSidebar />
+              </div>
+            ) : null
+          ) : null}
+        </div>
       </SidebarContent>
 
       <SidebarFooter className="gap-2">
