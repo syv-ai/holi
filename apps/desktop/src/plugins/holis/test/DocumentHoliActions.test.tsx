@@ -13,7 +13,7 @@ import { activeRemoteAtom } from '@/plugin-api'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from '@/primitives'
 import { ApproveHoliDialog } from '../renderer/ApproveHoliDialog'
 import { DocumentHoliActions } from '../renderer/DocumentHoliActions'
-import { holisAtom, pendingApprovalAtom, type HoliSummary } from '../renderer/state'
+import { holisAtom, holiWizardAtom, pendingApprovalAtom, type HoliSummary } from '../renderer/state'
 
 const send = vi.fn()
 const create = vi.fn()
@@ -83,10 +83,13 @@ test('a Holi not approved here asks first, showing its soul', async () => {
   expect(screen.getByText('Do it.')).toBeTruthy()
 })
 
-test('New Holi starts from the document folder', async () => {
-  create.mockResolvedValue(holi({ id: 'crab', name: 'Crab' }))
-  setup()
+test('New Holi opens the wizard from the document folder', async () => {
+  const store = setup()
   await userEvent.click(screen.getByLabelText('More with this document'))
   await userEvent.click(screen.getByRole('menuitem', { name: /New Holi/ }))
-  expect(create).toHaveBeenCalledWith('o/vault', { accepts: ['kunder/**/*.md'] })
+  expect(create).not.toHaveBeenCalled()
+  expect(store.get(holiWizardAtom)).toEqual({
+    mode: 'create',
+    draft: { accepts: ['kunder/**/*.md'] },
+  })
 })

@@ -181,6 +181,18 @@ const PERMISSION_KEY = /permission|bypass|skip|danger|dontask|yolo/i
  *  so a run could be talked into changing every later one. */
 const BARE_WRITE = /^(?:Edit|Write|MultiEdit)(?:\(\s*(?:\*\*?(?:\/\*\*?)*)?\s*\))?$/
 
+/** Why one `allow` rule is refused, or null when it reads: the check the
+ *  file's parse makes, so a form can say it before anything is written. */
+export function holiRuleError(rule: string): string | null {
+  if (rule.trim() === '' || /[\n\r]/.test(rule)) {
+    return '`allow` holds one permission rule per item, as text'
+  }
+  if (BARE_WRITE.test(rule.trim())) {
+    return `\`${rule.trim()}\` lets a run write anywhere, its own instructions included. Name the folders it writes: \`Edit(tilbud/**)\`.`
+  }
+  return null
+}
+
 /** Whether a vault path is a Holi's file: `<id>/holi.yaml`, or an older
  *  single `<id>.yaml` directly inside `HOLIS_DIR` (`.local.yaml` is a Holi only
  *  this machine has). */
@@ -302,15 +314,11 @@ export function parseHoliFile(text: string, path: string): HoliParse {
   if (!Array.isArray(rawAllow)) return { ok: false, error: '`allow` must be a list of rules' }
   const allow: string[] = []
   for (const rule of rawAllow) {
-    if (typeof rule !== 'string' || rule.trim() === '' || /[\n\r]/.test(rule)) {
+    if (typeof rule !== 'string') {
       return { ok: false, error: '`allow` holds one permission rule per item, as text' }
     }
-    if (BARE_WRITE.test(rule.trim())) {
-      return {
-        ok: false,
-        error: `\`${rule.trim()}\` lets a run write anywhere, its own instructions included. Name the folders it writes: \`Edit(tilbud/**)\`.`,
-      }
-    }
+    const refused = holiRuleError(rule)
+    if (refused !== null) return { ok: false, error: refused }
     allow.push(rule.trim())
   }
   // A folder Holi's soul is its SOUL.md; an older file's is `instructions`.

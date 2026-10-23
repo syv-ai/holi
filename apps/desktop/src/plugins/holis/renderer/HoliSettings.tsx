@@ -1,7 +1,7 @@
 /**
  * A Holi's settings, after MonoCode's `MonoSettingsDialog` and
  * `MonoFilePages` (MIT, Copyright (c) 2026 Nick; see NOTICE.md): a dialog with
- * three sections on its left, which is also how a new Holi is set up.
+ * three sections on its left. A new Holi is set up in the wizard first.
  *
  * - **General**: its face and name, its model, what it may do without asking,
  *   the documents it takes, and removing it. Each saves as it changes, into

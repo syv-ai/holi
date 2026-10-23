@@ -1,8 +1,8 @@
 /**
  * Send to Holi: the Holis plugin's rows in a document's Agent menu
  * (`RendererPlugin.documentActions`, docs/features/holis.md). The Holis that
- * take this document first, then every other Holi, then New Holi, which starts
- * from the document's folder as what it takes. Core draws the menu; these rows
+ * take this document first, then every other Holi, then New Holi, which opens
+ * the wizard with the document's folder as what it takes. Core draws the menu; these rows
  * are the plugin's.
  */
 import { useAtomValue, useSetAtom } from 'jotai'
@@ -17,7 +17,7 @@ import {
   Icon,
 } from '@/primitives'
 import { PixelPersona } from '@/composites'
-import { createHoliAtom, holisAtom, sendableFor, sendToHoliAtom, type HoliSummary } from './state'
+import { holisAtom, holiWizardAtom, sendableFor, sendToHoliAtom, type HoliSummary } from './state'
 
 function HoliItem({ holi, path }: { holi: HoliSummary; path: string }): React.JSX.Element {
   const send = useSetAtom(sendToHoliAtom)
@@ -36,7 +36,7 @@ function HoliItem({ holi, path }: { holi: HoliSummary; path: string }): React.JS
 
 export function DocumentHoliActions({ path }: { path: string }): React.JSX.Element {
   const holis = useAtomValue(holisAtom)
-  const create = useSetAtom(createHoliAtom)
+  const wizard = useSetAtom(holiWizardAtom)
   const { takes, rest } = sendableFor(holis, path)
   const folder = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : ''
   return (
@@ -64,7 +64,12 @@ export function DocumentHoliActions({ path }: { path: string }): React.JSX.Eleme
       )}
       <DropdownMenuSeparator />
       <DropdownMenuItem
-        onSelect={() => void create(folder === '' ? {} : { accepts: [`${folder}/**/*.md`] })}
+        onSelect={() =>
+          wizard({
+            mode: 'create',
+            ...(folder === '' ? {} : { draft: { accepts: [`${folder}/**/*.md`] } }),
+          })
+        }
       >
         <Icon icon={Plus} size="sm" />
         New Holi…

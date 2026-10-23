@@ -5,6 +5,7 @@ import {
   HOLI_MASCOTS,
   HOLI_MASCOT_LABELS,
   holiMascotOf,
+  holiRuleError,
   LEGACY_HOLI_MASCOTS,
   holiAccepts,
   holiApprovalText,
@@ -148,6 +149,14 @@ describe('Holi files', () => {
     expect(def(`allow: ['Edit(**/task.*.md)']\ninstructions: x\n`).allow).toEqual([
       'Edit(**/task.*.md)',
     ])
+  })
+
+  it('says why one rule is refused before anything is written', () => {
+    expect(holiRuleError('Edit(**)')).toMatch(/write anywhere/)
+    expect(holiRuleError('Write')).toMatch(/write anywhere/)
+    expect(holiRuleError('  ')).toMatch(/one permission rule/)
+    expect(holiRuleError('Edit(tilbud/**)')).toBeNull()
+    expect(holiRuleError('Bash(holi google read:*)')).toBeNull()
   })
 
   it('names paths and ids', () => {

@@ -3,11 +3,11 @@
  * MonoCode's `MonoRailSection` and `MonoIntro` (MIT, Copyright (c) 2026 Nick;
  * see NOTICE.md): a "Holis" label with its +, then one row per Holi, its pixel
  * persona with a status dot. With none yet, an intro card that says what a Holi
- * is and makes the first one.
+ * is and makes the first one. Making one, and reading how they work, is the
+ * wizard (`wizard/HoliWizard.tsx`).
  */
 import { useAtomValue, useSetAtom } from 'jotai'
-import { Ellipsis, Plus } from 'lucide-react'
-import { useState } from 'react'
+import { CircleHelp, Ellipsis, Plus } from 'lucide-react'
 import { PixelPersona, SectionLabel } from '@/composites'
 import {
   Button,
@@ -20,9 +20,10 @@ import {
 } from '@/primitives'
 import { appModeAtom, cn, openPathAtom } from '@/plugin-api'
 import { HOLI_COLOURS, HOLI_MASCOTS } from '@holi/shared'
+import { HoliDialogs } from './HoliDialogs'
 import {
-  createHoliAtom,
   holiSettingsAtom,
+  holiWizardAtom,
   holiStateAtom,
   holisAtom,
   holisLoadedAtom,
@@ -134,10 +135,9 @@ function HoliRow({ holi }: { holi: HoliSummary }): React.JSX.Element {
 }
 
 /** With no Holis yet: what one is, every face it could have, and a button
- *  that makes the first (after MonoCode's `MonoIntroCard`). */
+ *  that starts making the first (after MonoCode's `MonoIntroCard`). */
 function MeetHolis(): React.JSX.Element {
-  const create = useSetAtom(createHoliAtom)
-  const [error, setError] = useState<string | null>(null)
+  const wizard = useSetAtom(holiWizardAtom)
   return (
     <div className="flex flex-col gap-2 rounded-lg bg-foreground/[0.03] p-2.5">
       <p className="text-nav font-medium text-foreground">Meet Holis</p>
@@ -150,13 +150,16 @@ function MeetHolis(): React.JSX.Element {
         Agents of this vault with a soul and a memory. Send one a document, or give one an
         automation to carry out.
       </p>
-      {error !== null && <p className="text-xs text-destructive">{error}</p>}
+      <Button size="sm" className="w-full" onClick={() => wizard({ mode: 'create' })}>
+        Create Holi
+      </Button>
       <Button
         size="sm"
+        variant="ghost"
         className="w-full"
-        onClick={() => void create().then((res) => setError(res.ok ? null : res.message))}
+        onClick={() => wizard({ mode: 'learn' })}
       >
-        Create Holi
+        How Holis work
       </Button>
     </div>
   )
@@ -166,13 +169,26 @@ export function HolisSection(): React.JSX.Element {
   const holis = useAtomValue(holisAtom)
   const loaded = useAtomValue(holisLoadedAtom)
   const reload = useSetAtom(loadHolisAtom)
-  const create = useSetAtom(createHoliAtom)
+  const wizard = useSetAtom(holiWizardAtom)
   return (
     <section aria-label="Holis" className="flex flex-col gap-px">
       <div className="flex items-center justify-between pe-1">
         <SectionLabel className="pb-0">Holis</SectionLabel>
         {holis.length > 0 && (
-          <IconButton icon={Plus} label="New Holi" size="sm" onClick={() => void create()} />
+          <div className="flex items-center gap-0.5">
+            <IconButton
+              icon={CircleHelp}
+              label="How Holis work"
+              size="sm"
+              onClick={() => wizard({ mode: 'learn' })}
+            />
+            <IconButton
+              icon={Plus}
+              label="New Holi"
+              size="sm"
+              onClick={() => wizard({ mode: 'create' })}
+            />
+          </div>
         )}
       </div>
       {loaded === 'loading' && holis.length === 0 ? (
@@ -192,6 +208,7 @@ export function HolisSection(): React.JSX.Element {
       ) : (
         holis.map((h) => <HoliRow key={h.id} holi={h} />)
       )}
+      <HoliDialogs />
     </section>
   )
 }

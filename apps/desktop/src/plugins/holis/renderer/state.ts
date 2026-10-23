@@ -24,6 +24,7 @@ import {
   type PluginStore,
 } from '@/plugin-api'
 import { globToRegExp, HOLI_COLOURS, type HoliDraft } from '@holi/shared'
+import { habitsCap, type HabitDraft } from './habits-cap'
 import { holiCap, type HoliEdits, type HoliRun, type HoliSummary } from './holis-cap'
 
 export type { HoliRun, HoliSummary }
@@ -281,22 +282,58 @@ export const approvePendingAtom = atom(null, async (get, set): Promise<Result> =
   }
 })
 
-/** Make a Holi, after MonoCode's `onCreateMono`: the next free face, then
- *  its page with its settings open, which is the setup. */
+/**
+ * The new-Holi wizard (docs/features/holis.md, The wizard): `create` walks
+ * from what a Holi is to making one, starting from `draft` (a document's
+ * folder as what it takes); `learn` is only the steps that explain.
+ */
+export interface HoliWizard {
+  mode: 'create' | 'learn'
+  draft?: Partial<HoliDraft>
+  /** Start at making it: the person has just read how a Holi works. */
+  skipIntro?: boolean
+}
+export const holiWizardAtom = atom<HoliWizard | null>(null)
+
+/**
+ * Make a Holi from the wizard, after MonoCode's `onCreateMono`: its folder
+ * through `holis.create` (main's validation is the last word), then its first
+ * habit, if one was asked for, through the automations' own `schedules.save`,
+ * written off. Then its page, and the approval as for any new Holi: nothing
+ * runs until this machine approved what it says.
+ */
 export const createHoliAtom = atom(
   null,
-  async (get, set, draft: Partial<HoliDraft> = {}): Promise<Result> => {
+  async (
+    get,
+    set,
+    args: { draft: Partial<HoliDraft>; habit?: Omit<HabitDraft, 'holi'> },
+  ): Promise<{ ok: true; warning?: string } | { ok: false; message: string }> => {
     const remote = get(activeRemoteAtom)
     if (remote === null) return noVault
+    let made: HoliSummary
     try {
-      const made = await holiCap.create(remote, draft)
-      set(holisAtom, (list) => [...list.filter((h) => h.id !== made.id), made])
-      set(openHoliAtom, made.id)
-      set(holiSettingsAtom, { id: made.id, section: 'general' })
-      return { ok: true }
+      made = await holiCap.create(remote, args.draft)
     } catch (err) {
       return failed(err)
     }
+    set(holisAtom, (list) => [...list.filter((h) => h.id !== made.id), made])
+    set(openHoliAtom, made.id)
+    let habitError: string | null = null
+    if (args.habit !== undefined) {
+      try {
+        await habitsCap.save(remote, { draft: { ...args.habit, holi: made.id } })
+      } catch (err) {
+        habitError = failed(err).message
+      }
+    }
+    set(holiWizardAtom, null)
+    if (made.status !== 'approved' && made.fingerprint !== undefined) {
+      set(pendingApprovalAtom, { holi: made })
+    }
+    return habitError === null
+      ? { ok: true }
+      : { ok: true, warning: `${made.name} is made, but its habit is not: ${habitError}` }
   },
 )
 
