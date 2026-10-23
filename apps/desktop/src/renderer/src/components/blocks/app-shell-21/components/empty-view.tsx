@@ -43,7 +43,7 @@ import { BOARD_TAB } from "./documents-section"
 
 /** A tab opened with +: it shows this view until something is picked in it,
  *  and then becomes that thing. Nothing is written to the vault until then. */
-export const NEW_TAB_PREFIX = "new-tab:"
+export const NEW_TAB_PREFIX = "holi:new:"
 
 export function isNewTab(id: string | null): boolean {
   return id !== null && id.startsWith(NEW_TAB_PREFIX)
