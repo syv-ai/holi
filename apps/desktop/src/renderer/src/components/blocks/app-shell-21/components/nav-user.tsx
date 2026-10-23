@@ -125,10 +125,11 @@ function GlassSegmentedToggle() {
   )
 }
 
-/** The window is glass only on a Mac, so only there is there anything to set. */
-const IS_MAC =
-  typeof document !== "undefined" &&
-  document.documentElement.dataset.platform === "mac"
+/** The window is glass only on a Mac, so only there is there anything to set.
+ *  Read at render: `main.tsx` stamps the platform after the modules load. */
+function isMac() {
+  return document.documentElement.dataset.platform === "mac"
+}
 
 // ── Account Menu ──
 
@@ -179,7 +180,7 @@ function AccountMenuContent({ isMobile }: { isMobile: boolean }) {
             <ThemeSegmentedToggle />
           </div>
         </DropdownMenuItem>
-        {IS_MAC ? (
+        {isMac() ? (
           <DropdownMenuItem
             onSelect={(event) => event.preventDefault()}
             className="cursor-default focus:bg-transparent!"
