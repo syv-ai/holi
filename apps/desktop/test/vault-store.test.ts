@@ -82,13 +82,13 @@ describe('scanVault', () => {
   })
 
   it('surfaces an unparseable task instead of dropping it', async () => {
-    const root = await vault({ 'task.broken.md': '---\nstatus: blocked\n---\n' })
+    const root = await vault({ 'task.broken.md': '---\npriority: critical\n---\n' })
     const snap = await scanVault(root)
 
     expect(snapshotTasks(snap).items).toEqual([])
     expect(snapshotTasks(snap).broken).toHaveLength(1)
     expect(snapshotTasks(snap).broken[0]!.path).toBe('task.broken.md')
-    expect(snapshotTasks(snap).broken[0]!.error).toMatch(/status must be one of/)
+    expect(snapshotTasks(snap).broken[0]!.error).toMatch(/priority must be one of/)
   })
 
   it('never walks into .git', async () => {

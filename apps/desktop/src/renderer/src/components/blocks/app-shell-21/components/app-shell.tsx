@@ -23,6 +23,7 @@ import { THREADS } from "./data"
 import type { Move } from "@/lib/tree-actions"
 import { BOARD_TAB, useNewDocument } from "./documents-section"
 import { MobileHeader } from "./mobile-header"
+import { PlanningView } from "../../planning/planning-view"
 import { SiteHeader } from "./site-header"
 import { ThreadSidebar } from "./thread-sidebar"
 import { leadWidth, TitleBar } from "./title-bar"
@@ -191,7 +192,11 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
       ) : null}
       {/* The landmark stays with the shell, so whatever fills the view
           inherits it. */}
-      <main className="flex min-h-0 flex-1 flex-col" />
+      <main className="flex min-h-0 flex-1 flex-col">
+        {activeThreadId === BOARD_TAB ? (
+          <PlanningView onOpenTask={handleSelectThread} />
+        ) : null}
+      </main>
     </div>
   )
 

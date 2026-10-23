@@ -18,6 +18,7 @@ import { leaveReasonsAtom } from '@/state/plugins'
 import { activeModeAtom } from '../state/color-scheme'
 import { tickNowAtom } from '../state/clock'
 import { useVaultMembers } from '../state/members'
+import { usePlanningFiles } from '../state/planning'
 import { useSettingsFollowDisk } from '../state/settings'
 import { applyVaultSwitchAtom, leavingVaultAtom } from '../state/vault-switch'
 import { activeRemoteAtom, openVaultAtom } from '../state/vaults'
@@ -34,6 +35,7 @@ export function Shell() {
 
   useSettingsFollowDisk()
   useVaultMembers()
+  usePlanningFiles()
 
   // Keep `nowAtom` on the current minute (see `state/clock.ts`).
   const tickNow = useSetAtom(tickNowAtom)

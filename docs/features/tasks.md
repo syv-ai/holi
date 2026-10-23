@@ -1,15 +1,30 @@
 # Tasks
 
 A task is a markdown file named `task.<name>.md`, living in the folder it is about. There is no
-record, index or task id: the file is the whole task. The board shows every task in the vault as
-Todo / Doing / Done, with one swim lane per folder.
+record, index or task id: the file is the whole task. The vault's statuses are its columns, and
+the [planning](planning.md) view shows every task in the vault by them.
 
 ## How it works
 
 - **The file.** The filename prefix makes a file a task, so `**/task.*.md` finds them all. The
-  path is the identity and the folder is the lane. Frontmatter holds `status`
-  (`todo | doing | done`, default `todo`), `due`, `priority` (`low | medium | high`), `tags`,
-  `assignees`, `reminder`, `recurrence` and `order`, all optional. Unknown keys are written back verbatim. The body is the
+  path is the identity and the folder is the lane. Frontmatter holds `status` (default `todo`),
+  `start` and `due` (stamps), `priority` (`low | medium | high | urgent`), `estimate`, `tags`,
+  `assignees`, `reminder`, `recurrence` and `order`, all optional, written in that order. Unknown
+  keys are written back verbatim.
+- **Statuses are the vault's.** `status` is any word; which words are columns is
+  `.holi/statuses.yaml`'s to say ([planning](planning.md)), each status with a fixed category
+  (`backlog`, `unstarted`, `started`, `review`, `completed`) that is all the app reasons with.
+  Without that file a vault has Backlog, To do, In progress, Review and Done, whose ids are
+  `backlog`, `todo`, `doing`, `review` and `done`, so a task written before statuses were the
+  vault's needs nothing rewritten. A status the vault does not list still shows (`columnFor` in
+  shared): `todo`, `doing` and `done` in the first status of what they meant, anything else in the
+  first `unstarted` one, and the file keeps its word until someone moves the task. Open means any
+  status not filed under `completed`: the sidebar's Board count, `overdue`, Progress. The file
+  format holds only that a status is a word, since the vocabulary is per vault.
+- **Urgent** sits above high, and reads as the `p0` label. **`estimate`** is how much work a task
+  is: a number and `m`, `h`, `d` or `w` (`30m`, `2h`, `1.5d`, `1w`), a day being eight working
+  hours and a week five days when estimates are added up (`estimate.ts`). **`start`** is when work
+  begins, a stamp like `due`. The body is the
   description, and its first heading is the title, falling back to the filename
   (`task.fix-login.md` reads "Fix login"). There is no `title:` key.
 - **Claimed in the snapshot.** Tasks claim `task.*.md` (`taskClaim` in shared): main's scanner
@@ -70,11 +85,13 @@ Todo / Doing / Done, with one swim lane per folder.
   narrows the list or names a new one; an add closes quick add, the text clears and the lane stays.
   ⌘⇧T is the full-create dialog, which opens the result. Both write the whole task in one create.
   The agent writes the file.
-- **Completing** is setting status to done, from the checkbox, a drop into Done, or the status
-  row; `completeTask` in `packages/shared` says what that writes. A
+- **Completing** is setting a status filed under `completed`, from the checkbox, a drop into a
+  completed column, or the status row; `completeTask` in `packages/shared` says what that writes,
+  and main reads the vault's statuses to know which ones complete (`main/vault/statuses.ts`). A
   recurring task with a `due` rolls forward: `due` advances to on-or-after today via
   `nextDueCatchup`, keeping its time; the reminder shifts by the same whole-day delta, keeping its
-  own time; status returns to `todo`. Otherwise it becomes `done`.
+  own time; status returns to the vault's first `unstarted` status. Otherwise it takes the
+  completed status it was set to (`holi tasks complete` uses the first one).
 - **Date picker.** `DateTimePicker` edits `due`, `reminder` and a recurrence's `endDate`. Presets
   resolve to a stamp on choosing: reminders are relative to `due` when set ("1 day before"), to now
   otherwise ("tomorrow 09:00"). The month grid is one tab stop with arrow and PageUp/Down keys.
@@ -110,9 +127,14 @@ Todo / Doing / Done, with one swim lane per folder.
 
 - The marker is in the filename, never frontmatter. A pasted `type: task` must not make tasks.
 - Done is completion wherever the app writes it: `tasks.update` and `tasks.move` apply
-  `completeTask`, and the frontmatter widget writes its result into the buffer, as does the
-  agent's `holi tasks complete <path>`. Only a hand edit of the file can write a bare
-  `status: done`, and that ends a recurring series.
+  `completeTask` to any status the vault files under `completed`, and the frontmatter widget writes
+  its result into the buffer, as does the agent's `holi tasks complete <path>`. Only a hand edit
+  of the file can write a bare completed status, and that ends a recurring series.
+- A status is never rewritten for not being listed: showing a task somewhere is display, and only
+  a person moving it writes a new status.
+- The reminder sweep, `archive-done` and the editor's status row still know only Holi's default
+  ids: a vault whose completed status is not `done` keeps reminding of finished tasks and does not
+  archive them.
 - A reminder is an absolute moment. A non-stamp reminder is inert, never an error, so a legacy
   `1d` costs a notification rather than the task. `due` is strict.
 - Virtual labels are never stored: `overdue` would be a commit per task at midnight.
@@ -147,8 +169,9 @@ Todo / Doing / Done, with one swim lane per folder.
 
 ## Code
 
-- `packages/shared/src/task-file.ts`, `completion.ts`, `dates.ts`, `calendar.ts`, `labels.ts`,
-  `recurrence.ts`, `reminder.ts`, `rank.ts`: the format and all the pure rules.
+- `packages/shared/src/task-file.ts`, `statuses.ts`, `estimate.ts`, `completion.ts`, `dates.ts`,
+  `calendar.ts`, `labels.ts`, `recurrence.ts`, `reminder.ts`, `rank.ts`: the format and all the
+  pure rules.
 - `apps/desktop/src/main/router.ts`: `tasks.*` and `patched`, which applies completion.
 - `apps/desktop/src/main/vault/task-capabilities.ts`: `tasks.list`, `tasks.complete`, and
   `tasks.create` (the UI door), which the board and the Google views create tasks through.

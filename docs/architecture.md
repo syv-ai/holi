@@ -213,6 +213,7 @@ See [agent-sessions](features/agent-sessions.md), [agent-config](features/agent-
 | [frontmatter](features/frontmatter.md)         | The frontmatter block and its typed rows                             |
 | [wiki-links](features/wiki-links.md)           | Path-based links, rename, backrefs                                   |
 | [tasks](features/tasks.md)                     | `task.*.md` files, the board, recurrence and reminders               |
+| [planning](features/planning.md)               | The vault as one project: `.holi/project.md`, `.holi/statuses.yaml`  |
 | [daily-notes](features/daily-notes.md)         | Idempotent daily notes and their archive                             |
 | [google](features/google.md)                   | Gmail and Calendar, per vault                                        |
 | [pdf](features/pdf.md)                         | Typst export and the PDF viewer                                      |

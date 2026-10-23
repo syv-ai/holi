@@ -31,9 +31,9 @@ A `.md` file in the vault, named by its vault-relative path. The file is the doc
 
 ### Task
 
-A file named `task.<name>.md` in the folder it is about. Frontmatter carries `status`, `due`,
-`priority`, `tags`, `assignees` (GitHub logins), `reminder`, `recurrence`; the body is the
-description. The path is its identity
+A file named `task.<name>.md` in the folder it is about. Frontmatter carries `status`, `start`,
+`due`, `priority`, `estimate`, `tags`, `assignees` (GitHub logins), `reminder`, `recurrence`; the
+body is the description. The path is its identity
 and the filename prefix is what makes it a task. See [tasks](features/tasks.md).
 
 ### Lane
@@ -43,7 +43,15 @@ lanes moves the file.
 
 ### Status
 
-A task's state: `todo`, `doing` or `done`.
+A task's state: one of the vault's statuses in `.holi/statuses.yaml`, by default `backlog`,
+`todo`, `doing`, `review` or `done`. Each has a **category** (`backlog`, `unstarted`, `started`,
+`review`, `completed`) that says what it means; a task is **open** unless its status is
+`completed`. See [planning](features/planning.md).
+
+### Project
+
+The vault itself, seen as one ongoing piece of work: `.holi/project.md` holds its name, status,
+lead, dates, milestones and About. There is one per vault. See [planning](features/planning.md).
 
 ### Autosave commit
 

@@ -24,6 +24,7 @@ import type { taskCapabilities } from '../../../main/vault/task-capabilities'
 import { capClient } from '../lib/cap-client'
 import { trpc } from '../lib/trpc'
 import { nowAtom, todayAtom } from './clock'
+import { isClosedAtom } from './planning'
 import { closeTabsForPaths, workspaceAtom } from './panes'
 import { activeRemoteAtom, loadSnapshotAtom, snapshotAtom } from './vaults'
 
@@ -51,17 +52,21 @@ export const taskTagsAtom = atom((get) =>
 
 export const brokenTasksAtom = atom((get) => get(snapshotTasksAtom).broken)
 
-/** How many tasks are still open (not done): the badge on the board button. */
-export const openTaskCountAtom = atom(
-  (get) => get(snapshotTasksAtom).items.filter((t) => t.status !== 'done').length,
-)
+/** How many tasks are still open, by the vault's own statuses (any status
+ *  not filed under `completed`): the badge on the sidebar's Board. */
+export const openTaskCountAtom = atom((get) => {
+  const isClosed = get(isClosedAtom)
+  return get(snapshotTasksAtom).items.filter((t) => !isClosed(t.status)).length
+})
 
 /** How many open tasks are overdue, by the board's own `overdue` label: what
  *  turns the board badge red. Follows `nowAtom`, so it turns over on the minute. */
 export const overdueTaskCountAtom = atom((get) => {
   const now = get(nowAtom)
-  return get(snapshotTasksAtom).items.filter((t) => virtualLabels(t, now).includes('overdue'))
-    .length
+  const isClosed = get(isClosedAtom)
+  return get(snapshotTasksAtom).items.filter((t) =>
+    virtualLabels(t, now, isClosed).includes('overdue'),
+  ).length
 })
 
 /** Open (not-done) tasks whose body links to `notePath`. A task counts once no
@@ -250,7 +255,17 @@ export const createTaskAtom = atom(
       /** Set before the task exists (quick add, full create): written with
        *  the create, one file, one write. */
       extra?: Partial<
-        Pick<Task, 'due' | 'priority' | 'tags' | 'assignees' | 'reminder' | 'recurrence'>
+        Pick<
+          Task,
+          | 'due'
+          | 'start'
+          | 'priority'
+          | 'estimate'
+          | 'tags'
+          | 'assignees'
+          | 'reminder'
+          | 'recurrence'
+        >
       >
     },
   ) => {
