@@ -129,9 +129,44 @@ export function EmptyView({
         {/* No entrance: a New tab opens many times a day, and opening a tab
           lands at once everywhere else in Holi. */}
         {/* Sized by the pane, not the window, since the sidebar takes its share:
-          one column when narrow, and from 56rem the mark stands beside the
-          day and what you would do, with what was written across both. */}
+          one column when narrow, and from 56rem the day across the top, the
+          mark beside what you would do, and what was written across the foot. */}
         <div className="mx-auto grid w-full max-w-lg gap-10 px-6 pt-[max(3rem,12vh)] pb-16 @4xl:max-w-5xl @4xl:grid-cols-[auto_minmax(0,1fr)] @4xl:items-start @4xl:gap-x-16">
+          {/* The day heads the page, across both columns: where you are
+            and what is open, before anything to do about it. */}
+          <header className="flex flex-col gap-1 @4xl:col-span-2">
+            {vaultName ? (
+              <p className="text-muted-foreground text-xs font-medium">
+                {vaultName}
+              </p>
+            ) : null}
+            <h1 className="text-2xl leading-tight font-semibold tracking-[-0.02em]">
+              {dayLabel(today)}
+            </h1>
+            <p className="text-muted-foreground text-sm">
+              {openTasks === 0 ? (
+                "Nothing open on the board."
+              ) : (
+                <>
+                  <span className="text-foreground font-medium tabular-nums">
+                    {openTasks}
+                  </span>{" "}
+                  open {openTasks === 1 ? "task" : "tasks"}
+                  {overdue > 0 ? (
+                    <>
+                      ,{" "}
+                      <span className="text-foreground font-medium tabular-nums">
+                        {overdue}
+                      </span>{" "}
+                      overdue
+                    </>
+                  ) : null}
+                  .
+                </>
+              )}
+            </p>
+          </header>
+
           {/* The mark, in dots the pointer drags a wake through: it moves only
             under the hand, so it costs nothing while the view is read. The
             first thing to go when the pane narrows. */}
@@ -142,81 +177,44 @@ export function EmptyView({
             <AsciiWake shape="holi" size={8} label="Holi" />
           </div>
 
-          {/* The day and the board head what you would do next, beside the
-            mark, so the two columns come out the same height. */}
-          <div className="flex flex-col gap-8">
-            <header className="flex flex-col gap-1">
-              {vaultName ? (
-                <p className="text-muted-foreground text-xs font-medium">
-                  {vaultName}
-                </p>
-              ) : null}
-              <h1 className="text-2xl leading-tight font-semibold tracking-[-0.02em]">
-                {dayLabel(today)}
-              </h1>
-              <p className="text-muted-foreground text-sm">
-                {openTasks === 0 ? (
-                  "Nothing open on the board."
-                ) : (
-                  <>
-                    <span className="text-foreground font-medium tabular-nums">
-                      {openTasks}
-                    </span>{" "}
-                    open {openTasks === 1 ? "task" : "tasks"}
-                    {overdue > 0 ? (
-                      <>
-                        ,{" "}
-                        <span className="text-foreground font-medium tabular-nums">
-                          {overdue}
-                        </span>{" "}
-                        overdue
-                      </>
-                    ) : null}
-                    .
-                  </>
-                )}
-              </p>
-            </header>
-
-            {/* Commands as plain rows under a heading, the way an editor's
+          {/* Commands as plain rows under a heading, the way an editor's
               welcome page lists them: the heading, not a fill, sets them
               apart from the documents. Kept to a short column, so Board's
               count stays beside it. */}
-            <section
-              aria-labelledby="start"
-              className="flex flex-col gap-2 @4xl:max-w-sm"
+          <section
+            aria-labelledby="start"
+            className="flex flex-col gap-2 @4xl:max-w-sm"
+          >
+            <h2
+              id="start"
+              className="text-muted-foreground text-xs font-medium"
             >
-              <h2
-                id="start"
-                className="text-muted-foreground text-xs font-medium"
-              >
-                Start
-              </h2>
-              <ItemGroup className="gap-0.5 has-data-[size=xs]:gap-0.5">
-                <StartRow
-                  icon={<FilePlusIcon />}
-                  label="New document"
-                  onClick={onNewDocument}
-                />
-                <StartRow
-                  icon={<CalendarDaysIcon />}
-                  label="Today’s note"
-                  onClick={() => void openToday()}
-                />
-                <StartRow
-                  icon={<SquareKanbanIcon />}
-                  label="Board"
-                  count={openTasks}
-                  onClick={() => onOpen(BOARD_TAB)}
-                />
-                <StartRow
-                  icon={<SearchIcon />}
-                  label="Search"
-                  onClick={onOpenSearch}
-                />
-              </ItemGroup>
-            </section>
-          </div>
+              Start
+            </h2>
+            <ItemGroup className="gap-0.5 has-data-[size=xs]:gap-0.5">
+              <StartRow
+                icon={<FilePlusIcon />}
+                label="New document"
+                onClick={onNewDocument}
+              />
+              <StartRow
+                icon={<CalendarDaysIcon />}
+                label="Today’s note"
+                onClick={() => void openToday()}
+              />
+              <StartRow
+                icon={<SquareKanbanIcon />}
+                label="Board"
+                count={openTasks}
+                onClick={() => onOpen(BOARD_TAB)}
+              />
+              <StartRow
+                icon={<SearchIcon />}
+                label="Search"
+                onClick={onOpenSearch}
+              />
+            </ItemGroup>
+          </section>
 
           <RecentlyEdited onOpen={onOpen} onNewDocument={onNewDocument} />
         </div>
