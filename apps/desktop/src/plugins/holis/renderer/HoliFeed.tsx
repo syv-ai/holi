@@ -9,13 +9,15 @@
  * through core's run atoms; this page only asks.
  */
 import { useAtomValue, useSetAtom } from 'jotai'
-import { ChevronRight, FileText } from 'lucide-react'
+import { ChevronRight, FileText, Plus } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
-import { Churn, EmptyState } from '@/composites'
+import { IconStackEmpty } from '@/components/reui/icon-stack-empty'
+import { Churn } from '@/composites'
 import { Button, Icon } from '@/primitives'
 import {
   agentRunFilesAtom,
   agentRunsReviewedAtom,
+  agentsSelectionAtom,
   agentSessionRowsAtom,
   cn,
   keepAgentRunAtom,
@@ -23,6 +25,7 @@ import {
   reviewAgentRunAtom,
   revertAgentRunAtom,
   showAgentSessionAtom,
+  useHasCapability,
 } from '@/plugin-api'
 import { StateLabel, ago, useNow } from './parts'
 import { holiSeenAtom, runNeedsYou, runState, type HoliRun, type HoliSummary } from './state'
@@ -185,6 +188,10 @@ export function HoliFeed({
 }): React.JSX.Element {
   const sessions = useAtomValue(agentSessionRowsAtom)
   const files = useAtomValue(agentRunFilesAtom)
+  // A habit is the one way to give it work from here: offered while the
+  // automations plugin runs.
+  const habits = useHasCapability('schedules.list')
+  const select = useSetAtom(agentsSelectionAtom)
   const seen = useAtomValue(holiSeenAtom)[holi.id]
   const setSeen = useSetAtom(holiSeenAtom)
   const load = useSetAtom(loadAgentRunsAtom)
@@ -236,10 +243,19 @@ export function HoliFeed({
 
   if (holi.runs.length === 0) {
     return (
-      <EmptyState
+      <IconStackEmpty
         icon={FileText}
         title="No runs yet"
-        description={`Open a document it takes, and pick ${holi.name} from the menu beside its Agent button. An automation it carries out shows under Habits.`}
+        description={`Send ${holi.name} a document from the menu beside the document's Agent button, or give it a habit and it runs on its own.`}
+        action={
+          habits
+            ? {
+                label: 'Add a habit',
+                icon: Plus,
+                onClick: () => select({ owner: 'automations', id: `new:${holi.id}` }),
+              }
+            : undefined
+        }
       />
     )
   }

@@ -19,6 +19,7 @@ import {
   InputGroupInput,
   Skeleton,
 } from '@/primitives'
+import { IconStackEmpty } from '@/components/reui/icon-stack-empty'
 import { cn } from '@/plugin-api'
 import { AutomationEditor, useInitialDraft } from './AutomationEditor'
 import {
@@ -125,14 +126,14 @@ function Editor({ open }: { open: string }): React.JSX.Element {
   const initial = useInitialDraft(summary, holi)
   if (!isNew && summary === undefined) {
     return all.length === 0 ? (
-      <EmptyState
+      <IconStackEmpty
         icon={Zap}
         title="Put agent work on a schedule"
         description="An automation runs a prompt as a session at the times you set, on this machine, while the vault is open. A Holi can carry it out, with its soul and memory."
         action={{ label: 'New automation', icon: Plus, onClick: () => select('new') }}
       />
     ) : (
-      <EmptyState
+      <IconStackEmpty
         icon={Zap}
         title="Pick an automation"
         description="Or start a new one."

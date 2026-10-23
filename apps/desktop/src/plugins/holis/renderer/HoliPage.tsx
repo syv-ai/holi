@@ -28,6 +28,7 @@ import {
   useHasCapability,
   type UiCapability,
 } from '@/plugin-api'
+import { IconStackEmpty } from '@/components/reui/icon-stack-empty'
 import { HoliFeed } from './HoliFeed'
 import {
   holiSettingsAtom,
@@ -95,7 +96,7 @@ function Habits({ holi }: { holi: HoliSummary }): React.JSX.Element {
 
   if (!has) {
     return (
-      <EmptyState
+      <IconStackEmpty
         icon={Clock}
         title="Automations are off in this vault"
         description="Turn them on in Settings, Plugins, and give this Holi recurring work."
@@ -121,7 +122,7 @@ function Habits({ holi }: { holi: HoliSummary }): React.JSX.Element {
   }
   if (habits.length === 0) {
     return (
-      <EmptyState
+      <IconStackEmpty
         icon={Clock}
         title="No habits yet"
         description={`Put recurring work on a schedule for ${holi.name}, like a morning digest or a weekly report.`}
@@ -194,7 +195,11 @@ export function HoliPage({ id }: { id: string }): React.JSX.Element {
         action={{ label: 'Retry', onClick: () => void reload() }}
       />
     ) : (
-      <EmptyState title="That Holi is no longer in this vault" />
+      <IconStackEmpty
+        icon={Sparkles}
+        title="That Holi is no longer in this vault"
+        description="Someone removed or renamed its file. The others are in the sidebar."
+      />
     )
   }
 
