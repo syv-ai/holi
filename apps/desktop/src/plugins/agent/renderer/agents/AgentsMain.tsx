@@ -2,8 +2,9 @@
  * The Agents mode's main view (docs/features/agent-sessions.md, The Agents
  * view): one of four things, picked in the sidebar.
  *
- * - **Home**, what the view opens on: a slot's `home` when one offers it
- *   (the chat plugin's new-session page), else the Inbox.
+ * - **Home**, what the view opens on whenever nothing is selected: the
+ *   new-session page, the built-in chat's `home`. Never the Inbox, which is
+ *   its own row.
  * - **The Inbox**: the sessions waiting on you, and what other plugins add
  *   there (a Holi's report that asked for you).
  * - **A background session**: what it is and its state. Its terminal is not
@@ -17,11 +18,10 @@
 import { useAtomValue, useSetAtom } from 'jotai'
 import { Bot, Inbox, SquarePen } from 'lucide-react'
 import { useEffect, useState } from 'react'
-import { EmptyState } from '@/composites'
+import { IconStackEmpty } from '@/components/reui/icon-stack-empty'
 import { activeRemoteAtom, agentsSlotsAtom } from '@/plugin-api'
 import { inboxCountAtom } from '../state/agents-status'
 import { agentsViewAtom } from '../state/agents-view'
-import { newViewSessionAtom } from '../state/session-view'
 import { stopSessionAtom } from '../state/send'
 import { agentSessionsAtom } from '../state/sessions'
 import { SessionCard, StateLabel } from './parts'
@@ -50,8 +50,6 @@ function InboxView(): React.JSX.Element {
   const slots = useAtomValue(agentsSlotsAtom)
   const count = useAtomValue(inboxCountAtom)
   const setView = useSetAtom(agentsViewAtom)
-  const start = useSetAtom(newViewSessionAtom)
-  const [error, setError] = useState<string | null>(null)
   const now = useNow()
   const waiting = sessions.filter((s) => s.state === 'needs-you')
   return (
@@ -61,17 +59,14 @@ function InboxView(): React.JSX.Element {
         {count > 0 && <span className="text-muted-foreground tabular-nums">{count}</span>}
       </Bar>
       {count === 0 ? (
-        <EmptyState
+        <IconStackEmpty
           icon={Inbox}
           title="Nothing needs you"
-          description={
-            error ??
-            'A session waiting on a permission prompt or a question lands here, and so does a Holi that asks for you.'
-          }
+          description="A session waiting on a permission prompt or a question lands here, and so does a Holi that asks for you."
           action={{
             label: 'New session',
             icon: SquarePen,
-            onClick: () => void start().then((res) => setError(res.ok ? null : res.message)),
+            onClick: () => setView({ kind: 'home' }),
           }}
         />
       ) : (
@@ -145,10 +140,11 @@ function SessionView({ id }: { id: string }): React.JSX.Element {
           <span className="truncate text-xs text-muted-foreground">{facts.join(' · ')}</span>
         )}
       </Bar>
-      <EmptyState
+      <IconStackEmpty
         icon={Bot}
         title="A background run"
         description={error ?? description}
+        role={error === null ? undefined : 'alert'}
         action={{
           label: 'Stop session',
           onClick: () => void stop(id).then((res) => setError(res.ok ? null : res.message)),
@@ -176,16 +172,18 @@ export function AgentsMain(): React.JSX.Element {
   }, [missing, setView])
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col bg-background" data-agents-main={view.kind}>
+    // No ground of its own: on macOS the window is glass, and the shell's
+    // `main` tints it as the vault's Transparency asks (index.css, Glass).
+    <div className="flex min-h-0 flex-1 flex-col" data-agents-main={view.kind}>
       {view.kind === 'session' && !missing ? (
         <SessionView key={view.id} id={view.id} />
       ) : view.kind === 'slot' && slot?.main !== undefined ? (
         <slot.main key={view.id} id={view.id} />
-      ) : view.kind === 'home' && Home !== undefined ? (
-        <Home />
-      ) : (
+      ) : view.kind === 'inbox' ? (
         <InboxView />
-      )}
+      ) : Home !== undefined ? (
+        <Home />
+      ) : null}
     </div>
   )
 }

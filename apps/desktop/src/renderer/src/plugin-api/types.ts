@@ -405,8 +405,8 @@ export interface AgentsSlot {
   /** The main view while the selection is its own; gets the selected id. */
   main?: ComponentType<{ id: string }>
   /** The mode's main view while nothing is selected, in place of the
-   *  provider's own (its Inbox): the first running slot with one wins. The
-   *  chat plugin's new-session page. */
+   *  Inbox, which is a row of its own: the first running slot with one wins. The
+   *  built-in chat's new-session page. */
   home?: ComponentType
   /** Added to what the mode toggle reports. */
   status?: Atom<AgentsStatus>

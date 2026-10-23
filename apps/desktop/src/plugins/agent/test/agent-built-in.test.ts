@@ -1,9 +1,9 @@
 /**
- * A vault with the agent off: nothing under `.claude/` is seeded, whichever
- * plugin contributes it, and the `agent.*` capabilities are refused. Turning
- * it on seeds `.claude/` once.
+ * The agent and chat are built in: a vault whose `plugins.yaml` an older Holi
+ * wrote with `agent: false` and `chat: false` still seeds `.claude/` and
+ * serves `agent.*`, and the next write drops the stale pins.
  */
-import { access, mkdtemp, readFile, rm } from 'node:fs/promises'
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it } from 'vitest'
@@ -11,6 +11,7 @@ import { createCapabilityHost } from '../../../main/capabilities/dispatch'
 import { createCapabilityRegistry } from '../../../main/capabilities/registry'
 import { noCoreServices } from '../../../main/capabilities/services'
 import { createPluginHost } from '../../../main/plugin-host/host'
+import { install } from '../../../main/plugin-host/installed'
 import { coreSeed } from '../../../main/vault/seed/core'
 import { writeVaultSettings } from '../../../main/vault/settings'
 import { MAIN_PLUGINS } from '../../main'
@@ -27,7 +28,7 @@ const exists = (path: string) =>
     () => false,
   )
 
-it('seeds nothing under .claude/ and refuses agent.* until the agent is on', async () => {
+it('runs whatever a stale plugins.yaml pins for it', async () => {
   const root = await mkdtemp(join(tmpdir(), 'holi-agent-off-'))
   dirs.push(root)
   const registry = createCapabilityRegistry()
@@ -68,17 +69,23 @@ it('seeds nothing under .claude/ and refuses agent.* until the agent is on', asy
   const terminals = () =>
     capabilities.dispatch({ door: 'ui', remote: 'o/r', name: 'agent.terminals', params: {} })
 
-  await writeVaultSettings(root, { committed: { plugins: { agent: false } } })
+  await mkdir(join(root, '.holi/settings'), { recursive: true })
+  await writeFile(
+    join(root, '.holi/settings/plugins.yaml'),
+    'plugins:\n  agent: false\n  chat: false\n  google: true\n',
+  )
+  expect([...(await host.enabled(root))]).toEqual(expect.arrayContaining(['agent', 'chat']))
   await host.seed(root)
   expect(await exists(join(root, 'AGENTS.md'))).toBe(true)
-  expect(await exists(join(root, '.claude'))).toBe(false)
-  await expect(terminals()).rejects.toThrow('no such method: agent.terminals')
-
-  await writeVaultSettings(root, { committed: { plugins: { agent: true } } })
-  host.invalidate()
-  await host.seed(root)
   const settings = JSON.parse(await readFile(join(root, '.claude/settings.json'), 'utf8'))
   expect(JSON.stringify(settings.hooks)).toContain('google-send-gate')
   expect(await exists(join(root, '.claude/skills/gmail-calendar/SKILL.md'))).toBe(true)
   expect((await terminals()).value).toEqual([])
+
+  // Any write regenerates the file whole, without the built-in parts.
+  install(MAIN_PLUGINS)
+  await writeVaultSettings(root, { committed: { plugins: { pdf: true } } })
+  const text = await readFile(join(root, '.holi/settings/plugins.yaml'), 'utf8')
+  expect(text).not.toMatch(/\b(agent|chat):/)
+  expect(text).toMatch(/^  google: true$/m)
 })

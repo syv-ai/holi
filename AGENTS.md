@@ -20,10 +20,13 @@ vault store and sync. `src/preload` is the narrow
 Node access or GitHub credentials. `router.ts` is main's typed API seam; keep
 Electron dependencies out of code that should remain testable under plain Node.
 
-Optional parts of Holi are plugins under `src/plugins/<id>/` (the agent, automations, Holis, PDF, Google, vault apps and community plugins
+Optional parts of Holi are plugins under `src/plugins/<id>/` (automations, Holis, PDF, Google, vault apps and community plugins
 so far), each with its own `main/`, `renderer/`, `shared/` and
 `test/`, reaching core only through `src/main/plugin-api.ts` and
-`@/plugin-api`. Vault apps live in `src/plugins/apps/`; what a synced vault
+`@/plugin-api`. The agent and chat live there too, written to the same
+contract, but are built in (`PluginInfo.builtIn`): they always run, Settings
+does not list them, and a stale `agent:` or `chat:` pin in `plugins.yaml` is
+ignored. Vault apps live in `src/plugins/apps/`; what a synced vault
 holds of an app (the bundle grammar, the record merge, the `.local.app` rule)
 stays in `packages/shared` and core main. Plugins from other repositories are
 community plugins: processes the `community` plugin runs, never code it loads.
@@ -105,7 +108,7 @@ legacy alias with the same behavior as `pnpm lint`.
   first reads them. The active-vault snapshot and watcher are shared state, not
   per-component caches.
 - The agent is a real `claude` process in a main-process `node-pty` PTY, with
-  the managed vault clone as cwd. It is the plugin `src/plugins/agent/`: a
+  the managed vault clone as cwd. It is the built-in part `src/plugins/agent/`: a
   host (`main/host/`, the PTY in `pty.ts`) and Claude Code as its provider
   (`main/claude/`). Keep Claude's native permission prompts; do
   not add `--dangerously-skip-permissions` or a parallel prompt system.
@@ -115,9 +118,9 @@ legacy alias with the same behavior as `pnpm lint`.
   out an automation, once this machine approved what the Holi says. Both are
   plugins built on the agent: they start sessions through `agent.launch` and
   hear it through `ctx.hear`; core reaches them only through plugin slots. A
-  conversation drawn as chat is the plugin `src/plugins/chat/`, on by default
-  and the Agents mode's session UI (the person prefers the conversation; a
-  terminal view may return later), which answers Claude Code's own
+  conversation drawn as chat is the built-in part `src/plugins/chat/`, the
+  Agents mode's session UI and its home, the new-session page (the person
+  prefers the conversation; a terminal view may return later), which answers Claude Code's own
   `can_use_tool` prompts and nothing more.
 - Use system `git` and parse plumbing/porcelain output, not human-readable git
   output. Holi-managed clones autosave, pull, merge, and push; do not assume a

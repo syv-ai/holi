@@ -139,7 +139,7 @@ stuck push is the exception: it submits its instruction as the first turn of its
 
 ### Chat session
 
-Claude Code run on its structured channel (`stream-json`) by the optional chat plugin, drawn as a
+Claude Code run on its structured channel (`stream-json`) by built-in chat, drawn as a
 conversation in the Agents view, its permission prompts Claude Code's own as cards. Named by a UUID;
 its transcript is kept on this machine, never in the vault. See [chat](features/chat.md).
 

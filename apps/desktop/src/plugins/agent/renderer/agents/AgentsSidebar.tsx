@@ -58,7 +58,7 @@ export function AgentsSidebar(): React.JSX.Element {
         <NavRow
           icon={Inbox}
           label="Inbox"
-          current={view.kind === 'inbox' || view.kind === 'home'}
+          current={view.kind === 'inbox'}
           onClick={() => setView({ kind: 'inbox' })}
           end={
             inbox > 0 ? (

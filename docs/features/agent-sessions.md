@@ -26,20 +26,20 @@ name), "Agents" for the list, and "New session" for an unnamed session, whose ti
 terminal shows can change under it (`←` in an attached session goes back to the list, and Enter
 there attaches any session), so a terminal is never taken to be a session. When its client exits
 (a detach, `/exit`, its session stopped) the tab closes. An agent tab is the surface `agent`, kept mounted,
-with the terminal id as its id. The agent is the plugin `agent` (`src/plugins/agent/`, on by
-default), and its renderer side (`renderer/index.tsx`) registers its tab (with `tabs`, so the strip,
+with the terminal id as its id. The agent is `agent` (`src/plugins/agent/`), a part of Holi
+written to the plugin contract and built in, so no vault turns it off
+([architecture](../architecture.md), Plugins), and its renderer side (`renderer/index.tsx`) registers its tab (with `tabs`, so the strip,
 the palette and the recents read each terminal's label and status dot), its nav item (which runs
 `agent.show`), its commands (`agent.show` on ⌘J, `agent.new`), its rows, orbs and turn review, the
 palette's session rows, the leave question, and the agent service every "Ask" goes through
-(`useAgentService`). With the agent off there is no service, so no "Ask" is offered. Its main side starts with the vault and attaches to it (`activate`), and its disposer stops the vault's sessions and terminals. The
+(`useAgentService`). Its main side starts with the vault and attaches to it (`activate`), and its disposer stops the vault's sessions and terminals. The
 renderer reaches it through the `agent.*` capabilities (sessions, terminals, open, start, send,
 stop, respawn, duplicate, attach, detach, and the turn review's turns, turnFiles, turnDiff and
 revert, which deletes a file the turn created rather than leaving it empty). Main tells it the session and terminal lists and each terminal's bytes as the events
 `sessions`, `terminals`, `pty-data` and `pty-exit`; keystrokes and resizes go back as the events
 `pty-write` and `pty-resize`, which keep their order. A terminal's bytes go straight to its xterm
-(`renderer/lib/session-terminals.ts`), never through an atom. Its main side is the plugin `agent`
-(`src/plugins/agent/main/`), so in a vault with the agent off its capabilities are refused, its
-events are not sent and nothing under `.claude/` is seeded.
+(`renderer/lib/session-terminals.ts`), never through an atom. A stale `agent: false` an older Holi
+wrote into `plugins.yaml` is ignored, and dropped at the file's next write.
 
 **Other plugins drive Claude Code through it, never around it.** The agent knows nothing of a
 plugin that requires it ([architecture](../architecture.md), Plugins); it offers general
@@ -49,8 +49,8 @@ environment, the binary), `agent.turn` (begin, end or forget a turn by an id the
 vault's one working set, so sync pauses and the turn is recorded like a session's), and
 `agent.open` with `fork` (a terminal on a copy of a conversation) or `login` (Claude Code's
 `/login` for the vault's config directory). The listing never names a bracketed id, so its
-reconcile forgets only the turns of its own sessions. The optional chat plugin is one such caller
-([chat](chat.md)).
+reconcile forgets only the turns of its own sessions. Chat, built in like the agent, is one such caller
+([chat](chat.md)), and Holis and automations are others.
 
 **Where you meet it.** ⌘J and the nav menu's agent item focus a terminal showing the list, or
 open one. Which terminal shows it is read from its title, since `←` and Enter move a terminal
@@ -58,7 +58,8 @@ between the list and a session. An agent tab's **Open overview** always opens a 
 item is green while any session is live. The sidebar's **Agents** mode ([sidebar](sidebar.md)) is the agent's. At
 the top, **Search conversations…** with a filter menu. Under it, **Inbox**: what needs you, the
 sessions waiting on a permission prompt or a question and what other plugins add there (a Holi's
-report that asked for you); it is also what the view opens on, and empty it says what lands there.
+report that asked for you); empty, it says what lands there and offers a new session. It is a row
+of its own and never the home: with nothing selected the view is chat's new-session page.
 Beside it the places plugins add (Automations), then their sections ([Holis](holis.md)), then
 **Sessions** with its **+** (⌘N).
 
@@ -185,9 +186,9 @@ showing it busy, crosses it off), so a session resumed from the list is never re
   process Holi never spawned.
 - A bearer or port in a session's environment: a background session's environment is the
   supervisor's, and the supervisor outlives a Holi restart.
-- A headless chat panel in core: re-implements the TUI. Offered only as the chat plugin
-  ([chat](chat.md)), now the Agents mode's session UI and on by default, on Claude Code's own
-  structured channel and prompts.
+- A headless chat panel in core: re-implements the TUI. Chat ([chat](chat.md)) is built in as the
+  Agents mode's session UI, on Claude Code's own structured channel and prompts, and written to
+  the plugin contract rather than core.
 - A server-side agent: there is no server.
 - A Holi list of past sessions: the agent list is that list.
 - A gate before the agent's writes: Claude Code already asks.

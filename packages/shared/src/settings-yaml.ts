@@ -318,14 +318,19 @@ function pluginLines(
 ): string[] {
   const has = Object.prototype.hasOwnProperty.call(values, 'plugins')
   const value = values.plugins
+  // An older Holi's pin of a built-in part is dropped, as if never written.
   const answered =
     has && typeof value === 'object' && value !== null && !Array.isArray(value)
-      ? (value as Record<string, unknown>)
+      ? Object.fromEntries(
+          Object.entries(value as Record<string, unknown>).filter(
+            ([id]) => !known.some((p) => p.id === id && p.builtIn === true),
+          ),
+        )
       : null
   const out: string[] = ['', '# ── Plugins']
 
   if (target === 'local') {
-    if (!has) return []
+    if (!has || (answered !== null && Object.keys(answered).length === 0)) return []
     out.push(
       ...wrap(
         `false turns a plugin off on this machine alone. Only ${PLUGINS_FILE} turns one on.`,
@@ -351,7 +356,9 @@ function pluginLines(
   const unset = (id: string, on: boolean) =>
     live ? `  # ${id}: ${inline(on)}` : `#   ${id}: ${inline(on)}`
   const entries: string[] = []
-  for (const plugin of target === 'committed' ? known : []) {
+  // A built-in part is not listed: it is not a plugin to turn on or off.
+  const optional = known.filter((p) => p.builtIn !== true)
+  for (const plugin of target === 'committed' ? optional : []) {
     if (answered === null || !(plugin.id in answered))
       entries.push(unset(plugin.id, plugin.default))
     else entries.push(`  ${plugin.id}: ${inline(answered[plugin.id])}`)

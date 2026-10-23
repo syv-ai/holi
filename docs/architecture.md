@@ -39,8 +39,9 @@ The agent is Claude Code, unmodified. Holi adds no adapter layer and no prompt-b
 forward when a Claude Code release changes something. Users are developers: the raw terminal is the
 interface, git is a tool they already know, and Claude Code is already installed and signed in. With
 the vault being plain files in a git repo, the agent needs no Holi-specific operations at all.
-Drawing Claude Code as a conversation instead of a terminal is an adapter, so it is not core: it is
-the chat plugin, on by default as the Agents mode's session UI ([chat](features/chat.md)).
+Drawing Claude Code as a conversation instead of a terminal is an adapter, so it is written to the
+plugin contract like the agent itself: the built-in chat part, the Agents mode's session UI
+([chat](features/chat.md)), which no vault can turn off.
 
 ## 3. Processes and the IPC seam
 
@@ -84,6 +85,15 @@ The dependency runs one way: the plugin underneath knows nothing of what require
 on this machine, or needing one that is off), and every reader in both processes asks it. Both
 processes check their list with `checkPluginCatalogue` at boot, which refuses a missing or circular
 requirement.
+A part of Holi may be written to the plugin contract without being optional: `PluginInfo.builtIn`.
+The agent and chat are built in. The resolver runs a built-in part in every vault whatever the
+plugins files say, the settings tab and the onboarding act do not list it, a write refuses to pin
+it, and the writer leaves its id out of the `plugins` block, so a pin an older Holi wrote
+(`chat: false`) is ignored at once and gone at the file's next write. They stay under
+`src/plugins/` rather than moving into core: the contract is what keeps core free of Claude Code,
+and what lets Holis, automations and the rest build on the agent (`requires`, `ctx.hear`, its
+`.claude/` seed) without core knowing them. A built-in part may require only other built-in parts,
+which `checkPluginCatalogue` checks.
 A plugin that only adds to another says so in `PluginInfo.addsTo`: Google, PDF and vault apps add
 skills, hooks and settings fragments to the agent. Unlike `requires`, it runs without the other;
 what it adds waits until that one runs, and the resolver says what each running plugin is adding
@@ -109,16 +119,17 @@ core's `holi-vault:`, and a plugin's handler answers 404 while the open vault ha
 marked `frame` serves framed pages: the window guard lets such a frame move within its scheme and
 sends a link out of it to the browser.
 A plugin's own code sits in `main/`, `renderer/`, `shared/` and `test/` under its folder; its
-renderer imports its main side as types only, for `capClient`. The plugins are the agent
-([agent-sessions](features/agent-sessions.md)), chat, which requires it ([chat](features/chat.md)), PDF ([pdf](features/pdf.md)), Google
+renderer imports its main side as types only, for `capClient`. The built-in parts are the agent
+([agent-sessions](features/agent-sessions.md)) and chat, which requires it ([chat](features/chat.md)).
+The optional plugins are automations and Holis, built on the agent, PDF ([pdf](features/pdf.md)), Google
 ([google](features/google.md)), vault apps ([vault apps](features/vault-apps.md)) and community
 plugins ([community plugins](features/community-plugins.md)), which hosts plugins from other
 repositories as processes it runs, never as code it loads. A renderer plugin may give its claims as
 an atom, for claims that follow what main tells it, and a plugin may register a frame origin with
 the window guard (`ctx.frameOrigin`).
 A seed contribution can own a path prefix (`owns`): the agent owns `.claude/`. Another plugin seeds
-there only by declaring it adds to the agent, which `install` checks at boot, and its files and
-fragments there are left out while the agent is off and seeded once when it turns on.
+there only by declaring it adds to the agent, which `install` checks at boot. The agent is built
+in, so what is added there is seeded whenever the adding plugin runs.
 The app door, through which a vault app's frame calls capabilities, is core's, and the apps plugin
 is its one opener (`ctx.openAppDoor`), supplying the consent check for entries with an
 `appGrant`; with apps off, no entry is reachable through it.
@@ -170,7 +181,7 @@ See [vaults-sync](features/vaults-sync.md), [history](features/history.md),
 
 ## 5. The agent
 
-The agent is a plugin (`src/plugins/agent/`): a host (`main/host/`: PTYs, terminal mirror, turn
+The agent is a built-in part written to the plugin contract (`src/plugins/agent/`): a host (`main/host/`: PTYs, terminal mirror, turn
 coordinator, turn review) and a provider (`main/claude/`: Claude Code's CLI, session listing,
 config directory, hook routes and seed), with the line between them in `main/provider.ts`.
 Every session is a Claude Code background session: the vault's supervisor runs it, its job
@@ -195,7 +206,8 @@ and turn ends through `ctx.hear` (what a plugin's main side `publish`es, heard o
 that require it), and fill the Agents view and the Agent menu from slots core knows nothing of
 ([holis](features/holis.md)).
 
-**Chat** is the plugin, on by default, that draws Claude Code as a conversation: Claude Code on its
+**Chat** is the built-in part that draws Claude Code as a conversation, and the Agents mode's
+home (its new-session page) whenever nothing is selected: Claude Code on its
 structured channel (`stream-json`, with `--permission-prompt-tool stdio`), its prompts Claude Code's
 own, answered from a card. The agent knows nothing of it; chat reaches the agent's turn bracket,
 command target and terminals through general capabilities ([chat](features/chat.md)).

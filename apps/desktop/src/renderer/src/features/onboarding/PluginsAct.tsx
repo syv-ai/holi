@@ -11,7 +11,13 @@
  * Only choosing happens here. Setting a plugin up (connecting Google, having
  * Claude Code) is per machine and happens where the plugin is used.
  */
-import { pluginLabels, resolvePlugins, type PluginInfo, type PluginSettings } from '@holi/shared'
+import {
+  optionalPlugins,
+  pluginLabels,
+  resolvePlugins,
+  type PluginInfo,
+  type PluginSettings,
+} from '@holi/shared'
 import { useAtomValue } from 'jotai'
 import { installedPluginsAtom } from '@/state/plugins'
 import { OptionCard, pluginMark } from '@/composites'
@@ -33,7 +39,7 @@ export function PluginsAct({ plugins, onChange }: Props) {
   const { running: on, status } = resolvePlugins(plugins, infos)
   return (
     <div className="obrit-cards grid w-full grid-cols-1 gap-3 sm:grid-cols-2">
-      {infos.map((info) => {
+      {optionalPlugins(infos).map((info) => {
         const running = on.has(info.id)
         const st = status.get(info.id)
         const needs = st?.kind === 'needs' ? st.missing : []

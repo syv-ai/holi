@@ -24,18 +24,20 @@ mode, the mode's own list, and who is signed in. Everywhere else is one keystrok
   back, since the panes are where it opens.
 - **The Agents side is a plugin's.** `RendererPlugin.agentsMode` gives a sidebar, a main view and a
   status atom. In Agents mode the sidebar body is its sidebar, and its view covers the panes, which
-  stay mounted underneath so nothing open is lost. The agent plugin provides it: the Inbox, then its live background sessions under Sessions
+  stay mounted underneath so nothing open is lost. The built-in agent provides it: the Inbox, then its live background sessions under Sessions
   ([agent sessions](agent-sessions.md)); with no plugin providing it there is one mode and no
   toggle. **Other plugins add to it without the agent knowing them**: `RendererPlugin.agentsSlot`
   gives a row for the top group beside the Inbox (`nav`: [Automations](scheduled-agents.md)), a
   section (`sidebar`: [Holis](holis.md)) placed by its `order` (the sessions are at 100; a slot with
   none comes after them, as chat does), rows in the Inbox (`inbox`), a main view for its rows, the
-  mode's main view while nothing is selected (`home`, the first running slot's wins, else the
-  Inbox) and a status the toggle adds in. What is shown is core's `agentsSelectionAtom`,
-  `{owner, id}`, so a plugin's row opens its own view. The [chat](chat.md) plugin is one, and its
-  new-session page is the home. In the shell the sidebar's Agents tab is the mode
+  mode's main view while nothing is selected (`home`, the first running slot's wins; the Inbox is
+  its own row, never the home) and a status the toggle adds in. What is shown is core's `agentsSelectionAtom`,
+  `{owner, id}`, so a plugin's row opens its own view. Built-in [chat](chat.md) is one, and its
+  new-session page is the home, so Agents always opens on the composer. In the shell the sidebar's Agents tab is the mode
   (`sidebarSectionAtom` is `appModeAtom`): while it is on, `<main>` is the mode's main view, and
-  opening or picking a document tab goes back to Documents.
+  opening or picking a document tab goes back to Documents. The mode's views paint no ground of
+  their own: on macOS the window is glass and `<main>` tints it as the vault's Transparency asks,
+  so only controls, cards, menus and overlays inside them carry a background.
 - **Documents** is a search field and two destinations, then what you pinned, then the files:
   - **Search** is a field at the top (a grey fill, as every text field is) that opens the
     [command palette](command-palette.md) (⌘P): files, notes and commands. It is a press, not a

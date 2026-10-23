@@ -12,6 +12,7 @@ import { useAtomValue } from "jotai"
 import { useEffect, useState } from "react"
 import {
   PLUGINS_LOCAL_FILE,
+  optionalPlugins,
   pluginLabels,
   resolvePlugins,
   type PluginInfo,
@@ -115,7 +116,7 @@ function PluginSwitches() {
       title="Built in"
       description="Everyone who clones the vault gets the same ones. Turning one off stops it at once."
     >
-      {infos.map((info) => {
+      {optionalPlugins(infos).map((info) => {
         const st = status.get(info.id)
         const failure = running.has(info.id) ? failures[info.id] : undefined
         const id = `settings-plugin-${info.id}`
