@@ -20,6 +20,7 @@ import {
   type VaultRelPath,
 } from '@holi/shared'
 import { resolveRelative } from '@holi/shared/path-safety-node'
+import { completionStatuses, readVaultStatuses } from './statuses'
 import { absPathFor, writeAtomic } from './vault-files'
 
 export type TaskDoneResult =
@@ -54,10 +55,13 @@ export async function taskDoneOp(
     return { ok: false, error: `${rel}: ${(error as Error).message}` }
   }
 
-  const completion = completeTask(task, today)
+  const statuses = await readVaultStatuses(root)
+  const completion = completeTask(task, today, completionStatuses(statuses))
   await writeAtomic(root, rel, serializeTaskFile({ ...task, ...completion }))
 
-  if (completion.status === 'done') return { ok: true, path: rel, status: 'done' }
+  // The result says what happened, finished or rolled forward, in Holi's own
+  // words; the file says it in the vault's (`completionStatuses`).
+  if (completion.due === undefined) return { ok: true, path: rel, status: 'done' }
   return {
     ok: true,
     path: rel,

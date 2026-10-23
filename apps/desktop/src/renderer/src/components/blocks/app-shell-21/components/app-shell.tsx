@@ -24,6 +24,7 @@ import type { Move } from "@/lib/tree-actions"
 import { BOARD_TAB, useNewDocument } from "./documents-section"
 import { EmptyView, isNewTab, NEW_TAB_PREFIX } from "./empty-view"
 import { MobileHeader } from "./mobile-header"
+import { PlanningView } from "../../planning/planning-view"
 import { SiteHeader } from "./site-header"
 import { useSidebarApps } from "./sidebar-apps"
 import { ShortcutsDialog } from "./shortcuts-dialog"
@@ -304,6 +305,8 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
             onNewDocument={handleNewChat}
             onOpenSearch={() => setSearchOpen(true)}
           />
+        ) : activeThreadId === BOARD_TAB ? (
+          <PlanningView onOpenTask={handleSelectThread} />
         ) : null}
       </main>
     </div>

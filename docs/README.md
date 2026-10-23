@@ -27,6 +27,7 @@ other rather than repeating each other.
 | [frontmatter](features/frontmatter.md)             | The frontmatter block, typed rows, schemas                               |
 | [wiki-links](features/wiki-links.md)               | Link grammar, rename, backrefs                                           |
 | [tasks](features/tasks.md)                         | Task files, the board, dates, recurrence, reminders                      |
+| [planning](features/planning.md)                   | The vault as one project: Overview, Board, List and Table                |
 | [daily-notes](features/daily-notes.md)             | Idempotent daily notes and their archive                                 |
 | [agent-sessions](features/agent-sessions.md)       | Background sessions, the Agents view, turn review, reconcile             |
 | [chat](features/chat.md)                           | The optional plugin that draws Claude Code as a conversation             |

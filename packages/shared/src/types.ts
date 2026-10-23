@@ -3,8 +3,11 @@
  * are no generated ids.
  */
 
-export type TaskStatus = 'todo' | 'doing' | 'done'
-export type Priority = 'low' | 'medium' | 'high'
+/** A status id from the vault's statuses (`statuses.ts`): `todo`, `doing`
+ *  and `done` are three of the defaults. Any word a file says is kept, listed
+ *  or not; `columnFor` says where it shows. */
+export type TaskStatus = string
+export type Priority = 'low' | 'medium' | 'high' | 'urgent'
 export type DocKind = 'note' | 'daily'
 
 /**
@@ -92,7 +95,11 @@ export interface Task {
    *  time. The absence of a time is meaningful: due that day, not at midnight
    *  on it. */
   due?: string
+  /** When work on it begins: a stamp like `due`. */
+  start?: string
   priority?: Priority
+  /** How much work it is: `30m`, `2h`, `1.5d`, `1w` (`estimate.ts`). */
+  estimate?: string
   tags: string[]
   /**
    * Who the task is for: GitHub logins of the vault's members, without the

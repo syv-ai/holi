@@ -12,6 +12,7 @@ import { initTRPC, TRPCError } from '@trpc/server'
 import {
   completeTask,
   isAgentSurfacePath,
+  isClosedStatus,
   parseTaskFile,
   parseTaskPatch,
   sameLogin,
@@ -19,6 +20,7 @@ import {
   vaultRelPath,
   withIcon,
   ICONS_FILE,
+  type StatusDef,
   type Task,
   type TaskPatch,
   type VaultEntry,
@@ -42,6 +44,7 @@ import { importFiles } from './vault/import-files'
 import { exportFiles } from './vault/export-files'
 import { moveNotes } from './vault/move'
 import { getOrCreateDaily, sweepDaily } from './vault/daily'
+import { completionStatuses, readVaultStatuses } from './vault/statuses'
 import { openRepo, remoteUrl, type Commit } from './git'
 import { GitHubApiError, type Repo } from './github/api'
 import type { DeviceFlow } from './github/device-flow'
@@ -908,7 +911,7 @@ export function createRouter(deps: RouterDeps) {
         const rel = safe(input.path)
         // Read-modify-write: the file is the task, so an edit is a parse, a
         // merge and a full rewrite.
-        const next = patched(await readTask(root, rel), input.patch)
+        const next = patched(await readTask(root, rel), input.patch, await readVaultStatuses(root))
         await writeAtomic(root, rel, serializeTaskFile(next))
         return next
       }),
@@ -961,7 +964,7 @@ export function createRouter(deps: RouterDeps) {
 
         if (hasPatch) {
           const task = await readTask(root, from)
-          const next = patched(task, patchOrThrow(fieldPatch))
+          const next = patched(task, patchOrThrow(fieldPatch), await readVaultStatuses(root))
           await writeAtomic(root, from, serializeTaskFile(next))
         }
 
@@ -979,14 +982,18 @@ export function createRouter(deps: RouterDeps) {
 
   /**
    * A patch applied to a task. **Done is completion**, wherever it comes from
-   * (a field edit, a drop into Done, the card's checkbox): on a recurring task
-   * it is the next occurrence, not the end of the series (`completeTask`).
+   * (a field edit, a drop into a completed column, the card's checkbox): on a
+   * recurring task it is the next occurrence, not the end of the series
+   * (`completeTask`). Done is any status the vault's `.holi/statuses.yaml`
+   * files under `completed`, and only a patch that names a status completes,
+   * so re-ranking a finished card does not roll it forward.
    * The merge SPREADS rather than testing for undefined: a key
    * present-and-undefined is how `parseTaskPatch` spells "clear this field".
    */
-  function patched(task: Task, patch: TaskPatch): Task {
+  function patched(task: Task, patch: TaskPatch, statuses: readonly StatusDef[]): Task {
     const next = { ...task, ...patch }
-    return patch.status === 'done' ? { ...next, ...completeTask(next, today()) } : next
+    if (patch.status === undefined || !isClosedStatus(statuses, patch.status)) return next
+    return { ...next, ...completeTask(next, today(), completionStatuses(statuses, patch.status)) }
   }
 
   /**

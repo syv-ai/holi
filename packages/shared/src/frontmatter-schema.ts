@@ -13,6 +13,7 @@
 import { isAgentSurfacePath, isHiddenPath } from './path-safety'
 import type { Recurrence } from './types'
 import { isTaskFilePath } from './task-file'
+import { DEFAULT_STATUSES } from './statuses'
 
 /** How a value is edited. The renderer maps each of these to one control. */
 export type FieldKind =
@@ -46,7 +47,7 @@ export interface FieldSpec {
   readonly required?: boolean
 }
 
-/** `todo | doing | done`, and the rest of the task vocabulary: the same words
+/** The default statuses (`statuses.ts`), and the rest of the task vocabulary: the same words
  *  `task-file.ts` validates, in the shape a control needs. */
 const TASK_FIELDS: readonly FieldSpec[] = [
   // DISPLAY order only: `serializeTaskFile` builds its own object, so changing
@@ -54,11 +55,13 @@ const TASK_FIELDS: readonly FieldSpec[] = [
   // by the widget itself.
   {
     key: 'status',
-    kind: { kind: 'enum', options: ['todo', 'doing', 'done'] },
+    kind: { kind: 'enum', options: DEFAULT_STATUSES.map((s) => s.id) },
     required: true,
   },
-  { key: 'priority', kind: { kind: 'enum', options: ['low', 'medium', 'high'] } },
+  { key: 'priority', kind: { kind: 'enum', options: ['low', 'medium', 'high', 'urgent'] } },
+  { key: 'start', kind: { kind: 'stamp' } },
   { key: 'due', kind: { kind: 'stamp' } },
+  { key: 'estimate', kind: { kind: 'text' } },
   { key: 'reminder', kind: { kind: 'stamp' } },
   { key: 'recurrence', kind: { kind: 'recurrence' } },
   { key: 'tags', kind: { kind: 'list' } },
