@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState, type DragEvent } from "react"
+import { useEffect, useMemo, useRef, useState, type DragEvent } from "react"
 import { useAtom, useAtomValue, useSetAtom } from "jotai"
 import {
   dragAndDropFeature,
   expandAllFeature,
   hotkeysCoreFeature,
+  renamingFeature,
   selectionFeature,
   syncDataLoaderFeature,
   type DragTarget,
@@ -11,7 +12,7 @@ import {
 } from "@headless-tree/core"
 import { useTree } from "@headless-tree/react"
 import { toast } from "sonner"
-import { isHiddenPath, TASKS_CLAIM } from "@holi/shared"
+import { GITKEEP, isHiddenPath, TASKS_CLAIM } from "@holi/shared"
 import { cn } from "@/lib/cn"
 
 import {
@@ -22,6 +23,7 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu"
+import { Input } from "@/components/ui/input"
 import {
   SidebarGroup,
   SidebarGroupAction,
@@ -39,7 +41,7 @@ import {
 } from "@/components/reui/tree"
 import { folderDocumentAt } from "@/lib/folder-documents"
 import { buildTreeData, ROOT_ID, type TreeItemData } from "@/lib/tree-data"
-import { planMoveInto, type Move } from "@/lib/tree-actions"
+import { planMoveInto, planRenameFolder, type Move } from "@/lib/tree-actions"
 import { basename, joinPath, parentOf } from "@/lib/tree-paths"
 import { canMoveInto } from "@/lib/tree-view"
 import { claimsAtom, folderClaimsAtom } from "@/state/plugins"
@@ -64,6 +66,7 @@ import {
   FolderOpenIcon,
   FolderPlusIcon,
   ListChecksIcon,
+  PencilIcon,
   PlusIcon,
   SquareKanbanIcon,
 } from "lucide-react"
@@ -115,6 +118,19 @@ function useFiles() {
     ],
     [snapshot, showTasks]
   )
+  // Everything a rename or a new name must not collide with, or must carry
+  // along: task files too, shown or not.
+  const allPaths = useMemo(
+    () => [
+      ...snapshot.docs.map((doc) => doc.path),
+      ...snapshot.files.map((file) => file.path),
+      ...Object.values(snapshot.claimed).flatMap((set) => [
+        ...set.items.map((item) => item.path),
+        ...set.broken.map((item) => item.path),
+      ]),
+    ],
+    [snapshot]
+  )
   const paths = showHidden
     ? docPaths
     : docPaths.filter((path) => !isHiddenPath(path))
@@ -125,9 +141,10 @@ function useFiles() {
   return {
     remote,
     docPaths,
+    allPaths,
     paths,
     dirs,
-    taken: new Set([...docPaths, ...snapshot.dirs]),
+    taken: new Set([...allPaths, ...snapshot.dirs]),
     showHidden,
     showTasks,
     toggleHidden: () =>
@@ -220,6 +237,11 @@ export function FilesSection({
   const moveNotes = useSetAtom(moveNotesAtom)
   const importFiles = useSetAtom(importFilesAtom)
   const [dropping, setDropping] = useState(false)
+  /** The row the context menu was opened on, or null for the empty space. */
+  const [menuTarget, setMenuTarget] = useState<string | null>(null)
+  /** Set by the menu's Rename; the field opens once the menu has closed, so
+   *  the menu handing focus back does not take it from the field. */
+  const renameNext = useRef<string | null>(null)
 
   const data = useMemo(
     () =>
@@ -259,6 +281,50 @@ export function FilesSection({
       const skipped = await importFiles(outside, dest)
       for (const { name, reason } of skipped) toast.error(`${name}: ${reason}`)
     }
+  }
+
+  /** A new name in the same folder: a file moves, a folder moves what it
+   *  holds. Either way links are rewritten and open tabs follow. */
+  async function rename(item: ItemInstance<TreeItemData>, value: string) {
+    const from = item.getId()
+    const name = value.trim()
+    if (name === "" || name === basename(from)) return
+    if (name.includes("/")) {
+      toast.error("A name can't contain a slash.")
+      return
+    }
+    const to = joinPath(parentOf(from), name)
+    if (files.taken.has(to)) {
+      toast.error(`There is already a ${name} here.`)
+      return
+    }
+    // The row keeps its place in a hand-made order, and a folder keeps its own.
+    const parent = parentOf(from)
+    const siblings = order[parent]
+    if (siblings?.includes(from)) {
+      setOrder(
+        parent,
+        siblings.map((id) => (id === from ? to : id))
+      )
+    }
+    const inside = order[from]
+    if (inside) {
+      setOrder(
+        to,
+        inside.map((id) => joinPath(to, id.slice(from.length + 1)))
+      )
+    }
+    if (item.getItemData()?.isFolder !== true) {
+      await move([{ from, to }])
+      return
+    }
+    const { moves } = planRenameFolder(files.allPaths, from, name)
+    // An empty folder holds only its keep file.
+    await move(
+      moves.length > 0
+        ? moves
+        : [{ from: `${from}/${GITKEEP}`, to: `${to}/${GITKEEP}` }]
+    )
   }
 
   async function onDrop(
@@ -305,6 +371,8 @@ export function FilesSection({
     onPrimaryAction: (item) => {
       if (!item.isFolder()) onOpen(item.getId())
     },
+    canRename: (item) => item.getId() !== ROOT_ID,
+    onRename: (item, value) => void rename(item, value),
     canReorder: true,
     onDrop: (items, target) => void onDrop(items, target),
     canDropForeignDragObject: (dataTransfer) =>
@@ -320,6 +388,7 @@ export function FilesSection({
       hotkeysCoreFeature,
       dragAndDropFeature,
       expandAllFeature,
+      renamingFeature,
     ],
   })
 
@@ -374,6 +443,12 @@ export function FilesSection({
                   setDropping(false)
               }}
               onDrop={onAreaDrop}
+              onContextMenu={(event) => {
+                const row = (event.target as Element).closest(
+                  "[data-slot=tree-item]"
+                )
+                if (!row) setMenuTarget(null)
+              }}
               // Rows fade out over the bottom padding, so the blur above has
               // nothing sharp to stop on at the edge; at the end of the list
               // the last row clears the fade.
@@ -393,7 +468,11 @@ export function FilesSection({
               ) : (
                 <Tree indent={INDENT} tree={tree} className="relative">
                   {tree.getItems().map((item) => (
-                    <TreeItem key={item.getId()} item={item}>
+                    <TreeItem
+                      key={item.getId()}
+                      item={item}
+                      onContextMenu={() => setMenuTarget(item.getId())}
+                    >
                       <TreeItemLabel
                         className={cn(
                           "hover:bg-foreground/5 bg-transparent",
@@ -402,7 +481,30 @@ export function FilesSection({
                       >
                         <span className="flex min-w-0 items-center gap-2">
                           <FileGlyph item={item} />
-                          <span className="truncate">{item.getItemName()}</span>
+                          {item.isRenaming() ? (
+                            <Input
+                              {...item.getRenameInputProps()}
+                              autoFocus
+                              aria-label={`Rename ${item.getItemName()}`}
+                              // The name without its extension, ready to type over.
+                              onFocus={(event) => {
+                                const value = event.currentTarget.value
+                                const dot = value.lastIndexOf(".")
+                                event.currentTarget.setSelectionRange(
+                                  0,
+                                  item.isFolder() || dot <= 0
+                                    ? value.length
+                                    : dot
+                                )
+                              }}
+                              onClick={(event) => event.stopPropagation()}
+                              className="h-6 px-1.5"
+                            />
+                          ) : (
+                            <span className="truncate">
+                              {item.getItemName()}
+                            </span>
+                          )}
                         </span>
                       </TreeItemLabel>
                     </TreeItem>
@@ -413,7 +515,29 @@ export function FilesSection({
             </div>
           </ContextMenuTrigger>
 
-          <ContextMenuContent className="w-52">
+          <ContextMenuContent
+            className="w-52"
+            onCloseAutoFocus={(event) => {
+              const id = renameNext.current
+              if (id === null) return
+              renameNext.current = null
+              event.preventDefault()
+              tree.getItemInstance(id).startRenaming()
+            }}
+          >
+            {menuTarget !== null ? (
+              <>
+                <ContextMenuItem
+                  onSelect={() => {
+                    renameNext.current = menuTarget
+                  }}
+                >
+                  <PencilIcon aria-hidden="true" />
+                  Rename
+                </ContextMenuItem>
+                <ContextMenuSeparator />
+              </>
+            ) : null}
             <ContextMenuItem
               onSelect={() =>
                 void createFolder(freeName(files.taken, "", "New folder"))
