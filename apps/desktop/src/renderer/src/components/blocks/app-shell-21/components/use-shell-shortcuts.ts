@@ -9,22 +9,22 @@ import { BOARD_TAB } from "./documents-section"
 
 /** What the shell can do, for its keys (`lib/shortcuts.ts`). */
 export interface ShellActions {
+  /** The focused pane's tabs, and its active one: the keys act on it. */
   tabIds: readonly string[]
   activeTabId: string | null
-  /** An app (Mail, Calendar) holds the window. */
-  appOpen: boolean
   apps: readonly SidebarApp[]
   open: (id: string) => void
   selectTab: (id: string) => void
   closeTab: (id: string) => void
   closeAllTabs: () => void
   reopenTab: () => void
+  /** A new pane beside the focused one (⌘\). */
+  splitRight: () => void
   newDocument: () => void
   toggleFiles: () => void
   /** Bring the files sidebar out: leave any app, expand the rail. */
   showFiles: () => void
   openApp: (id: string) => void
-  leaveApp: () => void
   setSearchOpen: (update: (open: boolean) => boolean) => void
 }
 
@@ -85,13 +85,13 @@ export function useShellShortcuts(shell: ShellActions): void {
       const id = index === 8 ? tabIds[tabIds.length - 1] : tabIds[index]
       if (id !== undefined) shell.selectTab(id)
     },
-    // With an app holding the window, ⌘W puts it away and shows the tabs.
+    // An app (Mail, Calendar) is a tab too: ⌘W puts it away like any other.
     "tab.close": () => {
-      if (shell.appOpen) shell.leaveApp()
-      else if (activeTabId !== null) shell.closeTab(activeTabId)
+      if (activeTabId !== null) shell.closeTab(activeTabId)
     },
     "tab.closeAll": shell.closeAllTabs,
     "tab.reopen": shell.reopenTab,
+    "pane.split": shell.splitRight,
     "document.new": shell.newDocument,
     "app.mail": app("mail"),
     "app.calendar": app("calendar"),

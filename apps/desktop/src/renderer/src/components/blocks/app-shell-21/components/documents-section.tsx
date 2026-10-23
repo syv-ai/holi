@@ -108,7 +108,7 @@ import {
 } from "lucide-react"
 
 /** The header tab id of the task board, beside the document paths. */
-export const BOARD_TAB = "board"
+export const BOARD_TAB = "holi:board"
 
 const INDENT = 16
 

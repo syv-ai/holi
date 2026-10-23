@@ -83,6 +83,7 @@
     "marked": "^18.0.9",
     "mermaid": "^11.17.2",
     "motion": "^13.4.4",
+    "motion-panels": "0.6.1",
     "node-pty": "^1.0.0",
     "radix-ui": "^1.6.7",
     "react": "^19.2.8",

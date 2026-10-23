@@ -258,6 +258,7 @@ test("a chat's menu offers what its owner backs, and a live run its own verbs", 
   })
   store.set(fixtures.calls, [])
   expect(await menuOf(/^Weekly review/)).toEqual([
+    'Open to the side',
     'Pin to top',
     'Rename',
     'Mark as unread',
@@ -267,6 +268,7 @@ test("a chat's menu offers what its owner backs, and a live run its own verbs", 
   ])
   await userEvent.keyboard('{Escape}')
   expect(await menuOf(/^Notes pass/)).toEqual([
+    'Open to the side',
     'Mark as unread',
     'Copy session ID',
     'Restart',

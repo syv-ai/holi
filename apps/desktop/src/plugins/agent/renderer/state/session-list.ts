@@ -18,10 +18,11 @@ import {
   appModeAtom,
   agentsSlotsAtom,
   type AgentsSessionItem,
+  type AgentsTabLook,
   type AgentsSessionsSource,
   type PluginStore,
 } from '@/plugin-api'
-import { agentsViewAtom } from './agents-view'
+import { agentsViewAtom, agentsViewOf } from './agents-view'
 import { newViewSessionAtom, showSessionAtom } from './session-view'
 import { NEW_SESSION, agentSessionsAtom, type AgentSession } from './sessions'
 
@@ -337,6 +338,27 @@ export const sessionRowsAtom = atom((get): SessionRow[] => {
     const endedAt = Math.max(item.endedAt ?? 0, ended[item.key] ?? 0) || undefined
     return { item, current, state: rowState(item, seen, current, endedAt) }
   })
+})
+
+/**
+ * How a session tab looks (the mode's `tabLook`): the row it shows, found as
+ * the list finds the open one, by its selection or, for one of the agent's
+ * own sessions, its job id.
+ */
+export const sessionTabLookAtom = atom((get) => {
+  const rows = get(sessionRowsAtom)
+  return (selection: { owner: string; id: string }): AgentsTabLook | undefined => {
+    const view = agentsViewOf(selection)
+    if (view.kind === 'inbox') return { title: 'Inbox', state: 'idle' }
+    const jobId = view.kind === 'session' ? view.id : null
+    const row = rows.find((r) => isCurrent(r.item, selection, jobId))
+    if (row === undefined) return undefined
+    return {
+      title: row.item.title,
+      state: row.state,
+      ...(row.item.by === undefined ? {} : { by: row.item.by }),
+    }
+  }
 })
 
 /** Mark a row read: opening it, its turn ending while it is open, or the

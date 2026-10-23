@@ -327,8 +327,21 @@ export interface ArcadeCastMember {
 
 export interface AgentsMode {
   sidebar: ComponentType
-  main: ComponentType
+  /** The mode's main view for one tab: `selection` is what the tab shows
+   *  (null for the mode's home), so two tabs can show two sessions. */
+  main: ComponentType<{ selection: { owner: string; id: string } | null }>
   status: Atom<AgentsStatus>
+  /** How a session tab looks (`AgentsTabLook`), by the selection it shows;
+   *  undefined for one the mode does not know (yet). */
+  tabLook?: Atom<(selection: { owner: string; id: string }) => AgentsTabLook | undefined>
+}
+
+/** A session tab as the strip draws it: its title, the state its dot shows,
+ *  and who ran it (a Holi wears its face). */
+export interface AgentsTabLook {
+  title: string
+  state: 'needs-you' | 'working' | 'done' | 'idle'
+  by?: AgentsSessionItem['by']
 }
 
 /**

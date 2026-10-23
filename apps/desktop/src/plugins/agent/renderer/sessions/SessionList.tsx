@@ -14,6 +14,7 @@ import { SiClaude } from "@icons-pack/react-simple-icons"
 import { useAtom, useAtomValue, useSetAtom } from "jotai"
 import {
   ArchiveIcon,
+  Columns2Icon,
   ArchiveRestoreIcon,
   CheckIcon,
   CircleAlertIcon,
@@ -95,7 +96,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 import { PixelPersona } from "@/composites"
-import { cn } from "@/plugin-api"
+import { cn, openTabAtom } from "@/plugin-api"
 import { agentSessionsAtom } from "../state/sessions"
 import {
   duplicateSessionAtom,
@@ -506,12 +507,35 @@ function useRowActions(
   const pin = useSetAtom(pinSessionRowAtom)
   const markRead = useSetAtom(markSessionSeenAtom)
   const markUnread = useSetAtom(markSessionUnreadAtom)
+  const openTab = useSetAtom(openTabAtom)
   const { item, state } = row
   const can = abilities.get(keyOwner(item.key))
   const jobId = item.jobId
   const isLive = jobId !== undefined && live.some((s) => s.id === jobId)
   const sessionId = item.sessionId ?? jobId
   const icon = (Glyph: typeof PinIcon) => <Glyph aria-hidden="true" />
+
+  // A row that selects something, or a live session, can be a tab of its
+  // own beside the one in front.
+  const selection =
+    item.selection ??
+    (isLive && jobId !== undefined
+      ? { owner: "agent", id: `session:${jobId}` }
+      : undefined)
+  const place: MenuAction[] =
+    selection === undefined
+      ? []
+      : [
+          {
+            kind: "item",
+            label: "Open to the side",
+            icon: icon(Columns2Icon),
+            run: () => {
+              markRead(item.key)
+              openTab({ kind: "session", ...selection }, { beside: true })
+            },
+          },
+        ]
 
   const own: MenuAction[] = []
   if (can?.pin) {
@@ -599,7 +623,7 @@ function useRowActions(
       run: onDelete,
     })
   }
-  return joinGroups([own, running, keep])
+  return joinGroups([place, own, running, keep])
 }
 
 /** A card with its menus: right-click, and ⋯ on hover or focus. */

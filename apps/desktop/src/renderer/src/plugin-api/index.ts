@@ -17,6 +17,7 @@ export type {
   AgentsSessionsSource,
   AgentsSlot,
   AgentsStatus,
+  AgentsTabLook,
   AgentSessionRow,
   AskResult,
   AskTargets,
@@ -54,6 +55,8 @@ export {
   vaultsAtom,
 } from '@/state/vaults'
 export { openDocumentAtom } from '@/state/open-document'
+export { openTabAtom } from '@/state/shell-tabs'
+export { type TabDescriptor } from '@/state/tab-descriptor'
 export { arcadeCastAtom, gridArcadeAtom } from '@/state/grid-arcade'
 export { ArcadeTakeControl, HoliArcade } from '@/components/monocode/arcade/HoliArcade'
 export { sessionAtom } from '@/state/session'

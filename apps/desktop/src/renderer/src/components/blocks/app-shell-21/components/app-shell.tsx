@@ -18,26 +18,54 @@ import {
 } from "@/components/ui/sheet"
 import { SidebarProvider } from "@/components/ui/sidebar"
 import { TooltipProvider } from "@/components/ui/tooltip"
-import { SETTINGS_TAB } from "@/components/blocks/profile-9/components/sections"
 import { SettingsNav } from "@/components/blocks/profile-9/components/settings-nav"
-import { SettingsView } from "@/components/blocks/profile-9/components/settings-view"
 import { useSettingsHotkey } from "@/components/blocks/profile-9/components/use-settings-hotkey"
 import { settingsRequestAtom } from "@/state/settings-section"
 import { openDocumentRequestAtom } from "@/state/open-document"
 import { runningPluginsAtom } from "@/state/plugins"
 import { sidebarSectionAtom } from "@/state/sidebar-section"
-import { SettingsIcon } from "lucide-react"
+import { shellWorkspaceAtom } from "@/state/shell-tabs"
+import {
+  closeOtherTabs,
+  closePane,
+  closePaneTabs,
+  closeTab as closeTabIn,
+  focusPane,
+  focusedPane,
+  MAX_PANES,
+  moveTab,
+  openNewTab as openNewTabIn,
+  openTab as openTabIn,
+  paneBeside,
+  reopenClosed,
+  retargetTabs as retargetTabsIn,
+  selectTab as selectTabIn,
+  setShares,
+  splitRight as splitRightIn,
+  type ShellPane,
+  type ShellWorkspace,
+} from "@/state/shell-workspace"
+import {
+  AGENTS_HOME_KEY,
+  parseTabKey,
+  SETTINGS_KEY,
+  tabForPath,
+  tabKey,
+} from "@/state/tab-descriptor"
+import { activeRemoteAtom } from "@/state/vaults"
 
 import { ChatSearchDialog } from "./chat-search-dialog"
 import { THREADS } from "./data"
 import type { Move } from "@/lib/tree-actions"
-import { BOARD_TAB, useNewDocument } from "./documents-section"
-import { EmptyView, isNewTab, NEW_TAB_PREFIX } from "./empty-view"
+import { useNewDocument } from "./documents-section"
 import { MobileHeader } from "./mobile-header"
-import { PlanningView } from "../../planning/planning-view"
+import { PanesView } from "./panes-view"
 import { SiteHeader } from "./site-header"
 import { useSidebarApps } from "./sidebar-apps"
 import { ShortcutsDialog } from "./shortcuts-dialog"
+import { TabView } from "./tab-view"
+import { useTabLook } from "./tab-look"
+import { useSessionTabs } from "./use-session-tabs"
 import { useShellShortcuts } from "./use-shell-shortcuts"
 import { useShortcutDispatcher } from "@/state/shortcuts"
 import { ThreadSidebar } from "./thread-sidebar"
@@ -49,16 +77,55 @@ const RAIL_THRESHOLD = 190
 /** Matches the panel transition, so state lands after the motion finishes. */
 const SETTLE_MS = 280
 
+/** Where a vault's last pane widths for a pane count are kept, on this
+ *  machine (docs/features/tabs-panes.md, Persistence). */
+function sharesStorageKey(remote: string | null, count: number): string {
+  return `holi.panes.${remote ?? ""}.${count}`
+}
+
+function readShares(remote: string | null, count: number): number[] | null {
+  try {
+    const raw = localStorage.getItem(sharesStorageKey(remote, count))
+    const parsed: unknown = raw === null ? null : JSON.parse(raw)
+    return Array.isArray(parsed) &&
+      parsed.length === count &&
+      parsed.every((n) => typeof n === "number" && n > 0)
+      ? (parsed as number[])
+      : null
+  } catch {
+    return null
+  }
+}
+
+function writeShares(remote: string | null, shares: number[]): void {
+  try {
+    localStorage.setItem(
+      sharesStorageKey(remote, shares.length),
+      JSON.stringify(shares)
+    )
+  } catch {
+    // Storage off (a private window): the widths last the session only.
+  }
+}
+
+/** The key a sidebar row, a search hit or a plugin's request opens: a view's
+ *  own key (the board), or a vault path's tab. */
+function keyFor(id: string): string {
+  return parseTabKey(id)?.kind === "doc" || id.endsWith(".app")
+    ? tabKey(tabForPath(id))
+    : id
+}
 export function AppShell({ onAddVault }: { onAddVault: () => void }) {
   const isMobile = useIsMobile()
   /** The block's demo threads, still behind ⌘K until search covers the vault. */
   const threads = THREADS
-  /** The open tab: a vault path, the board, or a ⌘K thread. */
-  const [activeThreadId, setActiveThreadId] = useState<string | null>(null)
-  /** The header's tabs, in the order they were opened. */
-  const [openTabIds, setOpenTabIds] = useState<string[]>([])
-  /** Closed tabs, last closed last, for Reopen closed tab. */
-  const closedTabs = useRef<string[]>([])
+  /** The panes and their tabs, this vault's (`state/shell-tabs.ts`). */
+  const [ws, setWs] = useAtom(shellWorkspaceAtom)
+  const remote = useAtomValue(activeRemoteAtom)
+  const focused = focusedPane(ws)
+  /** The focused pane's tab: what the sidebar marks and the keys act on. */
+  const activeThreadId = focused.active
+  const activeTab = activeThreadId === null ? null : parseTabKey(activeThreadId)
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [searchOpen, setSearchOpen] = useState(false)
@@ -74,28 +141,28 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
   const widthRef = useRef(SIDEBAR_WIDTH)
   const settling = useRef(false)
   const settleTimer = useRef<number | null>(null)
-  /** Numbers each New tab, so two of them are two tabs. */
-  const newTabSeq = useRef(0)
   const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_WIDTH)
   /** Armed on the first resize: any earlier and the first layout animates in. */
   const [animate, setAnimate] = useState(false)
   const apps = useSidebarApps()
-  /** The app holding the window (Mail, Calendar), or null for the files. */
-  const [app, setApp] = useState<string | null>(null)
-  /** Whether the files sidebar was open when an app took over, so leaving
+  /** The app in front (Mail, Calendar): the focused pane's tab, when it is
+   *  one. An app folds the files sidebar to its rail while it is in front. */
+  const app = activeTab?.kind === "app" ? activeTab.id : null
+  /** Whether the files sidebar was open when an app came forward, so leaving
    *  the app gives it back as it was. */
   const openBeforeApp = useRef(false)
   /** The tab in front when Settings came forward, for its Back. */
   const beforeSettings = useRef<string | null>(null)
   const settingsRequest = useAtomValue(settingsRequestAtom)
   const openRequest = useAtomValue(openDocumentRequestAtom)
-  /** The sidebar's tab: on Agents, the main area is the Agents mode's. */
+  /** The sidebar's tab. It no longer swaps the main area: a session opens
+   *  as a tab, and + on the Agents side opens the Agents home. */
   const [section, setSection] = useAtom(sidebarSectionAtom)
-  /** The Agents mode's main view, from the plugin that provides the mode. */
   const running = useAtomValue(runningPluginsAtom)
-  const AgentsMain = running.find((plugin) => plugin.agentsMode)?.agentsMode
-    ?.main
+  const hasAgents = running.some((plugin) => plugin.agentsMode !== undefined)
+  const look = useTabLook()
   useSettingsHotkey()
+  useSessionTabs(activeThreadId)
 
   useEffect(() => {
     return () => {
@@ -125,6 +192,31 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openRequest])
 
+  // An app coming forward folds the files to the rail; leaving it for any
+  // other tab gives them back as they were.
+  const appBefore = useRef<string | null>(null)
+  useEffect(() => {
+    const was = appBefore.current
+    appBefore.current = app
+    const panel = sidebarPanel.current
+    if (was === null && app !== null) {
+      openBeforeApp.current = !!panel && !panel.isCollapsed()
+      if (openBeforeApp.current) toggleSidebar()
+    } else if (was !== null && app === null) {
+      if (openBeforeApp.current && panel?.isCollapsed()) toggleSidebar()
+    }
+    // Only the app changing folds; the toggle reads the latest state.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [app])
+
+  // A pane count this vault has had before opens at the widths it had.
+  const paneCount = ws.panes.length
+  useEffect(() => {
+    if (paneCount < 2) return
+    const stored = readShares(remote, paneCount)
+    if (stored !== null) setWs((w) => setShares(w, stored))
+  }, [paneCount, remote, setWs])
+
   /** React state catches up only after the motion has finished. */
   function settleOpen(next: boolean) {
     if (settleTimer.current) window.clearTimeout(settleTimer.current)
@@ -148,127 +240,100 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
     else panel.collapse()
   }
 
-  /** An app folds the files sidebar to its rail and brings its own. */
+  function update(change: (w: ShellWorkspace) => ShellWorkspace) {
+    setWs(change)
+  }
+
+  /** An app opens as a tab, or comes forward where it is. */
   function openApp(id: string) {
     setMobileNavOpen(false)
-    if (id === app) return
-    const panel = sidebarPanel.current
-    if (app === null) openBeforeApp.current = !!panel && !panel.isCollapsed()
-    setApp(id)
-    if (panel && !panel.isCollapsed()) toggleSidebar()
+    update((w) => openTabIn(w, tabKey({ kind: "app", id })))
   }
 
-  /** Back to the files: the sidebar opens again if the app had folded it. */
-  function leaveApp() {
-    if (app === null) return
-    setApp(null)
-    if (openBeforeApp.current && sidebarPanel.current?.isCollapsed()) {
-      toggleSidebar()
-    }
-  }
-
-  /** The band's toggle and the divider: opening the files leaves any app. */
+  /** The band's toggle and the divider. */
   function toggleFiles() {
-    if (app !== null && sidebarPanel.current?.isCollapsed()) {
-      setApp(null)
-      toggleSidebar()
-      return
-    }
     toggleSidebar()
-  }
-
-  const tabs = openTabIds.map((id) => ({
-    id,
-    title: tabTitle(id),
-    icon: id === SETTINGS_TAB ? SettingsIcon : undefined,
-  }))
-
-  function tabTitle(id: string): string {
-    if (id === SETTINGS_TAB) return "Settings"
-    if (id === BOARD_TAB) return "Board"
-    if (isNewTab(id)) return "New tab"
-    const thread = threads.find((candidate) => candidate.id === id)
-    if (thread) return thread.title
-    return id.slice(id.lastIndexOf("/") + 1).replace(/\.md$/, "")
-  }
-
-  /** Opening a document brings its tab forward, adding one if it has none.
-   *  From a New tab it takes that tab's place, as in a browser. */
-  function openTab(id: string) {
-    const blank = isNewTab(activeThreadId) ? activeThreadId : null
-    setOpenTabIds((current) => {
-      if (current.includes(id)) return current.filter((tab) => tab !== blank)
-      if (blank) return current.map((tab) => (tab === blank ? id : tab))
-      return [...current, id]
-    })
-    setActiveThreadId(id)
   }
 
   /** Settings comes forward as a tab, its nav in place of the files. A
    *  folded sidebar opens for it, since the nav is how its pages are reached. */
   function openSettings() {
-    leaveApp()
     setMobileNavOpen(false)
-    if (activeThreadId !== SETTINGS_TAB) beforeSettings.current = activeThreadId
-    setOpenTabIds((current) =>
-      current.includes(SETTINGS_TAB) ? current : [...current, SETTINGS_TAB]
-    )
-    setActiveThreadId(SETTINGS_TAB)
+    if (activeThreadId !== SETTINGS_KEY) beforeSettings.current = activeThreadId
+    update((w) => openTabIn(w, SETTINGS_KEY))
     if (!isMobile && sidebarPanel.current?.isCollapsed()) toggleSidebar()
   }
 
   /** Settings' Back: to the tab it came from, Settings staying open. */
   function leaveSettings() {
     const back = beforeSettings.current
-    setActiveThreadId(back !== null && openTabIds.includes(back) ? back : null)
+    update((w) => {
+      const pane = focusedPane(w)
+      if (back !== null && pane.tabs.includes(back)) {
+        return selectTabIn(w, pane.id, back)
+      }
+      const other = pane.tabs.find((tab) => tab !== SETTINGS_KEY)
+      return other === undefined ? w : selectTabIn(w, pane.id, other)
+    })
   }
 
-  /** +: a tab that shows the empty view until something is picked in it. */
-  function openNewTab() {
-    leaveApp()
-    setSection("documents")
-    newTabSeq.current += 1
-    const id = `${NEW_TAB_PREFIX}${newTabSeq.current}`
-    setOpenTabIds((current) => [...current, id])
-    setActiveThreadId(id)
+  /** +: in `paneId` (the focused pane by default), a New tab, or on the
+   *  Agents side the Agents home, the new-session page. */
+  function openNewTab(paneId?: string) {
+    update((w) => {
+      const there = paneId === undefined ? w : focusPane(w, paneId)
+      return section === "agents" && hasAgents
+        ? openTabIn(there, AGENTS_HOME_KEY)
+        : openNewTabIn(there)
+    })
   }
 
-  /** Closing the active tab hands focus to its neighbour, the next one first. */
-  function closeTab(id: string) {
-    const index = openTabIds.indexOf(id)
-    const rest = openTabIds.filter((tabId) => tabId !== id)
-    closedTabs.current.push(id)
-    setOpenTabIds(rest)
-    if (id === activeThreadId) {
-      setActiveThreadId(rest[Math.min(index, rest.length - 1)] ?? null)
-    }
+  function closeTab(key: string) {
+    update((w) => closeTabIn(w, key))
   }
 
   function closeAllTabs() {
-    setOpenTabIds([])
-    setActiveThreadId(null)
+    update((w) => closePaneTabs(w, w.focused))
   }
 
+  /** Open a vault path, the board, or any tab key, in the focused pane. */
   function handleSelectThread(id: string) {
-    leaveApp()
-    setSection("documents")
-    openTab(id)
+    const key = keyFor(id)
+    if (parseTabKey(key)?.kind === "doc" || key.endsWith(".app")) {
+      setSection("documents")
+    }
+    update((w) => openTabIn(w, key))
     setMobileNavOpen(false)
   }
 
-  function selectTab(id: string) {
-    leaveApp()
-    setSection("documents")
-    setActiveThreadId(id)
+  /** A moved file's tab follows it to its new path, in every pane. */
+  function retargetTabs(moves: Move[]) {
+    update((w) => retargetTabsIn(w, moves))
   }
 
-  /** A moved file's tab follows it to its new path. */
-  function retargetTabs(moves: Move[]) {
-    const to = new Map(moves.map((move) => [move.from, move.to]))
-    setOpenTabIds((current) => current.map((id) => to.get(id) ?? id))
-    setActiveThreadId((current) =>
-      current === null ? null : (to.get(current) ?? current)
-    )
+  function splitRight(paneId?: string, key?: string) {
+    update((w) => splitRightIn(w, paneId ?? w.focused, key))
+  }
+
+  /** A sized pane was resized: it takes `share`, and the pane that fills
+   *  takes the rest. */
+  function resizePane(paneId: string, share: number) {
+    update((w) => {
+      const fill = w.panes.length === 3 ? 1 : 0
+      const shares = w.panes.map((p) => (p.id === paneId ? share : p.share))
+      const others = shares.reduce(
+        (sum, s, i) => (i === fill ? sum : sum + s),
+        0
+      )
+      shares[fill] = Math.max(0.05, 1 - others)
+      const next = setShares(w, shares)
+      if (next !== w)
+        writeShares(
+          remote,
+          next.panes.map((p) => p.share)
+        )
+      return next
+    })
   }
 
   const newDocument = useNewDocument(handleSelectThread)
@@ -278,35 +343,26 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
 
   useShortcutDispatcher()
   useShellShortcuts({
-    tabIds: openTabIds,
+    tabIds: focused.tabs,
     activeTabId: activeThreadId,
-    appOpen: app !== null,
     apps,
     open: handleSelectThread,
-    selectTab,
+    selectTab: (key) => update((w) => selectTabIn(w, w.focused, key)),
     closeTab,
     closeAllTabs,
-    reopenTab: () => {
-      const id = closedTabs.current.pop()
-      if (id !== undefined) handleSelectThread(id)
-    },
+    reopenTab: () => update(reopenClosed),
+    splitRight: () => splitRight(),
     newDocument: handleNewChat,
     toggleFiles,
     showFiles: () => {
       if (isMobile) return setMobileNavOpen(true)
-      setApp(null)
       if (sidebarPanel.current?.isCollapsed()) toggleSidebar()
     },
     openApp,
-    leaveApp,
     setSearchOpen,
   })
   /** Settings in front: its nav takes the sidebar's place. */
-  const settingsActive = app === null && activeThreadId === SETTINGS_TAB
-  /** The sidebar on Agents: the main area is the Agents mode's, whatever
-   *  tab is open behind it. */
-  const agentsActive =
-    app === null && !settingsActive && section === "agents" && !!AgentsMain
+  const settingsActive = activeTab?.kind === "settings"
 
   /** In the sheet the header button closes it; on desktop it collapses the panel. */
   const sidebar = settingsActive ? (
@@ -341,18 +397,84 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
     />
   )
 
-  const header = (
-    <SiteHeader
-      tabs={tabs}
-      activeTabId={app === null && !agentsActive ? activeThreadId : null}
-      onSelectTab={selectTab}
-      onCloseTab={closeTab}
-      onNewTab={openNewTab}
-      onCloseAllTabs={closeAllTabs}
-    />
+  const multi = !isMobile && ws.panes.length > 1
+
+  /** A pane's strip: in the title band with one pane, its own header with
+   *  several. */
+  function strip(pane: ShellPane, index: number) {
+    return (
+      <SiteHeader
+        tabs={pane.tabs.map(look)}
+        activeTabId={pane.active}
+        focused={!multi || pane.id === ws.focused}
+        onSelectTab={(key) => update((w) => selectTabIn(w, pane.id, key))}
+        onCloseTab={closeTab}
+        onCloseOtherTabs={(key) => update((w) => closeOtherTabs(w, key))}
+        onNewTab={() => openNewTab(pane.id)}
+        onCloseAllTabs={() => update((w) => closePaneTabs(w, pane.id))}
+        onReopenTab={() => update(reopenClosed)}
+        pane={
+          isMobile
+            ? undefined
+            : {
+                count: ws.panes.length,
+                canSplit: ws.panes.length < MAX_PANES,
+                first: index === 0,
+                last: index === ws.panes.length - 1,
+                onSplitRight: (key) => splitRight(pane.id, key),
+                onMoveTab: (key, side) =>
+                  update((w) => {
+                    const to = paneBeside(w, pane.id, side)
+                    return to === null ? w : moveTab(w, key, to.id)
+                  }),
+                onClosePane: () => update((w) => closePane(w, pane.id)),
+              }
+        }
+      />
+    )
+  }
+
+  /** One pane: its header when there are several, then its tab's view.
+   *  Focus follows a press or keyboard focus into it. */
+  function paneBody(pane: ShellPane) {
+    const index = ws.panes.findIndex((p) => p.id === pane.id)
+    const isFocused = pane.id === ws.focused
+    return (
+      <section
+        aria-label={multi ? `Pane ${index + 1}` : undefined}
+        data-pane={pane.id}
+        data-pane-focused={isFocused || undefined}
+        onPointerDownCapture={() => update((w) => focusPane(w, pane.id))}
+        onFocusCapture={() => update((w) => focusPane(w, pane.id))}
+        className="flex min-h-0 min-w-0 flex-1 flex-col"
+      >
+        {multi ? (
+          <div className="flex h-11 shrink-0 border-b">
+            {strip(pane, index)}
+          </div>
+        ) : null}
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          <TabView
+            tab={pane.active}
+            settingsNavInSidebar={
+              isFocused && settingsActive && !isMobile && sidebarOpen
+            }
+            onOpen={handleSelectThread}
+            onNewDocument={handleNewChat}
+            onOpenSearch={() => setSearchOpen(true)}
+          />
+        </div>
+      </section>
+    )
+  }
+
+  const header = multi ? (
+    // Several panes: each carries its strip, and the band is left to drag.
+    <div className="min-w-0 flex-1" />
+  ) : (
+    strip(focused, ws.panes.indexOf(focused))
   )
 
-  const AppView = apps.find((candidate) => candidate.id === app)?.render
   const main = (
     <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col">
       {/* On desktop the header rides in the title band above both columns. */}
@@ -368,29 +490,15 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
           is open, as the old shell mounted them. */}
       <div className="flex min-h-0 flex-1">
         <main className="flex min-h-0 min-w-0 flex-1 flex-col">
-          {/* An app arrives from the rail's edge, where the files just folded
-            away: once per switch, keyed on the app. */}
-          {AppView ? (
-            <div
-              key={app}
-              className="animate-in fade-in-0 slide-in-from-left-3 motion-reduce:slide-in-from-left-0 flex min-h-0 flex-1 flex-col duration-200 ease-[cubic-bezier(0.22,1,0.36,1)]"
-            >
-              <AppView />
-            </div>
-          ) : settingsActive ? (
-            <SettingsView navHidden={isMobile || !sidebarOpen} />
-          ) : agentsActive && AgentsMain ? (
-            <AgentsMain />
-          ) : activeThreadId === null || isNewTab(activeThreadId) ? (
-            <EmptyView
-              key={activeThreadId ?? "none"}
-              onOpen={handleSelectThread}
-              onNewDocument={handleNewChat}
-              onOpenSearch={() => setSearchOpen(true)}
+          {isMobile ? (
+            paneBody(focused)
+          ) : (
+            <PanesView
+              panes={ws.panes}
+              renderPane={paneBody}
+              onShareChange={resizePane}
             />
-          ) : activeThreadId === BOARD_TAB ? (
-            <PlanningView onOpenTask={handleSelectThread} />
-          ) : null}
+          )}
         </main>
         {running.flatMap(({ info, drawers = [] }) =>
           drawers.map((Drawer, i) => <Drawer key={`${info.id}:${i}`} />)

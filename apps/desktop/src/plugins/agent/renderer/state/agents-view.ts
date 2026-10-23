@@ -22,16 +22,18 @@ export type AgentsView =
   /** A row another plugin added: its own main view draws it. */
   | { kind: 'slot'; owner: string; id: string }
 
+/** What a selection shows: a tab's own, or the mode's. */
+export function agentsViewOf(sel: { owner: string; id: string } | null): AgentsView {
+  if (sel === null) return { kind: 'home' }
+  if (sel.owner !== AGENT_OWNER) return { kind: 'slot', owner: sel.owner, id: sel.id }
+  if (sel.id === 'inbox') return { kind: 'inbox' }
+  const [kind, ...rest] = sel.id.split(':')
+  if (kind === 'session') return { kind: 'session', id: rest.join(':') }
+  return { kind: 'home' }
+}
+
 export const agentsViewAtom = atom(
-  (get): AgentsView => {
-    const sel = get(agentsSelectionAtom)
-    if (sel === null) return { kind: 'home' }
-    if (sel.owner !== AGENT_OWNER) return { kind: 'slot', owner: sel.owner, id: sel.id }
-    if (sel.id === 'inbox') return { kind: 'inbox' }
-    const [kind, ...rest] = sel.id.split(':')
-    if (kind === 'session') return { kind: 'session', id: rest.join(':') }
-    return { kind: 'home' }
-  },
+  (get): AgentsView => agentsViewOf(get(agentsSelectionAtom)),
   (_get, set, view: AgentsView) => {
     if (view.kind === 'home') set(agentsSelectionAtom, null)
     else if (view.kind === 'inbox') set(agentsSelectionAtom, { owner: AGENT_OWNER, id: 'inbox' })
