@@ -144,6 +144,13 @@ export const SHORTCUTS: readonly Shortcut[] = [
     whileTyping: true,
   },
   {
+    id: 'pane.split',
+    label: 'Split right',
+    group: 'Tabs',
+    keys: ['⌘\\'],
+    whileTyping: true,
+  },
+  {
     id: 'tab.reopen',
     label: 'Reopen closed tab',
     group: 'Tabs',

@@ -12,7 +12,7 @@ import {
   resolvePluginSettings,
   type ResolvedVaultSettings,
 } from '@holi/shared'
-import { activeRemoteAtom, agentsSelectionAtom, type RendererPlugin } from '@/plugin-api'
+import { activeRemoteAtom, type RendererPlugin } from '@/plugin-api'
 import { CHAT_INFO } from './chat/info'
 import { AGENT_INFO } from './agent/info'
 import { AgentsMain } from './agent/renderer/agents/AgentsMain'
@@ -54,7 +54,7 @@ test('a vault with chat: false pinned still opens on the new-session page', () =
   const store = vaultPinning('plugins:\n  chat: false\n  agent: false\n')
   render(
     <Provider store={store}>
-      <AgentsMain />
+      <AgentsMain selection={null} />
     </Provider>,
   )
   expect(screen.getByText('New session page')).toBeInTheDocument()
@@ -63,10 +63,9 @@ test('a vault with chat: false pinned still opens on the new-session page', () =
 
 test('the Inbox is its own view, not the home', () => {
   const store = vaultPinning('plugins: {}\n')
-  store.set(agentsSelectionAtom, { owner: 'agent', id: 'inbox' })
   render(
     <Provider store={store}>
-      <AgentsMain />
+      <AgentsMain selection={{ owner: 'agent', id: 'inbox' }} />
     </Provider>,
   )
   expect(screen.getByText('Nothing needs you')).toBeInTheDocument()

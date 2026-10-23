@@ -17,11 +17,11 @@
  */
 import { useAtomValue, useSetAtom } from 'jotai'
 import { Bot, Inbox, SquarePen } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { IconStackEmpty } from '@/components/reui/icon-stack-empty'
 import { activeRemoteAtom, agentsSlotsAtom } from '@/plugin-api'
 import { inboxCountAtom } from '../state/agents-status'
-import { agentsViewAtom } from '../state/agents-view'
+import { agentsViewAtom, agentsViewOf } from '../state/agents-view'
 import { stopSessionAtom } from '../state/send'
 import { agentSessionsAtom } from '../state/sessions'
 import { SessionCard, StateLabel } from './parts'
@@ -154,22 +154,25 @@ function SessionView({ id }: { id: string }): React.JSX.Element {
   )
 }
 
-export function AgentsMain(): React.JSX.Element {
-  const view = useAtomValue(agentsViewAtom)
-  const setView = useSetAtom(agentsViewAtom)
+/** One tab's view: `selection` is what the tab shows (null, the home), so
+ *  two panes can show two sessions; the sidebar's selection is the focused
+ *  tab's, which the shell keeps in step. */
+export function AgentsMain({
+  selection,
+}: {
+  selection: { owner: string; id: string } | null
+}): React.JSX.Element {
+  const view = agentsViewOf(selection)
   const sessions = useAtomValue(agentSessionsAtom)
   const slots = useAtomValue(agentsSlotsAtom)
   const slot = view.kind === 'slot' ? slots.find((s) => s.plugin === view.owner) : undefined
   const Home = slots.find((s) => s.home !== undefined)?.home
 
   // A session that stopped, or a plugin turned off, is no longer something to
-  // show.
+  // show: its tab shows the home until it is closed.
   const missing =
     (view.kind === 'session' && !sessions.some((s) => s.id === view.id)) ||
     (view.kind === 'slot' && slot?.main === undefined)
-  useEffect(() => {
-    if (missing) setView({ kind: 'home' })
-  }, [missing, setView])
 
   return (
     // No ground of its own: on macOS the window is glass, and the shell's

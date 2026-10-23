@@ -39,6 +39,7 @@ same table, so the sheet can only show keys that work. The dialog opens from the
 | Tabs       | Close tab                     | ⌘W (menu)    | Ctrl W (menu)             |
 | Tabs       | Close all tabs                | ⌥⌘W          | Ctrl Alt W                |
 | Tabs       | Reopen closed tab             | ⇧⌘T          | Ctrl Shift T              |
+| Tabs       | Split right                   | ⌘\           | Ctrl \                    |
 | Files      | New document                  | ⌘N           | Ctrl N                    |
 | Files      | Rename selected file          | F2           | F2                        |
 | Files      | Collapse all folders          | ⌥⌘←          | Ctrl Alt ←                |
@@ -59,7 +60,10 @@ same table, so the sheet can only show keys that work. The dialog opens from the
   behind a modal.
 - **⌘W is the menu's.** It is the File menu's accelerator (`main/menu.ts`), which fires before the
   page sees the key, so its row is display only (`boundBy: 'menu'`) and main sends `tab.close`.
-  With Mail or Calendar holding the window, ⌘W puts the app away instead of closing a hidden tab.
+  Mail, Calendar and Settings are tabs, so ⌘W closes them like any other.
+- **The tab keys act on the focused pane** ([tabs and panes](tabs-panes.md)): next, previous,
+  ⌘1–9, ⌘W and ⌥⌘W (Close all tabs, which closes a split pane with them) stay within it, and
+  ⌘\ opens a pane beside it.
 - **No clashes** with the menu's accelerators (Edit's ⌘Z ⌘X ⌘C ⌘V ⌘A, View's ⌘R ⌘0 ⌘+ ⌘-
   ⌥⌘I ⌃⌘F, Window's ⌘M, ⌘⇧W, ⌘H, ⌘Q) or macOS's own (⌘Tab, ⌘Space, ⌘\`). A test pins ids and
   keys unique.

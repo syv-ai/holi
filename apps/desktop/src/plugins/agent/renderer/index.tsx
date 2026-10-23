@@ -19,7 +19,7 @@ import { SessionActions } from './SessionActions'
 import { AgentsMain } from './agents/AgentsMain'
 import { AgentsSidebar } from './agents/AgentsSidebar'
 import { agentsStatusAtom } from './state/agents-status'
-import { newSessionAtom, sessionListVault } from './state/session-list'
+import { newSessionAtom, sessionListVault, sessionTabLookAtom } from './state/session-list'
 import {
   AGENT_SURFACE,
   agentEvents,
@@ -106,6 +106,7 @@ export const agentRenderer: RendererPlugin = {
     sidebar: AgentsSidebar,
     main: AgentsMain,
     status: agentsStatusAtom,
+    tabLook: sessionTabLookAtom,
   },
   drawers: [TurnReview],
   leaveGuard: agentLeaveGuardAtom,
