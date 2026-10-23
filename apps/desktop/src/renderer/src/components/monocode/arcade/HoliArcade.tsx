@@ -10,8 +10,8 @@
  * Nick; see LICENSE in this folder. The canvas renderer is theirs: the stamped
  * cells, the cell outlines blitted from a canvas of their own, the sprites,
  * the eased speech bubble, the frame-capped loop, take-control and Escape.
- * Holi's changes: one game, so no slider; its own cast drawn from the Holis'
- * pixel mascots; colours read off the theme's tokens; a keep-out the content
+ * Holi's changes: one game, so no slider; its own cast drawn as the Holis'
+ * pixel personas (normal in the light theme, the superhero in the dark); colours read off the theme's tokens; a keep-out the content
  * marks (`data-arcade-keepout`); no autoplay under reduced motion; the loop
  * parks while the view is hidden or off screen; the take-control pill lives
  * in the content's flow rather than over it; and the HUD and the pill are
@@ -29,7 +29,12 @@ import {
 import { Button } from "@/components/ui/button"
 import { Kbd } from "@/components/ui/kbd"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
-import { pixelLayers } from "@/composites/pixel-mascot/pixel-mascots"
+import { heroModeNow } from "@/composites/pixel-persona/hero-mode"
+import {
+  cropBox,
+  personaRuns,
+  type Frame,
+} from "@/composites/pixel-persona/personas"
 import { cn } from "@/lib/cn"
 
 import {
@@ -70,8 +75,6 @@ const IDLE_MASK: CSSProperties = {
 const KEEP_DIM = 0.12
 /** Cells over which the keep-out's dimming eases back to the open board. */
 const KEEP_FEATHER = 6
-/** Sprites sit inside their tile rather than spilling over it. */
-const SPRITE_SCALE = 0.9
 /** How hard the bubble chases its speaker; sprites move cell by cell. */
 const BUBBLE_EASE = 0.2
 const FRAME_MS = 33
@@ -113,29 +116,81 @@ function readInk(probe: HTMLElement | null): Ink {
   }
 }
 
-/** The Holi's pixel figure, scaled out of its 16-unit box. */
+/**
+ * The personas, pre-drawn: one small canvas per character, frame and theme,
+ * painted once from its runs the first time the board meets it, so a frame
+ * only blits. A sprite pixel is one CSS pixel (whole device pixels at any
+ * whole devicePixelRatio), which keeps the figure sharp and about a tile wide.
+ */
+const FIGURE = cropBox("full")
+type Frames = Record<"rest" | "walk" | "talkA" | "talkB", HTMLCanvasElement>
+const FRAMES: Record<keyof Frames, Frame> = {
+  rest: { pose: "rest", mouth: "smile", blink: false },
+  walk: { pose: "rest", mouth: "closed", blink: false },
+  talkA: { pose: "waveA", mouth: "open", blink: false },
+  talkB: { pose: "waveB", mouth: "smile", blink: false },
+}
+/** ms a waving frame holds while a Holi talks. */
+const WAVE_MS = 200
+const atlas = [new Map<string, Frames>(), new Map<string, Frames>()] as const
+
+function figure(mascot: string, hero: boolean): Frames {
+  const sheet = atlas[hero ? 1 : 0]
+  const hit = sheet.get(mascot)
+  if (hit) return hit
+  const paint = (frame: Frame) => {
+    const canvas = document.createElement("canvas")
+    canvas.width = FIGURE.w
+    canvas.height = FIGURE.h
+    const ctx = canvas.getContext("2d")
+    if (!ctx) return canvas
+    for (const run of personaRuns(mascot, frame, hero, "full")) {
+      ctx.fillStyle = run.fill
+      ctx.fillRect(run.x - FIGURE.x, run.y - FIGURE.y, run.w, 1)
+    }
+    return canvas
+  }
+  const frames: Frames = {
+    rest: paint(FRAMES.rest),
+    walk: paint(FRAMES.walk),
+    talkA: paint(FRAMES.talkA),
+    talkB: paint(FRAMES.talkB),
+  }
+  sheet.set(mascot, frames)
+  return frames
+}
+
+/** A Holi's persona, centred on its tile: facing the way it walks, a pixel
+ *  up mid-step, waving while it talks. */
 function drawHoli(
   ctx: CanvasRenderingContext2D,
-  sprite: Extract<ArcadeSprite, { kind: "holi" }>
+  sprite: Extract<ArcadeSprite, { kind: "holi" }>,
+  hero: boolean,
+  now: number
 ) {
-  const layers = pixelLayers(
-    sprite.mascot,
-    sprite.color,
+  const frames = figure(sprite.mascot, hero)
+  const image =
     sprite.frame === "talk"
-  )
-  // The 8×8 figure fills 12 of the box's 16 units, centred on the tile.
-  const span = sprite.size * PITCH * SPRITE_SCALE
-  const unit = span / 12
-  const left = sprite.cx * PITCH + CELL / 2 - 8 * unit
-  const top = sprite.cy * PITCH + CELL / 2 - 8 * unit
-  for (const rect of [...layers.body, ...layers.open]) {
-    ctx.fillStyle = rect.fill
-    ctx.fillRect(
-      left + rect.x * unit,
-      top + rect.y * unit,
-      rect.w * unit,
-      rect.h * unit
-    )
+      ? Math.floor(now / WAVE_MS) % 2 === 0
+        ? frames.talkA
+        : frames.talkB
+      : sprite.frame === "walk"
+        ? frames.walk
+        : frames.rest
+  // Whole CSS pixels, so a sprite pixel never straddles two device pixels.
+  const left = Math.round(sprite.cx * PITCH + CELL / 2 - 16)
+  const top =
+    Math.round(sprite.cy * PITCH + CELL / 2 - 16) +
+    FIGURE.y -
+    (sprite.frame === "walk" ? 1 : 0)
+  if (sprite.dx < 0) {
+    ctx.save()
+    ctx.translate(left + FIGURE.w, 0)
+    ctx.scale(-1, 1)
+    ctx.drawImage(image, 0, top, FIGURE.w, FIGURE.h)
+    ctx.restore()
+  } else {
+    ctx.drawImage(image, left, top, FIGURE.w, FIGURE.h)
   }
 }
 
@@ -282,6 +337,7 @@ export function HoliArcade({
     let lastFrame = 0
     let onScreen = true
     let bubbleAt: { x: number; y: number } | null = null
+    let hero = heroModeNow()
 
     const drawGrid = () => {
       if (!gridCtx || width <= 0 || height <= 0) return
@@ -425,13 +481,15 @@ export function HoliArcade({
       }
 
       const spriteDim = controlled ? 1 : IDLE_SPRITE_DIM
+      const now = performance.now()
+      ctx.imageSmoothingEnabled = false
       for (const sprite of arcade.sprites()) {
         const cell = Math.round(sprite.cy) * cols + Math.round(sprite.cx)
         const under = controlled ? 1 : (shade[cell] ?? 1)
         const opacity = sprite.alpha * spriteDim * under
         if (opacity <= 0.02) continue
         ctx.globalAlpha = opacity
-        if (sprite.kind === "holi") drawHoli(ctx, sprite)
+        if (sprite.kind === "holi") drawHoli(ctx, sprite, hero, now)
         else if (sprite.kind === "paper") drawPaper(ctx, sprite)
         else drawConflict(ctx, sprite, ink.alert)
       }
@@ -510,6 +568,7 @@ export function HoliArcade({
 
     const recolour = () => {
       ink = readInk(probeRef.current)
+      hero = heroModeNow()
       drawGrid()
       if (still()) paintStill()
     }

@@ -9,8 +9,7 @@ Ported or adapted:
 - `renderer/agents/AgentsSidebar.tsx`, `parts.tsx` (after `app/shell/Sidebar.tsx`'s session cards
   and rail; their braille spinner and shimmering step text gave way to Holi's own `motion-orbit`)
 - `renderer/agents/AgentsMain.tsx` (after `features/sessions/ui/SessionPane.tsx`)
-- The pixel mascots, now in core (`src/renderer/src/composites/pixel-mascot/`), the Holis
-  (`../holis/NOTICE.md`) and the automations view (`../automations/`, after
+- The Holis (`../holis/NOTICE.md`) and the automations view (`../automations/`, after
   `features/automations/ui/AutomationsView.tsx`), which carry the same licence
 
 MonoCode is not affiliated with Holi. Provider marks shown in the UI are trademarks of their owners

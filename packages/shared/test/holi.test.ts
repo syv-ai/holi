@@ -2,6 +2,10 @@ import { describe, expect, it } from 'vitest'
 import {
   editHoliText,
   globToRegExp,
+  HOLI_MASCOTS,
+  HOLI_MASCOT_LABELS,
+  holiMascotOf,
+  LEGACY_HOLI_MASCOTS,
   holiAccepts,
   holiApprovalText,
   holiIdOf,
@@ -48,7 +52,7 @@ describe('Holi files', () => {
     expect(def(PROPOSAL)).toMatchObject({
       id: 'proposal',
       name: 'Proposal',
-      mascot: 'rocket',
+      mascot: 'captain',
       color: '#a5a1ff',
       model: 'sonnet',
       accepts: ['kunder/**/*.md'],
@@ -57,6 +61,39 @@ describe('Holi files', () => {
       unknownKeys: [],
     })
     expect(def(PROPOSAL).folder).toBe(false)
+  })
+
+  it('reads an older arcade mascot as the character that stands in for it', () => {
+    expect(def(PROPOSAL.replace('mascot: rocket', 'mascot: frog')).mascot).toBe('champion')
+    expect(def(PROPOSAL.replace('mascot: rocket', 'mascot: professor')).mascot).toBe('professor')
+    for (const [old, now] of Object.entries(LEGACY_HOLI_MASCOTS)) {
+      expect(def(PROPOSAL.replace('mascot: rocket', `mascot: ${old}`)).mascot).toBe(now)
+    }
+  })
+
+  it('maps every older mascot to its own character', () => {
+    const olds = [
+      'invader',
+      'ghost',
+      'robot',
+      'cat',
+      'skull',
+      'crab',
+      'mushroom',
+      'rocket',
+      'dino',
+      'frog',
+    ]
+    expect(Object.keys(LEGACY_HOLI_MASCOTS).sort()).toEqual([...olds].sort())
+    expect(new Set(Object.values(LEGACY_HOLI_MASCOTS)).size).toBe(olds.length)
+    for (const now of Object.values(LEGACY_HOLI_MASCOTS)) expect(HOLI_MASCOTS).toContain(now)
+    for (const m of HOLI_MASCOTS) {
+      expect(holiMascotOf(m)).toBe(m)
+      expect(HOLI_MASCOT_LABELS[m]).toMatch(/^[A-Z][a-z]+$/)
+    }
+    expect(holiMascotOf('dragon')).toBeUndefined()
+    expect(holiMascotOf('toString')).toBeUndefined()
+    expect(holiMascotOf(7)).toBeUndefined()
   })
 
   it('gives a bare Holi a stable look from its id, and takes any document', () => {
@@ -89,7 +126,7 @@ describe('Holi files', () => {
   })
 
   it('refuses what it cannot run, saying why', () => {
-    expect(error('name: X\nmascot: dragon\ninstructions: x\n')).toMatch(/mascot/)
+    expect(error('name: X\nmascot: dragon\ninstructions: x\n')).toMatch(/mascot.*captain/)
     expect(error('model: "a b"\ninstructions: x\n')).toMatch(/model/)
     expect(error('accepts: [3]\ninstructions: x\n')).toMatch(/accepts/)
     expect(error('name: X\n')).toMatch(/instructions/)
@@ -130,7 +167,7 @@ describe('Holi files', () => {
   it('writes a folder Holi it reads back, its soul in SOUL.md', () => {
     const text = serializeHoliFile({
       name: 'Proposal',
-      mascot: 'rocket',
+      mascot: 'captain',
       accepts: ['kunder/**/*.md'],
       allow: ['Edit(tilbud/**)'],
     })

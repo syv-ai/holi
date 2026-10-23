@@ -25,7 +25,7 @@ every Holi through the agent's `agent.launch` and reaches the agent's sessions o
 
 ```yaml
 name: Proposal
-mascot: rocket
+mascot: captain
 description: Turns a customer note into a PDF proposal
 model: sonnet
 accepts:
@@ -76,7 +76,7 @@ what it is: notes the Holi wrote in earlier runs, facts and not instructions. On
 covers is said as instructions (its id, its folder, its soul), never its name or description, which
 anyone may change.
 
-**On the New tab.** The plugin contributes the vault's Holis (every one that parses, by mascot and
+**On the New tab.** The plugin contributes the vault's Holis (every one that parses, by persona and
 colour) as the cast of the empty view's arcade (`RendererPlugin.arcadeCast`, see
 [tabs and panes](tabs-panes.md)). Core draws the game and knows nothing of Holis.
 
@@ -109,12 +109,39 @@ Holi's latest send. Holi never reads a transcript. A report that asks for the pe
 notification (a click opens the Holi's page) and an Inbox row until they have opened the page.
 
 **In the Agents view** ([sidebar](sidebar.md)) the Holis are a section with a **+**, after
-Automations and before the sessions. A Holi is a row: its pixel mascot, which bobs idle, hops while
-a run works and gets an idea when it needs you (the one animation the view keeps of its own); a
+Automations and before the sessions. A Holi is a row: its face (below), which blinks idle, talks while
+a run works and calls out when it needs you (the one animation the view keeps of its own); a
 status dot, steady amber when it needs you; and New, Changed or Invalid. With none yet, a **Meet
 Holis** card says what one is and makes the first. **+** makes a Holi at once with the next face
 and colour no other Holi has, and opens its settings, which are the setup (after MonoCode's
 `createMono`).
+
+**Faces.** A Holi's `mascot` is one of ten pixel personas, syv.ai's own website characters, each
+named by its character and never by a person: `captain`, `strategist`, `skipper`, `spy`,
+`professor`, `operator`, `starter`, `scout`, `champion` and `benchmarker`. A persona is a 32×32
+sprite in its own paint; in the light theme it wears its everyday clothes and in the dark it suits up
+as a superhero (suit, cape, mask, a 7 on the chest), following the resolved `data-theme`. It is
+drawn at whole multiples of its grid so it stays sharp: the head-and-shoulders window (20 pixels
+square, at 20px) in the small slots (a sidebar row, the Inbox, menus, pickers), the whole figure at
+32px in a Holi page's header and at 64px on its settings. The Holi's `color` is the plate behind the
+figure, a translucent disc that marks whose it is without repainting it; in the arcade it is the
+colour of the papers it carries and of its speech bubble. Idle a face blinks now and then, working
+it talks, and needing you it waves (a whole figure) or calls out (a head); reduced motion holds the
+first frame. A file's older arcade names still read, each as the character that stands in for it,
+so an existing Holi only changes its look; Holi never writes them:
+
+| older      | now           |
+| ---------- | ------------- |
+| `invader`  | `spy`         |
+| `ghost`    | `strategist`  |
+| `robot`    | `operator`    |
+| `cat`      | `scout`       |
+| `skull`    | `benchmarker` |
+| `crab`     | `skipper`     |
+| `mushroom` | `starter`     |
+| `rocket`   | `captain`     |
+| `dino`     | `professor`   |
+| `frog`     | `champion`    |
 
 **A Holi's page** is its face, name and state, a line asking for approval while this machine has
 not approved what it says now, and two tabs. **Runs**, newest first: the document each took and
@@ -184,6 +211,7 @@ lands in the Inbox.
 - `apps/desktop/src/plugins/holis/renderer/`: `HolisSection.tsx` (the sidebar section and Meet
   Holis), `HoliPage.tsx`, `HoliFeed.tsx`, `HoliSettings.tsx`, `HolisInbox.tsx`,
   `DocumentHoliActions.tsx`, `ApproveHoliDialog.tsx`; `state.ts`
-- `apps/desktop/src/renderer/src/composites/pixel-mascot/`: the mascots
+- `apps/desktop/src/renderer/src/composites/pixel-persona/`: the personas (`personas.ts`) and
+  `PixelPersona`; the names and the old-name mapping are `@holi/shared`'s `holi.ts`
 - `apps/desktop/src/renderer/src/components/PaneHeader.tsx`: the Agent split button and its slot
 - `apps/desktop/src/plugins/holis/main/vault/shipped/.claude/skills/holis/`

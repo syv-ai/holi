@@ -1,0 +1,82 @@
+/*
+ * The personas' own motion (docs/features/holis.md): two frames of the figure
+ * swapped on `step-end`, the way a sprite moves. Idle, a blink every few
+ * seconds; working, the mouth opening and closing; waiting on you, a wave.
+ * Nothing moves the figure itself, only which frame shows.
+ *
+ * Every duration is a multiple of `--motion-inflight`, the app's one loop
+ * pace, so re-pacing the app re-paces these. Reduced motion holds the first
+ * frame, as it stops every loop.
+ */
+
+.pixel-persona-plate {
+  opacity: 0.4;
+}
+
+.pixel-persona-b {
+  opacity: 0;
+}
+
+[data-persona-status='idle'] > .pixel-persona-a {
+  animation: pixel-persona-blink-a calc(var(--motion-inflight) * 2.1667) step-end infinite;
+}
+[data-persona-status='idle'] > .pixel-persona-b {
+  animation: pixel-persona-blink-b calc(var(--motion-inflight) * 2.1667) step-end infinite;
+}
+[data-persona-status='working'] > .pixel-persona-a {
+  animation: pixel-persona-swap-a calc(var(--motion-inflight) * 0.25) step-end infinite;
+}
+[data-persona-status='working'] > .pixel-persona-b {
+  animation: pixel-persona-swap-b calc(var(--motion-inflight) * 0.25) step-end infinite;
+}
+[data-persona-status='needs-you'] > .pixel-persona-a {
+  animation: pixel-persona-swap-a calc(var(--motion-inflight) * 0.5) step-end infinite;
+}
+[data-persona-status='needs-you'] > .pixel-persona-b {
+  animation: pixel-persona-swap-b calc(var(--motion-inflight) * 0.5) step-end infinite;
+}
+
+@keyframes pixel-persona-swap-a {
+  0% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0;
+  }
+}
+@keyframes pixel-persona-swap-b {
+  0% {
+    opacity: 0;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+@keyframes pixel-persona-blink-a {
+  0% {
+    opacity: 1;
+  }
+  96% {
+    opacity: 0;
+  }
+  98.5% {
+    opacity: 1;
+  }
+}
+@keyframes pixel-persona-blink-b {
+  0% {
+    opacity: 0;
+  }
+  96% {
+    opacity: 1;
+  }
+  98.5% {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pixel-persona * {
+    animation: none !important;
+  }
+}

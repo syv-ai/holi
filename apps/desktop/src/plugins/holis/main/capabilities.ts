@@ -13,7 +13,7 @@
  *
  * No `electron` import: this loads under plain Node in the tests.
  */
-import { HOLI_MASCOTS, type HoliDraft, type HoliMascot, type MemoryHit } from '@holi/shared'
+import { holiMascotOf, type HoliDraft, type HoliMascot, type MemoryHit } from '@holi/shared'
 import {
   cap,
   CapabilityError,
@@ -65,10 +65,10 @@ const strings = (raw: unknown, key: string): string[] | undefined => {
 
 const mascotParam = (v: unknown): HoliMascot | undefined => {
   if (v === undefined || v === null || v === '') return undefined
-  if (typeof v !== 'string' || !(HOLI_MASCOTS as readonly string[]).includes(v)) {
-    throw new CapabilityError('BAD_REQUEST', 'unknown mascot')
-  }
-  return v as HoliMascot
+  // An older arcade name still reads, as the character that stands in for it.
+  const mascot = holiMascotOf(v)
+  if (mascot === undefined) throw new CapabilityError('BAD_REQUEST', 'unknown mascot')
+  return mascot
 }
 
 function draftParam(raw: unknown): Partial<HoliDraft> {

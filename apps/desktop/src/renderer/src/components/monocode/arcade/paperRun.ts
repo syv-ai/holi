@@ -24,7 +24,7 @@
  * Random on purpose (`Math.random`): where papers land, and how the idle brain
  * breaks a tie.
  */
-import { HOLI_COLOURS } from "@holi/shared"
+import { HOLI_COLOURS, holiMascotOf, type HoliMascot } from "@holi/shared"
 
 import type {
   ArcadeCastMember,
@@ -38,7 +38,7 @@ import type {
 
 const BOOT_FADE_MS = 420
 
-/** Cells to a tile: a mascot gets a 4×4 square of the grid. */
+/** Cells to a tile: a Holi gets a 4×4 square of the grid. */
 export const TILE = 4
 
 /** Smallest board worth running; below this the surface stays a plain grid. */
@@ -133,17 +133,17 @@ const STACK_LINES = [
 ]
 
 /** Each figure's own way of putting it. */
-const VOICE: Record<string, readonly string[]> = {
-  invader: ["WE COME WITH PAPERS", "TAKE US TO YOUR INBOX"],
-  ghost: ["BOO! ALL FILED", "SPOOKY FAST"],
-  robot: ["BEEP. TASK COMPLETE", "PROCESSING… DONE"],
-  cat: ["PURRFECTLY FILED", "KNOCKED IT IN"],
-  skull: ["DEAD ON DEADLINE", "NO BONES ABOUT IT"],
-  crab: ["FILED SIDEWAYS", "SNIP SNIP, DONE"],
-  mushroom: ["THE VAULT GROWS", "SPORE-ADIC GENIUS"],
-  rocket: ["LIFTOFF TO OUTBOX", "DELIVERED IN ORBIT"],
-  dino: ["RAWR. SHIPPED", "OLD SCHOOL FILING"],
-  frog: ["RIBBIT. DONE", "HOPPED TO IT"],
+const VOICE: Record<HoliMascot, readonly string[]> = {
+  captain: ["CAPTAIN ON DECK", "FILED. CASE CLOSED"],
+  strategist: ["ALL ACCORDING TO PLAN", "A STRATEGIC FILING"],
+  skipper: ["FULL STEAM TO OUTBOX", "ALL HANDS, FILED"],
+  spy: ["MISSION COMPLETE", "FILED. TOP SECRET"],
+  professor: ["CLASS DISMISSED", "TEXTBOOK FILING"],
+  operator: ["SHIPPED TO PROD", "RUNNING IN PRODUCTION"],
+  starter: ["OFF TO A FLYING START", "AND WE'RE OFF"],
+  scout: ["FRESH FROM THE FIELD", "REPORTING BACK"],
+  champion: ["GOLD MEDAL FILING", "UNDEFEATED"],
+  benchmarker: ["NEW HIGH SCORE", "TOP OF THE BENCHMARK"],
 }
 
 /** The Holi that just walked into a conflict. */
@@ -157,9 +157,19 @@ const CONFLICT_LINES = [
 
 /** Who plays when the vault has no Holis, or the holis plugin is off. */
 export const DEFAULT_CAST: readonly ArcadeCastMember[] = [
-  { id: "courier", name: "Courier", mascot: "rocket", color: HOLI_COLOURS[0] },
-  { id: "clerk", name: "Clerk", mascot: "robot", color: HOLI_COLOURS[1] },
-  { id: "scout", name: "Scout", mascot: "cat", color: HOLI_COLOURS[2] },
+  { id: "captain", name: "Captain", mascot: "captain", color: HOLI_COLOURS[0] },
+  {
+    id: "professor",
+    name: "Professor",
+    mascot: "professor",
+    color: HOLI_COLOURS[1],
+  },
+  {
+    id: "operator",
+    name: "Operator",
+    mascot: "operator",
+    color: HOLI_COLOURS[2],
+  },
 ]
 
 const DIRS = [
@@ -189,7 +199,7 @@ type Holi = Mover & {
   cap: number
   stun: number
   talk: number
-  /** Tiles walked, for the two-frame shuffle. */
+  /** Tiles walked, for the two-frame walk. */
   steps: number
   /** The paper it is after, so two Holis don't chase the same one. */
   goal: number | null
@@ -592,7 +602,8 @@ export function createPaperRun(): GridArcade {
       outboxFlash = OUTBOX_FLASH_MS
       holi.carry = []
       holi.trail = []
-      const voice = VOICE[holi.member.mascot]
+      const face = holiMascotOf(holi.member.mascot)
+      const voice = face && VOICE[face]
       const lines =
         count >= 4 && Math.random() < 0.5
           ? STACK_LINES
@@ -876,9 +887,11 @@ export function createPaperRun(): GridArcade {
           mascot: holi.member.mascot,
           color: holi.member.color,
           frame:
-            holi.talk > 0 || ((holi.dx || holi.dy) && holi.steps % 2 === 1)
+            holi.talk > 0
               ? "talk"
-              : "rest",
+              : (holi.dx || holi.dy) && holi.steps % 2 === 1
+                ? "walk"
+                : "rest",
           player: isPlayer,
         })
       })

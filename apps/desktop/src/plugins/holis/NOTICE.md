@@ -12,8 +12,10 @@ Ported or adapted:
 - `renderer/HoliPage.tsx`, `renderer/HoliSettings.tsx`, `renderer/MemoryPage.tsx`,
   `renderer/HolisSection.tsx` (after `MonoSettingsDialog.tsx`, `MonoFilePages.tsx`,
   `MonoIntro.tsx` and `MonoRailSection.tsx`)
-- The pixel mascots, in core (`apps/desktop/src/renderer/src/composites/PixelMascot.tsx`)
 - The idea of a Holi itself: an agent of your own with a soul, a memory and habits
+
+The Holis' faces were MonoCode's pixel mascots; they are now syv.ai's own pixel personas
+(`apps/desktop/src/renderer/src/composites/pixel-persona/`), which owe MonoCode nothing.
 
 MonoCode is not affiliated with Holi.
 

@@ -2,13 +2,13 @@
  * The Holis' section of the Agents sidebar (docs/features/holis.md), after
  * MonoCode's `MonoRailSection` and `MonoIntro` (MIT, Copyright (c) 2026 Nick;
  * see NOTICE.md): a "Holis" label with its +, then one row per Holi, its pixel
- * mascot with a status dot. With none yet, an intro card that says what a Holi
+ * persona with a status dot. With none yet, an intro card that says what a Holi
  * is and makes the first one.
  */
 import { useAtomValue, useSetAtom } from 'jotai'
 import { Ellipsis, Plus } from 'lucide-react'
 import { useState } from 'react'
-import { PixelMascot, SectionLabel } from '@/composites'
+import { PixelPersona, SectionLabel } from '@/composites'
 import {
   Button,
   DropdownMenu,
@@ -19,7 +19,7 @@ import {
   Skeleton,
 } from '@/primitives'
 import { appModeAtom, cn, openPathAtom } from '@/plugin-api'
-import { HOLI_MASCOTS } from '@holi/shared'
+import { HOLI_COLOURS, HOLI_MASCOTS } from '@holi/shared'
 import {
   createHoliAtom,
   holiSettingsAtom,
@@ -65,11 +65,15 @@ function HoliRow({ holi }: { holi: HoliSummary }): React.JSX.Element {
         aria-label={`${holi.name}${state === 'needs-you' ? ', needs you' : state === 'working' ? ', working' : ''}`}
         onClick={() => open(holi.id)}
       >
-        <span className="relative flex size-[18px] shrink-0 items-center justify-center">
+        <span className="relative flex size-5 shrink-0 items-center justify-center">
           {broken ? (
-            <PixelMascot name="ghost" color={GREY} still />
+            <PixelPersona name={holi.mascot ?? 'strategist'} color={GREY} still muted />
           ) : (
-            <PixelMascot name={holi.mascot ?? 'ghost'} color={holi.color ?? GREY} status={state} />
+            <PixelPersona
+              name={holi.mascot ?? 'strategist'}
+              color={holi.color ?? GREY}
+              status={state}
+            />
           )}
           <span
             aria-hidden="true"
@@ -137,9 +141,9 @@ function MeetHolis(): React.JSX.Element {
   return (
     <div className="flex flex-col gap-2 rounded-lg bg-foreground/[0.03] p-2.5">
       <p className="text-nav font-medium text-foreground">Meet Holis</p>
-      <div aria-hidden="true" className="flex items-center gap-1.5 opacity-60">
-        {HOLI_MASCOTS.slice(0, 7).map((m) => (
-          <PixelMascot key={m} name={m} color={GREY} still className="size-3.5" />
+      <div aria-hidden="true" className="flex items-center gap-1">
+        {HOLI_MASCOTS.slice(0, 7).map((m, i) => (
+          <PixelPersona key={m} name={m} color={HOLI_COLOURS[i % HOLI_COLOURS.length]!} still />
         ))}
       </div>
       <p className="text-xs text-pretty text-muted-foreground">

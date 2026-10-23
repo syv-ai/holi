@@ -23,7 +23,7 @@ to answer your permission prompts.
 
 ```yaml
 name: Proposal
-mascot: rocket
+mascot: captain
 description: Turns a customer note into a PDF proposal
 model: sonnet
 accepts:
@@ -32,15 +32,15 @@ allow:
   - Edit(tilbud/**)
 ```
 
-| key           |                                                                                                         |
-| ------------- | ------------------------------------------------------------------------------------------------------- |
-| `name`        | What Holi shows. Defaults to the folder name.                                                           |
-| `mascot`      | Optional: `invader`, `ghost`, `robot`, `cat`, `skull`, `crab`, `mushroom`, `rocket`, `dino` or `frog`.  |
-| `color`       | Optional: a quoted `'#rrggbb'`.                                                                         |
-| `description` | Optional: one line on what it is for.                                                                   |
-| `model`       | Optional: `sonnet`, `opus`, `haiku` or a full model id.                                                 |
-| `accepts`     | Optional: vault paths it can be sent, as globs (`kunder/**/*.md`). Omitted: any document.               |
-| `allow`       | Optional: Claude Code permission rules a run may use **without asking**. Everything else asks the user. |
+| key           |                                                                                                                                          |
+| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`        | What Holi shows. Defaults to the folder name.                                                                                            |
+| `mascot`      | Optional: its face, `captain`, `strategist`, `skipper`, `spy`, `professor`, `operator`, `starter`, `scout`, `champion` or `benchmarker`. |
+| `color`       | Optional: a quoted `'#rrggbb'`.                                                                                                          |
+| `description` | Optional: one line on what it is for.                                                                                                    |
+| `model`       | Optional: `sonnet`, `opus`, `haiku` or a full model id.                                                                                  |
+| `accepts`     | Optional: vault paths it can be sent, as globs (`kunder/**/*.md`). Omitted: any document.                                                |
+| `allow`       | Optional: Claude Code permission rules a run may use **without asking**. Everything else asks the user.                                  |
 
 There is no key for a permission mode or a schedule: a run always keeps Claude
 Code's prompts, and a Holi on a clock is an automation that names it. Any key

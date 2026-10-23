@@ -25,7 +25,7 @@ the fresh shell's empty view (`empty-view.tsx`, a New tab) lies a dot grid where
 Holis play Paper run by themselves: papers (documents and tasks) land on the board, each Holi
 picks them up into a stack that trails behind it and files them in the outbox, saying so in a
 speech bubble in its own voice, and merge conflicts wander about and scatter a stack they touch.
-The cast is the vault's Holis by mascot and colour, which the holis plugin contributes through
+The cast is the vault's Holis by persona and colour, which the holis plugin contributes through
 the `arcadeCast` plugin slot; with none (or the plugin off) a default cast plays. Content wins: idle, the
 board melts into the pane (dimmed, slightly blurred, masked away toward the foot and the sides),
 takes no pointer, dims to a whisper under the logo (anything marked `data-arcade-keepout`) and puts

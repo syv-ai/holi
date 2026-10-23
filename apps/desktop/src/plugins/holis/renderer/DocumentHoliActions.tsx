@@ -16,19 +16,14 @@ import {
   DropdownMenuSubTrigger,
   Icon,
 } from '@/primitives'
-import { PixelMascot } from '@/composites'
+import { PixelPersona } from '@/composites'
 import { createHoliAtom, holisAtom, sendableFor, sendToHoliAtom, type HoliSummary } from './state'
 
 function HoliItem({ holi, path }: { holi: HoliSummary; path: string }): React.JSX.Element {
   const send = useSetAtom(sendToHoliAtom)
   return (
     <DropdownMenuItem onSelect={() => void send({ holi, path })}>
-      <PixelMascot
-        name={holi.mascot ?? 'ghost'}
-        color={holi.color ?? '#8f8f94'}
-        still
-        className="size-4"
-      />
+      <PixelPersona name={holi.mascot ?? 'strategist'} color={holi.color ?? '#8f8f94'} still />
       <span className="min-w-0 flex-1 truncate">{holi.name}</span>
       {holi.status !== 'approved' && (
         <span className="text-xs text-muted-foreground">
@@ -59,12 +54,7 @@ export function DocumentHoliActions({ path }: { path: string }): React.JSX.Eleme
           <DropdownMenuSubContent>
             {rest.map((h) => (
               <DropdownMenuItem key={h.id} disabled>
-                <PixelMascot
-                  name={h.mascot ?? 'ghost'}
-                  color={h.color ?? '#8f8f94'}
-                  still
-                  className="size-4"
-                />
+                <PixelPersona name={h.mascot ?? 'strategist'} color={h.color ?? '#8f8f94'} still />
                 <span className="min-w-0 flex-1 truncate">{h.name}</span>
                 <span className="text-xs text-muted-foreground">Takes other documents</span>
               </DropdownMenuItem>

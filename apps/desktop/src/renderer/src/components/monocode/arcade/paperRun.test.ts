@@ -21,8 +21,8 @@ const ROWS = 100
 const FRAME_MS = 33
 
 const CAST = [
-  { id: "proposal", name: "Proposal", mascot: "rocket", color: "#a5a1ff" },
-  { id: "assistant", name: "Assistant", mascot: "frog", color: "#7ee0b5" },
+  { id: "proposal", name: "Proposal", mascot: "captain", color: "#a5a1ff" },
+  { id: "assistant", name: "Assistant", mascot: "champion", color: "#7ee0b5" },
 ]
 
 /** A seeded `Math.random`, so a board plays the same way every run. */
@@ -83,7 +83,10 @@ describe("paper run", () => {
     const arcade = board()
     arcade.step(FRAME_MS)
     const onBoard = holis(arcade)
-    expect(onBoard.map((sprite) => sprite.mascot)).toEqual(["rocket", "frog"])
+    expect(onBoard.map((sprite) => sprite.mascot)).toEqual([
+      "captain",
+      "champion",
+    ])
     expect(onBoard.map((sprite) => sprite.color)).toEqual([
       "#a5a1ff",
       "#7ee0b5",
@@ -103,7 +106,7 @@ describe("paper run", () => {
     const many = Array.from({ length: 9 }, (_, i) => ({
       id: `h${i}`,
       name: `H${i}`,
-      mascot: "ghost",
+      mascot: "strategist",
       color: "#f28fb1",
     }))
     const arcade = board(many)
@@ -117,10 +120,10 @@ describe("paper run", () => {
     const before = holis(arcade)[0]!
     arcade.setCast([
       CAST[0]!,
-      { id: "new", name: "New", mascot: "cat", color: "#f0b46a" },
+      { id: "new", name: "New", mascot: "scout", color: "#f0b46a" },
     ])
     const after = holis(arcade)
-    expect(after.map((sprite) => sprite.mascot)).toEqual(["rocket", "cat"])
+    expect(after.map((sprite) => sprite.mascot)).toEqual(["captain", "scout"])
     expect(after[0]!.cx).toBe(before.cx)
     expect(after[0]!.cy).toBe(before.cy)
   })

@@ -47,10 +47,11 @@ export type ArcadeSprite =
       dx: number
       dy: number
       alpha: number
+      /** Its persona: one of `HOLI_MASCOTS`. */
       mascot: string
       color: string
-      /** Which of the mascot's two frames to paint. */
-      frame: "rest" | "talk"
+      /** Standing, mid-step, or saying something (`speechBubble`). */
+      frame: "rest" | "walk" | "talk"
       /** The one the player steers. */
       player: boolean
     }

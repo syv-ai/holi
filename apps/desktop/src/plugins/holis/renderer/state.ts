@@ -106,14 +106,14 @@ export const holisStatusAtom = atom((get): AgentsStatus => ({
 }))
 
 /** The vault's Holis as the empty view's arcade draws them: every one that
- *  parses, by its mascot and colour. */
+ *  parses, by its persona and colour. */
 export const holisArcadeCastAtom = atom((get): readonly ArcadeCastMember[] =>
   get(holisAtom)
     .filter((h) => h.status !== 'invalid')
     .map((h) => ({
       id: h.id,
       name: h.name,
-      mascot: h.mascot ?? 'ghost',
+      mascot: h.mascot ?? 'strategist',
       color: h.color ?? HOLI_COLOURS[0],
     })),
 )

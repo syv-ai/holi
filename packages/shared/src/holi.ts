@@ -17,7 +17,7 @@
  *
  * ```yaml
  * name: Proposal
- * mascot: rocket
+ * mascot: captain
  * description: Turns a customer note into a PDF proposal
  * model: sonnet
  * accepts:
@@ -56,22 +56,65 @@ export const SOUL_SEED = `# Soul
 `
 
 /**
- * The pixel figures a Holi can be drawn as (after MonoCode's project mascots).
- * The sprites themselves are the renderer's; the names are the file's grammar.
+ * The pixel characters a Holi can be drawn as: syv.ai's website personas,
+ * named by their character rather than by anyone. The sprites themselves are
+ * the renderer's (`composites/pixel-persona/`); the names are the file's
+ * grammar, in the order a new Holi is given them.
  */
 export const HOLI_MASCOTS = [
-  'invader',
-  'ghost',
-  'robot',
-  'cat',
-  'skull',
-  'crab',
-  'mushroom',
-  'rocket',
-  'dino',
-  'frog',
+  'captain',
+  'strategist',
+  'skipper',
+  'spy',
+  'professor',
+  'operator',
+  'starter',
+  'scout',
+  'champion',
+  'benchmarker',
 ] as const
 export type HoliMascot = (typeof HOLI_MASCOTS)[number]
+
+/** Each character's name as a person reads it: a new Holi without a name is
+ *  called after its face. */
+export const HOLI_MASCOT_LABELS: Record<HoliMascot, string> = {
+  captain: 'Captain',
+  strategist: 'Strategist',
+  skipper: 'Skipper',
+  spy: 'Spy',
+  professor: 'Professor',
+  operator: 'Operator',
+  starter: 'Starter',
+  scout: 'Scout',
+  champion: 'Champion',
+  benchmarker: 'Benchmarker',
+}
+
+/**
+ * The arcade figures Holis were drawn as before the personas, each mapped to
+ * the character that now stands in for it. An older file's `mascot:` still
+ * reads, so an existing Holi only changes its look; nothing writes these.
+ */
+export const LEGACY_HOLI_MASCOTS: Readonly<Record<string, HoliMascot>> = {
+  invader: 'spy',
+  ghost: 'strategist',
+  robot: 'operator',
+  cat: 'scout',
+  skull: 'benchmarker',
+  crab: 'skipper',
+  mushroom: 'starter',
+  rocket: 'captain',
+  dino: 'professor',
+  frog: 'champion',
+}
+
+/** A `mascot:` value as a character: one of `HOLI_MASCOTS`, an older name
+ *  mapped onto its stand-in, or undefined for anything else. */
+export function holiMascotOf(value: unknown): HoliMascot | undefined {
+  if (typeof value !== 'string') return undefined
+  if ((HOLI_MASCOTS as readonly string[]).includes(value)) return value as HoliMascot
+  return Object.hasOwn(LEGACY_HOLI_MASCOTS, value) ? LEGACY_HOLI_MASCOTS[value] : undefined
+}
 
 /** Soft identity colours a new Holi is given in turn: categorical, the one
  *  place hue is a Holi's own. */
@@ -222,7 +265,8 @@ export function parseHoliFile(text: string, path: string): HoliParse {
     return { ok: false, error: '`name` must be text' }
   }
   const rawMascot = f['mascot']
-  if (rawMascot !== undefined && !(HOLI_MASCOTS as readonly unknown[]).includes(rawMascot)) {
+  const mascot = holiMascotOf(rawMascot)
+  if (rawMascot !== undefined && mascot === undefined) {
     return { ok: false, error: `\`mascot\` is one of ${HOLI_MASCOTS.join(', ')}` }
   }
   const rawColor = f['color']
@@ -285,7 +329,7 @@ export function parseHoliFile(text: string, path: string): HoliParse {
     def: {
       id,
       name: typeof rawName === 'string' ? rawName.trim() : id,
-      mascot: (rawMascot as HoliMascot | undefined) ?? pick(HOLI_MASCOTS, id),
+      mascot: mascot ?? pick(HOLI_MASCOTS, id),
       color: typeof rawColor === 'string' ? rawColor.toLowerCase() : pick(HOLI_COLOURS, id),
       description: typeof rawDescription === 'string' ? rawDescription.trim() : '',
       ...(typeof rawModel === 'string' ? { model: rawModel } : {}),

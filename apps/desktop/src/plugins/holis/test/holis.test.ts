@@ -202,13 +202,13 @@ describe('reports', () => {
 describe('making and editing one', () => {
   it('makes a folder with the next free face, its soul seeded', async () => {
     const made = await holis.create(vault())
-    expect(made).toMatchObject({ id: 'invader', name: 'Invader', mascot: 'invader', folder: true })
-    expect(await readFile(join(root, '.holi/holis/invader/SOUL.md'), 'utf8')).toContain(
+    expect(made).toMatchObject({ id: 'captain', name: 'Captain', mascot: 'captain', folder: true })
+    expect(await readFile(join(root, '.holi/holis/captain/SOUL.md'), 'utf8')).toContain(
       '## Standing instructions',
     )
     const next = await holis.create(vault())
-    expect(next.mascot).toBe('ghost')
-    expect((await holis.create(vault(), { name: 'Invader' })).id).toBe('invader-2')
+    expect(next.mascot).toBe('strategist')
+    expect((await holis.create(vault(), { name: 'Captain' })).id).toBe('captain-2')
   })
 
   it('edits its settings in place, keeping a person’s comments', async () => {

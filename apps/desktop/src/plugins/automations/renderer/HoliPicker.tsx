@@ -12,7 +12,7 @@ import { SiClaude } from '@icons-pack/react-simple-icons'
 import { useAtomValue } from 'jotai'
 import { Check, ChevronDown } from 'lucide-react'
 import { useEffect, useState } from 'react'
-import { PixelMascot } from '@/composites'
+import { PixelPersona } from '@/composites'
 import {
   Button,
   Command,
@@ -73,11 +73,11 @@ function Face({ holi, className }: { holi?: PickableHoli; className?: string }) 
       aria-hidden="true"
     />
   ) : (
-    <PixelMascot
-      name={(holi.mascot ?? 'ghost') as never}
+    <PixelPersona
+      name={holi.mascot ?? 'strategist'}
       color={holi.color ?? '#8f8f94'}
       still
-      className={cn('size-3.5', className)}
+      className={className}
     />
   )
 }

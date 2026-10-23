@@ -312,16 +312,16 @@ export interface SidebarApp {
 
 /**
  * One character of the empty view's arcade (`components/monocode/arcade`):
- * a Holi as the board draws it, by its pixel mascot and its colour. The
+ * a Holi as the board draws it, by its pixel persona and its colour. The
  * holis plugin contributes the vault's own; with none, the board brings a
  * default cast.
  */
 export interface ArcadeCastMember {
   id: string
   name: string
-  /** One of `HOLI_MASCOTS`; an unknown one draws the ghost. */
+  /** One of `HOLI_MASCOTS`, its persona; an older arcade name draws its stand-in. */
   mascot: string
-  /** `#rrggbb`, the figure's own paint: categorical, not a theme token. */
+  /** `#rrggbb`, the Holi's own colour: its papers and its speech bubble. */
   color: string
 }
 

@@ -37,6 +37,7 @@ import {
   HOLI_COLOURS,
   HOLI_FILE,
   HOLI_MASCOTS,
+  HOLI_MASCOT_LABELS,
   holiAccepts,
   holiApprovalText,
   holiFolder,
@@ -371,8 +372,8 @@ export function sendPrompt(path: string): string {
   return `Work on ${path}.`
 }
 
-/** A name for a new Holi, from its face: "Crab", "Rocket". */
-const faceName = (mascot: string): string => mascot.charAt(0).toUpperCase() + mascot.slice(1)
+/** A name for a new Holi, from its face: "Captain", "Scout". */
+const faceName = (mascot: HoliMascot): string => HOLI_MASCOT_LABELS[mascot]
 
 export function createHolis(deps: HolisDeps): Holis {
   const now = deps.now ?? (() => new Date())

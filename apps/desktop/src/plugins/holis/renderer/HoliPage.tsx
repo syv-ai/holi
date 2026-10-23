@@ -9,7 +9,7 @@
 import { useAtomValue, useSetAtom } from 'jotai'
 import { Clock, Plus, Settings, Sparkles, StickyNote } from 'lucide-react'
 import { useEffect, useState } from 'react'
-import { EmptyState, PixelMascot } from '@/composites'
+import { EmptyState, PixelPersona } from '@/composites'
 import {
   Badge,
   Button,
@@ -202,7 +202,12 @@ export function HoliPage({ id }: { id: string }): React.JSX.Element {
     <div className="flex min-h-0 flex-1 flex-col" data-holi-page={holi.id}>
       <div className="flex h-12 shrink-0 items-center gap-2 border-b border-divider pe-3 ps-4 text-sm">
         {holi.mascot !== undefined && (
-          <PixelMascot name={holi.mascot} color={holi.color ?? '#8f8f94'} status={state} />
+          <PixelPersona
+            name={holi.mascot}
+            color={holi.color ?? '#8f8f94'}
+            status={state}
+            crop="full"
+          />
         )}
         <span className="truncate font-medium">{holi.name}</span>
         <span className="text-muted-foreground">

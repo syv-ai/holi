@@ -15,7 +15,7 @@
 import { useAtomValue, useSetAtom } from 'jotai'
 import { Pencil, Plus, Settings, Sparkles, StickyNote, Trash2 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
-import { PixelMascot } from '@/composites'
+import { PixelPersona } from '@/composites'
 import {
   Button,
   Dialog,
@@ -41,6 +41,7 @@ import { activeRemoteAtom, appModeAtom, cn, openPathAtom } from '@/plugin-api'
 import {
   HOLI_COLOURS,
   HOLI_MASCOTS,
+  HOLI_MASCOT_LABELS,
   MEMORY_MAX_LINES,
   memoryDate,
   memoryEntry,
@@ -179,10 +180,11 @@ function General({ holi, onError }: { holi: HoliSummary; onError: (m: string) =>
         <Popover>
           <PopoverTrigger asChild>
             <Button variant="outline" className="size-20" aria-label="Change its face and colour">
-              <PixelMascot
-                name={holi.mascot ?? 'ghost'}
+              <PixelPersona
+                name={holi.mascot ?? 'strategist'}
                 color={holi.color ?? '#8f8f94'}
-                className="size-12"
+                crop="full"
+                scale={2}
               />
             </Button>
           </PopoverTrigger>
@@ -197,8 +199,8 @@ function General({ holi, onError }: { holi: HoliSummary; onError: (m: string) =>
               onValueChange={(m) => m !== '' && save({ mascot: m as HoliMascot })}
             >
               {HOLI_MASCOTS.map((m) => (
-                <ToggleGroupItem key={m} value={m} aria-label={m}>
-                  <PixelMascot name={m} color={holi.color ?? '#8f8f94'} still className="size-5" />
+                <ToggleGroupItem key={m} value={m} aria-label={HOLI_MASCOT_LABELS[m]}>
+                  <PixelPersona name={m} color={holi.color ?? '#8f8f94'} still />
                 </ToggleGroupItem>
               ))}
             </ToggleGroup>
