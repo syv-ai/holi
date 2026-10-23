@@ -56,19 +56,45 @@ reconcile forgets only the turns of its own sessions. The optional chat plugin i
 open one. Which terminal shows it is read from its title, since `←` and Enter move a terminal
 between the list and a session. An agent tab's **Open overview** always opens a new one. The agent
 item is green while any session is live. The sidebar's **Agents** mode ([sidebar](sidebar.md)) is the agent's. At
-the top, **Inbox**: what needs you, the sessions waiting on a permission prompt or a question and
-what other plugins add there (a Holi's report that asked for you); it is also what the view opens
-on, and empty it says what lands there. Beside it the places plugins add (Automations), then their
-sections ([Holis](holis.md)), then **Sessions** with its **+** (⌘N): one card per **live** session
-(its process alive), after MonoCode's session card, its model and the state or how long ago, its
-name, and where it runs or what it waits for, waiting on you first, then working, then idle, and a
-search over their names. One that needs you is a dashed card. A card opens the session in a
-terminal of the view's own; with none running, Sessions says how to start one. The model comes
-from the session's status line (`model.display_name`), the start time from the listing's
-`startedAt`. Work in flight turns the house loader (`motion-orbit`), the one loop on a row; a
-session or Holi that needs you is a steady amber dot, never a breathing one, since waiting is a
-state and not work. The words beside a step stay still. A Holi's runs are sessions too, and show among them as well as on its page. A stopped or finished session
-is not in the view: it is in the agent list, where opening it picks it up again. The mode toggle
+the top, **Search conversations…** with a filter menu. Under it, **Inbox**: what needs you, the
+sessions waiting on a permission prompt or a question and what other plugins add there (a Holi's
+report that asked for you); it is also what the view opens on, and empty it says what lands there.
+Beside it the places plugins add (Automations), then their sections ([Holis](holis.md)), then
+**Sessions** with its **+** (⌘N).
+
+**Sessions is one list of every conversation and run**, after MonoCode's session list: the
+agent's live sessions and the rows plugins add through their slot's `sessions` (each chat, each
+Holi's and each automation's recent runs). A plugin's row that is an agent session (its job id)
+and the live session with that id are one row: the session gives it its state and model, the
+plugin its title and who ran it. A card shows the model (a Holi's face, or an automation's bolt, in
+place of the provider's mark when one ran it) with the age on the right, the title in full on
+hover, and the vault with where it ran (a Holi's document). A card selects what it stands for
+(`agentsSelectionAtom`: a chat's conversation) or opens the session it is, brought back first
+when it has finished. **+**, ⌘N and the empty state start a session in the view a slot offers
+(chat's composer), else in a terminal. Search reads the title, who ran it, the place and the
+model; the filter keeps states, who started it (you, or Holis and automations), and archived rows
+on request (a slot that keeps an archive offers Archive on its cards). Arrow keys, Home and End
+move between cards; Enter opens one.
+
+**Each card's state is said in words and a glyph, never colour alone**, and it takes the age's
+place as MonoCode's does:
+
+- **Needs you**: a permission prompt or a question waits (Claude Code's own state, or a chat's
+  pending `can_use_tool` or `AskUserQuestion`), or a Holi's report asked for you. A warning badge
+  whose tooltip says what it waits on, a dashed card, and pinned in a **Needs you** group above
+  the rest.
+- **Working**: a turn is in flight. The house spinner, still under reduced motion, and "Working".
+- **Done**: a turn ended after the row was last opened. A check before the age, until the row is
+  opened; the open row is never done. A chat's or a run's end is recorded with it; a live
+  session's is noted when this window sees it stop working (MonoCode's unseen-finished rule).
+  When each row was last opened is this machine's (`holi.agents.sessions.seen`), and a turn that
+  ended before it began keeping track is not news.
+
+The rest are grouped by the day of their last activity: Today, Yesterday, Earlier. The model
+comes from the session's status line (`model.display_name`), the start time from the listing's
+`startedAt`. A session or Holi that needs you is a steady amber dot elsewhere too, never a
+breathing one, since waiting is a state and not work. A stopped session that no plugin lists is
+not in the view: it is in the agent list, where opening it picks it up again. The mode toggle
 counts what needs you and what works, sessions and Holis and what other plugins add, from either
 mode.
 
@@ -189,3 +215,5 @@ showing it busy, crosses it off), so a session resumed from the list is never re
 - `apps/desktop/src/plugins/agent/renderer/`: rows, orbs, terminal (`terminal.css`), turn chip and review; `index.tsx`: the
   plugin's renderer side; `service.ts`: the agent service
 - `apps/desktop/src/plugins/agent/renderer/state/sessions.ts`, `send.ts`, `turns.ts`: the lists, what you do, and turn review
+- `apps/desktop/src/plugins/agent/renderer/state/session-list.ts`, `sessions/SessionList.tsx`: the one session list, its
+  states, filter and groups

@@ -50,8 +50,10 @@ turn created is deleted, every other file gets its old text back), one new commi
 so it is never in the clone.
 
 **In the Agents mode** the chat plugin fills the slot the agent's view offers
-([sidebar](sidebar.md)): a **Chats** section in its sidebar (New chat, the chats with their state in
-words, Archived folded) and its main view (the composer, or one conversation). What its chats wait
+([sidebar](sidebar.md)): its chats as rows of the sidebar's one session list (the slot's
+`sessions`, [agent-sessions](agent-sessions.md): working, needs you, done until opened, and
+Archive), the list's **+** opening its composer, and its main view (the composer, or one
+conversation). What its chats wait
 on is added to the count on the mode toggle. **Open a copy in a terminal** opens
 `claude --resume <id> --fork-session` in an agent tab (`agent.open` with `fork`), the raw view that
 never fights the chat's own process for the conversation; **Sign in** runs Claude Code's `/login`
@@ -82,6 +84,6 @@ chat works or waits on the person asks first (the plugin's own quit guard).
 - `apps/desktop/src/plugins/chat/main/claude-stream.ts`: `stream-json` and `can_use_tool`
 - `apps/desktop/src/plugins/chat/main/capabilities.ts`: `chats.*`
 - `apps/desktop/src/plugins/chat/shared/chat.ts`: transcript items, tool phrasing, the reducer
-- `apps/desktop/src/plugins/chat/renderer/`: `ChatSidebar.tsx`, `ChatMain.tsx`, `Transcript.tsx`,
+- `apps/desktop/src/plugins/chat/renderer/`: `ChatMain.tsx`, `Transcript.tsx`,
   `Composer.tsx`, `ReviewCard.tsx`; `state/chats.ts`, `state/review.ts`
 - `apps/desktop/src/plugins/chat/NOTICE.md`: MonoCode's licence for the parts after it

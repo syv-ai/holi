@@ -332,6 +332,59 @@ export interface AgentsMode {
 }
 
 /**
+ * One row of the Agents sidebar's session list (docs/features/agent-sessions.md,
+ * The Agents view), from whichever plugin owns it: a chat, a Holi's run, an
+ * automation's run. The provider draws them all as one list and derives each
+ * row's state from these fields; it never knows whose a row is.
+ */
+export interface AgentsSessionItem {
+  /** Unique across every plugin's rows: `<owner>:<id>`. */
+  key: string
+  /** What picking it selects, in `agentsSelectionAtom`. Absent for a run
+   *  that is only an agent session (`jobId`): the provider opens that. */
+  selection?: { owner: string; id: string }
+  /** The agent session it is, by job id, when it is one. A row of the
+   *  provider's own live sessions with the same id merges into this one. */
+  jobId?: string
+  title: string
+  /** The model in Claude Code's words or alias (`Opus 5.5`, `opus`). */
+  model?: string
+  /** What it is doing now: mid-turn, waiting on a permission or a question,
+   *  or neither. */
+  state: 'needs-you' | 'working' | 'idle'
+  /** Only for 'needs-you': what it waits on, in words. */
+  waitingFor?: string
+  /** Last activity, epoch ms: what its age and its day group count from. */
+  updatedAt: number
+  /** When its last turn ended, epoch ms. Done and unread until it is opened
+   *  after this. */
+  endedAt?: number
+  /** Out of the list unless the filter asks for archived ones. */
+  archived?: boolean
+  /** Where it ran, after the vault: the document a Holi was sent. */
+  location?: string
+  /** Who started it, when it was not the person: a Holi (by its persona) or
+   *  an automation. */
+  by?: { kind: 'holi' | 'automation'; name: string; mascot?: string; color?: string }
+}
+
+/** A plugin's rows in the Agents sidebar's session list. */
+export interface AgentsSessionsSource {
+  items: Atom<readonly AgentsSessionItem[]>
+  /** Whether its rows have come back once: `loading` draws skeletons,
+   *  `error` an inline Retry. Absent is `ready`. */
+  status?: Atom<'loading' | 'ready' | 'error'>
+  /** Ask for its rows again (the error's Retry). */
+  reload?: WritableAtom<null, [], unknown>
+  /** Start a new session in its own view: the list's + and its empty
+   *  state's action. The first slot with one wins over the provider's own. */
+  create?: WritableAtom<null, [], unknown>
+  /** Archive a row of its own, or bring one back, by its `key`. Rows
+   *  without it offer no Archive. */
+  archive?: WritableAtom<null, [key: string, archived: boolean], unknown>
+}
+
+/**
  * What another plugin adds to the Agents mode, which the plugin providing it
  * draws without knowing who adds what (docs/features/sidebar.md). Its rows
  * select `{owner: <its id>, id}` in `agentsSelectionAtom`, and while one of
@@ -353,6 +406,8 @@ export interface AgentsSlot {
   main?: ComponentType<{ id: string }>
   /** Added to what the mode toggle reports. */
   status?: Atom<AgentsStatus>
+  /** Its rows in the provider's one session list (chats, a Holi's runs). */
+  sessions?: AgentsSessionsSource
 }
 
 export interface RendererPlugin {

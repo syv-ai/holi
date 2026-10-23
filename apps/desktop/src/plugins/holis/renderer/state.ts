@@ -18,6 +18,7 @@ import {
   appModeAtom,
   showAgentSessionAtom,
   type AgentSessionRow,
+  type AgentsSessionItem,
   type ArcadeCastMember,
   type AgentsStatus,
   type PluginEventHandler,
@@ -105,6 +106,47 @@ export const holisStatusAtom = atom((get): AgentsStatus => ({
   needsYou: get(holiAsksAtom).length,
   working: 0,
 }))
+
+/** How many of each Holi's runs the session list shows, newest first. */
+const LISTED_RUNS = 10
+
+/** A document's name without its folder or `.md`: what a run is about. */
+const docName = (path: string): string => (path.split('/').pop() ?? path).replace(/\.md$/i, '')
+
+/**
+ * Each Holi's recent runs as rows of the agent's session list (the slot's
+ * `sessions`), wearing the Holi's face. A run is its session (`jobId`): the
+ * agent puts the live session's state on it, and opening it opens that
+ * session. A run whose report asked for the person and that they have not
+ * seen needs them, like the Inbox says.
+ */
+export const holiSessionItemsAtom = atom((get): AgentsSessionItem[] => {
+  const seen = get(holiSeenAtom)
+  return get(holisAtom).flatMap((h) =>
+    h.runs.slice(0, LISTED_RUNS).map((run): AgentsSessionItem => {
+      const ended = run.report === undefined ? undefined : Date.parse(run.report.at)
+      const asks = reportNeedsYou(run, seen[h.id])
+      return {
+        key: `${HOLIS_OWNER}:${run.jobId}`,
+        jobId: run.jobId,
+        title: docName(run.path),
+        state: asks ? 'needs-you' : 'idle',
+        ...(asks ? { waitingFor: 'Its report asks for you' } : {}),
+        updatedAt: ended ?? Date.parse(run.at),
+        ...(ended === undefined ? {} : { endedAt: ended }),
+        location: run.path,
+        by: {
+          kind: 'holi',
+          name: h.name,
+          mascot: h.mascot ?? 'strategist',
+          color: h.color ?? HOLI_COLOURS[0],
+        },
+      }
+    }),
+  )
+})
+
+export const holiSessionsStatusAtom = atom((get) => get(holisLoadedAtom))
 
 /** The vault's Holis as the empty view's arcade draws them: every one that
  *  parses, by its persona and colour. */
