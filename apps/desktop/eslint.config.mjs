@@ -230,6 +230,8 @@ const pluginImports = [
       '!@/components/ui/*',
       '!@/components/reui',
       '!@/components/reui/*',
+      '!@/components/reui/event-calendar',
+      '!@/components/reui/event-calendar/*',
     ],
     message:
       'a plugin reaches core through @/plugin-api (plus primitives, composites, and components/ui and components/reui).',
@@ -405,6 +407,7 @@ export default [
       'src/renderer/src/components/ui/**/*.{ts,tsx}',
       'src/renderer/src/components/reui/**/*.{ts,tsx}',
       'src/renderer/src/components/blocks/**/*.{ts,tsx}',
+      'src/plugins/google/renderer/calendar/**/*.{ts,tsx}',
       'src/renderer/src/components/Shell.tsx',
       'src/renderer/src/components/leave-confirm.tsx',
       'src/renderer/src/hooks/**/*.{ts,tsx}',
