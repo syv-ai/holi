@@ -39,6 +39,7 @@ other rather than repeating each other.
 | [vault-apps](features/vault-apps.md)               | Agent-written apps in their own origin                                   |
 | [community-plugins](features/community-plugins.md) | Plugins from other repositories, run as their own processes              |
 | [command-palette](features/command-palette.md)     | Quick open and the one table of commands                                 |
+| [shortcuts](features/keyboard-shortcuts.md)        | The shell's keyboard shortcuts, their table and their dialog             |
 | [nav-menu](features/nav-menu.md)                   | The nav's items, their menu, and Home                                    |
 | [sidebar](features/sidebar.md)                     | The sidebar, its two modes, the seam and the profile                     |
 | [home](features/home.md)                           | Home: the vault's library (recent, notes, tasks, activity)               |

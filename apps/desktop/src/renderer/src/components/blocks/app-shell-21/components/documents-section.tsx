@@ -49,7 +49,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Kbd } from "@/components/ui/kbd"
+import { Kbd, KbdGroup } from "@/components/ui/kbd"
 import {
   SidebarGroup,
   SidebarGroupAction,
@@ -59,7 +59,10 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarMenuSkeleton,
+  useSidebar,
 } from "@/components/ui/sidebar"
+import { hotkeyLabels } from "@/lib/hotkey"
+import { isMac, useShortcutHandlers } from "@/state/shortcuts"
 import {
   Tree,
   TreeDragLine,
@@ -224,7 +227,11 @@ export function DocumentsNav({
         >
           <SearchIcon aria-hidden="true" />
           <span>Search</span>
-          <Kbd className="ms-auto">⌘K</Kbd>
+          <KbdGroup className="ms-auto">
+            {hotkeyLabels("⌘K", isMac()).map((label) => (
+              <Kbd key={label}>{label}</Kbd>
+            ))}
+          </KbdGroup>
         </SidebarMenuButton>
       </SidebarMenuItem>
       <SidebarMenuItem>
@@ -608,6 +615,20 @@ export function FilesSection({
   useEffect(() => {
     tree.rebuildTree()
   }, [data, tree])
+
+  // The tree's own F2 renames its focused row; this one renames the selected
+  // row from anywhere else, while the sidebar is open to show the field.
+  const { open: sidebarOpen } = useSidebar()
+  useShortcutHandlers({
+    "files.collapseAll": () => tree.collapseAll(),
+    "files.rename": sidebarOpen
+      ? () => {
+          if (tree.getElement()?.contains(document.activeElement)) return
+          const item = tree.getSelectedItems()[0]
+          if (item && item.getId() !== ROOT_ID) item.startRenaming()
+        }
+      : undefined,
+  })
 
   /** Finder drops on the empty space below the rows land at the root. */
   function onAreaDrop(event: DragEvent) {
