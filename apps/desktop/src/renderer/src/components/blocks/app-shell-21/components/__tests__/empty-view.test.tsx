@@ -67,6 +67,8 @@ test("lists the newest documents first, leaving hidden ones out", () => {
   expect(rows[0]).toMatch(/^Kickoff/)
   expect(rows[1]).toMatch(/^Old/)
   expect(rows.some((text) => text.startsWith("x"))).toBe(false)
+  // One line: the name, where it lives, and when.
+  expect(rows[0]).toMatch(/^KickoffMeetingsToday$/)
   fireEvent.click(screen.getByText("Kickoff"))
   expect(onOpen).toHaveBeenCalledWith("Meetings/Kickoff.md")
 })

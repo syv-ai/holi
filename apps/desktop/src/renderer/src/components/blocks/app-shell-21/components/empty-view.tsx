@@ -138,8 +138,9 @@ export function EmptyView({
           </p>
         </header>
 
-        {/* Commands, so bordered tiles: they must not read as the list of
-            documents under them. */}
+        {/* Commands, so filled tiles: on the glass a light fill reads as a
+            control, and they must not read as the list of documents under
+            them. */}
         <ItemGroup
           aria-label="Start"
           className="grid grid-cols-2 gap-2 has-data-[size=sm]:gap-2"
@@ -190,10 +191,10 @@ function StartRow({
     <div role="listitem">
       <Item
         asChild
-        variant="outline"
+        variant="muted"
         size="sm"
         // A press answers with the slightest give; hover stays a colour.
-        className="hover:bg-foreground/5 focus-visible:bg-foreground/5 h-full text-start transition-[background-color,border-color,transform] duration-150 ease-[cubic-bezier(0.22,1,0.36,1)] active:scale-[0.98] motion-reduce:active:scale-100"
+        className="bg-foreground/5 hover:bg-foreground/8 focus-visible:bg-foreground/8 h-full text-start transition-[background-color,border-color,transform] duration-150 ease-[cubic-bezier(0.22,1,0.36,1)] active:scale-[0.98] motion-reduce:active:scale-100"
       >
         <button type="button" onClick={onClick}>
           <ItemMedia
