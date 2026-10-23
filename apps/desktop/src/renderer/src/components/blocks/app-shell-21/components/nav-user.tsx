@@ -239,7 +239,7 @@ export function NavUser({ collapsed = false }: { collapsed?: boolean }) {
       <SidebarMenuItem>
         <DropdownMenu>
           <DropdownMenuTrigger
-            className="border-border hover:bg-foreground/5 bg-transparent h-auto rounded-lg border py-1.5 ps-1.5 pe-1.5"
+            className="hover:bg-foreground/5 h-auto rounded-lg bg-transparent py-1.5 ps-1.5 pe-1.5"
             asChild
           >
             <SidebarMenuButton aria-label="Open account menu">

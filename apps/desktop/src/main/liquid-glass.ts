@@ -14,6 +14,7 @@ import type { BrowserWindow } from 'electron'
 type LiquidGlass = {
   isGlassSupported(): boolean
   addView(handle: Buffer, options?: { cornerRadius?: number; tintColor?: string; opaque?: boolean }): number
+  unstable_setSubdued(id: number, subdued: number): void
 }
 
 let loaded: LiquidGlass | null | undefined
@@ -44,7 +45,15 @@ export function applyLiquidGlass(win: BrowserWindow): void {
   if (!glass) return
   win.webContents.once('did-finish-load', () => {
     try {
-      glass.addView(win.getNativeWindowHandle())
+      const id = glass.addView(win.getNativeWindowHandle())
+      // Subdued is how macOS draws glass in an inactive window: the desktop's
+      // colours muted. Kept on always, so a focused window does not take on
+      // the wallpaper's tint. A private API; if it is gone, the glass stays.
+      try {
+        if (id >= 0) glass.unstable_setSubdued(id, 1)
+      } catch (error) {
+        console.warn('[liquid-glass] subdued unavailable:', error)
+      }
     } catch (error) {
       console.warn('[liquid-glass] addView failed:', error)
       win.setVibrancy('under-window')
