@@ -84,7 +84,7 @@ colour) as the cast of the empty view's arcade (`RendererPlugin.arcadeCast`, see
 menu of what plugins offer for the document (`RendererPlugin.documentActions`). Core draws the menu
 and knows nothing of Holis; the Holis plugin contributes its rows: **Send to Holi**, the Holis that
 take this document, then **All Holis** (the others, shown as taking other documents), then **New
-Holi…**, which starts one with the document's folder as its `accepts`. A send is a background
+Holi…**, which opens the wizard with the document's folder as its `accepts`. A send is a background
 session (`claude --bg` through `agent.launch`), shown in the Agents view; its first turn is one line
 naming the document, and its turns pause sync and are recorded under its job id like any session's.
 
@@ -112,9 +112,33 @@ notification (a click opens the Holi's page) and an Inbox row until they have op
 Automations and before the sessions. A Holi is a row: its face (below), which blinks idle, talks while
 a run works and calls out when it needs you (the one animation the view keeps of its own); a
 status dot, steady amber when it needs you; and New, Changed or Invalid. With none yet, a **Meet
-Holis** card says what one is and makes the first. **+** makes a Holi at once with the next face
-and colour no other Holi has, and opens its settings, which are the setup (after MonoCode's
-`createMono`).
+Holis** card says what one is, with **Create Holi** and **How Holis work**. **+** and the card open
+the wizard; the **?** beside **+** opens its explaining steps alone.
+
+**The wizard** (`renderer/wizard/`) is ReUI's `onboarding-2` block, installed with the shadcn CLI:
+its rail of numbered steps on the left, which jumps back to any step reached, and one step at a
+time in a ghost Frame. It explains, then makes one. **What a Holi is**: a name and a face
+(`holi.yaml`), a soul (`SOUL.md`), a memory (`MEMORY.md`), in the vault for everyone. **How it gets
+work**: sent from a document's menu, or on a schedule as habits; there are no event triggers, since
+an automation's only triggers are `cron` and `at`. **Who it is**: name, face (the personas), colour,
+a short description; the name follows the face until typed, and the face and colour start at the
+first ones no other Holi has. **What it does**: its soul, the documents it takes, its model. **What
+it may do**: what `allow` is, in plain words, a folder it may write (`Edit(<folder>/**)`) or any
+other rule, each refused at once by the file's own check (`holiRuleError`: a bare `Edit` or `Write`
+is refused). **Habits**, when the automations plugin is on: one optional habit, a sentence ("Every
+weekday at 08:00") and what it does each time. **Review and create**. A person who already has
+Holis starts at Who it is, the explaining steps a click back. **How Holis work** is the first two
+steps, ending in **Create a Holi**.
+
+Create is the one create path: `holis.create`, whose parse in main is the last word, and for a habit
+the automations' own `schedules.save`, written off, as the automation editor's Create writes one.
+Then the Holi's page, and the approval dialog as for any new Holi: making it approves nothing, and
+the habit runs only on a machine that turns it on in Automations, which approves it and the Holi
+there. A habit that fails to write leaves the Holi made, and says so.
+
+The dialogs (the approval, the settings, the wizard) are the plugin's drawer, and the sidebar
+section mounts them too, since the shell mounts no plugin drawers yet; whichever mounts first draws
+them.
 
 **Faces.** A Holi's `mascot` is one of ten pixel personas, syv.ai's own website characters, each
 named by its character and never by a person: `captain`, `strategist`, `skipper`, `spy`,
@@ -209,7 +233,8 @@ lands in the Inbox.
   prompt, `create`/`update`/`remove`, and `context` for automations; `memory.ts`: the memory
   commands and the page's hash-checked saves; `capabilities.ts`: `holis.*`
 - `apps/desktop/src/plugins/holis/renderer/`: `HolisSection.tsx` (the sidebar section and Meet
-  Holis), `HoliPage.tsx`, `HoliFeed.tsx`, `HoliSettings.tsx`, `HolisInbox.tsx`,
+  Holis), `wizard/` (the new-Holi wizard, after ReUI's `onboarding-2`), `HoliPage.tsx`,
+  `HoliFeed.tsx`, `HoliSettings.tsx`, `HolisInbox.tsx`,
   `DocumentHoliActions.tsx`, `ApproveHoliDialog.tsx`; `state.ts`
 - `apps/desktop/src/renderer/src/composites/pixel-persona/`: the personas (`personas.ts`) and
   `PixelPersona`; the names and the old-name mapping are `@holi/shared`'s `holi.ts`
