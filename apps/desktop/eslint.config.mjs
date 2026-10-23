@@ -414,6 +414,7 @@ export default [
       'src/renderer/src/components/leave-confirm.tsx',
       'src/renderer/src/hooks/**/*.{ts,tsx}',
       'src/plugins/google/renderer/mail/**/*.{ts,tsx}',
+      'src/plugins/chat/renderer/**/*.{ts,tsx}',
     ],
     rules: {
       'no-restricted-syntax': 'off',

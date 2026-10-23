@@ -38,8 +38,10 @@ import {
   transcriptNow,
   type ChatEvent,
   type ChatSummary,
+  type Effort,
   type PermissionMode,
   type TranscriptItem,
+  type TurnUsage,
 } from '../shared/chat'
 import {
   claudeChatArgs,
@@ -84,6 +86,7 @@ export interface ChatRecord {
   id: string
   title: string
   model?: string
+  effort?: Effort
   mode: PermissionMode
   createdAt: number
   updatedAt: number
@@ -97,12 +100,30 @@ export interface ChatRecord {
 
 interface ChatIndex {
   chats: ChatRecord[]
+  /** The `/` commands the vault's last session reported (`init`). */
+  commands?: SessionCommands
+}
+
+/** What a session's `init` said it offers as `/` commands. */
+export interface SessionCommands {
+  names: string[]
+  skills: string[]
+}
+
+function parseCommands(raw: unknown): SessionCommands | undefined {
+  const r = raw as { names?: unknown; skills?: unknown } | null | undefined
+  if (r === null || typeof r !== 'object' || !Array.isArray(r.names)) return undefined
+  const strings = (v: unknown): string[] =>
+    Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []
+  return { names: strings(r.names), skills: strings(r.skills) }
 }
 
 function parseIndex(raw: unknown): ChatIndex {
   const list = (raw as { chats?: unknown } | null)?.chats
   if (!Array.isArray(list)) return { chats: [] }
+  const commands = parseCommands((raw as { commands?: unknown }).commands)
   return {
+    ...(commands === undefined ? {} : { commands }),
     chats: list.filter(
       (c): c is ChatRecord =>
         c !== null &&
@@ -116,6 +137,8 @@ function parseIndex(raw: unknown): ChatIndex {
 /** Options a turn can carry. */
 export interface TurnOptions {
   model?: string | null
+  /** Null clears it to Claude Code's default. */
+  effort?: Effort | null
   mode?: PermissionMode
 }
 
@@ -178,9 +201,12 @@ export interface Chats {
       reviewed?: boolean
       title?: string
       model?: string | null
+      effort?: Effort | null
       mode?: PermissionMode
     },
   ): Promise<ChatResult>
+  /** The `/` commands the vault's last session reported, if one has run. */
+  sessionCommands(): SessionCommands | null
   /** The conversation id Claude Code keeps, for "open in a terminal". */
   conversationOf(id: string): string | null
   /** Whether any session is working or waiting: what leaving costs. */
@@ -203,6 +229,7 @@ export function createChats(deps: ChatsDeps): Chats {
   let dir: string | null = null
   let store: JsonFileStore<ChatIndex> | null = null
   let records: ChatRecord[] = []
+  let commands: SessionCommands | null = null
   const transcripts = new Map<string, TranscriptItem[]>()
   const dirty = new Set<string>()
   let saveTimer: ReturnType<typeof setTimeout> | null = null
@@ -225,6 +252,7 @@ export function createChats(deps: ChatsDeps): Chats {
       id: r.id,
       title: r.title,
       ...(r.model === undefined ? {} : { model: r.model }),
+      ...(r.effort === undefined ? {} : { effort: r.effort }),
       mode: r.mode,
       state,
       ...(state === 'working' && nowState.step !== undefined ? { step: nowState.step } : {}),
@@ -298,9 +326,14 @@ export function createChats(deps: ChatsDeps): Chats {
     const at = records.findIndex((r) => r.id === id)
     if (at === -1) return
     records[at] = change(records[at]!)
+    await saveIndex()
+  }
+
+  async function saveIndex(): Promise<void> {
     const snapshot = records
+    const said = commands
     await store
-      ?.update(() => ({ chats: snapshot }))
+      ?.update(() => ({ chats: snapshot, ...(said === null ? {} : { commands: said }) }))
       .catch((err: unknown) => log(`index failed: ${String(err)}`))
   }
 
@@ -354,14 +387,24 @@ export function createChats(deps: ChatsDeps): Chats {
     l.child.kill('SIGTERM')
   }
 
-  function endTurn(id: string, failed: boolean): void {
+  function endTurn(
+    id: string,
+    failed: boolean,
+    how: { model?: string; usage?: TurnUsage } = {},
+  ): void {
     const l = live.get(id)
     if (l !== undefined) {
       l.turnOpen = false
       l.pending.clear()
       armIdle(id, l)
     }
-    apply(id, { type: 'turn-end', at: now(), ...(failed ? { failed: true } : {}) })
+    apply(id, {
+      type: 'turn-end',
+      at: now(),
+      ...(failed ? { failed: true } : {}),
+      ...(how.model === undefined ? {} : { model: how.model }),
+      ...(how.usage === undefined ? {} : { usage: how.usage }),
+    })
     const at = now()
     void saveRecord(id, (r) => ({ ...r, endedAt: at, updatedAt: at, reviewed: false })).then(
       pushList,
@@ -385,11 +428,22 @@ export function createChats(deps: ChatsDeps): Chats {
       const percent = res.contextPercent
       void saveRecord(id, (x) => ({ ...x, contextPercent: percent }))
     }
-    if (res.turnEnded !== undefined && l.turnOpen) endTurn(id, res.turnEnded.failed)
+    if (res.commands !== undefined && JSON.stringify(res.commands) !== JSON.stringify(commands)) {
+      commands = res.commands
+      void saveIndex()
+    }
+    if (res.turnEnded !== undefined && l.turnOpen) {
+      const { failed, model, usage } = res.turnEnded
+      endTurn(id, failed, {
+        ...(model === undefined ? {} : { model }),
+        ...(usage === undefined ? {} : { usage }),
+      })
+    }
     pushList()
   }
 
-  const launchKey = (r: ChatRecord): string => JSON.stringify([r.model ?? null, r.mode])
+  const launchKey = (r: ChatRecord): string =>
+    JSON.stringify([r.model ?? null, r.effort ?? null, r.mode])
 
   async function ensureProcess(r: ChatRecord): Promise<Live | string> {
     const key = launchKey(r)
@@ -408,6 +462,7 @@ export function createChats(deps: ChatsDeps): Chats {
     const args = claudeChatArgs({
       mode: r.mode,
       ...(r.model === undefined ? {} : { model: r.model }),
+      ...(r.effort === undefined ? {} : { effort: r.effort }),
       ...(resume === undefined ? { sessionId: r.id } : { resume }),
     })
     let child: ChildProcessWithoutNullStreams
@@ -495,7 +550,9 @@ export function createChats(deps: ChatsDeps): Chats {
       remote = next
       dir = join(deps.userData, 'agent-chats', chatDirSlug(next))
       store = jsonFileStore(join(dir, 'index.json'), parseIndex)
-      records = (await store.read()).chats
+      const index = await store.read()
+      records = index.chats
+      commands = index.commands ?? null
       root = (await deps.target())?.root ?? ''
       lastSummaries = ''
       pushList()
@@ -515,6 +572,7 @@ export function createChats(deps: ChatsDeps): Chats {
           id,
           title: args.title ?? chatTitle(args.text),
           ...(args.model ? { model: args.model } : {}),
+          ...(args.effort ? { effort: args.effort } : {}),
           mode: args.mode ?? 'default',
           createdAt: at,
           updatedAt: at,
@@ -522,8 +580,7 @@ export function createChats(deps: ChatsDeps): Chats {
           reviewed: true,
         }
         records.push(r)
-        const snapshot = records
-        await store?.update(() => ({ chats: snapshot }))
+        await saveIndex()
         transcripts.set(id, [])
       }
       await loadTranscript(id)
@@ -534,11 +591,17 @@ export function createChats(deps: ChatsDeps): Chats {
       const r = record(id)
       if (r === undefined) return { ok: false, message: 'That session is gone.' }
       await loadTranscript(id)
-      if (opts.model !== undefined || opts.mode !== undefined) {
+      if (opts.model !== undefined || opts.effort !== undefined || opts.mode !== undefined) {
         await saveRecord(id, (x) => {
-          const { model: _m, ...rest } = x
+          const { model: _m, effort: _e, ...rest } = x
           const model = opts.model === undefined ? x.model : (opts.model ?? undefined)
-          return { ...rest, ...(model === undefined ? {} : { model }), mode: opts.mode ?? x.mode }
+          const effort = opts.effort === undefined ? x.effort : (opts.effort ?? undefined)
+          return {
+            ...rest,
+            ...(model === undefined ? {} : { model }),
+            ...(effort === undefined ? {} : { effort }),
+            mode: opts.mode ?? x.mode,
+          }
         })
       }
       return turn(record(id)!, text)
@@ -589,6 +652,10 @@ export function createChats(deps: ChatsDeps): Chats {
           if (change.model === null) delete next.model
           else next.model = change.model
         }
+        if (change.effort !== undefined) {
+          if (change.effort === null) delete next.effort
+          else next.effort = change.effort
+        }
         return next
       })
       if (change.archived === true) stopProcess(id)
@@ -597,6 +664,8 @@ export function createChats(deps: ChatsDeps): Chats {
     },
 
     conversationOf: (id) => record(id)?.conversationId ?? null,
+
+    sessionCommands: () => commands,
 
     busy: () => list().filter((s) => s.state !== 'idle'),
 
@@ -619,6 +688,7 @@ export function createChats(deps: ChatsDeps): Chats {
       dir = null
       store = null
       records = []
+      commands = null
       transcripts.clear()
       if (left !== null) deps.emit(left, 'chats', [])
     },

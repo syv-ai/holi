@@ -17,7 +17,7 @@
  *
  * No Electron import: pure, and loaded by the tests.
  */
-import type { ChatEvent, PermissionMode, Question } from '../shared/chat'
+import type { ChatEvent, Effort, PermissionMode, Question, TurnUsage } from '../shared/chat'
 
 export type JsonRecord = Record<string, unknown>
 
@@ -48,6 +48,7 @@ export function parseLine(line: string): JsonRecord | null {
 
 export interface ClaudeLaunch {
   model?: string
+  effort?: Effort
   mode: PermissionMode
   /** A new conversation's id, chosen by Holi so it is known before the
    *  first line comes back. */
@@ -76,6 +77,7 @@ export function claudeChatArgs(launch: ClaudeLaunch): string[] {
     launch.mode,
   ]
   if (launch.model !== undefined) args.push('--model', launch.model)
+  if (launch.effort !== undefined) args.push('--effort', launch.effort)
   if (launch.resume !== undefined) args.push('--resume', launch.resume)
   else if (launch.sessionId !== undefined) args.push('--session-id', launch.sessionId)
   return args
@@ -182,8 +184,12 @@ export interface ClaudeLineResult {
   ackRequestId?: string
   /** Claude Code withdrew a request (a hook decided first). */
   cancelRequestId?: string
-  /** The turn ended. */
-  turnEnded?: { failed: boolean; error?: string }
+  /** The turn ended: how, the model that answered and what it cost. */
+  turnEnded?: { failed: boolean; error?: string; model?: string; usage?: TurnUsage }
+  /** What Claude Code offers as `/` commands in this session, from its
+   *  `init`: its built-ins, the vault's commands and skills, its plugins'.
+   *  Commands only its TUI can run are left out. */
+  commands?: { names: string[]; skills: string[] }
   /** How full the context is now, 0 to 100. */
   contextPercent?: number
 }
@@ -199,6 +205,8 @@ export interface ClaudeReader {
   currentMessage: string | null
   /** The last request's context use, in tokens. */
   usedTokens: number
+  /** The model the last assistant message came from. */
+  model: string | null
 }
 
 export const newClaudeReader = (): ClaudeReader => ({
@@ -207,7 +215,51 @@ export const newClaudeReader = (): ClaudeReader => ({
   streamedMessages: new Set(),
   currentMessage: null,
   usedTokens: 0,
+  model: null,
 })
+
+const strings = (value: unknown): string[] =>
+  Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string' && v !== '') : []
+
+/**
+ * A turn's token accounting from its `result`, after MonoCode's
+ * `turnMetricsFromResult` (MIT, Copyright (c) 2026 Nick; see NOTICE.md).
+ * The cache hit is the share of all input (fresh, read from cache, written
+ * to it) that was read from cache.
+ */
+export function turnUsage(r: JsonRecord): TurnUsage | undefined {
+  const usage = rec(r['usage'])
+  if (usage === null) return undefined
+  const inputTokens = num(usage, 'input_tokens')
+  const outputTokens = num(usage, 'output_tokens')
+  const cacheReadTokens = num(usage, 'cache_read_input_tokens')
+  const cacheWriteTokens = num(usage, 'cache_creation_input_tokens')
+  const cacheReported = 'cache_read_input_tokens' in usage || 'cache_creation_input_tokens' in usage
+  const cacheable = inputTokens + cacheReadTokens + cacheWriteTokens
+  if (inputTokens === 0 && outputTokens === 0 && cacheable === 0) return undefined
+  return {
+    ...(inputTokens ? { inputTokens } : {}),
+    ...(outputTokens ? { outputTokens } : {}),
+    ...(cacheReadTokens ? { cacheReadTokens } : {}),
+    ...(cacheWriteTokens ? { cacheWriteTokens } : {}),
+    ...(cacheReported && cacheable ? { cacheHitPercent: (cacheReadTokens / cacheable) * 100 } : {}),
+  }
+}
+
+/** The model that did most of a turn's writing, by `modelUsage`'s output
+ *  tokens; the last assistant message's model when it has none. */
+function turnModel(r: JsonRecord, fallback: string | null): string | undefined {
+  let best: string | undefined
+  let most = -1
+  for (const [id, entry] of Object.entries(rec(r['modelUsage']) ?? {})) {
+    const out = num(rec(entry), 'outputTokens')
+    if (out > most) {
+      most = out
+      best = id
+    }
+  }
+  return best ?? fallback ?? undefined
+}
 
 const usageTokens = (usage: JsonRecord | null): number =>
   num(usage, 'input_tokens') +
@@ -376,6 +428,8 @@ export function readClaudeRecord(reader: ClaudeReader, r: JsonRecord): ClaudeLin
     }
     const used = usageTokens(rec(message?.['usage']))
     if (used > 0) reader.usedTokens = used
+    const model = str(message, 'model')
+    if (model !== undefined && model !== '<synthetic>') reader.model = model
     return out
   }
 
@@ -398,6 +452,14 @@ export function readClaudeRecord(reader: ClaudeReader, r: JsonRecord): ClaudeLin
   }
 
   if (type === 'system') {
+    if (subtype === 'init') {
+      const model = str(r, 'model')
+      if (model !== undefined) reader.model = model
+      const tuiOnly = new Set(strings(r['terminal_slash_commands']))
+      const names = strings(r['slash_commands']).filter((n) => !tuiOnly.has(n))
+      if (names.length > 0) out.commands = { names, skills: strings(r['skills']) }
+      return out
+    }
     if (subtype === 'status' || subtype?.startsWith('compact')) {
       const text = (str(r, 'message') ?? '').trim()
       if (text !== '' && !QUIET_STATUS.test(text)) out.events.push({ type: 'status', text })
@@ -416,7 +478,14 @@ export function readClaudeRecord(reader: ClaudeReader, r: JsonRecord): ClaudeLin
       : []
     const error = failed ? (errors[0] ?? str(r, 'result') ?? 'The turn failed.') : undefined
     if (error !== undefined) out.events.push({ type: 'error', text: error })
-    out.turnEnded = { failed, ...(error === undefined ? {} : { error }) }
+    const model = turnModel(r, reader.model)
+    const usageOfTurn = turnUsage(r)
+    out.turnEnded = {
+      failed,
+      ...(error === undefined ? {} : { error }),
+      ...(model === undefined ? {} : { model }),
+      ...(usageOfTurn === undefined ? {} : { usage: usageOfTurn }),
+    }
     // The last request is what sits in the window; the model's window is the
     // CLI's to say, so no table of models is kept here.
     const usage = rec(r['usage'])

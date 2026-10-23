@@ -29,10 +29,13 @@ mode, the mode's own list, and who is signed in. Everywhere else is one keystrok
   toggle. **Other plugins add to it without the agent knowing them**: `RendererPlugin.agentsSlot`
   gives a row for the top group beside the Inbox (`nav`: [Automations](scheduled-agents.md)), a
   section (`sidebar`: [Holis](holis.md)) placed by its `order` (the sessions are at 100; a slot with
-  none comes after them, as chat does), rows in the Inbox (`inbox`), a main view for its rows and
-  a status the toggle adds in. What is
-  shown is core's `agentsSelectionAtom`, `{owner, id}`, so a plugin's row opens its own view. The
-  optional [chat](chat.md) plugin is one.
+  none comes after them, as chat does), rows in the Inbox (`inbox`), a main view for its rows, the
+  mode's main view while nothing is selected (`home`, the first running slot's wins, else the
+  Inbox) and a status the toggle adds in. What is shown is core's `agentsSelectionAtom`,
+  `{owner, id}`, so a plugin's row opens its own view. The [chat](chat.md) plugin is one, and its
+  new-session page is the home. In the shell the sidebar's Agents tab is the mode
+  (`sidebarSectionAtom` is `appModeAtom`): while it is on, `<main>` is the mode's main view, and
+  opening or picking a document tab goes back to Documents.
 - **Documents** is a search field and two destinations, then what you pinned, then the files:
   - **Search** is a field at the top (a grey fill, as every text field is) that opens the
     [command palette](command-palette.md) (⌘P): files, notes and commands. It is a press, not a

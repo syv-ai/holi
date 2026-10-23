@@ -1,27 +1,28 @@
 /**
  * The Agents mode's main view (docs/features/agent-sessions.md, The Agents
- * view): one of three things, picked in the sidebar.
+ * view): one of four things, picked in the sidebar.
  *
- * - **The Inbox**, also what the view opens on: the sessions waiting on you,
- *   and what other plugins add there (a Holi's report that asked for you).
- * - **A live background session**: its terminal, `claude attach`, since
- *   Claude Code's TUI is its interface.
+ * - **Home**, what the view opens on: a slot's `home` when one offers it
+ *   (the chat plugin's new-session page), else the Inbox.
+ * - **The Inbox**: the sessions waiting on you, and what other plugins add
+ *   there (a Holi's report that asked for you).
+ * - **A background session**: what it is and its state. Its terminal is not
+ *   drawn here while conversations are the session UI (docs/features/chat.md);
+ *   the session runs on, and Holis and automations keep starting them.
  * - **A row another plugin added**: that plugin's own view (its slot).
  *
  * After MonoCode's `SessionPane` (MIT, Copyright (c) 2026 Nick; see
  * NOTICE.md), cut to the mock's simplicity.
  */
 import { useAtomValue, useSetAtom } from 'jotai'
-import { Inbox, SquarePen } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { Bot, Inbox, SquarePen } from 'lucide-react'
+import { useEffect, useState } from 'react'
 import { EmptyState } from '@/composites'
 import { activeRemoteAtom, agentsSlotsAtom } from '@/plugin-api'
-import { agentCap } from '../agent-cap'
-import { SessionTerminal } from '../SessionTerminal'
 import { inboxCountAtom } from '../state/agents-status'
-import { agentsViewAtom, viewTerminalsAtom } from '../state/agents-view'
+import { agentsViewAtom } from '../state/agents-view'
 import { newViewSessionAtom } from '../state/session-view'
-import { agentGeometryAtom, agentSessionsAtom } from '../state/sessions'
+import { agentSessionsAtom } from '../state/sessions'
 import { SessionCard, StateLabel } from './parts'
 import { useNow } from './AgentsSidebar'
 
@@ -102,49 +103,11 @@ function InboxView(): React.JSX.Element {
   )
 }
 
-/** A background session in a terminal of the view's own: the one its New
- *  session opened, or a new `claude attach` window that closes with the view. */
-function TerminalView({ id }: { id: string }): React.JSX.Element {
-  const remote = useAtomValue(activeRemoteAtom)
+/** A background session, without its terminal: what it is and where it
+ *  stands. Holis and automations run sessions like this one. */
+function SessionView({ id }: { id: string }): React.JSX.Element {
   const sessions = useAtomValue(agentSessionsAtom)
-  const geometry = useAtomValue(agentGeometryAtom)
-  const setGeometry = useSetAtom(agentGeometryAtom)
-  const owned = useAtomValue(viewTerminalsAtom)[id]
-  const setOwned = useSetAtom(viewTerminalsAtom)
   const session = sessions.find((s) => s.id === id)
-  const [terminalId, setTerminalId] = useState<string | null>(owned ?? null)
-  const [error, setError] = useState<string | null>(null)
-  const opened = useRef<string | null>(owned ?? null)
-
-  useEffect(() => {
-    if (remote === null) return
-    let gone = false
-    if (opened.current === null) {
-      void agentCap.open(remote, { attach: id, ...geometry }).then((res) => {
-        if (gone) {
-          if (res.ok) void agentCap.detach(remote, { id: res.terminalId })
-          return
-        }
-        if (res.ok) {
-          opened.current = res.terminalId
-          setTerminalId(res.terminalId)
-        } else setError(res.message)
-      })
-    }
-    return () => {
-      gone = true
-      // The window closes with the view; the session goes on in the background.
-      if (opened.current !== null) void agentCap.detach(remote, { id: opened.current })
-      opened.current = null
-      setOwned((t) => {
-        const { [id]: _gone, ...rest } = t
-        return rest
-      })
-    }
-    // Opened once per session shown; the geometry is only where it starts.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [remote, id])
-
   return (
     <>
       <Bar>
@@ -155,25 +118,11 @@ function TerminalView({ id }: { id: string }): React.JSX.Element {
           </span>
         )}
       </Bar>
-      <div className="flex min-h-0 flex-1 flex-col">
-        {error !== null ? (
-          <div className="flex flex-1 items-center justify-center text-sm text-destructive">
-            {error}
-          </div>
-        ) : terminalId === null ? (
-          <div
-            role="status"
-            aria-label="Opening the terminal"
-            className="m-6 h-24 rounded-lg motion-shimmer"
-          />
-        ) : (
-          <SessionTerminal
-            terminalId={terminalId}
-            visible
-            onGeometry={(cols, rows) => setGeometry({ cols, rows })}
-          />
-        )}
-      </div>
+      <EmptyState
+        icon={Bot}
+        title="Running in the background"
+        description="This session was started by a Holi or an automation. It works on its own; what it changes shows up in the vault and in its turn review."
+      />
     </>
   )
 }
@@ -184,6 +133,7 @@ export function AgentsMain(): React.JSX.Element {
   const sessions = useAtomValue(agentSessionsAtom)
   const slots = useAtomValue(agentsSlotsAtom)
   const slot = view.kind === 'slot' ? slots.find((s) => s.plugin === view.owner) : undefined
+  const Home = slots.find((s) => s.home !== undefined)?.home
 
   // A session that stopped, or a plugin turned off, is no longer something to
   // show.
@@ -197,9 +147,11 @@ export function AgentsMain(): React.JSX.Element {
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-background" data-agents-main={view.kind}>
       {view.kind === 'session' && !missing ? (
-        <TerminalView key={view.id} id={view.id} />
+        <SessionView key={view.id} id={view.id} />
       ) : view.kind === 'slot' && slot?.main !== undefined ? (
         <slot.main key={view.id} id={view.id} />
+      ) : view.kind === 'home' && Home !== undefined ? (
+        <Home />
       ) : (
         <InboxView />
       )}

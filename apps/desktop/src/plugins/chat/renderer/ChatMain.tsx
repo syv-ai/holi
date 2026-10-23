@@ -1,23 +1,37 @@
 /**
- * The chat plugin's main view in the Agents mode (its slot,
- * docs/features/chat.md): the composer for a new chat, or one chat's
- * conversation with its permission cards inline, the review card under a
- * finished turn, and a composer to reply.
+ * The chat plugin's main views in the Agents mode (docs/features/chat.md):
+ * the new-session page, which is also the mode's home (its slot's `home`),
+ * and one chat's conversation with its permission cards inline, the review
+ * card under a finished turn, and the composer pinned under it.
  *
- * After MonoCode's `SessionPane` (MIT, Copyright (c) 2026 Nick; see
- * NOTICE.md), cut to the mock's simplicity.
+ * The new-session page is MonoCode's `EmptySession`: a centred column, the
+ * question over a large composer, on the Holis' arcade board faded in as on
+ * the New tab. The conversation is its `SessionPane`, cut to what a chat
+ * does. Ported from https://github.com/hardbeat920/monocode, MIT License,
+ * Copyright (c) 2026 Nick; see NOTICE.md.
  */
-import { useAtom, useAtomValue, useSetAtom } from 'jotai'
-import { Archive, ListChecks, MessageSquarePlus, Square, SquareTerminal, Sun } from 'lucide-react'
-import { useEffect, useState } from 'react'
-import { Button, Icon, IconButton } from '@/primitives'
-import { activeRemoteAtom, appModeAtom, openSurfaceAtom } from '@/plugin-api'
-import type { ChatSummary } from '../shared/chat'
-import { Composer, type ComposerChoice } from './Composer'
-import { StateLabel } from './parts'
-import { ReviewCard } from './ReviewCard'
+import { useAtom, useAtomValue, useSetAtom } from "jotai"
+import { ArchiveIcon, ArchiveRestoreIcon } from "lucide-react"
+import { useEffect, useRef, useState } from "react"
+
+import { Badge } from "@/components/reui/badge"
+import { Button } from "@/components/ui/button"
 import {
-  chatCap,
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
+import {
+  ArcadeTakeControl,
+  arcadeCastAtom,
+  cn,
+  gridArcadeAtom,
+  HoliArcade,
+} from "@/plugin-api"
+import type { ChatSummary, TranscriptItem } from "../shared/chat"
+import { Composer, useVaultName, type ComposerChoice } from "./Composer"
+import { ReviewCard } from "./ReviewCard"
+import {
   chatsAtom,
   chatsLoadedAtom,
   composerPrefsAtom,
@@ -28,90 +42,154 @@ import {
   startChatAtom,
   transcriptsAtom,
   updateChatAtom,
-} from './state/chats'
-import { churnAtom, refreshChurnAtom } from './state/review'
-import { Transcript, TranscriptSkeleton } from './Transcript'
-
-/** The agent's terminal tab: the raw view of a chat, or its sign-in. */
-const AGENT_SURFACE = 'agent'
-
-function Bar({
-  children,
-  end,
-}: {
-  children: React.ReactNode
-  end?: React.ReactNode
-}): React.JSX.Element {
-  return (
-    <div className="flex h-12 shrink-0 items-center gap-2 border-b border-divider pe-3 ps-4 text-sm">
-      <div className="flex min-w-0 flex-1 items-center gap-2">{children}</div>
-      {end !== undefined && <div className="flex shrink-0 items-center gap-0.5">{end}</div>}
-    </div>
-  )
-}
+} from "./state/chats"
+import { churnAtom, refreshChurnAtom } from "./state/review"
+import { Transcript, TranscriptSkeleton } from "./Transcript"
 
 /** A composer's draft, by key, kept in the store. */
 function useDraft(key: string): [string, (v: string) => void] {
   const [drafts, setDrafts] = useAtom(draftsAtom)
-  return [drafts[key] ?? '', (v) => setDrafts((d) => ({ ...d, [key]: v }))]
+  return [drafts[key] ?? "", (v) => setDrafts((d) => ({ ...d, [key]: v }))]
 }
 
-const SUGGESTIONS = [
-  { icon: Sun, text: 'Brief me on today' },
-  { icon: ListChecks, text: 'Turn my meeting notes into tasks' },
-] as const
-
-function NewChat(): React.JSX.Element {
-  const remote = useAtomValue(activeRemoteAtom)
+/**
+ * The new-session page. Nothing is started until the first message is sent;
+ * the message is the session's first turn and its title.
+ */
+export function NewSession() {
   const [prefs, setPrefs] = useAtom(composerPrefsAtom)
   const start = useSetAtom(startChatAtom)
-  const [draft, setDraft] = useDraft('new')
+  const [draft, setDraft] = useDraft("new")
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
-  const vault = remote?.split('/')[1] ?? 'this vault'
+  const vault = useVaultName()
+  const arcadeOn = useAtomValue(gridArcadeAtom)
+  const cast = useAtomValue(arcadeCastAtom)
+  /** While someone plays, the board covers the pane and the page steps out;
+   *  Escape or Release brings it back, focus on the take-control pill. */
+  const [playing, setPlaying] = useState(false)
+  /** The pointer is over the board's free ground, not over the column. */
+  const [overBoard, setOverBoard] = useState(false)
+  const takeControlRef = useRef<HTMLButtonElement>(null)
+  const wasPlaying = useRef(false)
 
-  const send = (text = draft) => {
-    if (text.trim() === '') return
+  useEffect(() => {
+    if (wasPlaying.current && !playing) takeControlRef.current?.focus()
+    wasPlaying.current = playing
+  }, [playing])
+
+  /** Free ground: the scroller itself, the column's spacers, or the pill's
+   *  own row; anything else is the page. */
+  function trackBoard(event: React.PointerEvent<HTMLDivElement>) {
+    const target = event.target as Element
+    const free =
+      target === event.currentTarget ||
+      target.closest("[data-arcade-free]") !== null
+    if (free !== overBoard) setOverBoard(free)
+  }
+
+  const send = () => {
+    const text = draft
+    if (text.trim() === "") return
     setBusy(true)
     setError(null)
-    void start({ text }).then((res) => {
+    void start({
+      text,
+      model: prefs.model,
+      effort: prefs.effort ?? null,
+      mode: prefs.mode,
+    }).then((res) => {
       setBusy(false)
-      if (res.ok) setDraft('')
+      if (res.ok) setDraft("")
       else setError(res.message)
     })
   }
+  const choice: ComposerChoice = {
+    model: prefs.model,
+    effort: prefs.effort ?? null,
+    mode: prefs.mode,
+  }
 
   return (
-    <>
-      <Bar>
-        <Icon icon={MessageSquarePlus} size="sm" className="text-muted-foreground" />
-        <span className="font-medium">New chat</span>
-      </Bar>
-      <div className="grid min-h-0 flex-1 place-items-center overflow-y-auto p-8">
-        <div className="flex w-full max-w-2xl flex-col gap-4">
-          <h2 className="text-lg font-medium tracking-tight">What should we work on in {vault}?</h2>
-          <Composer
-            value={draft}
-            onChange={setDraft}
-            onSend={() => send()}
-            busy={busy}
-            placeholder="Ask, plan, / for skills, @ for notes…"
-            choice={prefs}
-            onChoice={setPrefs}
-            autoFocus
-            error={error}
+    <div
+      data-slot="new-session"
+      className="@container relative isolate flex min-h-0 flex-1 flex-col"
+    >
+      {/* The Holis' arcade, as on the New tab: under everything and melting
+          into the pane, taking no pointer until someone takes control. The
+          first of the fun to go as the pane narrows; machine-local, on by
+          default (`gridArcade`). */}
+      {arcadeOn ? (
+        <HoliArcade
+          cast={cast}
+          playing={playing}
+          onRelease={() => setPlaying(false)}
+          className="hidden @3xl:block"
+        />
+      ) : null}
+      <div
+        inert={playing}
+        aria-hidden={playing || undefined}
+        onPointerMove={arcadeOn ? trackBoard : undefined}
+        onPointerLeave={() => setOverBoard(false)}
+        className={cn(
+          "relative z-10 flex min-h-0 flex-1 flex-col overflow-y-auto transition-opacity duration-200 ease-[cubic-bezier(0.22,1,0.36,1)]",
+          playing && "opacity-0"
+        )}
+      >
+        {/* MonoCode's column: spacers centre it when there is room, and the
+            lower one gives way first, so on a short pane the composer sits
+            where it will dock. */}
+        <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col px-6 pt-6 pb-6">
+          <div
+            aria-hidden="true"
+            data-arcade-free=""
+            className="flex-[1_1_0px]"
           />
-          <div className="flex flex-wrap gap-1.5">
-            {SUGGESTIONS.map((s) => (
-              <Button key={s.text} size="xs" variant="secondary" onClick={() => send(s.text)}>
-                <Icon icon={s.icon} size="sm" />
-                {s.text}
-              </Button>
-            ))}
+          <div data-arcade-keepout="" className="flex flex-col gap-4">
+            <h1 className="truncate px-1 text-lg font-medium tracking-tight">
+              What should we work on in {vault}?
+            </h1>
+            <Composer
+              value={draft}
+              onChange={setDraft}
+              onSend={send}
+              busy={busy}
+              choice={choice}
+              onChoice={(next) =>
+                setPrefs({
+                  model: next.model,
+                  effort: next.effort,
+                  mode: next.mode,
+                })
+              }
+              autoFocus
+              large
+              error={error}
+            />
           </div>
+          {/* MonoCode's take-control pill, under the column: shown while the
+              pointer is on the board's free ground, or on keyboard focus. */}
+          {arcadeOn ? (
+            <div
+              data-arcade-free=""
+              className="hidden justify-center pt-4 @3xl:flex"
+            >
+              <ArcadeTakeControl
+                ref={takeControlRef}
+                show={overBoard}
+                onClick={() => setPlaying(true)}
+              />
+            </div>
+          ) : null}
+          <div
+            aria-hidden="true"
+            data-arcade-free=""
+            className="flex-[1_1_1.125rem]"
+          />
         </div>
       </div>
-    </>
+    </div>
   )
 }
 
@@ -124,19 +202,41 @@ function useChatTranscript(id: string) {
   useEffect(() => {
     setError(null)
     void load(id).catch((err: unknown) =>
-      setError(err instanceof Error ? err.message : String(err)),
+      setError(err instanceof Error ? err.message : String(err))
     )
   }, [id, load, attempt])
   return { items, error, retry: () => setAttempt((n) => n + 1) }
 }
 
-function ChatView({ chat }: { chat: ChatSummary }): React.JSX.Element {
-  const remote = useAtomValue(activeRemoteAtom)
+/** The model the chat's last finished turn ran on. */
+function lastModel(
+  items: readonly TranscriptItem[] | undefined
+): string | undefined {
+  if (items === undefined) return undefined
+  for (let i = items.length - 1; i >= 0; i--) {
+    const item = items[i]!
+    if (item.kind === "turn" && item.model !== undefined) return item.model
+  }
+  return undefined
+}
+
+/** Where the chat stands, in words, as a light badge. */
+function StateBadge({
+  state,
+}: {
+  state: "needs-you" | "working" | "done" | "idle"
+}) {
+  if (state === "needs-you")
+    return <Badge variant="warning-light">Needs you</Badge>
+  if (state === "working") return <Badge variant="info-light">Working…</Badge>
+  if (state === "done") return <Badge variant="success-light">Done</Badge>
+  return null
+}
+
+function ChatView({ chat }: { chat: ChatSummary }) {
   const send = useSetAtom(sendChatAtom)
   const interrupt = useSetAtom(interruptChatAtom)
   const update = useSetAtom(updateChatAtom)
-  const openSurface = useSetAtom(openSurfaceAtom)
-  const setMode = useSetAtom(appModeAtom)
   const refreshChurn = useSetAtom(refreshChurnAtom)
   const churn = useAtomValue(churnAtom)[chat.id]
   const { items, error: loadError, retry } = useChatTranscript(chat.id)
@@ -144,11 +244,16 @@ function ChatView({ chat }: { chat: ChatSummary }): React.JSX.Element {
   const [error, setError] = useState<string | null>(null)
   const [choice, setChoice] = useState<ComposerChoice>({
     model: chat.model ?? null,
+    effort: chat.effort ?? null,
     mode: chat.mode,
   })
   useEffect(() => {
-    setChoice({ model: chat.model ?? null, mode: chat.mode })
-  }, [chat.id, chat.model, chat.mode])
+    setChoice({
+      model: chat.model ?? null,
+      effort: chat.effort ?? null,
+      mode: chat.mode,
+    })
+  }, [chat.id, chat.model, chat.effort, chat.mode])
   useEffect(() => {
     // The turn's record is written once sync resumes after it: read it a
     // moment after the end, and again in case the settle commit was slow.
@@ -163,17 +268,23 @@ function ChatView({ chat }: { chat: ChatSummary }): React.JSX.Element {
   }, [chat.endedAt, refreshChurn])
 
   const state =
-    chat.state === 'idle'
+    chat.state === "idle"
       ? chat.endedAt !== undefined && !chat.reviewed
-        ? 'done'
-        : 'idle'
+        ? "done"
+        : "idle"
       : chat.state
 
   const reply = () => {
     const text = draft
     setError(null)
-    setDraft('')
-    void send({ id: chat.id, text, model: choice.model, mode: choice.mode }).then((res) => {
+    setDraft("")
+    void send({
+      id: chat.id,
+      text,
+      model: choice.model,
+      effort: choice.effort,
+      mode: choice.mode,
+    }).then((res) => {
       if (!res.ok) {
         setError(res.message)
         setDraft(text)
@@ -181,55 +292,43 @@ function ChatView({ chat }: { chat: ChatSummary }): React.JSX.Element {
     })
   }
 
-  const openTerminal = () => {
-    if (remote === null) return
-    void chatCap.terminal(remote, { id: chat.id }).then((res) => {
-      if (!res.ok) setError(res.message)
-      else {
-        setMode('documents')
-        openSurface(AGENT_SURFACE, res.terminalId)
-      }
-    })
-  }
-
   return (
     <>
-      <Bar
-        end={
-          <>
-            <IconButton
-              icon={SquareTerminal}
-              label="Open a copy in a terminal"
-              size="sm"
-              onClick={openTerminal}
-            />
-            {chat.state === 'working' && (
-              <IconButton
-                icon={Square}
-                label="Stop this turn"
-                size="sm"
-                onClick={() => void interrupt(chat.id)}
-              />
-            )}
-            <IconButton
-              icon={Archive}
-              label="Archive"
-              size="sm"
-              onClick={() => void update({ id: chat.id, archived: !chat.archived })}
-            />
-          </>
-        }
-      >
-        <span className="truncate font-medium">{chat.title}</span>
-        <span className="flex shrink-0 items-center gap-2 text-xs">
-          <StateLabel state={state} />
-        </span>
-      </Bar>
+      <header className="flex h-12 shrink-0 items-center gap-2 border-b ps-6 pe-3">
+        <h1 className="min-w-0 truncate text-sm font-medium">{chat.title}</h1>
+        <StateBadge state={state} />
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              className="ms-auto"
+              aria-label={chat.archived ? "Unarchive" : "Archive"}
+              onClick={() =>
+                void update({ id: chat.id, archived: !chat.archived })
+              }
+            >
+              {chat.archived ? (
+                <ArchiveRestoreIcon aria-hidden="true" />
+              ) : (
+                <ArchiveIcon aria-hidden="true" />
+              )}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>
+            {chat.archived ? "Unarchive" : "Archive"}
+          </TooltipContent>
+        </Tooltip>
+      </header>
       <div className="flex min-h-0 flex-1 flex-col">
         {loadError !== null ? (
-          <div className="flex flex-1 flex-col items-center justify-center gap-2 text-sm text-muted-foreground">
-            Could not read this conversation: {loadError}
-            <Button size="xs" variant="secondary" onClick={retry}>
+          <div
+            role="alert"
+            className="text-muted-foreground flex flex-1 flex-col items-center justify-center gap-3 text-sm"
+          >
+            Couldn’t read this conversation: {loadError}
+            <Button type="button" size="sm" variant="outline" onClick={retry}>
               Retry
             </Button>
           </div>
@@ -240,23 +339,28 @@ function ChatView({ chat }: { chat: ChatSummary }): React.JSX.Element {
         ) : (
           <Transcript
             chatId={chat.id}
+            title={chat.title}
             items={items}
             footer={
-              state === 'done' && churn !== undefined ? <ReviewCard chatId={chat.id} /> : undefined
+              state === "done" && churn !== undefined ? (
+                <ReviewCard chatId={chat.id} />
+              ) : undefined
             }
           />
         )}
-        <div className="px-8 pb-5">
-          <div className="mx-auto max-w-3xl">
+        {/* The composer, pinned under the conversation. */}
+        <div className="px-6 pb-5">
+          <div className="mx-auto w-full max-w-3xl">
             <Composer
               value={draft}
               onChange={setDraft}
               onSend={reply}
               onStop={() => void interrupt(chat.id)}
-              busy={chat.state !== 'idle'}
-              placeholder="Reply…"
+              busy={chat.state !== "idle"}
               choice={choice}
               onChoice={setChoice}
+              ranModel={lastModel(items)}
+              autoFocus
               error={error}
             />
           </div>
@@ -267,14 +371,17 @@ function ChatView({ chat }: { chat: ChatSummary }): React.JSX.Element {
 }
 
 /** The slot's main view: `id` is `new` or a chat's id. */
-export function ChatMain({ id }: { id: string }): React.JSX.Element {
+export function ChatMain({ id }: { id: string }) {
   const chats = useAtomValue(chatsAtom)
   const loaded = useAtomValue(chatsLoadedAtom)
   const chat = chats.find((c) => c.id === id)
   return (
-    <div className="flex min-h-0 flex-1 flex-col bg-background" data-chat-main={id}>
-      {id === 'new' ? (
-        <NewChat />
+    <div
+      className="bg-background flex min-h-0 flex-1 flex-col"
+      data-chat-main={id}
+    >
+      {id === "new" ? (
+        <NewSession />
       ) : chat !== undefined ? (
         <ChatView key={chat.id} chat={chat} />
       ) : !loaded ? (
@@ -282,8 +389,13 @@ export function ChatMain({ id }: { id: string }): React.JSX.Element {
           <TranscriptSkeleton />
         </div>
       ) : (
-        <NewChat />
+        <NewSession />
       )}
     </div>
   )
+}
+
+/** The Agents mode's home: the new-session page. */
+export function ChatHome() {
+  return <ChatMain id="new" />
 }

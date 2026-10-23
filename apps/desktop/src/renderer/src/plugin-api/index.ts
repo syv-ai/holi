@@ -43,7 +43,17 @@ export { useHasCapability } from '@/state/capabilities'
 export { cn } from '@/lib/cn'
 export { useAck } from '@/lib/use-ack'
 export { DRAWER_WIDTH } from '@/lib/drawer'
-export { activeRemoteAtom, historyEpochsAtom, snapshotAtom, syncStateAtom } from '@/state/vaults'
+export {
+  activeRemoteAtom,
+  historyEpochsAtom,
+  snapshotAtom,
+  snapshotLoadedAtom,
+  syncStateAtom,
+  vaultsAtom,
+} from '@/state/vaults'
+export { openDocumentAtom } from '@/state/open-document'
+export { arcadeCastAtom, gridArcadeAtom } from '@/state/grid-arcade'
+export { ArcadeTakeControl, HoliArcade } from '@/components/monocode/arcade/HoliArcade'
 export { sessionAtom } from '@/state/session'
 export { usePluginSetting } from '@/state/settings'
 export { activeModeAtom } from '@/state/color-scheme'

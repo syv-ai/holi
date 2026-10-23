@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react"
-import { useAtomValue } from "jotai"
+import { useAtom, useAtomValue } from "jotai"
 import { cn } from "@/lib/cn"
 import { type PanelImperativeHandle } from "react-resizable-panels"
 
@@ -23,6 +23,9 @@ import { SettingsNav } from "@/components/blocks/profile-9/components/settings-n
 import { SettingsView } from "@/components/blocks/profile-9/components/settings-view"
 import { useSettingsHotkey } from "@/components/blocks/profile-9/components/use-settings-hotkey"
 import { settingsRequestAtom } from "@/state/settings-section"
+import { openDocumentRequestAtom } from "@/state/open-document"
+import { runningPluginsAtom } from "@/state/plugins"
+import { sidebarSectionAtom } from "@/state/sidebar-section"
 import { SettingsIcon } from "lucide-react"
 
 import { ChatSearchDialog } from "./chat-search-dialog"
@@ -85,6 +88,13 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
   /** The tab in front when Settings came forward, for its Back. */
   const beforeSettings = useRef<string | null>(null)
   const settingsRequest = useAtomValue(settingsRequestAtom)
+  const openRequest = useAtomValue(openDocumentRequestAtom)
+  /** The sidebar's tab: on Agents, the main area is the Agents mode's. */
+  const [section, setSection] = useAtom(sidebarSectionAtom)
+  /** The Agents mode's main view, from the plugin that provides the mode. */
+  const AgentsMain = useAtomValue(runningPluginsAtom).find(
+    (plugin) => plugin.agentsMode
+  )?.agentsMode?.main
   useSettingsHotkey()
 
   useEffect(() => {
@@ -103,6 +113,17 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
     // Only a new request opens it; the handler reads the latest state.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settingsRequest])
+
+  // A plugin asked to open a document (a chat's changed file, a saved
+  // reply): it opens as a tab, on the Documents side.
+  const seenOpen = useRef(openRequest)
+  useEffect(() => {
+    if (openRequest === seenOpen.current) return
+    seenOpen.current = openRequest
+    if (openRequest !== null) handleSelectThread(openRequest.path)
+    // Only a new request opens; the handler reads the latest state.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openRequest])
 
   /** React state catches up only after the motion has finished. */
   function settleOpen(next: boolean) {
@@ -205,6 +226,7 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
   /** +: a tab that shows the empty view until something is picked in it. */
   function openNewTab() {
     leaveApp()
+    setSection("documents")
     newTabSeq.current += 1
     const id = `${NEW_TAB_PREFIX}${newTabSeq.current}`
     setOpenTabIds((current) => [...current, id])
@@ -229,12 +251,14 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
 
   function handleSelectThread(id: string) {
     leaveApp()
+    setSection("documents")
     openTab(id)
     setMobileNavOpen(false)
   }
 
   function selectTab(id: string) {
     leaveApp()
+    setSection("documents")
     setActiveThreadId(id)
   }
 
@@ -279,6 +303,10 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
   })
   /** Settings in front: its nav takes the sidebar's place. */
   const settingsActive = app === null && activeThreadId === SETTINGS_TAB
+  /** The sidebar on Agents: the main area is the Agents mode's, whatever
+   *  tab is open behind it. */
+  const agentsActive =
+    app === null && !settingsActive && section === "agents" && !!AgentsMain
 
   /** In the sheet the header button closes it; on desktop it collapses the panel. */
   const sidebar = settingsActive ? (
@@ -316,7 +344,7 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
   const header = (
     <SiteHeader
       tabs={tabs}
-      activeTabId={app === null ? activeThreadId : null}
+      activeTabId={app === null && !agentsActive ? activeThreadId : null}
       onSelectTab={selectTab}
       onCloseTab={closeTab}
       onNewTab={openNewTab}
@@ -347,6 +375,8 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
           </div>
         ) : settingsActive ? (
           <SettingsView navHidden={isMobile || !sidebarOpen} />
+        ) : agentsActive && AgentsMain ? (
+          <AgentsMain />
         ) : activeThreadId === null || isNewTab(activeThreadId) ? (
           <EmptyView
             key={activeThreadId ?? "none"}

@@ -13,9 +13,17 @@ import {
   stringParam,
   type CapabilityContext,
 } from '../../../main/plugin-api'
-import type { ChatSummary, PermissionMode, TranscriptItem } from '../shared/chat'
+import {
+  isEffort,
+  type ChatCommand,
+  type ChatSummary,
+  type Effort,
+  type PermissionMode,
+  type TranscriptItem,
+} from '../shared/chat'
 import type { PermissionAnswer } from './claude-stream'
-import type { ChatResult, Chats, TurnOptions } from './chats'
+import type { ChatResult, Chats, CommandTarget, TurnOptions } from './chats'
+import { configDirOf, listCommands } from './commands'
 
 export const CHAT_NAMESPACES = ['chats'] as const
 
@@ -25,6 +33,8 @@ export type OpenResult = { ok: true; terminalId: string } | { ok: false; message
 export interface ChatCapabilitiesDeps {
   chats: Chats
   liveRemote(): string | null
+  /** How Claude Code runs in the open vault (`agent.target`). */
+  target(): Promise<CommandTarget | null>
   /** A terminal on a copy of a conversation: the raw view. */
   openFork(conversationId: string): Promise<OpenResult>
   /** A terminal running Claude Code's `/login` for the vault. */
@@ -52,12 +62,23 @@ function modelParam(p: Record<string, unknown>): string | null | undefined {
   return v
 }
 
+/** `effort`: absent leaves it, null clears it to Claude Code's default. */
+function effortParam(p: Record<string, unknown>): Effort | null | undefined {
+  const v = p['effort']
+  if (v === undefined) return undefined
+  if (v === null) return null
+  if (!isEffort(v)) throw new CapabilityError('BAD_REQUEST', 'unknown effort')
+  return v
+}
+
 function turnOptions(p: Record<string, unknown>): TurnOptions {
   const mode = modeParam(p)
   const model = modelParam(p)
+  const effort = effortParam(p)
   return {
     ...(mode === undefined ? {} : { mode }),
     ...(model === undefined ? {} : { model }),
+    ...(effort === undefined ? {} : { effort }),
   }
 }
 
@@ -97,6 +118,34 @@ export const chatCapabilities = (deps: ChatCapabilitiesDeps) => {
       params: (raw) => ({ id: id(raw) }),
       run: async (ctx, { id: chat }): Promise<TranscriptItem[]> =>
         live(ctx) ? deps.chats.transcript(chat) : [],
+    }),
+
+    /** What the composer's `/` menu lists: what Claude Code runs as a
+     *  command in this vault (`commands.ts`). */
+    'chats.commands': cap({
+      doors: ['ui'],
+      params: noParams,
+      run: async (ctx): Promise<ChatCommand[]> => {
+        if (!live(ctx)) return []
+        const target = await deps.target()
+        if (target === null) return []
+        return listCommands({
+          root: target.root,
+          configDir: configDirOf(target.env),
+          session: deps.chats.sessionCommands(),
+        })
+      },
+    }),
+
+    /** Where a chat works, for the composer's chips: the clone's branch. */
+    'chats.where': cap({
+      doors: ['ui'],
+      params: noParams,
+      run: async (ctx): Promise<{ branch: string | null }> => {
+        if (!live(ctx)) return { branch: null }
+        const status = await ctx.core.repo().status()
+        return { branch: status.branch === '' ? null : status.branch }
+      },
     }),
 
     /** A new chat session whose first turn is `text`. */

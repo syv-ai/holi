@@ -156,8 +156,9 @@ showing it busy, crosses it off), so a session resumed from the list is never re
   process Holi never spawned.
 - A bearer or port in a session's environment: a background session's environment is the
   supervisor's, and the supervisor outlives a Holi restart.
-- A headless chat panel in core: re-implements the TUI. Offered only as the optional chat plugin
-  ([chat](chat.md)), off by default, on Claude Code's own structured channel and prompts.
+- A headless chat panel in core: re-implements the TUI. Offered only as the chat plugin
+  ([chat](chat.md)), now the Agents mode's session UI and on by default, on Claude Code's own
+  structured channel and prompts.
 - A server-side agent: there is no server.
 - A Holi list of past sessions: the agent list is that list.
 - A gate before the agent's writes: Claude Code already asks.
