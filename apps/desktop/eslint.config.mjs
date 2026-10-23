@@ -105,6 +105,11 @@ const elementTypes = {
       from: ['plugins'],
       allow: ['primitives', 'composites', ['plugins', { plugin: '${from.plugin}' }]],
     },
+    {
+      // Workspace draws the apps plugin's page.
+      from: [['plugins', { plugin: 'workspace-ui' }]],
+      allow: ['primitives', 'composites', ['plugins', { plugin: 'apps' }]],
+    },
   ],
 }
 const external = {

@@ -47,6 +47,16 @@ export const rowFromMotion = { opacity: 0, y: 48, filter: 'blur(4px)' }
  */
 export const settle = { type: 'spring', duration: 0.4, bounce: 0.15 } as const
 
+/** An icon arriving in a dock (an opened tab): up from a little below,
+ *  small and clear, with a bounce; leaving, it shrinks back down, faster. */
+export const popFrom = { opacity: 0, scale: 0.4, y: 8 }
+export const popAt = { opacity: 1, scale: 1, y: 0 }
+export const pop = { type: 'spring', duration: 0.45, bounce: 0.35 } as const
+export const popLeave = { type: 'spring', duration: 0.2, bounce: 0 } as const
+
+/** A dock making room for an icon, or giving it back. */
+export const dockResize = { type: 'spring', duration: 0.4, bounce: 0.18 } as const
+
 /** How a count rolls to its new value. */
 export const roll = { type: 'spring', duration: 0.35, bounce: 0.18 } as const
 

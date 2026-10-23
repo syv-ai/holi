@@ -1,7 +1,13 @@
 import { fireEvent, render, screen } from '@/test/render'
 import userEvent from '@testing-library/user-event'
 import { afterEach, expect, test, vi } from 'vitest'
-import { MorphingMenu, dockCapacity, dockGrid, type MorphingMenuItem } from '../MorphingMenu'
+import {
+  MorphingMenu,
+  dockCapacity,
+  dockGrid,
+  trailingLayout,
+  type MorphingMenuItem,
+} from '../MorphingMenu'
 
 const dot = () => <svg />
 function items(onSelect = vi.fn()): MorphingMenuItem[] {
@@ -51,6 +57,52 @@ test('the dock fills the width and wraps what does not fit', () => {
   expect(dockGrid(8, 20)).toEqual({ columns: 1, rows: 8 })
   // Unmeasured reads as one row.
   expect(dockGrid(8, 0)).toEqual({ columns: 8, rows: 1 })
+})
+
+test('a second section sits beside the shortcuts, narrower when short of room, else under them', () => {
+  const section = { content: null, width: 192 }
+  // 4 shortcuts are 136px with the bar's inset; the line is 9px more.
+  expect(trailingLayout(section, 4, 0)).toMatchObject({ row: 'inline', width: 201 })
+  expect(trailingLayout(section, 4, 400)).toMatchObject({ row: 'inline', width: 201 })
+  // Short of room, it takes what is left, down to three of its icons.
+  expect(trailingLayout(section, 4, 300)).toMatchObject({ row: 'inline', width: 164 })
+  expect(trailingLayout(section, 4, 241)).toMatchObject({ row: 'inline', width: 105 })
+  // Less than that, or a wrapped dock: a row of its own, never left out.
+  expect(trailingLayout(section, 4, 200)).toMatchObject({ row: 'own', width: 128 })
+  expect(trailingLayout(section, 8, 200)).toMatchObject({ row: 'own', width: 192 })
+  expect(trailingLayout({ content: null, width: 0 }, 4, 400)).toBeNull()
+  expect(trailingLayout(undefined, 4, 400)).toBeNull()
+})
+
+test('where the dock wraps, the second section is a row of its own under the shortcuts', () => {
+  giveRoom(104)
+  render(
+    <MorphingMenu
+      items={items()}
+      label="Go to"
+      trailing={{ content: <span data-testid="tail">tabs</span>, width: 128 }}
+    />,
+  )
+  const section = screen.getByTestId('tail').closest('[data-menu-trailing]')!
+  expect(section).toHaveAttribute('data-menu-trailing', 'own')
+  expect(section.querySelector('[data-menu-trailing-line]')).toBeNull()
+  // Three columns of shortcuts in two rows, and the section's row: 3 * 32 + 8.
+  const nav = screen.getByRole('navigation', { name: 'Go to' })
+  expect(nav.style.height).toBe(`${3 * 32 + 8}px`)
+})
+
+test('beside the shortcuts, the second section follows a line', () => {
+  giveRoom(600)
+  render(
+    <MorphingMenu
+      items={items()}
+      label="Go to"
+      trailing={{ content: <span data-testid="tail">tabs</span>, width: 128 }}
+    />,
+  )
+  const section = screen.getByTestId('tail').closest('[data-menu-trailing]')!
+  expect(section).toHaveAttribute('data-menu-trailing', 'inline')
+  expect(section.firstElementChild).toHaveAttribute('data-menu-trailing-line')
 })
 
 test('every item has a shortcut in the wrapped dock, and no More', () => {

@@ -139,6 +139,15 @@ guard), from the same helper as the main window (`main/renderer-window.ts`); the
 shows and closes it (core closes any left open when the plugin stops), and talks to its page over the window's own channel (`page:event`,
 `page:message`), so the plugin's events stay the main window's. `ctx.showMainWindow` brings the main
 window forward. The agent's quick panel and its dock are two such windows.
+A plugin may also say where core's own parts of the frame sit (`layout`, a `ShellLayout`): core
+still draws them, and the first running plugin that answers a field decides it. The workspace plugin
+(`src/plugins/workspace-ui/`, off unless a vault turns it on) moves the
+[nav menu](features/nav-menu.md) to the foot of the window that way, the open tabs into it, and
+Settings and sync to the sidebar's header. Its Apps page is a surface kind of its own (`apps`), and
+its rail item stands in for the apps plugin's (`RailItem.replaces`). A surface may name other plugins
+it is about (`Surface.requires`), and the registry leaves it out while one of them is off, so with the
+apps plugin off there is no Apps page, item, Open command or Home option, and the dock stays. It is
+the one plugin that imports another's code (the apps plugin's list of apps and its glyph).
 Main tells a plugin's renderer something through events: `ctx.emit(remote, name, payload)` sends
 `{remote, name, payload}` on the plugin's one channel, `plugin:<id>`, read by one preload member,
 `window.holi.plugin.on(id, cb)`. Main sends only about a vault that runs the plugin, so the renderer

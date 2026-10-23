@@ -9,7 +9,13 @@
  * exists: jsdom computes no layout, so a rendered strip measures 0×0.
  */
 import { describe, expect, test } from 'vitest'
-import { offscreenTabs, type PillSpan } from '../src/renderer/src/lib/tab-overflow'
+import {
+  NOTHING_OFFSCREEN,
+  offscreenTabs,
+  revealScroll,
+  sameOffscreen,
+  type PillSpan,
+} from '../src/renderer/src/lib/tab-overflow'
 
 /** Five 60px pills, laid out end to end with no gap: 0, 60, 120, 180, 240. */
 const pills: PillSpan[] = Array.from({ length: 5 }, (_, i) => ({ left: i * 60, width: 60 }))
@@ -54,4 +60,34 @@ describe('offscreenTabs', () => {
   test('an empty strip has no sides', () => {
     expect(offscreenTabs([], 0, 200)).toEqual({ left: [], right: [] })
   })
+})
+
+describe('revealScroll', () => {
+  const pill = pills[3]! // 180 to 240
+
+  test('a pill already in view moves nothing', () => {
+    expect(revealScroll(pill, 100, 150)).toBe(100)
+  })
+
+  test('a pill off the left edge brings its left edge to the viewport’s', () => {
+    expect(revealScroll(pill, 200, 100)).toBe(180)
+  })
+
+  test('a pill off the right edge brings its right edge to the viewport’s', () => {
+    expect(revealScroll(pill, 0, 100)).toBe(140)
+  })
+
+  test('a pill wider than the viewport shows from its left edge', () => {
+    expect(revealScroll(pill, 0, 40)).toBe(180)
+  })
+
+  test('an unmeasured viewport moves nothing', () => {
+    expect(revealScroll(pill, 0, 0)).toBe(0)
+  })
+})
+
+test('sameOffscreen compares the tabs on each side', () => {
+  expect(sameOffscreen(NOTHING_OFFSCREEN, { left: [], right: [] })).toBe(true)
+  expect(sameOffscreen({ left: [1], right: [] }, { left: [], right: [1] })).toBe(false)
+  expect(sameOffscreen({ left: [0, 1], right: [4] }, { left: [0, 1], right: [4] })).toBe(true)
 })

@@ -9,6 +9,7 @@ import { communityMain } from './community/main'
 import { googleMain } from './google/main'
 import { pdfMain } from './pdf/main'
 import { tasksMain } from './tasks/main'
+import { workspaceMain } from './workspace-ui/main'
 
 export const MAIN_PLUGINS: readonly MainPlugin[] = [
   agentMain,
@@ -17,4 +18,5 @@ export const MAIN_PLUGINS: readonly MainPlugin[] = [
   googleMain,
   appsMain,
   communityMain,
+  workspaceMain,
 ]
