@@ -91,7 +91,7 @@ export function EmptyView({
       if (path !== null) onOpen(path)
     } catch {
       toast.error(
-        "Couldn't open today's note. Check that the vault is reachable, then try again."
+        "Couldn’t open today’s note. Check that the vault is reachable, then try again."
       )
     }
   }
@@ -108,7 +108,7 @@ export function EmptyView({
               {vaultName}
             </p>
           ) : null}
-          <h1 className="text-2xl font-semibold tracking-tight">
+          <h1 className="text-2xl leading-tight font-semibold tracking-[-0.02em]">
             {dayLabel(today)}
           </h1>
           <p className="text-muted-foreground text-sm">
@@ -148,7 +148,7 @@ export function EmptyView({
           />
           <StartRow
             icon={<CalendarDaysIcon />}
-            label="Today's note"
+            label="Today’s note"
             onClick={() => void openToday()}
           />
           <StartRow
@@ -200,9 +200,7 @@ function StartRow({
             {icon}
           </ItemMedia>
           <ItemContent className="min-w-0">
-            <ItemTitle className="block w-full truncate font-normal">
-              {label}
-            </ItemTitle>
+            <ItemTitle className="block w-full truncate">{label}</ItemTitle>
           </ItemContent>
           {count ? (
             <ItemActions className="text-muted-foreground text-xs tabular-nums">
