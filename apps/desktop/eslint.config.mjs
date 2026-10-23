@@ -221,8 +221,18 @@ const pluginImports = [
       '!@/plugin-api',
       '!@/test',
       '!@/test/*',
+      // The fresh frontend's primitives: stock shadcn and ReUI components,
+      // and nothing else under components/ (gitignore order: the folder is
+      // re-included, its other entries excluded again, then these two).
+      '!@/components',
+      '@/components/*',
+      '!@/components/ui',
+      '!@/components/ui/*',
+      '!@/components/reui',
+      '!@/components/reui/*',
     ],
-    message: 'a plugin reaches core through @/plugin-api (plus primitives and composites).',
+    message:
+      'a plugin reaches core through @/plugin-api (plus primitives, composites, and components/ui and components/reui).',
   },
   {
     // Into core's main or renderer by a relative path: from inside
@@ -398,6 +408,7 @@ export default [
       'src/renderer/src/components/Shell.tsx',
       'src/renderer/src/components/leave-confirm.tsx',
       'src/renderer/src/hooks/**/*.{ts,tsx}',
+      'src/plugins/google/renderer/mail/**/*.{ts,tsx}',
     ],
     rules: {
       'no-restricted-syntax': 'off',
