@@ -101,7 +101,6 @@ import {
   PlusIcon,
   SquareKanbanIcon,
 } from "lucide-react"
-import GradualBlur from "@/components/react-bits/GradualBlur"
 
 /** The header tab id of the task board, beside the document paths. */
 export const BOARD_TAB = "board"
@@ -777,7 +776,7 @@ export function FilesSection({
         </DropdownMenuContent>
       </DropdownMenu>
 
-      {/* The tree fades into a blur at its foot while there is more below. */}
+      {/* The rows fade out at the tree's foot (the mask below). */}
       <div className="relative flex min-h-24 flex-1 flex-col">
         <ContextMenu>
           <ContextMenuTrigger asChild>
@@ -799,9 +798,8 @@ export function FilesSection({
                 )
                 if (!row) setMenuTarget(null)
               }}
-              // Rows are gone before the blur lets go at the edge, so nothing
-              // sharp shows under its end; at the end of the list the bottom
-              // padding lifts the last row clear of the fade.
+              // Rows fade out toward the foot; at the end of the list the
+              // bottom padding lifts the last row clear of the fade.
               style={{
                 maskImage:
                   "linear-gradient(to bottom, #000 calc(100% - 3rem), transparent calc(100% - 1rem))",
@@ -906,17 +904,6 @@ export function FilesSection({
             <ContextMenuActions actions={sectionActions} />
           </ContextMenuContent>
         </ContextMenu>
-        <GradualBlur
-          position="bottom"
-          height="3rem"
-          strength={2}
-          layers={8}
-          curve="linear"
-          exponential
-          autoHide
-          zIndex={10}
-          edgeFade={0.3}
-        />
       </div>
     </SidebarGroup>
   )

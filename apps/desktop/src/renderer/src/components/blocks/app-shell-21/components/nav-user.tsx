@@ -1,8 +1,9 @@
 import type { ReactNode } from "react"
 import { useAtomValue, useSetAtom } from "jotai"
-import type { ColorScheme } from "@holi/shared"
+import type { ColorScheme, WindowGlass } from "@holi/shared"
 
 import { colorSchemeAtom, writeColorSchemeAtom } from "@/state/color-scheme"
+import { windowGlassAtom, writeWindowGlassAtom } from "@/state/window-glass"
 import { sessionAtom, signOutAtom } from "@/state/session"
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
@@ -32,6 +33,9 @@ import {
   SettingsIcon,
   KeyboardIcon,
   PaletteIcon,
+  BlendIcon,
+  SquareDashedIcon,
+  SquareIcon,
   LogOutIcon,
   MoreHorizontalIcon,
 } from "lucide-react"
@@ -82,6 +86,50 @@ function ThemeSegmentedToggle() {
   )
 }
 
+// ── Transparency Toggle ──
+
+const GLASSES: { value: WindowGlass; label: string; icon: ReactNode }[] = [
+  {
+    value: "clear",
+    label: "Clear",
+    icon: <SquareDashedIcon aria-hidden="true" />,
+  },
+  {
+    value: "frosted",
+    label: "Frosted",
+    icon: <BlendIcon aria-hidden="true" />,
+  },
+  { value: "solid", label: "Solid", icon: <SquareIcon aria-hidden="true" /> },
+]
+
+function GlassSegmentedToggle() {
+  const current = useAtomValue(windowGlassAtom)
+  const setGlass = useSetAtom(writeWindowGlassAtom)
+
+  return (
+    <ToggleGroup
+      type="single"
+      value={current}
+      onValueChange={(value) => value && void setGlass(value as WindowGlass)}
+      variant="outline"
+      spacing={0}
+      size="sm"
+      aria-label="Transparency"
+    >
+      {GLASSES.map(({ value, label, icon }) => (
+        <ToggleGroupItem key={value} value={value} aria-label={label}>
+          {icon}
+        </ToggleGroupItem>
+      ))}
+    </ToggleGroup>
+  )
+}
+
+/** The window is glass only on a Mac, so only there is there anything to set. */
+const IS_MAC =
+  typeof document !== "undefined" &&
+  document.documentElement.dataset.platform === "mac"
+
 // ── Account Menu ──
 
 function AccountMenuContent({ isMobile }: { isMobile: boolean }) {
@@ -131,6 +179,18 @@ function AccountMenuContent({ isMobile }: { isMobile: boolean }) {
             <ThemeSegmentedToggle />
           </div>
         </DropdownMenuItem>
+        {IS_MAC ? (
+          <DropdownMenuItem
+            onSelect={(event) => event.preventDefault()}
+            className="cursor-default focus:bg-transparent!"
+          >
+            <BlendIcon aria-hidden="true" />
+            Transparency
+            <div className="ml-auto">
+              <GlassSegmentedToggle />
+            </div>
+          </DropdownMenuItem>
+        ) : null}
       </DropdownMenuGroup>
 
       <DropdownMenuSeparator />
@@ -179,7 +239,7 @@ export function NavUser({ collapsed = false }: { collapsed?: boolean }) {
       <SidebarMenuItem>
         <DropdownMenu>
           <DropdownMenuTrigger
-            className="border-border bg-background hover:bg-accent h-auto rounded-lg border py-1.5 ps-1.5 pe-1.5"
+            className="border-border hover:bg-foreground/5 bg-transparent h-auto rounded-lg border py-1.5 ps-1.5 pe-1.5"
             asChild
           >
             <SidebarMenuButton aria-label="Open account menu">

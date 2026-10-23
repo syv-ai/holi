@@ -123,6 +123,12 @@ export type ColorScheme = 'dark' | 'light' | 'system'
 
 export const COLOR_SCHEMES: readonly ColorScheme[] = ['dark', 'light', 'system']
 
+/** How much of the window's glass shows through (macOS): `clear` lets most of
+ *  it through, `solid` none. Only the chrome's tint changes; nothing moves. */
+export type WindowGlass = 'clear' | 'frosted' | 'solid'
+
+export const WINDOW_GLASSES: readonly WindowGlass[] = ['clear', 'frosted', 'solid']
+
 /**
  * The font the **notes editor** sets prose in. Code, frontmatter and the
  * plain/code editor are never affected — see `notesFontTheme`.
@@ -206,6 +212,7 @@ export interface ResolvedAppSettings {
   home: string
   dailyNotes: boolean
   colorScheme: ColorScheme
+  windowGlass: WindowGlass
   editorFont: EditorFont
   /** Space on an empty line opens an ask for a new agent session. */
   spaceAsksAgent: boolean
@@ -374,6 +381,7 @@ export type VaultSettingKey =
   | 'home'
   | 'hooks'
   | 'colorScheme'
+  | 'windowGlass'
   | 'editorFont'
   | 'spaceAsksAgent'
   | 'maxCommittedFileBytes'
@@ -601,6 +609,26 @@ export const VAULT_SETTINGS: readonly VaultSetting[] = [
     // must not flip your app to light mode.
     target: 'local',
     askedAtBirth: true,
+    whereToChange: LOCAL_FILE_HINT,
+    section: 'appearance',
+  },
+  {
+    key: 'windowGlass',
+    label: 'Transparency',
+    explanation: 'How much of the desktop shows through the window, on a Mac.',
+    type: {
+      kind: 'enum',
+      options: [
+        { value: 'clear', label: 'Clear' },
+        { value: 'frosted', label: 'Frosted' },
+        { value: 'solid', label: 'Solid' },
+      ],
+    },
+    default: 'clear' as WindowGlass,
+    // Machine-local, like Appearance: how see-through your window is is
+    // nobody else's business.
+    target: 'local',
+    askedAtBirth: false,
     whereToChange: LOCAL_FILE_HINT,
     section: 'appearance',
   },

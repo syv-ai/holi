@@ -1,4 +1,5 @@
 import { useAtomValue, useSetAtom } from 'jotai'
+import { useWindowGlass } from '@/state/window-glass'
 import { useEffect, useState } from 'react'
 import { OnboardingRitual } from '@/features/onboarding/OnboardingRitual'
 import { SignIn } from './features/auth/SignIn'
@@ -19,6 +20,7 @@ export function App() {
   // Stamped from the root, not from Shell: the sign-in screen and the ritual are
   // outside Shell and should still follow the OS rather than being stuck dark.
   useColorScheme()
+  useWindowGlass()
   useEditorFont()
 
   useEffect(() => {

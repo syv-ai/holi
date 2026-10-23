@@ -156,16 +156,34 @@
 }
 
 /* ── Glass (macOS) ────────────────────────────────────────────────────────
- * After MonoCode: the window is the system's blur of the desktop (`vibrancy`,
- * `main/index.ts`), the page's root is clear, and the sidebar lays its own
- * colour over the blur at 85%, so the desk shows through faintly. The view
- * keeps its solid background. */
-[data-platform='mac'] :is(html, body, #root) {
+ * The window is the system's glass (liquid glass on macOS 26, vibrancy
+ * before: `main/liquid-glass.ts`), so nothing between it and the page may
+ * paint a ground: not the root, and not shadcn's sidebar wrapper, whose
+ * `bg-background` otherwise hides the glass entirely. The chrome (sidebar and
+ * title band) and the view then lay their own colour over it, as much as the
+ * vault's Transparency asks (`state/window-glass.ts`, `data-glass`). */
+[data-platform='mac'] :is(html, body, #root),
+[data-platform='mac'] [data-slot='sidebar-wrapper'] {
   background: transparent;
+}
+[data-platform='mac'] {
+  --glass-chrome: 25%;
+  --glass-view: 0%;
+}
+[data-platform='mac'][data-glass='frosted'] {
+  --glass-chrome: 70%;
+  --glass-view: 80%;
+}
+[data-platform='mac'][data-glass='solid'] {
+  --glass-chrome: 100%;
+  --glass-view: 100%;
 }
 [data-platform='mac'] [data-slot='sidebar'],
 [data-platform='mac'] [data-slot='app-chrome'] {
-  background: color-mix(in oklab, var(--sidebar) 85%, transparent);
+  background: color-mix(in oklab, var(--sidebar) var(--glass-chrome), transparent);
+}
+[data-platform='mac'] main {
+  background: color-mix(in oklab, var(--background) var(--glass-view), transparent);
 }
 
 /* ── Window ───────────────────────────────────────────────────────────────

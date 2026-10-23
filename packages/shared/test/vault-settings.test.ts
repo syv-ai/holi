@@ -276,7 +276,7 @@ describe('VAULT_SETTING_DESCRIPTORS', () => {
     // A teammate's committed choice flipping your app to light mode, or taking
     // your Space key, is exactly the failure the `.local` layer exists to prevent.
     const local = VAULT_SETTING_DESCRIPTORS.filter((d) => d.target === 'local').map((d) => d.key)
-    expect(local).toEqual(['colorScheme', 'spaceAsksAgent'])
+    expect(local).toEqual(['colorScheme', 'windowGlass', 'spaceAsksAgent'])
   })
 
   it('names no key twice', () => {
