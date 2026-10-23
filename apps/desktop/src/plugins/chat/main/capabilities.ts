@@ -193,7 +193,7 @@ export const chatCapabilities = (deps: ChatCapabilitiesDeps) => {
         live(ctx) ? deps.chats.interrupt(chat) : notOpen,
     }),
 
-    /** Archive, mark reviewed, rename, or change how the next turn runs. */
+    /** Archive, pin, mark reviewed, rename, or change how the next turn runs. */
     'chats.update': cap({
       doors: ['ui'],
       params: (raw) => {
@@ -202,17 +202,28 @@ export const chatCapabilities = (deps: ChatCapabilitiesDeps) => {
         const flag = (key: string): boolean | undefined =>
           typeof p[key] === 'boolean' ? (p[key] as boolean) : undefined
         const archived = flag('archived')
+        const pinned = flag('pinned')
         const reviewed = flag('reviewed')
         return {
           id: stringParam(p, 'id'),
           ...turnOptions(p),
           ...(title === undefined ? {} : { title }),
           ...(archived === undefined ? {} : { archived }),
+          ...(pinned === undefined ? {} : { pinned }),
           ...(reviewed === undefined ? {} : { reviewed }),
         }
       },
       run: async (ctx, { id: chat, ...change }): Promise<ChatResult> =>
         live(ctx) ? deps.chats.update(chat, change) : notOpen,
+    }),
+
+    /** Forget a chat on this machine: Holi's record and transcript of it.
+     *  Claude Code's own transcript stays where Claude Code keeps it. */
+    'chats.delete': cap({
+      doors: ['ui'],
+      params: (raw) => ({ id: id(raw) }),
+      run: async (ctx, { id: chat }): Promise<ChatResult> =>
+        live(ctx) ? deps.chats.remove(chat) : notOpen,
     }),
 
     /** Claude Code's own sign-in, in a terminal: each vault's config

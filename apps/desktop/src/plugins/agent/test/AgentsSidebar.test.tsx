@@ -28,9 +28,21 @@ vi.mock('@/state/agents-slots', async (orig) => {
     set(real.agentsSelectionAtom, { owner: 'chat', id: 'new' }),
   )
   const archive = atom(null, () => {})
+  // What the menus asked the chat slot to do, in order.
+  const calls = atom<string[]>([])
+  const rename = atom(null, (_get, set, key: string, title: string) =>
+    set(calls, (c) => [...c, `rename ${key} ${title}`]),
+  )
+  const pin = atom(null, (_get, set, key: string, pinned: boolean) =>
+    set(calls, (c) => [...c, `pin ${key} ${pinned}`]),
+  )
+  const remove = atom(null, async (_get, set, key: string) => {
+    set(calls, (c) => [...c, `delete ${key}`])
+    return { ok: true }
+  })
   return {
     ...real,
-    __test: { chatItems, chatStatus, reloads },
+    __test: { chatItems, chatStatus, reloads, calls },
     agentsSlotsAtom: atom(() => [
       {
         plugin: 'automations',
@@ -47,7 +59,16 @@ vi.mock('@/state/agents-slots', async (orig) => {
       {
         plugin: 'chat',
         status: atom({ needsYou: 0, working: 1 }),
-        sessions: { items: chatItems, status: chatStatus, reload, create, archive },
+        sessions: {
+          items: chatItems,
+          status: chatStatus,
+          reload,
+          create,
+          archive,
+          rename,
+          pin,
+          remove,
+        },
       },
     ]),
   }
@@ -62,6 +83,7 @@ const fixtures = (
       chatItems: PrimitiveAtom<AgentsSessionItem[]>
       chatStatus: PrimitiveAtom<'loading' | 'ready' | 'error'>
       reloads: PrimitiveAtom<number>
+      calls: PrimitiveAtom<string[]>
     }
   }
 ).__test
@@ -217,4 +239,101 @@ test('an error offers Retry, which asks the slots again', async () => {
   expect(screen.getByRole('alert').textContent).toMatch(/Could not load/)
   await userEvent.click(screen.getByRole('button', { name: 'Retry' }))
   expect(store.get(fixtures.reloads)).toBe(1)
+})
+
+/** Open a card's ⋯ menu and list what it offers. */
+async function menuOf(title: RegExp): Promise<string[]> {
+  const card = screen.getByRole('button', { name: title })
+  const row = card.closest('[data-session-row]') as HTMLElement
+  await userEvent.click(within(row).getByRole('button', { name: /^More actions for/ }))
+  const menu = await screen.findByRole('menu')
+  return within(menu)
+    .getAllByRole('menuitem')
+    .map((i) => i.textContent ?? '')
+}
+
+test("a chat's menu offers what its owner backs, and a live run its own verbs", async () => {
+  const store = setup({
+    chats: [chat('c2', { title: 'Weekly review', sessionId: 'conv-2', updatedAt: NOW - 30_000 })],
+  })
+  store.set(fixtures.calls, [])
+  expect(await menuOf(/^Weekly review/)).toEqual([
+    'Pin to top',
+    'Rename',
+    'Mark as unread',
+    'Copy session ID',
+    'Archive',
+    'Delete…',
+  ])
+  await userEvent.keyboard('{Escape}')
+  expect(await menuOf(/^Notes pass/)).toEqual([
+    'Mark as unread',
+    'Copy session ID',
+    'Restart',
+    'Duplicate',
+    'Stop session',
+  ])
+})
+
+test('Pin to top asks the owner, and a pinned row sits in Pinned above the days', async () => {
+  const store = setup({
+    chats: [
+      chat('c1', { title: 'Weekly review' }),
+      chat('c2', { title: 'Plan the week', pinned: true, updatedAt: NOW - 3 * 86_400_000 }),
+    ],
+  })
+  store.set(fixtures.calls, [])
+  const groups = within(screen.getByRole('region', { name: 'Sessions' }))
+    .getAllByRole('group')
+    .map((g) => g.getAttribute('aria-label'))
+  expect(groups).toEqual(['Needs you', 'Pinned', 'Today'])
+  await menuOf(/^Weekly review/)
+  await userEvent.click(screen.getByRole('menuitem', { name: 'Pin to top' }))
+  expect(store.get(fixtures.calls)).toEqual(['pin chat:c1 true'])
+})
+
+test('Rename opens a field in the row: Enter saves, Escape cancels', async () => {
+  const store = setup({ sessions: false, chats: [chat('c1', { title: 'Weekly review' })] })
+  store.set(fixtures.calls, [])
+  await menuOf(/^Weekly review/)
+  await userEvent.click(screen.getByRole('menuitem', { name: 'Rename' }))
+  const field = await screen.findByRole('textbox', { name: 'Rename Weekly review' })
+  await userEvent.clear(field)
+  await userEvent.type(field, 'Review the week{Enter}')
+  expect(store.get(fixtures.calls)).toEqual(['rename chat:c1 Review the week'])
+  expect(screen.queryByRole('textbox', { name: /^Rename/ })).toBeNull()
+
+  cards()[0]!.focus()
+  await userEvent.keyboard('{F2}')
+  const again = await screen.findByRole('textbox', { name: 'Rename Weekly review' })
+  await userEvent.type(again, 'x{Escape}')
+  expect(store.get(fixtures.calls)).toEqual(['rename chat:c1 Review the week'])
+})
+
+test('Delete asks first, naming the session and what stays', async () => {
+  const store = setup({
+    sessions: false,
+    chats: [chat('c1', { title: 'Greeting only, no task yet' })],
+  })
+  store.set(fixtures.calls, [])
+  await menuOf(/^Greeting only/)
+  await userEvent.click(screen.getByRole('menuitem', { name: 'Delete…' }))
+  const dialog = await screen.findByRole('alertdialog')
+  expect(within(dialog).getByText('Delete “Greeting only, no task yet”?')).toBeTruthy()
+  expect(dialog.textContent).toMatch(/Claude Code’s own transcript stays/)
+  expect(store.get(fixtures.calls)).toEqual([])
+  await userEvent.click(within(dialog).getByRole('button', { name: 'Delete' }))
+  expect(store.get(fixtures.calls)).toEqual(['delete chat:c1'])
+  expect(screen.queryByRole('alertdialog')).toBeNull()
+})
+
+test('Mark as unread makes a read row done until it is opened, and back', async () => {
+  const store = setup({ sessions: false, chats: [chat('c1', { title: 'Weekly review' })] })
+  await menuOf(/^Weekly review/)
+  await userEvent.click(screen.getByRole('menuitem', { name: 'Mark as unread' }))
+  expect(cards()[0]!.getAttribute('aria-label')).toBe('Weekly review, done, not opened yet')
+  expect(await menuOf(/^Weekly review/)).toContain('Mark as read')
+  await userEvent.click(screen.getByRole('menuitem', { name: 'Mark as read' }))
+  expect(cards()[0]!.getAttribute('aria-label')).toBe('Weekly review')
+  expect(store.get(sessionsSeenAtom).unread).toEqual({})
 })

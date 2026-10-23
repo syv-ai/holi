@@ -216,6 +216,11 @@ export interface ChatSummary {
   endedAt?: number
   /** Out of the sidebar, still on disk. */
   archived: boolean
+  /** Kept above the day groups in the session list. */
+  pinned: boolean
+  /** Claude Code's own conversation id (what `--resume` takes), once the
+   *  first turn has started one. */
+  conversationId?: string
   /** The person has kept or reverted what the last turn changed. */
   reviewed: boolean
   /** Its process is running now. */

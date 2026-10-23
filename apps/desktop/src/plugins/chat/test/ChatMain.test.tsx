@@ -254,6 +254,7 @@ test("a turn says who worked and for how long, then what to do with it", async (
         updatedAt: 1,
         endedAt: 7_000,
         archived: false,
+        pinned: false,
         reviewed: true,
         alive: false,
       },

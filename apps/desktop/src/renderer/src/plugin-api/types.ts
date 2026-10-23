@@ -361,6 +361,11 @@ export interface AgentsSessionItem {
   endedAt?: number
   /** Out of the list unless the filter asks for archived ones. */
   archived?: boolean
+  /** Kept in a Pinned group above the day groups. */
+  pinned?: boolean
+  /** Claude Code's id for it, for Copy session ID: a conversation's id (what
+   *  `--resume` takes). A run's job id stands in when it has none. */
+  sessionId?: string
   /** Where it ran, after the vault: the document a Holi was sent. */
   location?: string
   /** Who started it, when it was not the person: a Holi (by its persona) or
@@ -382,6 +387,13 @@ export interface AgentsSessionsSource {
   /** Archive a row of its own, or bring one back, by its `key`. Rows
    *  without it offer no Archive. */
   archive?: WritableAtom<null, [key: string, archived: boolean], unknown>
+  /** Retitle a row of its own. Rows without it offer no Rename. */
+  rename?: WritableAtom<null, [key: string, title: string], unknown>
+  /** Pin a row of its own above the day groups, or unpin it. */
+  pin?: WritableAtom<null, [key: string, pinned: boolean], unknown>
+  /** Delete a row of its own, after the list has asked. Rows without it
+   *  offer no Delete. */
+  remove?: WritableAtom<null, [key: string], unknown>
 }
 
 /**

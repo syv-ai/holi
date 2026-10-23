@@ -60,13 +60,16 @@ so it is never in the clone.
 
 **In the Agents mode** chat fills the slot the agent's view offers
 ([sidebar](sidebar.md)): its chats as rows of the sidebar's one session list (the slot's
-`sessions`, [agent-sessions](agent-sessions.md): working, needs you, done until opened, and
-Archive), its main view (one conversation) and the mode's **home** (`AgentsSlot.home`), the
+`sessions`, [agent-sessions](agent-sessions.md): working, needs you, done until opened, and its
+menu's Pin, Rename, Archive and Delete), its main view (one conversation) and the mode's **home** (`AgentsSlot.home`), the
 new-session page the mode opens on and the list's **+** (its `create`) goes to. Selecting a chat sets `agentsSelectionAtom` to `{owner: 'chat', id}` (`new` for the
 page); nothing selected is the home. What its chats wait on is added to the count on the mode
 toggle. **Sign in** runs Claude Code's `/login` for the vault (`agent.open` with `login`), since a
 chat has no TUI to type it in. Quitting while a chat works or waits on the person asks first (the
-plugin's own quit guard). The capability that opens a copy of a conversation in a terminal
+plugin's own quit guard). Rename and Pin are Holi's title and pin in the index (`chats.update`). **Delete** (`chats.delete`)
+stops the chat's process and forgets it on this machine, its index entry and Holi's transcript;
+Claude Code's own transcript, under the vault's config directory, is Claude Code's and stays, so
+the conversation can still be resumed from a terminal by its id. The capability that opens a copy of a conversation in a terminal
 (`chats.terminal`) stays, but nothing in the mode offers it while no terminal is drawn there.
 
 **The new-session page** is MonoCode's: "What should we work on in <vault>?" over a large composer,

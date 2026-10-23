@@ -142,6 +142,8 @@ export function chatItem(c: ChatSummary): AgentsSessionItem {
     state: c.state,
     updatedAt: c.updatedAt,
     archived: c.archived,
+    ...(c.pinned ? { pinned: true } : {}),
+    ...(c.conversationId === undefined ? {} : { sessionId: c.conversationId }),
     ...(c.model === undefined ? {} : { model: c.model }),
     ...(c.waitingFor === undefined ? {} : { waitingFor: c.waitingFor }),
     ...(c.endedAt === undefined ? {} : { endedAt: c.endedAt }),
@@ -167,12 +169,49 @@ export const reloadChatsAtom = atom(null, async (get, set) => {
   }
 })
 
+/** A chat's id from its row key, or null for another owner's row. */
+const chatIdOf = (key: string): string | null => {
+  const prefix = `${CHAT_OWNER}:`
+  return key.startsWith(prefix) ? key.slice(prefix.length) : null
+}
+
 /** Archive a chat by its row key, or bring it back. */
 export const archiveChatRowAtom = atom(null, (_get, set, key: string, archived: boolean) => {
-  const prefix = `${CHAT_OWNER}:`
-  if (!key.startsWith(prefix)) return
-  return set(updateChatAtom, { id: key.slice(prefix.length), archived })
+  const id = chatIdOf(key)
+  if (id === null) return
+  return set(updateChatAtom, { id, archived })
 })
+
+/** Retitle a chat by its row key: Holi's title for it, kept in the index. */
+export const renameChatRowAtom = atom(null, (_get, set, key: string, title: string) => {
+  const id = chatIdOf(key)
+  if (id === null || title.trim() === '') return
+  return set(updateChatAtom, { id, title: title.trim() })
+})
+
+/** Pin a chat above the day groups, or unpin it. */
+export const pinChatRowAtom = atom(null, (_get, set, key: string, pinned: boolean) => {
+  const id = chatIdOf(key)
+  if (id === null) return
+  return set(updateChatAtom, { id, pinned })
+})
+
+/** Delete a chat on this machine (`chats.delete`): Holi's record and
+ *  transcript. The view it was shown in goes back to the composer. */
+export const deleteChatRowAtom = atom(
+  null,
+  async (get, set, key: string): Promise<ChatActionResult | undefined> => {
+    const id = chatIdOf(key)
+    const remote = get(activeRemoteAtom)
+    if (id === null) return undefined
+    if (remote === null) return NO_VAULT
+    const res = await chatCap.delete(remote, { id })
+    const view = get(chatViewAtom)
+    if (res.ok && view.kind === 'chat' && view.id === id) set(chatViewAtom, { kind: 'new' })
+    if (res.ok) set(chatsAtom, (list) => list.filter((c) => c.id !== id))
+    return res
+  },
+)
 
 /** What the chats add to the mode toggle's report. */
 export const chatStatusAtom = atom((get): AgentsStatus => {
@@ -363,6 +402,7 @@ export const updateChatAtom = atom(
     args: {
       id: string
       archived?: boolean
+      pinned?: boolean
       reviewed?: boolean
       title?: string
       model?: string | null

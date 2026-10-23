@@ -18,6 +18,7 @@ import {
   appModeAtom,
   agentsSlotsAtom,
   type AgentsSessionItem,
+  type AgentsSessionsSource,
   type PluginStore,
 } from '@/plugin-api'
 import { agentsViewAtom } from './agents-view'
@@ -110,6 +111,8 @@ export function mergeSessionItems(
 export interface SeenRecord {
   since: number
   seen: Record<string, number>
+  /** Rows the person marked unread: done until opened, whenever they ended. */
+  unread?: Record<string, true>
 }
 
 /**
@@ -125,7 +128,9 @@ export function rowState(
 ): SessionRowState {
   if (item.state === 'needs-you') return 'needs-you'
   if (item.state === 'working') return 'working'
-  if (current || endedAt === undefined) return 'idle'
+  if (current) return 'idle'
+  if (seen.unread?.[item.key] === true) return 'done'
+  if (endedAt === undefined) return 'idle'
   return endedAt > Math.max(seen.seen[item.key] ?? 0, seen.since) ? 'done' : 'idle'
 }
 
@@ -185,7 +190,7 @@ export function rowMatches(row: SessionRow, query: string, filter: SessionFilter
   )
 }
 
-export type SessionGroupId = 'needs-you' | 'today' | 'yesterday' | 'earlier'
+export type SessionGroupId = 'needs-you' | 'pinned' | 'today' | 'yesterday' | 'earlier'
 
 export interface SessionGroup {
   id: SessionGroupId
@@ -195,14 +200,16 @@ export interface SessionGroup {
 
 const GROUP_LABEL: Record<SessionGroupId, string> = {
   'needs-you': 'Needs you',
+  pinned: 'Pinned',
   today: 'Today',
   yesterday: 'Yesterday',
   earlier: 'Earlier',
 }
 
 /**
- * The rows as the list groups them: what needs you pinned first, then by the
- * day of their last activity, newest first in each. Empty groups are left out.
+ * The rows as the list groups them: what needs you first, then what the person
+ * pinned, then by the day of their last activity, newest first in each. Empty
+ * groups are left out.
  */
 export function groupRows(rows: readonly SessionRow[], now: number): SessionGroup[] {
   const midnight = new Date(now)
@@ -212,6 +219,7 @@ export function groupRows(rows: readonly SessionRow[], now: number): SessionGrou
   yesterday.setDate(yesterday.getDate() - 1)
   const buckets: Record<SessionGroupId, SessionRow[]> = {
     'needs-you': [],
+    pinned: [],
     today: [],
     yesterday: [],
     earlier: [],
@@ -222,11 +230,13 @@ export function groupRows(rows: readonly SessionRow[], now: number): SessionGrou
     const id: SessionGroupId =
       row.state === 'needs-you'
         ? 'needs-you'
-        : at >= today
-          ? 'today'
-          : at >= yesterday.getTime()
-            ? 'yesterday'
-            : 'earlier'
+        : row.item.pinned === true
+          ? 'pinned'
+          : at >= today
+            ? 'today'
+            : at >= yesterday.getTime()
+              ? 'yesterday'
+              : 'earlier'
     buckets[id].push(row)
   }
   return (Object.keys(buckets) as SessionGroupId[])
@@ -329,9 +339,18 @@ export const sessionRowsAtom = atom((get): SessionRow[] => {
   })
 })
 
-/** Mark a row read: opening it, or its turn ending while it is open. */
+/** Mark a row read: opening it, its turn ending while it is open, or the
+ *  menu's Mark as read. */
 export const markSessionSeenAtom = atom(null, (_get, set, key: string) =>
-  set(sessionsSeenAtom, (r) => ({ ...r, seen: { ...r.seen, [key]: Date.now() } })),
+  set(sessionsSeenAtom, (r) => {
+    const { [key]: _was, ...unread } = r.unread ?? {}
+    return { ...r, seen: { ...r.seen, [key]: Date.now() }, unread }
+  }),
+)
+
+/** The menu's Mark as unread: the row shows done until it is opened. */
+export const markSessionUnreadAtom = atom(null, (_get, set, key: string) =>
+  set(sessionsSeenAtom, (r) => ({ ...r, unread: { ...r.unread, [key]: true } })),
 )
 
 /**
@@ -404,15 +423,55 @@ export const newSessionAtom = atom(null, async (get, set) => {
   await set(newViewSessionAtom)
 })
 
-/** Whether a row's owner can archive it (its slot's `archive`). */
-export const archivableOwnersAtom = atom(
-  (get) =>
-    new Set(
-      get(agentsSlotsAtom)
-        .filter((s) => s.sessions?.archive !== undefined)
-        .map((s) => s.plugin),
+/** What each owner lets its rows' menu do, by plugin id: only what its slot
+ *  backs. */
+export interface RowAbilities {
+  archive: boolean
+  rename: boolean
+  pin: boolean
+  remove: boolean
+}
+
+export const rowAbilitiesAtom = atom(
+  (get): ReadonlyMap<string, RowAbilities> =>
+    new Map(
+      get(agentsSlotsAtom).map((s) => [
+        s.plugin,
+        {
+          archive: s.sessions?.archive !== undefined,
+          rename: s.sessions?.rename !== undefined,
+          pin: s.sessions?.pin !== undefined,
+          remove: s.sessions?.remove !== undefined,
+        },
+      ]),
     ),
 )
+
+/** The slot that owns a row, by its key. */
+const ownerSessions = (
+  slots: readonly { plugin: string; sessions?: AgentsSessionsSource }[],
+  key: string,
+): AgentsSessionsSource | undefined => slots.find((s) => s.plugin === keyOwner(key))?.sessions
+
+/** Retitle a row through the slot that owns it. */
+export const renameSessionRowAtom = atom(null, (get, set, args: { key: string; title: string }) => {
+  const rename = ownerSessions(get(agentsSlotsAtom), args.key)?.rename
+  if (rename !== undefined && args.title.trim() !== '') {
+    return set(rename, args.key, args.title.trim())
+  }
+})
+
+/** Pin a row above the day groups, or unpin it, through its owner. */
+export const pinSessionRowAtom = atom(null, (get, set, args: { key: string; pinned: boolean }) => {
+  const pin = ownerSessions(get(agentsSlotsAtom), args.key)?.pin
+  if (pin !== undefined) return set(pin, args.key, args.pinned)
+})
+
+/** Delete a row through its owner, once the person has confirmed. */
+export const deleteSessionRowAtom = atom(null, (get, set, key: string) => {
+  const remove = ownerSessions(get(agentsSlotsAtom), key)?.remove
+  if (remove !== undefined) return set(remove, key)
+})
 
 /** The plugin a row key belongs to: the part before its first `:`. */
 export const keyOwner = (key: string): string => key.slice(0, key.indexOf(':'))

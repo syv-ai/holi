@@ -172,3 +172,25 @@ test('ages as MonoCode puts them', () => {
   expect(age(now - 3 * 86_400_000, now)).toBe('3d')
   expect(age(new Date(2026, 9, 7).getTime(), now)).toMatch(/7/)
 })
+
+test('a pinned row sits in Pinned, under what needs you and above the days', () => {
+  const now = new Date(2026, 9, 23, 15, 0).getTime()
+  const rows = [
+    row({ key: 't', updatedAt: now - 60_000 }),
+    row({ key: 'p', updatedAt: 1, pinned: true }),
+    row({ key: 'ask', updatedAt: 1, pinned: true }, 'needs-you'),
+  ]
+  expect(groupRows(rows, now).map((g) => [g.label, g.rows.map((r) => r.item.key)])).toEqual([
+    ['Needs you', ['ask']],
+    ['Pinned', ['p']],
+    ['Today', ['t']],
+  ])
+})
+
+test('a row marked unread is done until it is opened, whenever it ended', () => {
+  const unread = { since: 900, seen: { 'chat:1': 950 }, unread: { 'chat:1': true as const } }
+  expect(rowState(item(), unread, false)).toBe('done')
+  expect(rowState(item({ endedAt: 100 }), unread, false)).toBe('done')
+  expect(rowState(item(), unread, true)).toBe('idle')
+  expect(rowState(item({ state: 'working' }), unread, false)).toBe('working')
+})

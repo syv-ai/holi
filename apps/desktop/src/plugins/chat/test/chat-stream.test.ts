@@ -1,6 +1,6 @@
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { EventEmitter } from 'node:events'
-import { mkdtemp } from 'node:fs/promises'
+import { access, mkdtemp, readdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PassThrough } from 'node:stream'
@@ -13,6 +13,7 @@ import {
   type JsonRecord,
 } from '../main/claude-stream'
 import { createChats } from '../main/chats'
+import { chatCapabilities } from '../main/capabilities'
 import { applyChatEvent, transcriptNow, type ChatEvent, type TranscriptItem } from '../shared/chat'
 
 const ROOT = '/v'
@@ -283,6 +284,84 @@ describe('chat sessions', () => {
       ok: false,
       message: expect.stringContaining('Claude Code is not installed'),
     })
+  })
+})
+
+describe("a chat's menu", () => {
+  const exists = (path: string) =>
+    access(path).then(
+      () => true,
+      () => false,
+    )
+
+  it('renames and pins a chat, and remembers both after a restart', async () => {
+    const userData = await mkdtemp(join(tmpdir(), 'holi-chats-'))
+    const make = () =>
+      createChats({
+        userData,
+        emit: () => {},
+        target: async () => ({ root: ROOT, env: {}, claude: '/bin/claude' }),
+        turn: () => {},
+        gone: () => {},
+        spawnProcess: () => fakeProcess().child as unknown as ChildProcessWithoutNullStreams,
+      })
+    const chats = make()
+    await chats.attach('o/r')
+    await chats.start({ text: 'Greeting only, no task yet', id: 'c1' })
+    expect(chats.list()[0]).toMatchObject({ pinned: false })
+    await chats.update('c1', { title: '  Plan the week  ', pinned: true })
+    expect(chats.list()[0]).toMatchObject({ title: 'Plan the week', pinned: true })
+    await chats.leave()
+
+    const again = make()
+    await again.attach('o/r')
+    expect(again.list()[0]).toMatchObject({ title: 'Plan the week', pinned: true })
+    await again.update('c1', { pinned: false })
+    expect(again.list()[0]).toMatchObject({ pinned: false })
+    await again.leave()
+  })
+
+  it("deletes Holi's record and transcript, and its process with them", async () => {
+    const userData = await mkdtemp(join(tmpdir(), 'holi-chats-'))
+    const proc = fakeProcess()
+    const gone: string[] = []
+    const chats = createChats({
+      userData,
+      emit: () => {},
+      target: async () => ({ root: ROOT, env: {}, claude: '/bin/claude' }),
+      turn: () => {},
+      gone: (id) => gone.push(id),
+      spawnProcess: () => proc.child as unknown as ChildProcessWithoutNullStreams,
+    })
+    await chats.attach('o/r')
+    await chats.start({ text: 'go', id: 'c1' })
+    proc.print({ type: 'system', subtype: 'init', session_id: 'conv-1', cwd: ROOT })
+    await tick()
+    expect(chats.list()[0]).toMatchObject({ conversationId: 'conv-1' })
+    await chats.leave()
+    await chats.attach('o/r')
+    const transcript = join(userData, 'agent-chats')
+    const [dir] = await readdir(transcript)
+    const file = join(transcript, dir!, 'c1.json')
+    expect(await exists(file)).toBe(true)
+
+    // A capability call, as the session list's Delete makes it.
+    const caps = chatCapabilities({
+      chats,
+      liveRemote: () => 'o/r',
+      target: async () => null,
+      openFork: async () => ({ ok: false, message: '' }),
+      openLogin: async () => ({ ok: false, message: '' }),
+    })
+    const ctx = { remote: 'o/r' } as Parameters<(typeof caps)['chats.delete']['run']>[0]
+    expect(await caps['chats.delete'].run(ctx, caps['chats.delete'].params({ id: 'c1' }))).toEqual({
+      ok: true,
+      id: 'c1',
+    })
+    expect(chats.list()).toEqual([])
+    expect(await exists(file)).toBe(false)
+    expect(await chats.remove('c1')).toMatchObject({ ok: false })
+    await chats.leave()
   })
 })
 

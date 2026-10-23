@@ -28,7 +28,7 @@
  */
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { jsonFileStore, type JsonFileStore } from '../../../main/plugin-api'
 import {
@@ -92,6 +92,8 @@ export interface ChatRecord {
   updatedAt: number
   endedAt?: number
   archived: boolean
+  /** Kept above the day groups; absent is not. */
+  pinned?: boolean
   reviewed: boolean
   /** Claude Code's own conversation id, which `--resume` takes. */
   conversationId?: string
@@ -198,6 +200,7 @@ export interface Chats {
     id: string,
     change: {
       archived?: boolean
+      pinned?: boolean
       reviewed?: boolean
       title?: string
       model?: string | null
@@ -205,6 +208,12 @@ export interface Chats {
       mode?: PermissionMode
     },
   ): Promise<ChatResult>
+  /**
+   * Forget a chat on this machine: stop its process, drop it from the index
+   * and delete Holi's transcript of it. Claude Code's own transcript, under
+   * the vault's config directory, is Claude Code's and stays.
+   */
+  remove(id: string): Promise<ChatResult>
   /** The `/` commands the vault's last session reported, if one has run. */
   sessionCommands(): SessionCommands | null
   /** The conversation id Claude Code keeps, for "open in a terminal". */
@@ -263,6 +272,8 @@ export function createChats(deps: ChatsDeps): Chats {
       updatedAt: r.updatedAt,
       ...(r.endedAt === undefined ? {} : { endedAt: r.endedAt }),
       archived: r.archived,
+      pinned: r.pinned === true,
+      ...(r.conversationId === undefined ? {} : { conversationId: r.conversationId }),
       reviewed: r.reviewed,
       alive: l !== undefined,
       ...(r.contextPercent === undefined ? {} : { contextPercent: r.contextPercent }),
@@ -358,6 +369,8 @@ export function createChats(deps: ChatsDeps): Chats {
   }
 
   function apply(id: string, event: ChatEvent): void {
+    // A chat deleted while its process wound down keeps nothing it said.
+    if (record(id) === undefined) return
     const items = transcripts.get(id) ?? []
     const { items: next, changed } = applyChatEvent(items, event, root)
     transcripts.set(id, next)
@@ -644,6 +657,10 @@ export function createChats(deps: ChatsDeps): Chats {
       await saveRecord(id, (r) => {
         const next: ChatRecord = { ...r }
         if (change.archived !== undefined) next.archived = change.archived
+        if (change.pinned !== undefined) {
+          if (change.pinned) next.pinned = true
+          else delete next.pinned
+        }
         if (change.reviewed !== undefined) next.reviewed = change.reviewed
         if (change.title !== undefined && change.title.trim() !== '')
           next.title = change.title.trim()
@@ -659,6 +676,29 @@ export function createChats(deps: ChatsDeps): Chats {
         return next
       })
       if (change.archived === true) stopProcess(id)
+      pushList()
+      return { ok: true, id }
+    },
+
+    async remove(id) {
+      if (record(id) === undefined) return { ok: false, message: 'That session is gone.' }
+      // Its process may still print or exit: nothing it says lands after this.
+      const l = live.get(id)
+      if (l?.turnOpen) {
+        l.turnOpen = false
+        deps.gone(id)
+      }
+      records = records.filter((r) => r.id !== id)
+      stopProcess(id)
+      transcripts.delete(id)
+      dirty.delete(id)
+      outbox.delete(id)
+      await saveIndex()
+      if (dir !== null) {
+        await rm(join(dir, `${id}.json`), { force: true }).catch((err: unknown) =>
+          log(`delete ${id} failed: ${String(err)}`),
+        )
+      }
       pushList()
       return { ok: true, id }
     },

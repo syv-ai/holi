@@ -11,6 +11,9 @@ import { ChatHome, ChatMain } from './ChatMain'
 import {
   archiveChatRowAtom,
   chatEvents,
+  deleteChatRowAtom,
+  pinChatRowAtom,
+  renameChatRowAtom,
   chatSessionItemsAtom,
   chatSessionsStatusAtom,
   chatStatusAtom,
@@ -30,6 +33,9 @@ export const chatRenderer: RendererPlugin = {
       // Chat is the session UI: the list's + opens its composer.
       create: newChatViewAtom,
       archive: archiveChatRowAtom,
+      rename: renameChatRowAtom,
+      pin: pinChatRowAtom,
+      remove: deleteChatRowAtom,
     },
     main: ChatMain,
     home: ChatHome,

@@ -77,8 +77,19 @@ automation's) shows in the Agents mode as a summary, not its terminal: its name,
 start, and Stop; a run waiting on a permission prompt says so, since only its terminal answers it
 ([chat](chat.md), why no terminal is drawn). Search reads the title, who ran it, the place and the
 model; the filter keeps states, who started it (you, or Holis and automations), and archived rows
-on request (a slot that keeps an archive offers Archive on its cards). Arrow keys, Home and End
-move between cards; Enter opens one.
+on request. Arrow keys, Home and End move between cards; Enter opens one.
+
+**A card's menu**, after MonoCode's, is the same list on right-click and on the ⋯ that shows on
+hover and focus, and it offers only what something backs. The row's owner backs **Pin to top** /
+**Unpin**, **Rename** (a field in the row: Enter saves, Escape cancels, leaving it saves; F2 opens
+it too), **Archive** / **Unarchive** and **Delete…**, through its slot's `pin`, `rename`, `archive`
+and `remove`; chat backs all four ([chat](chat.md)), and a Holi's or an automation's run none, so
+its card offers none. **Mark as read** / **Mark as unread** is this machine's read state
+(`holi.agents.sessions.seen`): an unread mark is done until the row is opened. **Copy session ID**
+copies Claude Code's id for it, a conversation's (what `--resume` takes) or a run's job id. A live
+background session keeps **Restart**, **Duplicate** and **Stop session**. Delete asks first in an
+alert naming the session, and says what stays. Pinned rows sit in a **Pinned** group under Needs
+you and above the days.
 
 **Each card's state is said in words and a glyph, never colour alone**, and it takes the age's
 place as MonoCode's does:
@@ -94,7 +105,8 @@ place as MonoCode's does:
   When each row was last opened is this machine's (`holi.agents.sessions.seen`), and a turn that
   ended before it began keeping track is not news.
 
-The rest are grouped by the day of their last activity: Today, Yesterday, Earlier. The model
+The rest are grouped, after the pinned ones, by the day of their last activity: Today, Yesterday,
+Earlier. The model
 comes from the session's status line (`model.display_name`), the start time from the listing's
 `startedAt`. A session or Holi that needs you is a steady amber dot elsewhere too, never a
 breathing one, since waiting is a state and not work. A stopped session that no plugin lists is
@@ -105,8 +117,8 @@ mode.
 **Stop, restart, duplicate.** A row's **Stop** runs `claude stop <id>`. An idle session stops at
 once; one mid-turn or waiting on you asks first. Its context menu adds **Restart** (`claude
 respawn`, a fresh process for the same conversation, which re-reads settings and `AGENTS.md`) and
-**Duplicate** (a background copy of the conversation, opened in a window of its own). Rename is
-Claude Code's: `/rename`, or Ctrl+R in the list. **Start another session** on an agent tab starts
+**Duplicate** (a background copy of the conversation, opened in a window of its own). A live
+session's own name is Claude Code's: `/rename`, or Ctrl+R in the list. **Start another session** on an agent tab starts
 one with no prompt, which waits for yours.
 
 **State is read, not inferred.** Main reads `claude agents --json` for the vault's config directory
