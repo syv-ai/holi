@@ -8,6 +8,7 @@
  */
 export type {
   AgentRunFile,
+  ArcadeCastMember,
   AgentRunsSource,
   AgentService,
   AgentServiceSource,

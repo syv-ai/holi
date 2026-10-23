@@ -49,6 +49,7 @@ import {
   SettingsRow,
   type Choice,
 } from "./settings-kit"
+import { useVaultSettings } from "./use-vault-settings"
 
 // ── Appearance ──
 
@@ -88,6 +89,8 @@ export function AppearancePage() {
   const setScheme = useSetAtom(writeColorSchemeAtom)
   const glass = useAtomValue(windowGlassAtom)
   const setGlass = useSetAtom(writeWindowGlassAtom)
+  // The arcade is the open vault's machine-local file, like Space-to-ask.
+  const { resolved, write } = useVaultSettings()
 
   return (
     <SettingsCard
@@ -118,6 +121,18 @@ export function AppearancePage() {
           />
         </SettingsRow>
       ) : null}
+      <SettingsRow
+        title="Arcade on the New tab"
+        description="Your Holis play a small game behind an empty tab: they file papers in the outbox, and you can take over with the arrow keys."
+        htmlFor="settings-grid-arcade"
+      >
+        <Switch
+          id="settings-grid-arcade"
+          disabled={resolved === null}
+          checked={resolved?.gridArcade ?? true}
+          onCheckedChange={(on) => void write("gridArcade", on, "local")}
+        />
+      </SettingsRow>
     </SettingsCard>
   )
 }

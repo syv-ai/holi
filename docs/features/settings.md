@@ -15,6 +15,7 @@ A vault's settings are YAML files it carries itself, in two pairs. `.holi/settin
 | `colorScheme`                         | local     | yes            | `system`                     |
 | `editorFont`                          | committed | no             | `serif`                      |
 | `spaceAsksAgent`                      | local     | no             | `true`                       |
+| `gridArcade`                          | local     | no             | `true`                       |
 
 `home` is Home: what the nav's Home and "Go home" go to, and what the vault opens on. One string: `recents` (the vault's [library](home.md), the default; the value keeps its old name so existing settings files still read), `daily` (today's note, offered while `dailyNotes` is on), a view's name (a bare name with no slash or dot: `board`, `agenda`, `mail`, or any `homeable` surface a plugin adds), or any app or file by its vault path. The overview and a finished folder document (an app) are shown in the Home tab; anything else opens as itself. A target that is not there (a deleted file or app, `daily` with `dailyNotes` off, a view whose plugin is off or that cannot be Home) opens the Home tab saying so. The row offers, in sections, the fixed choices (Built in), the views that can be Home in this vault (Views), and the vault's shared apps under the nav menu's word for them (Apps), plus the current value when it is none of them (File), so an app named Home does not read as Home naming itself; a personal `.local.` app is not offered, since the row writes the committed file. A personal Home is `home:` in `app.local.yaml`.
 
@@ -35,7 +36,7 @@ A vault's settings are YAML files it carries itself, in two pairs. `.holi/settin
 - Data, never code: settings name which of Holi's behaviours apply and can never carry a script or a path to run.
 - The committed file is untrusted input. Every value is validated on read and on write.
 - A broken or missing settings file never stops a vault opening or a commit landing.
-- Something about you on this machine (`colorScheme`, `spaceAsksAgent`) is written local, so a teammate's choice cannot flip your app or take your Space key.
+- Something about you on this machine (`colorScheme`, `spaceAsksAgent`, `gridArcade`) is written local, so a teammate's choice cannot flip your app or take your Space key.
 - Not every setting is a birth question. A preference with a good default stays out of the ritual, and the seed never freezes an unasked value into a new vault.
 - Adding a setting is adding one entry to `VAULT_SETTINGS`.
 

@@ -310,6 +310,21 @@ export interface SidebarApp {
   visible?: Atom<boolean>
 }
 
+/**
+ * One character of the empty view's arcade (`components/monocode/arcade`):
+ * a Holi as the board draws it, by its pixel mascot and its colour. The
+ * holis plugin contributes the vault's own; with none, the board brings a
+ * default cast.
+ */
+export interface ArcadeCastMember {
+  id: string
+  name: string
+  /** One of `HOLI_MASCOTS`; an unknown one draws the ghost. */
+  mascot: string
+  /** `#rrggbb`, the figure's own paint: categorical, not a theme token. */
+  color: string
+}
+
 export interface AgentsMode {
   sidebar: ComponentType
   main: ComponentType
@@ -360,6 +375,8 @@ export interface RendererPlugin {
   agentsMode?: AgentsMode
   /** Apps it lists at the foot of the sidebar (`SidebarApp`). */
   sidebarApps?: readonly SidebarApp[]
+  /** Characters it puts on the empty view's arcade (`ArcadeCastMember`). */
+  arcadeCast?: Atom<readonly ArcadeCastMember[]>
   /** Its additions to the Agents mode another plugin provides. */
   agentsSlot?: AgentsSlot
   /**

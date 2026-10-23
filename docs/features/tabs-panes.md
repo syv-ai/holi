@@ -20,6 +20,21 @@ The workspace is one or more side-by-side panes, each with its own tab strip. Ta
 New note, Go to file (⌘P), Commands (⌘⇧P) and Go home: the one place inside the app the mark
 stands on its own (`components/EmptyPane.tsx`).
 
+**The arcade** (after MonoCode's grid arcade, MIT, see `components/monocode/arcade/LICENSE`). Behind
+the fresh shell's empty view (`empty-view.tsx`, a New tab) lies a dot grid where the vault's
+Holis play Paper run by themselves: papers (documents and tasks) land on the board, each Holi
+picks them up into a stack that trails behind it and files them in the outbox, saying so in a
+speech bubble in its own voice, and merge conflicts wander about and scatter a stack they touch.
+The cast is the vault's Holis by mascot and colour, which the holis plugin contributes through
+the `arcadeCast` plugin slot; with none (or the plugin off) a default cast plays. Content wins: the
+board takes no pointer, dims to a whisper under the logo (anything marked `data-arcade-keepout`)
+and puts nothing there, and is gone below a 48rem pane, before the logo goes. The Play button in
+the corner hands the first Holi to the arrow keys or WASD, the board covers the view (which goes
+`inert`), a bigger stack filed at once scores more (1 + 2 + … + n), and Escape, or focus leaving
+the board, gives it back. It never moves on its own under reduced motion, and its loop parks while
+the view is hidden or off screen. `gridArcade` (Settings, Appearance; machine-local, on by default)
+turns it off.
+
 **The strip and the header** (after Arc's and Cursor's tabs, Linear's page header). Tabs are
 browser tabs: cells of one width that share their dividers on the window's ground, every one with
 an icon (a note without a glyph wears a page). The active tab is the page's colour and open at the

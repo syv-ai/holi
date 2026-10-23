@@ -49,6 +49,7 @@ const settings = (colorScheme: ResolvedVaultSettings['colorScheme']): ResolvedVa
   pluginValues: {},
   dailyNotes: true,
   spaceAsksAgent: true,
+  gridArcade: true,
   colorScheme,
   windowGlass: 'clear',
   editorFont: 'mono',

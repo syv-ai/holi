@@ -18,11 +18,12 @@ import {
   appModeAtom,
   showAgentSessionAtom,
   type AgentSessionRow,
+  type ArcadeCastMember,
   type AgentsStatus,
   type PluginEventHandler,
   type PluginStore,
 } from '@/plugin-api'
-import { globToRegExp, type HoliDraft } from '@holi/shared'
+import { globToRegExp, HOLI_COLOURS, type HoliDraft } from '@holi/shared'
 import { holiCap, type HoliEdits, type HoliRun, type HoliSummary } from './holis-cap'
 
 export type { HoliRun, HoliSummary }
@@ -103,6 +104,19 @@ export const holisStatusAtom = atom((get): AgentsStatus => ({
   needsYou: get(holiAsksAtom).length,
   working: 0,
 }))
+
+/** The vault's Holis as the empty view's arcade draws them: every one that
+ *  parses, by its mascot and colour. */
+export const holisArcadeCastAtom = atom((get): readonly ArcadeCastMember[] =>
+  get(holisAtom)
+    .filter((h) => h.status !== 'invalid')
+    .map((h) => ({
+      id: h.id,
+      name: h.name,
+      mascot: h.mascot ?? 'ghost',
+      color: h.color ?? HOLI_COLOURS[0],
+    })),
+)
 
 /** The Holi a page shows, by id; the selection is core's. */
 export const selectedHoliAtom = atom((get) => {
