@@ -21,8 +21,20 @@ automatically. There is no server.
 apps/desktop/     Electron + React app: the whole product
 packages/shared/  Browser-safe domain rules: paths, task files, wiki-links,
                   dates, recurrence, themes, text merge
+skills/holi/      Installable Holi CLI skill for external agents
 docs/             Living documentation
 ```
+
+## Agent skill
+
+Install the [`holi` skill](skills/holi/SKILL.md) for external agents:
+
+```sh
+npx skills add syv-ai/holi
+```
+
+Add `-g` to install globally instead of in the current project. The skill
+explains Holi's CLI; it does not install the app. Run the CLI from an open vault.
 
 ## Dev
 

@@ -125,9 +125,35 @@ export function createCapabilityHost(deps: CapabilityHostDeps): CapabilityHost {
   }
 
   let opened = false
+  // One CLI note operation at a time per vault, through its snapshot refresh
+  // and settlement. Two agents that inspect the same revision must not both
+  // pass the check before either has written and published its change.
+  const docQueues = new Map<string, Promise<void>>()
+  const docCommands = new Set([
+    'docs.inspect',
+    'docs.create',
+    'docs.update',
+    'docs.delete',
+    'docs.settle',
+  ])
 
   return {
-    dispatch: ({ door, remote, name, params }) => run(door, remote, null, name, params),
+    dispatch: async ({ door, remote, name, params }) => {
+      if (door !== 'cli' || !docCommands.has(name)) return run(door, remote, null, name, params)
+      const previous = docQueues.get(remote) ?? Promise.resolve()
+      let release!: () => void
+      const pending = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      docQueues.set(remote, pending)
+      await previous
+      try {
+        return await run(door, remote, null, name, params)
+      } finally {
+        release()
+        if (docQueues.get(remote) === pending) docQueues.delete(remote)
+      }
+    },
 
     async names(remote, door) {
       const root = await rootOf(remote)

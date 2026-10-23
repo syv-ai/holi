@@ -638,7 +638,12 @@ async function main(): Promise<void> {
     registry: capabilities,
     rootFor,
     active: () => host.active(),
-    core: createCoreServices({ active: () => host.active(), members, reports: uiReports }),
+    core: createCoreServices({
+      active: () => host.active(),
+      members,
+      reports: uiReports,
+      claims: (root) => plugins.scanClaimsFor(root),
+    }),
     pluginEnabled: async (plugin, root) => (await plugins.enabled(root)).has(plugin),
     claims: (root) => plugins.scanClaimsFor(root),
   })
