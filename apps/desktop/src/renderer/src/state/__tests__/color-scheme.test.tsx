@@ -50,7 +50,7 @@ const settings = (colorScheme: ResolvedVaultSettings['colorScheme']): ResolvedVa
   dailyNotes: true,
   spaceAsksAgent: true,
   colorScheme,
-  windowGlass: 'clear',
+  windowGlass: 'frosted',
   editorFont: 'mono',
   hooks: VAULT_SETTING_DEFAULTS.hooks,
   maxCommittedFileBytes: 10 * 1024 * 1024,

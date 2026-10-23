@@ -166,13 +166,14 @@
 [data-platform='mac'] [data-slot='sidebar-wrapper'] {
   background: transparent;
 }
+/* Frosted, the default, until the vault's own choice is stamped. */
 [data-platform='mac'] {
-  --glass-chrome: 25%;
-  --glass-view: 0%;
-}
-[data-platform='mac'][data-glass='frosted'] {
   --glass-chrome: 70%;
   --glass-view: 80%;
+}
+[data-platform='mac'][data-glass='clear'] {
+  --glass-chrome: 25%;
+  --glass-view: 0%;
 }
 [data-platform='mac'][data-glass='solid'] {
   --glass-chrome: 100%;
