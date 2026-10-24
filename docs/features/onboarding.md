@@ -75,6 +75,13 @@ them push access to. The same ritual, minus the greeting, is how any later vault
   than over a repo someone could already have cloned.
 - The new vault is activated at the threshold, not at creation, so it opens after its settings
   are written rather than on the seeded defaults.
+- Opening the new vault also owes Claude Code its first run there (`state/claude-first-run.ts`).
+  Each vault has its own Claude Code config directory, so a background session in a new one is
+  refused as an untrusted workspace. Once the vault is open and its agent is running, the shell
+  opens a terminal on `claude /login` in it as a tab: Claude Code shows its own trust prompt, then
+  its login. Holi answers neither for the person. A colleague who cloned the vault, or anyone
+  whose run was refused, starts the same thing from Settings → General → Claude Code, "Trust and
+  sign in", or from a refused document run's "Trust in Claude Code".
 - A plugin is written to the vault only when turned away from its default, so a vault that keeps
   the default follows it.
 - Joining never asks the plugin or settings questions. An adopted vault's committed answers already speak,

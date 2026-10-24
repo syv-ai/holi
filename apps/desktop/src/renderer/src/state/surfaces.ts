@@ -6,6 +6,8 @@ import { atom, useAtomValue, useSetAtom, type Atom } from 'jotai'
 import { useEffect } from 'react'
 import { tabForPath } from '@/lib/folder-documents'
 import { openHomeAtom } from './home'
+import { openTabAtom } from './shell-tabs'
+import { tabForPath as shellTabForPath, type TabDescriptor } from './tab-descriptor'
 import {
   activeTab,
   closeSurfaceTabs,
@@ -29,9 +31,19 @@ import { snapshotAtom } from './vaults'
  * land wherever `home` says.
  */
 export const openSurfaceAtom = atom(null, (_get, set, surface: string, id?: string): void => {
-  if (surface === 'home') void set(openHomeAtom)
-  else set(workspaceAtom, (w) => openSurface(w, surface, id))
+  if (surface === 'home') return void set(openHomeAtom)
+  set(workspaceAtom, (w) => openSurface(w, surface, id))
+  // The shell's tabs are `shell-tabs.ts`'s: a vault app by its bundle, any
+  // other surface by name. Without this a plugin's open (the agent's
+  // `holi apps open`) reached only the old workspace, which nothing draws.
+  set(openTabAtom, shellSurfaceTab(surface, id))
 })
+
+/** The shell tab a surface opens as. */
+function shellSurfaceTab(surface: string, id?: string): TabDescriptor {
+  if (surface === 'app' && id !== undefined) return { kind: 'vault-app', path: id }
+  return id === undefined ? { kind: 'surface', surface } : { kind: 'surface', surface, id }
+}
 
 /** Close the active pane's tab onto `surface` with `id`, if it has one: an
  *  app's "close tab" once its bundle is gone. */
@@ -119,6 +131,8 @@ export const openPathAtom = atom(
   null,
   (get, set, path: string, how: 'preview' | 'pinned' | 'pane' = 'pinned'): void => {
     const tab = get(tabForPathAtom)(path)
+    // The shell's tabs, as for a surface; `pane` is beside the focused one.
+    set(openTabAtom, shellTabForPath(path), { beside: how === 'pane' })
     set(workspaceAtom, (w) =>
       how === 'pane'
         ? openInNewPane(w, tab)

@@ -111,7 +111,10 @@ export function SessionTerminal({
       fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, monospace',
       scrollback: 10_000,
       cursorBlink: false, // Ink owns the cursor
-      theme: { background: '#0a0a0a', foreground: '#e5e5e5' },
+      // On the pane's own surface, in its text colour, so the terminal is no
+      // black box in a light or tinted theme. Read once, when it is built.
+      allowTransparency: true,
+      theme: { background: '#00000000', foreground: getComputedStyle(mount).color },
     })
     const fit = new FitAddon()
     term.loadAddon(fit)
@@ -233,13 +236,13 @@ export function SessionTerminal({
     <div
       ref={hostRef}
       data-session-terminal={terminalId}
-      className={cn('relative min-h-0 flex-1 bg-background', !visible && 'hidden')}
+      className={cn('relative min-h-0 flex-1', !visible && 'hidden')}
     >
       {/* The gutter is the inset, not padding: xterm measures the box it is
           opened in, and an inset box measures what it is. 16px either side,
           the plugin panes' one left edge (`PaneToolbar`), 12px above and
           below. */}
-      <div ref={mountRef} className="absolute inset-x-4 inset-y-3" />
+      <div ref={mountRef} className="text-foreground absolute inset-x-4 inset-y-3" />
     </div>
   )
 }

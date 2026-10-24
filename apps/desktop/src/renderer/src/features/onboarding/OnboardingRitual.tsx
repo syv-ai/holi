@@ -5,10 +5,12 @@
  * both run the current act's primary action.
  */
 import { useEffect, useReducer, useState } from 'react'
-import { useAtomValue } from 'jotai'
+import { useAtomValue, useSetAtom } from 'jotai'
+import { claudeFirstRunAtom } from '@/state/claude-first-run'
 import { ArrowLeft, ArrowRight, X } from 'lucide-react'
 import { VAULT_SETTING_DEFAULTS, resolvePlugins, type PluginSettings } from '@holi/shared'
-import { AmbientBackdrop, AmbientGrain, BrandMark } from '@/composites'
+import { BrandMark } from '@/composites'
+import { ScreenArcade } from '@/components/monocode/arcade/screen-arcade'
 import {
   Button,
   Icon,
@@ -177,7 +179,13 @@ export function OnboardingRitual({ mode, onDismiss, dryRun = false }: Props) {
     actions.join(remote).catch(failInPlace)
   }
 
-  const open = () => void actions.open(createdRemote)
+  const requestFirstRun = useSetAtom(claudeFirstRunAtom)
+  // A new vault has never run Claude Code: the shell opens it once, so its
+  // trust prompt and login come now rather than as a refused agent later.
+  const open = () => {
+    if (createdRemote !== null) requestFirstRun(createdRemote)
+    void actions.open(createdRemote)
+  }
 
   const primary: Partial<Record<Act, Primary>> = {
     ...(naming && { naming: { label: 'Continue', run: advance, disabled: !slug } }),
@@ -235,13 +243,15 @@ export function OnboardingRitual({ mode, onDismiss, dryRun = false }: Props) {
       data-state={stateOf(act)}
       inert={stateOf(act) !== 'active'}
     >
-      <div className="obrit-act-inner">{children}</div>
+      <div className="obrit-act-inner" data-arcade-keepout="">
+        {children}
+      </div>
     </section>
   )
 
   return (
-    <div className="onboarding-ritual" role="dialog" aria-modal="true">
-      <AmbientBackdrop />
+    <div className="onboarding-ritual" role="dialog" aria-modal="true" data-glass-ground="">
+      <ScreenArcade />
       <div className="obrit-frame">
         <header className="obrit-head app-drag">
           <BrandMark />
@@ -370,7 +380,6 @@ export function OnboardingRitual({ mode, onDismiss, dryRun = false }: Props) {
           </div>
         </footer>
       </div>
-      <AmbientGrain />
     </div>
   )
 }

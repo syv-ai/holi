@@ -4,7 +4,7 @@
  *
  * The ritual paints with the app's tokens (the seed theme, or the open
  * vault's in a dry run), so the first screen looks like the app it opens
- * into, over the same ambient backdrop and grain as sign-in. `--brand` is its
+ * into, over the window's tint and the arcade, as sign-in. `--brand` is its
  * accent, as text and as glow. Type is the app's own Geist, on one scale:
  * display headings, an 18px lede, 14px controls, 12px meta, nothing smaller. */
 
@@ -12,9 +12,11 @@
   position: fixed;
   inset: 0;
   z-index: 50;
-  /* The backdrop and grain blend with this box and nothing behind it. */
   isolation: isolate;
+  /* Solid off macOS; there, the window's tint (index.css, Glass,
+     `data-glass-ground`), with the app it opens over blurred away. */
   background: var(--background);
+  backdrop-filter: blur(40px);
   color: var(--foreground);
   font-family: var(--font-sans);
   font-size: 0.875rem;

@@ -19,7 +19,8 @@ import { useSetAtom } from 'jotai'
 import { Check, Copy } from 'lucide-react'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { useEffect, useRef, useState } from 'react'
-import { AmbientBackdrop, AmbientGrain, BrandMark } from '@/composites'
+import { BrandMark } from '@/composites'
+import { ScreenArcade } from '@/components/monocode/arcade/screen-arcade'
 import {
   Button,
   Icon,
@@ -120,8 +121,13 @@ export function SignIn() {
   const focused = phase.kind === 'starting' || phase.kind === 'waiting'
 
   return (
-    <div className="relative isolate h-screen w-full overflow-hidden bg-background text-foreground">
-      <AmbientBackdrop />
+    // The window's own tint (index.css, Glass), with the arcade running
+    // under it, as on the New tab.
+    <div
+      data-glass-ground=""
+      className="relative isolate h-screen w-full overflow-hidden bg-background text-foreground"
+    >
+      <ScreenArcade />
 
       {/* Only the content scrolls: a scroller reserves its gutter inside
           itself, and the backdrop and grain must reach under it. */}
@@ -131,7 +137,10 @@ export function SignIn() {
             <BrandMark />
           </header>
 
-          <main className="mx-auto flex w-full max-w-6xl flex-1 items-center py-16 sm:py-20 lg:py-24">
+          <main
+            data-arcade-keepout=""
+            className="mx-auto flex w-full max-w-6xl flex-1 items-center py-16 sm:py-20 lg:py-24"
+          >
             <div
               className={cn(
                 'relative grid w-full grid-cols-1 items-center justify-items-center gap-14 sm:gap-16 lg:gap-24',
@@ -224,7 +233,6 @@ export function SignIn() {
           </footer>
         </div>
       </div>
-      <AmbientGrain />
     </div>
   )
 }
