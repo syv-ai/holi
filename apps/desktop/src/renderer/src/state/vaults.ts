@@ -274,6 +274,25 @@ export const abandonReconcileAtom = atom(null, async () => {
 })
 
 /**
+ * Switch the vault to a branch, or create one at HEAD (the status bar's branch
+ * picker, `docs/features/status-bar.md`).
+ *
+ * The buffers go to disk first, so the settle commit main makes before the
+ * switch carries the newest words onto the branch they were typed on. Main
+ * refuses, in words, whatever would lose work; the rejection is the caller's to
+ * show. Afterwards the snapshot is read again at once rather than waiting for
+ * the watcher, and open editors reload from the new tree as after a pull.
+ */
+export const switchBranchAtom = atom(
+  null,
+  async (_get, set, { name, create = false }: { name: string; create?: boolean }) => {
+    await flushAllBuffers()
+    await trpc.sync.switchBranch.mutate({ name, create })
+    await set(loadSnapshotAtom)
+  },
+)
+
+/**
  * Rename a note: move the file, rewrite inbound links, follow the open tab.
  *
  * The order is the correctness: flush the live buffer and commit a clean

@@ -15,7 +15,7 @@ row that crosses both. It is drawn on desktop only. Each item is a ghost button 
 tooltip, a Lucide icon at `size-3.5` and its words. Only what is true is drawn:
 
 - **Branch**: the vault's checked-out branch, with `*` while the tree has uncommitted changes.
-  Clicking it opens the Output.
+  Clicking it opens the branch picker (below); the Output has its own toggle on the right.
 - **Sync**: behind and ahead (`2↓ 0↑`) with a sync glyph that turns while pulling or reconciling
   (`animate-spin`, held still under reduced motion). Offline swaps the glyph for a cloud, and a state that
   wants you (a conflict, no access, a blocked pause) for a warning, with the state's words beside
@@ -30,6 +30,22 @@ tooltip, a Lucide icon at `size-3.5` and its words. Only what is true is drawn:
 Branch, counts and the last sync come from one query, `sync.info` (a `git status` and the vault's
 `syncInfo()`), read again when the sync state, history or the activity log moves, and every 30
 seconds. The sync state is the existing push (`vault:sync`).
+
+**The branch picker** is VS Code's, built as shadcn's combobox: a Popover holding a Command. From
+the top: a search, **Create branch…**, the local branches (most recently committed first, the
+current one checked, `not published` on one with no upstream yet), then the branches on `origin`
+that have no local branch. It reads the list at once from the clone (`sync.branches`,
+`for-each-ref`) and fetches as it opens (`sync.fetchBranches`; main skips it when it fetched in the
+last 15 seconds or a pull is already fetching), then reads again. Choosing a local branch switches
+to it; choosing a remote one makes a local branch tracking it (`switch --track`). **Create
+branch…** swaps the list for a name field, prefilled with the search, checked as you type against
+git's own rule in main (`sync.branchNameValid`, `check-ref-format --branch`, the answer equal to the
+name) and against the local names; Enter or **Create branch** makes it at HEAD (`switch -c`), with
+no upstream until its first push. Loading shows skeleton rows, a list that fails shows an inline
+error with Retry, and a switch main refuses shows its words at the top of the picker, which stays
+open. A switch writes the open buffers to disk, then `sync.switchBranch` settles the tree and
+switches (see [vaults and sync](vaults-sync.md), Branches); the snapshot is read again and the
+open editors reload from the new tree as after a pull.
 
 **The plugin slot.** `RendererPlugin.statusItems` lists `{id, side, order, Component}`; a plugin
 draws its item with `StatusBarItem` from `@/plugin-api` and renders nothing when it has nothing to
@@ -113,7 +129,8 @@ clears; Clear clears main's ring too, so a reload does not bring the lines back.
 with its short sha and message, a pull that merged, a merge conflict with its paths, a push and
 how many commits it took, a push that was refused or failed with git's own words, a reconcile and
 an abandoned merge, and each change of the sync state where it settles; plus a vault opening and
-closing. The agent: a session starting and ending, and a turn ending. Plugins: one that would not
+closing; and each branch switch and creation (`Switched to branch topic`, `Created branch
+feat/notes`), with the push naming its branch (`Pushed 1 commit to origin/feat/notes`). The agent: a session starting and ending, and a turn ending. Plugins: one that would not
 start, and whatever a plugin writes with `ctx.log`. The app: Holi starting, and an update found,
 ready or failing. Every line is scrubbed of anything shaped like a credential before it is kept.
 
@@ -159,11 +176,13 @@ keys back rather than typing them. See [keyboard shortcuts](keyboard-shortcuts.m
   `syncNow`
 - `apps/desktop/src/main/terminal/`: the PTY and the panel's shells; `shell-integration.ts` (the
   zsh and bash shims), `terminal-context.ts` (OSC 7, lsof, the git summary)
-- `apps/desktop/src/main/router.ts` (`sync.info`, `sync.now`, `activity`, `terminal`),
+- `apps/desktop/src/main/router.ts` (`sync.info`, `sync.now`, `sync.branches`,
+  `sync.fetchBranches`, `sync.branchNameValid`, `sync.switchBranch`, `activity`, `terminal`),
   `src/preload/index.ts` (`activity`, `terminal` pushes)
 - `apps/desktop/src/plugins/agent/main/host/session-log.ts`: the agent's lines
 - `apps/desktop/src/renderer/src/components/blocks/app-shell-21/components/status-bar.tsx`,
-  `bottom-panel.tsx`, `panel-terminal.tsx`, `terminal-context-chips.tsx`, `panel-output.tsx`
+  `branch-picker.tsx`, `bottom-panel.tsx`, `panel-terminal.tsx`, `terminal-context-chips.tsx`,
+  `panel-output.tsx`
 - `apps/desktop/src/renderer/src/lib/terminal-theme.ts`
 - `apps/desktop/src/renderer/src/state/activity.ts`, `bottom-panel.ts`, `panel-terminals.ts`
 - `apps/desktop/src/plugins/agent/renderer/sessions/AgentStatusItem.tsx`

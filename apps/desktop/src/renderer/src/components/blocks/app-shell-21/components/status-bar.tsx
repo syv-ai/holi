@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useState, type ReactNode } from "react"
+import {
+  useCallback,
+  useEffect,
+  useState,
+  type ComponentProps,
+  type ReactNode,
+} from "react"
 import { useAtomValue, useSetAtom } from "jotai"
 import {
   CloudOffIcon,
@@ -30,6 +36,7 @@ import {
 } from "@/state/bottom-panel"
 import { runningPluginsAtom } from "@/state/plugins"
 import { isMac } from "@/state/shortcuts"
+import { BranchPicker } from "./branch-picker"
 import {
   activeRemoteAtom,
   historyEpochsAtom,
@@ -45,16 +52,18 @@ import {
  */
 
 /** One item: a compact ghost button with its tooltip. Plugins draw theirs
- *  with it too (`@/plugin-api`). */
+ *  with it too (`@/plugin-api`). Other button props pass through, so an item
+ *  can be a popover's trigger (the branch picker). */
 export function StatusBarItem({
   tooltip,
   onClick,
   label,
   pressed,
   children,
-}: {
+  ...rest
+}: Omit<ComponentProps<typeof Button>, "onClick"> & {
   tooltip: string
-  onClick?: () => void
+  onClick?: ComponentProps<typeof Button>["onClick"]
   /** Its accessible name, when the visible text is not enough. */
   label?: string
   /** A toggle's state, for the panel's two. */
@@ -65,6 +74,7 @@ export function StatusBarItem({
     <Tooltip>
       <TooltipTrigger asChild>
         <Button
+          {...rest}
           type="button"
           variant="ghost"
           size="xs"
@@ -228,21 +238,24 @@ function SyncItems() {
 
   return (
     <>
-      <StatusBarItem
-        tooltip={
-          info.dirty
-            ? `Branch ${info.branch}, with changes not yet committed`
-            : `Branch ${info.branch}`
+      <BranchPicker
+        trigger={
+          <StatusBarItem
+            tooltip={
+              info.dirty
+                ? `Branch ${info.branch}, with changes not yet committed. Click to switch branch`
+                : `Branch ${info.branch}. Click to switch branch`
+            }
+            label={`Branch ${info.branch}${info.dirty ? ", uncommitted changes" : ""}`}
+          >
+            <GitBranchIcon aria-hidden />
+            <span className="max-w-40 truncate">
+              {info.branch}
+              {info.dirty ? "*" : ""}
+            </span>
+          </StatusBarItem>
         }
-        label={`Branch ${info.branch}${info.dirty ? ", uncommitted changes" : ""}`}
-        onClick={() => showPanel("output")}
-      >
-        <GitBranchIcon aria-hidden />
-        <span className="max-w-40 truncate">
-          {info.branch}
-          {info.dirty ? "*" : ""}
-        </span>
-      </StatusBarItem>
+      />
       <StatusBarItem
         tooltip={tooltip}
         label={`Sync: ${label.text}, ${info.behind} behind, ${info.ahead} ahead`}
