@@ -98,7 +98,7 @@ export function AppCard({
             {personal ? "Personal" : "Shared"}
           </Badge>
           <div className="flex min-w-0 items-center gap-1">
-            <FolderIcon className="shrink-0" aria-hidden="true" />
+            <FolderIcon className="size-4 shrink-0" aria-hidden="true" />
             <span className="text-secondary-foreground truncate text-xs font-medium">
               {folder ?? "Vault root"}
             </span>
