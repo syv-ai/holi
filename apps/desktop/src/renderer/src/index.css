@@ -183,7 +183,10 @@
 [data-platform='mac'] [data-slot='app-chrome'] {
   background: color-mix(in oklab, var(--sidebar) var(--glass-chrome), transparent);
 }
-[data-platform='mac'] main {
+/* A screen that is its own glass ground (sign-in, adding a vault) carries
+   the tint once; a <main> inside it must not stack a second. */
+[data-platform='mac'] main:not([data-glass-ground] *),
+[data-platform='mac'] [data-glass-ground] {
   background: color-mix(in oklab, var(--background) var(--glass-view), transparent);
 }
 /* Split view keeps this ground: its views sit edge to edge on `main`, a

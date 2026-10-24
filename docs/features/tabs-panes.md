@@ -63,12 +63,13 @@ Separate (with a split active), Reopen closed tab and Close all tabs.
 **Opening.** A view already open is selected where it is: its tab, or its split with it focused.
 Otherwise:
 
-- while a split is active it opens **in the focused member**, as a link followed in an Arc split
-  stays in that side; the view it replaces keeps a tab of its own right after the split, so
-  nothing is lost (a New tab member is simply given up);
-- from a New tab it takes that tab's place, as in a browser, and a session started from the
-  Agents home takes the home's place;
-- else it opens as a tab after the active one.
+- from a New tab it takes that tab's place, as in a browser, whether the New tab is a tab or a
+  split's focused member (so ⌘\ on a split, then a click in the sidebar, makes a third side), and
+  a session started from the Agents home takes the home's place;
+- else it opens as a tab after the active entry. A plain open never changes a split: a click in
+  the sidebar while one is up opening into it swapped out half of what you were looking at.
+  Joining a split is its own gesture: ⌥-click, Open in split view (a tab's menu, or a file
+  row's in the tree), ⌘\, or a drop on a member's edge.
 
 **Closing.** Closing the active tab hands over to the entry after it, else the one before. Closing
 a split member takes it out of the split, and a 2-split turns back into a tab of the one left.
@@ -192,12 +193,21 @@ Release ends a game, and focus goes back to the pill. It never moves on its own 
 motion, and its loop parks while the view is hidden or off screen. `gridArcade` (Settings,
 Appearance; machine-local, on by default) turns it off.
 
+**The scoreboard.** A run that ends on a new personal best at its speed is committed to
+`.holi/arcade/scores/<login>.json`, so the team plays against each other. Each player has a file of
+their own, written only by their machines, so two records set at once never conflict and never
+pause sync; an ordinary run writes nothing. A run counts at the slowest speed it was played at, so
+switching to Fast for the finish is no Fast run. While playing, the board beside the game shows the
+top five at that speed, the player's own row marked and their place under the cut, with the run in
+play ranked live. Sign-in and adding a vault run the same board as background only
+(`ScreenArcade`): no vault, no scoreboard.
+
 ## Rules
 
 - A view is open once: as a tab, or as one member of one split. Every opener selects it where it
   is; putting it into a split takes it out of where it was.
 - A split is one strip entry. Selecting any other entry shows that view alone; the split stays.
-- Opening inside an active split lands in the focused member; the view replaced keeps a tab.
+- A plain open beside an active split is a new tab after it; only a New tab member is filled.
 - Every workspace function returns the same workspace for a no-op, so a caller can tell. A drop
   target asks `dropTab` (or the strip `dropOnStrip`) whether a drop would change anything before
   it takes one.

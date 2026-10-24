@@ -5,7 +5,12 @@ import { IconStackEmpty } from "@/components/reui/icon-stack-empty"
 import { SettingsView } from "@/components/blocks/profile-9/components/settings-view"
 import { runningPluginsAtom, surfacesAtom } from "@/state/plugins"
 import { parseTabKey } from "@/state/tab-descriptor"
+import { snapshotAtom } from "@/state/vaults"
 
+import { AppsView } from "../../apps-view/apps-view"
+import { VaultAppTab } from "../../apps-view/vault-app-tab"
+import { DocumentView } from "../../document-view/document-view"
+import { FileView } from "../../file-view/file-view"
 import { PlanningView } from "../../planning/planning-view"
 import { EmptyView } from "./empty-view"
 import { useSidebarApps } from "./sidebar-apps"
@@ -19,6 +24,7 @@ export function TabView({
   tab,
   settingsNavInSidebar,
   onOpen,
+  onMoved,
   onNewDocument,
   onOpenSearch,
 }: {
@@ -28,11 +34,15 @@ export function TabView({
   settingsNavInSidebar: boolean
   /** Open a vault path or the board, the way the shell opens one. */
   onOpen: (key: string) => void
+  /** A document moved (a task given another project): its tabs follow. */
+  onMoved: (from: string, to: string) => void
   onNewDocument: () => void
   onOpenSearch: () => void
 }) {
   const running = useAtomValue(runningPluginsAtom)
   const surfaces = useAtomValue(surfacesAtom)
+  /** The vault's non-markdown files, which open in the file viewer. */
+  const vaultFiles = useAtomValue(snapshotAtom).files
   const apps = useSidebarApps()
   const AgentsMain = running.find((plugin) => plugin.agentsMode)?.agentsMode
     ?.main
@@ -51,6 +61,24 @@ export function TabView({
       )
     case "board":
       return <PlanningView onOpenTask={onOpen} />
+    case "apps":
+      return <AppsView onOpen={onOpen} />
+    case "surface": {
+      // A tab onto another registered surface: the trust terminal after
+      // onboarding, as the agent's surface on its terminal.
+      const Surface = surfaces.get(descriptor.surface)?.render
+      if (Surface !== undefined) {
+        return <Surface key={tab} id={descriptor.id ?? ""} visible />
+      }
+      return (
+        <IconStackEmpty
+          icon={AppWindowIcon}
+          title="This view is not running"
+          description="Turn its plugin on to open it here."
+          action={{ label: "Search", icon: SearchIcon, onClick: onOpenSearch }}
+        />
+      )
+    }
     case "settings":
       return <SettingsView navHidden={!settingsNavInSidebar} />
     case "app": {
@@ -106,30 +134,37 @@ export function TabView({
           }
         />
       )
-    case "vault-app": {
-      // A vault app is the `app` surface, by its bundle's path.
-      const AppSurface = surfaces.get("app")?.render
-      if (AppSurface !== undefined) {
-        return <AppSurface key={tab} id={descriptor.path} visible />
-      }
+    case "vault-app":
+      // A vault app is the `app` surface, by its bundle's path, under its
+      // header (Reload, the log, Edit source).
       return (
-        <IconStackEmpty
-          icon={AppWindowIcon}
-          title={descriptor.path}
-          description="Vault apps open here once their runner is part of this shell."
-          action={{ label: "Search", icon: SearchIcon, onClick: onOpenSearch }}
+        <VaultAppTab
+          key={tab}
+          path={descriptor.path}
+          onOpenSearch={onOpenSearch}
         />
       )
-    }
     case "doc":
-      // The document editor's slot: `DocumentView` renders `descriptor.path`
-      // here once it is part of this shell.
+      if (/\.md$/i.test(descriptor.path)) {
+        return (
+          <DocumentView
+            key={tab}
+            path={descriptor.path}
+            onOpen={onOpen}
+            onMoved={onMoved}
+          />
+        )
+      }
+      // Any other file: css, yaml, json, an image, a PDF.
+      if (vaultFiles.some((file) => file.path === descriptor.path)) {
+        return <FileView key={tab} path={descriptor.path} />
+      }
       return (
         <IconStackEmpty
           key={tab}
           icon={FileTextIcon}
           title={descriptor.path}
-          description="Documents open here once the editor is part of this shell."
+          description="This file is no longer in the vault."
           action={{ label: "Search", icon: SearchIcon, onClick: onOpenSearch }}
         />
       )

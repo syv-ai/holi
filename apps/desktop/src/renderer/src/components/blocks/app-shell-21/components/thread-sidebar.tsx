@@ -23,16 +23,18 @@ import {
 import { activeRemoteAtom } from "@/state/vaults"
 import type { Move } from "@/lib/tree-actions"
 import {
+  APPS_TAB,
   BOARD_TAB,
   DocumentsNav,
+  useAppsOn,
   FilesSection,
-  NewDocumentNav,
 } from "./documents-section"
 import { NavUser } from "./nav-user"
 import { ReuiMark } from "./reui-mark"
 import { VaultSwitcher } from "./vault-switcher"
 import { SidebarAppItem, useSidebarApps } from "./sidebar-apps"
 import {
+  AppWindowIcon,
   PanelLeftIcon,
   PlusIcon,
   SearchIcon,
@@ -71,6 +73,7 @@ export function ThreadSidebar({
   const apps = useSidebarApps()
   const [section, setSection] = useAtom(sidebarSectionAtom)
   const remote = useAtomValue(activeRemoteAtom)
+  const appsOn = useAppsOn()
   /** Off until the first switch, so the sidebar's first paint is never held
    *  back by a fade. */
   const [switched, setSwitched] = useState(false)
@@ -110,6 +113,21 @@ export function ThreadSidebar({
                 <span>Board</span>
               </SidebarMenuButton>
             </SidebarMenuItem>
+
+            {appsOn ? (
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  tooltip="Apps"
+                  isActive={activeId === APPS_TAB}
+                  onClick={() => onOpen(APPS_TAB)}
+                  aria-label="Apps"
+                  className={RAIL_BUTTON}
+                >
+                  <AppWindowIcon aria-hidden="true" />
+                  <span>Apps</span>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            ) : null}
 
             <SidebarMenuItem>
               <SidebarMenuButton
@@ -210,7 +228,6 @@ export function ThreadSidebar({
                 onOpen={onOpen}
               />
               <SidebarSeparator className="mx-0 my-3" />
-              <NewDocumentNav onNewDocument={onNewDocument} />
               <FilesSection
                 activeId={activeId}
                 onOpen={onOpen}

@@ -51,7 +51,7 @@ export function isNewTab(id: string | null): boolean {
 
 /** How many recently edited documents the view lists when it is wide; a
  *  narrow one shows the first five. */
-const RECENT_COUNT = 8
+const RECENT_COUNT = 6
 
 /** "Friday 23 October", from the clock's `YYYY-MM-DD`. */
 const DAY = new Intl.DateTimeFormat(undefined, {
@@ -161,14 +161,15 @@ export function EmptyView({
           playing && "opacity-0"
         )}
       >
-        {/* No entrance: a New tab opens many times a day, and opening a tab
-          lands at once everywhere else in Holi. */}
+        {/* Centred in the pane and sized to fit it, so it does not scroll; a
+          very short window still can. No entrance: a New tab opens many
+          times a day, and opening a tab lands at once everywhere else. */}
         {/* Sized by the pane, not the window, since the sidebar takes its share:
           one column when narrow, and from 56rem the day across the top, the
           mark beside what you would do, and what was written across the foot. */}
         <div
           ref={gridRef}
-          className="mx-auto grid w-full max-w-lg gap-10 px-6 pt-[max(3rem,12vh)] pb-16 @4xl:max-w-5xl @4xl:grid-cols-[auto_minmax(0,1fr)] @4xl:items-start @4xl:gap-x-16"
+          className="mx-auto my-auto grid w-full max-w-lg gap-8 px-6 py-8 @4xl:max-w-5xl @4xl:grid-cols-[auto_minmax(0,1fr)] @4xl:items-start @4xl:gap-x-16"
         >
           {/* The day heads the page, across both columns: where you are
             and what is open, before anything to do about it. */}
@@ -221,7 +222,7 @@ export function EmptyView({
               count stays beside it. */}
           <section
             aria-labelledby="start"
-            className="flex flex-col gap-2 @4xl:max-w-sm"
+            className="flex flex-col gap-2 @4xl:max-w-sm @4xl:self-stretch"
           >
             <h2
               id="start"
@@ -229,7 +230,9 @@ export function EmptyView({
             >
               Start
             </h2>
-            <ItemGroup className="gap-0.5 has-data-[size=xs]:gap-0.5">
+            {/* Beside the logo, the rows spread over its height, so the
+                two stand as one band. */}
+            <ItemGroup className="gap-0.5 has-data-[size=xs]:gap-0.5 @4xl:flex-1 @4xl:justify-between">
               <StartRow
                 icon={<FilePlusIcon />}
                 label="New document"

@@ -71,6 +71,7 @@ import { TabView } from "./tab-view"
 import { useTabLook } from "./tab-look"
 import { useSessionTabs } from "./use-session-tabs"
 import { useShellShortcuts } from "./use-shell-shortcuts"
+import { useClaudeFirstRun } from "./use-claude-first-run"
 import { useShortcutDispatcher } from "@/state/shortcuts"
 import { ThreadSidebar } from "./thread-sidebar"
 import { leadWidth, TitleBar } from "./title-bar"
@@ -357,6 +358,7 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
   }
 
   useShortcutDispatcher()
+  useClaudeFirstRun(handleSelectThread)
   useShellShortcuts({
     // Split tabs: the keys step over strip entries, and ⌘W closes the view
     // in front (a split's focused member).
@@ -368,6 +370,7 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
       split === null ? undefined : () => update((w) => separate(w, split.id)),
     stepMember:
       split === null ? undefined : (step) => update((w) => stepMember(w, step)),
+    app,
     apps,
     open: handleSelectThread,
     selectTab: (id) => update((w) => selectEntry(w, id)),
@@ -463,6 +466,7 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
               isFocused && settingsActive && !isMobile && sidebarOpen
             }
             onOpen={handleSelectThread}
+            onMoved={(from, to) => retargetTabs([{ from, to }])}
             onNewDocument={handleNewChat}
             onOpenSearch={() => setSearchOpen(true)}
           />

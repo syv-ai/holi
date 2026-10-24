@@ -59,6 +59,9 @@ same table, so the sheet can only show keys that work. The dialog opens from the
 - **The focused widget wins.** A key it handled (`defaultPrevented`) is not a shortcut, which is how
   the editor's ⌘B stays bold. shadcn's sidebar had its own ⌘B listener; it is removed, or the
   sidebar would toggle twice.
+- **⌘B asks before leaving an app.** With Mail or Calendar holding the window, ⌘B would take it
+  back to the files, so the first press only shows a toast saying so (bottom right, a bar running
+  down its four seconds) and a second press before it goes leaves. The band's toggle and the divider leave at once: a click is not an accident.
 - **Behind a dialog** only the dialog toggles fire (⌘K, ⌘/, `?`): ⌘N must not make a document
   behind a modal.
 - **⌘W is the menu's.** It is the File menu's accelerator (`main/menu.ts`), which fires before the

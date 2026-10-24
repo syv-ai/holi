@@ -47,9 +47,15 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { FileType, getFileType } from "@/components/reui/file-type"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Kbd, KbdGroup } from "@/components/ui/kbd"
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
 import {
   SidebarGroup,
   SidebarGroupAction,
@@ -75,10 +81,12 @@ import { planMoveInto, planRenameFolder, type Move } from "@/lib/tree-actions"
 import { basename, joinPath, parentOf } from "@/lib/tree-paths"
 import { canMoveInto } from "@/lib/tree-view"
 import { useTabDrag } from "./use-tab-drag"
-import { claimsAtom, folderClaimsAtom } from "@/state/plugins"
+import { openDialogAtom } from "@/state/dialogs"
+import { openTabAtom } from "@/state/shell-tabs"
+import { tabForPath } from "@/state/tab-descriptor"
+import { claimsAtom, folderClaimsAtom, surfacesAtom } from "@/state/plugins"
 import { createTaskAtom, openTaskCountAtom } from "@/state/tasks"
 import { setTreeOrderAtom, treeOrderAtom } from "@/state/tree-order"
-import { tabForPath } from "@/state/tab-descriptor"
 import {
   activeRemoteAtom,
   createFolderAtom,
@@ -97,8 +105,6 @@ import {
   ArrowUpIcon,
   EllipsisIcon,
   FolderInputIcon,
-  FileIcon,
-  FileTextIcon,
   FolderIcon,
   FolderOpenIcon,
   FolderPlusIcon,
@@ -107,10 +113,19 @@ import {
   PencilIcon,
   PlusIcon,
   SquareKanbanIcon,
+  SquareSplitHorizontalIcon,
 } from "lucide-react"
 
 /** The header tab id of the task board, beside the document paths. */
 export const BOARD_TAB = "holi:board"
+
+/** The header tab id of the vault's apps, beside the board. */
+export const APPS_TAB = "holi:apps"
+
+/** Whether vault apps are on: the Apps row is there only while they are. */
+export function useAppsOn(): boolean {
+  return useAtomValue(surfacesAtom).has("app")
+}
 
 const INDENT = 16
 
@@ -168,12 +183,20 @@ function useFiles() {
     ],
     [snapshot]
   )
-  const paths = showHidden
-    ? docPaths
-    : docPaths.filter((path) => !isHiddenPath(path))
-  const dirs = showHidden
-    ? snapshot.dirs
-    : snapshot.dirs.filter((dir) => !isHiddenPath(dir))
+  // Memoised: the tree rebuilds whenever these change identity, and a
+  // rebuild re-renders this component.
+  const paths = useMemo(
+    () =>
+      showHidden ? docPaths : docPaths.filter((path) => !isHiddenPath(path)),
+    [docPaths, showHidden]
+  )
+  const dirs = useMemo(
+    () =>
+      showHidden
+        ? snapshot.dirs
+        : snapshot.dirs.filter((dir) => !isHiddenPath(dir)),
+    [snapshot.dirs, showHidden]
+  )
 
   return {
     remote,
@@ -208,7 +231,7 @@ async function attempt(what: string, action: () => Promise<void>) {
 const ARRIVE =
   "animate-in fade-in-0 duration-200 ease-[cubic-bezier(0.22,1,0.36,1)]"
 
-/** Search and Board, at the top of the Documents tab. */
+/** Search, Board and Apps, at the top of the Documents tab. */
 export function DocumentsNav({
   activeId,
   onOpenSearch,
@@ -221,6 +244,7 @@ export function DocumentsNav({
   const openTasks = useAtomValue(openTaskCountAtom)
   // The Board row drags as its tab, onto the content or the strip.
   const tabDrag = useTabDrag()
+  const appsOn = useAppsOn()
 
   return (
     <SidebarMenu className="gap-0.5 px-2">
@@ -264,27 +288,19 @@ export function DocumentsNav({
           </SidebarMenuBadge>
         ) : null}
       </SidebarMenuItem>
-    </SidebarMenu>
-  )
-}
-
-/** New document, heading the files it adds to. */
-export function NewDocumentNav({
-  onNewDocument,
-}: {
-  onNewDocument: () => void
-}) {
-  return (
-    <SidebarMenu className="px-2">
-      <SidebarMenuItem>
-        <SidebarMenuButton
-          onClick={onNewDocument}
-          className="hover:bg-foreground/5 data-active:bg-foreground/10 data-active:hover:bg-foreground/12"
-        >
-          <PlusIcon aria-hidden="true" />
-          <span>New document</span>
-        </SidebarMenuButton>
-      </SidebarMenuItem>
+      {appsOn ? (
+        <SidebarMenuItem>
+          <SidebarMenuButton
+            isActive={activeId === APPS_TAB}
+            aria-current={activeId === APPS_TAB ? "page" : undefined}
+            onClick={() => onOpen(APPS_TAB)}
+            className="hover:bg-foreground/5 data-active:bg-foreground/10 data-active:hover:bg-foreground/12"
+          >
+            <AppWindowIcon aria-hidden="true" />
+            <span>Apps</span>
+          </SidebarMenuButton>
+        </SidebarMenuItem>
+      ) : null}
     </SidebarMenu>
   )
 }
@@ -429,8 +445,16 @@ export function FilesSection({
   const order = useAtomValue(treeOrderAtom)
   const setOrder = useSetAtom(setTreeOrderAtom)
   const folderClaims = useAtomValue(folderClaimsAtom)
-  const creates = useAtomValue(claimsAtom).flatMap(
-    (claim) => claim.create ?? []
+  const claims = useAtomValue(claimsAtom)
+  const snapshot = useAtomValue(snapshotAtom)
+  const openDialog = useSetAtom(openDialogAtom)
+  const openTab = useSetAtom(openTabAtom)
+  /** What plugins make from the New menu, with the folder document each
+   *  one's entry belongs to: a new app opens as the app, not its `index.html`. */
+  const creates = claims.flatMap((claim) =>
+    claim.create === undefined
+      ? []
+      : [{ ...claim.create, entry: claim.folder?.entry }]
   )
   const vaults = useAtomValue(vaultsAtom)
   const createNote = useSetAtom(createNoteAtom)
@@ -681,7 +705,21 @@ export function FilesSection({
     const destinations = ["", ...files.dirs].filter(
       (dir) => dir !== here && dir !== id && !dir.startsWith(`${id}/`)
     )
+    // A file or an app opens beside what is in front, as ⌥-click does; a
+    // folder has nothing to open.
+    const openable = !item.isFolder()
     return [
+      ...(openable
+        ? ([
+            {
+              kind: "item",
+              label: "Open in split view",
+              icon: <SquareSplitHorizontalIcon aria-hidden="true" />,
+              run: () => openTab(tabForPath(id), { beside: true }),
+            },
+            { kind: "separator" },
+          ] satisfies MenuAction[])
+        : []),
       {
         kind: "item",
         label: "Rename",
@@ -716,74 +754,122 @@ export function FilesSection({
             void attempt(`move “${basename(id)}”`, () => moveInto([id], dest)),
         })),
       },
+      ...pluginRowActions(id),
       { kind: "separator" },
     ]
   }
 
-  const sectionActions: MenuAction[] = [
-    {
-      kind: "item",
-      label: "New folder",
-      icon: <FolderPlusIcon aria-hidden="true" />,
-      run: () =>
-        void attempt("create the folder", async () => {
-          const name = freeName(files.taken, "", "New folder")
-          await createFolder(name)
-          markArrived([name])
-        }),
-    },
-    {
-      kind: "item",
-      label: "New task",
-      icon: <ListChecksIcon aria-hidden="true" />,
-      run: () =>
-        void attempt("create the task", async () => {
-          const path = await createTask({
-            title: "Untitled task",
-            status: "todo",
-            folder: "",
-          })
-          if (path) onOpen(path)
-        }),
-    },
-    ...creates.map((create): MenuAction => ({
-      kind: "item",
-      label: create.label,
-      icon: <AppWindowIcon aria-hidden="true" />,
-      disabled: files.remote === null,
-      run: () =>
-        void attempt("create the app", async () => {
-          if (files.remote === null) return
-          const path = await create.run({
-            remote: files.remote,
-            parent: "",
-            name: freeName(files.taken, "", "Untitled", ".app").replace(
-              /\.app$/,
-              ""
-            ),
-          })
-          if (path) {
-            markArrived([path])
-            onOpen(path)
-          }
-        }),
-    })),
-    { kind: "separator" },
-    {
-      kind: "check",
-      label: "Show task files",
-      checked: files.showTasks,
-      toggle: files.toggleTasks,
-    },
-    {
-      kind: "check",
-      label: "Show hidden files",
-      checked: files.showHidden,
-      toggle: files.toggleHidden,
-    },
-    { kind: "separator" },
-    { kind: "item", label: "Collapse all", run: () => tree.collapseAll() },
-  ]
+  /** What a plugin's claim adds to this row's menu (an app's "Finish this
+   *  app"), asked of each item's `when` as the menu opens. */
+  function pluginRowActions(id: string): MenuAction[] {
+    const remote = files.remote
+    if (remote === null) return []
+    const items = claims
+      .filter((claim) => claim.match(id))
+      .flatMap((claim) => claim.rowMenu ?? [])
+      .filter((item) => item.when?.(id, snapshot) ?? true)
+    if (items.length === 0) return []
+    return [
+      { kind: "separator" },
+      ...items.map((item): MenuAction => ({
+        kind: "item",
+        label: item.label,
+        run: () => item.run({ remote, path: id, openDialog }),
+      })),
+    ]
+  }
+
+  /** The folder a menu's New items make things in: the folder row it was
+   *  opened on, the folder of the file row it was opened on, or the root. */
+  function newParent(target: string | null): string {
+    if (target === null || target === ROOT_ID) return ""
+    const item = tree.getItemInstance(target)
+    return item.isFolder() ? target : parentOf(target)
+  }
+
+  /** Shows what was just made inside `parent`, which may be collapsed. */
+  function reveal(parent: string) {
+    if (parent !== "") tree.getItemInstance(parent).expand()
+  }
+
+  const newActions = (target: string | null): MenuAction[] => {
+    const parent = newParent(target)
+    return [
+      {
+        kind: "item",
+        label: "New folder",
+        icon: <FolderPlusIcon aria-hidden="true" />,
+        run: () =>
+          void attempt("create the folder", async () => {
+            const name = joinPath(
+              parent,
+              freeName(files.taken, parent, "New folder")
+            )
+            await createFolder(name)
+            reveal(parent)
+            markArrived([name])
+          }),
+      },
+      {
+        kind: "item",
+        label: "New task",
+        icon: <ListChecksIcon aria-hidden="true" />,
+        run: () =>
+          void attempt("create the task", async () => {
+            const path = await createTask({
+              title: "Untitled task",
+              status: "todo",
+              folder: parent,
+            })
+            if (path) onOpen(path)
+          }),
+      },
+      ...creates.map((create): MenuAction => ({
+        kind: "item",
+        label: create.label,
+        icon: <AppWindowIcon aria-hidden="true" />,
+        disabled: files.remote === null,
+        run: () =>
+          void attempt("create the app", async () => {
+            if (files.remote === null) return
+            const path = await create.run({
+              remote: files.remote,
+              parent,
+              name: freeName(files.taken, parent, "Untitled", ".app").replace(
+                /\.app$/,
+                ""
+              ),
+            })
+            if (path) {
+              const suffix =
+                create.entry === undefined ? null : `/${create.entry}`
+              const opened =
+                suffix !== null && path.endsWith(suffix)
+                  ? path.slice(0, -suffix.length)
+                  : path
+              reveal(parent)
+              markArrived([opened])
+              onOpen(opened)
+            }
+          }),
+      })),
+      { kind: "separator" },
+      {
+        kind: "check",
+        label: "Show task files",
+        checked: files.showTasks,
+        toggle: files.toggleTasks,
+      },
+      {
+        kind: "check",
+        label: "Show hidden files",
+        checked: files.showHidden,
+        toggle: files.toggleHidden,
+      },
+      { kind: "separator" },
+      { kind: "item", label: "Collapse all", run: () => tree.collapseAll() },
+    ]
+  }
 
   /** A menu closing on Rename opens the field instead of taking focus back. */
   function openRenameOnClose(event: Event) {
@@ -802,6 +888,16 @@ export function FilesSection({
   return (
     <SidebarGroup className="min-h-0 flex-1 px-2 pb-0">
       <SidebarGroupLabel>Files</SidebarGroupLabel>
+      {/* New document sits beside the menu, where the section's actions are. */}
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <SidebarGroupAction className="right-9" onClick={newNote}>
+            <PlusIcon aria-hidden="true" />
+            <span className="sr-only">New document</span>
+          </SidebarGroupAction>
+        </TooltipTrigger>
+        <TooltipContent side="bottom">New document</TooltipContent>
+      </Tooltip>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <SidebarGroupAction>
@@ -822,7 +918,7 @@ export function FilesSection({
               <DropdownMenuActions actions={rowActions(focused.getId())} />
             </>
           ) : null}
-          <DropdownMenuActions actions={sectionActions} />
+          <DropdownMenuActions actions={newActions(focused?.getId() ?? null)} />
         </DropdownMenuContent>
       </DropdownMenu>
 
@@ -935,7 +1031,7 @@ export function FilesSection({
                             />
                           ) : (
                             <span className="truncate">
-                              {item.getItemName()}
+                              {displayName(item)}
                             </span>
                           )}
                         </span>
@@ -955,7 +1051,7 @@ export function FilesSection({
             {menuTarget !== null ? (
               <ContextMenuActions actions={rowActions(menuTarget)} />
             ) : null}
-            <ContextMenuActions actions={sectionActions} />
+            <ContextMenuActions actions={newActions(menuTarget)} />
           </ContextMenuContent>
         </ContextMenu>
       </div>
@@ -963,17 +1059,20 @@ export function FilesSection({
   )
 }
 
+/** A row's name: the file's name without its extension, which the icon
+ *  already says. Folders keep theirs whole. */
+function displayName(item: ItemInstance<TreeItemData>): string {
+  const name = item.getItemName()
+  if (item.isFolder() && !item.getItemData()?.isDocument) return name
+  const dot = name.lastIndexOf(".")
+  return dot > 0 ? name.slice(0, dot) : name
+}
+
+/** Folders keep their folder glyph; every file, an app bundle included,
+ *  shows ReUI's file-type icon for its kind. */
 function FileGlyph({ item }: { item: ItemInstance<TreeItemData> }) {
   const data = item.getItemData()
-  if (data?.isDocument) {
-    return (
-      <AppWindowIcon
-        className="text-muted-foreground size-4"
-        aria-hidden="true"
-      />
-    )
-  }
-  if (item.isFolder()) {
+  if (item.isFolder() && !data?.isDocument) {
     return item.isExpanded() ? (
       <FolderOpenIcon
         className="text-muted-foreground size-4"
@@ -983,9 +1082,12 @@ function FileGlyph({ item }: { item: ItemInstance<TreeItemData> }) {
       <FolderIcon className="text-muted-foreground size-4" aria-hidden="true" />
     )
   }
-  return item.getId().endsWith(".md") ? (
-    <FileTextIcon className="text-muted-foreground size-4" aria-hidden="true" />
-  ) : (
-    <FileIcon className="text-muted-foreground size-4" aria-hidden="true" />
+  return (
+    <FileType
+      type={getFileType(item.getItemName())}
+      size="mini"
+      aria-hidden="true"
+      className="shrink-0"
+    />
   )
 }

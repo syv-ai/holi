@@ -1,11 +1,13 @@
 import { atom, useAtomValue, useSetAtom } from "jotai"
-import { useMemo } from "react"
+import { useEffect, useMemo, useRef } from "react"
+import { toast } from "sonner"
 
 import type { SidebarApp } from "@/plugin-api"
 import { runningPluginsAtom } from "@/state/plugins"
 import { shortcutsDialogOpenAtom, useShortcutHandlers } from "@/state/shortcuts"
 import { sidebarSectionAtom } from "@/state/sidebar-section"
 import { BOARD_TAB } from "./documents-section"
+import { LEAVE_TOAST_ID, showLeaveAppToast } from "./leave-app-toast"
 
 /** What the shell can do, for its keys (`lib/shortcuts.ts`). */
 export interface ShellActions {
@@ -26,6 +28,8 @@ export interface ShellActions {
   /** Focus the active split's member `step` places on; undefined without
    *  an active split. */
   stepMember?: (step: number) => void
+  /** The app in the focused tab (Mail, Calendar), or null for the files. */
+  app: string | null
   apps: readonly SidebarApp[]
   open: (id: string) => void
   selectTab: (id: string) => void
@@ -41,6 +45,9 @@ export interface ShellActions {
   openApp: (id: string) => void
   setSearchOpen: (update: (open: boolean) => boolean) => void
 }
+
+/** How long a first ⌘B in an app waits for the second: the toast's life. */
+const LEAVE_CONFIRM_MS = 4000
 
 /** The app shell's handlers for the shortcut table. */
 export function useShellShortcuts(shell: ShellActions): void {
@@ -61,6 +68,31 @@ export function useShellShortcuts(shell: ShellActions): void {
   const listed = useAtomValue(listedAtom)
 
   const { tabIds, activeTabId } = shell
+
+  /** Set while a first ⌘B in an app waits to be confirmed; it ends the wait
+   *  and the toast together. Switching or leaving the app forgets it. */
+  const leaveTimer = useRef<number | null>(null)
+  function disarmLeave() {
+    if (leaveTimer.current !== null) window.clearTimeout(leaveTimer.current)
+    leaveTimer.current = null
+    toast.dismiss(LEAVE_TOAST_ID)
+  }
+  useEffect(() => disarmLeave, [shell.app])
+
+  /** ⌘B in an app takes the window back to the files, so it asks first: an
+   *  accidental press would drop the person out of their mail or calendar. */
+  function toggleSidebar() {
+    if (shell.app === null) return shell.toggleFiles()
+    if (leaveTimer.current !== null) {
+      disarmLeave()
+      return shell.toggleFiles()
+    }
+    leaveTimer.current = window.setTimeout(disarmLeave, LEAVE_CONFIRM_MS)
+    const label =
+      shell.apps.find((candidate) => candidate.id === shell.app)?.label ??
+      "this app"
+    showLeaveAppToast(label, LEAVE_CONFIRM_MS)
+  }
   /** The entry `step` places from the active one, wrapping. */
   function stepTab(step: number) {
     if (tabIds.length === 0) return
@@ -90,7 +122,7 @@ export function useShellShortcuts(shell: ShellActions): void {
       setDialogOpen(false)
       shell.setSearchOpen((open) => !open)
     },
-    "sidebar.toggle": shell.toggleFiles,
+    "sidebar.toggle": toggleSidebar,
     "sidebar.documents": () => showSection("documents"),
     "sidebar.agents": hasAgents ? () => showSection("agents") : undefined,
     "board.open": () => shell.open(BOARD_TAB),

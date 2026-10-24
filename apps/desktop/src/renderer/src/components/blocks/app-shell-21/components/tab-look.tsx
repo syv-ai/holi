@@ -4,6 +4,7 @@ import { useCallback } from "react"
 import {
   AppWindowIcon,
   FileTextIcon,
+  LayoutGridIcon,
   SettingsIcon,
   SquareKanbanIcon,
   SquarePenIcon,
@@ -12,7 +13,7 @@ import {
 
 import { PixelPersona } from "@/composites"
 import type { AgentsTabLook } from "@/plugin-api"
-import { runningPluginsAtom } from "@/state/plugins"
+import { runningPluginsAtom, surfacesAtom } from "@/state/plugins"
 import { parseTabKey } from "@/state/tab-descriptor"
 
 import type { HeaderTab } from "./site-header"
@@ -25,9 +26,10 @@ type LookUp = (selection: {
 
 const NO_LOOKS = atom<LookUp>(() => () => undefined)
 
-/** A file's name as its tab says it: without its folders, `.md` or `.app`. */
+/** A file's name as its tab says it, as the files list shows it: without its
+ *  folders or its extension. */
 function fileTitle(path: string): string {
-  return path.slice(path.lastIndexOf("/") + 1).replace(/\.(md|app)$/, "")
+  return path.slice(path.lastIndexOf("/") + 1).replace(/(?<=.)\.[^./]+$/, "")
 }
 
 /** A session's mark: the Holi's face when one ran it, the automation's
@@ -65,6 +67,7 @@ function SessionMark({ look }: { look: AgentsTabLook | undefined }) {
  *  the state its dot shows. */
 export function useTabLook(): (key: string) => HeaderTab {
   const apps = useSidebarApps()
+  const surfaces = useAtomValue(surfacesAtom)
   const looksAtom =
     useAtomValue(runningPluginsAtom).find((plugin) => plugin.agentsMode)
       ?.agentsMode?.tabLook ?? NO_LOOKS
@@ -79,6 +82,19 @@ export function useTabLook(): (key: string) => HeaderTab {
           return { id: key, title: fileTitle(tab.path), icon: AppWindowIcon }
         case "board":
           return { id: key, title: "Board", icon: SquareKanbanIcon }
+        case "apps":
+          return { id: key, title: "Apps", icon: LayoutGridIcon }
+        case "surface": {
+          const label = surfaces.get(tab.surface)?.label
+          return {
+            id: key,
+            title:
+              typeof label === "function"
+                ? label(tab.id ?? "")
+                : (label ?? tab.surface),
+            icon: AppWindowIcon,
+          }
+        }
         case "new":
           return { id: key, title: "New tab" }
         case "agents-home":
@@ -104,6 +120,6 @@ export function useTabLook(): (key: string) => HeaderTab {
           return { id: key, title: key }
       }
     },
-    [apps, lookUp]
+    [apps, surfaces, lookUp]
   )
 }

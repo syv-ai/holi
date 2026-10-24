@@ -12,8 +12,9 @@
  * - a vault app is its bundle's path (`Apps/Budget.app`): the `.app` suffix
  *   says which;
  * - every other view is `holi:<kind>`, with its parts after it:
- *   `holi:board`, `holi:new:3`, `holi:agents`, `holi:settings`,
- *   `holi:app:mail`, `holi:session:<owner>:<id>` (the id may hold colons);
+ *   `holi:board`, `holi:apps`, `holi:new:3`, `holi:agents`, `holi:settings`,
+ *   `holi:app:mail`, `holi:session:<owner>:<id>` (the id may hold colons),
+ *   `holi:surface:<surface>[:<id>]`;
  * - a document whose path would read as one of those (it starts with
  *   `holi:`, or ends in `.app` without being an app) is `holi:doc:<path>`,
  *   so every descriptor survives the trip.
@@ -26,6 +27,11 @@ export type TabDescriptor =
   | { kind: "doc"; path: string }
   | { kind: "vault-app"; path: string }
   | { kind: "board" }
+  /** The vault's apps, beside the board. */
+  | { kind: "apps" }
+  /** A tab onto a registered surface (`surfacesAtom`), by its name and the
+   *  id it was opened with: the agent's terminal after onboarding. */
+  | { kind: "surface"; surface: string; id?: string }
   /** A tab showing the empty view until something is picked in it,
    *  numbered so two of them are two tabs. */
   | { kind: "new"; n: number }
@@ -64,6 +70,12 @@ export function tabKey(tab: TabDescriptor): string {
       return tab.path
     case "board":
       return view("board")
+    case "apps":
+      return view("apps")
+    case "surface":
+      return tab.id === undefined
+        ? view("surface", tab.surface)
+        : view("surface", tab.surface, tab.id)
     case "new":
       return view("new", tab.n)
     case "agents-home":
@@ -93,6 +105,16 @@ export function parseTabKey(key: string): TabDescriptor | null {
   switch (kind) {
     case "board":
       return tail === null ? { kind: "board" } : null
+    case "apps":
+      return tail === null ? { kind: "apps" } : null
+    case "surface": {
+      if (!tail) return null
+      const at = tail.indexOf(":")
+      if (at === 0) return null
+      return at === -1
+        ? { kind: "surface", surface: tail }
+        : { kind: "surface", surface: tail.slice(0, at), id: tail.slice(at + 1) }
+    }
     case "agents":
       return tail === null ? { kind: "agents-home" } : null
     case "settings":

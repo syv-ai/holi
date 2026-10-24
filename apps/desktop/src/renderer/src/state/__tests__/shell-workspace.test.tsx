@@ -295,9 +295,16 @@ describe("inside a split", () => {
     expect(strip(ws).slice(1)).toEqual([A, C])
   })
 
-  test("opening in a split lands in the focused member; the old view keeps a tab", () => {
+  test("opening while a split is up is a new tab after it; the split stays whole", () => {
     const ws = openTab(pair(), D)
-    expect(strip(ws)).toEqual([[A, D], B, C])
+    expect(strip(ws)).toEqual([[A, B], D, C])
+    expect(ws.active).toBe(D)
+    expect(focusedTab(ws)).toBe(D)
+  })
+
+  test("⌘\\ on a split adds a third side, and the next open fills it", () => {
+    const ws = openTab(splitActive(pair()), D)
+    expect(strip(ws)).toEqual([[A, B, D], C])
     expect(focusedTab(ws)).toBe(D)
   })
 

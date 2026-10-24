@@ -313,13 +313,11 @@ function isViewKey(key: string): boolean {
  * Open a view, or select it where it is (its tab, or its split with it
  * focused). Not open yet:
  *
- * - while a split is active it opens **in the focused member**, as a link
- *   followed in an Arc split stays in that side; the view it replaces keeps
- *   a tab of its own right after the split, unless `replaces` says it is a
- *   blank to give up (a New tab);
- * - else from a blank (`replaces`, a New tab by default) it takes that
- *   tab's place, as in a browser;
- * - else it is a new tab after the active one.
+ * - from a blank (`replaces`, a New tab by default) it takes that blank's
+ *   place, as in a browser, the blank a tab or a split's focused member;
+ * - else it is a new tab after the active entry. A split is never changed
+ *   by a plain open: a click in the sidebar while one is up must not swap
+ *   out half of it. Joining one is its own gesture (`openInSplit`, a drop).
  */
 export function openTab(
   ws: ShellWorkspace,
@@ -333,7 +331,7 @@ export function openTab(
       : selectEntry(ws, key)
   }
   const split = activeSplit(ws)
-  if (split !== null) {
+  if (split !== null && replaces(split.focused)) {
     return replaceIn(ws, split.id, split.focused, key, replaces)
   }
   const active = activeEntry(ws)
