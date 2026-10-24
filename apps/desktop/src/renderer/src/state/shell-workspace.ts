@@ -17,10 +17,9 @@
  */
 import { parseTabKey, tabForPath, tabKey } from "./tab-descriptor"
 
-/** Up to three views in a split: a session beside a document beside the
- *  board, and the most one horizontal group of motion-panels holds flat (a
- *  sized view each side of the one that fills). */
-export const MAX_SPLIT = 3
+/** Up to four views in a split: a session beside a document beside the
+ *  board beside an app, each still wide enough to use on a laptop. */
+export const MAX_SPLIT = 4
 
 /** A split view: one strip entry, its members side by side. */
 export interface ShellSplit {

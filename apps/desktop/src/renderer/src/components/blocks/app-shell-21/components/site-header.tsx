@@ -6,6 +6,7 @@ import {
   Columns2Icon,
   EllipsisVerticalIcon,
   FileTextIcon,
+  PanelRightCloseIcon,
   PlusIcon,
   RotateCcwIcon,
   SquareSplitHorizontalIcon,
@@ -18,6 +19,7 @@ import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
+  ContextMenuLabel,
   ContextMenuSeparator,
   ContextMenuShortcut,
   ContextMenuTrigger,
@@ -44,14 +46,17 @@ import {
   closeAllTabs,
   closeEntry,
   closeOtherTabs,
+  closeTab,
   closeTabsToRight,
   dropOnStrip,
   entryId,
   focusMember,
   isSplit,
   MAX_SPLIT,
+  moveOut,
   openInSplit,
   reopenClosed,
+  replaceWithNew,
   selectEntry,
   separate,
   splitActive,
@@ -109,6 +114,21 @@ export function SiteHeader({
   const setDrag = useSetAtom(tabDragAtom)
   /** Where a drag along the strip would land: before entry `n`. */
   const [dropAt, setDropAt] = useState<number | null>(null)
+  /** The member of a split's pill that was right-clicked, whose own
+   *  actions its menu offers: a member has no header of its own. */
+  const [menuMember, setMenuMember] = useState<string | null>(null)
+  /** A member's part of the pill drags that member alone (out to the
+   *  strip, onto another view), not the whole split. */
+  const memberDrag = (key: string) => {
+    const source = dragSource(key)
+    return {
+      ...source,
+      onDragStart: (event: DragEvent) => {
+        event.stopPropagation()
+        source.onDragStart(event)
+      },
+    }
+  }
   const act = (change: (w: ShellWorkspace) => ShellWorkspace) => setWs(change)
   const split = activeSplit(ws)
   const count = ws.entries.length
@@ -195,6 +215,13 @@ export function SiteHeader({
                         (dropAt === count && index === count - 1) || undefined
                       }
                       {...(draggable ? dragSource(id) : {})}
+                      onContextMenu={(event) =>
+                        setMenuMember(
+                          (event.target as HTMLElement)
+                            .closest<HTMLElement>("[data-member]")
+                            ?.getAttribute("data-member") ?? null
+                        )
+                      }
                       className={cn(
                         "group/tab relative flex h-full",
                         // Where a dragged entry would land: a hairline in
@@ -230,6 +257,7 @@ export function SiteHeader({
                           </>
                         ) : (
                           <SplitMembers
+                            drag={draggable ? memberDrag : undefined}
                             members={members!}
                             focused={
                               split?.id === id
@@ -256,6 +284,16 @@ export function SiteHeader({
                   </ContextMenuTrigger>
                   <EntryMenu
                     split={isSplit(entry) ? entry : null}
+                    member={
+                      isSplit(entry) &&
+                      menuMember !== null &&
+                      entry.views.includes(menuMember)
+                        ? (members!.find((m) => m.id === menuMember) ?? null)
+                        : null
+                    }
+                    onMoveOut={(key) => act((w) => moveOut(w, key))}
+                    onReplace={(key) => act((w) => replaceWithNew(w, key))}
+                    onCloseMember={(key) => act((w) => closeTab(w, key))}
                     last={index === count - 1}
                     only={count < 2}
                     onOpenInSplit={() => act((w) => openInSplit(w, id))}
@@ -338,9 +376,11 @@ export function SiteHeader({
 function SplitMembers({
   members,
   focused,
+  drag,
 }: {
   members: HeaderTab[]
   focused: string | null
+  drag?: (key: string) => object
 }) {
   return (
     <span className="flex min-w-0 flex-1 items-center gap-2">
@@ -351,6 +391,7 @@ function SplitMembers({
           ) : null}
           <span
             data-member={member.id}
+            {...(drag ? drag(member.id) : {})}
             className={cn(
               "flex min-w-0 flex-1 basis-0 items-center gap-1.5 transition-colors",
               focused !== null &&
@@ -370,6 +411,10 @@ function SplitMembers({
 /** A strip entry's right-click menu. */
 function EntryMenu({
   split,
+  member,
+  onMoveOut,
+  onReplace,
+  onCloseMember,
   last,
   only,
   onOpenInSplit,
@@ -380,6 +425,11 @@ function EntryMenu({
   onReopen,
 }: {
   split: ShellSplit | null
+  /** The right-clicked member of a split's pill, if any. */
+  member: HeaderTab | null
+  onMoveOut: (key: string) => void
+  onReplace: (key: string) => void
+  onCloseMember: (key: string) => void
   last: boolean
   only: boolean
   onOpenInSplit: () => void
@@ -391,6 +441,26 @@ function EntryMenu({
 }) {
   return (
     <ContextMenuContent className="w-56">
+      {member !== null ? (
+        <>
+          <ContextMenuLabel className="text-muted-foreground truncate text-xs font-normal">
+            {member.title}
+          </ContextMenuLabel>
+          <ContextMenuItem onSelect={() => onMoveOut(member.id)}>
+            <PanelRightCloseIcon aria-hidden="true" />
+            Move out of split
+          </ContextMenuItem>
+          <ContextMenuItem onSelect={() => onReplace(member.id)}>
+            <PlusIcon aria-hidden="true" />
+            Replace with New tab
+          </ContextMenuItem>
+          <ContextMenuItem onSelect={() => onCloseMember(member.id)}>
+            <XIcon aria-hidden="true" />
+            Close {member.title}
+          </ContextMenuItem>
+          <ContextMenuSeparator />
+        </>
+      ) : null}
       {split === null ? (
         <ContextMenuItem onSelect={onOpenInSplit}>
           <SquareSplitHorizontalIcon aria-hidden="true" />

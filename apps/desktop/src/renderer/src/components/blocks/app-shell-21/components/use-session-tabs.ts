@@ -3,7 +3,8 @@ import { useEffect, useRef } from "react"
 
 import { agentsSelectionAtom, type AgentsSelection } from "@/state/agents-slots"
 import { shellWorkspaceAtom } from "@/state/shell-tabs"
-import { openTab } from "@/state/shell-workspace"
+import { openingBeside } from "@/state/alt-open"
+import { openInSplit, openTab } from "@/state/shell-workspace"
 import {
   AGENTS_HOME_KEY,
   parseTabKey,
@@ -55,7 +56,11 @@ export function useSessionTabs(focusedKey: string | null): void {
     if (selection === wrote.current) return
     wrote.current = selection
     const key = keyForSelection(selection)
-    setWorkspace((ws) => openTab(ws, key, replaceable))
+    // ⌥ on the row that made the selection opens it beside what is in front.
+    const beside = openingBeside()
+    setWorkspace((ws) =>
+      beside ? openInSplit(ws, key) : openTab(ws, key, replaceable)
+    )
   }, [selection, setWorkspace])
 
   useEffect(() => {

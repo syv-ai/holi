@@ -153,13 +153,10 @@ test("⌘\\ makes a split of the tab and a New tab: one pill, two views", async 
   expect(
     strip.getByRole("tab", { name: "Split view: B, New tab" })
   ).toBeTruthy()
-  // Each member has its own header, and none of them holds tabs.
-  const headers = document.querySelectorAll("[data-slot=pane-header]")
-  expect(headers).toHaveLength(2)
+  // No member has a header of its own or holds tabs: the pill does.
+  expect(document.querySelectorAll("[data-slot=pane-header]")).toHaveLength(0)
   expect(within(views()[0]!).queryByRole("tab")).toBeNull()
-  expect(within(views()[1]!).getByRole("navigation").textContent).toContain(
-    "New tab"
-  )
+  expect(within(views()[1]!).queryByRole("tab")).toBeNull()
 })
 
 test("selecting another tab shows it alone, the split staying in the strip", async () => {
@@ -187,18 +184,15 @@ test("a tab's menu opens it in split view with the active tab", async () => {
   expect(focusedTab(ws)).toBe("A.md")
 })
 
-test("a member moves out of its split from its header's menu", async () => {
+test("a member moves out of its split from the pill's menu", async () => {
   const store = mount()
   fireEvent.contextMenu(within(stripOf()).getByRole("tab", { name: "A" }))
   fireEvent.click(
     await screen.findByRole("menuitem", { name: /Open in split view/ })
   )
   await waitFor(() => expect(views()).toHaveLength(2))
-  const left = views()[0]!
-  fireEvent.keyDown(
-    within(left).getByRole("button", { name: "View options" }),
-    { key: "Enter" }
-  )
+  const left = document.querySelector("[data-member]")!
+  fireEvent.contextMenu(left)
   fireEvent.click(
     await screen.findByRole("menuitem", { name: /Move out of split/ })
   )

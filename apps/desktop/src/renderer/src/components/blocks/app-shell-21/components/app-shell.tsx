@@ -35,6 +35,7 @@ import {
   entryOf,
   focusedTab,
   focusMember,
+  openInSplit,
   openNewTab as openNewTabIn,
   openTab as openTabIn,
   reopenClosed,
@@ -46,6 +47,7 @@ import {
   stepMember,
   type ShellWorkspace,
 } from "@/state/shell-workspace"
+import { openingBeside } from "@/state/alt-open"
 import {
   AGENTS_HOME_KEY,
   parseTabKey,
@@ -60,7 +62,6 @@ import { THREADS } from "./data"
 import type { Move } from "@/lib/tree-actions"
 import { useNewDocument } from "./documents-section"
 import { MobileHeader } from "./mobile-header"
-import { PaneHeader } from "./pane-header"
 import { PanesView, type MemberSlot } from "./panes-view"
 import { SiteHeader } from "./site-header"
 import { useSidebarApps } from "./sidebar-apps"
@@ -316,7 +317,9 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
     if (parseTabKey(key)?.kind === "doc" || key.endsWith(".app")) {
       setSection("documents")
     }
-    update((w) => openTabIn(w, key))
+    // ⌥-click (or ⌥↩) opens it beside what is in front.
+    const beside = openingBeside()
+    update((w) => (beside ? openInSplit(w, key) : openTabIn(w, key)))
     setMobileNavOpen(false)
   }
 
@@ -331,7 +334,7 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
     update((w) => {
       const s = activeSplit(w)
       if (s === null) return w
-      const fill = s.views.length === 3 ? 1 : 0
+      const fill = s.views.length >= 3 ? 1 : 0
       const shares = s.views.map((v, i) => (v === key ? share : s.shares[i]!))
       const others = shares.reduce(
         (sum, x, i) => (i === fill ? sum : sum + x),
@@ -445,11 +448,11 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
         data-pane-focused={(multi && isFocused) || undefined}
         onPointerDownCapture={focus}
         onFocusCapture={focus}
-        className="flex min-h-0 min-w-0 flex-1 flex-col"
+        // No header of its own: the view's own top row is its header, and
+        // the split's pill in the strip names, closes and moves its members.
+        // A hairline over the focused member says where an open lands.
+        className="data-pane-focused:before:bg-ring relative flex min-h-0 min-w-0 flex-1 flex-col data-pane-focused:before:absolute data-pane-focused:before:inset-x-0 data-pane-focused:before:top-0 data-pane-focused:before:z-10 data-pane-focused:before:h-px"
       >
-        {multi && tab !== null ? (
-          <PaneHeader member={tab} focused={isFocused} />
-        ) : null}
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <TabView
             tab={tab}

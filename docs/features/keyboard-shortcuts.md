@@ -69,6 +69,9 @@ same table, so the sheet can only show keys that work. The dialog opens from the
   view in front:** the focused member inside a split (a 2-split turns back into a tab), the tab
   otherwise. ⌘T opens a New tab at the strip's end, or the Agents home while the sidebar is on
   Agents, as + does.
+- **⌥-click opens beside.** ⌥-click (or ⌥↩) a document, a session, a search result or a link and
+  it opens in split view beside what is in front, up to four views; the dialog lists it as a
+  gesture under Split view.
 - **Split view keys.** ⌘\ makes a split of the active tab and a New tab (or adds a New tab to a
   split with room). ⇧⌘\ separates the active split and ⌃⌥→ / ⌃⌥← step its focused member; the
   three are live, and listed, only while a split is active. Shift turns `\` into `|` on most

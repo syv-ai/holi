@@ -42,6 +42,7 @@ const A = "Notes/A.md"
 const B = "Notes/B.md"
 const C = "Notes/C.md"
 const D = "Notes/D.md"
+const E = "Notes/E.md"
 const S = sessionKey({ owner: "chat", id: "s1" })
 
 function withTabs(...keys: string[]): ShellWorkspace {
@@ -146,7 +147,7 @@ describe("making a split", () => {
   })
 
   test("a split holds at most MAX_SPLIT views; ⌘\\ then does nothing", () => {
-    const ws = openInSplit(pair(), C)
+    const ws = openInSplit(openInSplit(pair(), C), D)
     expect(split(ws).views).toHaveLength(MAX_SPLIT)
     expect(splitActive(ws)).toBe(ws)
   })
@@ -175,11 +176,11 @@ describe("making a split", () => {
     expect(focusedTab(ws)).toBe(C)
   })
 
-  test("at three members an edge drop replaces instead of splitting", () => {
-    let ws = selectEntry(withTabs(A, B, C, D), A)
-    ws = openInSplit(openInSplit(ws, B), C)
-    ws = dropTab(ws, D, B, "right")
-    expect(strip(ws)).toEqual([[A, D, C], B])
+  test("at four members an edge drop replaces instead of splitting", () => {
+    let ws = selectEntry(withTabs(A, B, C, D, E), A)
+    ws = openInSplit(openInSplit(openInSplit(ws, B), C), D)
+    ws = dropTab(ws, E, B, "right")
+    expect(strip(ws)).toEqual([[A, E, C, D], B])
   })
 
   test("within a split a drop reorders or swaps", () => {

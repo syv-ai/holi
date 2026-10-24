@@ -2,7 +2,7 @@
 
 One tab strip, in the title band, holds every tab, after Arc's. A tab holds any view: a document,
 a vault app, the board, a New tab, the Agents home, an agent session, Mail or Calendar, or
-Settings. A **split view** is one entry of that strip holding two or three views side by side:
+Settings. A **split view** is one entry of that strip holding two to four views side by side:
 selecting it shows them together, selecting any other tab shows that one alone at full width, the
 split staying in the strip as its own entry.
 
@@ -78,40 +78,45 @@ open elsewhere by then. Closing a tab of a running session only detaches: the se
 
 ## Split view
 
-**Making one.** ⌘\ on a tab makes a split of that tab and a New tab on its right, focused (on a
+**Making one.** ⌥-click (or ⌥↩) anything that opens a tab, a document in the files tree, a
+session in the Agents sidebar, a search result, a link, and it opens beside what is in front
+instead of in its place (`state/alt-open.ts`: a capture listener notes whether ⌥ was held, and
+the open asks within the same moment). ⌘\ on a tab makes a split of that tab and a New tab on its right, focused (on a
 split with room, a New tab joins it). A tab's **Open in split view** makes a split of the active
 tab and that tab, whose own entry goes. Dragging a strip tab onto the content's left or right edge
 (the outer thirds) splits with the view there; dropping it in a member's middle replaces that
-member, which gets a tab of its own. Inside one split, a member's header dropped on another swaps
-the two, or on an edge reorders them. A split holds three views at most: at three, the edges
-replace instead of splitting. A view is open once: putting it into a split takes it out of its tab
+member, which gets a tab of its own. The tab in front dropped on its own left or right half splits
+there with its neighbour in the strip (the one before it, else after it), or with a New tab when it
+is the only tab. Inside one split, a member dragged from the pill onto another swaps the two, or on
+an edge reorders them. A split holds four views at most: at four, the edges replace instead of
+splitting. A view is open once: putting it into a split takes it out of its tab
 or its other split, as two editors on one document would race two autosaves.
 
-**Leaving one.** A member's ⋯ offers **Replace with…** (a New tab in its place, the old view
-keeping a tab), **Move out of split** (it becomes its own tab, after the split) and Close; its ×
-closes it. Dragging a member's header to the strip moves it out there. **Separate** (⇧⌘\, or the
+**Leaving one.** Right-clicking a member's part of the split's pill offers **Move out of split**
+(it becomes its own tab, after the split), **Replace with New tab** (a New tab in its place, the
+old view keeping a tab) and Close. Dragging a member's part of the pill along the strip moves it
+out there. **Separate** (⇧⌘\, or the
 pill's menu) turns every member back into its own tab, in place.
 
 **The look.** No cards and no ground change: the members sit edge to edge, square, on `main`'s own
 background and glass tint, exactly as a single tab. Between two members is a 1px `bg-border` line,
 full height, which is the resize handle: it reaches 4px either side for the pointer, shows a
 `col-resize` cursor, and turns `bg-ring` on hover, keyboard focus and while dragging
-(`transition-colors`). Each member has a thin header (`pane-header.tsx`, 40px, `border-b`): its
-mark and a breadcrumb of where it is (a document's or vault app's folders, past two folded to an
-ellipsis, then its name; any other tab its title), then ⋯ and ×. Nothing tab-like is in it: the
-tabs are the strip's. **The focused member** is marked by its header alone: its title at the
-foreground's full weight, the others' muted. A ring around a whole view was too loud without
-cards. Clicking or focusing anywhere in a member focuses it. The header carries no actions of the
-view's own yet: there is no seam for a view to offer them.
+(`transition-colors`). **A member has no header of its own**: a document's, a session's or the
+board's own top row is its header, and a second bar above it read as two headers that disagreed.
+The pill in the strip names the members, and its menu moves and closes them. **The focused member**
+(where an open lands) has a 1px `bg-ring` line along its top edge, and its part of the pill is at
+the foreground's full weight, the others' muted. Clicking or focusing anywhere in a member focuses
+it.
 
 **Keys.** ⌘\ split view, ⇧⌘\ separate, ⌃⌥→ / ⌃⌥← focus the next or previous member, ⌘W closes the
 focused member inside a split and the tab otherwise ([keyboard shortcuts](keyboard-shortcuts.md)).
 Next/previous tab and ⌘1–9 go over strip entries, a split counting as one.
 
 **motion-panels** (MIT, Valerii Strilets; `components/ui/motion-panels.tsx` is its shadcn item)
-lays the views out in `panes-view.tsx`. Its group holds one panel that fills and at most one sized
-panel each side of it, so the layout follows the count: one view fills; two are filling then
-sized; three are sized, filling, sized. A sized member is a percentage of the area and follows a
+lays the views out in `panes-view.tsx`. Its group holds one panel that fills and sized panels around
+it, so the layout follows the count: one view fills; two are filling then sized;
+three are sized, filling, sized; four are sized, filling, sized, sized. A sized member is a percentage of the area and follows a
 window resize; drag, the arrow keys (Shift for bigger steps), Home and End resize it, and a double
 click resets it. The separator is the library's, `role="separator"` with `aria-orientation` and a
 "Resize view" label.
@@ -127,7 +132,7 @@ folds. The filling slot cannot fold, so a member arriving or leaving there lands
 another entry is not a fold: its views just land. The library folds instantly under reduced motion,
 inside `MotionConfig reducedMotion="user"`.
 
-**Drag targets.** A strip tab or a member's header drags (native drag, its own MIME type
+**Drag targets.** A strip tab or a member's part of a pill drags (native drag, its own MIME type
 `application/x-holi-tab`, so nothing else takes it). While one is dragged every view in front lays
 a target over its content (a view may be an iframe or a terminal, which would swallow the drag)
 and highlights where it would land: the half it would split into, or the whole view it would
@@ -135,7 +140,7 @@ replace. A drop that would change nothing is refused. The menus are the keyboard
 places.
 
 **Persistence.** Tabs and splits live for the app's session, per vault; a restart opens on an
-empty strip, as the shell always has. The widths a vault last had for a two- and a three-member
+empty strip, as the shell always has. The widths a vault last had for a two-, three- and four-member
 split are kept on this machine (`localStorage`, `holi.panes.<remote>.<count>`), and a new split
 opens at them.
 
@@ -182,16 +187,19 @@ Appearance; machine-local, on by default) turns it off.
   split member in that member, and a new entry would hide the split the user is working in.
 - Cards on a darker ground for the members: the platform is square and flat, and a hairline parts
   two views well enough.
-- A ring around the focused member: without cards it reads as a selection box; the header's
-  weight says it quietly.
+- A ring around the focused member: without cards it reads as a selection box; a hairline on
+  its top edge says it quietly.
+- A header bar on each member (breadcrumb, ⋯, ×): it stacked on the view's own header, two rows
+  saying the same thing in different type.
 - Nesting motion-panels groups for any number of members: closing a middle one would fold every
   member after it.
 
 ## Code
 
-- `apps/desktop/src/renderer/src/state/tab-descriptor.ts`, `shell-workspace.ts`, `shell-tabs.ts`
+- `apps/desktop/src/renderer/src/state/tab-descriptor.ts`, `shell-workspace.ts`, `shell-tabs.ts`,
+  `alt-open.ts`
 - `apps/desktop/src/renderer/src/components/blocks/app-shell-21/components/app-shell.tsx`,
-  `site-header.tsx`, `panes-view.tsx`, `pane-header.tsx`, `use-tab-drag.ts`, `tab-view.tsx`,
+  `site-header.tsx`, `panes-view.tsx`, `use-tab-drag.ts`, `tab-view.tsx`,
   `tab-look.tsx`, `use-session-tabs.ts`, `use-shell-shortcuts.ts`
 - `apps/desktop/src/renderer/src/components/ui/motion-panels.tsx`
 - `apps/desktop/src/main/menu.ts`: ⌘W and ⌘⇧W

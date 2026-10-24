@@ -25,14 +25,15 @@ import { TAB_MIME, tabDragAtom, zoneAt } from "./use-tab-drag"
 
 /**
  * The active strip entry's views side by side, on motion-panels (MIT,
- * Valerii Strilets): one view for a tab, two or three for a split
+ * Valerii Strilets): one view for a tab, two to four for a split
  * (docs/features/tabs-panes.md, Split view). A horizontal group's one
  * filling panel takes what the sized panels beside it leave, so the layout
  * follows the count:
  *
  * - one view fills;
  * - two: the first fills, the second is sized at the end;
- * - three: sized, filling, sized.
+ * - three: sized, filling, sized;
+ * - four: sized, filling, sized, sized.
  *
  * **A view never remounts when the layout changes.** Each view renders
  * through a portal into a host element of its own, keyed on its tab key, and
@@ -54,12 +55,13 @@ import { TAB_MIME, tabDragAtom, zoneAt } from "./use-tab-drag"
 
 const MIN_MEMBER = 240
 
-type Role = "start" | "fill" | "end"
+type Role = "start" | "fill" | "end" | "end2"
 
 function roles(count: number): Role[] {
   if (count <= 1) return ["fill"]
   if (count === 2) return ["fill", "end"]
-  return ["start", "fill", "end"]
+  if (count === 3) return ["start", "fill", "end"]
+  return ["start", "fill", "end", "end2"]
 }
 
 /** A view as laid out: its tab key and its share of the width. */
@@ -167,7 +169,7 @@ export function PanesView({
   }
   const layout = roles(slots.length)
   const count = slots.length
-  const maxSize = count === 2 ? "75%" : "45%"
+  const maxSize = count === 2 ? "75%" : count === 3 ? "45%" : "35%"
   const [ws, setWs] = useAtom(shellWorkspaceAtom)
   const dragging = useAtomValue(tabDragAtom)
   const split = activeSplit(ws)
@@ -179,8 +181,8 @@ export function PanesView({
     if (role === "fill" && index > 0) {
       children.push(<LineSeparator key="sep-start" />)
     }
-    if (role === "end") {
-      children.push(<LineSeparator key="sep-end" />)
+    if (role === "end" || role === "end2") {
+      children.push(<LineSeparator key={`sep-${role}`} />)
     }
     const body = (
       <div className="relative flex h-full min-h-0 w-full min-w-0">

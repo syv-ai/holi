@@ -202,6 +202,14 @@ export const SHORTCUTS: readonly Shortcut[] = [
     repeats: true,
   },
   {
+    id: 'split.gesture.open',
+    label: 'Open beside what is in front',
+    group: 'Split view',
+    keys: [],
+    gesture: '⌥-click a document, session or link',
+    liveWith: 'pane.split',
+  },
+  {
     id: 'split.gesture.edge',
     label: 'Split with a tab',
     group: 'Split view',
@@ -222,7 +230,7 @@ export const SHORTCUTS: readonly Shortcut[] = [
     label: 'Move a view out of a split',
     group: 'Split view',
     keys: [],
-    gesture: 'Drag its header to the tabs',
+    gesture: 'Drag it from the pill to the tabs',
     liveWith: 'pane.split',
   },
 

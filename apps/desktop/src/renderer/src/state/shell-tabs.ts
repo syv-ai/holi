@@ -18,6 +18,7 @@ import {
   openTab,
   type ShellWorkspace,
 } from "./shell-workspace"
+import { openingBeside } from "./alt-open"
 import { tabKey, type TabDescriptor } from "./tab-descriptor"
 import { activeRemoteAtom } from "./vaults"
 
@@ -48,8 +49,10 @@ export const openTabAtom = atom(
   null,
   (_get, set, tab: TabDescriptor, options?: { beside?: boolean }) => {
     const key = tabKey(tab)
+    // Read once, outside the update: reading spends the ⌥.
+    const beside = options?.beside === true || openingBeside()
     set(shellWorkspaceAtom, (ws) =>
-      options?.beside ? openInSplit(ws, key) : openTab(ws, key)
+      beside ? openInSplit(ws, key) : openTab(ws, key)
     )
   }
 )
