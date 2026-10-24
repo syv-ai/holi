@@ -1,0 +1,199 @@
+/**
+ * A document in the rich-text editor against a mocked vault: it opens with
+ * its frontmatter kept aside, ⌘B is always the editor's, and Space on an
+ * empty line asks Sonnet to write there: the marker is saved, the run locks
+ * the page until its session is done, and Stop ends it.
+ */
+import { emptyVaultSnapshot } from "@holi/shared"
+import userEvent from "@testing-library/user-event"
+import { atom, createStore, Provider } from "jotai"
+import { afterEach, beforeEach, expect, test, vi } from "vitest"
+
+import { act, fireEvent, render, screen, waitFor } from "@/test/render"
+import * as agentService from "@/state/agent-service"
+import { activeRemoteAtom, snapshotAtom } from "@/state/vaults"
+
+import { DocumentView } from "../document-view"
+
+Element.prototype.getAnimations ??= () => []
+// ProseMirror measures the caret; jsdom has no layout.
+Range.prototype.getBoundingClientRect ??= () => new DOMRect()
+Range.prototype.getClientRects ??= () =>
+  ({ length: 0, item: () => null, [Symbol.iterator]: [][Symbol.iterator] }) as unknown as DOMRectList
+Element.prototype.scrollIntoView ??= () => undefined
+document.elementFromPoint ??= () => null
+
+const files = new Map<string, string>()
+const write = vi.fn()
+const cap = vi.fn()
+
+vi.mock("@/lib/trpc", () => ({
+  trpc: {
+    notes: {
+      read: {
+        query: ({ path }: { path: string }) =>
+          Promise.resolve(files.get(path) ?? ""),
+      },
+      write: {
+        mutate: (input: { path: string; text: string }) => {
+          files.set(input.path, input.text)
+          write(input)
+          return Promise.resolve({ ok: true })
+        },
+      },
+    },
+    history: {
+      list: {
+        query: () =>
+          Promise.resolve([
+            {
+              sha: "4a14110aaaa",
+              subject: "Update",
+              date: new Date(Date.now() - 2 * 3_600_000).toISOString(),
+              author: "Ada",
+              added: 1,
+              removed: 0,
+            },
+          ]),
+      },
+    },
+    github: {
+      fileContributors: {
+        query: () =>
+          Promise.resolve([{ login: "ada", name: "Ada", avatarUrl: null }]),
+      },
+    },
+    cap: { run: { mutate: (input: unknown) => cap(input) } },
+  },
+}))
+
+vi.mock("@/state/agent-service", async () => {
+  const { atom: makeAtom } = await import("jotai")
+  const sessions = makeAtom<
+    { id: string; name: string; state: "needs-you" | "working" | "idle" }[]
+  >([])
+  return {
+    __sessions: sessions,
+    useAgentService: () => ({ name: "Claude", sessions }),
+    showAgentSessionAtom: makeAtom(null, () => undefined),
+  }
+})
+
+const sessions = (agentService as unknown as {
+  __sessions: ReturnType<
+    typeof atom<{ id: string; name: string; state: "needs-you" | "working" | "idle" }[]>
+  >
+}).__sessions
+
+const PATH = "notes/Plan.md"
+let store: ReturnType<typeof createStore>
+
+beforeEach(() => {
+  files.clear()
+  write.mockReset()
+  cap.mockReset()
+  cap.mockImplementation(({ name }: { name: string }) =>
+    Promise.resolve(
+      name === "agent.launch" ? { ok: true, sessionId: "abc12345" } : { ok: true }
+    )
+  )
+  store = createStore()
+  store.set(activeRemoteAtom, "syv/vault")
+  store.set(snapshotAtom, {
+    ...emptyVaultSnapshot(),
+    docs: [{ path: PATH, kind: "note", updatedAt: "2026-10-23T10:00:00Z" }],
+  } as never)
+  store.set(sessions, [])
+})
+
+afterEach(() => vi.useRealTimers())
+
+function open(text: string) {
+  files.set(PATH, text)
+  return render(
+    <Provider store={store}>
+      <DocumentView path={PATH} onOpen={() => undefined} />
+    </Provider>
+  )
+}
+
+async function editorBox() {
+  return await screen.findByRole("textbox", { name: "Plan document" })
+}
+
+test("opens the body in the editor, with its name and contributors", async () => {
+  open("---\ntitle: Plan\n---\n\n# Kickoff\n\nSee [[Other]].\n")
+  const box = await editorBox()
+  expect(screen.getByRole("heading", { level: 1, name: "Plan" })).toBeVisible()
+  expect(box).toHaveTextContent("Kickoff")
+  expect(box).toHaveTextContent("See Other.")
+  expect(box).not.toHaveTextContent("title: Plan")
+  expect(
+    await screen.findByRole("group", { name: "Written by ada" })
+  ).toBeInTheDocument()
+})
+
+test("⌘B is always claimed by the editor, never the sidebar toggle", async () => {
+  open("Hello\n")
+  const box = await editorBox()
+  box.focus()
+  // Tiptap's Mod is ⌘ on a Mac and Ctrl elsewhere; jsdom is not a Mac.
+  const allowed = fireEvent.keyDown(box, { key: "b", code: "KeyB", ctrlKey: true })
+  expect(allowed).toBe(false)
+})
+
+test("Space on an empty line asks Sonnet, locks the page, and unlocks when done", async () => {
+  const user = userEvent.setup()
+  open("---\ntitle: Plan\n---\n\n")
+  const box = await editorBox()
+  box.focus()
+  fireEvent.keyDown(box, { key: " ", code: "Space" })
+
+  const prompt = await screen.findByRole("textbox", {
+    name: "What should the agent do?",
+  })
+  await user.type(prompt, "Write an introduction{Enter}")
+
+  await waitFor(() =>
+    expect(cap).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "agent.launch", remote: "syv/vault" })
+    )
+  )
+  const launch = JSON.parse(cap.mock.calls[0]![0].paramsJson)
+  expect(launch.model).toBe("claude-sonnet-5-5")
+  expect(launch.prompt).toContain("Write an introduction")
+  expect(launch.allow).toContain("Edit(./notes/Plan.md)")
+  // The marker was saved where the person asked, under the kept frontmatter.
+  expect(files.get(PATH)).toBe("---\ntitle: Plan\n---\n\n<!-- holi:agent -->\n")
+
+  await waitFor(() => expect(box).toHaveAttribute("contenteditable", "false"))
+  expect(screen.getByText("Locked")).toBeInTheDocument()
+
+  act(() => store.set(sessions, [{ id: "abc12345", name: "", state: "working" }]))
+  expect(await screen.findByText("Writing…")).toBeInTheDocument()
+
+  act(() => store.set(sessions, [{ id: "abc12345", name: "", state: "idle" }]))
+  await waitFor(() => expect(box).toHaveAttribute("contenteditable", "true"))
+})
+
+test("Stop ends the run", async () => {
+  const user = userEvent.setup()
+  open("")
+  const box = await editorBox()
+  box.focus()
+  fireEvent.keyDown(box, { key: " ", code: "Space" })
+  await user.type(
+    await screen.findByRole("textbox", { name: "What should the agent do?" }),
+    "Draft it{Enter}"
+  )
+  await user.click(await screen.findByRole("button", { name: "Stop" }))
+  await waitFor(() =>
+    expect(cap).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "agent.stop",
+        paramsJson: JSON.stringify({ id: "abc12345" }),
+      })
+    )
+  )
+  expect(await screen.findByText("Stopped")).toBeInTheDocument()
+})

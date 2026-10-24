@@ -1,0 +1,605 @@
+/**
+ * A markdown document, open in ReUI's rich-text editor (`rich-text-editor-2`)
+ * and saved back to the file as markdown (`markdown.ts`).
+ *
+ * The file stays the source of truth. Typing saves after a pause; a change on
+ * disk (a pull, the agent) is read back in unless there are local edits not
+ * yet saved, which win and are written over it.
+ *
+ * The agent is part of the page: Space on an empty line asks it to write
+ * there, the format bubble's Ask AI rewrites a selection, and the menu's
+ * Turn into an Artifact makes a vault app of the document. While a run edits
+ * the document the page is locked (nothing in it can be pressed) and the
+ * status pill at its foot says what it is doing and offers Stop.
+ */
+import { useEffect, useMemo, useRef, useState } from "react"
+import { createPortal } from "react-dom"
+import { useAtomValue } from "jotai"
+import { EditorContent, useEditor } from "@tiptap/react"
+import { FileWarningIcon, SparklesIcon } from "lucide-react"
+
+import { DeleteTableDialog } from "@/components/blocks/rich-text-editor-2/components/delete-table-dialog"
+import { RichTextBlockActions } from "@/components/blocks/rich-text-editor-2/components/rich-text-block-actions"
+import { RichTextBlockGutter } from "@/components/blocks/rich-text-editor-2/components/rich-text-block-gutter"
+import { setRichTextBubble } from "@/components/blocks/rich-text-editor-2/components/rich-text-bubble-bar"
+import { RICH_TEXT_PROSE } from "@/components/blocks/rich-text-editor-2/components/rich-text-content"
+import { RichTextLinkBubble } from "@/components/blocks/rich-text-editor-2/components/rich-text-link"
+import {
+  RICH_TEXT_BASIC_SLASH_ITEMS,
+  RichTextSlashCommand,
+  type RichTextSlashItem,
+} from "@/components/blocks/rich-text-editor-2/components/rich-text-slash-menu"
+import { useRichTextSelector } from "@/components/blocks/rich-text-editor-2/components/rich-text-state"
+import {
+  RICH_TEXT_TABLE_PROSE,
+  RICH_TEXT_TABLE_SLASH_ITEM,
+  RichTextTable,
+  RichTextTableBubble,
+} from "@/components/blocks/rich-text-editor-2/components/rich-text-table"
+import { Button } from "@/components/ui/button"
+import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "@/components/ui/empty"
+import { Skeleton } from "@/components/ui/skeleton"
+import { TooltipProvider } from "@/components/ui/tooltip"
+import { cn } from "@/lib/cn"
+import { TaskProperties } from "@/components/blocks/planning/task-properties"
+import { trpc } from "@/lib/trpc"
+import { activeRemoteAtom, snapshotAtom } from "@/state/vaults"
+
+import { AgentPrompt, AgentStatus } from "./agent-prompt"
+import { agentPromptKey, agentPromptPos, onEmptyLine, setAgentPrompt } from "./agent-trigger"
+import {
+  artifactPathFor,
+  folderOf,
+  isRunLive,
+  locksDocument,
+  useDocumentAgent,
+} from "./document-agent"
+import { createDocumentExtensions } from "./document-extensions"
+import { DocumentFormatBubble } from "./document-format-bubble"
+import { DocumentHeader, type SaveState } from "./document-header"
+import {
+  AGENT_MARKER,
+  documentTitle,
+  joinDocument,
+  splitDocument,
+} from "./markdown"
+
+// How long typing has to pause before the file is written.
+const SAVE_DELAY_MS = 600
+
+// The block drop line, as the rich-text block draws it.
+const DROP_LINE =
+  "[&_.prosemirror-dropcursor-block]:text-primary [&_.prosemirror-dropcursor-block]:h-0.5! [&_.prosemirror-dropcursor-block]:-translate-y-[0.5px] [&_.prosemirror-dropcursor-block]:rounded-full"
+
+type Load =
+  | { kind: "loading" }
+  | { kind: "ready"; head: string; body: string; text: string }
+  | { kind: "error"; message: string }
+
+/** The vault path a `[[target]]` names: an exact path, else a markdown
+ *  file whose name matches, nearest folder first. */
+function resolveLink(
+  target: string,
+  from: string,
+  docs: readonly { path: string }[]
+): string | null {
+  const wanted = target.toLowerCase().replace(/\.md$/, "")
+  const exact = docs.find(
+    (doc) => doc.path.toLowerCase().replace(/\.md$/, "") === wanted
+  )
+  if (exact) return exact.path
+  const named = docs.filter(
+    (doc) => documentTitle(doc.path).toLowerCase() === wanted
+  )
+  const folder = folderOf(from)
+  return (
+    named.find((doc) => folderOf(doc.path) === folder)?.path ??
+    named[0]?.path ??
+    null
+  )
+}
+
+export function DocumentView({
+  path,
+  onOpen,
+  onMoved,
+}: {
+  path: string
+  /** Open a vault path in a tab: a linked note, or a finished artifact. */
+  onOpen: (path: string) => void
+  /** The document moved (a task given another project): follow it. */
+  onMoved?: (from: string, to: string) => void
+}) {
+  const remote = useAtomValue(activeRemoteAtom)
+  const docs = useAtomValue(snapshotAtom).docs
+  const mtime = docs.find((doc) => doc.path === path)?.updatedAt
+  const [load, setLoad] = useState<Load>({ kind: "loading" })
+  const [attempt, setAttempt] = useState(0)
+
+  useEffect(() => {
+    if (remote === null) return
+    let live = true
+    setLoad({ kind: "loading" })
+    trpc.notes.read
+      .query({ remote, path })
+      .then((text) => {
+        if (!live) return
+        const { head, body } = splitDocument(text)
+        setLoad({ kind: "ready", head, body, text })
+      })
+      .catch((err: unknown) => {
+        if (live)
+          setLoad({
+            kind: "error",
+            message: err instanceof Error ? err.message : String(err),
+          })
+      })
+    return () => {
+      live = false
+    }
+  }, [remote, path, attempt])
+
+  if (load.kind === "loading") return <DocumentSkeleton />
+  if (load.kind === "error" || remote === null)
+    return (
+      <Empty className="h-full">
+        <EmptyHeader>
+          <EmptyMedia variant="icon">
+            <FileWarningIcon />
+          </EmptyMedia>
+          <EmptyTitle>Couldn’t open {documentTitle(path)}</EmptyTitle>
+          <EmptyDescription>
+            {load.kind === "error" ? load.message : "No vault is open."}
+          </EmptyDescription>
+        </EmptyHeader>
+        <EmptyContent>
+          <Button variant="outline" onClick={() => setAttempt((n) => n + 1)}>
+            Retry
+          </Button>
+        </EmptyContent>
+      </Empty>
+    )
+
+  return (
+    <DocumentEditor
+      key={path}
+      path={path}
+      remote={remote}
+      initial={load}
+      mtime={mtime}
+      docs={docs}
+      onOpen={onOpen}
+      onMoved={onMoved}
+    />
+  )
+}
+
+function DocumentEditor({
+  path,
+  remote,
+  initial,
+  mtime,
+  docs,
+  onOpen,
+  onMoved,
+}: {
+  path: string
+  remote: string
+  initial: { head: string; body: string; text: string }
+  mtime: string | undefined
+  docs: readonly { path: string }[]
+  onOpen: (path: string) => void
+  onMoved?: (from: string, to: string) => void
+}) {
+  const agent = useDocumentAgent(path)
+  const locked = locksDocument(agent.run)
+  const [saveState, setSaveState] = useState<SaveState>("saved")
+  const [linkOpen, setLinkOpen] = useState(false)
+  const [deleteTableOpen, setDeleteTableOpen] = useState(false)
+  const [fullWidth, setFullWidth] = useState(false)
+  const [smallText, setSmallText] = useState(false)
+  /** Whether the agent prompt is open; its line is the editor's to track
+   *  (`agentPromptKey`), and it renders into `promptBox` on that line. */
+  const [promptOpen, setPromptOpen] = useState(false)
+  const [promptBox] = useState(() => {
+    const box = document.createElement("div")
+    box.contentEditable = "false"
+    box.className = "my-1"
+    return box
+  })
+  const pageRef = useRef<HTMLDivElement>(null)
+  const head = useRef(initial.head)
+  /** The file as last read or written: what a change on disk is compared to. */
+  const lastText = useRef(initial.text)
+  const saveTimer = useRef<number | undefined>(undefined)
+
+  // Callbacks the extensions hold, read through refs so the extensions are
+  // made once per document.
+  const handlers = useRef({
+    openLink: (_target: string) => undefined as void,
+    trigger: (_pos: number) => undefined as void,
+  })
+  handlers.current.openLink = (target) => {
+    const found = resolveLink(target, path, docs)
+    if (found) onOpen(found)
+  }
+
+  const extensions = useMemo(
+    () => [
+      ...createDocumentExtensions({
+        folder: folderOf(path),
+        placeholder: "Type / for commands, or Space to ask AI",
+        onOpenLink: (target) => handlers.current.openLink(target),
+        onAgentTrigger: (pos) => handlers.current.trigger(pos),
+        promptContainer: promptBox,
+      }),
+      RichTextTable,
+      RichTextBlockActions,
+      RichTextSlashCommand.configure({
+        items: [
+          ...RICH_TEXT_BASIC_SLASH_ITEMS,
+          RICH_TEXT_TABLE_SLASH_ITEM,
+          ASK_AI_SLASH_ITEM((pos) => handlers.current.trigger(pos)),
+        ],
+      }),
+    ],
+    [path, promptBox]
+  )
+
+  const editor = useEditor(
+    {
+      extensions,
+      content: initial.body,
+      contentType: "markdown",
+      immediatelyRender: false,
+      editorProps: {
+        attributes: {
+          role: "textbox",
+          "aria-label": `${documentTitle(path)} document`,
+          "aria-multiline": "true",
+        },
+      },
+      onUpdate: ({ transaction }) => {
+        if (!transaction.docChanged) return
+        setSaveState("saving")
+        window.clearTimeout(saveTimer.current)
+        saveTimer.current = window.setTimeout(() => void save(), SAVE_DELAY_MS)
+      },
+    },
+    [extensions]
+  )
+
+  const editable = useRichTextSelector(
+    editor,
+    (current) => current?.isEditable ?? true
+  )
+
+  const markdown = () =>
+    editor ? joinDocument(head.current, editor.getMarkdown()) : lastText.current
+
+  async function save(): Promise<void> {
+    window.clearTimeout(saveTimer.current)
+    saveTimer.current = undefined
+    if (!editor || editor.isDestroyed) return
+    const text = markdown()
+    if (text === lastText.current) {
+      setSaveState("saved")
+      return
+    }
+    try {
+      await trpc.notes.write.mutate({ remote, path, text })
+      lastText.current = text
+      setSaveState("saved")
+    } catch {
+      setSaveState("error")
+    }
+  }
+
+  // Leaving the document writes what is pending.
+  useEffect(
+    () => () => {
+      if (saveTimer.current !== undefined) void save()
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [editor]
+  )
+
+  // A change on disk comes back in, unless local edits are still pending.
+  useEffect(() => {
+    if (!editor || mtime === undefined) return
+    let live = true
+    void trpc.notes.read
+      .query({ remote, path })
+      .then((text) => {
+        if (!live || editor.isDestroyed || text === lastText.current) return
+        if (saveTimer.current !== undefined && !locked) return
+        const next = splitDocument(text)
+        head.current = next.head
+        lastText.current = text
+        editor.commands.setContent(next.body, {
+          contentType: "markdown",
+          emitUpdate: false,
+        })
+      })
+      .catch(() => undefined)
+    return () => {
+      live = false
+    }
+    // Only a new mtime means the file may have changed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mtime, editor])
+
+  // A run that edits the document locks it; done, the lock lifts.
+  useEffect(() => {
+    if (!editor || editor.isDestroyed) return
+    editor.setEditable(!locked)
+  }, [editor, locked])
+
+  // A finished edit clears its pill on its own; an artifact waits to be
+  // opened or dismissed.
+  useEffect(() => {
+    const run = agent.run
+    if (!run || run.status !== "done" || run.kind === "artifact") return
+    const timer = window.setTimeout(agent.dismiss, 1500)
+    return () => window.clearTimeout(timer)
+  }, [agent.run, agent.dismiss])
+
+  handlers.current.trigger = (pos) => {
+    if (!editor || !agent.available || isRunLive(agent.run)) return
+    setAgentPrompt(editor, pos)
+    setPromptOpen(true)
+  }
+
+  function closePrompt() {
+    if (!editor) return
+    const pos = agentPromptPos(editor.state)
+    setAgentPrompt(editor, null)
+    setPromptOpen(false)
+    editor.commands.focus(pos ?? "end")
+  }
+
+  async function sendPrompt(request: string) {
+    if (!editor) return
+    // The prompt's line becomes the marker the agent writes at.
+    const { state } = editor
+    const pos = agentPromptPos(state)
+    const tr = state.tr.setMeta(agentPromptKey, { pos: null })
+    const marker = state.schema.nodes.htmlBlock?.create({ html: AGENT_MARKER })
+    if (pos !== null && marker && onEmptyLineAt(state.doc, pos)) {
+      const $pos = state.doc.resolve(pos)
+      tr.replaceWith($pos.before(), $pos.after(), marker)
+    }
+    editor.view.dispatch(tr)
+    setPromptOpen(false)
+    await save()
+    await agent.start("write", request)
+  }
+
+  async function quickCommand(verb: string, passage: string) {
+    await save()
+    await agent.start("rewrite", verb, passage)
+  }
+
+  async function turnIntoArtifact() {
+    await save()
+    await agent.start("artifact", "Make an artifact")
+  }
+
+  /**
+   * The whole page takes a press. Below the last line it starts a new one
+   * (reusing an empty last line); beside the text it puts the caret on the
+   * nearest line. Presses on the text itself are the editor's.
+   */
+  function pressPage(event: React.MouseEvent<HTMLDivElement>) {
+    if (!editor || !editor.isEditable || event.button !== 0) return
+    // Only the bare page: the scroller, the page box, or the inset around the
+    // text. Bubbles, the gutter and the prompt sit in the page too.
+    const target = event.target
+    if (
+      target !== event.currentTarget &&
+      target !== pageRef.current &&
+      target !== editor.view.dom.parentElement
+    )
+      return
+    event.preventDefault()
+    const text = editor.view.dom.getBoundingClientRect()
+    if (event.clientY > text.bottom) {
+      const { doc, schema } = editor.state
+      const last = doc.lastChild
+      const emptyLast =
+        last?.type.name === "paragraph" && last.content.size === 0
+      if (!emptyLast) {
+        editor
+          .chain()
+          .insertContentAt(doc.content.size, { type: schema.nodes.paragraph!.name })
+          .run()
+      }
+      editor.commands.focus("end")
+      return
+    }
+    const x = Math.min(Math.max(event.clientX, text.left + 1), text.right - 1)
+    const at = editor.view.posAtCoords({ left: x, top: event.clientY })
+    editor.commands.focus(at?.pos ?? "end")
+  }
+
+  function openLinkEditor() {
+    if (!editor?.isEditable || !editor.can().toggleBold()) return
+    if (editor.isActive("link")) editor.chain().extendMarkRange("link").run()
+    setRichTextBubble(editor, "documentFormatBubble", "show")
+    setLinkOpen(true)
+  }
+
+  const canAsk = agent.available && !isRunLive(agent.run)
+
+  return (
+    <TooltipProvider delayDuration={300}>
+      <div className="text-foreground relative flex h-full min-h-0 w-full flex-col">
+        {/* Locked while a run edits the document: nothing in it answers. */}
+        <div inert={locked} className="flex min-h-0 flex-1 flex-col">
+          {/* On the page's own ground, a hairline under it; the text scrolls
+              beneath the line, not under the header. */}
+          <DocumentHeader
+            editor={editor}
+            path={path}
+            title={documentTitle(path)}
+            saveState={saveState}
+            locked={locked}
+            markdown={markdown}
+            fullWidth={fullWidth}
+            smallText={smallText}
+            onFullWidthChange={setFullWidth}
+            onSmallTextChange={setSmallText}
+            onTurnIntoArtifact={canAsk ? () => void turnIntoArtifact() : null}
+          />
+          <div
+            className="relative min-h-0 flex-1 overflow-y-auto"
+            onMouseDown={pressPage}
+          >
+            {/* A task's fields, on the body's column; nothing for a note. */}
+            <TaskProperties
+              path={path}
+              beforeWrite={save}
+              onMoved={onMoved}
+              className={cn(
+                "mx-auto w-full px-4 pt-8 sm:px-16 sm:pt-12",
+                fullWidth ? "max-w-none" : "max-w-3xl"
+              )}
+            />
+            <div ref={pageRef} className={cn("relative min-h-full", DROP_LINE)}>
+              {editor ? (
+                <EditorContent
+                  editor={editor}
+                  onKeyDown={(event) => {
+                    const mod = event.metaKey || event.ctrlKey
+                    if (mod && !event.altKey && event.key.toLowerCase() === "k") {
+                      event.preventDefault()
+                      openLinkEditor()
+                    }
+                  }}
+                  className={cn(
+                    RICH_TEXT_PROSE,
+                    RICH_TEXT_TABLE_PROSE,
+                    "mx-auto w-full px-4 py-8 sm:px-16 sm:py-12",
+                    fullWidth ? "max-w-none" : "max-w-3xl",
+                    smallText && "text-sm/6",
+                    locked && "opacity-60"
+                  )}
+                />
+              ) : (
+                <DocumentSkeleton />
+              )}
+              {editor ? (
+                <>
+                  <DocumentFormatBubble
+                    editor={editor}
+                    linkOpen={linkOpen}
+                    onLinkOpenChange={setLinkOpen}
+                    onQuickCommand={
+                      canAsk
+                        ? (verb, passage) => void quickCommand(verb, passage)
+                        : null
+                    }
+                  />
+                  <RichTextLinkBubble editor={editor} onEdit={openLinkEditor} />
+                  <RichTextTableBubble
+                    editor={editor}
+                    onDeleteTable={() => setDeleteTableOpen(true)}
+                  />
+                  <RichTextBlockGutter
+                    editor={editor}
+                    editable={editable}
+                    scrollerRef={pageRef}
+                    onDeleteTable={() => setDeleteTableOpen(true)}
+                  />
+                </>
+              ) : null}
+              {promptOpen
+                ? createPortal(
+                    <AgentPrompt
+                      onSubmit={(request) => void sendPrompt(request)}
+                      onCancel={closePrompt}
+                    />,
+                    promptBox
+                  )
+                : null}
+            </div>
+          </div>
+        </div>
+
+        {agent.run ? (
+          <div className="pointer-events-none absolute inset-x-0 bottom-4 z-30 flex justify-center px-4">
+            <div className="pointer-events-auto">
+              <AgentStatus
+                run={agent.run}
+                onStop={() => void agent.stop()}
+                onDismiss={agent.dismiss}
+                onOpenArtifact={() => {
+                  agent.dismiss()
+                  onOpen(artifactPathFor(path))
+                }}
+              />
+            </div>
+          </div>
+        ) : null}
+      </div>
+      <DeleteTableDialog
+        editor={editor}
+        open={deleteTableOpen}
+        onOpenChange={setDeleteTableOpen}
+      />
+    </TooltipProvider>
+  )
+}
+
+/** Whether `pos` is still on an empty top-level paragraph. */
+function onEmptyLineAt(
+  doc: import("@tiptap/pm/model").Node,
+  pos: number
+): boolean {
+  const $pos = doc.resolve(pos)
+  return (
+    $pos.depth === 1 &&
+    $pos.parent.type.name === "paragraph" &&
+    $pos.parent.content.size === 0
+  )
+}
+
+/** "/ai": the same prompt Space opens, for those who reach for the slash. */
+function ASK_AI_SLASH_ITEM(open: (pos: number) => void): RichTextSlashItem {
+  return {
+    id: "ask-ai",
+    group: "AI",
+    title: "Ask AI",
+    hint: "Have Sonnet write or change the document",
+    keywords: ["ai", "agent", "write", "sonnet", "claude"],
+    icon: <SparklesIcon aria-hidden="true" />,
+    can: (editor) => editor.isEditable,
+    run: (editor, range) => {
+      editor.chain().focus().deleteRange(range).run()
+      if (onEmptyLine(editor)) open(editor.state.selection.from)
+    },
+  }
+}
+
+function DocumentSkeleton() {
+  return (
+    <div
+      aria-label="Opening the document"
+      className="mx-auto flex w-full max-w-3xl flex-col gap-8 px-4 py-12 sm:px-16"
+    >
+      <Skeleton className="h-8 w-2/3" />
+      <div className="flex flex-col gap-2.5">
+        <Skeleton className="h-4 w-full" />
+        <Skeleton className="h-4 w-11/12" />
+        <Skeleton className="h-4 w-3/5" />
+      </div>
+    </div>
+  )
+}

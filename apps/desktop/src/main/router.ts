@@ -46,7 +46,7 @@ import { moveNotes } from './vault/move'
 import { getOrCreateDaily, sweepDaily } from './vault/daily'
 import { completionStatuses, readVaultStatuses } from './vault/statuses'
 import { openRepo, remoteUrl, type Commit } from './git'
-import { GitHubApiError, type Repo } from './github/api'
+import { GitHubApiError, type Contributor, type Repo } from './github/api'
 import type { DeviceFlow } from './github/device-flow'
 import { createMembersCache, type MembersCache } from './github/members-cache'
 import type { GitHubSession } from './github/session'
@@ -628,6 +628,27 @@ export function createRouter(deps: RouterDeps) {
         return { visibility: repo.visibility, collaborators }
       }),
     ),
+
+    /**
+     * Who has written a file, for the document header. GitHub's answer where
+     * it has one (accounts and avatars); offline, signed out, or for commits
+     * not pushed yet, the local log's author names.
+     */
+    fileContributors: t.procedure
+      .input(fields({ remote: 'string', path: 'string' }))
+      .query(async ({ input }): Promise<Contributor[]> => {
+        const remote = safeRemote(input.remote)
+        const path = safe(input.path)
+        try {
+          const found = await gh(() => deps.session.api.fileContributors(remote, path))
+          if (found.length > 0) return found
+        } catch {
+          // Fall through to the local history.
+        }
+        const commits = await activeOrThrow().repo.log({ path }).catch(() => [])
+        const names = [...new Set(commits.map((commit) => commit.author))]
+        return names.map((name) => ({ login: null, name, avatarUrl: null }))
+      }),
 
     openCollaboratorSettings: t.procedure
       .input(fields({ remote: 'string' }))
