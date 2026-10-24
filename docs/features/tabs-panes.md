@@ -56,19 +56,48 @@ right, focusing it there; a pane left empty closes. Focus follows a press or key
 pane, and every tab key acts on the focused pane. Three panes at most.
 
 **The strips.** With one pane its strip rides in the title band, as it always did. With several,
-each pane carries its strip in a header row of its own under the band, and the band is left to
-drag the window: a strip that jumped into the band whenever its pane took focus would move under
-the pointer. The focused pane's active tab has the strip's full weight; an unfocused pane's is
-lighter. A session tab shows its state as a dot on its mark: working (pulsing, still under
-reduced motion), needs you, or done and not opened yet.
+each pane's card carries its own header (below), and the band is left to drag the window: a strip
+that jumped into the band whenever its pane took focus would move under the pointer. The focused
+pane's active tab has the strip's full weight; an unfocused pane's is lighter. A session tab shows
+its state as a dot on its mark: working (pulsing, still under reduced motion), needs you, or done
+and not opened yet.
+
+**Split view** (after Arc's). One pane keeps the plain look, its view filling the area. With two or
+three, the area becomes the window's ground and each pane a card on it: `rounded-xl`, a hairline
+border, 8px around and between the cards, and the focused card ringed (`ring-ring/40`). Clicking
+anywhere in a card focuses it. A card that arrives fades in from 0.98 as its panel unfolds
+(`duration-200`, the house curve; a fade only under reduced motion). The separators are the gaps:
+nothing shows until the pointer or keyboard focus finds one, then a short pill, brighter while
+dragging.
+
+**A card's header** (`pane-header.tsx`, 40px) holds, left to right: the pane's own tabs as compact
+marks (each named by its title, its tooltip, and its right-click menu; a middle click closes), +
+for a New tab, a breadcrumb of where the active tab is (a document's or vault app's folders muted,
+past two folded to an ellipsis, then its name; any other tab its title: the session's, Board, the
+app's), then ⋯ (Split right, Move tab to the left or right pane, Close other tabs, Reopen closed
+tab) and × (Close pane: its tabs close and go to Reopen closed tab, as any closed tab does). The
+header carries no actions of the view's own yet: there is no seam for a view to offer them.
+
+**Into split view.** ⌘\ and Split right; a tab's right-click menu's **Open in split view**, which
+moves the tab to the pane on its right, else into a new pane there while there is room, else to the
+pane on its left (a pane's only tab leaves a New tab behind, so the split has two sides); and
+dragging a tab. A tab drags (native drag, its own MIME type `application/x-holi-tab`, so nothing
+else takes it) from either strip onto any pane: while it is dragged every pane lays a target over
+its view (a view may be an iframe or a terminal, which would swallow the drag), and highlights
+where the tab would land. The outer thirds of a pane are its edges, where the tab opens a pane of
+its own on that side, taking half that pane's width; the middle third moves it into that pane. On
+its own pane each half is an edge, and at three panes every drop moves. A drop that would change
+nothing (a pane's only tab beside itself) is refused. The menu items are the keyboard's way to the
+same places. Opening a document to the side from the files tree is `openTabAtom` with
+`{ beside: true }`; the tree's menu does not offer it yet.
 
 **motion-panels** (MIT, Valerii Strilets; `components/ui/motion-panels.tsx` is its shadcn item)
 lays the panes out in `panes-view.tsx`. Its group holds one panel that fills and at most one sized
 panel each side of it, so the layout follows the count: one pane fills; two are filling then sized;
 three are sized, filling, sized. A sized pane is a percentage of the area and follows a window
 resize; drag, the arrow keys (Shift for bigger steps), Home and End resize it, and a double click
-resets it. Its separators are the item's, a hairline on the border token that lights on hover and
-while dragging, `role="separator"` with `aria-orientation` and an "Resize pane" label.
+resets it. Its separators are the library's, drawn as the gaps between cards (above),
+`role="separator"` with `aria-orientation` and a "Resize pane" label.
 
 **A pane's content never remounts when the layout changes.** Each pane renders through a portal
 into a host element of its own, and whichever slot holds the pane now adopts the host, so a
@@ -80,7 +109,10 @@ mounts folded and opens; one leaving a sized slot stays as an empty ghost while 
 filling slot cannot fold, so a pane arriving or leaving there lands at once. The library folds
 instantly under reduced motion, inside `MotionConfig reducedMotion="user"`.
 
-**Glass.** Panes paint no ground: they sit on the window's glass, divided only by separators.
+**Glass.** One pane paints no ground of its own: it is `main`, tinted by the vault's Transparency
+(`--glass-view`). In split view `main` takes the chrome's tint (`--glass-chrome`, the sidebar's
+colour), so the ground reads as one surface with the sidebar and the band, and each card the view's
+(`index.css`, Glass).
 
 **Persistence.** Tabs and panes live for the app's session, per vault; a restart opens on an empty
 pane, as the shell always has. The pane widths a vault last had for two and for three panes are
@@ -111,7 +143,8 @@ Appearance; machine-local, on by default) turns it off.
 - A tab is open once, in one pane. Every opener focuses it where it is.
 - A split never copies the current tab; a move takes it out of its old pane.
 - The active tab follows the document, not the index, when a tab closes or moves.
-- Every workspace function returns the same workspace for a no-op, so a caller can tell.
+- Every workspace function returns the same workspace for a no-op, so a caller can tell. A drop
+  target asks `dropTab` whether a drop would change anything before it takes one.
 - A pane's content renders through its own host, never as a child of a layout slot, or a layout
   change remounts it.
 - `useSessionTabs` remembers the selection it last wrote, so its own writes never open a tab.
@@ -125,12 +158,17 @@ Appearance; machine-local, on by default) turns it off.
   pointer whenever focus changes.
 - Nesting motion-panels groups for any number of panes: closing a middle pane would fold every
   pane after it.
+- A card around a single pane: a frame around the only thing on screen says nothing, and costs the
+  width of its margin.
+- The card's header repeating each tab's title in the strip: the breadcrumb already names the
+  active one, and titled tabs would leave it no room in a third of the window.
 
 ## Code
 
 - `apps/desktop/src/renderer/src/state/tab-descriptor.ts`, `shell-workspace.ts`, `shell-tabs.ts`
 - `apps/desktop/src/renderer/src/components/blocks/app-shell-21/components/app-shell.tsx`,
-  `panes-view.tsx`, `tab-view.tsx`, `tab-look.tsx`, `site-header.tsx`, `use-session-tabs.ts`
+  `panes-view.tsx`, `pane-header.tsx`, `use-tab-drag.ts`, `tab-view.tsx`, `tab-look.tsx`,
+  `site-header.tsx`, `use-session-tabs.ts`
 - `apps/desktop/src/renderer/src/components/ui/motion-panels.tsx`
 - `apps/desktop/src/main/menu.ts`: ⌘W and ⌘⇧W
 - `state/panes.ts` and `state/surfaces.ts` are the earlier shell's workspace; the fresh shell does

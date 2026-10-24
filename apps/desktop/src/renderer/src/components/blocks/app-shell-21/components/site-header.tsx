@@ -27,10 +27,15 @@ import {
 } from "@/components/ui/tooltip"
 import { cn } from "@/lib/cn"
 import type { IconGlyph } from "@/primitives"
+import { useSetAtom } from "jotai"
+import { shellWorkspaceAtom } from "@/state/shell-tabs"
+import { openInSplit } from "@/state/shell-workspace"
+import { useTabDragSource } from "./use-tab-drag"
 import {
   ArrowLeftToLineIcon,
   ArrowRightToLineIcon,
   Columns2Icon,
+  SquareSplitHorizontalIcon,
   EllipsisVerticalIcon,
   FileTextIcon,
   PanelRightCloseIcon,
@@ -95,6 +100,10 @@ export function SiteHeader({
   onReopenTab: () => void
   pane?: PaneControls
 }) {
+  // Split view (pane-header.tsx, use-tab-drag.ts): a tab drags to a pane or
+  // a pane's edge, and its menu opens it in split view.
+  const dragSource = useTabDragSource()
+  const setWorkspace = useSetAtom(shellWorkspaceAtom)
   return (
     // A row, not a landmark: the title band holds it with one pane, each
     // pane's header with several, and the mobile column's header on phones.
@@ -120,6 +129,7 @@ export function SiteHeader({
                       cannot hold another button. */}
                   <div
                     data-tab-key={tab.id}
+                    {...(pane === undefined ? {} : dragSource(tab.id))}
                     className="group/tab relative flex h-full"
                   >
                     <TabsTrigger
@@ -169,6 +179,14 @@ export function SiteHeader({
                   {pane !== undefined ? (
                     <>
                       <ContextMenuSeparator />
+                      <ContextMenuItem
+                        onSelect={() =>
+                          setWorkspace((ws) => openInSplit(ws, tab.id))
+                        }
+                      >
+                        <SquareSplitHorizontalIcon aria-hidden="true" />
+                        Open in split view
+                      </ContextMenuItem>
                       <ContextMenuItem
                         disabled={!pane.canSplit}
                         onSelect={() => pane.onSplitRight(tab.id)}

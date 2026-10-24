@@ -186,6 +186,18 @@
 [data-platform='mac'] main {
   background: color-mix(in oklab, var(--background) var(--glass-view), transparent);
 }
+/* Split view (panes-view.tsx): the area is the window's ground, in the
+ * chrome's colour so it reads as one surface with the sidebar and the band,
+ * and each pane's card takes the view's tint instead. */
+main:has([data-slot='pane-card']) {
+  background: var(--sidebar);
+}
+[data-platform='mac'] main:has([data-slot='pane-card']) {
+  background: color-mix(in oklab, var(--sidebar) var(--glass-chrome), transparent);
+}
+[data-platform='mac'] [data-slot='pane-card'] {
+  background: color-mix(in oklab, var(--background) var(--glass-view), transparent);
+}
 
 /* ══ ASCII wake ════════════════════════════════════════════
  * Bencho's (`components/bencho/ASCIIWake.tsx`). Its ink is Bencho's

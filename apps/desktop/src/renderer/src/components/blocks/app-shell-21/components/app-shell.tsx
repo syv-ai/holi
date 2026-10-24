@@ -59,6 +59,7 @@ import { THREADS } from "./data"
 import type { Move } from "@/lib/tree-actions"
 import { useNewDocument } from "./documents-section"
 import { MobileHeader } from "./mobile-header"
+import { PaneHeader } from "./pane-header"
 import { PanesView } from "./panes-view"
 import { SiteHeader } from "./site-header"
 import { useSidebarApps } from "./sidebar-apps"
@@ -448,10 +449,9 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
         onFocusCapture={() => update((w) => focusPane(w, pane.id))}
         className="flex min-h-0 min-w-0 flex-1 flex-col"
       >
+        {/* Split view: each card carries its own header (pane-header.tsx). */}
         {multi ? (
-          <div className="flex h-11 shrink-0 border-b">
-            {strip(pane, index)}
-          </div>
+          <PaneHeader paneId={pane.id} onNewTab={() => openNewTab(pane.id)} />
         ) : null}
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <TabView

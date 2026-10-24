@@ -92,6 +92,9 @@ vi.mock("@/components/ui/motion-panels", () => ({
   Panel: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   PanelSeparator: () => <div role="separator" />,
 }))
+vi.mock("motion-panels/react", () => ({
+  Separator: () => <div role="separator" />,
+}))
 
 function mount() {
   const store = createStore()
@@ -142,11 +145,88 @@ test("a tab moves to the other pane, and a pane goes with its last tab", async (
   await waitFor(() =>
     expect(within(panes()[1]!).getByRole("tab", { name: /A/ })).toBeTruthy()
   )
-  // Close the right pane's tabs: the pane closes, the left one stays.
+  // The right card's ×: the pane closes, its tabs reopenable, the left one
+  // stays.
   const right = panes()[1]!
-  for (const name of ["Close A", "Close New tab"]) {
-    fireEvent.click(within(right).getByRole("button", { name }))
-  }
+  fireEvent.click(within(right).getByRole("button", { name: "Close pane" }))
   await waitFor(() => expect(panes()).toHaveLength(1))
-  expect(store.get(shellWorkspaceAtom).panes[0]!.tabs).toEqual(["B.md"])
+  const ws = store.get(shellWorkspaceAtom)
+  expect(ws.panes[0]!.tabs).toEqual(["B.md"])
+  expect(ws.closed).toContain("A.md")
+})
+
+test("each card's header names where its tab is", async () => {
+  mount()
+  fireEvent.keyDown(window, { key: "\\", ctrlKey: true })
+  await waitFor(() => expect(panes()).toHaveLength(2))
+  const [left, right] = panes()
+  expect(within(left!).getByRole("navigation").textContent).toContain("B")
+  expect(within(right!).getByRole("navigation").textContent).toContain(
+    "New tab"
+  )
+  expect(document.querySelectorAll("[data-slot=pane-card]")).toHaveLength(2)
+  expect(
+    document.querySelector("[data-slot=pane-card][data-focused]")
+  ).toBeTruthy()
+})
+
+test("a tab's menu opens it in split view", async () => {
+  const store = mount()
+  fireEvent.contextMenu(screen.getByRole("tab", { name: /A/ }))
+  fireEvent.click(
+    await screen.findByRole("menuitem", { name: /Open in split view/ })
+  )
+  await waitFor(() => expect(panes()).toHaveLength(2))
+  const ws = store.get(shellWorkspaceAtom)
+  expect(ws.panes.map((p) => p.tabs)).toEqual([["B.md"], ["A.md"]])
+  expect(ws.focused).toBe(ws.panes[1]!.id)
+})
+
+/** A drag's data, as jsdom has none. */
+function transfer(): DataTransfer {
+  const data = new Map<string, string>()
+  return {
+    get types() {
+      return [...data.keys()]
+    },
+    setData: (type: string, value: string) => void data.set(type, value),
+    getData: (type: string) => data.get(type) ?? "",
+    effectAllowed: "all",
+    dropEffect: "none",
+  } as unknown as DataTransfer
+}
+
+test("dragging a tab onto the right half of the view splits it there", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout"] })
+  const store = mount()
+  const dataTransfer = transfer()
+  const tab = document.querySelector<HTMLElement>("[data-tab-key='A.md']")!
+  fireEvent.dragStart(tab, { dataTransfer })
+  await vi.runAllTimersAsync()
+  vi.useRealTimers()
+  const target = await waitFor(() => {
+    const el = document.querySelector<HTMLElement>("[data-drop-target]")
+    expect(el).toBeTruthy()
+    return el!
+  })
+  // jsdom lays nothing out: a 1000px wide pane, the pointer at 900.
+  target.getBoundingClientRect = () =>
+    ({
+      left: 0,
+      top: 0,
+      width: 1000,
+      height: 600,
+      right: 1000,
+      bottom: 600,
+    }) as DOMRect
+  fireEvent.dragOver(target, { dataTransfer, clientX: 900 })
+  await waitFor(() => expect(target.dataset.dropZone).toBe("right"))
+  fireEvent.drop(target, { dataTransfer, clientX: 900 })
+  await waitFor(() => expect(panes()).toHaveLength(2))
+  const ws = store.get(shellWorkspaceAtom)
+  expect(ws.panes.map((p) => p.tabs)).toEqual([["B.md"], ["A.md"]])
+  // The drag is over: no targets left over the views.
+  await waitFor(() =>
+    expect(document.querySelector("[data-drop-target]")).toBeNull()
+  )
 })

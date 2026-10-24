@@ -5,12 +5,14 @@ import {
   closeOtherTabs,
   closePane,
   closeTab,
+  dropTab,
   emptyWorkspace,
   focusedPane,
   MAX_PANES,
   moveTab,
   openBeside,
   openNewTab,
+  openInSplit,
   openTab,
   reopenClosed,
   retargetTabs,
@@ -164,6 +166,83 @@ describe("panes", () => {
     ws = openTab(ws, B)
     ws = openBeside(focusPaneFirst(ws), C)
     expect(ws.panes[1]!.tabs).toContain(C)
+  })
+})
+
+describe("split view", () => {
+  test("a tab dropped on a pane's edge opens a pane of its own on that side", () => {
+    let ws = withTabs(A, B)
+    const only = ws.panes[0]!.id
+    ws = dropTab(ws, A, only, "right")
+    expect(ws.panes.map((p) => p.tabs)).toEqual([[B], [A]])
+    expect(ws.focused).toBe(ws.panes[1]!.id)
+    expect(shares(ws)).toEqual([0.5, 0.5])
+    // On the left edge of the right pane: a third pane between them.
+    ws = openTab(ws, C)
+    ws = dropTab(ws, C, ws.panes[1]!.id, "left")
+    expect(ws.panes.map((p) => p.tabs)).toEqual([[B], [C], [A]])
+    expect(shares(ws)).toEqual([0.5, 0.25, 0.25])
+  })
+
+  test("a tab dropped in a pane's middle moves into it", () => {
+    let ws = splitRight(withTabs(A, B), undefined, B)
+    const [left, right] = ws.panes
+    ws = dropTab(ws, A, right!.id, "center")
+    // The left pane, emptied, goes; its share with it.
+    expect(ws.panes.map((p) => p.tabs)).toEqual([[B, A]])
+    expect(ws.panes[0]!.id).toBe(right!.id)
+    expect(left).toBeDefined()
+  })
+
+  test("at MAX_PANES an edge drop moves into the pane instead", () => {
+    let ws = withTabs(A, B, C)
+    ws = splitRight(ws, ws.focused, C)
+    ws = splitRight(ws, ws.focused, undefined)
+    expect(ws.panes).toHaveLength(MAX_PANES)
+    ws = dropTab(ws, A, ws.panes[2]!.id, "right")
+    expect(ws.panes).toHaveLength(MAX_PANES)
+    expect(ws.panes[2]!.tabs).toContain(A)
+  })
+
+  test("a drop that changes nothing is the same workspace", () => {
+    const ws = withTabs(A, B)
+    const only = ws.panes[0]!.id
+    expect(dropTab(ws, A, only, "center")).toBe(ws)
+    const sole = withTabs(A)
+    expect(dropTab(sole, A, sole.panes[0]!.id, "right")).toBe(sole)
+    expect(dropTab(ws, "Notes/Nope.md", only, "right")).toBe(ws)
+  })
+
+  test("open in split view moves a tab right, splitting while there is room", () => {
+    let ws = withTabs(A, B)
+    ws = openInSplit(ws, A)
+    expect(ws.panes.map((p) => p.tabs)).toEqual([[B], [A]])
+    // Already split: into the pane on the right.
+    ws = openTab(focusPaneFirst(ws), C)
+    ws = openInSplit(ws, C)
+    expect(ws.panes.map((p) => p.tabs)).toEqual([[B], [A, C]])
+    expect(focusedPane(ws).active).toBe(C)
+  })
+
+  test("open in split view on a pane's only tab leaves a New tab behind", () => {
+    const ws = openInSplit(withTabs(A), A)
+    expect(ws.panes).toHaveLength(2)
+    expect(ws.panes[1]!.tabs).toEqual([A])
+    expect(ws.panes[0]!.tabs).toHaveLength(1)
+    expect(ws.panes[0]!.tabs[0]).toMatch(/^holi:new:/)
+    expect(ws.focused).toBe(ws.panes[1]!.id)
+  })
+
+  test("open in split view from the last of MAX_PANES goes left", () => {
+    let ws = withTabs(A, B, C)
+    ws = splitRight(ws, ws.focused, C)
+    ws = splitRight(ws, ws.focused)
+    const last = ws.panes[2]!
+    ws = openTab(ws, S)
+    expect(ws.panes[2]!.tabs).toContain(S)
+    ws = openInSplit(ws, S)
+    expect(ws.panes[1]!.tabs).toContain(S)
+    expect(last).toBeDefined()
   })
 })
 

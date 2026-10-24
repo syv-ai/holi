@@ -445,3 +445,84 @@ export function closeTabsWhere(
   }
   return dropEmptyPanes(next)
 }
+
+// ------------------------------------------------------------------ split view
+
+/** Where a tab dropped on a pane goes: beside it, or into it. */
+export type DropZone = "left" | "right" | "center"
+
+/** A new pane holding `key` on `side` of `paneId`, focused, taking half that
+ *  pane's share; `key` leaves the pane it was in. */
+function insertPaneWith(
+  ws: ShellWorkspace,
+  paneId: string,
+  side: "left" | "right",
+  key: string
+): ShellWorkspace {
+  const at = ws.panes.findIndex((p) => p.id === paneId)
+  const target = ws.panes[at]!
+  const seq = ws.seq + 1
+  const id = `pane-${seq}`
+  const half = target.share / 2
+  const fresh: ShellPane = { id, tabs: [key], active: key, share: half }
+  const holder = paneOf(ws, key)
+  const panes = ws.panes.map((p) => {
+    const left = holder !== null && p.id === holder.id ? withoutTab(p, key) : p
+    return p.id === paneId ? { ...left, share: half } : left
+  })
+  panes.splice(side === "left" ? at : at + 1, 0, fresh)
+  return dropEmptyPanes({ ...ws, panes, focused: id, seq }, id)
+}
+
+/**
+ * A tab dropped on a pane (docs/features/tabs-panes.md, Split view): on its
+ * left or right edge it opens a pane of its own on that side, while there is
+ * room; in its middle, or at `MAX_PANES`, it moves into that pane. A drop
+ * that would change nothing (a pane's only tab dropped beside itself, a tab
+ * dropped into its own pane) returns the same workspace, which is how a drop
+ * target tells whether to take the drop.
+ */
+export function dropTab(
+  ws: ShellWorkspace,
+  key: string,
+  paneId: string,
+  zone: DropZone
+): ShellWorkspace {
+  const target = ws.panes.find((p) => p.id === paneId)
+  const holder = paneOf(ws, key)
+  if (target === undefined || holder === null) return ws
+  const split = zone !== "center" && ws.panes.length < MAX_PANES
+  if (!split) {
+    return holder.id === target.id ? ws : moveTab(ws, key, target.id)
+  }
+  if (holder.id === target.id && holder.tabs.length === 1) return ws
+  return insertPaneWith(ws, target.id, zone as "left" | "right", key)
+}
+
+/**
+ * Open in split view: `key` goes beside the pane it is in, into the pane on
+ * its right, else a new pane there while there is room, else the pane on its
+ * left. A pane's only tab leaves a New tab behind, so the split has two sides.
+ * A tab not open yet opens beside the focused pane.
+ */
+export function openInSplit(ws: ShellWorkspace, key: string): ShellWorkspace {
+  const holder = paneOf(ws, key)
+  if (holder === null) return openBeside(ws, key)
+  const right = paneBeside(ws, holder.id, "right")
+  if (right !== null) return moveTab(ws, key, right.id)
+  if (ws.panes.length < MAX_PANES) {
+    if (holder.tabs.length > 1) {
+      return insertPaneWith(ws, holder.id, "right", key)
+    }
+    // Its only tab: a New tab takes its place, and it moves right.
+    const blank = tabKey({ kind: "new", n: ws.seq + 1 })
+    const seeded = withPane({ ...ws, seq: ws.seq + 1 }, holder.id, (p) => ({
+      ...p,
+      tabs: [blank, key],
+      active: blank,
+    }))
+    return insertPaneWith(seeded, holder.id, "right", key)
+  }
+  const left = paneBeside(ws, holder.id, "left")
+  return left === null ? ws : moveTab(ws, key, left.id)
+}
