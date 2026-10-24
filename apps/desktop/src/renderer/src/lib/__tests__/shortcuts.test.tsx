@@ -180,7 +180,9 @@ describe('split view keys', () => {
 
   test('⌃⌥ arrows step the members, leaving ⌥⌘← to the files', () => {
     expect(idOf(ev({ ctrlKey: true, altKey: true, key: 'ArrowRight' }), ctx())).toBe('split.next')
-    expect(idOf(ev({ ctrlKey: true, altKey: true, key: 'ArrowLeft' }), ctx())).toBe('split.previous')
+    expect(idOf(ev({ ctrlKey: true, altKey: true, key: 'ArrowLeft' }), ctx())).toBe(
+      'split.previous',
+    )
     expect(idOf(ev({ metaKey: true, altKey: true, key: 'ArrowLeft' }), ctx())).toBe(
       'files.collapseAll',
     )
@@ -241,5 +243,20 @@ describe('the dialog', () => {
     expect(screen.getByText('Drag it to an edge or between two views')).toBeInTheDocument()
     expect(screen.getByText('Drag it from the pill to the tabs')).toBeInTheDocument()
     delete document.documentElement.dataset.platform
+  })
+})
+
+describe('the panel keys', () => {
+  test('⌃` fires from inside a terminal, where other Control keys do not', () => {
+    const toggle = ev({ key: '`', code: 'Backquote', ctrlKey: true })
+    expect(idOf(toggle, ctx({ target: 'terminal' }))).toBe('panel.terminal')
+    expect(idOf(toggle, ctx({ target: 'text' }))).toBe('panel.terminal')
+    expect(idOf(ev({ key: 'Tab', ctrlKey: true }), ctx({ target: 'terminal' }))).toBeNull()
+  })
+
+  test('⇧⌘U opens Output, and on a Mac ⌘` is left to macOS', () => {
+    expect(idOf(ev({ key: 'U', metaKey: true, shiftKey: true }), ctx())).toBe('panel.output')
+    expect(idOf(ev({ key: '`', metaKey: true }), ctx())).toBeNull()
+    expect(idOf(ev({ key: '`', ctrlKey: true }), ctx({ mac: false }))).toBe('panel.terminal')
   })
 })

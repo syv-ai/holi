@@ -443,6 +443,20 @@ export interface AgentsSlot {
   conversation?: ComponentType<{ conversationId: string; live: boolean; title: string }>
 }
 
+/**
+ * An item of the status bar at the foot of the main column
+ * (docs/features/status-bar.md). Its `Component` draws itself, usually as a
+ * `StatusBarItem`, and renders nothing when it has nothing true to say.
+ * Left items follow core's sync items, right items come before core's
+ * Terminal and Output toggles; within a side, lower `order` first.
+ */
+export interface StatusItem {
+  id: string
+  side: 'left' | 'right'
+  order?: number
+  Component: ComponentType
+}
+
 export interface RendererPlugin {
   info: PluginInfo
   /** Handlers for the plugin's events, by name. Subscribed at boot for every
@@ -477,6 +491,8 @@ export interface RendererPlugin {
   sidebarSection?: ComponentType
   /** Right-hand drawers; each decides whether it is open. */
   drawers?: readonly ComponentType[]
+  /** Its items in the status bar (`StatusItem`). */
+  statusItems?: readonly StatusItem[]
   /**
    * Why leaving the open vault (switching, or adding one) costs something
    * now, as a sentence, or null when it costs nothing. Core asks before

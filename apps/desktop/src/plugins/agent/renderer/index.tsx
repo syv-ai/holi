@@ -31,6 +31,7 @@ import {
 } from './state/sessions'
 import { openSessionAtom, showAgentsAtom } from './state/send'
 import { TurnReview } from './TurnReview'
+import { AgentStatusItem } from './sessions/AgentStatusItem'
 
 /**
  * Each terminal's tab, in Holi's names so a tab and its sidebar row agree. A
@@ -109,6 +110,7 @@ export const agentRenderer: RendererPlugin = {
     tabLook: sessionTabLookAtom,
   },
   drawers: [TurnReview],
+  statusItems: [{ id: 'sessions', side: 'right', order: 10, Component: AgentStatusItem }],
   leaveGuard: agentLeaveGuardAtom,
   // The agent's terminals and the session list's turn ends while the vault
   // is open.

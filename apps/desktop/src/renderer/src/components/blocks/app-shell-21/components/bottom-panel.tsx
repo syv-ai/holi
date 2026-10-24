@@ -1,0 +1,463 @@
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type PointerEvent,
+} from "react"
+import { useAtom, useAtomValue, useSetAtom } from "jotai"
+import {
+  CopyIcon,
+  EraserIcon,
+  Maximize2Icon,
+  Minimize2Icon,
+  PlusIcon,
+  Trash2Icon,
+  XIcon,
+} from "lucide-react"
+import { toast } from "sonner"
+
+import { Button } from "@/components/ui/button"
+import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyTitle,
+} from "@/components/ui/empty"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
+import { cn } from "@/lib/cn"
+import {
+  ACTIVITY_FILTERS,
+  activityEntriesAtom,
+  activityFilterAtom,
+  clearActivityAtom,
+  entryText,
+  filterEntries,
+  type ActivityFilter,
+} from "@/state/activity"
+import {
+  bottomPanelAtom,
+  clampPanelHeight,
+  PANEL_DEFAULT_HEIGHT,
+  PANEL_MIN_HEIGHT,
+  readPanelHeight,
+  togglePanelAtom,
+  writePanelHeight,
+  type PanelTab,
+} from "@/state/bottom-panel"
+import {
+  activePanelTerminalAtom,
+  createPanelTerminalAtom,
+  killPanelTerminalAtom,
+  panelTerminalErrorAtom,
+  panelTerminalsAtom,
+} from "@/state/panel-terminals"
+import { useShortcutHandlers } from "@/state/shortcuts"
+import { activeRemoteAtom } from "@/state/vaults"
+
+import { PanelOutput } from "./panel-output"
+import { PanelTerminal } from "./panel-terminal"
+
+/**
+ * The bottom panel (docs/features/status-bar.md), VS Code's Panel: under every
+ * view and split, above the status bar, with a Terminal and an Output tab.
+ *
+ * Its top edge is the resize handle, drawn like the split view's (a hairline,
+ * a wider hit area, the ring on hover and drag), with the arrow keys and a
+ * double-click back to the default height. The height is this machine's.
+ *
+ * Mounted from the shell's first render, so ⌃` and ⇧⌘U are live, but drawn
+ * only once it has been opened; after that a closed panel is hidden, never
+ * unmounted, so the shells' scrollback and the Output's place survive.
+ */
+
+/** One arrow press, and with Shift. */
+const KEY_STEP = 16
+const KEY_STEP_LARGE = 64
+
+export function BottomPanel({ onRetryOutput }: { onRetryOutput: () => void }) {
+  const [panel, setPanel] = useAtom(bottomPanelAtom)
+  const toggle = useSetAtom(togglePanelAtom)
+  const [height, setHeight] = useState(readPanelHeight)
+  const [resizing, setResizing] = useState(false)
+  const [everOpen, setEverOpen] = useState(panel.open)
+  /** The column's height, which bounds the panel's. */
+  const [available, setAvailable] = useState(0)
+  const rootRef = useRef<HTMLDivElement | null>(null)
+  const drag = useRef<{ y: number; height: number } | null>(null)
+
+  useShortcutHandlers({
+    "panel.terminal": () => toggle("terminal"),
+    "panel.output": () => toggle("output"),
+  })
+
+  useEffect(() => {
+    if (panel.open) setEverOpen(true)
+  }, [panel.open])
+
+  // The column it sits in: its height bounds the panel's.
+  useLayoutEffect(() => {
+    const column = rootRef.current?.parentElement
+    if (!column) return
+    const measure = () => setAvailable(column.clientHeight)
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(column)
+    return () => observer.disconnect()
+  }, [everOpen])
+
+  const shown = available > 0 ? clampPanelHeight(height, available) : height
+
+  function commit(next: number) {
+    const clamped =
+      available > 0
+        ? clampPanelHeight(next, available)
+        : Math.max(PANEL_MIN_HEIGHT, next)
+    setHeight(clamped)
+    writePanelHeight(clamped)
+  }
+
+  function onPointerDown(e: PointerEvent<HTMLDivElement>) {
+    if (e.button !== 0) return
+    e.currentTarget.setPointerCapture(e.pointerId)
+    drag.current = { y: e.clientY, height: shown }
+    setResizing(true)
+  }
+  function onPointerMove(e: PointerEvent<HTMLDivElement>) {
+    const start = drag.current
+    if (start === null) return
+    // Dragging up makes it taller.
+    const next = start.height + (start.y - e.clientY)
+    setHeight(available > 0 ? clampPanelHeight(next, available) : next)
+  }
+  function onPointerUp(e: PointerEvent<HTMLDivElement>) {
+    if (drag.current === null) return
+    drag.current = null
+    setResizing(false)
+    e.currentTarget.releasePointerCapture(e.pointerId)
+    commit(height)
+  }
+  function onKeyDown(e: KeyboardEvent<HTMLDivElement>) {
+    const step = e.shiftKey ? KEY_STEP_LARGE : KEY_STEP
+    const keys: Record<string, number> = {
+      ArrowUp: shown + step,
+      ArrowDown: shown - step,
+      Home: Number.MAX_SAFE_INTEGER,
+      End: PANEL_MIN_HEIGHT,
+    }
+    const next = keys[e.key]
+    if (next === undefined) return
+    e.preventDefault()
+    commit(next)
+  }
+
+  if (!everOpen) return <div ref={rootRef} hidden />
+
+  const max =
+    available > 0
+      ? clampPanelHeight(Number.MAX_SAFE_INTEGER, available)
+      : undefined
+
+  return (
+    <div
+      ref={rootRef}
+      data-bottom-panel
+      data-glass-ground
+      hidden={!panel.open}
+      style={panel.maximized ? undefined : { height: shown }}
+      className={cn(
+        "bg-background relative flex min-h-0 shrink-0 flex-col",
+        panel.maximized && "flex-1"
+      )}
+    >
+      {/* The top edge: a hairline that is the resize handle. */}
+      {panel.maximized ? (
+        <div className="bg-border h-px shrink-0" />
+      ) : (
+        <div
+          role="separator"
+          aria-orientation="horizontal"
+          aria-label="Resize panel"
+          aria-valuenow={shown}
+          aria-valuemin={PANEL_MIN_HEIGHT}
+          aria-valuemax={max}
+          tabIndex={0}
+          data-resizing={resizing || undefined}
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={onPointerUp}
+          onPointerCancel={onPointerUp}
+          onDoubleClick={() => commit(PANEL_DEFAULT_HEIGHT)}
+          onKeyDown={onKeyDown}
+          className="bg-border hover:bg-ring focus-visible:bg-ring data-resizing:bg-ring relative z-10 h-px shrink-0 cursor-row-resize outline-hidden transition-colors after:absolute after:inset-x-0 after:-inset-y-1 after:content-['']"
+        />
+      )}
+      <PanelHeader
+        tab={panel.tab}
+        onTab={(tab) => setPanel((p) => ({ ...p, tab }))}
+        maximized={panel.maximized}
+        onMaximize={() => setPanel((p) => ({ ...p, maximized: !p.maximized }))}
+        onClose={() =>
+          setPanel((p) => ({ ...p, open: false, maximized: false }))
+        }
+      />
+      <div className="flex min-h-0 flex-1 flex-col">
+        <TerminalTab visible={panel.open && panel.tab === "terminal"} />
+        <div
+          className={cn(
+            "flex min-h-0 flex-1 flex-col",
+            panel.tab !== "output" && "hidden"
+          )}
+        >
+          <PanelOutput
+            visible={panel.open && panel.tab === "output"}
+            onRetry={onRetryOutput}
+          />
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/** A compact icon button with its tooltip. */
+function HeaderButton({
+  label,
+  onClick,
+  disabled,
+  children,
+}: {
+  label: string
+  onClick: () => void
+  disabled?: boolean
+  children: React.ReactNode
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          aria-label={label}
+          disabled={disabled}
+          onClick={onClick}
+          className="text-muted-foreground"
+        >
+          {children}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent side="top">{label}</TooltipContent>
+    </Tooltip>
+  )
+}
+
+function PanelHeader({
+  tab,
+  onTab,
+  maximized,
+  onMaximize,
+  onClose,
+}: {
+  tab: PanelTab
+  onTab: (tab: PanelTab) => void
+  maximized: boolean
+  onMaximize: () => void
+  onClose: () => void
+}) {
+  return (
+    <div className="flex h-9 shrink-0 items-center gap-2 border-b ps-2 pe-1.5">
+      <Tabs value={tab} onValueChange={(v) => onTab(v as PanelTab)}>
+        <TabsList variant="line">
+          <TabsTrigger value="terminal" className="text-xs">
+            Terminal
+          </TabsTrigger>
+          <TabsTrigger value="output" className="text-xs">
+            Output
+          </TabsTrigger>
+        </TabsList>
+      </Tabs>
+      <div className="flex-1" />
+      <div className="flex items-center gap-1">
+        {tab === "terminal" ? <TerminalControls /> : <OutputControls />}
+        <div className="bg-border mx-1 h-4 w-px" aria-hidden />
+        <HeaderButton
+          label={maximized ? "Restore panel size" : "Maximize panel"}
+          onClick={onMaximize}
+        >
+          {maximized ? (
+            <Minimize2Icon aria-hidden className="size-3.5" />
+          ) : (
+            <Maximize2Icon aria-hidden className="size-3.5" />
+          )}
+        </HeaderButton>
+        <HeaderButton label="Close panel" onClick={onClose}>
+          <XIcon aria-hidden className="size-3.5" />
+        </HeaderButton>
+      </div>
+    </div>
+  )
+}
+
+function TerminalControls() {
+  const terminals = useAtomValue(panelTerminalsAtom)
+  const [active, setActive] = useAtom(activePanelTerminalAtom)
+  const create = useSetAtom(createPanelTerminalAtom)
+  const kill = useSetAtom(killPanelTerminalAtom)
+  const remote = useAtomValue(activeRemoteAtom)
+  return (
+    <>
+      {terminals.length > 0 ? (
+        <Select value={active ?? undefined} onValueChange={setActive}>
+          <SelectTrigger size="sm" aria-label="Terminal" className="text-xs">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {terminals.map((t) => (
+              <SelectItem key={t.id} value={t.id} className="text-xs">
+                {t.exitCode === null ? t.title : `${t.title} (exited)`}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      ) : null}
+      <HeaderButton
+        label="New terminal"
+        disabled={remote === null}
+        onClick={() => void create()}
+      >
+        <PlusIcon aria-hidden className="size-3.5" />
+      </HeaderButton>
+      <HeaderButton
+        label="Kill terminal"
+        disabled={active === null}
+        onClick={() => {
+          if (active !== null) void kill(active)
+        }}
+      >
+        <Trash2Icon aria-hidden className="size-3.5" />
+      </HeaderButton>
+    </>
+  )
+}
+
+function OutputControls() {
+  const [filter, setFilter] = useAtom(activityFilterAtom)
+  const entries = useAtomValue(activityEntriesAtom)
+  const clear = useSetAtom(clearActivityAtom)
+  const shown = filterEntries(entries, filter)
+  return (
+    <>
+      <Select
+        value={filter}
+        onValueChange={(v) => setFilter(v as ActivityFilter)}
+      >
+        <SelectTrigger size="sm" aria-label="Channel" className="text-xs">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {ACTIVITY_FILTERS.map((f) => (
+            <SelectItem key={f.value} value={f.value} className="text-xs">
+              {f.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      <HeaderButton
+        label="Copy output"
+        disabled={shown.length === 0}
+        onClick={() => {
+          void navigator.clipboard
+            .writeText(shown.map(entryText).join("\n"))
+            .then(() => toast.success("Output copied"))
+            .catch(() => toast.error("Could not copy the output"))
+        }}
+      >
+        <CopyIcon aria-hidden className="size-3.5" />
+      </HeaderButton>
+      <HeaderButton
+        label="Clear output"
+        disabled={entries.length === 0}
+        onClick={() => void clear()}
+      >
+        <EraserIcon aria-hidden className="size-3.5" />
+      </HeaderButton>
+    </>
+  )
+}
+
+/** The Terminal tab: every shell, the one in front shown. The first show
+ *  with none opens one, as VS Code does. */
+function TerminalTab({ visible }: { visible: boolean }) {
+  const terminals = useAtomValue(panelTerminalsAtom)
+  const active = useAtomValue(activePanelTerminalAtom)
+  const error = useAtomValue(panelTerminalErrorAtom)
+  const remote = useAtomValue(activeRemoteAtom)
+  const create = useSetAtom(createPanelTerminalAtom)
+  const [starting, setStarting] = useState(false)
+
+  useEffect(() => {
+    if (!visible || remote === null || terminals.length > 0) return
+    if (error !== null || starting) return
+    setStarting(true)
+    void create().finally(() => setStarting(false))
+  }, [visible, remote, terminals.length, error, starting, create])
+
+  return (
+    <div className={cn("flex min-h-0 flex-1 flex-col", !visible && "hidden")}>
+      {terminals.map((t) => (
+        <PanelTerminal
+          key={t.id}
+          id={t.id}
+          visible={visible && t.id === active}
+        />
+      ))}
+      {terminals.length > 0 ? null : remote === null ? (
+        <Empty className="min-h-0 flex-1 gap-3 p-4">
+          <EmptyHeader>
+            <EmptyTitle className="text-sm">No vault is open</EmptyTitle>
+            <EmptyDescription className="text-xs">
+              A terminal starts in the open vault&apos;s folder.
+            </EmptyDescription>
+          </EmptyHeader>
+        </Empty>
+      ) : error !== null ? (
+        <Empty role="alert" className="min-h-0 flex-1 gap-3 p-4">
+          <EmptyHeader>
+            <EmptyTitle className="text-sm">
+              The terminal did not start
+            </EmptyTitle>
+            <EmptyDescription className="text-xs">{error}</EmptyDescription>
+          </EmptyHeader>
+          <EmptyContent>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => void create()}
+            >
+              Retry
+            </Button>
+          </EmptyContent>
+        </Empty>
+      ) : (
+        <div role="status" className="text-muted-foreground px-4 py-3 text-xs">
+          Starting a shell…
+        </div>
+      )}
+    </div>
+  )
+}

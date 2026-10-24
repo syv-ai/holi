@@ -13,12 +13,14 @@
  */
 import { matchShortcutKey } from './hotkey'
 
-export type ShortcutGroup = 'Navigation' | 'Tabs' | 'Split view' | 'Files' | 'Apps' | 'Help'
+export type ShortcutGroup =
+  'Navigation' | 'Tabs' | 'Split view' | 'Panel' | 'Files' | 'Apps' | 'Help'
 
 export const SHORTCUT_GROUPS: readonly ShortcutGroup[] = [
   'Navigation',
   'Tabs',
   'Split view',
+  'Panel',
   'Files',
   'Apps',
   'Help',
@@ -38,6 +40,9 @@ export interface Shortcut {
    *  never a key the focused widget handled). Off for a plain key like `?`,
    *  and for keys a field uses itself. */
   whileTyping?: true
+  /** Fires in a terminal even with Control held: the panel's own toggle,
+   *  which has to close the panel from inside the shell it shows. */
+  inTerminal?: true
   /** Fires while a dialog is open: the toggles for the dialogs themselves. */
   inDialogs?: true
   /** Fires on auto-repeat, for keys that step (next tab). */
@@ -242,6 +247,24 @@ export const SHORTCUTS: readonly Shortcut[] = [
     liveWith: 'pane.split',
   },
 
+  // Panel (docs/features/status-bar.md): VS Code's keys. ⌃` is the one
+  // Control key that fires in a terminal, so the panel closes from inside it.
+  {
+    id: 'panel.terminal',
+    label: 'Toggle terminal',
+    group: 'Panel',
+    keys: ['⌃`'],
+    whileTyping: true,
+    inTerminal: true,
+  },
+  {
+    id: 'panel.output',
+    label: 'Show output',
+    group: 'Panel',
+    keys: ['⇧⌘U'],
+    whileTyping: true,
+  },
+
   // Files
   {
     id: 'document.new',
@@ -356,7 +379,7 @@ export function resolveShortcut(
     if (e.repeat && shortcut.repeats === undefined) return null
     if (ctx.dialogOpen && shortcut.inDialogs === undefined) return null
     if (ctx.target !== 'page' && shortcut.whileTyping === undefined) return null
-    if (ctx.target === 'terminal' && e.ctrlKey) return null
+    if (ctx.target === 'terminal' && e.ctrlKey && shortcut.inTerminal === undefined) return null
     return { shortcut, index }
   }
   return null

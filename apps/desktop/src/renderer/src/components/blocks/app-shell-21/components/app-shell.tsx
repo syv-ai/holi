@@ -74,6 +74,11 @@ import { useShellShortcuts } from "./use-shell-shortcuts"
 import { useClaudeFirstRun } from "./use-claude-first-run"
 import { useShortcutDispatcher } from "@/state/shortcuts"
 import { ThreadSidebar } from "./thread-sidebar"
+// The status bar and the bottom panel (docs/features/status-bar.md).
+import { BottomPanel } from "./bottom-panel"
+import { StatusBar } from "./status-bar"
+import { useActivityLog } from "@/state/activity"
+import { usePanelTerminals } from "@/state/panel-terminals"
 import { leadWidth, TitleBar } from "./title-bar"
 
 /** Expanded width in pixels, and the drag point below which the rail takes over. */
@@ -358,6 +363,10 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
   }
 
   useShortcutDispatcher()
+  // The activity log and the panel's shells are followed from here, for the
+  // window's life, so the Output collects while the panel is closed.
+  const retryActivity = useActivityLog()
+  usePanelTerminals()
   useClaudeFirstRun(handleSelectThread)
   useShellShortcuts({
     // Split tabs: the keys step over strip entries, and ⌘W closes the view
@@ -491,22 +500,30 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
           agent's turn review, the Holis' dialogs), each deciding whether it
           is open, as the old shell mounted them. */}
       <div className="flex min-h-0 flex-1">
-        <main className="flex min-h-0 min-w-0 flex-1 flex-col">
-          {isMobile ? (
-            memberBody(activeThreadId ?? NO_TAB)
-          ) : (
-            <PanesView
-              entryId={ws.active}
-              members={members}
-              renderMember={memberBody}
-              onShareChange={resizeMember}
-            />
-          )}
-        </main>
+        {/* The views, then the bottom panel under all of them: one column,
+            so the panel spans every split and stays put across tabs. */}
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          <main className="flex min-h-0 min-w-0 flex-1 flex-col">
+            {isMobile ? (
+              memberBody(activeThreadId ?? NO_TAB)
+            ) : (
+              <PanesView
+                entryId={ws.active}
+                members={members}
+                renderMember={memberBody}
+                onShareChange={resizeMember}
+              />
+            )}
+          </main>
+          {isMobile ? null : <BottomPanel onRetryOutput={retryActivity} />}
+        </div>
         {running.flatMap(({ info, drawers = [] }) =>
           drawers.map((Drawer, i) => <Drawer key={`${info.id}:${i}`} />)
         )}
       </div>
+      {/* The status bar: the column's foot, under the drawers too, on
+          desktop only. */}
+      {isMobile ? null : <StatusBar />}
     </div>
   )
 
