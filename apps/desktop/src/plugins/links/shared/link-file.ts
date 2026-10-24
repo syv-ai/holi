@@ -60,9 +60,15 @@ export function linkName(title: string): string {
     .replace(/\.local(?=\.|\s|$)/gi, ' ')
     .replace(/\s+/g, ' ')
     .trim()
-    .slice(0, NAME_MAX)
-    .replace(/^[.\s]+|[.\s]+$/g, '')
-  return name === '' ? 'link' : name
+  // Cut at the last whole word that fits, then drop what is left dangling
+  // at either end: dots, and the separators a page title strings its parts
+  // with (`·`, `-`, `–`, `—`, `,`), so "… · Pull Request 189 ·" ends at 189.
+  const cut =
+    name.length <= NAME_MAX
+      ? name
+      : name.slice(0, NAME_MAX + 1).replace(/\s+\S*$/, '') || name.slice(0, NAME_MAX)
+  const tidy = cut.replace(/^[.\s·•\-–—,|]+|[.\s·•\-–—,|]+$/g, '')
+  return tidy === '' ? 'link' : tidy
 }
 
 /** The path for a new link titled `title` in `folder` ('' = the vault root).

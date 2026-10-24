@@ -34,6 +34,14 @@ describe('linkFilePath', () => {
     expect(linkFilePath('', long, 2).endsWith(' 2.md')).toBe(true)
   })
 
+  it('cuts a long title at a word, without a dangling separator', () => {
+    const title =
+      'Browse and edit Claude auto-memory from Dash by FabianScott · Pull Request #189 · syv-ai/dash'
+    expect(linkFilePath('', title)).toBe(
+      'link.Browse and edit Claude auto-memory from Dash by FabianScott · Pull Request 189.md',
+    )
+  })
+
   it('never names a link local by its title', () => {
     expect(linkFilePath('', 'notes.local')).toBe('link.notes.md')
     expect(linkFilePath('', 'a.local.b')).toBe('link.a .b.md')

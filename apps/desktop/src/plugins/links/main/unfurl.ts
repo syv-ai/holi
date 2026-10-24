@@ -13,6 +13,7 @@
  */
 import { lookup } from 'node:dns/promises'
 import { BlockList, isIP } from 'node:net'
+import { decodeHTML } from 'entities'
 import { Parser } from 'htmlparser2'
 import { hostOf, isWebUrl, type LinkPreview } from '../shared/preview'
 
@@ -69,7 +70,10 @@ export function parseHead(html: string, url: string): Omit<LinkPreview, 'url'> {
     }
   }
   const text = (s: string | undefined): string | undefined => {
-    const t = s?.replace(/\s+/g, ' ').trim()
+    // Some sites (GitHub's descriptions) escape their text twice, so one
+    // decoding still reads `&#39;`: decode what is left once more.
+    const decoded = s !== undefined && /&(#\d+|#x[\da-f]+|[a-z]+\d*);/i.test(s) ? decodeHTML(s) : s
+    const t = decoded?.replace(/\s+/g, ' ').trim()
     return t === undefined || t === '' ? undefined : t
   }
   const found = {

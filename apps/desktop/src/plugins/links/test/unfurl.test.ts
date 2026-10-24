@@ -35,6 +35,12 @@ describe('parseHead', () => {
     })
   })
 
+  it('reads text a site escaped twice', () => {
+    const html =
+      '<meta property="og:description" content="A project&amp;#39;s &amp;quot;…&amp;quot; menu">'
+    expect(parseHead(html, 'https://github.com/').description).toBe('A project\'s "…" menu')
+  })
+
   it('leaves out an image that is not a web address', () => {
     const html = '<meta property="og:image" content="javascript:alert(1)">'
     expect(parseHead(html, 'https://example.com/').image).toBeUndefined()

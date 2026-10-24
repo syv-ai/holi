@@ -20,6 +20,7 @@ import {
 import { hostOf, isWebUrl } from '../shared/preview'
 import { linkHeader } from './header'
 import { PreviewCard } from './PreviewCard'
+import { UrlField } from './UrlField'
 import { linksCap } from './use-preview'
 
 /** The vault's link files, by path. */
@@ -81,7 +82,8 @@ export const LINK_PATH_CLAIM: PathClaim = {
     }),
     extensions: (path) => linkHeader(path),
   },
-  frontmatter: { fields: LINK_FIELDS, alwaysOpen: true },
+  // The address in full, wrapping, where a one-line field would cut it off.
+  frontmatter: { fields: LINK_FIELDS, controls: { url: UrlField }, alwaysOpen: true },
 }
 
 const LINK_MARK: PathMark = { glyph: <Icon icon={Link} size="sm" tone="muted" /> }

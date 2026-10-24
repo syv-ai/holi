@@ -11,7 +11,7 @@
 import { useState } from 'react'
 import { ArrowUpRight, Globe } from 'lucide-react'
 import { cn } from '@/plugin-api'
-import { Button, Icon } from '@/primitives'
+import { Icon } from '@/primitives'
 import { hostOf, type LinkPreview } from '../shared/preview'
 import { usePreview } from './use-preview'
 
@@ -74,10 +74,13 @@ function Waiting() {
 }
 
 /**
- * `url`'s card, image above, inset within the card. `floating` is a hover's,
- * drawn on the surface of the popover it is put in. Otherwise it sits in a
- * page (a link file's tab), wider, on a muted surface of its own, with Open.
- * `title` is what the vault calls it, which wins over what the page says.
+ * `url`'s card, image above, inset within the card. The whole card is the
+ * link: a click anywhere opens the page in the browser, and the card answers
+ * the pointer (a lift of its surface, the image easing in, the arrow
+ * nudging out). `floating` is a hover's, drawn on the surface of the popover
+ * it is put in; otherwise it sits in a page (a link file's tab), centred and
+ * wider, on a muted surface of its own, with the address in full. `title` is
+ * what the vault calls it, which wins over what the page says.
  */
 export function PreviewCard({
   url,
@@ -91,17 +94,29 @@ export function PreviewCard({
   const preview = usePreview(url)
   const heading = title ?? preview?.title ?? hostOf(url)
   return (
-    <div
+    <a
+      href={url}
+      // Holi opens it: the window itself never navigates.
+      onClick={(e) => {
+        e.preventDefault()
+        void window.holi.openExternal(url)
+      }}
+      draggable={false}
       className={cn(
         // The app's face, not the editor's it may sit in.
-        'flex flex-col p-1.5 font-sans',
-        floating ? 'w-[22rem]' : 'max-w-lg rounded-2xl bg-muted/50',
+        'group/card flex cursor-pointer flex-col p-1.5 font-sans no-underline outline-none',
+        'motion-respond active:scale-[0.99] focus-visible:ring-1 focus-visible:ring-ring',
+        floating
+          ? 'w-[22rem] hover:bg-accent/40'
+          : 'mx-auto max-w-lg rounded-2xl bg-muted/50 hover:bg-muted/80',
       )}
     >
-      <Picture
-        src={preview?.image}
-        className="aspect-[1.91/1] w-full rounded-[10px] bg-muted object-cover"
-      />
+      <div className="overflow-hidden rounded-[10px]">
+        <Picture
+          src={preview?.image}
+          className="motion-respond aspect-[1.91/1] w-full bg-muted object-cover group-hover/card:scale-[1.02]"
+        />
+      </div>
       <div className={cn('flex min-w-0 flex-col', floating ? 'px-3 pt-3 pb-3' : 'px-4 pt-4 pb-4')}>
         <div className="flex min-w-0 items-center gap-2">
           <SiteMark icon={preview?.icon} />
@@ -126,23 +141,17 @@ export function PreviewCard({
             </p>
           )
         )}
-        {floating ? (
-          <div className="mt-3 truncate text-xs text-muted-foreground/70">{shownUrl(url)}</div>
-        ) : (
-          <div className="mt-5 flex min-w-0 items-center gap-3">
-            <Button
-              variant="secondary"
-              size="sm"
-              className="pr-3 pl-3.5"
-              onClick={() => void window.holi.openExternal(url)}
-            >
-              Open
-              <Icon icon={ArrowUpRight} size="sm" />
-            </Button>
-            <span className="truncate text-xs text-muted-foreground/70">{shownUrl(url)}</span>
-          </div>
-        )}
+        <div className="mt-3 flex min-w-0 items-start gap-1.5 text-xs text-muted-foreground/70 group-hover/card:text-muted-foreground">
+          <span className={cn('min-w-0', floating ? 'truncate' : 'break-all')}>
+            {floating ? shownUrl(url) : url}
+          </span>
+          <Icon
+            icon={ArrowUpRight}
+            size="sm"
+            className="motion-respond shrink-0 group-hover/card:translate-x-0.5 group-hover/card:-translate-y-0.5"
+          />
+        </div>
       </div>
-    </div>
+    </a>
   )
 }
