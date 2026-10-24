@@ -19,6 +19,11 @@ Ported or adapted:
 - `renderer/ReviewCard.tsx` (after `features/sessions/ui/SessionReview.tsx`)
 - `main/commands.ts` (after `src-tauri/src/skills.rs`'s skill discovery)
 - `shared/chat.ts` (the transcript's item shapes and tool phrasing)
+- `renderer/steps/` (after `AgentTranscript.tsx`'s activity rows, `ToolCall`, `SubagentPanel` and
+  `ActivityThinkingRow`, `features/files/ui/FilePreview.tsx`'s diff rows and
+  `features/sessions/model/taskList.ts`), `renderer/attachments.tsx` (after
+  `features/sessions/model/attachments.ts`)
+- `shared/tool-views.ts` (after `integrations/harness/core/preview.ts`'s tool previews and diff)
 - `main/claude-stream.ts` (after `integrations/harness/providers/claude/claudeProtocol.ts`, its
   `turnMetricsFromResult` included)
 
