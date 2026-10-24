@@ -11,23 +11,29 @@
  * group in place of MonoCode's own box; the choices are the ones Claude Code
  * takes on its command line (`--model`, `--effort`, `--permission-mode`),
  * and the permission choices are its own modes, every one of which still
- * asks; no attachments, since a chat sends text.
+ * asks. `+` attaches: a vault document as an `@` reference, or images and
+ * files from disk; an image can be pasted or dropped too (`attachments.tsx`).
  */
 import { useAtomValue, useSetAtom } from "jotai"
 import {
   ArrowUpIcon,
+  AtSignIcon,
   ChevronDownIcon,
   FolderGit2Icon,
   GitBranchIcon,
+  PaperclipIcon,
+  PlusIcon,
   ShieldCheckIcon,
   SquareIcon,
 } from "lucide-react"
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
+import { toast } from "sonner"
 import { isHiddenPath } from "@holi/shared"
 
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
@@ -73,6 +79,13 @@ import {
   type RankedPath,
   type Token,
 } from "./composer-tokens"
+import {
+  AttachmentTray,
+  MAX_ATTACHMENTS,
+  readAttachment,
+  releaseAttachment,
+  type ComposerFile,
+} from "./attachments"
 import { CommandMenu, MentionMenu } from "./ComposerMenus"
 import {
   branchAtom,
@@ -138,9 +151,14 @@ export function Composer({
   autoFocus,
   error,
   large = false,
+  files = [],
+  onFiles,
 }: {
   value: string
   onChange(value: string): void
+  /** What goes with the message; without `onFiles` nothing can be attached. */
+  files?: readonly ComposerFile[]
+  onFiles?(files: ComposerFile[]): void
   onSend(): void
   /** Stops the turn in flight; without it a busy composer only waits. */
   onStop?(): void
@@ -172,6 +190,54 @@ export function Composer({
   const [active, setActive] = useState(0)
   /** Where the caret goes once a pick has re-rendered the text. */
   const caretAfter = useRef<number | null>(null)
+  const filePicker = useRef<HTMLInputElement | null>(null)
+  const wantsMention = useRef(false)
+  const [dragging, setDragging] = useState(false)
+  const filesRef = useRef(files)
+  filesRef.current = files
+
+  /** Read files in and add them, saying why one could not go. */
+  async function attach(list: readonly File[]) {
+    if (onFiles === undefined || list.length === 0) return
+    const room = MAX_ATTACHMENTS - filesRef.current.length
+    if (room <= 0) {
+      toast.error(`A message can carry ${MAX_ATTACHMENTS} files at most.`)
+      return
+    }
+    const read = await Promise.all(list.slice(0, room).map(readAttachment))
+    const added: ComposerFile[] = []
+    for (const r of read) {
+      if ("error" in r) toast.error(r.error)
+      else added.push(r)
+    }
+    if (list.length > room) {
+      toast.error(`A message can carry ${MAX_ATTACHMENTS} files at most.`)
+    }
+    if (added.length > 0) onFiles([...filesRef.current, ...added])
+  }
+
+  function removeFile(id: string) {
+    if (onFiles === undefined) return
+    const gone = files.find((f) => f.id === id)
+    if (gone !== undefined) releaseAttachment(gone)
+    onFiles(files.filter((f) => f.id !== id))
+  }
+
+  /** `@` at the caret, which opens the vault's documents. */
+  function mentionAtCaret() {
+    const el = ref.current
+    const at = el?.selectionStart ?? value.length
+    const before = value.slice(0, at)
+    const lead = before === "" || /\s$/.test(before) ? "" : " "
+    const next = `${before}${lead}@${value.slice(at)}`
+    const caret = at + lead.length + 1
+    caretAfter.current = caret
+    onChange(next)
+    setMention(mentionTokenAt(next, caret))
+    setSlash(null)
+    setDismissed(null)
+    el?.focus()
+  }
 
   useEffect(() => {
     if (autoFocus) ref.current?.focus()
@@ -254,7 +320,7 @@ export function Composer({
   }
 
   function send() {
-    if (value.trim() === "" || busy) return
+    if ((value.trim() === "" && files.length === 0) || busy) return
     setSlash(null)
     setMention(null)
     onSend()
@@ -302,7 +368,7 @@ export function Composer({
   const pickable = onChoice !== undefined
   const modeLabel =
     PERMISSION_MODES.find((m) => m.value === choice.mode)?.label ?? "Ask first"
-  const canSend = value.trim() !== "" && !busy
+  const canSend = (value.trim() !== "" || files.length > 0) && !busy
   const modelText = choiceLabel(choice, ranModel)
 
   return (
@@ -338,7 +404,30 @@ export function Composer({
         </div>
       ) : null}
 
-      <InputGroup className="bg-background dark:bg-background">
+      <InputGroup
+        className={cn(
+          "bg-background dark:bg-background",
+          dragging && "border-ring ring-ring/50 ring-3"
+        )}
+        onDragOver={(e) => {
+          if (onFiles === undefined || !e.dataTransfer.types.includes("Files"))
+            return
+          e.preventDefault()
+          setDragging(true)
+        }}
+        onDragLeave={(e) => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node | null))
+            setDragging(false)
+        }}
+        onDrop={(e) => {
+          if (onFiles === undefined) return
+          const dropped = [...e.dataTransfer.files]
+          setDragging(false)
+          if (dropped.length === 0) return
+          e.preventDefault()
+          void attach(dropped)
+        }}
+      >
         {/* Where Claude Code works: the vault's clone, on its branch. */}
         <InputGroupAddon align="block-start" className="gap-3">
           <InputGroupText className="text-xs">
@@ -352,6 +441,11 @@ export function Composer({
             </InputGroupText>
           ) : null}
         </InputGroupAddon>
+        {files.length > 0 ? (
+          <InputGroupAddon align="block-start">
+            <AttachmentTray files={files} onRemove={removeFile} />
+          </InputGroupAddon>
+        ) : null}
 
         <InputGroupTextarea
           ref={ref}
@@ -373,9 +467,71 @@ export function Composer({
             setMention(null)
           }}
           onKeyDown={onKeyDown}
+          onPaste={(e) => {
+            if (onFiles === undefined) return
+            const pasted = [...e.clipboardData.files]
+            if (pasted.length === 0) return
+            e.preventDefault()
+            void attach(pasted)
+          }}
         />
 
         <InputGroupAddon align="block-end" className="gap-1">
+          {onFiles !== undefined ? (
+            <>
+              <DropdownMenu>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <DropdownMenuTrigger asChild>
+                      <InputGroupButton size="icon-xs" aria-label="Attach">
+                        <PlusIcon aria-hidden="true" />
+                      </InputGroupButton>
+                    </DropdownMenuTrigger>
+                  </TooltipTrigger>
+                  <TooltipContent>Attach</TooltipContent>
+                </Tooltip>
+                <DropdownMenuContent
+                  align="start"
+                  className="w-56"
+                  onCloseAutoFocus={(e) => {
+                    // Back to the text, with the documents open, not to `+`.
+                    if (!wantsMention.current) return
+                    wantsMention.current = false
+                    e.preventDefault()
+                    mentionAtCaret()
+                  }}
+                >
+                  <DropdownMenuItem
+                    onSelect={() => {
+                      wantsMention.current = true
+                    }}
+                  >
+                    <AtSignIcon aria-hidden="true" />A vault document
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onSelect={() => filePicker.current?.click()}
+                  >
+                    <PaperclipIcon aria-hidden="true" />
+                    Images or files from disk…
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+              <input
+                ref={filePicker}
+                type="file"
+                multiple
+                hidden
+                aria-hidden="true"
+                tabIndex={-1}
+                accept="image/png,image/jpeg,image/gif,image/webp,application/pdf,text/*,.md,.json,.yaml,.yml,.csv"
+                onChange={(e) => {
+                  const picked = [...(e.target.files ?? [])]
+                  e.target.value = ""
+                  void attach(picked)
+                }}
+              />
+            </>
+          ) : null}
           <DropdownMenu>
             <DropdownMenuTrigger asChild disabled={!pickable}>
               <InputGroupButton size="xs" aria-label={`Model: ${modelText}`}>

@@ -29,7 +29,9 @@ import {
   HoliArcade,
 } from "@/plugin-api"
 import type { ChatSummary, TranscriptItem } from "../shared/chat"
+import { releaseAttachment, type ComposerFile } from "./attachments"
 import { Composer, useVaultName, type ComposerChoice } from "./Composer"
+import { SessionInfo } from "./SessionInfo"
 import { ReviewCard } from "./ReviewCard"
 import {
   chatsAtom,
@@ -45,6 +47,35 @@ import {
 } from "./state/chats"
 import { churnAtom, refreshChurnAtom } from "./state/review"
 import { Transcript, TranscriptSkeleton } from "./Transcript"
+
+/** The files waiting in a composer; their thumbnails let go once sent. */
+function useFiles(): [
+  ComposerFile[],
+  (files: ComposerFile[]) => void,
+  () => SendFiles,
+] {
+  const [files, setFiles] = useState<ComposerFile[]>([])
+  const take = (): SendFiles => {
+    const sent = files.map(({ name, mediaType, data }) => ({
+      name,
+      mediaType,
+      data,
+    }))
+    return {
+      files: sent,
+      done: () => {
+        files.forEach(releaseAttachment)
+        setFiles([])
+      },
+    }
+  }
+  return [files, setFiles, take]
+}
+
+interface SendFiles {
+  files: { name: string; mediaType: string; data: string }[]
+  done(): void
+}
 
 /** A composer's draft, by key, kept in the store. */
 function useDraft(key: string): [string, (v: string) => void] {
@@ -62,6 +93,7 @@ export function NewSession() {
   const [draft, setDraft] = useDraft("new")
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [files, setFiles, takeFiles] = useFiles()
   const vault = useVaultName()
   const arcadeOn = useAtomValue(gridArcadeAtom)
   const cast = useAtomValue(arcadeCastAtom)
@@ -90,7 +122,8 @@ export function NewSession() {
 
   const send = () => {
     const text = draft
-    if (text.trim() === "") return
+    const outgoing = takeFiles()
+    if (text.trim() === "" && outgoing.files.length === 0) return
     setBusy(true)
     setError(null)
     void start({
@@ -98,10 +131,13 @@ export function NewSession() {
       model: prefs.model,
       effort: prefs.effort ?? null,
       mode: prefs.mode,
+      files: outgoing.files,
     }).then((res) => {
       setBusy(false)
-      if (res.ok) setDraft("")
-      else setError(res.message)
+      if (res.ok) {
+        setDraft("")
+        outgoing.done()
+      } else setError(res.message)
     })
   }
   const choice: ComposerChoice = {
@@ -166,6 +202,8 @@ export function NewSession() {
               autoFocus
               large
               error={error}
+              files={files}
+              onFiles={setFiles}
             />
           </div>
           {/* MonoCode's take-control pill, under the column: shown while the
@@ -241,6 +279,7 @@ function ChatView({ chat }: { chat: ChatSummary }) {
   const churn = useAtomValue(churnAtom)[chat.id]
   const { items, error: loadError, retry } = useChatTranscript(chat.id)
   const [draft, setDraft] = useDraft(chat.id)
+  const [files, setFiles, takeFiles] = useFiles()
   const [error, setError] = useState<string | null>(null)
   const [choice, setChoice] = useState<ComposerChoice>({
     model: chat.model ?? null,
@@ -276,6 +315,7 @@ function ChatView({ chat }: { chat: ChatSummary }) {
 
   const reply = () => {
     const text = draft
+    const outgoing = takeFiles()
     setError(null)
     setDraft("")
     void send({
@@ -284,11 +324,12 @@ function ChatView({ chat }: { chat: ChatSummary }) {
       model: choice.model,
       effort: choice.effort,
       mode: choice.mode,
+      files: outgoing.files,
     }).then((res) => {
       if (!res.ok) {
         setError(res.message)
         setDraft(text)
-      }
+      } else outgoing.done()
     })
   }
 
@@ -297,29 +338,31 @@ function ChatView({ chat }: { chat: ChatSummary }) {
       <header className="flex h-12 shrink-0 items-center gap-2 border-b ps-6 pe-3">
         <h1 className="min-w-0 truncate text-sm font-medium">{chat.title}</h1>
         <StateBadge state={state} />
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              className="ms-auto"
-              aria-label={chat.archived ? "Unarchive" : "Archive"}
-              onClick={() =>
-                void update({ id: chat.id, archived: !chat.archived })
-              }
-            >
-              {chat.archived ? (
-                <ArchiveRestoreIcon aria-hidden="true" />
-              ) : (
-                <ArchiveIcon aria-hidden="true" />
-              )}
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>
-            {chat.archived ? "Unarchive" : "Archive"}
-          </TooltipContent>
-        </Tooltip>
+        <span className="ms-auto flex shrink-0 items-center gap-0.5">
+          {chat.info !== undefined ? <SessionInfo info={chat.info} /> : null}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                aria-label={chat.archived ? "Unarchive" : "Archive"}
+                onClick={() =>
+                  void update({ id: chat.id, archived: !chat.archived })
+                }
+              >
+                {chat.archived ? (
+                  <ArchiveRestoreIcon aria-hidden="true" />
+                ) : (
+                  <ArchiveIcon aria-hidden="true" />
+                )}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              {chat.archived ? "Unarchive" : "Archive"}
+            </TooltipContent>
+          </Tooltip>
+        </span>
       </header>
       <div className="flex min-h-0 flex-1 flex-col">
         {loadError !== null ? (
@@ -362,6 +405,8 @@ function ChatView({ chat }: { chat: ChatSummary }) {
               ranModel={lastModel(items)}
               autoFocus
               error={error}
+              files={files}
+              onFiles={setFiles}
             />
           </div>
         </div>
