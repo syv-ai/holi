@@ -15,6 +15,7 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import { useAtomValue } from "jotai"
+import { findNext, findPrev } from "prosemirror-search"
 import { EditorContent, useEditor } from "@tiptap/react"
 import { FileWarningIcon, SparklesIcon } from "lucide-react"
 
@@ -36,6 +37,7 @@ import {
   RichTextTable,
   RichTextTableBubble,
 } from "@/components/blocks/rich-text-editor-2/components/rich-text-table"
+import { useIsApplePlatform } from "@/components/blocks/rich-text-editor-2/components/rich-text-toolbar"
 import { Button } from "@/components/ui/button"
 import {
   Empty,
@@ -62,6 +64,7 @@ import {
   useDocumentAgent,
 } from "./document-agent"
 import { createDocumentExtensions } from "./document-extensions"
+import { DocumentFindBar, type FindRequest } from "./document-find-bar"
 import { DocumentFormatBubble } from "./document-format-bubble"
 import { DocumentHeader, type SaveState } from "./document-header"
 import {
@@ -205,6 +208,9 @@ function DocumentEditor({
   const [deleteTableOpen, setDeleteTableOpen] = useState(false)
   const [fullWidth, setFullWidth] = useState(false)
   const [smallText, setSmallText] = useState(false)
+  /** The find bar, open while set; a new request refocuses it. */
+  const [find, setFind] = useState<FindRequest | null>(null)
+  const apple = useIsApplePlatform()
   /** Whether the agent prompt is open; its line is the editor's to track
    *  (`agentPromptKey`), and it renders into `promptBox` on that line. */
   const [promptOpen, setPromptOpen] = useState(false)
@@ -436,11 +442,44 @@ function DocumentEditor({
     setLinkOpen(true)
   }
 
+  /**
+   * ⌘F (Ctrl+F elsewhere) anywhere in this document's view opens its own find
+   * bar, so each view of a split has its own. The selection seeds the query
+   * when it is one line. With the bar open, ⌘G and ⇧⌘G step from the text
+   * too, and Escape in the text closes it.
+   */
+  function handleViewKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
+    if (!editor || event.defaultPrevented) return
+    const mod = apple ? event.metaKey : event.ctrlKey
+    const key = event.key.toLowerCase()
+    if (mod && !event.altKey && !event.shiftKey && key === "f") {
+      event.preventDefault()
+      const { from, to, $from, $to } = editor.state.selection
+      const text =
+        from < to && $from.sameParent($to)
+          ? editor.state.doc.textBetween(from, to)
+          : null
+      setFind((current) => ({ token: (current?.token ?? 0) + 1, text }))
+    } else if (find && mod && !event.altKey && key === "g") {
+      event.preventDefault()
+      ;(event.shiftKey ? findPrev : findNext)(
+        editor.state,
+        editor.view.dispatch
+      )
+    } else if (find && event.key === "Escape" && editor.view.hasFocus()) {
+      event.preventDefault()
+      setFind(null)
+    }
+  }
+
   const canAsk = agent.available && !isRunLive(agent.run)
 
   return (
     <TooltipProvider delayDuration={300}>
-      <div className="text-foreground relative flex h-full min-h-0 w-full flex-col">
+      <div
+        className="text-foreground relative flex h-full min-h-0 w-full flex-col"
+        onKeyDown={handleViewKeyDown}
+      >
         {/* Locked while a run edits the document: nothing in it answers. */}
         <div inert={locked} className="flex min-h-0 flex-1 flex-col">
           {/* On the page's own ground, a hairline under it; the text scrolls
@@ -462,6 +501,17 @@ function DocumentEditor({
             className="relative min-h-0 flex-1 overflow-y-auto"
             onMouseDown={pressPage}
           >
+            {/* The find bar floats at the page's top right, over the text,
+                and stays there as it scrolls. */}
+            {editor && find ? (
+              <div className="sticky top-2 z-40 flex h-0 items-start justify-end px-4">
+                <DocumentFindBar
+                  editor={editor}
+                  request={find}
+                  onClose={() => setFind(null)}
+                />
+              </div>
+            ) : null}
             {/* A task's fields, on the body's column; nothing for a note. */}
             <TaskProperties
               path={path}

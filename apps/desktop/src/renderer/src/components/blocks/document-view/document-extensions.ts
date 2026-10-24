@@ -13,7 +13,9 @@ import { createRichTextExtensions } from "@/components/blocks/rich-text-editor-2
 import { vaultAssetUrl } from "@/lib/vault-asset"
 
 import { AgentTrigger } from "./agent-trigger"
+import { DocumentFind } from "./document-find"
 import { AGENT_MARKER, DocumentMarkdown } from "./markdown"
+import { MultiCursor } from "./multi-cursor"
 import { WikiLink } from "./wiki-link"
 
 /** `src` as written in the file, resolved against the document's folder for
@@ -165,5 +167,8 @@ export function createDocumentExtensions({
       container: promptContainer,
     }),
     DocumentMarkdown,
+    // ⌘F's find bar highlights through this; ⌘D adds the next occurrence.
+    DocumentFind,
+    MultiCursor,
   ]
 }

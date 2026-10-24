@@ -41,6 +41,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 
+import { extraSelections } from "./multi-cursor"
+
 const FORMAT_BUBBLE_KEY = "documentFormatBubble"
 
 const FORMAT_BUBBLE_OPTIONS = { placement: "top", offset: 8 } as const
@@ -86,9 +88,12 @@ export function DocumentFormatBubble({
   // Stable identity: a new function would re-register the plugin options.
   const shouldShow = useCallback(
     ({ editor: current, element, state: doc, from, to }: ShouldShowProps) => {
-      if (!current.isEditable) return false
+      // The bubble's debounced check can outlive the editor (a closed tab).
+      if (current.isDestroyed || !current.isEditable) return false
       if (linkOpenRef.current) return true
       if (!isTextSelection(doc.selection) || doc.selection.empty) return false
+      // Marks would reach only the newest of several ⌘D selections.
+      if (extraSelections(doc).length > 0) return false
       if (!doc.doc.textBetween(from, to).trim()) return false
       if (
         current.isActive("codeBlock") ||

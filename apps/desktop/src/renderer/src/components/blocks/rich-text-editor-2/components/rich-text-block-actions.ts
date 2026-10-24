@@ -366,7 +366,8 @@ export const RichTextBlockActions = Extension.create({
     return {
       "Mod-Shift-ArrowUp": run(moveBlockUp),
       "Mod-Shift-ArrowDown": run(moveBlockDown),
-      "Mod-d": run(duplicateBlock),
+      // VS Code's copy line down: ⌘D selects the next occurrence instead.
+      "Shift-Alt-ArrowDown": run(duplicateBlock),
       "Mod-/": () =>
         this.editor.isEditable && (menuOpeners.get(this.editor)?.() ?? false),
     }

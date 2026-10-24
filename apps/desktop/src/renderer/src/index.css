@@ -133,6 +133,40 @@
   --terminal-selection: color-mix(in oklab, var(--foreground) 22%, transparent);
 }
 
+/* The document editor's find and ⌘D marks (`document-view/document-find.ts`,
+   `multi-cursor.ts`). Every match is a quiet tint, the one the selection is
+   on a stronger one, so the current match reads with the editor blurred and
+   focus in the find bar. An extra ⌘D selection wears the blurred selection's
+   tint (primary at 15%), and an extra caret is the text colour. */
+:root {
+  --find-match: color-mix(in oklab, var(--warning) 22%, transparent);
+  --find-match-current: color-mix(in oklab, var(--warning) 55%, transparent);
+  --extra-selection: color-mix(in oklab, var(--primary) 15%, transparent);
+}
+[data-theme='dark'] {
+  --find-match-current: color-mix(in oklab, var(--warning) 45%, transparent);
+}
+.tiptap .ProseMirror-search-match {
+  background-color: var(--find-match);
+}
+.tiptap .ProseMirror-active-search-match {
+  background-color: var(--find-match-current);
+}
+.tiptap .rich-text-extra-selection {
+  background-color: var(--extra-selection);
+}
+.tiptap .rich-text-extra-caret {
+  position: relative;
+}
+.tiptap .rich-text-extra-caret::after {
+  content: '';
+  position: absolute;
+  inset-block: 0.15em;
+  inset-inline-start: -0.5px;
+  border-inline-start: 1px solid var(--foreground);
+  pointer-events: none;
+}
+
 /* Type a step under Tailwind's defaults, the size desktop tools set their
    chrome in (13px body, 11px meta): the type shrinks, the spacing does not. */
 @theme {

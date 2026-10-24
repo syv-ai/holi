@@ -219,7 +219,7 @@ export function RichTextBlockMenuItems({
         <DropdownMenuItem onClick={() => runOnBlock(duplicateBlock)}>
           <CopyIcon aria-hidden="true" />
           Duplicate
-          <MenuShortcut keys={["mod", "D"]} />
+          <MenuShortcut keys={["shift", "alt", "↓"]} />
         </DropdownMenuItem>
         <DropdownMenuItem
           disabled={!menu.canUp}
