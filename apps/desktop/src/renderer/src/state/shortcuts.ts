@@ -25,6 +25,18 @@ export const liveShortcutIdsAtom = atom<ReadonlySet<string>>(
   (get) => new Set(get(handlersAtom).keys()),
 )
 
+/**
+ * Run a live shortcut by id, as its key would: the command menu's actions
+ * are the table's rows. `false` when nothing handles it now.
+ */
+export const runShortcutAtom = atom(null, (get, _set, id: string): boolean => {
+  const slots = get(handlersAtom).get(id)
+  const slot = slots?.[slots.length - 1]
+  if (slot === undefined) return false
+  slot.current(0)
+  return true
+})
+
 /** Whether the Keyboard shortcuts dialog is open. */
 export const shortcutsDialogOpenAtom = atom(false)
 
@@ -92,12 +104,9 @@ export function useShortcutDispatcher(): void {
   const store = useStore()
 
   useEffect(() => {
-    const run = (id: string, index: number): boolean => {
+    const run = (id: string, index: number): void => {
       const slots = store.get(handlersAtom).get(id)
-      const slot = slots?.[slots.length - 1]
-      if (slot === undefined) return false
-      slot.current(index)
-      return true
+      slots?.[slots.length - 1]?.current(index)
     }
     const onKey = (e: KeyboardEvent): void => {
       const match = resolveShortcut(e, {
@@ -112,7 +121,7 @@ export function useShortcutDispatcher(): void {
     }
     window.addEventListener('keydown', onKey)
     // Absent in a test or a page without the preload bridge.
-    const offMenu = window.holi?.menu?.onCommand((id) => void run(id, 0))
+    const offMenu = window.holi?.menu?.onCommand((id) => run(id, 0))
     return () => {
       window.removeEventListener('keydown', onKey)
       offMenu?.()
