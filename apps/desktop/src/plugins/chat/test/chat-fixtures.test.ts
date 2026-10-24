@@ -12,7 +12,8 @@ import {
 } from '../main/claude-stream'
 import { applyChatEvent, type TranscriptItem } from '../shared/chat'
 import { diffLines } from '../shared/tool-views'
-import { ofKind, replay } from './replay'
+import { foldConversation, isConversationId, projectSlug } from '../main/conversation'
+import { fixtureLines, ofKind, replay } from './replay'
 
 type Tool = Extract<TranscriptItem, { kind: 'tool' }>
 
@@ -367,5 +368,39 @@ describe('transcripts saved before these fields', () => {
       status: 'done',
       view: { type: 'shell', stdout: 'ok', exitCode: 0 },
     })
+  })
+})
+
+describe("a background run's conversation, from Claude Code's transcript", () => {
+  it('folds the prompt, the steps, the subagent and the reply', () => {
+    const items = foldConversation(fixtureLines('disk-agent'), {
+      root: '/vault',
+      subagent: (id) => (id === 'a475921f641d771fa' ? fixtureLines('disk-agent.sub') : null),
+    })
+    expect(ofKind(items, 'user').map((u) => u.text)).toEqual([
+      expect.stringContaining('Use the Task tool'),
+    ])
+    const turn = ofKind(items, 'turn')[0]!
+    expect(turn.endedAt).toBeGreaterThan(turn.startedAt)
+    expect(turn.model).toBe('claude-haiku-5-5')
+    const agent = tool(items, (t) => t.tool === 'Agent')
+    expect(agent.view).toMatchObject({ type: 'agent', result: 'add, sub, mul' })
+    expect(
+      ofKind(items, 'tool')
+        .filter((t) => t.parentId === agent.id)
+        .map((t) => t.tool),
+    ).toEqual(['Bash', 'Read'])
+    expect(ofKind(items, 'assistant').at(-1)?.text).toBe(
+      'calc.py defines three functions: add, sub, mul.',
+    )
+  })
+
+  it('leaves a live run’s last turn open, and names the folder as Claude Code does', () => {
+    const items = foldConversation(fixtureLines('disk-agent'), { root: '/vault', live: true })
+    expect(ofKind(items, 'turn')[0]!.endedAt).toBeUndefined()
+    expect(projectSlug('/Users/me/Library/Holi/vaults/mara.notes')).toBe(
+      '-Users-me-Library-Holi-vaults-mara-notes',
+    )
+    expect(isConversationId('../../etc/passwd')).toBe(false)
   })
 })

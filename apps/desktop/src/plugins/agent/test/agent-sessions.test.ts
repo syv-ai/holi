@@ -129,7 +129,14 @@ describe('agent sessions', () => {
     expect(t.sessions.sessions().map((s) => s.id)).toEqual(['aaaaaaaa'])
     expect(t.sent.at(-1)).toEqual([
       'sessions',
-      [{ id: 'aaaaaaaa', name: 'Session aaaaaaaa', state: 'idle' }],
+      [
+        {
+          id: 'aaaaaaaa',
+          name: 'Session aaaaaaaa',
+          state: 'idle',
+          conversationId: 'aaaaaaaa-uuid',
+        },
+      ],
     ])
   })
 

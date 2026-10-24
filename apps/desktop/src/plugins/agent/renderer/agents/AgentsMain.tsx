@@ -19,6 +19,7 @@ import { useAtomValue, useSetAtom } from 'jotai'
 import { Bot, Inbox, SquarePen } from 'lucide-react'
 import { useState } from 'react'
 import { IconStackEmpty } from '@/components/reui/icon-stack-empty'
+import { Button } from '@/components/ui/button'
 import { activeRemoteAtom, agentsSlotsAtom } from '@/plugin-api'
 import { inboxCountAtom } from '../state/agents-status'
 import { agentsViewAtom, agentsViewOf } from '../state/agents-view'
@@ -100,18 +101,21 @@ function InboxView(): React.JSX.Element {
 }
 
 /**
- * A background run (a Holi's, an automation's, one the agent started), as a
- * summary rather than its terminal: what it is, where it stands, its model
- * and since when, and Stop. Its transcript is Claude Code's TUI, which this
- * view does not draw, and a background job's id is not a conversation a
- * chat could `--resume`, so there is no read-only conversation or "Continue
- * in chat" here. What it changes reaches the vault and its turn review.
+ * A background run (a Holi's, an automation's, one the agent started): what
+ * it is, where it stands, its model and since when, and Stop; under that its
+ * conversation, read only, once Claude Code has said which it is: the slot's
+ * `conversation` (the built-in chat's transcript, read from Claude Code's own
+ * file). Without one it is a summary. Nothing here answers its prompts, and
+ * there is no "Continue in chat": a background job is not a chat's process.
+ * What it changes reaches the vault and its turn review.
  */
 function SessionView({ id }: { id: string }): React.JSX.Element {
   const sessions = useAtomValue(agentSessionsAtom)
   const stop = useSetAtom(stopSessionAtom)
+  const slots = useAtomValue(agentsSlotsAtom)
   const [error, setError] = useState<string | null>(null)
   const session = sessions.find((s) => s.id === id)
+  const Conversation = slots.find((s) => s.conversation !== undefined)?.conversation
   const facts = [
     session?.model,
     session?.startedAt === undefined
@@ -127,9 +131,23 @@ function SessionView({ id }: { id: string }): React.JSX.Element {
       : session?.state === 'working'
         ? 'A Holi, an automation or the agent started it. It works on its own; what it changes reaches the vault and its turn review.'
         : 'It has finished its work for now. What it changed is in the vault and its turn review.'
+  const reading = Conversation !== undefined && session?.conversationId !== undefined
   return (
     <>
-      <Bar>
+      <Bar
+        end={
+          reading ? (
+            <Button
+              type="button"
+              size="xs"
+              variant="outline"
+              onClick={() => void stop(id).then((res) => setError(res.ok ? null : res.message))}
+            >
+              Stop session
+            </Button>
+          ) : undefined
+        }
+      >
         <span className="truncate font-medium">{session?.name ?? 'Session'}</span>
         {session !== undefined && (
           <span className="flex shrink-0 items-center gap-2 text-xs">
@@ -140,16 +158,31 @@ function SessionView({ id }: { id: string }): React.JSX.Element {
           <span className="truncate text-xs text-muted-foreground">{facts.join(' · ')}</span>
         )}
       </Bar>
-      <IconStackEmpty
-        icon={Bot}
-        title="A background run"
-        description={error ?? description}
-        role={error === null ? undefined : 'alert'}
-        action={{
-          label: 'Stop session',
-          onClick: () => void stop(id).then((res) => setError(res.ok ? null : res.message)),
-        }}
-      />
+      {Conversation !== undefined && session?.conversationId !== undefined ? (
+        <>
+          {error !== null || session.state === 'needs-you' ? (
+            <p role="alert" className="px-6 pt-3 text-xs text-muted-foreground">
+              {error ?? description}
+            </p>
+          ) : null}
+          <Conversation
+            conversationId={session.conversationId}
+            live={session.state !== 'idle'}
+            title={session.name}
+          />
+        </>
+      ) : (
+        <IconStackEmpty
+          icon={Bot}
+          title="A background run"
+          description={error ?? description}
+          role={error === null ? undefined : 'alert'}
+          action={{
+            label: 'Stop session',
+            onClick: () => void stop(id).then((res) => setError(res.ok ? null : res.message)),
+          }}
+        />
+      )}
     </>
   )
 }

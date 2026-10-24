@@ -13,10 +13,11 @@ import { activeRemoteAtom } from "@/plugin-api"
 import { render, screen, within } from "@/test/render"
 import type { TranscriptItem } from "../shared/chat"
 import { Markdown } from "../renderer/Markdown"
+import { ConversationView } from "../renderer/ConversationView"
 import { Transcript } from "../renderer/Transcript"
 import { replay } from "./replay"
 
-const cap = vi.hoisted(() => ({ answer: vi.fn() }))
+const cap = vi.hoisted(() => ({ answer: vi.fn(), conversation: vi.fn() }))
 vi.mock("../renderer/chat-cap", () => ({
   chatCap: cap,
   agentTurnsCap: { turns: async () => [] },
@@ -212,4 +213,37 @@ test("a reply's vault image loads through the vault route; HTML stays text", () 
   expect(img.getAttribute("src")).toBe("holi-vault://vault/Assets/chart.png")
   expect(screen.queryByRole("img", { name: "x" })).toBeNull()
   expect(document.body.textContent).toContain("<img src=x onerror=alert(1)>")
+})
+
+test("a background run's conversation reads as a chat's, asking nothing", async () => {
+  cap.conversation.mockResolvedValue(replay("agent").items)
+  const store = createStore()
+  store.set(activeRemoteAtom, "mara/notes")
+  render(
+    <Provider store={store}>
+      <TooltipProvider>
+        <ConversationView conversationId="a80e3af2" live={false} title="Run" />
+      </TooltipProvider>
+    </Provider>
+  )
+  expect(
+    await screen.findByRole("button", { name: /List function names/ })
+  ).toBeTruthy()
+  expect(cap.conversation).toHaveBeenCalledWith("mara/notes", {
+    conversationId: "a80e3af2",
+    live: false,
+  })
+})
+
+test("a conversation Claude Code has not written yet says so, with Retry", async () => {
+  cap.conversation.mockResolvedValue(null)
+  const store = createStore()
+  store.set(activeRemoteAtom, "mara/notes")
+  render(
+    <Provider store={store}>
+      <ConversationView conversationId="a80e3af2" live={false} title="Run" />
+    </Provider>
+  )
+  expect(await screen.findByRole("alert")).toBeTruthy()
+  expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy()
 })

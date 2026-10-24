@@ -24,6 +24,7 @@ import {
 import type { OutgoingFile, PermissionAnswer } from './claude-stream'
 import type { ChatResult, Chats, CommandTarget, TurnOptions } from './chats'
 import { configDirOf, listCommands } from './commands'
+import { isConversationId, readConversation } from './conversation'
 
 export const CHAT_NAMESPACES = ['chats'] as const
 
@@ -184,6 +185,31 @@ export const chatCapabilities = (deps: ChatCapabilitiesDeps) => {
           root: target.root,
           configDir: configDirOf(target.env),
           session: deps.chats.sessionCommands(),
+        })
+      },
+    }),
+
+    /** A background run's conversation (a Holi's, an automation's), read
+     *  from Claude Code's own transcript and folded as a chat's: read only. */
+    'chats.conversation': cap({
+      doors: ['ui'],
+      params: (raw) => {
+        const p = paramsObject(raw)
+        const conversationId = stringParam(p, 'conversationId')
+        if (!isConversationId(conversationId)) {
+          throw new CapabilityError('BAD_REQUEST', 'conversationId is a conversation id')
+        }
+        return { conversationId, live: p['live'] === true }
+      },
+      run: async (ctx, { conversationId, live: running }): Promise<TranscriptItem[] | null> => {
+        if (!live(ctx)) return null
+        const target = await deps.target()
+        if (target === null) return null
+        return readConversation({
+          configDir: configDirOf(target.env),
+          root: target.root,
+          conversationId,
+          live: running,
         })
       },
     }),

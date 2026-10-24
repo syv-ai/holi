@@ -437,6 +437,10 @@ export interface AgentsSlot {
   status?: Atom<AgentsStatus>
   /** Its rows in the provider's one session list (chats, a Holi's runs). */
   sessions?: AgentsSessionsSource
+  /** A background session's conversation, read only, by Claude Code's
+   *  conversation id: the built-in chat's transcript, drawn in the agent's
+   *  session view. The first running slot with one wins. */
+  conversation?: ComponentType<{ conversationId: string; live: boolean; title: string }>
 }
 
 export interface RendererPlugin {
