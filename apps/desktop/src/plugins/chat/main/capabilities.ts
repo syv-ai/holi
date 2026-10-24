@@ -21,9 +21,10 @@ import {
   type PermissionMode,
   type TranscriptItem,
 } from '../shared/chat'
-import type { PermissionAnswer } from './claude-stream'
+import type { OutgoingFile, PermissionAnswer } from './claude-stream'
 import type { ChatResult, Chats, CommandTarget, TurnOptions } from './chats'
 import { configDirOf, listCommands } from './commands'
+import { isConversationId, readConversation } from './conversation'
 
 export const CHAT_NAMESPACES = ['chats'] as const
 
@@ -82,11 +83,62 @@ function turnOptions(p: Record<string, unknown>): TurnOptions {
   }
 }
 
+/** What one message may carry: a few files, none too large. */
+const MAX_FILES = 10
+const MAX_FILE_BYTES = 10 * 1024 * 1024
+const MAX_TOTAL_BYTES = 30 * 1024 * 1024
+
+/** `files`: what the composer attached, as base64. */
+function filesParam(p: Record<string, unknown>): OutgoingFile[] | undefined {
+  const raw = p['files']
+  if (raw === undefined || raw === null) return undefined
+  if (!Array.isArray(raw) || raw.length > MAX_FILES) {
+    throw new CapabilityError('BAD_REQUEST', `files is a list of at most ${MAX_FILES}`)
+  }
+  let total = 0
+  return raw.map((f) => {
+    const o = paramsObject(f)
+    const name = stringParam(o, 'name').slice(0, 200)
+    const mediaType = stringParam(o, 'mediaType')
+    const data = stringParam(o, 'data')
+    if (!/^[\w.+-]+\/[\w.+-]+$/.test(mediaType)) {
+      throw new CapabilityError('BAD_REQUEST', 'mediaType is a media type')
+    }
+    if (!/^[A-Za-z0-9+/=]*$/.test(data)) throw new CapabilityError('BAD_REQUEST', 'data is base64')
+    const bytes = Math.floor((data.length * 3) / 4)
+    total += bytes
+    if (bytes > MAX_FILE_BYTES || total > MAX_TOTAL_BYTES) {
+      throw new CapabilityError('BAD_REQUEST', 'the attached files are too large')
+    }
+    return { name, mediaType, data }
+  })
+}
+
+/** A message's text: required, unless it carries files. */
+function textParam(p: Record<string, unknown>, files: OutgoingFile[] | undefined): string {
+  if ((files?.length ?? 0) === 0) return stringParam(p, 'text')
+  return typeof p['text'] === 'string' ? p['text'] : ''
+}
+
 function answerParam(raw: unknown): PermissionAnswer {
   const a = paramsObject(raw)
   const kind = a['kind']
-  if (kind === 'allow') return { kind: 'allow', ...(a['always'] === true ? { always: true } : {}) }
-  if (kind === 'deny') return { kind: 'deny' }
+  if (kind === 'allow') {
+    // Only a mode that still asks: never a bypass, whatever the caller sends.
+    const mode = a['mode']
+    if (mode !== undefined && mode !== 'acceptEdits') {
+      throw new CapabilityError('BAD_REQUEST', 'answer.mode is acceptEdits')
+    }
+    return {
+      kind: 'allow',
+      ...(a['always'] === true ? { always: true } : {}),
+      ...(mode === undefined ? {} : { mode }),
+    }
+  }
+  if (kind === 'deny') {
+    const message = typeof a['message'] === 'string' ? a['message'].trim().slice(0, 4000) : ''
+    return { kind: 'deny', ...(message === '' ? {} : { message }) }
+  }
   if (kind === 'answer') {
     const answers = paramsObject(a['answers'])
     const out: Record<string, string> = {}
@@ -137,6 +189,31 @@ export const chatCapabilities = (deps: ChatCapabilitiesDeps) => {
       },
     }),
 
+    /** A background run's conversation (a Holi's, an automation's), read
+     *  from Claude Code's own transcript and folded as a chat's: read only. */
+    'chats.conversation': cap({
+      doors: ['ui'],
+      params: (raw) => {
+        const p = paramsObject(raw)
+        const conversationId = stringParam(p, 'conversationId')
+        if (!isConversationId(conversationId)) {
+          throw new CapabilityError('BAD_REQUEST', 'conversationId is a conversation id')
+        }
+        return { conversationId, live: p['live'] === true }
+      },
+      run: async (ctx, { conversationId, live: running }): Promise<TranscriptItem[] | null> => {
+        if (!live(ctx)) return null
+        const target = await deps.target()
+        if (target === null) return null
+        return readConversation({
+          configDir: configDirOf(target.env),
+          root: target.root,
+          conversationId,
+          live: running,
+        })
+      },
+    }),
+
     /** Where a chat works, for the composer's chips: the clone's branch. */
     'chats.where': cap({
       doors: ['ui'],
@@ -153,9 +230,15 @@ export const chatCapabilities = (deps: ChatCapabilitiesDeps) => {
       doors: ['ui'],
       params: (raw) => {
         const p = paramsObject(raw)
-        const text = stringParam(p, 'text')
+        const files = filesParam(p)
+        const text = textParam(p, files)
         const title = optionalStringParam(p, 'title')
-        return { text, ...turnOptions(p), ...(title === undefined ? {} : { title }) }
+        return {
+          text,
+          ...turnOptions(p),
+          ...(title === undefined ? {} : { title }),
+          ...(files === undefined ? {} : { files }),
+        }
       },
       run: async (ctx, args): Promise<ChatResult> => (live(ctx) ? deps.chats.start(args) : notOpen),
     }),
@@ -164,10 +247,16 @@ export const chatCapabilities = (deps: ChatCapabilitiesDeps) => {
       doors: ['ui'],
       params: (raw) => {
         const p = paramsObject(raw)
-        return { id: stringParam(p, 'id'), text: stringParam(p, 'text'), ...turnOptions(p) }
+        const files = filesParam(p)
+        return {
+          id: stringParam(p, 'id'),
+          text: textParam(p, files),
+          ...turnOptions(p),
+          ...(files === undefined ? {} : { files }),
+        }
       },
-      run: async (ctx, { id: chat, text, ...opts }): Promise<ChatResult> =>
-        live(ctx) ? deps.chats.send(chat, text, opts) : notOpen,
+      run: async (ctx, { id: chat, text, files, ...opts }): Promise<ChatResult> =>
+        live(ctx) ? deps.chats.send(chat, text, opts, files) : notOpen,
     }),
 
     /** The person's answer to a permission card or a question, sent back to

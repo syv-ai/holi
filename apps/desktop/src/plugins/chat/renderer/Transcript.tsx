@@ -19,26 +19,27 @@
 import { SiClaude } from "@icons-pack/react-simple-icons"
 import { useAtomValue, useSetAtom } from "jotai"
 import {
-  BotIcon,
   ChartColumnIcon,
   CheckIcon,
   CircleAlertIcon,
   CircleXIcon,
   CopyIcon,
-  FilePenIcon,
+  FileIcon,
   FilePlusIcon,
-  FileTextIcon,
-  GlobeIcon,
-  type LucideIcon,
-  SearchIcon,
-  SparklesIcon,
-  SquareTerminalIcon,
-  WrenchIcon,
+  ImageIcon,
 } from "lucide-react"
-import { useEffect, useLayoutEffect, useRef, useState } from "react"
+import {
+  memo,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react"
 import { toast } from "sonner"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/reui/alert"
+import { Badge } from "@/components/reui/badge"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Spinner } from "@/components/ui/spinner"
@@ -56,24 +57,16 @@ import {
 import {
   modelLabel,
   needsSignIn,
+  type ApprovalStatus,
   type Question,
-  type ToolKind,
   type TranscriptItem,
   type TurnUsage,
 } from "../shared/chat"
 import { answerChatAtom, chatCap } from "./state/chats"
 import { Markdown } from "./Markdown"
-
-const TOOL_ICON: Record<ToolKind, LucideIcon> = {
-  read: FileTextIcon,
-  edit: FilePenIcon,
-  search: SearchIcon,
-  execute: SquareTerminalIcon,
-  fetch: GlobeIcon,
-  agent: BotIcon,
-  skill: SparklesIcon,
-  other: WrenchIcon,
-}
+import { PlanCard } from "./steps/PlanCard"
+import { TodoCard, todoProgress } from "./steps/TodoCard"
+import { Code, StatusLine, Step, Thought, ToolStep } from "./steps/ToolStep"
 
 /** "6s", "1m 12s", "2m": how long a turn worked. */
 export function formatElapsed(ms: number): string {
@@ -157,43 +150,6 @@ function useTick(on: boolean): number {
   return now
 }
 
-function Step({
-  icon: Glyph,
-  running,
-  failed,
-  children,
-}: {
-  icon: LucideIcon
-  running: boolean
-  failed?: boolean
-  children: React.ReactNode
-}) {
-  return (
-    <div className="text-muted-foreground flex min-w-0 items-center gap-2 text-sm">
-      {running ? (
-        <Spinner
-          aria-hidden="true"
-          className="text-foreground size-3.5 motion-reduce:animate-none"
-        />
-      ) : failed ? (
-        <CircleXIcon
-          aria-hidden="true"
-          className="text-destructive size-3.5 shrink-0"
-        />
-      ) : (
-        <Glyph aria-hidden="true" className="size-3.5 shrink-0" />
-      )}
-      <span className="min-w-0 truncate">{children}</span>
-    </div>
-  )
-}
-
-function Code({ children }: { children: React.ReactNode }) {
-  return (
-    <code className="text-foreground/85 font-mono text-xs">{children}</code>
-  )
-}
-
 /** Sign this vault's Claude Code in: its `/login`, which needs a terminal of
  *  its own, the one place a chat opens one. Then send the message again. */
 function SignIn() {
@@ -223,9 +179,11 @@ function SignIn() {
 function ApprovalCard({
   chatId,
   item,
+  showDetail = true,
 }: {
   chatId: string
   item: Extract<TranscriptItem, { kind: "approval" }>
+  showDetail?: boolean
 }) {
   const answer = useSetAtom(answerChatAtom)
   const [error, setError] = useState<string | null>(null)
@@ -273,7 +231,7 @@ function ApprovalCard({
         ?
       </AlertTitle>
       <AlertDescription className="gap-2.5">
-        {item.detail !== undefined ? (
+        {item.detail !== undefined && showDetail ? (
           <p className="line-clamp-4 text-xs whitespace-pre-wrap">
             {item.detail}
           </p>
@@ -568,22 +526,77 @@ function groupTurns(
   return out
 }
 
-function TurnView({
+type ToolItem = Extract<TranscriptItem, { kind: "tool" }>
+
+type Entry = Extract<TranscriptItem, { kind: "user" }> | TurnGroup
+
+/** The turns, each kept as the same object while nothing in it changed, so
+ *  a streamed reply redraws its own turn and not the session's hundred. */
+function useStableGroups(items: readonly TranscriptItem[]): Entry[] {
+  const last = useRef(new Map<string, TurnGroup>())
+  return useMemo(() => {
+    const next = new Map<string, TurnGroup>()
+    const out = groupTurns(items).map((entry) => {
+      if ("kind" in entry) return entry
+      const key = entry.turn?.id ?? entry.items[0]?.id ?? "lead"
+      const before = last.current.get(key)
+      const same =
+        before !== undefined &&
+        before.turn === entry.turn &&
+        before.items.length === entry.items.length &&
+        before.items.every((item, i) => item === entry.items[i])
+      const kept = same ? before : entry
+      next.set(key, kept)
+      return kept
+    })
+    last.current = next
+    return out
+  }, [items])
+}
+
+/** What a turn's items say about each other: a subagent's steps by its
+ *  call, the person's answer by the call it was about. */
+function relations(items: readonly TranscriptItem[]) {
+  const children = new Map<string, ToolItem[]>()
+  const answers = new Map<string, ApprovalStatus>()
+  const tools = new Set<string>()
+  const diffs = new Set<string>()
+  for (const item of items) {
+    if (item.kind === "tool") {
+      tools.add(item.id)
+      if (item.view?.type === "diff") diffs.add(item.id)
+      if (item.parentId !== undefined) {
+        const list = children.get(item.parentId) ?? []
+        list.push(item)
+        children.set(item.parentId, list)
+      }
+    }
+    if (item.kind === "approval" && item.callId !== undefined) {
+      answers.set(item.callId, item.status)
+    }
+  }
+  return { children, answers, tools, diffs }
+}
+
+const TurnView = memo(function TurnView({
   chatId,
   title,
   group,
   now,
+  readOnly,
 }: {
   chatId: string
   title: string
   group: TurnGroup
   now: number
+  readOnly: boolean
 }) {
   const { turn, items } = group
   const open = turn !== null && turn.endedAt === undefined
   const waitingOnYou = items.some(
     (i) =>
-      (i.kind === "approval" || i.kind === "question") && i.status === "pending"
+      (i.kind === "approval" || i.kind === "question" || i.kind === "plan") &&
+      i.status === "pending"
   )
   const elapsed =
     turn === null ? null : Math.max(0, (turn.endedAt ?? now) - turn.startedAt)
@@ -595,6 +608,13 @@ function TurnView({
     .map((i) => i.text.trim())
     .filter((t) => t !== "")
     .join("\n\n")
+  const { children, answers, tools, diffs } = useMemo(
+    () => relations(items),
+    [items]
+  )
+  const todos = items.find(
+    (i): i is Extract<TranscriptItem, { kind: "todos" }> => i.kind === "todos"
+  )
 
   return (
     <div className="flex flex-col gap-3" data-turn={turn?.id}>
@@ -621,6 +641,15 @@ function TurnView({
           {turn.failed === true ? (
             <span className="text-destructive">· stopped</span>
           ) : null}
+          {todos !== undefined && todos.todos.length > 0 ? (
+            <Badge
+              variant="secondary"
+              className="ms-auto shrink-0 tabular-nums"
+              aria-label={`Todo list: ${todoProgress(todos.todos)}`}
+            >
+              {todoProgress(todos.todos)}
+            </Badge>
+          ) : null}
         </div>
       ) : null}
 
@@ -631,38 +660,70 @@ function TurnView({
               <Markdown key={item.id} text={item.text} />
             )
           case "reasoning":
-            return item.streaming ? (
-              <Step key={item.id} icon={SparklesIcon} running>
-                Thinking…
-              </Step>
-            ) : null
-          case "tool": {
-            // A call waiting on the person is not working: its card says so.
-            const running = item.status === "running" && !waitingOnYou
+            return <Thought key={item.id} item={item} />
+          case "tool":
+            // A subagent's steps are drawn under its call.
+            if (item.parentId !== undefined && tools.has(item.parentId)) {
+              return null
+            }
             return (
-              <Step
+              <ToolStep
                 key={item.id}
-                icon={TOOL_ICON[item.toolKind]}
-                running={running}
-                failed={item.status === "failed"}
-              >
-                {item.status === "running" ? item.active : item.title}{" "}
-                {item.subject !== undefined ? (
-                  <Code>{item.subject}</Code>
-                ) : null}
-              </Step>
+                item={item}
+                waiting={waitingOnYou}
+                answer={answers.get(item.id)}
+                steps={children.get(item.id)}
+                answers={answers}
+              />
             )
-          }
+          case "todos":
+            return <TodoCard key={item.id} item={item} />
+          case "plan":
+            return (
+              <PlanCard
+                key={item.id}
+                chatId={chatId}
+                item={
+                  readOnly && item.status === "pending"
+                    ? { ...item, status: "proposed" }
+                    : item
+                }
+              />
+            )
           case "approval":
-            return <ApprovalCard key={item.id} chatId={chatId} item={item} />
+            // An answered prompt is said on its step; a pending one asks.
+            if (
+              item.status !== "pending" &&
+              item.callId !== undefined &&
+              tools.has(item.callId)
+            ) {
+              return null
+            }
+            if (readOnly && item.status === "pending") {
+              return (
+                <Step key={item.id} icon={CircleAlertIcon} running={false}>
+                  Waiting for an answer: {item.verb}{" "}
+                  {item.subject !== undefined ? (
+                    <Code>{item.subject}</Code>
+                  ) : null}
+                </Step>
+              )
+            }
+            return (
+              <ApprovalCard
+                key={item.id}
+                chatId={chatId}
+                item={item}
+                // The step above already draws the change as a diff.
+                showDetail={
+                  item.callId === undefined || !diffs.has(item.callId)
+                }
+              />
+            )
           case "question":
             return <QuestionCard key={item.id} chatId={chatId} item={item} />
           case "status":
-            return (
-              <p key={item.id} className="text-muted-foreground text-xs">
-                {item.text}
-              </p>
-            )
+            return <StatusLine key={item.id} item={item} />
           case "error":
             return (
               <div
@@ -675,7 +736,7 @@ function TurnView({
                   className="mt-0.5 size-3.5 shrink-0"
                 />
                 <span className="min-w-0 break-words">{item.text}</span>
-                {needsSignIn(item.text) ? <SignIn /> : null}
+                {needsSignIn(item.text) && !readOnly ? <SignIn /> : null}
               </div>
             )
           default:
@@ -713,6 +774,35 @@ function TurnView({
       ) : null}
     </div>
   )
+})
+
+/** The files a message carried, as chips under its text. */
+function AttachmentChips({
+  attachments,
+}: {
+  attachments: NonNullable<
+    Extract<TranscriptItem, { kind: "user" }>["attachments"]
+  >
+}) {
+  return (
+    <ul
+      className="flex flex-wrap justify-end gap-1.5"
+      aria-label="Attached files"
+    >
+      {attachments.map((a, i) => (
+        <li key={`${i}-${a.name}`}>
+          <Badge variant="outline" className="max-w-56">
+            {a.kind === "image" ? (
+              <ImageIcon aria-hidden="true" />
+            ) : (
+              <FileIcon aria-hidden="true" />
+            )}
+            <span className="min-w-0 truncate">{a.name}</span>
+          </Badge>
+        </li>
+      ))}
+    </ul>
+  )
 }
 
 export interface TranscriptProps {
@@ -722,13 +812,23 @@ export interface TranscriptProps {
   items: readonly TranscriptItem[]
   /** Drawn after the items: the review card. */
   footer?: React.ReactNode
+  /** A run nobody answers from here (a background session): its cards
+   *  only say what they asked. */
+  readOnly?: boolean
 }
 
-export function Transcript({ chatId, title, items, footer }: TranscriptProps) {
+export function Transcript({
+  chatId,
+  title,
+  items,
+  footer,
+  readOnly = false,
+}: TranscriptProps) {
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const stuck = useRef(true)
   const open = items.some((i) => i.kind === "turn" && i.endedAt === undefined)
   const now = useTick(open)
+  const groups = useStableGroups(items)
 
   // Follow the conversation while the person is at its end; leave them where
   // they are when they have scrolled up to read.
@@ -756,13 +856,20 @@ export function Transcript({ chatId, title, items, footer }: TranscriptProps) {
         className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-6 pt-8 pb-4"
         aria-live="polite"
       >
-        {groupTurns(items).map((entry) =>
+        {groups.map((entry) =>
           "kind" in entry ? (
             <div
               key={entry.id}
-              className="bg-muted max-w-[80%] self-end rounded-2xl px-3.5 py-2 text-sm break-words whitespace-pre-wrap"
+              className="flex max-w-[80%] flex-col gap-1.5 self-end"
             >
-              {entry.text}
+              {entry.text.trim() !== "" ? (
+                <div className="bg-muted self-end rounded-2xl px-3.5 py-2 text-sm break-words whitespace-pre-wrap">
+                  {entry.text}
+                </div>
+              ) : null}
+              {entry.attachments !== undefined ? (
+                <AttachmentChips attachments={entry.attachments} />
+              ) : null}
             </div>
           ) : (
             <TurnView
@@ -770,7 +877,13 @@ export function Transcript({ chatId, title, items, footer }: TranscriptProps) {
               chatId={chatId}
               title={title}
               group={entry}
-              now={now}
+              // Only the turn in flight ticks: the others stay as drawn.
+              now={
+                entry.turn !== null && entry.turn.endedAt === undefined
+                  ? now
+                  : 0
+              }
+              readOnly={readOnly}
             />
           )
         )}

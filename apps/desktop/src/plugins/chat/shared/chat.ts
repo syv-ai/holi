@@ -13,6 +13,9 @@
  *
  * Pure and browser-safe: no Node, no Electron, no React.
  */
+import { CAP, mcpName, toolView, type ToolView } from './tool-views'
+
+export type { DiffLine, FileDiff, PathMatch, ToolView } from './tool-views'
 
 /** Claude Code's own permission modes Holi offers. Never `bypassPermissions`:
  *  every mode here still asks through Claude Code's rules. */
@@ -100,9 +103,38 @@ export type ChatState = 'needs-you' | 'working' | 'idle'
 
 /** A tool call's family: picks its icon and its verb. */
 export type ToolKind =
-  'read' | 'edit' | 'search' | 'execute' | 'fetch' | 'agent' | 'skill' | 'other'
+  'read' | 'edit' | 'search' | 'execute' | 'fetch' | 'agent' | 'skill' | 'mcp' | 'other'
 
-export type ToolStatus = 'running' | 'done' | 'failed'
+/** `denied`: Claude Code's rules, a hook or the person said no. */
+export type ToolStatus = 'running' | 'done' | 'failed' | 'denied'
+
+/** One entry of a TodoWrite list. */
+export interface TodoEntry {
+  text: string
+  /** The present tense, while in progress: "Running the tests". */
+  active?: string
+  status: 'pending' | 'in_progress' | 'completed'
+}
+
+/** A file the person sent with a message, as the bubble names it. */
+export interface Attachment {
+  name: string
+  kind: 'image' | 'file' | 'document'
+  mediaType?: string
+  size?: number
+}
+
+/** What a status line is about: picks its icon. */
+export type StatusIcon =
+  'plan' | 'compact' | 'retry' | 'limit' | 'hook' | 'stop' | 'denied' | 'command' | 'info'
+
+/** What Claude Code said it runs with, from its `init`. */
+export interface SessionInfo {
+  tools: string[]
+  mcpServers: { name: string; status: string }[]
+  version?: string
+  model?: string
+}
 
 export type ApprovalStatus = 'pending' | 'allowed' | 'always' | 'denied' | 'cancelled'
 
@@ -119,7 +151,7 @@ export interface Question {
 }
 
 export type TranscriptItem =
-  | { kind: 'user'; id: string; text: string; at: number }
+  | { kind: 'user'; id: string; text: string; at: number; attachments?: Attachment[] }
   /** One turn's bracket: "Working…" while open, "Worked for 6s" once shut. */
   | {
       kind: 'turn'
@@ -130,9 +162,19 @@ export type TranscriptItem =
       /** The model that answered, as Claude Code names it. */
       model?: string
       usage?: TurnUsage
+      /** The person stopped it. */
+      interrupted?: boolean
     }
   | { kind: 'assistant'; id: string; text: string; streaming: boolean }
-  | { kind: 'reasoning'; id: string; text: string; streaming: boolean }
+  /** Thinking, timed; its text is empty when Claude Code keeps it to itself. */
+  | {
+      kind: 'reasoning'
+      id: string
+      text: string
+      streaming: boolean
+      startedAt?: number
+      endedAt?: number
+    }
   | {
       kind: 'tool'
       id: string
@@ -147,6 +189,24 @@ export type TranscriptItem =
       status: ToolStatus
       /** The tool's result text, trimmed. */
       detail?: string
+      /** What the step opens into: output, lines read, a diff. */
+      view?: ToolView
+      /** The call's input, capped: what its view is rebuilt from. */
+      input?: Record<string, unknown>
+      /** The subagent call (`Agent`/`Task`) this one ran inside. */
+      parentId?: string
+    }
+  /** A TodoWrite list: one per turn, updated in place. */
+  | { kind: 'todos'; id: string; todos: TodoEntry[] }
+  /** ExitPlanMode's plan, and its approval while Claude Code asks for it. */
+  | {
+      kind: 'plan'
+      id: string
+      plan: string
+      status: 'proposed' | 'pending' | 'approved' | 'rejected'
+      requestId?: string
+      /** Claude Code offered to accept edits from here on. */
+      canAcceptEdits?: boolean
     }
   | {
       kind: 'approval'
@@ -162,6 +222,8 @@ export type TranscriptItem =
       status: ApprovalStatus
       /** Claude Code offered a rule to remember the answer by. */
       canAlways: boolean
+      /** The tool call it asks about. */
+      callId?: string
     }
   | {
       kind: 'question'
@@ -171,31 +233,78 @@ export type TranscriptItem =
       status: 'pending' | 'answered' | 'skipped' | 'cancelled'
       answers?: Record<string, string>
     }
-  | { kind: 'status'; id: string; text: string }
+  | {
+      kind: 'status'
+      id: string
+      text: string
+      icon?: StatusIcon
+      tone?: 'warning' | 'destructive'
+      /** A longer look, behind the line. */
+      detail?: string
+    }
   | { kind: 'error'; id: string; text: string }
 
 /** What a driver reports, as the transcript draws it. Paths are already vault-relative. */
 export type ChatEvent =
-  | { type: 'user'; id: string; text: string; at: number }
+  | { type: 'user'; id: string; text: string; at: number; attachments?: Attachment[] }
   | { type: 'turn-start'; id: string; at: number }
-  | { type: 'turn-end'; at: number; failed?: boolean; model?: string; usage?: TurnUsage }
+  | {
+      type: 'turn-end'
+      at: number
+      failed?: boolean
+      interrupted?: boolean
+      model?: string
+      usage?: TurnUsage
+    }
   | { type: 'text'; delta: string }
   | { type: 'text-done'; text?: string }
-  | { type: 'reasoning'; delta: string }
-  | { type: 'reasoning-done' }
-  | { type: 'tool-start'; callId: string; name: string; input: Record<string, unknown> }
-  | { type: 'tool-input'; callId: string; name: string; input: Record<string, unknown> }
-  | { type: 'tool-end'; callId: string; ok: boolean; detail?: string }
+  | { type: 'reasoning'; delta: string; at?: number }
+  | { type: 'reasoning-done'; at?: number }
+  | {
+      type: 'tool-start'
+      callId: string
+      name: string
+      input: Record<string, unknown>
+      parentId?: string
+    }
+  | {
+      type: 'tool-input'
+      callId: string
+      name: string
+      input: Record<string, unknown>
+      parentId?: string
+    }
+  | {
+      type: 'tool-end'
+      callId: string
+      ok: boolean
+      detail?: string
+      /** Claude Code's structured result (`tool_use_result`). */
+      result?: unknown
+    }
+  /** Claude Code's rules, a hook or the person refused the call. */
+  | { type: 'tool-denied'; callId: string }
   | {
       type: 'approval'
       requestId: string
       name: string
       input: Record<string, unknown>
       canAlways: boolean
+      callId?: string
+      /** The modes Claude Code offered to switch to (`setMode`). */
+      modes?: string[]
     }
   | { type: 'question'; requestId: string; questions: Question[] }
   | { type: 'resolved'; requestId: string; status: ApprovalStatus | 'answered' | 'skipped' }
-  | { type: 'status'; text: string }
+  /** Claude Code's permission mode changed; `from` is the one before. */
+  | { type: 'mode'; mode: string; from?: string }
+  | {
+      type: 'status'
+      text: string
+      icon?: StatusIcon
+      tone?: 'warning' | 'destructive'
+      detail?: string
+    }
   | { type: 'error'; text: string }
 
 /** One chat session, as the sidebar and the header show it. */
@@ -226,6 +335,8 @@ export interface ChatSummary {
   /** Its process is running now. */
   alive: boolean
   contextPercent?: number
+  /** What its last process said it runs with. */
+  info?: SessionInfo
 }
 
 // ------------------------------------------------------------------ tools
@@ -259,7 +370,18 @@ export function toolKind(name: string): ToolKind {
   if (n === 'webfetch' || n === 'websearch' || n === 'fetch') return 'fetch'
   if (n === 'task' || n === 'agent') return 'agent'
   if (n === 'skill') return 'skill'
+  if (mcpName(name) !== null) return 'mcp'
   return 'other'
+}
+
+/** "Get forecast": a tool's own name, as words. */
+const words = (name: string): string => {
+  const spaced = name
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/[_-]+/g, ' ')
+    .trim()
+    .toLowerCase()
+  return spaced.charAt(0).toUpperCase() + spaced.slice(1)
 }
 
 /** How a tool call reads, done and in flight, from its name and input. */
@@ -272,7 +394,10 @@ export function describeTool(
   const rel = path === undefined ? undefined : relativeTo(root, path)
   switch (name.toLowerCase()) {
     case 'read':
+    case 'notebookread':
       return { title: 'Read', active: 'Reading', subject: rel }
+    case 'ls':
+      return { title: 'Listed', active: 'Listing', subject: rel }
     case 'write':
       return { title: 'Wrote', active: 'Writing', subject: rel }
     case 'edit':
@@ -316,10 +441,55 @@ export function describeTool(
         subject: str(input, 'skill', 'name'),
       }
     case 'todowrite':
-      return { title: 'Updated its plan', active: 'Planning' }
+      return { title: 'Updated the todo list', active: 'Updating the todo list' }
+    case 'exitplanmode':
+      return { title: 'Proposed a plan', active: 'Writing a plan' }
+    case 'enterplanmode':
+      return { title: 'Entered plan mode', active: 'Entering plan mode' }
+    case 'toolsearch':
+      return { title: 'Loaded tools', active: 'Loading tools', subject: str(input, 'query') }
+    case 'askuserquestion':
+      return { title: 'Asked you', active: 'Asking you' }
+    case 'bashoutput':
+      return {
+        title: 'Read the output of',
+        active: 'Reading the output of',
+        subject: str(input, 'bash_id', 'shell_id'),
+      }
+    case 'killshell':
+    case 'killbash':
+    case 'taskstop':
+      return { title: 'Stopped a background task', active: 'Stopping a background task' }
+    case 'slashcommand':
+      return { title: 'Ran', active: 'Running', subject: str(input, 'command') }
+    case 'monitor':
+      return { title: 'Watched', active: 'Watching', subject: str(input, 'description', 'command') }
+    case 'enterworktree':
+      return { title: 'Moved to a worktree', active: 'Moving to a worktree' }
+    case 'exitworktree':
+      return { title: 'Left the worktree', active: 'Leaving the worktree' }
+    case 'croncreate':
+      return { title: 'Scheduled', active: 'Scheduling', subject: str(input, 'prompt', 'schedule') }
+    case 'crondelete':
+      return { title: 'Removed a schedule', active: 'Removing a schedule' }
+    case 'cronlist':
+      return { title: 'Listed schedules', active: 'Listing schedules' }
+    case 'schedulewakeup':
+      return { title: 'Set a wake-up', active: 'Setting a wake-up' }
+    case 'sendmessage':
+      return { title: 'Sent a message', active: 'Sending a message' }
+    case 'listagents':
+      return { title: 'Listed agents', active: 'Listing agents' }
+    case 'pushnotification':
+      return { title: 'Sent a notification', active: 'Sending a notification' }
     default: {
-      const pretty = name.replace(/^mcp__[^_]+__/, '').replace(/_/g, ' ')
-      return { title: `Used ${pretty}`, active: `Using ${pretty}`, subject: rel }
+      const mcp = mcpName(name)
+      const pretty = words(mcp === null ? name : mcp.tool)
+      const lower = pretty.charAt(0).toLowerCase() + pretty.slice(1)
+      if (mcp !== null && rel === undefined) {
+        return { title: `Used ${lower} from`, active: `Using ${lower} from`, subject: mcp.server }
+      }
+      return { title: `Used ${lower}`, active: `Using ${lower}`, subject: rel }
     }
   }
 }
@@ -357,6 +527,11 @@ export function describeApproval(
     }
   }
   const d = describeTool(name, input, root)
+  const mcp = mcpName(name)
+  if (mcp !== null) {
+    const tool = words(mcp.tool)
+    return { verb: `Use ${tool.charAt(0).toLowerCase()}${tool.slice(1)} from`, subject: mcp.server }
+  }
   return { verb: `Use ${name}`, ...(d.subject === undefined ? {} : { subject: d.subject }) }
 }
 
@@ -382,6 +557,62 @@ const lastOf = <K extends TranscriptItem['kind']>(
 ): Extract<TranscriptItem, { kind: K }> | undefined => {
   const last = items.at(-1)
   return last?.kind === kind ? (last as Extract<TranscriptItem, { kind: K }>) : undefined
+}
+
+/** TodoWrite's list, read defensively; null when it has none. */
+export function todosOf(input: Record<string, unknown>): TodoEntry[] | null {
+  const raw = input['todos']
+  if (!Array.isArray(raw)) return null
+  const out: TodoEntry[] = []
+  for (const t of raw) {
+    if (t === null || typeof t !== 'object') continue
+    const r = t as Record<string, unknown>
+    const text = [r['content'], r['text'], r['activeForm']].find(
+      (v): v is string => typeof v === 'string' && v.trim() !== '',
+    )
+    if (text === undefined) continue
+    const s = String(r['status'] ?? 'pending')
+      .toLowerCase()
+      .replace(/[\s_-]+/g, '')
+    const status: TodoEntry['status'] =
+      s === 'completed' || s === 'done' || s === 'complete'
+        ? 'completed'
+        : s === 'inprogress' || s === 'active'
+          ? 'in_progress'
+          : 'pending'
+    const active =
+      typeof r['activeForm'] === 'string' && r['activeForm'] !== text ? r['activeForm'] : undefined
+    out.push({ text: text.trim(), status, ...(active === undefined ? {} : { active }) })
+  }
+  return out
+}
+
+/** A tool's input as the transcript keeps it: long text cut, so a written
+ *  file is not kept twice. */
+export function capInput(input: Record<string, unknown>): Record<string, unknown> {
+  const cut = (v: unknown, depth: number): unknown => {
+    if (typeof v === 'string') return v.length > CAP.textChars ? `${v.slice(0, CAP.textChars)}…` : v
+    if (Array.isArray(v)) return depth > 4 ? [] : v.slice(0, 100).map((x) => cut(x, depth + 1))
+    if (v !== null && typeof v === 'object') {
+      if (depth > 4) return {}
+      const out: Record<string, unknown> = {}
+      for (const [k, x] of Object.entries(v)) out[k] = cut(x, depth + 1)
+      return out
+    }
+    return v
+  }
+  return cut(input, 0) as Record<string, unknown>
+}
+
+const hasPatch = (result: unknown): boolean => {
+  if (result === null || typeof result !== 'object') return false
+  const r = result as Record<string, unknown>
+  return (
+    (Array.isArray(r['structuredPatch']) && r['structuredPatch'].length > 0) ||
+    r['type'] === 'create' ||
+    typeof r['old_source'] === 'string' ||
+    typeof r['originalFile'] === 'string'
+  )
 }
 
 /**
@@ -412,9 +643,32 @@ export function applyChatEvent(
         i.kind === kind && pred(i as Extract<TranscriptItem, { kind: K }>),
     )
 
+  /** The turn the transcript is in now: what a todo list is kept per. */
+  const currentTurn = (): string => {
+    for (let i = next.length - 1; i >= 0; i--) {
+      const item = next[i]!
+      if (item.kind === 'turn') return item.id
+      if (item.kind === 'user') break
+    }
+    return 'lead'
+  }
+  /** Prose before a tool call is finished: the call starts its own row. */
+  const closeProse = (): void => {
+    const prose = lastOf(next, 'assistant')
+    if (prose !== undefined && prose.streaming) put({ ...prose, streaming: false })
+  }
+
   switch (event.type) {
     case 'user':
-      put({ kind: 'user', id: event.id, text: event.text, at: event.at })
+      put({
+        kind: 'user',
+        id: event.id,
+        text: event.text,
+        at: event.at,
+        ...(event.attachments === undefined || event.attachments.length === 0
+          ? {}
+          : { attachments: event.attachments }),
+      })
       break
     case 'turn-start':
       put({ kind: 'turn', id: event.id, startedAt: event.at })
@@ -422,14 +676,16 @@ export function applyChatEvent(
     case 'turn-end': {
       // Whatever was still streaming has stopped with the turn.
       for (const item of next) {
-        if ((item.kind === 'assistant' || item.kind === 'reasoning') && item.streaming) {
-          put({ ...item, streaming: false })
+        if (item.kind === 'assistant' && item.streaming) put({ ...item, streaming: false })
+        if (item.kind === 'reasoning' && item.streaming) {
+          put({ ...item, streaming: false, endedAt: item.endedAt ?? event.at })
         }
         if (item.kind === 'tool' && item.status === 'running') put({ ...item, status: 'done' })
         if (item.kind === 'approval' && item.status === 'pending')
           put({ ...item, status: 'cancelled' })
         if (item.kind === 'question' && item.status === 'pending')
           put({ ...item, status: 'cancelled' })
+        if (item.kind === 'plan' && item.status === 'pending') put({ ...item, status: 'proposed' })
       }
       const turn = [...next].reverse().find((i) => i.kind === 'turn')
       if (turn?.kind === 'turn' && turn.endedAt === undefined) {
@@ -437,9 +693,12 @@ export function applyChatEvent(
           ...turn,
           endedAt: event.at,
           ...(event.failed ? { failed: true } : {}),
+          ...(event.interrupted ? { interrupted: true } : {}),
           ...(event.model === undefined ? {} : { model: event.model }),
           ...(event.usage === undefined ? {} : { usage: event.usage }),
         })
+        if (event.interrupted)
+          put({ kind: 'status', id: nextItemId('s'), text: 'Stopped', icon: 'stop' })
       }
       break
     }
@@ -462,21 +721,58 @@ export function applyChatEvent(
     case 'reasoning': {
       const open = lastOf(next, 'reasoning')
       if (open !== undefined && open.streaming) put({ ...open, text: open.text + event.delta })
-      else put({ kind: 'reasoning', id: nextItemId('r'), text: event.delta, streaming: true })
+      else {
+        put({
+          kind: 'reasoning',
+          id: nextItemId('r'),
+          text: event.delta,
+          streaming: true,
+          ...(event.at === undefined ? {} : { startedAt: event.at }),
+        })
+      }
       break
     }
     case 'reasoning-done': {
       const open = lastOf(next, 'reasoning')
-      if (open !== undefined && open.streaming) put({ ...open, streaming: false })
+      if (open !== undefined && open.streaming) {
+        put({ ...open, streaming: false, ...(event.at === undefined ? {} : { endedAt: event.at }) })
+      }
       break
     }
     case 'tool-start':
     case 'tool-input': {
-      // Prose before a tool call is finished: the call starts its own row.
-      const prose = lastOf(next, 'assistant')
-      if (prose !== undefined && prose.streaming) put({ ...prose, streaming: false })
+      closeProse()
+      const lower = event.name.toLowerCase()
+      if (lower === 'todowrite') {
+        // One list per turn, redrawn in place as Claude Code ticks it off.
+        const todos = todosOf(event.input)
+        if (todos !== null) {
+          const id = `todos-${currentTurn()}`
+          put({ kind: 'todos', id, todos })
+        }
+        break
+      }
+      if (lower === 'exitplanmode') {
+        const plan = typeof event.input['plan'] === 'string' ? event.input['plan'] : ''
+        const existing = find('plan', (i) => i.id === event.callId)
+        put({
+          kind: 'plan',
+          id: event.callId,
+          plan: plan === '' ? (existing?.plan ?? '') : plan,
+          status: existing?.status ?? 'proposed',
+          ...(existing?.requestId === undefined ? {} : { requestId: existing.requestId }),
+          ...(existing?.canAcceptEdits === undefined
+            ? {}
+            : { canAcceptEdits: existing.canAcceptEdits }),
+        })
+        break
+      }
+      // Plan mode is drawn from Claude Code's own mode change (`mode`).
+      if (lower === 'enterplanmode') break
       const existing = find('tool', (i) => i.id === event.callId)
       const d = describeTool(event.name, event.input, root)
+      const view = toolView(event.name, event.input, root)
+      const parentId = event.parentId ?? existing?.parentId
       put({
         kind: 'tool',
         id: event.callId,
@@ -487,22 +783,73 @@ export function applyChatEvent(
         ...(d.subject === undefined ? {} : { subject: d.subject }),
         status: existing?.status ?? 'running',
         ...(existing?.detail === undefined ? {} : { detail: existing.detail }),
+        ...(existing?.status !== undefined &&
+        existing.status !== 'running' &&
+        existing.view !== undefined
+          ? { view: existing.view }
+          : view === undefined
+            ? {}
+            : { view }),
+        input: capInput(event.input),
+        ...(parentId === undefined ? {} : { parentId }),
       })
       break
     }
     case 'tool-end': {
+      const plan = find('plan', (i) => i.id === event.callId)
+      if (plan !== undefined) {
+        if (plan.status !== 'approved' && plan.status !== 'rejected') {
+          put({ ...plan, status: event.ok ? 'approved' : 'rejected' })
+        }
+        break
+      }
       const tool = find('tool', (i) => i.id === event.callId)
       if (tool !== undefined) {
         const detail = trimDetail(event.detail)
+        const fresh = toolView(tool.tool, tool.input ?? {}, root, {
+          ok: event.ok,
+          ...(event.detail === undefined ? {} : { output: event.detail }),
+          ...(event.result === undefined ? {} : { result: event.result }),
+        })
+        // An edit's diff from its input stands unless the result brings the
+        // real hunks: the kept input is capped, the call's own was whole.
+        const keep =
+          tool.view !== undefined &&
+          (fresh === undefined || (fresh.type === 'diff' && !hasPatch(event.result)))
+        const view = keep ? tool.view : fresh
         put({
           ...tool,
-          status: event.ok ? 'done' : 'failed',
+          status: tool.status === 'denied' ? 'denied' : event.ok ? 'done' : 'failed',
           ...(detail === undefined ? {} : { detail }),
+          ...(view === undefined ? {} : { view }),
         })
       }
       break
     }
+    case 'tool-denied': {
+      const tool = find('tool', (i) => i.id === event.callId)
+      if (tool !== undefined) put({ ...tool, status: 'denied' })
+      break
+    }
     case 'approval': {
+      if (event.name === 'ExitPlanMode') {
+        // The plan's own card asks: Approve, or Keep planning.
+        const plan =
+          (event.callId === undefined ? undefined : find('plan', (i) => i.id === event.callId)) ??
+          [...next]
+            .reverse()
+            .find((i): i is Extract<TranscriptItem, { kind: 'plan' }> => i.kind === 'plan')
+        const text = typeof event.input['plan'] === 'string' ? event.input['plan'] : ''
+        put({
+          kind: 'plan',
+          id: plan?.id ?? event.callId ?? `plan-${event.requestId}`,
+          plan: text === '' ? (plan?.plan ?? '') : text,
+          status: 'pending',
+          requestId: event.requestId,
+          ...((event.modes ?? []).includes('acceptEdits') ? { canAcceptEdits: true } : {}),
+        })
+        break
+      }
       const d = describeApproval(event.name, event.input, root)
       put({
         kind: 'approval',
@@ -514,6 +861,7 @@ export function applyChatEvent(
         ...(d.detail === undefined ? {} : { detail: d.detail }),
         status: 'pending',
         canAlways: event.canAlways,
+        ...(event.callId === undefined ? {} : { callId: event.callId }),
       })
       break
     }
@@ -527,9 +875,24 @@ export function applyChatEvent(
       })
       break
     case 'resolved': {
+      const plan = find('plan', (i) => i.requestId === event.requestId)
+      if (plan !== undefined) {
+        const status =
+          event.status === 'allowed' || event.status === 'always'
+            ? 'approved'
+            : event.status === 'denied'
+              ? 'rejected'
+              : 'proposed'
+        put({ ...plan, status })
+        break
+      }
       const approval = find('approval', (i) => i.requestId === event.requestId)
       if (approval !== undefined && event.status !== 'answered' && event.status !== 'skipped') {
         put({ ...approval, status: event.status })
+        if (event.status === 'denied' && approval.callId !== undefined) {
+          const tool = find('tool', (i) => i.id === approval.callId)
+          if (tool !== undefined) put({ ...tool, status: 'denied' })
+        }
       }
       const question = find('question', (i) => i.requestId === event.requestId)
       if (question !== undefined) {
@@ -539,8 +902,30 @@ export function applyChatEvent(
       }
       break
     }
+    case 'mode': {
+      if (event.from === undefined || event.from === event.mode) break
+      if (event.mode === 'plan') {
+        put({ kind: 'status', id: nextItemId('s'), text: 'Entered plan mode', icon: 'plan' })
+      } else if (event.from === 'plan') {
+        put({
+          kind: 'status',
+          id: nextItemId('s'),
+          text:
+            event.mode === 'acceptEdits' ? 'Exited plan mode, accepting edits' : 'Exited plan mode',
+          icon: 'plan',
+        })
+      }
+      break
+    }
     case 'status':
-      put({ kind: 'status', id: nextItemId('s'), text: event.text })
+      put({
+        kind: 'status',
+        id: nextItemId('s'),
+        text: event.text,
+        ...(event.icon === undefined ? {} : { icon: event.icon }),
+        ...(event.tone === undefined ? {} : { tone: event.tone }),
+        ...(event.detail === undefined ? {} : { detail: event.detail }),
+      })
       break
     case 'error': {
       // Claude Code says a failed turn's reason as its reply too: once is enough.

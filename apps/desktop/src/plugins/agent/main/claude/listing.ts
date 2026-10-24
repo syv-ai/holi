@@ -61,6 +61,9 @@ export interface SessionSummary {
   model?: string
   /** When it started, epoch ms, from the listing. */
   startedAt?: number
+  /** Claude Code's conversation id (its transcript's name), once it has
+   *  said: what a read-only view of the conversation reads. */
+  conversationId?: string
 }
 
 /** What a session's status line says: its context use and its model. */
@@ -151,6 +154,7 @@ export function summarise(
     ...(reading.contextPercent === undefined ? {} : { contextPercent: reading.contextPercent }),
     ...(reading.model === undefined ? {} : { model: reading.model }),
     ...(row.startedAt === undefined ? {} : { startedAt: row.startedAt }),
+    ...(row.sessionId === undefined ? {} : { conversationId: row.sessionId }),
   }
 }
 

@@ -4,12 +4,33 @@
  * is ever put into the page. After MonoCode's `AgentMarkdown` (MIT, Copyright
  * (c) 2026 Nick; see NOTICE.md), which also draws its own tree.
  *
- * Raw HTML in a reply is shown as the text it is. Links open in the browser
- * through the window guard, which sends any navigation out of the app there.
+ * Raw HTML in a reply is shown as the text it is, never parsed. Links open
+ * in the browser through the window guard, which sends any navigation out of
+ * the app there. An image (`![alt](src)`) is drawn when it is the vault's own
+ * file (a vault-relative path, through the `holi-vault://` asset route
+ * documents use) or an `https:` URL (the page's policy leaves remote images
+ * to the renderer); anything else is its alt text as a link or as text.
  */
 import { Lexer, type Token, type Tokens } from 'marked'
 import { Fragment, memo, type ReactNode } from 'react'
-import { cn } from '@/plugin-api'
+import { cn, vaultAssetUrl } from '@/plugin-api'
+
+/** Where an image in a reply may load from: the vault's own files and
+ *  https, nothing else (no `file:`, no `data:`, no paths out of the vault). */
+export function imageSource(href: string): string | null {
+  const h = href.trim()
+  if (/^https:\/\//i.test(h)) return h
+  if (/^[a-z][a-z0-9+.-]*:/i.test(h) || h.startsWith('/') || h.startsWith('~')) return null
+  let path: string
+  try {
+    path = decodeURI(h.replace(/^\.\//, ''))
+  } catch {
+    return null
+  }
+  const parts = path.split('/')
+  if (path === '' || parts.some((p) => p === '..' || p === '')) return null
+  return vaultAssetUrl(path)
+}
 
 function inline(tokens: readonly Token[] | undefined, key = ''): ReactNode {
   if (tokens === undefined) return null
@@ -60,8 +81,32 @@ function inlineToken(t: Token, key: string): ReactNode {
         inline(link.tokens, key)
       )
     }
-    case 'image':
-      return (t as Tokens.Image).text
+    case 'image': {
+      const image = t as Tokens.Image
+      const src = imageSource(image.href)
+      if (src === null) {
+        return /^https?:/i.test(image.href) ? (
+          <a
+            href={image.href}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-foreground underline decoration-foreground/30 underline-offset-4 transition-colors hover:decoration-foreground"
+          >
+            {image.text || image.href}
+          </a>
+        ) : (
+          image.text
+        )
+      }
+      return (
+        <img
+          src={src}
+          alt={image.text}
+          loading="lazy"
+          className="my-1 inline-block max-h-96 max-w-full rounded-md align-top"
+        />
+      )
+    }
     case 'html':
       return (t as Tokens.HTML).text
     default:

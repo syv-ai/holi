@@ -79,7 +79,11 @@ Nothing starts until the first message is sent.
 **The composer** says where Claude Code works (the vault, and the clone's branch from
 `chats.where`), takes the text, and under it the model and its effort (`--model`, `--effort`; an
 alias such as `opus` reads as the model the last turn ran on, "Opus 5.5"), the permission mode,
-and send, which stops a running turn. A chat sends text, so there is no attach button. **`/`**
+and send, which stops a running turn. **`+`** attaches: a vault document as an `@path` reference,
+or images and files from disk; an image can be pasted or dropped on the composer too. Images go to
+Claude Code as image blocks, PDFs as document blocks and text files as their text in a named
+`<file>` block, all in the stream-json user message (at most 10 files of 10 MB); the message's
+bubble names them. Other binaries are refused with a reason. **`/`**
 lists what Claude Code runs as a command in the vault (`chats.commands`): the `slash_commands` the
 vault's last session reported in its `init`, less the TUI-only ones, merged with what the vault's
 and its config directory's `.claude/commands/**.md` and `.claude/skills/*/SKILL.md` say about
@@ -97,6 +101,63 @@ Enter or Tab pick, Escape closes; otherwise Enter sends and Shift+Enter is a new
 worked for 6s"), from the `result`'s `modelUsage`; under a finished turn, copy the reply, save it
 as a vault document, and a usage icon whose tooltip reads the `result`'s tokens ("Cache hit 39% ·
 Output 4 tok/s", "2 input · 22 output · 12.7k cached"), then when it ended.
+
+## What the transcript draws
+
+Everything is folded by the reducer (`shared/chat.ts`, `shared/tool-views.ts`) from Claude Code's
+stream-json into typed transcript items, which the renderer only draws. Saved transcripts without
+the newer fields still load: every new field is optional.
+
+- **Tool steps** read as a sentence, present tense while running ("Reading", "Running the tests")
+  and past once done ("Read `notes.md`"); every tool has its pair, MCP tools read "Used get forecast
+  from `weather`". A step opens (collapsed by default; failed or refused ones open) into its
+  result, mounted only when opened: a command with its output, errors and exit status; a read's
+  lines, numbered; a search's matches as vault paths that open as tabs; a fetch's URL, status and
+  answer, a web search's query and links; an MCP tool's server, tool, input and pretty-printed
+  JSON result; anything else its raw input and output. Results come from Claude Code's
+  `tool_use_result`, capped in the transcript (output 20k characters, 400 lines).
+- **Edits** (Edit, MultiEdit, Write, NotebookEdit) show their diff under the step, not folded:
+  old and new line numbers from Claude Code's `structuredPatch`, a line diff of the input while it
+  waits for approval, a new file as all additions; the first 12 lines, then Show all. Plan mode's
+  own copy of the plan (`~/.claude/plans/`) folds, since the plan card shows it. The turn's review
+  card stays the summary.
+- **Refusals**: a call Claude Code's rules, a hook or the person refused is marked "not allowed"
+  with the reason (`tool_result_meta`'s `reject`). An answered prompt is said on its step
+  ("allowed once", "always allowed") instead of as a line of its own.
+- **The todo list** (TodoWrite) is one card per turn, redrawn in place: waiting, in progress
+  (spinner) and done (checked, struck through), its count on the turn's header ("2/3 done").
+- **Plan mode**: entering and leaving are status lines, from the `permissionMode` Claude Code
+  reports in its `status` records, and the composer's mode picker follows the same report.
+  ExitPlanMode is a **Plan** card of markdown; its approval is Claude Code's own `can_use_tool`
+  prompt, answered from the card: **Approve**, **Approve and accept edits** only when Claude Code
+  offers a `setMode` suggestion (2.1.310 offers none for ExitPlanMode, so the button does not show),
+  and **Keep planning**, a deny with an optional note sent back as its message.
+- **Subagents** (`Agent`/`Task`): a group under its description with its type and step count; its
+  own steps (records with `parent_tool_use_id`) hang under it on a rail, open while it works and
+  folded once done, with its answer. Its prose is not drawn as the agent's.
+- **Thinking**: "Thinking…" while it streams, then "Thought for 4s", which opens for the text when
+  Claude Code sends any. 2.1.310 sends thinking empty (signature only), so such a block is only a
+  timed line, and only from 2 s.
+- **Other events**: "Context compacted" with its token counts (`compact_boundary`), retries
+  (`api_retry`), the usage limit (`rate_limit_event` when not plainly allowed), a hook's message
+  (`informational`) or failure (`hook_response` with a non-zero exit), "Stopped" for a turn the
+  person stopped (the `result` after Holi's interrupt is not a failure), and a slash command's
+  output (`<local-command-stdout>`).
+- **Session info**: the header's info button lists the `init`'s version, model, MCP servers and
+  their status, and tools.
+- **Images in replies** (`![alt](src)`) load from the vault through `holi-vault://` when the path
+  is vault-relative, or from an `https:` URL; any other source is its alt text. Raw HTML stays
+  text, never parsed.
+
+## Background runs
+
+A background session (a Holi's, an automation's) is not a chat's process, but Claude Code says its
+conversation id in its listing (`sessionId`), and writes the conversation to
+`<config dir>/projects/<cwd slug>/<id>.jsonl`, with each subagent's steps in
+`<id>/subagents/agent-<agent id>.jsonl`. `chats.conversation` reads those files and folds them with
+the same reader and reducer (`main/conversation.ts`), and the agent's session view draws the
+result through its slot's `conversation`, read only: its cards say what they asked and offer
+nothing, and it is read again every 2 s while the run works.
 
 ## Rules
 
@@ -125,8 +186,13 @@ Output 4 tok/s", "2 input · 22 output · 12.7k cached"), then when it ended.
 - `apps/desktop/src/plugins/chat/main/claude-stream.ts`: `stream-json` and `can_use_tool`
 - `apps/desktop/src/plugins/chat/main/capabilities.ts`: `chats.*`
 - `apps/desktop/src/plugins/chat/main/commands.ts`: what the `/` menu lists
+- `apps/desktop/src/plugins/chat/main/conversation.ts`: a background run's transcript, folded
+- `apps/desktop/src/plugins/chat/shared/tool-views.ts`: what each tool step opens into, and diffs
+- `apps/desktop/src/plugins/chat/test/fixtures/`: captured stream-json runs (see `replay.ts`)
 - `apps/desktop/src/plugins/chat/shared/chat.ts`: transcript items, tool phrasing, the reducer
 - `apps/desktop/src/plugins/chat/renderer/`: `ChatMain.tsx` (the new-session
   page and a conversation), `Transcript.tsx`, `Composer.tsx`, `ComposerMenus.tsx` and
-  `composer-tokens.ts` (`/` and `@`), `ReviewCard.tsx`; `state/chats.ts`, `state/review.ts`
+  `composer-tokens.ts` (`/` and `@`), `attachments.tsx`, `ReviewCard.tsx`, `SessionInfo.tsx`,
+  `ConversationView.tsx`, `steps/` (the step rows, bodies, diff, todo and plan cards);
+  `state/chats.ts`, `state/review.ts`
 - `apps/desktop/src/plugins/chat/NOTICE.md`: MonoCode's licence for the parts after it

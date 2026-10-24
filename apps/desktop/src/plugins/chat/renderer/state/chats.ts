@@ -323,13 +323,26 @@ export const loadTranscriptAtom = atom(null, async (get, set, id: string) => {
   set(transcriptsAtom, (all) => ({ ...all, [id]: mergeItems(items, all[id] ?? []) }))
 })
 
+/** A file the composer sends with a message, base64. */
+export interface SendFile {
+  name: string
+  mediaType: string
+  data: string
+}
+
 /** A new chat session whose first turn is `text`, brought forward. */
 export const startChatAtom = atom(
   null,
   async (
     get,
     set,
-    args: { text: string; model?: string | null; effort?: Effort | null; mode?: PermissionMode },
+    args: {
+      text: string
+      model?: string | null
+      effort?: Effort | null
+      mode?: PermissionMode
+      files?: SendFile[]
+    },
   ): Promise<ChatActionResult> => {
     const remote = get(activeRemoteAtom)
     if (remote === null) return NO_VAULT
@@ -341,6 +354,7 @@ export const startChatAtom = atom(
       mode: args.mode ?? prefs.mode,
       ...(model ? { model } : {}),
       ...(effort ? { effort } : {}),
+      ...(args.files === undefined || args.files.length === 0 ? {} : { files: args.files }),
     })
     if (!res.ok) return res
     set(chatViewAtom, { kind: 'chat', id: res.id })
@@ -360,11 +374,16 @@ export const sendChatAtom = atom(
       model?: string | null
       effort?: Effort | null
       mode?: PermissionMode
+      files?: SendFile[]
     },
   ): Promise<ChatActionResult> => {
     const remote = get(activeRemoteAtom)
     if (remote === null) return NO_VAULT
-    return chatCap.send(remote, args)
+    const { files, ...rest } = args
+    return chatCap.send(remote, {
+      ...rest,
+      ...(files === undefined || files.length === 0 ? {} : { files }),
+    })
   },
 )
 
@@ -377,8 +396,8 @@ export const answerChatAtom = atom(
       id: string
       requestId: string
       answer:
-        | { kind: 'allow'; always?: boolean }
-        | { kind: 'deny' }
+        | { kind: 'allow'; always?: boolean; mode?: 'acceptEdits' }
+        | { kind: 'deny'; message?: string }
         | { kind: 'answer'; answers: Record<string, string> }
     },
   ): Promise<ChatActionResult> => {

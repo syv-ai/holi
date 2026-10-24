@@ -44,6 +44,7 @@ export { trpc } from '@/lib/trpc'
 export { capClient, type CapClient, type UiCapability } from '@/lib/cap-client'
 export { useHasCapability } from '@/state/capabilities'
 export { cn } from '@/lib/cn'
+export { vaultAssetUrl } from '@/lib/vault-asset'
 export { useAck } from '@/lib/use-ack'
 export { DRAWER_WIDTH } from '@/lib/drawer'
 export {

@@ -40,10 +40,12 @@ import {
   type ChatSummary,
   type Effort,
   type PermissionMode,
+  type SessionInfo,
   type TranscriptItem,
   type TurnUsage,
 } from '../shared/chat'
 import {
+  attachmentKind,
   claudeChatArgs,
   controlResponse,
   interruptRequest,
@@ -53,6 +55,7 @@ import {
   readClaudeRecord,
   userMessage,
   type ClaudeReader,
+  type OutgoingFile,
   type PendingPermission,
   type PermissionAnswer,
 } from './claude-stream'
@@ -76,6 +79,9 @@ export function chatDirSlug(remote: string): string {
   return readable === '' ? hash : `${readable}-${hash}`
 }
 
+const isMode = (v: string): v is PermissionMode =>
+  v === 'default' || v === 'acceptEdits' || v === 'plan'
+
 /** A live process idle this long is let go; the next message resumes it. */
 const IDLE_EXIT_MS = 15 * 60_000
 /** Transcript writes are batched: a streamed reply changes its item per token. */
@@ -98,6 +104,8 @@ export interface ChatRecord {
   /** Claude Code's own conversation id, which `--resume` takes. */
   conversationId?: string
   contextPercent?: number
+  /** What its last process said it runs with (`init`). */
+  info?: SessionInfo
 }
 
 interface ChatIndex {
@@ -146,6 +154,8 @@ export interface TurnOptions {
 
 export interface StartArgs extends TurnOptions {
   text: string
+  /** Files sent with the first message. */
+  files?: OutgoingFile[]
   /** Fix the id (the tests). */
   id?: string
   title?: string
@@ -193,7 +203,7 @@ export interface Chats {
   list(): ChatSummary[]
   transcript(id: string): Promise<TranscriptItem[]>
   start(args: StartArgs): Promise<ChatResult>
-  send(id: string, text: string, opts?: TurnOptions): Promise<ChatResult>
+  send(id: string, text: string, opts?: TurnOptions, files?: OutgoingFile[]): Promise<ChatResult>
   answer(id: string, requestId: string, answer: PermissionAnswer): Promise<ChatResult>
   interrupt(id: string): Promise<ChatResult>
   update(
@@ -277,6 +287,7 @@ export function createChats(deps: ChatsDeps): Chats {
       reviewed: r.reviewed,
       alive: l !== undefined,
       ...(r.contextPercent === undefined ? {} : { contextPercent: r.contextPercent }),
+      ...(r.info === undefined ? {} : { info: r.info }),
     }
   }
 
@@ -403,7 +414,7 @@ export function createChats(deps: ChatsDeps): Chats {
   function endTurn(
     id: string,
     failed: boolean,
-    how: { model?: string; usage?: TurnUsage } = {},
+    how: { model?: string; usage?: TurnUsage; interrupted?: boolean } = {},
   ): void {
     const l = live.get(id)
     if (l !== undefined) {
@@ -415,6 +426,7 @@ export function createChats(deps: ChatsDeps): Chats {
       type: 'turn-end',
       at: now(),
       ...(failed ? { failed: true } : {}),
+      ...(how.interrupted ? { interrupted: true } : {}),
       ...(how.model === undefined ? {} : { model: how.model }),
       ...(how.usage === undefined ? {} : { usage: how.usage }),
     })
@@ -441,13 +453,27 @@ export function createChats(deps: ChatsDeps): Chats {
       const percent = res.contextPercent
       void saveRecord(id, (x) => ({ ...x, contextPercent: percent }))
     }
+    if (res.info !== undefined && JSON.stringify(res.info) !== JSON.stringify(record(id)?.info)) {
+      const info = res.info
+      void saveRecord(id, (x) => ({ ...x, info }))
+    }
+    // Claude Code switched mode (plan approved, edits accepted): the record
+    // follows, so the composer shows it and the next turn needs no restart.
+    if (res.mode !== undefined && isMode(res.mode) && record(id)?.mode !== res.mode) {
+      const mode = res.mode
+      void saveRecord(id, (x) => ({ ...x, mode })).then(() => {
+        const r = record(id)
+        if (r !== undefined && live.get(id) === l) l.launchKey = launchKey(r)
+      })
+    }
     if (res.commands !== undefined && JSON.stringify(res.commands) !== JSON.stringify(commands)) {
       commands = res.commands
       void saveIndex()
     }
     if (res.turnEnded !== undefined && l.turnOpen) {
-      const { failed, model, usage } = res.turnEnded
+      const { failed, model, usage, interrupted } = res.turnEnded
       endTurn(id, failed, {
+        ...(interrupted ? { interrupted } : {}),
         ...(model === undefined ? {} : { model }),
         ...(usage === undefined ? {} : { usage }),
       })
@@ -486,7 +512,7 @@ export function createChats(deps: ChatsDeps): Chats {
     }
     const l: Live = {
       child,
-      reader: newClaudeReader(),
+      reader: newClaudeReader(now),
       buffer: '',
       pending: new Map(),
       turnOpen: false,
@@ -534,7 +560,11 @@ export function createChats(deps: ChatsDeps): Chats {
     return l
   }
 
-  async function turn(r: ChatRecord, text: string): Promise<ChatResult> {
+  async function turn(
+    r: ChatRecord,
+    text: string,
+    files: readonly OutgoingFile[] = [],
+  ): Promise<ChatResult> {
     const l = await ensureProcess(r)
     if (typeof l === 'string') {
       apply(r.id, { type: 'error', text: l })
@@ -543,12 +573,24 @@ export function createChats(deps: ChatsDeps): Chats {
     }
     if (l.turnOpen) return { ok: false, message: 'It is still working on the last message.' }
     const at = now()
-    apply(r.id, { type: 'user', id: nextItemId('u'), text, at })
+    const attachments = files.map((f) => ({
+      name: f.name,
+      kind: attachmentKind(f.mediaType),
+      mediaType: f.mediaType,
+      size: Math.floor((f.data.length * 3) / 4),
+    }))
+    apply(r.id, {
+      type: 'user',
+      id: nextItemId('u'),
+      text,
+      at,
+      ...(attachments.length === 0 ? {} : { attachments }),
+    })
     apply(r.id, { type: 'turn-start', id: nextItemId('t'), at })
     l.turnOpen = true
     if (l.idleTimer !== null) clearTimeout(l.idleTimer)
     deps.turn(r.id, true)
-    write(l, userMessage(text))
+    write(l, userMessage(text, files))
     await saveRecord(r.id, (x) => ({ ...x, updatedAt: at, archived: false }))
     pushList()
     return { ok: true, id: r.id }
@@ -583,7 +625,7 @@ export function createChats(deps: ChatsDeps): Chats {
       if (r === undefined) {
         r = {
           id,
-          title: args.title ?? chatTitle(args.text),
+          title: args.title ?? chatTitle(args.text.trim() || (args.files?.[0]?.name ?? '')),
           ...(args.model ? { model: args.model } : {}),
           ...(args.effort ? { effort: args.effort } : {}),
           mode: args.mode ?? 'default',
@@ -597,10 +639,10 @@ export function createChats(deps: ChatsDeps): Chats {
         transcripts.set(id, [])
       }
       await loadTranscript(id)
-      return turn(r, args.text)
+      return turn(r, args.text, args.files)
     },
 
-    async send(id, text, opts = {}) {
+    async send(id, text, opts = {}, files = []) {
       const r = record(id)
       if (r === undefined) return { ok: false, message: 'That session is gone.' }
       await loadTranscript(id)
@@ -617,7 +659,7 @@ export function createChats(deps: ChatsDeps): Chats {
           }
         })
       }
-      return turn(record(id)!, text)
+      return turn(record(id)!, text, files)
     },
 
     async answer(id, requestId, answer) {
@@ -648,6 +690,7 @@ export function createChats(deps: ChatsDeps): Chats {
       const l = live.get(id)
       if (l === undefined || !l.turnOpen) return { ok: true, id }
       l.controlSeq += 1
+      l.reader.interrupting = true
       write(l, interruptRequest(`holi-interrupt-${l.controlSeq}`))
       return { ok: true, id }
     },

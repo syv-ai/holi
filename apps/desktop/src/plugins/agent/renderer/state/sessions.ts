@@ -47,6 +47,8 @@ export interface AgentSession {
   model?: string
   /** When it started, epoch ms. */
   startedAt?: number
+  /** Claude Code's conversation id, once it has said. */
+  conversationId?: string
 }
 
 /**
