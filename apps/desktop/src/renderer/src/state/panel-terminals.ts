@@ -67,6 +67,7 @@ export function usePanelTerminals(): void {
     const load = (remote: string | null) => {
       store.set(panelTerminalsAtom, [])
       store.set(activePanelTerminalAtom, null)
+      store.set(panelTerminalErrorAtom, null)
       if (remote === null) return
       trpc.terminal.list
         .query({ remote })

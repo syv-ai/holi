@@ -407,14 +407,20 @@ function TerminalTab({ visible }: { visible: boolean }) {
   const error = useAtomValue(panelTerminalErrorAtom)
   const remote = useAtomValue(activeRemoteAtom)
   const create = useSetAtom(createPanelTerminalAtom)
-  const [starting, setStarting] = useState(false)
+  /** One automatic start per empty list: a ref, not state, because React
+   *  runs a mount effect twice in development and two shells would start. */
+  const autoStarted = useRef(false)
 
   useEffect(() => {
-    if (!visible || remote === null || terminals.length > 0) return
-    if (error !== null || starting) return
-    setStarting(true)
-    void create().finally(() => setStarting(false))
-  }, [visible, remote, terminals.length, error, starting, create])
+    if (terminals.length > 0) {
+      autoStarted.current = false
+      return
+    }
+    if (!visible || remote === null || error !== null) return
+    if (autoStarted.current) return
+    autoStarted.current = true
+    void create()
+  }, [visible, remote, terminals.length, error, create])
 
   return (
     <div className={cn("flex min-h-0 flex-1 flex-col", !visible && "hidden")}>
