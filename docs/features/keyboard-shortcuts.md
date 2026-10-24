@@ -69,6 +69,13 @@ command list: `?`, ↓ to a row, ↩ runs it, so a person who forgot a key can s
 | Apps       | Open Mail / Open Calendar     | ⇧⌘M / ⇧⌘C    | Ctrl Shift M / C          |
 | Help       | Show keyboard shortcuts       | ? or ⌘/      | ? or Ctrl /               |
 
+The document editor's own keys are not in the table: they need focus in a document and are the
+editor's to handle ([editor](editor.md)). ⌘F (Ctrl F) finds in the focused document, ⌘G / ⇧⌘G
+(Ctrl G / Ctrl Shift G) step through its matches while the find bar is open, ⌘D (Ctrl D) selects
+the word or adds its next occurrence, and ⇧⌥↓ (Shift Alt ↓) duplicates the block. None of them
+clashes with the table or the menu: the menu's Edit role has no Find, and ⌃⌘F is View's full
+screen.
+
 ## Rules
 
 - **Never while typing, unless the row says so.** In a text field, the editor or the terminal only
