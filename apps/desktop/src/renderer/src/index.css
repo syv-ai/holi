@@ -89,6 +89,50 @@
   --invert: var(--color-zinc-700);
 }
 
+/* The bottom panel's terminal (`lib/terminal-theme.ts`): the 16 ANSI colours,
+   tuned against the panel's own ground. On white the normal colours hold 4.5:1
+   or better and the bright ones are a step darker, not lighter, so they stay
+   legible; on the dark ground every colour but black clears 4:1. Its ground
+   is the panel's (no colour of its own), its text the view's. */
+:root {
+  --terminal-black: var(--color-zinc-800);
+  --terminal-red: var(--color-red-600);
+  --terminal-green: var(--color-green-700);
+  --terminal-yellow: var(--color-yellow-700);
+  --terminal-blue: var(--color-blue-600);
+  --terminal-magenta: var(--color-purple-600);
+  --terminal-cyan: var(--color-cyan-700);
+  --terminal-white: var(--color-zinc-600);
+  --terminal-bright-black: var(--color-zinc-500);
+  --terminal-bright-red: var(--color-red-700);
+  --terminal-bright-green: var(--color-green-800);
+  --terminal-bright-yellow: var(--color-yellow-800);
+  --terminal-bright-blue: var(--color-blue-700);
+  --terminal-bright-magenta: var(--color-purple-700);
+  --terminal-bright-cyan: var(--color-cyan-800);
+  --terminal-bright-white: var(--color-zinc-400);
+  --terminal-selection: color-mix(in oklab, var(--foreground) 16%, transparent);
+}
+[data-theme='dark'] {
+  --terminal-black: var(--color-zinc-600);
+  --terminal-red: var(--color-red-400);
+  --terminal-green: var(--color-green-400);
+  --terminal-yellow: var(--color-yellow-400);
+  --terminal-blue: var(--color-blue-400);
+  --terminal-magenta: var(--color-purple-400);
+  --terminal-cyan: var(--color-cyan-400);
+  --terminal-white: var(--color-zinc-300);
+  --terminal-bright-black: var(--color-zinc-500);
+  --terminal-bright-red: var(--color-red-300);
+  --terminal-bright-green: var(--color-green-300);
+  --terminal-bright-yellow: var(--color-yellow-300);
+  --terminal-bright-blue: var(--color-blue-300);
+  --terminal-bright-magenta: var(--color-purple-300);
+  --terminal-bright-cyan: var(--color-cyan-300);
+  --terminal-bright-white: var(--color-zinc-50);
+  --terminal-selection: color-mix(in oklab, var(--foreground) 22%, transparent);
+}
+
 /* Type a step under Tailwind's defaults, the size desktop tools set their
    chrome in (13px body, 11px meta): the type shrinks, the spacing does not. */
 @theme {

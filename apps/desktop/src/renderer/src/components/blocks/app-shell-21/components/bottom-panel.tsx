@@ -65,6 +65,7 @@ import {
   killPanelTerminalAtom,
   panelTerminalErrorAtom,
   panelTerminalsAtom,
+  terminalLabel,
 } from "@/state/panel-terminals"
 import { useShortcutHandlers } from "@/state/shortcuts"
 import { activeRemoteAtom } from "@/state/vaults"
@@ -328,7 +329,7 @@ function TerminalControls() {
           <SelectContent>
             {terminals.map((t) => (
               <SelectItem key={t.id} value={t.id} className="text-xs">
-                {t.exitCode === null ? t.title : `${t.title} (exited)`}
+                {terminalLabel(t, terminals)}
               </SelectItem>
             ))}
           </SelectContent>
@@ -429,6 +430,7 @@ function TerminalTab({ visible }: { visible: boolean }) {
           key={t.id}
           id={t.id}
           visible={visible && t.id === active}
+          context={t.context}
         />
       ))}
       {terminals.length > 0 ? null : remote === null ? (

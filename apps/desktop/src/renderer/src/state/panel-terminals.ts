@@ -11,12 +11,12 @@
  */
 import { atom, useStore } from 'jotai'
 import { useEffect } from 'react'
-import type { TerminalInfo } from '../../../main/terminal/terminals'
+import type { TerminalContext, TerminalInfo } from '../../../main/terminal/terminals'
 import { trpc } from '@/lib/trpc'
 import { activeRemoteAtom } from '@/state/vaults'
 import { bottomPanelAtom } from '@/state/bottom-panel'
 
-export type { TerminalInfo }
+export type { TerminalContext, TerminalInfo }
 
 export const panelTerminalsAtom = atom<readonly TerminalInfo[]>([])
 export const activePanelTerminalAtom = atom<string | null>(null)
@@ -34,12 +34,31 @@ export function registerTerminalSink(id: string, write: (data: string) => void):
   }
 }
 
+/** The last folder of a path: `holi` for `~/dev/holi`, `~` for home. */
+export function folderName(label: string): string {
+  if (label === '/' || label === '~') return label
+  const parts = label.split('/').filter(Boolean)
+  return parts.at(-1) ?? label
+}
+
+/**
+ * A terminal as the picker names it: the folder it is in, else its shell's
+ * name; two in the same folder are told apart by the shell's (`holi · zsh 2`).
+ */
+export function terminalLabel(t: TerminalInfo, list: readonly TerminalInfo[]): string {
+  const name = (x: TerminalInfo) => (x.context === null ? x.title : folderName(x.context.label))
+  const own = name(t)
+  const shared = list.some((x) => x.id !== t.id && name(x) === own)
+  const label = shared && t.context !== null ? `${own} · ${t.title}` : own
+  return t.exitCode === null ? label : `${label} (exited)`
+}
+
 /** The list after `id` went: the one beside it comes forward. */
-export function afterRemoval(
-  list: readonly TerminalInfo[],
+export function afterRemoval<T extends { id: string }>(
+  list: readonly T[],
   active: string | null,
   id: string,
-): { list: TerminalInfo[]; active: string | null } {
+): { list: T[]; active: string | null } {
   const index = list.findIndex((t) => t.id === id)
   const next = list.filter((t) => t.id !== id)
   if (active !== id) return { list: next, active }
@@ -57,6 +76,10 @@ export function usePanelTerminals(): void {
   useEffect(() => {
     const offData = window.holi?.terminal?.onData(({ remote, id, data }) => {
       if (remote === store.get(activeRemoteAtom)) sinks.get(id)?.(data)
+    })
+    const offContext = window.holi?.terminal?.onContext(({ remote, id, context }) => {
+      if (remote !== store.get(activeRemoteAtom)) return
+      store.set(panelTerminalsAtom, (list) => withContext(list, id, context))
     })
     const offExit = window.holi?.terminal?.onExit(({ remote, id, exitCode }) => {
       if (remote !== store.get(activeRemoteAtom)) return
@@ -83,9 +106,19 @@ export function usePanelTerminals(): void {
     return () => {
       offData?.()
       offExit?.()
+      offContext?.()
       offRemote()
     }
   }, [store])
+}
+
+/** The list with `id`'s context replaced. */
+export function withContext(
+  list: readonly TerminalInfo[],
+  id: string,
+  context: TerminalContext,
+): TerminalInfo[] {
+  return list.map((t) => (t.id === id ? { ...t, context } : t))
 }
 
 /** + : another shell in the open vault, in front. */

@@ -1,17 +1,24 @@
 import { useCallback, useEffect, useRef } from "react"
 import { useAtomValue } from "jotai"
 import { FitAddon } from "@xterm/addon-fit"
+import { WebLinksAddon } from "@xterm/addon-web-links"
 import { WebglAddon } from "@xterm/addon-webgl"
 import { Terminal } from "@xterm/xterm"
 import "@xterm/xterm/css/xterm.css"
 
 import { cn } from "@/lib/cn"
 import { matchShortcutKey } from "@/lib/hotkey"
+import { terminalFont, terminalTheme } from "@/lib/terminal-theme"
 import { trpc } from "@/lib/trpc"
 import { activeModeAtom } from "@/state/color-scheme"
-import { registerTerminalSink } from "@/state/panel-terminals"
+import {
+  registerTerminalSink,
+  type TerminalContext,
+} from "@/state/panel-terminals"
 import { isMac } from "@/state/shortcuts"
 import { activeRemoteAtom } from "@/state/vaults"
+
+import { TerminalContextChips } from "./terminal-context-chips"
 
 /**
  * One of the bottom panel's shells in an xterm (docs/features/status-bar.md).
@@ -19,8 +26,10 @@ import { activeRemoteAtom } from "@/state/vaults"
  * Mounted for as long as its shell exists and hidden while another is in
  * front or the panel is closed, so its scrollback survives both; built on
  * first show, because xterm opened in a `display:none` box never paints.
- * Its colours are the agent terminal's (`SessionTerminal.tsx`): no ground
- * of its own, in the view's text colour, re-read when light and dark swap.
+ * Above it, the context chips (where the shell is, its branch, its changes);
+ * its colours are the app's tokens (`lib/terminal-theme.ts`): no ground of
+ * its own, the view's text colour and a tuned ANSI palette, read again when
+ * light and dark swap.
  */
 
 /** A hidden box measures 0×0, and fitting there would shrink the shell to
@@ -31,21 +40,16 @@ const MIN_FITTABLE_PX = 10
  *  ⌃` would be typed into the shell and the panel could not close. */
 const PANEL_KEYS = ["⌃`", "⇧⌘U"]
 
-function themeFor(mount: HTMLElement) {
-  return {
-    background: "#00000000",
-    foreground: getComputedStyle(mount).color,
-    cursor: getComputedStyle(mount).color,
-  }
-}
-
 export function PanelTerminal({
   id,
   visible,
+  context,
 }: {
   id: string
   /** In front, with the panel open. */
   visible: boolean
+  /** Where it is and the git work there; null until main first reads it. */
+  context: TerminalContext | null
 }) {
   const mountRef = useRef<HTMLDivElement | null>(null)
   const termRef = useRef<Terminal | null>(null)
@@ -91,13 +95,24 @@ export function PanelTerminal({
     if (!mount || termRef.current) return
     const term = new Terminal({
       fontSize: 12,
-      fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, monospace",
+      lineHeight: 1.3,
+      fontFamily: terminalFont(mount),
+      cursorStyle: "bar",
+      cursorWidth: 2,
+      cursorBlink: true,
       scrollback: 10_000,
       allowTransparency: true,
-      theme: themeFor(mount),
+      theme: terminalTheme(mount),
     })
     const fit = new FitAddon()
     term.loadAddon(fit)
+    // A URL in the output opens in the browser, through main.
+    term.loadAddon(
+      new WebLinksAddon((event, uri) => {
+        event.preventDefault()
+        void window.holi?.openExternal(uri)
+      })
+    )
     term.open(mount)
     // WebGL draws on the cell grid (see SessionTerminal); a lost context
     // falls back to the DOM renderer.
@@ -156,15 +171,32 @@ export function PanelTerminal({
   useEffect(() => () => disposeRef.current?.(), [])
 
   // Shown: build the first time, refit and focus every time, once flex
-  // layout has resolved (two frames).
+  // layout has resolved (two frames). The first build waits for the mono
+  // font, or xterm measures its cells in the fallback's.
   useEffect(() => {
     if (!visible) return
-    build()
-    termRef.current?.focus()
-    const frame = requestAnimationFrame(() =>
-      requestAnimationFrame(() => syncSize())
-    )
-    return () => cancelAnimationFrame(frame)
+    let cancelled = false
+    let frame = 0
+    const show = () => {
+      if (cancelled) return
+      build()
+      termRef.current?.focus()
+      frame = requestAnimationFrame(() =>
+        requestAnimationFrame(() => syncSize())
+      )
+    }
+    const mount = mountRef.current
+    if (termRef.current || !mount || !document.fonts) show()
+    else {
+      void document.fonts
+        .load(`12px ${terminalFont(mount)}`)
+        .catch(() => [])
+        .then(show)
+    }
+    return () => {
+      cancelled = true
+      cancelAnimationFrame(frame)
+    }
   }, [visible, build, syncSize])
 
   // Light and dark swap the text colour the terminal draws in.
@@ -173,7 +205,7 @@ export function PanelTerminal({
     const frame = requestAnimationFrame(() => {
       const term = termRef.current
       const mount = mountRef.current
-      if (term && mount) term.options.theme = themeFor(mount)
+      if (term && mount) term.options.theme = terminalTheme(mount)
     })
     return () => cancelAnimationFrame(frame)
   }, [mode])
@@ -181,14 +213,14 @@ export function PanelTerminal({
   return (
     <div
       data-panel-terminal={id}
-      className={cn("relative min-h-0 flex-1", !visible && "hidden")}
+      className={cn("flex min-h-0 flex-1 flex-col", !visible && "hidden")}
     >
-      {/* The gutter is an inset, not padding: xterm measures the box it
-          opens in. */}
-      <div
-        ref={mountRef}
-        className="text-foreground absolute inset-x-3 inset-y-2"
-      />
+      <TerminalContextChips context={context} className="px-3 pt-2.5" />
+      <div className="relative min-h-0 flex-1">
+        {/* The gutter is an inset, not padding: xterm measures the box it
+            opens in. */}
+        <div ref={mountRef} className="text-foreground absolute inset-3" />
+      </div>
     </div>
   )
 }
