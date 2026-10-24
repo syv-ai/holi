@@ -86,7 +86,7 @@ const STATUS_ICON: Record<StatusIcon, LucideIcon> = {
 
 /** The chevron that turns as its row opens: transform only. */
 const chevron =
-  "text-muted-foreground/60 size-3.5 shrink-0 transition-transform duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] group-data-[state=open]/step:rotate-90 motion-reduce:transition-none"
+  "text-muted-foreground/60 size-3.5 shrink-0 transition-transform duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] group-data-[state=open]/row:rotate-90 motion-reduce:transition-none"
 
 /** The row a step is read as. */
 const rowClass =
@@ -244,7 +244,11 @@ export const ToolStep = memo(function ToolStep({
   }
 
   // An edit's change is the point of it: drawn under the step, not folded.
-  if (view?.type === "diff") {
+  // Plan mode's own copy of the plan is the plan card's, so that one folds.
+  const planFile =
+    view?.type === "diff" &&
+    view.files.every((f) => /(^|\/)\.claude\/plans\//.test(f.path))
+  if (view?.type === "diff" && !planFile) {
     return (
       <div className="flex min-w-0 flex-col" data-step={item.id}>
         <div className={rowClass}>

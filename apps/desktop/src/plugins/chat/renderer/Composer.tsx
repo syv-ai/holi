@@ -218,9 +218,12 @@ export function Composer({
 
   function removeFile(id: string) {
     if (onFiles === undefined) return
-    const gone = files.find((f) => f.id === id)
+    const now = filesRef.current
+    const gone = now.find((f) => f.id === id)
     if (gone !== undefined) releaseAttachment(gone)
-    onFiles(files.filter((f) => f.id !== id))
+    const next = now.filter((f) => f.id !== id)
+    filesRef.current = next
+    onFiles(next)
   }
 
   /** `@` at the caret, which opens the vault's documents. */
