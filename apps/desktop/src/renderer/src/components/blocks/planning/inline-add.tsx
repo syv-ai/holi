@@ -12,14 +12,32 @@ import { Input } from "@/components/ui/input"
 export function InlineAdd({
   label,
   onAdd,
+  dashed = false,
 }: {
   /** What the button and field are called: "Add task to To do". */
   label: string
   onAdd: (title: string) => Promise<void>
+  /** An empty column's add: kanban-board-4's dashed drop-sized button. */
+  dashed?: boolean
 }) {
   const [open, setOpen] = useState(false)
   const [title, setTitle] = useState("")
   const [busy, setBusy] = useState(false)
+
+  if (!open && dashed) {
+    return (
+      <Button
+        type="button"
+        variant="outline"
+        className="text-muted-foreground hover:text-foreground bg-background/70 h-20 w-full border-dashed"
+        aria-label={label}
+        onClick={() => setOpen(true)}
+      >
+        <PlusIcon data-icon="inline-start" aria-hidden="true" />
+        Add task
+      </Button>
+    )
+  }
 
   if (!open) {
     return (

@@ -1,6 +1,5 @@
 import { useMemo, useState, type ReactNode } from "react"
 import type { StatusDef, Task } from "@holi/shared"
-import { Badge } from "@/components/reui/badge"
 import {
   DataGrid,
   DataGridContainer,
@@ -13,15 +12,17 @@ import {
   type ColumnVisibilityState,
   type ExpandedState,
 } from "@tanstack/react-table"
-import { cn } from "@/lib/cn"
 
 import { Button } from "@/components/ui/button"
-import { FieldGroup } from "@/components/ui/field"
 import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover"
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuLabel,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import { PanelBody } from "../../planning/toolbar"
 import { createTaskColumns, type TaskColumnsContext } from "./columns"
 import {
   COLUMN_LABELS,
@@ -29,7 +30,7 @@ import {
   type TaskGroupRow,
   type TaskTableRow,
 } from "./data"
-import { CheckIcon, Settings2Icon } from "lucide-react"
+import { Settings2Icon } from "lucide-react"
 
 /** List: headerless rows under collapsible status groups, with an Add task
  *  line in each. Table: the same groups under a header, every field a
@@ -79,6 +80,10 @@ export interface TaskGridViewProps extends TaskColumnsContext {
   /** The toolbar above the grid, handed the grid's own controls to place. */
   toolbar: (controls: ReactNode) => ReactNode
   emptyMessage: string
+  /** Above the grid: the tab's alerts. */
+  notices?: ReactNode
+  /** In place of the grid, when the filters left nothing to show. */
+  empty?: ReactNode
 }
 
 export function TaskGridView({
@@ -86,6 +91,8 @@ export function TaskGridView({
   groups,
   toolbar,
   emptyMessage,
+  notices,
+  empty,
   ...context
 }: TaskGridViewProps) {
   const { statuses } = context
@@ -145,6 +152,9 @@ export function TaskGridView({
     getRowId: (row) => row.id,
     getSubRows: (row) => (row.kind === "group" ? row.subRows : undefined),
     getRowCanExpand: (row) => row.original.kind === "group",
+    // What is folded is ours: a search that changes the rows must not reset
+    // it, which `setExpanded` would read as every group folded.
+    autoResetExpanded: false,
     state: { columnVisibility, expanded },
     onExpandedChange: (updater) =>
       setExpanded(typeof updater === "function" ? updater(expanded) : updater),
@@ -161,54 +171,36 @@ export function TaskGridView({
     <>
       <Button
         type="button"
-        variant="outline"
+        variant="ghost"
         size="sm"
         onClick={() => setExpanded(everyExpanded ? {} : allExpanded(rows))}
       >
         {everyExpanded ? "Collapse groups" : "Expand groups"}
       </Button>
       {variant === "table" ? (
-        <Popover>
-          <PopoverTrigger asChild>
-            <Button type="button" variant="outline" size="sm">
+        <DropdownMenu modal={false}>
+          <DropdownMenuTrigger asChild>
+            <Button type="button" variant="ghost" size="sm">
               <Settings2Icon data-icon="inline-start" aria-hidden="true" />
               Display
             </Button>
-          </PopoverTrigger>
-          <PopoverContent align="end" className="w-[300px] p-0">
-            <FieldGroup className="gap-3 px-3.5 py-3">
-              <div className="flex flex-col gap-2">
-                <div className="text-muted-foreground text-xs font-medium">
-                  Display properties
-                </div>
-                <div className="flex flex-wrap gap-1.5">
-                  {keys.map((key) => {
-                    const active = !hidden.includes(key)
-                    return (
-                      <Button
-                        key={key}
-                        type="button"
-                        size="sm"
-                        variant={active ? "secondary" : "outline"}
-                        className={cn(
-                          "rounded-full",
-                          active && "border-foreground/10"
-                        )}
-                        aria-pressed={active}
-                        onClick={() => toggle(key)}
-                      >
-                        {active ? (
-                          <CheckIcon className="size-4" aria-hidden="true" />
-                        ) : null}
-                        {COLUMN_LABELS[key]}
-                      </Button>
-                    )
-                  })}
-                </div>
-              </div>
-            </FieldGroup>
-          </PopoverContent>
-        </Popover>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="min-w-44">
+            <DropdownMenuGroup>
+              <DropdownMenuLabel>Columns</DropdownMenuLabel>
+              {keys.map((key) => (
+                <DropdownMenuCheckboxItem
+                  key={key}
+                  checked={!hidden.includes(key)}
+                  onSelect={(event) => event.preventDefault()}
+                  onCheckedChange={() => toggle(key)}
+                >
+                  {COLUMN_LABELS[key]}
+                </DropdownMenuCheckboxItem>
+              ))}
+            </DropdownMenuGroup>
+          </DropdownMenuContent>
+        </DropdownMenu>
       ) : null}
     </>
   )
@@ -231,28 +223,32 @@ export function TaskGridView({
         body: "[&>tr:has(>td:only-child:empty)]:hidden",
         bodyRow:
           "group/task-row [&>td]:h-9 [&:has([data-task-row=group])>td]:h-11 [&:has([data-task-row=group])>td]:bg-muted/45 [&:has([data-task-row=group])>td]:shadow-none [&:has([data-task-row=group])>td]:hover:bg-muted/45",
-        edgeCell: "first:ps-3 last:pe-3 lg:first:ps-4 lg:last:pe-4",
+        // Level with the toolbar above, now the grid runs to the pane's edge.
+        edgeCell: "first:ps-4 last:pe-4 lg:first:ps-6 lg:last:pe-6",
       }}
     >
-      <section className="flex min-h-0 w-full flex-1 flex-col gap-3">
+      <section className="flex min-h-0 w-full flex-1 flex-col">
         {toolbar(controls)}
 
-        {/* Content */}
-        <DataGridContainer className="border-b">
-          <DataGridScrollArea>
-            <DataGridTable renderHeader={variant === "table"} />
-          </DataGridScrollArea>
-        </DataGridContainer>
-
-        {/* Footer */}
-        <div className="text-muted-foreground flex flex-wrap items-center gap-2 text-sm">
-          <span className="text-foreground font-medium">By status</span>
-          {statuses.map((status) => (
-            <Badge key={status.id} variant="outline">
-              {status.name}: {groups[status.id]?.length ?? 0}
-            </Badge>
-          ))}
-        </div>
+        {empty !== undefined ? (
+          <PanelBody>
+            {notices}
+            {empty}
+          </PanelBody>
+        ) : (
+          <PanelBody flush>
+            {notices != null ? (
+              <div className="flex flex-col gap-4 px-4 py-4 lg:px-6">
+                {notices}
+              </div>
+            ) : null}
+            <DataGridContainer className="border-b">
+              <DataGridScrollArea>
+                <DataGridTable renderHeader={variant === "table"} />
+              </DataGridScrollArea>
+            </DataGridContainer>
+          </PanelBody>
+        )}
       </section>
     </DataGrid>
   )

@@ -1,11 +1,10 @@
 /**
- * New task, from the toolbar: a title and the fields worth setting before a
- * task exists. Written in one create, one file, in the vault root; anything
- * else is set on the task itself once it is open.
+ * New task, from the toolbar or a column's +: a title, a description, and the
+ * task's fields as a row of chips (`TaskFields`). Written in one create, one
+ * file, in the chosen project's folder (the vault root without one).
  */
 import { useState } from "react"
-import type { Priority, StatusDef, Task } from "@holi/shared"
-import { isEstimate } from "@holi/shared"
+import type { StatusDef, Task } from "@holi/shared"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -23,22 +22,21 @@ import {
   FieldLabel,
 } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
-import { PRIORITIES } from "@/lib/planning"
-import { StatusDot } from "./task-bits"
-
-const NO_PRIORITY = "none"
+import { Textarea } from "@/components/ui/textarea"
+import { TaskFields, type TaskFieldValues } from "./task-fields"
 
 export type NewTaskInput = {
   title: string
   status: string
-  extra: Partial<Pick<Task, "priority" | "start" | "due" | "estimate">>
+  folder: string
+  description?: string
+  extra: Partial<
+    Pick<Task, "priority" | "start" | "due" | "estimate" | "tags" | "assignees">
+  >
+}
+
+function emptyDraft(status: string, folder: string): TaskFieldValues {
+  return { status, assignees: [], tags: [], folder }
 }
 
 export function NewTaskDialog({
@@ -46,50 +44,54 @@ export function NewTaskDialog({
   onOpenChange,
   statuses,
   defaultStatus,
+  defaultFolder = "",
+  today,
   onCreate,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   statuses: readonly StatusDef[]
   defaultStatus: string
+  defaultFolder?: string
+  today: string
   onCreate: (input: NewTaskInput) => Promise<void>
 }) {
   const [title, setTitle] = useState("")
-  const [status, setStatus] = useState(defaultStatus)
-  const [priority, setPriority] = useState<string>(NO_PRIORITY)
-  const [start, setStart] = useState("")
-  const [due, setDue] = useState("")
-  const [estimate, setEstimate] = useState("")
+  const [description, setDescription] = useState("")
+  const [fields, setFields] = useState(() =>
+    emptyDraft(defaultStatus, defaultFolder)
+  )
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const reset = () => {
     setTitle("")
-    setStatus(defaultStatus)
-    setPriority(NO_PRIORITY)
-    setStart("")
-    setDue("")
-    setEstimate("")
+    setDescription("")
+    setFields(emptyDraft(defaultStatus, defaultFolder))
     setError(null)
   }
 
-  const estimateBad = estimate.trim() !== "" && !isEstimate(estimate.trim())
-
   const submit = async () => {
-    if (title.trim() === "" || estimateBad) return
+    if (title.trim() === "") return
     setBusy(true)
     setError(null)
+    const { status, folder, assignees, tags, priority, due, start, estimate } =
+      fields
     try {
       await onCreate({
         title: title.trim(),
         status,
+        folder,
+        ...(description.trim() !== ""
+          ? { description: description.trim() }
+          : {}),
         extra: {
-          ...(priority !== NO_PRIORITY
-            ? { priority: priority as Priority }
-            : {}),
-          ...(start !== "" ? { start } : {}),
-          ...(due !== "" ? { due } : {}),
-          ...(estimate.trim() !== "" ? { estimate: estimate.trim() } : {}),
+          ...(priority !== undefined ? { priority } : {}),
+          ...(start !== undefined ? { start } : {}),
+          ...(due !== undefined ? { due } : {}),
+          ...(estimate !== undefined ? { estimate } : {}),
+          ...(tags.length > 0 ? { tags } : {}),
+          ...(assignees.length > 0 ? { assignees } : {}),
         },
       })
       reset()
@@ -109,7 +111,7 @@ export function NewTaskDialog({
         onOpenChange(next)
       }}
     >
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-xl">
         <form
           className="flex flex-col gap-6"
           onSubmit={(event) => {
@@ -120,87 +122,46 @@ export function NewTaskDialog({
           <DialogHeader>
             <DialogTitle>New task</DialogTitle>
             <DialogDescription>
-              Saved as a task file in the vault. Everything else can be set on
-              the task once it is open.
+              Saved as a task file in the vault.
             </DialogDescription>
           </DialogHeader>
 
           <FieldGroup className="gap-4">
             <Field>
-              <FieldLabel htmlFor="new-task-title">Title</FieldLabel>
+              <FieldLabel htmlFor="new-task-title" className="sr-only">
+                Title
+              </FieldLabel>
               <Input
                 id="new-task-title"
                 autoFocus
                 value={title}
                 onChange={(event) => setTitle(event.target.value)}
-                placeholder="What needs doing?"
+                placeholder="Task title"
               />
             </Field>
-            <div className="grid grid-cols-2 gap-4">
-              <Field>
-                <FieldLabel htmlFor="new-task-status">Status</FieldLabel>
-                <Select value={status} onValueChange={setStatus}>
-                  <SelectTrigger id="new-task-status" className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {statuses.map((s) => (
-                      <SelectItem key={s.id} value={s.id}>
-                        <StatusDot status={s} />
-                        {s.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </Field>
-              <Field>
-                <FieldLabel htmlFor="new-task-priority">Priority</FieldLabel>
-                <Select value={priority} onValueChange={setPriority}>
-                  <SelectTrigger id="new-task-priority" className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value={NO_PRIORITY}>No priority</SelectItem>
-                    {PRIORITIES.map((p) => (
-                      <SelectItem key={p.id} value={p.id}>
-                        {p.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </Field>
-              <Field>
-                <FieldLabel htmlFor="new-task-start">Start</FieldLabel>
-                <Input
-                  id="new-task-start"
-                  type="date"
-                  value={start}
-                  onChange={(event) => setStart(event.target.value)}
-                />
-              </Field>
-              <Field>
-                <FieldLabel htmlFor="new-task-due">Due</FieldLabel>
-                <Input
-                  id="new-task-due"
-                  type="date"
-                  value={due}
-                  onChange={(event) => setDue(event.target.value)}
-                />
-              </Field>
-            </div>
-            <Field data-invalid={estimateBad || undefined}>
-              <FieldLabel htmlFor="new-task-estimate">Estimate</FieldLabel>
-              <Input
-                id="new-task-estimate"
-                value={estimate}
-                aria-invalid={estimateBad || undefined}
-                onChange={(event) => setEstimate(event.target.value)}
-                placeholder="30m, 2h, 1.5d, 1w"
+            <Field>
+              <FieldLabel htmlFor="new-task-description" className="sr-only">
+                Description
+              </FieldLabel>
+              <Textarea
+                id="new-task-description"
+                value={description}
+                onChange={(event) => setDescription(event.target.value)}
+                placeholder="Add a description (optional)"
+                className="min-h-24"
               />
-              {estimateBad ? (
-                <FieldError>A number and m, h, d or w, like 2d.</FieldError>
-              ) : null}
             </Field>
+            <TaskFields
+              values={fields}
+              statuses={statuses}
+              today={today}
+              onChange={(change) =>
+                setFields((current) => ({
+                  ...current,
+                  [change.field]: change.value,
+                }))
+              }
+            />
             {error !== null ? <FieldError>{error}</FieldError> : null}
           </FieldGroup>
 
@@ -212,10 +173,7 @@ export function NewTaskDialog({
             >
               Cancel
             </Button>
-            <Button
-              type="submit"
-              disabled={busy || title.trim() === "" || estimateBad}
-            >
+            <Button type="submit" disabled={busy || title.trim() === ""}>
               Create task
             </Button>
           </DialogFooter>

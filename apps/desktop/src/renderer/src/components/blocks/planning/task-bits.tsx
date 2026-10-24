@@ -4,8 +4,18 @@
  * table say a task's facts the same way.
  */
 import type { ComponentProps } from "react"
-import type { Priority, StatusDef } from "@holi/shared"
-import { CalendarDaysIcon, FlagIcon, TimerIcon } from "lucide-react"
+import type { Priority, StatusCategory, StatusDef } from "@holi/shared"
+import {
+  CalendarDaysIcon,
+  CircleCheckIcon,
+  CircleDashedIcon,
+  CircleDotIcon,
+  CircleEllipsisIcon,
+  CircleIcon,
+  FlagIcon,
+  TimerIcon,
+  type LucideIcon,
+} from "lucide-react"
 
 import { Badge } from "@/components/reui/badge"
 import {
@@ -16,37 +26,40 @@ import {
   AvatarImage,
 } from "@/components/ui/avatar"
 import { cn } from "@/lib/cn"
-import {
-  avatarUrl,
-  CATEGORY_DOT,
-  initials,
-  priorityName,
-  shortDate,
-} from "@/lib/planning"
+import { avatarUrl, initials, priorityName, shortDate } from "@/lib/planning"
 
-export function StatusDot({
+/** A status's mark, by what it means: its shape says the category even
+ *  without its colour. Unsized, so a menu item or badge sizes it; elsewhere
+ *  pass `size-4`. */
+const CATEGORY_ICON: Record<
+  StatusCategory,
+  { icon: LucideIcon; className: string }
+> = {
+  backlog: { icon: CircleDashedIcon, className: "text-muted-foreground" },
+  unstarted: { icon: CircleIcon, className: "text-muted-foreground" },
+  started: {
+    icon: CircleDotIcon,
+    className: "text-amber-500 dark:text-amber-400",
+  },
+  review: { icon: CircleEllipsisIcon, className: "text-info" },
+  completed: { icon: CircleCheckIcon, className: "text-success" },
+}
+
+export function StatusIcon({
   status,
   className,
 }: {
   status: StatusDef
   className?: string
 }) {
-  return (
-    <span
-      aria-hidden="true"
-      className={cn(
-        "size-2 shrink-0 rounded-full",
-        CATEGORY_DOT[status.category],
-        className
-      )}
-    />
-  )
+  const { icon: Icon, className: tone } = CATEGORY_ICON[status.category]
+  return <Icon aria-hidden="true" className={cn("shrink-0", tone, className)} />
 }
 
 export function StatusBadge({ status }: { status: StatusDef }) {
   return (
-    <Badge variant="outline" className="bg-background gap-1.5">
-      <StatusDot status={status} className="size-1.5" />
+    <Badge variant="outline" className="gap-1.5">
+      <StatusIcon status={status} />
       {status.name}
     </Badge>
   )

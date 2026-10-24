@@ -13,9 +13,13 @@ import { columnFor, isOverdue, openingStatus, type Task } from "@holi/shared"
 import { useAtom, useAtomValue, useSetAtom } from "jotai"
 import {
   FileWarningIcon,
-  FolderIcon,
+  LayoutGridIcon,
+  ListIcon,
   ListTodoIcon,
   PencilIcon,
+  PlusIcon,
+  SquareKanbanIcon,
+  TableIcon,
   TriangleAlertIcon,
 } from "lucide-react"
 import { toast } from "sonner"
@@ -32,8 +36,8 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { TabsContent } from "@/components/ui/tabs"
 import { rankAt } from "@/lib/board-order"
 import {
+  EMPTY_PLANNING_FILTER,
   groupByStatus,
-  isFiltered,
   matchesPlanningFilter,
 } from "@/lib/planning"
 import { nowAtom, todayAtom } from "@/state/clock"
@@ -65,21 +69,29 @@ import {
   vaultsAtom,
 } from "@/state/vaults"
 import { TaskGridView } from "../data-grid-grouping-1/components/data-grid-view"
-import { KanbanBoard } from "../kanban-board-1/components/kanban-board"
+import { KanbanBoard } from "../kanban-board-4/components/kanban-board"
 import { Navbar } from "../navbar-1/components/navbar"
 import { EditProjectDialog } from "./edit-project-dialog"
 import { NewTaskDialog, type NewTaskInput } from "./new-task-dialog"
 import { Overview, ProjectStatusBadge, type ProjectState } from "./overview"
-import { RegionEmpty } from "./states"
-import { PlanningToolbar } from "./toolbar"
+import { NoMatches, RegionEmpty } from "./states"
+import { PanelBody, PlanningToolbar } from "./toolbar"
 
 type Columns = Record<string, Task[]>
 
-const TABS: { value: PlanningTab; label: string }[] = [
-  { value: "overview", label: "Overview" },
-  { value: "board", label: "Board" },
-  { value: "list", label: "List" },
-  { value: "table", label: "Table" },
+const TABS: { value: PlanningTab; label: string; icon: React.ReactNode }[] = [
+  {
+    value: "overview",
+    label: "Overview",
+    icon: <LayoutGridIcon aria-hidden="true" />,
+  },
+  {
+    value: "board",
+    label: "Board",
+    icon: <SquareKanbanIcon aria-hidden="true" />,
+  },
+  { value: "list", label: "List", icon: <ListIcon aria-hidden="true" /> },
+  { value: "table", label: "Table", icon: <TableIcon aria-hidden="true" /> },
 ]
 
 function message(err: unknown): string {
@@ -102,7 +114,11 @@ function BoardSkeleton() {
 
 function GridSkeleton() {
   return (
-    <div className="flex flex-col gap-2" role="status" aria-label="Loading tasks">
+    <div
+      className="flex flex-col gap-2"
+      role="status"
+      aria-label="Loading tasks"
+    >
       {Array.from({ length: 6 }, (_, i) => (
         <Skeleton key={i} className="h-9 w-full" />
       ))}
@@ -155,7 +171,6 @@ export function PlanningView({
     projectFile.state === "ready"
       ? { state: "ready", project: projectFile.value }
       : projectFile
-  const title = project?.name ?? vaultName
 
   const tasks = useMemo(() => [...taskMap.values()], [taskMap])
   const shown = useMemo(
@@ -170,7 +185,6 @@ export function PlanningView({
     () => [...new Set(tasks.flatMap((t) => t.assignees))],
     [tasks]
   )
-  const filtered = isFiltered(filter)
   const overdue = (task: Task) =>
     task.due !== undefined &&
     columnFor(statuses, task.status).category !== "completed" &&
@@ -189,8 +203,8 @@ export function PlanningView({
     }
   }
 
-  const createFromDialog = async ({ title, status, extra }: NewTaskInput) => {
-    const path = await createTask({ title, status, folder: "", extra })
+  const createFromDialog = async (input: NewTaskInput) => {
+    const path = await createTask(input)
     if (path) onOpenTask(path)
   }
 
@@ -237,6 +251,8 @@ export function PlanningView({
     setNewTask({ status })
 
   const noTasks = loaded && tasks.length === 0
+  /** Tasks exist, but the search and filters hide every one. */
+  const noMatches = loaded && !noTasks && shown.length === 0
   const toolbar = (extra?: React.ReactNode) => (
     <PlanningToolbar
       filter={filter}
@@ -250,6 +266,10 @@ export function PlanningView({
     />
   )
 
+  const hasNotices =
+    statusesFile.state === "error" ||
+    (statusesFile.state === "ready" && statusesFile.warnings.length > 0) ||
+    broken.length > 0
   const notices = (
     <>
       {statusesFile.state === "error" ? (
@@ -308,30 +328,31 @@ export function PlanningView({
 
   const noTasksYet = (
     <RegionEmpty
+      outlined
       icon={<ListTodoIcon />}
       title="No tasks yet"
       description="A task is a task.<name>.md file anywhere in the vault. Add the first one here."
       action={
-        <Button size="sm" onClick={() => openNewTask()}>
+        <Button variant="outline" size="sm" onClick={() => openNewTask()}>
+          <PlusIcon data-icon="inline-start" aria-hidden="true" />
           New task
         </Button>
       }
     />
   )
+  const nothingMatches = (
+    <NoMatches
+      search={filter.search}
+      onClear={() => setFilter(EMPTY_PLANNING_FILTER)}
+    />
+  )
 
-  const panel =
-    "flex min-h-0 flex-1 flex-col gap-4 overflow-auto px-4 py-4 lg:px-6"
+  const panel = "flex min-h-0 flex-1 flex-col"
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-planning-view>
       <Navbar
-        crumbs={[
-          {
-            label: vaultName,
-            icon: <FolderIcon className="size-3.5" aria-hidden="true" />,
-          },
-        ]}
-        title={title}
+        title="Board"
         status={
           project !== undefined ? (
             <ProjectStatusBadge status={project.status} />
@@ -351,84 +372,84 @@ export function PlanningView({
         value={tab}
         onValueChange={(value) => setTab(value as PlanningTab)}
         people={people}
-        onCreate={() => openNewTask()}
-        createLabel="New task"
       >
         <TabsContent value="overview" className={panel}>
-          <Overview
-            projectState={projectState}
-            fallbackName={vaultName}
-            tasks={tasks}
-            tasksLoading={!loaded}
-            statuses={statuses}
-            now={now}
-            today={today}
-            members={assigned}
-            onEditProject={() => setEditingProject(true)}
-            onRetryProject={retryFiles}
-            onOpenTask={onOpenTask}
-            onShowStatus={() => setTab("list")}
-            onNewTask={() => openNewTask()}
-          />
+          <PanelBody>
+            <Overview
+              projectState={projectState}
+              fallbackName={vaultName}
+              tasks={tasks}
+              tasksLoading={!loaded}
+              statuses={statuses}
+              now={now}
+              today={today}
+              members={assigned}
+              onEditProject={() => setEditingProject(true)}
+              onRetryProject={retryFiles}
+              onOpenTask={onOpenTask}
+              onShowStatus={() => setTab("list")}
+              onNewTask={() => openNewTask()}
+            />
+          </PanelBody>
         </TabsContent>
 
         <TabsContent value="board" className={panel}>
           {toolbar()}
-          {notices}
-          {!loaded ? (
-            <BoardSkeleton />
-          ) : noTasks ? (
-            noTasksYet
-          ) : (
-            <KanbanBoard
-              statuses={statuses}
-              value={preview ?? resting}
-              onValueChange={setPreview}
-              onValueCommit={onCommit}
-              onDragEnd={() => {
-                // A drop that moved nothing commits nothing: back to the
-                // vault's arrangement. One that did waits for its writes.
-                setTimeout(() => {
-                  if (!committing.current) setPreview(null)
-                })
-              }}
-              onDragCancel={() => setPreview(null)}
-              context={{ today, isOverdue: overdue, onOpenTask }}
-              emptyLabel={filtered ? "Nothing matches" : "No tasks"}
-              onAddTask={addTask}
-            />
-          )}
+          <PanelBody>
+            {notices}
+            {!loaded ? (
+              <BoardSkeleton />
+            ) : noTasks ? (
+              noTasksYet
+            ) : noMatches ? (
+              nothingMatches
+            ) : (
+              <KanbanBoard
+                statuses={statuses}
+                value={preview ?? resting}
+                onValueChange={setPreview}
+                onValueCommit={onCommit}
+                onDragEnd={() => {
+                  // A drop that moved nothing commits nothing: back to the
+                  // vault's arrangement. One that did waits for its writes.
+                  setTimeout(() => {
+                    if (!committing.current) setPreview(null)
+                  })
+                }}
+                onDragCancel={() => setPreview(null)}
+                context={{ today, isOverdue: overdue, onOpenTask }}
+                onAddTask={addTask}
+                onNewTask={openNewTask}
+              />
+            )}
+          </PanelBody>
         </TabsContent>
 
         {(["list", "table"] as const).map((variant) => (
           <TabsContent key={variant} value={variant} className={panel}>
-            {!loaded ? (
+            {!loaded || noTasks ? (
               <>
                 {toolbar()}
-                <GridSkeleton />
-              </>
-            ) : noTasks ? (
-              <>
-                {toolbar()}
-                {notices}
-                {noTasksYet}
+                <PanelBody>
+                  {loaded ? notices : null}
+                  {loaded ? noTasksYet : <GridSkeleton />}
+                </PanelBody>
               </>
             ) : (
-              <>
-                {notices}
-                <TaskGridView
-                  variant={variant}
-                  groups={resting}
-                  toolbar={toolbar}
-                  emptyMessage="No task matches the search or filters."
-                  statuses={statuses}
-                  today={today}
-                  isOverdue={overdue}
-                  onOpenTask={onOpenTask}
-                  onSetStatus={moveTo}
-                  onAddTask={addTask}
-                />
-              </>
+              <TaskGridView
+                variant={variant}
+                groups={resting}
+                toolbar={toolbar}
+                notices={hasNotices ? notices : undefined}
+                empty={noMatches ? nothingMatches : undefined}
+                emptyMessage="No task matches the search or filters."
+                statuses={statuses}
+                today={today}
+                isOverdue={overdue}
+                onOpenTask={onOpenTask}
+                onSetStatus={moveTo}
+                onAddTask={addTask}
+              />
             )}
           </TabsContent>
         ))}
@@ -440,6 +461,7 @@ export function PlanningView({
           onOpenChange={(open) => !open && setNewTask(null)}
           statuses={statuses}
           defaultStatus={newTask.status}
+          today={today}
           onCreate={createFromDialog}
         />
       ) : null}

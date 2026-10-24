@@ -30,6 +30,7 @@ export function NavbarTabs({ items, value, onValueChange }: NavbarTabsProps) {
       <TabsList variant="line" className="hidden md:inline-flex">
         {items.map((item) => (
           <TabsTrigger key={item.value} value={item.value}>
+            {item.icon}
             {item.label}
             {item.badge != null && (
               <Badge variant="secondary" className="rounded-full!">
@@ -59,6 +60,7 @@ export function NavbarTabs({ items, value, onValueChange }: NavbarTabsProps) {
             <DropdownMenuRadioGroup value={value} onValueChange={onValueChange}>
               {items.map((item) => (
                 <DropdownMenuRadioItem key={item.value} value={item.value}>
+                  {item.icon}
                   {item.label}
                   {item.badge != null && (
                     <Badge

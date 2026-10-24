@@ -1,8 +1,10 @@
 /**
- * Search, Filter, Sort and New task across the top of Board, List and Table.
+ * Search, Filter, Sort and New task across the top of Board, List and Table,
+ * the view's one New task.
  * One toolbar and one filter for the three, so switching tab keeps what the
  * person narrowed to. A tab's own controls (List and Table's group toggle,
- * Table's Display) ride in `extra`.
+ * Table's Display) ride in `extra`. It spans the tab as a bar of its own,
+ * and `PanelBody` holds what it narrows.
  */
 import type { ReactNode } from "react"
 import type { Priority } from "@holi/shared"
@@ -42,6 +44,7 @@ import {
   type PlanningFilter,
   type PlanningSort,
 } from "@/lib/planning"
+import { cn } from "@/lib/cn"
 
 function toggled<T>(list: readonly T[], item: T, on: boolean): T[] {
   return on
@@ -79,7 +82,7 @@ export function PlanningToolbar({
   ]
 
   return (
-    <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+    <div className="border-border flex shrink-0 flex-col gap-3 border-b px-4 py-2 lg:flex-row lg:items-center lg:justify-between lg:px-6">
       <InputGroup className="w-full min-w-0 lg:max-w-xs">
         <InputGroupAddon align="inline-start">
           <SearchIcon
@@ -92,7 +95,7 @@ export function PlanningToolbar({
           onChange={(event) =>
             onFilterChange({ ...filter, search: event.target.value })
           }
-          placeholder="Search tasks..."
+          placeholder="Search tasks…"
           aria-label="Search tasks"
         />
         {filter.search.length > 0 ? (
@@ -111,10 +114,14 @@ export function PlanningToolbar({
       <div className="flex min-w-0 flex-wrap items-center gap-1.5 lg:justify-end">
         <DropdownMenu modal={false}>
           <DropdownMenuTrigger asChild>
-            <Button type="button" variant="outline" size="sm">
+            <Button type="button" variant="ghost" size="sm">
               <FilterIcon data-icon="inline-start" aria-hidden="true" />
               Filter
-              {active > 0 ? <Badge variant="secondary">{active}</Badge> : null}
+              {active > 0 ? (
+                <Badge variant="outline" className="tabular-nums">
+                  {active}
+                </Badge>
+              ) : null}
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="max-h-96 min-w-52">
@@ -212,11 +219,10 @@ export function PlanningToolbar({
 
         <DropdownMenu modal={false}>
           <DropdownMenuTrigger asChild>
-            <Button type="button" variant="outline" size="sm">
+            <Button type="button" variant="ghost" size="sm">
               <ArrowUpDownIcon data-icon="inline-start" aria-hidden="true" />
-              {sort === "manual"
-                ? "Sort"
-                : PLANNING_SORTS.find((s) => s.id === sort)?.name}
+              Sort:{" "}
+              {PLANNING_SORTS.find((s) => s.id === sort)?.name ?? "Manual"}
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="min-w-44">
@@ -252,6 +258,27 @@ export function PlanningToolbar({
           New task
         </Button>
       </div>
+    </div>
+  )
+}
+
+/** What sits under the toolbar: the tab's scrolling content. `flush` runs
+ *  it to the pane's edges, for a grid whose rows are the edge. */
+export function PanelBody({
+  children,
+  flush = false,
+}: {
+  children: ReactNode
+  flush?: boolean
+}) {
+  return (
+    <div
+      className={cn(
+        "flex min-h-0 flex-1 flex-col overflow-auto",
+        !flush && "gap-4 px-4 py-4 lg:px-6"
+      )}
+    >
+      {children}
     </div>
   )
 }

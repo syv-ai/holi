@@ -19,9 +19,8 @@ import {
   CalendarIcon,
   CircleDotIcon,
   FlagIcon,
-  HistoryIcon,
-  ListTodoIcon,
   PencilIcon,
+  PlusIcon,
   UserIcon,
   UsersIcon,
 } from "lucide-react"
@@ -46,8 +45,6 @@ import {
 import { relativeTime } from "@/lib/relative-time"
 import { trpc } from "@/lib/trpc"
 import { historyEpochsAtom } from "@/state/vaults"
-import { CardGrid } from "../card-7/components/card-grid"
-import type { ICard } from "../card-7/components/data"
 import { Stats } from "../stats-9/components/stats"
 import { ActivityTimeline } from "../timeline-4/components/activity-timeline"
 import type { ActivityItem } from "../timeline-4/components/data"
@@ -180,16 +177,7 @@ export function Overview({
         <Section title="About" action={editButton}>
           {projectRegion((p) =>
             p.about.trim() === "" ? (
-              <RegionEmpty
-                icon={<PencilIcon />}
-                title="No description yet"
-                description="Say what this project is for, so everyone in the vault starts from the same place."
-                action={
-                  <Button variant="outline" size="sm" onClick={onEditProject}>
-                    Write one
-                  </Button>
-                }
-              />
+              <Quiet>No description yet. Say what this project is for.</Quiet>
             ) : (
               <p className="text-sm leading-relaxed whitespace-pre-wrap">
                 {p.about.trim()}
@@ -201,19 +189,6 @@ export function Overview({
         {tasksLoading ? (
           <Section title="Progress">
             <LinesSkeleton lines={4} />
-          </Section>
-        ) : summary.total === 0 ? (
-          <Section title="Progress">
-            <RegionEmpty
-              icon={<ListTodoIcon />}
-              title="No tasks yet"
-              description="Progress is counted from the vault's task files."
-              action={
-                <Button variant="outline" size="sm" onClick={onNewTask}>
-                  New task
-                </Button>
-              }
-            />
           </Section>
         ) : (
           <Stats
@@ -258,6 +233,7 @@ export function Overview({
               description="Open tasks with a due date show up here, soonest first."
               action={
                 <Button variant="outline" size="sm" onClick={onNewTask}>
+                  <PlusIcon data-icon="inline-start" aria-hidden="true" />
                   New task
                 </Button>
               }
@@ -280,29 +256,27 @@ export function Overview({
       </div>
 
       <div className="flex min-w-0 flex-col gap-6">
-        <div className="flex flex-col gap-3">
-          <h2 className="text-sm font-semibold">Details</h2>
+        <Section title="Details">
           {projectRegion(
             (p) => (
-              <CardGrid cards={detailCards(p, today, members)} />
+              <DetailRows project={p} today={today} members={members} />
             ),
             5
           )}
-        </div>
+        </Section>
 
-        <Section title="Milestones">
+        <Section
+          title="Milestones"
+          action={
+            <Button variant="ghost" size="sm" onClick={onEditProject}>
+              <PlusIcon data-icon="inline-start" aria-hidden="true" />
+              Add
+            </Button>
+          }
+        >
           {projectRegion((p) =>
             p.milestones.length === 0 ? (
-              <RegionEmpty
-                icon={<FlagIcon />}
-                title="No milestones yet"
-                description="Mark the dates the project is working towards."
-                action={
-                  <Button variant="outline" size="sm" onClick={onEditProject}>
-                    Add a milestone
-                  </Button>
-                }
-              />
+              <Quiet>No milestones yet.</Quiet>
             ) : (
               <ul className="flex flex-col gap-2">
                 {p.milestones.map((m) => {
@@ -389,46 +363,80 @@ function ComingUpRow({
   )
 }
 
-function detailCards(
-  project: Project,
-  today: string,
+/** One line in place of an empty state, where the section's own header
+ *  already holds the action. */
+function Quiet({ children }: { children: ReactNode }) {
+  return <p className="text-muted-foreground text-sm">{children}</p>
+}
+
+/** The project's facts as label and value rows: one panel, not a card each. */
+function DetailRows({
+  project,
+  today,
+  members,
+}: {
+  project: Project
+  today: string
   members: readonly string[]
-): ICard[] {
+}) {
   const none = <span className="text-muted-foreground">Not set</span>
-  return [
+  const rows: { label: string; icon: ReactNode; value: ReactNode }[] = [
     {
       label: "Status",
       icon: <CircleDotIcon aria-hidden="true" />,
-      primary: <ProjectStatusBadge status={project.status} />,
+      value: <ProjectStatusBadge status={project.status} />,
     },
     {
       label: "Lead",
       icon: <UserIcon aria-hidden="true" />,
-      primary: project.lead ?? none,
-      bottom:
+      value:
         project.lead !== undefined ? (
-          <PersonAvatar login={project.lead} />
-        ) : undefined,
+          <span className="flex min-w-0 items-center gap-2">
+            <PersonAvatar login={project.lead} />
+            <span className="truncate">{project.lead}</span>
+          </span>
+        ) : (
+          none
+        ),
     },
     {
       label: "Start",
       icon: <CalendarIcon aria-hidden="true" />,
-      primary:
+      value:
         project.start !== undefined ? shortDate(project.start, today) : none,
     },
     {
       label: "Due",
       icon: <FlagIcon aria-hidden="true" />,
-      primary: project.due !== undefined ? shortDate(project.due, today) : none,
+      value: project.due !== undefined ? shortDate(project.due, today) : none,
     },
     {
       label: "Members",
       icon: <UsersIcon aria-hidden="true" />,
-      primary: members.length === 0 ? none : `${members.length}`,
-      secondary: members.length === 0 ? undefined : "assigned to tasks",
-      bottom: <PeopleStack logins={members} max={4} />,
+      value:
+        members.length === 0 ? (
+          none
+        ) : (
+          <span className="flex items-center gap-2">
+            <PeopleStack logins={members} max={4} />
+            <span className="tabular-nums">{members.length}</span>
+          </span>
+        ),
     },
   ]
+  return (
+    <dl className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-6 gap-y-3 text-sm">
+      {rows.map((row) => (
+        <div key={row.label} className="contents">
+          <dt className="text-muted-foreground flex items-center gap-2 [&_svg]:size-4">
+            {row.icon}
+            {row.label}
+          </dt>
+          <dd className="flex min-h-6 min-w-0 items-center">{row.value}</dd>
+        </div>
+      ))}
+    </dl>
+  )
 }
 
 type Activity =
@@ -508,20 +516,7 @@ function RecentActivity({
           onRetry={() => setRetry((n) => n + 1)}
         />
       ) : activity.items.length === 0 ? (
-        <RegionEmpty
-          icon={<HistoryIcon />}
-          title="No activity yet"
-          description="Changes to tasks and to the project show up here once they are saved."
-          action={
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setRetry((n) => n + 1)}
-            >
-              Refresh
-            </Button>
-          }
-        />
+        <Quiet>No changes to tasks or the project yet.</Quiet>
       ) : (
         <ActivityTimeline
           items={activity.items.map((item) => ({

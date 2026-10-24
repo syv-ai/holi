@@ -35,9 +35,8 @@ the [planning](planning.md) view shows every task in the vault by them.
   the claim runs in every vault; with a claim absent its files are plain notes.
 - **Dates are stamps**: `YYYY-MM-DD` or `YYYY-MM-DDTHH:MM`, local, no timezone. The time is
   optional on `due` and `reminder`, and its absence means "that day", not midnight.
-- **Editing a task is editing its file.** A card click opens it beside the board as a preview,
-  with frontmatter drawn as typed rows ([frontmatter](frontmatter.md)). Its body is a narrower
-  column than a note's, as wide as those rows.
+- **Editing a task is editing its file.** A card's title opens it as a tab, its fields drawn as a
+  row of chips above the body ([planning](planning.md)), each change a write to the file.
 - **Board.** ReUI's kanban (`primitives/Kanban.tsx`): Todo, Doing and Done are three column
   surfaces (`bg-muted`, rounded, full height, `gap-4` apart in `p-4`), each headed by its name, a
   count `Badge` and a + that opens quick add creating in that column. Inside a column the cards

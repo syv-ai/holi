@@ -24,7 +24,7 @@ import {
   PeopleStack,
   PriorityBadge,
   StatusBadge,
-  StatusDot,
+  StatusIcon,
   TagBadges,
 } from "../../planning/task-bits"
 import {
@@ -72,7 +72,7 @@ function GroupExpandButton({
     >
       <ChevronRightIcon
         className={cn(
-          "size-3.5 shrink-0 transition-transform duration-150",
+          "size-3.5 shrink-0 transition-transform duration-150 motion-reduce:transition-none rtl:-scale-x-100",
           expanded && "rotate-90"
         )}
         aria-hidden="true"
@@ -98,7 +98,7 @@ function GroupCell({
         expanded={expanded}
         onToggle={onToggle}
       />
-      <StatusDot status={row.status} className="size-2.5" />
+      <StatusIcon status={row.status} className="size-4" />
       <div className="flex min-w-0 flex-1 items-center gap-2">
         <span className="text-foreground shrink-0 truncate text-sm font-medium">
           {row.status.name}
@@ -125,7 +125,7 @@ function TaskTitleCell({
       <button
         type="button"
         onClick={onOpen}
-        className="group/task-title focus-visible:ring-ring/50 flex max-w-full min-w-0 items-center gap-1 rounded-sm text-left text-sm leading-5 font-medium outline-none focus-visible:ring-2"
+        className="group/task-title focus-visible:ring-ring/50 flex max-w-full min-w-0 items-center gap-1 rounded-sm text-start text-sm leading-5 font-medium outline-none focus-visible:ring-2"
       >
         <span
           data-slot="task-title"
@@ -137,7 +137,7 @@ function TaskTitleCell({
           {task.title}
         </span>
         <ArrowRightIcon
-          className="size-3 shrink-0 -translate-x-1 opacity-0 transition-[transform,opacity] group-hover/task-title:translate-x-0 group-hover/task-title:opacity-100"
+          className="size-3 shrink-0 opacity-0 transition-opacity group-hover/task-title:opacity-100 rtl:-scale-x-100"
           aria-hidden="true"
         />
       </button>
@@ -174,7 +174,7 @@ function StatusCell({
         >
           {context.statuses.map((status) => (
             <DropdownMenuRadioItem key={status.id} value={status.id}>
-              <StatusDot status={status} />
+              <StatusIcon status={status} />
               {status.name}
             </DropdownMenuRadioItem>
           ))}

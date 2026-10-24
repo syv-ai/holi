@@ -65,7 +65,10 @@ const TASKS: Task[] = [
 ]
 
 function snapshotOf(tasks: Task[]): VaultSnapshot {
-  return { ...emptyVaultSnapshot(), claimed: { tasks: { items: tasks, broken: [] } } }
+  return {
+    ...emptyVaultSnapshot(),
+    claimed: { tasks: { items: tasks, broken: [] } },
+  }
 }
 
 function setup(tab: "board" | "list" | "overview" = "board") {
@@ -116,7 +119,9 @@ afterEach(() => {
 test("the board has a column per status, and a card in each task’s column", () => {
   activity.mockResolvedValue([])
   setup("board")
-  expect(screen.getByText("Website relaunch")).toBeInTheDocument()
+  expect(
+    screen.getByRole("heading", { level: 1, name: "Board" })
+  ).toBeInTheDocument()
   for (const name of ["Backlog", "To do", "In progress", "Review", "Done"]) {
     expect(
       screen.getByRole("region", { name: `${name} tasks` })
@@ -149,6 +154,18 @@ test("search narrows the board", async () => {
   )
   expect(screen.queryByText("Write the brief")).not.toBeInTheDocument()
   expect(screen.getByText("Waiting on legal")).toBeInTheDocument()
+})
+
+test("a search that hides every task says so, and clears", async () => {
+  activity.mockResolvedValue([])
+  setup("list")
+  const search = screen.getByRole("textbox", { name: "Search tasks" })
+  await userEvent.type(search, "zebra")
+  expect(screen.getByText("No matching tasks")).toBeInTheDocument()
+  expect(screen.getByText(/Nothing matches “zebra”/)).toBeInTheDocument()
+  await userEvent.click(screen.getByRole("button", { name: "Clear filters" }))
+  expect(search).toHaveValue("")
+  expect(screen.getByText("Write the brief")).toBeInTheDocument()
 })
 
 test("the list groups by status, and a status menu moves a task", async () => {
