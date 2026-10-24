@@ -48,7 +48,17 @@ import {
   withMdExtension,
 } from '@/lib/tree-paths'
 import { useArrivals } from '@/lib/use-arrivals'
-import { Button, ContextMenu, ContextMenuTrigger, Icon, Input, Tooltip } from '@/primitives'
+import {
+  Button,
+  ContextMenu,
+  ContextMenuTrigger,
+  HoverCard,
+  HoverCardContent,
+  HoverCardTrigger,
+  Icon,
+  Input,
+  Tooltip,
+} from '@/primitives'
 import { todayDailyPathAtom } from '@/state/daily'
 import { claimsAtom, folderClaimsAtom, surfacesAtom } from '@/state/plugins'
 import { revealRequestAtom } from '@/state/reveal'
@@ -480,8 +490,14 @@ export function FileTree({
     const isFolder = id !== null && data[id]?.isFolder === true && !data[id]?.isDocument
     return { id, isFolder, dest: dropFolder(id, isFolder) }
   }
+  /** What a web address dropped on the tree makes, if anything does. */
+  const fromUrl = creates.find((c) => c.fromUrl === true)
+  /** Files, or, while something makes one of them, web addresses (a link
+   *  dragged from a browser carries `text/uri-list` and no files). */
+  const accepts = (types: readonly string[]) =>
+    types.includes('Files') || (fromUrl !== undefined && types.includes('text/uri-list'))
   const onDragOver = (e: DragEvent) => {
-    if (!e.dataTransfer.types.includes('Files')) return
+    if (!accepts(e.dataTransfer.types)) return
     e.preventDefault()
     e.dataTransfer.dropEffect = 'copy'
     const { id, isFolder, dest } = dropAt(e)
@@ -495,10 +511,37 @@ export function FileTree({
         : null
   }
   const onDrop = (e: DragEvent) => {
-    if (!e.dataTransfer.types.includes('Files')) return
+    if (!accepts(e.dataTransfer.types)) return
     e.preventDefault()
     const { dest } = dropAt(e)
     endDrag()
+    if (!e.dataTransfer.types.includes('Files')) {
+      // `text/uri-list`: one address a line, `#` lines are comments.
+      const urls = e.dataTransfer
+        .getData('text/uri-list')
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter((line) => /^https?:\/\//i.test(line))
+      if (fromUrl === undefined || activeRemote === null || urls.length === 0) return
+      const remote = activeRemote
+      void (async () => {
+        let made: string | null = null
+        const failed: { name: string; reason: string }[] = []
+        // Each address on its own: one that fails is listed, the rest land.
+        for (const url of urls) {
+          try {
+            made = await fromUrl.run({ remote, parent: dest, name: url })
+          } catch (err) {
+            failed.push({ name: url, reason: err instanceof Error ? err.message : String(err) })
+          }
+        }
+        await loadSnapshot()
+        if (failed.length > 0) setSkipped(failed)
+        // One dropped address opens, as New Link would; several only land.
+        else if (urls.length === 1 && made !== null) onOpenPreview(made)
+      })()
+      return
+    }
     const sources = [...e.dataTransfer.files].map((f) => window.holi.pathForFile(f))
     const mine = vaultPrefix ? sources.filter((p) => p.startsWith(vaultPrefix)) : []
     const theirs = sources.filter((p) => !mine.includes(p))
@@ -595,84 +638,90 @@ export function FileTree({
         </div>
       )
     const arrival = arrivalProps(id)
-    return (
+    // A claim's card for its file (a saved link's preview), on rest.
+    const Card = node.isFolder ? undefined : claims.find((c) => c.hover && c.match(id))?.hover
+    const hoverable = (el: React.JSX.Element) =>
+      Card === undefined ? el : <HoverCardTrigger asChild>{el}</HoverCardTrigger>
+    const menu = (
       <ContextMenu>
         <ContextMenuTrigger asChild>
-          <Button
-            variant="ghost"
-            data-path={id}
-            role="treeitem"
-            aria-level={id.split('/').length}
-            aria-selected={selected.has(id)}
-            aria-expanded={node.isFolder ? isOpen : undefined}
-            tabIndex={id === (focusId ?? rows[0]?.id) ? 0 : -1}
-            draggable
-            onDragStart={(e) => {
-              e.preventDefault()
-              if (vaultPrefix) window.holi.startDrag(targets(id).map((p) => vaultPrefix + p))
-            }}
-            onClick={(e) => onRowClick(e, id, node)}
-            onDoubleClick={() => (!node.isFolder || node.isDocument) && onOpenPinned(id)}
-            onKeyDown={(e) => {
-              if (rowKey(e, id, node)) e.preventDefault()
-            }}
-            className={cn(
-              TREE_ROW_RESET,
-              className,
-              node.isDocument && 'group/doc',
-              // Hover-proof: ROW_RESET clears the ghost hover fill, which would
-              // otherwise wipe these under the pointer.
-              selected.size > 1 &&
-                selected.has(id) &&
-                'rounded-md bg-accent/60 hover:bg-accent/60 dark:hover:bg-accent/60',
-              dropTarget === id && 'rounded-md bg-accent hover:bg-accent dark:hover:bg-accent',
-              isCut && 'opacity-40',
-              arrival.className,
-            )}
-            style={{ ...style, ...arrival.style }}
-          >
-            {lead(id, node, isOpen)}
-            <span
-              data-slot="row-name"
+          {hoverable(
+            <Button
+              variant="ghost"
+              data-path={id}
+              role="treeitem"
+              aria-level={id.split('/').length}
+              aria-selected={selected.has(id)}
+              aria-expanded={node.isFolder ? isOpen : undefined}
+              tabIndex={id === (focusId ?? rows[0]?.id) ? 0 : -1}
+              draggable
+              onDragStart={(e) => {
+                e.preventDefault()
+                if (vaultPrefix) window.holi.startDrag(targets(id).map((p) => vaultPrefix + p))
+              }}
+              onClick={(e) => onRowClick(e, id, node)}
+              onDoubleClick={() => (!node.isFolder || node.isDocument) && onOpenPinned(id)}
+              onKeyDown={(e) => {
+                if (rowKey(e, id, node)) e.preventDefault()
+              }}
               className={cn(
-                TREE_LABEL,
-                marks.get(id)?.struck === true && 'line-through',
-                (ignored.has(id) || (node.isDocument && isDraft(id))) && 'opacity-50',
+                TREE_ROW_RESET,
+                className,
+                node.isDocument && 'group/doc',
+                // Hover-proof: ROW_RESET clears the ghost hover fill, which would
+                // otherwise wipe these under the pointer.
+                selected.size > 1 &&
+                  selected.has(id) &&
+                  'rounded-md bg-accent/60 hover:bg-accent/60 dark:hover:bg-accent/60',
+                dropTarget === id && 'rounded-md bg-accent hover:bg-accent dark:hover:bg-accent',
+                isCut && 'opacity-40',
+                arrival.className,
               )}
+              style={{ ...style, ...arrival.style }}
             >
-              {label(id, node)}
-            </span>
-            {/* Today's daily, marked where it lives (docs/features/daily-notes.md),
+              {lead(id, node, isOpen)}
+              <span
+                data-slot="row-name"
+                className={cn(
+                  TREE_LABEL,
+                  marks.get(id)?.struck === true && 'line-through',
+                  (ignored.has(id) || (node.isDocument && isDraft(id))) && 'opacity-50',
+                )}
+              >
+                {label(id, node)}
+              </span>
+              {/* Today's daily, marked where it lives (docs/features/daily-notes.md),
                 and a plugin's badge (how many open tasks link to it): at the
                 row's right end, boxed to its x-height like the name so the
                 row's centring lines the two up. */}
-            {/* A document's files are behind it: this is the way in that a
+              {/* A document's files are behind it: this is the way in that a
                 newcomer can see, on hover or focus. Not a button: it sits in
                 the row's, and the keyboard's way is → as for any folder. */}
-            {node.isDocument && (
-              <Tooltip content={`${isOpen ? 'Hide' : 'Show'} ${nounOf(id).toLowerCase()} files`}>
-                <span
-                  aria-hidden="true"
-                  data-slot="document-files"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    toggle(id)
-                  }}
-                  onDoubleClick={(e) => e.stopPropagation()}
-                  className="motion-respond ml-auto flex shrink-0 rounded-sm px-1 text-muted-foreground opacity-0 group-hover/doc:opacity-100 group-focus-visible/doc:opacity-100 hover:text-foreground"
-                >
-                  <Icon icon={ChevronRight} size="sm" className={cn(isOpen && 'rotate-90')} />
+              {node.isDocument && (
+                <Tooltip content={`${isOpen ? 'Hide' : 'Show'} ${nounOf(id).toLowerCase()} files`}>
+                  <span
+                    aria-hidden="true"
+                    data-slot="document-files"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      toggle(id)
+                    }}
+                    onDoubleClick={(e) => e.stopPropagation()}
+                    className="motion-respond ml-auto flex shrink-0 rounded-sm px-1 text-muted-foreground opacity-0 group-hover/doc:opacity-100 group-focus-visible/doc:opacity-100 hover:text-foreground"
+                  >
+                    <Icon icon={ChevronRight} size="sm" className={cn(isOpen && 'rotate-90')} />
+                  </span>
+                </Tooltip>
+              )}
+              {(id === todayDailyPath || marks.get(id)?.badge !== undefined) && (
+                <span className="ml-auto shrink-0 text-[11px] text-brand [text-box:trim-both_ex_alphabetic]">
+                  {[id === todayDailyPath ? 'today' : null, marks.get(id)?.badge ?? null]
+                    .filter((part) => part !== null)
+                    .join(' · ')}
                 </span>
-              </Tooltip>
-            )}
-            {(id === todayDailyPath || marks.get(id)?.badge !== undefined) && (
-              <span className="ml-auto shrink-0 text-[11px] text-brand [text-box:trim-both_ex_alphabetic]">
-                {[id === todayDailyPath ? 'today' : null, marks.get(id)?.badge ?? null]
-                  .filter((part) => part !== null)
-                  .join(' · ')}
-              </span>
-            )}
-          </Button>
+              )}
+            </Button>,
+          )}
         </ContextMenuTrigger>
         <RowMenu
           path={id}
@@ -689,6 +738,15 @@ export function FileTree({
           onRename={() => setRenaming(id)}
         />
       </ContextMenu>
+    )
+    if (Card === undefined) return menu
+    return (
+      <HoverCard>
+        {menu}
+        <HoverCardContent side="right">
+          <Card path={id} />
+        </HoverCardContent>
+      </HoverCard>
     )
   }
 

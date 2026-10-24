@@ -7,6 +7,7 @@ import { agentMain } from './agent/main'
 import { appsMain } from './apps/main'
 import { communityMain } from './community/main'
 import { googleMain } from './google/main'
+import { linksMain } from './links/main'
 import { pdfMain } from './pdf/main'
 import { tasksMain } from './tasks/main'
 
@@ -14,6 +15,7 @@ export const MAIN_PLUGINS: readonly MainPlugin[] = [
   agentMain,
   tasksMain,
   pdfMain,
+  linksMain,
   googleMain,
   appsMain,
   communityMain,

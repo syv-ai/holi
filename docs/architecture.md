@@ -158,7 +158,7 @@ sends a link out of it to the browser.
 A plugin's own code sits in `main/`, `renderer/`, `shared/` and `test/` under its folder; its
 renderer imports its main side as types only, for `capClient`. The plugins are the agent
 ([agent-sessions](features/agent-sessions.md)), tasks ([tasks](features/tasks.md)), PDF
-([pdf](features/pdf.md)), Google
+([pdf](features/pdf.md)), links ([links](features/links.md)), Google
 ([google](features/google.md)), vault apps ([vault apps](features/vault-apps.md)) and community
 plugins ([community plugins](features/community-plugins.md)), which hosts plugins from other
 repositories as processes it runs, never as code it loads. A renderer plugin may give its claims as
@@ -268,6 +268,7 @@ See [agent-sessions](features/agent-sessions.md), [agent-config](features/agent-
 | [daily-notes](features/daily-notes.md)         | Idempotent daily notes and their archive                             |
 | [google](features/google.md)                   | Gmail and Calendar, per vault                                        |
 | [pdf](features/pdf.md)                         | Typst export and the PDF viewer                                      |
+| [links](features/links.md)                     | `link.*.md` files and page previews                                  |
 | [vault-apps](features/vault-apps.md)           | Agent-authored apps in their own origin                              |
 | [command-palette](features/command-palette.md) | Quick open and the one table of commands                             |
 | [onboarding](features/onboarding.md)           | First run and adding a vault                                         |

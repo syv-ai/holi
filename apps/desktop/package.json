@@ -64,6 +64,8 @@
     "d3-force": "^3.0.0",
     "dompurify": "^3.4.13",
     "electron-updater": "^6.8.9",
+    "entities": "^7.0.1",
+    "htmlparser2": "^10.1.0",
     "jotai": "^2.20.1",
     "linkify-it": "^6.1.0",
     "lucide": "1.27.0",

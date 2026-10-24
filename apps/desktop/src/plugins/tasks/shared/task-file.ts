@@ -29,6 +29,7 @@ import { parse as parseYaml, stringify as stringifyYaml } from 'yaml'
 import {
   claimedFiles,
   cleanLogins,
+  fileSlug,
   firstHeading,
   FrontmatterError,
   hasLogin,
@@ -85,20 +86,12 @@ const KNOWN_KEYS = new Set([
 const SLUG_MAX = 60
 const SLUG_FALLBACK = 'task'
 
-/** `Review the Q2 doc` -> `review-the-q2-doc`. Never empty, never edge-dashed.
- *
- * This result becomes a **filename**, so collapsing every non-alphanumeric run
- * is load-bearing rather than cosmetic: a surviving `/` would silently relocate
- * the task into another folder (changing its lane), and `..` would leave the
- * vault entirely. */
+/** `Review the Q2 doc` -> `review-the-q2-doc`, by the shared file-name rule
+ *  (`fileSlug`): lower case, dashes, æ ø å written out. Never empty, never
+ *  edge-dashed, and never a `/` or `..` that would move the task into another
+ *  lane or out of the vault. */
 export function taskSlug(title: string): string {
-  const slug = title
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, SLUG_MAX)
-    .replace(/-+$/, '')
-  return slug === '' ? SLUG_FALLBACK : slug
+  return fileSlug(title, { max: SLUG_MAX, fallback: SLUG_FALLBACK })
 }
 
 /** The end of a private task's name, `task.<name>.local.md`: the `.local.`

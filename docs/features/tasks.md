@@ -11,7 +11,10 @@ Todo / Doing / Done, with one swim lane per folder.
   (`todo | doing | done`, default `todo`), `due`, `priority` (`low | medium | high`), `tags`,
   `assignees`, `reminder`, `recurrence` and `order`, all optional. Unknown keys are written back verbatim. The body is the
   description, and its first heading is the title, falling back to the filename
-  (`task.fix-login.md` reads "Fix login"). There is no `title:` key.
+  (`task.fix-login.md` reads "Fix login"). There is no `title:` key. A name Holi makes is
+  the title by the shared file-name rule (`fileSlug`, as a saved link's is): lower case,
+  dashes, æ ø å written as ae oe aa, other accents dropped (`Møde med Bo` is
+  `task.moede-med-bo.md`).
 - **Private or shared.** A private task is `task.<name>.local.md`: the `.local.` marker makes it
   a [local file](../glossary.md#local-file), so git ignores it and it never leaves this machine.
   For the person whose machine holds it, it is a task like any other: on the board, with a

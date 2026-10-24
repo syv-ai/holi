@@ -42,6 +42,8 @@ export type LinkAction = { kind: 'note'; path: string } | { kind: 'external'; ur
 export interface ClickTargets {
   /** `data-wiki-target` of the nearest chip ancestor, if any (note or task path). */
   wikiTarget?: string | undefined
+  /** `data-wiki-url` of that chip: the web address a saved link stands for. */
+  wikiUrl?: string | undefined
   /** `data-href` of the nearest markdown-link ancestor, if any. */
   href?: string | undefined
   /** ⌘ (mac) or Ctrl. */
@@ -49,9 +51,19 @@ export interface ClickTargets {
 }
 
 /** The pure routing decision; the DOM lookup is the adapter's job. */
-export function resolveLinkClick({ wikiTarget, href, modifier }: ClickTargets): LinkAction {
+export function resolveLinkClick({
+  wikiTarget,
+  wikiUrl,
+  href,
+  modifier,
+}: ClickTargets): LinkAction {
   // A chip wins over any enclosing link: it is the innermost thing clicked.
-  if (wikiTarget) return { kind: 'note', path: wikiTarget }
+  // ⌘ on a saved link's chip goes where it points; a plain click opens the file.
+  if (wikiTarget) {
+    return modifier && wikiUrl && /^https?:\/\//i.test(wikiUrl)
+      ? { kind: 'external', url: wikiUrl }
+      : { kind: 'note', path: wikiTarget }
+  }
   if (!href || !modifier) return null
   // Only http(s) leaves the app. A relative href is a vault path and routes internally.
   return /^https?:\/\//i.test(href) ? { kind: 'external', url: href } : { kind: 'note', path: href }
@@ -111,6 +123,7 @@ export function linkClickHandler(nav: () => LinkNav): Extension {
         if (!el?.closest) return false
         const action = resolveLinkClick({
           wikiTarget: el.closest<HTMLElement>('[data-wiki-target]')?.dataset['wikiTarget'],
+          wikiUrl: el.closest<HTMLElement>('[data-wiki-target]')?.dataset['wikiUrl'],
           href: el.closest<HTMLElement>('[data-href]')?.dataset['href'],
           modifier: event.metaKey || event.ctrlKey,
         })
