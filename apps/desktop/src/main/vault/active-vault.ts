@@ -16,12 +16,13 @@
  *   - The snapshot push carries **no path**. Everything downstream re-derives
  *     from it, so an over-eager push is free and a missed one self-heals.
  */
-import { emptyVaultSnapshot } from '@holi/shared'
+import { emptyVaultSnapshot, syncLabel } from '@holi/shared'
 import { stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { SyncState, VaultSnapshot } from '@holi/shared'
 import type { GitDeps, GitRepo, PullResult, RepoStatus } from '../git'
 import { isIndexLockError, openRepo } from '../git'
+import { errorText, type ActivityWrite } from '../activity/log'
 import { installGitHook, partitionBySize, type HeldBackFile } from './large-files'
 import { installRecordMergeDriver } from './record-merge'
 import { readMaxCommittedFileBytes } from './vault-settings'
@@ -114,7 +115,43 @@ export interface ActiveVault {
   /** Files the autosave held out of the last commit for being over the size cap
    *  (the large-file gate). Derived each commit tick, never stored on disk. */
   heldBack(): HeldBackFile[]
+  /** When the remote last answered (a pull or a push that got through), and
+   *  what the last failed attempt said, for the status bar. */
+  syncInfo(): SyncInfo
+  /**
+   * The status bar's sync item: commit, pull, then push, now, as the loop
+   * would. Declines what the loop would decline (a conflict, a pause), and
+   * never throws.
+   */
+  syncNow(): Promise<void>
   close(): Promise<void>
+}
+
+/** What the status bar says about sync beyond its state. */
+export interface SyncInfo {
+  /** ISO instant the remote last answered a pull or a push, or null. */
+  lastSyncAt: string | null
+  /** The last network failure's text (scrubbed by the log), cleared by the
+   *  next success. */
+  lastError: string | null
+}
+
+/** A sync state as one line of the activity log, with its level. */
+function stateLine(state: SyncState): { message: string; level: 'info' | 'warn' | 'error' } {
+  const label = syncLabel(state)
+  switch (state.kind) {
+    case 'up-to-date':
+      return { message: 'Sync: up to date', level: 'info' }
+    case 'paused':
+      return state.manual
+        ? { message: `Sync paused: ${state.reason}`, level: 'info' }
+        : { message: `Sync paused: ${state.reason}`, level: 'warn' }
+    case 'conflict':
+    case 'no-access':
+      return { message: `Sync: ${label.text}`, level: 'error' }
+    default:
+      return { message: `Sync: ${label.text}`, level: label.tone === 'warn' ? 'warn' : 'info' }
+  }
 }
 
 /**
@@ -161,10 +198,28 @@ export async function openActiveVault(args: {
   onCommitted?: (paths: string[] | null) => void
   /** Where this vault finds the running Holi: its `bridge.local.env`. */
   bridgeEnv?: VaultBridgeEnv
+  /** The activity log (`activity/log.ts`): each commit, merge, push and
+   *  sync-state change, never the quiet ticks. */
+  activity?: ActivityWrite
   timings?: Partial<SyncTimings>
 }): Promise<ActiveVault> {
   const timings: SyncTimings = { ...DEFAULT_TIMINGS, ...args.timings }
   const root = args.repo.root
+  /** One line in the activity log, about this vault. */
+  function log(
+    channel: 'git' | 'sync',
+    level: 'info' | 'warn' | 'error',
+    message: string,
+    detail?: string,
+  ): void {
+    args.activity?.({
+      channel,
+      level,
+      message,
+      remote: args.remote,
+      ...(detail === undefined ? {} : { detail }),
+    })
+  }
   // The size cap is a synced setting the settings pane edits while the vault is
   // open, so every commit re-reads it (`currentCap`).
   let maxCommittedFileBytes = await readMaxCommittedFileBytes(root)
@@ -241,8 +296,30 @@ export async function openActiveVault(args: {
    *  from `conflictPaths` alone, which is also the sticky banner over a clean
    *  tree, and from a merge someone started in a terminal, which is neither. */
   let reconciling = false
+  /** When the remote last answered, and the last failure's words. */
+  let lastSyncAt: string | null = null
+  let lastError: string | null = null
+  /** The last state the log was told, as its line: `pulling` comes and goes
+   *  every few minutes and says nothing, so the log hears only where the
+   *  state settles, and only when that differs. */
+  let loggedState: string | null = null
+
+  function noteSynced(): void {
+    lastSyncAt = new Date().toISOString()
+    lastError = null
+  }
 
   function setState(next: SyncState): void {
+    if (next.kind !== 'pulling') {
+      const line = stateLine(next)
+      if (line.message !== loggedState) {
+        // The first reading at open is not news unless it is bad.
+        if (loggedState !== null || next.kind !== 'up-to-date') {
+          log('sync', line.level, line.message)
+        }
+        loggedState = line.message
+      }
+    }
     // Only on a real change: the panel would otherwise re-render on every tick.
     if (JSON.stringify(next) === JSON.stringify(state)) return
     state = next
@@ -383,7 +460,16 @@ export async function openActiveVault(args: {
         setState(computeState(status))
         return null
       }
-      const sha = await args.repo.commitAll(commitMessage(partitioned.commit), partitioned.commit)
+      const message = commitMessage(partitioned.commit)
+      const sha = await args.repo.commitAll(message, partitioned.commit)
+      if (sha !== null) {
+        log(
+          'git',
+          'info',
+          `Committed ${sha.slice(0, 7)} ${message}`,
+          partitioned.commit.length > 1 ? partitioned.commit.slice(0, 50).join('\n') : undefined,
+        )
+      }
       await refreshState()
       if (sha !== null && !closed) args.onCommitted?.(partitioned.commit)
       // A commit that landed is work the remote does not have yet. Arm the
@@ -393,6 +479,7 @@ export async function openActiveVault(args: {
       return sha
     } catch (err) {
       console.error('[vault] commit failed:', err)
+      log('git', 'error', 'Commit failed', errorText(err))
       return null
     } finally {
       committing = false
@@ -448,6 +535,7 @@ export async function openActiveVault(args: {
       await refreshState()
       const result = await args.repo.pull()
       offline = false
+      noteSynced()
       if (result.kind === 'conflict') {
         /**
          * **A conflict naming no paths is not a conflict.**
@@ -463,12 +551,23 @@ export async function openActiveVault(args: {
          */
         if (result.paths.length === 0) return null
         conflictPaths = result.paths
+        log(
+          'git',
+          'error',
+          `Merge conflict in ${result.paths.length} file${result.paths.length === 1 ? '' : 's'}; merge aborted`,
+          result.paths.join('\n'),
+        )
       }
       // A clean merge is silent: no notification, no dialog. The tree
       // updates itself because the merge wrote files and the watcher saw it,
       // but rescan directly too: a merge is exactly the burst most likely to
       // land inside a coalescing window.
       if (result.kind === 'merged') {
+        log(
+          'git',
+          'info',
+          `Pulled and merged ${result.commits} commit${result.commits === 1 ? '' : 's'} from origin`,
+        )
         await rescan()
         if (!closed) args.onCommitted?.(null)
         // A merge writes a merge commit, which the remote does not have. Push
@@ -485,6 +584,11 @@ export async function openActiveVault(args: {
       // Most failures here really are the network, but a lock the user's own git
       // held briefly is not. Calling it offline sends someone to look at their
       // wifi for a problem that ended before they looked.
+      const text = errorText(err)
+      // Logged when it starts failing, or fails differently: a laptop on a
+      // plane fails every interval, and that is one line, not forty.
+      if (text !== lastError) log('git', 'warn', 'Pull failed', text)
+      lastError = text
       if (!isIndexLockError(err)) offline = true
       return null
     } finally {
@@ -539,6 +643,7 @@ export async function openActiveVault(args: {
     try {
       let result = await args.repo.push()
       if (result.kind === 'rejected' && result.reason === 'non-fast-forward') {
+        log('git', 'info', 'Push rejected: the remote moved, pulling first')
         // The remote moved. Release the push guard so `maybePull`'s own
         // synchronous claim of `pullInFlight` can take over. There is no await
         // between here and that claim, so no other push can slip through the gap.
@@ -553,13 +658,28 @@ export async function openActiveVault(args: {
       if (result.kind === 'pushed' || result.kind === 'nothing-to-push') {
         offline = false
         permissionDenied = false
+        noteSynced()
+        if (result.kind === 'pushed') {
+          log(
+            'git',
+            'info',
+            `Pushed ${result.commits} commit${result.commits === 1 ? '' : 's'} to origin`,
+          )
+        }
       } else if (result.kind === 'rejected' && result.reason === 'permission') {
+        if (!permissionDenied) {
+          log('git', 'error', 'Push refused: no write access to the repository')
+        }
         permissionDenied = true
+        lastError = 'no write access'
       }
       // A second non-fast-forward here (someone pushed again in the last few
       // milliseconds) is left for the next tick rather than looped on.
     } catch (err) {
       console.error('[vault] push failed:', err)
+      const text = errorText(err)
+      if (text !== lastError) log('git', 'error', 'Push failed', text)
+      lastError = text
       // Mirrors `maybePull`: a lock the user's own git briefly held is contention,
       // not the network, and calling it offline sends someone to check their wifi.
       if (!isIndexLockError(err)) offline = true
@@ -626,6 +746,23 @@ export async function openActiveVault(args: {
     snapshot: () => cached,
     syncState: () => state,
     heldBack: () => heldBack,
+    syncInfo: () => ({ lastSyncAt, lastError }),
+    async syncNow() {
+      if (closed) return
+      // Sequenced like `retry`, so one step does not lose to another's guard.
+      // Unlike `retry`, a sticky conflict stays: only Try again clears it.
+      try {
+        if (commitTimer !== null) {
+          clearTimeout(commitTimer)
+          commitTimer = null
+        }
+        await maybeCommit()
+        await maybePull()
+        await pushNow()
+      } catch (err) {
+        console.error('[vault] sync now failed:', err)
+      }
+    },
     refresh: rescan,
     commitNow() {
       // ⌘S, a vault switch, and quit. Skips the timer entirely: a real commit
@@ -681,6 +818,12 @@ export async function openActiveVault(args: {
       if (closed) return { paths: [] }
       const result = await args.repo.remerge()
       if (result.kind === 'conflict') {
+        log(
+          'git',
+          'info',
+          `Reconciling ${result.paths.length} conflicted file${result.paths.length === 1 ? '' : 's'}`,
+          result.paths.join('\n'),
+        )
         // Markers + MERGE_HEAD are now in the tree; refresh the (fresh) paths.
         conflictPaths = result.paths
         reconciling = true
@@ -706,6 +849,7 @@ export async function openActiveVault(args: {
     async abandon() {
       if (closed || !reconciling) return
       await args.repo.abortMerge()
+      log('git', 'info', 'Merge abandoned: the conflict is waiting again')
       reconciling = false
       await refreshState()
     },
@@ -750,6 +894,8 @@ export function createVaultHost(args: {
   /** Writes each opened vault's `bridge.local.env`, and deletes it when the
    *  vault closes (`bridge/env-file.ts`). */
   bridgeEnv?: VaultBridgeEnv
+  /** The activity log, handed to each vault it opens. */
+  activity?: ActivityWrite
   /**
    * Let go of whatever is running against this vault, before it closes.
    *
@@ -793,6 +939,7 @@ export function createVaultHost(args: {
     await args.onLeave?.().catch((err) => console.error('[vault] leave hook failed:', err))
     const vault = current
     current = null
+    args.activity?.({ channel: 'sync', message: `Closed ${vault.remote}`, remote: vault.remote })
     // Flush before letting go. Nothing is watching this tree once the vault is
     // closed, and a tree that is not clean is one the next pull cannot merge.
     await vault.commitNow().catch((err) => console.error('[vault] flush on switch failed:', err))
@@ -831,8 +978,10 @@ export function createVaultHost(args: {
           onHeldBack: args.onHeldBack,
           onCommitted: args.onCommitted,
           bridgeEnv: args.bridgeEnv,
+          ...(args.activity === undefined ? {} : { activity: args.activity }),
           timings: args.timings,
         })
+        args.activity?.({ channel: 'sync', message: `Opened ${remote}`, remote })
         return current
       }),
 

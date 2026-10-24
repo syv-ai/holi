@@ -38,6 +38,7 @@ import { pluginEvents, type PluginEventsDeps } from './events'
 import { ensureSeeded, withoutOwned } from '../vault/seed/seed'
 import type { SeedContribution, SeedResult } from '../vault/seed/types'
 import { readVaultSettings } from '../vault/settings'
+import type { ActivityWrite } from '../activity/log'
 
 /** The open vault, as far as a plugin's `PluginCtx` drives it. */
 export type OpenVault = LiveVault &
@@ -78,6 +79,9 @@ export interface PluginHostDeps {
   /** One capability call at the UI door in the vault `remote`, for
    *  `ctx.call`. Absent, a call is refused. */
   call?: (remote: string, name: string, params: unknown) => Promise<unknown>
+  /** The activity log (`activity/log.ts`), for `ctx.log` and for a plugin
+   *  that would not start. Absent, as in most tests, lines are dropped. */
+  activity?: ActivityWrite
 }
 
 export interface PluginHost {
@@ -317,6 +321,16 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
         if (deps.call === undefined) throw new Error(`no capability calls here: ${name}`)
         return deps.call(remote, name, params)
       },
+      log: (level, message, detail) =>
+        deps.activity?.({
+          // The agent's lines are a channel of their own; every other
+          // plugin's share one.
+          channel: id === 'agent' ? 'agent' : 'plugins',
+          level,
+          message: id === 'agent' ? message : `${plugin.info.label}: ${message}`,
+          remote,
+          ...(detail === undefined ? {} : { detail }),
+        }),
       publish: (name, payload) => {
         for (const handler of heard.get(`${id}/${name}`) ?? []) {
           try {
@@ -344,6 +358,13 @@ export function createPluginHost(deps: PluginHostDeps): PluginHost {
     } catch (err) {
       console.error(`[plugins] ${id} did not start:`, err)
       failed.set(id, err instanceof Error ? err.message : String(err))
+      deps.activity?.({
+        channel: 'plugins',
+        level: 'error',
+        message: `${plugin.info.label} did not start`,
+        detail: err instanceof Error ? err.message : String(err),
+        remote,
+      })
       undoAll(id, undos)
       return null
     }

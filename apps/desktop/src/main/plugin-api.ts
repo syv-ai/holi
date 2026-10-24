@@ -19,6 +19,7 @@ import type { SeedContribution } from './vault/seed/types'
 import type { Route } from './bridge/server'
 import type { UiReport } from './capabilities/services'
 import type { Transform } from './vault/hooks/runner'
+import type { ActivityLevel } from './activity/log'
 
 /** Undoes what an activation started, when the plugin stops: turned off,
  *  the vault left, or Holi quitting. */
@@ -132,6 +133,13 @@ export interface PluginCtx extends LiveVault, SchemeContext {
    */
   call(name: string, params: unknown): Promise<unknown>
   /**
+   * Write a line to the activity log, the bottom panel's Output
+   * (docs/features/status-bar.md): something this plugin did in the
+   * background that someone may want to read later. State changes, not
+   * ticks, and never a credential (the log scrubs what it can).
+   */
+  log(level: ActivityLevel, message: string, detail?: string): void
+  /**
    * Tell the main side of every plugin that requires this one something about
    * the open vault, as it happens: the agent's session list, a turn ending.
    * Nobody hearing it is not an error.
@@ -214,6 +222,7 @@ export { seedFolder } from './vault/seed/folder'
 export { jsonFileStore, type JsonFileStore } from './json-file-store'
 export { resolveBin, toolPath } from './bin'
 export { defaultProbePid, type PidState } from './process-group'
+export type { ActivityChannel, ActivityLevel } from './activity/log'
 export { remoteUrl, runGit, type RangeFile } from './git'
 export { gitignoreWith } from './vault/seed/core'
 export { removeDocFile, writeAtomic } from './vault/vault-files'

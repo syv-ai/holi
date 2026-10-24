@@ -21,6 +21,8 @@ import { agentCapabilities, AGENT_NAMESPACES } from './host/capabilities'
 import { createAgentSessions } from './host/sessions'
 import { createAgentTerminals } from './host/terminals'
 import { openTurnLog } from './host/turn-log'
+import { createSessionLog } from './host/session-log'
+import type { SessionSummary } from './claude/listing'
 
 export const agentMain: MainPlugin = {
   info: AGENT_INFO,
@@ -33,11 +35,17 @@ export const agentMain: MainPlugin = {
       systemPrefersDark: () => nativeTheme.shouldUseDarkColors,
     })
     const terminals = createAgentTerminals({ emit: ctx.emit, command: provider.terminal })
+    const sessionLog = createSessionLog(ctx.log)
     const started = createAgentSessions({
       emit: ctx.emit,
       // The session list and each turn's end, for the plugins built on the
-      // agent (automations close a run once it is done).
-      publish: ctx.publish,
+      // agent (automations close a run once it is done), and for the
+      // activity log.
+      publish: (name, payload) => {
+        ctx.publish(name, payload)
+        if (name === 'sessions') sessionLog.sessions(payload as SessionSummary[])
+        else if (name === 'turn-end') sessionLog.turnEnd((payload as { id: string }).id)
+      },
       provider,
       terminals,
       binDir: ctx.binDir,
