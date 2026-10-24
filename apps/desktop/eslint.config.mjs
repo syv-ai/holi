@@ -406,6 +406,7 @@ export default [
     files: [
       'src/renderer/src/components/ui/**/*.{ts,tsx}',
       'src/renderer/src/components/reui/**/*.{ts,tsx}',
+      'src/renderer/src/components/examples/**/*.{ts,tsx}',
       'src/renderer/src/components/blocks/**/*.{ts,tsx}',
       'src/renderer/src/components/bencho/**/*.{ts,tsx}',
       'src/renderer/src/components/monocode/**/*.{ts,tsx}',
