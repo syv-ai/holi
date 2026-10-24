@@ -46,7 +46,8 @@ plugin contract like the agent itself: the built-in chat part, the Agents mode's
 ## 3. Processes and the IPC seam
 
 - **Main** owns everything with side effects: the filesystem, git, GitHub and Google calls, the
-  vault store and watcher, sync, reminders, Typst and the Claude PTYs. It holds every credential.
+  vault store and watcher, sync, reminders, Typst, the Claude PTYs, the bottom panel's shells
+  (`main/terminal/`) and the activity log (`main/activity/`). It holds every credential.
 - **Preload** is a narrow `contextBridge` adapter over `ipcRenderer`.
 - **Renderer** is the React UI. It runs with `contextIsolation` and without Node, and never sees a
   token. It reaches main through a typed tRPC router (`src/main/router.ts`).

@@ -43,6 +43,7 @@ other rather than repeating each other.
 | [shortcuts](features/keyboard-shortcuts.md)        | The shell's keyboard shortcuts, their table and their dialog             |
 | [nav-menu](features/nav-menu.md)                   | The nav's items, their menu, and Home                                    |
 | [sidebar](features/sidebar.md)                     | The sidebar, its two modes, the seam and the profile                     |
+| [status-bar](features/status-bar.md)               | The status bar, the bottom panel, its Terminal and Output                |
 | [home](features/home.md)                           | Home: the vault's library (recent, notes, tasks, activity)               |
 | [onboarding](features/onboarding.md)               | First run, creating or joining a vault                                   |
 | [updates](features/updates.md)                     | Releases from CI, and the app updating itself                            |

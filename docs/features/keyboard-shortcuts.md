@@ -43,6 +43,8 @@ same table, so the sheet can only show keys that work. The dialog opens from the
 | Split view | Split view                    | ⌘\           | Ctrl \                    |
 | Split view | Separate split view           | ⇧⌘\          | Ctrl Shift \              |
 | Split view | Focus next / previous view    | ⌃⌥→ / ⌃⌥←    | Ctrl Alt → / ←            |
+| Panel      | Toggle terminal               | ⌃\`          | Ctrl \`                   |
+| Panel      | Show output                   | ⇧⌘U          | Ctrl Shift U              |
 | Files      | New document                  | ⌘N           | Ctrl N                    |
 | Files      | Rename selected file          | F2           | F2                        |
 | Files      | Collapse all folders          | ⌥⌘←          | Ctrl Alt ←                |
@@ -53,9 +55,13 @@ same table, so the sheet can only show keys that work. The dialog opens from the
 
 - **Never while typing, unless the row says so.** In a text field, the editor or the terminal only
   rows marked `whileTyping` fire, which is every modified key except collapse all; `?` and F2 are
-  characters or the field's own there. In the terminal no Control key fires at all: those are the
-  terminal's (Claude Code's own keys included), and on a Mac ⌘ is free because xterm leaves Command
-  alone.
+  characters or the field's own there. In the terminal no Control key fires, with one exception:
+  those are the terminal's (Claude Code's own keys included), and on a Mac ⌘ is free because xterm
+  leaves Command alone. The exception is ⌃\`, which toggles the bottom panel
+  ([status bar](status-bar.md)) and is marked `inTerminal`, so the panel closes from inside the
+  shell it shows; the panel's xterm hands it back rather than typing it. The panel keys are VS
+  Code's, registered by the panel itself, and clash with nothing in the menu or the table (⌘\` is
+  macOS's window cycling, so the toggle is on Control).
 - **The focused widget wins.** A key it handled (`defaultPrevented`) is not a shortcut, which is how
   the editor's ⌘B stays bold. shadcn's sidebar had its own ⌘B listener; it is removed, or the
   sidebar would toggle twice.
