@@ -50,13 +50,13 @@ describe('linkFilePath', () => {
 
 describe('parseLinkFile', () => {
   it('reads what a new file holds back', () => {
-    const text = linkFileText('https://example.com/a?b=1#c', 'The deck.')
+    const text = linkFileText('https://example.com/a?b=1#c')
     expect(parseLinkFile(text, 'link.a.md')).toEqual({
       path: 'link.a.md',
       url: 'https://example.com/a?b=1#c',
       tags: [],
     })
-    expect(text.endsWith('\nThe deck.\n')).toBe(true)
+    expect(text.endsWith('---\n')).toBe(true)
   })
 
   it('reads tags', () => {

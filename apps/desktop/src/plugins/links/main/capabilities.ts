@@ -92,7 +92,7 @@ export function linkCapabilities(deps: LinkCapabilitiesDeps) {
           ctx,
           folder,
           preview.title ?? titleFromUrl(url),
-          linkFileText(url, preview.description),
+          linkFileText(url),
         )
         return { path }
       },

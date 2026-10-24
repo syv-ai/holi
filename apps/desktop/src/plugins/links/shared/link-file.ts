@@ -89,11 +89,11 @@ export function titleFromUrl(url: string): string {
   }
 }
 
-/** A new link file's text: its address, and what was said about it. */
-export function linkFileText(url: string, description = ''): string {
-  const front = stringifyYaml({ url }, { lineWidth: 0 })
-  const body = description.trim()
-  return `---\n${front}---\n${body === '' ? '' : `\n${body}\n`}`
+/** A new link file's text: its address, and an empty body for what someone
+ *  will say about it. The page's own description is the card's to show, so
+ *  it is not copied in. */
+export function linkFileText(url: string): string {
+  return `---\n${stringifyYaml({ url }, { lineWidth: 0 })}---\n`
 }
 
 /** A link file's address and tags. Throws, saying why, for a file with no

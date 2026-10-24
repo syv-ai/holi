@@ -14,8 +14,8 @@ is stored.
 
 ## Saving one
 
-The easiest way is the command, which reads the page's title and description once and
-writes the file named after it:
+The easiest way is the command, which reads the page's title once and writes the file
+named after it, with an empty body:
 
 ```sh
 holi links create "https://example.com/report" [folder]
@@ -42,10 +42,9 @@ The 189-slide deck from the offsite. Section 4 has the pricing model.
 - **`url` is required**, and must be an `http://` or `https://` address. A file without
   one shows as broken.
 - `tags` is optional, a list like a note's.
-- **The body is what the link is**: why it was saved, what is where in it, who sent it.
-  `holi links create` starts it with the page's own one-line description; when the user
-  tells you what the link is for, write that in their words. Do not invent one, and do
-  not paste more of the page's text into it.
+- **The body is what the link is, in the user's words**: why it was saved, what is
+  where in it, who sent it. Write it when the user tells you; otherwise leave it empty.
+  Never copy the page's own description or text into it: the preview already shows it.
 - Do not add other keys for what the page says (an image, a site name, a description
   copied from the page): the preview reads those fresh, and a copy would go stale.
 
