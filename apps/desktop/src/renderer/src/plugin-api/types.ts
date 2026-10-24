@@ -62,6 +62,9 @@ export interface ClaimCreate {
   /** Make it, named `name`, in the folder `parent` ('' for the root). Resolves
    *  to a vault path to open, or null. */
   run(ctx: { remote: string; parent: string; name: string }): Promise<string | null>
+  /** A web address dropped on the tree makes one, through `run` with the
+   *  address as its name (a saved link). The first enabled one wins. */
+  fromUrl?: true
 }
 
 /**

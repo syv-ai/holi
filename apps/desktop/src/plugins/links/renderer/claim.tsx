@@ -1,9 +1,9 @@
 /**
  * Link files as a path claim (docs/features/links.md): New Link in the
- * explorer, the card on their rows in the tree, how a wiki-link to one is
- * drawn (⌘-click goes to the page), what `@` offers of them, their
- * frontmatter rows, the card at the top of their tab, Open in Browser in
- * their row menu, and how the tree and the tabs mark them.
+ * explorer and a web address dropped on it, the card on their rows in the
+ * tree, how a wiki-link to one is drawn (⌘-click goes to the page), what `@`
+ * offers of them, their frontmatter rows, the card at the top of their tab,
+ * Open in Browser in their row menu, and how the tree and the tabs mark them.
  */
 import { atom, useAtomValue } from 'jotai'
 import { Link as LinkGlyph } from 'lucide'
@@ -40,6 +40,8 @@ export const LINK_PATH_CLAIM: PathClaim = {
     label: 'New Link',
     icon: Link,
     placeholder: 'paste a web address',
+    // A link dragged in from a browser is saved where it lands.
+    fromUrl: true,
     run: async ({ remote, parent, name }) => {
       const url = name.trim()
       if (!isWebUrl(url)) throw new Error("That isn't a web address")

@@ -490,8 +490,14 @@ export function FileTree({
     const isFolder = id !== null && data[id]?.isFolder === true && !data[id]?.isDocument
     return { id, isFolder, dest: dropFolder(id, isFolder) }
   }
+  /** What a web address dropped on the tree makes, if anything does. */
+  const fromUrl = creates.find((c) => c.fromUrl === true)
+  /** Files, or, while something makes one of them, web addresses (a link
+   *  dragged from a browser carries `text/uri-list` and no files). */
+  const accepts = (types: readonly string[]) =>
+    types.includes('Files') || (fromUrl !== undefined && types.includes('text/uri-list'))
   const onDragOver = (e: DragEvent) => {
-    if (!e.dataTransfer.types.includes('Files')) return
+    if (!accepts(e.dataTransfer.types)) return
     e.preventDefault()
     e.dataTransfer.dropEffect = 'copy'
     const { id, isFolder, dest } = dropAt(e)
@@ -505,10 +511,28 @@ export function FileTree({
         : null
   }
   const onDrop = (e: DragEvent) => {
-    if (!e.dataTransfer.types.includes('Files')) return
+    if (!accepts(e.dataTransfer.types)) return
     e.preventDefault()
     const { dest } = dropAt(e)
     endDrag()
+    if (!e.dataTransfer.types.includes('Files')) {
+      // `text/uri-list`: one address a line, `#` lines are comments.
+      const urls = e.dataTransfer
+        .getData('text/uri-list')
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter((line) => /^https?:\/\//i.test(line))
+      if (fromUrl === undefined || activeRemote === null || urls.length === 0) return
+      const remote = activeRemote
+      void (async () => {
+        let made: string | null = null
+        for (const url of urls) made = await fromUrl.run({ remote, parent: dest, name: url })
+        await loadSnapshot()
+        // One dropped address opens, as New Link would; several only land.
+        if (urls.length === 1 && made !== null) onOpenPreview(made)
+      })()
+      return
+    }
     const sources = [...e.dataTransfer.files].map((f) => window.holi.pathForFile(f))
     const mine = vaultPrefix ? sources.filter((p) => p.startsWith(vaultPrefix)) : []
     const theirs = sources.filter((p) => !mine.includes(p))
