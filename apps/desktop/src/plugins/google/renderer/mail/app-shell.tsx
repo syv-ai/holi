@@ -1,6 +1,7 @@
 /**
- * Mail, as ReUI's app-shell-4: a rail of folders, the thread list, and the
- * open thread with its actions. Wired to Google's capabilities through
+ * Mail, as ReUI's app-shell-4 without its folder rail: the account and the
+ * thread list (its title switches mailbox), and the open thread with its
+ * actions. Wired to Google's capabilities through
  * `useMail`; HTML bodies go through `SandboxedHtml` as everywhere else.
  *
  * Self-contained so it can be mounted anywhere in Holi's shell: it fills its
@@ -168,8 +169,6 @@ export function MailShell({ className }: { className?: string }) {
       </div>
     ) : null
 
-  const unreadInbox = (mail.counts?.unread ?? 0) > 0
-
   return (
     <TooltipProvider delayDuration={0}>
       <SidebarProvider
@@ -188,29 +187,28 @@ export function MailShell({ className }: { className?: string }) {
           } as CSSProperties
         }
       >
-        {/* Sidebar */}
+        {/* The list column, with the account and the mailbox menu atop it */}
         <AppSidebar
-          folder={mail.folder}
-          onSelectFolder={(folder) => {
-            mail.setFolder(folder)
-            setInline(null)
-          }}
-          unread={{ inbox: unreadInbox }}
           expanded={expanded}
           onToggle={() => setExpanded((value) => !value)}
-          user={
-            <NavUser onManage={openConnections} onError={mail.reportError} />
-          }
         >
           <MailList
             mail={mail}
+            account={
+              <NavUser onManage={openConnections} onError={mail.reportError} />
+            }
+            onSelectFolder={(folder) => {
+              mail.setFolder(folder)
+              setInline(null)
+            }}
             onCompose={() => startCompose()}
             onOpenDraft={openDraft}
             onOpenConnections={openConnections}
           />
         </AppSidebar>
 
-        <div className="bg-background flex min-w-0 flex-1 flex-col">
+        {/* No fill of its own: the window's surface shows through. */}
+        <div className="flex min-w-0 flex-1 flex-col">
           <AppHeader mail={mail} commands={commands} />
           <MailReader
             mail={mail}

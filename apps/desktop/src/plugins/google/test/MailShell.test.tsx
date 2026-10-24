@@ -205,7 +205,8 @@ test('search sends Gmail grammar on Enter and escapes the folder', async () => {
   render(<MailShell />)
   await screen.findByRole('list', { name: 'Inbox' })
 
-  await user.click(screen.getByRole('button', { name: 'Sent' }))
+  await user.click(screen.getByRole('button', { name: 'Mailbox: Inbox' }))
+  await user.click(await screen.findByRole('menuitemradio', { name: 'Sent' }))
   await waitFor(() => expect(searchMock).toHaveBeenLastCalledWith({ mailbox: 'sent' }))
 
   await user.type(screen.getByRole('textbox', { name: 'Search mail' }), 'from:jane{Enter}')
@@ -217,7 +218,7 @@ test('starred is Gmail’s is:starred', async () => {
   render(<MailShell />)
   await screen.findByRole('list', { name: 'Inbox' })
 
-  await user.click(screen.getByRole('button', { name: 'Starred' }))
+  await user.click(screen.getByRole('tab', { name: 'Starred' }))
 
   await waitFor(() => expect(searchMock).toHaveBeenLastCalledWith({ query: 'is:starred' }))
 })
@@ -259,7 +260,8 @@ test('drafts come from Gmail and say so when there are none', async () => {
   render(<MailShell />)
   await screen.findByRole('list', { name: 'Inbox' })
 
-  await user.click(screen.getByRole('button', { name: 'Drafts' }))
+  await user.click(screen.getByRole('button', { name: 'Mailbox: Inbox' }))
+  await user.click(await screen.findByRole('menuitemradio', { name: 'Drafts' }))
 
   expect(await screen.findByText('No drafts')).toBeInTheDocument()
   expect(draftsMock).toHaveBeenCalled()

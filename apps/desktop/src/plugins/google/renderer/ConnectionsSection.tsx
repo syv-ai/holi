@@ -16,13 +16,41 @@
  * the nav menu shows Mail and Agenda on the same answer. Only the flow's
  * transient state is local, and every change here asks main again
  * (`refreshGoogle`) rather than assuming what it produced.
+ *
+ * Drawn as ReUI's settings-6: the service as a framed row with its mark on
+ * the same tile the onboarding's plugin cards use (`IconTile`, `pluginMark`),
+ * its state and one action, and what follows from connecting as muted rows
+ * inside the same frame.
  */
 import { useAtomValue } from 'jotai'
+import { ImageIcon, ShieldCheckIcon } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
-import { SettingsNote } from '@/composites'
+import { Alert, AlertDescription, AlertTitle } from '@/components/reui/alert'
+import { Frame, FramePanel } from '@/components/reui/frame'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
+import { Avatar, AvatarFallback } from '@/components/ui/avatar'
+import { Button } from '@/components/ui/button'
+import {
+  Item,
+  ItemActions,
+  ItemContent,
+  ItemDescription,
+  ItemMedia,
+  ItemTitle,
+} from '@/components/ui/item'
+import { IconTile, pluginMark } from '@/composites'
 import { activeRemoteAtom } from '@/plugin-api'
-import { Button, Dialog } from '@/primitives'
 import { googleCap, useGoogleAccount } from './account'
+import { initialsOf } from './mail/data'
 import { useAlwaysAllowedSenders, useForgetImageSenders } from './mail-images'
 
 /** The flow's transient state. "Connected" is deliberately absent: that is the
@@ -142,124 +170,148 @@ export function ConnectionsSection(): React.JSX.Element {
   const needsReconsent = connected && missingScopes.length > 0
 
   return (
-    // The settings page's card carries the plugin's name above this.
-    <section>
-      <div className="flex items-center justify-between gap-3">
-        <div className="min-w-0">
-          <p className="text-xs text-pretty break-words text-muted-foreground">
+    <Frame>
+      <FramePanel className="space-y-2.5">
+        <Item className="p-0">
+          <ItemMedia className="translate-y-0! self-center!">
+            <IconTile>{pluginMark('google')}</IconTile>
+          </ItemMedia>
+
+          <ItemContent className="min-w-0">
+            <ItemTitle>Google</ItemTitle>
+            <ItemDescription className="break-words">
+              {connected ? (
+                <>
+                  Mail and Calendar, as <span className="text-foreground">{account.email}</span>
+                </>
+              ) : phase.kind === 'connecting' ? (
+                'Waiting for your browser…'
+              ) : (
+                'Read and triage your Gmail, read your Calendar. This vault only.'
+              )}
+            </ItemDescription>
+            {!connected && phase.kind === 'idle' && phase.error !== undefined && (
+              <p role="alert" className="text-sm text-pretty text-destructive">
+                {phase.error}
+              </p>
+            )}
+          </ItemContent>
+
+          <ItemActions>
             {connected ? (
               <>
-                Connected as <span className="text-foreground">{account.email}</span>
+                {needsReconsent && (
+                  <Button size="sm" disabled={busy} onClick={() => void connect()}>
+                    {phase.kind === 'connecting' ? 'Connecting…' : 'Reconnect'}
+                  </Button>
+                )}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  aria-label="Disconnect this vault"
+                  onClick={() => void disconnect()}
+                >
+                  Disconnect
+                </Button>
               </>
-            ) : phase.kind === 'connecting' ? (
-              'Waiting for your browser…'
             ) : (
-              'Read and triage your Gmail, read your Calendar. This vault only.'
-            )}
-          </p>
-          {!connected && phase.kind === 'idle' && phase.error !== undefined && (
-            <p role="alert" className="mt-0.5 text-xs text-pretty text-destructive">
-              {phase.error}
-            </p>
-          )}
-        </div>
-
-        {connected ? (
-          <div className="flex shrink-0 items-center gap-2">
-            {needsReconsent && (
-              <Button size="xs" disabled={busy} onClick={() => void connect()}>
-                {phase.kind === 'connecting' ? 'Connecting…' : 'Reconnect'}
+              <Button size="sm" disabled={busy} onClick={() => void connect()}>
+                {phase.kind === 'connecting' ? 'Connecting…' : connectLabel}
               </Button>
             )}
-            <Button variant="secondary" size="xs" onClick={() => void disconnect()}>
-              Disconnect this vault
-            </Button>
-          </div>
-        ) : (
-          <Button
-            variant="secondary"
-            size="xs"
-            className="shrink-0"
-            disabled={busy}
-            onClick={() => void connect()}
-          >
-            {phase.kind === 'connecting' ? 'Connecting…' : connectLabel}
-          </Button>
-        )}
-      </div>
+          </ItemActions>
+        </Item>
 
-      {/* Accounts connected on this machine that this vault is not using.
-          Picking one is a mapping, not a consent round trip, so it is one click
-          and deliberately not dressed up as connecting. */}
-      {others.length > 0 && (
-        <ul className="mt-2 flex flex-col gap-1">
-          {others.map((other) => (
-            <li key={other.sub} className="flex items-center justify-between gap-3">
-              <span className="min-w-0 text-xs break-all text-muted-foreground">{other.email}</span>
-              <span className="flex shrink-0 items-center gap-2">
-                <Button size="xs" variant="secondary" onClick={() => void linkAccount(other.sub)}>
-                  Use in this vault
-                </Button>
-                <Button
-                  size="xs"
-                  variant="ghost"
-                  onClick={() => setRemoving({ sub: other.sub, email: other.email })}
-                >
-                  Remove from Holi
-                </Button>
-              </span>
-            </li>
+        {connected &&
+          (needsReconsent ? (
+            <Alert variant="destructive">
+              <AlertTitle>Holi needs new permissions</AlertTitle>
+              <AlertDescription>
+                Mail still loads, but marking read, starring, archiving and contacts will not work
+                until you reconnect.
+              </AlertDescription>
+            </Alert>
+          ) : (
+            <Item variant="muted">
+              <ItemMedia variant="icon">
+                <ShieldCheckIcon />
+              </ItemMedia>
+              <ItemContent>
+                <ItemTitle>What Holi may do</ItemTitle>
+                <ItemDescription>
+                  Read your mail and calendar, and mark read, star, archive or trash a thread. It
+                  cannot delete mail permanently or change your calendar.
+                </ItemDescription>
+              </ItemContent>
+            </Item>
           ))}
-        </ul>
-      )}
-      {connected &&
-        (needsReconsent ? (
-          <p className="mt-2 text-xs text-pretty text-destructive">
-            Holi needs new permissions. Mail still loads, but marking read, starring, archiving and
-            contacts will not work until you reconnect.
-          </p>
-        ) : (
-          <SettingsNote className="mt-2">
-            Holi can read your mail and calendar, and mark read, star, archive or trash a thread. It
-            cannot delete mail permanently or change your calendar.
-          </SettingsNote>
-        ))}
-      {connected && <ImageSenders />}
+        {connected && <ImageSenders />}
 
-      <Dialog
-        open={removing !== null}
-        onClose={() => {
-          if (!removePending) setRemoving(null)
-        }}
-        size="sm"
-      >
-        {removing !== null && (
-          <>
-            <Dialog.Header>
-              Remove <span className="break-all">{removing.email}</span> from Holi?
-            </Dialog.Header>
-            <Dialog.Body>
-              <p className="text-sm text-pretty text-muted-foreground">
-                Holi revokes its access at Google. Every vault using this account stops reading mail
-                and calendar.
-              </p>
-            </Dialog.Body>
-            <Dialog.Footer>
-              <Button variant="ghost" disabled={removePending} onClick={() => setRemoving(null)}>
-                Cancel
+        {/* Accounts connected on this machine that this vault is not using.
+            Picking one is a mapping, not a consent round trip, so it is one
+            click and deliberately not dressed up as connecting. */}
+        {others.map((other) => (
+          <Item key={other.sub} variant="muted">
+            <ItemMedia>
+              <Avatar className="size-8">
+                <AvatarFallback className="text-xs font-semibold">
+                  {initialsOf('', other.email)}
+                </AvatarFallback>
+              </Avatar>
+            </ItemMedia>
+            <ItemContent className="min-w-0">
+              <ItemTitle className="break-all">{other.email}</ItemTitle>
+              <ItemDescription>Connected on this machine</ItemDescription>
+            </ItemContent>
+            <ItemActions>
+              <Button size="sm" variant="outline" onClick={() => void linkAccount(other.sub)}>
+                Use in this vault
               </Button>
               <Button
-                variant="destructive"
-                disabled={removePending}
-                onClick={() => void removeAccount(removing.sub)}
+                size="sm"
+                variant="ghost"
+                onClick={() => setRemoving({ sub: other.sub, email: other.email })}
               >
-                {removePending ? 'Removing…' : 'Remove account'}
+                Remove from Holi
               </Button>
-            </Dialog.Footer>
-          </>
-        )}
-      </Dialog>
-    </section>
+            </ItemActions>
+          </Item>
+        ))}
+      </FramePanel>
+
+      <AlertDialog
+        open={removing !== null}
+        onOpenChange={(open) => {
+          if (!open && !removePending) setRemoving(null)
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Remove <span className="break-all">{removing?.email}</span> from Holi?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              Holi revokes its access at Google. Every vault using this account stops reading mail
+              and calendar.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={removePending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              disabled={removePending}
+              onClick={(event) => {
+                // Stays open until Google has answered.
+                event.preventDefault()
+                if (removing !== null) void removeAccount(removing.sub)
+              }}
+            >
+              {removePending ? 'Removing…' : 'Remove account'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </Frame>
   )
 }
 
@@ -278,13 +330,21 @@ function ImageSenders(): React.JSX.Element | null {
   if (senders === undefined || senders.size === 0) return null
 
   return (
-    <p className="mt-2 flex items-baseline gap-2 text-xs text-muted-foreground">
-      <span className="min-w-0 flex-1">
-        Images load automatically from {senders.size} {senders.size === 1 ? 'sender' : 'senders'}.
-      </span>
-      <Button variant="ghost" size="xs" className="shrink-0" onClick={() => void forget()}>
-        Forget them
-      </Button>
-    </p>
+    <Item variant="muted">
+      <ItemMedia variant="icon">
+        <ImageIcon />
+      </ItemMedia>
+      <ItemContent>
+        <ItemTitle>Images from trusted senders</ItemTitle>
+        <ItemDescription>
+          Images load automatically from {senders.size} {senders.size === 1 ? 'sender' : 'senders'}.
+        </ItemDescription>
+      </ItemContent>
+      <ItemActions>
+        <Button variant="outline" size="sm" onClick={() => void forget()}>
+          Forget them
+        </Button>
+      </ItemActions>
+    </Item>
   )
 }

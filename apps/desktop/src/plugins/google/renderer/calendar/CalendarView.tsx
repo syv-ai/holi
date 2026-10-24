@@ -34,7 +34,6 @@ import type {
   EventCalendarSlotInfo,
 } from '@/components/reui/event-calendar/event-calendar-types'
 import { Button } from '@/components/ui/button'
-import { Card } from '@/components/ui/card'
 import {
   Empty,
   EmptyContent,
@@ -422,104 +421,105 @@ export function CalendarView(): React.JSX.Element {
 
   return (
     <TooltipProvider delayDuration={0}>
-      <div className="bg-background flex h-full w-full min-w-0 flex-col p-4">
-        <Card className="flex min-h-0 flex-1 flex-row gap-0 overflow-hidden p-0!">
-          <CalendarRail
-            className="hidden w-72 shrink-0 flex-col border-e lg:flex"
-            date={date}
-            onDateChange={setDate}
-            events={items}
-            calendars={calendar.calendars}
-            loading={firstLoad}
-            onToggleCalendar={calendar.setCalendarEnabled}
-            onOpenOccurrence={openView}
-          />
-          <EventCalendar
-            events={items}
-            date={date}
-            onDateChange={setDate}
-            defaultView="week"
-            views={['day', 'week', 'month', 'agenda']}
-            weekStartsOn={WEEK_STARTS_ON}
-            loading={calendar.loading}
-            navButtonSize="default"
-            nowIndicator
-            scrollToHour={8}
-            snapDuration={15}
-            scrollMode="contained"
-            scrollbars="custom"
-            showDayAddButton
-            offDays
-            onRangeChange={(info) => calendar.showRange(info.range)}
-            onEventClick={openView}
-            onSlotClick={(slot: EventCalendarSlotInfo) =>
-              openCreate(slot.date, slot.allDay, slot.end)
-            }
-            onSelectSlot={(slot: EventCalendarSlotDraft) =>
-              openCreate(slot.start, slot.allDay, slot.end)
-            }
-            onEventUpdate={handleEventUpdate}
-            onDragBlocked={handleDragBlocked}
-            canDropEvent={canDropEvent}
-            renderEvent={renderEvent}
-            renderAgendaEvent={renderAgendaEvent}
-            renderNoEvents={renderNoEvents}
-            className="min-w-0 flex-1"
-          >
-            {/* The primitive's EventCalendarNav already carries px-2 py-2, so
+      {/* The calendar is the page: no card, inset or fill of its own, so the
+          window's surface shows through and the rail's border is the only
+          divider. */}
+      <div className="flex h-full w-full min-w-0 flex-row overflow-hidden">
+        <CalendarRail
+          className="hidden w-72 shrink-0 flex-col border-e lg:flex"
+          date={date}
+          onDateChange={setDate}
+          events={items}
+          calendars={calendar.calendars}
+          loading={firstLoad}
+          onToggleCalendar={calendar.setCalendarEnabled}
+          onOpenOccurrence={openView}
+        />
+        <EventCalendar
+          events={items}
+          date={date}
+          onDateChange={setDate}
+          defaultView="week"
+          views={['day', 'week', 'month', 'agenda']}
+          weekStartsOn={WEEK_STARTS_ON}
+          loading={calendar.loading}
+          navButtonSize="default"
+          nowIndicator
+          scrollToHour={8}
+          snapDuration={15}
+          scrollMode="contained"
+          scrollbars="custom"
+          showDayAddButton
+          offDays
+          onRangeChange={(info) => calendar.showRange(info.range)}
+          onEventClick={openView}
+          onSlotClick={(slot: EventCalendarSlotInfo) =>
+            openCreate(slot.date, slot.allDay, slot.end)
+          }
+          onSelectSlot={(slot: EventCalendarSlotDraft) =>
+            openCreate(slot.start, slot.allDay, slot.end)
+          }
+          onEventUpdate={handleEventUpdate}
+          onDragBlocked={handleDragBlocked}
+          canDropEvent={canDropEvent}
+          renderEvent={renderEvent}
+          renderAgendaEvent={renderAgendaEvent}
+          renderNoEvents={renderNoEvents}
+          className="min-w-0 flex-1"
+        >
+          {/* The primitive's EventCalendarNav already carries px-2 py-2, so
                 the row only needs matching right padding. Below sm the toolbar
                 takes a full row of its own. */}
-            <div className="flex flex-wrap items-center gap-x-2 pe-2">
-              <EventCalendarNav className="w-full min-w-0 flex-nowrap sm:w-auto sm:flex-1" />
-              <EventCalendarToolbar className="w-full gap-2 pb-2 sm:w-auto sm:pb-0">
-                {/* The rail owns the calendars list at lg+, so this menu is
+          <div className="flex flex-wrap items-center gap-x-2 pe-2">
+            <EventCalendarNav className="w-full min-w-0 flex-nowrap sm:w-auto sm:flex-1" />
+            <EventCalendarToolbar className="w-full gap-2 pb-2 sm:w-auto sm:pb-0">
+              {/* The rail owns the calendars list at lg+, so this menu is
                     only the narrow host for it. */}
-                <div className="lg:hidden">
-                  <CalendarsMenu
-                    calendars={calendar.calendars}
-                    onToggle={calendar.setCalendarEnabled}
-                  />
-                </div>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="icon"
-                      disabled={calendar.loading}
-                      onClick={calendar.reload}
-                    >
-                      <RefreshCwIcon className="size-4" aria-hidden="true" />
-                      <span className="sr-only">Refresh</span>
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>Refresh</TooltipContent>
-                </Tooltip>
-                <Button
-                  className="flex-1 sm:flex-none"
-                  onClick={() => openCreate(quickAddStart(date), false)}
-                >
-                  <PlusIcon className="size-4" aria-hidden="true" />
-                  New event
-                </Button>
-              </EventCalendarToolbar>
-            </div>
-            {calendar.status.kind === 'error' && (
-              <div
-                role="alert"
-                className="text-destructive flex items-center gap-2 border-t px-3 py-2 text-sm"
-              >
-                <span className="min-w-0 flex-1">
-                  Couldn’t load your calendar: {calendar.status.message}
-                </span>
-                <Button type="button" variant="outline" size="sm" onClick={calendar.reload}>
-                  Retry
-                </Button>
+              <div className="lg:hidden">
+                <CalendarsMenu
+                  calendars={calendar.calendars}
+                  onToggle={calendar.setCalendarEnabled}
+                />
               </div>
-            )}
-            <EventCalendarContent />
-          </EventCalendar>
-        </Card>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    disabled={calendar.loading}
+                    onClick={calendar.reload}
+                  >
+                    <RefreshCwIcon className="size-4" aria-hidden="true" />
+                    <span className="sr-only">Refresh</span>
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Refresh</TooltipContent>
+              </Tooltip>
+              <Button
+                className="flex-1 sm:flex-none"
+                onClick={() => openCreate(quickAddStart(date), false)}
+              >
+                <PlusIcon className="size-4" aria-hidden="true" />
+                New event
+              </Button>
+            </EventCalendarToolbar>
+          </div>
+          {calendar.status.kind === 'error' && (
+            <div
+              role="alert"
+              className="text-destructive flex items-center gap-2 border-t px-3 py-2 text-sm"
+            >
+              <span className="min-w-0 flex-1">
+                Couldn’t load your calendar: {calendar.status.message}
+              </span>
+              <Button type="button" variant="outline" size="sm" onClick={calendar.reload}>
+                Retry
+              </Button>
+            </div>
+          )}
+          <EventCalendarContent />
+        </EventCalendar>
 
         <EventSheet
           state={sheet}

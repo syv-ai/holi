@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from "react"
 import {
   CalendarDaysIcon,
+  ChevronDownIcon,
   FilePenIcon,
   FilterIcon,
   InboxIcon,
@@ -14,7 +15,7 @@ import {
   XIcon,
 } from "lucide-react"
 import { Badge } from "@/components/reui/badge"
-import { Avatar, AvatarFallback } from "@/components/ui/avatar"
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -44,16 +45,20 @@ import {
 } from "@/components/ui/tooltip"
 import { cn } from "@/plugin-api"
 import { listStamp } from "../mail-stamp"
-import { CATEGORIES, NAV_FOLDERS, initialsOf } from "./data"
+import { CATEGORIES, MAILBOXES, initialsOf, type MailFolder } from "./data"
+import { senderIconUrl } from "./sender-icon"
 import type { DraftSummary, MailState, ThreadSummary } from "./use-mail"
 
 // ── Filter Tabs ──
 
-type FilterTab = "all" | "unread"
+/** The pills that narrow the inbox. Starred is Gmail's `is:starred`, the
+ *  list's starred folder, so it and Unread are one or the other. */
+type FilterTab = "all" | "unread" | "starred"
 
 const TABS: { id: FilterTab; label: string }[] = [
   { id: "all", label: "All" },
   { id: "unread", label: "Unread" },
+  { id: "starred", label: "Starred" },
 ]
 
 /** A Gmail tab's label for a row chip; Primary and no tab say nothing. */
@@ -102,6 +107,27 @@ function MailRow({
   )
 }
 
+/** A row's avatar. The icon is shown whole, inset, rather than cropped to the
+ *  circle; the initials stay until it loads and stand in if it never does. */
+function SenderAvatar({ name, email }: { name: string; email: string }) {
+  const icon = senderIconUrl(email)
+  return (
+    <Avatar className="mt-0.5 size-6 shrink-0 md:size-8">
+      {icon !== null && (
+        <AvatarImage
+          src={icon}
+          alt=""
+          referrerPolicy="no-referrer"
+          className="bg-muted object-contain p-1"
+        />
+      )}
+      <AvatarFallback className="text-xs font-semibold">
+        {initialsOf(name, email)}
+      </AvatarFallback>
+    </Avatar>
+  )
+}
+
 function MailItem({
   thread,
   isSelected,
@@ -125,12 +151,8 @@ function MailItem({
         )}
       </div>
 
-      {/* Avatar */}
-      <Avatar className="mt-0.5 size-6 shrink-0 md:size-8">
-        <AvatarFallback className="text-xs font-semibold">
-          {initialsOf(thread.from.name, thread.from.email)}
-        </AvatarFallback>
-      </Avatar>
+      {/* Avatar: the sender's site icon, else their initials */}
+      <SenderAvatar name={thread.from.name} email={thread.from.email} />
 
       {/* Content */}
       <div className="flex min-w-0 flex-1 flex-col">
@@ -256,15 +278,15 @@ function DraftItem({
   return (
     <MailRow id={draft.draftId} isSelected={false} onClick={onClick}>
       <div className="flex w-2 shrink-0" />
-      <Avatar className="mt-0.5 size-6 shrink-0 md:size-8">
-        <AvatarFallback className="text-xs font-semibold">
-          {first === undefined ? (
+      {first === undefined ? (
+        <Avatar className="mt-0.5 size-6 shrink-0 md:size-8">
+          <AvatarFallback className="text-xs font-semibold">
             <FilePenIcon className="size-3.5" aria-hidden="true" />
-          ) : (
-            initialsOf(first.name, first.email)
-          )}
-        </AvatarFallback>
-      </Avatar>
+          </AvatarFallback>
+        </Avatar>
+      ) : (
+        <SenderAvatar name={first.name} email={first.email} />
+      )}
       <div className="flex min-w-0 flex-1 flex-col">
         <div className="mb-1 flex items-center justify-between gap-1">
           <span className="text-foreground/75 truncate text-sm leading-tight font-medium">
@@ -343,6 +365,10 @@ function ListMessage({
 
 interface MailListProps {
   mail: MailState
+  /** The account menu, full width at the top of the column. */
+  account: ReactNode
+  /** Switch mailbox (or the starred pill); the shell also closes any reply. */
+  onSelectFolder: (folder: MailFolder) => void
   onCompose: () => void
   onOpenDraft: (draft: DraftSummary) => void
   onOpenConnections: () => void
@@ -350,15 +376,19 @@ interface MailListProps {
 
 export function MailList({
   mail,
+  account,
+  onSelectFolder,
   onCompose,
   onOpenDraft,
   onOpenConnections,
 }: MailListProps) {
   const [query, setQuery] = useState("")
-  const folder = NAV_FOLDERS.find((f) => f.id === mail.folder)!
+  /** Starred is a pill on the inbox, so the title still says Inbox. */
+  const mailbox =
+    MAILBOXES.find((m) => m.id === mail.folder) ?? MAILBOXES[0]!
   const inbox = mail.folder === "inbox" && !mail.searching
-  /** Sent and Drafts have no unread state. */
-  const filterable = mail.folder !== "sent" && !mail.showsDrafts
+  /** Sent and Drafts have no unread or starred pills. */
+  const filterable = mail.folder === "inbox" || mail.folder === "starred"
   const categoryLabel =
     CATEGORIES.find((c) => c.value === mail.category)?.label ?? "All tabs"
 
@@ -366,7 +396,9 @@ export function MailList({
     ? "Search"
     : inbox && mail.category !== null
       ? categoryLabel
-      : folder.label
+      : mail.folder === "starred"
+        ? "Starred"
+        : mailbox.label
   const unreadCount = !inbox
     ? null
     : mail.category === null
@@ -520,16 +552,61 @@ export function MailList({
     )
   })()
 
-  const tab: FilterTab = mail.unreadOnly && filterable ? "unread" : "all"
+  const tab: FilterTab =
+    mail.folder === "starred"
+      ? "starred"
+      : mail.unreadOnly && filterable
+        ? "unread"
+        : "all"
+
+  const selectTab = (next: FilterTab) => {
+    if (next === "starred") {
+      if (mail.folder !== "starred") onSelectFolder("starred")
+      mail.setUnreadOnly(false)
+      return
+    }
+    if (mail.folder !== "inbox") onSelectFolder("inbox")
+    mail.setUnreadOnly(next === "unread")
+  }
 
   return (
-    <div className={cn("bg-background flex flex-1 flex-col overflow-hidden")}>
-      {/* ── Header ── */}
+    <div className="flex flex-1 flex-col overflow-hidden">
+      {/* ── Account ── */}
+      <div className="border-border shrink-0 border-b p-2">{account}</div>
+
+      {/* ── Header: the mailbox is the title's menu ── */}
       <div className="border-border flex h-(--header-height) shrink-0 items-center justify-between border-b px-3">
         <div className="flex min-w-0 items-center gap-2">
-          <span className="truncate text-sm leading-relaxed font-semibold">
-            {title}
-          </span>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="ghost"
+                size="sm"
+                aria-label={`Mailbox: ${mailbox.label}`}
+                className="-ml-2 min-w-0 font-semibold"
+              >
+                <span className="truncate">
+                  {mail.searching ? "Search" : mailbox.label}
+                </span>
+                <ChevronDownIcon
+                  className="text-muted-foreground"
+                  aria-hidden="true"
+                />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="w-48">
+              <DropdownMenuRadioGroup
+                value={mail.searching ? "" : mailbox.id}
+                onValueChange={(value) => onSelectFolder(value as MailFolder)}
+              >
+                {MAILBOXES.map((m) => (
+                  <DropdownMenuRadioItem key={m.id} value={m.id}>
+                    {m.label}
+                  </DropdownMenuRadioItem>
+                ))}
+              </DropdownMenuRadioGroup>
+            </DropdownMenuContent>
+          </DropdownMenu>
           {unreadCount !== null && unreadCount > 0 && (
             <Badge className="rounded-full!" variant="outline" size="sm">
               {unreadCount}
@@ -691,10 +768,10 @@ export function MailList({
       {/* ── Filter Tabs + Mail Content ── */}
       <Tabs
         value={tab}
-        onValueChange={(v) => mail.setUnreadOnly(v === "unread")}
+        onValueChange={(v) => selectTab(v as FilterTab)}
         className="flex min-h-0 flex-1 flex-col gap-0"
       >
-        {/* Tab bar row: only where there is an unread state */}
+        {/* Tab bar row: only on the inbox, where the pills apply */}
         {filterable && (
           <div className="border-border/60 flex shrink-0 items-center overflow-x-auto border-b px-1.5 py-1.5 md:px-2">
             <TabsList className="h-auto gap-0.5 bg-transparent p-0">

@@ -416,6 +416,7 @@ export default [
       'src/plugins/google/renderer/mail/**/*.{ts,tsx}',
       'src/plugins/chat/renderer/**/*.{ts,tsx}',
       'src/plugins/agent/renderer/sessions/**/*.{ts,tsx}',
+      'src/plugins/google/renderer/ConnectionsSection.tsx',
     ],
     rules: {
       'no-restricted-syntax': 'off',

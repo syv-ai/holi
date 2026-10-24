@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { CheckIcon, SettingsIcon } from "lucide-react"
+import { CheckIcon, ChevronsUpDownIcon, SettingsIcon } from "lucide-react"
 import { useAtomValue } from "jotai"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
@@ -23,6 +23,8 @@ import { initialsOf } from "./data"
  * connected on this machine to switch to. Switching links the vault to that
  * account, as Connections' "Use in this vault" does; connecting and removing
  * stay in Connections.
+ *
+ * The full width of the list column, above the mailbox it reads.
  */
 export function NavUser({
   onManage,
@@ -52,8 +54,7 @@ export function NavUser({
       <DropdownMenuTrigger asChild>
         <Button
           variant="ghost"
-          size="icon-sm"
-          className="mx-auto"
+          className="w-full justify-start"
           aria-label={
             email === "" ? "Google account" : `Google account ${email}`
           }
@@ -63,15 +64,21 @@ export function NavUser({
               {initialsOf("", email)}
             </AvatarFallback>
           </Avatar>
+          <span className="min-w-0 flex-1 truncate text-left">
+            {email === "" ? "Not connected" : email}
+          </span>
+          <ChevronsUpDownIcon
+            className="text-muted-foreground"
+            aria-hidden="true"
+          />
         </Button>
       </DropdownMenuTrigger>
 
       {/* Content */}
       <DropdownMenuContent
-        side="right"
-        align="end"
-        sideOffset={8}
-        className="w-64"
+        side="bottom"
+        align="start"
+        className="w-(--radix-dropdown-menu-trigger-width) min-w-64"
       >
         <DropdownMenuGroup>
           <DropdownMenuLabel className="flex items-center gap-2.5 py-2">

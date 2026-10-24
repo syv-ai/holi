@@ -1,26 +1,19 @@
-import type { LucideIcon } from "lucide-react"
-import { FileTextIcon, InboxIcon, SendIcon, StarIcon } from "lucide-react"
-
 /**
- * The places the rail offers, each one Gmail answers for: the inbox, starred
+ * The places the list shows, each one Gmail answers for: the inbox, starred
  * (Gmail's `is:starred`), Sent and Drafts. The block's Archive, Spam and
  * Trash are left out: the list reads through the inbox-or-sent cache, and
  * Holi lists neither spam nor trash.
  */
 export type MailFolder = "inbox" | "starred" | "sent" | "drafts"
 
-export type MailNavFolder = {
-  id: MailFolder
-  label: string
-  icon: LucideIcon
-}
-
-export const NAV_FOLDERS: MailNavFolder[] = [
-  { id: "inbox", label: "Inbox", icon: InboxIcon },
-  { id: "starred", label: "Starred", icon: StarIcon },
-  { id: "sent", label: "Sent", icon: SendIcon },
-  { id: "drafts", label: "Drafts", icon: FileTextIcon },
-]
+/** The mailboxes the list's title switches between. Starred is not one: it
+ *  is a pill beside All and Unread, a way of narrowing the inbox. */
+export const MAILBOXES: { id: Exclude<MailFolder, "starred">; label: string }[] =
+  [
+    { id: "inbox", label: "Inbox" },
+    { id: "sent", label: "Sent" },
+    { id: "drafts", label: "Drafts" },
+  ]
 
 /**
  * Gmail's tabs inside the inbox. `null` (the whole inbox) is the default:

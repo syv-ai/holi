@@ -1,16 +1,5 @@
 import type { ReactNode } from "react"
-import {
-  Sidebar,
-  SidebarContent,
-  SidebarFooter,
-  SidebarGroup,
-  SidebarGroupContent,
-  SidebarMenu,
-  SidebarMenuButton,
-  SidebarMenuItem,
-} from "@/components/ui/sidebar"
 import { cn } from "@/plugin-api"
-import { NAV_FOLDERS, type MailFolder } from "./data"
 
 // ── Sidebar Rail Toggle ──
 
@@ -32,7 +21,7 @@ function SidebarRailToggle({
       aria-expanded={expanded}
       onClick={onToggle}
       style={{
-        left: expanded ? "var(--sidebar-width)" : "var(--sidebar-width-icon)",
+        left: expanded ? "var(--sidebar-width)" : 0,
       }}
       className={cn(
         "group/rail absolute top-1/2 z-30 flex h-12 w-7 -translate-y-1/2 cursor-pointer items-center pl-2 outline-none",
@@ -80,85 +69,27 @@ function SidebarRailToggle({
 // ── App Sidebar ──
 
 interface AppSidebarProps {
-  folder: MailFolder
-  onSelectFolder: (folder: MailFolder) => void
-  /** Folders with something unread get the block's dot. */
-  unread: Partial<Record<MailFolder, boolean>>
   expanded: boolean
   onToggle: () => void
-  /** The account menu, at the foot of the rail. */
-  user: ReactNode
   /** The mail list column. */
   children: ReactNode
 }
 
 /**
- * The block's two inner sidebars: the icon rail of folders and the mail list.
- * Both are static (`collapsible="none"`): the block's outer sidebar was a
- * window-fixed one, which cannot sit inside Holi's own shell; collapsing the
- * list is the view's own state.
+ * The mail list column and the toggle that folds it away. The block's icon
+ * rail of folders is gone: the account sits at the top of the list and the
+ * mailboxes are its title's menu. No fill of its own, so the window's surface
+ * shows through.
  */
-export function AppSidebar({
-  folder,
-  onSelectFolder,
-  unread,
-  expanded,
-  onToggle,
-  user,
-  children,
-}: AppSidebarProps) {
+export function AppSidebar({ expanded, onToggle, children }: AppSidebarProps) {
   return (
     <>
       <div
         className={cn(
-          "bg-sidebar text-sidebar-foreground flex h-full shrink-0 overflow-hidden border-r",
-          expanded
-            ? "w-(--sidebar-width)"
-            : "w-[calc(var(--sidebar-width-icon)+1px)]"
+          "text-sidebar-foreground flex h-full shrink-0 overflow-hidden",
+          expanded ? "w-(--sidebar-width) border-r" : "w-0"
         )}
       >
-        {/* ── First inner sidebar: icon navigation rail ── */}
-        <Sidebar
-          collapsible="none"
-          className="w-[calc(var(--sidebar-width-icon)+1px)]! border-r"
-        >
-          {/* Folder nav */}
-          <SidebarContent>
-            <SidebarGroup>
-              <SidebarGroupContent>
-                <SidebarMenu className="gap-0.5">
-                  {NAV_FOLDERS.map((f) => (
-                    <SidebarMenuItem key={f.id}>
-                      <SidebarMenuButton
-                        className="justify-center!"
-                        tooltip={{ children: f.label, hidden: false }}
-                        aria-label={f.label}
-                        isActive={folder === f.id}
-                        onClick={() => {
-                          onSelectFolder(f.id)
-                          if (!expanded) onToggle()
-                        }}
-                      >
-                        <f.icon aria-hidden="true" />
-                        {unread[f.id] === true && (
-                          <span
-                            className="bg-primary absolute top-0.5 right-0.5 size-1.5 rounded-full"
-                            aria-hidden="true"
-                          />
-                        )}
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
-                  ))}
-                </SidebarMenu>
-              </SidebarGroupContent>
-            </SidebarGroup>
-          </SidebarContent>
-
-          {/* Footer: the account */}
-          <SidebarFooter>{user}</SidebarFooter>
-        </Sidebar>
-
-        {/* ── Second inner sidebar: mail list ── */}
         {expanded && children}
       </div>
 
