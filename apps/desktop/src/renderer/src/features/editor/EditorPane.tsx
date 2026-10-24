@@ -487,7 +487,7 @@ export function EditorPane({
   // The file's claim came or went (its plugin turned on or off): the open
   // view takes the new claim layer, and starts or stops taking comment
   // threads, in place, caret and undo kept.
-  const { frontmatterAlwaysOpen, claimExtensions } = deps
+  const { frontmatterAlwaysOpen, claimExtensions, pluginExtensions } = deps
   useEffect(() => {
     const view = viewRef.current
     if (view === null || path === null || plain) return
@@ -507,7 +507,7 @@ export function EditorPane({
       unfollowCommentsRef.current()
       unfollowCommentsRef.current = null
     }
-  }, [frontmatterAlwaysOpen, claimExtensions, commentable, path, plain, store])
+  }, [frontmatterAlwaysOpen, claimExtensions, pluginExtensions, commentable, path, plain, store])
 
   /**
    * The vault changed somewhere: re-read our own file and decide. The snapshot

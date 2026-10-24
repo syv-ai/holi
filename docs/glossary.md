@@ -179,6 +179,12 @@ The files that configure the agent rather than hold content: `AGENTS.md`, `CLAUD
 `.holi/memory/`, `.holi/schedules/`, `USER.local.md`, and all of `.claude/`. Writing them changes what the agent does next, so anything
 less trusted than the user (a vault app, a hook) is kept off them.
 
+### Link file
+
+A web address saved in the vault as `link.<name>.md`: `url` in its frontmatter, what it is in its
+body, its name the title. The page itself is never stored; its preview is fetched live. See
+[links](features/links.md).
+
 ### Local file
 
 Any file with `.local.` in its name, or anything under a folder with `.local.` in its name, and

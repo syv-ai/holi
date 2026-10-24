@@ -43,8 +43,23 @@ describe('resolveLinkClick (wiki-links, markdown links)', () => {
     })
   })
 
+  // A saved link's chip: the file on a plain click, the page on ⌘-click.
+  it("opens a saved link's page on ⌘/Ctrl-click, and its file on a plain one", () => {
+    const chip = { wikiTarget: 'link.Deck.md', wikiUrl: 'https://example.com/deck' }
+    expect(resolveLinkClick({ ...chip, modifier: true })).toEqual({
+      kind: 'external',
+      url: 'https://example.com/deck',
+    })
+    expect(resolveLinkClick({ ...chip, modifier: false })).toEqual({
+      kind: 'note',
+      path: 'link.Deck.md',
+    })
+  })
+
   it('prefers the chip when a click is inside both', () => {
-    expect(resolveLinkClick({ wikiTarget: 'a.md', href: 'https://example.com', modifier: true })).toEqual({
+    expect(
+      resolveLinkClick({ wikiTarget: 'a.md', href: 'https://example.com', modifier: true }),
+    ).toEqual({
       kind: 'note',
       path: 'a.md',
     })

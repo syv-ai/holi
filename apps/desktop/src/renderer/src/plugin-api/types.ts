@@ -134,6 +134,9 @@ export interface PathClaim {
   /** Its files' frontmatter rows: the first enabled claim with one that
    *  matches the file. */
   frontmatter?: ClaimFrontmatter
+  /** A card shown while the pointer rests on one of its files' rows in the
+   *  tree: a preview, never a control only it holds. */
+  hover?: ComponentType<{ path: string }>
   /**
    * Its files leave the file tree until someone shows them, with a toggle in
    * the explorer's menu ("Show <label>"), remembered per vault on this
@@ -350,6 +353,9 @@ export interface RendererPlugin {
    *  returned undo runs when either stops. */
   vault?(remote: string, store: PluginStore): () => void
   agent?: AgentServiceSource
+  /** More of every notes editor while it runs, whatever the file: what a
+   *  plugin draws over any note's text (a web address's preview). */
+  editorExtensions?: Extension
   /** Commands, run by id like core's (`state/commands.ts`), while it runs. */
   commands?: readonly Command[]
   /** What it adds to the notes editor's slash menu while it runs, after the

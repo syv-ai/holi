@@ -90,10 +90,13 @@ export interface EditorDeps {
   frontmatterAlwaysOpen?: boolean
   /** What the file's claim adds to the editor (`ClaimEditor.extensions`). */
   claimExtensions?: Extension
+  /** What running plugins add to every note (`RendererPlugin.editorExtensions`). */
+  pluginExtensions?: Extension
 }
 
-/** What the file's claim brings: its frontmatter mode and its own layer. A
- *  compartment, so a plugin turned on or off reaches a view already open. */
+/** What the file's claim brings: its frontmatter mode and its own layer, and
+ *  what running plugins add to every note. A compartment, so a plugin turned
+ *  on or off reaches a view already open. */
 const claimLayer = new Compartment()
 
 /** The note's comment threads and the selection's Comment button. Whether a
@@ -101,12 +104,16 @@ const claimLayer = new Compartment()
  *  a compartment for the same reason. */
 const commentLayer = new Compartment()
 
-type ClaimLayer = Pick<EditorDeps, 'frontmatterAlwaysOpen' | 'claimExtensions' | 'comment'>
+type ClaimLayer = Pick<
+  EditorDeps,
+  'frontmatterAlwaysOpen' | 'claimExtensions' | 'pluginExtensions' | 'comment'
+>
 
 function claimLayerOf(deps: ClaimLayer): Extension {
   return [
     frontmatterAlwaysOpenFacet.of(deps.frontmatterAlwaysOpen === true),
     deps.claimExtensions ?? [],
+    deps.pluginExtensions ?? [],
   ]
 }
 

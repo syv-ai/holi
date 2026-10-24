@@ -48,6 +48,9 @@ export interface LinkChip {
   struck?: boolean
   /** The hover card's line under the title. */
   meta?: string
+  /** A web address the file stands for (a saved link): ⌘-click opens it,
+   *  and the link's hover is its plugin's, not the wiki-link card. */
+  url?: string
 }
 
 /** Path → chip lookup for links to claimed files, the sibling of

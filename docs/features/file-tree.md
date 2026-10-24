@@ -24,7 +24,7 @@ The sidebar explorer shows the vault as the folders and files on disk. It reads 
 **Toolbar.** The tree's top-right holds the [nav menu](nav-menu.md)'s morphing menu, anchored at
 that corner and opening downward: icons on the sidebar's own background, so rows scrolled under
 them do not show through, while the tree is hovered or the menu has focus, kept
-while it is open. **+** unfolds into New File, New Folder and what enabled claims make (`create`: New Task, New App); Collapse All, Show hidden files
+while it is open. **+** unfolds into New File, New Folder and what enabled claims make (`create`: New Task, New Link, New App); Collapse All, Show hidden files
 and each hideable claim's filter (Show task files) are shortcuts, the filters pressed while on. Every item has a
 shortcut, so there is no More. In a sidebar too narrow for the open menu, it grows rightward over
 the editor rather than past the window's edge.
