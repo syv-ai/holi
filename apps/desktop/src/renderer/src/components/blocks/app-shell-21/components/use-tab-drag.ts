@@ -162,32 +162,43 @@ export function slotAt(
 
 /**
  * The preview of a view landing at edge `index` of the members laid out
- * across `edges` (as `slotAt`'s): the gap is the share the newcomer gets,
- * `1 / (count + 1)` of the width, which is what the drop commits
- * (`insertIntoActive`), and it opens where the drop will put it. The
- * members before it slide left and those after it slide right, together,
- * by what the gap takes from each side, so the gap's two edges are where
- * the committed layout puts them and nothing jumps on drop.
+ * across `edges` (as `slotAt`'s): the layout the drop commits
+ * (`insertIntoActive`), so nothing jumps on drop. The newcomer gets
+ * `1 / (count + 1)` of the width at that place and every member shrinks to
+ * `count / (count + 1)` of its width to make room, none leaving the screen.
  *
- * In pixels from the content's left edge: the gap's start and width, and
- * each member's shift.
+ * In pixels from the content's left edge: the gap's start and width; each
+ * member's new span, as an offset from where it starts now and a width; and
+ * how far each edge between members moves (`boundaries[i]` for `edges[i]`).
  */
 export function insertPreview(
   edges: readonly number[],
   index: number
-): { gapStart: number; gapWidth: number; shifts: number[] } {
+): {
+  gapStart: number
+  gapWidth: number
+  spans: { offset: number; width: number }[]
+  boundaries: number[]
+} {
   const count = edges.length - 1
   const left = edges[0] ?? 0
   const width = (edges[count] ?? left) - left
   const gapWidth = width / (count + 1)
-  const before = width > 0 ? ((edges[index] ?? left) - left) / width : 0
-  const towardStart = before * gapWidth
-  const towardEnd = gapWidth - towardStart
+  const keep = count / (count + 1)
+  /** Where an edge between members lands, from the content's left. */
+  const landed = (at: number) => {
+    const from = (edges[at] ?? left) - left
+    return from * keep + (at > index ? gapWidth : 0)
+  }
   return {
-    gapStart: before * width - towardStart,
+    gapStart: ((edges[index] ?? left) - left) * keep,
     gapWidth,
-    shifts: Array.from({ length: count }, (_, i) =>
-      i < index ? -towardStart : towardEnd
-    ),
+    spans: Array.from({ length: count }, (_, i) => {
+      const start = (edges[i] ?? left) - left
+      const end = (edges[i + 1] ?? left) - left
+      const from = start * keep + (i >= index ? gapWidth : 0)
+      return { offset: from - start, width: (end - start) * keep }
+    }),
+    boundaries: edges.map((edge, at) => landed(at) - (edge - left)),
   }
 }

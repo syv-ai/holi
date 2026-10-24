@@ -105,7 +105,8 @@ interface Geometry {
 
 /** What a drag over the content shows, for the slot under the pointer. */
 type Preview =
-  /** A gap opens at edge `index`; the members slide by `shifts`. `fills`
+  /** A gap opens at edge `index`; the members shrink into `spans` and the
+   *  edges between them move by `boundaries`. `fills`
    *  is the view that will fill the rest when that is not what is there
    *  now (the tab in front dragged to its own edge splits with its
    *  neighbour). */
@@ -114,7 +115,8 @@ type Preview =
       index: number
       gapStart: number
       gapWidth: number
-      shifts: number[]
+      spans: { offset: number; width: number }[]
+      boundaries: number[]
       fills: string | null
     }
   /** A split's own member moves to edge `index`: a line there, nothing
@@ -126,7 +128,14 @@ type Preview =
 /** The house curve for what slides: the reveal's 200ms, no bounce, and
  *  nothing under reduced motion. */
 const SLIDE =
-  "transition-transform duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none"
+  "transition-[left,width] duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none"
+
+/** A panel while a tab is dragged: the box its member is laid out from,
+ *  letting it out so a shrunk member can sit where the drop will put it.
+ *  The library clips inline, so this has to win over that. */
+function panelWhileDragging(dragging: string | null): string | false {
+  return dragging !== null && "relative overflow-visible!"
+}
 
 export function PanesView({
   entryId,
@@ -380,11 +389,12 @@ export function PanesView({
       />
     )
 
-  const shifts = new Map<string, number>()
+  const spans = new Map<string, { offset: number; width: number }>()
   if (preview?.kind === "insert" && geometry.current !== null) {
-    geometry.current.keys.forEach((key, i) =>
-      shifts.set(key, preview.shifts[i] ?? 0)
-    )
+    geometry.current.keys.forEach((key, i) => {
+      const span = preview.spans[i]
+      if (span !== undefined) spans.set(key, span)
+    })
   }
 
   // ---------------------------------------------------------------- layout
@@ -398,14 +408,12 @@ export function PanesView({
   const count = slots.length
   const maxSize = count === 2 ? "75%" : count === 3 ? "45%" : "35%"
 
-  /** The divider before slot `at`, sliding with its neighbours: with the
-   *  one where the gap opens. */
+  /** The divider before slot `at`, moving to where the shrunk members
+   *  meet: hidden where the gap opens. */
   function separatorShift(at: number): number | "hidden" | undefined {
     if (preview?.kind !== "insert") return undefined
     if (at === preview.index) return "hidden"
-    return at < preview.index
-      ? preview.shifts[0]
-      : preview.shifts[preview.shifts.length - 1]
+    return preview.boundaries[at]
   }
 
   const children: ReactNode[] = []
@@ -429,18 +437,24 @@ export function PanesView({
         />
       )
     }
-    const shift = ghost ? undefined : shifts.get(member.key)
+    // While a gap opens, the member shrinks into its span of the layout the
+    // drop commits, laid out from its panel (which lets it out of its box
+    // for the drag): a real resize, so it reflows rather than leaving the
+    // screen. The span only changes when the slot under the pointer does.
+    const span = ghost ? undefined : spans.get(member.key)
     const body = (
       <div
         data-preview-member={ghost ? undefined : member.key}
         style={
-          shift === undefined
+          span === undefined
             ? undefined
-            : { transform: `translateX(${shift}px)` }
+            : { left: span.offset, width: span.width }
         }
         className={cn(
-          "relative flex h-full min-h-0 w-full min-w-0",
-          dragging !== null && "will-change-transform",
+          "flex h-full min-h-0 min-w-0",
+          dragging !== null
+            ? "absolute inset-y-0 left-0 w-full"
+            : "relative w-full",
           landing ? "transition-none" : SLIDE
         )}
       >
@@ -449,7 +463,10 @@ export function PanesView({
     )
     if (role === "fill") {
       children.push(
-        <Panel key="fill" className="min-h-0 min-w-0">
+        <Panel
+          key="fill"
+          className={cn("min-h-0 min-w-0", panelWhileDragging(dragging))}
+        >
           {body}
         </Panel>
       )
@@ -467,7 +484,7 @@ export function PanesView({
               onShareChange(member.key, Number.parseFloat(size) / 100)
             }
           }}
-          className="min-h-0"
+          className={cn("min-h-0", panelWhileDragging(dragging))}
         >
           {body}
         </Panel>

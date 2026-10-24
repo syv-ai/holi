@@ -44,23 +44,26 @@ test("a full split only replaces, member by member", () => {
 
 test("the gap is the newcomer's share, where the drop puts it", () => {
   // One view, gap on the right: half the width, the view slid half left.
-  expect(insertPreview([0, 1000], 1)).toEqual({
-    gapStart: 500,
-    gapWidth: 500,
-    shifts: [-500],
-  })
-  expect(insertPreview([0, 1000], 0)).toEqual({
-    gapStart: 0,
-    gapWidth: 500,
-    shifts: [500],
-  })
-  // Two views 600/400, gap between: a third of the width, opening where
-  // the committed shares (0.4, 1/3, 0.267) put it.
+  // One view shrinks to half, on the side away from the gap.
+  const right = insertPreview([0, 1000], 1)
+  expect(right.gapStart).toBe(500)
+  expect(right.gapWidth).toBe(500)
+  expect(right.spans).toEqual([{ offset: 0, width: 500 }])
+  const leftGap = insertPreview([0, 1000], 0)
+  expect(leftGap.gapStart).toBe(0)
+  expect(leftGap.spans).toEqual([{ offset: 500, width: 500 }])
+  // Two views 600/400, gap between: a third of the width, where the
+  // committed shares (0.4, 1/3, 0.267) put it, and both shrink by a third.
   const two = insertPreview([0, 600, 1000], 1)
   expect(two.gapWidth).toBeCloseTo(1000 / 3)
   expect(two.gapStart).toBeCloseTo(400)
-  expect(two.shifts[0]).toBeCloseTo(-200)
-  expect(two.shifts[1]).toBeCloseTo(1000 / 3 - 200)
+  expect(two.spans[0]!.offset).toBeCloseTo(0)
+  expect(two.spans[0]!.width).toBeCloseTo(400)
+  expect(two.spans[1]!.offset).toBeCloseTo(400 + 1000 / 3 - 600)
+  expect(two.spans[1]!.width).toBeCloseTo(400 * (2 / 3))
+  // Nothing leaves the screen: the last view ends at the right edge.
+  expect(600 + two.spans[1]!.offset + two.spans[1]!.width).toBeCloseTo(1000)
+  expect(two.boundaries[1]).toBeCloseTo(400 - 600)
 })
 
 function transfer(): DataTransfer {

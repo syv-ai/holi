@@ -135,10 +135,10 @@ inside `MotionConfig reducedMotion="user"`.
 **Drag targets: the views make room.** A strip tab, a member's part of a pill, or a sidebar row
 drags (native drag, its own MIME type `application/x-holi-tab`, so nothing else takes it). While
 one is dragged, one transparent catcher lies over the whole content (a view may be an iframe or a
-terminal, which would swallow the drag), and the views slide apart to open a gap where the dragged
+terminal, which would swallow the drag), and the views shrink to open a gap where the dragged
 view would land, its mark and title in it on `bg-muted/40` inside a dashed hairline. Where the
 pointer is decides (`slotAt` in `use-tab-drag.ts`), against the members' edges as the drag found
-them, so the zones never move under the pointer while the views slide:
+them, so the zones never move under the pointer while the views resize:
 
 - **one view**: its left half opens the gap on the left, its right half on the right; there is no
   middle, as a single view's middle would take nothing;
@@ -148,11 +148,12 @@ them, so the zones never move under the pointer while the views slide:
 - **four** (full): every member is a replace target, whole; nothing slides.
 
 The gap is the share the newcomer gets, `1 / (count + 1)`, at the place the drop puts it
-(`insertIntoActive`); the members before it slide left and those after it right, together, so the
-gap's edges are exactly where the drop lands them. Only transforms move (the house curve, 200ms),
-never a view's layout, so an editor or a terminal is not laid out again mid-drag; dragover sets
-state only when the slot under the pointer changes. Moving across slides the gap there; leaving the
-content or cancelling slides everything back. The drop lands the layout at once, on a panel group
+(`insertIntoActive`); every member shrinks to `count / (count + 1)` of its width, into exactly the
+span the drop gives it, so nothing leaves the screen and nothing jumps on drop. It is a real resize
+(`left` and `width`, the house curve, 200ms; the panels let their members out for the drag, as the
+library clips): a view reflows, which is what shows where it will sit. A view is laid out again
+only when the slot under the pointer changes, as dragover sets state only then. Moving across moves
+the gap there; leaving the content or cancelling gives every view its width back. The drop lands the layout at once, on a panel group
 mounted afresh (the views keep their hosts), and the widths it placed are not reseeded from the
 remembered ones. Under reduced motion the gap simply appears.
 
@@ -211,6 +212,8 @@ Appearance; machine-local, on by default) turns it off.
 - Duplicating a tab on split (VS Code, Obsidian): breaks one editor per document.
 - Opening from the tree as a new entry while a split is active: Arc keeps a link followed in a
   split member in that member, and a new entry would hide the split the user is working in.
+- Sliding the views apart with transforms for the preview: a single view slid half off the screen
+  before the drop shrank it; the views resize instead.
 - Cards on a darker ground for the members: the platform is square and flat, and a hairline parts
   two views well enough.
 - A ring around the focused member: without cards it reads as a selection box; a hairline on
