@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { parseScheduleFile, scheduleApprovalText, type ScheduleDef } from '../src/schedule'
 import { interestOf, matchesGlob, parseTriggers } from '../src/triggers'
 
-const PATH = '.holi/schedules/inbox.md'
+const PATH = '.holi/schedules/inbox.local.md'
 const file = (frontmatter: string) => `---\n${frontmatter}\n---\nDo it.\n`
 
 function def(text: string): ScheduleDef {

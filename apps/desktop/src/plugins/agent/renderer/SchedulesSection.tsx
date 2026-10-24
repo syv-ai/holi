@@ -246,7 +246,7 @@ export function SchedulesSection({ remote }: { remote: string }): React.JSX.Elem
     <section>
       <SettingsHeading
         title="Scheduled agents"
-        blurb="Prompts Holi runs as agent sessions at set times, on this machine, while this vault is open. Each one is a file in .holi/schedules/."
+        blurb="Your prompts Holi runs as agent sessions at set times, on this machine, while this vault is open. Each one is a .local.md file in .holi/schedules/, never synced."
       />
       {error !== null && <SettingsNote className="text-destructive">{error}</SettingsNote>}
       {schedules !== null && schedules.length === 0 && (

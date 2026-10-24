@@ -310,19 +310,10 @@ function statusOf(entry: FileEntry, state: ScheduleState | undefined): ScheduleS
   return state.approved === fingerprint(entry.parsed.def) ? 'on' : 'changed'
 }
 
-/** One schedule by its path or its slug. A slug two files share (`x.md` and
- *  `x.local.md`) names neither. */
+/** One schedule by its path or its slug. */
 function find(entries: readonly FileEntry[], ref: string): FileEntry {
-  const byPath = entries.find((e) => e.path === ref)
-  if (byPath !== undefined) return byPath
-  const bySlug = entries.filter((e) => scheduleSlug(e.path) === ref)
-  if (bySlug.length === 1) return bySlug[0]!
-  if (bySlug.length > 1) {
-    throw new CapabilityError(
-      'BAD_REQUEST',
-      `${ref} names ${bySlug.map((e) => e.path).join(' and ')}: give the path`,
-    )
-  }
+  const found = entries.find((e) => e.path === ref || scheduleSlug(e.path) === ref)
+  if (found !== undefined) return found
   throw new CapabilityError('NOT_FOUND', `No schedule ${ref} in ${SCHEDULES_DIR}/`)
 }
 

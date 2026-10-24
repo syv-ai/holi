@@ -5,7 +5,7 @@ description: Create, change, list, run or turn off scheduled agents: a prompt Ho
 
 # Scheduled agents
 
-A scheduled agent is **one markdown file** in `.holi/schedules/`. Holi reads it,
+A scheduled agent is **one `.local.md` file** in `.holi/schedules/`. Holi reads it,
 and at the times it names starts a background Claude Code session in this vault
 whose first message is the file's body. The run is an ordinary session: it shows
 in the sidebar under the schedule's name, it can be opened, and Claude Code asks
@@ -134,9 +134,12 @@ Things to know:
 - Changing `on:` turns the schedule back off until the user switches it on
   again, like a change to the prompt: it decides who can start a run.
 
-Name the file after what it does, in kebab case: `.holi/schedules/inbox-triage.md`.
-A file named `*.local.md` stays on this machine and never syncs; use that when the
-prompt mentions anything personal, or the user does not want teammates to see it.
+Name the file after what it does, in kebab case: `.holi/schedules/inbox-triage.local.md`.
+A schedule is the user's own: it reads their mail and speaks for them, so it is
+always `.local.md`, stays on this machine and never syncs. A plain `.md` file in
+`.holi/schedules/` is not a schedule and never runs. To share a schedule with a
+teammate, they copy the file into their own vault folder as their own
+`.local.md` and adapt it to themselves.
 
 ## Writing the prompt
 
@@ -195,17 +198,11 @@ for this machine. After writing a schedule, tell the user it is there, say what
 it allows without asking, and ask them to switch it on in Settings.
 
 **Any later change to the prompt, model, `allow` or `on` turns it back off** ("changed")
-until the user switches it on again: whoever edits a schedule (a teammate's
-pull, a run of the schedule itself) cannot change those without the user's yes.
+until the user switches it on again: whoever edits a schedule (another session,
+a run of the schedule itself) cannot change those without the user's yes.
 Changing only `cron`, `at` or `name` keeps it on: the run is never told its
 name, only the file's path and its prompt.
 
-A schedule pulled from a teammate is off on this machine until switched on here.
-
-**Switch a schedule on in one place.** Every machine that switches on a shared
-schedule runs it, so on a laptop and a desktop it runs twice: two drafts and two
-tasks for each mail. A schedule only one person wants belongs in a `.local.md`
-file.
 
 ## The other commands
 

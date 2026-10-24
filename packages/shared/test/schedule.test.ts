@@ -11,7 +11,7 @@ import {
 } from '../src/schedule'
 
 const at = (y: number, mo: number, d: number, h = 0, mi = 0) => new Date(y, mo - 1, d, h, mi)
-const PATH = '.holi/schedules/inbox-triage.md'
+const PATH = '.holi/schedules/inbox-triage.local.md'
 
 const file = (frontmatter: string, body = 'Check my mail.') => `---\n${frontmatter}\n---\n${body}\n`
 
@@ -28,16 +28,16 @@ function error(text: string): string {
 }
 
 describe('schedule paths', () => {
-  it('is a markdown file directly in .holi/schedules', () => {
+  it('is a local markdown file directly in .holi/schedules', () => {
     expect(isScheduleFilePath(PATH)).toBe(true)
-    expect(isScheduleFilePath('.holi/schedules/mine.local.md')).toBe(true)
-    expect(isScheduleFilePath('.holi/schedules/sub/x.md')).toBe(false)
+    expect(isScheduleFilePath('.holi/schedules/shared.md')).toBe(false)
+    expect(isScheduleFilePath('.holi/schedules/.local.md')).toBe(false)
+    expect(isScheduleFilePath('.holi/schedules/sub/x.local.md')).toBe(false)
     expect(isScheduleFilePath('.holi/schedules/notes.txt')).toBe(false)
     expect(isScheduleFilePath('notes/.holi/schedules/x.md')).toBe(false)
   })
 
   it('names itself by its file, without the local marker', () => {
-    expect(scheduleSlug('.holi/schedules/mine.local.md')).toBe('mine')
     expect(scheduleSlug(PATH)).toBe('inbox-triage')
   })
 })
