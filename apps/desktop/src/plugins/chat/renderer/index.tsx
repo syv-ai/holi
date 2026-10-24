@@ -22,6 +22,7 @@ import {
   chatsVault,
   newChatViewAtom,
   reloadChatsAtom,
+  startChatAtom,
 } from './state/chats'
 
 export const chatRenderer: RendererPlugin = {
@@ -43,6 +44,9 @@ export const chatRenderer: RendererPlugin = {
     home: ChatHome,
     conversation: ConversationView,
     status: chatStatusAtom,
+    // The command menu's Ask the agent: a new chat with the composer's
+    // own defaults.
+    start: startChatAtom,
   },
   vault: (remote: string, store: PluginStore) => chatsVault(remote, store),
 }

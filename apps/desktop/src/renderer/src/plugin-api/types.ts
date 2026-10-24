@@ -444,6 +444,14 @@ export interface AgentsSlot {
    *  conversation id: the built-in chat's transcript, drawn in the agent's
    *  session view. The first running slot with one wins. */
   conversation?: ComponentType<{ conversationId: string; live: boolean; title: string }>
+  /** Start a conversation whose first message is `text`, and select it, so
+   *  its tab opens and comes forward: the built-in chat's. The command menu's
+   *  Ask the agent. The first running slot with one wins. */
+  start?: WritableAtom<
+    null,
+    [{ text: string }],
+    Promise<{ ok: true } | { ok: false; message: string }>
+  >
 }
 
 /**

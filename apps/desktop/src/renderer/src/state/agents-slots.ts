@@ -25,3 +25,20 @@ export const agentsSlotsAtom = atom((get): readonly (AgentsSlot & { plugin: stri
     .sort((a, b) => (a.slot.order ?? 200) - (b.slot.order ?? 200) || a.i - b.i)
     .map(({ slot }) => slot),
 )
+
+/** Whether a running slot can start a conversation (`AgentsSlot.start`). */
+export const canStartConversationAtom = atom((get) =>
+  get(agentsSlotsAtom).some((slot) => slot.start !== undefined),
+)
+
+/** Start a conversation with `text` as its first message, through the first
+ *  slot that can; its selection opens the tab. */
+export const startConversationAtom = atom(
+  null,
+  (get, set, text: string): Promise<{ ok: true } | { ok: false; message: string }> => {
+    const start = get(agentsSlotsAtom).find((slot) => slot.start !== undefined)?.start
+    return start === undefined
+      ? Promise.resolve({ ok: false, message: 'No agent is running in this vault.' })
+      : set(start, { text })
+  },
+)
