@@ -1,11 +1,17 @@
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { createStore, Provider } from 'jotai'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ShortcutsDialog } from '@/components/blocks/app-shell-21/components/shortcuts-dialog'
 import { hotkeyLabels, matchShortcutKey } from '@/lib/hotkey'
-import { liveShortcuts, resolveShortcut, SHORTCUTS, type KeyContext } from '@/lib/shortcuts'
+import {
+  liveShortcuts,
+  resolveShortcut,
+  runsFromList,
+  SHORTCUTS,
+  type KeyContext,
+} from '@/lib/shortcuts'
 import {
   shortcutsDialogOpenAtom,
   useShortcutDispatcher,
@@ -204,14 +210,14 @@ describe('the dialog', () => {
         <Live ids={['search.open', 'tab.next', 'shortcuts.show', 'shortcuts.toggle']} />
       </Provider>,
     )
-    expect(await screen.findByRole('heading', { name: 'Navigation' })).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: 'Tabs' })).toBeInTheDocument()
-    expect(screen.queryByRole('heading', { name: 'Apps' })).toBeNull()
+    expect(await screen.findByRole('group', { name: 'Navigation' })).toBeInTheDocument()
+    expect(screen.getByRole('group', { name: 'Tabs' })).toBeInTheDocument()
+    expect(screen.queryByRole('group', { name: 'Apps' })).toBeNull()
     expect(screen.getByText('Search')).toBeInTheDocument()
     // Not live, so not listed.
     expect(screen.queryByText('Open board')).toBeNull()
 
-    const field = screen.getByRole('textbox', { name: 'Search keyboard shortcuts' })
+    const field = screen.getByRole('combobox', { name: 'Search keyboard shortcuts' })
     act(() => {
       fireEvent.change(field, { target: { value: 'tab' } })
     })
@@ -236,13 +242,173 @@ describe('the dialog', () => {
         <Live ids={['tab.new', 'pane.split', 'split.separate', 'split.next', 'split.previous']} />
       </Provider>,
     )
-    expect(await screen.findByRole('heading', { name: 'Split view' })).toBeInTheDocument()
+    expect(await screen.findByRole('group', { name: 'Split view' })).toBeInTheDocument()
     expect(screen.getByText('New tab')).toBeInTheDocument()
     expect(screen.getByText('Separate split view')).toBeInTheDocument()
     expect(screen.getByText('Focus next view in split')).toBeInTheDocument()
     expect(screen.getByText('Drag it to an edge or between two views')).toBeInTheDocument()
     expect(screen.getByText('Drag it from the pill to the tabs')).toBeInTheDocument()
     delete document.documentElement.dataset.platform
+  })
+})
+
+describe('the dialog runs a row', () => {
+  beforeEach(() => {
+    document.documentElement.dataset.platform = 'mac'
+  })
+  afterEach(() => {
+    delete document.documentElement.dataset.platform
+  })
+
+  function Live({ handlers }: { handlers: Record<string, ShortcutHandler> }) {
+    useShortcutDispatcher()
+    useShortcutHandlers(handlers)
+    return (
+      <>
+        <Button type="button">before</Button>
+        <ShortcutsDialog />
+      </>
+    )
+  }
+
+  const selected = () => screen.getByRole('option', { selected: true })
+
+  test('? opens it, the arrows move, Enter closes it and runs the action', async () => {
+    const newTab = vi.fn()
+    const terminal = vi.fn()
+    const store = createStore()
+    const show = () => store.set(shortcutsDialogOpenAtom, (open) => !open)
+    render(
+      <Provider store={store}>
+        <Live
+          handlers={{
+            'shortcuts.show': show,
+            'tab.new': newTab,
+            'panel.terminal': terminal,
+          }}
+        />
+      </Provider>,
+    )
+    const before = screen.getByRole('button', { name: 'before' })
+    before.focus()
+    fireEvent.keyDown(before, { key: '?', shiftKey: true })
+    const field = await screen.findByRole('combobox', { name: 'Search keyboard shortcuts' })
+    expect(field).toHaveFocus()
+    // The first runnable row is selected on open, and its keys are in its name.
+    await waitFor(() => expect(selected()).toHaveAccessibleName('New tab, ⌘ T'))
+    fireEvent.keyDown(field, { key: 'ArrowDown' })
+    await waitFor(() => expect(selected()).toHaveAccessibleName('Toggle terminal, ⌃ `'))
+    fireEvent.keyDown(field, { key: 'Enter' })
+    await waitFor(() => expect(terminal).toHaveBeenCalledTimes(1))
+    expect(store.get(shortcutsDialogOpenAtom)).toBe(false)
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(before).toHaveFocus()
+    expect(newTab).not.toHaveBeenCalled()
+  })
+
+  test('Home and End go to the ends, and a run hands its focus to the action', async () => {
+    const store = createStore()
+    store.set(shortcutsDialogOpenAtom, true)
+    const output = vi.fn(() => screen.getByRole('button', { name: 'before' }).focus())
+    render(
+      <Provider store={store}>
+        <Live handlers={{ 'search.open': () => {}, 'tab.new': () => {}, 'panel.output': output }} />
+      </Provider>,
+    )
+    const field = await screen.findByRole('combobox', { name: 'Search keyboard shortcuts' })
+    await waitFor(() => expect(selected()).toHaveAccessibleName('Search, ⌘ K'))
+    fireEvent.keyDown(field, { key: 'End' })
+    await waitFor(() => expect(selected()).toHaveAccessibleName('Show output, ⇧ ⌘ U'))
+    fireEvent.keyDown(field, { key: 'Home' })
+    await waitFor(() => expect(selected()).toHaveAccessibleName('Search, ⌘ K'))
+    fireEvent.keyDown(field, { key: 'End' })
+    fireEvent.keyDown(field, { key: 'Enter' })
+    await waitFor(() => expect(output).toHaveBeenCalledTimes(1))
+    expect(screen.getByRole('button', { name: 'before' })).toHaveFocus()
+  })
+
+  test('search narrows the list by name or key, and selects the first match', async () => {
+    const store = createStore()
+    store.set(shortcutsDialogOpenAtom, true)
+    render(
+      <Provider store={store}>
+        <Live handlers={{ 'search.open': () => {}, 'tab.new': () => {}, 'tab.reopen': () => {} }} />
+      </Provider>,
+    )
+    const field = await screen.findByRole('combobox', { name: 'Search keyboard shortcuts' })
+    act(() => {
+      fireEvent.change(field, { target: { value: 'reopen' } })
+    })
+    expect(screen.getAllByRole('option')).toHaveLength(1)
+    await waitFor(() => expect(selected()).toHaveAccessibleName('Reopen closed tab, ⇧ ⌘ T'))
+    act(() => {
+      fireEvent.change(field, { target: { value: '⇧' } })
+    })
+    expect(screen.getAllByRole('option').map((o) => o.textContent)).toEqual([
+      expect.stringContaining('Reopen closed tab'),
+    ])
+  })
+
+  test('gesture rows and the rows it only shows are skipped', async () => {
+    const goto = vi.fn()
+    const store = createStore()
+    store.set(shortcutsDialogOpenAtom, true)
+    render(
+      <Provider store={store}>
+        <Live
+          handlers={{
+            'tab.goto': goto,
+            'tab.new': () => {},
+            'pane.split': () => {},
+            'panel.terminal': () => {},
+          }}
+        />
+      </Provider>,
+    )
+    const field = await screen.findByRole('combobox', { name: 'Search keyboard shortcuts' })
+    const gotoRow = screen.getByRole('option', { name: /^Go to tab/ })
+    expect(gotoRow).toHaveAttribute('aria-disabled', 'true')
+    const gesture = screen.getByRole('option', { name: /^Split with a tab/ })
+    expect(gesture).toHaveAttribute('aria-disabled', 'true')
+    // ⌘1–9 comes first in the table, but the first row to run is New tab.
+    await waitFor(() => expect(selected()).toHaveAccessibleName('New tab, ⌘ T'))
+    fireEvent.keyDown(field, { key: 'ArrowDown' })
+    await waitFor(() => expect(selected()).toHaveAccessibleName('Split view, ⌘ \\'))
+    // Past the five drags straight to the panel.
+    fireEvent.keyDown(field, { key: 'ArrowDown' })
+    await waitFor(() => expect(selected()).toHaveAccessibleName('Toggle terminal, ⌃ `'))
+    fireEvent.click(gotoRow)
+    expect(goto).not.toHaveBeenCalled()
+    expect(store.get(shortcutsDialogOpenAtom)).toBe(true)
+  })
+})
+
+describe('every runnable row has an action', () => {
+  // The renderer's sources, to find each id a component registers a handler
+  // for: a row the dialog runs must be one something can run.
+  const sources = import.meta.glob(['../../**/*.{ts,tsx}', '!../../**/__tests__/**'], {
+    query: '?raw',
+    import: 'default',
+    eager: true,
+  }) as Record<string, string>
+  const registered = new Set(
+    Object.values(sources)
+      .filter((source) => source.includes('useShortcutHandlers({'))
+      .flatMap((source) => [...source.matchAll(/^\s*["']([\w.]+)["']\s*:/gm)].map((m) => m[1])),
+  )
+
+  test.each(SHORTCUTS.filter(runsFromList).map((s) => s.id))('%s is registered', (id) => {
+    expect(registered).toContain(id)
+  })
+
+  test('the dialog runs only ids that are live, and never a gesture', () => {
+    const lines = liveShortcuts(ALL)
+    for (const line of lines) {
+      if (line.gesture !== undefined) expect(line.run).toBeUndefined()
+      if (line.run !== undefined) expect(ALL.has(line.run)).toBe(true)
+    }
+    expect(lines.find((l) => l.label === 'Close tab')?.run).toBe('tab.close')
+    expect(lines.find((l) => l.label === 'Show keyboard shortcuts')?.run).toBeUndefined()
   })
 })
 

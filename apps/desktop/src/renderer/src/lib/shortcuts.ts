@@ -6,7 +6,8 @@
  * not here: the component that owns the state registers a handler for the id
  * while it is mounted (`useShortcutHandlers`), and one `keydown` listener
  * matches this table against the handlers that are live. The dialog lists the
- * same live rows, so it shows exactly the keys that work right now.
+ * same live rows, so it shows exactly the keys that work right now, and runs
+ * the same handler a key does when a row is chosen (`runShortcutAtom`).
  *
  * Keys are glyph strings (`lib/hotkey.ts`): on a Mac `⌘` is Command and `⌃`
  * Control; elsewhere both are Ctrl.
@@ -54,6 +55,19 @@ export interface Shortcut {
    *  nothing a key runs, shown while the row `liveWith` names is live. */
   gesture?: string
   liveWith?: string
+  /** Listed by the dialog but not run from it: the dialog's own keys, and a
+   *  range of keys whose one line cannot say which of them to run. */
+  listOnly?: true
+}
+
+/**
+ * Whether the dialog's list runs the row on Enter: anything a key runs, the
+ * menu's ⌘W included, but not a gesture or a `listOnly` row.
+ */
+export function runsFromList(shortcut: Shortcut): boolean {
+  return (
+    shortcut.gesture === undefined && shortcut.listOnly === undefined && shortcut.keys.length > 0
+  )
 }
 
 export const SHORTCUTS: readonly Shortcut[] = [
@@ -65,6 +79,7 @@ export const SHORTCUTS: readonly Shortcut[] = [
     // `?` only outside text, where it is a character; ⌘/ everywhere.
     keys: ['?'],
     inDialogs: true,
+    listOnly: true,
   },
   {
     id: 'shortcuts.toggle',
@@ -73,6 +88,7 @@ export const SHORTCUTS: readonly Shortcut[] = [
     keys: ['⌘/'],
     whileTyping: true,
     inDialogs: true,
+    listOnly: true,
   },
 
   // Navigation
@@ -138,6 +154,7 @@ export const SHORTCUTS: readonly Shortcut[] = [
     keys: ['⌘1', '⌘2', '⌘3', '⌘4', '⌘5', '⌘6', '⌘7', '⌘8', '⌘9'],
     display: '⌘1–9',
     whileTyping: true,
+    listOnly: true,
   },
   {
     id: 'tab.close',
@@ -392,6 +409,9 @@ export interface ShortcutLine {
   specs: string[]
   /** A gesture's words, shown in place of keys. */
   gesture?: string
+  /** The live id the dialog runs on Enter (the first of the merged rows that
+   *  `runsFromList`); absent for a line it only shows. */
+  run?: string
 }
 
 /** The lines the dialog shows: live rows, merged by label, in table order. */
@@ -412,6 +432,9 @@ export function liveShortcuts(
       ...(shortcut.gesture === undefined ? {} : { gesture: shortcut.gesture }),
     }
     line.specs.push(...(shortcut.display === undefined ? shortcut.keys : [shortcut.display]))
+    if (line.run === undefined && live.has(shortcut.id) && runsFromList(shortcut)) {
+      line.run = shortcut.id
+    }
     lines.set(key, line)
   }
   return [...lines.values()]
