@@ -138,8 +138,8 @@ Name the file after what it does, in kebab case: `.holi/schedules/inbox-triage.l
 A schedule is the user's own: it reads their mail and speaks for them, so it is
 always `.local.md`, stays on this machine and never syncs. A plain `.md` file in
 `.holi/schedules/` is not a schedule and never runs. To share a schedule with a
-teammate, they copy the file into their own vault folder as their own
-`.local.md` and adapt it to themselves.
+teammate, send them the file; they save it as their own `.local.md` and adapt
+it to themselves.
 
 ## Writing the prompt
 
@@ -202,7 +202,6 @@ until the user switches it on again: whoever edits a schedule (another session,
 a run of the schedule itself) cannot change those without the user's yes.
 Changing only `cron`, `at` or `name` keeps it on: the run is never told its
 name, only the file's path and its prompt.
-
 
 ## The other commands
 

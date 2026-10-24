@@ -59,8 +59,8 @@ it does not hold back while they are in a session of their own or one waits on t
 and no schedule outranks another.
 
 **More task triggers.** A status change (`doing`, `done`) and a task newly assigned to this
-machine's person. Today `task` is due and overdue only, and an assigned task triggers on every
-machine that runs the schedule, not only its assignee's.
+machine's person. Today `task` is due and overdue only, and an assigned task triggers every
+schedule with a task trigger, not only its assignee's.
 
 ## Vault apps
 

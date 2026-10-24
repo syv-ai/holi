@@ -1,5 +1,5 @@
 /**
- * A scheduled agent's definition: one markdown file in `.holi/schedules/`
+ * A scheduled agent's definition: one `.local.md` file in `.holi/schedules/`
  * whose frontmatter says when and with what, and whose body is the prompt
  * (docs/features/scheduled-agents.md).
  *
