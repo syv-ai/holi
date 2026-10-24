@@ -34,7 +34,48 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   the app's icon on a plate, whether it is shared through the vault or personal (`.local.app`),
   its folder, its name, its manifest's `description` (read through the surface's `describe`, so
   again whenever the app's files change, with a Retry when it cannot be read) and Open. Card
-  skeletons show while the vault loads, and an empty state when there are none. It reads the registry's `app` surface, not the plugin, so it is
+  skeletons show while the vault loads, and an empty state when there are none. The plate shows
+  the app's **preview** once it has one (below), and the icon until then.
+- **A card's menu.** Right-click a card, or press the menu key (or Shift+F10) with its Open
+  focused: **Open**; **Open beside**, in split view, as ⌥-click does (`openTab` with `beside`);
+  **Ask about this app**, a new chat beside it with the app as its context (shown only while an
+  agent can start a conversation, `AgentsSlot.start`; see [chat](chat.md)); **Reveal in Files**,
+  which brings the Documents sidebar forward and selects the bundle's row
+  (`state/reveal-in-files.ts`); **Copy path**, the vault-relative bundle path; **Refresh
+  preview**; then **Archive**. The keyboard reaches it through the menu key rather than a ⋯ on
+  the card, so c-card-7 keeps its composition.
+- **Archive** is `archived: true` in the app's `app.yaml`, written by main (`apps.archive`, UI
+  door) with every other line and comment of the file kept; Unarchive removes the key. An
+  archived app leaves the surface's `instances`, so the Apps grid, the nav menu's Apps group, ⌘K
+  and the Home picker no longer list it, and the Apps page lists it under an **Archived** toggle
+  in its header, where its menu says Unarchive. It is still a finished app: the tree shows its
+  row, a path or `holi apps open` opens it, and nothing is moved or deleted. The toast ("Budget
+  archived") offers **Undo** and stays until dismissed, as Mail's archive does, because undo
+  beats a confirmation for a removal this easy to reverse. The write is an ordinary edit of a
+  synced file, so autosave commits it and teammates see the app archived too: it is the vault's
+  launcher list being tidied, not one person's view. Holi had no archive for documents to reuse
+  (a task's `archive-done` moves the file, and a chat's Archive is a flag in this machine's
+  index); a move would change the app's path, which is its identity, its tab key and the key
+  its approvals and records are kept under, and a machine-local flag would not sync, so the
+  smallest consistent choice is the manifest key the launchers already read.
+- **Previews.** When an app has loaded in a tab and had a moment to draw (1.5 s, then the
+  browser's next idle moment), `AppFrame` asks main to keep a picture of it
+  (`apps.capturePreview` with the frame's rect): main cuts the window's pixels to that rect with
+  `webContents.capturePage`, scales them to at most 720 px wide and keeps a JPEG. A picture is
+  taken once per load, and only while the frame is unobscured: the page visible, and the frame
+  the topmost element at its centre and 16 px inside each corner, so a menu or a dialog over it
+  is never kept. Previews are machine-local, under `userData/app-previews/`, one JPEG and one
+  JSON per app named by a hash of the vault's remote and the bundle path (`previews.ts`), never
+  in the vault. The JSON holds the bundle's stamp when the picture was taken: the newest mtime
+  of its files, `data/` and the log aside, as the approval hash leaves them out, and `app.yaml` too, which says what
+  the app is (its description, Archive) rather than how it looks. `apps.preview`
+  serves it as a `data:` URL only while that stamp holds, so a change to the app's code shows
+  the icon until it runs again, and a change to its records does not. The card shows a
+  skeleton while it asks, the picture with `object-cover` from its top left (where an app starts), or the icon. **Refresh preview**
+  lets the picture go and asks any frame showing the app to take it again (`apps.forgetPreview`
+  and a request `AppFrame` hears); with none open, the icon shows until the app next runs.
+  An app that never ran on this machine keeps the icon: nothing renders apps offscreen to
+  fill in previews (see Rejected). It reads the registry's `app` surface, not the plugin, so it is
   there only while the plugin is on (`components/blocks/apps-view/`). The claim's Finish this app
   is on the tree's row menu of a draft, and the Files menu's New app scaffolds a bundle and opens
   it as the app: in the folder the menu was opened on (a file row's folder), at the root from
@@ -124,7 +165,7 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   (`main/capabilities/`, see [architecture](../architecture.md)); the apps feature registers
   `store.*` and `apps.*` (`src/plugins/apps/main/capabilities.ts`). Each entry has its params, its refusals, and the doors
   it opens to: the app's bridge, the agent's `holi` CLI (`/cli` on the bridge server), and Holi's
-  own UI, which reaches `apps.call`, `apps.grants`, `apps.grant`, `apps.log` and `apps.init`. An app sees
+  own UI, which reaches `apps.call`, `apps.grants`, `apps.grant`, `apps.log`, `apps.init`, `apps.describe`, `apps.archived`, `apps.archive` and the preview calls. An app sees
   exactly what the agent can inspect from the terminal, written once. At the app door the bundle
   is the frame's, and a `bundle` param is ignored; at the CLI door the agent names it. One
   capability host (`capabilities/dispatch.ts`) runs a call for every door: the clone, the open
@@ -251,6 +292,13 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
 - A Deno or Bun sidecar for backends: Electron's `utilityProcess` already ships Node.
 - A CSP with `connect-src 'none'`: rules out any app that calls an API.
 - Note-embedded app widgets: keeps the editor lean.
+- Rendering an app offscreen to fill in a missing preview: an app's frame needs `AppFrame` to
+  answer its bridge, so a hidden window would either show a broken page or need a second
+  answerer; it would run code nobody opened, an app's load may write records that sync, and an
+  app that needs approval must not run before the person approves it. An app that never ran
+  here keeps its icon.
+- Archiving by moving the bundle under `archive/`, as `archive-done` does for tasks: the path is
+  the app's identity, so its tab, approvals and links would all have to follow.
 - An app store, versioning, or permission prompts for what the vault shares: trust is vault
   membership; reuse is copying the directory. The one prompt is for one person's own Google data,
   which vault membership does not cover.
@@ -269,7 +317,8 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   actions (`surface.tsx`); its `open` event is the agent's `holi apps open`. Its `shared/` holds
   the bridge vocabulary (`bridge.ts`: `APP_METHODS`, the topics), the manifest (`manifest.ts`),
   an app's name and `holi-app:` host (`bundle.ts`), and the store's schema subset, ids and log
-  (`store.ts`).
+  (`store.ts`). Its `main/previews.ts` keeps the previews; `renderer/app-previews.ts` takes them and
+  `renderer/apps.ts` holds the archived list.
 - `apps/desktop/src/main/capabilities/`: the registry, its dispatch and services, the read
   fences and core's entries, with note rendering (`render-note.ts`).
 - `apps/desktop/src/main/vault/search.ts`: the vault search behind `holi.search`, shared with

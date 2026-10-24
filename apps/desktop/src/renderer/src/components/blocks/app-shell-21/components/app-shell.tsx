@@ -22,6 +22,7 @@ import { SettingsNav } from "@/components/blocks/profile-9/components/settings-n
 import { useSettingsHotkey } from "@/components/blocks/profile-9/components/use-settings-hotkey"
 import { settingsRequestAtom } from "@/state/settings-section"
 import { openDocumentRequestAtom } from "@/state/open-document"
+import { revealInFilesRequestAtom } from "@/state/reveal-in-files"
 import { runningPluginsAtom } from "@/state/plugins"
 import { sidebarSectionAtom } from "@/state/sidebar-section"
 import { shellWorkspaceAtom } from "@/state/shell-tabs"
@@ -171,6 +172,7 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
   const beforeSettings = useRef<string | null>(null)
   const settingsRequest = useAtomValue(settingsRequestAtom)
   const openRequest = useAtomValue(openDocumentRequestAtom)
+  const revealRequest = useAtomValue(revealInFilesRequestAtom)
   /** The sidebar's tab. It no longer swaps the main area: a session opens
    *  as a tab, and + on the Agents side opens the Agents home. */
   const [section, setSection] = useAtom(sidebarSectionAtom)
@@ -207,6 +209,20 @@ export function AppShell({ onAddVault }: { onAddVault: () => void }) {
     // Only a new request opens; the handler reads the latest state.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openRequest])
+
+  // Reveal in Files: the Documents sidebar comes forward, open, and the tree
+  // finds the row itself.
+  const seenReveal = useRef(revealRequest)
+  useEffect(() => {
+    if (revealRequest === seenReveal.current) return
+    seenReveal.current = revealRequest
+    if (revealRequest === null) return
+    setSection("documents")
+    if (isMobile) setMobileNavOpen(true)
+    else if (sidebarPanel.current?.isCollapsed()) toggleSidebar()
+    // Only a new request reveals; the toggle reads the latest state.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [revealRequest])
 
   // An app coming forward folds the files to the rail; leaving it for any
   // other tab gives them back as they were.

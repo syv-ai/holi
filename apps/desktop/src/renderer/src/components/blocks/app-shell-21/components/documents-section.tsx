@@ -76,6 +76,7 @@ import {
   TreeItemLabel,
 } from "@/components/reui/tree"
 import { folderDocumentAt } from "@/lib/folder-documents"
+import { revealInFilesRequestAtom } from "@/state/reveal-in-files"
 import { buildTreeData, ROOT_ID, type TreeItemData } from "@/lib/tree-data"
 import { planMoveInto, planRenameFolder, type Move } from "@/lib/tree-actions"
 import { basename, joinPath, parentOf } from "@/lib/tree-paths"
@@ -430,6 +431,9 @@ function DropdownMenuActions({ actions }: { actions: MenuAction[] }) {
  * (a move that rewrites links); drop files from Finder anywhere on it to copy
  * them in. Right-click, or the ⋯ beside +, for the menu.
  */
+/** The last Reveal in Files the tree answered (`revealInFilesRequestAtom`). */
+let revealedSeq = 0
+
 export function FilesSection({
   activeId,
   onOpen,
@@ -646,6 +650,30 @@ export function FilesSection({
   useEffect(() => {
     tree.rebuildTree()
   }, [data, tree])
+
+  // Reveal in Files (an app's card): open the row's folders, then select it,
+  // focus it and scroll it into view once the tree has drawn them.
+  // The tree may mount with the request already made (the sidebar was on
+  // Agents), so what was handled is kept outside it.
+  const revealRequest = useAtomValue(revealInFilesRequestAtom)
+  useEffect(() => {
+    if (revealRequest === null || revealRequest.seq <= revealedSeq) return
+    if (data[revealRequest.path] === undefined) return
+    revealedSeq = revealRequest.seq
+    const path = revealRequest.path
+    const parts = path.split("/")
+    for (let i = 1; i < parts.length; i++) {
+      tree.getItemInstance(parts.slice(0, i).join("/")).expand()
+    }
+    const frame = requestAnimationFrame(() => {
+      const item = tree.getItemInstance(path)
+      item.setFocused()
+      tree.setSelectedItems([path])
+      void item.scrollTo({ block: "nearest" })
+      markArrived([path])
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [revealRequest, data, tree])
 
   // The tree's own F2 renames its focused row; this one renames the selected
   // row from anywhere else, while the sidebar is open to show the field.

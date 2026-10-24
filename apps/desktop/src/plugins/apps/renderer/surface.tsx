@@ -19,7 +19,8 @@ import {
 import { IconButton } from '@/primitives'
 import { AppFrame } from './AppFrame'
 import { AppIcon } from './AppIcon'
-import { appInstancesAtom, appOpensAtom } from './apps'
+import { appInstancesAtom, appOpensAtom, archiveAppAtom, archivedAppsAtom } from './apps'
+import { previewVersionsAtom, refreshPreviewAtom } from './app-previews'
 import { appsCap } from './apps-cap'
 
 /** What makes a bundle an app at all: its entry document. */
@@ -68,6 +69,13 @@ export const APP_SURFACE: Surface = {
   instances: appInstancesAtom,
   // The manifest's `description`, which is there for the launchers.
   describe: (remote, id) => appsCap.describe(remote, { bundle: id }).then((r) => r.description),
+  // The picture `AppFrame` took the last time the app ran here.
+  preview: (remote, id) => appsCap.preview(remote, { bundle: id }).then((r) => r.dataUrl),
+  previewVersions: previewVersionsAtom,
+  refreshPreview: refreshPreviewAtom,
+  // `archived: true` in the manifest: out of the launchers, never deleted.
+  archived: archivedAppsAtom,
+  archive: archiveAppAtom,
   headerActions: AppHeaderActions,
 }
 

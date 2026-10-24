@@ -17,11 +17,12 @@
  * of the app claim's folder document (`surface.tsx`).
  */
 import { atom } from 'jotai'
-import { selectAtom } from 'jotai/utils'
+import { selectAtom, unwrap } from 'jotai/utils'
 import { appBundleOf } from '@holi/shared'
 import { APP_MANIFEST_FILE } from '../shared/manifest'
 import { appName } from '../shared/bundle'
-import { byRecency, recentsAtom, snapshotAtom } from '@/plugin-api'
+import { activeRemoteAtom, byRecency, recentsAtom, snapshotAtom } from '@/plugin-api'
+import { appsCap } from './apps-cap'
 
 const ENTRY_FILE = 'index.html'
 
@@ -50,14 +51,89 @@ export const appPathsAtom = atom((get) => {
   return [...entries].filter((p) => manifests.has(p)).sort(byName)
 })
 
+/** Every manifest and when it last changed, as one string: what says the
+ *  archived list may have changed. */
+const manifestsSignatureAtom = selectAtom(snapshotAtom, (snapshot) =>
+  snapshot.files
+    .filter((f) => f.path.endsWith(`.app/${APP_MANIFEST_FILE}`))
+    .map((f) => `${f.path}@${f.updatedAt}`)
+    .join('\n'),
+)
+
+/** The archived apps as main last read them, with the signature they were
+ *  read at. Read again only when a manifest changes. */
+const readArchivedAtom = unwrap(
+  atom(async (get): Promise<{ signature: string | null; bundles: readonly string[] }> => {
+    const remote = get(activeRemoteAtom)
+    const signature = get(manifestsSignatureAtom)
+    if (remote === null || signature === '') return { signature, bundles: [] }
+    const { bundles } = await appsCap.archived(remote).catch(() => ({ bundles: [] as string[] }))
+    return { signature, bundles }
+  }),
+  // While a newer read is on its way, the last one stands.
+  (previous) => previous ?? { signature: null, bundles: [] },
+)
+
 /**
- * The finished apps, most recently opened first, then the rest by name: the
- * `app` surface's instances. The same array until the order changes: the
- * recents move on every tab switch, and a new list restarts the nav menu's
- * layout pass.
+ * Archive and Unarchive as the person did them, before main's next read
+ * says so: each holds only while the manifests are as they were when it was
+ * made, so the read after the write replaces it, and a card does not flicker
+ * back in between.
+ */
+export const archiveOverridesAtom = atom<
+  Readonly<Record<string, { archived: boolean; signature: string }>>
+>({})
+
+/** The finished apps whose manifest says `archived: true`, by name. */
+export const archivedAppsAtom = selectAtom(
+  atom((get) => {
+    const read = get(readArchivedAtom)
+    const archived = new Set(read.bundles)
+    for (const [bundle, o] of Object.entries(get(archiveOverridesAtom))) {
+      if (o.signature !== read.signature) continue
+      if (o.archived) archived.add(bundle)
+      else archived.delete(bundle)
+    }
+    return get(appPathsAtom).filter((p) => archived.has(p))
+  }),
+  (paths) => paths,
+  (a, b) => a.length === b.length && a.every((p, i) => p === b[i]),
+)
+
+/** Archive an app, or bring it back: one line of its manifest, written by
+ *  main; the launchers follow at once. */
+export const archiveAppAtom = atom(
+  null,
+  async (get, set, { id, archived }: { id: string; archived: boolean }): Promise<void> => {
+    const remote = get(activeRemoteAtom)
+    if (remote === null) throw new Error('No vault is open.')
+    const signature = get(manifestsSignatureAtom)
+    const before = get(archiveOverridesAtom)
+    set(archiveOverridesAtom, { ...before, [id]: { archived, signature } })
+    try {
+      await appsCap.archive(remote, { bundle: id, archived })
+    } catch (err) {
+      set(archiveOverridesAtom, (now) => {
+        const { [id]: _gone, ...rest } = now
+        return rest
+      })
+      throw err
+    }
+  },
+)
+
+/**
+ * The finished apps that are not archived, most recently opened first, then
+ * the rest by name: the `app` surface's instances. The same array until the
+ * order changes: the recents move on every tab switch, and a new list
+ * restarts the nav menu's layout pass.
  */
 export const appInstancesAtom = selectAtom(
-  atom((get) => byRecency(get(recentsAtom), 'app', get(appPathsAtom))),
+  atom((get) => {
+    const archived = new Set(get(archivedAppsAtom))
+    const live = get(appPathsAtom).filter((p) => !archived.has(p))
+    return byRecency(get(recentsAtom), 'app', live)
+  }),
   (paths) => paths,
   (a, b) => a.length === b.length && a.every((p, i) => p === b[i]),
 )

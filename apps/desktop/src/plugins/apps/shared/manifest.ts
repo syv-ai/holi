@@ -13,7 +13,7 @@
  * app, because an app that silently does not appear is the worst failure. Only
  * text that is not a mapping at all (a list, a number, a bare scalar) is refused.
  */
-import { parse as parseYaml } from 'yaml'
+import { isMap as isYamlMap, parse as parseYaml, parseDocument } from 'yaml'
 import { isRecordId, type CollectionSchema } from './store'
 
 /** The registration marker, at the app's own root. */
@@ -45,6 +45,9 @@ export interface AppManifest {
    * `holi.env` gives it from the vault's `.env` (docs/features/vault-apps.md).
    */
   env?: string[]
+  /** Set aside: the launchers leave it out and list it under Archived. It
+   *  is still a finished app that opens by its path; only `true` counts. */
+  archived?: boolean
 }
 
 /** What a secret's name may be: an environment variable's, upper case. */
@@ -151,6 +154,7 @@ export function parseAppManifest(yaml: string): AppManifest | null {
   Object.assign(manifest, parseAffordances((raw as Record<string, unknown>)['dangerously-allow']))
   const env = parseEnv((raw as Record<string, unknown>).env)
   if (env !== undefined) manifest.env = env
+  if ((raw as Record<string, unknown>).archived === true) manifest.archived = true
   return manifest
 }
 
@@ -188,4 +192,24 @@ export function appManifestText(description?: string): string {
  *  means the same thing — the author wrote a manifest and left it blank. */
 function isCommentOnly(yaml: string): boolean {
   return yaml.split('\n').every((line) => line.trim() === '' || line.trim().startsWith('#'))
+}
+
+/**
+ * The manifest's text with `archived: true` set, or the key gone, and every
+ * other line as it was, comments included: the file is the person's (or the
+ * agent's), so only the one key changes. Null when the text is not a mapping
+ * this can edit (a list, or YAML that does not parse), which is refused
+ * rather than overwritten.
+ */
+export function setManifestArchived(yaml: string, archived: boolean): string | null {
+  if (yaml.trim() === '' || isCommentOnly(yaml)) {
+    if (!archived) return yaml
+    const lead = yaml === '' || yaml.endsWith('\n') ? yaml : `${yaml}\n`
+    return `${lead}archived: true\n`
+  }
+  const doc = parseDocument(yaml)
+  if (doc.errors.length > 0 || !isYamlMap(doc.contents)) return null
+  if (archived) doc.set('archived', true)
+  else doc.delete('archived')
+  return doc.toString()
 }

@@ -1,18 +1,30 @@
 /**
  * One vault app on the Apps page, on ReUI's c-card-7 (`components/examples/
- * c-card-7.tsx`, kept as installed): the inset image is the app's own icon on
- * a muted plate, since an app has no picture of itself; the Trending badge
- * says whether the app is shared through the vault or personal to this
- * machine; Featured is its folder; the blurb is its manifest's description;
- * Get Started opens it. The name, which the example has no place for, sits
- * above the description.
+ * c-card-7.tsx`, kept as installed): the inset image is the app's preview,
+ * the picture taken the last time it ran here, or its own icon on a muted
+ * plate when it has none; the Trending badge says whether the app is shared
+ * through the vault or personal to this machine; Featured is its folder; the
+ * blurb is its manifest's description; Get Started opens it. The name, which
+ * the example has no place for, sits above the description.
+ *
+ * The card is a context menu's trigger: right-click it, or press the menu
+ * key (or Shift+F10) with its Open button focused, for Open, Open beside,
+ * Ask about this app, Reveal in Files, Copy path, Refresh preview and
+ * Archive.
  */
-import { useEffect, useState, type ComponentType } from "react"
+import { useEffect, useRef, useState, type ComponentType } from "react"
 import {
+  ArchiveIcon,
+  ArchiveRestoreIcon,
   ArrowRightIcon,
+  CopyIcon,
   FolderIcon,
+  FolderTreeIcon,
+  ImageIcon,
   LockIcon,
   RefreshCwIcon,
+  SparklesIcon,
+  SquareSplitHorizontalIcon,
   UsersIcon,
 } from "lucide-react"
 import { isLocalOnlyPath } from "@holi/shared"
@@ -20,6 +32,13 @@ import { isLocalOnlyPath } from "@holi/shared"
 import { Badge } from "@/components/reui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardTitle } from "@/components/ui/card"
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu"
 import { Skeleton } from "@/components/ui/skeleton"
 
 type Description =
@@ -60,13 +79,59 @@ function useDescription(
   ]
 }
 
+type Preview = { kind: "loading" } | { kind: "ready"; url: string | null }
+
+/** The app's preview, read again when `stamp` or `version` moves. One that
+ *  cannot be read is no preview: the icon plate stands in, as for an app
+ *  that never ran here. */
+function usePreview(
+  preview: (() => Promise<string | null>) | undefined,
+  stamp: string,
+  version: number
+): Preview {
+  const [state, setState] = useState<Preview>(
+    preview === undefined ? { kind: "ready", url: null } : { kind: "loading" }
+  )
+  useEffect(() => {
+    if (preview === undefined) return
+    let live = true
+    preview().then(
+      (url) => live && setState({ kind: "ready", url }),
+      () => live && setState({ kind: "ready", url: null })
+    )
+    return () => {
+      live = false
+    }
+    // `preview` is a fresh closure every render; the app's files and its
+    // picture being taken again are what decide when to read again.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stamp, version])
+  return state
+}
+
+/** What the card's menu can do; an action left out is not offered. */
+export interface AppCardActions {
+  onOpenBeside: () => void
+  /** A chat about the app, beside; absent while no agent can start one. */
+  onAsk?: () => void
+  onReveal: () => void
+  onCopyPath: () => void
+  onRefreshPreview?: () => void
+  /** Archive the app, or bring it back when it is archived. */
+  onArchive?: () => void
+}
+
 export function AppCard({
   path,
   name,
   icon: Icon,
   stamp,
   describe,
+  preview: readPreview,
+  previewVersion = 0,
+  archived = false,
   onOpen,
+  actions,
 }: {
   path: string
   name: string
@@ -74,18 +139,39 @@ export function AppCard({
   /** The newest mtime among the app's files. */
   stamp: string
   describe?: () => Promise<string | null>
+  /** Its picture, a `data:` URL, or null when it has none. */
+  preview?: () => Promise<string | null>
+  /** Moves when its picture is taken again or let go. */
+  previewVersion?: number
+  archived?: boolean
   onOpen: () => void
+  actions?: AppCardActions
 }) {
   const [description, retry] = useDescription(describe, stamp)
+  const preview = usePreview(readPreview, stamp, previewVersion)
+  const leaving = useRef(false)
   const slash = path.lastIndexOf("/")
   const folder = slash === -1 ? null : path.slice(0, slash)
   const personal = isLocalOnlyPath(path)
 
-  return (
+  const card = (
     <Card className="w-full">
       <CardContent className="flex flex-col gap-4">
         <div className="bg-muted relative flex h-48 w-full items-center justify-center overflow-hidden rounded-lg">
-          <Icon className="text-muted-foreground size-12" />
+          {preview.kind === "loading" ? (
+            <Skeleton
+              className="size-full"
+              aria-label={`Loading the preview of ${name}`}
+            />
+          ) : preview.url !== null ? (
+            <img
+              src={preview.url}
+              alt={`${name}, as it last looked`}
+              className="size-full object-cover object-left-top"
+            />
+          ) : (
+            <Icon className="text-muted-foreground size-12" />
+          )}
         </div>
 
         <div className="flex items-center justify-between gap-5">
@@ -140,6 +226,70 @@ export function AppCard({
         </Button>
       </CardContent>
     </Card>
+  )
+
+  if (actions === undefined) return card
+  /** What opens somewhere else (a tab, a split, the sidebar) keeps the
+   *  focus it moved there: the menu does not hand it back to the card. */
+  const away = (run: () => void) => () => {
+    leaving.current = true
+    run()
+  }
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger asChild>{card}</ContextMenuTrigger>
+      <ContextMenuContent
+        className="w-56"
+        aria-label={`${name} actions`}
+        onCloseAutoFocus={(event) => {
+          if (leaving.current) event.preventDefault()
+          leaving.current = false
+        }}
+      >
+        <ContextMenuItem onSelect={away(onOpen)}>
+          <ArrowRightIcon aria-hidden="true" />
+          Open
+        </ContextMenuItem>
+        <ContextMenuItem onSelect={away(actions.onOpenBeside)}>
+          <SquareSplitHorizontalIcon aria-hidden="true" />
+          Open beside
+        </ContextMenuItem>
+        {actions.onAsk !== undefined ? (
+          <ContextMenuItem onSelect={away(actions.onAsk)}>
+            <SparklesIcon aria-hidden="true" />
+            Ask about this app
+          </ContextMenuItem>
+        ) : null}
+        <ContextMenuSeparator />
+        <ContextMenuItem onSelect={away(actions.onReveal)}>
+          <FolderTreeIcon aria-hidden="true" />
+          Reveal in Files
+        </ContextMenuItem>
+        <ContextMenuItem onSelect={actions.onCopyPath}>
+          <CopyIcon aria-hidden="true" />
+          Copy path
+        </ContextMenuItem>
+        {actions.onRefreshPreview !== undefined ? (
+          <ContextMenuItem onSelect={actions.onRefreshPreview}>
+            <ImageIcon aria-hidden="true" />
+            Refresh preview
+          </ContextMenuItem>
+        ) : null}
+        {actions.onArchive !== undefined ? (
+          <>
+            <ContextMenuSeparator />
+            <ContextMenuItem onSelect={actions.onArchive}>
+              {archived ? (
+                <ArchiveRestoreIcon aria-hidden="true" />
+              ) : (
+                <ArchiveIcon aria-hidden="true" />
+              )}
+              {archived ? "Unarchive" : "Archive"}
+            </ContextMenuItem>
+          </>
+        ) : null}
+      </ContextMenuContent>
+    </ContextMenu>
   )
 }
 

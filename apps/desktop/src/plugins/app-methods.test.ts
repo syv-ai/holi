@@ -57,6 +57,8 @@ it('answers every bridge method that is not the renderer’s at the app door', (
         throw new Error('not called')
       },
       grants: { status: async () => ({ codeHash: '', affordances: [] }), grant: async () => true },
+      previews: { read: async () => null, save: async () => {}, forget: async () => {} },
+      capture: async () => null,
     }),
   )
   registry.register(['store'], storeCapabilities())

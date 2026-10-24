@@ -35,6 +35,10 @@ the editor rather than past the window's edge.
   or not the tree shows task files. **An app** is `holi apps init`'s scaffold (`index.html` and an
   `app.yaml`, never overwriting), and its `index.html` opens, which expands the bundle. A typed
   `.app` is not doubled.
+- **Reveal in Files**, from outside the tree (an app's card on the Apps page), brings the
+  Documents sidebar forward and open, expands the row's folders, then selects, focuses and
+  scrolls to the row (`state/reveal-in-files.ts`, a numbered request the shell and the tree
+  both hear; the tree keeps the last one it answered, since it may mount after the ask).
 
 **Row menu.** Open in a New Pane, New File, New Folder, Rename (F2), Edit Icon, Delete (⌫), Cut, Copy, Paste, Duplicate, Copy to Folder, Move to Folder, Convert to PDF (markdown only), Copy Path, Copy Relative Path, Reveal in Finder. A folder document's row leads with Open and Open in a New Pane (not while it is a draft), and Show or Hide App Files, named by its surface. A claim adds its own items, each shown when its `when` holds (Finish this app on an unfinished app). A multi-selection gets only the batch actions: delete, clipboard, duplicate and the two out-of-vault ones.
 

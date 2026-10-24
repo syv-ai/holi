@@ -48,6 +48,12 @@ import { AppWindow } from 'lucide-react'
 import { EmptyState } from '@/composites'
 import { Button, Dialog } from '@/primitives'
 import { appPushSignaturesAtom, storeSignatures } from './app-push'
+import {
+  frameIsUnobscured,
+  PREVIEW_SETTLE_MS,
+  previewRequestsAtom,
+  previewTakenAtom,
+} from './app-previews'
 import { appOpensAtom, appPathsAtom } from './apps'
 import { appsCap } from './apps-cap'
 
@@ -78,6 +84,50 @@ function useTopicSignatures(bundle: string): Record<string, string> {
     () => ({ ...vault, ...storeSignatures(snapshot, bundle) }),
     [vault, snapshot, bundle],
   )
+}
+
+/**
+ * Take the app's picture for its card once its document has loaded and had
+ * a moment to draw, while the browser is idle, and again whenever Refresh
+ * preview asks; only while the frame is unobscured (`frameIsUnobscured`).
+ * One picture per load: the app's later changes are its own business.
+ */
+function usePreviewCapture(
+  frameRef: React.RefObject<HTMLIFrameElement | null>,
+  path: string,
+  loaded: string | null,
+): void {
+  const remote = useAtomValue(activeRemoteAtom)
+  const request = useAtomValue(previewRequestsAtom)[path] ?? 0
+  const taken = useSetAtom(previewTakenAtom)
+  useEffect(() => {
+    if (loaded === null || remote === null) return
+    let live = true
+    let idle: number | null = null
+    const take = (): void => {
+      const frame = frameRef.current
+      if (!live || frame === null || !frameIsUnobscured(frame)) return
+      const r = frame.getBoundingClientRect()
+      // 2px in from each edge, so a pane's separator beside it is not kept.
+      const rect = { x: r.left + 2, y: r.top + 2, width: r.width - 4, height: r.height - 4 }
+      appsCap.capturePreview(remote, { bundle: path, rect }).then(
+        (res) => live && res.saved && taken(path),
+        (e: unknown) => console.warn('[apps] preview:', e),
+      )
+    }
+    const timer = window.setTimeout(() => {
+      idle =
+        typeof window.requestIdleCallback === 'function'
+          ? window.requestIdleCallback(take, { timeout: 1_000 })
+          : null
+      if (idle === null) take()
+    }, PREVIEW_SETTLE_MS)
+    return () => {
+      live = false
+      window.clearTimeout(timer)
+      if (idle !== null) window.cancelIdleCallback(idle)
+    }
+  }, [frameRef, path, loaded, remote, request, taken])
 }
 
 export function AppFrame({ path }: { path: string }): React.JSX.Element {
@@ -221,6 +271,7 @@ export function AppFrame({ path }: { path: string }): React.JSX.Element {
   // Which document the frame holds: the fade-in waits for this one's load.
   const documentKey = `${path}\n${reloads}\n${mode}`
   const [loaded, setLoaded] = useState<string | null>(null)
+  usePreviewCapture(frameRef, path, gateOpen && loaded === documentKey ? loaded : null)
 
   const decide = (allow: boolean): void => {
     const shown = ask

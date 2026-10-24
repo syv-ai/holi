@@ -111,6 +111,20 @@ export interface Surface {
   /** One instance's own words about itself, for its card on a launcher page
    *  (the Apps page); null when it has none. Read again as its files change. */
   describe?: (remote: string, id: string) => Promise<string | null>
+  /** A small picture of one instance for its card, a `data:` URL; null when
+   *  this machine has none that is current. Read again as its files change
+   *  and as `previewVersions` moves. */
+  preview?: (remote: string, id: string) => Promise<string | null>
+  /** Bumped for an instance whenever its picture is taken or let go. */
+  previewVersions?: Atom<Readonly<Record<string, number>>>
+  /** A card's Refresh preview: let the picture go, and take it again now if
+   *  the instance is open somewhere on screen. */
+  refreshPreview?: WritableAtom<null, [id: string], Promise<void>>
+  /** The instances set aside, which `instances` leaves out: a launcher lists
+   *  them under Archived. */
+  archived?: Atom<readonly string[]>
+  /** Set one aside, or bring it back; rejects with the reason it could not. */
+  archive?: WritableAtom<null, [{ id: string; archived: boolean }], Promise<void>>
   /** Controls at the end of the pane's tab strip while its tab is active. */
   headerActions?: ComponentType<{ id?: string }>
   /**

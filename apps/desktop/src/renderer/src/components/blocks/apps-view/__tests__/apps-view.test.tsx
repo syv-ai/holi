@@ -5,13 +5,31 @@
  * states for no apps and for the plugin being off.
  */
 import { atom, createStore, Provider } from "jotai"
-import { expect, test, vi } from "vitest"
+import { beforeEach, expect, test, vi } from "vitest"
 import userEvent from "@testing-library/user-event"
 import type { VaultSnapshot } from "@holi/shared"
-import { render, screen, within } from "@/test/render"
-import { coreContributionAtom } from "@/state/plugins"
+import { fireEvent, render, screen, within } from "@/test/render"
+import type { ConversationStart } from "@/plugin-api/types"
+import { agentsSelectionAtom } from "@/state/agents-slots"
+import { openNextBeside } from "@/state/alt-open"
+import { coreContributionAtom, installedPluginsAtom } from "@/state/plugins"
+import { revealInFilesRequestAtom } from "@/state/reveal-in-files"
+import { shellWorkspaceAtom } from "@/state/shell-tabs"
 import { activeRemoteAtom, snapshotAtom } from "@/state/vaults"
+import { useSessionTabs } from "../../app-shell-21/components/use-session-tabs"
 import { AppsView } from "../apps-view"
+
+const toasts = vi.hoisted(() => {
+  const toast = Object.assign(vi.fn(), { error: vi.fn(), success: vi.fn() })
+  return { toast }
+})
+vi.mock("sonner", () => toasts)
+
+beforeEach(() => {
+  toasts.toast.mockReset()
+  toasts.toast.error.mockReset()
+  toasts.toast.success.mockReset()
+})
 
 const APPS = ["tools/Budget.app", "Home.local.app"]
 
@@ -27,11 +45,14 @@ function withApps({
   describe,
   loaded = true,
   create,
+  extra = {},
 }: {
   apps?: string[]
   describe?: (remote: string, id: string) => Promise<string | null>
   loaded?: boolean
   create?: () => Promise<string | null>
+  /** More of the `app` surface: previews, the archive. */
+  extra?: Record<string, unknown>
 } = {}) {
   const store = createStore()
   store.set(activeRemoteAtom, "syv-ai/site")
@@ -71,6 +92,7 @@ function withApps({
         render: () => null,
         instances: atom(apps),
         describe,
+        ...extra,
       },
     ],
   } as never)
@@ -167,4 +189,217 @@ test("with no apps, the empty state offers New app, which opens the new app", as
 test("with the plugin off, the page says how to turn it on", () => {
   renderView(createStore())
   expect(screen.getByText("Vault apps are off")).toBeInTheDocument()
+})
+
+test("an app's preview fills its plate, and one without keeps the icon", async () => {
+  const preview = vi.fn(async (_remote: string, id: string) =>
+    id === "tools/Budget.app" ? "data:image/jpeg;base64,AAAA" : null
+  )
+  renderView(withApps({ extra: { preview } }))
+  const [budget, home] = screen.getAllByRole("listitem")
+  const img = await within(budget!).findByRole("img", {
+    name: "Budget, as it last looked",
+  })
+  expect(img.getAttribute("src")).toBe("data:image/jpeg;base64,AAAA")
+  expect(img.className).toContain("object-cover")
+  await vi.waitFor(() =>
+    expect(within(home!).getByTestId("app-icon")).toBeInTheDocument()
+  )
+  expect(preview).toHaveBeenCalledWith("syv-ai/site", "Home.local.app")
+})
+
+/** The menu a card opens: a right-click, or the menu key on its focused
+ *  Open button, both a `contextmenu` event the card's trigger hears. */
+function openMenu(name: string) {
+  fireEvent.contextMenu(screen.getByRole("button", { name: `Open ${name}` }))
+  return screen.getByRole("menu")
+}
+
+test("right-click offers the app's actions, and each does its thing", async () => {
+  const refresh = vi.fn(async (_id: string) => {})
+  const store = withApps({
+    extra: {
+      refreshPreview: atom(null, (_get, _set, id: string) => refresh(id)),
+      archive: atom(null, async () => {}),
+    },
+  })
+  const write = vi.fn(async () => {})
+  Object.assign(navigator, { clipboard: { writeText: write } })
+  const onOpen = renderView(store)
+
+  const menu = openMenu("Budget")
+  expect(
+    within(menu)
+      .getAllByRole("menuitem")
+      .map((item) => item.textContent)
+  ).toEqual([
+    "Open",
+    "Open beside",
+    "Reveal in Files",
+    "Copy path",
+    "Refresh preview",
+    "Archive",
+  ])
+
+  await userEvent.click(within(menu).getByRole("menuitem", { name: "Open" }))
+  expect(onOpen).toHaveBeenCalledWith("tools/Budget.app")
+
+  await userEvent.click(
+    within(openMenu("Budget")).getByRole("menuitem", { name: "Copy path" })
+  )
+  expect(write).toHaveBeenCalledWith("tools/Budget.app")
+
+  await userEvent.click(
+    within(openMenu("Budget")).getByRole("menuitem", {
+      name: "Reveal in Files",
+    })
+  )
+  expect(store.get(revealInFilesRequestAtom)?.path).toBe("tools/Budget.app")
+
+  await userEvent.click(
+    within(openMenu("Budget")).getByRole("menuitem", {
+      name: "Refresh preview",
+    })
+  )
+  expect(refresh).toHaveBeenCalledWith("tools/Budget.app")
+})
+
+test("Open beside opens the app in split view, as ⌥-click does", async () => {
+  const store = withApps()
+  store.set(shellWorkspaceAtom, {
+    entries: ["holi:apps"],
+    active: "holi:apps",
+    closed: [],
+    seq: 0,
+  })
+  renderView(store)
+  await userEvent.click(
+    within(openMenu("Budget")).getByRole("menuitem", { name: "Open beside" })
+  )
+  const ws = store.get(shellWorkspaceAtom)
+  expect(ws.entries).toHaveLength(1)
+  expect(ws.entries[0]).toMatchObject({
+    views: ["holi:apps", "tools/Budget.app"],
+  })
+})
+
+test("Archive hides the card behind Archived, and the toast's Undo brings it back", async () => {
+  const archived = atom<string[]>([])
+  const instances = atom((get) =>
+    APPS.filter((p) => !get(archived).includes(p))
+  )
+  const calls: { id: string; archived: boolean }[] = []
+  const archive = atom(
+    null,
+    async (_get, set, arg: { id: string; archived: boolean }) => {
+      calls.push(arg)
+      set(archived, (now) =>
+        arg.archived ? [...now, arg.id] : now.filter((p) => p !== arg.id)
+      )
+    }
+  )
+  renderView(withApps({ extra: { instances, archived, archive } }))
+
+  await userEvent.click(
+    within(openMenu("Budget")).getByRole("menuitem", { name: "Archive" })
+  )
+  expect(calls).toEqual([{ id: "tools/Budget.app", archived: true }])
+  expect(
+    screen.queryByRole("button", { name: "Open Budget" })
+  ).not.toBeInTheDocument()
+
+  // Listed under Archived, with Unarchive in its menu.
+  const toggle = screen.getByRole("button", { name: "Show the archived apps" })
+  expect(toggle.textContent).toContain("1")
+  await userEvent.click(toggle)
+  expect(screen.getByText("Archived apps")).toBeInTheDocument()
+  expect(
+    within(openMenu("Budget")).getByRole("menuitem", { name: "Unarchive" })
+  ).toBeInTheDocument()
+  fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape" })
+
+  // The toast says so and undoes it; the undo offers no second toast.
+  expect(toasts.toast).toHaveBeenCalledTimes(1)
+  const [title, options] = toasts.toast.mock.calls[0] as [
+    string,
+    { action: { label: string; onClick: () => void } },
+  ]
+  expect(title).toBe("Budget archived")
+  expect(options.action.label).toBe("Undo")
+  options.action.onClick()
+  await vi.waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: "Open Budget" })
+    ).toBeInTheDocument()
+  )
+  expect(calls[1]).toEqual({ id: "tools/Budget.app", archived: false })
+  expect(toasts.toast).toHaveBeenCalledTimes(1)
+  // Nothing archived: no Archived toggle.
+  expect(
+    screen.queryByRole("button", { name: /archived apps/ })
+  ).not.toBeInTheDocument()
+})
+
+/** The shell's selection-to-tab rule, as the app shell mounts it. */
+function SessionTabs() {
+  useSessionTabs(null)
+  return null
+}
+
+test("Ask about this app opens a new chat beside the page, carrying the app", async () => {
+  const store = withApps()
+  store.set(shellWorkspaceAtom, {
+    entries: ["holi:apps"],
+    active: "holi:apps",
+    closed: [],
+    seq: 0,
+  })
+  // A chat slot as the chat plugin's is: with no text it opens its
+  // new-session page, beside when asked, holding the context.
+  const started: ConversationStart[] = []
+  store.set(installedPluginsAtom, [
+    {
+      info: { id: "chat-stand-in", label: "Chat", default: true },
+      agentsSlot: {
+        start: atom(null, async (_get, set, args: ConversationStart) => {
+          started.push(args)
+          if (args.beside) openNextBeside()
+          set(agentsSelectionAtom, { owner: "chat", id: "new" })
+          return { ok: true as const }
+        }),
+      },
+    },
+  ] as never)
+  render(
+    <Provider store={store}>
+      <SessionTabs />
+      <AppsView onOpen={() => {}} />
+    </Provider>
+  )
+  await userEvent.click(
+    within(openMenu("Budget")).getByRole("menuitem", {
+      name: "Ask about this app",
+    })
+  )
+  expect(started).toEqual([
+    {
+      text: "",
+      context: [{ kind: "app", path: "tools/Budget.app", name: "Budget" }],
+      beside: true,
+    },
+  ])
+  await vi.waitFor(() =>
+    expect(store.get(shellWorkspaceAtom).entries[0]).toMatchObject({
+      views: ["holi:apps", "holi:agents"],
+    })
+  )
+})
+
+test("with no agent to ask, the menu leaves Ask about this app out", () => {
+  renderView(withApps())
+  expect(
+    within(openMenu("Budget")).queryByRole("menuitem", {
+      name: "Ask about this app",
+    })
+  ).toBeNull()
 })
