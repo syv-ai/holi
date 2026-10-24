@@ -21,30 +21,22 @@ describe('isLinkFilePath', () => {
 })
 
 describe('linkFilePath', () => {
-  it('keeps a title readable, and never lets it move the file', () => {
-    expect(linkFilePath('', 'Q3 strategy deck')).toBe('link.Q3 strategy deck.md')
-    expect(linkFilePath('decks', 'Q3: deck/v2 [draft] #1')).toBe('decks/link.Q3 deck v2 draft 1.md')
+  it('names a link by the shared file-name rule', () => {
+    expect(linkFilePath('', 'Q3 Strategy Deck')).toBe('link.q3-strategy-deck.md')
+    expect(linkFilePath('decks', 'Møde: næste skridt')).toBe('decks/link.moede-naeste-skridt.md')
     expect(linkFilePath('', '../..')).toBe('link.link.md')
-    expect(linkTitle(linkFilePath('a', 'Q3 deck'))).toBe('Q3 deck')
+    expect(linkFilePath('', 'notes.local')).toBe('link.notes-local.md')
+  })
+
+  it('reads a name back with spaces', () => {
+    expect(linkTitle(linkFilePath('a', 'Q3 deck'))).toBe('q3 deck')
+    expect(linkTitle('link.q3-deck.local.md')).toBe('q3 deck')
   })
 
   it('numbers a second of a name after cutting it to length', () => {
-    const long = 'x'.repeat(200)
+    const long = 'word '.repeat(40)
     expect(linkFilePath('', long, 2)).not.toBe(linkFilePath('', long))
-    expect(linkFilePath('', long, 2).endsWith(' 2.md')).toBe(true)
-  })
-
-  it('cuts a long title at a word, without a dangling separator', () => {
-    const title =
-      'Browse and edit Claude auto-memory from Dash by FabianScott · Pull Request #189 · syv-ai/dash'
-    expect(linkFilePath('', title)).toBe(
-      'link.Browse and edit Claude auto-memory from Dash by FabianScott · Pull Request 189.md',
-    )
-  })
-
-  it('never names a link local by its title', () => {
-    expect(linkFilePath('', 'notes.local')).toBe('link.notes.md')
-    expect(linkFilePath('', 'a.local.b')).toBe('link.a .b.md')
+    expect(linkFilePath('', long, 2).endsWith('-2.md')).toBe(true)
   })
 })
 

@@ -80,7 +80,7 @@ function Waiting() {
  * nudging out). `floating` is a hover's, drawn on the surface of the popover
  * it is put in; otherwise it sits in a page (a link file's tab), centred and
  * wider, on a muted surface of its own, with the address in full. `title` is
- * what the vault calls it, which wins over what the page says.
+ * what the vault calls it, shown when the page names nothing.
  */
 export function PreviewCard({
   url,
@@ -92,7 +92,7 @@ export function PreviewCard({
   floating?: boolean
 }): React.JSX.Element {
   const preview = usePreview(url)
-  const heading = title ?? preview?.title ?? hostOf(url)
+  const heading = preview?.title ?? title ?? hostOf(url)
   return (
     <a
       href={url}

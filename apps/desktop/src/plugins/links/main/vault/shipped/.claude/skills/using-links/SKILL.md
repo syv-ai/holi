@@ -36,9 +36,9 @@ tags: [strategy, q3]
 The 189-slide deck from the offsite. Section 4 has the pricing model.
 ```
 
-- **The name is the title.** `link.Q3 strategy deck.md` is "Q3 strategy deck". Use the
-  name the user would say, with spaces and capitals as they write it. There is no
-  `title:` key.
+- **The name is the title, as a file name**: lower case, dashes for spaces, æ ø å written
+  as ae oe aa, other accents dropped, and no punctuation. "Q3 Strategy Deck" is
+  `link.q3-strategy-deck.md`. Use the name the user would say. There is no `title:` key.
 - **`url` is required**, and must be an `http://` or `https://` address. A file without
   one shows as broken.
 - `tags` is optional, a list like a note's.
@@ -52,9 +52,9 @@ The 189-slide deck from the offsite. Section 4 has the pricing model.
 
 Every link file matches `**/link.*.md`. Search their `url` lines to find one by address,
 and their names and bodies to find one by what it is. Link to one from a note with
-`[[link.Q3 strategy deck.md]]` (the whole path, `.md` included, as every wiki-link here).
+`[[link.q3-strategy-deck.md]]` (the whole path, `.md` included, as every wiki-link here).
 
 ## Changing one
 
-Edit the file: change `url` to move the link, rename the file to retitle it. Ask for the
+Edit the file: change `url` to move the link, rename the file to retitle it, by the same rule. Ask for the
 rename (or use Holi's rename) rather than `mv`, so the wiki-links to it follow.

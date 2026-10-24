@@ -3,13 +3,15 @@
  * (docs/features/links.md). Frontmatter holds `url` and, like any note,
  * `tags`; the body is what someone wrote about it.
  *
- * Nothing the page says is stored: the name is the title, and the card's
- * image and description are fetched live. A file holds only what a person
+ * Nothing the page says is stored: the name is the page's title as a file
+ * name (`fileSlug`), and the card's title, image and description are
+ * fetched live. A file holds only what a person
  * chose, so it never goes stale against the page.
  */
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml'
 import {
   claimedFiles,
+  fileSlug,
   splitFrontmatter,
   type ClaimedFiles,
   type ClaimedItem,
@@ -38,44 +40,32 @@ export function isLinkFilePath(rel: string): boolean {
   return base.startsWith(LINK_PREFIX) && base.endsWith('.md') && base.length > 'link..md'.length
 }
 
-/** What a link is called: its name without the marker, a private one's
- *  `.local` or `.md` (`link.Q3 deck.md` is "Q3 deck"). */
+/** What a link is called where a name is read rather than a file listed (a
+ *  wiki-link's chip, the `@` menu): its name without the marker, a private
+ *  one's `.local` or `.md`, dashes read as spaces (`link.q3-deck.md` is
+ *  "q3 deck"). The card shows the page's own title. */
 export function linkTitle(rel: string): string {
   const base = rel.split('/').at(-1) ?? rel
-  return base.slice(LINK_PREFIX.length).replace(/(\.local)?\.md$/i, '')
+  return base
+    .slice(LINK_PREFIX.length)
+    .replace(/(\.local)?\.md$/i, '')
+    .replace(/-/g, ' ')
 }
 
 const NAME_MAX = 80
 
-/**
- * A title made safe as a filename, kept readable: spaces and case stay, as in
- * a note's name. What goes is what would move the file or break a link to
- * it: path separators, the characters a wiki-link reads (`[ ] # ^ |`), the
- * ones other systems refuse in a name, leading or trailing dots, and a
- * `.local` that would keep the file off every other machine.
- */
+/** A title as a link's name, by the shared file-name rule (`fileSlug`): lower
+ *  case, dashes, æ ø å written out, so `Q3 strategy deck` is
+ *  `q3-strategy-deck`. */
 export function linkName(title: string): string {
-  const name = title
-    .replace(/[\\/:*?"<>|#^[\]\u0000-\u001f]+/g, ' ')
-    .replace(/\.local(?=\.|\s|$)/gi, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-  // Cut at the last whole word that fits, then drop what is left dangling
-  // at either end: dots, and the separators a page title strings its parts
-  // with (`·`, `-`, `–`, `—`, `,`), so "… · Pull Request 189 ·" ends at 189.
-  const cut =
-    name.length <= NAME_MAX
-      ? name
-      : name.slice(0, NAME_MAX + 1).replace(/\s+\S*$/, '') || name.slice(0, NAME_MAX)
-  const tidy = cut.replace(/^[.\s·•\-–—,|]+|[.\s·•\-–—,|]+$/g, '')
-  return tidy === '' ? 'link' : tidy
+  return fileSlug(title, { max: NAME_MAX, fallback: 'link' })
 }
 
 /** The path for a new link titled `title` in `folder` ('' = the vault root).
- *  `n` above 1 is the nth of that name, `title 2`, its number after the
- *  name is cut to length, so it always tells the two apart. */
+ *  `n` above 1 is the nth of that name, `title-2`, its number after the name
+ *  is cut to length, so it always tells the two apart. */
 export function linkFilePath(folder: string, title: string, n = 1): string {
-  const name = `${LINK_PREFIX}${linkName(title)}${n > 1 ? ` ${n}` : ''}.md`
+  const name = `${LINK_PREFIX}${linkName(title)}${n > 1 ? `-${n}` : ''}.md`
   return folder === '' ? name : `${folder}/${name}`
 }
 

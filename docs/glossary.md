@@ -182,7 +182,7 @@ less trusted than the user (a vault app, a hook) is kept off them.
 ### Link file
 
 A web address saved in the vault as `link.<name>.md`: `url` in its frontmatter, what it is in its
-body, its name the title. The page itself is never stored; its preview is fetched live. See
+body, its name the page's title as a file name. The page itself is never stored; its preview is fetched live. See
 [links](features/links.md).
 
 ### Local file

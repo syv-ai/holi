@@ -161,7 +161,8 @@ the same pass.
   search tool may skip gitignored files, so look for private tasks explicitly, or use
   `holi tasks list`. There is no index to query.
 - Writing a whole task file at once is fine and is the fastest way to create one.
-  Use the title's slug for the filename: lowercase, dashes, no punctuation, then
-  `.local.md` for a private task or `.md` for a shared one.
+  Use the title's slug for the filename: lowercase, dashes for spaces, æ ø å written as
+  ae oe aa, other accents dropped, no punctuation ("Møde med Bo" is
+  `task.moede-med-bo`), then `.local.md` for a private task or `.md` for a shared one.
 - After changing a `due` or `reminder`, check the value you wrote is a stamp. It is
   the one field where a wrong format fails quietly.
