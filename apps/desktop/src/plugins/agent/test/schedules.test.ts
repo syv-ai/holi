@@ -184,6 +184,14 @@ describe('approval', () => {
     expect(caps['schedules.enable'].doors).toEqual(['ui'])
     expect(caps['schedules.run'].doors).toContain('cli')
   })
+
+  it('lists a committed schedule as one that cannot run, with its rename', async () => {
+    await writeSchedule('inbox.md', 'cron: "*/30 * * * *"')
+    const [row] = await scheduler.list(vault())
+    expect(row!.status).toBe('invalid')
+    expect(row!.error).toContain('inbox.local.md')
+    await expect(scheduler.enable(vault(), 'inbox')).rejects.toThrow('inbox.local.md')
+  })
 })
 
 describe('running on schedule', () => {

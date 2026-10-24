@@ -81,7 +81,7 @@ export function isScheduleFilePath(path: string): boolean {
  *  falls back to. */
 export function scheduleSlug(path: string): string {
   const base = path.slice(path.lastIndexOf('/') + 1)
-  return base.replace(/\.local\.md$/, '')
+  return base.replace(/\.md$/, '').replace(/\.local$/, '')
 }
 
 /** A model name fit for argv: no spaces, no flags. */

@@ -11,7 +11,7 @@ is an ordinary [agent session](agent-sessions.md).
 **A schedule is one local file**, `.holi/schedules/<name>.local.md`. It is one person's: it reads
 their mail with their Google account and writes in their name, so it never syncs, nobody else sees
 it in Settings, and nobody else can edit or break it. A committed `.holi/schedules/<name>.md` is not
-a schedule and never runs. Its frontmatter says when and with what, and its body is the prompt:
+a schedule and never runs: Settings lists it as invalid with the rename that makes it one. Its frontmatter says when and with what, and its body is the prompt:
 
 ```markdown
 ---

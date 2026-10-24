@@ -286,17 +286,26 @@ const fingerprint = (def: ScheduleDef): string =>
   createHash('sha256').update(scheduleApprovalText(def)).digest('hex')
 
 /** The vault's schedule files, parsed. A missing directory is none. Only
- *  regular files: a link could point a schedule at anything. */
+ *  regular files: a link could point a schedule at anything. A committed
+ *  `x.md` beside them is listed as invalid with the rename that makes it one,
+ *  so a file an older skill told the agent to write does not just vanish. */
 async function readSchedules(root: string): Promise<FileEntry[]> {
   const dir = join(root, SCHEDULES_DIR)
   const names = await readdir(dir).catch(() => [] as string[])
   const out: FileEntry[] = []
   for (const name of names.sort()) {
     const path = `${SCHEDULES_DIR}/${name}`
-    if (!isScheduleFilePath(path)) continue
+    const shared = !isScheduleFilePath(path) && name.endsWith('.md') && name !== '.md'
+    if (!isScheduleFilePath(path) && !shared) continue
     const abs = join(dir, name)
     const info = await lstat(abs).catch(() => null)
     if (info === null || !info.isFile()) continue
+    if (shared) {
+      const local = name.replace(/\.md$/, '.local.md')
+      const error = `Not a schedule: a schedule is one person's and never syncs. Rename it to ${local}.`
+      out.push({ path, parsed: { ok: false, error } })
+      continue
+    }
     const text = await readFile(abs, 'utf8').catch(() => null)
     if (text === null) continue
     out.push({ path, parsed: parseScheduleFile(text, path) })
@@ -310,9 +319,11 @@ function statusOf(entry: FileEntry, state: ScheduleState | undefined): ScheduleS
   return state.approved === fingerprint(entry.parsed.def) ? 'on' : 'changed'
 }
 
-/** One schedule by its path or its slug. */
+/** One schedule by its path or its slug. A slug a committed `x.md` shares
+ *  with `x.local.md` names the local one, the only one that can run. */
 function find(entries: readonly FileEntry[], ref: string): FileEntry {
-  const found = entries.find((e) => e.path === ref || scheduleSlug(e.path) === ref)
+  const matches = entries.filter((e) => e.path === ref || scheduleSlug(e.path) === ref)
+  const found = matches.find((e) => isScheduleFilePath(e.path)) ?? matches[0]
   if (found !== undefined) return found
   throw new CapabilityError('NOT_FOUND', `No schedule ${ref} in ${SCHEDULES_DIR}/`)
 }
