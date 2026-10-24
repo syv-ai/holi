@@ -59,9 +59,45 @@ last closes the panel. Opening the Terminal tab with none starts one. Closing th
 leaving the vault and quitting stop them (SIGHUP, then SIGKILL, through the same pid probe the
 agent's kill uses). An xterm built after its shell printed asks main for what it printed (the last
 256 KB) and drops the live pushes until that answer lands; main sends both down the one window
-channel in order, so nothing doubles. Colours are the agent terminal's: no ground of its own, in the
-view's text colour, read again when light and dark swap. If node-pty will not load, the tab says so
-with the rebuild command (`pnpm --filter @holi/desktop run rebuild:natives`) and a Retry.
+channel in order, so nothing doubles. If node-pty will not load, the tab says so with the rebuild
+command (`pnpm --filter @holi/desktop run rebuild:natives`) and a Retry.
+
+**Context chips**, as Warp draws them above its prompt: a row of small outlined monospace chips
+over the shell in front. The cwd with home as `~` (a long one loses its middle; the tooltip has the
+whole path, and a click or Enter copies it), the git branch when the cwd is in a work tree, and the
+changes as `16 • +1435 −3`: changed files (untracked ones included), lines added in the success
+colour and removed in the destructive one, each part drawn only when it is not zero. A skeleton
+holds the row until main first reads it. The picker names each terminal by its cwd's folder
+(`holi`), adding the shell's name when two share one (`holi · zsh 2`).
+
+Main works them out (`main/terminal/terminal-context.ts`) and pushes each change
+(`terminal:context`, naming the vault and the terminal like the bytes; `terminal.list` carries the
+last one for a reload). **Where the shell is** comes from shell integration
+(`shell-integration.ts`): a prompt hook that prints OSC 7 (`file://host/path`). zsh starts with
+`ZDOTDIR` at a Holi-written directory (a fresh `mkdtemp` per run) whose `.zshenv`, `.zprofile`,
+`.zshrc` and `.zlogin` each source the person's own file of that name from their real `ZDOTDIR` or
+`$HOME`, with `ZDOTDIR` set back to theirs while it runs; the hook goes in after their `.zshrc`, the
+last file restores `ZDOTDIR` for good, and a `HISTFILE` that macOS's `/etc/zshrc` pointed at Holi's
+directory is put back. bash starts with `--init-file`, a script that reads what a login bash would
+(`/etc/profile`, then the first of `~/.bash_profile`, `~/.bash_login`, `~/.profile`) and appends the
+hook to `PROMPT_COMMAND`, after theirs so it still sees the command's status. Main reads the OSC 7
+off the PTY's bytes (one split across chunks is held until it ends), and takes it only as a local
+`file:` URL naming a directory that exists. A shell that has never printed one (fish, or an rc that
+drops the hook) is asked of the OS instead: `lsof -a -p PID -d cwd -Fn` once output has been quiet a
+moment, at most every two seconds. **The git work** is `rev-parse --abbrev-ref HEAD`,
+`status --porcelain=v2 -z --untracked-files=all` and `diff --numstat -z HEAD` (the empty tree before
+a first commit), with `GIT_OPTIONAL_LOCKS=0` so a read never takes the index lock from the sync
+engine; it is read at the start, then 150ms after every prompt, since every prompt prints an OSC 7,
+so an edit shows at the next prompt. The cwd may be outside the vault: it is the person's own shell.
+
+**The look.** The xterm's colours come from the app's tokens (`lib/terminal-theme.ts`): no ground
+of its own, so it is exactly the panel's (on macOS, the window's glass); the view's text colour; the
+16 ANSI colours from `--terminal-*` in `index.css`, tuned for each mode (on white the normal ones
+hold 4.5:1 and the bright ones are a step darker; on the dark ground all but black clear 4:1); a
+selection from `--terminal-selection`. All are read again when light and dark swap. The app's mono
+font (`--font-mono`, Geist Mono) at 12px and a 1.3 line height, a blinking bar cursor and a 12px
+gutter; the first build waits for the font so cells are measured in it. WebGL draws it and a lost
+context falls back to the DOM renderer; URLs are links that open through `openExternal`.
 
 **The Output** shows the activity log (`main/activity/log.ts`): a ring of the last 2000 lines of
 `{at, channel, level, message, detail?}` on the channels `git`, `sync`, `agent`, `plugins` and `app`.
@@ -96,8 +132,11 @@ keys back rather than typing them. See [keyboard shortcuts](keyboard-shortcuts.m
   every interval, and that is one line.
 - Never a credential: the token never reaches a URL or an argument (`GIT_ASKPASS`), and the log
   scrubs URL userinfo, GitHub token shapes, `Bearer` values and `*TOKEN=` pairs anyway.
-- The renderer gets bytes and lines, never a process or a path outside the vault. A shell starts
-  only in the open vault's clone.
+- The renderer gets bytes and lines, never a process. A shell starts only in the open vault's
+  clone; the one path it reports, its cwd, is validated in main and may be anywhere the person
+  `cd`s.
+- The person's shell setup runs as it would in their own terminal: Holi only adds a prompt hook,
+  after their files.
 - Nothing fake in the bar: an item with nothing true to say is not drawn.
 
 ## Rejected
@@ -108,6 +147,9 @@ keys back rather than typing them. See [keyboard shortcuts](keyboard-shortcuts.m
   and turn hooks, and it is a plugin core cannot import. The PTY primitive moved to core instead.
 - Logging every git command: the loop runs `git status` every few seconds, and a log of that is
   noise that buries the commit someone is looking for.
+- Parsing OSC 7 in the renderer's xterm (`registerOscHandler`): main has to validate the path and
+  run git there anyway, it sees the bytes of a terminal whose xterm is not built yet, and the
+  renderer would otherwise hand main a path to act on.
 - Persisting the log to disk: it is a window onto now; git keeps the history that matters.
 
 ## Code
@@ -115,11 +157,13 @@ keys back rather than typing them. See [keyboard shortcuts](keyboard-shortcuts.m
 - `apps/desktop/src/main/activity/log.ts`: the ring, scrubbing
 - `apps/desktop/src/main/vault/active-vault.ts`: where sync and git write to it, `syncInfo`,
   `syncNow`
-- `apps/desktop/src/main/terminal/`: the PTY and the panel's shells
+- `apps/desktop/src/main/terminal/`: the PTY and the panel's shells; `shell-integration.ts` (the
+  zsh and bash shims), `terminal-context.ts` (OSC 7, lsof, the git summary)
 - `apps/desktop/src/main/router.ts` (`sync.info`, `sync.now`, `activity`, `terminal`),
   `src/preload/index.ts` (`activity`, `terminal` pushes)
 - `apps/desktop/src/plugins/agent/main/host/session-log.ts`: the agent's lines
 - `apps/desktop/src/renderer/src/components/blocks/app-shell-21/components/status-bar.tsx`,
-  `bottom-panel.tsx`, `panel-terminal.tsx`, `panel-output.tsx`
+  `bottom-panel.tsx`, `panel-terminal.tsx`, `terminal-context-chips.tsx`, `panel-output.tsx`
+- `apps/desktop/src/renderer/src/lib/terminal-theme.ts`
 - `apps/desktop/src/renderer/src/state/activity.ts`, `bottom-panel.ts`, `panel-terminals.ts`
 - `apps/desktop/src/plugins/agent/renderer/sessions/AgentStatusItem.tsx`
