@@ -2,7 +2,8 @@
 
 The fresh shell's keys live in one table, and the Keyboard shortcuts dialog is drawn from that
 same table, so the sheet can only show keys that work. The dialog opens from the profile menu's
-**Keyboard shortcuts** item, from `?` outside a text field, and from ⌘/ anywhere.
+**Keyboard shortcuts** item, from `?` outside a text field, and from ⌘/ anywhere. It doubles as a
+command list: `?`, ↓ to a row, ↩ runs it, so a person who forgot a key can still use it.
 
 ## How it works
 
@@ -21,9 +22,26 @@ same table, so the sheet can only show keys that work. The dialog opens from the
 - **Platform keys.** On a Mac ⌘ is Command and ⌃ is Control, each only itself; elsewhere both are
   Ctrl, and the dialog says `Ctrl`, `Alt`, `Shift`. A Mac never takes Control's text-editing keys
   (⌃B, ⌃K, ⌃N) for a ⌘ shortcut. A symbol key such as `?` ignores the Shift that types it.
-- **The dialog** is ReUI's `sheet-3` (searchable, grouped, `Kbd` chords, empty state) set in a
-  shadcn `Dialog` in two columns, with a search field focused on open that filters by label,
-  group or key name. It has no motion of its own beyond the Dialog's: it opens many times a day.
+- **The dialog** is a shadcn `Dialog` holding the installed `Command` (cmdk) list: one column of
+  groups under their headings, each row a `listbox` option whose accessible name is its label and
+  its keys (`New tab, ⌘ T`), the keys drawn as `Kbd` chords. The search field is focused on open
+  and filters by label, group or key name with the dialog's own substring match
+  (`shortcutSections`, cmdk's fuzzy filter off); typing selects the first match. It has no motion
+  of its own beyond the Dialog's: it opens many times a day.
+- **Running a row.** ↑ ↓ move, Home and End jump, ↩ (or a click) runs the selected row, and the
+  first row that runs is selected on open. A row runs through `runShortcutAtom`
+  (`state/shortcuts.ts`), which calls the same newest registered handler the `keydown` listener
+  and the menu's channel call, so a row can only do what its key does. ⌘W's row runs `tab.close` as the menu's
+  accelerator does. Choosing a row closes the dialog first; once it has closed, focus goes back to
+  where it was when the dialog opened and only then does the action run, so what the action
+  focuses (a new tab, the terminal) keeps it. A plain close hands focus back the same way, since
+  the dialog has no trigger for Radix to return to.
+- **Rows it only shows** are options marked `aria-disabled`, dimmed and skipped by the arrows: a
+  gesture (Split view's drags, ⌥-click), Go to tab ⌘1–9 (one line for nine keys cannot say which
+  tab), and Show keyboard shortcuts, the dialog itself. Those carry `listOnly` in the table;
+  `runsFromList` says which rows run, and a test pins that every one of them has a handler
+  registered somewhere in the renderer. Keys that need focus in a particular place (the editor's
+  bold, a list's arrows) are not in the table at all.
 
 ## Bindings
 
