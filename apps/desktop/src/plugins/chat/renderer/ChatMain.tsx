@@ -16,6 +16,7 @@ import { useEffect, useRef, useState } from "react"
 
 import { Badge } from "@/components/reui/badge"
 import { Button } from "@/components/ui/button"
+import { ViewHeader, ViewHeaderTitle } from "@/composites/ViewHeader"
 import {
   Tooltip,
   TooltipContent,
@@ -335,10 +336,14 @@ function ChatView({ chat }: { chat: ChatSummary }) {
 
   return (
     <>
-      <header className="flex h-12 shrink-0 items-center gap-2 border-b ps-6 pe-3">
-        <h1 className="min-w-0 truncate text-sm font-medium">{chat.title}</h1>
-        <StateBadge state={state} />
-        <span className="ms-auto flex shrink-0 items-center gap-0.5">
+      {/* The same row as a document's (`ViewHeader`), so a session and a
+          document side by side line up. */}
+      <ViewHeader>
+        <ViewHeaderTitle
+          title={chat.title}
+          badge={<StateBadge state={state} />}
+        />
+        <span className="flex shrink-0 items-center gap-0.5">
           {chat.info !== undefined ? <SessionInfo info={chat.info} /> : null}
           <Tooltip>
             <TooltipTrigger asChild>
@@ -363,7 +368,7 @@ function ChatView({ chat }: { chat: ChatSummary }) {
             </TooltipContent>
           </Tooltip>
         </span>
-      </header>
+      </ViewHeader>
       <div className="flex min-h-0 flex-1 flex-col">
         {loadError !== null ? (
           <div

@@ -6,6 +6,7 @@ export { DiffView } from './DiffView'
 // Moved to `@/primitives`; kept for callers not yet pointed there (`features/tasks/CreateTask.tsx`).
 export { PanelHeader, type HeaderAction } from './PanelHeader'
 export { PaneToolbar } from './PaneToolbar'
+export { ViewHeader, ViewHeaderTitle } from './ViewHeader'
 export { EmptyState, LoadingRows } from './EmptyState'
 export { RecurrenceField } from './RecurrenceField'
 export { DrawerShell, DrawerTitle } from './DrawerShell'
