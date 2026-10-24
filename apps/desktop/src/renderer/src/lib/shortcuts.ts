@@ -13,11 +13,12 @@
  */
 import { matchShortcutKey } from './hotkey'
 
-export type ShortcutGroup = 'Navigation' | 'Tabs' | 'Files' | 'Apps' | 'Help'
+export type ShortcutGroup = 'Navigation' | 'Tabs' | 'Split view' | 'Files' | 'Apps' | 'Help'
 
 export const SHORTCUT_GROUPS: readonly ShortcutGroup[] = [
   'Navigation',
   'Tabs',
+  'Split view',
   'Files',
   'Apps',
   'Help',
@@ -44,6 +45,10 @@ export interface Shortcut {
   /** The application menu's accelerator, which fires before the page sees the
    *  key: the keys are for display and main sends the id (`main/menu.ts`). */
   boundBy?: 'menu'
+  /** A pointer gesture the dialog lists in place of keys (`keys` empty):
+   *  nothing a key runs, shown while the row `liveWith` names is live. */
+  gesture?: string
+  liveWith?: string
 }
 
 export const SHORTCUTS: readonly Shortcut[] = [
@@ -137,17 +142,17 @@ export const SHORTCUTS: readonly Shortcut[] = [
     boundBy: 'menu',
   },
   {
+    id: 'tab.new',
+    label: 'New tab',
+    group: 'Tabs',
+    keys: ['⌘T'],
+    whileTyping: true,
+  },
+  {
     id: 'tab.closeAll',
     label: 'Close all tabs',
     group: 'Tabs',
     keys: ['⌥⌘W'],
-    whileTyping: true,
-  },
-  {
-    id: 'pane.split',
-    label: 'Split right',
-    group: 'Tabs',
-    keys: ['⌘\\'],
     whileTyping: true,
   },
   {
@@ -156,6 +161,69 @@ export const SHORTCUTS: readonly Shortcut[] = [
     group: 'Tabs',
     keys: ['⇧⌘T'],
     whileTyping: true,
+  },
+
+  // Split view (docs/features/tabs-panes.md): ⌘W closes the focused member
+  // inside a split, so it has no row of its own here.
+  {
+    id: 'pane.split',
+    label: 'Split view',
+    group: 'Split view',
+    keys: ['⌘\\'],
+    whileTyping: true,
+  },
+  // Shift turns \ into | on most layouts, and a symbol key matches the
+  // character: both are listed, the dialog shows the one. ⌘\ would take the
+  // Shift too, as a symbol key; a match naming the Shift wins
+  // (`resolveShortcut`).
+  {
+    id: 'split.separate',
+    label: 'Separate split view',
+    group: 'Split view',
+    keys: ['⇧⌘|', '⇧⌘\\'],
+    display: '⇧⌘\\',
+    whileTyping: true,
+  },
+  // ⌥⌘← is Collapse all folders, so the members step on ⌃⌥.
+  {
+    id: 'split.next',
+    label: 'Focus next view in split',
+    group: 'Split view',
+    keys: ['⌃⌥→'],
+    whileTyping: true,
+    repeats: true,
+  },
+  {
+    id: 'split.previous',
+    label: 'Focus previous view in split',
+    group: 'Split view',
+    keys: ['⌃⌥←'],
+    whileTyping: true,
+    repeats: true,
+  },
+  {
+    id: 'split.gesture.edge',
+    label: 'Split with a tab',
+    group: 'Split view',
+    keys: [],
+    gesture: 'Drag it to the view’s edge',
+    liveWith: 'pane.split',
+  },
+  {
+    id: 'split.gesture.replace',
+    label: 'Replace a view in a split',
+    group: 'Split view',
+    keys: [],
+    gesture: 'Drag a tab onto it',
+    liveWith: 'pane.split',
+  },
+  {
+    id: 'split.gesture.out',
+    label: 'Move a view out of a split',
+    group: 'Split view',
+    keys: [],
+    gesture: 'Drag its header to the tabs',
+    liveWith: 'pane.split',
   },
 
   // Files
@@ -256,8 +324,17 @@ export function resolveShortcut(
   table: readonly Shortcut[] = SHORTCUTS,
 ): ShortcutMatch | null {
   if (e.isComposing || e.defaultPrevented) return null
-  for (const shortcut of table) {
-    if (shortcut.boundBy !== undefined || !ctx.live.has(shortcut.id)) continue
+  // A symbol key ignores a Shift its spec does not name (`?`), so ⌘\ also
+  // matches ⇧⌘\: a live row whose spec names the Shift held goes first.
+  const candidates = table.filter(
+    (shortcut) => shortcut.boundBy === undefined && ctx.live.has(shortcut.id),
+  )
+  const exact = (shortcut: Shortcut): boolean =>
+    shortcut.keys.some(
+      (spec) => matchShortcutKey(e, spec, ctx.mac) && spec.includes('⇧') === e.shiftKey,
+    )
+  const ordered = [...candidates.filter(exact), ...candidates.filter((s) => !exact(s))]
+  for (const shortcut of ordered) {
     const index = shortcut.keys.findIndex((spec) => matchShortcutKey(e, spec, ctx.mac))
     if (index < 0) continue
     if (e.repeat && shortcut.repeats === undefined) return null
@@ -274,6 +351,8 @@ export interface ShortcutLine {
   group: ShortcutGroup
   label: string
   specs: string[]
+  /** A gesture's words, shown in place of keys. */
+  gesture?: string
 }
 
 /** The lines the dialog shows: live rows, merged by label, in table order. */
@@ -283,9 +362,16 @@ export function liveShortcuts(
 ): ShortcutLine[] {
   const lines = new Map<string, ShortcutLine>()
   for (const shortcut of table) {
-    if (!live.has(shortcut.id)) continue
+    const listed =
+      live.has(shortcut.id) || (shortcut.liveWith !== undefined && live.has(shortcut.liveWith))
+    if (!listed) continue
     const key = `${shortcut.group}:${shortcut.label}`
-    const line = lines.get(key) ?? { group: shortcut.group, label: shortcut.label, specs: [] }
+    const line: ShortcutLine = lines.get(key) ?? {
+      group: shortcut.group,
+      label: shortcut.label,
+      specs: [],
+      ...(shortcut.gesture === undefined ? {} : { gesture: shortcut.gesture }),
+    }
     line.specs.push(...(shortcut.display === undefined ? shortcut.keys : [shortcut.display]))
     lines.set(key, line)
   }

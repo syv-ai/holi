@@ -1,25 +1,28 @@
 /**
- * Dragging a tab to another pane, or to a pane's edge to split
- * (docs/features/tabs-panes.md, Split view). Native HTML5 drag with a MIME
- * type of Holi's own, so nothing else on the page (the files tree, an
+ * Dragging a strip entry or a split member's header
+ * (docs/features/tabs-panes.md, Making a split): along the strip to reorder,
+ * onto the content's edge to split, onto a member to replace it, and a
+ * member's header to the strip to leave its split. Native HTML5 drag with a
+ * MIME type of Holi's own, so nothing else on the page (the files tree, an
  * editor) takes a tab for a file, and a tab takes nothing else.
  *
- * While a tab is dragged, `tabDragAtom` holds its key, and every pane lays a
- * drop target over its content (`panes-view.tsx`): a pane's view may be an
- * iframe or a terminal, which would swallow the drag events.
+ * While one is dragged, `tabDragAtom` holds its id (a tab key, or a split's
+ * id), and every view in front lays a drop target over its content
+ * (`panes-view.tsx`): a view may be an iframe or a terminal, which would
+ * swallow the drag events.
  *
- * The keyboard's way to the same places is the tab's menu: Open in split
- * view, Split right, Move to the left or right pane.
+ * The keyboard's way to the same places is the menus: Open in split view,
+ * Separate, Replace with…, Move out of split.
  */
 import { atom, useSetAtom } from "jotai"
 import type { DragEvent } from "react"
 
 import type { DropZone } from "@/state/shell-workspace"
 
-/** The drag's MIME type; its data is the tab's key. */
+/** The drag's MIME type; its data is the tab's key or the split's id. */
 export const TAB_MIME = "application/x-holi-tab"
 
-/** The tab being dragged, or null. */
+/** The tab or split being dragged, or null. */
 export const tabDragAtom = atom<string | null>(null)
 
 /** What a tab's element spreads to be draggable, by its key. */
