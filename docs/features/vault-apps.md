@@ -29,17 +29,21 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   the name without `.app`, and Duplicate makes `Budget copy.app`. A drop on the row lands beside
   it, not among its files. A personal app's row shows like any other, dimmed as a
   local file. See [file tree](file-tree.md).
-- **Launchers.** The tree's app row, the [nav menu](nav-menu.md)'s Apps drill-down (every
-  finished app, most recently opened first, in the sidebar and on the rail; absent when there are none), and the
-  [command palette](command-palette.md), which lists them with their folder. There is no separate
-  Apps section. Its Finish this app is on the tree's app row, and its Edit Source gave way to the
-  row's Show App Files, which expands the bundle so `index.html` opens like any file.
+- **Launchers.** The tree's app row, and **Apps** under Search in the sidebar (and on the rail):
+  a page of every finished app, most recently opened first, each with its folder, and an empty
+  state when there are none. It reads the registry's `app` surface, not the plugin, so it is
+  there only while the plugin is on (`components/blocks/apps-view/`). The claim's Finish this app
+  is on the tree's row menu of a draft, and the Files menu's New app scaffolds a bundle and opens
+  it as the app: in the folder the menu was opened on (a file row's folder), at the root from
+  the empty space or the Apps page. The scaffold's page takes the theme's `--background` and
+  `--foreground`, so it reads in either mode.
 - **Tabs.** An app is the surface `app` with its bundle path as the tab's id, deduped across panes
   like a note (see [tabs and panes](tabs-panes.md)). The bundle is a folder document: the app's
   claim (`renderer/surface.tsx` in the plugin) says a
-  `.app` folder with its `index.html` is one, finished once `app.yaml` is there. Reload is the
-  surface's pane-header action, beside the other per-file buttons, that remounts the
-  frame. If the bundle disappears under an open tab (a teammate's pull), the tab stays as a
+  `.app` folder with its `index.html` is one, finished once `app.yaml` is there. The tab draws
+  the app under a header (`apps-view/vault-app-tab.tsx`): its name and folder, Edit source,
+  which opens `index.html` in the pane beside it, and the surface's own header actions, Reload
+  (which remounts the frame) and the log. If the bundle disappears under an open tab (a teammate's pull), the tab stays as a
   tombstone (the shared empty state) saying the app was deleted, with Close tab. Deleting from a menu removes the files and closes the tab
   instead. A move of the bundle carries its tab along, like a note's.
 - **Serving.** `holi-app://<host>/<path>` is served by a protocol handler rooted at that app's own
