@@ -24,6 +24,8 @@ export type {
   ClaimCreate,
   ClaimDecoration,
   ClaimMenuItem,
+  ConversationContext,
+  ConversationStart,
   FolderClaim,
   PathClaim,
   PluginEventHandler,
@@ -69,6 +71,7 @@ export { usePluginSetting } from '@/state/settings'
 export { activeModeAtom } from '@/state/color-scheme'
 export { appModeAtom, type AppMode } from '@/state/app-mode'
 export { agentsSelectionAtom, agentsSlotsAtom, type AgentsSelection } from '@/state/agents-slots'
+export { openNextBeside } from '@/state/alt-open'
 export { openNoteTabAtom } from '@/state/panes'
 export { openSettingsSectionAtom } from '@/state/settings-section'
 export {

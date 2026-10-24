@@ -14,7 +14,7 @@
  * asks. `+` attaches: a vault document as an `@` reference, or images and
  * files from disk; an image can be pasted or dropped too (`attachments.tsx`).
  */
-import { useAtomValue, useSetAtom } from "jotai"
+import { atom, useAtomValue, useSetAtom } from "jotai"
 import {
   ArrowUpIcon,
   AtSignIcon,
@@ -58,6 +58,7 @@ import {
   cn,
   snapshotAtom,
   snapshotLoadedAtom,
+  surfacesAtom,
   vaultsAtom,
 } from "@/plugin-api"
 import {
@@ -87,12 +88,15 @@ import {
   type ComposerFile,
 } from "./attachments"
 import { CommandMenu, MentionMenu } from "./ComposerMenus"
+import { addContext, ContextTray, type ConversationContext } from "./context"
 import {
   branchAtom,
   commandsAtom,
   loadBranchAtom,
   loadCommandsAtom,
 } from "./state/chats"
+
+const NO_APPS = atom<readonly string[]>([])
 
 /** The models offered: Claude Code's own aliases, which follow its releases
  *  without Holi keeping a list of ids. */
@@ -153,12 +157,18 @@ export function Composer({
   large = false,
   files = [],
   onFiles,
+  context = [],
+  onContext,
 }: {
   value: string
   onChange(value: string): void
   /** What goes with the message; without `onFiles` nothing can be attached. */
   files?: readonly ComposerFile[]
   onFiles?(files: ComposerFile[]): void
+  /** What the message is about besides its text (an app, as a chip); without
+   *  `onContext` the `@` menu offers documents only. */
+  context?: readonly ConversationContext[]
+  onContext?(context: readonly ConversationContext[]): void
   onSend(): void
   /** Stops the turn in flight; without it a busy composer only waits. */
   onStop?(): void
@@ -274,14 +284,26 @@ export function Composer({
     return rankCommands(list, slash?.query ?? "")
   }, [slashOpen, commandsState, slash?.query])
 
-  /** The vault's documents, most recently changed first. */
+  /** The vault's apps, as the registry's `app` surface lists them, when
+   *  this composer can carry one: picked from `@`, an app is a chip. */
+  const appSurface = useAtomValue(surfacesAtom).get("app")
+  const appList = useAtomValue(appSurface?.instances ?? NO_APPS)
+  const apps = useMemo(
+    () => (onContext === undefined ? [] : appList),
+    [onContext, appList]
+  )
+  const appSet = useMemo(() => new Set(apps), [apps])
+
+  /** The vault's documents, most recently changed first, then its apps. */
   const recent = useMemo(
-    () =>
-      snapshot.docs
+    () => [
+      ...snapshot.docs
         .filter((doc) => !isHiddenPath(doc.path))
         .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
         .map((doc) => doc.path),
-    [snapshot.docs]
+      ...apps,
+    ],
+    [snapshot.docs, apps]
   )
   const paths: RankedPath[] = useMemo(
     () => (mentionOpen ? rankPaths(recent, mention?.query ?? "") : []),
@@ -315,6 +337,19 @@ export function Composer({
 
   function pickPath(row: RankedPath) {
     if (mention === null) return
+    if (appSet.has(row.path) && onContext !== undefined) {
+      // An app is a chip, not text: the `@query` typed for it goes.
+      const label = appSurface?.label
+      const name =
+        typeof label === "function" ? label(row.path) : (label ?? row.name)
+      const rest = value.slice(mention.end).replace(/^ /, "")
+      caretAfter.current = mention.start
+      setMention(null)
+      onChange(`${value.slice(0, mention.start)}${rest}`)
+      onContext(addContext(context, { kind: "app", path: row.path, name }))
+      ref.current?.focus()
+      return
+    }
     const next = replaceToken(value, mention, "@", mentionValue(row.path))
     caretAfter.current = next.caret
     setMention(null)
@@ -401,6 +436,7 @@ export function Composer({
             query={mention?.query ?? ""}
             active={active}
             loading={!snapshotLoaded}
+            apps={appSet}
             onActive={setActive}
             onPick={pickPath}
           />
@@ -444,6 +480,16 @@ export function Composer({
             </InputGroupText>
           ) : null}
         </InputGroupAddon>
+        {context.length > 0 ? (
+          <InputGroupAddon align="block-start">
+            <ContextTray
+              items={context}
+              onRemove={(path) =>
+                onContext?.(context.filter((item) => item.path !== path))
+              }
+            />
+          </InputGroupAddon>
+        ) : null}
         {files.length > 0 ? (
           <InputGroupAddon align="block-start">
             <AttachmentTray files={files} onRemove={removeFile} />

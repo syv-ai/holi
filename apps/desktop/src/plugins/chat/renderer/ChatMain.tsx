@@ -31,6 +31,7 @@ import {
 } from "@/plugin-api"
 import type { ChatSummary, TranscriptItem } from "../shared/chat"
 import { releaseAttachment, type ComposerFile } from "./attachments"
+import type { ConversationContext } from "./context"
 import { Composer, useVaultName, type ComposerChoice } from "./Composer"
 import { SessionInfo } from "./SessionInfo"
 import { ReviewCard } from "./ReviewCard"
@@ -38,6 +39,7 @@ import {
   chatsAtom,
   chatsLoadedAtom,
   composerPrefsAtom,
+  contextsAtom,
   draftsAtom,
   interruptChatAtom,
   loadTranscriptAtom,
@@ -84,6 +86,21 @@ function useDraft(key: string): [string, (v: string) => void] {
   return [drafts[key] ?? "", (v) => setDrafts((d) => ({ ...d, [key]: v }))]
 }
 
+/** What a composer's next message is about (an app), by key, kept in the
+ *  store so a card's Ask about this app can fill the new-session page's. */
+function useContextItems(
+  key: string
+): [
+  readonly ConversationContext[],
+  (items: readonly ConversationContext[]) => void,
+] {
+  const [all, setAll] = useAtom(contextsAtom)
+  return [
+    all[key] ?? [],
+    (items) => setAll((now) => ({ ...now, [key]: items })),
+  ]
+}
+
 /**
  * The new-session page. Nothing is started until the first message is sent;
  * the message is the session's first turn and its title.
@@ -92,6 +109,7 @@ export function NewSession() {
   const [prefs, setPrefs] = useAtom(composerPrefsAtom)
   const start = useSetAtom(startChatAtom)
   const [draft, setDraft] = useDraft("new")
+  const [context, setContext] = useContextItems("new")
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [files, setFiles, takeFiles] = useFiles()
@@ -133,10 +151,12 @@ export function NewSession() {
       effort: prefs.effort ?? null,
       mode: prefs.mode,
       files: outgoing.files,
+      context,
     }).then((res) => {
       setBusy(false)
       if (res.ok) {
         setDraft("")
+        setContext([])
         outgoing.done()
       } else setError(res.message)
     })
@@ -205,6 +225,8 @@ export function NewSession() {
               error={error}
               files={files}
               onFiles={setFiles}
+              context={context}
+              onContext={setContext}
             />
           </div>
           {/* MonoCode's take-control pill, under the column: shown while the
@@ -280,6 +302,7 @@ function ChatView({ chat }: { chat: ChatSummary }) {
   const churn = useAtomValue(churnAtom)[chat.id]
   const { items, error: loadError, retry } = useChatTranscript(chat.id)
   const [draft, setDraft] = useDraft(chat.id)
+  const [context, setContext] = useContextItems(chat.id)
   const [files, setFiles, takeFiles] = useFiles()
   const [error, setError] = useState<string | null>(null)
   const [choice, setChoice] = useState<ComposerChoice>({
@@ -316,9 +339,11 @@ function ChatView({ chat }: { chat: ChatSummary }) {
 
   const reply = () => {
     const text = draft
+    const about = context
     const outgoing = takeFiles()
     setError(null)
     setDraft("")
+    setContext([])
     void send({
       id: chat.id,
       text,
@@ -326,10 +351,12 @@ function ChatView({ chat }: { chat: ChatSummary }) {
       effort: choice.effort,
       mode: choice.mode,
       files: outgoing.files,
+      context: about,
     }).then((res) => {
       if (!res.ok) {
         setError(res.message)
         setDraft(text)
+        setContext(about)
       } else outgoing.done()
     })
   }
@@ -412,6 +439,8 @@ function ChatView({ chat }: { chat: ChatSummary }) {
               error={error}
               files={files}
               onFiles={setFiles}
+              context={context}
+              onContext={setContext}
             />
           </div>
         </div>

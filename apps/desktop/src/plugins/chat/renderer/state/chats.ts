@@ -14,11 +14,14 @@ import {
   activeRemoteAtom,
   agentsSelectionAtom,
   appModeAtom,
+  openNextBeside,
   type AgentsSessionItem,
+  type ConversationContext,
   type AgentsStatus,
   type PluginEventHandler,
 } from '@/plugin-api'
 import { chatCap } from '../chat-cap'
+import { withContext } from '../context'
 import type {
   ChatCommand,
   ChatSummary,
@@ -125,6 +128,10 @@ export const loadBranchAtom = atom(null, (get, set): (() => void) => {
 
 /** Unsent text, per composer: `new` and each session's id. */
 export const draftsAtom = atom<Record<string, string>>({})
+
+/** What each composer's next message is about besides its text (an app),
+ *  by the same keys as the drafts. */
+export const contextsAtom = atom<Record<string, readonly ConversationContext[]>>({})
 
 /** The chats the sidebar lists: not archived. */
 export const sidebarChatsAtom = atom((get) => get(chatsAtom).filter((c) => !c.archived))
@@ -304,6 +311,7 @@ export function chatsVault(
     store.set(chatsLoadedAtom, false)
     store.set(chatsErrorAtom, false)
     store.set(draftsAtom, {})
+    store.set(contextsAtom, {})
     store.set(commandsAtom, { status: 'idle' })
     store.set(branchAtom, null)
   }
@@ -330,7 +338,12 @@ export interface SendFile {
   data: string
 }
 
-/** A new chat session whose first turn is `text`, brought forward. */
+/**
+ * A new chat session whose first turn is `text`, brought forward; `context`
+ * (an app) goes as references ahead of it, and `beside` opens its tab in
+ * split view. With no text, nothing starts: the new-session page comes
+ * forward with the context in its composer, for the person to ask.
+ */
 export const startChatAtom = atom(
   null,
   async (
@@ -342,21 +355,34 @@ export const startChatAtom = atom(
       effort?: Effort | null
       mode?: PermissionMode
       files?: SendFile[]
+      context?: readonly ConversationContext[]
+      beside?: boolean
     },
   ): Promise<ChatActionResult> => {
     const remote = get(activeRemoteAtom)
     if (remote === null) return NO_VAULT
+    if (args.text.trim() === '' && (args.files?.length ?? 0) === 0) {
+      if (args.context === undefined || args.context.length === 0) {
+        return { ok: false, message: 'There is nothing to send.' }
+      }
+      set(contextsAtom, (all) => ({ ...all, new: args.context! }))
+      if (args.beside) openNextBeside()
+      set(chatViewAtom, { kind: 'new' })
+      set(appModeAtom, 'agents')
+      return { ok: true }
+    }
     const prefs = get(composerPrefsAtom)
     const model = args.model === undefined ? prefs.model : args.model
     const effort = args.effort === undefined ? (prefs.effort ?? null) : args.effort
     const res = await chatCap.start(remote, {
-      text: args.text,
+      text: withContext(args.text, args.context),
       mode: args.mode ?? prefs.mode,
       ...(model ? { model } : {}),
       ...(effort ? { effort } : {}),
       ...(args.files === undefined || args.files.length === 0 ? {} : { files: args.files }),
     })
     if (!res.ok) return res
+    if (args.beside) openNextBeside()
     set(chatViewAtom, { kind: 'chat', id: res.id })
     set(appModeAtom, 'agents')
     return { ok: true, id: res.id }
@@ -375,13 +401,15 @@ export const sendChatAtom = atom(
       effort?: Effort | null
       mode?: PermissionMode
       files?: SendFile[]
+      context?: readonly ConversationContext[]
     },
   ): Promise<ChatActionResult> => {
     const remote = get(activeRemoteAtom)
     if (remote === null) return NO_VAULT
-    const { files, ...rest } = args
+    const { files, context, ...rest } = args
     return chatCap.send(remote, {
       ...rest,
+      text: withContext(args.text, context),
       ...(files === undefined || files.length === 0 ? {} : { files }),
     })
   },

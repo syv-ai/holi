@@ -32,3 +32,10 @@ export function openingBeside(): boolean {
   last = { alt: false, at: 0 }
   return beside
 }
+
+/** Make the next open, in this moment, open beside what is in front, as if
+ *  ⌥ were held: for an action that asks for split view by itself, such as
+ *  a card's Ask about this app, whose tab opens from a selection. */
+export function openNextBeside(): void {
+  last = { alt: true, at: performance.now() }
+}

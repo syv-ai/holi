@@ -12,6 +12,7 @@
  * states every list here has.
  */
 import {
+  AppWindowIcon,
   FileTextIcon,
   SlashIcon,
   SparklesIcon,
@@ -234,6 +235,7 @@ export function MentionMenu({
   query,
   active,
   loading,
+  apps,
   onActive,
   onPick,
 }: {
@@ -241,6 +243,8 @@ export function MentionMenu({
   query: string
   active: number
   loading: boolean
+  /** The rows that are vault apps, marked with an app's glyph. */
+  apps?: ReadonlySet<string>
   onActive: (index: number) => void
   onPick: (path: RankedPath) => void
 }) {
@@ -277,10 +281,17 @@ export function MentionMenu({
                 onClick={() => onPick(row)}
                 className="data-active:bg-accent data-active:text-accent-foreground flex h-8 w-full items-center gap-2 rounded-md px-2 text-start outline-none"
               >
-                <FileTextIcon
-                  aria-hidden="true"
-                  className="text-muted-foreground size-4 shrink-0"
-                />
+                {apps?.has(row.path) ? (
+                  <AppWindowIcon
+                    aria-hidden="true"
+                    className="text-muted-foreground size-4 shrink-0"
+                  />
+                ) : (
+                  <FileTextIcon
+                    aria-hidden="true"
+                    className="text-muted-foreground size-4 shrink-0"
+                  />
+                )}
                 <span
                   className={cn(
                     "min-w-0 flex-1 truncate",

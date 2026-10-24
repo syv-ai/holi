@@ -94,7 +94,21 @@ the menu lists those built-ins and says quietly at its foot that the vault's com
 load, with Retry, only while the menu is open. The branch chip is left out the same way when
 `chats.where` does not answer. **`@`** lists the
 vault's documents from the vault snapshot, most recently changed first, and inserts `@path`
-(quoted when the path has a space), which Claude Code reads as a file reference. Arrow keys and
+(quoted when the path has a space), which Claude Code reads as a file reference. After the
+documents it lists the vault's apps (the registry's `app` surface's instances); picking one
+makes it a chip instead of text.
+
+**An app as context** is a chip above the text, with the app's icon and name and its own Remove,
+kept per composer like the draft. It is not sent as its files: the message opens with one line
+per app naming its bundle as an `@` reference ("This is about the vault app “Budget”, the
+folder @Finance/Budget.app (its page is index.html, its manifest app.yaml)."), then a blank line
+and the text, so Claude Code reads the app itself, in the clone, under its own permissions, as
+it does a document (`renderer/context.tsx`). A card's **Ask about this app**
+([vault apps](vault-apps.md)) goes through `AgentsSlot.start`, which this plugin provides, with
+no text, the app as `context` and `beside`: nothing starts, and the new-session page opens in
+split view beside the Apps page with the chip in its composer, for the person to ask. With text,
+`start` starts the chat at once with the context ahead of the text, as the command menu's Ask
+the agent does without it. Arrow keys and
 Enter or Tab pick, Escape closes; otherwise Enter sends and Shift+Enter is a new line.
 
 **A turn** is drawn under a line naming the model that answered and how long it worked ("Opus 5.5

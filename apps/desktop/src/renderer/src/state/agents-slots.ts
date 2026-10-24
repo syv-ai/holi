@@ -4,7 +4,7 @@
  * so the provider and the plugins adding to it never import each other.
  */
 import { atom } from 'jotai'
-import type { AgentsSlot } from '@/plugin-api/types'
+import type { AgentsSlot, ConversationStart } from '@/plugin-api/types'
 import { runningPluginsAtom } from './plugins'
 
 /** What the Agents mode shows: a row of `owner`'s (a plugin id), by its own
@@ -32,13 +32,18 @@ export const canStartConversationAtom = atom((get) =>
 )
 
 /** Start a conversation with `text` as its first message, through the first
- *  slot that can; its selection opens the tab. */
+ *  slot that can; its selection opens the tab. Given as a `ConversationStart`,
+ *  it can carry context (an app) and open beside what is in front. */
 export const startConversationAtom = atom(
   null,
-  (get, set, text: string): Promise<{ ok: true } | { ok: false; message: string }> => {
-    const start = get(agentsSlotsAtom).find((slot) => slot.start !== undefined)?.start
-    return start === undefined
+  (
+    get,
+    set,
+    start: string | ConversationStart,
+  ): Promise<{ ok: true } | { ok: false; message: string }> => {
+    const slot = get(agentsSlotsAtom).find((s) => s.start !== undefined)?.start
+    return slot === undefined
       ? Promise.resolve({ ok: false, message: 'No agent is running in this vault.' })
-      : set(start, { text })
+      : set(slot, typeof start === 'string' ? { text: start } : start)
   },
 )

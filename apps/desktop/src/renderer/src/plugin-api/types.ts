@@ -412,6 +412,24 @@ export interface AgentsSessionsSource {
   remove?: WritableAtom<null, [key: string], unknown>
 }
 
+/** Something a conversation is about besides its words: a vault app, by its
+ *  bundle path, which the agent reads itself (`AgentsSlot.start`). */
+export interface ConversationContext {
+  kind: 'app'
+  path: string
+  name: string
+}
+
+/** How a conversation starts (`AgentsSlot.start`). */
+export interface ConversationStart {
+  /** Its first message. Empty, with `context`, opens the new-session page
+   *  with that context in its composer, for the person to ask. */
+  text: string
+  context?: readonly ConversationContext[]
+  /** Open it in split view beside what is in front, as ⌥-click does. */
+  beside?: boolean
+}
+
 /**
  * What another plugin adds to the Agents mode, which the plugin providing it
  * draws without knowing who adds what (docs/features/sidebar.md). Its rows
@@ -449,7 +467,7 @@ export interface AgentsSlot {
    *  Ask the agent. The first running slot with one wins. */
   start?: WritableAtom<
     null,
-    [{ text: string }],
+    [ConversationStart],
     Promise<{ ok: true } | { ok: false; message: string }>
   >
 }
