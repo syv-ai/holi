@@ -156,7 +156,17 @@ describe("making a split", () => {
     expect(strip(dropTab(ws, A, B, "right"))).toEqual([[B, A]])
     expect(strip(dropTab(ws, A, B, "left"))).toEqual([[A, B]])
     expect(dropTab(ws, A, B, "center")).toBe(ws)
-    expect(dropTab(ws, B, B, "left")).toBe(ws)
+    expect(dropTab(ws, B, B, "center")).toBe(ws)
+  })
+
+  test("the tab in front dropped on its own edge splits with its neighbour", () => {
+    const ws = selectEntry(withTabs(A, B, C), B)
+    expect(strip(dropTab(ws, B, B, "right"))).toEqual([[A, B], C])
+    expect(strip(dropTab(ws, B, B, "left"))).toEqual([[B, A], C])
+    expect(focusedTab(dropTab(ws, B, B, "right"))).toBe(B)
+    const alone = dropTab(withTabs(A), A, A, "right")
+    expect(isSplit(alone.entries[0]!)).toBe(true)
+    expect(focusedTab(alone)).toBe(A)
   })
 
   test("a tab dropped on a member replaces it, the replaced one keeping a tab", () => {

@@ -613,7 +613,11 @@ export type DropZone = "left" | "right" | "center"
  *   `MAX_SPLIT` the edge replaces instead;
  * - in a member's middle it replaces that member, which gets a tab of its
  *   own (within one split, the two swap); a single tab's middle takes
- *   nothing.
+ *   nothing;
+ * - the tab in front dropped on its own edge splits there with its
+ *   neighbour in the strip (the tab before it, else after it), or with a
+ *   New tab when it is the only one: the gesture of dragging a tab beside
+ *   what is open.
  *
  * A drop that would change nothing (a view onto itself, a split's id) is
  * the same workspace, which is how a drop target tells whether to take it.
@@ -625,7 +629,10 @@ export function dropTab(
   zone: DropZone
 ): ShellWorkspace {
   const entry = activeEntry(ws)
-  if (entry === null || key === target) return ws
+  if (entry === null) return ws
+  if (key === target) {
+    return !isSplit(entry) && zone !== "center" ? splitOwn(ws, key, zone) : ws
+  }
   if (!entryViews(entry).includes(target) || entryOf(ws, key) === null) {
     return ws
   }
@@ -652,6 +659,38 @@ export function dropTab(
     return replaceIn(out, entry.id, target, key)
   }
   return addToActive(out, key, zone, target)
+}
+
+/** The active tab `key` dropped on its own `side`: beside its neighbour in
+ *  the strip, else beside a New tab. */
+function splitOwn(
+  ws: ShellWorkspace,
+  key: string,
+  side: "left" | "right"
+): ShellWorkspace {
+  const at = indexOfEntry(ws, key)
+  const near = [ws.entries[at - 1], ws.entries[at + 1]].find(
+    (e) => e !== undefined && !isSplit(e)
+  )
+  if (near !== undefined) {
+    return addToActive(detach({ ...ws, active: entryId(near) }, key), key, side)
+  }
+  const seq = ws.seq + 1
+  const fresh = tabKey({ kind: "new", n: seq })
+  const views = side === "left" ? [key, fresh] : [fresh, key]
+  const next = nextSplitId({ ...ws, seq })
+  const split: ShellSplit = {
+    id: next.id,
+    views,
+    shares: evenShares(2),
+    focused: key,
+  }
+  return {
+    ...ws,
+    seq: next.seq,
+    entries: replaceEntryAt(ws, at, split),
+    active: next.id,
+  }
 }
 
 /** A split's shares, in member order, normalised to sum to 1. */
