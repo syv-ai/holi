@@ -72,7 +72,8 @@ function card(found: Found): Tooltip {
     create: () => {
       const dom = document.createElement('div')
       // The popover's surface: CodeMirror's hover shell is transparent.
-      dom.className = 'overflow-hidden rounded-md bg-popover text-popover-foreground shadow-popover'
+      dom.className =
+        'overflow-hidden rounded-2xl bg-popover text-popover-foreground shadow-popover'
       const root = createRoot(dom)
       root.render(
         createElement(PreviewCard, {

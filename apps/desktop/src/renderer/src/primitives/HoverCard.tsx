@@ -8,7 +8,9 @@ import { cn } from '@/lib/cn'
  * opens it.
  */
 function HoverCard(props: React.ComponentProps<typeof HoverCardPrimitive.Root>): React.JSX.Element {
-  return <HoverCardPrimitive.Root data-slot="hover-card" openDelay={400} closeDelay={100} {...props} />
+  return (
+    <HoverCardPrimitive.Root data-slot="hover-card" openDelay={400} closeDelay={100} {...props} />
+  )
 }
 
 function HoverCardTrigger(
@@ -31,7 +33,7 @@ function HoverCardContent({
         sideOffset={sideOffset}
         className={cn(
           // Borderless on the themeable `.shadow-popover`, like every overlay.
-          'z-50 w-80 overflow-hidden rounded-md bg-popover text-popover-foreground shadow-popover outline-hidden',
+          'z-50 overflow-hidden rounded-2xl bg-popover text-popover-foreground shadow-popover outline-hidden',
           'origin-(--radix-hover-card-content-transform-origin) data-[state=open]:motion-in-origin data-[state=closed]:motion-out-origin',
           className,
         )}

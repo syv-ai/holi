@@ -33,6 +33,8 @@ class CardWidget extends WidgetType {
   override toDOM(): HTMLElement {
     const dom = document.createElement('div')
     dom.className = 'cm-link-card pt-1 pb-4'
+    // In the text's column, as the editor's other blocks (a diagram) are.
+    dom.style.margin = '0 var(--editor-inset)'
     const root = createRoot(dom)
     roots.set(dom, root)
     root.render(createElement(PreviewCard, { url: this.url, title: this.title }))
